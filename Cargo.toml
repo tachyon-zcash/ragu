@@ -1,6 +1,12 @@
 [workspace]
 members = [
     "crates/ragu",
+    "crates/ragu_arithmetic",
+    "crates/ragu_circuits",
+    "crates/ragu_core",
+    "crates/ragu_gadgets",
+    "crates/ragu_macros",
+    "crates/ragu_pasta",
 ]
 
 resolver = "2"

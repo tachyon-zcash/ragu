@@ -1,0 +1,23 @@
+[package]
+name = "ragu_arithmetic"
+version = "0.0.0"
+authors = [
+    "Sean Bowe <ewillbefull@gmail.com>"
+]
+description = """
+WIP
+"""
+license = "MIT OR Apache-2.0"
+edition = "2024"
+rust-version = "1.85"
+
+readme = "../../README.md"
+repository = "https://github.com/ebfull/ragu"
+documentation = "https://docs.rs/ragu"
+categories = []
+keywords = []
+
+[features]
+default = []
+
+[dependencies]
