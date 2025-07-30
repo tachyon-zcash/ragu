@@ -7,6 +7,7 @@ members = [
     "crates/ragu_gadgets",
     "crates/ragu_macros",
     "crates/ragu_pasta",
+    "crates/ragu_primitives",
 ]
 
 resolver = "2"
