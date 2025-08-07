@@ -45,6 +45,23 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
         }
     }
 
+    /// Create a polynomial from the given coefficients. Panics if the number of
+    /// coefficients exceeds the rank's limit.
+    pub fn from_coeffs(mut coeffs: Vec<F>) -> Self {
+        assert!(coeffs.len() <= R::num_coeffs());
+        coeffs.resize(R::num_coeffs(), F::ZERO);
+        Self {
+            coeffs,
+            _marker: core::marker::PhantomData,
+        }
+    }
+
+    /// Iterate over the coefficients of this polynomial in ascending order of
+    /// degree.
+    pub fn iter_coeffs(&self) -> impl Iterator<Item = F> + DoubleEndedIterator {
+        self.coeffs.iter().cloned()
+    }
+
     /// Evaluate this polynomial at the given point.
     pub fn eval(&self, x: F) -> F {
         arithmetic::eval(&self.coeffs[..], x)

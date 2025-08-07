@@ -62,7 +62,7 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
 
     /// Iterate over the coefficients of this polynomial in ascending order of
     /// degree.
-    pub fn iter(&self) -> impl Iterator<Item = F> {
+    pub fn iter_coeffs(&self) -> impl Iterator<Item = F> + DoubleEndedIterator {
         use core::iter::repeat_n;
 
         assert!(self.u.len() <= R::n());
@@ -218,7 +218,7 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
     /// Reduce this polynomial into its unstructured representation,
     pub fn unstructured(&self) -> super::unstructured::Polynomial<F, R> {
         super::unstructured::Polynomial {
-            coeffs: self.iter().collect(),
+            coeffs: self.iter_coeffs().collect(),
             _marker: core::marker::PhantomData,
         }
     }
