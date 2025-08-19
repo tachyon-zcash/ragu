@@ -4,7 +4,7 @@
 
 # `ragu_gadgets`
 
-This crate contains internal implementation code for the [`ragu`](https://crates.io/crates/ragu) crate.
+This crate contains internal implementation code for the [`ragu`](https://crates.io/crates/ragu) crate. **This crate currently is not used in the codebase and the crate name is merely reserved.**
 
 ## License
 

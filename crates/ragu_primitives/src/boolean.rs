@@ -119,6 +119,12 @@ pub fn multipack<'dr, D: Driver<'dr, F: ff::PrimeField>>(
     let mut v = vec![];
     for chunk in bits.chunks(D::F::CAPACITY as usize) {
         let value = D::just(|| {
+            // The witness value here is computed in an MSB-first add-and-double
+            // algorithm for efficiency. This is different from the constraint
+            // evaluation logic below, which is LSB-first. The reason is that
+            // `LinearExpression` instances cannot always be efficiently scaled.
+            // Instead, a `LinearExpression::gain` operation is used to scale
+            // _future_ terms added to an expression.
             let mut value = D::F::ZERO;
             for bit in chunk.iter().rev() {
                 value = value.double();
