@@ -1,9 +1,7 @@
 [package]
 name = "ragu_macros"
 version = "0.0.0"
-authors = [
-    "Sean Bowe <ewillbefull@gmail.com>"
-]
+authors = ["Sean Bowe <ewillbefull@gmail.com>"]
 description = """
 Intended for internal use in the Ragu project
 """

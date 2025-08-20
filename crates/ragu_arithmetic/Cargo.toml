@@ -1,9 +1,7 @@
 [package]
 name = "ragu_arithmetic"
 version = "0.0.0"
-authors = [
-    "Sean Bowe <ewillbefull@gmail.com>"
-]
+authors = ["Sean Bowe <ewillbefull@gmail.com>"]
 description = """
 Fundamental arithmetic traits and utilities for the Ragu project
 """
@@ -18,7 +16,7 @@ categories = []
 keywords = []
 
 [package.metadata.docs.rs]
-rustdoc-args = [ "--html-in-header", "katex-header.html" ]
+rustdoc-args = ["--html-in-header", "katex-header.html"]
 all-features = true
 
 [features]

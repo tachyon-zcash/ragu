@@ -1,9 +1,7 @@
 [package]
 name = "ragu"
 version = "0.0.0"
-authors = [
-    "Sean Bowe <ewillbefull@gmail.com>"
-]
+authors = ["Sean Bowe <ewillbefull@gmail.com>"]
 description = """
 Proof-carrying data (PCD) framework for Rust
 """
@@ -18,7 +16,7 @@ categories = []
 keywords = []
 
 [package.metadata.docs.rs]
-rustdoc-args = [ "--html-in-header", "katex-header.html" ]
+rustdoc-args = ["--html-in-header", "katex-header.html"]
 all-features = true
 
 [features]
@@ -32,19 +30,19 @@ ragu_primitives = { path = "crates/ragu_primitives", version = "0.0.0" }
 
 [workspace]
 members = [
-    "crates/ragu_arithmetic",
-    "crates/ragu_circuits",
-    "crates/ragu_core",
-    "crates/ragu_gadgets",
-    "crates/ragu_macros",
-    "crates/ragu_pasta",
-    "crates/ragu_primitives",
+  "crates/ragu_arithmetic",
+  "crates/ragu_circuits",
+  "crates/ragu_core",
+  "crates/ragu_gadgets",
+  "crates/ragu_macros",
+  "crates/ragu_pasta",
+  "crates/ragu_primitives",
 ]
 
 resolver = "2"
 
 [workspace.dependencies]
-ff = {version = "0.13", default-features = false }
+ff = { version = "0.13", default-features = false }
 group = { version = "0.13", default-features = false }
 pasta_curves = "0.5.1"
 rand = "0.8.5"
