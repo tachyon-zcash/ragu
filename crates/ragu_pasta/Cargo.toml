@@ -12,7 +12,7 @@ rust-version = "1.85"
 readme = "README.md"
 repository = "https://github.com/ebfull/ragu"
 documentation = "https://docs.rs/ragu_pasta"
-categories = []
+categories = ["cryptography", "mathematics", "algorithms", "science", "no-std"]
 keywords = []
 
 [package.metadata.docs.rs]

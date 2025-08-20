@@ -12,7 +12,7 @@ rust-version = "1.85"
 readme = "README.md"
 repository = "https://github.com/ebfull/ragu"
 documentation = "https://docs.rs/ragu_macros"
-categories = []
+categories = ["development-tools"]
 keywords = []
 
 [lib]
