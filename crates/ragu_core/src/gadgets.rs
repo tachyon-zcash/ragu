@@ -191,3 +191,61 @@ pub unsafe trait GadgetKind<F: Field>: core::any::Any {
 /// }
 /// ```
 pub use ragu_macros::Gadget;
+
+/// Obtains the concrete [`GadgetKind<F>`] of a [`Gadget`] type given only the
+/// gadget's type and a field type `F`. This is particularly useful in contexts
+/// where a specific concrete driver does not exist or the type is annoying to
+/// write by hand.
+///
+/// ## Usage
+///
+/// The macro is provided the field type `F` and the gadget type `G`, separated
+/// by a semicolon. Anywhere in the gadget type where a driver is expected, you
+/// can instead use a bare `_`, and anywhere the driver's lifetime `'dr` is
+/// expected you can use `'_` instead.
+///
+/// ```rust
+/// # use ff::Field;
+/// # use ragu_core::{drivers::{Driver, Witness}, gadgets::Kind};
+/// # #[derive(ragu_core::gadgets::Gadget)]
+/// # struct Boolean<'my_dr, #[ragu(driver)] MyD: Driver<'my_dr>> {
+/// #     #[ragu(wire)]
+/// #     wire: MyD::Wire,
+/// #     #[ragu(witness)]
+/// #     value: Witness<MyD, MyD::F>,
+/// # }
+/// # trait MyTrait<F: Field> {
+/// #     type Kind: ragu_core::gadgets::GadgetKind<F>;
+/// # }
+/// # struct Foo;
+/// impl<F: Field> MyTrait<F> for Foo {
+///     type Kind = Kind![F; Boolean<'_, _>];
+/// }
+/// ```
+///
+/// In this example, the `Kind!` macro expands to the type
+///
+/// ```rust
+/// # use ff::Field;
+/// # use ragu_core::{drivers::{Driver, Witness}, gadgets::{Kind, Gadget}};
+/// # use core::marker::PhantomData;
+/// # #[derive(ragu_core::gadgets::Gadget)]
+/// # struct Boolean<'my_dr, #[ragu(driver)] MyD: Driver<'my_dr>> {
+/// #     #[ragu(wire)]
+/// #     wire: MyD::Wire,
+/// #     #[ragu(witness)]
+/// #     value: Witness<MyD, MyD::F>,
+/// # }
+/// # type MyKind<F: Field> =
+/// <Boolean<'static, PhantomData<F>> as Gadget<'static, PhantomData<F>>>::Kind
+/// # ;
+/// ```
+///
+/// This works because [`PhantomData<F>`](core::marker::PhantomData) implements
+/// [`Driver<'static>`](Driver) for all fields `F`, and the circular constraint
+/// between [`Gadget::Kind`] and the rebind type [`GadgetKind::Rebind`] requires
+/// the resulting [`GadgetKind`] type to be the correct one. This macro only
+/// works in contexts where the (possibly generic) [`Field`] type `F` is known,
+/// and any other constraints on the [`Gadget`] implementation necessary for a
+/// fully qualified expansion are satisfied.
+pub use ragu_macros::gadget_kind as Kind;

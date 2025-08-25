@@ -16,6 +16,7 @@ use syn::{DeriveInput, Error, LitInt, parse_macro_input};
 mod gadget;
 mod gadget_serialize;
 mod helpers;
+mod kind;
 mod repr;
 
 // Documentation for the `repr256` macro is in `macro@ragu_arithmetic::repr256`.
@@ -23,6 +24,22 @@ mod repr;
 #[proc_macro]
 pub fn repr256(input: TokenStream) -> TokenStream {
     repr::evaluate(parse_macro_input!(input as LitInt))
+        .unwrap_or_else(Error::into_compile_error)
+        .into()
+}
+
+// Documentation for the `gadget_kind` macro is in `macro@ragu_core::gadgets::Kind`.
+#[allow(missing_docs)]
+#[proc_macro]
+pub fn gadget_kind(input: TokenStream) -> TokenStream {
+    let ragu_core_path = helpers::ragu_core_path();
+    let ragu_core_path = if let Err(e) = ragu_core_path {
+        return e.into_compile_error().into();
+    } else {
+        ragu_core_path.unwrap()
+    };
+
+    kind::evaluate(parse_macro_input!(input as kind::Input), ragu_core_path)
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }
