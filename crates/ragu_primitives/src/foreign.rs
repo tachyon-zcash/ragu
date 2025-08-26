@@ -1,38 +1,58 @@
+use ff::Field;
 use ragu_core::{Result, drivers::Driver};
 
 use alloc::boxed::Box;
 
 use crate::serialize::{Buffer, GadgetSerialize};
 
-impl<'dr, D: Driver<'dr>> GadgetSerialize<'dr, D> for () {
-    fn serialize<B: Buffer<'dr, D>>(&self, _: &mut D, _: &mut B) -> Result<()> {
+impl<F: Field> GadgetSerialize<F> for () {
+    fn serialize_gadget<'dr, D: Driver<'dr, F = F>, B: Buffer<'dr, D>>(
+        _: &(),
+        _: &mut D,
+        _: &mut B,
+    ) -> Result<()> {
         Ok(())
     }
 }
 
-impl<'dr, D: Driver<'dr>, G: GadgetSerialize<'dr, D>, const N: usize> GadgetSerialize<'dr, D>
-    for [G; N]
+impl<F: Field, G: GadgetSerialize<F>, const N: usize> GadgetSerialize<F>
+    for [::core::marker::PhantomData<G>; N]
 {
-    fn serialize<B: Buffer<'dr, D>>(&self, dr: &mut D, buf: &mut B) -> Result<()> {
-        for item in self {
-            G::serialize(item, dr, buf)?;
+    fn serialize_gadget<'dr, D: Driver<'dr, F = F>, B: Buffer<'dr, D>>(
+        this: &[G::Rebind<'dr, D>; N],
+        dr: &mut D,
+        buf: &mut B,
+    ) -> Result<()> {
+        for item in this {
+            G::serialize_gadget(item, dr, buf)?;
         }
         Ok(())
     }
 }
 
-impl<'dr, D: Driver<'dr>, G1: GadgetSerialize<'dr, D>, G2: GadgetSerialize<'dr, D>>
-    GadgetSerialize<'dr, D> for (G1, G2)
+impl<F: Field, G1: GadgetSerialize<F>, G2: GadgetSerialize<F>> GadgetSerialize<F>
+    for (
+        ::core::marker::PhantomData<G1>,
+        ::core::marker::PhantomData<G2>,
+    )
 {
-    fn serialize<B: Buffer<'dr, D>>(&self, dr: &mut D, buf: &mut B) -> Result<()> {
-        G1::serialize(&self.0, dr, buf)?;
-        G2::serialize(&self.1, dr, buf)?;
+    fn serialize_gadget<'dr, D: Driver<'dr, F = F>, B: Buffer<'dr, D>>(
+        this: &(G1::Rebind<'dr, D>, G2::Rebind<'dr, D>),
+        dr: &mut D,
+        buf: &mut B,
+    ) -> Result<()> {
+        G1::serialize_gadget(&this.0, dr, buf)?;
+        G2::serialize_gadget(&this.1, dr, buf)?;
         Ok(())
     }
 }
 
-impl<'dr, D: Driver<'dr>, G: GadgetSerialize<'dr, D>> GadgetSerialize<'dr, D> for Box<G> {
-    fn serialize<B: Buffer<'dr, D>>(&self, dr: &mut D, buf: &mut B) -> Result<()> {
-        G::serialize(self, dr, buf)
+impl<F: Field, G: GadgetSerialize<F>> GadgetSerialize<F> for ::core::marker::PhantomData<Box<G>> {
+    fn serialize_gadget<'dr, D: Driver<'dr, F = F>, B: Buffer<'dr, D>>(
+        this: &Box<G::Rebind<'dr, D>>,
+        dr: &mut D,
+        buf: &mut B,
+    ) -> Result<()> {
+        G::serialize_gadget(this, dr, buf)
     }
 }

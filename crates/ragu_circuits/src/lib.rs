@@ -18,6 +18,7 @@ use ff::Field;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, Witness},
+    gadgets::GadgetKind,
 };
 use ragu_primitives::serialize::GadgetSerialize;
 
@@ -48,10 +49,7 @@ pub trait Circuit<F: Field>: Sized + Send + Sync {
 
     /// Represents a gadget that can be serialized and represents the output of
     /// a circuit computation.
-    type Output<'dr, D: Driver<'dr, F = F>>: GadgetSerialize<'dr, D>
-    where
-        // See <https://github.com/rust-lang/rust/issues/87479>.
-        Self: 'dr;
+    type Output: GadgetSerialize<F>;
 
     /// Auxillary data produced during the computation of the
     /// [`witness`](Circuit::witness) method that may be useful, such as
@@ -67,9 +65,7 @@ pub trait Circuit<F: Field>: Sized + Send + Sync {
         &self,
         dr: &mut D,
         instance: Witness<D, Self::Instance<'source>>,
-    ) -> Result<Self::Output<'dr, D>>
-    where
-        Self: 'dr;
+    ) -> Result<<Self::Output as GadgetKind<F>>::Rebind<'dr, D>>;
 
     /// Given a witness type for this circuit, perform a computation using the
     /// provided [`Driver`] and return the `Self::Output` gadget that the verifier's
@@ -79,9 +75,10 @@ pub trait Circuit<F: Field>: Sized + Send + Sync {
         &self,
         dr: &mut D,
         witness: Witness<D, Self::Witness<'source>>,
-    ) -> Result<(Self::Output<'dr, D>, Witness<D, Self::Aux<'source>>)>
-    where
-        Self: 'dr;
+    ) -> Result<(
+        <Self::Output as GadgetKind<F>>::Rebind<'dr, D>,
+        Witness<D, Self::Aux<'source>>,
+    )>;
 }
 
 /// Extension trait for all circuits.

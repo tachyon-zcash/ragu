@@ -219,14 +219,14 @@ mod tests {
     impl<F: Field, R: Rank> crate::Circuit<F> for StageObject<R> {
         type Instance<'source> = ();
         type Witness<'source> = ();
-        type Output<'dr, D: Driver<'dr, F = F>> = ();
+        type Output = ();
         type Aux<'source> = ();
 
         fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
             &self,
             _: &mut D,
             _: Witness<D, Self::Instance<'source>>,
-        ) -> Result<Self::Output<'dr, D>> {
+        ) -> Result<<Self::Output as GadgetKind<F>>::Rebind<'dr, D>> {
             Ok(())
         }
 
@@ -234,10 +234,10 @@ mod tests {
             &self,
             dr: &mut D,
             _: Witness<D, Self::Witness<'source>>,
-        ) -> Result<(Self::Output<'dr, D>, Witness<D, Self::Aux<'source>>)>
-        where
-            Self: 'dr,
-        {
+        ) -> Result<(
+            <Self::Output as GadgetKind<F>>::Rebind<'dr, D>,
+            Witness<D, Self::Aux<'source>>,
+        )> {
             let reserved = self.skip_multiplications + self.num_multiplications + 1;
             assert!(reserved <= R::n());
 

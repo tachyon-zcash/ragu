@@ -3,14 +3,14 @@ use ff::{Field, PrimeField};
 use ragu_core::{
     Result,
     drivers::{Driver, LinearExpression, Witness},
-    gadgets::Gadget,
+    gadgets::{Gadget, Kind},
     maybe::Maybe,
 };
 
 use alloc::{vec, vec::Vec};
 
 use crate::{
-    Element,
+    Element, GadgetExt,
     demoted::DemotedDriver,
     serialize::{Buffer, GadgetSerialize},
     util::InternalMaybe,
@@ -105,9 +105,13 @@ impl<'dr, D: Driver<'dr>> Boolean<'dr, DemotedDriver<'dr, D>> {
     }
 }
 
-impl<'dr, D: Driver<'dr>> GadgetSerialize<'dr, D> for Boolean<'dr, D> {
-    fn serialize<B: Buffer<'dr, D>>(&self, dr: &mut D, buf: &mut B) -> Result<()> {
-        self.element().serialize(dr, buf)
+impl<F: Field> GadgetSerialize<F> for Kind![F; @Boolean<'_, _>] {
+    fn serialize_gadget<'dr, D: Driver<'dr, F = F>, B: Buffer<'dr, D>>(
+        this: &Boolean<'dr, D>,
+        dr: &mut D,
+        buf: &mut B,
+    ) -> Result<()> {
+        this.element().serialize(dr, buf)
     }
 }
 

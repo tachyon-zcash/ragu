@@ -4,6 +4,7 @@ use ff::Field;
 use ragu_core::{
     Result,
     drivers::{Driver, LinearExpression, Witness},
+    gadgets::{GadgetKind, Kind},
     maybe::Maybe,
 };
 use ragu_pasta::Fp;
@@ -50,7 +51,7 @@ fn test_simple_circuit() {
 
     impl Circuit<Fp> for MySimpleCircuit {
         type Instance<'instance> = (Fp, Fp); // Public inputs: c and d
-        type Output<'dr, D: Driver<'dr, F = Fp>> = (Element<'dr, D>, Element<'dr, D>);
+        type Output = Kind![Fp; (Element<'_, _>, Element<'_, _>)];
         type Witness<'witness> = (Fp, Fp); // Witness: a and b
         type Aux<'witness> = ();
 
@@ -58,7 +59,7 @@ fn test_simple_circuit() {
             &self,
             dr: &mut D,
             instance: Witness<D, Self::Instance<'instance>>,
-        ) -> Result<Self::Output<'dr, D>> {
+        ) -> Result<<Self::Output as GadgetKind<Fp>>::Rebind<'dr, D>> {
             let c = Element::alloc(dr, instance.view().map(|v| v.0))?;
             let d = Element::alloc(dr, instance.view().map(|v| v.1))?;
 
@@ -69,7 +70,10 @@ fn test_simple_circuit() {
             &self,
             dr: &mut D,
             witness: Witness<D, Self::Witness<'witness>>,
-        ) -> Result<(Self::Output<'dr, D>, Witness<D, Self::Aux<'witness>>)> {
+        ) -> Result<(
+            <Self::Output as GadgetKind<Fp>>::Rebind<'dr, D>,
+            Witness<D, Self::Aux<'witness>>,
+        )> {
             let a = Element::alloc(dr, witness.view().map(|w| w.0))?;
             let b = Element::alloc(dr, witness.view().map(|w| w.1))?;
 

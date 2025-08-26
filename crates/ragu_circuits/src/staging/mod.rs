@@ -91,10 +91,7 @@ pub trait StagedCircuit<F: Field, R: Rank>: Sized + Send + Sync {
     type Witness<'source>: Send;
 
     /// Represents the output of a circuit computation which can be serialized.
-    type Output<'dr, D: Driver<'dr, F = F>>: GadgetSerialize<'dr, D>
-    where
-        // See <https://github.com/rust-lang/rust/issues/87479>.
-        Self: 'dr;
+    type Output: GadgetSerialize<F>;
 
     /// Auxillary data produced during the computation of the
     /// [`witness`](StagedCircuit::witness) method that may be useful, such as
@@ -111,9 +108,7 @@ pub trait StagedCircuit<F: Field, R: Rank>: Sized + Send + Sync {
         &self,
         dr: &mut D,
         instance: Witness<D, Self::Instance<'source>>,
-    ) -> Result<Self::Output<'dr, D>>
-    where
-        Self: 'dr;
+    ) -> Result<<Self::Output as GadgetKind<F>>::Rebind<'dr, D>>;
 
     /// Given a witness type for this circuit, perform a computation using the
     /// provided [`Driver`] and return the `Self::Output` gadget that the
@@ -123,9 +118,10 @@ pub trait StagedCircuit<F: Field, R: Rank>: Sized + Send + Sync {
         &self,
         dr: StageBuilder<'a, 'dr, D, R, (), Self::Final>,
         witness: Witness<D, Self::Witness<'source>>,
-    ) -> Result<(Self::Output<'dr, D>, Witness<D, Self::Aux<'source>>)>
-    where
-        Self: 'dr;
+    ) -> Result<(
+        <Self::Output as GadgetKind<F>>::Rebind<'dr, D>,
+        Witness<D, Self::Aux<'source>>,
+    )>;
 }
 
 /// Wrapper type that implements [`Circuit`] for a given [`StagedCircuit`].
@@ -157,20 +153,14 @@ impl<F: Field, R: Rank, S: StagedCircuit<F, R>> Staged<F, R, S> {
 impl<F: Field, R: Rank, S: StagedCircuit<F, R>> Circuit<F> for Staged<F, R, S> {
     type Instance<'source> = S::Instance<'source>;
     type Witness<'source> = S::Witness<'source>;
-    type Output<'dr, D: Driver<'dr, F = F>>
-        = S::Output<'dr, D>
-    where
-        Self: 'dr;
+    type Output = S::Output;
     type Aux<'source> = S::Aux<'source>;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: &mut D,
         instance: Witness<D, S::Instance<'source>>,
-    ) -> Result<S::Output<'dr, D>>
-    where
-        Self: 'dr,
-    {
+    ) -> Result<<Self::Output as GadgetKind<F>>::Rebind<'dr, D>> {
         self.circuit.instance(dr, instance)
     }
 
@@ -178,10 +168,10 @@ impl<F: Field, R: Rank, S: StagedCircuit<F, R>> Circuit<F> for Staged<F, R, S> {
         &self,
         dr: &mut D,
         witness: Witness<D, S::Witness<'source>>,
-    ) -> Result<(S::Output<'dr, D>, Witness<D, S::Aux<'source>>)>
-    where
-        Self: 'dr,
-    {
+    ) -> Result<(
+        <Self::Output as GadgetKind<F>>::Rebind<'dr, D>,
+        Witness<D, S::Aux<'source>>,
+    )> {
         self.circuit.witness(StageBuilder::new(dr), witness)
     }
 }

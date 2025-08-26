@@ -5,7 +5,7 @@ use ragu_core::{
     drivers::{DirectSum, Driver, DriverTypes},
     maybe::{Always, MaybeKind},
 };
-use ragu_primitives::serialize::GadgetSerialize;
+use ragu_primitives::GadgetExt;
 
 use alloc::{vec, vec::Vec};
 use core::marker::PhantomData;

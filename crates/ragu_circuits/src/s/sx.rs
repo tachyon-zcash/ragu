@@ -5,7 +5,7 @@ use ragu_core::{
     drivers::{Driver, DriverTypes, LinearExpression},
     maybe::Empty,
 };
-use ragu_primitives::serialize::GadgetSerialize;
+use ragu_primitives::GadgetExt;
 
 use alloc::vec;
 

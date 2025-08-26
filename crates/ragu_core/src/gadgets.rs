@@ -269,8 +269,16 @@ pub use ragu_macros::Gadget;
 /// This works because [`PhantomData<F>`](core::marker::PhantomData) implements
 /// [`Driver<'static>`](Driver) for all fields `F`, and the circular constraint
 /// between [`Gadget::Kind`] and the rebind type [`GadgetKind::Rebind`] requires
-/// the resulting [`GadgetKind`] type to be the correct one. This macro only
-/// works in contexts where the (possibly generic) [`Field`] type `F` is known,
-/// and any other constraints on the [`Gadget`] implementation necessary for a
-/// fully qualified expansion are satisfied.
+/// the resulting [`GadgetKind`] type to be the (only) correct one. This macro
+/// only works in contexts where the (possibly generic) [`Field`] type `F` is
+/// known, and any other constraints on the [`Gadget`] implementation are
+/// satisfied.
+///
+/// In some contexts (like the `Self` type of an impl) the fully qualified
+/// expansion runs afoul of strict portions of Rust's coherence and type
+/// parameter constraint rules even though the type does not violate them. In
+/// these cases, it's usually sufficient to put an `@` symbol at the start of
+/// your type, like `Kind![F; @Boolean<'_, _>]`, which signals to the procedural
+/// macro that it should perform the substitution without qualifications, which
+/// works fine in most cases.
 pub use ragu_macros::gadget_kind as Kind;

@@ -9,6 +9,7 @@ use syn::{
 pub struct Input {
     f: Type,
     _semicolon: Token![;],
+    cast: Option<Token![@]>,
     path: Type,
 }
 
@@ -17,20 +18,29 @@ impl Parse for Input {
         Ok(Self {
             f: input.parse()?,
             _semicolon: input.parse()?,
+            cast: if input.peek(Token![@]) {
+                Some(input.parse()?)
+            } else {
+                None
+            },
             path: input.parse()?,
         })
     }
 }
 
 pub fn evaluate(input: Input, ragu_core_path: Path) -> syn::Result<TokenStream> {
-    let Input { f, path, .. } = input;
+    let Input { f, path, cast, .. } = input;
 
     let mut subst = path.clone();
     subst.substitute(&f);
 
-    Ok(
-        quote!(<#subst as #ragu_core_path::gadgets::Gadget<'static, ::core::marker::PhantomData<#f>>>::Kind),
-    )
+    if cast.is_none() {
+        Ok(
+            quote!(<#subst as #ragu_core_path::gadgets::Gadget<'static, ::core::marker::PhantomData<#f>>>::Kind),
+        )
+    } else {
+        Ok(quote!(#subst))
+    }
 }
 
 trait Substitution {
@@ -135,6 +145,25 @@ fn test_evaluate() {
         .to_string(),
         quote!(
             <MyGadget<'static, ::core::marker::PhantomData<F>, C, 5> as ::ragu::gadgets::Gadget<'static, ::core::marker::PhantomData<F>>>::Kind
+        )
+        .to_string()
+    );
+}
+
+#[rustfmt::skip]
+#[test]
+fn test_extra() {
+    use syn::parse_quote;
+
+    assert_eq!(
+        evaluate(
+            parse_quote!(F; @EndoscalingOutput<'_, _, C>),
+            parse_quote!{::ragu}
+        )
+        .unwrap()
+        .to_string(),
+        quote!(
+            EndoscalingOutput<'static, ::core::marker::PhantomData<F>, C>
         )
         .to_string()
     );

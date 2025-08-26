@@ -5,7 +5,7 @@ use ragu_core::{
     drivers::{Driver, DriverTypes},
     maybe::Empty,
 };
-use ragu_primitives::serialize::GadgetSerialize;
+use ragu_primitives::GadgetExt;
 
 use core::marker::PhantomData;
 

@@ -5,7 +5,7 @@ use ragu_core::{
     drivers::{Driver, DriverTypes},
     maybe::{Always, Maybe, MaybeKind},
 };
-use ragu_primitives::serialize::GadgetSerialize;
+use ragu_primitives::GadgetExt;
 
 use super::{Circuit, Rank, structured};
 

@@ -19,7 +19,6 @@ pub struct Point<'dr, D: Driver<'dr>, C: CurveAffine> {
     #[ragu(gadget)]
     y: Element<'dr, D>,
     #[ragu(phantom)]
-    #[ragu(skip)]
     _marker: PhantomData<C>,
 }
 

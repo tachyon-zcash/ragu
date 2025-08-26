@@ -182,6 +182,7 @@ fn test_mesh_circuit_consistency() {
     use ragu_core::{
         Result,
         drivers::{Driver, Witness},
+        gadgets::{GadgetKind, Kind},
     };
     use ragu_pasta::Fp;
     use ragu_primitives::Element;
@@ -195,7 +196,7 @@ fn test_mesh_circuit_consistency() {
 
     impl Circuit<Fp> for SquareCircuit {
         type Instance<'instance> = Fp;
-        type Output<'dr, D: Driver<'dr, F = Fp>> = Element<'dr, D>;
+        type Output = Kind![Fp; Element<'_, _>];
         type Witness<'witness> = Fp;
         type Aux<'witness> = ();
 
@@ -203,7 +204,7 @@ fn test_mesh_circuit_consistency() {
             &self,
             dr: &mut D,
             instance: Witness<D, Self::Instance<'instance>>,
-        ) -> Result<Self::Output<'dr, D>> {
+        ) -> Result<<Self::Output as GadgetKind<Fp>>::Rebind<'dr, D>> {
             Element::alloc(dr, instance)
         }
 
@@ -211,7 +212,10 @@ fn test_mesh_circuit_consistency() {
             &self,
             dr: &mut D,
             witness: Witness<D, Self::Witness<'witness>>,
-        ) -> Result<(Self::Output<'dr, D>, Witness<D, Self::Aux<'witness>>)> {
+        ) -> Result<(
+            <Self::Output as GadgetKind<Fp>>::Rebind<'dr, D>,
+            Witness<D, Self::Aux<'witness>>,
+        )> {
             let mut a = Element::alloc(dr, witness)?;
 
             for _ in 0..self.times {

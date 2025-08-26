@@ -3,7 +3,7 @@ use ff::Field;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, LinearExpression, Witness},
-    gadgets::Gadget,
+    gadgets::{Gadget, Kind},
     maybe::Maybe,
 };
 
@@ -281,10 +281,13 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
     }
 }
 
-impl<'dr, D: Driver<'dr>> GadgetSerialize<'dr, D> for Element<'dr, D> {
-    /// Serialize this element into the provided buffer.
-    fn serialize<B: Buffer<'dr, D>>(&self, dr: &mut D, buf: &mut B) -> Result<()> {
-        buf.write(dr, self)
+impl<F: Field> GadgetSerialize<F> for Kind![F; @Element<'_, _>] {
+    fn serialize_gadget<'dr, D: Driver<'dr, F = F>, B: Buffer<'dr, D>>(
+        this: &Element<'dr, D>,
+        dr: &mut D,
+        buf: &mut B,
+    ) -> Result<()> {
+        buf.write(dr, this)
     }
 }
 

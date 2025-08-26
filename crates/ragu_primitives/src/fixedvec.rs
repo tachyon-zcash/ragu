@@ -110,12 +110,14 @@ impl<T: Clone, L: Len> Clone for FixedVec<T, L> {
     }
 }
 
-impl<'dr, D: Driver<'dr>, G: GadgetSerialize<'dr, D>, L: Len> GadgetSerialize<'dr, D>
-    for FixedVec<G, L>
-{
-    fn serialize<B: Buffer<'dr, D>>(&self, dr: &mut D, buf: &mut B) -> Result<()> {
-        for item in &self.v {
-            G::serialize(item, dr, buf)?;
+impl<F: Field, G: GadgetSerialize<F>, L: Len> GadgetSerialize<F> for FixedVec<PhantomData<G>, L> {
+    fn serialize_gadget<'dr, D: Driver<'dr, F = F>, B: Buffer<'dr, D>>(
+        this: &FixedVec<G::Rebind<'dr, D>, L>,
+        dr: &mut D,
+        buf: &mut B,
+    ) -> Result<()> {
+        for item in &this.v {
+            G::serialize_gadget(item, dr, buf)?;
         }
         Ok(())
     }

@@ -8,18 +8,18 @@ use syn::{
 use crate::helpers::*;
 
 impl GenericDriver {
-    fn gadget_params(&self) -> AngleBracketedGenericArguments {
+    pub fn gadget_params(&self) -> AngleBracketedGenericArguments {
         let driver_ident = &self.ident;
         let lifetime = &self.lifetime;
 
         parse_quote!( <#lifetime, #driver_ident> )
     }
 
-    fn is_lt(&self, other: &Lifetime) -> bool {
+    pub fn is_lt(&self, other: &Lifetime) -> bool {
         self.lifetime.ident == other.ident
     }
 
-    fn is_ty(&self, other: &Type) -> bool {
+    pub fn is_ty(&self, other: &Type) -> bool {
         if let Type::Path(path) = other {
             if let Some(seg) = path.path.segments.last() {
                 if seg.ident == self.ident {
@@ -30,7 +30,7 @@ impl GenericDriver {
         false
     }
 
-    fn kind_arguments(
+    pub fn kind_arguments(
         &self,
         ty_generics: &AngleBracketedGenericArguments,
         ragu_core_path: &Path,
@@ -46,7 +46,7 @@ impl GenericDriver {
         parse_quote!( < #( #args ),* > )
     }
 
-    fn kind_subst_arguments(
+    pub fn kind_subst_arguments(
         &self,
         ty_generics: &AngleBracketedGenericArguments,
     ) -> AngleBracketedGenericArguments {
@@ -65,7 +65,7 @@ impl GenericDriver {
         parse_quote!( < #( #args ),* > )
     }
 
-    fn rebind_arguments(
+    pub fn rebind_arguments(
         &self,
         ty_generics: &AngleBracketedGenericArguments,
     ) -> AngleBracketedGenericArguments {
