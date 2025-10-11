@@ -10,19 +10,25 @@ use ragu_core::Error;
 use rand::thread_rng;
 use std::marker::PhantomData;
 
-/// Interpreted through state machine semantics, we define the accumulator's "state"
-/// at any time T as an enum that can either operate in uncompresed or compressed
-/// mode. Each state supports transitions corresponding to either another accumulation
-/// step (continuing the recursion) or a decision procedure (terminating or the process).
+/// The accumulator represents the state of a PCD proof at any point in the recursion.
+///
+/// Conceptually, it models state machine semantics: it's seeded with a base case
+/// (initial uncompressed accumulator), engages in a recursive process that
+/// accumulates prior uncompressed states for efficiency, and eventually applies a
+/// decision procedure that compressed the accumulator for bandwidth efficiency.
+///
+/// At any time 'T', the accumulator's state is represented by an enum operating in either
+/// uncompressed or compressed mode. A higher level abstract that digests the accumulator
+/// can then apply a state transition function to either perform another accumulation step
+/// (continuing the recursion) or a decision procedure (terminating the recursion process).
 #[derive(Clone, Debug)]
 pub enum Accumulator<C: CurveAffine, R: Rank> {
     Uncompressed(Box<UncompressedAccumulator<C, R>>),
     Compressed(CompressedAccumulator<C>),
 }
 
-/// The "uncompressed" accumulator holds the complete witness and deferred work.
-/// It has the property of being large but inexpensive to accumulate during
-/// the recursive process.
+/// Uncompressed accumulator with full witness and deferred work.
+/// Used during recursive proof composition (cheap to combine).
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub struct UncompressedAccumulator<C: CurveAffine, R: Rank> {
@@ -32,8 +38,8 @@ pub struct UncompressedAccumulator<C: CurveAffine, R: Rank> {
     pub(crate) deferred: DeferredWork<C>,
 }
 
-/// The "compressed" accumulator encapsulates succinct IPA openings. It has
-/// the property of being small for bandwidth considerations but expensive to verify.
+/// Compressed accumulator with succinct IPA openings.
+/// Used for final output, transmission, or storage (small but expensive to verify).
 #[derive(Clone, Debug)]
 pub struct CompressedAccumulator<C: CurveAffine> {
     pub instance: AccumulatorInstance<C>,
@@ -73,6 +79,31 @@ pub struct AccumulatorInstance<C: CurveAffine> {
 }
 
 impl<C: CurveAffine, R: Rank> Accumulator<C, R> {
+    /// Create the base accumulator, representing the starting point for the PCD chain.
+    pub fn base() -> Self {
+        Self::dummy()
+    }
+
+    /// Check if this accumulator represents a base case.
+    pub fn is_base(&self) -> bool {
+        match self {
+            Accumulator::Uncompressed(acc) => {
+                acc.deferred.is_empty() && acc.public_inputs.is_empty()
+            }
+            Accumulator::Compressed(_) => false,
+        }
+    }
+
+    /// Check if this is an uncompressed accumulator.
+    pub fn is_uncompressed(&self) -> bool {
+        matches!(self, Accumulator::Uncompressed(_))
+    }
+
+    /// Check if this is a compressed accumulator.
+    pub fn is_compressed(&self) -> bool {
+        matches!(self, Accumulator::Compressed(_))
+    }
+
     /// Create a dummy uncompressed accumulator with placeholder values for testing, and base case.
     pub fn dummy() -> Self {
         Accumulator::Uncompressed(Box::new(UncompressedAccumulator::dummy()))
