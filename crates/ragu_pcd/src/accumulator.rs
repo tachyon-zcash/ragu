@@ -18,7 +18,7 @@ use std::marker::PhantomData;
 /// decision procedure that compressed the accumulator for bandwidth efficiency.
 ///
 /// At any time 'T', the accumulator's state is represented by an enum operating in either
-/// uncompressed or compressed mode. A higher level abstract that digests the accumulator
+/// uncompressed or compressed mode. A higher level abstraction that digests the accumulator
 /// can then apply a state transition function to either perform another accumulation step
 /// (continuing the recursion) or a decision procedure (terminating the recursion process).
 #[derive(Clone, Debug)]
