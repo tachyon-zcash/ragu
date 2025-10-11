@@ -113,6 +113,20 @@ impl<C: CurveAffine, R: Rank> Accumulator<C, R> {
     pub fn random(mesh: &Mesh<C::Scalar, R>, generators: &impl FixedGenerators<C>) -> Self {
         Accumulator::Uncompressed(Box::new(UncompressedAccumulator::random(mesh, generators)))
     }
+
+    pub fn compress(self) -> Result<Self, Error> {
+        match self {
+            Accumulator::Uncompressed(uncompressed) => {
+                let compressed = CompressedAccumulator {
+                    instance: uncompressed.instance,
+                    ipa_proof: PhantomData,
+                    circuit_inputs: vec![uncompressed.public_inputs],
+                };
+                Ok(Accumulator::Compressed(compressed))
+            }
+            Accumulator::Compressed(_) => Ok(self),
+        }
+    }
 }
 
 impl<C: CurveAffine, R: Rank> UncompressedAccumulator<C, R> {

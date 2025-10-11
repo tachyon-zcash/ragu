@@ -39,4 +39,8 @@
 extern crate alloc;
 
 pub mod accumulator;
+pub mod cycle;
 pub mod deferreds;
+pub mod engine;
+pub mod prover;
+pub mod session;
