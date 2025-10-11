@@ -1,4 +1,4 @@
-use alloc::boxed::Box;
+use alloc::{boxed::Box, string::String};
 use core::{error, result};
 
 /// Alias for [`core::result::Result<T, Error>`].
@@ -51,6 +51,14 @@ pub enum Error {
         /// Actual length observed at runtime
         actual: usize,
     },
+
+    /// Attempted to register a circuit with a tag that already exists in the mesh.
+    #[error("circuit tag '{0}' already exists in the mesh")]
+    DuplicateCircuitTag(String),
+
+    /// Attempted to look up a circuit by a tag that does not exist in the mesh.
+    #[error("circuit tag '{0}' not found in the mesh")]
+    CircuitTagNotFound(String),
 }
 
 #[test]

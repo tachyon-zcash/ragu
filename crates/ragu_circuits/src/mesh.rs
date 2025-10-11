@@ -10,6 +10,9 @@ use crate::{
     Circuit, CircuitExt, CircuitObject,
     polynomials::{Rank, structured, unstructured},
 };
+use alloc::collections::BTreeMap;
+use alloc::format;
+use alloc::string::String;
 
 /// A collection of circuits over a particular field, some of which may make
 /// reference to the others or be executed in similar contexts.
@@ -17,6 +20,8 @@ pub struct Mesh<'params, F: PrimeField, R: Rank> {
     domain: Domain<F>,
     current_omega: F,
     circuits: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
+    // Internal circuit lookup registry
+    circuit_tags: BTreeMap<String, F>,
 }
 
 impl<'params, F: PrimeField, R: Rank> Mesh<'params, F, R> {
@@ -32,16 +37,30 @@ impl<'params, F: PrimeField, R: Rank> Mesh<'params, F, R> {
             domain: Domain::new(log2_circuits),
             current_omega: F::ONE,
             circuits: Vec::new(),
+            circuit_tags: BTreeMap::new(),
         }
     }
 
-    /// Adds a bare circuit to this mesh. Returns the point of the mesh domain
-    /// that the circuit is assigned to.
-    pub fn add_bare_circuit<C>(&mut self, circuit: C) -> Result<F>
+    /// Registers a bare circuit to this mesh with a custom tag for internal lookups.
+    /// Returns the point of the mesh domain that the circuit is assigned to.
+    ///
+    /// Returns an error if:
+    /// - The circuit count exceeds the mesh capacity
+    /// - A circuit with the same tag already exists
+    pub fn register_circuit<C>(&mut self, tag: impl Into<String>, circuit: C) -> Result<F>
     where
         C: Circuit<F> + Send + 'params,
     {
-        self.add_circuit_object(circuit.into_object()?)
+        let tag = tag.into();
+
+        if self.circuit_tags.contains_key(&tag) {
+            return Err(Error::DuplicateCircuitTag(tag));
+        }
+
+        let omega = self.add_circuit_object(circuit.into_object()?)?;
+        self.circuit_tags.insert(tag, omega);
+
+        Ok(omega)
     }
 
     /// Adds a custom circuit object to this mesh. Returns the point of the mesh
@@ -60,6 +79,41 @@ impl<'params, F: PrimeField, R: Rank> Mesh<'params, F, R> {
         self.circuits.push(circuit);
 
         Ok(omega)
+    }
+
+    /// Internal circuit registry lookup by index.
+    pub fn get_circuit_by_index(&self, index: usize) -> Option<(F, &dyn CircuitObject<F, R>)> {
+        let circuit = self.circuits.get(index)?;
+        let omega = self.circuit_tags.get(&format!("circuit_{}", index))?;
+        Some((*omega, &**circuit))
+    }
+
+    /// Internal circuit registry lookup by tag.
+    pub fn get_circuit_by_tag(&self, tag: &str) -> Option<(F, &dyn CircuitObject<F, R>)> {
+        let omega = *self.circuit_tags.get(tag)?;
+        let index = self.get_circuit_from_omega(omega)?;
+        let circuit = self.circuits.get(index)?;
+        Some((omega, &**circuit))
+    }
+
+    /// Returns an iterator over all registered circuit tags.
+    pub fn circuit_tags(&self) -> impl Iterator<Item = &String> {
+        self.circuit_tags.keys()
+    }
+
+    /// Returns the omega value for a given circuit tag.
+    pub fn get_omega_by_tag(&self, tag: &str) -> Option<F> {
+        self.circuit_tags.get(tag).copied()
+    }
+
+    /// Checks if a circuit tag exists in the mesh.
+    pub fn has_circuit(&self, tag: &str) -> bool {
+        self.circuit_tags.contains_key(tag)
+    }
+
+    /// Returns the total number of registered circuits.
+    pub fn circuit_count(&self) -> usize {
+        self.circuits.len()
     }
 
     /// Returns the index of the circuit for the provided $\omega^i$ value, or
@@ -215,11 +269,16 @@ fn test_mesh_circuit_consistency() {
 
     let mut mesh = Mesh::<Fp, TestRank>::new(3);
 
-    mesh.add_bare_circuit(SquareCircuit { times: 2 }).unwrap();
-    mesh.add_bare_circuit(SquareCircuit { times: 5 }).unwrap();
-    mesh.add_bare_circuit(SquareCircuit { times: 10 }).unwrap();
-    mesh.add_bare_circuit(SquareCircuit { times: 11 }).unwrap();
-    mesh.add_bare_circuit(SquareCircuit { times: 19 }).unwrap();
+    mesh.register_circuit("square_circuit_one", SquareCircuit { times: 2 })
+        .unwrap();
+    mesh.register_circuit("square_circuit_two", SquareCircuit { times: 5 })
+        .unwrap();
+    mesh.register_circuit("square_circuit_three", SquareCircuit { times: 10 })
+        .unwrap();
+    mesh.register_circuit("square_circuit_four", SquareCircuit { times: 11 })
+        .unwrap();
+    mesh.register_circuit("square_circuit_five", SquareCircuit { times: 19 })
+        .unwrap();
 
     let w = Fp::random(thread_rng());
     let x = Fp::random(thread_rng());
