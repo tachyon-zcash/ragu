@@ -58,6 +58,22 @@ pub struct DeferredTranscriptChallenge<F> {
 }
 
 impl<C: CurveAffine> DeferredWork<C> {
+    /// Check if there is no deffered work (base case indicator)
+    pub fn is_empty(&self) -> bool {
+        self.scalar_muls.is_empty()
+            && self.inner_products.is_empty()
+            && self.poly_evals.is_empty()
+            && self.hash_to_fields.is_empty()
+    }
+
+    /// Count the total number of deferred operations.
+    pub fn operation_count(&self) -> usize {
+        self.scalar_muls.len()
+            + self.inner_products.len()
+            + self.poly_evals.len()
+            + self.hash_to_fields.len()
+    }
+
     /// NOTE: For seeding random deferreds for testing purposes only.
     pub fn random(count: usize) -> Self {
         Self {
