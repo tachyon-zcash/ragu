@@ -45,7 +45,7 @@ pub struct CompressedAccumulator<C: CurveAffine> {
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub(crate) struct AccumulatorWitness<C: CurveAffine, R: Rank> {
-    pub(crate) s_poly: unstructured::Polynomial<C::Scalar, R>,
+    s_poly: unstructured::Polynomial<C::Scalar, R>,
     s_blinding: C::Scalar,
 
     a_poly: structured::Polynomial<C::Scalar, R>,
