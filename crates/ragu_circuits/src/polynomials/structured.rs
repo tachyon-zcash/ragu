@@ -28,7 +28,7 @@ use super::Rank;
 /// $\mathbf{a}, \mathbf{b}, \mathbf{c}$ coefficient vectors. Alternatively, you
 /// can obtain a view of the polynomial with its coefficients reversed. Only
 /// using a [`View`] can the coefficient vectors be accessed and mutated.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Polynomial<F: Field, R: Rank> {
     // Note: We use `u`, `v`, `w`, and `d` to represent the coefficient vectors
     // in the general polynomial so they cannot be confused with the vectors in

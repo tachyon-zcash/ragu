@@ -401,6 +401,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ragu_pcd"
+version = "0.0.0"
+dependencies = [
+ "ff",
+ "pasta_curves",
+ "proptest",
+ "ragu_arithmetic",
+ "ragu_circuits",
+ "ragu_core",
+ "ragu_macros",
+ "ragu_pasta",
+ "ragu_primitives",
+ "rand 0.8.5",
+]
+
+[[package]]
 name = "ragu_primitives"
 version = "0.0.0"
 dependencies = [

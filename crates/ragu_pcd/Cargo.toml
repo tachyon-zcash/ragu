@@ -1,0 +1,37 @@
+[package]
+name = "ragu_pcd"
+version = "0.0.0"
+authors = ["Sean Bowe <ewillbefull@gmail.com>"]
+description = """
+PCD sceheme for the Ragu project
+"""
+license = "MIT OR Apache-2.0"
+edition = "2024"
+rust-version = "1.85"
+
+readme = "README.md"
+repository = "https://github.com/ebfull/ragu"
+documentation = "https://docs.rs/ragu_pcd"
+categories = ["cryptography", "mathematics", "algorithms", "science", "no-std"]
+keywords = []
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "katex-header.html"]
+all-features = true
+
+[features]
+default = []
+
+[dependencies]
+arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", package = "ragu_arithmetic" }
+ff = { workspace = true }
+pasta_curves = { workspace = true }
+ragu_circuits = { path = "../ragu_circuits", version = "0.0.0" }
+ragu_core = { version = "0.0.0", path = "../ragu_core" }
+ragu_macros = { path = "../ragu_macros", version = "0.0.0" }
+ragu_pasta = { version = "0.0.0", path = "../ragu_pasta" }
+ragu_primitives = { version = "0.0.0", path = "../ragu_primitives" }
+rand = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
