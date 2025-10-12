@@ -1,3 +1,6 @@
+//! Mid-Level: Orchestration layer that concerns itself with knowing about both curves,
+//! pattern matches on the curve, and routes to the correct prover in thd cycle.
+
 use ragu_circuits::polynomials::Rank;
 use ragu_core::Error;
 
@@ -7,7 +10,7 @@ use crate::{
     prover::AccumulationProver,
 };
 
-/// Engine that drives cycling between pasta curves.
+/// Routing engine that drives cycling between pasta curves.
 ///
 /// TODO: https://github.com/ebfull/ragu/issues/17.
 pub struct CurveCycleEngine<C, R>

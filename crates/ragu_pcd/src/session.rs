@@ -1,4 +1,4 @@
-//! User-facing API
+//! High-Level: User-facing API
 //!
 //! The API we're exposing should ideally remain agnostic with respect to the underlying curve
 //! choice, allowing the user to choose either Pallas or Vesta as the application curve.

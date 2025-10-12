@@ -1,3 +1,8 @@
+//! Low-Level: Curve-specific logic.
+//!
+//! `AccumulationProver`` encapsulates all the prover logic (rule validation,
+//! circuit synthesis, recursive circuit invocation) for a specific curve.
+
 use std::marker::PhantomData;
 
 use arithmetic::CurveAffine;
@@ -16,6 +21,7 @@ where
     C: CurveAffine,
     R: Rank,
 {
+    // Mesh, generators, vk fields?
     pub(crate) _curve_cycle: PhantomData<C>,
     _rank: PhantomData<R>,
 }

@@ -10,12 +10,18 @@ pub trait CurveCycle: CurveAffine {
     type Pair: CurveAffine<Base = Self::ScalarExt, ScalarExt = Self::Base>;
 }
 
-// Implement for Pallas
+/// Type aliases.
+pub type PrimaryField<C> = <C as CurveAffine>::ScalarExt;
+pub type PairedField<C> = <<C as CurveCycle>::Pair as CurveAffine>::ScalarExt;
+pub type PrimaryBase<C> = <C as CurveAffine>::Base;
+pub type PairedBase<C> = <<C as CurveCycle>::Pair as CurveAffine>::Base;
+
+// Implement for Pallas.
 impl CurveCycle for EpAffine {
     type Pair = EqAffine;
 }
 
-// Implement for Vesta
+// Implement for Vesta.
 impl CurveCycle for EqAffine {
     type Pair = EpAffine;
 }
