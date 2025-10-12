@@ -10,7 +10,7 @@
 //! management, etc.
 
 use crate::accumulator::Accumulator;
-use crate::cycle::CurveCycle;
+use crate::cycle::{CurveCycle, CycleState};
 use crate::engine::CurveCycleEngine;
 use crate::prover::AccumulationProver;
 use ragu_circuits::Circuit;
@@ -56,9 +56,14 @@ where
         // Create accumulation provers.
         let primary_prover: AccumulationProver<C, R> = AccumulationProver::new();
         let paired_prover = AccumulationProver::new();
+        let state = CycleState::OnPaired {
+            primary: Accumulator::base(),
+            paired: Accumulator::base(),
+        };
+        let depth = 0usize;
 
         // Create curve cycling engine.
-        let engine = CurveCycleEngine::from_provers(primary_prover, paired_prover);
+        let engine = CurveCycleEngine::from_provers(primary_prover, paired_prover, state, depth);
 
         Ok(Self {
             engine,

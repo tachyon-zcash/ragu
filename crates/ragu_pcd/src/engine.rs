@@ -1,7 +1,11 @@
 use ragu_circuits::polynomials::Rank;
 use ragu_core::Error;
 
-use crate::{accumulator::Accumulator, cycle::CurveCycle, prover::AccumulationProver};
+use crate::{
+    accumulator::Accumulator,
+    cycle::{CurveCycle, CycleState},
+    prover::AccumulationProver,
+};
 
 /// Engine that drives cycling between pasta curves.
 ///
@@ -11,10 +15,17 @@ where
     C: CurveCycle,
     R: Rank,
 {
-    /// Prover for primary curve (C).
+    /// Prover for `Pallas` primary curve (C).
     primary_prover: AccumulationProver<C, R>,
-    /// Prover for the paired curve (C::Pair).
+
+    /// Prover for the `Vesta` paired curve (C::Pair).
     paired_prover: AccumulationProver<C::Pair, R>,
+
+    /// Current state in the cycle.
+    state: CycleState<C, R>,
+
+    /// Depth of the recursion in the session.
+    depth: usize,
 }
 
 impl<C: CurveCycle, R: Rank> CurveCycleEngine<C, R> {
@@ -22,10 +33,14 @@ impl<C: CurveCycle, R: Rank> CurveCycleEngine<C, R> {
     pub fn from_provers(
         primary_prover: AccumulationProver<C, R>,
         paired_prover: AccumulationProver<C::Pair, R>,
+        state: CycleState<C, R>,
+        depth: usize,
     ) -> Self {
         Self {
             primary_prover,
             paired_prover,
+            state,
+            depth,
         }
     }
 
@@ -44,47 +59,40 @@ impl<C: CurveCycle, R: Rank> CurveCycleEngine<C, R> {
         Self {
             primary_prover: AccumulationProver::new(),
             paired_prover: AccumulationProver::new(),
+            state: CycleState::OnPaired {
+                primary: Accumulator::base(),
+                paired: Accumulator::base(),
+            },
+            depth: 0usize,
         }
     }
 
-    /// Execute one PCD step with curve cycling.
-    ///
-    /// RecursionSession::step (higher-level) calls into this lower-level step function.
-    /// The engine determines which prover to use based on step count (alternates curves).
-    pub fn step(
-        &mut self,
-        prev: Accumulator<C, R>,
-        circuit_tag: &str,
-        witness: &[C::ScalarExt],
-        step_number: usize,
-    ) -> Result<Accumulator<C, R>, Error> {
-        if step_number % 2 == 0 {
-            self.step_on_primary(prev, circuit_tag, witness)
-        } else {
-            self.step_on_paired(prev, circuit_tag, witness)
-        }
-    }
+    /// Execute one PCD step, alternating between curves.
+    pub fn step(&mut self, circuit_tag: &str, witness: &[C::ScalarExt]) -> Result<(), Error> {
+        self.state = match std::mem::replace(&mut self.state, unsafe { std::mem::zeroed() }) {
+            CycleState::OnPrimary { primary, paired } => {
+                // Prove on primary, verifying paired.
+                let new_primary = self.primary_prover.step(primary, circuit_tag, witness)?;
 
-    /// Prove on the primary curve (C) – Pallas.
-    pub fn step_on_primary(
-        &mut self,
-        _prev: Accumulator<C, R>,
-        _circuit_tag: &str,
-        _witness: &[C::ScalarExt],
-    ) -> Result<Accumulator<C, R>, Error> {
-        // TODO: Call `step()` on the primary_prover.
-        todo!()
-    }
+                CycleState::OnPaired {
+                    primary: Accumulator::Uncompressed(Box::new(new_primary)),
+                    paired,
+                }
+            }
+            CycleState::OnPaired { primary, paired } => {
+                // Prove on paired, verifying primary.
+                let new_paired = self.paired_prover.step(paired, circuit_tag, &[])?;
 
-    /// Prove on the paired curve (C::Paired) – Vesta.
-    pub fn step_on_paired(
-        &mut self,
-        _prev: Accumulator<C, R>,
-        _circuit_tag: &str,
-        _witness: &[C::ScalarExt],
-    ) -> Result<Accumulator<C, R>, Error> {
-        // TODO: Call `step()` on the paired_prover.
-        todo!()
+                CycleState::OnPrimary {
+                    primary,
+                    paired: Accumulator::Uncompressed(Box::new(new_paired)),
+                }
+            }
+        };
+
+        self.depth += 1;
+
+        Ok(())
     }
 }
 

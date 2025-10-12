@@ -1,5 +1,8 @@
 use arithmetic::CurveAffine;
 use pasta_curves::{EpAffine, EqAffine};
+use ragu_circuits::polynomials::Rank;
+
+use crate::accumulator::Accumulator;
 
 /// Extends [`CurveAffine`] (the supertrait) with information about the
 /// paired curve in the 2-cycle.
@@ -15,4 +18,21 @@ impl CurveCycle for EpAffine {
 // Implement for Vesta
 impl CurveCycle for EqAffine {
     type Pair = EpAffine;
+}
+
+pub enum CycleState<C, R>
+where
+    C: CurveCycle,
+    R: Rank,
+{
+    /// Currently on the primary curve (C).
+    OnPrimary {
+        primary: Accumulator<C, R>,
+        paired: Accumulator<C::Pair, R>,
+    },
+    /// Currently on the paired curve (C::Pair).
+    OnPaired {
+        primary: Accumulator<C, R>,
+        paired: Accumulator<C::Pair, R>,
+    },
 }
