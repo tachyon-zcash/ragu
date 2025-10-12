@@ -1,5 +1,6 @@
 use crate::deferreds::DeferredWork;
 use arithmetic::CurveAffine;
+use arithmetic::CurveExt;
 use arithmetic::FixedGenerators;
 use ff::Field;
 use ragu_circuits::{
@@ -79,21 +80,6 @@ pub struct AccumulatorInstance<C: CurveAffine> {
 }
 
 impl<C: CurveAffine, R: Rank> Accumulator<C, R> {
-    /// Create the base accumulator, representing the starting point for the PCD chain.
-    pub fn base() -> Self {
-        Self::dummy()
-    }
-
-    /// Check if this accumulator represents a base case.
-    pub fn is_base(&self) -> bool {
-        match self {
-            Accumulator::Uncompressed(acc) => {
-                acc.deferred.is_empty() && acc.public_inputs.is_empty()
-            }
-            Accumulator::Compressed(_) => false,
-        }
-    }
-
     /// Check if this is an uncompressed accumulator.
     pub fn is_uncompressed(&self) -> bool {
         matches!(self, Accumulator::Uncompressed(_))
@@ -105,8 +91,8 @@ impl<C: CurveAffine, R: Rank> Accumulator<C, R> {
     }
 
     /// Create a dummy uncompressed accumulator with placeholder values for testing, and base case.
-    pub fn dummy() -> Self {
-        Accumulator::Uncompressed(Box::new(UncompressedAccumulator::dummy()))
+    pub fn base(mesh: &Mesh<C::Scalar, R>, generators: &impl FixedGenerators<C>) -> Self {
+        Accumulator::Uncompressed(Box::new(UncompressedAccumulator::base(mesh, generators)))
     }
 
     /// Generate random uncompressed accumulator for testing.
@@ -116,35 +102,58 @@ impl<C: CurveAffine, R: Rank> Accumulator<C, R> {
 }
 
 impl<C: CurveAffine, R: Rank> UncompressedAccumulator<C, R> {
-    pub fn dummy() -> Self {
+    pub fn base(mesh: &Mesh<C::Scalar, R>, generators: &impl FixedGenerators<C>) -> Self {
+        // Zero polynomials with synthetic blinding factors to avoid identity commitments.
+        let a_poly = structured::Polynomial::default();
+        let a_blinding = C::Scalar::random(&mut thread_rng());
+
+        let b_poly = structured::Polynomial::default();
+        let b_blinding = C::Scalar::random(&mut thread_rng());
+
+        let p_poly = unstructured::Polynomial::default();
+        let p_blinding = C::Scalar::random(&mut thread_rng());
+
+        // Trivial zero challenge points.
+        let x: <<C as CurveAffine>::CurveExt as CurveExt>::ScalarExt = C::Scalar::ZERO;
+        let y = C::Scalar::ZERO;
+
+        let s_poly = mesh.xy(x, y);
+        let s_blinding = C::Scalar::random(&mut thread_rng());
+
+        // Zero evaluations (consistent with zero polynomials).
+        let u = C::Scalar::ZERO;
+        let v: <C as CurveAffine>::ScalarExt = C::Scalar::ZERO;
+
+        let c = a_poly.revdot(&b_poly);
+
+        let s_commitment = s_poly.commit(generators, s_blinding);
+        let a_commitment = a_poly.commit(generators, a_blinding);
+        let b_commitment = b_poly.commit(generators, b_blinding);
+        let p_commitment = p_poly.commit(generators, p_blinding);
+
         Self {
             witness: AccumulatorWitness {
-                s_poly: unstructured::Polynomial::default(),
-                s_blinding: C::Scalar::ZERO,
-                a_poly: structured::Polynomial::default(),
-                a_blinding: C::Scalar::ZERO,
-                b_poly: structured::Polynomial::default(),
-                b_blinding: C::Scalar::ZERO,
-                p_poly: unstructured::Polynomial::default(),
-                p_blinding: C::Scalar::ZERO,
+                s_poly,
+                s_blinding,
+                a_poly,
+                a_blinding,
+                b_poly,
+                b_blinding,
+                p_poly,
+                p_blinding,
             },
             instance: AccumulatorInstance {
-                s_commitment: C::identity(),
-                x: ChallengePoint(C::Scalar::ZERO),
-                y: ChallengePoint(C::Scalar::ZERO),
-                a_commitment: C::identity(),
-                b_commitment: C::identity(),
-                c: C::Scalar::ZERO,
-                p_commitment: C::identity(),
-                u: ChallengePoint(C::Scalar::ZERO),
-                v: EvaluationPoint(C::Scalar::ZERO),
+                s_commitment,
+                x: ChallengePoint(x),
+                y: ChallengePoint(y),
+                a_commitment,
+                b_commitment,
+                c,
+                p_commitment,
+                u: ChallengePoint(u),
+                v: EvaluationPoint(v),
             },
-            deferred: DeferredWork {
-                scalar_muls: vec![],
-                inner_products: vec![],
-                poly_evals: vec![],
-                hash_to_fields: vec![],
-            },
+            deferred: DeferredWork::empty(),
             public_inputs: vec![],
         }
     }
@@ -200,7 +209,7 @@ impl<C: CurveAffine, R: Rank> UncompressedAccumulator<C, R> {
                 v: EvaluationPoint(v),
             },
             deferred,
-            public_inputs: vec![C::Scalar::ZERO],
+            public_inputs: vec![],
         }
     }
 
@@ -265,36 +274,20 @@ mod tests {
         let generators = pasta.host_generators();
         let mesh = Mesh::<pasta_curves::Fp, TestRank>::new(3);
 
-        // Test dummy construction
-        let dummy = Accumulator::<EqAffine, TestRank>::dummy();
-        match dummy {
-            Accumulator::Uncompressed(acc) => {
-                assert_eq!(acc.witness.s_blinding, pasta_curves::Fp::ZERO);
-                assert_eq!(acc.witness.a_blinding, pasta_curves::Fp::ZERO);
-                assert_eq!(acc.witness.b_blinding, pasta_curves::Fp::ZERO);
-                assert_eq!(acc.witness.p_blinding, pasta_curves::Fp::ZERO);
-
-                assert!(acc.deferred.scalar_muls.is_empty());
-                assert!(acc.deferred.inner_products.is_empty());
-                assert!(acc.deferred.poly_evals.is_empty());
-                assert!(acc.deferred.hash_to_fields.is_empty());
-            }
-            _ => panic!("Expected uncompressed accumulator"),
-        }
-
-        // Test random construction
-        let random = Accumulator::<EqAffine, TestRank>::random(&mesh, generators);
-        match random {
+        // Test base case construction
+        let base = Accumulator::<EqAffine, TestRank>::base(&mesh, generators);
+        match base {
             Accumulator::Uncompressed(acc) => {
                 assert_ne!(acc.witness.s_blinding, pasta_curves::Fp::ZERO);
-                assert_eq!(acc.deferred.scalar_muls.len(), 1);
-                assert_eq!(acc.deferred.inner_products.len(), 1);
-                assert_eq!(acc.deferred.poly_evals.len(), 1);
-                assert_eq!(acc.deferred.hash_to_fields.len(), 1);
+                assert_ne!(acc.witness.a_blinding, pasta_curves::Fp::ZERO);
+                assert_ne!(acc.witness.b_blinding, pasta_curves::Fp::ZERO);
+                assert_ne!(acc.witness.p_blinding, pasta_curves::Fp::ZERO);
+
+                assert!(acc.deferred.is_empty());
+
+                assert!(acc.public_inputs.is_empty());
             }
-            _ => {
-                panic!("Expected uncompressed accumulator")
-            }
+            _ => panic!("Expected uncompressed accumulator"),
         }
     }
 }
