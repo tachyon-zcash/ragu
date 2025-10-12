@@ -11,7 +11,9 @@
 //! * Accumulation internals
 //! * Mesh management
 
-use crate::accumulator::Accumulator;
+use std::marker::PhantomData;
+
+use crate::accumulator::{Accumulator, CompressedAccumulator};
 use crate::cycle::CurveCycle;
 use crate::engine::CurveCycleEngine;
 use crate::prover::AccumulationProver;
@@ -53,11 +55,11 @@ where
     /// If `C = Pallas`, then `C::Pair = Vesta` automatically.
     pub fn new() -> Result<Self, Error> {
         // Create accumulation provers.
-        let prover_c1 = AccumulationProver::new();
-        let prover_c2 = AccumulationProver::new();
+        let primary_prover: AccumulationProver<C, R> = AccumulationProver::new();
+        let paired_prover = AccumulationProver::new();
 
         // Create curve cycling engine.
-        let engine = CurveCycleEngine::from_provers(prover_c1, prover_c2);
+        let engine = CurveCycleEngine::from_provers(primary_prover, paired_prover);
 
         Ok(Self {
             engine,
@@ -79,6 +81,7 @@ where
         todo!()
     }
 
+    /// IVC step: combine with dummy and new circuits.
     pub fn step(&mut self, _circuit_tag: &str, _witness: &[C::Scalar]) -> Result<(), Error> {
         // TODO: Delegate to engine to perform an accumulation step.
         todo!()
@@ -90,5 +93,25 @@ where
 
     pub fn is_base(&self) -> bool {
         self.depth == 0
+    }
+
+    pub fn decision(&self) -> bool {
+        // TODO: Delegate to engine to perform an decision procedure.
+        todo!()
+    }
+
+    pub fn compress(accumulator: Accumulator<C, R>) -> Result<Accumulator<C, R>, Error> {
+        // TODO: Delegate to engine to perform an accumulator compression.
+        match accumulator {
+            Accumulator::Uncompressed(uncompressed) => {
+                let compressed = CompressedAccumulator {
+                    instance: uncompressed.instance,
+                    ipa_proof: PhantomData,
+                    circuit_inputs: vec![uncompressed.public_inputs],
+                };
+                Ok(Accumulator::Compressed(compressed))
+            }
+            Accumulator::Compressed(compressed) => Ok(Accumulator::Compressed(compressed)),
+        }
     }
 }
