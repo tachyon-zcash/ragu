@@ -10,9 +10,9 @@
 //! management, etc.
 
 use crate::accumulator::Accumulator;
-use crate::cycle::{CurveCycle, CycleState};
-use crate::engine::CurveCycleEngine;
+use crate::engine::{CycleEngine, CycleState};
 use crate::prover::AccumulationProver;
+use arithmetic::Cycle;
 use ragu_circuits::Circuit;
 use ragu_circuits::polynomials::Rank;
 use ragu_core::Error;
@@ -27,17 +27,14 @@ use ragu_core::Error;
 #[allow(dead_code)]
 pub struct RecursionSession<C, R>
 where
-    C: CurveCycle,
+    C: Cycle,
     R: Rank,
     // TODO: append 'CombinationRules' field (https://github.com/tachyon-zcash/ragu/issues/5)
 {
     /// `CurveCycleEngine` is the orchestrator, a lower-level abstraction that handles
     /// the underlying PCD curve cycling between the primary and paired provers
     /// operating over the Pallas and Vesta curves.
-    engine: CurveCycleEngine<C, R>,
-
-    /// Handle to the accumulator.
-    accumulator: Option<Accumulator<C, R>>,
+    engine: CycleEngine<C, R>,
 
     /// Track the number of recursive steps.
     depth: usize,
@@ -45,50 +42,45 @@ where
 
 impl<C, R> RecursionSession<C, R>
 where
-    C: CurveCycle,
+    C: Cycle,
     R: Rank,
 {
-    /// Create a new recursion session.
-    ///
-    /// The paired curve is automatically determined from `C`.
-    /// If `C = Pallas`, then `C::Pair = Vesta` automatically.
-    pub fn new() -> Result<Self, Error> {
+    /// Create a new recursion session for the given cycle with meshes
+    /// supporting up to 2^log2_circuits circuits.
+    pub fn new(log2_circuits: u32) -> Result<Self, Error> {
         // Create accumulation provers.
-        let primary_prover: AccumulationProver<C, R> = AccumulationProver::new();
-        let paired_prover = AccumulationProver::new();
-        let state = CycleState::OnPaired {
-            primary: Accumulator::base(),
-            paired: Accumulator::base(),
+        let nested_prover: AccumulationProver<C::NestedCurve, R> =
+            AccumulationProver::new(log2_circuits);
+        let host_prover: AccumulationProver<C::HostCurve, R> =
+            AccumulationProver::new(log2_circuits);
+        let state = CycleState::Host {
+            nested: Accumulator::base(),
+            host: Accumulator::base(),
         };
-        let depth = 0usize;
+        let depth = 0;
 
         // Create curve cycling engine.
-        let engine = CurveCycleEngine::from_provers(primary_prover, paired_prover, state, depth);
+        let engine = CycleEngine::from_provers(nested_prover, host_prover, state, depth);
 
-        Ok(Self {
-            engine,
-            accumulator: Some(Accumulator::base()),
-            depth: 0,
-        })
+        Ok(Self { engine, depth })
     }
 
-    /// Circuit registration.
-    pub fn circuit_registration<Circ>(
-        &mut self,
-        _tag: impl Into<String>,
-        _circuit: Circ,
-    ) -> Result<(), Error>
+    /// Register a circuit that operates over the circuit field.
+    pub fn register_circuit<Circ>(&mut self, circuit: Circ) -> Result<(), Error>
     where
-        Circ: Circuit<C::ScalarExt> + Send + 'static,
+        Circ: Circuit<C::CircuitField> + Send + 'static,
     {
-        // TODO: Delegates call to engine to register circuits on both meshes.
-        todo!()
+        self.engine.register_circuit(circuit)?;
+
+        Ok(())
     }
 
-    /// PCD step.
-    pub fn step(&mut self, _circuit_tag: &str, _witness: &[C::Scalar]) -> Result<(), Error> {
-        // TODO: Delegates call to engine to perform an accumulation step.
-        todo!()
+    /// PCD step with supplied witnesses.
+    pub fn step(&mut self, witnesses: &[Vec<C::CircuitField>]) -> Result<(), Error> {
+        self.engine.step(witnesses)?;
+        self.depth += 1;
+
+        Ok(())
     }
 
     /// Perform the decision procedure to determine if accumulation is valid.
@@ -97,18 +89,7 @@ where
         todo!()
     }
 
-    /// Compress an accumulator from uncompressed to compressed form.
-    pub fn compress(accumulator: Accumulator<C, R>) -> Result<Accumulator<C, R>, Error> {
-        // TODO: Delegate to engine to perform an accumulator compression.
-        match accumulator {
-            Accumulator::Uncompressed(_uncompressed) => {
-                todo!()
-            }
-            Accumulator::Compressed(compressed) => Ok(Accumulator::Compressed(compressed)),
-        }
-    }
-
-    /// Depth of recursion.
+    /// Get the current recursion depth.
     pub fn depth(&self) -> usize {
         self.depth
     }

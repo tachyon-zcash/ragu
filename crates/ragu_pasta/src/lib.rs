@@ -46,8 +46,13 @@ pub use poseidon_fq::PoseidonFq;
 
 impl Cycle for Pasta {
     type CircuitField = pasta_curves::Fp;
+
     type ScalarField = pasta_curves::Fq;
+
+    /// Pallas curve (scalar field = Fq, base field = Fp).
     type NestedCurve = pasta_curves::EpAffine;
+
+    /// Vesta curve (scalar field = Fp, base field = Fq).
     type HostCurve = pasta_curves::EqAffine;
 
     type HostGenerators = VestaGenerators;

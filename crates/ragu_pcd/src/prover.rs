@@ -3,10 +3,8 @@
 //! `AccumulationProver`` encapsulates all the prover logic (rule validation,
 //! circuit synthesis, recursive circuit invocation) for a specific curve.
 
-use std::marker::PhantomData;
-
 use arithmetic::CurveAffine;
-use ragu_circuits::polynomials::Rank;
+use ragu_circuits::{Circuit, mesh::Mesh, polynomials::Rank};
 use ragu_core::Error;
 
 use crate::accumulator::{Accumulator, CompressedAccumulator, UncompressedAccumulator};
@@ -21,27 +19,32 @@ where
     C: CurveAffine,
     R: Rank,
 {
-    // Mesh, generators, vk fields?
-    pub(crate) _curve_cycle: PhantomData<C>,
-    _rank: PhantomData<R>,
+    mesh: Mesh<'static, C::Scalar, R>,
 }
 
 /// TODO: Determine which the mesh construction fits in.
 impl<C: CurveAffine, R: Rank> AccumulationProver<C, R> {
-    pub fn new() -> Self {
+    /// Create a new accumulation prover with a mesh supporting up to 2^log2_circuits circuits.
+    pub fn new(log2_circuits: u32) -> Self {
         Self {
-            _curve_cycle: PhantomData,
-            _rank: PhantomData,
+            mesh: Mesh::new(log2_circuits),
         }
     }
 
-    /// Execute one accumulation step on this curve. Calls into
-    /// the recursive circuits.
+    /// Register a circuit into this prover's mesh.
+    pub fn register_circuit<Circ>(&mut self, circuit: Circ) -> Result<(), Error>
+    where
+        Circ: Circuit<C::Scalar> + Send + 'static,
+    {
+        self.mesh.add_bare_circuit(circuit)?;
+        Ok(())
+    }
+
+    /// Execute one accumulation step on this curve.
     pub fn step(
         &mut self,
         _prev_acc: Accumulator<C, R>,
-        _circuit_tag: &str,
-        _application_witness: &[C::Scalar],
+        _witnesses: Option<&[Vec<C::Scalar>]>,
     ) -> Result<UncompressedAccumulator<C, R>, Error> {
         todo!()
     }
@@ -65,6 +68,6 @@ impl<C: CurveAffine, R: Rank> AccumulationProver<C, R> {
 
 impl<C: CurveAffine, R: Rank> Default for AccumulationProver<C, R> {
     fn default() -> Self {
-        Self::new()
+        Self::new(4)
     }
 }

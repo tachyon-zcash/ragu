@@ -1,28 +1,43 @@
 //! Mid-Level: Orchestration layer that concerns itself with knowing about both curves,
-//! pattern matches on the curve, and routes to the correct prover in thd cycle.
+//! pattern matches on the curve, and routes to the correct prover in the cycle.
 
-use ragu_circuits::polynomials::Rank;
+use arithmetic::Cycle;
+use ragu_circuits::{Circuit, polynomials::Rank};
 use ragu_core::Error;
 
-use crate::{
-    accumulator::Accumulator,
-    cycle::{CurveCycle, CycleState},
-    prover::AccumulationProver,
-};
+use crate::{accumulator::Accumulator, prover::AccumulationProver};
 
-/// Routing engine that drives cycling between pasta curves.
-///
-/// TODO: https://github.com/ebfull/ragu/issues/17.
-pub struct CurveCycleEngine<C, R>
+/// Represents which curve is currently active in the PCD cycle.
+pub enum CycleState<C, R>
 where
-    C: CurveCycle,
+    C: Cycle,
+    R: Rank,
+{
+    /// Nested curve (Pallas).
+    Nested {
+        nested: Accumulator<C::NestedCurve, R>,
+        host: Accumulator<C::HostCurve, R>,
+    },
+    /// Host curve (Vesta).
+    Host {
+        nested: Accumulator<C::NestedCurve, R>,
+        host: Accumulator<C::HostCurve, R>,
+    },
+}
+
+/// Routing engine that manages cycling between the Pasta curves.
+/// The engine maintains provers and accumulators for both the nested
+/// curve and the host curve.
+pub struct CycleEngine<C, R>
+where
+    C: Cycle,
     R: Rank,
 {
     /// Prover for `Pallas` primary curve (C).
-    primary_prover: AccumulationProver<C, R>,
+    nested_prover: AccumulationProver<C::NestedCurve, R>,
 
     /// Prover for the `Vesta` paired curve (C::Pair).
-    paired_prover: AccumulationProver<C::Pair, R>,
+    host_prover: AccumulationProver<C::HostCurve, R>,
 
     /// Current state in the cycle.
     state: CycleState<C, R>,
@@ -31,64 +46,77 @@ where
     depth: usize,
 }
 
-impl<C: CurveCycle, R: Rank> CurveCycleEngine<C, R> {
+impl<C: Cycle, R: Rank> CycleEngine<C, R> {
     /// Create a curve cycle engine from pre-configured provers.
     pub fn from_provers(
-        primary_prover: AccumulationProver<C, R>,
-        paired_prover: AccumulationProver<C::Pair, R>,
+        nested_prover: AccumulationProver<C::NestedCurve, R>,
+        host_prover: AccumulationProver<C::HostCurve, R>,
         state: CycleState<C, R>,
         depth: usize,
     ) -> Self {
         Self {
-            primary_prover,
-            paired_prover,
+            nested_prover,
+            host_prover,
             state,
             depth,
         }
     }
 
     /// Get a reference to the primary curve prover.
-    pub fn primary_prover(&self) -> &AccumulationProver<C, R> {
-        &self.primary_prover
+    pub fn nested_prover(&self) -> &AccumulationProver<C::NestedCurve, R> {
+        &self.nested_prover
     }
 
     /// Get a reference to the paired curve prover.
-    pub fn paired_prover(&self) -> &AccumulationProver<C::Pair, R> {
-        &self.paired_prover
+    pub fn host_prover(&self) -> &AccumulationProver<C::HostCurve, R> {
+        &self.host_prover
     }
 
     /// Initialize a new curve cycle engine.
-    pub fn new() -> Self {
+    pub fn new(log2_circuits: u32) -> Self {
         Self {
-            primary_prover: AccumulationProver::new(),
-            paired_prover: AccumulationProver::new(),
-            state: CycleState::OnPaired {
-                primary: Accumulator::base(),
-                paired: Accumulator::base(),
+            nested_prover: AccumulationProver::new(log2_circuits),
+            host_prover: AccumulationProver::new(log2_circuits),
+            state: CycleState::Host {
+                nested: Accumulator::base(),
+                host: Accumulator::base(),
             },
-            depth: 0usize,
+            depth: 0,
         }
     }
 
-    /// Execute one PCD step, alternating between curves.
-    pub fn step(&mut self, circuit_tag: &str, witness: &[C::ScalarExt]) -> Result<(), Error> {
-        self.state = match std::mem::replace(&mut self.state, unsafe { std::mem::zeroed() }) {
-            CycleState::OnPrimary { primary, paired } => {
-                // Prove on primary, verifying paired.
-                let new_primary = self.primary_prover.step(primary, circuit_tag, witness)?;
+    /// Register an application circuit on the host prover's mesh.
+    pub fn register_circuit<Circ>(&mut self, circuit: Circ) -> Result<(), Error>
+    where
+        Circ: Circuit<C::CircuitField> + Send + 'static,
+    {
+        self.host_prover.register_circuit(circuit)?;
 
-                CycleState::OnPaired {
-                    primary: Accumulator::Uncompressed(Box::new(new_primary)),
-                    paired,
+        Ok(())
+    }
+
+    /// Execute one PCD step, alternating between curves.
+    ///
+    /// Each step proves execution of all application circuits in the mesh
+    /// and recursively verifies the other curve's accumulator.
+    pub fn step(&mut self, witnesses: &[Vec<C::CircuitField>]) -> Result<(), Error> {
+        self.state = match std::mem::replace(&mut self.state, unsafe { std::mem::zeroed() }) {
+            CycleState::Nested { nested, host } => {
+                // Prove on nested curve (Pallas), verifying host accumulator.
+                let new_nested = self.nested_prover.step(nested, None)?;
+
+                CycleState::Host {
+                    nested: Accumulator::Uncompressed(Box::new(new_nested)),
+                    host,
                 }
             }
-            CycleState::OnPaired { primary, paired } => {
-                // Prove on paired, verifying primary.
-                let new_paired = self.paired_prover.step(paired, circuit_tag, &[])?;
+            CycleState::Host { nested, host } => {
+                //  Prove on host curve (Vesta), verifying nested accumulator.
+                let new_host = self.host_prover.step(host, Some(witnesses))?;
 
-                CycleState::OnPrimary {
-                    primary,
-                    paired: Accumulator::Uncompressed(Box::new(new_paired)),
+                CycleState::Nested {
+                    nested,
+                    host: Accumulator::Uncompressed(Box::new(new_host)),
                 }
             }
         };
@@ -99,8 +127,8 @@ impl<C: CurveCycle, R: Rank> CurveCycleEngine<C, R> {
     }
 }
 
-impl<C: CurveCycle, R: Rank> Default for CurveCycleEngine<C, R> {
+impl<C: Cycle, R: Rank> Default for CycleEngine<C, R> {
     fn default() -> Self {
-        Self::new()
+        Self::new(4)
     }
 }
