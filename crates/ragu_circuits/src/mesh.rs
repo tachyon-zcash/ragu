@@ -49,7 +49,7 @@ impl<'params, F: PrimeField, R: Rank> Mesh<'params, F, R> {
     /// - A circuit with the same tag already exists
     pub fn register_circuit<C>(&mut self, tag: impl Into<String>, circuit: C) -> Result<F>
     where
-        C: Circuit<F> + Send + 'params,
+        C: Circuit<F> + Send + 'params + 'static,
     {
         let tag = tag.into();
 
@@ -57,26 +57,13 @@ impl<'params, F: PrimeField, R: Rank> Mesh<'params, F, R> {
             return Err(Error::DuplicateCircuitTag(tag));
         }
 
-        let omega = self.add_circuit_object(circuit.into_object()?)?;
-        self.circuit_tags.insert(tag, omega);
-
-        Ok(omega)
-    }
-
-    /// Adds a custom circuit object to this mesh. Returns the point of the mesh
-    /// domain that the circuit is assigned to.
-    pub fn add_circuit_object(
-        &mut self,
-        circuit: Box<dyn CircuitObject<F, R> + 'params>,
-    ) -> Result<F> {
-        if self.circuits.len() >= self.domain.n() {
-            return Err(Error::CircuitBoundExceeded(self.domain.n()));
-        }
-
         let omega = self.current_omega;
-        self.current_omega *= self.domain.omega();
 
-        self.circuits.push(circuit);
+        let circuit_obj = circuit.into_circuit_object(omega)?;
+
+        self.current_omega *= self.domain.omega();
+        self.circuits.push(circuit_obj);
+        self.circuit_tags.insert(tag, omega);
 
         Ok(omega)
     }
@@ -212,6 +199,38 @@ impl<'params, F: PrimeField, R: Rank> Mesh<'params, F, R> {
         }
 
         result
+    }
+}
+
+/// Marker type to disambiguate trait impl for regular circuits.
+pub struct RegularCircuit;
+
+/// Marker type to disambiguate trait impl for closures.
+pub struct OmegaCircuit;
+
+/// Trait for converting types into `CircuitObjects`, with optional omega parameter.
+pub trait IntoCircuitObject<F: PrimeField, R: Rank, Marker = ()> {
+    /// `CircuitObject` conversion method.
+    fn into_circuit_object(self, omega: F) -> Result<Box<dyn CircuitObject<F, R>>>;
+}
+
+/// Implementation for regular circuits – ignores omega and synthesizes immediately.
+impl<F: PrimeField, R: Rank, C> IntoCircuitObject<F, R, RegularCircuit> for C
+where
+    C: Circuit<F> + Send + 'static,
+{
+    fn into_circuit_object(self, _omega: F) -> Result<Box<dyn CircuitObject<F, R>>> {
+        self.into_object()
+    }
+}
+
+/// Implementation for closures - receives omega for lazy evaluation.
+impl<F: PrimeField, R: Rank, Func> IntoCircuitObject<F, R, OmegaCircuit> for Func
+where
+    Func: FnOnce(F) -> Result<Box<dyn CircuitObject<F, R>>>,
+{
+    fn into_circuit_object(self, omega: F) -> Result<Box<dyn CircuitObject<F, R>>> {
+        self(omega)
     }
 }
 
