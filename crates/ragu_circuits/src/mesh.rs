@@ -57,6 +57,10 @@ impl<'params, F: PrimeField, R: Rank> Mesh<'params, F, R> {
             return Err(Error::DuplicateCircuitTag(tag));
         }
 
+        if self.circuits.len() >= self.domain.n() {
+            return Err(Error::CircuitBoundExceeded(self.domain.n()));
+        }
+
         let omega = self.current_omega;
 
         let circuit_obj = circuit.into_circuit_object(omega)?;
