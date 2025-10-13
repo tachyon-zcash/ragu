@@ -62,11 +62,10 @@ impl<'params, F: PrimeField, R: Rank> Mesh<'params, F, R> {
         }
 
         let omega = self.current_omega;
-
-        let circuit_obj = circuit.into_circuit_object(omega)?;
+        let circuit = circuit.into_circuit_object(omega)?;
 
         self.current_omega *= self.domain.omega();
-        self.circuits.push(circuit_obj);
+        self.circuits.push(circuit);
         self.circuit_tags.insert(tag, omega);
 
         Ok(omega)
