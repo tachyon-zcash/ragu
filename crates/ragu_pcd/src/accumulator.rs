@@ -1,6 +1,5 @@
 use crate::deferreds::DeferredWork;
 use arithmetic::CurveAffine;
-use arithmetic::CurveExt;
 use arithmetic::FixedGenerators;
 use ff::Field;
 use ragu_circuits::{
@@ -114,7 +113,7 @@ impl<C: CurveAffine, R: Rank> UncompressedAccumulator<C, R> {
         let p_blinding = C::Scalar::random(&mut thread_rng());
 
         // Trivial zero challenge points.
-        let x: <<C as CurveAffine>::CurveExt as CurveExt>::ScalarExt = C::Scalar::ZERO;
+        let x = C::Scalar::ZERO;
         let y = C::Scalar::ZERO;
 
         let s_poly = mesh.xy(x, y);
@@ -122,7 +121,7 @@ impl<C: CurveAffine, R: Rank> UncompressedAccumulator<C, R> {
 
         // Zero evaluations (consistent with zero polynomials).
         let u = C::Scalar::ZERO;
-        let v: <C as CurveAffine>::ScalarExt = C::Scalar::ZERO;
+        let v = C::Scalar::ZERO;
 
         let c = a_poly.revdot(&b_poly);
 
@@ -175,7 +174,7 @@ impl<C: CurveAffine, R: Rank> UncompressedAccumulator<C, R> {
         let s_blinding = C::Scalar::random(&mut thread_rng());
 
         let u = C::Scalar::random(&mut thread_rng());
-        let v: <C as CurveAffine>::ScalarExt = p_poly.eval(u);
+        let v = p_poly.eval(u);
         let c = a_poly.revdot(&b_poly);
 
         let s_commitment = s_poly.commit(generators, s_blinding);
