@@ -58,6 +58,16 @@ pub struct DeferredTranscriptChallenge<F> {
 }
 
 impl<C: CurveAffine> DeferredWork<C> {
+    /// Create empty deferred work for base case.
+    pub fn empty() -> Self {
+        Self {
+            scalar_muls: vec![],
+            inner_products: vec![],
+            poly_evals: vec![],
+            hash_to_fields: vec![],
+        }
+    }
+
     /// Check if there is no deffered work (base case indicator)
     pub fn is_empty(&self) -> bool {
         self.scalar_muls.is_empty()
