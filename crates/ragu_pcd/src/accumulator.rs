@@ -1,6 +1,7 @@
 use crate::deferreds::DeferredWork;
 use arithmetic::CurveAffine;
 use arithmetic::FixedGenerators;
+use core::marker::PhantomData;
 use ff::Field;
 use ragu_circuits::{
     mesh::Mesh,
@@ -8,7 +9,6 @@ use ragu_circuits::{
 };
 use ragu_core::Error;
 use rand::thread_rng;
-use std::marker::PhantomData;
 
 /// The accumulator represents the state of a PCD proof at any point in the recursion.
 ///
