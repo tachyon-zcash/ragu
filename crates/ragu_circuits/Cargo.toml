@@ -26,7 +26,7 @@ default = []
 arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", package = "ragu_arithmetic" }
 ff = { workspace = true }
 group = { workspace = true }
-hashbrown = { version = "0.16", default-features = false }
+hashbrown = { version = "0.15", default-features = false }
 ahash = { version = "0.8.12", default-features = false }
 ragu_core = { path = "../ragu_core", version = "0.0.0" }
 ragu_primitives = { path = "../ragu_primitives", version = "0.0.0" }

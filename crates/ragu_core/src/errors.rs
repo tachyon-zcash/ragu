@@ -51,14 +51,6 @@ pub enum Error {
         /// Actual length observed at runtime
         actual: usize,
     },
-
-    /// No circuits have been registered before finalization
-    #[error("cannot finalize mesh since no circuits have been registred")]
-    EmptyCircuitRegisteration,
-
-    /// Attempted to finalize an already-finalized mesh
-    #[error("mesh has already been finalized ")]
-    MeshAlreadyFinalized,
 }
 
 #[test]

@@ -13,8 +13,6 @@ use ff::PrimeField;
 use hashbrown::HashMap;
 use ragu_core::{Error, Result};
 
-const OMEGA_HASH_MULTIPLIER: u64 = 5;
-
 /// Builder for constructing a mesh of circuits.
 ///
 /// Represents a collection of circuits over a particular field,
@@ -22,21 +20,14 @@ const OMEGA_HASH_MULTIPLIER: u64 = 5;
 /// in similar contexts.
 pub struct MeshBuilder<'params, F: PrimeField, R: Rank> {
     circuits: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
-    max_log2_circuits: u32,
 }
 
 impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
-    /// Initialize a new mesh with the supported number of circuits.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the provided `log2_circuits` exceeds [`R::RANK`](Rank::RANK).
-    pub fn new(max_log2_circuits: u32) -> Self {
-        assert!(max_log2_circuits <= R::RANK);
-
+    /// Initialize a new mesh object.
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
         Self {
             circuits: Vec::new(),
-            max_log2_circuits,
         }
     }
 
@@ -46,7 +37,7 @@ impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
         C: Circuit<F> + Send + 'params,
     {
         let id = self.circuits.len();
-        if id >= (1 << self.max_log2_circuits) {
+        if id >= (R::num_coeffs()) {
             return Err(Error::CircuitBoundExceeded(id));
         }
 
@@ -62,19 +53,10 @@ impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
     /// is later determined during finalization, bit-reversal automatically maps each
     /// circuit to its correct position in the finalized domain.
     pub fn finalize(self) -> Result<Mesh<'params, F, R>> {
-        if self.circuits.is_empty() {
-            return Err(Error::EmptyCircuitRegisteration);
-        }
+        // Compute the smallest power-of-2 domain size that fits all circuits.
+        let log2_circuits = self.circuits.len().next_power_of_two().trailing_zeros();
 
-        // Compute the smallest power-of-2 domain k that fits all circuits.
-        let log2_circuits = self
-            .circuits
-            .len()
-            .next_power_of_two()
-            .trailing_zeros()
-            .min(self.max_log2_circuits);
-
-        let domain: Domain<F> = Domain::new(log2_circuits);
+        let domain = Domain::<F>::new(log2_circuits);
         let domain_size = 1 << log2_circuits;
         let mut reordered = Vec::with_capacity(domain_size);
         reordered.extend((0..domain_size).map(|_| None));
@@ -82,9 +64,9 @@ impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
         let mut omega_lsb_lookup =
             HashMap::with_capacity_and_hasher(domain_size, RandomState::new());
 
-        for (tag, circuit) in self.circuits.into_iter().enumerate() {
-            // Omega values are precomputed in maximal domain 2^S, independent of final domain 2^k.
-            // The key property is circuit synthesis can compute the omega^{i} is for the jth circuit at
+        for (id, circuit) in self.circuits.into_iter().enumerate() {
+            // Omega values are precomputed in the maximal field domain 2^S (where S = F::S), independent of final domain 2^k.
+            // The key property is circuit synthesis can compute omega^i for the jth circuit at
             // compile-time as: "omega^i where i = bit_reverse(j, S)". This is a pure function that doesn't
             // rely on a mesh construction.
             //
@@ -92,10 +74,12 @@ impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
             // "position = bit_reverse(j, S) >> (S - k)".
             //
             // We perform a mapping to the actual position in the smaller domain, effectively compressing
-            // the 2^{max_log2_circuits}-slot domain to 2^{log2_circuits}-slot domain. This means that
-            // circuit placement is independent of the initial max_log2_circuits choice.
-            let bit_reversal_id = bitreverse(tag.try_into().unwrap(), self.max_log2_circuits);
-            let position = (bit_reversal_id >> (self.max_log2_circuits - log2_circuits)) as usize;
+            // the 2^S-slot domain to 2^k-slot domain (where k = log2_circuits).
+            let bit_reversal_id = bitreverse(id as u32, F::S);
+
+            // Cast to u64 to avoid overflow: in a single circuit mesh setting (log2_circuits = 0),
+            // right shifting by (F::S - log2_circuits) = 32 overflows a u32.
+            let position = ((bit_reversal_id as u64) >> (F::S - log2_circuits)) as usize;
 
             // Builds O(1) omega lookup table.
             let omega_at_position = domain.omega().pow([position as u64]);
@@ -131,7 +115,7 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
     /// For field elements of multiplicative order 2^k (omega values),
     /// this uniquely identifies each element.
     fn field_to_lsb(f: &F) -> u64 {
-        let product = *f * F::from(OMEGA_HASH_MULTIPLIER);
+        let product = f.double().double() + f;
         let bytes = product.to_repr();
         let byte_slice = bytes.as_ref();
 
@@ -146,16 +130,6 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
     fn get_circuit_from_omega(&self, w: F) -> Option<usize> {
         let w_lsb = Self::field_to_lsb(&w);
         self.omega_lsb_lookup.get(&w_lsb).copied()
-    }
-
-    /// Returns the number of registered circuits.
-    pub fn len(&self) -> usize {
-        self.circuits.iter().filter(|c| c.is_some()).count()
-    }
-
-    /// Returns true if no circuits are registered.
-    pub fn is_empty(&self) -> bool {
-        self.circuits.iter().all(|c| c.is_none())
     }
 
     /// Evaluate the mesh polynomial unrestricted at $W$.
@@ -219,8 +193,7 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
         add_poly: impl Fn(&dyn CircuitObject<F, R>, F, &mut T),
     ) -> T {
         // Compute the Lagrange coefficients for the provided `w`.
-        let domain = &self.domain;
-        let ell = domain.ell(w, self.circuits.len());
+        let ell = self.domain.ell(w, self.circuits.len());
 
         let mut result = init();
 
@@ -245,28 +218,27 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
     }
 }
 
-/// Returns the omega value for a given circuit ID on the fly.
-pub fn compute_circuit_omega<F: PrimeField>(id: u32, max_log2_circuits: u32) -> F {
-    let domain = Domain::<F>::new(max_log2_circuits);
-
-    let bit_reversal_id = bitreverse(id, max_log2_circuits);
-
-    // Compute omega^{bit_reversal_id}.
-    domain.omega().pow([bit_reversal_id as u64])
+/// Returns the omega value for a given circuit ID in the maximal field domain.    
+pub fn compute_circuit_omega<F: PrimeField>(id: u32) -> F {
+    let bit_reversal_id = bitreverse(id, F::S);
+    F::ROOT_OF_UNITY.pow([bit_reversal_id as u64])
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::mesh::compute_circuit_omega;
     use crate::{
         Circuit,
         mesh::{Mesh, MeshBuilder},
         polynomials::R,
     };
     use ahash::RandomState;
+    use arithmetic::{Domain, bitreverse};
     use ff::Field;
+    use ff::PrimeField;
     use hashbrown::HashMap;
     use ragu_core::{
-        Error, Result,
+        Result,
         drivers::{Driver, DriverValue},
         gadgets::{GadgetKind, Kind},
     };
@@ -314,7 +286,7 @@ mod tests {
 
     #[test]
     fn test_mesh_circuit_consistency() -> Result<()> {
-        let mesh = MeshBuilder::<Fp, TestRank>::new(8)
+        let mesh = MeshBuilder::<Fp, TestRank>::new()
             .register_circuit(SquareCircuit { times: 2 })?
             .register_circuit(SquareCircuit { times: 5 })?
             .register_circuit(SquareCircuit { times: 10 })?
@@ -358,22 +330,7 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_mesh_fails() {
-        let mesh = MeshBuilder::<Fp, TestRank>::new(8);
-
-        assert!(matches!(
-            mesh.finalize(),
-            Err(Error::EmptyCircuitRegisteration)
-        ));
-    }
-
-    #[test]
     fn test_omega_lookup_correctness() -> Result<()> {
-        use crate::polynomials::R;
-        use arithmetic::Domain;
-        use ff::Field;
-        use ragu_pasta::Fp;
-
         let log2_circuits = 8;
         let domain = Domain::<Fp>::new(log2_circuits);
         let domain_size = 1 << log2_circuits;
@@ -401,6 +358,40 @@ mod tests {
             );
 
             omega_power *= domain.omega();
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_single_circuit_mesh() -> Result<()> {
+        // Checks that a single circuit can be finalized without bit-shift overflows.
+        let _mesh = MeshBuilder::<Fp, TestRank>::new()
+            .register_circuit(SquareCircuit { times: 1 })?
+            .finalize()?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_compute_circuit_omega_consistency() -> Result<()> {
+        for num_circuits in [2usize, 3, 7, 8, 15, 16, 32] {
+            let log2_circuits = num_circuits.next_power_of_two().trailing_zeros();
+            let domain = Domain::<Fp>::new(log2_circuits);
+
+            for id in 0..num_circuits {
+                let omega_from_function = compute_circuit_omega::<Fp>(id as u32);
+
+                let bit_reversal_id = bitreverse(id as u32, Fp::S);
+                let position = ((bit_reversal_id as u64) >> (Fp::S - log2_circuits)) as usize;
+                let omega_from_finalization = domain.omega().pow([position as u64]);
+
+                assert_eq!(
+                    omega_from_function, omega_from_finalization,
+                    "Omega mismatch for circuit {} in mesh of size {}",
+                    id, num_circuits
+                );
+            }
         }
 
         Ok(())
