@@ -188,9 +188,8 @@ impl<F: PrimeField> Domain<F> {
             ff::BatchInverter::invert_with_external_scratch(&mut denominators, &mut scratch);
         }
 
-        // Factor out common \frac{x^n - 1}{n} from (x - \omega^i)^{-1} \cdot \frac{(x^n - 1) \omega^i}{n},
-        // saving recomputing n - 1 unnecessary field multiplications and subtractions.
-        let base_numerator = (xn - F::ONE) * self.n_inv;
+        // Factor out common \frac{x^n - 1}{n}.
+        let common_factor = (xn - F::ONE) * self.n_inv;
 
         #[cfg(feature = "multicore")]
         {
@@ -200,7 +199,7 @@ impl<F: PrimeField> Domain<F> {
                 .enumerate()
                 .map(|(i, denominator)| {
                     let omega_power = self.omega.pow([i as u64]);
-                    base_numerator * denominator * omega_power
+                    common_factor * denominator * omega_power
                 })
                 .collect();
 
@@ -213,9 +212,9 @@ impl<F: PrimeField> Domain<F> {
                 // (x - \omega^i)^{-1} \cdot \frac{(x^n - 1) \omega^i}{n}
                 denominators
                     .into_iter()
-                    .scan(base_numerator, move |base_numerator, denominator| {
-                        let tmp = (*base_numerator) * denominator;
-                        *base_numerator *= self.omega;
+                    .scan(common_factor, move |numerator, denominator| {
+                        let tmp = (*numerator) * denominator;
+                        *numerator *= self.omega;
                         Some(tmp)
                     })
                     .collect(),
