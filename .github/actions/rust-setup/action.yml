@@ -33,7 +33,7 @@ runs:
           exit 1
         fi
         cargo fetch --locked
-        cargo test --no-run --release --all --locked
+        cargo test --no-run --release --all --locked --features multicore
 
     - name: Clean workspace crates (keep deps)
       shell: bash

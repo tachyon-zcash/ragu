@@ -20,28 +20,35 @@ jobs:
   clippy:
     name: clippy
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: sequential
+            cargo_features: ""
+          - name: multicore
+            cargo_features: "--features multicore"
     steps:
       - uses: actions/checkout@v4
       - name: Setup Rust
         uses: ./.github/actions/rust-setup
         with:
           components: clippy
-      - name: Run clippy
-        run: cargo clippy --all --locked -- -D warnings
+      - name: Run clippy (${{ matrix.name }})
+        run: cargo clippy --all --locked ${{ matrix.cargo_features }} -- -D warnings
 
   test:
     name: tests
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        features: ["", "multicore"]
+        include:
+          - name: sequential
+            cargo_features: ""
+          - name: multicore
+            cargo_features: "--features multicore"
     steps:
       - uses: actions/checkout@v4
       - name: Setup Rust
         uses: ./.github/actions/rust-setup
-      - name: Run tests (sequential)
-        if: matrix.features == ''
-        run: cargo test --release --all --locked
-      - name: Run tests (with multicore)
-        if: matrix.features == 'multicore'
-        run: cargo test --release --all --locked --features multicore
+      - name: Run tests (${{ matrix.name }})
+        run: cargo test --release --all --locked ${{ matrix.cargo_features }}
