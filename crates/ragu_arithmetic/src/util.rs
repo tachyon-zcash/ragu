@@ -20,7 +20,7 @@ where
 /// Evaluates a single polynomial in multiple points in parallel (batch verification).
 #[cfg(feature = "multicore")]
 #[allow(dead_code)]
-pub fn batch_eval_at_points<F: Field + Sync>(coeffs: &[F], points: &[F]) -> Vec<F> {
+pub fn batch_eval_at_points<F: Field>(coeffs: &[F], points: &[F]) -> Vec<F> {
     use crate::parallel::{self, ParallelIterator};
 
     parallel::par_iter(points)
@@ -30,14 +30,14 @@ pub fn batch_eval_at_points<F: Field + Sync>(coeffs: &[F], points: &[F]) -> Vec<
 
 #[cfg(not(feature = "multicore"))]
 #[allow(dead_code)]
-pub fn batch_eval_at_points<F: Field + Sync>(coeffs: &[F], points: &[F]) -> Vec<F> {
+pub fn batch_eval_at_points<F: Field>(coeffs: &[F], points: &[F]) -> Vec<F> {
     points.iter().map(|&x| eval(coeffs.iter(), x)).collect()
 }
 
 /// Evaluates multiple polynomials at a single point.
 #[cfg(feature = "multicore")]
 #[allow(dead_code)]
-pub fn batch_eval_polynomials<F: Field + Sync>(polys: &[Vec<F>], point: &F) -> Vec<F> {
+pub fn batch_eval_polynomials<F: Field>(polys: &[Vec<F>], point: &F) -> Vec<F> {
     use crate::parallel::{self, ParallelIterator};
 
     parallel::par_iter(polys)
@@ -54,7 +54,7 @@ pub fn batch_eval_polynomials<F: Field>(polys: &[Vec<F>], point: &F) -> Vec<F> {
 /// Evaluates multiple (polynomial, point) pairs in parallel.
 #[cfg(feature = "multicore")]
 #[allow(dead_code)]
-pub fn batch_eval_pairs<F: Field + Sync>(pairs: &[(Vec<F>, F)]) -> Vec<F> {
+pub fn batch_eval_pairs<F: Field>(pairs: &[(Vec<F>, F)]) -> Vec<F> {
     use crate::parallel::{self, ParallelIterator};
 
     parallel::par_iter(pairs)
@@ -64,7 +64,7 @@ pub fn batch_eval_pairs<F: Field + Sync>(pairs: &[(Vec<F>, F)]) -> Vec<F> {
 
 #[cfg(not(feature = "multicore"))]
 #[allow(dead_code)]
-pub fn batch_eval_pairs<F: Field + Sync>(pairs: &[(Vec<F>, F)]) -> Vec<F> {
+pub fn batch_eval_pairs<F: Field>(pairs: &[(Vec<F>, F)]) -> Vec<F> {
     pairs
         .iter()
         .map(|(poly, point)| eval(poly.iter(), *point))
