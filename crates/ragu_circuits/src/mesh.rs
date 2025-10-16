@@ -1,5 +1,5 @@
-//! A [`Mesh`] manages multiple circuits over a field, allowing them to share
-//! a common domain for efficient polynomial evaluation.
+//! Management of polynomials that encode large sets of circuit polynomials for
+//! efficient querying.
 
 use crate::{
     Circuit, CircuitExt, CircuitObject,
@@ -13,28 +13,29 @@ use ff::PrimeField;
 use hashbrown::HashMap;
 use ragu_core::{Error, Result};
 
-/// Builder for constructing a mesh of circuits.
-///
-/// Represents a collection of circuits over a particular field,
-/// some of which may make reference to the others or be executed
-/// in similar contexts.
+/// Builder for constructing a new [`Mesh`].
 pub struct MeshBuilder<'params, F: PrimeField, R: Rank> {
     circuits: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
 }
 
+impl<F: PrimeField, R: Rank> Default for MeshBuilder<'_, F, R> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
-    /// Initialize a new mesh object.
-    #[allow(clippy::new_without_default)]
+    /// Creates a new empty [`Mesh`] builder.
     pub fn new() -> Self {
         Self {
             circuits: Vec::new(),
         }
     }
 
-    /// Registers a circuit in the mesh.
+    /// Registers a new circuit.
     pub fn register_circuit<C>(mut self, circuit: C) -> Result<Self>
     where
-        C: Circuit<F> + Send + 'params,
+        C: Circuit<F> + 'params,
     {
         let id = self.circuits.len();
         if id >= (R::num_coeffs()) {
@@ -46,12 +47,7 @@ impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
         Ok(self)
     }
 
-    /// Determines minimal power-of-2 domain k and maps circuits from maximal domain 2^S to 2^k.
-    ///
-    /// The domain is "rolling" in the sense that this construction supports incremental
-    /// circuit registration into the mesh, without knowing the final domain size k. When `k`
-    /// is later determined during finalization, bit-reversal automatically maps each
-    /// circuit to its correct position in the finalized domain.
+    /// Builds the final [`Mesh`].
     pub fn finalize(self) -> Result<Mesh<'params, F, R>> {
         // Compute the smallest power-of-2 domain size that fits all circuits.
         let log2_circuits = self.circuits.len().next_power_of_two().trailing_zeros();
