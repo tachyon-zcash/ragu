@@ -25,8 +25,8 @@
 //! * All gadgets are parameterized by a [`Driver`] type that outlives the
 //!   special lifetime `'dr`.
 //! * Gadgets can contain wires ([`D::Wire`](Driver::Wire)), witness data
-//!   ([`Witness<D, T>`](crate::drivers::Witness)), other gadgets, and otherwise
-//!   can contain any other [`Send`] contents that are `'static`.
+//!   ([`DriverValue<D, T>`](crate::drivers::DriverValue)), other gadgets, and
+//!   otherwise can contain any other [`Send`] contents that are `'static`.
 //!
 //! #### Fungibility
 //!

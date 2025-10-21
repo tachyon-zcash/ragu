@@ -110,9 +110,9 @@ pub trait DriverTypes {
 ///   need to obtain these values depending on whether or not a witness for them
 ///   is expected.
 /// * Users keep track of wire assignments or related witness data using a
-///   driver-specific [`Witness`] type. This type implements an `Option`-like
-///   abstraction called [`Maybe`] which allows for compile-time optimization
-///   and static analysis of witness data computation and memory.
+///   driver-specific [`DriverValue`] type. This type implements an
+///   `Option`-like abstraction called [`Maybe`] which allows for compile-time
+///   optimization and static analysis of witness data computation and memory.
 /// * Finally, and most importantly, wires can be constrained in two ways:
 ///     * The [`mul`](Driver::mul) method enforces a multiplicative constraint
 ///       on the created wires; the wires are the inputs and output of a

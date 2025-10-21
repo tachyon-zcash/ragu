@@ -1,95 +1,141 @@
-//! TODO(ebfull): Collections of circuits.
+//! Management of polynomials that encode large sets of circuit polynomials for
+//! efficient querying.
 
 use arithmetic::Domain;
+use arithmetic::bitreverse;
 use ff::PrimeField;
 use ragu_core::{Error, Result};
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec::Vec};
 
 use crate::{
     Circuit, CircuitExt, CircuitObject,
     polynomials::{Rank, structured, unstructured},
 };
 
-/// A collection of circuits over a particular field, some of which may make
-/// reference to the others or be executed in similar contexts.
-pub struct Mesh<'params, F: PrimeField, R: Rank> {
-    domain: Domain<F>,
-    current_omega: F,
+/// Builder for constructing a new [`Mesh`].
+pub struct MeshBuilder<'params, F: PrimeField, R: Rank> {
     circuits: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
 }
 
-impl<'params, F: PrimeField, R: Rank> Mesh<'params, F, R> {
-    /// Initialize a new mesh with the supported number of circuits.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the provided `log2_circuits` exceeds [`R::RANK`](Rank::RANK).
-    pub fn new(log2_circuits: u32) -> Self {
-        assert!(log2_circuits <= R::RANK);
+impl<F: PrimeField, R: Rank> Default for MeshBuilder<'_, F, R> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
+impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
+    /// Creates a new empty [`Mesh`] builder.
+    pub fn new() -> Self {
         Self {
-            domain: Domain::new(log2_circuits),
-            current_omega: F::ONE,
             circuits: Vec::new(),
         }
     }
 
-    /// Adds a bare circuit to this mesh. Returns the point of the mesh domain
-    /// that the circuit is assigned to.
-    pub fn add_bare_circuit<C>(&mut self, circuit: C) -> Result<F>
+    /// Registers a new circuit.
+    pub fn register_circuit<C>(mut self, circuit: C) -> Result<Self>
     where
-        C: Circuit<F> + Send + 'params,
+        C: Circuit<F> + 'params,
     {
-        self.add_circuit_object(circuit.into_object()?)
+        self.circuits.push(circuit.into_object()?);
+
+        Ok(self)
     }
 
-    /// Adds a custom circuit object to this mesh. Returns the point of the mesh
-    /// domain that the circuit is assigned to.
-    pub fn add_circuit_object(
-        &mut self,
+    /// Registers a new circuit using a bare circuit object.
+    pub fn register_circuit_object<C>(
+        mut self,
         circuit: Box<dyn CircuitObject<F, R> + 'params>,
-    ) -> Result<F> {
-        if self.circuits.len() >= self.domain.n() {
-            return Err(Error::CircuitBoundExceeded(self.domain.n()));
+    ) -> Result<Self> {
+        let id = self.circuits.len();
+        if id >= R::num_coeffs() {
+            return Err(Error::CircuitBoundExceeded(id));
         }
-
-        let omega = self.current_omega;
-        self.current_omega *= self.domain.omega();
 
         self.circuits.push(circuit);
 
-        Ok(omega)
+        Ok(self)
     }
 
-    /// Returns the index of the circuit for the provided $\omega^i$ value, or
-    /// `None` if there is no such circuit or the provided value is not in the
-    /// domain.
-    fn get_circuit_from_omega(&self, w: F) -> Option<usize> {
-        // TODO(ebfull): This could use a lookup table. In the pasta curves the
-        // most efficient method would be to hash based on the least significant
-        // 32 bits, as this is guaranteed to be unique for all field elements of
-        // order 2^k.
+    /// Builds the final [`Mesh`].
+    pub fn finalize(self) -> Result<Mesh<'params, F, R>> {
+        // Compute the smallest power-of-2 domain size that fits all circuits.
+        let log2_circuits = self.circuits.len().next_power_of_two().trailing_zeros();
 
-        let mut cur = F::ONE;
+        let domain = Domain::<F>::new(log2_circuits);
+
+        // Build omega^j -> i lookup table.
+        let mut omega_lookup = BTreeMap::new();
+
         for i in 0..self.circuits.len() {
-            if cur == w {
-                return Some(i);
-            }
-            cur *= self.domain.omega();
+            // Rather than assigning the `i`th circuit to `omega^i` in the final
+            // domain, we will assign it to `omega^j` where `j` is the
+            // `log2_circuits` bit-reversal of `i`. This has the property that
+            // `omega^j` = `F::ROOT_OF_UNITY^m` where `m` is the `F::S` bit
+            // reversal of `i`, which can be computed independently of `omega`
+            // and the actual (ideal) choice of `log2_circuits`. In effect, this
+            // is *implicitly* performing domain extensions as smaller domains
+            // become exhausted.
+            let j = bitreverse(i as u32, log2_circuits) as usize;
+            let omega_j = OmegaKey::from(domain.omega().pow([j as u64]));
+            omega_lookup.insert(omega_j, i);
         }
 
-        None
+        Ok(Mesh {
+            domain,
+            circuits: self.circuits,
+            omega_lookup,
+        })
     }
+}
 
+/// Represents a collection of circuits over a particular field, some of which
+/// may make reference to the others or be executed in similar contexts. The
+/// circuits are combined together using an interpolation polynomial so that
+/// they can be queried efficiently.
+pub struct Mesh<'params, F: PrimeField, R: Rank> {
+    domain: Domain<F>,
+    circuits: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
+
+    // Maps from the OmegaKey (which represents some `omega^j`) to the index `i`
+    // of the circuits vector.
+    omega_lookup: BTreeMap<OmegaKey, usize>,
+}
+
+/// Represents a key for identifying a unique $\omega^j$ value where $\omega$ is
+/// a $2^k$-th root of unity.
+#[derive(Ord, PartialOrd, PartialEq, Eq)]
+struct OmegaKey(u64);
+
+impl<F: PrimeField> From<F> for OmegaKey {
+    fn from(f: F) -> Self {
+        // Multiplication by 5 ensures the least significant 64 bits of the
+        // field element can be used as a key for all elements of order 2^k.
+        // TODO: This only holds for the Pasta curves. See issue #51
+        let product = f.double().double() + f;
+
+        let bytes = product.to_repr();
+        let byte_slice = bytes.as_ref();
+
+        OmegaKey(u64::from_le_bytes(
+            byte_slice[..8]
+                .try_into()
+                .expect("field representation is at least 8 bytes"),
+        ))
+    }
+}
+
+impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
     /// Evaluate the mesh polynomial unrestricted at $W$.
     pub fn xy(&self, x: F, y: F) -> unstructured::Polynomial<F, R> {
         let mut coeffs = unstructured::Polynomial::default();
-        for (circuit, lc) in self.circuits.iter().zip(coeffs.iter_mut()) {
-            *lc = circuit.sxy(x, y);
+        for (i, circuit) in self.circuits.iter().enumerate() {
+            let j = bitreverse(i as u32, self.domain.log2_n()) as usize;
+            coeffs[j] = circuit.sxy(x, y);
         }
         // Convert from the Lagrange basis.
-        self.domain.ifft(&mut coeffs[..self.domain.n()]);
+        let domain = &self.domain;
+        domain.ifft(&mut coeffs[..domain.n()]);
 
         coeffs
     }
@@ -148,11 +194,16 @@ impl<'params, F: PrimeField, R: Rank> Mesh<'params, F, R> {
             // The provided `w` was not in the domain, and `ell` are the
             // coefficients we need to use to separate each (partial) circuit
             // evaluation.
-            for (circuit, circuit_coeff) in self.circuits.iter().zip(ell) {
-                add_poly(&**circuit, circuit_coeff, &mut result);
+            for (j, coeff) in ell.iter().enumerate() {
+                let i = bitreverse(j as u32, self.domain.log2_n()) as usize;
+                if let Some(circuit) = self.circuits.get(i) {
+                    add_poly(&**circuit, *coeff, &mut result);
+                }
             }
-        } else if let Some(i) = self.get_circuit_from_omega(w) {
-            add_poly(&*self.circuits[i], F::ONE, &mut result);
+        } else if let Some(i) = self.omega_lookup.get(&OmegaKey::from(w)) {
+            if let Some(circuit) = self.circuits.get(*i) {
+                add_poly(&**circuit, F::ONE, &mut result);
+            }
         } else {
             // In this case, the circuit is not defined and defaults to the zero polynomial.
         }
@@ -161,9 +212,20 @@ impl<'params, F: PrimeField, R: Rank> Mesh<'params, F, R> {
     }
 }
 
-#[test]
-fn test_mesh_circuit_consistency() {
+/// Returns $\omega^j$ that corresponds to the $i$th circuit added to a Mesh.
+pub fn omega_j<F: PrimeField>(id: u32) -> F {
+    let bit_reversal_id = bitreverse(id, F::S);
+    F::ROOT_OF_UNITY.pow([bit_reversal_id as u64])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MeshBuilder, OmegaKey, omega_j};
+    use crate::{Circuit, polynomials::R};
+    use alloc::collections::btree_map::BTreeMap;
+    use arithmetic::{Domain, bitreverse};
     use ff::Field;
+    use ff::PrimeField;
     use ragu_core::{
         Result,
         drivers::{Driver, DriverValue},
@@ -172,8 +234,6 @@ fn test_mesh_circuit_consistency() {
     use ragu_pasta::Fp;
     use ragu_primitives::Element;
     use rand::thread_rng;
-
-    use crate::polynomials::R;
 
     struct SquareCircuit {
         times: usize,
@@ -213,30 +273,23 @@ fn test_mesh_circuit_consistency() {
 
     type TestRank = R<8>;
 
-    let mut mesh = Mesh::<Fp, TestRank>::new(3);
+    #[test]
+    fn test_mesh_circuit_consistency() -> Result<()> {
+        let mesh = MeshBuilder::<Fp, TestRank>::new()
+            .register_circuit(SquareCircuit { times: 2 })?
+            .register_circuit(SquareCircuit { times: 5 })?
+            .register_circuit(SquareCircuit { times: 10 })?
+            .register_circuit(SquareCircuit { times: 11 })?
+            .register_circuit(SquareCircuit { times: 19 })?
+            .register_circuit(SquareCircuit { times: 19 })?
+            .register_circuit(SquareCircuit { times: 19 })?
+            .register_circuit(SquareCircuit { times: 19 })?
+            .finalize()?;
 
-    mesh.add_bare_circuit(SquareCircuit { times: 2 }).unwrap();
-    mesh.add_bare_circuit(SquareCircuit { times: 5 }).unwrap();
-    mesh.add_bare_circuit(SquareCircuit { times: 10 }).unwrap();
-    mesh.add_bare_circuit(SquareCircuit { times: 11 }).unwrap();
-    mesh.add_bare_circuit(SquareCircuit { times: 19 }).unwrap();
+        let w = Fp::random(thread_rng());
+        let x = Fp::random(thread_rng());
+        let y = Fp::random(thread_rng());
 
-    let w = Fp::random(thread_rng());
-    let x = Fp::random(thread_rng());
-    let y = Fp::random(thread_rng());
-
-    let xy_poly = mesh.xy(x, y);
-    let wy_poly = mesh.wy(w, y);
-    let wx_poly = mesh.wx(w, x);
-
-    let wxy_value = mesh.wxy(w, x, y);
-
-    assert_eq!(wxy_value, xy_poly.eval(w));
-    assert_eq!(wxy_value, wy_poly.eval(x));
-    assert_eq!(wxy_value, wx_poly.eval(y));
-
-    let mut w = Fp::ONE;
-    for _ in 0..mesh.domain.n() {
         let xy_poly = mesh.xy(x, y);
         let wy_poly = mesh.wy(w, y);
         let wx_poly = mesh.wx(w, x);
@@ -247,6 +300,86 @@ fn test_mesh_circuit_consistency() {
         assert_eq!(wxy_value, wy_poly.eval(x));
         assert_eq!(wxy_value, wx_poly.eval(y));
 
-        w *= mesh.domain.omega();
+        let mut w = Fp::ONE;
+        for _ in 0..mesh.domain.n() {
+            let xy_poly = mesh.xy(x, y);
+            let wy_poly = mesh.wy(w, y);
+            let wx_poly = mesh.wx(w, x);
+
+            let wxy_value = mesh.wxy(w, x, y);
+
+            assert_eq!(wxy_value, xy_poly.eval(w));
+            assert_eq!(wxy_value, wy_poly.eval(x));
+            assert_eq!(wxy_value, wx_poly.eval(y));
+
+            w *= mesh.domain.omega();
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_omega_lookup_correctness() -> Result<()> {
+        let log2_circuits = 8;
+        let domain = Domain::<Fp>::new(log2_circuits);
+        let domain_size = 1 << log2_circuits;
+
+        let mut omega_lookup = BTreeMap::new();
+        let mut omega_power = Fp::ONE;
+
+        for i in 0..domain_size {
+            omega_lookup.insert(OmegaKey::from(omega_power), i);
+            omega_power *= domain.omega();
+        }
+
+        omega_power = Fp::ONE;
+        for i in 0..domain_size {
+            let looked_up_index = omega_lookup.get(&OmegaKey::from(omega_power)).copied();
+
+            assert_eq!(
+                looked_up_index,
+                Some(i),
+                "Failed to lookup omega^{} correctly",
+                i
+            );
+
+            omega_power *= domain.omega();
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_single_circuit_mesh() -> Result<()> {
+        // Checks that a single circuit can be finalized without bit-shift overflows.
+        let _mesh = MeshBuilder::<Fp, TestRank>::new()
+            .register_circuit(SquareCircuit { times: 1 })?
+            .finalize()?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_omega_j_consistency() -> Result<()> {
+        for num_circuits in [2usize, 3, 7, 8, 15, 16, 32] {
+            let log2_circuits = num_circuits.next_power_of_two().trailing_zeros();
+            let domain = Domain::<Fp>::new(log2_circuits);
+
+            for id in 0..num_circuits {
+                let omega_from_function = omega_j::<Fp>(id as u32);
+
+                let bit_reversal_id = bitreverse(id as u32, Fp::S);
+                let position = ((bit_reversal_id as u64) >> (Fp::S - log2_circuits)) as usize;
+                let omega_from_finalization = domain.omega().pow([position as u64]);
+
+                assert_eq!(
+                    omega_from_function, omega_from_finalization,
+                    "Omega mismatch for circuit {} in mesh of size {}",
+                    id, num_circuits
+                );
+            }
+        }
+
+        Ok(())
     }
 }

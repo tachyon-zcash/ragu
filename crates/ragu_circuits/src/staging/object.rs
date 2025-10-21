@@ -85,9 +85,12 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageObject<R> {
             w * plus + v * minus + u * plus
         };
 
-        // TODO(ebfull): underflows possible, though they don't affect the
-        // arithmetic in practice.
-        let c1 = block(self.skip_multiplications - 1, self.skip_multiplications);
+        // Handle the edge case where skip_multiplications is zero.
+        let c1 = if self.skip_multiplications > 0 {
+            block(self.skip_multiplications - 1, self.skip_multiplications)
+        } else {
+            F::ZERO
+        };
         let c2 = block(R::n() - 2, reserved);
 
         y.pow_vartime([(3 * reserved) as u64]) * c1 + c2
@@ -345,6 +348,21 @@ mod tests {
         assert!(rx2.revdot(&circ1.sy(y)) != Fp::ZERO);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_skip_multiplications_zero() {
+        let stage_object = StageObject::<R>::new(0, 5).unwrap();
+
+        let x = Fp::random(thread_rng());
+        let y = Fp::random(thread_rng());
+
+        let sxy = stage_object.sxy(x, y);
+        let sx = stage_object.sx(x);
+        let sy = stage_object.sy(y);
+
+        assert_eq!(sxy, sx.eval(y));
+        assert_eq!(sxy, sy.eval(x));
     }
 
     proptest! {

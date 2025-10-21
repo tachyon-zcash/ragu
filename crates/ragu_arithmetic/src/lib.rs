@@ -87,7 +87,7 @@ mod util;
 
 pub use coeff::Coeff;
 pub use domain::Domain;
-pub use fft::Ring;
+pub use fft::{Ring, bitreverse};
 pub use util::{dot, eval, factor, factor_iter, geosum, mul};
 
 // TODO(ebfull): Use this if we need to increase the bit size of endoscalars.

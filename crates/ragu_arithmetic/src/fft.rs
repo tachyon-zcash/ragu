@@ -37,16 +37,17 @@ impl<F: PrimeField> Ring for FFTField<F> {
     }
 }
 
-pub(crate) fn fft<R: Ring>(log2_n: u32, input: &mut [R::R], omega: R::F) {
-    fn bitreverse(mut n: u32, l: u32) -> u32 {
-        let mut r = 0;
-        for _ in 0..l {
-            r = (r << 1) | (n & 1);
-            n >>= 1;
-        }
-        r
+/// Reverses the bits of `n` using `l` bits.
+pub fn bitreverse(mut n: u32, l: u32) -> u32 {
+    let mut r = 0;
+    for _ in 0..l {
+        r = (r << 1) | (n & 1);
+        n >>= 1;
     }
+    r
+}
 
+pub(crate) fn fft<R: Ring>(log2_n: u32, input: &mut [R::R], omega: R::F) {
     assert_eq!(input.len(), 1 << log2_n);
     let n = input.len() as u32;
 

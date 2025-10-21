@@ -1,0 +1,50 @@
+name: Rust Setup
+description: Install pinned Rust toolchain, cache Cargo artifacts, and print versions
+inputs:
+  components:
+    description: Optional Rust components to install (comma-separated)
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Install Rust toolchain (from rust-toolchain.toml)
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: ${{ inputs.components }}
+
+    - id: cargo-cache
+      name: Cache cargo (restore)
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('rust-toolchain.toml', 'rust-toolchain') }}-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Cache dependency builds
+      if: steps.cargo-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ ! -f Cargo.lock ]; then
+          echo "Cargo.lock is required in CI!" >&2
+          exit 1
+        fi
+        cargo fetch --locked
+        cargo test --no-run --release --all --locked
+
+    - name: Clean workspace crates (keep deps)
+      shell: bash
+      run: |
+        set -euo pipefail
+        pkgs=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import sys,json; print("\n".join(p["name"] for p in json.load(sys.stdin)["packages"]))')
+        for p in $pkgs; do
+          cargo clean -p "$p" --release || true
+          cargo clean -p "$p" || true
+        done
+
+    - name: Show toolchain
+      shell: bash
+      run: rustc -Vv && cargo -Vv
