@@ -1,6 +1,7 @@
 use crate::deferreds::DeferredWork;
 use arithmetic::CurveAffine;
 use arithmetic::FixedGenerators;
+use core::marker::PhantomData;
 use ff::Field;
 use ragu_circuits::{
     mesh::Mesh,
@@ -8,7 +9,6 @@ use ragu_circuits::{
 };
 use ragu_core::Error;
 use rand::thread_rng;
-use std::marker::PhantomData;
 
 /// The accumulator represents the state of a PCD proof at any point in the recursion.
 ///
@@ -28,14 +28,35 @@ pub enum Accumulator<C: CurveAffine, R: Rank> {
 }
 
 /// Uncompressed accumulator with full witness and deferred work.
-/// Used during recursive proof composition (cheap to combine).
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub struct UncompressedAccumulator<C: CurveAffine, R: Rank> {
-    pub(crate) witness: AccumulatorWitness<C, R>,
-    pub instance: AccumulatorInstance<C>,
+    /// R polynomial commitments – witness commitments from proofs being verified. 
+    pub r_commitments: Vec<C>,
+
+    /// Public inputs.
     pub public_inputs: Vec<C::Scalar>,
-    pub(crate) deferred: DeferredWork<C>,
+
+    /// Staging polynomial commitments used in this accumulator.
+    pub staging_commitments: Vec<StagingCommitment<C>>,
+
+    /// Deferred arithmetic.
+    pub deferreds: DeferredWork<C>,
+
+    /// Split-accumulation polynomials (s, a, b, p).
+    pub witness: AccumulatorWitness<C, R>,
+
+    /// Instance data (commitments, challenges, evaluations).
+    pub instance: AccumulatorInstance<C>,
+
+    // TODO: add `AccumulatorState` for rerandomization tracking.
+}
+
+/// Staging commitment from a partial witness.
+#[derive(Clone, Debug)]
+pub struct StagingCommitment<C: CurveAffine> {
+    pub commitment: C,
+    pub stage_id: usize,
+    pub num_values: usize,
 }
 
 /// Compressed accumulator with succinct IPA openings.
@@ -43,13 +64,12 @@ pub struct UncompressedAccumulator<C: CurveAffine, R: Rank> {
 #[derive(Clone, Debug)]
 pub struct CompressedAccumulator<C: CurveAffine> {
     pub instance: AccumulatorInstance<C>,
-    pub(crate) ipa_proof: PhantomData<C>,
+    ipa_proof: PhantomData<C>,
     pub circuit_inputs: Vec<Vec<C::Scalar>>,
 }
 
 /// Split-Accumulation private witness.
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub(crate) struct AccumulatorWitness<C: CurveAffine, R: Rank> {
     s_poly: unstructured::Polynomial<C::Scalar, R>,
     s_blinding: C::Scalar,
@@ -152,8 +172,10 @@ impl<C: CurveAffine, R: Rank> UncompressedAccumulator<C, R> {
                 u: ChallengePoint(u),
                 v: EvaluationPoint(v),
             },
-            deferred: DeferredWork::empty(),
-            public_inputs: vec![],
+            deferreds: DeferredWork::empty(),
+            public_inputs: Vec::new(),
+            r_commitments: Vec::new(),
+            staging_commitments: Vec::new(),
         }
     }
 
@@ -183,7 +205,7 @@ impl<C: CurveAffine, R: Rank> UncompressedAccumulator<C, R> {
         let p_commitment = p_poly.commit(generators, p_blinding);
 
         // Deferreds.
-        let deferred = DeferredWork::random(1);
+        let deferreds = DeferredWork::random(1);
 
         Self {
             witness: AccumulatorWitness {
@@ -207,8 +229,10 @@ impl<C: CurveAffine, R: Rank> UncompressedAccumulator<C, R> {
                 u: ChallengePoint(u),
                 v: EvaluationPoint(v),
             },
-            deferred,
-            public_inputs: vec![],
+            deferreds,
+            public_inputs: Vec::new(),
+            r_commitments: Vec::new(),
+            staging_commitments: Vec::new(),
         }
     }
 
@@ -263,15 +287,15 @@ pub struct EvaluationPoint<F>(pub F);
 mod tests {
     use super::*;
     use arithmetic::Cycle;
-    use ragu_circuits::polynomials::R;
-    use ragu_pasta::{EqAffine, Pasta};
+    use ragu_circuits::{mesh::MeshBuilder, polynomials::R};
+    use ragu_pasta::{EqAffine, Fp, Pasta};
 
     #[test]
     fn test_accumulator_construction() {
         type TestRank = R<10>;
         let pasta = Pasta::default();
         let generators = pasta.host_generators();
-        let mesh = Mesh::<pasta_curves::Fp, TestRank>::new(3);
+        let mesh: Mesh<'_, Fp, R<10>> = MeshBuilder::<Fp, TestRank>::new().finalize().expect("finalize mesh");
 
         // Test base case construction
         let base = Accumulator::<EqAffine, TestRank>::base(&mesh, generators);
@@ -282,7 +306,7 @@ mod tests {
                 assert_ne!(acc.witness.b_blinding, pasta_curves::Fp::ZERO);
                 assert_ne!(acc.witness.p_blinding, pasta_curves::Fp::ZERO);
 
-                assert!(acc.deferred.is_empty());
+                assert!(acc.deferreds.is_empty());
 
                 assert!(acc.public_inputs.is_empty());
             }

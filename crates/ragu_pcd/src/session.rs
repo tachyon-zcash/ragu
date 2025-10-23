@@ -9,9 +9,7 @@
 //! themselves with. Some of these lower-level primitives are accumulators, dummy proofs, curve cycles, mesh
 //! management, etc.
 
-use crate::accumulator::Accumulator;
-use crate::engine::{CycleEngine, CycleState};
-use crate::prover::AccumulationProver;
+use crate::engine::CycleEngine;
 use arithmetic::Cycle;
 use ragu_circuits::Circuit;
 use ragu_circuits::polynomials::Rank;
@@ -24,48 +22,32 @@ use ragu_core::Error;
 /// the session can be finalized to produce a compressed proof and
 /// associated decision procedure to check the veracity of the
 /// accumulation.
-#[allow(dead_code)]
-pub struct RecursionSession<C, R>
+pub struct RecursionSession<'a, C, R>
 where
     C: Cycle,
     R: Rank,
-    // TODO: append 'CombinationRules' field (https://github.com/tachyon-zcash/ragu/issues/5)
 {
-    /// `CurveCycleEngine` is the orchestrator, a lower-level abstraction that handles
-    /// the underlying PCD curve cycling between the primary and paired provers
-    /// operating over the Pallas and Vesta curves.
-    engine: CycleEngine<C, R>,
-
-    /// Track the number of recursive steps.
-    depth: usize,
+    /// `CycleEngine` is the curve orchestrator. 
+    engine: CycleEngine<'a, C, R>,
 }
 
-impl<C, R> RecursionSession<C, R>
+impl<'a, C, R> RecursionSession<'a, C, R>
 where
-    C: Cycle,
+    C: Cycle + Default,
     R: Rank,
 {
     /// Create a new recursion session for the given cycle with meshes
     /// supporting up to 2^log2_circuits circuits.
-    pub fn new(log2_circuits: u32) -> Result<Self, Error> {
-        // Create accumulation provers.
-        let nested_prover: AccumulationProver<C::NestedCurve, R> =
-            AccumulationProver::new(log2_circuits);
-        let host_prover: AccumulationProver<C::HostCurve, R> =
-            AccumulationProver::new(log2_circuits);
-        let state = CycleState::Host {
-            nested: Accumulator::base(),
-            host: Accumulator::base(),
-        };
-        let depth = 0;
-
-        // Create curve cycling engine.
-        let engine = CycleEngine::from_provers(nested_prover, host_prover, state, depth);
-
-        Ok(Self { engine, depth })
+    pub fn new() -> Result<Self, Error> {
+        Ok(Self {
+            engine: CycleEngine::new(),
+        })
     }
 
-    /// Register a circuit that operates over the circuit field.
+    /// Register an application circuit that operates over the circuit field.
+    /// 
+    /// Circuits are registered before the first `step()` invocation, and 
+    /// circuit registration is closed once execution begins. 
     pub fn register_circuit<Circ>(&mut self, circuit: Circ) -> Result<(), Error>
     where
         Circ: Circuit<C::CircuitField> + Send + 'static,
@@ -75,10 +57,15 @@ where
         Ok(())
     }
 
-    /// PCD step with supplied witnesses.
-    pub fn step(&mut self, witnesses: &[Vec<C::CircuitField>]) -> Result<(), Error> {
+    /// Execute one PCD step with the provided witnesses.
+    /// 
+    /// Mesh finalization automatically happens on the first call.
+    pub fn step(&'a mut self, witnesses: &[Vec<C::CircuitField>]) -> Result<(), Error> {
+        if witnesses.is_empty() {
+            return Err(Error::InvalidWitness("witnesses cannot be empty".into()))
+        }
+
         self.engine.step(witnesses)?;
-        self.depth += 1;
 
         Ok(())
     }
@@ -86,31 +73,6 @@ where
     /// Perform the decision procedure to determine if accumulation is valid.
     pub fn decision(&self) -> bool {
         // TODO: Delegates call to engine to perform an decision procedure.
-        todo!()
-    }
-
-    /// Get the current recursion depth.
-    pub fn depth(&self) -> usize {
-        self.depth
-    }
-
-    /// Check if this session is at the base.
-    pub fn is_base(&self) -> bool {
-        self.depth == 0
-    }
-
-    /// Query statistics about the current session.
-    pub fn statistics(&self) {
-        todo!()
-    }
-
-    /// Checkpoint the current state.
-    pub fn checkpoint(&self) {
-        todo!()
-    }
-
-    /// Restore the checkpointed state.
-    pub fn restore(&self) {
         todo!()
     }
 }
