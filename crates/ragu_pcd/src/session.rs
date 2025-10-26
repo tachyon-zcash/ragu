@@ -54,12 +54,12 @@ where
     /// Execute one PCD step with the provided witnesses.
     ///
     /// Mesh finalization automatically happens on the first call.
-    pub fn step(&'a mut self, witnesses: &[Vec<C::CircuitField>]) -> Result<(), Error> {
-        if witnesses.is_empty() {
+    pub fn step(&'a mut self, application_witnesses: &Vec<C::CircuitField>) -> Result<(), Error> {
+        if application_witnesses.is_empty() {
             return Err(Error::InvalidWitness("witnesses cannot be empty".into()));
         }
 
-        self.engine.step(witnesses)?;
+        self.engine.step(application_witnesses)?;
 
         Ok(())
     }

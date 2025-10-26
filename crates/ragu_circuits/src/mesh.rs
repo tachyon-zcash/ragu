@@ -55,7 +55,7 @@ impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
         self.circuits.push(circuit);
 
         Ok(self)
-    }
+    }   
 
     /// Builds the final [`Mesh`].
     pub fn finalize(self) -> Result<Mesh<'params, F, R>> {
@@ -209,6 +209,16 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
         }
 
         result
+    }
+
+    /// Get a circuit by its registration index.
+    pub fn get_circuit(&self, id: usize) ->  Option<&dyn CircuitObject<F, R>> { 
+        self.circuits.get(id).map(|boxed| &**boxed)
+    }
+
+    /// Get the number of circuits in the mesh.
+    pub fn num_circuits(&self) -> usize {
+        self.circuits.len()
     }
 }
 

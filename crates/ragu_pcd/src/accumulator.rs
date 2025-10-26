@@ -1,4 +1,3 @@
-use crate::deferreds::DeferredWork;
 use arithmetic::CurveAffine;
 use arithmetic::FixedGenerators;
 use core::marker::PhantomData;
@@ -10,56 +9,44 @@ use ragu_circuits::{
 use ragu_core::Error;
 use rand::thread_rng;
 
-/// The accumulator represents the state of a PCD proof at any point in the recursion.
+/// Accumulator for one side of the cycle, parameterized by the two curve types.
 ///
 /// Conceptually, it models state machine semantics: it's seeded with a base case
 /// (initial uncompressed accumulator), engages in a recursive process that
-/// accumulates prior uncompressed states for efficiency, and eventually applies a
-/// decision procedure that compressed the accumulator for bandwidth efficiency.
+/// accumulates prior uncompressed states for efficiency, and can eventually apply a
+/// decision procedure that compresses the accumulator for bandwidth efficiency.
 ///
 /// At any time 'T', the accumulator's state is represented by an enum operating in either
 /// uncompressed or compressed mode. A higher level abstraction that digests the accumulator
 /// can then apply a state transition function to either perform another accumulation step
 /// (continuing the recursion) or a decision procedure (terminating the recursion process).
-#[derive(Clone, Debug)]
-pub enum Accumulator<C: CurveAffine, R: Rank> {
-    Uncompressed(Box<UncompressedAccumulator<C, R>>),
-    Compressed(CompressedAccumulator<C>),
+pub struct CycleAccumulator<HostCurve, NestedCurve, R>
+where
+    HostCurve: CurveAffine,
+    NestedCurve: CurveAffine,
+    R: Rank,
+{
+    pub accumulator: UncompressedAccumulator<HostCurve, R>,
+
+    /// Points we want to endoscale this round (native to the circuit).
+    pub endoscalars: Vec<NestedCurve>,
+
+    /// New non-native points produced this round (to be deferred).
+    pub deferreds: Vec<HostCurve>,
+
+    /// Staging polynomial commitments.
+    pub staging: Vec<HostCurve>,
 }
 
 /// Uncompressed accumulator with full witness and deferred work.
 #[derive(Clone, Debug)]
 pub struct UncompressedAccumulator<C: CurveAffine, R: Rank> {
-    /// Deferred R witness polynomial commitments from previous proof (to be endoscaled now).
-    pub deferred_r_commitments: Vec<C>,
-
-    /// New R's for this proof (to be deferred to next proof).
-    pub new_r_commitments: Vec<C>,
-    pub new_r_inner_commitment: Vec<C>,
-
-    /// Public inputs.
-    pub public_inputs: Vec<C::Scalar>,
-
-    /// Staging polynomial commitments used in this accumulator.
-    pub staging_commitments: Vec<StagingCommitment<C>>,
-
-    /// Deferred arithmetic.
-    pub deferreds: DeferredWork<C>,
-
     /// Split-accumulation polynomials (s, a, b, p).
     pub witness: AccumulatorWitness<C, R>,
 
     /// Instance data (commitments, challenges, evaluations).
     pub instance: AccumulatorInstance<C>,
     // TODO: add `AccumulatorState` for rerandomization tracking.
-}
-
-/// Staging commitment from a partial witness.
-#[derive(Clone, Debug)]
-pub struct StagingCommitment<C: CurveAffine> {
-    pub commitment: C,
-    pub stage_id: usize,
-    pub num_values: usize,
 }
 
 /// Compressed accumulator with succinct IPA openings.
@@ -90,36 +77,39 @@ pub(crate) struct AccumulatorWitness<C: CurveAffine, R: Rank> {
 /// Split-Accumulation public instance.
 #[derive(Clone, Debug)]
 pub struct AccumulatorInstance<C: CurveAffine> {
-    pub s_commitment: C,
-    pub x: ChallengePoint<C::Scalar>,
-    pub y: ChallengePoint<C::Scalar>,
-    pub a_commitment: C,
-    pub b_commitment: C,
+    // Structured polynomials
+    pub a: C,
+    pub b: C,
     pub c: C::Scalar,
-    pub p_commitment: C,
+
+    // Unstructured polynomial (batches evaluation checks)
+    pub p: C,
     pub u: ChallengePoint<C::Scalar>,
     pub v: EvaluationPoint<C::Scalar>,
+
+    // Mesh polynomial
+    pub s: C,
+    pub x: ChallengePoint<C::Scalar>,
+    pub y: ChallengePoint<C::Scalar>,
 }
 
-impl<C: CurveAffine, R: Rank> Accumulator<C, R> {
-    /// Check if this is an uncompressed accumulator.
-    pub fn is_uncompressed(&self) -> bool {
-        matches!(self, Accumulator::Uncompressed(_))
-    }
-
-    /// Check if this is a compressed accumulator.
-    pub fn is_compressed(&self) -> bool {
-        matches!(self, Accumulator::Compressed(_))
-    }
-
-    /// Create a dummy uncompressed accumulator with placeholder values for testing, and base case.
-    pub fn base(mesh: &Mesh<C::Scalar, R>, generators: &impl FixedGenerators<C>) -> Self {
-        Accumulator::Uncompressed(Box::new(UncompressedAccumulator::base(mesh, generators)))
-    }
-
-    /// Generate random uncompressed accumulator for testing.
-    pub fn random(mesh: &Mesh<C::Scalar, R>, generators: &impl FixedGenerators<C>) -> Self {
-        Accumulator::Uncompressed(Box::new(UncompressedAccumulator::random(mesh, generators)))
+impl<HostCurve, NestedCurve, R> CycleAccumulator<HostCurve, NestedCurve, R>
+where
+    HostCurve: CurveAffine,
+    NestedCurve: CurveAffine,
+    R: Rank,
+{
+    /// Create a base CycleAccumulator with empty deferred work
+    pub fn base(
+        mesh: &Mesh<HostCurve::Scalar, R>,
+        generators: &impl FixedGenerators<HostCurve>,
+    ) -> Self {
+        Self {
+            accumulator: UncompressedAccumulator::base(mesh, generators),
+            endoscalars: Vec::new(),
+            deferreds: Vec::new(),
+            staging: Vec::new(),
+        }
     }
 }
 
@@ -165,22 +155,16 @@ impl<C: CurveAffine, R: Rank> UncompressedAccumulator<C, R> {
                 p_blinding,
             },
             instance: AccumulatorInstance {
-                s_commitment,
-                x: ChallengePoint(x),
-                y: ChallengePoint(y),
-                a_commitment,
-                b_commitment,
+                a: a_commitment,
+                b: b_commitment,
                 c,
-                p_commitment,
+                p: p_commitment,
                 u: ChallengePoint(u),
                 v: EvaluationPoint(v),
+                s: s_commitment,
+                x: ChallengePoint(x),
+                y: ChallengePoint(y),
             },
-            deferreds: DeferredWork::empty(),
-            public_inputs: Vec::new(),
-            deferred_r_commitments: Vec::new(),
-            new_r_commitments: Vec::new(),
-            new_r_inner_commitment: Vec::new(),
-            staging_commitments: Vec::new(),
         }
     }
 
@@ -209,9 +193,6 @@ impl<C: CurveAffine, R: Rank> UncompressedAccumulator<C, R> {
         let b_commitment = b_poly.commit(generators, b_blinding);
         let p_commitment = p_poly.commit(generators, p_blinding);
 
-        // Deferreds.
-        let deferreds = DeferredWork::random(1);
-
         Self {
             witness: AccumulatorWitness {
                 s_poly,
@@ -224,22 +205,16 @@ impl<C: CurveAffine, R: Rank> UncompressedAccumulator<C, R> {
                 p_blinding,
             },
             instance: AccumulatorInstance {
-                s_commitment,
-                x: ChallengePoint(x),
-                y: ChallengePoint(y),
-                a_commitment,
-                b_commitment,
+                a: a_commitment,
+                b: b_commitment,
                 c,
-                p_commitment,
+                p: p_commitment,
                 u: ChallengePoint(u),
                 v: EvaluationPoint(v),
+                s: s_commitment,
+                x: ChallengePoint(x),
+                y: ChallengePoint(y),
             },
-            deferreds,
-            public_inputs: Vec::new(),
-            deferred_r_commitments: Vec::new(),
-            new_r_commitments: Vec::new(),
-            new_r_inner_commitment: Vec::new(),
-            staging_commitments: Vec::new(),
         }
     }
 
@@ -306,20 +281,14 @@ mod tests {
             .finalize()
             .expect("finalize mesh");
 
-        // Test base case construction
-        let base = Accumulator::<EqAffine, TestRank>::base(&mesh, generators);
-        match base {
-            Accumulator::Uncompressed(acc) => {
-                assert_ne!(acc.witness.s_blinding, pasta_curves::Fp::ZERO);
-                assert_ne!(acc.witness.a_blinding, pasta_curves::Fp::ZERO);
-                assert_ne!(acc.witness.b_blinding, pasta_curves::Fp::ZERO);
-                assert_ne!(acc.witness.p_blinding, pasta_curves::Fp::ZERO);
+        let base = CycleAccumulator::<EqAffine, EqAffine, TestRank>::base(&mesh, generators);
 
-                assert!(acc.deferreds.is_empty());
-
-                assert!(acc.public_inputs.is_empty());
-            }
-            _ => panic!("Expected uncompressed accumulator"),
-        }
+        assert_ne!(base.accumulator.witness.s_blinding, Fp::ZERO);
+        assert_ne!(base.accumulator.witness.a_blinding, Fp::ZERO);
+        assert_ne!(base.accumulator.witness.b_blinding, Fp::ZERO);
+        assert_ne!(base.accumulator.witness.p_blinding, Fp::ZERO);
+        assert!(base.endoscalars.is_empty());
+        assert!(base.deferreds.is_empty());
+        assert!(base.staging.is_empty());
     }
 }
