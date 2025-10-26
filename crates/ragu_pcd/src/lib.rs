@@ -39,8 +39,7 @@
 extern crate alloc;
 
 pub mod accumulator;
-pub mod circuits;
 pub mod deferreds;
 pub mod engine;
-pub mod prover;
 pub mod session;
+pub mod staging;

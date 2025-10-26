@@ -1,11 +1,19 @@
 //! Cycle engine orchestration layer for simultaneous CycleFold-style accumulation
 //! that directly manages meshes, generators, and the curve states.
+//!
+//! The Pallas and Vesta curves are tightly-cuppled: steps happen at the exact
+//! same time on both curves, they share the same transcript over Fp, and only
+//! perform native arithmetic.
 
 use arithmetic::Cycle;
-use ragu_circuits::{mesh::{Mesh, MeshBuilder}, polynomials::Rank, Circuit};
+use ragu_circuits::{
+    Circuit,
+    mesh::{Mesh, MeshBuilder},
+    polynomials::Rank,
+};
 use ragu_core::Error;
 
-use crate::{accumulator::UncompressedAccumulator};
+use crate::accumulator::UncompressedAccumulator;
 
 /// CycleFold-style simultaneous state.
 pub struct CycleState<C, R>
@@ -13,19 +21,15 @@ where
     C: Cycle,
     R: Rank,
 {
-    /// Pallas accumulator (Fq, Pallas  over Vesta curve).
     pub pallas_accumulator: UncompressedAccumulator<C::NestedCurve, R>,
-
-    /// Vesta acccumulator (Fq over Pallas curve).
     pub vesta_accumulator: UncompressedAccumulator<C::HostCurve, R>,
-
-    // TODO: Single unified transcript over Fp.
+    // TODO: Append single unified transcript over Fp.
 }
 
 enum EngineState<'a, C: Cycle, R: Rank> {
     Building {
-        pallas_builder: MeshBuilder<'a, C::ScalarField, R>,  
-        vesta_builder: MeshBuilder<'a, C::CircuitField, R>, 
+        pallas_builder: MeshBuilder<'a, C::ScalarField, R>,
+        vesta_builder: MeshBuilder<'a, C::CircuitField, R>,
     },
     Finalized {
         /// Meshes for both curves.
@@ -43,10 +47,10 @@ where
     C: Cycle,
     R: Rank,
 {
-    /// Cycle that provides generators. 
+    /// Cycle that provides generators.
     cycle: C,
 
-    /// Engine state for meshes and accumulators. 
+    /// Engine state for meshes and accumulators.
     engine_state: EngineState<'a, C, R>,
 
     /// Depth of the recursion in the session.
@@ -55,13 +59,12 @@ where
 
 impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
     /// Initialize a new curve cycle engine.
-    pub fn new(
-    ) -> Self {
+    pub fn new() -> Self {
         Self {
             cycle: C::default(),
-            engine_state: EngineState::Building { 
-                pallas_builder: MeshBuilder::<C::ScalarField, R>::new(), 
-                vesta_builder: MeshBuilder::<C::CircuitField, R>::new() 
+            engine_state: EngineState::Building {
+                pallas_builder: MeshBuilder::<C::ScalarField, R>::new(),
+                vesta_builder: MeshBuilder::<C::CircuitField, R>::new(),
             },
             depth: 0,
         }
@@ -78,26 +81,26 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         };
 
         self.engine_state = match std::mem::replace(&mut self.engine_state, dummy) {
-            EngineState::Building { pallas_builder, vesta_builder } => {
-                EngineState::Building {
-                    pallas_builder,
-                    vesta_builder: vesta_builder.register_circuit(circuit)?,
-                }
+            EngineState::Building {
+                pallas_builder,
+                vesta_builder,
+            } => EngineState::Building {
+                pallas_builder,
+                vesta_builder: vesta_builder.register_circuit(circuit)?,
+            },
+            EngineState::Finalized { .. } => {
+                return Err(Error::InvalidWitness(
+                    "cannot register circuits after finalization".into(),
+                ));
             }
-            EngineState::Finalized { .. } => return Err(Error::InvalidWitness(
-                "cannot register circuits after finalization".into()
-            )),
         };
 
         Ok(())
     }
 
-    /// Execute one PCD step, alternating between curves.
-    ///
-    /// Each step proves execution of all application circuits in the mesh
-    /// and recursively verifies the other curve's accumulator.
+    /// Execute one PCD step on both curves simultaneously.
     pub fn step(&'a mut self, witnesses: &[Vec<C::CircuitField>]) -> Result<(), Error> {
-        // Finalize the mesh on first step invocation. 
+        // Finalize the mesh on first step invocation.
         if matches!(self.engine_state, EngineState::Building { .. }) {
             self.finalize_internal()?;
         }
@@ -108,17 +111,20 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
     }
 
     /// Finalize the mesh builders and initialize base accumulators.
-    /// 
+    ///
     /// This transitions the engine from the 'Building' state to the 'Finalized'
-    /// state, creating the finalized mesh structures and seeding the accumulators. 
+    /// state, creating the finalized mesh structures and seeding the accumulators.
     pub fn finalize_internal(&'a mut self) -> Result<(), Error> {
         let dummy = EngineState::Building {
-            pallas_builder: MeshBuilder::<C::ScalarField, R>::new(), 
+            pallas_builder: MeshBuilder::<C::ScalarField, R>::new(),
             vesta_builder: MeshBuilder::<C::CircuitField, R>::new(),
         };
 
         match std::mem::replace(&mut self.engine_state, dummy) {
-            EngineState::Building { pallas_builder, vesta_builder } => {
+            EngineState::Building {
+                pallas_builder,
+                vesta_builder,
+            } => {
                 // Finalize the mesh builders.
                 let pallas_mesh = pallas_builder.finalize().expect("pallas mesh");
                 let vesta_mesh = vesta_builder.finalize().expect("vesta mesh");
@@ -127,8 +133,9 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
                 let nested_generators = self.cycle.nested_generators();
                 let host_generators = self.cycle.host_generators();
 
-                // Initialize base accumulators for both curves in the cycle. 
-                let pallas_accumulator = UncompressedAccumulator::base(&pallas_mesh, nested_generators);
+                // Initialize base accumulators for both curves in the cycle.
+                let pallas_accumulator =
+                    UncompressedAccumulator::base(&pallas_mesh, nested_generators);
                 let vesta_accumulator = UncompressedAccumulator::base(&vesta_mesh, host_generators);
 
                 // Intialize cycle state.
@@ -138,13 +145,25 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
                 };
 
                 // Transition to a finalized state.
-                self.engine_state = EngineState::Finalized { pallas_mesh, vesta_mesh, state };
+                self.engine_state = EngineState::Finalized {
+                    pallas_mesh,
+                    vesta_mesh,
+                    state,
+                };
 
                 Ok(())
             }
-            EngineState::Finalized { pallas_mesh, vesta_mesh, state } => {
+            EngineState::Finalized {
+                pallas_mesh,
+                vesta_mesh,
+                state,
+            } => {
                 // Already finalized, restore state and return error.
-                self.engine_state = EngineState::Finalized { pallas_mesh, vesta_mesh, state };
+                self.engine_state = EngineState::Finalized {
+                    pallas_mesh,
+                    vesta_mesh,
+                    state,
+                };
 
                 Err(Error::MeshAlreadyFinalized)
             }

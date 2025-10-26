@@ -1,9 +1,8 @@
 //! High-Level: User-facing API
 //!
-//! The API we're exposing should ideally remain agnostic with respect to the underlying curve
-//! choice, allowing the user to choose either Pallas or Vesta as the application curve.
+//! The API we're exposing should ideally remain agnostic with respect to the underlying curve cycle.
 //! Conceptually, the 'RecursionSession' serves as the main user-facing entry point (builder interface)
-//! encapsulating the `CurveCycleEngine` that drives the accumulation logic under the hood.
+//! encapsulating the underlying `CycleEngine` that drives the recursion under the hood.
 //!
 //! This design abstracts away the underlying complex machinery, which users shouldn't need to concern
 //! themselves with. Some of these lower-level primitives are accumulators, dummy proofs, curve cycles, mesh
@@ -17,17 +16,13 @@ use ragu_core::Error;
 
 /// A stateful session for building recursive proofs in a PCD chain.
 ///
-/// The session maintains an accumulator for chaining proofs, staying
-/// in uncompressed form for efficient composition. When finished,
-/// the session can be finalized to produce a compressed proof and
-/// associated decision procedure to check the veracity of the
-/// accumulation.
+/// The session maintains an engine that orchestrates the curve cycle.
 pub struct RecursionSession<'a, C, R>
 where
     C: Cycle,
     R: Rank,
 {
-    /// `CycleEngine` is the curve orchestrator. 
+    /// `CycleEngine` is the curve orchestrator.
     engine: CycleEngine<'a, C, R>,
 }
 
@@ -36,8 +31,7 @@ where
     C: Cycle + Default,
     R: Rank,
 {
-    /// Create a new recursion session for the given cycle with meshes
-    /// supporting up to 2^log2_circuits circuits.
+    /// Create a new recursion session for the given cycle with meshes.
     pub fn new() -> Result<Self, Error> {
         Ok(Self {
             engine: CycleEngine::new(),
@@ -45,9 +39,9 @@ where
     }
 
     /// Register an application circuit that operates over the circuit field.
-    /// 
-    /// Circuits are registered before the first `step()` invocation, and 
-    /// circuit registration is closed once execution begins. 
+    ///
+    /// Circuits are registered before the first `step()` invocation, and
+    /// circuit registration is closed once execution begins.
     pub fn register_circuit<Circ>(&mut self, circuit: Circ) -> Result<(), Error>
     where
         Circ: Circuit<C::CircuitField> + Send + 'static,
@@ -58,11 +52,11 @@ where
     }
 
     /// Execute one PCD step with the provided witnesses.
-    /// 
+    ///
     /// Mesh finalization automatically happens on the first call.
     pub fn step(&'a mut self, witnesses: &[Vec<C::CircuitField>]) -> Result<(), Error> {
         if witnesses.is_empty() {
-            return Err(Error::InvalidWitness("witnesses cannot be empty".into()))
+            return Err(Error::InvalidWitness("witnesses cannot be empty".into()));
         }
 
         self.engine.step(witnesses)?;
@@ -72,7 +66,6 @@ where
 
     /// Perform the decision procedure to determine if accumulation is valid.
     pub fn decision(&self) -> bool {
-        // TODO: Delegates call to engine to perform an decision procedure.
         todo!()
     }
 }

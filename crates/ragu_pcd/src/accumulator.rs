@@ -30,8 +30,12 @@ pub enum Accumulator<C: CurveAffine, R: Rank> {
 /// Uncompressed accumulator with full witness and deferred work.
 #[derive(Clone, Debug)]
 pub struct UncompressedAccumulator<C: CurveAffine, R: Rank> {
-    /// R polynomial commitments – witness commitments from proofs being verified. 
-    pub r_commitments: Vec<C>,
+    /// Deferred R witness polynomial commitments from previous proof (to be endoscaled now).
+    pub deferred_r_commitments: Vec<C>,
+
+    /// New R's for this proof (to be deferred to next proof).
+    pub new_r_commitments: Vec<C>,
+    pub new_r_inner_commitment: Vec<C>,
 
     /// Public inputs.
     pub public_inputs: Vec<C::Scalar>,
@@ -47,7 +51,6 @@ pub struct UncompressedAccumulator<C: CurveAffine, R: Rank> {
 
     /// Instance data (commitments, challenges, evaluations).
     pub instance: AccumulatorInstance<C>,
-
     // TODO: add `AccumulatorState` for rerandomization tracking.
 }
 
@@ -174,7 +177,9 @@ impl<C: CurveAffine, R: Rank> UncompressedAccumulator<C, R> {
             },
             deferreds: DeferredWork::empty(),
             public_inputs: Vec::new(),
-            r_commitments: Vec::new(),
+            deferred_r_commitments: Vec::new(),
+            new_r_commitments: Vec::new(),
+            new_r_inner_commitment: Vec::new(),
             staging_commitments: Vec::new(),
         }
     }
@@ -231,7 +236,9 @@ impl<C: CurveAffine, R: Rank> UncompressedAccumulator<C, R> {
             },
             deferreds,
             public_inputs: Vec::new(),
-            r_commitments: Vec::new(),
+            deferred_r_commitments: Vec::new(),
+            new_r_commitments: Vec::new(),
+            new_r_inner_commitment: Vec::new(),
             staging_commitments: Vec::new(),
         }
     }
@@ -295,7 +302,9 @@ mod tests {
         type TestRank = R<10>;
         let pasta = Pasta::default();
         let generators = pasta.host_generators();
-        let mesh: Mesh<'_, Fp, R<10>> = MeshBuilder::<Fp, TestRank>::new().finalize().expect("finalize mesh");
+        let mesh: Mesh<'_, Fp, R<10>> = MeshBuilder::<Fp, TestRank>::new()
+            .finalize()
+            .expect("finalize mesh");
 
         // Test base case construction
         let base = Accumulator::<EqAffine, TestRank>::base(&mesh, generators);

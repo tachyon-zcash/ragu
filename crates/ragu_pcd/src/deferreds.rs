@@ -132,8 +132,8 @@ impl<C: CurveAffine> DeferredWork<C> {
                 let poly_coeffs = vec![C::Scalar::random(&mut thread_rng())];
                 let point = C::Scalar::random(&mut thread_rng());
 
-                // NOTE: This implementation is not constant-time and is therefore susceptible to timing attacks.
-                // In production, replace it with a constant-time, optimized Horner’s method.
+                // NOTE: This implementation is not constant-time and is (probably) susceptible to timing attacks.
+                // In production, we should replace it with a constant-time, optimized Horner’s method.
                 let evaluation = poly_coeffs
                     .iter()
                     .enumerate()

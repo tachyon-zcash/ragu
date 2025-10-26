@@ -55,7 +55,6 @@ pub enum Error {
     /// Finalize the mesh when it has already been finalized.
     #[error("mesh has already been finalized")]
     MeshAlreadyFinalized,
-
 }
 
 #[test]
