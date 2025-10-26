@@ -1,4 +1,4 @@
 pub mod common;
-pub mod fp;
-pub mod fq;
+pub mod pallas;
 pub mod utility;
+pub mod vesta;

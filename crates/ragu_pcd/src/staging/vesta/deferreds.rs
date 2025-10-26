@@ -16,9 +16,9 @@ pub type FpStageingCircuit = StagingCircuit<EpAffine>;
 
 #[cfg(test)]
 mod tests {
-    use crate::staging::fp::deferreds::OuterStage;
-    use crate::staging::fp::deferreds::StagingCircuit;
-    use crate::staging::fp::deferreds::{
+    use crate::staging::vesta::deferreds::OuterStage;
+    use crate::staging::vesta::deferreds::StagingCircuit;
+    use crate::staging::vesta::deferreds::{
         FpInnerStage, FpOuterStage, FpStageingCircuit, InnerStage,
     };
     use ff::Field;
