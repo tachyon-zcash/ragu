@@ -39,7 +39,10 @@
 extern crate alloc;
 
 pub mod accumulator;
-pub mod deferreds;
+pub mod endoscalar;
 pub mod engine;
+pub mod nested_encoding;
+pub mod pallas;
 pub mod session;
-pub mod staging;
+pub mod utilities;
+pub mod vesta;

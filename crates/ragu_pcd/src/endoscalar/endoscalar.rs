@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 use arithmetic::{CurveAffine, Uendo};
 use ff::Field;
 use ragu_circuits::{
@@ -15,8 +16,6 @@ use ragu_primitives::{
     io::Write,
     vec::{ConstLen, FixedVec},
 };
-
-use alloc::vec::Vec;
 
 pub(crate) struct EndoscalarStage;
 
@@ -206,7 +205,7 @@ mod tests {
     use ragu_pasta::{EpAffine, Fp, Fq};
     use rand::{Rng, thread_rng};
 
-    use crate::staging::common::endoscalar::{Endoscaling, EndoscalingInstance};
+    use crate::endoscalar::endoscalar::{Endoscaling, EndoscalingInstance};
 
     use super::{EndoscalarStage, EndoscalingWitness, Read, SlotStage};
     type R = polynomials::R<13>;

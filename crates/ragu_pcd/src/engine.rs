@@ -13,6 +13,7 @@ use ragu_circuits::{
     polynomials::Rank,
 };
 use ragu_core::Error;
+use ragu_core::Result;
 
 /// CycleFold-style simultaneous state.
 pub struct CycleState<C, R>
@@ -70,7 +71,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
     }
 
     /// Register an application circuit on the host prover's mesh.
-    pub fn register_circuit<Circ>(&mut self, circuit: Circ) -> Result<(), Error>
+    pub fn register_circuit<Circ>(&mut self, circuit: Circ) -> Result<()>
     where
         Circ: Circuit<C::CircuitField> + 'static,
     {
@@ -117,7 +118,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         &mut self,
         // Application circuit witnesses.
         application_witnesses: &Vec<C::CircuitField>,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         // Finalize the mesh on first step invocation.
         if matches!(self.engine_state, EngineState::Building { .. }) {
             self.finalize_internal()?;
@@ -138,8 +139,13 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
 
             // Execute both sides of the curve cycle simulatenously.
             // TODO: add rayon::join() for parallel processing.
-            Self::step_pallas_side(pallas_mesh, &[], &mut state.pallas_accumulator, &self.cycle)?;
-            Self::step_vesta_side(
+            Self::accumulation_pallas(
+                pallas_mesh,
+                &[],
+                &mut state.pallas_accumulator,
+                &self.cycle,
+            )?;
+            Self::accumulation_vesta(
                 vesta_mesh,
                 application_witnesses,
                 &mut state.vesta_accumulator,
@@ -150,37 +156,11 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         Ok(())
     }
 
-    /// Executes the Pallas-side accumulation step.
-    ///
-    /// This is the Fq round — computations are done over Fq, and commitments
-    /// are made on the Pallas host curve.
-    pub fn step_pallas_side(
-        mesh: &Mesh<'_, C::ScalarField, R>,
-        witnesses: &[C::ScalarField],
-        accumulator: &mut CycleAccumulator<C::NestedCurve, C::HostCurve, R>,
-        cycle: &C,
-    ) -> Result<(), Error> {
-        todo!()
-    }
-
-    /// Executes the Vesta-side accumulation step.
-    ///
-    /// This is an Fp round: computations occur over Fp, and commitments
-    /// are made on the Vesta host curve.
-    pub fn step_vesta_side(
-        mesh: &Mesh<'_, C::CircuitField, R>,
-        witnesses: &[C::CircuitField],
-        accumulator: &mut CycleAccumulator<<C as Cycle>::HostCurve, <C as Cycle>::NestedCurve, R>,
-        cycle: &C,
-    ) -> Result<(), Error> {
-        todo!()
-    }
-
     /// Finalize the mesh builders and initialize base accumulators.
     ///
     /// This transitions the engine from the 'Building' state to the 'Finalized'
     /// state, creating the finalized mesh structures and seeding the accumulators.
-    pub fn finalize_internal(&mut self) -> Result<(), Error> {
+    pub fn finalize_internal(&mut self) -> Result<()> {
         let dummy = EngineState::Building {
             pallas_builder: MeshBuilder::<C::ScalarField, R>::new(),
             vesta_builder: MeshBuilder::<C::CircuitField, R>::new(),

@@ -9,7 +9,7 @@
 use ragu_core::Result;
 use ragu_pasta::{EpAffine, EqAffine};
 
-use crate::staging::common::deferreds::{InnerStage, OuterStage, StagingCircuit};
+use crate::nested_encoding::b_stage::{InnerStage, OuterStage, StagingCircuit};
 
 pub type FqInnerStage<const NUM: usize> = InnerStage<EpAffine, NUM>;
 pub type FqOuterStage = OuterStage<EqAffine>;

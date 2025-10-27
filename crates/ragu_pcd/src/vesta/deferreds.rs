@@ -8,7 +8,7 @@
 
 use ragu_pasta::{EpAffine, EqAffine};
 
-use crate::staging::common::deferreds::{InnerStage, OuterStage, StagingCircuit};
+use crate::nested_encoding::b_stage::{InnerStage, OuterStage, StagingCircuit};
 
 pub type FpInnerStage<const NUM: usize> = InnerStage<EqAffine, NUM>;
 pub type FpOuterStage = OuterStage<EpAffine>;
@@ -16,11 +16,6 @@ pub type FpStageingCircuit = StagingCircuit<EpAffine>;
 
 #[cfg(test)]
 mod tests {
-    use crate::staging::vesta::deferreds::OuterStage;
-    use crate::staging::vesta::deferreds::StagingCircuit;
-    use crate::staging::vesta::deferreds::{
-        FpInnerStage, FpOuterStage, FpStageingCircuit, InnerStage,
-    };
     use ff::Field;
     use pasta_curves::group::Curve;
     use pasta_curves::group::prime::PrimeCurveAffine;
@@ -30,10 +25,11 @@ mod tests {
         staging::{StageExt, Staged},
     };
     use ragu_core::Result;
-    use ragu_pasta::EpAffine;
     use ragu_pasta::Fq;
     use ragu_pasta::{EqAffine, Fp, Pasta};
     use rand::thread_rng;
+
+    use crate::vesta::deferreds::{FpInnerStage, FpOuterStage, FpStageingCircuit};
 
     const NUM: usize = 8;
     type R = ragu_circuits::polynomials::R<10>;

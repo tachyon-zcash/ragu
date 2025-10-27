@@ -270,7 +270,7 @@ mod tests {
     use super::*;
     use arithmetic::Cycle;
     use ragu_circuits::{mesh::MeshBuilder, polynomials::R};
-    use ragu_pasta::{EqAffine, Fp, Pasta};
+    use ragu_pasta::{EpAffine, EqAffine, Fp, Pasta};
 
     #[test]
     fn test_accumulator_construction() {
@@ -281,7 +281,7 @@ mod tests {
             .finalize()
             .expect("finalize mesh");
 
-        let base = CycleAccumulator::<EqAffine, EqAffine, TestRank>::base(&mesh, generators);
+        let base = CycleAccumulator::<EqAffine, EpAffine, TestRank>::base(&mesh, generators);
 
         assert_ne!(base.accumulator.witness.s_blinding, Fp::ZERO);
         assert_ne!(base.accumulator.witness.a_blinding, Fp::ZERO);

@@ -1,3 +1,5 @@
+//! B staging polynomial.
+//!
 //! Generic deferred staging that works for both Fp and Fq sides.
 //!
 //! It's constructed to be generic over the staged curve and circuit field,
@@ -31,17 +33,17 @@ pub struct InnerStage<NestedCurve, const NUM: usize> {
     _marker: core::marker::PhantomData<NestedCurve>,
 }
 
-impl<NestedCurve, R, const NUM: usize> Stage<<NestedCurve as CurveAffine>::Base, R>
+impl<NestedCurve, R, const NUM: usize> Stage<<NestedCurve>::Base, R>
     for InnerStage<NestedCurve, NUM>
 where
     NestedCurve: CurveAffine,
-    <NestedCurve as CurveAffine>::Base: PrimeField,
+    <NestedCurve>::Base: PrimeField,
     R: Rank,
 {
     type Parent = ();
     type Witness<'source> = &'source [NestedCurve; NUM];
 
-    type OutputKind = Kind![<NestedCurve as CurveAffine>::Base;
+    type OutputKind = Kind![<NestedCurve>::Base;
               FixedVec<Point<'_, _, NestedCurve>, ConstLen<NUM>>];
 
     fn values() -> usize {
@@ -51,9 +53,9 @@ where
     fn witness<'dr, 'source: 'dr, D>(
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<<Self::OutputKind as GadgetKind<<NestedCurve as CurveAffine>::Base>>::Rebind<'dr, D>>
+    ) -> Result<<Self::OutputKind as GadgetKind<<NestedCurve>::Base>>::Rebind<'dr, D>>
     where
-        D: Driver<'dr, F = <NestedCurve as CurveAffine>::Base>,
+        D: Driver<'dr, F = <NestedCurve>::Base>,
         Self: 'dr,
     {
         let mut v = Vec::with_capacity(NUM);
@@ -65,18 +67,19 @@ where
 }
 
 /// Outer stage: allocates the host curve commitment using its native base field.
-pub struct OuterStage<HC: CurveAffine>(PhantomData<HC>);
+pub struct OuterStage<HostCurve>(PhantomData<HostCurve>);
 
-impl<HC, R> Stage<HC::Base, R> for OuterStage<HC>
+impl<HostCurve, R> Stage<HostCurve::Base, R> for OuterStage<HostCurve>
 where
-    HC: CurveAffine,
+    HostCurve: CurveAffine,
+    <HostCurve>::Base: PrimeField,
     R: Rank,
 {
     type Parent = ();
 
-    type Witness<'source> = HC;
+    type Witness<'source> = HostCurve;
 
-    type OutputKind = Kind![HC::Base; Point<'_, _, HC>];
+    type OutputKind = Kind![HostCurve::Base; Point<'_, _, HostCurve>];
 
     fn values() -> usize {
         2
@@ -85,9 +88,9 @@ where
     fn witness<'dr, 'source: 'dr, D>(
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<<Self::OutputKind as GadgetKind<HC::Base>>::Rebind<'dr, D>>
+    ) -> Result<<Self::OutputKind as GadgetKind<HostCurve::Base>>::Rebind<'dr, D>>
     where
-        D: Driver<'dr, F = HC::Base>,
+        D: Driver<'dr, F = HostCurve::Base>,
         Self: 'dr,
     {
         Point::alloc(dr, witness)
@@ -95,42 +98,42 @@ where
 }
 
 #[derive(Clone)]
-pub struct StagingCircuit<HC>(core::marker::PhantomData<HC>);
+pub struct StagingCircuit<HostCurve>(core::marker::PhantomData<HostCurve>);
 
-impl<HC> StagingCircuit<HC> {
+impl<HostCurve> StagingCircuit<HostCurve> {
     pub fn new() -> Self {
         Self(core::marker::PhantomData)
     }
 }
 
-impl<HC, R> StagedCircuit<HC::Base, R> for StagingCircuit<HC>
+impl<HostCurve, R> StagedCircuit<HostCurve::Base, R> for StagingCircuit<HostCurve>
 where
-    HC: arithmetic::CurveAffine,
+    HostCurve: arithmetic::CurveAffine,
     R: Rank,
 {
-    type Final = OuterStage<HC>;
+    type Final = OuterStage<HostCurve>;
     type Instance<'src> = ();
-    type Witness<'w> = HC;
-    type Output = Kind![HC::Base; Point<'_, _, HC>];
-    type Aux<'source> = HC;
+    type Witness<'w> = HostCurve;
+    type Output = Kind![HostCurve::Base; Point<'_, _, HostCurve>];
+    type Aux<'source> = HostCurve;
 
-    fn instance<'dr, 'src: 'dr, D: Driver<'dr, F = HC::Base>>(
+    fn instance<'dr, 'src: 'dr, D: Driver<'dr, F = HostCurve::Base>>(
         &self,
         _dr: &mut D,
         _instance: DriverValue<D, Self::Instance<'src>>,
-    ) -> Result<<Self::Output as GadgetKind<HC::Base>>::Rebind<'dr, D>> {
+    ) -> Result<<Self::Output as GadgetKind<HostCurve::Base>>::Rebind<'dr, D>> {
         todo!()
     }
 
-    fn witness<'a, 'dr, 'w: 'dr, D: Driver<'dr, F = HC::Base>>(
+    fn witness<'a, 'dr, 'w: 'dr, D: Driver<'dr, F = HostCurve::Base>>(
         &self,
         dr: StageBuilder<'a, 'dr, D, R, (), Self::Final>,
         witness: DriverValue<D, Self::Witness<'w>>,
     ) -> Result<(
-        <Self::Output as GadgetKind<HC::Base>>::Rebind<'dr, D>,
+        <Self::Output as GadgetKind<HostCurve::Base>>::Rebind<'dr, D>,
         DriverValue<D, Self::Aux<'w>>,
     )> {
-        let (ep_point_gadget, dr) = dr.add_stage::<OuterStage<HC>>(witness)?;
+        let (ep_point_gadget, dr) = dr.add_stage::<OuterStage<HostCurve>>(witness)?;
         let dr = dr.finish();
         let ep_value = ep_point_gadget.value();
 

@@ -1,17 +1,12 @@
 use ff::Field;
-use ragu_circuits::mesh::Mesh;
-use ragu_circuits::{Circuit, mesh::MeshBuilder, polynomials::R, staging::Staged};
-use ragu_core::gadgets::{GadgetKind, Kind};
-use ragu_core::maybe::Maybe;
-use ragu_core::{
-    Result,
-    drivers::{Driver, DriverValue},
-};
+use ragu_circuits::polynomials::R;
+use ragu_core::Result;
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::engine::CycleEngine;
-use ragu_pcd::staging::utility::dummy_circuits::SquaringCircuit;
-use ragu_primitives::Element;
+use ragu_pcd::utilities::dummy_circuits::SquaringCircuit;
 use rand::thread_rng;
+
+type TestRank = R<8>;
 
 fn main() -> Result<()> {
     // TODO: incrementally register staged circuits.
