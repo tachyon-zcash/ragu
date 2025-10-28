@@ -72,14 +72,6 @@ where
 ///
 /// * Fp round: caller parameterizes using `Curve = C::NestedCurve` (Pallas)
 /// * Fq round: caller parameterizes using `Curve = C::HostCurve` (Vesta)
-///
-/// /// Allocates a commitment point on an arbitrary `Curve`, with the circuit
-/// field = `Curve::Base`.
-///
-/// In the Fp round, set `Curve = C::NestedCurve` (Pallas), so the gadget is a
-/// Pallas point allocated over Fp. In the Fq round, set `Curve = C::NestedCurve`
-/// (Vesta), allocated over Fq.
-
 pub struct OuterStageB<Curve>(PhantomData<Curve>);
 
 impl<Curve, R> Stage<Curve::Base, R> for OuterStageB<Curve>
@@ -110,7 +102,7 @@ where
     }
 }
 
-/// /// Staging circuit that witnesses a commitment point on `Curve` inside a circuit
+/// Staging circuit that witnesses a commitment point on `Curve` inside a circuit
 /// over `Curve::Base`. Typically `Curve = C::NestedCurve` in the current round.
 #[derive(Clone)]
 pub struct StagingCircuitB<Curve>(core::marker::PhantomData<Curve>);
