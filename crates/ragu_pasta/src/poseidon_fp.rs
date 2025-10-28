@@ -1,5 +1,5 @@
 /// Poseidon permutation parameters for Pallas's base field
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct PoseidonFp;
 
 // Generated using https://github.com/daira/pasta-hadeshash

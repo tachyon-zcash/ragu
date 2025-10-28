@@ -1,5 +1,5 @@
 /// Poseidon permutation parameters for Vesta's base field
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct PoseidonFq;
 
 // Generated using https://github.com/daira/pasta-hadeshash
