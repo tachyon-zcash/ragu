@@ -9,11 +9,14 @@
 use ragu_core::Result;
 use ragu_pasta::{EpAffine, EqAffine};
 
-use crate::nested_encoding::b_stage::{InnerStage, OuterStage, StagingCircuit};
+use crate::nested_encoding::{
+    b_stage::{InnerStageB, OuterStageB, StagingCircuitB},
+    d_stage::StagingCircuitD,
+};
 
-pub type FqInnerStage<const NUM: usize> = InnerStage<EpAffine, NUM>;
-pub type FqOuterStage = OuterStage<EqAffine>;
-pub type FqStageingCircuit = StagingCircuit<EqAffine>;
+pub type FqInnerStage<const NUM: usize> = InnerStageB<EpAffine, NUM>;
+pub type FqOuterStage = OuterStageB<EqAffine>;
+pub type FqStageingCircuit = StagingCircuitB<EqAffine>;
 
 #[test]
 fn test_nested_staging_polynomial() -> Result<()> {

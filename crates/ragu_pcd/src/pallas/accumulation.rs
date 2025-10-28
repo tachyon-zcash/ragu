@@ -13,7 +13,8 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
     pub fn accumulation_pallas(
         mesh: &Mesh<'_, C::ScalarField, R>,
         witnesses: &[C::ScalarField],
-        accumulator: &mut CycleAccumulator<C::NestedCurve, C::HostCurve, R>,
+        acc1: &mut CycleAccumulator<C::NestedCurve, C::HostCurve, R>,
+        acc2: &CycleAccumulator<C::HostCurve, C::NestedCurve, R>,
         cycle: &C,
     ) -> Result<()> {
         todo!()

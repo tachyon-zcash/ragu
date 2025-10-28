@@ -1,12 +1,8 @@
 use crate::accumulator::CycleAccumulator;
-use crate::nested_encoding::d_stage::{DStage, DStagingCircuit};
+use crate::engine::CycleEngine;
+use crate::nested_encoding::b_stage::{InnerStageB, StagingCircuitB};
+use crate::nested_encoding::d_stage::StagingCircuitD;
 use crate::utilities::dummy_circuits::Circuits;
-use crate::{
-    engine::CycleEngine,
-    nested_encoding::b_stage::{
-        InnerStage as InnerStageB, OuterStage as OuterStageB, StagingCircuit as StagingCircuitB,
-    },
-};
 use arithmetic::Cycle;
 use ff::Field;
 use ragu_circuits::CircuitExt;
@@ -27,56 +23,60 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
     pub fn accumulation_vesta(
         mesh: &Mesh<'_, C::CircuitField, R>,
         witnesses: &[C::CircuitField],
-        accumulator: &mut CycleAccumulator<<C as Cycle>::HostCurve, <C as Cycle>::NestedCurve, R>,
+        acc1: &mut CycleAccumulator<C::HostCurve, C::NestedCurve, R>,
+        acc2: &CycleAccumulator<C::NestedCurve, C::HostCurve, R>,
         cycle: &C,
     ) -> Result<()> {
-        // *Temporary*: use dummy circuits for generating witneses polynomials.
-        // These correspond to the same circuits registered in the mesh.
+        // Dummy circuits used in the mesh.
         const N: usize = 4;
         let circuits = Circuits::new();
+        let circuit_list = [&circuits.s3, &circuits.s4, &circuits.s10, &circuits.s19];
 
-        // 1. Process the user's application circuits and compute the witness polynomials.
-        let mut r_commitments = Vec::new();
+        ////////////////// 1. Process the application circuits //////////////////
 
-        for (circuit_id, &witness) in witnesses.iter().enumerate() {
-            let circuit = match circuit_id {
-                0 => &circuits.s3,
-                1 => &circuits.s4,
-                2 => &circuits.s10,
-                3 => &circuits.s19,
-                _ => return Err(Error::CircuitBoundExceeded(circuit_id)),
-            };
+        let mut a_polys = Vec::with_capacity(N);
+        let mut ky = Vec::with_capacity(N);
 
-            let (rx_poly, _instance) = circuit.rx::<R>(witness)?;
-
-            let r_commitment = rx_poly.commit(
+        // The witness polynomials r(X) are over Fp, and produce commitments to Vesta points.
+        for (&witness, circuit) in witnesses.iter().zip(circuit_list.iter()) {
+            let (rx_poly, instance) = circuit.rx::<R>(witness)?;
+            a_polys.push(rx_poly.commit(
                 cycle.host_generators(),
                 C::CircuitField::random(thread_rng()),
-            );
-
-            r_commitments.push(r_commitment);
+            ));
+            ky.push(circuit.ky(instance)?);
         }
 
-        // 2. Construct B staging polynomial.
-        let r_commitments_array: [C::HostCurve; N] = r_commitments
+        // -------- 2. Construct B staging polynomial -------- //
+
+        // We're building a two-layer staged B to wire properly handle the non-native arithemtic.
+
+        let a_commitments_array: [C::HostCurve; N] = a_polys
             .try_into()
             .map_err(|_| Error::CircuitBoundExceeded(N))?;
 
+        // Build inner staging polynomial over Fq that allocates these Vesta points.
         let inner_rx_fq = <InnerStageB<C::HostCurve, N> as StageExt<C::ScalarField, R>>::rx(
-            &r_commitments_array,
+            &a_commitments_array,
         )?;
-        let ep_commit = inner_rx_fq.commit(
+
+        // Create a "nested encoding" by committing to the staging polynomial using the nested generators (Pallas).
+        let b_inner_commit_pallas = inner_rx_fq.commit(
             cycle.nested_generators(),
             C::ScalarField::random(thread_rng()),
         );
 
-        let b_poly = Staged::<C::CircuitField, R, _>::new(StagingCircuitB::<C::NestedCurve>::new());
-        let (_outer_rx, ep_point_value) = b_poly.rx::<R>(ep_commit)?;
+        // Outer staging polynomial over Fp carries this nested commitment.
+        let b_stage =
+            Staged::<C::CircuitField, R, _>::new(StagingCircuitB::<C::NestedCurve>::new());
+        let (_b_outer_rx_fp, b_point_nested) = b_stage.rx::<R>(b_inner_commit_pallas)?;
 
-        let outer_s = <OuterStageB<EpAffine> as StageExt<Fp, R>>::final_into_object()?;
+        // -------- 3. Construct D staging polynomial -------- //
 
-        // 3. Construct D staging polynomial.
-        let w_poly = Staged::<C::CircuitField, R, _>::new(DStagingCircuit::<C::NestedCurve>::new());
+        // Hash the B commitment to generate challenge w.
+        let d_stage = Staged::<Fp, R, _>::new(StagingCircuitD::<EpAffine>::new());
+        let (_w_rx, w_instance) =
+            d_stage.rx::<R>(unsafe { std::mem::transmute_copy(&b_point_nested) })?;
 
         Ok(())
     }

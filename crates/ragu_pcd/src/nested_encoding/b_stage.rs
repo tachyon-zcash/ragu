@@ -25,26 +25,26 @@ use ragu_primitives::{
     vec::{ConstLen, FixedVec},
 };
 
-/// Generic inner stage: allocates points from the nested curve using its native field.
+/// Inner stage: Allocates commitment points on an arbitrary `Curve`, using `Curve::Base`
+/// as the circuit’s native field.
 ///
-/// - In the Fp round: uses Vesta (EqAffine) points, which are defined over Fq.
-/// - In the Fq round: uses Pallas (EpAffine) points, which are defined over Fp.
-pub struct InnerStage<NestedCurve, const NUM: usize> {
-    _marker: core::marker::PhantomData<NestedCurve>,
+/// * Fp round: caller parameterizes using `Curve = C::HostCurve` (Vesta)
+/// * Fq round: caller parameterizes using `Curve = C::NestedCurve` (Pallas)
+pub struct InnerStageB<Curve, const NUM: usize> {
+    _marker: core::marker::PhantomData<Curve>,
 }
 
-impl<NestedCurve, R, const NUM: usize> Stage<<NestedCurve>::Base, R>
-    for InnerStage<NestedCurve, NUM>
+impl<Curve, R, const NUM: usize> Stage<<Curve>::Base, R> for InnerStageB<Curve, NUM>
 where
-    NestedCurve: CurveAffine,
-    <NestedCurve>::Base: PrimeField,
+    Curve: CurveAffine,
+    <Curve>::Base: PrimeField,
     R: Rank,
 {
     type Parent = ();
-    type Witness<'source> = &'source [NestedCurve; NUM];
+    type Witness<'source> = &'source [Curve; NUM];
 
-    type OutputKind = Kind![<NestedCurve>::Base;
-              FixedVec<Point<'_, _, NestedCurve>, ConstLen<NUM>>];
+    type OutputKind = Kind![<Curve>::Base;
+              FixedVec<Point<'_, _, Curve>, ConstLen<NUM>>];
 
     fn values() -> usize {
         NUM * 2
@@ -53,9 +53,9 @@ where
     fn witness<'dr, 'source: 'dr, D>(
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<<Self::OutputKind as GadgetKind<<NestedCurve>::Base>>::Rebind<'dr, D>>
+    ) -> Result<<Self::OutputKind as GadgetKind<<Curve>::Base>>::Rebind<'dr, D>>
     where
-        D: Driver<'dr, F = <NestedCurve>::Base>,
+        D: Driver<'dr, F = <Curve>::Base>,
         Self: 'dr,
     {
         let mut v = Vec::with_capacity(NUM);
@@ -66,20 +66,33 @@ where
     }
 }
 
-/// Outer stage: allocates the host curve commitment using its native base field.
-pub struct OuterStage<HostCurve>(PhantomData<HostCurve>);
+/// Outer stage: Allocates commitment points on an arbitrary `Curve`, using `Curve::Base`
+/// as the circuit’s native field. This has the opposite parameterization to the inner stage
+/// by design.
+///
+/// * Fp round: caller parameterizes using `Curve = C::NestedCurve` (Pallas)
+/// * Fq round: caller parameterizes using `Curve = C::HostCurve` (Vesta)
+///
+/// /// Allocates a commitment point on an arbitrary `Curve`, with the circuit
+/// field = `Curve::Base`.
+///
+/// In the Fp round, set `Curve = C::NestedCurve` (Pallas), so the gadget is a
+/// Pallas point allocated over Fp. In the Fq round, set `Curve = C::NestedCurve`
+/// (Vesta), allocated over Fq.
 
-impl<HostCurve, R> Stage<HostCurve::Base, R> for OuterStage<HostCurve>
+pub struct OuterStageB<Curve>(PhantomData<Curve>);
+
+impl<Curve, R> Stage<Curve::Base, R> for OuterStageB<Curve>
 where
-    HostCurve: CurveAffine,
-    <HostCurve>::Base: PrimeField,
+    Curve: CurveAffine,
+    <Curve>::Base: PrimeField,
     R: Rank,
 {
     type Parent = ();
 
-    type Witness<'source> = HostCurve;
+    type Witness<'source> = Curve;
 
-    type OutputKind = Kind![HostCurve::Base; Point<'_, _, HostCurve>];
+    type OutputKind = Kind![Curve::Base; Point<'_, _, Curve>];
 
     fn values() -> usize {
         2
@@ -88,55 +101,57 @@ where
     fn witness<'dr, 'source: 'dr, D>(
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<<Self::OutputKind as GadgetKind<HostCurve::Base>>::Rebind<'dr, D>>
+    ) -> Result<<Self::OutputKind as GadgetKind<Curve::Base>>::Rebind<'dr, D>>
     where
-        D: Driver<'dr, F = HostCurve::Base>,
+        D: Driver<'dr, F = Curve::Base>,
         Self: 'dr,
     {
         Point::alloc(dr, witness)
     }
 }
 
+/// /// Staging circuit that witnesses a commitment point on `Curve` inside a circuit
+/// over `Curve::Base`. Typically `Curve = C::NestedCurve` in the current round.
 #[derive(Clone)]
-pub struct StagingCircuit<HostCurve>(core::marker::PhantomData<HostCurve>);
+pub struct StagingCircuitB<Curve>(core::marker::PhantomData<Curve>);
 
-impl<HostCurve> StagingCircuit<HostCurve> {
+impl<Curve> StagingCircuitB<Curve> {
     pub fn new() -> Self {
         Self(core::marker::PhantomData)
     }
 }
 
-impl<HostCurve, R> StagedCircuit<HostCurve::Base, R> for StagingCircuit<HostCurve>
+impl<Curve, R> StagedCircuit<Curve::Base, R> for StagingCircuitB<Curve>
 where
-    HostCurve: arithmetic::CurveAffine,
+    Curve: arithmetic::CurveAffine,
     R: Rank,
 {
-    type Final = OuterStage<HostCurve>;
+    type Final = OuterStageB<Curve>;
     type Instance<'src> = ();
-    type Witness<'w> = HostCurve;
-    type Output = Kind![HostCurve::Base; Point<'_, _, HostCurve>];
-    type Aux<'source> = HostCurve;
+    type Witness<'w> = Curve;
+    type Output = Kind![Curve::Base; Point<'_, _, Curve>];
+    type Aux<'source> = Curve;
 
-    fn instance<'dr, 'src: 'dr, D: Driver<'dr, F = HostCurve::Base>>(
+    fn instance<'dr, 'src: 'dr, D: Driver<'dr, F = Curve::Base>>(
         &self,
         _dr: &mut D,
         _instance: DriverValue<D, Self::Instance<'src>>,
-    ) -> Result<<Self::Output as GadgetKind<HostCurve::Base>>::Rebind<'dr, D>> {
+    ) -> Result<<Self::Output as GadgetKind<Curve::Base>>::Rebind<'dr, D>> {
         todo!()
     }
 
-    fn witness<'a, 'dr, 'w: 'dr, D: Driver<'dr, F = HostCurve::Base>>(
+    fn witness<'a, 'dr, 'w: 'dr, D: Driver<'dr, F = Curve::Base>>(
         &self,
         dr: StageBuilder<'a, 'dr, D, R, (), Self::Final>,
         witness: DriverValue<D, Self::Witness<'w>>,
     ) -> Result<(
-        <Self::Output as GadgetKind<HostCurve::Base>>::Rebind<'dr, D>,
+        <Self::Output as GadgetKind<Curve::Base>>::Rebind<'dr, D>,
         DriverValue<D, Self::Aux<'w>>,
     )> {
-        let (ep_point_gadget, dr) = dr.add_stage::<OuterStage<HostCurve>>(witness)?;
-        let dr = dr.finish();
-        let ep_value = ep_point_gadget.value();
+        let (curve_point_gadget, dr) = dr.add_stage::<OuterStageB<Curve>>(witness)?;
+        let curve_point_value = curve_point_gadget.value();
+        let _ = dr.finish();
 
-        Ok((ep_point_gadget, ep_value))
+        Ok((curve_point_gadget, curve_point_value))
     }
 }

@@ -8,11 +8,11 @@
 
 use ragu_pasta::{EpAffine, EqAffine};
 
-use crate::nested_encoding::b_stage::{InnerStage, OuterStage, StagingCircuit};
+use crate::nested_encoding::b_stage::{InnerStageB, OuterStageB, StagingCircuitB};
 
-pub type FpInnerStage<const NUM: usize> = InnerStage<EqAffine, NUM>;
-pub type FpOuterStage = OuterStage<EpAffine>;
-pub type FpStageingCircuit = StagingCircuit<EpAffine>;
+pub type FpInnerStage<const NUM: usize> = InnerStageB<EqAffine, NUM>;
+pub type FpOuterStage = OuterStageB<EpAffine>;
+pub type FpStageingCircuit = StagingCircuitB<EpAffine>;
 
 #[cfg(test)]
 mod tests {

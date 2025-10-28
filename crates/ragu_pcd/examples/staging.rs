@@ -9,7 +9,6 @@ use rand::thread_rng;
 type TestRank = R<8>;
 
 fn main() -> Result<()> {
-    // TODO: incrementally register staged circuits.
     let mut engine = CycleEngine::<Pasta, TestRank>::new();
 
     engine.register_circuit(SquaringCircuit(3))?;
@@ -24,7 +23,7 @@ fn main() -> Result<()> {
         Fp::random(thread_rng()),
     ];
 
-    engine.step(&witnesses);
+    engine.step(&witnesses)?;
 
     Ok(())
 }

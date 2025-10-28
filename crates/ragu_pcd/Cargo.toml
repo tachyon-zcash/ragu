@@ -35,3 +35,7 @@ rand = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+
+[[example]]
+name = "staging"
+path = "examples/staging.rs"
