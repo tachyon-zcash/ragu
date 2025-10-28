@@ -23,8 +23,8 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
     pub fn accumulation_vesta(
         mesh: &Mesh<'_, C::CircuitField, R>,
         witnesses: &[C::CircuitField],
-        acc1: &mut CycleAccumulator<C::HostCurve, C::NestedCurve, R>,
-        acc2: &CycleAccumulator<C::NestedCurve, C::HostCurve, R>,
+        acc1: &CycleAccumulator<C::HostCurve, C::NestedCurve, R>,
+        acc2: &CycleAccumulator<C::HostCurve, C::NestedCurve, R>,
         cycle: &C,
     ) -> Result<()> {
         // Dummy circuits used in the mesh.
@@ -46,6 +46,8 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
             ));
             ky.push(circuit.ky(instance)?);
         }
+
+        // Append the previous A commitments
 
         // -------- 2. Construct B staging polynomial -------- //
 

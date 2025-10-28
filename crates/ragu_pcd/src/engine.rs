@@ -142,16 +142,16 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
             Self::accumulation_vesta(
                 vesta_mesh,
                 application_witnesses,
-                &mut state.vesta_accumulator, // Previous Vesta state
-                &state.pallas_accumulator,    // Pallas state to verify in this Fp round
+                &state.vesta_accumulator,
+                &state.vesta_accumulator,
                 &self.cycle,
             )?;
 
             Self::accumulation_pallas(
                 pallas_mesh,
                 &[],
-                &mut state.pallas_accumulator, // Previous Pallas state
-                &state.vesta_accumulator,      // Vesta state to verify in this Fq round
+                &state.pallas_accumulator,
+                &state.pallas_accumulator,
                 &self.cycle,
             )?;
         }

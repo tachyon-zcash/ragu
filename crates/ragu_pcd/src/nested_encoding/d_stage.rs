@@ -1,7 +1,7 @@
 //! D staging polynomial.
 //!
 //! Hashes a commitment from the host curve to generate a challenge.
-//! This doesn't need to be generic because it will always perform
+//! This doesn't strictly need to be generic because it will always perform
 //! a hash over an Fp transcript.
 use std::marker::PhantomData;
 
