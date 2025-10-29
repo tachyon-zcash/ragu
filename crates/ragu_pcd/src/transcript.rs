@@ -29,7 +29,7 @@ impl<F: Field> AccumulationTranscript<F> {
     }
 
     /// Squeeze challenge scalar from transcript state.
-    pub fn challenge_scalar(&mut self) -> F {
+    pub fn squeeze(&mut self) -> F {
         self.state = self.state.square();
         self.state
     }

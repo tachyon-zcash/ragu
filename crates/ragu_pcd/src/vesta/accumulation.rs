@@ -1,8 +1,10 @@
 use crate::accumulator::CycleAccumulator;
 use crate::engine::CycleEngine;
-use crate::nested_encoding::b_stage::BInnerStage;
-use crate::nested_encoding::d_stage::{ChallengeCompositeCircuit, D1InnerStage, D2InnerStage};
-use crate::transcript::AccumulationTranscript;
+use crate::nested_encoding::b_stage::{BInnerStage, BNestedEncodingCircuit};
+use crate::nested_encoding::d_stage::{
+    D1InnerStage, D2InnerStage, DNestedEncodingCircuit, DNestedEncodingWitness,
+};
+use crate::transcript::{self, AccumulationTranscript};
 use crate::utilities::dummy_circuits::Circuits;
 use crate::vesta::structures::{A, B, SPrime, SPrimePrime};
 use arithmetic::{CurveAffine, Cycle, FixedGenerators};
@@ -107,6 +109,10 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         let b_blinding = C::ScalarField::random(OsRng);
         let b_nested_commitment = b_inner_rx.commit(cycle.nested_generators(), b_blinding);
 
+        // TODO: where is this used?
+        let b_circuit = Staged::<Fp, R, _>::new(BNestedEncodingCircuit::<C::NestedCurve>::new());
+        let (_d_rx, _d_aux) = b_circuit.rx::<R>(b_nested_commitment)?;
+
         // TRANSCRIPT: Absorb B stage commitment before deriving w challenge.
         transcript.absorb_point(b_nested_commitment);
 
@@ -120,22 +126,20 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // call to Poseidon. We compute this off-circuit that allows us to continue
         // with the computation, similiar to predict(), and then later verify
         // it was computed properly inside the circuit.
-        let binding = b_nested_commitment.coordinates().unwrap();
-        let w_challenge = binding.x();
 
-        // TRANSCRIPT: Absorb w challenge.
-        transcript.absorb_scalar(*w_challenge);
+        // TRANSCRIPT: Squeeze w challenge.
+        let w_challenge = transcript.squeeze();
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // PHASE: S' Mesh Polynomials
         ///////////////////////////////////////////////////////////////////////////////////////
 
         // COMPUTE S': M(w, x_i, Y) polynomials for mesh consistency checks.
-        let s1_poly_acc1 = mesh.wx(*w_challenge, acc1.accumulator.instance.x.0);
+        let s1_poly_acc1 = mesh.wx(w_challenge, acc1.accumulator.instance.x.0);
         let s1_blinding_acc1 = C::CircuitField::random(thread_rng());
         let s1_commitment_acc1 = s1_poly_acc1.commit(cycle.host_generators(), s1_blinding_acc1);
 
-        let s1_poly_acc2 = mesh.wx(*w_challenge, acc2.accumulator.instance.x.0);
+        let s1_poly_acc2 = mesh.wx(w_challenge, acc2.accumulator.instance.x.0);
         let s1_blinding_acc2 = C::CircuitField::random(thread_rng());
         let s1_commitment_acc2 = s1_poly_acc2.commit(cycle.host_generators(), s1_blinding_acc2);
 
@@ -174,19 +178,15 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // PHASE: Y challenge derivation.
         ///////////////////////////////////////////////////////////////////////////////////////
 
-        // Derive y challenge from D1 commitment using Poseidon hash.
-        let binding = d1_nested_commitment.coordinates().unwrap();
-        let y_challenge = binding.x();
-
-        // TRANSCRIPT: Absorb w challenge.
-        transcript.absorb_scalar(*y_challenge);
+        // TRANSCRIPT: Squeeze y challenge.
+        let y_challenge = transcript.squeeze();
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // PHASE: S'' Mesh Polynomial.
         ///////////////////////////////////////////////////////////////////////////////////////
 
         // COMPUTE S'': M(w, X, y_i) polynomial for mesh consistency checks.
-        let s2_poly = mesh.wy(*w_challenge, *y_challenge);
+        let s2_poly = mesh.wy(w_challenge, y_challenge);
         let s2_blinding = C::CircuitField::random(thread_rng());
         let s2_commitment = s2_poly.commit(cycle.host_generators(), s2_blinding);
 
@@ -215,29 +215,8 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // PHASE: Z challenge derivation.
         ///////////////////////////////////////////////////////////////////////////////////////
 
-        // Derive z challenge from D2 commitment using Poseidon hash.
-        let binding = d2_nested_commitment.coordinates().unwrap();
-        let z_challenge = binding.x();
-
-        // TRANSCRIPT: Absorb z hallenge.
-        transcript.absorb_scalar(*z_challenge);
-
-        ///////////////////////////////////////////////////////////////////////////////////////
-        // PHASE: Composite circuit: verify all challenges in-circuit.
-        ///////////////////////////////////////////////////////////////////////////////////////
-
-        use crate::nested_encoding::d_stage::CompositeChallengeWitness;
-
-        let composite_witness = CompositeChallengeWitness {
-            b_nested_commitment,
-            d1_nested_commitment,
-            d2_nested_commitment,
-        };
-
-        let composite_circuit =
-            Staged::<Fp, R, _>::new(ChallengeCompositeCircuit::<C::NestedCurve>::new());
-
-        let (composite_rx, composite_aux) = composite_circuit.rx::<R>(composite_witness)?;
+        // TRANSCRIPT: Squeeze z challenge.
+        let z_challenge = transcript.squeeze();
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // PHASE: Compute B polynomial.
@@ -246,16 +225,16 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         let circuit_ids: [C::CircuitField; N] =
             core::array::from_fn(|i| C::CircuitField::from(i as u64));
 
-        let tz = R::tz(*z_challenge);
+        let tz = R::tz(z_challenge);
         let mut b_poly: Vec<B<C::HostCurve, R>> = a_polys
             .iter()
             .take(N) // Only application circuits, not accumulators yet
             .zip(circuit_ids.iter())
             .map(|(a, &circuit_id)| {
                 let mut b_poly = a.poly.clone();
-                b_poly.dilate(*z_challenge);
+                b_poly.dilate(z_challenge);
                 b_poly.add_assign(&tz);
-                b_poly.add_assign(&mesh.wy(circuit_id, *y_challenge));
+                b_poly.add_assign(&mesh.wy(circuit_id, y_challenge));
 
                 let b_blinding = C::CircuitField::random(thread_rng());
                 let b_commitment = b_poly.commit(cycle.host_generators(), b_blinding);
@@ -279,9 +258,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // PHASE: Compute error terms.
         ///////////////////////////////////////////////////////////////////////////////////////
 
-        // The prover computes all of the cross products a_i . b_j for i
-        // != j. This is done before the verifier selects the random challenges
-        // mu and nu.
+        // The prover computes all of the cross products a_i . b_j for i != j.
         let len = a_polys.len();
         let mut cross_products = Vec::new();
         for i in 0..len {
@@ -292,9 +269,6 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
                 }
             }
         }
-
-        // D3 STAGING POLYNOMIAL: Nested encoding for error terms.
-        type D4StagingPolynomial<C, const N: usize> = BInnerStage<C, N>;
 
         let mut cross_commitments = Vec::new();
         for cross_scalar in &cross_products {
@@ -320,6 +294,22 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
 
         // TRANSCRIPT: Absorb D3 stage commitment.
         transcript.absorb_point(d3_nested_commitment);
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // PHASE: Composite circuit: verify all challenges in-circuit.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        let d_witness = DNestedEncodingWitness {
+            b_nested_commitment,
+            w_challenge,
+            d1_nested_commitment,
+            y_challenge,
+            d2_nested_commitment,
+            z_challenge,
+        };
+
+        let d_circuit = Staged::<Fp, R, _>::new(DNestedEncodingCircuit::<C::NestedCurve>::new());
+        let (_composite_rx, _composite_aux) = d_circuit.rx::<R>(d_witness)?;
 
         Ok(())
     }

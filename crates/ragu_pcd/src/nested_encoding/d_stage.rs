@@ -21,8 +21,6 @@ use ragu_primitives::{
 };
 use std::marker::PhantomData;
 
-use crate::nested_encoding::b_stage::BOuterStage;
-
 /// D1 Inner Stage: staging polynomial (over `HostCurve::Base`) that witnesses the S' mesh polynomial commitments.
 pub struct D1InnerStage<HostCurve, const NUM: usize> {
     _marker: core::marker::PhantomData<HostCurve>,
@@ -157,7 +155,7 @@ pub struct WChallengeStage<NestedCurve> {
 impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> Stage<NestedCurve::Base, R>
     for WChallengeStage<NestedCurve>
 {
-    type Parent = BOuterStage<NestedCurve>;
+    type Parent = ();
     type Witness<'source> = NestedCurve::Base;
     type OutputKind = Kind![NestedCurve::Base; Element<'_, _>];
 
@@ -236,25 +234,28 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> Stage<NestedCurve::Base, R>
 /// Composite circuit: witness data for the composite challenge derivation circuit.
 /// The commitments here are nested commitments (Pallas points), representing
 /// outputs of the two-layer nested encoding process.
-pub struct CompositeChallengeWitness<C: CurveAffine> {
+pub struct DNestedEncodingWitness<C: CurveAffine> {
     pub b_nested_commitment: C,
+    pub w_challenge: C::Base,
     pub d1_nested_commitment: C,
+    pub y_challenge: C::Base,
     pub d2_nested_commitment: C,
+    pub z_challenge: C::Base,
 }
 
 /// Output struct containing all intermediate commitments and challenges.
 #[derive(ragu_macros::Gadget, ragu_primitives::io::Write)]
-pub struct CompositeOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
+pub struct DNestedEncodingOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     #[ragu(gadget)]
-    pub b_commitment: Point<'dr, D, C>,
+    pub b_nested_commitment: Point<'dr, D, C>,
     #[ragu(gadget)]
     pub w_challenge: Element<'dr, D>,
     #[ragu(gadget)]
-    pub d1_commitment: Point<'dr, D, C>,
+    pub d1_nested_commitment: Point<'dr, D, C>,
     #[ragu(gadget)]
     pub y_challenge: Element<'dr, D>,
     #[ragu(gadget)]
-    pub d2_commitment: Point<'dr, D, C>,
+    pub d2_nested_commitment: Point<'dr, D, C>,
     #[ragu(gadget)]
     pub z_challenge: Element<'dr, D>,
 }
@@ -267,21 +268,21 @@ pub struct CompositeChallengeAux<F: PrimeField> {
 }
 
 #[derive(Clone)]
-pub struct ChallengeCompositeCircuit<NestedCurve>(core::marker::PhantomData<NestedCurve>);
+pub struct DNestedEncodingCircuit<NestedCurve>(core::marker::PhantomData<NestedCurve>);
 
-impl<NestedCurve> ChallengeCompositeCircuit<NestedCurve> {
+impl<NestedCurve> DNestedEncodingCircuit<NestedCurve> {
     pub fn new() -> Self {
         Self(core::marker::PhantomData)
     }
 }
 
 impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Base, R>
-    for ChallengeCompositeCircuit<NestedCurve>
+    for DNestedEncodingCircuit<NestedCurve>
 {
     type Final = ZChallengeStage<NestedCurve>;
     type Instance<'src> = ();
-    type Witness<'w> = CompositeChallengeWitness<NestedCurve>;
-    type Output = Kind![NestedCurve::Base; CompositeOutput<'_, _, NestedCurve>];
+    type Witness<'w> = DNestedEncodingWitness<NestedCurve>;
+    type Output = Kind![NestedCurve::Base; DNestedEncodingOutput<'_, _, NestedCurve>];
     type Aux<'source> = ();
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = NestedCurve::Base>>(
@@ -290,6 +291,8 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
         _instance: DriverValue<D, Self::Instance<'source>>,
     ) -> Result<<Self::Output as GadgetKind<NestedCurve::Base>>::Rebind<'dr, D>> {
         unimplemented!()
+
+        // TODO: THIS SHOULD TAKE B-COMMITMENT AS A PUBLIC INPUT INTO THE CIRCUIT
     }
 
     fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = NestedCurve::Base>>(
@@ -300,77 +303,61 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
         <Self::Output as GadgetKind<NestedCurve::Base>>::Rebind<'dr, D>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
-        // STAGE 1: StageBuilder for `BOuterStage` to allocate B nested commitment.
-        let (b_commitment, dr) = dr
-            .add_stage::<BOuterStage<NestedCurve>>(witness.view().map(|w| w.b_nested_commitment))?;
-
-        // Extract value for off-circuit w computation.
-        let b_value = b_commitment.value();
-        let w_value = b_value.map(|b| {
-            let coords = b.coordinates().unwrap();
-            *coords.x()
-        });
-
-        // STAGE 2: StageBuilder for `WChallengeStage` for computed w value.
-        let (w_challenge, dr) = dr.add_stage::<WChallengeStage<NestedCurve>>(w_value)?;
+        // STAGE 1: StageBuilder for `WChallengeStage` for computed w value.
+        let (w_challenge, dr) =
+            dr.add_stage::<WChallengeStage<NestedCurve>>(witness.view().map(|w| w.w_challenge))?;
 
         // STAGE 3: StageBuilder for `D1OuterStage` to allocate D1 nested commitment.
-        let (d1_commitment, dr) = dr.add_stage::<D1OuterStage<NestedCurve>>(
+        let (d1_nested_commitment, dr) = dr.add_stage::<D1OuterStage<NestedCurve>>(
             witness.view().map(|w| w.d1_nested_commitment),
         )?;
 
-        // Extract value for off-circuit y computation.
-        let d1_value = d1_commitment.value();
-        let y_value = d1_value.map(|d1| {
-            let coords = d1.coordinates().unwrap();
-            *coords.x()
-        });
-
         // STAGE 4: StageBuilder for `YChallengeStage` for computed y value.
-        let (y_challenge, dr) = dr.add_stage::<YChallengeStage<NestedCurve>>(y_value)?;
+        let (y_challenge, dr) =
+            dr.add_stage::<YChallengeStage<NestedCurve>>(witness.view().map(|w| w.y_challenge))?;
 
         // STAGE 5: StageBuilder for `D2OuterStage` to allocate D2 nested commitment.
-        let (d2_commitment, dr) = dr.add_stage::<D2OuterStage<NestedCurve>>(
+        let (d2_nested_commitment, dr) = dr.add_stage::<D2OuterStage<NestedCurve>>(
             witness.view().map(|w| w.d2_nested_commitment),
         )?;
 
-        // Extract value for off-circuit z computation.
-        let d2_value = d2_commitment.value();
-        let z_value = d2_value.map(|d2| {
-            let coords = d2.coordinates().unwrap();
-            *coords.x()
-        });
-
         // STAGE 5: StageBuilder for `ZChallengeStage` for computed z value.
-        let (z_challenge, dr) = dr.add_stage::<ZChallengeStage<NestedCurve>>(z_value)?;
+        let (z_challenge, dr) =
+            dr.add_stage::<ZChallengeStage<NestedCurve>>(witness.view().map(|w| w.z_challenge))?;
 
         let dr = dr.finish();
 
+        // Now allocate `b_commitment` (NOT in the staging polynomial) and verify
+        // that w was correctly derived from B. This keeps B and D as separate staging
+        // polynomials while still verifying the FS challenge derivation.
+
+        let b_nested_commitment = Point::alloc(dr, witness.view().map(|w| w.b_nested_commitment))?;
+
         // Verify w = Poseidon(B).
         let mut sponge_w = Sponge::new(dr, &PoseidonFp);
-        b_commitment.write(dr, &mut sponge_w)?;
+        b_nested_commitment.write(dr, &mut sponge_w)?;
         let w_computed = sponge_w.squeeze(dr)?;
         dr.enforce_equal(w_computed.wire(), w_challenge.wire())?;
 
         // Verify y = Poseidon(D1_nested).
         let mut sponge_y = Sponge::new(dr, &PoseidonFp);
-        d1_commitment.write(dr, &mut sponge_y)?;
+        d1_nested_commitment.write(dr, &mut sponge_y)?;
         let y_computed = sponge_y.squeeze(dr)?;
         dr.enforce_equal(y_computed.wire(), y_challenge.wire())?;
 
         // Verify z = Poseidon(D2_nested).
         let mut sponge_z = Sponge::new(dr, &PoseidonFp);
-        d2_commitment.write(dr, &mut sponge_z)?;
+        d2_nested_commitment.write(dr, &mut sponge_z)?;
         let z_computed = sponge_z.squeeze(dr)?;
         dr.enforce_equal(z_computed.wire(), z_challenge.wire())?;
 
         // Return output gadgets and empty auxilary.
-        let output = CompositeOutput {
-            b_commitment,
+        let output = DNestedEncodingOutput {
+            b_nested_commitment,
             w_challenge: w_challenge.clone(),
-            d1_commitment,
+            d1_nested_commitment,
             y_challenge: y_challenge.clone(),
-            d2_commitment,
+            d2_nested_commitment,
             z_challenge: z_challenge.clone(),
         };
 
@@ -394,32 +381,37 @@ mod tests {
     #[test]
     fn test_parent_chain_multiplications_skipped() -> Result<()> {
         let b_nested_commitment = (EpAffine::generator() * Fq::random(thread_rng())).to_affine();
+        let w_challenge = Fp::random(thread_rng());
         let d1_nested_commitment = (EpAffine::generator() * Fq::random(thread_rng())).to_affine();
+        let y_challenge = Fp::random(thread_rng());
         let d2_nested_commitment = (EpAffine::generator() * Fq::random(thread_rng())).to_affine();
+        let z_challenge = Fp::random(thread_rng());
 
-        let witness = CompositeChallengeWitness {
+        let witness = DNestedEncodingWitness {
             b_nested_commitment,
+            w_challenge,
             d1_nested_commitment,
+            y_challenge,
             d2_nested_commitment,
+            z_challenge,
         };
 
-        let circuit = ChallengeCompositeCircuit::<EpAffine>::new();
+        let circuit = DNestedEncodingCircuit::<EpAffine>::new();
         let staged = Staged::<Fp, Rank, _>::new(circuit);
-
         let (rx, _aux) = staged.rx::<Rank>(witness)?;
+
         assert!(
             rx.iter_coeffs().count() > 0,
             "Staging should produce a non-empty polynomial"
         );
 
-        let z_skip = <ZChallengeStage<EpAffine> as Stage<Fp, Rank>>::skip_multiplications();
-
-        let b_muls = <BOuterStage<EpAffine> as StageExt<Fp, Rank>>::num_multiplications();
         let w_muls = <WChallengeStage<EpAffine> as StageExt<Fp, Rank>>::num_multiplications();
         let d1_muls = <D1OuterStage<EpAffine> as StageExt<Fp, Rank>>::num_multiplications();
         let y_muls = <YChallengeStage<EpAffine> as StageExt<Fp, Rank>>::num_multiplications();
         let d2_muls = <D2OuterStage<EpAffine> as StageExt<Fp, Rank>>::num_multiplications();
-        let expected_skip = b_muls + w_muls + d1_muls + y_muls + d2_muls;
+        let expected_skip = w_muls + d1_muls + y_muls + d2_muls;
+
+        let z_skip = <ZChallengeStage<EpAffine> as Stage<Fp, Rank>>::skip_multiplications();
 
         assert_eq!(
             z_skip, expected_skip,
