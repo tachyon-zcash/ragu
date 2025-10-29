@@ -7,12 +7,12 @@
 //! you can use to say derive a challenge, then nested encoding can be used to
 //! implement a two-layer flow for doing that:
 //!
-//!     * Inner-stage: commit to the N polynomials using Vesta and construct a staging
-//!     polynomial (over Fq) that witnesses those Vesta commitments,
+//! * Inner-stage: commit to the N polynomials using Vesta and construct a staging
+//! polynomial (over Fq) that witnesses those Vesta commitments,
 //!         
-//!     * Off-circuit: commit to the staging polynomial using Pallas generators.
+//! * Off-circuit: commit to the staging polynomial using Pallas generators.
 //!
-//!     * Outer-stage: allocate the commitment which can be used across staged circuits.
+//! * Outer-stage: allocate the commitment which can be used across staged circuits.
 //!
 //! Imprtantly, we can't form a connection between the inner and outer stages due to
 //! the field boundary constraint in the `Stage` trait that disallowes stages from

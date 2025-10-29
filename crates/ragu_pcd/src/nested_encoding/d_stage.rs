@@ -372,10 +372,52 @@ mod tests {
     use pasta_curves::group::prime::PrimeCurveAffine;
     use ragu_circuits::CircuitExt;
     use ragu_circuits::staging::StageExt;
-    use ragu_circuits::staging::{Stage, Staged};
+    use ragu_circuits::staging::{Stage, StageBuilder, Staged};
+    use ragu_core::drivers::{Emulator, Simulator};
+    use ragu_core::maybe::Maybe;
     use ragu_pasta::{EpAffine, Fp, Fq};
+    use ragu_primitives::{GadgetExt, Point, Sponge};
     use rand::thread_rng;
     type Rank = ragu_circuits::polynomials::R<12>;
+
+    fn validate_circuit_constraints(witness: DNestedEncodingWitness<EpAffine>) -> Result<()> {
+        Simulator::simulate(witness, |dr, witness| {
+            let circuit = DNestedEncodingCircuit::<EpAffine>::new();
+            let stage_builder =
+                StageBuilder::<'_, '_, _, Rank, (), ZChallengeStage<EpAffine>>::new(dr);
+            circuit.witness(stage_builder, witness)?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    fn compute_fiat_shamir_challenges(
+        b_commitment: EpAffine,
+        d1_commitment: EpAffine,
+        d2_commitment: EpAffine,
+    ) -> Result<(Fp, Fp, Fp)> {
+        use ragu_core::maybe::Always;
+        let mut em = Emulator::<Always<()>, Fp>::default();
+
+        let mut sponge = Sponge::new(&mut em, &PoseidonFp);
+
+        let b_point = Point::constant(&mut em, b_commitment)?;
+        b_point.write(&mut em, &mut sponge)?;
+        let w = sponge.squeeze(&mut em)?;
+        let w_challenge = *w.value().take();
+
+        let d1_point = Point::constant(&mut em, d1_commitment)?;
+        d1_point.write(&mut em, &mut sponge)?;
+        let y = sponge.squeeze(&mut em)?;
+        let y_challenge = y.value().take();
+
+        let d2_point = Point::constant(&mut em, d2_commitment)?;
+        d2_point.write(&mut em, &mut sponge)?;
+        let z = sponge.squeeze(&mut em)?;
+        let z_challenge = z.value().take();
+
+        Ok((w_challenge, *y_challenge, *z_challenge))
+    }
 
     #[test]
     fn test_parent_chain_multiplications_skipped() -> Result<()> {
@@ -401,7 +443,7 @@ mod tests {
 
         assert!(
             rx.iter_coeffs().count() > 0,
-            "Staging should produce a non-empty polynomial"
+            "Staging polynomial shouldn't be empty"
         );
 
         let w_muls = <WChallengeStage<EpAffine> as StageExt<Fp, Rank>>::num_multiplications();
@@ -414,8 +456,199 @@ mod tests {
 
         assert_eq!(
             z_skip, expected_skip,
-            "skip_multiplications() should equal the sum of all parent stages' multiplications"
+            "skip_multiplications() should equal the sum of all parent stages multiplications"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_valid_fiat_shamir_challenges_pass() -> Result<()> {
+        let mut rng = thread_rng();
+        let b_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
+        let d1_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
+        let d2_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
+
+        let (w_challenge, y_challenge, z_challenge) = compute_fiat_shamir_challenges(
+            b_nested_commitment,
+            d1_nested_commitment,
+            d2_nested_commitment,
+        )?;
+
+        let witness = DNestedEncodingWitness {
+            b_nested_commitment,
+            w_challenge,
+            d1_nested_commitment,
+            y_challenge,
+            d2_nested_commitment,
+            z_challenge,
+        };
+
+        let circuit = DNestedEncodingCircuit::<EpAffine>::new();
+        let staged = Staged::<Fp, Rank, _>::new(circuit);
+        let (rx, _aux) = staged.rx::<Rank>(witness)?;
+
+        assert!(
+            rx.iter_coeffs().count() > 0,
+            "Valid transcript should produce non-empty staging polynomial"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    #[should_panic(expected = "InvalidWitness")]
+    fn test_invalid_w_challenge_fails() {
+        let mut rng = thread_rng();
+        let b_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
+        let d1_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
+        let d2_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
+
+        let (_w_challenge_correct, y_challenge, z_challenge) = compute_fiat_shamir_challenges(
+            b_nested_commitment,
+            d1_nested_commitment,
+            d2_nested_commitment,
+        )
+        .unwrap();
+
+        let w_challenge_invalid = Fp::random(&mut rng);
+
+        let witness = DNestedEncodingWitness {
+            b_nested_commitment,
+            w_challenge: w_challenge_invalid,
+            d1_nested_commitment,
+            y_challenge,
+            d2_nested_commitment,
+            z_challenge,
+        };
+
+        validate_circuit_constraints(witness).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "InvalidWitness")]
+    fn test_invalid_y_challenge_fails() {
+        let mut rng = thread_rng();
+        let b_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
+        let d1_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
+        let d2_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
+
+        let (w_challenge, _y_challenge_correct, z_challenge) = compute_fiat_shamir_challenges(
+            b_nested_commitment,
+            d1_nested_commitment,
+            d2_nested_commitment,
+        )
+        .unwrap();
+
+        let y_challenge_invalid = Fp::random(&mut rng);
+
+        let witness = DNestedEncodingWitness {
+            b_nested_commitment,
+            w_challenge,
+            d1_nested_commitment,
+            y_challenge: y_challenge_invalid,
+            d2_nested_commitment,
+            z_challenge,
+        };
+
+        validate_circuit_constraints(witness).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "InvalidWitness")]
+    fn test_invalid_z_challenge_fails() {
+        let mut rng = thread_rng();
+        let b_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
+        let d1_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
+        let d2_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
+
+        let (w_challenge, y_challenge, _z_challenge_correct) = compute_fiat_shamir_challenges(
+            b_nested_commitment,
+            d1_nested_commitment,
+            d2_nested_commitment,
+        )
+        .unwrap();
+
+        let z_challenge_invalid = Fp::random(&mut rng);
+
+        let witness = DNestedEncodingWitness {
+            b_nested_commitment,
+            w_challenge,
+            d1_nested_commitment,
+            y_challenge,
+            d2_nested_commitment,
+            z_challenge: z_challenge_invalid,
+        };
+
+        validate_circuit_constraints(witness).unwrap();
+    }
+
+    #[test]
+    fn test_sequential_dependency_of_challenges() -> Result<()> {
+        let mut rng = thread_rng();
+
+        let b_nested_commitment_1 = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
+        let d1_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
+        let d2_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
+
+        let (w_challenge_1, y_challenge_1, z_challenge_1) = compute_fiat_shamir_challenges(
+            b_nested_commitment_1,
+            d1_nested_commitment,
+            d2_nested_commitment,
+        )?;
+
+        let b_nested_commitment_2 = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
+        assert_ne!(
+            b_nested_commitment_1, b_nested_commitment_2,
+            "B commitments should differ"
+        );
+
+        let (w_challenge_2, y_challenge_2, z_challenge_2) = compute_fiat_shamir_challenges(
+            b_nested_commitment_2,
+            d1_nested_commitment,
+            d2_nested_commitment,
+        )?;
+
+        assert_ne!(
+            w_challenge_1, w_challenge_2,
+            "w should change when B changes"
+        );
+        assert_ne!(
+            y_challenge_1, y_challenge_2,
+            "y should change when B changes"
+        );
+        assert_ne!(
+            z_challenge_1, z_challenge_2,
+            "z should change when B changes"
+        );
+
+        let witness_invalid = DNestedEncodingWitness {
+            b_nested_commitment: b_nested_commitment_2,
+            w_challenge: w_challenge_1,
+            d1_nested_commitment,
+            y_challenge: y_challenge_1,
+            d2_nested_commitment,
+            z_challenge: z_challenge_1,
+        };
+
+        let result = validate_circuit_constraints(witness_invalid);
+        assert!(
+            result.is_err(),
+            "Circuit should reject when B changes but challenges remain from old B"
+        );
+
+        let witness_valid = DNestedEncodingWitness {
+            b_nested_commitment: b_nested_commitment_2,
+            w_challenge: w_challenge_2,
+            d1_nested_commitment,
+            y_challenge: y_challenge_2,
+            d2_nested_commitment,
+            z_challenge: z_challenge_2,
+        };
+
+        let staged = Staged::<Fp, Rank, _>::new(DNestedEncodingCircuit::<EpAffine>::new());
+        let (rx, _aux) = staged.rx::<Rank>(witness_valid)?;
+        assert!(rx.iter_coeffs().count() > 0, "Valid new transcript");
 
         Ok(())
     }
