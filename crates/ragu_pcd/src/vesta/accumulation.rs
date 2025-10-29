@@ -4,10 +4,10 @@ use crate::nested_encoding::b_stage::{BInnerStage, BNestedEncodingCircuit};
 use crate::nested_encoding::d_stage::{
     D1InnerStage, D2InnerStage, DNestedEncodingCircuit, DNestedEncodingWitness,
 };
-use crate::transcript::{self, AccumulationTranscript};
+use crate::transcript::AccumulationTranscript;
 use crate::utilities::dummy_circuits::Circuits;
 use crate::vesta::structures::{A, B, SPrime, SPrimePrime};
-use arithmetic::{CurveAffine, Cycle, FixedGenerators};
+use arithmetic::{Cycle, FixedGenerators};
 use ff::Field;
 use ragu_circuits::CircuitExt;
 use ragu_circuits::mesh::Mesh;

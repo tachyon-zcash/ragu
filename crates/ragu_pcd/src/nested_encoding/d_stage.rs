@@ -330,25 +330,24 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
         // Now allocate `b_commitment` (NOT in the staging polynomial) and verify
         // that w was correctly derived from B. This keeps B and D as separate staging
         // polynomials while still verifying the FS challenge derivation.
-
         let b_nested_commitment = Point::alloc(dr, witness.view().map(|w| w.b_nested_commitment))?;
 
-        // Verify w = Poseidon(B).
-        let mut sponge_w = Sponge::new(dr, &PoseidonFp);
-        b_nested_commitment.write(dr, &mut sponge_w)?;
-        let w_computed = sponge_w.squeeze(dr)?;
+        // Initialize a single sponge for FS challenge derivation.
+        let mut sponge = Sponge::new(dr, &PoseidonFp);
+
+        // Derive w = H(state_0 || B).
+        b_nested_commitment.write(dr, &mut sponge)?;
+        let w_computed = sponge.squeeze(dr)?;
         dr.enforce_equal(w_computed.wire(), w_challenge.wire())?;
 
-        // Verify y = Poseidon(D1_nested).
-        let mut sponge_y = Sponge::new(dr, &PoseidonFp);
-        d1_nested_commitment.write(dr, &mut sponge_y)?;
-        let y_computed = sponge_y.squeeze(dr)?;
+        // Derive y = H(state_1 || D1)  where state_1 contains (B, w).
+        d1_nested_commitment.write(dr, &mut sponge)?;
+        let y_computed = sponge.squeeze(dr)?;
         dr.enforce_equal(y_computed.wire(), y_challenge.wire())?;
 
-        // Verify z = Poseidon(D2_nested).
-        let mut sponge_z = Sponge::new(dr, &PoseidonFp);
-        d2_nested_commitment.write(dr, &mut sponge_z)?;
-        let z_computed = sponge_z.squeeze(dr)?;
+        // Derive z = H(state_2 || D2)  where state_2 contains (B, w, D1, y).
+        d2_nested_commitment.write(dr, &mut sponge)?;
+        let z_computed = sponge.squeeze(dr)?;
         dr.enforce_equal(z_computed.wire(), z_challenge.wire())?;
 
         // Return output gadgets and empty auxilary.
