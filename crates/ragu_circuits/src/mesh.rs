@@ -210,16 +210,6 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
 
         result
     }
-
-    /// Get a circuit by its registration index.
-    pub fn get_circuit(&self, id: usize) ->  Option<&dyn CircuitObject<F, R>> { 
-        self.circuits.get(id).map(|boxed| &**boxed)
-    }
-
-    /// Get the number of circuits in the mesh.
-    pub fn num_circuits(&self) -> usize {
-        self.circuits.len()
-    }
 }
 
 /// Returns $\omega^j$ that corresponds to the $i$th circuit added to a Mesh.
