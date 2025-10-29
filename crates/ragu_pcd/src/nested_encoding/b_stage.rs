@@ -1,15 +1,26 @@
-//! B staging polynomial.
+//! B-stage with a generic, two-layer nested encoding structure. Nested encoding
+//! solves the issue of witnessing data from one curve inside a circuit
+//! over a different curve, for instance Fq elements inside an Fp circuit.
 //!
-//! Generic deferred staging that works for both Fp and Fq sides.
+//! If you have for instance N polynomials over Fp, where the host curve is Vesta,
+//! and you want to a succinct, in-circuit representation of those polynomials that
+//! you can use to say derive a challenge, then nested encoding can be used to
+//! implement a two-layer flow for doing that:
 //!
-//! It's constructed to be generic over the staged curve and circuit field,
-//! allowing you to reuse `InnerStage`, `OuterStage`, and `StagingCircuit`
-//! for both sides of the cycle.
-
-use std::marker::PhantomData;
+//!     * Inner-stage: commit to the N polynomials using Vesta and construct a staging
+//!     polynomial (over Fq) that witnesses those Vesta commitments,
+//!         
+//!     * Off-circuit: commit to the staging polynomial using Pallas generators.
+//!
+//!     * Outer-stage: allocate the commitment which can be used across staged circuits.
+//!
+//! Imprtantly, we can't form a connection between the inner and outer stages due to
+//! the field boundary constraint in the `Stage` trait that disallowes stages from
+//! building stages that aren't in the same curve. That's why the inner stage acts as
+//! an interstitial, temporary stage that we use to construct the commitment, and
+//! then we can form an outer stage from which subsequent stages can be built on.
 
 use arithmetic::CurveAffine;
-use ff::PrimeField;
 use ragu_circuits::{
     polynomials::Rank,
     staging::{Stage, StageBuilder, StagedCircuit},
@@ -24,27 +35,25 @@ use ragu_primitives::{
     Point,
     vec::{ConstLen, FixedVec},
 };
+use std::marker::PhantomData;
 
-/// Inner stage: Allocates commitment points on an arbitrary `Curve`, using `Curve::Base`
-/// as the circuit’s native field.
+/// Inner stage: allocates `HostCurve` commitment points, using `HostCurve::Base`
+/// as the circuit’s native base field.
 ///
 /// * Fp round: caller parameterizes using `Curve = C::HostCurve` (Vesta)
 /// * Fq round: caller parameterizes using `Curve = C::NestedCurve` (Pallas)
-pub struct InnerStageB<Curve, const NUM: usize> {
-    _marker: core::marker::PhantomData<Curve>,
+pub struct BInnerStage<HostCurve, const NUM: usize> {
+    _marker: core::marker::PhantomData<HostCurve>,
 }
 
-impl<Curve, R, const NUM: usize> Stage<<Curve>::Base, R> for InnerStageB<Curve, NUM>
-where
-    Curve: CurveAffine,
-    <Curve>::Base: PrimeField,
-    R: Rank,
+impl<HostCurve: CurveAffine, R: Rank, const NUM: usize> Stage<<HostCurve>::Base, R>
+    for BInnerStage<HostCurve, NUM>
 {
     type Parent = ();
-    type Witness<'source> = &'source [Curve; NUM];
+    type Witness<'source> = &'source [HostCurve; NUM];
 
-    type OutputKind = Kind![<Curve>::Base;
-              FixedVec<Point<'_, _, Curve>, ConstLen<NUM>>];
+    type OutputKind = Kind![<HostCurve>::Base;
+              FixedVec<Point<'_, _, HostCurve>, ConstLen<NUM>>];
 
     fn values() -> usize {
         NUM * 2
@@ -53,38 +62,34 @@ where
     fn witness<'dr, 'source: 'dr, D>(
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<<Self::OutputKind as GadgetKind<<Curve>::Base>>::Rebind<'dr, D>>
+    ) -> Result<<Self::OutputKind as GadgetKind<<HostCurve>::Base>>::Rebind<'dr, D>>
     where
-        D: Driver<'dr, F = <Curve>::Base>,
+        D: Driver<'dr, F = <HostCurve>::Base>,
         Self: 'dr,
     {
+        // Allocate each commitment point.
         let mut v = Vec::with_capacity(NUM);
         for i in 0..NUM {
             v.push(Point::alloc(dr, witness.view().map(|w| w[i]))?);
         }
-        Ok(FixedVec::new(v).expect("output"))
+        Ok(FixedVec::new(v).expect("length"))
     }
 }
 
-/// Outer stage: Allocates commitment points on an arbitrary `Curve`, using `Curve::Base`
-/// as the circuit’s native field. This has the opposite parameterization to the inner stage
-/// by design.
+/// Outer stage: Allocates `NestedCurve` commitment points, using `NestedCurve::Base`
+/// as the circuit’s base native field. This has the opposite parameterization to the
+/// inner stage.
 ///
 /// * Fp round: caller parameterizes using `Curve = C::NestedCurve` (Pallas)
 /// * Fq round: caller parameterizes using `Curve = C::HostCurve` (Vesta)
-pub struct OuterStageB<Curve>(PhantomData<Curve>);
+pub struct BOuterStage<NestedCurve>(PhantomData<NestedCurve>);
 
-impl<Curve, R> Stage<Curve::Base, R> for OuterStageB<Curve>
-where
-    Curve: CurveAffine,
-    <Curve>::Base: PrimeField,
-    R: Rank,
-{
+impl<NestedCurve: CurveAffine, R: Rank> Stage<NestedCurve::Base, R> for BOuterStage<NestedCurve> {
     type Parent = ();
 
-    type Witness<'source> = Curve;
+    type Witness<'source> = NestedCurve;
 
-    type OutputKind = Kind![Curve::Base; Point<'_, _, Curve>];
+    type OutputKind = Kind![NestedCurve::Base; Point<'_, _, NestedCurve>];
 
     fn values() -> usize {
         2
@@ -93,57 +98,76 @@ where
     fn witness<'dr, 'source: 'dr, D>(
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<<Self::OutputKind as GadgetKind<Curve::Base>>::Rebind<'dr, D>>
+    ) -> Result<<Self::OutputKind as GadgetKind<NestedCurve::Base>>::Rebind<'dr, D>>
     where
-        D: Driver<'dr, F = Curve::Base>,
+        D: Driver<'dr, F = NestedCurve::Base>,
         Self: 'dr,
     {
+        // Allocate the commitment point.
         Point::alloc(dr, witness)
     }
 }
 
-/// Staging circuit that witnesses a commitment point on `Curve` inside a circuit
-/// over `Curve::Base`. Typically `Curve = C::NestedCurve` in the current round.
+/// Staged circuit that witnesses the B-stage nested encoding commitment.
 #[derive(Clone)]
-pub struct StagingCircuitB<Curve>(core::marker::PhantomData<Curve>);
+pub struct BNestedEncodingCircuit<NestedCurve>(core::marker::PhantomData<NestedCurve>);
 
-impl<Curve> StagingCircuitB<Curve> {
+impl<NestedCurve> BNestedEncodingCircuit<NestedCurve> {
     pub fn new() -> Self {
         Self(core::marker::PhantomData)
     }
 }
 
-impl<Curve, R> StagedCircuit<Curve::Base, R> for StagingCircuitB<Curve>
-where
-    Curve: arithmetic::CurveAffine,
-    R: Rank,
+impl<NestedCurve: CurveAffine, R: Rank> StagedCircuit<NestedCurve::Base, R>
+    for BNestedEncodingCircuit<NestedCurve>
 {
-    type Final = OuterStageB<Curve>;
+    type Final = BOuterStage<NestedCurve>;
     type Instance<'src> = ();
-    type Witness<'w> = Curve;
-    type Output = Kind![Curve::Base; Point<'_, _, Curve>];
-    type Aux<'source> = Curve;
+    type Witness<'w> = NestedCurve;
+    type Output = Kind![NestedCurve::Base; Point<'_, _, NestedCurve>];
+    type Aux<'source> = NestedCurve;
 
-    fn instance<'dr, 'src: 'dr, D: Driver<'dr, F = Curve::Base>>(
+    fn instance<'dr, 'src: 'dr, D: Driver<'dr, F = NestedCurve::Base>>(
         &self,
         _dr: &mut D,
         _instance: DriverValue<D, Self::Instance<'src>>,
-    ) -> Result<<Self::Output as GadgetKind<Curve::Base>>::Rebind<'dr, D>> {
-        todo!()
+    ) -> Result<<Self::Output as GadgetKind<NestedCurve::Base>>::Rebind<'dr, D>> {
+        unimplemented!()
     }
 
-    fn witness<'a, 'dr, 'w: 'dr, D: Driver<'dr, F = Curve::Base>>(
+    fn witness<'a, 'dr, 'w: 'dr, D: Driver<'dr, F = NestedCurve::Base>>(
         &self,
         dr: StageBuilder<'a, 'dr, D, R, (), Self::Final>,
         witness: DriverValue<D, Self::Witness<'w>>,
     ) -> Result<(
-        <Self::Output as GadgetKind<Curve::Base>>::Rebind<'dr, D>,
+        <Self::Output as GadgetKind<NestedCurve::Base>>::Rebind<'dr, D>,
         DriverValue<D, Self::Aux<'w>>,
     )> {
-        let (curve_point_gadget, dr) = dr.add_stage::<OuterStageB<Curve>>(witness)?;
-        let curve_point_value = curve_point_gadget.value();
+        // Add `BOuterStage` to allocate the commitment point.
+        let (b_commitment, dr) = dr.add_stage::<BOuterStage<NestedCurve>>(witness)?;
+        let b_commitment_value = b_commitment.value();
         let _ = dr.finish();
 
-        Ok((curve_point_gadget, curve_point_value))
+        Ok((b_commitment, b_commitment_value))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ragu_circuits::staging::StageExt;
+    use ragu_pasta::{EpAffine, EqAffine, Fp, Fq};
+    type TestRank = ragu_circuits::polynomials::R<10>;
+
+    #[test]
+    fn test_b_staging() {
+        assert_eq!(
+            <BInnerStage<EqAffine, 4> as StageExt<Fq, TestRank>>::num_multiplications(),
+            4
+        );
+        assert_eq!(
+            <BOuterStage<EpAffine> as StageExt<Fp, TestRank>>::num_multiplications(),
+            1
+        );
     }
 }

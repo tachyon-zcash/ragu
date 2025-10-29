@@ -8,11 +8,11 @@
 
 use ragu_pasta::{EpAffine, EqAffine};
 
-use crate::nested_encoding::b_stage::{InnerStageB, OuterStageB, StagingCircuitB};
+use crate::nested_encoding::b_stage::{BInnerStage, BNestedEncodingCircuit, BOuterStage};
 
-pub type FpInnerStage<const NUM: usize> = InnerStageB<EqAffine, NUM>;
-pub type FpOuterStage = OuterStageB<EpAffine>;
-pub type FpStageingCircuit = StagingCircuitB<EpAffine>;
+pub type FpBInnerStage<const NUM: usize> = BInnerStage<EqAffine, NUM>;
+pub type FpBOuterStage = BOuterStage<EpAffine>;
+pub type FpStageingCircuit = BNestedEncodingCircuit<EpAffine>;
 
 #[cfg(test)]
 mod tests {
@@ -29,7 +29,7 @@ mod tests {
     use ragu_pasta::{EqAffine, Fp, Pasta};
     use rand::thread_rng;
 
-    use crate::vesta::deferreds::{FpInnerStage, FpOuterStage, FpStageingCircuit};
+    use crate::vesta::deferreds::{FpBInnerStage, FpBOuterStage, FpStageingCircuit};
 
     const NUM: usize = 8;
     type R = ragu_circuits::polynomials::R<10>;
@@ -43,7 +43,7 @@ mod tests {
 
         // Generate the partial witness polynomial by executing the Fq staging polynomial, and compute a Ep commitment to
         // it outside the circuit.
-        let inner_rx_fq = <FpInnerStage<NUM> as StageExt<Fq, R>>::rx(&eq_points)?;
+        let inner_rx_fq = <FpBInnerStage<NUM> as StageExt<Fq, R>>::rx(&eq_points)?;
         let ep_commit = inner_rx_fq.commit(&params.pallas, Fq::random(thread_rng()));
 
         // The staged circuit allocates the commitment in the circuit.
@@ -52,7 +52,7 @@ mod tests {
 
         assert_eq!(ep_point_value, ep_commit);
 
-        let outer_s = <FpOuterStage as StageExt<Fp, R>>::final_into_object()?;
+        let outer_s = <FpBOuterStage as StageExt<Fp, R>>::final_into_object()?;
         let y = Fp::random(thread_rng());
         let z = Fp::random(thread_rng());
 

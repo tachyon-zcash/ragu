@@ -14,6 +14,7 @@ use ragu_circuits::{
 };
 use ragu_core::Error;
 use ragu_core::Result;
+use ragu_pasta::Fp;
 
 /// CycleFold-style simultaneous state.
 pub struct CycleState<C, R>
@@ -118,7 +119,10 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         &mut self,
         // Application circuit witnesses.
         application_witnesses: &Vec<C::CircuitField>,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        C: Cycle<CircuitField = Fp>,
+    {
         // Finalize the mesh on first step invocation.
         if matches!(self.engine_state, EngineState::Building { .. }) {
             self.finalize_internal()?;

@@ -44,5 +44,6 @@ pub mod engine;
 pub mod nested_encoding;
 pub mod pallas;
 pub mod session;
+pub mod transcript;
 pub mod utilities;
 pub mod vesta;

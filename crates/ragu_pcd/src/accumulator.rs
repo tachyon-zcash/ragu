@@ -42,10 +42,10 @@ where
 #[derive(Clone, Debug)]
 pub struct UncompressedAccumulator<C: CurveAffine, R: Rank> {
     /// Split-accumulation polynomials (s, a, b, p).
-    pub witness: AccumulatorWitness<C, R>,
+    pub(crate) witness: AccumulatorWitness<C, R>,
 
     /// Instance data (commitments, challenges, evaluations).
-    pub instance: AccumulatorInstance<C>,
+    pub(crate) instance: AccumulatorInstance<C>,
     // TODO: add `AccumulatorState` for rerandomization tracking.
 }
 
@@ -61,17 +61,17 @@ pub struct CompressedAccumulator<C: CurveAffine> {
 /// Split-Accumulation private witness.
 #[derive(Clone, Debug)]
 pub(crate) struct AccumulatorWitness<C: CurveAffine, R: Rank> {
-    s_poly: unstructured::Polynomial<C::Scalar, R>,
-    s_blinding: C::Scalar,
+    pub(crate) s_poly: unstructured::Polynomial<C::Scalar, R>,
+    pub(crate) s_blinding: C::Scalar,
 
-    a_poly: structured::Polynomial<C::Scalar, R>,
-    a_blinding: C::Scalar,
+    pub(crate) a_poly: structured::Polynomial<C::Scalar, R>,
+    pub(crate) a_blinding: C::Scalar,
 
-    b_poly: structured::Polynomial<C::Scalar, R>,
-    b_blinding: C::Scalar,
+    pub(crate) b_poly: structured::Polynomial<C::Scalar, R>,
+    pub(crate) b_blinding: C::Scalar,
 
-    p_poly: unstructured::Polynomial<C::Scalar, R>,
-    p_blinding: C::Scalar,
+    pub(crate) p_poly: unstructured::Polynomial<C::Scalar, R>,
+    pub(crate) p_blinding: C::Scalar,
 }
 
 /// Split-Accumulation public instance.

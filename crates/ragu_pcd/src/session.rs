@@ -13,6 +13,7 @@ use arithmetic::Cycle;
 use ragu_circuits::Circuit;
 use ragu_circuits::polynomials::Rank;
 use ragu_core::Error;
+use ragu_pasta::Fp;
 
 /// A stateful session for building recursive proofs in a PCD chain.
 ///
@@ -54,7 +55,10 @@ where
     /// Execute one PCD step with the provided witnesses.
     ///
     /// Mesh finalization automatically happens on the first call.
-    pub fn step(&'a mut self, application_witnesses: &Vec<C::CircuitField>) -> Result<(), Error> {
+    pub fn step(&'a mut self, application_witnesses: &Vec<C::CircuitField>) -> Result<(), Error>
+    where
+        C: Cycle<CircuitField = Fp>,
+    {
         if application_witnesses.is_empty() {
             return Err(Error::InvalidWitness("witnesses cannot be empty".into()));
         }
