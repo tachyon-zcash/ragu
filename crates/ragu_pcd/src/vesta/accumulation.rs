@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use crate::accumulator::CycleAccumulator;
 use crate::engine::CycleEngine;
 use crate::nested_encoding::b_stage::{BInnerStage, BNestedEncodingCircuit};
@@ -9,6 +11,7 @@ use crate::utilities::dummy_circuits::Circuits;
 use crate::vesta::structures::{CommittedPolynomial, CommittedStructured};
 use arithmetic::{Cycle, FixedGenerators};
 use ff::Field;
+use ragu_circuits::polynomials::structured;
 use ragu_circuits::CircuitExt;
 use ragu_circuits::mesh::Mesh;
 use ragu_circuits::{
@@ -56,7 +59,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // TODO: Determine the endoscaling operations, representing deferreds from the other curve.
 
         ///////////////////////////////////////////////////////////////////////////////////////
-        // PHASE: Process the application circuits. The witness polynomials
+        // TASK: Process the application circuits. The witness polynomials
         // r(X) are over Fp, and produce commitments to Vesta points.
         ///////////////////////////////////////////////////////////////////////////////////////
 
@@ -122,13 +125,17 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
 
         // TODO: where is the partial witness polynomial for B, `_d_rx`, used?
         let b_circuit = Staged::<Fp, R, _>::new(BNestedEncodingCircuit::<C::NestedCurve>::new());
-        let (_d_rx, _d_aux) = b_circuit.rx::<R>(b_nested_commitment)?;
+        let (_b_rx, _b_aux) = b_circuit.rx::<R>(b_nested_commitment)?;
 
         // TRANSCRIPT: Absorb B stage commitment before deriving w challenge.
         transcript.absorb_point(b_nested_commitment);
 
         ///////////////////////////////////////////////////////////////////////////////////////
-        // PHASE: W challenge derivation.
+        // PHASE: Construct D staging polynomial. This uses a two-layer nested encoding.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: W challenge derivation.
         ///////////////////////////////////////////////////////////////////////////////////////
 
         // Derive w challenge from B commitment using Poseidon hash.
@@ -142,7 +149,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         let w_challenge = transcript.squeeze();
 
         ///////////////////////////////////////////////////////////////////////////////////////
-        // PHASE: S' Mesh Polynomials.
+        // TASK: S' Mesh Polynomials.
         ///////////////////////////////////////////////////////////////////////////////////////
 
         // COMPUTE S': For each previous accumulator, compute M(w, x_i, Y) for checking mesh consistency.
@@ -170,7 +177,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         let s_prime_commitments = [s_prime[0].commitment, s_prime[1].commitment];
 
         ///////////////////////////////////////////////////////////////////////////////////////
-        // PHASE: D1 Two-Layer Nested Encoding.
+        // TASK: D1 Two-Layer Nested Encoding.
         //////////////////////////////////////////////////////////////////////////////////////
 
         // INNER LAYER: Staging polynomial (over Fq) that witnesses the S' Vesta commitments.
@@ -185,14 +192,14 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         transcript.absorb_point(d1_nested_commitment);
 
         ///////////////////////////////////////////////////////////////////////////////////////
-        // PHASE: Y challenge derivation.
+        // TASK: Y challenge derivation.
         ///////////////////////////////////////////////////////////////////////////////////////
 
         // TRANSCRIPT: Squeeze y challenge.
         let y_challenge = transcript.squeeze();
 
         ///////////////////////////////////////////////////////////////////////////////////////
-        // PHASE: S'' Mesh Polynomial.
+        // TASK: S'' Mesh Polynomial.
         ///////////////////////////////////////////////////////////////////////////////////////
 
         // COMPUTE S'': M(w, X, y) polynomial for final mesh consistency checks.
@@ -209,7 +216,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         ky.push(acc2.accumulator.instance.c);
 
         ///////////////////////////////////////////////////////////////////////////////////////
-        // PHASE: D2 Two-Layer Nested Encoding
+        // TASK: D2 Two-Layer Nested Encoding
         //////////////////////////////////////////////////////////////////////////////////////
 
         // INNER LAYER: Staging polynomial (over Fq) that witnesses the S'' Vesta commitment.
@@ -223,16 +230,16 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         transcript.absorb_point(d2_nested_commitment);
 
         ///////////////////////////////////////////////////////////////////////////////////////
-        // PHASE: Z challenge derivation.
+        // TASK: Z challenge derivation.
         ///////////////////////////////////////////////////////////////////////////////////////
 
         // TRANSCRIPT: Squeeze z challenge.
         let z_challenge = transcript.squeeze();
 
         ///////////////////////////////////////////////////////////////////////////////////////
-        // PHASE: Compute B polynomials for revdot verification.
+        // TASK: Compute B polynomials for revdot verification.
         //
-        //  For each application circuit: B_i(X) = A_i(X)·z + t(X,z) + M(circuit_id, X, y),
+        //  For each application circuit: B_i(X) = A_i(X) * z + t(X,z) + M(circuit_id, X, y),
         //  and this construction ensures: A_i (revdot) B_i = k_i(y).
         ///////////////////////////////////////////////////////////////////////////////////////
 
@@ -274,7 +281,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         });
 
         ///////////////////////////////////////////////////////////////////////////////////////
-        // PHASE: Compute error / slack term (from folding multiple revdot checks)
+        // TASK: Compute error / slack term (from folding multiple revdot checks)
         // before computing the u and v evaluations.
         ///////////////////////////////////////////////////////////////////////////////////////
 
@@ -318,7 +325,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         transcript.absorb_point(d3_nested_commitment);
 
         ///////////////////////////////////////////////////////////////////////////////////////
-        // PHASE: Challenge circuit: verify w, y, and z challenges in-circuit.
+        // TASK: Challenge circuit: verify w, y, and z challenges in-circuit.
         ///////////////////////////////////////////////////////////////////////////////////////
 
         let d_witness = DNestedEncodingWitness {
@@ -332,6 +339,54 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
 
         let d_circuit = Staged::<Fp, R, _>::new(DNestedEncodingCircuit::<C::NestedCurve>::new());
         let (_d_rx, _d_aux) = d_circuit.rx::<R>(d_witness)?;
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // PHASE: Construct E staging polynomial.
+        ///////////////////////////////////////////////////////////////////////////////////////
+    
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: mu and nu challenge derivation for checking revdot claims are correct.
+        ///////////////////////////////////////////////////////////////////////////////////////
+        
+        // TRANSCRIPT: Squeeze mu challenge.
+        let mu_challenge = transcript.squeeze();
+
+        // TRANSCRIPT: Absorb mu challenge. 
+        transcript.absorb_scalar(mu_challenge);
+        
+        // TRANSCRIPT: Squeeze nu challenge.
+        let nu_challenge = transcript.squeeze();
+
+        let mu_inv = mu_challenge.invert().unwrap();
+        let munu = mu_challenge * nu_challenge;
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Folding A and B polynomials into single polynomials.
+        ///////////////////////////////////////////////////////////////////////////////////////
+        let a_poly = structured::Polynomial::fold(a_polys.iter().map(|p| &p.poly), mu_inv);
+        let a_blinding = C::CircuitField::random(OsRng);
+        let a_commitment = a_poly.commit(cycle.host_generators(), a_blinding);
+        
+        let a_folded = CommittedPolynomial {
+            poly: a_poly,
+            blind: a_blinding,
+            commitment: a_commitment,
+        };
+        
+        let b_poly = structured::Polynomial::fold(a_polys.iter().map(|p| &p.poly), munu);
+        let b_blinding = C::CircuitField::random(OsRng);
+        let b_commitment = b_poly.commit(cycle.host_generators(), b_blinding);
+        
+        let b_folded = CommittedPolynomial {
+            poly: b_poly,
+            blind: b_blinding,
+            commitment: b_commitment,
+        };
+
+        // Computed the expected value of c = a.revdot(b).
+
+        
+
 
         Ok(())
     }

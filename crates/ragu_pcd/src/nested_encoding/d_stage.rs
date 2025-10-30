@@ -1,6 +1,6 @@
 //! D-stage with a composite challenge derivation circuit, which derives the
 //! challenges (w, y, z) in a continuous parent chain, using two-layer nested
-//! encoding (similiar to stage-b) for commitments.
+//! encoding (similiar to B-stage) for commitments.
 
 use arithmetic::CurveAffine;
 use ff::PrimeField;
@@ -243,7 +243,7 @@ pub struct DNestedEncodingWitness<C: CurveAffine> {
     pub z_challenge: C::Base,
 }
 
-/// Output struct containing all intermediate commitments and challenges.
+/// Output containing all intermediate commitments and challenges.
 #[derive(ragu_macros::Gadget, ragu_primitives::io::Write)]
 pub struct DNestedEncodingOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     #[ragu(gadget)]
@@ -291,8 +291,6 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
         _instance: DriverValue<D, Self::Instance<'source>>,
     ) -> Result<<Self::Output as GadgetKind<NestedCurve::Base>>::Rebind<'dr, D>> {
         unimplemented!()
-
-        // TODO: THIS SHOULD TAKE B-COMMITMENT AS A PUBLIC INPUT INTO THE CIRCUIT
     }
 
     fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = NestedCurve::Base>>(
@@ -327,7 +325,7 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
 
         let dr = dr.finish();
 
-        // Now allocate `b_commitment` (NOT in the staging polynomial) and verify
+        // Now allocate `b_nested_commitment` (NOT in the staging polynomial) and verify
         // that w was correctly derived from B. This keeps B and D as separate staging
         // polynomials while still verifying the FS challenge derivation.
         let b_nested_commitment = Point::alloc(dr, witness.view().map(|w| w.b_nested_commitment))?;
