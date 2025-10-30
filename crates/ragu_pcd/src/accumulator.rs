@@ -55,42 +55,42 @@ pub struct UncompressedAccumulator<C: CurveAffine, R: Rank> {
 pub struct CompressedAccumulator<C: CurveAffine> {
     pub instance: AccumulatorInstance<C>,
     ipa_proof: PhantomData<C>,
-    pub circuit_inputs: Vec<Vec<C::Scalar>>,
+    pub circuit_inputs: Vec<Vec<C::ScalarExt>>,
 }
 
-/// Split-Accumulation private witness.
+/// Split-Accumulation private witness (prover's working structure).
 #[derive(Clone, Debug)]
 pub(crate) struct AccumulatorWitness<C: CurveAffine, R: Rank> {
-    pub(crate) s_poly: unstructured::Polynomial<C::Scalar, R>,
-    pub(crate) s_blinding: C::Scalar,
+    pub(crate) s_poly: unstructured::Polynomial<C::ScalarExt, R>,
+    pub(crate) s_blinding: C::ScalarExt,
 
-    pub(crate) a_poly: structured::Polynomial<C::Scalar, R>,
-    pub(crate) a_blinding: C::Scalar,
+    pub(crate) a_poly: structured::Polynomial<C::ScalarExt, R>,
+    pub(crate) a_blinding: C::ScalarExt,
 
-    pub(crate) b_poly: structured::Polynomial<C::Scalar, R>,
-    pub(crate) b_blinding: C::Scalar,
+    pub(crate) b_poly: structured::Polynomial<C::ScalarExt, R>,
+    pub(crate) b_blinding: C::ScalarExt,
 
-    pub(crate) p_poly: unstructured::Polynomial<C::Scalar, R>,
-    pub(crate) p_blinding: C::Scalar,
+    pub(crate) p_poly: unstructured::Polynomial<C::ScalarExt, R>,
+    pub(crate) p_blinding: C::ScalarExt,
 }
 
 /// Split-Accumulation public instance.
 #[derive(Clone, Debug)]
 pub struct AccumulatorInstance<C: CurveAffine> {
-    // Structured polynomials
+    // Structured commitments & revdot claim.
     pub a: C,
     pub b: C,
-    pub c: C::Scalar,
+    pub c: C::ScalarExt,
 
-    // Unstructured polynomial (batches evaluation checks)
+    // Batching commitment & evaluation claim.
     pub p: C,
-    pub u: ChallengePoint<C::Scalar>,
-    pub v: EvaluationPoint<C::Scalar>,
+    pub u: ChallengePoint<C::ScalarExt>,
+    pub v: EvaluationPoint<C::ScalarExt>,
 
-    // Mesh polynomial
+    // Mesh commitments & challenges.
     pub s: C,
-    pub x: ChallengePoint<C::Scalar>,
-    pub y: ChallengePoint<C::Scalar>,
+    pub x: ChallengePoint<C::ScalarExt>,
+    pub y: ChallengePoint<C::ScalarExt>,
 }
 
 impl<HostCurve, NestedCurve, R> CycleAccumulator<HostCurve, NestedCurve, R>
@@ -101,7 +101,7 @@ where
 {
     /// Create a base CycleAccumulator with empty deferred work
     pub fn base(
-        mesh: &Mesh<HostCurve::Scalar, R>,
+        mesh: &Mesh<HostCurve::ScalarExt, R>,
         generators: &impl FixedGenerators<HostCurve>,
     ) -> Self {
         Self {
@@ -114,27 +114,27 @@ where
 }
 
 impl<C: CurveAffine, R: Rank> UncompressedAccumulator<C, R> {
-    pub fn base(mesh: &Mesh<C::Scalar, R>, generators: &impl FixedGenerators<C>) -> Self {
+    pub fn base(mesh: &Mesh<C::ScalarExt, R>, generators: &impl FixedGenerators<C>) -> Self {
         // Zero polynomials with synthetic blinding factors to avoid identity commitments.
         let a_poly = structured::Polynomial::default();
-        let a_blinding = C::Scalar::random(&mut thread_rng());
+        let a_blinding = C::ScalarExt::random(&mut thread_rng());
 
         let b_poly = structured::Polynomial::default();
-        let b_blinding = C::Scalar::random(&mut thread_rng());
+        let b_blinding = C::ScalarExt::random(&mut thread_rng());
 
         let p_poly = unstructured::Polynomial::default();
-        let p_blinding = C::Scalar::random(&mut thread_rng());
+        let p_blinding = C::ScalarExt::random(&mut thread_rng());
 
         // Trivial zero challenge points.
-        let x = C::Scalar::ZERO;
-        let y = C::Scalar::ZERO;
+        let x = C::ScalarExt::ZERO;
+        let y = C::ScalarExt::ZERO;
 
         let s_poly = mesh.xy(x, y);
-        let s_blinding = C::Scalar::random(&mut thread_rng());
+        let s_blinding = C::ScalarExt::random(&mut thread_rng());
 
         // Zero evaluations (consistent with zero polynomials).
-        let u = C::Scalar::ZERO;
-        let v = C::Scalar::ZERO;
+        let u = C::ScalarExt::ZERO;
+        let v = C::ScalarExt::ZERO;
 
         let c = a_poly.revdot(&b_poly);
 
@@ -168,23 +168,23 @@ impl<C: CurveAffine, R: Rank> UncompressedAccumulator<C, R> {
         }
     }
 
-    pub fn random(mesh: &Mesh<C::Scalar, R>, generators: &impl FixedGenerators<C>) -> Self {
-        let a_poly = structured::Polynomial::<C::Scalar, R>::random(&mut thread_rng());
-        let a_blinding = C::Scalar::random(&mut thread_rng());
+    pub fn random(mesh: &Mesh<C::ScalarExt, R>, generators: &impl FixedGenerators<C>) -> Self {
+        let a_poly = structured::Polynomial::<C::ScalarExt, R>::random(&mut thread_rng());
+        let a_blinding = C::ScalarExt::random(&mut thread_rng());
 
-        let b_poly = structured::Polynomial::<C::Scalar, R>::random(&mut thread_rng());
-        let b_blinding = C::Scalar::random(&mut thread_rng());
+        let b_poly = structured::Polynomial::<C::ScalarExt, R>::random(&mut thread_rng());
+        let b_blinding = C::ScalarExt::random(&mut thread_rng());
 
-        let p_poly = unstructured::Polynomial::<C::Scalar, R>::random(&mut thread_rng());
-        let p_blinding = C::Scalar::random(&mut thread_rng());
+        let p_poly = unstructured::Polynomial::<C::ScalarExt, R>::random(&mut thread_rng());
+        let p_blinding = C::ScalarExt::random(&mut thread_rng());
 
-        let x = C::Scalar::random(&mut thread_rng());
-        let y = C::Scalar::random(&mut thread_rng());
+        let x = C::ScalarExt::random(&mut thread_rng());
+        let y = C::ScalarExt::random(&mut thread_rng());
 
         let s_poly = mesh.xy(x, y);
-        let s_blinding = C::Scalar::random(&mut thread_rng());
+        let s_blinding = C::ScalarExt::random(&mut thread_rng());
 
-        let u = C::Scalar::random(&mut thread_rng());
+        let u = C::ScalarExt::random(&mut thread_rng());
         let v = p_poly.eval(u);
         let c = a_poly.revdot(&b_poly);
 
@@ -226,6 +226,34 @@ impl<C: CurveAffine, R: Rank> UncompressedAccumulator<C, R> {
     // call-site usage as the implementation is flushed out.
 }
 
+impl<C: CurveAffine, R: Rank> AccumulatorWitness<C, R> {
+    pub fn base() -> Self {
+        // Zero polynomials with synthetic blinding factors to avoid identity commitments.
+        let a_poly = structured::Polynomial::default();
+        let a_blinding = C::ScalarExt::random(&mut thread_rng());
+
+        let b_poly = structured::Polynomial::default();
+        let b_blinding = C::ScalarExt::random(&mut thread_rng());
+
+        let p_poly = unstructured::Polynomial::default();
+        let p_blinding = C::ScalarExt::random(&mut thread_rng());
+
+        let s_poly = unstructured::Polynomial::default();
+        let s_blinding = C::ScalarExt::random(&mut thread_rng());
+
+        AccumulatorWitness {
+            s_poly,
+            s_blinding,
+            a_poly,
+            a_blinding,
+            b_poly,
+            b_blinding,
+            p_poly,
+            p_blinding,
+        }
+    }
+}
+
 /// The circuit public inputs represent the canonical encoding of an `AccumulatorInstance`.
 ///
 /// The instance is the formal description of the verifier-enforced portion of a statement,
@@ -236,25 +264,25 @@ impl<C: CurveAffine, R: Rank> UncompressedAccumulator<C, R> {
 ///
 /// TODO: https://github.com/ebfull/ragu/issues/24.
 impl<C: CurveAffine> AccumulatorInstance<C> {
-    pub fn to_public_inputs(&self) -> Result<Vec<C::Scalar>, Error> {
+    pub fn to_public_inputs(&self) -> Result<Vec<C::ScalarExt>, Error> {
         todo!()
     }
 
-    pub fn from_public_inputs(_inputs: &[C::Scalar]) -> Result<Self, Error> {
+    pub fn from_public_inputs(_inputs: &[C::ScalarExt]) -> Result<Self, Error> {
         todo!()
     }
 }
 
-impl<C: CurveAffine> TryFrom<&[C::Scalar]> for AccumulatorInstance<C> {
+impl<C: CurveAffine> TryFrom<&[C::ScalarExt]> for AccumulatorInstance<C> {
     type Error = Error;
-    fn try_from(inputs: &[C::Scalar]) -> Result<Self, Self::Error> {
+    fn try_from(inputs: &[C::ScalarExt]) -> Result<Self, Self::Error> {
         Self::from_public_inputs(inputs)
     }
 }
 
-impl<C: CurveAffine> TryFrom<Vec<C::Scalar>> for AccumulatorInstance<C> {
+impl<C: CurveAffine> TryFrom<Vec<C::ScalarExt>> for AccumulatorInstance<C> {
     type Error = Error;
-    fn try_from(inputs: Vec<C::Scalar>) -> Result<Self, Self::Error> {
+    fn try_from(inputs: Vec<C::ScalarExt>) -> Result<Self, Self::Error> {
         Self::from_public_inputs(&inputs)
     }
 }

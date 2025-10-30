@@ -6,7 +6,7 @@ use crate::nested_encoding::d_stage::{
 };
 use crate::transcript::AccumulationTranscript;
 use crate::utilities::dummy_circuits::Circuits;
-use crate::vesta::structures::{A, B, SPrime, SPrimePrime};
+use crate::vesta::structures::{CommittedPolynomial, CommittedStructured};
 use arithmetic::{Cycle, FixedGenerators};
 use ff::Field;
 use ragu_circuits::CircuitExt;
@@ -43,6 +43,16 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // Intantiate a DUMMY transcript object.
         let mut transcript = AccumulationTranscript::<C::CircuitField>::new();
 
+        // Instantiate new accumulator object, which contains the prover's split accumulator witness and instance parts.
+        let cycle_accumulator = CycleAccumulator::<C::HostCurve, C::NestedCurve, R>::base(
+            mesh,
+            cycle.host_generators(),
+        );
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // PHASE: Process endoscalars.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
         // TODO: Determine the endoscaling operations, representing deferreds from the other curve.
 
         ///////////////////////////////////////////////////////////////////////////////////////
@@ -58,9 +68,9 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
             let blinding = C::CircuitField::random(OsRng);
             let commitment = rx_poly.commit(cycle.host_generators(), blinding);
 
-            a_polys.push(A {
+            a_polys.push(CommittedPolynomial {
                 poly: rx_poly,
-                blinding,
+                blind: blinding,
                 commitment,
             });
 
@@ -68,14 +78,14 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         }
 
         // Append the previous A accumulator polynomials.
-        a_polys.push(A {
+        a_polys.push(CommittedPolynomial {
             poly: acc1.accumulator.witness.a_poly.clone(),
-            blinding: acc1.accumulator.witness.a_blinding,
+            blind: acc1.accumulator.witness.a_blinding,
             commitment: acc1.accumulator.instance.a,
         });
-        a_polys.push(A {
+        a_polys.push(CommittedPolynomial {
             poly: acc2.accumulator.witness.a_poly.clone(),
-            blinding: acc2.accumulator.witness.a_blinding,
+            blind: acc2.accumulator.witness.a_blinding,
             commitment: acc2.accumulator.instance.a,
         });
 
@@ -144,14 +154,14 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         let s1_commitment_acc2 = s1_poly_acc2.commit(cycle.host_generators(), s1_blinding_acc2);
 
         let s_prime = [
-            SPrime {
+            CommittedPolynomial {
                 poly: s1_poly_acc1,
-                blinding: s1_blinding_acc1,
+                blind: s1_blinding_acc1,
                 commitment: s1_commitment_acc1,
             },
-            SPrime {
+            CommittedPolynomial {
                 poly: s1_poly_acc2,
-                blinding: s1_blinding_acc2,
+                blind: s1_blinding_acc2,
                 commitment: s1_commitment_acc2,
             },
         ];
@@ -190,9 +200,9 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         let s2_blinding = C::CircuitField::random(thread_rng());
         let s2_commitment = s2_poly.commit(cycle.host_generators(), s2_blinding);
 
-        let s2 = SPrimePrime {
+        let s2 = CommittedPolynomial {
             poly: s2_poly,
-            blinding: s2_blinding,
+            blind: s2_blinding,
             commitment: s2_commitment,
         };
 
@@ -226,7 +236,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
             core::array::from_fn(|i| C::CircuitField::from(i as u64));
 
         let tz = R::tz(z_challenge);
-        let mut b_poly: Vec<B<C::HostCurve, R>> = a_polys
+        let mut b_polys: Vec<CommittedStructured<R, C::HostCurve>> = a_polys
             .iter()
             .take(N) // Only application circuits, not accumulators yet
             .zip(circuit_ids.iter())
@@ -239,19 +249,26 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
                 let b_blinding = C::CircuitField::random(thread_rng());
                 let b_commitment = b_poly.commit(cycle.host_generators(), b_blinding);
 
-                B {
+                CommittedPolynomial {
                     poly: b_poly,
-                    blinding: b_blinding,
+                    blind: b_blinding,
                     commitment: b_commitment,
                 }
+
+                // CommittedPolynomial::new_from_parts(b_poly, b_blinding, b_commitment)
             })
             .collect();
 
         // Append existing accumulator B polynomials.
-        b_poly.push(B {
+        b_polys.push(CommittedPolynomial {
             poly: acc1.accumulator.witness.b_poly.clone(),
-            blinding: acc1.accumulator.witness.b_blinding,
+            blind: acc1.accumulator.witness.b_blinding,
             commitment: acc1.accumulator.instance.b,
+        });
+        b_polys.push(CommittedPolynomial {
+            poly: acc2.accumulator.witness.b_poly.clone(),
+            blind: acc2.accumulator.witness.b_blinding,
+            commitment: acc2.accumulator.instance.b,
         });
 
         ///////////////////////////////////////////////////////////////////////////////////////
@@ -264,7 +281,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         for i in 0..len {
             for j in 0..len {
                 if i != j {
-                    let cross = a_polys[i].poly.revdot(&b_poly[j].poly);
+                    let cross = a_polys[i].poly.revdot(&b_polys[j].poly);
                     cross_products.push(cross);
                 }
             }
