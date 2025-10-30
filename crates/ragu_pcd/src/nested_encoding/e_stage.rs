@@ -14,9 +14,7 @@ use ragu_core::{
     gadgets::{GadgetKind, Kind},
 };
 use ragu_pasta::{Fp, PoseidonFp};
-use ragu_primitives::{
-    Element, GadgetExt, Point, Sponge,
-};
+use ragu_primitives::{Element, GadgetExt, Point, Sponge};
 
 /// Mu challenge stage: witnesses the mu challenge derived from D staging polynomial.
 pub struct MuChallengeStage<NestedCurve> {
@@ -159,7 +157,8 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
         // Now allocate `d3_nested_commitment` (NOT in the staging polynomial) and verify
         // that mu and nu were correctly derived. This keeps D and E as separate staging
         // polynomials while still verifying the FS challenge derivation.
-        let d3_nested_commitment = Point::alloc(dr, witness.view().map(|w| w.d3_nested_commitment))?;
+        let d3_nested_commitment =
+            Point::alloc(dr, witness.view().map(|w| w.d3_nested_commitment))?;
 
         // Initialize a single sponge for FS challenge derivation.
         let mut sponge = Sponge::new(dr, &PoseidonFp);

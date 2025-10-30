@@ -11,9 +11,9 @@ use crate::utilities::dummy_circuits::Circuits;
 use crate::vesta::structures::{CommittedPolynomial, CommittedStructured};
 use arithmetic::{Cycle, FixedGenerators};
 use ff::Field;
-use ragu_circuits::polynomials::structured;
 use ragu_circuits::CircuitExt;
 use ragu_circuits::mesh::Mesh;
+use ragu_circuits::polynomials::structured;
 use ragu_circuits::{
     polynomials::Rank,
     staging::{StageExt, Staged},
@@ -343,17 +343,17 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         ///////////////////////////////////////////////////////////////////////////////////////
         // PHASE: Construct E staging polynomial.
         ///////////////////////////////////////////////////////////////////////////////////////
-    
+
         ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: mu and nu challenge derivation for checking revdot claims are correct.
         ///////////////////////////////////////////////////////////////////////////////////////
-        
+
         // TRANSCRIPT: Squeeze mu challenge.
         let mu_challenge = transcript.squeeze();
 
-        // TRANSCRIPT: Absorb mu challenge. 
+        // TRANSCRIPT: Absorb mu challenge.
         transcript.absorb_scalar(mu_challenge);
-        
+
         // TRANSCRIPT: Squeeze nu challenge.
         let nu_challenge = transcript.squeeze();
 
@@ -366,17 +366,17 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         let a_poly = structured::Polynomial::fold(a_polys.iter().map(|p| &p.poly), mu_inv);
         let a_blinding = C::CircuitField::random(OsRng);
         let a_commitment = a_poly.commit(cycle.host_generators(), a_blinding);
-        
+
         let a_folded = CommittedPolynomial {
             poly: a_poly,
             blind: a_blinding,
             commitment: a_commitment,
         };
-        
+
         let b_poly = structured::Polynomial::fold(a_polys.iter().map(|p| &p.poly), munu);
         let b_blinding = C::CircuitField::random(OsRng);
         let b_commitment = b_poly.commit(cycle.host_generators(), b_blinding);
-        
+
         let b_folded = CommittedPolynomial {
             poly: b_poly,
             blind: b_blinding,
@@ -384,9 +384,6 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         };
 
         // Computed the expected value of c = a.revdot(b).
-
-        
-
 
         Ok(())
     }
