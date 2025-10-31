@@ -321,11 +321,13 @@ mod tests {
             }
         }
 
-        let endoscalar: Uendo = thread_rng().r#gen();
+        let endoscalar_a: Uendo = thread_rng().r#gen();
+        let endoscalar_b: Uendo = thread_rng().r#gen();
         let p1 = (EpAffine::generator() * Fq::random(thread_rng())).into();
         let p2 = (EpAffine::generator() * Fq::random(thread_rng())).into();
 
-        let rx1 = MyStage1::rx(endoscalar)?;
+        let rx1_a = MyStage1::rx(endoscalar_a)?;
+        let rx1_b = MyStage1::rx(endoscalar_b)?;
         let rx2 = MyStage2::rx((p1, p2))?;
 
         let circ1 = MyStage1::into_object()?;
@@ -335,16 +337,23 @@ mod tests {
         let y = Fp::random(thread_rng());
 
         {
-            let mut rhs = rx1.clone();
-            rhs.dilate(z);
-            rhs.add_assign(&circ1.sy(y));
-            rhs.add_assign(&R::tz(z));
-            assert_eq!(rx1.revdot(&rhs), Fp::ZERO);
+            let rhs = circ1.sy(y);
+            assert_eq!(rx1_a.revdot(&rhs), Fp::ZERO);
+            assert_eq!(rx1_b.revdot(&rhs), Fp::ZERO);
+
+            // It is safe to combine an arbitrary number of these into a single
+            // revdot claim (separating each stage polynomial by a power of z)
+            // because the right hand side is the same for each, and the result
+            // must be zero in both cases.
+            let mut combined = rx1_a.clone();
+            combined.scale(z);
+            combined.add_assign(&rx1_b);
+            assert_eq!(combined.revdot(&rhs), Fp::ZERO);
         }
 
-        assert_eq!(rx1.revdot(&circ1.sy(y)), Fp::ZERO);
+        assert_eq!(rx1_a.revdot(&circ1.sy(y)), Fp::ZERO);
         assert_eq!(rx2.revdot(&circ2.sy(y)), Fp::ZERO);
-        assert!(rx1.revdot(&circ2.sy(y)) != Fp::ZERO);
+        assert!(rx1_a.revdot(&circ2.sy(y)) != Fp::ZERO);
         assert!(rx2.revdot(&circ1.sy(y)) != Fp::ZERO);
 
         Ok(())
