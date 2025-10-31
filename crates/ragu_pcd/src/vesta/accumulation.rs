@@ -59,6 +59,12 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // TODO: Determine the endoscaling operations, representing deferreds from the other curve.
 
         ///////////////////////////////////////////////////////////////////////////////////////
+        // PHASE: Process `StagedObjects`.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // TODO: Check the staged objects for staging consistency.
+
+        ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: Process the application circuits. The witness polynomials
         // r(X) are over Fp, and produce commitments to Vesta points.
         ///////////////////////////////////////////////////////////////////////////////////////
@@ -338,7 +344,24 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         };
 
         let d_circuit = Staged::<Fp, R, _>::new(DNestedEncodingCircuit::<C::NestedCurve>::new());
-        let (_d_rx, _d_aux) = d_circuit.rx::<R>(d_witness)?;
+        let (d_rx, _d_aux) = d_circuit.rx::<R>(d_witness)?;
+
+        let d_staged_circuit_blinding = C::CircuitField::random(OsRng);
+        let d_staged_circuit_commitment =
+            d_rx.commit(cycle.host_generators(), d_staged_circuit_blinding);
+
+        // INNER LAYER: Staging polynomial (over Fq) that witnesses the D staged circuit Vesta commitment.
+        let d_staged_circuit_inner = <D2InnerStage<C::HostCurve, 1> as StageExt<
+            C::ScalarField,
+            R,
+        >>::rx(&[d_staged_circuit_commitment])?;
+
+        // NESTED ENCODING: Commit to the staging polynomial using Pallas generators (nested curve).
+        let d_staged_circuit_nested_blinding = C::ScalarField::random(OsRng);
+        let d_staged_circuit_nested_commitment = d_staged_circuit_inner
+            .commit(cycle.nested_generators(), d_staged_circuit_nested_blinding);
+
+        transcript.absorb_point(d_staged_circuit_nested_commitment);
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // PHASE: Construct E staging polynomial.
