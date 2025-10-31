@@ -231,6 +231,69 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> Stage<NestedCurve::Base, R>
     }
 }
 
+/// Error Inner Stage: staging polynomial (over `HostCurve::Base`) that witnesses the error terms.
+pub struct ErrorInnerStage<HostCurve, const NUM: usize> {
+    _marker: core::marker::PhantomData<HostCurve>,
+}
+
+impl<HostCurve: CurveAffine, R: Rank, const NUM: usize> Stage<<HostCurve>::Base, R>
+    for ErrorInnerStage<HostCurve, NUM>
+{
+    type Parent = ();
+    type Witness<'source> = &'source [HostCurve; NUM];
+    type OutputKind = Kind![<HostCurve>::Base;
+              FixedVec<Point<'_, _, HostCurve>, ConstLen<NUM>>];
+
+    fn values() -> usize {
+        NUM * 2
+    }
+
+    fn witness<'dr, 'source: 'dr, D>(
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<<Self::OutputKind as GadgetKind<<HostCurve>::Base>>::Rebind<'dr, D>>
+    where
+        D: Driver<'dr, F = <HostCurve>::Base>,
+        Self: 'dr,
+    {
+        // Allocate each commitment point.
+        let mut v = Vec::with_capacity(NUM);
+        for i in 0..NUM {
+            v.push(Point::alloc(dr, witness.view().map(|w| w[i]))?);
+        }
+        Ok(FixedVec::new(v).expect("length"))
+    }
+}
+
+/// Indirection stage for computing a partial staged witness for the staging circuit.
+pub struct DIndirectionStage<NestedCurve>(PhantomData<NestedCurve>);
+
+impl<NestedCurve: CurveAffine, R: Rank> Stage<NestedCurve::Base, R>
+    for DIndirectionStage<NestedCurve>
+{
+    type Parent = ();
+
+    type Witness<'source> = NestedCurve;
+
+    type OutputKind = Kind![NestedCurve::Base; Point<'_, _, NestedCurve>];
+
+    fn values() -> usize {
+        2
+    }
+
+    fn witness<'dr, 'source: 'dr, D>(
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<<Self::OutputKind as GadgetKind<NestedCurve::Base>>::Rebind<'dr, D>>
+    where
+        D: Driver<'dr, F = NestedCurve::Base>,
+        Self: 'dr,
+    {
+        // Allocate the commitment point.
+        Point::alloc(dr, witness)
+    }
+}
+
 /// Composite circuit: witness data for the composite challenge derivation circuit.
 /// The commitments here are nested commitments (Pallas points), representing
 /// outputs of the two-layer nested encoding process.

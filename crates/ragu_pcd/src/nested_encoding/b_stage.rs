@@ -108,6 +108,35 @@ impl<NestedCurve: CurveAffine, R: Rank> Stage<NestedCurve::Base, R> for BOuterSt
     }
 }
 
+/// Indirection stage for computing a partial staged witness for the staging circuit.
+pub struct BIndirectionStage<NestedCurve>(PhantomData<NestedCurve>);
+
+impl<NestedCurve: CurveAffine, R: Rank> Stage<NestedCurve::Base, R>
+    for BIndirectionStage<NestedCurve>
+{
+    type Parent = ();
+
+    type Witness<'source> = NestedCurve;
+
+    type OutputKind = Kind![NestedCurve::Base; Point<'_, _, NestedCurve>];
+
+    fn values() -> usize {
+        2
+    }
+
+    fn witness<'dr, 'source: 'dr, D>(
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<<Self::OutputKind as GadgetKind<NestedCurve::Base>>::Rebind<'dr, D>>
+    where
+        D: Driver<'dr, F = NestedCurve::Base>,
+        Self: 'dr,
+    {
+        // Allocate the commitment point.
+        Point::alloc(dr, witness)
+    }
+}
+
 /// Staged circuit that witnesses the B-stage nested encoding commitment.
 #[derive(Clone)]
 pub struct BNestedEncodingCircuit<NestedCurve>(core::marker::PhantomData<NestedCurve>);
