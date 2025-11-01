@@ -41,7 +41,7 @@ extern crate alloc;
 pub mod accumulator;
 pub mod endoscalar;
 pub mod engine;
-pub mod nested_encoding;
+pub mod staging;
 pub mod pallas;
 pub mod session;
 pub mod transcript;

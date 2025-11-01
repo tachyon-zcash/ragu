@@ -6,7 +6,7 @@
 //!   2. **Off-circuit commitment:** commit `r(X)` using Vesta (Eq) generators.
 //!   3. **Outer (Fq) stage:** stage the resulting Eq commitment inside the Fq circuit.
 
-use crate::nested_encoding::b_stage::{BInnerStage, BNestedEncodingCircuit, BOuterStage};
+use crate::staging::b_stage::{BInnerStage, BNestedEncodingCircuit, BOuterStage};
 use ragu_core::Result;
 use ragu_pasta::{EpAffine, EqAffine};
 pub type FqBInnerStage<const NUM: usize> = BInnerStage<EpAffine, NUM>;

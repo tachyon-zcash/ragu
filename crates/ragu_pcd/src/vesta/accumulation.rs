@@ -1,11 +1,11 @@
 use crate::accumulator::{ConsistencyEvaluations, CycleAccumulator, FinalEvaluations};
 use crate::engine::CycleEngine;
-use crate::nested_encoding::b_stage::{BIndirectionStage, BInnerStage, BNestedEncodingCircuit};
-use crate::nested_encoding::d_stage::{
+use crate::staging::b_stage::{BIndirectionStage, BInnerStage, BNestedEncodingCircuit};
+use crate::staging::d_stage::{
     D1InnerStage, D2InnerStage, DIndirectionStage, DSubcircuit1, DSubcircuit1Witness, DSubcircuit2,
     DSubcircuit2Witness, ErrorInnerStage,
 };
-use crate::nested_encoding::e_stage::E2InnerStage;
+use crate::staging::e_stage::E2InnerStage;
 use crate::transcript::AccumulationTranscript;
 use crate::utilities::dummy_circuits::Circuits;
 use crate::vesta::structures::{CommittedPolynomial, CommittedStructured};

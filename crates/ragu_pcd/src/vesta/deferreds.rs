@@ -8,7 +8,7 @@
 
 use ragu_pasta::{EpAffine, EqAffine};
 
-use crate::nested_encoding::b_stage::{BInnerStage, BNestedEncodingCircuit, BOuterStage};
+use crate::staging::b_stage::{BInnerStage, BNestedEncodingCircuit, BOuterStage};
 
 pub type FpBInnerStage<const NUM: usize> = BInnerStage<EqAffine, NUM>;
 pub type FpBOuterStage = BOuterStage<EpAffine>;
