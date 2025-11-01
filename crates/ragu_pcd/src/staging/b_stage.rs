@@ -38,6 +38,7 @@ use ragu_primitives::{
 };
 use std::marker::PhantomData;
 
+// Inner stages (arrays of curve points).
 inner_stage!(BInnerStage);
 outer_stage!(BOuterStage, ());
 indirection_stage!(BIndirectionStage);

@@ -5,7 +5,7 @@ use crate::staging::d_stage::{
     D1InnerStage, D2InnerStage, DIndirectionStage, DSubcircuit1, DSubcircuit1Witness, DSubcircuit2,
     DSubcircuit2Witness, ErrorInnerStage,
 };
-use crate::staging::e_stage::E2InnerStage;
+use crate::staging::e_stage::{E2InnerStage, EIndirectionStage, ESubcircuit1, ESubcircuit1Witness};
 use crate::transcript::AccumulationTranscript;
 use crate::utilities::dummy_circuits::Circuits;
 use crate::vesta::structures::{CommittedPolynomial, CommittedStructured};
@@ -382,10 +382,6 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
         ///////////////////////////////////////////////////////////////////////////////////////
-        // PHASE: E STAGE. This uses a two-layer nested encoding.
-        ///////////////////////////////////////////////////////////////////////////////////////
-
-        ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: mu and nu challenge derivation for checking revdot claims are correct.
         ///////////////////////////////////////////////////////////////////////////////////////
 
@@ -417,6 +413,64 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
             len,
         })?;
 
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        // LAYER OF INDIRECTION: We now introduce another nested commitment layer to produce
+        // an Fp-hashable, partially nested commitment for use in the transcript.
+        let c_staged_circuit_blinding = C::CircuitField::random(OsRng);
+        let c_staged_circuit_commitment =
+            c_rx.commit(cycle.host_generators(), c_staged_circuit_blinding);
+
+        // INNER LAYER: Staging polynomial (over Fq) that witnesses the B staged circuit Vesta commitment.
+        let c_staged_circuit_inner = <DIndirectionStage<C::HostCurve> as StageExt<
+            C::ScalarField,
+            R,
+        >>::rx(c_staged_circuit_commitment)?;
+
+        // NESTED ENCODING: Commit to the staging polynomial using Pallas generators (nested curve).
+        let c_staged_circuit_nested_blinding = C::ScalarField::random(OsRng);
+        let c_staged_circuit_nested_commitment = c_staged_circuit_inner
+            .commit(cycle.nested_generators(), c_staged_circuit_nested_blinding);
+
+        transcript.absorb_point(c_staged_circuit_nested_commitment);
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // PHASE: E STAGE. This uses a two-layer nested encoding.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Check mu and nu challenge derivation.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // STAGED CIRCUIT: This simply allocates the partial nested commitment point inside the staged circuit.
+        let e_circuit = Staged::<Fp, R, _>::new(ESubcircuit1::<C::NestedCurve>::new());
+        let (e_rx, _e_aux) = e_circuit.rx::<R>(ESubcircuit1Witness {
+            c_staged_circuit_nested_commitment,
+            mu_challenge,
+            nu_challenge,
+        })?;
+
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        // LAYER OF INDIRECTION: We now introduce another nested commitment layer to produce
+        // an Fp-hashable, partially nested commitment for use in the transcript.
+        let e_staged_circuit_blinding = C::CircuitField::random(OsRng);
+        let e_staged_circuit_commitment =
+            e_rx.commit(cycle.host_generators(), e_staged_circuit_blinding);
+
+        // INNER LAYER: Staging polynomial (over Fq) that witnesses the B staged circuit Vesta commitment.
+        let e_staged_circuit_inner = <EIndirectionStage<C::HostCurve> as StageExt<
+            C::ScalarField,
+            R,
+        >>::rx(e_staged_circuit_commitment)?;
+
+        // NESTED ENCODING: Commit to the staging polynomial using Pallas generators (nested curve).
+        let e_staged_circuit_nested_blinding = C::ScalarField::random(OsRng);
+        let cestaged_circuit_nested_commitment = c_staged_circuit_inner
+            .commit(cycle.nested_generators(), e_staged_circuit_nested_blinding);
+
+        transcript.absorb_point(cestaged_circuit_nested_commitment);
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
         ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: Folding A and B polynomials into single polynomials.
         ///////////////////////////////////////////////////////////////////////////////////////
@@ -440,27 +494,6 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
             blind: b_blinding,
             commitment: b_commitment,
         };
-
-        //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        // LAYER OF INDIRECTION: We now introduce another nested commitment layer to produce
-        // an Fp-hashable, partially nested commitment for use in the transcript.
-        let c_staged_circuit_blinding = C::CircuitField::random(OsRng);
-        let c_staged_circuit_commitment =
-            c_rx.commit(cycle.host_generators(), c_staged_circuit_blinding);
-
-        // INNER LAYER: Staging polynomial (over Fq) that witnesses the B staged circuit Vesta commitment.
-        let c_staged_circuit_inner = <DIndirectionStage<C::HostCurve> as StageExt<
-            C::ScalarField,
-            R,
-        >>::rx(c_staged_circuit_commitment)?;
-
-        // NESTED ENCODING: Commit to the staging polynomial using Pallas generators (nested curve).
-        let c_staged_circuit_nested_blinding = C::ScalarField::random(OsRng);
-        let c_staged_circuit_nested_commitment = c_staged_circuit_inner
-            .commit(cycle.nested_generators(), c_staged_circuit_nested_blinding);
-
-        transcript.absorb_point(c_staged_circuit_nested_commitment);
-        //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: x challenge derivation.
@@ -585,12 +618,6 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
 
         transcript.absorb_scalar(batched_a_eval);
         transcript.absorb_scalar(batched_b_eval);
-
-        ///////////////////////////////////////////////////////////////////////////////////////
-        // TASK: Compute E staging circuit.
-        ///////////////////////////////////////////////////////////////////////////////////////
-
-        // TODO: Compute E staging circuit.
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // PHASE: F STAGE.

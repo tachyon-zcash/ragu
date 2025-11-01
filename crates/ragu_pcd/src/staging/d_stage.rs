@@ -21,12 +21,12 @@ use ragu_primitives::{
 };
 use std::marker::PhantomData;
 
-// Inner stages (arrays of curve points)
+// Inner stages (arrays of curve points).
 inner_stage!(D1InnerStage);
 inner_stage!(D2InnerStage);
 inner_stage!(ErrorInnerStage);
 
-// D subcircuit stages with parent chain (w -> D1 -> y -> D2 -> z -> D3)
+// D staged subcircuit stages with parent chain (w -> D1 -> y -> D2 -> z -> D3).
 challenge_stage!(WChallengeStage, ());
 outer_stage!(D1OuterStage, WChallengeStage);
 challenge_stage!(YChallengeStage, D1OuterStage);
@@ -34,7 +34,7 @@ outer_stage!(D2OuterStage, YChallengeStage);
 challenge_stage!(ZChallengeStage, D2OuterStage);
 outer_stage!(D3OuterStage, ZChallengeStage);
 
-// C subcircuit stages with parent chain (mu -> nu)
+// C staged subcircuit stages with parent chain (mu -> nu).
 challenge_stage!(MuChallengeStage, ());
 challenge_stage!(NuChallengeStage, MuChallengeStage);
 
@@ -245,7 +245,6 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
         <Self::Output as GadgetKind<NestedCurve::Base>>::Rebind<'dr, D>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
-        // STAGE 1: StageBuilder for `MuChallengeStage` for computed mu value.
         let (mu_challenge, dr) =
             dr.add_stage::<MuChallengeStage<NestedCurve>>(witness.view().map(|w| w.mu_challenge))?;
 
@@ -257,23 +256,9 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
         // Now allocate `d3_nested_commitment` (NOT in the staging polynomial) and verify
         // that mu and nu were correctly derived. This keeps D and E as separate staging
         // polynomials while still verifying the FS challenge derivation.
+        // TODO: what do we do with this now if we defer these checks to the next circuit?>
         let d3_nested_commitment =
             Point::alloc(dr, witness.view().map(|w| w.d3_nested_commitment))?;
-
-        // Initialize a single sponge for FS challenge derivation.
-        let mut sponge = Sponge::new(dr, &PoseidonFp);
-
-        // Derive mu = H(state_0 || D3)
-        d3_nested_commitment.write(dr, &mut sponge)?;
-        let mu_computed = sponge.squeeze(dr)?;
-        dr.enforce_equal(mu_computed.wire(), mu_challenge.wire())?;
-
-        // Absorb Mu challenge.
-        mu_computed.write(dr, &mut sponge)?;
-
-        // Derive nu = H(state_1 || mu) where state_1 contains (D3, mu).
-        let nu_computed = sponge.squeeze(dr)?;
-        dr.enforce_equal(nu_computed.wire(), nu_challenge.wire())?;
 
         // Witness mu_inv and verify it's the inverse of mu (non-determinstic witness trick from the Halo paper).
         let mu_inv = Element::alloc(dr, witness.view().map(|w| w.mu_inv))?;
