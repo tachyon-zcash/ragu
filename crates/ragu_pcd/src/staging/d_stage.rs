@@ -1,12 +1,9 @@
-//! D-stage with a composite challenge derivation circuit, which derives the
-//! challenges (w, y, z) in a continuous parent chain, using two-layer nested
-//! encoding (similiar to B-stage) for commitments.
-//!
-//! TODO; change description here to include c workload.
+//! D-stage with two composite subcircuits that together handle challenge derivation
+//! (w, y, z) and and C computation. These seperately have continuous parent chains,
+//! using two-layer nested encoding for commitments.
 
 use crate::{challenge_stage, indirection_stage, inner_stage, outer_stage};
 use arithmetic::CurveAffine;
-use ff::PrimeField;
 use ragu_circuits::{
     polynomials::Rank,
     staging::{Stage, StageBuilder, StagedCircuit},
@@ -130,8 +127,6 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
         let (z_challenge, dr) =
             dr.add_stage::<ZChallengeStage<NestedCurve>>(witness.view().map(|w| w.z_challenge))?;
 
-        // TODO: fix this.
-
         // STAGE 6: StageBuilder for `ZChallengeStage` for computed error terms.
         let (d3_nested_commitment, dr) = dr.add_stage::<D3OuterStage<NestedCurve>>(
             witness.view().map(|w| w.d3_nested_commitment),
@@ -212,8 +207,8 @@ pub struct DSubcircuit2Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> 
 }
 
 /// Auxiliary output containing the computed c value as a field element.
-pub struct DSubcircuit2Aux<F: PrimeField> {
-    pub c_value: F,
+pub struct DSubcircuit2Aux<C: CurveAffine> {
+    pub c_value: C::Base,
 }
 
 #[derive(Clone)]
@@ -232,7 +227,7 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
     type Instance<'src> = ();
     type Witness<'w> = DSubcircuit2Witness<NestedCurve>;
     type Output = Kind![NestedCurve::Base; DSubcircuit2Output<'_, _, NestedCurve>];
-    type Aux<'source> = DSubcircuit2Aux<NestedCurve::Base>;
+    type Aux<'source> = DSubcircuit2Aux<NestedCurve>;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = NestedCurve::Base>>(
         &self,
