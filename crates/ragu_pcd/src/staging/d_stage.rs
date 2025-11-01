@@ -134,7 +134,7 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
 
         let dr = dr.finish();
 
-        // Now allocate `b_nested_commitment` (NOT in the staging polynomial) and verify
+        // Now allocate `b_nested_commitment` (NOT as a seperate stage in this staging polynomial) and verify
         // that w was correctly derived from B. This keeps B and D as separate staging
         // polynomials while still verifying the FS challenge derivation.
         let b_nested_commitment = Point::alloc(dr, witness.view().map(|w| w.b_nested_commitment))?;
@@ -253,7 +253,7 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
 
         let dr = dr.finish();
 
-        // Now allocate `d3_nested_commitment` (NOT in the staging polynomial) and verify
+        // Now allocate `d3_nested_commitment` (NOT as a seperate in this staging polynomial) and verify
         // that mu and nu were correctly derived. This keeps D and E as separate staging
         // polynomials while still verifying the FS challenge derivation.
         // TODO: what do we do with this now if we defer these checks to the next circuit?>
