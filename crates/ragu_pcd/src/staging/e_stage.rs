@@ -2,10 +2,7 @@
 //! challenges (mu and nu), and computes C in a continuous parent chain.
 
 use arithmetic::CurveAffine;
-use ragu_circuits::{
-    polynomials::Rank,
-    staging::Stage,
-};
+use ragu_circuits::{polynomials::Rank, staging::Stage};
 use ragu_core::Result;
 use ragu_core::maybe::Maybe;
 use ragu_core::{
@@ -13,7 +10,7 @@ use ragu_core::{
     gadgets::{GadgetKind, Kind},
 };
 use ragu_primitives::{
-    Element, GadgetExt, Point, Sponge,
+    Point,
     vec::{ConstLen, FixedVec},
 };
 

@@ -14,7 +14,7 @@ macro_rules! inner_stage {
             type Parent = ();
             type Witness<'source> = &'source [HostCurve; NUM];
             type OutputKind = Kind![<HostCurve>::Base;
-                            FixedVec<Point<'_, _, HostCurve>, ConstLen<NUM>>];
+                                    FixedVec<Point<'_, _, HostCurve>, ConstLen<NUM>>];
 
             fn values() -> usize {
                 NUM * 2
