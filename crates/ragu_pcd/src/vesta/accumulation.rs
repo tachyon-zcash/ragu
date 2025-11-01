@@ -1,18 +1,19 @@
-use crate::accumulator::CycleAccumulator;
+use crate::accumulator::{ConsistencyEvaluations, CycleAccumulator, FinalEvaluations};
 use crate::engine::CycleEngine;
 use crate::nested_encoding::b_stage::{BIndirectionStage, BInnerStage, BNestedEncodingCircuit};
 use crate::nested_encoding::d_stage::{
-    D1InnerStage, D2InnerStage, DIndirectionStage, DNestedEncodingCircuit, DNestedEncodingWitness,
-    ErrorInnerStage,
+    D1InnerStage, D2InnerStage, DIndirectionStage, DSubcircuit1, DSubcircuit1Witness, DSubcircuit2,
+    DSubcircuit2Witness, ErrorInnerStage,
 };
+use crate::nested_encoding::e_stage::E2InnerStage;
 use crate::transcript::AccumulationTranscript;
 use crate::utilities::dummy_circuits::Circuits;
 use crate::vesta::structures::{CommittedPolynomial, CommittedStructured};
-use arithmetic::{Cycle, FixedGenerators};
+use arithmetic::{Cycle, FixedGenerators, factor_iter};
 use ff::Field;
 use ragu_circuits::CircuitExt;
 use ragu_circuits::mesh::Mesh;
-use ragu_circuits::polynomials::structured;
+use ragu_circuits::polynomials::{structured, unstructured};
 use ragu_circuits::{
     polynomials::Rank,
     staging::{StageExt, Staged},
@@ -41,6 +42,8 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         const N: usize = 4;
         let circuits = Circuits::new();
         let circuit_list = [&circuits.s3, &circuits.s4, &circuits.s10, &circuits.s19];
+        let circuit_ids: [C::CircuitField; N] =
+            core::array::from_fn(|i| C::CircuitField::from(i as u64));
 
         // Intantiate a DUMMY transcript object.
         let mut transcript = AccumulationTranscript::<C::CircuitField>::new();
@@ -58,10 +61,22 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // TODO: Determine the endoscaling operations, representing deferreds from the other curve.
 
         ///////////////////////////////////////////////////////////////////////////////////////
+        // PHASE: Map what needs to be deffered using some kind of map.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // TODO: Collect all the deferreds we've marked in the code.
+
+        ///////////////////////////////////////////////////////////////////////////////////////
         // PHASE: Process `StagedObjects`.
         ///////////////////////////////////////////////////////////////////////////////////////
 
         // TODO: Check the staged objects for staging consistency.
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // PHASE: Process other public inputs.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // TODO: Determine what objects need to be in the public inputs.
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: Process the application circuits. The witness polynomials
@@ -105,7 +120,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         }
 
         ///////////////////////////////////////////////////////////////////////////////////////
-        // PHASE: Construct B staging polynomial. This uses a two-layer nested encoding.
+        // PHASE: B STAGE. This uses a two-layer nested encoding.
         ///////////////////////////////////////////////////////////////////////////////////////
 
         // Collect application circuit commitments (Vesta points).
@@ -157,7 +172,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
         ///////////////////////////////////////////////////////////////////////////////////////
-        // PHASE: Construct D staging polynomial. This uses a two-layer nested encoding.
+        // PHASE: D STAGE. This uses a two-layer nested encoding.
         ///////////////////////////////////////////////////////////////////////////////////////
 
         ///////////////////////////////////////////////////////////////////////////////////////
@@ -233,6 +248,12 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         let s2_blinding = C::CircuitField::random(thread_rng());
         let s2_commitment = s2_poly.commit(cycle.host_generators(), s2_blinding);
 
+        let s_prime_prime = [CommittedPolynomial {
+            poly: s2_poly,
+            blind: s2_blinding,
+            commitment: s2_commitment,
+        }];
+
         // Append previous accumulator revdot claims as diagonal terms.
         let mut ky: Vec<Fp> = ky
             .iter()
@@ -268,9 +289,6 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         //  For each application circuit: B_i(X) = A_i(X) * z + t(X,z) + M(circuit_id, X, y),
         //  and this construction ensures: A_i (revdot) B_i = k_i(y).
         ///////////////////////////////////////////////////////////////////////////////////////
-
-        let circuit_ids: [C::CircuitField; N] =
-            core::array::from_fn(|i| C::CircuitField::from(i as u64));
 
         let tz = R::tz(z_challenge);
         let mut b_polys: Vec<CommittedStructured<R, C::HostCurve>> = a_polys
@@ -354,16 +372,17 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // TASK: Challenge circuit: verify w, y, and z challenges in-circuit.
         ///////////////////////////////////////////////////////////////////////////////////////
 
-        let d_witness = DNestedEncodingWitness {
+        let d_witness = DSubcircuit1Witness {
             b_nested_commitment,
             w_challenge,
             d1_nested_commitment,
             y_challenge,
             d2_nested_commitment,
             z_challenge,
+            d3_nested_commitment,
         };
 
-        let d_circuit = Staged::<Fp, R, _>::new(DNestedEncodingCircuit::<C::NestedCurve>::new());
+        let d_circuit = Staged::<Fp, R, _>::new(DSubcircuit1::<C::NestedCurve>::new());
         let (d_rx, _d_aux) = d_circuit.rx::<R>(d_witness)?;
 
         //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -388,7 +407,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
         ///////////////////////////////////////////////////////////////////////////////////////
-        // PHASE: Construct E staging polynomial.
+        // PHASE: E STAGE. This uses a two-layer nested encoding.
         ///////////////////////////////////////////////////////////////////////////////////////
 
         ///////////////////////////////////////////////////////////////////////////////////////
@@ -406,6 +425,22 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
 
         let mu_inv = mu_challenge.invert().unwrap();
         let munu = mu_challenge * nu_challenge;
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Compute C. The expected value of c = a.revdot(b).
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // STAGED CIRCUIT: This simply allocates the partial nested commitment point inside the staged circuit.
+        let c_circuit = Staged::<Fp, R, _>::new(DSubcircuit2::<C::NestedCurve>::new());
+        let (c_rx, _c_aux) = c_circuit.rx::<R>(DSubcircuit2Witness {
+            d3_nested_commitment,
+            mu_challenge,
+            nu_challenge,
+            mu_inv,
+            cross_products,
+            ky_values: ky,
+            len,
+        })?;
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: Folding A and B polynomials into single polynomials.
@@ -431,9 +466,293 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
             commitment: b_commitment,
         };
 
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        // LAYER OF INDIRECTION: We now introduce another nested commitment layer to produce
+        // an Fp-hashable, partially nested commitment for use in the transcript.
+        let c_staged_circuit_blinding = C::CircuitField::random(OsRng);
+        let c_staged_circuit_commitment =
+            c_rx.commit(cycle.host_generators(), c_staged_circuit_blinding);
+
+        // INNER LAYER: Staging polynomial (over Fq) that witnesses the B staged circuit Vesta commitment.
+        let c_staged_circuit_inner = <DIndirectionStage<C::HostCurve> as StageExt<
+            C::ScalarField,
+            R,
+        >>::rx(c_staged_circuit_commitment)?;
+
+        // NESTED ENCODING: Commit to the staging polynomial using Pallas generators (nested curve).
+        let c_staged_circuit_nested_blinding = C::ScalarField::random(OsRng);
+        let c_staged_circuit_nested_commitment = c_staged_circuit_inner
+            .commit(cycle.nested_generators(), c_staged_circuit_nested_blinding);
+
+        transcript.absorb_point(c_staged_circuit_nested_commitment);
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
         ///////////////////////////////////////////////////////////////////////////////////////
-        // TASK: Compute C. The expected value of c = a.revdot(b).
+        // TASK: x challenge derivation.
         ///////////////////////////////////////////////////////////////////////////////////////
+
+        // TRANSCRIPT: Squeeze x challenge.
+        let x_challenge = transcript.squeeze();
+
+        let xz = x_challenge * z_challenge;
+
+        // TODO: This needs to happen inside the circuit.
+        let txz = R::txz(x_challenge, z_challenge);
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Compute S for mesh consistency.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        let s_polynomial = mesh.xy(x_challenge, y_challenge);
+        let s_blinding = C::CircuitField::random(OsRng);
+        let s_commitment = s_polynomial.commit(cycle.host_generators(), s_blinding);
+
+        let s = CommittedPolynomial {
+            poly: s_polynomial,
+            blind: s_blinding,
+            commitment: s_commitment,
+        };
+
+        // INNER LAYER: Staging polynomial (over Fq) that witnesses the S Vesta commitment.
+        let e1_inner_rx =
+            <D2InnerStage<C::HostCurve, 1> as StageExt<C::ScalarField, R>>::rx(&[s_commitment])?;
+
+        // NESTED ENCODING: Commit to the staging polynomial using Pallas generators (nested curve).
+        let e1_blinding = C::ScalarField::random(OsRng);
+        let e1_nested_commitment = e1_inner_rx.commit(cycle.nested_generators(), e1_blinding);
+
+        transcript.absorb_point(e1_nested_commitment);
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Compute evaluations.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        let circuit_evaluations: [Fp; N] = [
+            mesh.wxy(circuit_ids[0], x_challenge, y_challenge),
+            mesh.wxy(circuit_ids[1], x_challenge, y_challenge),
+            mesh.wxy(circuit_ids[2], x_challenge, y_challenge),
+            mesh.wxy(circuit_ids[3], x_challenge, y_challenge),
+        ];
+
+        let consistency_evaluations = ConsistencyEvaluations::<C::HostCurve> {
+            acc1_s_at_w: acc1.accumulator.witness.s_poly.eval(w_challenge),
+            acc2_s_at_w: acc2.accumulator.witness.s_poly.eval(w_challenge),
+            s1_acc1_at_y: s_prime[0].poly.eval(y_challenge),
+            s1_acc2_at_y: s_prime[1].poly.eval(y_challenge),
+            s2_at_x: s_prime_prime[0].poly.eval(x_challenge),
+        };
+
+        let a_polys_evals_x: Vec<Fp> = a_polys
+            .iter()
+            .map(|a_poly| a_poly.poly.eval(x_challenge))
+            .collect();
+        let a_polys_evals_xz: Vec<Fp> = a_polys
+            .iter()
+            .take(N)
+            .map(|a_poly| a_poly.poly.eval(xz))
+            .collect();
+        let acc_b_evals_x = [
+            acc1.accumulator.witness.b_poly.eval(x_challenge),
+            acc2.accumulator.witness.b_poly.eval(x_challenge),
+        ];
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Compute batched polynomial evaluation claims.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        let batched_a_eval = {
+            a_polys_evals_x
+                .iter()
+                .rev()
+                .fold(Fp::zero(), |acc, &eval| acc * mu_inv + eval)
+        };
+        let batched_b_eval = {
+            let circuit_b_evals = a_polys_evals_xz
+                .iter()
+                .zip(circuit_evaluations.iter())
+                .map(|(&eval_xz, &circuit_eval)| eval_xz + txz + circuit_eval);
+
+            let b_evals: Vec<_> = circuit_b_evals
+                .chain(acc_b_evals_x.iter().copied())
+                .collect();
+
+            b_evals
+                .iter()
+                .rev()
+                .fold(Fp::zero(), |acc, &eval| acc * munu + eval)
+        };
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Absorb all evaluation data into the transcript before driving alpha.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        for eval in circuit_evaluations {
+            transcript.absorb_scalar(eval);
+        }
+
+        transcript.absorb_scalar(consistency_evaluations.acc1_s_at_w);
+        transcript.absorb_scalar(consistency_evaluations.acc2_s_at_w);
+        transcript.absorb_scalar(consistency_evaluations.s1_acc1_at_y);
+        transcript.absorb_scalar(consistency_evaluations.s1_acc2_at_y);
+        transcript.absorb_scalar(consistency_evaluations.s2_at_x);
+
+        for eval in a_polys_evals_x {
+            transcript.absorb_scalar(eval);
+        }
+
+        for eval in a_polys_evals_xz {
+            transcript.absorb_scalar(eval);
+        }
+
+        for eval in acc_b_evals_x {
+            transcript.absorb_scalar(eval);
+        }
+
+        transcript.absorb_scalar(batched_a_eval);
+        transcript.absorb_scalar(batched_b_eval);
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Compute E staging circuit.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // TODO: compute E staging circuit.
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // PHASE: Construct F staging polynomial.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: alpha challenge derivation.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // TRANSCRIPT: Squeeze alpha challenge.
+        let alpha_challenge = transcript.squeeze();
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Compute and commit to the F polynomial which aggregates quotient
+        // polynomials using the alpha challenge.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        let f_polynomial = {
+            let mut queries: Vec<Box<dyn Iterator<Item = Fp>>> = vec![
+                factor_iter(a_folded.poly.iter_coeffs(), x_challenge),
+                factor_iter(b_folded.poly.iter_coeffs(), x_challenge),
+                factor_iter(
+                    acc1.accumulator.witness.p_poly.iter_coeffs(),
+                    acc1.accumulator.instance.u.0,
+                ),
+                factor_iter(
+                    acc2.accumulator.witness.p_poly.iter_coeffs(),
+                    acc2.accumulator.instance.u.0,
+                ),
+                factor_iter(acc1.accumulator.witness.s_poly.iter_coeffs(), w_challenge),
+                factor_iter(acc2.accumulator.witness.s_poly.iter_coeffs(), w_challenge),
+                factor_iter(s.poly.iter_coeffs(), circuit_ids[0]),
+                factor_iter(s.poly.iter_coeffs(), circuit_ids[1]),
+                factor_iter(s.poly.iter_coeffs(), circuit_ids[2]),
+                factor_iter(s.poly.iter_coeffs(), circuit_ids[3]),
+                factor_iter(s.poly.iter_coeffs(), w_challenge),
+                factor_iter(s_prime[0].poly.iter_coeffs(), acc1.accumulator.instance.y.0),
+                factor_iter(s_prime[1].poly.iter_coeffs(), acc2.accumulator.instance.y.0),
+                factor_iter(s_prime[0].poly.iter_coeffs(), y_challenge),
+                factor_iter(s_prime[1].poly.iter_coeffs(), y_challenge),
+                factor_iter(
+                    s_prime_prime[0].poly.iter_coeffs(),
+                    acc1.accumulator.instance.x.0,
+                ),
+                factor_iter(
+                    s_prime_prime[0].poly.iter_coeffs(),
+                    acc2.accumulator.instance.x.0,
+                ),
+                factor_iter(s_prime_prime[0].poly.iter_coeffs(), x_challenge),
+            ];
+
+            for a_poly in &a_polys {
+                queries.push(factor_iter(a_poly.poly.iter_coeffs(), x_challenge));
+            }
+
+            for a_poly in a_polys.iter().take(N) {
+                queries.push(factor_iter(a_poly.poly.iter_coeffs(), xz));
+            }
+
+            let mut f_poly = Vec::with_capacity(R::num_coeffs());
+            'poly: loop {
+                let mut this_coeff = Fp::ZERO;
+                for query in queries.iter_mut() {
+                    this_coeff *= alpha_challenge;
+                    if let Some(coeff) = query.next() {
+                        this_coeff += coeff;
+                    } else {
+                        break 'poly;
+                    }
+                }
+                f_poly.push(this_coeff);
+            }
+            f_poly.reverse();
+            unstructured::Polynomial::<Fp, R>::from_coeffs(f_poly)
+        };
+
+        let f_blinding = C::CircuitField::random(OsRng);
+        let f_commitment = f_polynomial.commit(cycle.host_generators(), f_blinding);
+
+        let f = CommittedPolynomial {
+            poly: f_polynomial,
+            blind: f_blinding,
+            commitment: f_commitment,
+        };
+
+        // INNER LAYER: Staging polynomial (over Fq) that witnesses the F Vesta commitment.
+        let e2_inner_rx =
+            <E2InnerStage<C::HostCurve, 1> as StageExt<C::ScalarField, R>>::rx(&[f_commitment])?;
+
+        // NESTED ENCODING: Commit to the staging polynomial using Pallas generators (nested curve).
+        let e2_blinding = C::ScalarField::random(OsRng);
+        let e2_nested_commitment = e2_inner_rx.commit(cycle.nested_generators(), e2_blinding);
+
+        transcript.absorb_point(e2_nested_commitment);
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: u challenge derivation.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // TRANSCRIPT: Squeeze u challenge.
+        let u_challenge = transcript.squeeze();
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Supply the u evaluation claims.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        let evaluations_final = FinalEvaluations::<C::HostCurve> {
+            a: a_folded.poly.eval(u_challenge),
+            b: b_folded.poly.eval(u_challenge),
+            acc1_p: acc1.accumulator.witness.p_poly.eval(u_challenge),
+            acc2_p: acc2.accumulator.witness.p_poly.eval(u_challenge),
+            acc1_s: acc1.accumulator.witness.s_poly.eval(u_challenge),
+            acc2_s: acc2.accumulator.witness.s_poly.eval(u_challenge),
+            s: s.poly.eval(u_challenge),
+            s1: [
+                s_prime[0].poly.eval(u_challenge),
+                s_prime[1].poly.eval(u_challenge),
+            ],
+            s2: s_prime_prime[0].poly.eval(u_challenge),
+        };
+
+        let a_polys_final_evals: Vec<Fp> = a_polys
+            .iter()
+            .map(|a_poly| a_poly.poly.eval(u_challenge))
+            .collect();
+
+        for eval in a_polys_final_evals {
+            transcript.absorb_scalar(eval);
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: b challenge derivation. This checks all evaluations are correct by
+        // folding the claims together.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // TRANSCRIPT: Squeeze b challenge.
+        let b_challenge = transcript.squeeze();
 
         Ok(())
     }

@@ -293,6 +293,28 @@ pub struct ChallengePoint<F>(pub F);
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub struct EvaluationPoint<F>(pub F);
 
+/// Polynomial evaluatons at the final batching challenge point u.
+pub struct FinalEvaluations<C: CurveAffine> {
+    pub(crate) a: C::ScalarExt,
+    pub(crate) b: C::ScalarExt,
+    pub(crate) acc1_p: C::ScalarExt,
+    pub(crate) acc2_p: C::ScalarExt,
+    pub(crate) acc1_s: C::ScalarExt,
+    pub(crate) acc2_s: C::ScalarExt,
+    pub(crate) s: C::ScalarExt,
+    pub(crate) s1: [C::ScalarExt; 2],
+    pub(crate) s2: C::ScalarExt,
+}
+
+/// Cross polynomial evaluations at fiat-shamir challenges (w, x, y).
+pub struct ConsistencyEvaluations<C: CurveAffine> {
+    pub(crate) acc1_s_at_w: C::ScalarExt,
+    pub(crate) acc2_s_at_w: C::ScalarExt,
+    pub(crate) s1_acc1_at_y: C::ScalarExt,
+    pub(crate) s1_acc2_at_y: C::ScalarExt,
+    pub(crate) s2_at_x: C::ScalarExt,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
