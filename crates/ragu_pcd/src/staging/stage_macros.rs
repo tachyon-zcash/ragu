@@ -197,4 +197,35 @@ macro_rules! challenge_stage {
             }
         }
     };
+    // Allows parent and child to have different NUM parameterizations.
+    ($name:ident, $parent:ident, $parent_num:literal) => {
+        pub struct $name<NestedCurve, const NUM: usize>(core::marker::PhantomData<NestedCurve>);
+
+        impl<NestedCurve: CurveAffine, R: Rank, const NUM: usize> Stage<NestedCurve::Base, R>
+            for $name<NestedCurve, NUM>
+        {
+            type Parent = $parent<NestedCurve, $parent_num>;
+            type Witness<'source> = [NestedCurve::Base; NUM];
+            type OutputKind = Kind![NestedCurve::Base; FixedVec<Element<'_, _>, ConstLen<NUM>>];
+
+            fn values() -> usize {
+                NUM
+            }
+
+            fn witness<'dr, 'source: 'dr, D>(
+                dr: &mut D,
+                witness: DriverValue<D, Self::Witness<'source>>,
+            ) -> Result<<Self::OutputKind as GadgetKind<NestedCurve::Base>>::Rebind<'dr, D>>
+            where
+                D: Driver<'dr, F = NestedCurve::Base>,
+                Self: 'dr,
+            {
+                let mut v = Vec::with_capacity(NUM);
+                for i in 0..NUM {
+                    v.push(Element::alloc(dr, witness.view().map(|w| w[i]))?);
+                }
+                Ok(FixedVec::new(v).expect("length"))
+            }
+        }
+    };
 }

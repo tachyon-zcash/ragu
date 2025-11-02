@@ -349,6 +349,12 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // TASK: Challenge circuit: verify w, y, and z challenges in-circuit.
         ///////////////////////////////////////////////////////////////////////////////////////
 
+        // Convert cross_products Vec to array (clone because we need it later for DCValueComputationWitness)
+        let cross_products: [C::CircuitField; CROSS_COUNT] = cross_products
+            .clone()
+            .try_into()
+            .map_err(|_| Error::CircuitBoundExceeded(CROSS_COUNT))?;
+
         let d_witness = DChallengeDerivationWitness {
             b_nested_commitment,
             w_challenge,
@@ -357,9 +363,8 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
             d2_nested_commitment,
             z_challenge,
             d3_nested_commitment,
+            cross_products,
         };
-
-        // TODO: missing the error terms
 
         let d_circuit =
             Staged::<Fp, R, _>::new(DChallengeDerivationStagedCircuit::<C::NestedCurve>::new());
@@ -414,7 +419,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
             mu_challenge,
             nu_challenge,
             mu_inv,
-            cross_products,
+            cross_products: cross_products.to_vec(),
             ky_values: ky,
             len,
         })?;
