@@ -38,19 +38,22 @@ macro_rules! inner_stage {
     };
 }
 
-/// Outer stages (curve points) with optional parent
+/// Outer stages (parameterized for NUM curve points) with optional parent
 #[macro_export]
 macro_rules! outer_stage {
     ($name:ident, ()) => {
-        pub struct $name<NestedCurve>(PhantomData<NestedCurve>);
+        pub struct $name<NestedCurve, const NUM: usize>(core::marker::PhantomData<NestedCurve>);
 
-        impl<NestedCurve: CurveAffine, R: Rank> Stage<NestedCurve::Base, R> for $name<NestedCurve> {
+        impl<NestedCurve: CurveAffine, R: Rank, const NUM: usize> Stage<NestedCurve::Base, R>
+            for $name<NestedCurve, NUM>
+        {
             type Parent = ();
-            type Witness<'source> = NestedCurve;
-            type OutputKind = Kind![NestedCurve::Base; Point<'_, _, NestedCurve>];
+            type Witness<'source> = [NestedCurve; NUM];
+            type OutputKind =
+                Kind![NestedCurve::Base; FixedVec<Point<'_, _, NestedCurve>, ConstLen<NUM>>];
 
             fn values() -> usize {
-                2
+                NUM * 2
             }
 
             fn witness<'dr, 'source: 'dr, D>(
@@ -61,20 +64,27 @@ macro_rules! outer_stage {
                 D: Driver<'dr, F = NestedCurve::Base>,
                 Self: 'dr,
             {
-                Point::alloc(dr, witness)
+                let mut v = Vec::with_capacity(NUM);
+                for i in 0..NUM {
+                    v.push(Point::alloc(dr, witness.view().map(|w| w[i]))?);
+                }
+                Ok(FixedVec::new(v).expect("length"))
             }
         }
     };
     ($name:ident, $parent:ident) => {
-        pub struct $name<NestedCurve>(PhantomData<NestedCurve>);
+        pub struct $name<NestedCurve, const NUM: usize>(core::marker::PhantomData<NestedCurve>);
 
-        impl<NestedCurve: CurveAffine, R: Rank> Stage<NestedCurve::Base, R> for $name<NestedCurve> {
-            type Parent = $parent<NestedCurve>;
-            type Witness<'source> = NestedCurve;
-            type OutputKind = Kind![NestedCurve::Base; Point<'_, _, NestedCurve>];
+        impl<NestedCurve: CurveAffine, R: Rank, const NUM: usize> Stage<NestedCurve::Base, R>
+            for $name<NestedCurve, NUM>
+        {
+            type Parent = $parent<NestedCurve, NUM>;
+            type Witness<'source> = [NestedCurve; NUM];
+            type OutputKind =
+                Kind![NestedCurve::Base; FixedVec<Point<'_, _, NestedCurve>, ConstLen<NUM>>];
 
             fn values() -> usize {
-                2
+                NUM * 2
             }
 
             fn witness<'dr, 'source: 'dr, D>(
@@ -85,7 +95,11 @@ macro_rules! outer_stage {
                 D: Driver<'dr, F = NestedCurve::Base>,
                 Self: 'dr,
             {
-                Point::alloc(dr, witness)
+                let mut v = Vec::with_capacity(NUM);
+                for i in 0..NUM {
+                    v.push(Point::alloc(dr, witness.view().map(|w| w[i]))?);
+                }
+                Ok(FixedVec::new(v).expect("length"))
             }
         }
     };
@@ -95,7 +109,7 @@ macro_rules! outer_stage {
 #[macro_export]
 macro_rules! indirection_stage {
     ($name:ident) => {
-        pub struct $name<NestedCurve>(PhantomData<NestedCurve>);
+        pub struct $name<NestedCurve>(core::marker::PhantomData<NestedCurve>);
 
         impl<NestedCurve: CurveAffine, R: Rank> Stage<NestedCurve::Base, R> for $name<NestedCurve> {
             type Parent = ();
@@ -120,19 +134,21 @@ macro_rules! indirection_stage {
     };
 }
 
-/// Challenge stages (field elements) using NestedCurve::Base
+/// Challenge stages (N field elements) using NestedCurve::Base
 #[macro_export]
 macro_rules! challenge_stage {
     ($name:ident, ()) => {
-        pub struct $name<NestedCurve>(PhantomData<NestedCurve>);
+        pub struct $name<NestedCurve, const NUM: usize>(core::marker::PhantomData<NestedCurve>);
 
-        impl<NestedCurve: CurveAffine, R: Rank> Stage<NestedCurve::Base, R> for $name<NestedCurve> {
+        impl<NestedCurve: CurveAffine, R: Rank, const NUM: usize> Stage<NestedCurve::Base, R>
+            for $name<NestedCurve, NUM>
+        {
             type Parent = ();
-            type Witness<'source> = NestedCurve::Base;
-            type OutputKind = Kind![NestedCurve::Base; Element<'_, _>];
+            type Witness<'source> = [NestedCurve::Base; NUM];
+            type OutputKind = Kind![NestedCurve::Base; FixedVec<Element<'_, _>, ConstLen<NUM>>];
 
             fn values() -> usize {
-                1
+                NUM
             }
 
             fn witness<'dr, 'source: 'dr, D>(
@@ -143,20 +159,26 @@ macro_rules! challenge_stage {
                 D: Driver<'dr, F = NestedCurve::Base>,
                 Self: 'dr,
             {
-                Element::alloc(dr, witness)
+                let mut v = Vec::with_capacity(NUM);
+                for i in 0..NUM {
+                    v.push(Element::alloc(dr, witness.view().map(|w| w[i]))?);
+                }
+                Ok(FixedVec::new(v).expect("length"))
             }
         }
     };
     ($name:ident, $parent:ident) => {
-        pub struct $name<NestedCurve>(PhantomData<NestedCurve>);
+        pub struct $name<NestedCurve, const NUM: usize>(core::marker::PhantomData<NestedCurve>);
 
-        impl<NestedCurve: CurveAffine, R: Rank> Stage<NestedCurve::Base, R> for $name<NestedCurve> {
-            type Parent = $parent<NestedCurve>;
-            type Witness<'source> = NestedCurve::Base;
-            type OutputKind = Kind![NestedCurve::Base; Element<'_, _>];
+        impl<NestedCurve: CurveAffine, R: Rank, const NUM: usize> Stage<NestedCurve::Base, R>
+            for $name<NestedCurve, NUM>
+        {
+            type Parent = $parent<NestedCurve, NUM>;
+            type Witness<'source> = [NestedCurve::Base; NUM];
+            type OutputKind = Kind![NestedCurve::Base; FixedVec<Element<'_, _>, ConstLen<NUM>>];
 
             fn values() -> usize {
-                1
+                NUM
             }
 
             fn witness<'dr, 'source: 'dr, D>(
@@ -167,7 +189,11 @@ macro_rules! challenge_stage {
                 D: Driver<'dr, F = NestedCurve::Base>,
                 Self: 'dr,
             {
-                Element::alloc(dr, witness)
+                let mut v = Vec::with_capacity(NUM);
+                for i in 0..NUM {
+                    v.push(Element::alloc(dr, witness.view().map(|w| w[i]))?);
+                }
+                Ok(FixedVec::new(v).expect("length"))
             }
         }
     };

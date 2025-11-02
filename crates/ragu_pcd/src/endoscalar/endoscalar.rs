@@ -202,7 +202,7 @@ mod tests {
         staging::{StageExt, Staged},
     };
     use ragu_core::Result;
-    use ragu_pasta::{EpAffine, Fp, Fq};
+    use ragu_pasta::{EpAffine, EqAffine, Fp, Fq};
     use rand::{Rng, thread_rng};
 
     use crate::endoscalar::endoscalar::{Endoscaling, EndoscalingInstance};
@@ -283,6 +283,90 @@ mod tests {
             rhs.add_assign(&R::tz(z));
             assert_eq!(lhs.revdot(&rhs), arithmetic::eval(&ky, y));
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_pallas_endoscaling_circuit_new() -> Result<()> {
+        /// Thin alias for the Fq-side endoscaling gadget: reuses `Endoscaling<C, R, N>` with `C = EqAffine` (Vesta).
+        type EndoFq<const N: usize, R> = Endoscaling<EqAffine, R, N>;
+
+        type R = polynomials::R<13>;
+        const NUM_SLOTS: usize = 143;
+
+        let endoscalar: Uendo = thread_rng().r#gen();
+        let input = (EqAffine::generator() * Fp::random(thread_rng())).to_affine();
+        let values = [(EqAffine::generator() * Fp::random(thread_rng())).to_affine(); NUM_SLOTS];
+
+        let stage_circuit = EndoFq::<NUM_SLOTS, R> {
+            a: Read::Input,
+            b: Read::Slot(0),
+            c: Read::Slot(1),
+            d: Read::Slot(2),
+            e: Read::Slot(3),
+            output: 4,
+            _marker: core::marker::PhantomData,
+        };
+        let staged_circuit = Staged::new(stage_circuit);
+
+        let (final_rx, _output) = staged_circuit.rx::<R>(EndoscalingWitness {
+            endoscalar,
+            slots: values,
+            input,
+        })?;
+
+        let final_s = SlotStage::<EqAffine, NUM_SLOTS>::final_into_object()?;
+        let y = Fq::random(thread_rng());
+        let z = Fq::random(thread_rng());
+
+        let mut rhs = final_rx.clone();
+        rhs.dilate(z);
+        rhs.add_assign(&final_s.sy(y));
+        rhs.add_assign(&R::tz(z));
+        assert_eq!(final_rx.revdot(&rhs), Fq::ZERO);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_vesta_endoscaling_circuit_new() -> Result<()> {
+        /// Thin alias for the Fq-side endoscaling gadget:
+        /// reuses `Endoscaling<C, R, N>` with `C = EpAffine` (Pallas).
+        type EndoFp<const N: usize, R> = Endoscaling<EpAffine, R, N>;
+
+        const NUM_SLOTS: usize = 143;
+
+        let endoscalar: Uendo = thread_rng().r#gen();
+        let input = (EpAffine::generator() * Fq::random(thread_rng())).to_affine();
+        let values = [(EpAffine::generator() * Fq::random(thread_rng())).to_affine(); NUM_SLOTS];
+
+        let stage_circuit = EndoFp::<NUM_SLOTS, R> {
+            a: Read::Input,
+            b: Read::Slot(0),
+            c: Read::Slot(1),
+            d: Read::Slot(2),
+            e: Read::Slot(3),
+            output: 4,
+            _marker: core::marker::PhantomData,
+        };
+        let staged_circuit = Staged::new(stage_circuit);
+
+        let (final_rx, _output) = staged_circuit.rx::<R>(EndoscalingWitness {
+            endoscalar,
+            slots: values,
+            input,
+        })?;
+
+        let final_s = SlotStage::<EpAffine, NUM_SLOTS>::final_into_object()?;
+        let y = Fp::random(thread_rng());
+        let z = Fp::random(thread_rng());
+
+        let mut rhs = final_rx.clone();
+        rhs.dilate(z);
+        rhs.add_assign(&final_s.sy(y));
+        rhs.add_assign(&R::tz(z));
+        assert_eq!(final_rx.revdot(&rhs), Fp::ZERO);
 
         Ok(())
     }

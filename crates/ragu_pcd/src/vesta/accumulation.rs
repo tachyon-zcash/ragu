@@ -2,8 +2,8 @@ use crate::accumulator::{ConsistencyEvaluations, CycleAccumulator, FinalEvaluati
 use crate::engine::CycleEngine;
 use crate::staging::b_stage::BInnerStage;
 use crate::staging::d_stage::{
-    D1InnerStage, D2InnerStage, DIndirectionStage, DSubcircuit1, DSubcircuit1Witness, DSubcircuit2,
-    DSubcircuit2Witness, ErrorInnerStage,
+    DCValueComputationStagedCircuit, DCValueComputationWitness, DChallengeDerivationStagedCircuit,
+    DChallengeDerivationWitness, DEphemeralStage, DIndirectionStage,
 };
 use crate::staging::e_stage::{E2InnerStage, EIndirectionStage, ESubcircuit1, ESubcircuit1Witness};
 use crate::transcript::AccumulationTranscript;
@@ -197,7 +197,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         //////////////////////////////////////////////////////////////////////////////////////
 
         // INNER LAYER: Staging polynomial (over Fq) that witnesses the S' Vesta commitments.
-        let d1_inner_rx = <D1InnerStage<C::HostCurve, 2> as StageExt<C::ScalarField, R>>::rx(
+        let d1_inner_rx = <DEphemeralStage<C::HostCurve, 2> as StageExt<C::ScalarField, R>>::rx(
             &s_prime_commitments,
         )?;
 
@@ -243,7 +243,9 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
 
         // INNER LAYER: Staging polynomial (over Fq) that witnesses the S'' Vesta commitment.
         let d2_inner_rx =
-            <D2InnerStage<C::HostCurve, 1> as StageExt<C::ScalarField, R>>::rx(&[s2_commitment])?;
+            <DEphemeralStage<C::HostCurve, 1> as StageExt<C::ScalarField, R>>::rx(&[
+                s2_commitment,
+            ])?;
 
         // NESTED ENCODING: Commit to the staging polynomial using Pallas generators (nested curve).
         let d2_blinding = C::ScalarField::random(OsRng);
@@ -331,7 +333,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
             .map_err(|_| Error::CircuitBoundExceeded(CROSS_COUNT))?;
 
         // INNER LAYER: Staging polynomial (over Fq) that witnesses the cross-terms Vesta commitment.
-        let d3_inner_rx = <ErrorInnerStage<C::HostCurve, CROSS_COUNT> as StageExt<
+        let d3_inner_rx = <DEphemeralStage<C::HostCurve, CROSS_COUNT> as StageExt<
             C::ScalarField,
             R,
         >>::rx(&cross_array)?;
@@ -347,7 +349,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // TASK: Challenge circuit: verify w, y, and z challenges in-circuit.
         ///////////////////////////////////////////////////////////////////////////////////////
 
-        let d_witness = DSubcircuit1Witness {
+        let d_witness = DChallengeDerivationWitness {
             b_nested_commitment,
             w_challenge,
             d1_nested_commitment,
@@ -357,7 +359,10 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
             d3_nested_commitment,
         };
 
-        let d_circuit = Staged::<Fp, R, _>::new(DSubcircuit1::<C::NestedCurve>::new());
+        // TODO: missing the error terms
+
+        let d_circuit =
+            Staged::<Fp, R, _>::new(DChallengeDerivationStagedCircuit::<C::NestedCurve>::new());
         let (d_rx, _d_aux) = d_circuit.rx::<R>(d_witness)?;
 
         //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -402,8 +407,9 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         ///////////////////////////////////////////////////////////////////////////////////////
 
         // STAGED CIRCUIT: This simply allocates the partial nested commitment point inside the staged circuit.
-        let c_circuit = Staged::<Fp, R, _>::new(DSubcircuit2::<C::NestedCurve>::new());
-        let (c_rx, _c_aux) = c_circuit.rx::<R>(DSubcircuit2Witness {
+        let c_circuit =
+            Staged::<Fp, R, _>::new(DCValueComputationStagedCircuit::<C::NestedCurve>::new());
+        let (c_rx, _c_aux) = c_circuit.rx::<R>(DCValueComputationWitness {
             d3_nested_commitment,
             mu_challenge,
             nu_challenge,
@@ -523,7 +529,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
 
         // INNER LAYER: Staging polynomial (over Fq) that witnesses the S Vesta commitment.
         let e1_inner_rx =
-            <D2InnerStage<C::HostCurve, 1> as StageExt<C::ScalarField, R>>::rx(&[s_commitment])?;
+            <DEphemeralStage<C::HostCurve, 1> as StageExt<C::ScalarField, R>>::rx(&[s_commitment])?;
 
         // NESTED ENCODING: Commit to the staging polynomial using Pallas generators (nested curve).
         let e1_blinding = C::ScalarField::random(OsRng);

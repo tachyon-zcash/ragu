@@ -1,5 +1,7 @@
 //! E-stage wsith subcircuits that together handle challenge derivation (mu, nu).
 
+use crate::staging::d_stage::DMuNuStage;
+use crate::{indirection_stage, inner_stage};
 use arithmetic::CurveAffine;
 use ragu_circuits::staging::{StageBuilder, StagedCircuit};
 use ragu_circuits::{polynomials::Rank, staging::Stage};
@@ -16,13 +18,8 @@ use ragu_primitives::{
     vec::{ConstLen, FixedVec},
 };
 
-use crate::staging::d_stage::{MuChallengeStage, NuChallengeStage};
-use crate::{indirection_stage, inner_stage};
-
 inner_stage!(E1InnerStage);
 inner_stage!(E2InnerStage);
-
-// Indirection stage.
 indirection_stage!(EIndirectionStage);
 
 /// C Circuit Witness: mu/nu derivation and c value computation
@@ -56,7 +53,7 @@ impl<NestedCurve> ESubcircuit1<NestedCurve> {
 impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Base, R>
     for ESubcircuit1<NestedCurve>
 {
-    type Final = NuChallengeStage<NestedCurve>;
+    type Final = DMuNuStage<NestedCurve, 2>;
     type Instance<'src> = ();
     type Witness<'w> = ESubcircuit1Witness<NestedCurve>;
     type Output = Kind![NestedCurve::Base; ESubcircuit1Output<'_, _, NestedCurve>];
@@ -78,13 +75,15 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
         <Self::Output as GadgetKind<NestedCurve::Base>>::Rebind<'dr, D>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
-        let (mu_challenge, dr) =
-            dr.add_stage::<MuChallengeStage<NestedCurve>>(witness.view().map(|w| w.mu_challenge))?;
-
-        let (nu_challenge, dr) =
-            dr.add_stage::<NuChallengeStage<NestedCurve>>(witness.view().map(|w| w.nu_challenge))?;
+        // STAGE: StageBuilder for `DMuNuStage` for computed mu and nu challenges.
+        let (challenges, dr) = dr.add_stage::<DMuNuStage<NestedCurve, 2>>(
+            witness.view().map(|w| [w.mu_challenge, w.nu_challenge]),
+        )?;
 
         let dr = dr.finish();
+
+        let mu_challenge = challenges[0].clone();
+        let nu_challenge = challenges[1].clone();
 
         // Now allocate `d3_nested_commitment` (NOT as a seperate stage in this staging polynomial) and verify
         // that mu and nu were correctly derived. This keeps D and E as separate staging
