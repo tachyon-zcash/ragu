@@ -187,6 +187,7 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
 
 challenge_stage!(DMuNuStage, ());
 
+/// Witness values.
 pub struct DCValueComputationWitness<C: CurveAffine> {
     /// Cross product commitments.
     pub d3_nested_commitment: C,
@@ -222,6 +223,11 @@ pub struct DCValueComputationOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D
 
 /// Auxiliary output containing the computed c value.
 pub struct DCValueComputationAux<C: CurveAffine> {
+    pub c_value: C::Base,
+}
+
+// Instances values.
+pub struct DCValueComputationInstance<C: CurveAffine> {
     pub c_value: C::Base,
 }
 
@@ -330,8 +336,6 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
             row_power = row_power.mul(dr, &mu_inv)?;
         }
 
-        // TODO: missing enforce equals calls
-
         let output = DCValueComputationOutput {
             d3_nested_commitment,
             mu_challenge,
@@ -356,7 +360,7 @@ mod tests {
     use ragu_core::drivers::{Emulator, Simulator};
     use ragu_core::maybe::Maybe;
     use ragu_pasta::{EpAffine, Fp, Fq};
-    use ragu_primitives::{GadgetExt, Point, Sponge, vec};
+    use ragu_primitives::{GadgetExt, Point, Sponge};
     use rand::thread_rng;
     type Rank = ragu_circuits::polynomials::R<12>;
 

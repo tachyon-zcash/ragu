@@ -476,10 +476,10 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
 
         // NESTED ENCODING: Commit to the staging polynomial using Pallas generators (nested curve).
         let e_staged_circuit_nested_blinding = C::ScalarField::random(OsRng);
-        let cestaged_circuit_nested_commitment = c_staged_circuit_inner
+        let e_staged_circuit_nested_commitment = e_staged_circuit_inner
             .commit(cycle.nested_generators(), e_staged_circuit_nested_blinding);
 
-        transcript.absorb_point(cestaged_circuit_nested_commitment);
+        transcript.absorb_point(e_staged_circuit_nested_commitment);
         //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
         ///////////////////////////////////////////////////////////////////////////////////////
@@ -515,7 +515,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
 
         let xz = x_challenge * z_challenge;
 
-        // TODO: This needs to be compputed inside the circuit.
+        // TODO: This needs to be computed inside the circuit.
         let txz = R::txz(x_challenge, z_challenge);
 
         ///////////////////////////////////////////////////////////////////////////////////////
