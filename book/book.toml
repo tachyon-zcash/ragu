@@ -1,0 +1,9 @@
+[book]
+authors = ["Sean Bowe"]
+language = "en"
+src = "src"
+title = "The Ragu Book"
+
+[preprocessor.katex]
+macros = "macros.txt"
+after = ["links"]
