@@ -9,7 +9,7 @@ runs:
   using: composite
   steps:
     - name: Install Rust toolchain (from rust-toolchain.toml)
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@1.85.0
       with:
         components: ${{ inputs.components }}
 
