@@ -4,7 +4,7 @@
 
 # `ragu_arithmetic`
 
-This crate provides fundamental traits and utilities for the cryptographic parameters used in the [Ragu project](https://github.com/ebfull/ragu). The traits in this crate are _used_ by [`ragu`](https://crates.io/crates/ragu) and other crates, and a supported _implementation_ is provided by the [`ragu_pasta`](https://crates.io/crates/ragu_pasta) crate.
+This crate provides fundamental traits and utilities for the cryptographic parameters used in the [Ragu project](https://github.com/tachyon-zcash/ragu). The traits in this crate are _used_ by [`ragu`](https://crates.io/crates/ragu) and other crates, and a supported _implementation_ is provided by the [`ragu_pasta`](https://crates.io/crates/ragu_pasta) crate.
 
 ## [Documentation](https://docs.rs/ragu_arithmetic)
 

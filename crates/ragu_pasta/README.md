@@ -4,7 +4,7 @@
 
 # `ragu_pasta`
 
-This crate provides [Ragu project](https://github.com/ebfull/ragu) support for the [Pasta curve cycle](https://electriccoin.co/blog/the-pasta-curves-for-halo-2-and-beyond/), including public parameters and a compatibility shim for the [`pasta_curves`](https://crates.io/crates/pasta_curves) crate.
+This crate provides [Ragu project](https://github.com/tachyon-zcash/ragu) support for the [Pasta curve cycle](https://electriccoin.co/blog/the-pasta-curves-for-halo-2-and-beyond/), including public parameters and a compatibility shim for the [`pasta_curves`](https://crates.io/crates/pasta_curves) crate.
 
 ## [Documentation](https://docs.rs/ragu_pasta)
 

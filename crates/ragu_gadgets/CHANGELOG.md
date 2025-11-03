@@ -13,5 +13,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial commit.
 
-[unreleased]: https://github.com/ebfull/ragu/compare/ragu_gadgets-0.0.0...HEAD
-[0.0.0]: https://github.com/ebfull/ragu/releases/tag/ragu_gadgets-0.0.0
+[unreleased]: https://github.com/tachyon-zcash/ragu/compare/ragu_gadgets-0.0.0...HEAD
+[0.0.0]: https://github.com/tachyon-zcash/ragu/releases/tag/ragu_gadgets-0.0.0
