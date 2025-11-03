@@ -1,0 +1,19 @@
+name: Notify website to deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger repository_dispatch in website
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.REPO_DISPATCH_TOKEN }}
+          repository: tachyon-zcash/website
+          event-type: ragu_updated
+          client-payload: |
+            { "ragu_sha": "${{ github.sha }}" }
