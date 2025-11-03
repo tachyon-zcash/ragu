@@ -10,7 +10,7 @@ edition = "2024"
 rust-version = "1.85"
 
 readme = "README.md"
-repository = "https://github.com/ebfull/ragu"
+repository = "https://github.com/tachyon-zcash/ragu"
 documentation = "https://docs.rs/ragu"
 categories = []
 keywords = []

@@ -20,8 +20,8 @@
 //! In fact, many of the common traits used throughout Ragu are actually defined
 //! in the [`pasta_curves`] crate, which provides the actual implementations of
 //! the Pasta curves and fields, and we
-//! [currently](https://github.com/ebfull/ragu/issues/1) rely on those traits in
-//! this crate for compatibility and interoperability reasons.
+//! [currently](https://github.com/tachyon-zcash/ragu/issues/1) rely on those
+//! traits in this crate for compatibility and interoperability reasons.
 //!
 //! ## FFTs
 //!
