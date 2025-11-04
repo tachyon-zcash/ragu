@@ -20,9 +20,9 @@ pub const DEFAULT_EQ_K: usize = 13;
 #[derive(Clone)]
 pub struct Pasta {
     /// The pallas curve generators.
-    pub pallas: PallasGenerators,
+    pub(crate) pallas: PallasGenerators,
     /// The vesta curve generators.
-    pub vesta: VestaGenerators,
+    pub(crate) vesta: VestaGenerators,
 }
 
 /// Fixed generators for the Pallas curve.
@@ -32,11 +32,35 @@ pub struct PallasGenerators {
     pub(crate) h: EpAffine,
 }
 
+impl PallasGenerators {
+    /// Returns a slice of the generators.
+    pub fn g(&self) -> &[EpAffine] {
+        &self.g
+    }
+
+    /// Returns a reference to the blinding generator.
+    pub fn h(&self) -> &EpAffine {
+        &self.h
+    }
+}
+
 /// Fixed generators for the Vesta curve.
 #[derive(Clone)]
 pub struct VestaGenerators {
     pub(crate) g: Vec<EqAffine>,
     pub(crate) h: EqAffine,
+}
+
+impl VestaGenerators {
+    /// Returns a slice of the generators.
+    pub fn g(&self) -> &[EqAffine] {
+        &self.g
+    }
+
+    /// Returns a reference to the blinding generator.
+    pub fn h(&self) -> &EqAffine {
+        &self.h
+    }
 }
 
 fn params_for_curve<C: CurveExt>(n: usize) -> (Vec<C::AffineExt>, C::AffineExt) {
