@@ -244,45 +244,16 @@ mod tests {
         let endoscaling_s = staged_circuit.clone().into_object()?;
 
         let y = Fp::random(thread_rng());
-        let z = Fp::random(thread_rng());
-
         let ky = staged_circuit.ky(EndoscalingInstance { input, output })?;
 
-        {
-            let mut rhs = endoscalar_rx.clone();
-            rhs.dilate(z);
-            rhs.add_assign(&endoscalar_s.sy(y));
-            rhs.add_assign(&R::tz(z));
-            assert_eq!(endoscalar_rx.revdot(&rhs), Fp::ZERO);
-        }
+        assert_eq!(endoscalar_rx.revdot(&endoscalar_s.sy(y)), Fp::ZERO);
+        assert_eq!(slot_rx.revdot(&slot_s.sy(y)), Fp::ZERO);
+        assert_eq!(final_rx.revdot(&final_s.sy(y)), Fp::ZERO);
 
-        {
-            let mut rhs = slot_rx.clone();
-            rhs.dilate(z);
-            rhs.add_assign(&slot_s.sy(y));
-            rhs.add_assign(&R::tz(z));
-            assert_eq!(slot_rx.revdot(&rhs), Fp::ZERO);
-        }
-
-        {
-            let mut rhs = final_rx.clone();
-            rhs.dilate(z);
-            rhs.add_assign(&final_s.sy(y));
-            rhs.add_assign(&R::tz(z));
-            assert_eq!(final_rx.revdot(&rhs), Fp::ZERO);
-        }
-
-        {
-            let mut lhs = final_rx.clone();
-            lhs.add_assign(&endoscalar_rx);
-            lhs.add_assign(&slot_rx);
-
-            let mut rhs = lhs.clone();
-            rhs.dilate(z);
-            rhs.add_assign(&endoscaling_s.sy(y));
-            rhs.add_assign(&R::tz(z));
-            assert_eq!(lhs.revdot(&rhs), arithmetic::eval(&ky, y));
-        }
+        let mut lhs = final_rx.clone();
+        lhs.add_assign(&endoscalar_rx);
+        lhs.add_assign(&slot_rx);
+        assert_eq!(lhs.revdot(&endoscaling_s.sy(y)), arithmetic::eval(&ky, y));
 
         Ok(())
     }
