@@ -1,5 +1,19 @@
 //! Management of polynomials that encode large sets of circuit polynomials for
 //! efficient querying.
+//!
+//! ## Overview
+//!
+//! Individual circuits in Ragu are represented by a bivariate polynomial
+//! $s_i(X, Y)$. Multiple circuits are used over any particular field throughout
+//! Ragu's PCD construction, and so the [`Mesh`] structure represents a larger
+//! polynomial $m(W, X, Y)$ that interpolates such that $m(\omega^i, X, Y) =
+//! s_i(X, Y)$ for some $\omega \in \mathbb{F}$ of sufficiently high $2^k$ order
+//! to encode all circuits for both PCD and for application circuits.
+//!
+//! The [`MeshBuilder`] structure is used to construct a new [`Mesh`] by
+//! inserting circuits and performing a [`finalize`](MeshBuilder::finalize) step
+//! to compile the added circuits into a mesh polynomial representation that can
+//! be efficiently evaluated at different restrictions.
 
 use arithmetic::Domain;
 use arithmetic::bitreverse;
@@ -33,17 +47,15 @@ impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
     }
 
     /// Registers a new circuit.
-    pub fn register_circuit<C>(mut self, circuit: C) -> Result<Self>
+    pub fn register_circuit<C>(self, circuit: C) -> Result<Self>
     where
         C: Circuit<F> + 'params,
     {
-        self.circuits.push(circuit.into_object()?);
-
-        Ok(self)
+        self.register_circuit_object(circuit.into_object()?)
     }
 
     /// Registers a new circuit using a bare circuit object.
-    pub fn register_circuit_object<C>(
+    pub fn register_circuit_object(
         mut self,
         circuit: Box<dyn CircuitObject<F, R> + 'params>,
     ) -> Result<Self> {
@@ -212,7 +224,18 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
     }
 }
 
-/// Returns $\omega^j$ that corresponds to the $i$th circuit added to a Mesh.
+/// Returns $\omega^j$ that corresponds to the $i$th circuit added to a
+/// [`Mesh`].
+///
+/// The $i$th circuit added to any [`Mesh`] (for a given [`PrimeField`] `F`) is
+/// assigned the domain element of smallest multiplicative order not yet
+/// assigned to any circuit prior to $i$. This corresponds with $\Omega^{f(i)}$
+/// where $f(i)$ is the [`S`](PrimeField::S)-bit reversal of `i` and $\Omega$ is
+/// the primitive [root of unity](PrimeField::ROOT_OF_UNITY) of order $2^{S}$ in
+/// `F`.
+///
+/// Notably, the result of this function does not depend on the actual size of
+/// the [`Mesh`]'s interpolation polynomial domain.
 pub fn omega_j<F: PrimeField>(id: u32) -> F {
     let bit_reversal_id = bitreverse(id, F::S);
     F::ROOT_OF_UNITY.pow([bit_reversal_id as u64])
@@ -234,6 +257,29 @@ mod tests {
     use ragu_pasta::Fp;
     use ragu_primitives::Element;
     use rand::thread_rng;
+
+    #[test]
+    fn test_omega_j_multiplicative_order() {
+        /// Return the 2^k multiplicative order of f (assumes f is a 2^k root of unity).
+        fn order<F: Field>(mut f: F) -> usize {
+            let mut order = 0;
+            while f != F::ONE {
+                f = f.square();
+                order += 1;
+            }
+            1 << order
+        }
+        assert_eq!(omega_j::<Fp>(0), Fp::ONE);
+        assert_eq!(omega_j::<Fp>(1), -Fp::ONE);
+        assert_eq!(order(omega_j::<Fp>(0)), 1);
+        assert_eq!(order(omega_j::<Fp>(1)), 2);
+        assert_eq!(order(omega_j::<Fp>(2)), 4);
+        assert_eq!(order(omega_j::<Fp>(3)), 4);
+        assert_eq!(order(omega_j::<Fp>(4)), 8);
+        assert_eq!(order(omega_j::<Fp>(5)), 8);
+        assert_eq!(order(omega_j::<Fp>(6)), 8);
+        assert_eq!(order(omega_j::<Fp>(7)), 8);
+    }
 
     struct SquareCircuit {
         times: usize,

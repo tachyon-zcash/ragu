@@ -1,4 +1,112 @@
-//! Tools for creating multi-stage circuits with partial witness commitments.
+//! Staging circuits for multi-stage witness computation.
+//!
+//! ## Background
+//!
+//! Circuits are evaluated over witnesses in Ragu by having the prover commit to
+//! some polynomial $r(X)$ which [encodes their witness](crate::CircuitExt::rx),
+//! and then checking to see if it satisfies the identity
+//!
+//! $$ \langle \kern-0.5em \langle \kern0.1em \mathbf{r}, \mathbf{r} \circ
+//! \mathbf{z^{4n}} + \mathbf{s} + \mathbf{t} \kern0.1em \rangle \kern-0.5em
+//! \rangle $$
+//!
+//! where $\mathbf{r}$ is the coefficient vector for $r(X)$, and $\mathbf{s},
+//! \mathbf{t}$ are determined by $y$ and $z$ (respectively) to enforce the
+//! linear and multiplication constraints (respectively) of the particular
+//! circuit. We say that $\mathbf{s}$ is the coefficient vector for $s(X, Y)$ at
+//! the restriction $Y = y$.
+//!
+//! ### Staging
+//!
+//! However, there are some situations where the prover would like to commit to
+//! parts of their witness in one or more **stages**, and _then_ enforce the
+//! combination of the stages in the above equation:
+//!
+//! * The prover may wish to commit to part of their witness first (which may
+//!   include hundreds of allocated wires), receive a cryptographic commitment
+//!   to that stage, and then apply a hash function to this succinct value to
+//!   obtain a challenge value that reduces a claim about the partial witness to
+//!   something that can be checked in fewer constraints.
+//! * The prover may wish to have multiple circuits contain the same data (but
+//!   perform different operations over it) but does not want to pay the cost of
+//!   using public inputs to check that they are equivalent.
+//!
+//! The solution is to decompose $r(X)$ like so:
+//!
+//! $$ r(X) = a(X) + b(X) + \cdots + f(X) $$
+//!
+//! where $a(X), b(X), \cdots$ are called _staging polynomials_ (corresponding
+//! to a _stage_ of the witness) and $f(X)$ is a special "final" staging
+//! polynomial that encodes the "remainder" of the witness assignment for
+//! $r(X)$. The prover will commit to $a(X), b(X), \cdots$ independently, and
+//! _then_ may commit to $f(X)$ and use public inputs to obtain cryptographic
+//! commitments to $a(X), b(X)$ for the purpose of evaluating hash functions
+//! that produce digests that are cryptographically bound to their contents.
+//!
+//! In order for this to work, each of the individual stages (including the
+//! final stage) of the witness must be constrained to be well-formed, meaning
+//! that their wire assignments cannot overlap. Some of these checks can be
+//! batched efficiently because well-formedness checks of the kind we need are
+//! highly linearized.
+//!
+//! ## Usage
+//!
+//! The [`Stage`] trait allows you to define a **stage** for your multi-stage
+//! circuit polynomial. Stages are (currently) designed so that they must be
+//! built on top of previous stages, with the trivial `()` implementation for a
+//! root stage provided by Ragu.
+//!
+//! ### Normal Stages
+//!
+//! [`StageExt::rx`] produces a staging polynomial for a given stage, given a
+//! witness. The well-formedness check can be performed by applying a revdot
+//! claim between the resulting [`Polynomial`](structured::Polynomial) and the
+//! stage's [staging object](StageExt::into_object).
+//!
+//! ```rust,ignore
+//! let a = MyStage::rx(my_stage_witness)?;
+//!
+//! let obj = MyStage::into_object()?;
+//! assert_eq!(a.revdot(&obj), Fp::ZERO);
+//! ```
+//!
+//! If two or more stage polynomials must satisfy the same well-formedness
+//! check, they can be combined using a random challenge $z$:
+//!
+//! ```rust,ignore
+//! let a = MyStage::rx(my_stage_witness)?;
+//! let b = MyStage::rx(my_stage_witness)?;
+//!
+//! // Sample random challenge z after committing to `a` and `b`
+//! let z = Fp::random(thread_rng());
+//!
+//! let mut combined = a.clone();
+//! combined.scale(z);
+//! combined.add_assign(&b);
+//!
+//! let obj = MyStage::into_object()?;
+//! assert_eq!(combined.revdot(&obj), Fp::ZERO);
+//! ```
+//!
+//! ### Final Stage
+//!
+//! The final witness circuit is implemented using the [`StagedCircuit`] trait,
+//! which is similar to the [`Circuit`] trait. The notable difference is that
+//! during witness generation the circuit has access to a [`StageBuilder`] which
+//! is used to load stages into the circuit synthesis according to the
+//! implementation's hierarchy.
+//!
+//! Any implementation of [`StagedCircuit`] can be transformed into an
+//! implementation of [`Circuit`] using the [`Staged`] adaptor. The resulting
+//! [`StageExt::rx`] output contains the final witness polynomial $f(X)$, which
+//! must be similarly checked to be well-formed using the
+//! [`StageExt::final_into_object`] method's staging object (obtained from the
+//! [`StagedCircuit::Final`] implementation).
+//!
+//! ### Combining the Stages
+//!
+//! Assuming stages are well-formed, they can be combined by merely adding them
+//! together with the final staging polynomial, producing the desired $r(X)$.
 
 use ff::Field;
 use ragu_core::{
@@ -235,7 +343,8 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
         Ok(rx)
     }
 
-    /// Converts this staging circuit into a circuit object.
+    /// Converts this stage into a circuit object that _only_ enforces
+    /// well-formedness checks on the stage.
     ///
     /// Staging circuits do not behave like normal circuits because they do not
     /// have a `ONE` wire and are used solely for partial witness commitments.
@@ -247,8 +356,9 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
         )?))
     }
 
-    /// Creates a staging circuit a final stage that has this stage as its
-    /// parent.
+    /// Creates a circuit object that can be used to enforce well-formedness
+    /// checks on any final witness (stage) that has this stage as its
+    /// [`StagedCircuit::Final`] stage.
     fn final_into_object<'a>() -> Result<Box<dyn CircuitObject<F, R> + 'a>> {
         Ok(Box::new(object::StageObject::new_max(
             Self::skip_multiplications() + Self::num_multiplications(),

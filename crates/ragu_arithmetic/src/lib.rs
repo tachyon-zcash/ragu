@@ -20,8 +20,8 @@
 //! In fact, many of the common traits used throughout Ragu are actually defined
 //! in the [`pasta_curves`] crate, which provides the actual implementations of
 //! the Pasta curves and fields, and we
-//! [currently](https://github.com/ebfull/ragu/issues/1) rely on those traits in
-//! this crate for compatibility and interoperability reasons.
+//! [currently](https://github.com/tachyon-zcash/ragu/issues/1) rely on those
+//! traits in this crate for compatibility and interoperability reasons.
 //!
 //! ## FFTs
 //!
@@ -65,8 +65,8 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(missing_docs)]
 #![deny(unsafe_code)]
-#![doc(html_favicon_url = "https://seanbowe.com/ragu_assets/icons/v1_favicon32.png")]
-#![doc(html_logo_url = "https://seanbowe.com/ragu_assets/icons/v1_rustdoc128.png")]
+#![doc(html_favicon_url = "https://tachyon.z.cash/assets/ragu/v1_favicon32.png")]
+#![doc(html_logo_url = "https://tachyon.z.cash/assets/ragu/v1_rustdoc128.png")]
 
 use ff::{Field, WithSmallOrderMulGroup};
 pub use pasta_curves::arithmetic::{Coordinates, CurveAffine, CurveExt};
