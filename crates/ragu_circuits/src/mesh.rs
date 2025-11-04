@@ -55,7 +55,7 @@ impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
         self.circuits.push(circuit);
 
         Ok(self)
-    }   
+    }
 
     /// Builds the final [`Mesh`].
     pub fn finalize(self) -> Result<Mesh<'params, F, R>> {

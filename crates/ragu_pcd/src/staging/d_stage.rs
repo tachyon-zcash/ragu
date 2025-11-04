@@ -1,8 +1,5 @@
-//! D-stage with two composite subcircuits that together handle challenge derivation
-//! (w, y, z) and and C computation. These seperately have continuous parent chains,
-//! using two-layer nested encoding for commitments.
+//! D staging polynomial.
 
-use crate::{challenge_stage, indirection_stage, inner_stage, outer_stage};
 use arithmetic::CurveAffine;
 use core::marker::PhantomData;
 use ragu_circuits::{
@@ -21,27 +18,101 @@ use ragu_primitives::{
     vec::{ConstLen, FixedVec},
 };
 
+use crate::{ephemeral_stage, indirection_stage};
+
+// Hardcoding a random constant for now, but this was variably change based on the
+// circuit count, which could mean nearly a thousand error terms.
+pub const MAX_CROSS_PRODUCTS: usize = 30;
+
 ///////////////////////////////////////////////////////////////////////////////////////
-// STAGED CIRCUIT: DChallengeDerivationStagedCircuit
+// D STAGING POLYNOMIAL
 ///////////////////////////////////////////////////////////////////////////////////////
 
-// Ephemeral inner stages to create nested commitments.
-inner_stage!(DEphemeralStage);
+// Ephemeral Stage: used to creating nested commitments.
+ephemeral_stage!(EphemeralStageD);
 
-// Stages form a parent chain (challenges (w, y, z) -> nested commitments (D1, D2, D3) --> error terms).
-challenge_stage!(DWyzChallengeStage, ());
-outer_stage!(DNestedCommitmentStage, DWyzChallengeStage);
+// Indirection Stage: for resolving the "outer layer problem".
+indirection_stage!(IndirectionStageD);
 
-// Macros flexibly support parent <> child relationships with different
-// `NUM` parameterizations, so we need to explicitly mark the parent count
-// when they differ.
-challenge_stage!(DErrorStage, DNestedCommitmentStage, 3);
+// D Stage.
+#[derive(ragu_macros::Gadget)]
+pub struct DStageOutput<
+    'dr,
+    D: Driver<'dr>,
+    HostCurve: CurveAffine<Base = D::F>,
+    const MAX_CROSS_PRODUCTS: usize,
+> {
+    #[ragu(gadget)]
+    pub challenges: FixedVec<Element<'dr, D>, ConstLen<3>>,
+    #[ragu(gadget)]
+    pub nested_commitments: FixedVec<Point<'dr, D, HostCurve>, ConstLen<2>>,
+    #[ragu(gadget)]
+    pub error_terms: FixedVec<Element<'dr, D>, ConstLen<MAX_CROSS_PRODUCTS>>,
+}
 
-// Indirection stage (the "outer layer problem")
-indirection_stage!(DIndirectionStage);
+/// D Stage: challenges (w, y, z), nested commitments (D1, D2), and error terms.
+pub struct DStage<HostCurve, const MAX_CROSS_PRODUCTS: usize> {
+    _marker: core::marker::PhantomData<HostCurve>,
+}
 
-// TODO: This number will variably change based on our circuit count.
-const MAX_CROSS_PRODUCTS: usize = 30;
+impl<HostCurve: CurveAffine, R: Rank, const MAX_CROSS_PRODUCTS: usize> Stage<<HostCurve>::Base, R>
+    for DStage<HostCurve, MAX_CROSS_PRODUCTS>
+{
+    type Parent = ();
+
+    type Witness<'source> = (
+        [<HostCurve>::Base; 3],
+        [HostCurve; 2],
+        [<HostCurve>::Base; MAX_CROSS_PRODUCTS],
+    );
+
+    type OutputKind = Kind![<HostCurve>::Base; DStageOutput<'_, _, HostCurve, MAX_CROSS_PRODUCTS>];
+
+    fn values() -> usize {
+        3 + (2 * 2) + MAX_CROSS_PRODUCTS
+    }
+
+    fn witness<'dr, 'source: 'dr, D>(
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<<Self::OutputKind as GadgetKind<<HostCurve>::Base>>::Rebind<'dr, D>>
+    where
+        D: Driver<'dr, F = <HostCurve>::Base>,
+        Self: 'dr,
+    {
+        // Allocate the challenges.
+        let mut challenges = Vec::with_capacity(3);
+        for i in 0..3 {
+            challenges.push(Element::alloc(dr, witness.view().map(|w| w.0[i]))?);
+        }
+        let challenges = FixedVec::new(challenges).expect("challenges length");
+
+        // Allocate the nested commitments.
+        let mut nested_commitments = Vec::with_capacity(2);
+        for i in 0..2 {
+            nested_commitments.push(Point::alloc(dr, witness.view().map(|w| w.1[i]))?);
+        }
+        let nested_commitments =
+            FixedVec::new(nested_commitments).expect("nested commitments length");
+
+        // Allocate the error terms.
+        let mut error_terms = Vec::with_capacity(MAX_CROSS_PRODUCTS);
+        for i in 0..MAX_CROSS_PRODUCTS {
+            error_terms.push(Element::alloc(dr, witness.view().map(|w| w.2[i]))?);
+        }
+        let error_terms = FixedVec::new(error_terms).expect("error terms length");
+
+        Ok(DStageOutput {
+            challenges,
+            nested_commitments,
+            error_terms,
+        })
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////////////
+// STAGED CIRCUIT: `DChallengeDerivationStagedCircuit`
+///////////////////////////////////////////////////////////////////////////////////////
 
 pub struct DChallengeDerivationWitness<C: CurveAffine> {
     pub b_nested_commitment: C,
@@ -50,11 +121,15 @@ pub struct DChallengeDerivationWitness<C: CurveAffine> {
     pub y_challenge: C::Base,
     pub d2_nested_commitment: C,
     pub z_challenge: C::Base,
-    pub d3_nested_commitment: C,
     pub cross_products: [C::Base; MAX_CROSS_PRODUCTS],
 }
+pub struct DChallengeDerivationInstance<C: CurveAffine> {
+    pub b_nested_commitment: C,
+    pub w_challenge: C::Base,
+    pub y_challenge: C::Base,
+    pub z_challenge: C::Base,
+}
 
-/// Output containing all intermediate commitments and challenges.
 #[derive(ragu_macros::Gadget, ragu_primitives::io::Write)]
 pub struct DChallengeDerivationOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     #[ragu(gadget)]
@@ -62,20 +137,11 @@ pub struct DChallengeDerivationOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base =
     #[ragu(gadget)]
     pub w_challenge: Element<'dr, D>,
     #[ragu(gadget)]
-    pub d1_nested_commitment: Point<'dr, D, C>,
-    #[ragu(gadget)]
     pub y_challenge: Element<'dr, D>,
     #[ragu(gadget)]
-    pub d2_nested_commitment: Point<'dr, D, C>,
-    #[ragu(gadget)]
     pub z_challenge: Element<'dr, D>,
-    #[ragu(gadget)]
-    pub d3_nested_commitment: Point<'dr, D, C>,
-    #[ragu(gadget)]
-    pub cross_products: FixedVec<Element<'dr, D>, ConstLen<MAX_CROSS_PRODUCTS>>,
 }
 
-/// D staged circuit: derives w, y, z challenges.
 #[derive(Clone)]
 pub struct DChallengeDerivationStagedCircuit<NestedCurve>(PhantomData<NestedCurve>);
 
@@ -88,18 +154,30 @@ impl<NestedCurve> DChallengeDerivationStagedCircuit<NestedCurve> {
 impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Base, R>
     for DChallengeDerivationStagedCircuit<NestedCurve>
 {
-    type Final = DErrorStage<NestedCurve, MAX_CROSS_PRODUCTS>;
-    type Instance<'src> = ();
+    type Final = DStage<NestedCurve, MAX_CROSS_PRODUCTS>;
+    type Instance<'src> = DChallengeDerivationInstance<NestedCurve>;
     type Witness<'w> = DChallengeDerivationWitness<NestedCurve>;
     type Output = Kind![NestedCurve::Base; DChallengeDerivationOutput<'_, _, NestedCurve>];
     type Aux<'source> = ();
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = NestedCurve::Base>>(
         &self,
-        _dr: &mut D,
-        _instance: DriverValue<D, Self::Instance<'source>>,
+        dr: &mut D,
+        instance: DriverValue<D, Self::Instance<'source>>,
     ) -> Result<<Self::Output as GadgetKind<NestedCurve::Base>>::Rebind<'dr, D>> {
-        unimplemented!()
+        let b_nested_commitment = Point::alloc(
+            dr,
+            instance.view().map(|instance| instance.b_nested_commitment),
+        )?;
+        let w_challenge = Element::alloc(dr, instance.view().map(|instance| instance.w_challenge))?;
+        let y_challenge = Element::alloc(dr, instance.view().map(|instance| instance.y_challenge))?;
+        let z_challenge = Element::alloc(dr, instance.view().map(|instance| instance.z_challenge))?;
+        Ok(DChallengeDerivationOutput {
+            b_nested_commitment,
+            w_challenge,
+            y_challenge,
+            z_challenge,
+        })
     }
 
     fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = NestedCurve::Base>>(
@@ -110,71 +188,54 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
         <Self::Output as GadgetKind<NestedCurve::Base>>::Rebind<'dr, D>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
-        // STAGE 1: StageBuilder for `DWyzStage` for the w, y, and z challenges.
-        let (challenges, dr) = dr.add_stage::<DWyzChallengeStage<NestedCurve, 3>>(
-            witness
-                .view()
-                .map(|w| [w.w_challenge, w.y_challenge, w.z_challenge]),
-        )?;
-
-        // STAGE 2: StageBuilder for `DNestedCommitmentStage` for the D1, D2, and D3 nested commitments.
-        let (nested_commitments, dr) =
-            dr.add_stage::<DNestedCommitmentStage<NestedCurve, 3>>(witness.view().map(|w| {
-                [
-                    w.d1_nested_commitment,
-                    w.d2_nested_commitment,
-                    w.d3_nested_commitment,
-                ]
+        // STAGE: StageBuilder for `DStage`: challenges (w, y, z), nested commitments (D1, D2), and error terms.
+        let (stage_output, dr) =
+            dr.add_stage::<DStage<NestedCurve, MAX_CROSS_PRODUCTS>>(witness.view().map(|w| {
+                (
+                    [w.w_challenge, w.y_challenge, w.z_challenge],
+                    [w.d1_nested_commitment, w.d2_nested_commitment],
+                    w.cross_products,
+                )
             }))?;
-
-        // STAGE 3: StageBuilder for `DErrorStage` for the error terms (cross products).
-        let (cross_products, dr) = dr.add_stage::<DErrorStage<NestedCurve, MAX_CROSS_PRODUCTS>>(
-            witness.view().map(|w| w.cross_products),
-        )?;
 
         let dr = dr.finish();
 
-        let w_challenge = challenges[0].clone();
-        let y_challenge = challenges[1].clone();
-        let z_challenge = challenges[2].clone();
-
-        let d1_nested_commitment = nested_commitments[0].clone();
-        let d2_nested_commitment = nested_commitments[1].clone();
-        let d3_nested_commitment = nested_commitments[2].clone();
+        let w_challenge = stage_output.challenges[0].clone();
+        let y_challenge = stage_output.challenges[1].clone();
+        let z_challenge = stage_output.challenges[2].clone();
+        let d1_nested_commitment = stage_output.nested_commitments[0].clone();
+        let d2_nested_commitment = stage_output.nested_commitments[1].clone();
 
         // Now allocate `b_nested_commitment` (NOT as a seperate stage in this staging polynomial) and verify
         // that w was correctly derived from B. This keeps B and D as separate staging
         // polynomials while still verifying the FS challenge derivation.
         let b_nested_commitment = Point::alloc(dr, witness.view().map(|w| w.b_nested_commitment))?;
 
-        // Initialize a single sponge for FS challenge derivation.
+        // Initialize a sponge for FS challenge derivation.
+        // Sponge has state size 5 and rate 4 (can output 4 challenges per absorption).
         let mut sponge = Sponge::new(dr, &PoseidonFp);
 
-        // Derive w = H(state_0 || B).
+        // Derive w = H(B).
         b_nested_commitment.write(dr, &mut sponge)?;
         let w_computed = sponge.squeeze(dr)?;
         dr.enforce_equal(w_computed.wire(), w_challenge.wire())?;
 
-        // Derive y = H(state_1 || D1)  where state_1 contains (B, w).
+        // Derive (y, z) = H(w || D1 || D2).
         d1_nested_commitment.write(dr, &mut sponge)?;
+        d2_nested_commitment.write(dr, &mut sponge)?;
+
         let y_computed = sponge.squeeze(dr)?;
         dr.enforce_equal(y_computed.wire(), y_challenge.wire())?;
 
-        // Derive z = H(state_2 || D2)  where state_2 contains (B, w, D1, y).
-        d2_nested_commitment.write(dr, &mut sponge)?;
         let z_computed = sponge.squeeze(dr)?;
         dr.enforce_equal(z_computed.wire(), z_challenge.wire())?;
 
         // Return output gadgets and empty auxilary.
         let output = DChallengeDerivationOutput {
             b_nested_commitment,
-            w_challenge: w_challenge,
-            d1_nested_commitment,
-            y_challenge: y_challenge,
-            d2_nested_commitment,
-            z_challenge: z_challenge,
-            d3_nested_commitment,
-            cross_products,
+            w_challenge,
+            y_challenge,
+            z_challenge,
         };
 
         Ok((output, D::just(|| ())))
@@ -182,16 +243,15 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////
-// STAGED CIRCUIT: DCValueComputationStagedCircuit
+// STAGED CIRCUIT: `DCValueComputationStagedCircuit`
 ///////////////////////////////////////////////////////////////////////////////////////
-
-challenge_stage!(DMuNuStage, ());
 
 /// Witness values.
 pub struct DCValueComputationWitness<C: CurveAffine> {
-    /// Cross product commitments.
-    pub d3_nested_commitment: C,
+    // D staging polynomial nested commitment.
+    pub d_nested_commitment: C,
 
+    // Mu and nu challenges.
     pub mu_challenge: C::Base,
     pub nu_challenge: C::Base,
 
@@ -212,7 +272,7 @@ pub struct DCValueComputationWitness<C: CurveAffine> {
 #[derive(ragu_macros::Gadget, ragu_primitives::io::Write)]
 pub struct DCValueComputationOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     #[ragu(gadget)]
-    pub d3_nested_commitment: Point<'dr, D, C>,
+    pub d_nested_commitment: Point<'dr, D, C>,
     #[ragu(gadget)]
     pub mu_challenge: Element<'dr, D>,
     #[ragu(gadget)]
@@ -221,13 +281,16 @@ pub struct DCValueComputationOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D
     pub c_value: Element<'dr, D>,
 }
 
-/// Auxiliary output containing the computed c value.
-pub struct DCValueComputationAux<C: CurveAffine> {
+// Instances values.
+pub struct DCValueComputationInstance<C: CurveAffine> {
+    pub d_commitment: C,
+    pub mu: C::Base,
+    pub nu: C::Base,
     pub c_value: C::Base,
 }
 
-// Instances values.
-pub struct DCValueComputationInstance<C: CurveAffine> {
+/// Auxiliary output containing the computed c value.
+pub struct DCValueComputationAux<C: CurveAffine> {
     pub c_value: C::Base,
 }
 
@@ -243,7 +306,7 @@ impl<NestedCurve> DCValueComputationStagedCircuit<NestedCurve> {
 impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Base, R>
     for DCValueComputationStagedCircuit<NestedCurve>
 {
-    type Final = DMuNuStage<NestedCurve, 2>;
+    type Final = ();
     type Instance<'src> = ();
     type Witness<'w> = DCValueComputationWitness<NestedCurve>;
     type Output = Kind![NestedCurve::Base; DCValueComputationOutput<'_, _, NestedCurve>];
@@ -265,24 +328,29 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
         <Self::Output as GadgetKind<NestedCurve::Base>>::Rebind<'dr, D>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
-        // STAGE: StageBuilder for `DMuNuStage` for computed mu and nu challenges.
-        let (challenges, dr) = dr.add_stage::<DMuNuStage<NestedCurve, 2>>(
-            witness.view().map(|w| [w.mu_challenge, w.nu_challenge]),
-        )?;
-
+        // No stages to add, finish immediately.
         let dr = dr.finish();
 
-        let mu_challenge = challenges[0].clone();
-        let nu_challenge = challenges[1].clone();
+        // Allocate the mu and nu challenges, and d_nested_commitment from the d staging polynomial.
+        let mu_challenge = Element::alloc(dr, witness.view().map(|w| w.mu_challenge))?;
+        let nu_challenge = Element::alloc(dr, witness.view().map(|w| w.nu_challenge))?;
 
-        // Now allocate `d3_nested_commitment` (NOT as a seperate in this staging polynomial) and verify
-        // that mu and nu were correctly derived. This keeps D and E as separate staging
-        // polynomials while still verifying the FS challenge derivation.
-        // TODO: what do we do with this now if we defer these checks to the next circuit?>
-        let d3_nested_commitment =
-            Point::alloc(dr, witness.view().map(|w| w.d3_nested_commitment))?;
+        let d_nested_commitment = Point::alloc(dr, witness.view().map(|w| w.d_nested_commitment))?;
 
-        // Witness mu_inv and verify it's the inverse of mu (non-determinstic witness trick from the Halo paper).
+        // Initialize a sponge for FS challenge derivation.
+        // Sponge has state size 5 and rate 4 (can output 4 challenges per absorption).
+        let mut sponge = Sponge::new(dr, &PoseidonFp);
+
+        // Derive (mu, nu) = H(d_nested_commitment).
+        d_nested_commitment.write(dr, &mut sponge)?;
+
+        let mu_computed = sponge.squeeze(dr)?;
+        dr.enforce_equal(mu_computed.wire(), mu_challenge.wire())?;
+
+        let nu_computed = sponge.squeeze(dr)?;
+        dr.enforce_equal(nu_computed.wire(), nu_challenge.wire())?;
+
+        // Witness mu_inv and verify it's the inverse of mu (the non-determinstic witness trick from the Halo paper).
         let mu_inv = Element::alloc(dr, witness.view().map(|w| w.mu_inv))?;
         let mu_times_mu_inv = mu_challenge.mul(dr, &mu_inv)?;
         let one = Element::constant(dr, Fp::one());
@@ -337,7 +405,7 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
         }
 
         let output = DCValueComputationOutput {
-            d3_nested_commitment,
+            d_nested_commitment,
             mu_challenge,
             nu_challenge,
             c_value: c_acc.clone(),
@@ -364,19 +432,13 @@ mod tests {
     use rand::thread_rng;
     type Rank = ragu_circuits::polynomials::R<12>;
 
-    /// Tests related to `DChallengeDerivationStagedCircuit`.
+    /// Staged Circuit: `DChallengeDerivationStagedCircuit`.
 
     fn validate_circuit_constraints(witness: DChallengeDerivationWitness<EpAffine>) -> Result<()> {
         Simulator::simulate(witness, |dr, witness| {
             let circuit = DChallengeDerivationStagedCircuit::<EpAffine>::new();
-            let stage_builder = StageBuilder::<
-                '_,
-                '_,
-                _,
-                Rank,
-                (),
-                DErrorStage<EpAffine, MAX_CROSS_PRODUCTS>,
-            >::new(dr);
+            let stage_builder =
+                StageBuilder::<'_, '_, _, Rank, (), DStage<EpAffine, MAX_CROSS_PRODUCTS>>::new(dr);
             circuit.witness(stage_builder, witness)?;
             Ok(())
         })?;
@@ -417,7 +479,6 @@ mod tests {
         let b_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
         let d1_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
         let d2_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
-        let d3_nested_commitment = (EpAffine::generator() * Fq::random(thread_rng())).to_affine();
 
         let (w_challenge, y_challenge, z_challenge) = compute_fiat_shamir_challenges(
             b_nested_commitment,
@@ -432,7 +493,6 @@ mod tests {
             y_challenge,
             d2_nested_commitment,
             z_challenge,
-            d3_nested_commitment,
             cross_products: [Fp::ZERO; MAX_CROSS_PRODUCTS],
         };
 
@@ -455,7 +515,6 @@ mod tests {
         let b_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
         let d1_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
         let d2_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
-        let d3_nested_commitment = (EpAffine::generator() * Fq::random(thread_rng())).to_affine();
 
         let (_w_challenge_correct, y_challenge, z_challenge) = compute_fiat_shamir_challenges(
             b_nested_commitment,
@@ -473,7 +532,6 @@ mod tests {
             y_challenge,
             d2_nested_commitment,
             z_challenge,
-            d3_nested_commitment,
             cross_products: [Fp::ZERO; MAX_CROSS_PRODUCTS],
         };
 
@@ -487,7 +545,6 @@ mod tests {
         let b_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
         let d1_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
         let d2_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
-        let d3_nested_commitment = (EpAffine::generator() * Fq::random(thread_rng())).to_affine();
 
         let (w_challenge, _y_challenge_correct, z_challenge) = compute_fiat_shamir_challenges(
             b_nested_commitment,
@@ -505,7 +562,6 @@ mod tests {
             y_challenge: y_challenge_invalid,
             d2_nested_commitment,
             z_challenge,
-            d3_nested_commitment,
             cross_products: [Fp::ZERO; MAX_CROSS_PRODUCTS],
         };
 
@@ -519,7 +575,6 @@ mod tests {
         let b_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
         let d1_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
         let d2_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
-        let d3_nested_commitment = (EpAffine::generator() * Fq::random(thread_rng())).to_affine();
 
         let (w_challenge, y_challenge, _z_challenge_correct) = compute_fiat_shamir_challenges(
             b_nested_commitment,
@@ -537,7 +592,6 @@ mod tests {
             y_challenge,
             d2_nested_commitment,
             z_challenge: z_challenge_invalid,
-            d3_nested_commitment,
             cross_products: [Fp::ZERO; MAX_CROSS_PRODUCTS],
         };
 
@@ -551,7 +605,6 @@ mod tests {
         let b_nested_commitment_1 = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
         let d1_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
         let d2_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
-        let d3_nested_commitment = (EpAffine::generator() * Fq::random(thread_rng())).to_affine();
 
         let (w_challenge_1, y_challenge_1, z_challenge_1) = compute_fiat_shamir_challenges(
             b_nested_commitment_1,
@@ -591,7 +644,6 @@ mod tests {
             y_challenge: y_challenge_1,
             d2_nested_commitment,
             z_challenge: z_challenge_1,
-            d3_nested_commitment,
             cross_products: [Fp::ZERO; MAX_CROSS_PRODUCTS],
         };
 
@@ -608,7 +660,6 @@ mod tests {
             y_challenge: y_challenge_2,
             d2_nested_commitment,
             z_challenge: z_challenge_2,
-            d3_nested_commitment,
             cross_products: [Fp::ZERO; MAX_CROSS_PRODUCTS],
         };
 
@@ -620,7 +671,7 @@ mod tests {
         Ok(())
     }
 
-    /// Tests related to `DCValueComputationStagedCircuit`.
+    /// Staged Circuit: `DCValueComputationStagedCircuit`.
 
     fn derive_fiat_shamir_challenges(d3_commitment: EpAffine) -> Result<(Fp, Fp)> {
         use ragu_core::maybe::Always;
@@ -674,8 +725,9 @@ mod tests {
     #[should_panic(expected = "InvalidWitness")]
     fn test_c_circuit_invalid_mu_fails() {
         let mut rng = thread_rng();
-        let d3_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
-        let (_mu_correct, nu_challenge) = derive_fiat_shamir_challenges(d3_commitment).unwrap();
+        let d_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
+        let (_mu_correct, nu_challenge) =
+            derive_fiat_shamir_challenges(d_nested_commitment).unwrap();
 
         let mu_invalid = Fp::random(&mut rng);
 
@@ -686,7 +738,7 @@ mod tests {
         let mu_inv = mu_invalid.invert().unwrap();
 
         let witness = DCValueComputationWitness {
-            d3_nested_commitment: d3_commitment,
+            d_nested_commitment,
             mu_challenge: mu_invalid,
             nu_challenge,
             mu_inv,
@@ -697,8 +749,7 @@ mod tests {
 
         Simulator::simulate(witness, |dr, witness| {
             let circuit = DCValueComputationStagedCircuit::<EpAffine>::new();
-            let stage_builder =
-                StageBuilder::<'_, '_, _, Rank, (), DMuNuStage<EpAffine, 2>>::new(dr);
+            let stage_builder = StageBuilder::<'_, '_, _, Rank, (), ()>::new(dr);
             circuit.witness(stage_builder, witness)?;
             Ok(())
         })
@@ -709,8 +760,9 @@ mod tests {
     #[should_panic(expected = "InvalidWitness")]
     fn test_c_circuit_invalid_nu_fails() {
         let mut rng = thread_rng();
-        let d3_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
-        let (mu_challenge, _nu_correct) = derive_fiat_shamir_challenges(d3_commitment).unwrap();
+        let d_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
+        let (mu_challenge, _nu_correct) =
+            derive_fiat_shamir_challenges(d_nested_commitment).unwrap();
 
         let nu_invalid = Fp::random(&mut rng);
 
@@ -721,7 +773,7 @@ mod tests {
         let mu_inv = mu_challenge.invert().unwrap();
 
         let witness = DCValueComputationWitness {
-            d3_nested_commitment: d3_commitment,
+            d_nested_commitment,
             mu_challenge,
             nu_challenge: nu_invalid,
             mu_inv,
@@ -732,8 +784,7 @@ mod tests {
 
         Simulator::simulate(witness, |dr, witness| {
             let circuit = DCValueComputationStagedCircuit::<EpAffine>::new();
-            let stage_builder =
-                StageBuilder::<'_, '_, _, Rank, (), DMuNuStage<EpAffine, 2>>::new(dr);
+            let stage_builder = StageBuilder::<'_, '_, _, Rank, (), ()>::new(dr);
             circuit.witness(stage_builder, witness)?;
             Ok(())
         })
@@ -743,8 +794,8 @@ mod tests {
     #[test]
     fn test_c_value_computation_matches_reference() -> Result<()> {
         let mut rng = thread_rng();
-        let d3_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
-        let (mu_challenge, nu_challenge) = derive_fiat_shamir_challenges(d3_commitment)?;
+        let d_nested_commitment = (EpAffine::generator() * Fq::random(&mut rng)).to_affine();
+        let (mu_challenge, nu_challenge) = derive_fiat_shamir_challenges(d_nested_commitment)?;
 
         let len = 4;
         let cross_products: Vec<Fp> = (0..(len * (len - 1)))
@@ -758,7 +809,7 @@ mod tests {
         let mu_inv = mu_challenge.invert().unwrap();
 
         let witness = DCValueComputationWitness {
-            d3_nested_commitment: d3_commitment,
+            d_nested_commitment,
             mu_challenge,
             nu_challenge,
             mu_inv,

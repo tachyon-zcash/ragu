@@ -44,6 +44,5 @@ pub mod engine;
 pub mod pallas;
 pub mod session;
 pub mod staging;
-pub mod transcript;
 pub mod utilities;
 pub mod vesta;
