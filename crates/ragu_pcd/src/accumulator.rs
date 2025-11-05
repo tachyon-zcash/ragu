@@ -26,16 +26,26 @@ where
     NestedCurve: CurveAffine,
     R: Rank,
 {
+    /// Uncompressed accumulator object.
     pub accumulator: UncompressedAccumulator<HostCurve, R>,
 
     /// Points we want to endoscale this round (native to the circuit).
-    pub endoscalars: Vec<NestedCurve>,
+    pub endoscalars: Vec<HostCurve>,
 
     /// New non-native points produced this round (to be deferred).
-    pub deferreds: Vec<HostCurve>,
+    pub deferreds: Vec<NestedCurve>,
 
-    /// Staging polynomial commitments.
-    pub staging: Vec<HostCurve>,
+    /// Staged circuits created in round.
+    pub staged_circuits: Vec<StagedCircuitData<HostCurve, R>>,
+}
+
+/// Data for a staged circuit that needs consistency verification.
+pub struct StagedCircuitData<C: CurveAffine, R: Rank> {
+    /// The final r(X) polynomial from the staged circuit.
+    pub(crate) final_rx: structured::Polynomial<C::ScalarExt, R>,
+
+    /// The ky polynomial (public inputs).
+    pub(crate) ky: Vec<C::ScalarExt>,
 }
 
 /// Uncompressed accumulator with full witness and deferred work.
@@ -108,7 +118,7 @@ where
             accumulator: UncompressedAccumulator::base(mesh, generators),
             endoscalars: Vec::new(),
             deferreds: Vec::new(),
-            staging: Vec::new(),
+            staged_circuits: Vec::new(),
         }
     }
 }
@@ -339,6 +349,5 @@ mod tests {
         assert_ne!(base.accumulator.witness.p_blinding, Fp::ZERO);
         assert!(base.endoscalars.is_empty());
         assert!(base.deferreds.is_empty());
-        assert!(base.staging.is_empty());
     }
 }

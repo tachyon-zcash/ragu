@@ -281,7 +281,6 @@ pub struct DCValueComputationOutput<'dr, D: Driver<'dr>> {
 
 // Instances values.
 pub struct DCValueComputationInstance<C: CurveAffine> {
-    pub d_commitment: C,
     pub mu: C::Base,
     pub nu: C::Base,
     pub c_value: C::Base,
@@ -305,17 +304,26 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
     for DCValueComputationStagedCircuit<NestedCurve>
 {
     type Final = ();
-    type Instance<'src> = ();
+    type Instance<'src> = DCValueComputationInstance<NestedCurve>;
     type Witness<'w> = DCValueComputationWitness<NestedCurve>;
     type Output = Kind![NestedCurve::Base; DCValueComputationOutput<'_, _>];
     type Aux<'source> = DCValueComputationAux<NestedCurve>;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = NestedCurve::Base>>(
         &self,
-        _dr: &mut D,
-        _instance: DriverValue<D, Self::Instance<'source>>,
+        dr: &mut D,
+        instance: DriverValue<D, Self::Instance<'source>>,
     ) -> Result<<Self::Output as GadgetKind<NestedCurve::Base>>::Rebind<'dr, D>> {
-        unimplemented!()
+        let mu_challenge = Element::alloc(dr, instance.view().map(|instance| instance.mu))?;
+        let nu_challenge: Element<'dr, D> =
+            Element::alloc(dr, instance.view().map(|instance| instance.nu))?;
+        let c_value = Element::alloc(dr, instance.view().map(|instance| instance.c_value))?;
+
+        Ok(DCValueComputationOutput {
+            mu_challenge,
+            nu_challenge,
+            c_value,
+        })
     }
 
     fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = NestedCurve::Base>>(
@@ -332,21 +340,6 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
         // Allocate the mu and nu challenges, and d_nested_commitment from the d staging polynomial.
         let mu_challenge = Element::alloc(dr, witness.view().map(|w| w.mu_challenge))?;
         let nu_challenge = Element::alloc(dr, witness.view().map(|w| w.nu_challenge))?;
-
-        // let d_nested_commitment = Point::alloc(dr, witness.view().map(|w| w.d_nested_commitment))?;
-
-        // // Initialize a sponge for FS challenge derivation.
-        // // Sponge has state size 5 and rate 4 (can output 4 challenges per absorption).
-        // let mut sponge = Sponge::new(dr, &PoseidonFp);
-
-        // // Derive (mu, nu) = H(d_nested_commitment).
-        // d_nested_commitment.write(dr, &mut sponge)?;
-
-        // let mu_computed = sponge.squeeze(dr)?;
-        // dr.enforce_equal(mu_computed.wire(), mu_challenge.wire())?;
-
-        // let nu_computed = sponge.squeeze(dr)?;
-        // dr.enforce_equal(nu_computed.wire(), nu_challenge.wire())?;
 
         // Witness mu_inv and verify it's the inverse of mu (the non-determinstic witness trick from the Halo paper).
         let mu_inv = Element::alloc(dr, witness.view().map(|w| w.mu_inv))?;
