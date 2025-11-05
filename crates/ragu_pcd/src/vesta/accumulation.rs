@@ -72,6 +72,12 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         );
 
         ///////////////////////////////////////////////////////////////////////////////////////
+        // PHASE: JIT-register recursion circuits
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // TODO: pre-register recursion circuits to the mesh before finalization.
+
+        ///////////////////////////////////////////////////////////////////////////////////////
         // PHASE: Process endoscalars.
         ///////////////////////////////////////////////////////////////////////////////////////
 
@@ -145,7 +151,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
             R,
         >>::rx(&a_commitments)?;
 
-        // NESTED COMMITMENT: Commit to the staging polynomial using Pallas generators.
+        // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators.
         let b_blinding = C::ScalarField::random(OsRng);
         let b_nested_commitment = b_inner_rx.commit(cycle.nested_generators(), b_blinding);
 
@@ -201,7 +207,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
             &s_prime_commitments,
         )?;
 
-        // NESTED COMMITMENT: Commit to the staging polynomial using Pallas generators (nested curve).
+        // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
         let d1_binding = C::ScalarField::random(OsRng);
         let d1_nested_commitment = d1_rx.commit(cycle.nested_generators(), d1_binding);
 
@@ -252,7 +258,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
             s2_commitment,
         ])?;
 
-        // NESTED COMMITMENT: Commit to the staging polynomial using Pallas generators (nested curve).
+        // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
         let d2_binding = C::ScalarField::random(OsRng);
         let d2_nested_commitment = d2_rx.commit(cycle.nested_generators(), d2_binding);
 
@@ -347,7 +353,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         let d_rx_inner =
             <IndirectionStageD<C::HostCurve> as StageExt<C::ScalarField, R>>::rx(d_rx_commitment)?;
 
-        // NESTED COMMITMENT: Commit to the staging polynomial using Pallas generators (nested curve).
+        // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
         let d_rx_nested_commitment_blinding = C::ScalarField::random(OsRng);
         let d_rx_nested_commitment =
             d_rx_inner.commit(cycle.nested_generators(), d_rx_nested_commitment_blinding);
@@ -410,7 +416,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
             &a_and_b_commmitments,
         )?;
 
-        // NESTED COMMITMENT: Commit to the staging polynomial using Pallas generators (nested curve).
+        // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
         let e1_binding = C::ScalarField::random(OsRng);
         let e1_nested_commitment = e1_rx.commit(cycle.nested_generators(), e1_binding);
 
@@ -446,7 +452,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         let e2_inner_rx =
             <EphemeralStageE<C::HostCurve, 1> as StageExt<C::ScalarField, R>>::rx(&[s_commitment])?;
 
-        // NESTED COMMITMENT: Commit to the staging polynomial using Pallas generators (nested curve).
+        // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
         let e2_blinding = C::ScalarField::random(OsRng);
         let e2_nested_commitment = e2_inner_rx.commit(cycle.nested_generators(), e2_blinding);
 
@@ -598,7 +604,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         let e_rx_inner =
             <IndirectionStageE<C::HostCurve> as StageExt<C::ScalarField, R>>::rx(e_rx_commitment)?;
 
-        // NESTED COMMITMENT: Commit to the staging polynomial using Pallas generators (nested curve).
+        // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
         let e_rx_nested_commitment_blinding = C::ScalarField::random(OsRng);
         let e_rx_nested_commitment =
             e_rx_inner.commit(cycle.nested_generators(), e_rx_nested_commitment_blinding);
@@ -696,7 +702,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         let e3_inner_rx =
             <EphemeralStageG<C::HostCurve, 1> as StageExt<C::ScalarField, R>>::rx(&[f.commitment])?;
 
-        // NESTED COMMITMENT: Commit to the staging polynomial using Pallas generators (nested curve).
+        // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
         let e3_blinding = C::ScalarField::random(OsRng);
         let e3_nested_commitment = e3_inner_rx.commit(cycle.nested_generators(), e3_blinding);
 
@@ -795,7 +801,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         let g_rx_inner =
             <IndirectionStageE<C::HostCurve> as StageExt<C::ScalarField, R>>::rx(g_rx_commitment)?;
 
-        // NESTED COMMITMENT: Commit to the staging polynomial using Pallas generators (nested curve).
+        // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
         let g_rx_nested_commitment_blinding = C::ScalarField::random(OsRng);
         let g_rx_nested_commitment =
             g_rx_inner.commit(cycle.nested_generators(), g_rx_nested_commitment_blinding);
@@ -1028,7 +1034,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         };
 
         ///////////////////////////////////////////////////////////////////////////////////////
-        // PHASE: STAGED CIRCUITS for collective verification.
+        // PHASE: STAGED CIRCUITS for collective verification (In-circuit verifiers).
         ///////////////////////////////////////////////////////////////////////////////////////
 
         ///////////////////////////////////////////////////////////////////////////////////////
@@ -1099,6 +1105,12 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
             inverses,
             v_claimed: v,
         })?;
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // PHASE: k(Y) handling for recursion circuits.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // TODO: where does this factor in?
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // PHASE: Collect deferreds (Vesta points to be checked on Pallas side).
