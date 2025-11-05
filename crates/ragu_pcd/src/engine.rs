@@ -173,6 +173,8 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
             vesta_builder: MeshBuilder::<C::CircuitField, R>::new(),
         };
 
+        // TODO: JIT-register recursion circuits to the mesh before finalization.
+
         match std::mem::replace(&mut self.engine_state, dummy) {
             EngineState::Building {
                 pallas_builder,
