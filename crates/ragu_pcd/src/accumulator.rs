@@ -2,6 +2,7 @@ use arithmetic::CurveAffine;
 use arithmetic::FixedGenerators;
 use core::marker::PhantomData;
 use ff::Field;
+use ragu_circuits::CircuitObject;
 use ragu_circuits::{
     mesh::Mesh,
     polynomials::{Rank, structured, unstructured},
@@ -46,6 +47,9 @@ pub struct StagedCircuitData<C: CurveAffine, R: Rank> {
 
     /// The ky polynomial (public inputs).
     pub(crate) ky: Vec<C::ScalarExt>,
+
+    /// The circuit object for computing s(X, y).
+    pub circuit: Box<dyn CircuitObject<C::ScalarExt, R>>,
 }
 
 /// Uncompressed accumulator with full witness and deferred work.

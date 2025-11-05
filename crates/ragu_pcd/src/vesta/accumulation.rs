@@ -91,7 +91,25 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // PHASE: Process `StagedObjects`.
         ///////////////////////////////////////////////////////////////////////////////////////
 
-        // TODO: Process the staged objects for staging consistency.
+        // TODO: Process the staged objects for staging consistency from the previous cycle.
+
+        for staged_data in &acc1.staged_circuits {
+            let y_challenge = acc1.accumulator.instance.y.0;
+            let sy = staged_data.circuit.sy(y_challenge);
+            let _ky_at_y = arithmetic::eval(&staged_data.ky, y_challenge);
+            let _lhs = staged_data.final_rx.revdot(&sy);
+
+            // TODO: Check if lhs != ky_at_y.
+        }
+
+        for staged_data in &acc2.staged_circuits {
+            let y_challenge = acc2.accumulator.instance.y.0;
+            let sy = staged_data.circuit.sy(y_challenge);
+            let _ky_at_y = arithmetic::eval(&staged_data.ky, y_challenge);
+            let _lhs = staged_data.final_rx.revdot(&sy);
+
+            // TODO: Check if lhs != ky_at_y.
+        }
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: Process the application circuits. The witness polynomials
@@ -1157,22 +1175,31 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // TASK: Collect staged circuit data for next cycle verification
         ///////////////////////////////////////////////////////////////////////////////////////
 
+        let d_circuit_object = d_circuit.clone().into_object()?;
+        let c_circuit_object = c_circuit.clone().into_object()?;
+        let e_circuit_object = e_circuit.clone().into_object()?;
+        let g_circuit_object = g_circuit.clone().into_object()?;
+
         cycle_accumulator.staged_circuits = vec![
             StagedCircuitData {
                 final_rx: d_rx,
                 ky: d_ky,
+                circuit: d_circuit_object,
             },
             StagedCircuitData {
                 final_rx: c_rx,
                 ky: c_ky,
+                circuit: c_circuit_object,
             },
             StagedCircuitData {
                 final_rx: e_rx,
                 ky: e_ky,
+                circuit: e_circuit_object,
             },
             StagedCircuitData {
                 final_rx: g_rx,
                 ky: g_ky,
+                circuit: g_circuit_object,
             },
         ];
 
