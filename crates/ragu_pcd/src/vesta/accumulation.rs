@@ -75,25 +75,14 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // PHASE: Process endoscalars.
         ///////////////////////////////////////////////////////////////////////////////////////
 
-        // TODO: Determine the endoscaling operations, representing deferreds from the other curve.
-
-        ///////////////////////////////////////////////////////////////////////////////////////
-        // PHASE: Map what needs to be deffered using some kind of map.
-        ///////////////////////////////////////////////////////////////////////////////////////
-
-        // TODO: Collect all the deferreds we've marked in the code.
+        // TODO: Determine the endoscaling operations, representing deferreds from the
+        // other curve.
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // PHASE: Process `StagedObjects`.
         ///////////////////////////////////////////////////////////////////////////////////////
 
-        // TODO: Check the staged objects for staging consistency.
-
-        ///////////////////////////////////////////////////////////////////////////////////////
-        // PHASE: Process other public inputs.
-        ///////////////////////////////////////////////////////////////////////////////////////
-
-        // TODO: Determine what objects need to be in the public inputs.
+        // TODO: Process the staged objects for staging consistency.
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: Process the application circuits. The witness polynomials
@@ -267,7 +256,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         let d2_binding = C::ScalarField::random(OsRng);
         let d2_nested_commitment = d2_rx.commit(cycle.nested_generators(), d2_binding);
 
-        // TODO: why aren't we obsorbing this into the transcript?
+        // TODO: why aren't we obsorbing s'' nested commitment into the transcript?
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: Compute B polynomials for revdot verification.
@@ -1112,10 +1101,11 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         })?;
 
         ///////////////////////////////////////////////////////////////////////////////////////
-        // PHASE: TRACK DEFERREDS
+        // PHASE: Collect deferreds (Vesta points to be checked on Pallas side).
         ///////////////////////////////////////////////////////////////////////////////////////
 
-        // TODO: need to add all the deferreds here.
+        // TODO: Fill this in.
+        cycle_accumulator.deferreds = vec![];
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: Compose the final accumulator.
