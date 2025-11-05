@@ -198,7 +198,7 @@ mod tests {
     use pasta_curves::group::prime::PrimeCurveAffine;
     use ragu_circuits::{
         CircuitExt,
-        polynomials::{self, Rank},
+        polynomials::{self},
         staging::{StageExt, Staged},
     };
     use ragu_core::Result;
@@ -289,13 +289,8 @@ mod tests {
 
         let final_s = SlotStage::<EqAffine, NUM_SLOTS>::final_into_object()?;
         let y = Fq::random(thread_rng());
-        let z = Fq::random(thread_rng());
 
-        let mut rhs = final_rx.clone();
-        rhs.dilate(z);
-        rhs.add_assign(&final_s.sy(y));
-        rhs.add_assign(&R::tz(z));
-        assert_eq!(final_rx.revdot(&rhs), Fq::ZERO);
+        assert_eq!(final_rx.revdot(&final_s.sy(y)), Fq::ZERO);
 
         Ok(())
     }
@@ -331,13 +326,8 @@ mod tests {
 
         let final_s = SlotStage::<EpAffine, NUM_SLOTS>::final_into_object()?;
         let y = Fp::random(thread_rng());
-        let z = Fp::random(thread_rng());
 
-        let mut rhs = final_rx.clone();
-        rhs.dilate(z);
-        rhs.add_assign(&final_s.sy(y));
-        rhs.add_assign(&R::tz(z));
-        assert_eq!(final_rx.revdot(&rhs), Fp::ZERO);
+        assert_eq!(final_rx.revdot(&final_s.sy(y)), Fp::ZERO);
 
         Ok(())
     }

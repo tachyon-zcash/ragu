@@ -1,6 +1,16 @@
-//! Staging macros.
+/// Staging macros.
 
 /// Ephemeral stage.
+///
+/// This is used for creating nested commitments, which solves the issue
+/// of witnessing data from one curve inside a circuit over a different curve,
+/// for instance Fq elements inside an Fp circuit.
+///
+/// Imprtantly, we can't form a connection between the inner and outer stages due to
+/// the field boundary constraint in the `Stage` trait that disallowes stages from
+/// building stages that aren't in the same curve. That's why the this acts as
+/// an interstitial, temporary stage that we use to construct the commitment, and
+/// then we can form an outer stage from which subsequent stages can be built on.
 #[macro_export]
 macro_rules! ephemeral_stage {
     ($name:ident) => {

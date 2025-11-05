@@ -3,7 +3,7 @@
 use ff::Field;
 
 pub mod structured;
-mod txz;
+pub mod txz;
 pub mod unstructured;
 
 mod private {

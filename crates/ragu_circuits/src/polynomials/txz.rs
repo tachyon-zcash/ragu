@@ -1,3 +1,5 @@
+//! In-circuit evaluation of the t(X, Z) polynomial.
+
 use ff::Field;
 use ragu_core::{
     Error, Result,
@@ -8,6 +10,7 @@ use ragu_core::{
 };
 use ragu_primitives::Element;
 
+/// Routine for evaluating the t(x, z) polynomial in-circuit.
 #[derive(Clone)]
 pub struct Evaluate {
     log2_n: u32,
@@ -15,6 +18,7 @@ pub struct Evaluate {
 }
 
 impl Evaluate {
+    /// Creates a new t(x, z) evaluator for a given rank.
     pub fn new(log2_n: u32) -> Self {
         let n = 1 << log2_n;
 

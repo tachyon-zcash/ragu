@@ -35,7 +35,7 @@ where
     /// Create a new recursion session for the given cycle with meshes.
     pub fn new() -> Result<Self, Error> {
         Ok(Self {
-            engine: CycleEngine::new(),
+            engine: CycleEngine::new(), // TODO: should the `CycleEngine` be heap allocated?
         })
     }
 
