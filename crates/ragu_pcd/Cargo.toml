@@ -3,16 +3,16 @@ name = "ragu_pcd"
 version = "0.0.0"
 authors = ["Sean Bowe <ewillbefull@gmail.com>"]
 description = """
-PCD sceheme for the Ragu project
+Intended for internal use in the Ragu project
 """
 license = "MIT OR Apache-2.0"
 edition = "2024"
 rust-version = "1.85"
 
 readme = "README.md"
-repository = "https://github.com/ebfull/ragu"
+repository = "https://github.com/tachyon-zcash/ragu"
 documentation = "https://docs.rs/ragu_pcd"
-categories = ["cryptography", "mathematics", "algorithms", "science", "no-std"]
+categories = ["cryptography", "mathematics", "algorithms", "development-tools", "no-std"]
 keywords = []
 
 [package.metadata.docs.rs]

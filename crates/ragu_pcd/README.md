@@ -1,12 +1,10 @@
 <p align="center">
-  <img width="300" height="80" src="https://seanbowe.com/ragu_assets/header/v1_github600x160.png">
+  <img width="300" height="80" src="https://tachyon.z.cash/assets/ragu/v1_github600x160.png">
 </p>
 
 # `ragu_pcd`
 
-This crate provides a PCD scheme to enable efficient recursive proof composition through accumulation-based batching of circuit proofs.
-
-## [Documentation](https://docs.rs/ragu_pcd)
+This crate contains internal implementation code for the [`ragu`](https://crates.io/crates/ragu) crate.
 
 ## License
 
