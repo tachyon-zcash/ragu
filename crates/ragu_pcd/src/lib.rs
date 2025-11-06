@@ -1,5 +1,4 @@
 //! # `ragu_pcd`
-<<<<<<< HEAD
 //!
 //! This crate provides a PCD scheme to enable efficient recursive proof
 //! composition through BCLMS21-inspired split-accumulation.
@@ -46,5 +45,3 @@ pub mod pallas;
 pub mod staging;
 pub mod utilities;
 pub mod vesta;
-=======
->>>>>>> main
