@@ -281,8 +281,8 @@ pub struct DCValueComputationOutput<'dr, D: Driver<'dr>> {
 
 // Instances values.
 pub struct DCValueComputationInstance<C: CurveAffine> {
-    pub mu: C::Base,
-    pub nu: C::Base,
+    pub mu_challenge: C::Base,
+    pub nu_challenge: C::Base,
     pub c_value: C::Base,
 }
 
@@ -314,9 +314,10 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
         dr: &mut D,
         instance: DriverValue<D, Self::Instance<'source>>,
     ) -> Result<<Self::Output as GadgetKind<NestedCurve::Base>>::Rebind<'dr, D>> {
-        let mu_challenge = Element::alloc(dr, instance.view().map(|instance| instance.mu))?;
+        let mu_challenge =
+            Element::alloc(dr, instance.view().map(|instance| instance.mu_challenge))?;
         let nu_challenge: Element<'dr, D> =
-            Element::alloc(dr, instance.view().map(|instance| instance.nu))?;
+            Element::alloc(dr, instance.view().map(|instance| instance.nu_challenge))?;
         let c_value = Element::alloc(dr, instance.view().map(|instance| instance.c_value))?;
 
         Ok(DCValueComputationOutput {

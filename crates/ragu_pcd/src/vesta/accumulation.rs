@@ -38,7 +38,7 @@ use ragu_primitives::GadgetExt;
 use ragu_primitives::{Element, Point, Sponge};
 use rand::rngs::OsRng;
 
-impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
+impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
     /// Executes the Vesta-side accumulation step.
     ///
     /// This is an Fp round: computations occur over Fp, and commitments
@@ -48,7 +48,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         witnesses: &[C::CircuitField],
         acc1: &CycleAccumulator<C::HostCurve, C::NestedCurve, R>,
         acc2: &CycleAccumulator<C::HostCurve, C::NestedCurve, R>,
-        cycle: &C,
+        params: &C,
     ) -> Result<()>
     where
         C: Cycle<CircuitField = Fp>,
@@ -71,7 +71,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // Instantiate new accumulator object, which contains the prover's split accumulator witness and instance parts.
         let mut cycle_accumulator = CycleAccumulator::<C::HostCurve, C::NestedCurve, R>::base(
             mesh,
-            cycle.host_generators(),
+            params.host_generators(),
         );
 
         ///////////////////////////////////////////////////////////////////////////////////////
@@ -116,7 +116,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         for (&witness, circuit) in witnesses.iter().zip(circuit_list.iter()) {
             let (rx_poly, instance) = circuit.rx::<R>(witness)?;
             let blinding = C::CircuitField::random(OsRng);
-            let commitment = rx_poly.commit(cycle.host_generators(), blinding);
+            let commitment = rx_poly.commit(params.host_generators(), blinding);
 
             // r(X) witness polynomial.
             a_polys.push(CommittedPolynomial {
@@ -168,7 +168,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
 
         // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators.
         let b_blinding = C::ScalarField::random(OsRng);
-        let b_nested_commitment = b_inner_rx.commit(cycle.nested_generators(), b_blinding);
+        let b_nested_commitment = b_inner_rx.commit(params.nested_generators(), b_blinding);
 
         let b_point = Point::constant(&mut em, b_nested_commitment)?;
         b_point.write(&mut em, &mut transcript)?;
@@ -192,11 +192,11 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // COMPUTE S': For each previous accumulator, compute M(w, x_i, Y) for checking mesh consistency.
         let s1_poly_acc1 = mesh.wx(w_challenge, acc1.accumulator.instance.x.0);
         let s1_blinding_acc1 = C::CircuitField::random(OsRng);
-        let s1_commitment_acc1 = s1_poly_acc1.commit(cycle.host_generators(), s1_blinding_acc1);
+        let s1_commitment_acc1 = s1_poly_acc1.commit(params.host_generators(), s1_blinding_acc1);
 
         let s1_poly_acc2 = mesh.wx(w_challenge, acc2.accumulator.instance.x.0);
         let s1_blinding_acc2 = C::CircuitField::random(OsRng);
-        let s1_commitment_acc2 = s1_poly_acc2.commit(cycle.host_generators(), s1_blinding_acc2);
+        let s1_commitment_acc2 = s1_poly_acc2.commit(params.host_generators(), s1_blinding_acc2);
 
         let s_prime = [
             CommittedPolynomial {
@@ -224,7 +224,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
 
         // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
         let d1_binding = C::ScalarField::random(OsRng);
-        let d1_nested_commitment = d1_rx.commit(cycle.nested_generators(), d1_binding);
+        let d1_nested_commitment = d1_rx.commit(params.nested_generators(), d1_binding);
 
         let d1_point = Point::constant(&mut em, d1_nested_commitment)?;
         d1_point.write(&mut em, &mut transcript)?;
@@ -248,7 +248,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // COMPUTE S'': M(w, X, y) polynomial for final mesh consistency checks.
         let s2_poly = mesh.wy(w_challenge, y_challenge);
         let s2_blinding = C::CircuitField::random(OsRng);
-        let s2_commitment = s2_poly.commit(cycle.host_generators(), s2_blinding);
+        let s2_commitment = s2_poly.commit(params.host_generators(), s2_blinding);
 
         let s_prime_prime = [CommittedPolynomial {
             poly: s2_poly,
@@ -275,9 +275,8 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
 
         // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
         let d2_binding = C::ScalarField::random(OsRng);
-        let d2_nested_commitment = d2_rx.commit(cycle.nested_generators(), d2_binding);
+        let d2_nested_commitment = d2_rx.commit(params.nested_generators(), d2_binding);
 
-        // TODO: why shouldn't we be obsorbing s'' nested commitment into the transcript?
         let d2_point = Point::constant(&mut em, d2_nested_commitment)?;
         d2_point.write(&mut em, &mut transcript)?;
 
@@ -301,7 +300,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
                 b_poly.add_assign(&mesh.wy(circuit_id, y_challenge));
 
                 let b_blinding = C::CircuitField::random(OsRng);
-                let b_commitment = b_poly.commit(cycle.host_generators(), b_blinding);
+                let b_commitment = b_poly.commit(params.host_generators(), b_blinding);
 
                 CommittedPolynomial {
                     poly: b_poly,
@@ -364,7 +363,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // LAYER OF INDIRECTION: We now introduce another nested commitment layer to produce
         // an Fp-hashable nested commitment for the transcript.
         let d_rx_blinding = C::CircuitField::random(OsRng);
-        let d_rx_commitment = d_rx.commit(cycle.host_generators(), d_rx_blinding);
+        let d_rx_commitment = d_rx.commit(params.host_generators(), d_rx_blinding);
 
         // INNER LAYER: Staging polynomial (over Fq) that witnesses the D staged circuit Vesta commitment.
         let d_rx_inner =
@@ -373,7 +372,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
         let d_rx_nested_commitment_blinding = C::ScalarField::random(OsRng);
         let d_rx_nested_commitment =
-            d_rx_inner.commit(cycle.nested_generators(), d_rx_nested_commitment_blinding);
+            d_rx_inner.commit(params.nested_generators(), d_rx_nested_commitment_blinding);
 
         let d_point = Point::constant(&mut em, d_rx_nested_commitment)?;
         d_point.write(&mut em, &mut transcript)?;
@@ -404,7 +403,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
 
         let a_poly = structured::Polynomial::fold(a_polys.iter().map(|a| &a.poly), mu_inv);
         let a_blinding = C::CircuitField::random(OsRng);
-        let a_commitment = a_poly.commit(cycle.host_generators(), a_blinding);
+        let a_commitment = a_poly.commit(params.host_generators(), a_blinding);
 
         let a_folded = CommittedPolynomial {
             poly: a_poly,
@@ -414,7 +413,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
 
         let b_poly = structured::Polynomial::fold(b_polys.iter().map(|b| &b.poly), munu);
         let b_blinding = C::CircuitField::random(OsRng);
-        let b_commitment = b_poly.commit(cycle.host_generators(), b_blinding);
+        let b_commitment = b_poly.commit(params.host_generators(), b_blinding);
 
         let b_folded = CommittedPolynomial {
             poly: b_poly,
@@ -435,7 +434,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
 
         // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
         let e1_binding = C::ScalarField::random(OsRng);
-        let e1_nested_commitment = e1_rx.commit(cycle.nested_generators(), e1_binding);
+        let e1_nested_commitment = e1_rx.commit(params.nested_generators(), e1_binding);
 
         let e1_point = Point::constant(&mut em, e1_nested_commitment)?;
         e1_point.write(&mut em, &mut transcript)?;
@@ -457,7 +456,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
 
         let s_polynomial = mesh.xy(x_challenge, y_challenge);
         let s_blinding = C::CircuitField::random(OsRng);
-        let s_commitment = s_polynomial.commit(cycle.host_generators(), s_blinding);
+        let s_commitment = s_polynomial.commit(params.host_generators(), s_blinding);
 
         let s = CommittedPolynomial {
             poly: s_polynomial,
@@ -471,7 +470,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
 
         // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
         let e2_blinding = C::ScalarField::random(OsRng);
-        let e2_nested_commitment = e2_inner_rx.commit(cycle.nested_generators(), e2_blinding);
+        let e2_nested_commitment = e2_inner_rx.commit(params.nested_generators(), e2_blinding);
 
         let e2_point = Point::constant(&mut em, e2_nested_commitment)?;
         e2_point.write(&mut em, &mut transcript)?;
@@ -615,7 +614,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // LAYER OF INDIRECTION: We now introduce another nested commitment layer to produce
         // an Fp-hashable nested commitment for the transcript.
         let e_rx_blinding = C::CircuitField::random(OsRng);
-        let e_rx_commitment = e_rx.commit(cycle.host_generators(), e_rx_blinding);
+        let e_rx_commitment = e_rx.commit(params.host_generators(), e_rx_blinding);
 
         // INNER LAYER: Staging polynomial (over Fq) that witnesses the D staged circuit Vesta commitment.
         let e_rx_inner =
@@ -624,7 +623,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
         let e_rx_nested_commitment_blinding = C::ScalarField::random(OsRng);
         let e_rx_nested_commitment =
-            e_rx_inner.commit(cycle.nested_generators(), e_rx_nested_commitment_blinding);
+            e_rx_inner.commit(params.nested_generators(), e_rx_nested_commitment_blinding);
 
         let e_point = Point::constant(&mut em, e_rx_nested_commitment)?;
         e_point.write(&mut em, &mut transcript)?;
@@ -707,7 +706,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         };
 
         let f_blinding = C::CircuitField::random(OsRng);
-        let f_commitment = f_polynomial.commit(cycle.host_generators(), f_blinding);
+        let f_commitment = f_polynomial.commit(params.host_generators(), f_blinding);
 
         let f = CommittedPolynomial {
             poly: f_polynomial,
@@ -722,7 +721,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
         let g1_blinding = C::ScalarField::random(OsRng);
         let g1_nested_commitment: <C as Cycle>::NestedCurve =
-            g1_inner_rx.commit(cycle.nested_generators(), g1_blinding);
+            g1_inner_rx.commit(params.nested_generators(), g1_blinding);
 
         let g1_point = Point::constant(&mut em, g1_nested_commitment)?;
         g1_point.write(&mut em, &mut transcript)?;
@@ -813,7 +812,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // LAYER OF INDIRECTION: We now introduce another nested commitment layer to produce
         // an Fp-hashable nested commitment for the transcript.
         let g_rx_blinding = C::CircuitField::random(OsRng);
-        let g_rx_commitment = g_rx.commit(cycle.host_generators(), g_rx_blinding);
+        let g_rx_commitment = g_rx.commit(params.host_generators(), g_rx_blinding);
 
         // INNER LAYER: Staging polynomial (over Fq) that witnesses the D staged circuit Vesta commitment.
         let g_rx_inner =
@@ -822,7 +821,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
         let g_rx_nested_commitment_blinding = C::ScalarField::random(OsRng);
         let g_rx_nested_commitment =
-            g_rx_inner.commit(cycle.nested_generators(), g_rx_nested_commitment_blinding);
+            g_rx_inner.commit(params.nested_generators(), g_rx_nested_commitment_blinding);
 
         let g_point = Point::constant(&mut em, g_rx_nested_commitment)?;
         g_point.write(&mut em, &mut transcript)?;
@@ -1043,7 +1042,7 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         // TASK: Compute p(X) commitment.
         ///////////////////////////////////////////////////////////////////////////////////////
 
-        let p_commitment = p_poly.commit(cycle.host_generators(), p_blind);
+        let p_commitment = p_poly.commit(params.host_generators(), p_blind);
 
         let p = CommittedPolynomial {
             poly: p_poly,
@@ -1140,8 +1139,8 @@ impl<'a, C: Cycle + Default, R: Rank> CycleEngine<'a, C, R> {
         let d_ky = d_circuit.ky(d_instance)?;
 
         let c_instance = DCValueComputationInstance {
-            mu: mu_challenge,
-            nu: nu_challenge,
+            mu_challenge,
+            nu_challenge,
             c_value: c_aux.c_value,
         };
         let c_ky = c_circuit.ky(c_instance)?;

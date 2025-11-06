@@ -42,7 +42,6 @@ pub mod accumulator;
 pub mod endoscalar;
 pub mod engine;
 pub mod pallas;
-pub mod session;
 pub mod staging;
 pub mod utilities;
 pub mod vesta;

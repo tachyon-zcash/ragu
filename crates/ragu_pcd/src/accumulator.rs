@@ -341,9 +341,9 @@ mod tests {
         type TestRank = R<10>;
         let pasta = Pasta::default();
         let generators = pasta.host_generators();
-        let mesh: Mesh<'_, Fp, R<10>> = MeshBuilder::<Fp, TestRank>::new()
+        let mesh = MeshBuilder::<Fp, TestRank>::new()
             .finalize()
-            .expect("finalize mesh");
+            .expect("mesh finalization");
 
         let base = CycleAccumulator::<EqAffine, EpAffine, TestRank>::base(&mesh, generators);
 
