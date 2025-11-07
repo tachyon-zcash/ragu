@@ -13,7 +13,7 @@
 //! mesh management, etc.
 
 use crate::{
-    accumulator::CycleAccumulator,
+    accumulator::Accumulator,
     staging::{
         d_stage::{DCValueComputationStagedCircuit, DChallengeDerivationStagedCircuit},
         e_stage::EChallengeDerivationStagedCircuit,
@@ -65,10 +65,10 @@ where
     R: Rank,
 {
     /// Pallas-side accumulator state.
-    pub pallas_accumulator: CycleAccumulator<C::NestedCurve, C::HostCurve, R>,
+    pub pallas_accumulator: Accumulator<C::NestedCurve, C::HostCurve, R>,
 
     /// Vesta-side accumulator state.
-    pub vesta_accumulator: CycleAccumulator<C::HostCurve, C::NestedCurve, R>,
+    pub vesta_accumulator: Accumulator<C::HostCurve, C::NestedCurve, R>,
 
     /// Recursion depth.
     pub depth: usize,
@@ -154,8 +154,8 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
         let host_generators = self.params.host_generators();
 
         CycleProof {
-            pallas_accumulator: CycleAccumulator::base(&self.pallas_mesh, nested_generators),
-            vesta_accumulator: CycleAccumulator::base(&self.vesta_mesh, host_generators),
+            pallas_accumulator: Accumulator::base(&self.pallas_mesh, nested_generators),
+            vesta_accumulator: Accumulator::base(&self.vesta_mesh, host_generators),
             depth: 0,
         }
     }
@@ -163,7 +163,7 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
     /// Execute one PCD step on both curves simultaneously.
     ///
     /// This is a pure function that doesn't mutate the engine state.
-    pub fn merge(
+    pub fn fold(
         &self,
         left_proof: CycleProof<C, R>,
         right_proof: CycleProof<C, R>,

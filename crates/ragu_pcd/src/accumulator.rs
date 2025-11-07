@@ -21,7 +21,7 @@ use rand::thread_rng;
 /// uncompressed or compressed mode. A higher level abstraction that digests the accumulator
 /// can then apply a state transition function to either perform another accumulation step
 /// (continuing the recursion) or a decision procedure (terminating the recursion process).
-pub struct CycleAccumulator<HostCurve, NestedCurve, R>
+pub struct Accumulator<HostCurve, NestedCurve, R>
 where
     HostCurve: CurveAffine,
     NestedCurve: CurveAffine,
@@ -107,13 +107,13 @@ pub struct AccumulatorInstance<C: CurveAffine> {
     pub y: ChallengePoint<C::ScalarExt>,
 }
 
-impl<HostCurve, NestedCurve, R> CycleAccumulator<HostCurve, NestedCurve, R>
+impl<HostCurve, NestedCurve, R> Accumulator<HostCurve, NestedCurve, R>
 where
     HostCurve: CurveAffine,
     NestedCurve: CurveAffine,
     R: Rank,
 {
-    /// Create a base CycleAccumulator with empty deferred work
+    /// Create a base accumulator with empty deferred work
     pub fn base(
         mesh: &Mesh<HostCurve::ScalarExt, R>,
         generators: &impl FixedGenerators<HostCurve>,
@@ -345,7 +345,7 @@ mod tests {
             .finalize()
             .expect("mesh finalization");
 
-        let base = CycleAccumulator::<EqAffine, EpAffine, TestRank>::base(&mesh, generators);
+        let base = Accumulator::<EqAffine, EpAffine, TestRank>::base(&mesh, generators);
 
         assert_ne!(base.accumulator.witness.s_blinding, Fp::ZERO);
         assert_ne!(base.accumulator.witness.a_blinding, Fp::ZERO);

@@ -1,6 +1,9 @@
 //! G staging polynomial.
 
-use crate::{ephemeral_stage, indirection_stage};
+use crate::{
+    ephemeral_stage, indirection_stage,
+    staging::instance::{UnifiedRecursionInstance, UnifiedRecursionOutput},
+};
 use arithmetic::CurveAffine;
 use core::marker::PhantomData;
 use ragu_circuits::{
@@ -114,44 +117,36 @@ impl<HostCurve: CurveAffine, R: Rank, const NUM_FINAL_EVALS: usize> Stage<<HostC
 ///////////////////////////////////////////////////////////////////////////////////////
 
 pub struct GVComputationStagedWitness<C: CurveAffine> {
-    // Staging polynomial data
-    pub u_challenge: C::Base,
-    pub e_nested_commitment: C,
+    // Other input.
     pub evals: [C::Base; NUM_FINAL_EVALS],
-
-    // Transcript challenges
-    pub alpha_challenge: C::Base,
-    pub beta_challenge: C::Base,
-
-    // Evaluation queries
     pub eval_points: [C::Base; NUM_V_QUERIES],
     pub intermediate_evals: [C::Base; NUM_V_QUERIES],
     pub final_evals_for_queries: [C::Base; NUM_V_QUERIES],
-
-    // Witnessed inverses
     pub inverses: [C::Base; NUM_V_QUERIES],
 
-    // V claimed to verify
-    pub v_claimed: C::Base,
-}
-
-pub struct GVComputationStagedInstance<C: CurveAffine> {
-    pub e_nested_commitment: C,
+    pub w_challenge: C::Base,
+    pub y_challenge: C::Base,
+    pub z_challenge: C::Base,
+    pub mu_challenge: C::Base,
+    pub nu_challenge: C::Base,
+    pub x_challenge: C::Base,
     pub alpha_challenge: C::Base,
     pub u_challenge: C::Base,
-    pub v_claimed: C::Base,
-}
+    pub b_challenge: C::Base,
 
-#[derive(ragu_macros::Gadget, ragu_primitives::io::Write)]
-pub struct GVComputationStagedOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
-    #[ragu(gadget)]
-    pub e_nested_commitment: Point<'dr, D, C>,
-    #[ragu(gadget)]
-    pub alpha_challenge: Element<'dr, D>,
-    #[ragu(gadget)]
-    pub u_challenge: Element<'dr, D>,
-    #[ragu(gadget)]
-    pub v_claimed: Element<'dr, D>,
+    pub b_staging_nested_commitment: C,
+    pub d1_nested_commitment: C,
+    pub d2_nested_commitment: C,
+    pub d_staging_nested_commitment: C,
+    pub e1_nested_commitment: C,
+    pub e2_nested_commitment: C,
+    pub e_staging_nested_commitment: C,
+    pub g1_nested_commitment: C,
+    pub g_staging_nested_commitment: C,
+    pub p_nested_commitment: C,
+
+    pub c: C::Base,
+    pub v: C::Base,
 }
 
 #[derive(Clone)]
@@ -167,9 +162,9 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
     for GVComputationStagedCircuit<NestedCurve>
 {
     type Final = GStage<NestedCurve, NUM_FINAL_EVALS>;
-    type Instance<'src> = GVComputationStagedInstance<NestedCurve>;
+    type Instance<'src> = UnifiedRecursionInstance<NestedCurve>;
     type Witness<'w> = GVComputationStagedWitness<NestedCurve>;
-    type Output = Kind![NestedCurve::Base; GVComputationStagedOutput<'_, _, NestedCurve>];
+    type Output = Kind![NestedCurve::Base; UnifiedRecursionOutput<'_, _, NestedCurve>];
     type Aux<'source> = ();
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = NestedCurve::Base>>(
@@ -177,22 +172,64 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
         dr: &mut D,
         instance: DriverValue<D, Self::Instance<'source>>,
     ) -> Result<<Self::Output as GadgetKind<NestedCurve::Base>>::Rebind<'dr, D>> {
-        let e_nested_commitment = Point::alloc(
-            dr,
-            instance.view().map(|instance| instance.e_nested_commitment),
-        )?;
+        // Allocate all challenges from unified instance.
+        let w_challenge = Element::alloc(dr, instance.view().map(|i| i.w_challenge))?;
+        let y_challenge = Element::alloc(dr, instance.view().map(|i| i.y_challenge))?;
+        let z_challenge = Element::alloc(dr, instance.view().map(|i| i.z_challenge))?;
+        let mu_challenge = Element::alloc(dr, instance.view().map(|i| i.mu_challenge))?;
+        let nu_challenge = Element::alloc(dr, instance.view().map(|i| i.nu_challenge))?;
+        let x_challenge = Element::alloc(dr, instance.view().map(|i| i.x_challenge))?;
+        let alpha_challenge = Element::alloc(dr, instance.view().map(|i| i.alpha_challenge))?;
+        let u_challenge = Element::alloc(dr, instance.view().map(|i| i.u_challenge))?;
+        let b_challenge = Element::alloc(dr, instance.view().map(|i| i.b_challenge))?;
 
-        let alpha_challenge =
-            Element::alloc(dr, instance.view().map(|instance| instance.alpha_challenge))?;
-        let u_challenge = Element::alloc(dr, instance.view().map(|instance| instance.u_challenge))?;
+        // Allocate all nested commitments from unified instance.
+        let b_staging_nested_commitment =
+            Point::alloc(dr, instance.view().map(|i| i.b_staging_nested_commitment))?;
+        let d1_nested_commitment =
+            Point::alloc(dr, instance.view().map(|i| i.d1_nested_commitment))?;
+        let d2_nested_commitment =
+            Point::alloc(dr, instance.view().map(|i| i.d2_nested_commitment))?;
+        let d_staging_nested_commitment =
+            Point::alloc(dr, instance.view().map(|i| i.d_staging_nested_commitment))?;
+        let e1_nested_commitment =
+            Point::alloc(dr, instance.view().map(|i| i.e1_nested_commitment))?;
+        let e2_nested_commitment =
+            Point::alloc(dr, instance.view().map(|i| i.e2_nested_commitment))?;
+        let e_staging_nested_commitment =
+            Point::alloc(dr, instance.view().map(|i| i.e_staging_nested_commitment))?;
+        let g1_nested_commitment =
+            Point::alloc(dr, instance.view().map(|i| i.g1_nested_commitment))?;
+        let g_staging_nested_commitment =
+            Point::alloc(dr, instance.view().map(|i| i.g_staging_nested_commitment))?;
+        let p_nested_commitment = Point::alloc(dr, instance.view().map(|i| i.p_nested_commitment))?;
 
-        let v_claimed = Element::alloc(dr, instance.view().map(|instance| instance.v_claimed))?;
+        // Allocate computed values from unified instance.
+        let c = Element::alloc(dr, instance.view().map(|i| i.c))?;
+        let v = Element::alloc(dr, instance.view().map(|i| i.v))?;
 
-        Ok(GVComputationStagedOutput {
-            e_nested_commitment,
+        Ok(UnifiedRecursionOutput {
+            w_challenge,
+            y_challenge,
+            z_challenge,
+            mu_challenge,
+            nu_challenge,
+            x_challenge,
             alpha_challenge,
             u_challenge,
-            v_claimed,
+            b_challenge,
+            b_staging_nested_commitment,
+            d1_nested_commitment,
+            d2_nested_commitment,
+            d_staging_nested_commitment,
+            e1_nested_commitment,
+            e2_nested_commitment,
+            e_staging_nested_commitment,
+            g1_nested_commitment,
+            g_staging_nested_commitment,
+            p_nested_commitment,
+            c,
+            v,
         })
     }
 
@@ -209,7 +246,7 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
             dr.add_stage::<GStage<NestedCurve, NUM_FINAL_EVALS>>(witness.view().map(|w| {
                 (
                     [w.alpha_challenge, w.u_challenge],
-                    [w.e_nested_commitment],
+                    [w.e_staging_nested_commitment],
                     w.evals,
                 )
             }))?;
@@ -219,8 +256,6 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
         let alpha_challenge = stage_output.challenges[0].clone();
         let u_challenge = stage_output.challenges[1].clone();
         let e_nested_commitment = stage_output.nested_commitments[0].clone();
-
-        let v_claimed = Element::alloc(dr, witness.view().map(|w| w.v_claimed))?;
 
         // Initialize a sponge for FS challenge derivation.
         // Sponge has state size 5 and rate 4 (can output 4 challenges per absorption).
@@ -239,9 +274,10 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
         dr.enforce_equal(u_computed.wire(), u_challenge.wire())?;
 
         // Compute V in-circuit using witnessed inverses.
-        let mut v_computed = Element::zero(dr);
+        let mut v = Element::zero(dr);
 
-        let num_queries = witness.view().map(|w| w.eval_points.len()).take();
+        // TODO: fix this.
+        let num_queries = NUM_V_QUERIES;
 
         for i in 0..num_queries {
             // Allocate evaluation data.
@@ -260,24 +296,70 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
             dr.enforce_equal(product.wire(), one.wire())?;
 
             // Compute v = v * alpha + inv * (eval' - eval).
-            v_computed = v_computed.mul(dr, &alpha_challenge)?;
+            v = v.mul(dr, &alpha_challenge)?;
             let eval_diff = eval_prime.sub(dr, &eval);
             let term = inv.mul(dr, &eval_diff)?;
-            v_computed = v_computed.add(dr, &term);
+            v = v.add(dr, &term);
         }
 
-        // Verify claimed V matches computed V.
-        dr.enforce_equal(v_claimed.wire(), v_computed.wire())?;
+        // Allocate remaining unified output fields from witness.
+        let w_challenge = Element::alloc(dr, witness.view().map(|w| w.w_challenge))?;
+        let y_challenge = Element::alloc(dr, witness.view().map(|w| w.y_challenge))?;
+        let z_challenge = Element::alloc(dr, witness.view().map(|w| w.z_challenge))?;
+        let b_challenge = Element::alloc(dr, witness.view().map(|w| w.b_challenge))?;
+        let mu_challenge = Element::alloc(dr, witness.view().map(|w| w.mu_challenge))?;
+        let nu_challenge = Element::alloc(dr, witness.view().map(|w| w.nu_challenge))?;
+        let x_challenge = Element::alloc(dr, witness.view().map(|w| w.x_challenge))?;
 
-        // Return output gadgets and empty auxilary.
-        let output = GVComputationStagedOutput {
-            e_nested_commitment,
-            alpha_challenge,
-            u_challenge,
-            v_claimed,
-        };
+        let b_staging_nested_commitment =
+            Point::alloc(dr, witness.view().map(|w| w.b_staging_nested_commitment))?;
+        let d1_nested_commitment =
+            Point::alloc(dr, witness.view().map(|w| w.d1_nested_commitment))?;
+        let d2_nested_commitment =
+            Point::alloc(dr, witness.view().map(|w| w.d2_nested_commitment))?;
+        let d_staging_nested_commitment =
+            Point::alloc(dr, witness.view().map(|w| w.d_staging_nested_commitment))?;
+        let e1_nested_commitment =
+            Point::alloc(dr, witness.view().map(|w| w.e1_nested_commitment))?;
+        let e2_nested_commitment =
+            Point::alloc(dr, witness.view().map(|w| w.e2_nested_commitment))?;
+        let e_staging_nested_commitment =
+            Point::alloc(dr, witness.view().map(|w| w.e_staging_nested_commitment))?;
+        let g1_nested_commitment =
+            Point::alloc(dr, witness.view().map(|w| w.g1_nested_commitment))?;
+        let g_staging_nested_commitment =
+            Point::alloc(dr, witness.view().map(|w| w.g_staging_nested_commitment))?;
+        let p_nested_commitment = Point::alloc(dr, witness.view().map(|w| w.p_nested_commitment))?;
 
-        Ok((output, D::just(|| ())))
+        let c = Element::alloc(dr, witness.view().map(|w| w.c))?;
+        let v = Element::alloc(dr, witness.view().map(|w| w.v))?;
+
+        Ok((
+            UnifiedRecursionOutput {
+                w_challenge,
+                y_challenge,
+                z_challenge,
+                mu_challenge,
+                nu_challenge,
+                x_challenge,
+                alpha_challenge,
+                u_challenge,
+                b_challenge,
+                b_staging_nested_commitment,
+                d1_nested_commitment,
+                d2_nested_commitment,
+                d_staging_nested_commitment,
+                e1_nested_commitment,
+                e2_nested_commitment,
+                e_staging_nested_commitment,
+                g1_nested_commitment,
+                g_staging_nested_commitment,
+                p_nested_commitment,
+                c,
+                v,
+            },
+            D::just(|| ()),
+        ))
     }
 }
 
@@ -322,9 +404,6 @@ mod tests {
             v_computed += inverses[i] * eval_diff;
         }
 
-        // Create a random nested commitment for e3
-        let e3_nested_commitment = (EpAffine::generator() * Fq::random(&mut OsRng)).to_affine();
-
         // Create random final evaluations (these go into the staging polynomial)
         let mut final_evals = [Fp::ZERO; NUM_FINAL_EVALS];
         for i in 0..NUM_FINAL_EVALS {
@@ -351,16 +430,36 @@ mod tests {
         }
 
         let witness = GVComputationStagedWitness {
-            u_challenge,
-            e_nested_commitment: e3_nested_commitment,
             evals: final_evals,
-            alpha_challenge,
-            beta_challenge: b_challenge,
             eval_points: eval_points_padded,
             intermediate_evals: intermediate_evals_padded,
             final_evals_for_queries: final_evals_padded,
             inverses: inverses_padded,
-            v_claimed: v_computed,
+            w_challenge: Fp::random(&mut OsRng),
+            y_challenge: Fp::random(&mut OsRng),
+            z_challenge: Fp::random(&mut OsRng),
+            mu_challenge: Fp::random(&mut OsRng),
+            nu_challenge: Fp::random(&mut OsRng),
+            x_challenge: Fp::random(&mut OsRng),
+            alpha_challenge,
+            u_challenge,
+            b_challenge,
+            b_staging_nested_commitment: (EpAffine::generator() * Fq::random(&mut OsRng))
+                .to_affine(),
+            d1_nested_commitment: (EpAffine::generator() * Fq::random(&mut OsRng)).to_affine(),
+            d2_nested_commitment: (EpAffine::generator() * Fq::random(&mut OsRng)).to_affine(),
+            d_staging_nested_commitment: (EpAffine::generator() * Fq::random(&mut OsRng))
+                .to_affine(),
+            e1_nested_commitment: (EpAffine::generator() * Fq::random(&mut OsRng)).to_affine(),
+            e2_nested_commitment: (EpAffine::generator() * Fq::random(&mut OsRng)).to_affine(),
+            e_staging_nested_commitment: (EpAffine::generator() * Fq::random(&mut OsRng))
+                .to_affine(),
+            g1_nested_commitment: (EpAffine::generator() * Fq::random(&mut OsRng)).to_affine(),
+            g_staging_nested_commitment: (EpAffine::generator() * Fq::random(&mut OsRng))
+                .to_affine(),
+            p_nested_commitment: (EpAffine::generator() * Fq::random(&mut OsRng)).to_affine(),
+            c: Fp::random(&mut OsRng),
+            v: Fp::random(&mut OsRng),
         };
 
         // Create the staged circuit

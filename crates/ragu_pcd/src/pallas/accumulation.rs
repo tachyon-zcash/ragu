@@ -1,4 +1,4 @@
-use crate::accumulator::CycleAccumulator;
+use crate::accumulator::Accumulator;
 use crate::engine::CycleEngine;
 use arithmetic::Cycle;
 use ragu_circuits::mesh::Mesh;
@@ -13,8 +13,8 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
     pub fn accumulation_pallas(
         _mesh: &Mesh<'_, C::ScalarField, R>,
         _witnesses: &[C::ScalarField],
-        _acc1: &CycleAccumulator<C::NestedCurve, C::HostCurve, R>,
-        _acc2: &CycleAccumulator<C::NestedCurve, C::HostCurve, R>,
+        _acc1: &Accumulator<C::NestedCurve, C::HostCurve, R>,
+        _acc2: &Accumulator<C::NestedCurve, C::HostCurve, R>,
         _cycle: &C,
     ) -> Result<()> {
         todo!()
