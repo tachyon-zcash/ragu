@@ -5,16 +5,16 @@ use crate::accumulator::{
     EvaluationPoint, FinalEvaluations, StagedCircuitData, UncompressedAccumulator,
 };
 use crate::engine::CycleEngine;
-use crate::staging::b_stage::EphemeralStageB;
-use crate::staging::d_stage::{
+use crate::staging::circuits::b_stage::EphemeralStageB;
+use crate::staging::circuits::d_stage::{
     DCValueComputationStagedCircuit, DCValueComputationWitness, DChallengeDerivationStagedCircuit,
     DChallengeDerivationWitness, DStage, EphemeralStageD, IndirectionStageD,
 };
-use crate::staging::e_stage::{
+use crate::staging::circuits::e_stage::{
     EChallengeDerivationStagedCircuit, EChallengeDerivationWitness, EStage, EphemeralStageE,
     IndirectionStageE,
 };
-use crate::staging::g_stage::{
+use crate::staging::circuits::g_stage::{
     EphemeralStageG, GStage, GVComputationStagedCircuit, GVComputationStagedWitness,
     IndirectionStageG, KYStage, NUM_V_QUERIES,
 };
@@ -1189,6 +1189,8 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
 
         let g_circuit =
             Staged::<Fp, R, _>::new(GVComputationStagedCircuit::<C::NestedCurve>::new());
+
+        // TODO: missing beta challenge verification
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: Compute the unified k(Y) instance for all the recursion circuits

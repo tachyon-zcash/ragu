@@ -21,7 +21,7 @@ use ragu_primitives::{
 use crate::{
     ephemeral_stage, indirection_stage,
     staging::{
-        g_stage::KYStage,
+        circuits::g_stage::KYStage,
         instance::{UnifiedRecursionInstance, UnifiedRecursionOutput},
     },
 };
@@ -30,10 +30,10 @@ use crate::{
 // D STAGING POLYNOMIAL
 ///////////////////////////////////////////////////////////////////////////////////////
 
-// Ephemeral Stage: used to creating nested commitments.
+// Ephemeral stage used to create nested commitments.
 ephemeral_stage!(EphemeralStageD);
 
-// Indirection Stage: for resolving the "outer layer problem".
+// Indirection stage used for an extra layer of nesting.
 indirection_stage!(IndirectionStageD);
 
 // D Stage.
@@ -42,36 +42,36 @@ pub struct DStageOutput<
     'dr,
     D: Driver<'dr>,
     HostCurve: CurveAffine<Base = D::F>,
-    const MAX_CROSS_PRODUCTS: usize,
+    const NUM_CROSS_PRODUCTS: usize,
 > {
     #[ragu(gadget)]
     pub challenges: FixedVec<Element<'dr, D>, ConstLen<3>>,
     #[ragu(gadget)]
     pub nested_commitments: FixedVec<Point<'dr, D, HostCurve>, ConstLen<2>>,
     #[ragu(gadget)]
-    pub error_terms: FixedVec<Element<'dr, D>, ConstLen<MAX_CROSS_PRODUCTS>>,
+    pub error_terms: FixedVec<Element<'dr, D>, ConstLen<NUM_CROSS_PRODUCTS>>,
 }
 
 /// D Stage: challenges (w, y, z), nested commitments (D1, D2), and error terms.
-pub struct DStage<HostCurve, const MAX_CROSS_PRODUCTS: usize> {
+pub struct DStage<HostCurve, const NUM_CROSS_PRODUCTS: usize> {
     _marker: core::marker::PhantomData<HostCurve>,
 }
 
-impl<HostCurve: CurveAffine, R: Rank, const MAX_CROSS_PRODUCTS: usize> Stage<<HostCurve>::Base, R>
-    for DStage<HostCurve, MAX_CROSS_PRODUCTS>
+impl<HostCurve: CurveAffine, R: Rank, const NUM_CROSS_PRODUCTS: usize> Stage<<HostCurve>::Base, R>
+    for DStage<HostCurve, NUM_CROSS_PRODUCTS>
 {
     type Parent = ();
 
     type Witness<'source> = (
         [<HostCurve>::Base; 3],
         [HostCurve; 2],
-        [<HostCurve>::Base; MAX_CROSS_PRODUCTS],
+        [<HostCurve>::Base; NUM_CROSS_PRODUCTS],
     );
 
-    type OutputKind = Kind![<HostCurve>::Base; DStageOutput<'_, _, HostCurve, MAX_CROSS_PRODUCTS>];
+    type OutputKind = Kind![<HostCurve>::Base; DStageOutput<'_, _, HostCurve, NUM_CROSS_PRODUCTS>];
 
     fn values() -> usize {
-        3 + (2 * 2) + MAX_CROSS_PRODUCTS
+        3 + (2 * 2) + NUM_CROSS_PRODUCTS
     }
 
     fn witness<'dr, 'source: 'dr, D>(
@@ -82,14 +82,14 @@ impl<HostCurve: CurveAffine, R: Rank, const MAX_CROSS_PRODUCTS: usize> Stage<<Ho
         D: Driver<'dr, F = <HostCurve>::Base>,
         Self: 'dr,
     {
-        // Allocate the challenges (w, y, z).
+        // Allocate the challenges.
         let mut challenges = Vec::with_capacity(3);
         for i in 0..3 {
             challenges.push(Element::alloc(dr, witness.view().map(|w| w.0[i]))?);
         }
         let challenges = FixedVec::new(challenges).expect("challenges length");
 
-        // Allocate the nested commitments (s' and s'').
+        // Allocate the nested commitments.
         let mut nested_commitments = Vec::with_capacity(2);
         for i in 0..2 {
             nested_commitments.push(Point::alloc(dr, witness.view().map(|w| w.1[i]))?);
@@ -98,8 +98,8 @@ impl<HostCurve: CurveAffine, R: Rank, const MAX_CROSS_PRODUCTS: usize> Stage<<Ho
             FixedVec::new(nested_commitments).expect("nested commitments length");
 
         // Allocate the error terms.
-        let mut error_terms = Vec::with_capacity(MAX_CROSS_PRODUCTS);
-        for i in 0..MAX_CROSS_PRODUCTS {
+        let mut error_terms = Vec::with_capacity(NUM_CROSS_PRODUCTS);
+        for i in 0..NUM_CROSS_PRODUCTS {
             error_terms.push(Element::alloc(dr, witness.view().map(|w| w.2[i]))?);
         }
         let error_terms = FixedVec::new(error_terms).expect("error terms length");
@@ -116,9 +116,9 @@ impl<HostCurve: CurveAffine, R: Rank, const MAX_CROSS_PRODUCTS: usize> Stage<<Ho
 // STAGED CIRCUIT: `DChallengeDerivationStagedCircuit`
 ///////////////////////////////////////////////////////////////////////////////////////
 
-pub struct DChallengeDerivationWitness<C: CurveAffine, const MAX_CROSS: usize> {
-    // Other inputs.
-    pub cross_products: [C::Base; MAX_CROSS],
+pub struct DChallengeDerivationWitness<C: CurveAffine, const NUM_CROSS_PRODUCTS: usize> {
+    // Supplemental inputs.
+    pub cross_products: [C::Base; NUM_CROSS_PRODUCTS],
 
     pub w_challenge: C::Base,
     pub y_challenge: C::Base,
@@ -146,25 +146,25 @@ pub struct DChallengeDerivationWitness<C: CurveAffine, const MAX_CROSS: usize> {
 }
 
 #[derive(Clone)]
-pub struct DChallengeDerivationStagedCircuit<NestedCurve, const MAX_CROSS: usize>(
+pub struct DChallengeDerivationStagedCircuit<NestedCurve, const NUM_CROSS_PRODUCTS: usize>(
     PhantomData<NestedCurve>,
 );
 
-impl<NestedCurve, const MAX_CROSS: usize>
-    DChallengeDerivationStagedCircuit<NestedCurve, MAX_CROSS>
+impl<NestedCurve, const NUM_CROSS_PRODUCTS: usize>
+    DChallengeDerivationStagedCircuit<NestedCurve, NUM_CROSS_PRODUCTS>
 {
     pub fn new() -> Self {
         Self(PhantomData)
     }
 }
 
-impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank, const MAX_CROSS: usize>
+impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank, const NUM_CROSS_PRODUCTS: usize>
     StagedCircuit<NestedCurve::Base, R>
-    for DChallengeDerivationStagedCircuit<NestedCurve, MAX_CROSS>
+    for DChallengeDerivationStagedCircuit<NestedCurve, NUM_CROSS_PRODUCTS>
 {
-    type Final = DStage<NestedCurve, MAX_CROSS>;
+    type Final = DStage<NestedCurve, NUM_CROSS_PRODUCTS>;
     type Instance<'src> = UnifiedRecursionInstance<NestedCurve>;
-    type Witness<'w> = DChallengeDerivationWitness<NestedCurve, MAX_CROSS>;
+    type Witness<'w> = DChallengeDerivationWitness<NestedCurve, NUM_CROSS_PRODUCTS>;
     type Output = Kind![NestedCurve::Base; UnifiedRecursionOutput<'_, _, NestedCurve>];
     type Aux<'source> = ();
 
@@ -244,7 +244,7 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank, const MAX_CROSS: usize>
     )> {
         // STAGE: StageBuilder for `DStage`: challenges (w, y, z), nested commitments (D1, D2), and error terms.
         let (stage_output, dr) =
-            dr.add_stage::<DStage<NestedCurve, MAX_CROSS>>(witness.view().map(|w| {
+            dr.add_stage::<DStage<NestedCurve, NUM_CROSS_PRODUCTS>>(witness.view().map(|w| {
                 (
                     [w.w_challenge, w.y_challenge, w.z_challenge],
                     [w.d1_nested_commitment, w.d2_nested_commitment],
@@ -260,9 +260,6 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank, const MAX_CROSS: usize>
         let d1_nested_commitment = stage_output.nested_commitments[0].clone();
         let d2_nested_commitment = stage_output.nested_commitments[1].clone();
 
-        // Now allocate `b_staging_nested_commitment` (NOT as a seperate stage in this staging polynomial) and verify
-        // that w was correctly derived from B. This keeps B and D as separate staging
-        // polynomials while still verifying the FS challenge derivation.
         let b_staging_nested_commitment =
             Point::alloc(dr, witness.view().map(|w| w.b_staging_nested_commitment))?;
 
@@ -346,12 +343,12 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank, const MAX_CROSS: usize>
 /// Witness values.
 pub struct DCValueComputationWitness<
     C: CurveAffine,
-    const MAX_CROSS: usize,
+    const NUM_CROSS_PRODUCTS: usize,
     const TOTAL_KY_COEFFS: usize,
 > {
-    // Other inputs.
+    // Supplemental inputs.
     pub mu_inv: C::Base,
-    pub cross_products: [C::Base; MAX_CROSS],
+    pub cross_products: [C::Base; NUM_CROSS_PRODUCTS],
     pub ky_coeffs: [C::Base; TOTAL_KY_COEFFS],
 
     pub w_challenge: C::Base,
@@ -387,13 +384,13 @@ pub struct DCValueComputationAux<C: CurveAffine> {
 #[derive(Clone)]
 pub struct DCValueComputationStagedCircuit<
     NestedCurve,
-    const MAX_CROSS: usize,
+    const NUM_CROSS_PRODUCTS: usize,
     const TOTAL_KY_COEFFS: usize,
     const LEN: usize,
 >(PhantomData<NestedCurve>);
 
-impl<NestedCurve, const MAX_CROSS: usize, const TOTAL_KY_COEFFS: usize, const LEN: usize>
-    DCValueComputationStagedCircuit<NestedCurve, MAX_CROSS, TOTAL_KY_COEFFS, LEN>
+impl<NestedCurve, const NUM_CROSS_PRODUCTS: usize, const TOTAL_KY_COEFFS: usize, const LEN: usize>
+    DCValueComputationStagedCircuit<NestedCurve, NUM_CROSS_PRODUCTS, TOTAL_KY_COEFFS, LEN>
 {
     pub fn new() -> Self {
         Self(PhantomData)
@@ -403,15 +400,15 @@ impl<NestedCurve, const MAX_CROSS: usize, const TOTAL_KY_COEFFS: usize, const LE
 impl<
     NestedCurve: CurveAffine<Base = Fp>,
     R: Rank,
-    const MAX_CROSS: usize,
+    const NUM_CROSS_PRODUCTS: usize,
     const TOTAL_KY_COEFFS: usize,
     const LEN: usize,
 > StagedCircuit<NestedCurve::Base, R>
-    for DCValueComputationStagedCircuit<NestedCurve, MAX_CROSS, TOTAL_KY_COEFFS, LEN>
+    for DCValueComputationStagedCircuit<NestedCurve, NUM_CROSS_PRODUCTS, TOTAL_KY_COEFFS, LEN>
 {
     type Final = KYStage<NestedCurve, TOTAL_KY_COEFFS>;
     type Instance<'src> = UnifiedRecursionInstance<NestedCurve>;
-    type Witness<'w> = DCValueComputationWitness<NestedCurve, MAX_CROSS, TOTAL_KY_COEFFS>;
+    type Witness<'w> = DCValueComputationWitness<NestedCurve, NUM_CROSS_PRODUCTS, TOTAL_KY_COEFFS>;
     type Output = Kind![NestedCurve::Base; UnifiedRecursionOutput<'_, _, NestedCurve>];
     type Aux<'source> = DCValueComputationAux<NestedCurve>;
 
@@ -511,9 +508,8 @@ impl<
         dr.enforce_equal(mu_times_mu_inv.wire(), one.wire())?;
 
         // Allocate cross products and ky coefficients from the witness.
-        // TODO: we shouldn't allocating again?
-        let mut cross_elements = Vec::with_capacity(MAX_CROSS);
-        for i in 0..MAX_CROSS {
+        let mut cross_elements = Vec::with_capacity(NUM_CROSS_PRODUCTS);
+        for i in 0..NUM_CROSS_PRODUCTS {
             let elem = Element::alloc(dr, witness.view().map(|w| w.cross_products[i]))?;
             cross_elements.push(elem);
         }
@@ -535,7 +531,7 @@ impl<
         ///////////////////////////////////////////////////////////////////////////////////////
 
         use crate::routines::c::Evaluate as computeC;
-        let c_routine = computeC::<MAX_CROSS, LEN>::new(LEN);
+        let c_routine = computeC::<NUM_CROSS_PRODUCTS, LEN>::new(LEN);
         let input = (
             ((mu_challenge.clone(), nu_challenge.clone()), mu_inv),
             (cross_elements_fixed, ky_evaluated),
@@ -618,18 +614,25 @@ mod tests {
     use ragu_primitives::{GadgetExt, Point, Sponge};
     use rand::rngs::OsRng;
     type Rank = ragu_circuits::polynomials::R<12>;
-    const TEST_MAX_CROSS: usize = 10;
+    const TEST_NUM_CROSS_PRODUCTS: usize = 10;
     const TEST_MAX_KY: usize = 12; // 3 circuits * 4 coefficients each = 12 total
 
     /// Staged Circuit: `DChallengeDerivationStagedCircuit`.
 
     fn validate_circuit_constraints(
-        witness: DChallengeDerivationWitness<EpAffine, TEST_MAX_CROSS>,
+        witness: DChallengeDerivationWitness<EpAffine, TEST_NUM_CROSS_PRODUCTS>,
     ) -> Result<()> {
         Simulator::simulate(witness, |dr, witness| {
-            let circuit = DChallengeDerivationStagedCircuit::<EpAffine, TEST_MAX_CROSS>::new();
-            let stage_builder =
-                StageBuilder::<'_, '_, _, Rank, (), DStage<EpAffine, TEST_MAX_CROSS>>::new(dr);
+            let circuit =
+                DChallengeDerivationStagedCircuit::<EpAffine, TEST_NUM_CROSS_PRODUCTS>::new();
+            let stage_builder = StageBuilder::<
+                '_,
+                '_,
+                _,
+                Rank,
+                (),
+                DStage<EpAffine, TEST_NUM_CROSS_PRODUCTS>,
+            >::new(dr);
             circuit.witness(stage_builder, witness)?;
             Ok(())
         })?;
@@ -676,9 +679,9 @@ mod tests {
             d2_nested_commitment,
         )?;
 
-        let witness: DChallengeDerivationWitness<EpAffine, TEST_MAX_CROSS> =
+        let witness: DChallengeDerivationWitness<EpAffine, TEST_NUM_CROSS_PRODUCTS> =
             DChallengeDerivationWitness {
-                cross_products: [Fp::ZERO; TEST_MAX_CROSS],
+                cross_products: [Fp::ZERO; TEST_NUM_CROSS_PRODUCTS],
                 w_challenge,
                 y_challenge,
                 z_challenge,
@@ -705,7 +708,7 @@ mod tests {
                 v: Fp::random(&mut OsRng),
             };
 
-        let circuit = DChallengeDerivationStagedCircuit::<EpAffine, TEST_MAX_CROSS>::new();
+        let circuit = DChallengeDerivationStagedCircuit::<EpAffine, TEST_NUM_CROSS_PRODUCTS>::new();
         let staged = Staged::<Fp, Rank, _>::new(circuit);
         let (rx, _aux) = staged.rx::<Rank>(witness)?;
 
@@ -733,9 +736,9 @@ mod tests {
 
         let w_challenge_invalid = Fp::random(&mut OsRng);
 
-        let witness: DChallengeDerivationWitness<EpAffine, TEST_MAX_CROSS> =
+        let witness: DChallengeDerivationWitness<EpAffine, TEST_NUM_CROSS_PRODUCTS> =
             DChallengeDerivationWitness {
-                cross_products: [Fp::ZERO; TEST_MAX_CROSS],
+                cross_products: [Fp::ZERO; TEST_NUM_CROSS_PRODUCTS],
                 w_challenge: w_challenge_invalid,
                 y_challenge,
                 z_challenge,
@@ -782,7 +785,7 @@ mod tests {
         let y_challenge_invalid = Fp::random(&mut OsRng);
 
         let witness = DChallengeDerivationWitness {
-            cross_products: [Fp::ZERO; TEST_MAX_CROSS],
+            cross_products: [Fp::ZERO; TEST_NUM_CROSS_PRODUCTS],
             w_challenge,
             y_challenge: y_challenge_invalid,
             z_challenge,
@@ -829,7 +832,7 @@ mod tests {
         let z_challenge_invalid = Fp::random(&mut OsRng);
 
         let witness = DChallengeDerivationWitness {
-            cross_products: [Fp::ZERO; TEST_MAX_CROSS],
+            cross_products: [Fp::ZERO; TEST_NUM_CROSS_PRODUCTS],
             w_challenge,
             y_challenge,
             z_challenge: z_challenge_invalid,
@@ -897,7 +900,7 @@ mod tests {
         );
 
         let witness_invalid = DChallengeDerivationWitness {
-            cross_products: [Fp::ZERO; TEST_MAX_CROSS],
+            cross_products: [Fp::ZERO; TEST_NUM_CROSS_PRODUCTS],
             w_challenge: w_challenge_1,
             y_challenge: y_challenge_1,
             z_challenge: z_challenge_1,
@@ -931,7 +934,7 @@ mod tests {
         );
 
         let witness_valid = DChallengeDerivationWitness {
-            cross_products: [Fp::ZERO; TEST_MAX_CROSS],
+            cross_products: [Fp::ZERO; TEST_NUM_CROSS_PRODUCTS],
             w_challenge: w_challenge_2,
             y_challenge: y_challenge_2,
             z_challenge: z_challenge_2,
@@ -958,7 +961,7 @@ mod tests {
             v: Fp::random(&mut OsRng),
         };
 
-        let circuit = DChallengeDerivationStagedCircuit::<EpAffine, TEST_MAX_CROSS>::new();
+        let circuit = DChallengeDerivationStagedCircuit::<EpAffine, TEST_NUM_CROSS_PRODUCTS>::new();
         let staged = Staged::<Fp, Rank, _>::new(circuit);
         let (rx, _aux) = staged.rx::<Rank>(witness_valid)?;
         assert!(rx.iter_coeffs().count() > 0, "Valid new transcript");
@@ -1065,7 +1068,7 @@ mod tests {
         let mu_inv = mu_challenge.invert().unwrap();
 
         // Pack into fixed-size arrays for witness
-        let mut cross_products = [Fp::ZERO; TEST_MAX_CROSS];
+        let mut cross_products = [Fp::ZERO; TEST_NUM_CROSS_PRODUCTS];
         for (i, &val) in cross_products_vec.iter().enumerate() {
             cross_products[i] = val;
         }
@@ -1106,8 +1109,12 @@ mod tests {
             v: Fp::random(&mut OsRng),
         };
 
-        let circuit =
-            DCValueComputationStagedCircuit::<EpAffine, TEST_MAX_CROSS, TEST_MAX_KY, LEN>::new();
+        let circuit = DCValueComputationStagedCircuit::<
+            EpAffine,
+            TEST_NUM_CROSS_PRODUCTS,
+            TEST_MAX_KY,
+            LEN,
+        >::new();
         let staged = Staged::<Fp, Rank, _>::new(circuit);
         let (_rx, aux) = staged.rx::<Rank>(witness)?;
 

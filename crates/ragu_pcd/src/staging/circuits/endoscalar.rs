@@ -205,7 +205,7 @@ mod tests {
     use ragu_pasta::{EpAffine, EqAffine, Fp, Fq};
     use rand::{Rng, thread_rng};
 
-    use crate::endoscalar::endoscalar::{Endoscaling, EndoscalingInstance};
+    use crate::staging::circuits::endoscalar::{Endoscaling, EndoscalingInstance};
 
     use super::{EndoscalarStage, EndoscalingWitness, Read, SlotStage};
     type R = polynomials::R<13>;

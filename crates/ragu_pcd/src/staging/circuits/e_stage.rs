@@ -29,10 +29,10 @@ pub const NUM_EVALS: usize = 23;
 // E STAGING POLYNOMIAL
 ///////////////////////////////////////////////////////////////////////////////////////
 
-// Ephemeral Stage: used to creating nested commitments.
+// Ephemeral stage used to create nested commitments.
 ephemeral_stage!(EphemeralStageE);
 
-// Indirection Stage: for resolving the "outer layer problem".
+// Indirection stage used for an extra layer of nesting.
 indirection_stage!(IndirectionStageE);
 
 // E Stage.
@@ -276,12 +276,9 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
         let x_computed = sponge.squeeze(dr)?;
         dr.enforce_equal(x_computed.wire(), x_challenge.wire())?;
 
-        // Perform T(X, z) computation for constraint polynomial: 76 multiplication constraints, and check it against
-        // value computed out-of-circuit.
+        // TODO: what to do with txz? launder out as aux data?
         let evaluate_txz = Evaluate::new(R::RANK);
         let txz = dr.routine(evaluate_txz, (x_challenge.clone(), z_challenge))?;
-
-        // TODO: what to do with txz? launder as aux data?
 
         // Allocate remaining unified output fields from witness.
         let w_challenge = Element::alloc(dr, witness.view().map(|w| w.w_challenge))?;

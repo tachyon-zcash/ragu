@@ -50,8 +50,6 @@ impl<F: Field, const MAX_CROSS: usize, const MAX_CIRCUITS: usize> Routine<F>
         let mut row_power = Element::one();
         let mut cross_iter = 0;
 
-        // TODO: add horner.rs
-
         for i in 0..len {
             let mut col_power = row_power.clone();
             for j in 0..len {
@@ -137,16 +135,13 @@ mod tests {
         const MAX_CROSS: usize = 10;
         const MAX_CIRCUITS: usize = 8;
 
-        // Generate random field elements
         let mu = Fp::random(OsRng);
         let nu = Fp::random(OsRng);
         let mu_inv = mu.invert().unwrap();
 
-        // Generate cross products (LEN * LEN - LEN = 3*3 - 3 = 6 elements)
         let num_cross = LEN * LEN - LEN;
         let cross_products: Vec<Fp> = (0..num_cross).map(|_| Fp::random(OsRng)).collect();
 
-        // Generate ky values (len = 3 elements)
         let ky_values: Vec<Fp> = (0..LEN).map(|_| Fp::random(OsRng)).collect();
 
         // Pad to fixed sizes (10 for cross products, 8 for ky)
@@ -155,7 +150,6 @@ mod tests {
         let mut ky_padded = ky_values.clone();
         ky_padded.resize(MAX_CIRCUITS, Fp::ZERO);
 
-        // Compute expected C value natively
         let munu = mu * nu;
         let mut expected_c = Fp::ZERO;
         let mut row_power = Fp::ONE;

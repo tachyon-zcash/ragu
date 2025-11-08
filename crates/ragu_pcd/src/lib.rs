@@ -39,7 +39,6 @@
 extern crate alloc;
 
 pub mod accumulator;
-pub mod endoscalar;
 pub mod engine;
 pub mod pallas;
 pub mod routines;

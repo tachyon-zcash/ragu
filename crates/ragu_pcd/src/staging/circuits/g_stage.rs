@@ -22,18 +22,17 @@ use ragu_primitives::{
     vec::{ConstLen, FixedVec},
 };
 
-/// Hardcoding the number of final evaluations.
-pub const NUM_FINAL_EVALS: usize = 16;
-pub const NUM_V_QUERIES: usize = 18;
-
 ///////////////////////////////////////////////////////////////////////////////////////
 // G STAGING POLYNOMIAL
 ///////////////////////////////////////////////////////////////////////////////////////
 
-// Ephemeral Stage: used to creating nested commitments.
+pub const NUM_FINAL_EVALS: usize = 16;
+pub const NUM_V_QUERIES: usize = 18;
+
+// Ephemeral stage used to create nested commitments.
 ephemeral_stage!(EphemeralStageG);
 
-// Indirection Stage: for resolving the "outer layer problem".
+// Indirection stage used for an extra layer of nesting.
 indirection_stage!(IndirectionStageG);
 
 // G Stage.
@@ -109,6 +108,54 @@ impl<HostCurve: CurveAffine, R: Rank, const NUM_FINAL_EVALS: usize> Stage<<HostC
             nested_commitments,
             evaluations,
         })
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////////////
+// KY STAGING POLYNOMIAL
+///////////////////////////////////////////////////////////////////////////////////////
+
+// K Stage.
+#[derive(ragu_macros::Gadget)]
+pub struct KYStageOutput<'dr, D: Driver<'dr>, const TOTAL_KY_COEFFS: usize> {
+    #[ragu(gadget)]
+    pub ky_coefficients: FixedVec<Element<'dr, D>, ConstLen<TOTAL_KY_COEFFS>>,
+}
+
+/// KY Stage: staging polynomial containing all ky coefficient data.
+pub struct KYStage<HostCurve, const TOTAL_KY_COEFFS: usize> {
+    _marker: core::marker::PhantomData<HostCurve>,
+}
+
+impl<HostCurve: CurveAffine, R: Rank, const TOTAL_KY_COEFFS: usize> Stage<<HostCurve>::Base, R>
+    for KYStage<HostCurve, TOTAL_KY_COEFFS>
+{
+    type Parent = ();
+
+    type Witness<'source> = [<HostCurve>::Base; TOTAL_KY_COEFFS];
+
+    type OutputKind = Kind![<HostCurve>::Base; KYStageOutput<'_, _, TOTAL_KY_COEFFS>];
+
+    fn values() -> usize {
+        TOTAL_KY_COEFFS
+    }
+
+    fn witness<'dr, 'source: 'dr, D>(
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<<Self::OutputKind as GadgetKind<<HostCurve>::Base>>::Rebind<'dr, D>>
+    where
+        D: Driver<'dr, F = <HostCurve>::Base>,
+        Self: 'dr,
+    {
+        // Allocate the ky coefficients.
+        let mut ky_coefficients = Vec::with_capacity(TOTAL_KY_COEFFS);
+        for i in 0..TOTAL_KY_COEFFS {
+            ky_coefficients.push(Element::alloc(dr, witness.view().map(|w| w[i]))?);
+        }
+        let ky_coefficients = FixedVec::new(ky_coefficients).expect("ky coefficients length");
+
+        Ok(KYStageOutput { ky_coefficients })
     }
 }
 
@@ -261,9 +308,6 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
         // Sponge has state size 5 and rate 4 (can output 4 challenges per absorption).
         let mut sponge = Sponge::new(dr, &PoseidonFp);
 
-        // TODO: fix these challenges
-        // TODO: missing beta challenge verification
-
         // Derive alpha from e_nested_commitment.
         e_nested_commitment.write(dr, &mut sponge)?;
 
@@ -276,10 +320,7 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
         // Compute V in-circuit using witnessed inverses.
         let mut v = Element::zero(dr);
 
-        // TODO: fix this.
-        let num_queries = NUM_V_QUERIES;
-
-        for i in 0..num_queries {
+        for i in 0..NUM_V_QUERIES {
             // Allocate evaluation data.
             let point = Element::alloc(dr, witness.view().map(|w| w.eval_points[i]))?;
             let eval = Element::alloc(dr, witness.view().map(|w| w.intermediate_evals[i]))?;
@@ -363,54 +404,6 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
     }
 }
 
-///////////////////////////////////////////////////////////////////////////////////////
-// KY STAGING POLYNOMIAL
-///////////////////////////////////////////////////////////////////////////////////////
-
-// K Stage.
-#[derive(ragu_macros::Gadget)]
-pub struct KYStageOutput<'dr, D: Driver<'dr>, const TOTAL_KY_COEFFS: usize> {
-    #[ragu(gadget)]
-    pub ky_coefficients: FixedVec<Element<'dr, D>, ConstLen<TOTAL_KY_COEFFS>>,
-}
-
-/// KY Stage: staging polynomial containing all ky coefficient data.
-pub struct KYStage<HostCurve, const TOTAL_KY_COEFFS: usize> {
-    _marker: core::marker::PhantomData<HostCurve>,
-}
-
-impl<HostCurve: CurveAffine, R: Rank, const TOTAL_KY_COEFFS: usize> Stage<<HostCurve>::Base, R>
-    for KYStage<HostCurve, TOTAL_KY_COEFFS>
-{
-    type Parent = ();
-
-    type Witness<'source> = [<HostCurve>::Base; TOTAL_KY_COEFFS];
-
-    type OutputKind = Kind![<HostCurve>::Base; KYStageOutput<'_, _, TOTAL_KY_COEFFS>];
-
-    fn values() -> usize {
-        TOTAL_KY_COEFFS
-    }
-
-    fn witness<'dr, 'source: 'dr, D>(
-        dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<<Self::OutputKind as GadgetKind<<HostCurve>::Base>>::Rebind<'dr, D>>
-    where
-        D: Driver<'dr, F = <HostCurve>::Base>,
-        Self: 'dr,
-    {
-        // Allocate the ky coefficients.
-        let mut ky_coefficients = Vec::with_capacity(TOTAL_KY_COEFFS);
-        for i in 0..TOTAL_KY_COEFFS {
-            ky_coefficients.push(Element::alloc(dr, witness.view().map(|w| w[i]))?);
-        }
-        let ky_coefficients = FixedVec::new(ky_coefficients).expect("ky coefficients length");
-
-        Ok(KYStageOutput { ky_coefficients })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -424,14 +417,12 @@ mod tests {
 
     #[test]
     fn test_g_stage_v_computation_valid() {
-        // Setup: Create a simple V computation scenario with a few queries
         const NUM_QUERIES: usize = 3;
 
         let alpha_challenge = Fp::random(OsRng);
         let u_challenge = Fp::random(OsRng);
         let b_challenge = Fp::random(OsRng);
 
-        // Create random evaluation points (ensuring they're different from u)
         let mut eval_points = [Fp::ZERO; NUM_QUERIES];
         let mut intermediate_evals = [Fp::ZERO; NUM_QUERIES];
         let mut final_evals_for_queries = [Fp::ZERO; NUM_QUERIES];
@@ -444,7 +435,6 @@ mod tests {
             inverses[i] = (u_challenge - eval_points[i]).invert().unwrap();
         }
 
-        // Compute V correctly using the same formula as the circuit
         let mut v_computed = Fp::ZERO;
         for i in 0..NUM_QUERIES {
             v_computed *= alpha_challenge;
@@ -452,29 +442,25 @@ mod tests {
             v_computed += inverses[i] * eval_diff;
         }
 
-        // Create random final evaluations (these go into the staging polynomial)
         let mut final_evals = [Fp::ZERO; NUM_FINAL_EVALS];
         for i in 0..NUM_FINAL_EVALS {
             final_evals[i] = Fp::random(OsRng);
         }
 
-        // Pad the arrays to match NUM_V_QUERIES (18)
         let mut eval_points_padded = [Fp::ZERO; NUM_V_QUERIES];
         let mut intermediate_evals_padded = [Fp::ZERO; NUM_V_QUERIES];
         let mut final_evals_padded = [Fp::ZERO; NUM_V_QUERIES];
-        let mut inverses_padded = [Fp::ONE; NUM_V_QUERIES]; // Use ONE for unused slots to avoid division issues
+        let mut inverses_padded = [Fp::ONE; NUM_V_QUERIES];
 
         eval_points_padded[..NUM_QUERIES].copy_from_slice(&eval_points);
         intermediate_evals_padded[..NUM_QUERIES].copy_from_slice(&intermediate_evals);
         final_evals_padded[..NUM_QUERIES].copy_from_slice(&final_evals_for_queries);
         inverses_padded[..NUM_QUERIES].copy_from_slice(&inverses);
 
-        // For the unused queries, set point = u so (u - point) = 0 and contribution is zero
         for i in NUM_QUERIES..NUM_V_QUERIES {
             eval_points_padded[i] = u_challenge;
             intermediate_evals_padded[i] = Fp::ZERO;
             final_evals_padded[i] = Fp::ZERO;
-            // inverse doesn't matter since eval_diff will be zero
         }
 
         let witness = GVComputationStagedWitness {
@@ -510,10 +496,8 @@ mod tests {
             v: Fp::random(&mut OsRng),
         };
 
-        // Create the staged circuit
         let circuit = Staged::<Fp, Rank, _>::new(GVComputationStagedCircuit::<EpAffine>::new());
 
-        // This should succeed because v_claimed matches the computed V
         let result = circuit.rx::<Rank>(witness);
         assert!(result.is_ok(), "Valid V computation should pass");
     }

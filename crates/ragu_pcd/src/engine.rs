@@ -14,7 +14,7 @@
 
 use crate::{
     accumulator::Accumulator,
-    staging::{
+    staging::circuits::{
         d_stage::{DCValueComputationStagedCircuit, DChallengeDerivationStagedCircuit},
         e_stage::EChallengeDerivationStagedCircuit,
         g_stage::GVComputationStagedCircuit,

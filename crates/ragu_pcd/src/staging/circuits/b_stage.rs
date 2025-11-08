@@ -18,8 +18,8 @@ use ragu_primitives::{
 // B STAGING POLYNOMIAL
 ///////////////////////////////////////////////////////////////////////////////////////
 
-// Ephemeral inner stages used to create nested commitments.
+// Ephemeral stage used to create nested commitments.
 ephemeral_stage!(EphemeralStageB);
 
-// Indirection stage (the "outer layer problem")
+// Indirection stage used for an extra layer of nesting.
 indirection_stage!(IndirectionStageB);
