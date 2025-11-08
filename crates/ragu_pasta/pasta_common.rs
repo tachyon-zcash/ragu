@@ -19,9 +19,7 @@ pub const DEFAULT_EQ_K: usize = 13;
 /// cycle.
 #[derive(Clone)]
 pub struct Pasta {
-    /// The pallas curve generators.
     pub(crate) pallas: PallasGenerators,
-    /// The vesta curve generators.
     pub(crate) vesta: VestaGenerators,
 }
 
