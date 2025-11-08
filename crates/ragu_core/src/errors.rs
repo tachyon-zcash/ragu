@@ -51,10 +51,6 @@ pub enum Error {
         /// Actual length observed at runtime
         actual: usize,
     },
-
-    /// Finalize the mesh when it has already been finalized.
-    #[error("mesh has already been finalized")]
-    MeshAlreadyFinalized,
 }
 
 #[test]
