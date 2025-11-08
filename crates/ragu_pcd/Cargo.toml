@@ -27,10 +27,10 @@ arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", package = "ragu_a
 ff = { workspace = true }
 pasta_curves = { workspace = true }
 ragu_circuits = { path = "../ragu_circuits", version = "0.0.0" }
-ragu_core = { version = "0.0.0", path = "../ragu_core" }
+ragu_core = { path = "../ragu_core", version = "0.0.0" }
 ragu_macros = { path = "../ragu_macros", version = "0.0.0" }
-ragu_pasta = { version = "0.0.0", path = "../ragu_pasta" }
-ragu_primitives = { version = "0.0.0", path = "../ragu_primitives" }
+ragu_pasta = { path = "../ragu_pasta", version = "0.0.0" }
+ragu_primitives = { path = "../ragu_primitives", version = "0.0.0" }
 rand = { workspace = true }
 
 [dev-dependencies]
