@@ -770,7 +770,7 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
         pub const NUM_FINAL_EVALS: usize = 16;
         let final_evals_array: [Fp; NUM_FINAL_EVALS] = final_evals
             .try_into()
-            .expect("intermediate_evals should have exactly 23 elements");
+            .expect("intermediate_evals should have exactly `NUM_FINAL_EVALS` elements");
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: Compute G staging polynomial.
@@ -793,7 +793,7 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
 
         // INNER LAYER: Staging polynomial (over Fq) that witnesses the D staged circuit Vesta commitment.
         let g_rx_inner =
-            <IndirectionStageE<C::HostCurve> as StageExt<C::ScalarField, R>>::rx(g_rx_commitment)?;
+            <IndirectionStageG<C::HostCurve> as StageExt<C::ScalarField, R>>::rx(g_rx_commitment)?;
 
         // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
         let g_rx_nested_commitment_blinding = C::ScalarField::random(OsRng);
@@ -1073,6 +1073,7 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
         let k_rx_nested_commitment =
             k_rx_inner.commit(params.nested_generators(), k_rx_nested_commitment_blinding);
 
+        // TODO: Determine what nested commitments *shouldn't* be absorbed into the transcript, like this?
         let k_point = Point::constant(&mut em, k_rx_nested_commitment)?;
         k_point.write(&mut em, &mut transcript)?;
         ///////////////////////////////////////////////////////////////////////////////////////

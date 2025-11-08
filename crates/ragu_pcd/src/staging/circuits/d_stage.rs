@@ -555,7 +555,7 @@ impl<
         let d2_nested_commitment =
             Point::alloc(dr, witness.view().map(|w| w.d2_nested_commitment))?;
         let d_staging_nested_commitment =
-            Point::alloc(dr, witness.view().map(|w| w.e1_nested_commitment))?;
+            Point::alloc(dr, witness.view().map(|w| w.d_staging_nested_commitment))?;
         let e1_nested_commitment =
             Point::alloc(dr, witness.view().map(|w| w.e1_nested_commitment))?;
         let e2_nested_commitment =
