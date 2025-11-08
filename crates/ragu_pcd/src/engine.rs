@@ -1,8 +1,8 @@
 //! Orchestration layer for CycleFold-inspired accumulation.
 //!
-//! Two-phase architecture: (1) `CycleEngineBuilder` for mutable (stateful) circuit
-//! registration, (2) `CycleEngine` for immutable (stateless) folding with proof-
-//! carrying data.
+//! The engine design models a two-phase architecture: (1) `CycleEngineBuilder`
+//! for mutable (stateful) circuit registration, (2) `CycleEngine` for immutable (stateless)
+//! folding with proof-carrying data.
 //!
 //! The API we're exposing should ideally remain agnostic with respect to the underlying curve cycle.
 //! Conceptually, `CycleEngineBuilder` serves as the main user-facing entry point (builder interface)
@@ -31,7 +31,7 @@ use ragu_core::Result;
 use ragu_pasta::Fp;
 
 /// Builder for registering circuits into the mesh.
-pub struct CycleEngineBuilder<'a, C, R>
+pub struct CycleMeshBuilder<'a, C, R>
 where
     C: Cycle,
     R: Rank,
@@ -74,7 +74,7 @@ where
     pub depth: usize,
 }
 
-impl<'a, C: Cycle, R: Rank> CycleEngineBuilder<'a, C, R> {
+impl<'a, C: Cycle, R: Rank> CycleMeshBuilder<'a, C, R> {
     /// Initialize empty mesh builders.
     pub fn new(params: &'a C) -> Self {
         Self {
@@ -91,8 +91,8 @@ impl<'a, C: Cycle, R: Rank> CycleEngineBuilder<'a, C, R> {
     {
         // TODO: have been wondering where r(X) generation fits relative to mesh registration.
         // The current construction seems to imply a strict dependency where it has to occur before
-        // registration, since registration in some sense is “lossy” and the circuit gets type-erased,
-        // so you can’t call ::rx() on the stored `CircuitObject`.
+        // registration, since registration in some sense is "lossy" and the circuit gets type-erased,
+        // so you can't call ::rx() on the stored `CircuitObject`.
         //
         // After the circuit gets registered, it's a `CircuitObject` that's type-erased,
         // so we can't generate the witness polynomial for it, r(X). Maybe, we should store
@@ -113,7 +113,16 @@ impl<'a, C: Cycle, R: Rank> CycleEngineBuilder<'a, C, R> {
     }
 
     /// Mesh finalization and seed the base accumulators.
-    pub fn finalize(mut self) -> Result<CycleEngine<'a, C, R>>
+    ///
+    /// Caller must provide derived const generic parameters.
+    /// Use the `finalize_with_n!` macro to compute these automatically from N.
+    pub fn finalize<
+        const NUM_CIRCUITS: usize,
+        const MAX_CROSS: usize,
+        const TOTAL_KY_COEFFS: usize,
+    >(
+        mut self,
+    ) -> Result<CycleEngine<'a, C, R>>
     where
         C: Cycle<CircuitField = Fp>,
     {
@@ -121,10 +130,15 @@ impl<'a, C: Cycle, R: Rank> CycleEngineBuilder<'a, C, R> {
         self.vesta_builder = self
             .vesta_builder
             .register_circuit(Staged::<C::CircuitField, R, _>::new(
-                DChallengeDerivationStagedCircuit::<C::NestedCurve>::new(),
+                DChallengeDerivationStagedCircuit::<C::NestedCurve, MAX_CROSS>::new(),
             ))?
             .register_circuit(Staged::<C::CircuitField, R, _>::new(
-                DCValueComputationStagedCircuit::<C::NestedCurve>::new(),
+                DCValueComputationStagedCircuit::<
+                    C::NestedCurve,
+                    MAX_CROSS,
+                    TOTAL_KY_COEFFS,
+                    NUM_CIRCUITS,
+                >::new(),
             ))?
             .register_circuit(Staged::<C::CircuitField, R, _>::new(
                 EChallengeDerivationStagedCircuit::<C::NestedCurve>::new(),
@@ -167,7 +181,7 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
         &self,
         left_proof: CycleProof<C, R>,
         right_proof: CycleProof<C, R>,
-        application_witnesses: &Vec<C::CircuitField>,
+        application_witnesses: &[C::CircuitField],
     ) -> Result<CycleProof<C, R>>
     where
         C: Cycle<CircuitField = Fp>,
@@ -208,4 +222,16 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
             depth: left_proof.depth.max(right_proof.depth) + 1,
         })
     }
+}
+
+// Rust doesn't support const operations on generic parameters by default.
+#[macro_export]
+macro_rules! finalize {
+    ($builder:expr, N = $n:expr, R = $r:expr) => {{
+        const NUM_CIRCUITS: usize = $n + 2;
+        const MAX_CROSS: usize = NUM_CIRCUITS * (NUM_CIRCUITS - 1);
+        const KY_DEGREE: usize = 1 << $r;
+        const TOTAL_KY_COEFFS: usize = $n * KY_DEGREE;
+        $builder.finalize::<NUM_CIRCUITS, MAX_CROSS, TOTAL_KY_COEFFS>()
+    }};
 }

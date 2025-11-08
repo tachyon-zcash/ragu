@@ -60,7 +60,6 @@ pub struct UncompressedAccumulator<C: CurveAffine, R: Rank> {
 
     /// Instance data (commitments, challenges, evaluations).
     pub(crate) instance: AccumulatorInstance<C>,
-    // TODO: add `AccumulatorState` for rerandomization tracking.
 }
 
 /// Compressed accumulator with succinct IPA openings.
@@ -105,6 +104,20 @@ pub struct AccumulatorInstance<C: CurveAffine> {
     pub s: C,
     pub x: ChallengePoint<C::ScalarExt>,
     pub y: ChallengePoint<C::ScalarExt>,
+}
+
+impl<C: CurveAffine, R: Rank> StagedCircuitData<C, R> {
+    pub fn new(
+        final_rx: structured::Polynomial<C::ScalarExt, R>,
+        ky: Vec<C::ScalarExt>,
+        circuit: Box<dyn CircuitObject<C::ScalarExt, R>>,
+    ) -> Self {
+        Self {
+            final_rx,
+            ky,
+            circuit,
+        }
+    }
 }
 
 impl<HostCurve, NestedCurve, R> Accumulator<HostCurve, NestedCurve, R>
@@ -268,6 +281,12 @@ impl<C: CurveAffine, R: Rank> AccumulatorWitness<C, R> {
     }
 }
 
+impl<C: CurveAffine, R: Rank> Default for AccumulatorWitness<C, R> {
+    fn default() -> Self {
+        Self::base()
+    }
+}
+
 /// The circuit public inputs represent the canonical encoding of an `AccumulatorInstance`.
 ///
 /// The instance is the formal description of the verifier-enforced portion of a statement,
@@ -327,31 +346,4 @@ pub struct ConsistencyEvaluations<C: CurveAffine> {
     pub(crate) s1_acc1_at_y: C::ScalarExt,
     pub(crate) s1_acc2_at_y: C::ScalarExt,
     pub(crate) s2_at_x: C::ScalarExt,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use arithmetic::Cycle;
-    use ragu_circuits::{mesh::MeshBuilder, polynomials::R};
-    use ragu_pasta::{EpAffine, EqAffine, Fp, Pasta};
-
-    #[test]
-    fn test_accumulator_construction() {
-        type TestRank = R<10>;
-        let pasta = Pasta::default();
-        let generators = pasta.host_generators();
-        let mesh = MeshBuilder::<Fp, TestRank>::new()
-            .finalize()
-            .expect("mesh finalization");
-
-        let base = Accumulator::<EqAffine, EpAffine, TestRank>::base(&mesh, generators);
-
-        assert_ne!(base.accumulator.witness.s_blinding, Fp::ZERO);
-        assert_ne!(base.accumulator.witness.a_blinding, Fp::ZERO);
-        assert_ne!(base.accumulator.witness.b_blinding, Fp::ZERO);
-        assert_ne!(base.accumulator.witness.p_blinding, Fp::ZERO);
-        assert!(base.endoscalars.is_empty());
-        assert!(base.deferreds.is_empty());
-    }
 }

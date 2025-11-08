@@ -363,6 +363,54 @@ impl<NestedCurve: CurveAffine<Base = Fp>, R: Rank> StagedCircuit<NestedCurve::Ba
     }
 }
 
+///////////////////////////////////////////////////////////////////////////////////////
+// KY STAGING POLYNOMIAL
+///////////////////////////////////////////////////////////////////////////////////////
+
+// K Stage.
+#[derive(ragu_macros::Gadget)]
+pub struct KYStageOutput<'dr, D: Driver<'dr>, const TOTAL_KY_COEFFS: usize> {
+    #[ragu(gadget)]
+    pub ky_coefficients: FixedVec<Element<'dr, D>, ConstLen<TOTAL_KY_COEFFS>>,
+}
+
+/// KY Stage: staging polynomial containing all ky coefficient data.
+pub struct KYStage<HostCurve, const TOTAL_KY_COEFFS: usize> {
+    _marker: core::marker::PhantomData<HostCurve>,
+}
+
+impl<HostCurve: CurveAffine, R: Rank, const TOTAL_KY_COEFFS: usize> Stage<<HostCurve>::Base, R>
+    for KYStage<HostCurve, TOTAL_KY_COEFFS>
+{
+    type Parent = ();
+
+    type Witness<'source> = [<HostCurve>::Base; TOTAL_KY_COEFFS];
+
+    type OutputKind = Kind![<HostCurve>::Base; KYStageOutput<'_, _, TOTAL_KY_COEFFS>];
+
+    fn values() -> usize {
+        TOTAL_KY_COEFFS
+    }
+
+    fn witness<'dr, 'source: 'dr, D>(
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<<Self::OutputKind as GadgetKind<<HostCurve>::Base>>::Rebind<'dr, D>>
+    where
+        D: Driver<'dr, F = <HostCurve>::Base>,
+        Self: 'dr,
+    {
+        // Allocate the ky coefficients.
+        let mut ky_coefficients = Vec::with_capacity(TOTAL_KY_COEFFS);
+        for i in 0..TOTAL_KY_COEFFS {
+            ky_coefficients.push(Element::alloc(dr, witness.view().map(|w| w[i]))?);
+        }
+        let ky_coefficients = FixedVec::new(ky_coefficients).expect("ky coefficients length");
+
+        Ok(KYStageOutput { ky_coefficients })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

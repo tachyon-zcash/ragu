@@ -42,6 +42,9 @@ pub mod accumulator;
 pub mod endoscalar;
 pub mod engine;
 pub mod pallas;
+pub mod routines;
 pub mod staging;
 pub mod utilities;
 pub mod vesta;
+
+pub use engine::{CycleEngine, CycleMeshBuilder, CycleProof};

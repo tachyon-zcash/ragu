@@ -1,3 +1,5 @@
+use std::array::from_fn;
+
 use crate::accumulator::{
     Accumulator, AccumulatorInstance, AccumulatorWitness, ChallengePoint, ConsistencyEvaluations,
     EvaluationPoint, FinalEvaluations, StagedCircuitData, UncompressedAccumulator,
@@ -13,12 +15,12 @@ use crate::staging::e_stage::{
     IndirectionStageE,
 };
 use crate::staging::g_stage::{
-    EphemeralStageG, GStage, GVComputationStagedCircuit, GVComputationStagedWitness, NUM_V_QUERIES,
+    EphemeralStageG, GStage, GVComputationStagedCircuit, GVComputationStagedWitness,
+    IndirectionStageG, KYStage, NUM_V_QUERIES,
 };
 use crate::staging::instance::UnifiedRecursionInstance;
-use crate::staging::k_stage::{IndirectionStageK, KStage, TOTAL_KY_COEFFS};
 use crate::utilities::dummy_circuits::Circuits;
-use crate::vesta::structures::{CommittedPolynomial, CommittedStructured};
+use crate::vesta::commitments::{CommittedPolynomial, CommittedStructured};
 use arithmetic::{Cycle, factor_iter};
 use ff::Field;
 use ragu_circuits::CircuitExt;
@@ -28,13 +30,12 @@ use ragu_circuits::{
     polynomials::Rank,
     staging::{StageExt, Staged},
 };
-use ragu_core::drivers::Emulator;
-use ragu_core::maybe::Always;
+use ragu_core::drivers::Driver;
 use ragu_core::maybe::Maybe;
 use ragu_core::{Error, Result};
 use ragu_pasta::{Fp, PoseidonFp};
 use ragu_primitives::GadgetExt;
-use ragu_primitives::{Element, Point, Sponge};
+use ragu_primitives::{Point, Sponge};
 use rand::rngs::OsRng;
 
 impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
@@ -52,12 +53,16 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
     where
         C: Cycle<CircuitField = Fp>,
     {
-        // Mirror the dummy circuits instantiated in a mesh.
+        // Hardcoded constants.
         const N: usize = 4;
+        const R: usize = 8;
+        const MAX_CROSS: usize = (N + 2) * (N + 1);
+        const KY_DEGREE: usize = R;
+        pub const TOTAL_KY_COEFFS: usize = N * KY_DEGREE;
+
         let circuits = Circuits::new();
         let circuit_list = [&circuits.s3, &circuits.s4, &circuits.s10, &circuits.s19];
-        let circuit_ids: [C::CircuitField; N] =
-            core::array::from_fn(|i| C::CircuitField::from(i as u64)); // TODO: remove this. 
+        let circuit_ids: [C::CircuitField; N] = from_fn(|i| C::CircuitField::from(i as u64));
 
         // Simulate a dummy transcript object using Poseidon sponge construction, using an
         // emulator driver to run the sponge permutation. The permutations are treated as
@@ -68,7 +73,7 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
         let mut transcript = Sponge::new(&mut em, &PoseidonFp);
 
         // Instantiate new accumulator object, which contains the prover's split accumulator witness and instance parts.
-        let mut cycle_accumulator =
+        let mut accumulator =
             Accumulator::<C::HostCurve, C::NestedCurve, R>::base(mesh, params.host_generators());
 
         ///////////////////////////////////////////////////////////////////////////////////////
@@ -79,18 +84,16 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
         // other curve.
 
         ///////////////////////////////////////////////////////////////////////////////////////
-        // PHASE: Process `StagedObjects`.
+        // PHASE: Process `StagedObjects` for staging consistency from the previous cycle.
         ///////////////////////////////////////////////////////////////////////////////////////
 
-        // TODO: Process the staged objects for staging consistency from the previous cycle.
+        // TODO: For each, check lhs != ky_at_y.
 
         for staged_data in &acc1.staged_circuits {
             let y_challenge = acc1.accumulator.instance.y.0;
             let sy = staged_data.circuit.sy(y_challenge);
             let _ky_at_y = arithmetic::eval(&staged_data.ky, y_challenge);
             let _lhs = staged_data.final_rx.revdot(&sy);
-
-            // TODO: Check if lhs != ky_at_y.
         }
 
         for staged_data in &acc2.staged_circuits {
@@ -98,8 +101,6 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
             let sy = staged_data.circuit.sy(y_challenge);
             let _ky_at_y = arithmetic::eval(&staged_data.ky, y_challenge);
             let _lhs = staged_data.final_rx.revdot(&sy);
-
-            // TODO: Check if lhs != ky_at_y.
         }
 
         ///////////////////////////////////////////////////////////////////////////////////////
@@ -1026,30 +1027,162 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
             commitment: p_commitment,
         };
 
-        // TODO: compute nested commitment to p
+        // INNER LAYER: Staging polynomial (over Fq) that witnesses the F Vesta commitment.
+        let g2_inner_rx =
+            <EphemeralStageG<C::HostCurve, 1> as StageExt<C::ScalarField, R>>::rx(&[p.commitment])?;
+
+        // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
+        let g2_blinding = C::ScalarField::random(OsRng);
+        let g2_nested_commitment: <C as Cycle>::NestedCurve =
+            g2_inner_rx.commit(params.nested_generators(), g2_blinding);
+
+        let g2_point = Point::constant(&mut em, g2_nested_commitment)?;
+        g2_point.write(&mut em, &mut transcript)?;
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Build KY staging polyhnomial for ky polynomial coefficients.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // Append application circuits ky coefficients.
+        let mut application_ky_coffs = Vec::new();
+        for ky_poly in &ky {
+            application_ky_coffs.extend_from_slice(ky_poly);
+        }
+
+        let ky_coeff_array: [C::CircuitField; TOTAL_KY_COEFFS] = application_ky_coffs
+            .try_into()
+            .map_err(|_| Error::CircuitBoundExceeded(TOTAL_KY_COEFFS))?;
+
+        // Build the K staging polynomial.
+        let k_rx =
+            <KYStage<C::NestedCurve, TOTAL_KY_COEFFS> as StageExt<Fp, R>>::rx(ky_coeff_array)?;
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // LAYER OF INDIRECTION: We now introduce another nested commitment layer to produce
+        // an Fp-hashable nested commitment for the transcript.
+        let k_rx_blinding = C::CircuitField::random(OsRng);
+        let k_rx_commitment = k_rx.commit(params.host_generators(), k_rx_blinding);
+
+        // INNER LAYER: Staging polynomial (over Fq) that witnesses the D staged circuit Vesta commitment.
+        let k_rx_inner =
+            <IndirectionStageG<C::HostCurve> as StageExt<C::ScalarField, R>>::rx(k_rx_commitment)?;
+
+        // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
+        let k_rx_nested_commitment_blinding = C::ScalarField::random(OsRng);
+        let k_rx_nested_commitment =
+            k_rx_inner.commit(params.nested_generators(), k_rx_nested_commitment_blinding);
+
+        let k_point = Point::constant(&mut em, k_rx_nested_commitment)?;
+        k_point.write(&mut em, &mut transcript)?;
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Compute c value using routine outside circuit.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        use crate::routines::c::Evaluate as ComputeC;
+        use crate::routines::horners::EvaluateKyPolynomials;
+        use ragu_core::{drivers::Emulator, maybe::Always};
+        use ragu_primitives::Element;
+
+        // Evaluate ky polynomials at y_challenge using Horner's routine.
+        let ky_degree = TOTAL_KY_COEFFS / N;
+        let mut dr = Emulator::<Always<()>, Fp>::default();
+
+        let mu_inv = mu_challenge.invert().unwrap();
+        let ky_evaluated = dr
+            .with((&ky_coeff_array[..], y_challenge), |dr, inputs| {
+                let (ky_coeffs_slice, y_val) = inputs.cast();
+
+                // Allocate ky coefficients.
+                let mut ky_coeff_elems = Vec::with_capacity(TOTAL_KY_COEFFS);
+                for i in 0..TOTAL_KY_COEFFS {
+                    let coeff = ky_coeffs_slice.view().map(|s| s[i]);
+                    ky_coeff_elems.push(Element::alloc(dr, coeff)?);
+                }
+                let ky_coeff_fixed = ragu_primitives::vec::FixedVec::new(ky_coeff_elems)
+                    .expect("ky_coeff_elems length");
+
+                let y_elem = Element::alloc(dr, y_val)?;
+
+                let horner_routine = EvaluateKyPolynomials::<TOTAL_KY_COEFFS, N>::new(N, ky_degree);
+                dr.routine(horner_routine, (ky_coeff_fixed, y_elem))
+            })
+            .expect("ky evaluation should succeed");
+
+        // Extract evaluated ky values and add previous accumulator c values.
+        let mut ky_values = Vec::with_capacity(N + 2);
+        for ky_elem in ky_evaluated.iter().take(N) {
+            ky_values.push(*ky_elem.value().take());
+        }
+        ky_values.push(acc1.accumulator.instance.c);
+        ky_values.push(acc2.accumulator.instance.c);
+
+        // Compute c using the routine.
+        let c = *dr
+            .with(
+                (
+                    (mu_challenge, nu_challenge, mu_inv),
+                    (&cross_products[..], &ky_values[..]),
+                ),
+                |dr, inputs| {
+                    let (challenges, slices) = inputs.cast();
+                    let (mu, nu, mu_inv) = challenges.cast();
+                    let (cross_slice, ky_slice) = slices.cast();
+
+                    let mu = Element::alloc(dr, mu)?;
+                    let nu = Element::alloc(dr, nu)?;
+                    let mu_inv = Element::alloc(dr, mu_inv)?;
+
+                    // Allocate cross products.
+                    let mut cross_elems = Vec::with_capacity(MAX_CROSS);
+                    for i in 0..MAX_CROSS {
+                        let val = cross_slice
+                            .view()
+                            .map(|s| if i < s.len() { s[i] } else { Fp::ZERO });
+                        cross_elems.push(Element::alloc(dr, val)?);
+                    }
+                    let cross_elems = ragu_primitives::vec::FixedVec::new(cross_elems)
+                        .expect("cross_elems length");
+
+                    // Allocate ky values.
+                    let mut ky_elems = Vec::with_capacity(N + 2);
+                    for i in 0..(N + 2) {
+                        let val = ky_slice
+                            .view()
+                            .map(|s| if i < s.len() { s[i] } else { Fp::ZERO });
+                        ky_elems.push(Element::alloc(dr, val)?);
+                    }
+                    let ky_elems =
+                        ragu_primitives::vec::FixedVec::new(ky_elems).expect("ky_elems length");
+
+                    let input = (((mu, nu), mu_inv), (cross_elems, ky_elems));
+                    dr.routine(ComputeC::<MAX_CROSS, { N + 2 }>::new(len), input)
+                },
+            )
+            .expect("c computation should succeed")
+            .value()
+            .take();
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // PHASE: STAGED CIRCUITS for collective verification (In-circuit verifiers).
         ///////////////////////////////////////////////////////////////////////////////////////
 
         ///////////////////////////////////////////////////////////////////////////////////////
-        // TASK: Routine invocation.
-        ///////////////////////////////////////////////////////////////////////////////////////
-
-        // TODO: Before the staging circuits are executed, we construct the unified instance.
-        // what populates c and v since they're computed inside the circuits and brought out
-        // as public inputs. To get around this circular dependency, we'll invoke routine
-        // for c.
-
-        ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: Create the staged circuits.
         ///////////////////////////////////////////////////////////////////////////////////////
 
-        let d_circuit =
-            Staged::<Fp, R, _>::new(DChallengeDerivationStagedCircuit::<C::NestedCurve>::new());
+        let d_circuit = Staged::<Fp, R, _>::new(DChallengeDerivationStagedCircuit::<
+            C::NestedCurve,
+            MAX_CROSS,
+        >::new());
 
-        let c_circuit =
-            Staged::<Fp, R, _>::new(DCValueComputationStagedCircuit::<C::NestedCurve>::new());
+        let c_circuit = Staged::<Fp, R, _>::new(DCValueComputationStagedCircuit::<
+            C::NestedCurve,
+            MAX_CROSS,
+            TOTAL_KY_COEFFS,
+            { N + 2 },
+        >::new());
 
         let e_circuit =
             Staged::<Fp, R, _>::new(EChallengeDerivationStagedCircuit::<C::NestedCurve>::new());
@@ -1083,57 +1216,11 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
             e_staging_nested_commitment: e_rx_nested_commitment,
             g1_nested_commitment,
             g_staging_nested_commitment: g_rx_nested_commitment,
-            p_nested_commitment: todo!(),
-            c: todo!(),
-            v: todo!(),
+            p_nested_commitment: g2_nested_commitment,
+            c,
+            v,
         };
         let unified_ky = d_circuit.ky(unified_instance)?;
-
-        ///////////////////////////////////////////////////////////////////////////////////////
-        // TASK: Build KY staging polyhnomial for ky coefficients.
-        ///////////////////////////////////////////////////////////////////////////////////////
-
-        let mut all_ky_coffs = Vec::new();
-
-        // Append application circuits ky coefficients.
-        for ky_poly in &ky {
-            all_ky_coffs.extend_from_slice(ky_poly);
-        }
-
-        // Append recursion circuits ky coefficients.
-        all_ky_coffs.extend_from_slice(&unified_ky);
-
-        // Append previous accumulator revdot claims as diagonal terms.
-        all_ky_coffs.push(acc1.accumulator.instance.c);
-        all_ky_coffs.push(acc2.accumulator.instance.c);
-
-        // Convert the ky coefficients to fixed-size array.
-        let ky_coeff_array: [C::CircuitField; TOTAL_KY_COEFFS] = all_ky_coffs
-            .try_into()
-            .map_err(|_| Error::CircuitBoundExceeded(TOTAL_KY_COEFFS))?;
-
-        // Build the K staging polynomial.
-        let k_rx =
-            <KStage<C::NestedCurve, TOTAL_KY_COEFFS> as StageExt<Fp, R>>::rx(ky_coeff_array)?;
-
-        ///////////////////////////////////////////////////////////////////////////////////////
-        // LAYER OF INDIRECTION: We now introduce another nested commitment layer to produce
-        // an Fp-hashable nested commitment for the transcript.
-        let k_rx_blinding = C::CircuitField::random(OsRng);
-        let k_rx_commitment = k_rx.commit(params.host_generators(), k_rx_blinding);
-
-        // INNER LAYER: Staging polynomial (over Fq) that witnesses the D staged circuit Vesta commitment.
-        let k_rx_inner =
-            <IndirectionStageK<C::HostCurve> as StageExt<C::ScalarField, R>>::rx(k_rx_commitment)?;
-
-        // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
-        let k_rx_nested_commitment_blinding = C::ScalarField::random(OsRng);
-        let k_rx_nested_commitment =
-            k_rx_inner.commit(params.nested_generators(), k_rx_nested_commitment_blinding);
-
-        let k_point = Point::constant(&mut em, k_rx_nested_commitment)?;
-        k_point.write(&mut em, &mut transcript)?;
-        ///////////////////////////////////////////////////////////////////////////////////////
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: Verify w, y, and z challenges in-circuit.
@@ -1159,9 +1246,9 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
             e_staging_nested_commitment: e_rx_nested_commitment,
             g1_nested_commitment,
             g_staging_nested_commitment: g_rx_nested_commitment,
-            p_nested_commitment: todo!(),
-            c: todo!(),
-            v: todo!(),
+            p_nested_commitment: g2_nested_commitment,
+            c,
+            v,
         })?;
 
         ///////////////////////////////////////////////////////////////////////////////////////
@@ -1170,9 +1257,8 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
 
         let (c_rx, c_aux) = c_circuit.rx::<R>(DCValueComputationWitness {
             mu_inv,
-            cross_products: cross_products.to_vec(),
-            ky_coeffs: todo!(),
-            len: todo!(),
+            cross_products: cross_products,
+            ky_coeffs: ky_coeff_array,
             w_challenge,
             y_challenge,
             z_challenge,
@@ -1191,9 +1277,9 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
             e_staging_nested_commitment: e_rx_nested_commitment,
             g1_nested_commitment,
             g_staging_nested_commitment: g_rx_nested_commitment,
-            p_nested_commitment: todo!(),
-            c: todo!(),
-            v: todo!(),
+            p_nested_commitment: g2_nested_commitment,
+            c,
+            v,
         })?;
 
         ///////////////////////////////////////////////////////////////////////////////////////
@@ -1220,9 +1306,9 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
             e_staging_nested_commitment: e_rx_nested_commitment,
             g1_nested_commitment,
             g_staging_nested_commitment: g_rx_nested_commitment,
-            p_nested_commitment: todo!(),
-            c: todo!(),
-            v: todo!(),
+            p_nested_commitment: g2_nested_commitment,
+            c,
+            v,
         })?;
 
         //////////////////////////////////////////////////////////////////////////////////////
@@ -1254,9 +1340,9 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
             e_staging_nested_commitment: e_rx_nested_commitment,
             g1_nested_commitment,
             g_staging_nested_commitment: g_rx_nested_commitment,
-            p_nested_commitment: todo!(),
-            c: todo!(),
-            v: todo!(),
+            p_nested_commitment: g2_nested_commitment,
+            c,
+            v,
         })?;
 
         ///////////////////////////////////////////////////////////////////////////////////////
@@ -1268,25 +1354,25 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
         let e_circuit_object = e_circuit.clone().into_object()?;
         let g_circuit_object = g_circuit.clone().into_object()?;
 
-        cycle_accumulator.staged_circuits = vec![
+        accumulator.staged_circuits = vec![
             StagedCircuitData {
                 final_rx: d_rx,
-                ky: unified_ky,
+                ky: unified_ky.clone(),
                 circuit: d_circuit_object,
             },
             StagedCircuitData {
                 final_rx: c_rx,
-                ky: unified_ky,
+                ky: unified_ky.clone(),
                 circuit: c_circuit_object,
             },
             StagedCircuitData {
                 final_rx: e_rx,
-                ky: unified_ky,
+                ky: unified_ky.clone(),
                 circuit: e_circuit_object,
             },
             StagedCircuitData {
                 final_rx: g_rx,
-                ky: unified_ky,
+                ky: unified_ky.clone(),
                 circuit: g_circuit_object,
             },
         ];
@@ -1298,7 +1384,7 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
         // Everything that's in a nested polynomial gets deferred. Deferreds should be:
         //    1. All the ephemeral nested commitments witnessing this round's work,
         //    2. All the staging polynomial nested commitments from D, E, G circuits,
-        cycle_accumulator.deferreds = vec![
+        accumulator.deferreds = vec![
             b_rx_nested_commitment, // B staging polynomial commitment
             d1_nested_commitment,   // Witnesses S' commitments
             d2_nested_commitment,   // Witnesses S'' commitments
@@ -1308,6 +1394,7 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
             e_rx_nested_commitment, // E staging polynomial commitment
             g1_nested_commitment,   // Witnesses F commitment
             g_rx_nested_commitment, // G staging polynomial commitment
+            k_rx_nested_commitment, // KY staging polynomial commitment
         ];
 
         ///////////////////////////////////////////////////////////////////////////////////////
@@ -1337,7 +1424,7 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
             y: ChallengePoint(y_challenge),
         };
 
-        cycle_accumulator.accumulator = UncompressedAccumulator::<C::HostCurve, R> {
+        accumulator.accumulator = UncompressedAccumulator::<C::HostCurve, R> {
             witness: accumulator_witness,
             instance: accumulator_instance,
         };
