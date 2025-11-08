@@ -815,6 +815,7 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
         let mut final_evals_for_queries = Vec::new();
         let mut inverses = Vec::new();
 
+        // TODO: This should be it's own routine as well.
         let (v, p_poly, p_blind) = {
             let mut v = Fp::ZERO;
 
@@ -1168,6 +1169,8 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
         // PHASE: STAGED CIRCUITS for collective verification (In-circuit verifiers).
         ///////////////////////////////////////////////////////////////////////////////////////
 
+        // TODO: Document the constraint costs of each circuit.
+
         ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: Create the staged circuits.
         ///////////////////////////////////////////////////////////////////////////////////////
@@ -1190,7 +1193,7 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
         let g_circuit =
             Staged::<Fp, R, _>::new(GVComputationStagedCircuit::<C::NestedCurve>::new());
 
-        // TODO: missing beta challenge verification
+        // TODO: Missing circuit for beta challenge verification.
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: Compute the unified k(Y) instance for all the recursion circuits
@@ -1219,9 +1222,11 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
             g1_nested_commitment,
             g_staging_nested_commitment: g_rx_nested_commitment,
             p_nested_commitment: g2_nested_commitment,
+            // TODO: Missing the ky_nested_commitment?
             c,
             v,
         };
+
         let unified_ky = d_circuit.ky(unified_instance)?;
 
         ///////////////////////////////////////////////////////////////////////////////////////
@@ -1384,8 +1389,10 @@ impl<'a, C: Cycle, R: Rank> CycleEngine<'a, C, R> {
         ///////////////////////////////////////////////////////////////////////////////////////
 
         // Everything that's in a nested polynomial gets deferred. Deferreds should be:
-        //    1. All the ephemeral nested commitments witnessing this round's work,
-        //    2. All the staging polynomial nested commitments from D, E, G circuits,
+        //
+        // - All the ephemeral nested commitments witnessing this round's work,
+        // - All the staging polynomial nested commitments from D, E, G circuits,
+
         accumulator.deferreds = vec![
             b_rx_nested_commitment, // B staging polynomial commitment
             d1_nested_commitment,   // Witnesses S' commitments
