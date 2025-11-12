@@ -150,7 +150,11 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(circuit: &C, x: F, y: F) -> Result
         _marker: core::marker::PhantomData,
     };
 
-    let one = dr.mul(|| unreachable!())?.2;
+    let (a_0, _b_0, c_0) = dr.mul(|| unreachable!())?;
+
+    // Placeholder linear constraint: a_0 - c_0 * K = 0.
+    dr.enforce_zero(|lc| lc.add(&a_0).sub(&c_0))?;
+    let one = c_0;
 
     let mut outputs = vec![];
 

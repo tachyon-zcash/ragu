@@ -15,17 +15,22 @@
 //! to compile the added circuits into a mesh polynomial representation that can
 //! be efficiently evaluated at different restrictions.
 
-use arithmetic::Domain;
-use arithmetic::bitreverse;
-use ff::PrimeField;
-use ragu_core::{Error, Result};
-
-use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec::Vec};
-
 use crate::{
     Circuit, CircuitExt, CircuitObject,
     polynomials::{Rank, structured, unstructured},
 };
+use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec::Vec};
+use arithmetic::Cycle;
+use arithmetic::Domain;
+use arithmetic::bitreverse;
+use core::cell::RefCell;
+use ff::Field;
+use ff::PrimeField;
+use ragu_core::drivers::Simulator;
+use ragu_core::{Error, Result};
+use ragu_pasta::{Fp, Pasta};
+use ragu_primitives::Element;
+use ragu_primitives::Sponge;
 
 /// Builder for constructing a new [`Mesh`].
 pub struct MeshBuilder<'params, F: PrimeField, R: Rank> {
@@ -70,10 +75,12 @@ impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
     }
 
     /// Builds the final [`Mesh`].
-    pub fn finalize(self) -> Result<Mesh<'params, F, R>> {
+    pub fn finalize(self) -> Result<Mesh<'params, F, R>>
+    where
+        F: PrimeField<Repr = [u8; 32]>,
+    {
         // Compute the smallest power-of-2 domain size that fits all circuits.
         let log2_circuits = self.circuits.len().next_power_of_two().trailing_zeros();
-
         let domain = Domain::<F>::new(log2_circuits);
 
         // Build omega^j -> i lookup table.
@@ -93,11 +100,59 @@ impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
             omega_lookup.insert(omega_j, i);
         }
 
-        Ok(Mesh {
+        // Create provisional mesh (circuits still have placeholder K).
+        let mut provisional_mesh = Mesh {
             domain,
             circuits: self.circuits,
             omega_lookup,
-        })
+            mesh_key: None,
+        };
+
+        // Compute K = H(M(w, x, y)) which creates binding commitment to mesh structure.
+        let mesh_key = Self::compute_mesh_key(&provisional_mesh);
+
+        provisional_mesh.mesh_key = Some(mesh_key);
+
+        // Substitute the computed K into the linear constraint for each circuit polynomial.
+        // TODO: How do we do this since the circuits are already compiled, we can't modify them directly?
+        // Is the correction be applied during mesh-evaluation time in the wxy(), wy(), wx(), and xy() methods?
+
+        Ok(provisional_mesh)
+    }
+
+    /// Compute the mesh binding key K by hashing the mesh structure.
+    pub fn compute_mesh_key(mesh: &Mesh<'params, F, R>) -> F
+    where
+        // Neccesary converting between generic F and concrete Fp for Poseidon hashing.
+        F: PrimeField<Repr = [u8; 32]>,
+    {
+        // Nothing-up-my-sleeve challenges (small primes).
+        // TODO: I made these placeholders, but what should these transparent constants actually be?
+        let w = F::from(2);
+        let x = F::from(3);
+        let y = F::from(5);
+
+        // Evaluate the mesh polynomial m(w,x,y) = \sum {l_i(w) * s_i(x,y)}.
+        let mesh_eval = mesh.wxy(w, x, y);
+        let mesh_eval_fp = Fp::from_repr(mesh_eval.to_repr()).unwrap_or(Fp::ZERO);
+
+        // Hash with Poseidon using Simulator driver.
+        let params = Pasta::baked();
+        let hash_result = RefCell::new(Fp::ZERO);
+
+        let _ = Simulator::simulate(mesh_eval_fp, |dr, value| {
+            let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
+                dr,
+                params.circuit_poseidon(),
+            );
+            let elem = Element::alloc(dr, value)?;
+            sponge.absorb(dr, &elem)?;
+            let hash_elem = sponge.squeeze(dr)?;
+            *hash_result.borrow_mut() = *hash_elem.wire();
+            Ok(())
+        });
+
+        F::from_repr(hash_result.borrow().to_repr()).unwrap_or(F::ZERO)
     }
 }
 
@@ -112,6 +167,8 @@ pub struct Mesh<'params, F: PrimeField, R: Rank> {
     // Maps from the OmegaKey (which represents some `omega^j`) to the index `i`
     // of the circuits vector.
     omega_lookup: BTreeMap<OmegaKey, usize>,
+
+    mesh_key: Option<F>,
 }
 
 /// Represents a key for identifying a unique $\omega^j$ value where $\omega$ is

@@ -28,6 +28,7 @@ ff = { workspace = true }
 group = { workspace = true }
 ragu_core = { path = "../ragu_core", version = "0.0.0" }
 ragu_primitives = { path = "../ragu_primitives", version = "0.0.0" }
+ragu_pasta = { path = "../ragu_pasta", version = "0.0.0", features = ["baked"] }
 rand = { workspace = true }
 
 [dev-dependencies]

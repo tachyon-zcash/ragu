@@ -111,7 +111,7 @@ pub fn eval<F: Field, C: Circuit<F>>(circuit: &C) -> Result<CircuitMetrics> {
     io.write(&mut collector, &mut degree_ky)?;
 
     Ok(CircuitMetrics {
-        num_linear_constraints: collector.num_linear_constraints + degree_ky + 1,
+        num_linear_constraints: collector.num_linear_constraints + degree_ky + 2,
         num_multiplication_constraints: collector.num_multiplication_constraints,
         degree_ky,
     })

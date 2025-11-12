@@ -151,7 +151,11 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
         available_b: None,
         _marker: core::marker::PhantomData,
     };
-    let one = collector.mul(|| unreachable!())?.2;
+    let (a_0, _b_0, c_0) = collector.mul(|| unreachable!())?;
+
+    // Placeholder linear constraint: a_0 - c_0 * K = 0.
+    collector.enforce_zero(|lc| lc.add(&a_0).sub(&c_0))?;
+    let one = c_0;
 
     let mut outputs = vec![];
     let (io, _) = circuit.witness(&mut collector, Empty)?;

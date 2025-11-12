@@ -385,6 +385,9 @@ mod tests {
             let check = |x: Fp, y: Fp| {
                 let xn_minus_1 = x.pow_vartime([(4 * R::n() - 1) as u64]);
 
+                // TODO: We need to also subtract the placeholder constraint.
+                // I think it's y^{num_linear-1} * (x^{2n-1} - x^{4n-1}) to make this failing test pass?
+
                 // This adjusts for the single "ONE" constraint which is always skipped
                 // in staging witnesses.
                 let sxy = comparison_object.sxy(x, y) - xn_minus_1;
