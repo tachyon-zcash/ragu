@@ -76,10 +76,17 @@ impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
 
     /// Builds the final [`Mesh`].
     pub fn finalize(self) -> Result<Mesh<'params, F, R>> {
-        // TODO: Before registering the recursion circuits (wherever that's done),
+        // TODO: Before registering the recursion circuits,
         // precompute the domain size, then register the recursion circuits
-        // and pass them the domain size accrordginly. Then inside the recursion circuits,
-        // each circuit needs to need to validate the omega is in the expected domain.
+        // and pass them the domain size accrordingly.
+        //
+        // let total_circuits = num_application_circuits (variable) + num_recursion_circuits (fixed).
+        // let domain_log2_size = compute_domain_log2_size(total_circuits);
+        //
+        // After, register recursion circuits, passing them the domain size.
+        // Then inside the recursion circuits, each circuit needs to validate
+        // the omega is in the expected domain.
+        //
         // We should also add an assertion to check the expected circuit counts.
 
         // Compute the smallest power-of-2 domain size that fits all circuits.
