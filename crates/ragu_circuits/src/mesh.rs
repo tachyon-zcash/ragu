@@ -46,6 +46,11 @@ impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
         }
     }
 
+    /// Retrieve the number of circuits.
+    pub fn num_circuits(&self) -> usize {
+        self.circuits.len()
+    }
+
     /// Registers a new circuit.
     pub fn register_circuit<C>(self, circuit: C) -> Result<Self>
     where
@@ -71,6 +76,12 @@ impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
 
     /// Builds the final [`Mesh`].
     pub fn finalize(self) -> Result<Mesh<'params, F, R>> {
+        // TODO: Before registering the recursion circuits (wherever that's done),
+        // precompute the domain size, then register the recursion circuits
+        // and pass them the domain size accrordginly. Then inside the recursion circuits,
+        // each circuit needs to need to validate the omega is in the expected domain.
+        // We should also add an assertion to check the expected circuit counts.
+
         // Compute the smallest power-of-2 domain size that fits all circuits.
         let log2_circuits = self.circuits.len().next_power_of_two().trailing_zeros();
 
@@ -239,6 +250,26 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
 pub fn omega_j<F: PrimeField>(id: u32) -> F {
     let bit_reversal_id = bitreverse(id, F::S);
     F::ROOT_OF_UNITY.pow([bit_reversal_id as u64])
+}
+
+/// Computes the log2 domain size needed for the application and recursion
+/// circuits being registered.
+///
+/// This function extracts the domain size computation logic from
+/// [`MeshBuilder::finalize`] to allow pre-computing the domain size before
+/// finalization
+pub fn compute_domain(num_circuits: usize) -> u32 {
+    num_circuits.next_power_of_two().trailing_zeros()
+}
+
+/// Vaidates omega is valid 2^k root of unity for the domain size.
+pub fn validate_omega_in_domain<F: PrimeField>(omega: F, log2_domain_size: u32) -> bool {
+    let mut value = omega;
+    for _ in 0..log2_domain_size {
+        value = value.square()
+    }
+
+    value == F::ONE
 }
 
 #[cfg(test)]
