@@ -1,34 +1,51 @@
-//! Emulation for executing circuit synthesis code without unnecessary
-//! constraint enforcement or wire tracking.
+//! Driver for executing circuit code natively with minimal overhead.
+//!
+//! ## Overview
+//!
+//! Circuit code is written with the [`Driver`] abstraction, which is used to
+//! express operations such as allocating wires and enforcing constraints
+//! alongside the corresponding witness generation logic. The simplest driver
+//! would be one that simply executes circuit code directly _without_ enforcing
+//! constraints; that is the purpose of this module's [`Emulator`].
+//!
+//! The [`Emulator`] driver never checks multiplication or linear constraints,
+//! but it _can_ be used to collect and compute wire assignments. In the latter
+//! case, it should be instantiated in the [`Wired`] mode. Otherwise, the
+//! [`Wireless`] mode is appropriate.
+//!
+//! ### Wire Extraction
+//!
+//! One of the common uses of an [`Emulator`] instantiated in [`Wired`] mode is
+//! for computing the expected wire assignments for a [`Gadget`] after executing
+//! a [`Routine`] or some other circuit code. Of course, wire assignments never
+//! exist when a witness does not exist. Still, [`Wired`] mode is parameterized
+//! by a [`MaybeKind`] so that a wired [`Emulator`] can be invoked in contexts
+//! where witness availability depends on another driver's behavior, such as
+//! invoking an [`Emulator`] within circuit code itself.
+//!
+//! ### Routines
+//!
+//! [`Emulator`]s are used for _natively_ executing code, not enforcing
+//! correctness. As such, they short-circuit execution of [`Routine`]s using
+//! [routine prediction](Routine::predict) when possible.
 //!
 //! ## Usage
 //!
-//! This module provides the [`Emulator`] driver, which can be used to execute
-//! circuit synthesis code _directly_ rather than for assembling a witness or
-//! polynomial reductions.
+//! The [`Emulator`] can be instantiated in [`Wired`] mode using
+//! [`Emulator::wired`], and in [`Wireless`] mode using [`Emulator::wireless`].
 //!
-//! The [`Emulator`] can be instantiated in [`Wired`] or [`Wireless`] mode,
-//! through the use of the respective constructors [`Emulator::wired()`] or
-//! [`Emulator::wireless()`]:
-//! * In [`Wired`] mode, circuit synthesis is performed while tracking wire
-//!   assignments; wire assignments have values depending on if there is a
-//!   witness present, as determined by the parameterized [`MaybeKind`].
-//!   [`Emulator::extractor()`] is a shorthand for creating a [`Wired`] emulator
-//!   with a known witness.
-//! * [`Wireless`] mode is equivalent, except that it doesn't track wire values
-//!   at all. [`Emulator::execute()`] is shorthand for creating a [`Wireless`]
-//!   emulator with a known witness.
+//! There are two shorthand methods for constructing an [`Emulator`]:
+//! * [`Emulator::extractor`] can be used to create a wired [`Emulator`] when a
+//!   witness is expected to exist ([`MaybeKind`] = [`Always`]).
+//! * [`Emulator::execute`] can similarly be used to create a wireless
+//!   [`Emulator`] when a witness is expected to exist. This is the common case
+//!   of executing circuit code natively.
 //!
-//! Emulators never enforce multiplication or linear constraints, and will also
-//! use [Routine prediction](Routine::predict) to short-circuit execution of
-//! routines.
-//!
-//! ### Extracting Wire Values
-//!
-//! In [`Wired`] mode, the wire assignments can be extracted from a gadget using
-//! [`Emulator::wires()`]. If a witness always exists (such as in the
-//! [`Emulator::extractor()`] case) then [`Emulator::always_wires()`] can be
-//! used to extract the raw wire assignments.
+//! In [`Wired`] mode, wire assignments can be extracted from a gadget using
+//! [`Emulator::wires`]; the returned wires are [`MaybeWired`] values that may
+//! or may not have known values depending on the parameterized [`MaybeKind`].
+//! In the case that a witness always exists, [`Emulator::always_wires`] can be
+//! used instead to fetch the values directly.
 
 use core::marker::PhantomData;
 use ff::Field;
@@ -43,22 +60,22 @@ use crate::{
     routines::{Prediction, Routine},
 };
 
-/// Mode that an emulator may be running in; usually either [`Wired`] or
+/// Mode that an [`Emulator`] may be running in; usually either [`Wired`] or
 /// [`Wireless`].
 pub trait Mode {
-    /// The resulting [`Emulator`]'s [`DriverTypes::MaybeKind`].
+    /// Equal to the resulting [`Emulator`]'s [`DriverTypes::MaybeKind`].
     type MaybeKind: MaybeKind;
 
-    /// The resulting [`Emulator`]'s [`DriverTypes::ImplField`].
+    /// Equal to the resulting [`Emulator`]'s [`DriverTypes::ImplField`].
     type F: Field;
 
-    /// The resulting [`Emulator`]'s [`DriverTypes::ImplWire`].
+    /// Equal to the resulting [`Emulator`]'s [`DriverTypes::ImplWire`].
     type Wire: Clone;
 
-    /// The resulting [`Emulator`]'s [`DriverTypes::LCadd`].
+    /// Equal to the resulting [`Emulator`]'s [`DriverTypes::LCadd`].
     type LCadd: LinearExpression<Self::Wire, Self::F>;
 
-    /// The resulting [`Emulator`]'s [`DriverTypes::LCenforce`].
+    /// Equal to the resulting [`Emulator`]'s [`DriverTypes::LCenforce`].
     type LCenforce: LinearExpression<Self::Wire, Self::F>;
 }
 
@@ -68,7 +85,7 @@ pub struct Wired<M: MaybeKind, F: Field>(PhantomData<(M, F)>);
 /// Container for a [`Field`] element representing a wire assignment that may or
 /// may not be known depending on the parameterized [`MaybeKind`].
 pub enum MaybeWired<M: MaybeKind, F: Field> {
-    /// The special wire representing the constant one.
+    /// The special wire representing the constant $1$.
     One,
 
     /// A wire with an arbitrary assignment.
@@ -76,7 +93,8 @@ pub enum MaybeWired<M: MaybeKind, F: Field> {
 }
 
 impl<M: MaybeKind, F: Field> MaybeWired<M, F> {
-    /// Retrieves the underlying wire value.
+    /// Retrieves the underlying wire value. This should be only called when
+    /// [`M` = `Always`], otherwise it will cause a compile-time failure.
     pub fn value(self) -> F {
         match self {
             MaybeWired::One => F::ONE,
@@ -85,7 +103,7 @@ impl<M: MaybeKind, F: Field> MaybeWired<M, F> {
     }
 
     /// Retrieves a reference to the underlying wire value.
-    pub fn snag<'a>(&'a self, one: &'a F) -> &'a F {
+    fn snag<'a>(&'a self, one: &'a F) -> &'a F {
         match self {
             MaybeWired::One => one,
             MaybeWired::Arbitrary(value) => value.snag(),
@@ -150,22 +168,31 @@ impl<M: MaybeKind, F: Field> Mode for Wireless<M, F> {
     type LCenforce = ();
 }
 
-/// A driver used to execute circuit synthesis code and obtain the result of a
-/// computation without enforcing constraints or collecting a witness. Useful
-/// for obtaining the result of a computation that is later executed with
-/// another driver.
+/// A driver used to natively execute circuit code without enforcing
+/// constraints. This driver also short-circuit executes [`Routine`]s using
+/// their provided [`Routine::predict`] method when possible.
+///
+/// See the [module level documentation](self) for more information.
+///
+/// ## [`Mode`]
+///
+/// The [`Emulator`] driver is parameterized on a [`Mode`], which determines
+/// whether wire assignments are tracked or not ([`Wired`] vs. [`Wireless`]).
 pub struct Emulator<M: Mode>(PhantomData<M>);
 
 impl<M: MaybeKind, F: Field> Emulator<Wired<M, F>> {
-    /// Creates a new `Emulator` driver in wired mode, parameterized on the
-    /// existence of a witness.
-    ///
-    /// This driver does not enforce any constraints.
+    /// Creates a new [`Emulator`] driver in [`Wired`] mode, parameterized on
+    /// the existence of a witness.
     pub fn wired() -> Self {
         Emulator(PhantomData)
     }
 
-    /// Extract the raw wire values from a gadget.
+    /// Extract the wires from a gadget produced using a wired [`Emulator`].
+    ///
+    /// Wire assignments are not directly returned by this method because wired
+    /// [`Emulator`]s are parameterized by a [`MaybeKind`]. Instead,
+    /// [`MaybeWired`] wires are returned. If a witness [`Always`] exists then
+    /// the caller should prefer to use [`Emulator::always_wires`].
     pub fn wires<'dr, G: Gadget<'dr, Self>>(&self, gadget: &G) -> Result<Vec<MaybeWired<M, F>>> {
         /// A conversion utility for extracting wire values.
         struct WireExtractor<M: MaybeKind, F: Field> {
@@ -191,10 +218,8 @@ impl<M: MaybeKind, F: Field> Emulator<Wired<M, F>> {
 }
 
 impl<M: MaybeKind, F: Field> Emulator<Wireless<M, F>> {
-    /// Creates a new [`Emulator`] driver in [`Wireless`] mode, parameterized on the
-    /// existence of a witness.
-    ///
-    /// This driver does not enforce any constraints or track wire assignments.
+    /// Creates a new [`Emulator`] driver in [`Wireless`] mode, parameterized on
+    /// the existence of a witness.
     pub fn wireless() -> Self {
         Emulator(PhantomData)
     }
@@ -203,14 +228,12 @@ impl<M: MaybeKind, F: Field> Emulator<Wireless<M, F>> {
 impl<F: Field> Emulator<Wireless<Always<()>, F>> {
     /// Creates a new [`Emulator`] driver in [`Wireless`] mode, specifically for
     /// executing with a known witness.
-    ///
-    /// This driver does not enforce any constraints or track wire assignments.
     pub fn execute() -> Self {
         Self::wireless()
     }
 
-    /// Execute the provided closure with a fresh [`Emulator`] driver in
-    /// [`Wireless`] mode.
+    /// Helper utility for executing a closure with a freshly created wireless
+    /// [`Emulator`] when a witness is expected to exist.
     pub fn emulate_wireless<R, W: Send>(
         witness: W,
         f: impl FnOnce(&mut Self, Always<W>) -> Result<R>,
@@ -221,27 +244,24 @@ impl<F: Field> Emulator<Wireless<Always<()>, F>> {
 }
 
 impl<F: Field> Emulator<Wired<Always<()>, F>> {
-    /// Extract the raw wire values from a gadget.
-    ///
-    /// This is a proxy for [`Emulator::wires`] that assumes a witness always
-    /// exists.
+    /// Extract the wires from a gadget produced using a wired [`Emulator`] that
+    /// expects a witness to exist. This method returns the actual wire
+    /// assignments if it is successful.
     pub fn always_wires<'dr, G: Gadget<'dr, Self>>(&self, gadget: &G) -> Result<Vec<F>> {
         Ok(self.wires(gadget)?.into_iter().map(|w| w.value()).collect())
     }
 
-    /// Creates a new `Emulator` while tracking wire assignments, specifically
-    /// for extracting the wire values afterward.
+    /// Creates a new [`Emulator`] driver in [`Wired`] mode, specifically for
+    /// executing with a known witness.
     ///
-    /// This driver tracks all wire assignments and is only used in contexts
-    /// when a witness always exists. The [`Emulator::wires()`] method can be
-    /// used to extract the raw wire values from a gadget constructed using this
-    /// driver.
+    /// This is useful for extracting wire assignments from a [`Gadget`] using
+    /// [`Emulator::always_wires`].
     pub fn extractor() -> Self {
         Emulator(PhantomData)
     }
 
-    /// Execute the provided closure with a fresh [`Emulator`] driver in
-    /// [`Wired`] mode.
+    /// Helper utility for executing a closure with a freshly created wired
+    /// [`Emulator`] when a witness is expected to exist.
     pub fn emulate_wired<R, W: Send>(
         witness: W,
         f: impl FnOnce(&mut Self, Always<W>) -> Result<R>,
@@ -257,8 +277,7 @@ impl<M: Mode<F = F>, F: Field> Emulator<M> {
         f(self)
     }
 
-    /// Executes a closure with this driver, passing a witness value into the
-    /// closure and returning its output.
+    /// Helper utility for executing a closure with this [`Emulator`].
     pub fn with<R, W: Send>(
         &mut self,
         witness: W,
@@ -369,6 +388,8 @@ impl<'dr, M: MaybeKind, F: Field> Driver<'dr> for Emulator<Wired<M, F>> {
     }
 }
 
+/// Conversion utility useful for passing wireless gadgets into
+/// [`Routine::predict`] to fulfill type system obligations.
 impl<'dr, D: Driver<'dr>> FromDriver<'dr, '_, D> for Emulator<Wireless<D::MaybeKind, D::F>> {
     type NewDriver = Self;
 
