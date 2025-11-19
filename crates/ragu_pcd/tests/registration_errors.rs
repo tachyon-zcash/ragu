@@ -11,6 +11,7 @@ use ragu_pcd::{
     ApplicationBuilder,
     header::{Header, Prefix},
 };
+use rand::{SeedableRng, rngs::StdRng};
 
 // Header A with prefix 0
 struct HPrefixA;
@@ -175,4 +176,31 @@ fn register_steps_duplicate_prefix_should_fail() {
         .unwrap()
         .register(Step1Dup)
         .unwrap();
+}
+
+#[test]
+fn test_decide_random_proof() -> Result<()> {
+    let pasta = Pasta::default();
+
+    let app = ApplicationBuilder::<Pasta, R<8>, 4>::new()
+        .register(Step0)
+        .unwrap()
+        .register(Step1)
+        .unwrap()
+        .finalize(&pasta)
+        .unwrap();
+
+    let mut rng = StdRng::seed_from_u64(1234);
+
+    let trivial = app.trivial().carry::<()>(());
+    assert!(app.verify(&trivial, &mut rng).unwrap());
+
+    let rerandom = app.rerandomize(trivial.clone(), &mut rng).unwrap();
+    assert!(app.verify(&rerandom, &mut rng).unwrap());
+
+    let is_valid = app.verify(&rerandom, &mut rng)?;
+
+    assert!(is_valid, "Random proof should verify");
+
+    Ok(())
 }

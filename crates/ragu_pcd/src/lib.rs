@@ -110,6 +110,16 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         mut self,
         params: &'params C,
     ) -> Result<Application<'params, C, R, HEADER_SIZE>> {
+        // TODO: JIT-register the actual recursion circuits into the mesh before finalization.
+
+        // TODO: https://github.com/tachyon-zcash/ragu/issues/94.
+        //
+        // Before registering the recursion circuits, precompute the domain size,
+        // then register the recursion circuits and pass them the domain size
+        // accordingly. After registering recursion circuits, we pass them the
+        // domain size, and the recursion circuits need to validate the omega
+        // is in the expected domain.
+
         // First, insert all of the internal steps.
         self.circuit_mesh =
             self.circuit_mesh
@@ -124,6 +134,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             circuit_mesh: self.circuit_mesh.finalize(params.circuit_poseidon())?,
             params,
             num_application_steps: self.num_application_steps,
+            host_generators: params.host_generators(),
             _marker: PhantomData,
         })
     }
@@ -134,6 +145,7 @@ pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     circuit_mesh: Mesh<'params, C::CircuitField, R>,
     params: &'params C,
     num_application_steps: usize,
+    host_generators: &'params C::HostGenerators,
     _marker: PhantomData<[(); HEADER_SIZE]>,
 }
 
@@ -141,15 +153,28 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// Creates a trivial proof for the empty [`Header`] implementation `()`.
     /// This may or may not be identical to any previously constructed (trivial)
     /// proof, and so is not guaranteed to be freshly randomized.
+    ///
+    /// Uses deterministic blinding factors (ONE) to ensure commitments are never the
+    /// identity point while remaining cacheable. This is the base case for PCD accumulation.
     pub fn trivial(&self) -> Proof<C, R> {
-        proof::trivial::<C, R, HEADER_SIZE>(self.num_application_steps, &self.circuit_mesh)
+        proof::trivial::<C, R, HEADER_SIZE>(
+            self.num_application_steps,
+            &self.circuit_mesh,
+            self.host_generators,
+        )
     }
 
     /// Creates a random trivial proof for the empty [`Header`] implementation
     /// `()`. This takes more time to generate because it cannot be cached
     /// within the [`Application`].
-    fn random<'source, RNG: Rng>(&self, _rng: &mut RNG) -> Pcd<'source, C, R, ()> {
-        self.trivial().carry(())
+    fn random<'source, RNG: Rng>(&self, rng: &mut RNG) -> Pcd<'source, C, R, ()> {
+        proof::random::<C, R, RNG, HEADER_SIZE>(
+            self.num_application_steps,
+            &self.circuit_mesh,
+            self.host_generators,
+            rng,
+        )
+        .carry(())
     }
 
     /// Rerandomize proof-carrying data.
@@ -219,6 +244,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         pcd: &Pcd<'_, C, R, H>,
         rng: RNG,
     ) -> Result<bool> {
-        verify::verify::<C, R, RNG, H, HEADER_SIZE>(&self.circuit_mesh, pcd, rng)
+        verify::verify::<C, R, RNG, H, HEADER_SIZE>(
+            &self.circuit_mesh,
+            pcd,
+            self.host_generators,
+            rng,
+        )
     }
 }

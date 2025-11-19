@@ -36,6 +36,10 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
             right_header: right_header.into_inner(),
             rx,
             _marker: PhantomData,
+            witness: left.proof.witness,
+            instance: left.proof.instance,
+            endoscalars: left.proof.endoscalars,
+            deferreds: left.proof.deferreds,
         },
         aux,
     ))

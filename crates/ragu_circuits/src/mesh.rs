@@ -280,6 +280,16 @@ pub fn omega_j<F: PrimeField>(id: u32) -> F {
     F::ROOT_OF_UNITY.pow([bit_reversal_id as u64])
 }
 
+/// Computes the log2 domain size needed for the application and recursion
+/// circuits being registered.
+///
+/// This function extracts the domain size computation logic from
+/// [`MeshBuilder::finalize`] to allow pre-computing the domain size before
+/// finalization
+pub fn compute_domain_size(num_circuits: usize) -> u32 {
+    num_circuits.next_power_of_two().trailing_zeros()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{MeshBuilder, OmegaKey, omega_j};

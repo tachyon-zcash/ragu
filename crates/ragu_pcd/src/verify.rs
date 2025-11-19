@@ -20,8 +20,16 @@ use stub_step::StubStep;
 pub fn verify<C: Cycle, R: Rank, RNG: Rng, H: Header<C::CircuitField>, const HEADER_SIZE: usize>(
     circuit_mesh: &Mesh<'_, C::CircuitField, R>,
     pcd: &Pcd<'_, C, R, H>,
+    host_generators: &C::HostGenerators,
     mut rng: RNG,
 ) -> Result<bool> {
+    let witness = &pcd.proof.witness;
+    let instance = &pcd.proof.instance;
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // High-level revdot equation check: rx.revdot(rhs) == k(y)
+    ///////////////////////////////////////////////////////////////////////////////////////
+
     let rx = &pcd.proof.rx;
     let circuit_id = omega_j(pcd.proof.circuit_id as u32);
     let y = C::CircuitField::random(&mut rng);
@@ -46,7 +54,53 @@ pub fn verify<C: Cycle, R: Rank, RNG: Rng, H: Header<C::CircuitField>, const HEA
         adapter.ky(instance)?
     };
 
-    let valid = rx.revdot(&rhs) == eval(ky.iter(), y);
+    if rx.revdot(&rhs) != eval(ky.iter(), y) {
+        return Ok(false);
+    }
 
-    Ok(valid)
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // Witness/instance consistency checks
+    ///////////////////////////////////////////////////////////////////////////////////////
+
+    // Check revdot: a.revdot(b) == c.
+    if witness.a_poly.revdot(&witness.b_poly) != instance.c {
+        return Ok(false);
+    }
+
+    // Check polynomial evaluation: p_poly(u) == v.
+    if witness.p_poly.eval(instance.u.0) != instance.v.0 {
+        return Ok(false);
+    }
+
+    // Check mesh consistency: s_poly == mesh.xy(x, y).
+    if witness.s_poly != circuit_mesh.xy(instance.x.0, instance.y.0) {
+        return Ok(false);
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // Commitment opening checks (TODO: implement full IPA verification)
+    ///////////////////////////////////////////////////////////////////////////////////////
+
+    // Verify commitment openings with pedersen vector commitments.
+    let a_commitment = witness.a_poly.commit(host_generators, witness.a_blinding);
+    if a_commitment != instance.a {
+        return Ok(false);
+    }
+
+    let b_commitment = witness.b_poly.commit(host_generators, witness.b_blinding);
+    if b_commitment != instance.b {
+        return Ok(false);
+    }
+
+    let p_commitment = witness.p_poly.commit(host_generators, witness.p_blinding);
+    if p_commitment != instance.p {
+        return Ok(false);
+    }
+
+    let s_commitment = witness.s_poly.commit(host_generators, witness.s_blinding);
+    if s_commitment != instance.s {
+        return Ok(false);
+    }
+
+    Ok(true)
 }
