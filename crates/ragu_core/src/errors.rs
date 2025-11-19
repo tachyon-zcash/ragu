@@ -51,6 +51,10 @@ pub enum Error {
         /// Actual length observed at runtime
         actual: usize,
     },
+
+    /// Failure in the process of performing setup or other initialization steps.
+    #[error("initialization failed: {0}")]
+    Initialization(Box<dyn error::Error + Send + Sync + 'static>),
 }
 
 #[test]
@@ -90,5 +94,12 @@ fn test_error_display() {
             }
         ),
         "vector does not have the expected length: (expected 10, actual 5)"
+    );
+    assert_eq!(
+        format!(
+            "{}",
+            Error::Initialization("mesh registration failed".into())
+        ),
+        "initialization failed: mesh registration failed"
     );
 }
