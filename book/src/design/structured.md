@@ -27,10 +27,19 @@ a central component of Ragu's accumulation-based recursive SNARK protocol
 because it is natural to reduce into claims about univariate polynomials: given
 two polynomials $a, b \in \F[X]$ defined by the coefficient vectors $\v{a},
 \v{b} \in \F^n$ (respectively), the $n - 1$ degree coefficient of the product
-polynomial $a \cdot b$ is $\revdot{\v{a}}{\v{b}}$. Further, because a structured
-vector $\v{r}$ contains terms involving $\v{a}_i \cdot \v{b}_i$ within the
-expansion of $\revdot{\v{r}}{\v{\hat{r}}}$ we can cleanly encode multiplication
-constraints into claims about such vectors.
+polynomial $a \cdot b$ is $\revdot{\v{a}}{\v{b}}$.
+
+Further, observe that a structured vector $\v{r} = \v{c} || \v{\hat{b}} || \v{a} || \v{0}$
+has the expansion
+
+$$
+\begin{array}{ll}
+\revdot{\v{r}}{\v{r}} = 2 \sum_i \v{a}_i \v{b}_i
+\end{array}
+$$
+
+and so we can encode [multiplication constraints](circuits/constraints.md#multiplication-constraints)
+into claims about such vectors, using verifier challenges to keep the claims linearly independent.
 
 ### Folding
 
