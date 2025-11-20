@@ -9,24 +9,19 @@
 
 extern crate alloc;
 
-use arithmetic::Cycle;
-use ragu_circuits::{
-    Circuit,
-    mesh::{Mesh, MeshBuilder},
-    polynomials::Rank,
-};
-use ragu_core::{
-    Error, Result,
-    drivers::emulator::Emulator,
-    maybe::{Always, Maybe, MaybeKind},
-};
-use rand::Rng;
-
 use alloc::collections::BTreeMap;
+use arithmetic::Cycle;
 use core::{any::TypeId, marker::PhantomData};
-
+use ff::Field;
 pub use header::Header;
 pub use proof::{Pcd, Proof};
+use ragu_circuits::{
+    CircuitExt,
+    mesh::{self, Mesh, MeshBuilder},
+    polynomials::Rank,
+};
+use ragu_core::{Error, Result};
+use rand::Rng;
 pub use step::Step;
 use step::{Adapter, rerandomize::Rerandomize};
 
@@ -134,8 +129,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// Creates a trivial proof for the empty [`Header`] implementation `()`.
     /// This may or may not be identical to any previously constructed (trivial)
     /// proof, and so is not guaranteed to be freshly randomized.
-    pub fn trivial(&self) -> Proof<C> {
+    pub fn trivial(&self) -> Proof<C, R> {
         Proof {
+            rx: todo!(),
+            circuit_id: todo!(),
             _marker: PhantomData,
         }
     }
@@ -143,7 +140,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// Creates a random trivial proof for the empty [`Header`] implementation
     /// `()`. This takes more time to generate because it cannot be cached
     /// within the [`Application`].
-    fn random<'source, RNG: Rng>(&self, _rng: &mut RNG) -> Pcd<'source, C, ()> {
+    fn random<'source, RNG: Rng>(&self, _rng: &mut RNG) -> Pcd<'source, C, R, ()> {
         self.trivial().carry(())
     }
 
@@ -168,19 +165,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         _rng: &mut RNG,
         step: S,
         witness: S::Witness<'source>,
-        left: Pcd<'source, C, S::Left>,
-        right: Pcd<'source, C, S::Right>,
-    ) -> Result<(Proof<C>, S::Aux<'source>)> {
-        // TODO(ebfull): This should construct the actual witness rather than emulate.
-        let mut dr = Emulator::extractor();
-        let witness = Always::maybe_just(|| (left.data, right.data, witness));
-        let (_, aux) = Adapter::<C, S, R, HEADER_SIZE>::new(step).witness(&mut dr, witness)?;
+        left: Pcd<'source, C, R, S::Left>,
+        right: Pcd<'source, C, R, S::Right>,
+    ) -> Result<(Proof<C, R>, S::Aux<'source>)> {
+        let circuit_id = mesh::omega_j(S::INDEX.map() as u32);
+
+        let circuit = Adapter::<C, S, R, HEADER_SIZE>::new(step);
+        let (rx, aux) = circuit.rx((left.data, right.data, witness))?;
 
         Ok((
             Proof {
+                rx,
+                circuit_id,
                 _marker: PhantomData,
             },
-            aux.take(),
+            aux,
         ))
     }
 
@@ -193,9 +192,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// result on the provided `pcd` as it would the output of this method.
     pub fn rerandomize<'source, RNG: Rng, H: Header<C::CircuitField>>(
         &self,
-        pcd: Pcd<'source, C, H>,
+        pcd: Pcd<'source, C, R, H>,
         rng: &mut RNG,
-    ) -> Result<Pcd<'source, C, H>> {
+    ) -> Result<Pcd<'source, C, R, H>> {
         let random_proof = self.random(rng);
         let data = pcd.data.clone();
         let rerandomized_proof = self.merge(rng, Rerandomize::new(), (), pcd, random_proof)?;
@@ -204,7 +203,26 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     }
 
     /// Verifies some [`Pcd`] for the provided [`Header`].
-    pub fn verify<H: Header<C::CircuitField>>(&self, _pcd: &Pcd<'_, C, H>) -> Result<bool> {
+    pub fn verify<RNG: Rng, H: Header<C::CircuitField>>(
+        &self,
+        pcd: &Pcd<'_, C, R, H>,
+        rng: &mut RNG,
+    ) -> Result<bool> {
+        let rx = &pcd.proof.rx;
+        let circuit_id = pcd.proof.circuit_id;
+        let y = C::CircuitField::random(rng);
+        let z = C::CircuitField::random(rng);
+        let sy = self._circuit_mesh.wy(circuit_id, y);
+        let tz = R::tz(z);
+
+        let mut rhs = rx.clone();
+        rhs.dilate(z);
+        rhs.add_assign(&sy);
+        rhs.add_assign(&tz);
+
+        // TODO: implement revdot and ky functions
+        // revdot(rx, rhs) == ky();
+
         Ok(true)
     }
 }
