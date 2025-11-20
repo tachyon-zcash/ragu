@@ -9,12 +9,8 @@
 
 extern crate alloc;
 
-use alloc::collections::BTreeMap;
 use arithmetic::Cycle;
-use core::{any::TypeId, marker::PhantomData};
 use ff::Field;
-pub use header::Header;
-pub use proof::{Pcd, Proof};
 use ragu_circuits::{
     CircuitExt,
     mesh::{self, Mesh, MeshBuilder},
@@ -22,6 +18,12 @@ use ragu_circuits::{
 };
 use ragu_core::{Error, Result};
 use rand::Rng;
+
+use alloc::collections::BTreeMap;
+use core::{any::TypeId, marker::PhantomData};
+
+pub use header::Header;
+pub use proof::{Pcd, Proof};
 pub use step::Step;
 use step::{Adapter, rerandomize::Rerandomize};
 
@@ -206,12 +208,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     pub fn verify<RNG: Rng, H: Header<C::CircuitField>>(
         &self,
         pcd: &Pcd<'_, C, R, H>,
-        rng: &mut RNG,
+        mut rng: RNG,
     ) -> Result<bool> {
         let rx = &pcd.proof.rx;
         let circuit_id = pcd.proof.circuit_id;
-        let y = C::CircuitField::random(rng);
-        let z = C::CircuitField::random(rng);
+        let y = C::CircuitField::random(&mut rng);
+        let z = C::CircuitField::random(&mut rng);
         let sy = self._circuit_mesh.wy(circuit_id, y);
         let tz = R::tz(z);
 
