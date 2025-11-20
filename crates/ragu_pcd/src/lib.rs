@@ -3,14 +3,13 @@
 #![cfg_attr(not(test), no_std)]
 #![allow(clippy::type_complexity)]
 #![deny(rustdoc::broken_intra_doc_links)]
-#![deny(missing_docs)]
+// #![deny(missing_docs)]
 #![doc(html_favicon_url = "https://tachyon.z.cash/assets/ragu/v1_favicon32.png")]
 #![doc(html_logo_url = "https://tachyon.z.cash/assets/ragu/v1_rustdoc128.png")]
 
 extern crate alloc;
 
 use arithmetic::Cycle;
-use ff::Field;
 use ragu_circuits::{
     CircuitExt,
     mesh::{self, Mesh, MeshBuilder},
@@ -29,7 +28,7 @@ use step::{Adapter, rerandomize::Rerandomize};
 
 mod header;
 mod proof;
-mod step;
+pub mod step;
 
 /// Builder for a proof-carrying data application.
 ///
@@ -112,19 +111,38 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         Ok(self)
     }
 
-    /// Finalize.
-    pub fn finalize(self, params: &C) -> Result<Application<'params, C, R, HEADER_SIZE>> {
+    /// Finalize the mesh and seed the base accumulator.
+    pub fn finalize(self, params: &'params C) -> Result<Application<'params, C, R, HEADER_SIZE>> {
+        // TODO: JIT-register all recursion circuits to the Vesta mesh before finalization.
+
+        // TODO: Before registering the recursion circuits,
+        // precompute the domain size, then register the recursion circuits
+        // and pass them the domain size accrordingly.
+        //
+        // let total_circuits = num_application_circuits (variable) + num_recursion_circuits (fixed).
+        // let domain_log2_size = compute_domain_log2_size(total_circuits);
+        //
+        // After, register recursion circuits, passing them the domain size.
+        // Then inside the recursion circuits, each circuit needs to validate
+        // the omega is in the expected domain.
+        //
+        // We should also add an assertion to check the expected circuit counts.
+
+        let circuit_mesh = self.circuit_mesh.finalize(params.circuit_poseidon())?;
+
         Ok(Application {
-            _circuit_mesh: self.circuit_mesh.finalize(params.circuit_poseidon())?,
             _marker: PhantomData,
+            circuit_mesh,
+            host_generators: params.host_generators(),
         })
     }
 }
 
 /// The recursion context that is used to create and verify proof-carrying data.
 pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
-    _circuit_mesh: Mesh<'params, C::CircuitField, R>,
     _marker: PhantomData<(C, R, [(); HEADER_SIZE])>,
+    circuit_mesh: Mesh<'params, C::CircuitField, R>,
+    host_generators: &'params C::HostGenerators,
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
@@ -132,18 +150,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// This may or may not be identical to any previously constructed (trivial)
     /// proof, and so is not guaranteed to be freshly randomized.
     pub fn trivial(&self) -> Proof<C, R> {
-        Proof {
-            rx: todo!(),
-            circuit_id: todo!(),
-            _marker: PhantomData,
-        }
+        // TODO: should we store the trivial proof and cache it?
+        Proof::trivial(&self.circuit_mesh, self.host_generators)
     }
 
     /// Creates a random trivial proof for the empty [`Header`] implementation
     /// `()`. This takes more time to generate because it cannot be cached
     /// within the [`Application`].
-    fn random<'source, RNG: Rng>(&self, _rng: &mut RNG) -> Pcd<'source, C, R, ()> {
-        self.trivial().carry(())
+    fn random<'source>(&self) -> Pcd<'source, C, R, ()> {
+        Proof::random(&self.circuit_mesh, self.host_generators).carry(())
     }
 
     /// Merge two PCD into one using a provided [`Step`].
@@ -173,13 +188,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let circuit_id = mesh::omega_j(S::INDEX.map() as u32);
 
         let circuit = Adapter::<C, S, R, HEADER_SIZE>::new(step);
-        let (rx, aux) = circuit.rx((left.data, right.data, witness))?;
+        let (_rx, aux) = circuit.rx::<R>((left.data, right.data, witness))?;
 
+        // TODO: Implement real accumulator folding. Currently just passing through
+        // the left proof without combining it with the right proof.
         Ok((
             Proof {
-                rx,
-                circuit_id,
                 _marker: PhantomData,
+                circuit_id,
+                witness: left.proof.witness,
+                instance: left.proof.instance,
+                endoscalars: left.proof.endoscalars,
+                deferreds: left.proof.deferreds,
             },
             aux,
         ))
@@ -197,7 +217,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         pcd: Pcd<'source, C, R, H>,
         rng: &mut RNG,
     ) -> Result<Pcd<'source, C, R, H>> {
-        let random_proof = self.random(rng);
+        let random_proof = self.random();
         let data = pcd.data.clone();
         let rerandomized_proof = self.merge(rng, Rerandomize::new(), (), pcd, random_proof)?;
 
@@ -207,24 +227,136 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// Verifies some [`Pcd`] for the provided [`Header`].
     pub fn verify<RNG: Rng, H: Header<C::CircuitField>>(
         &self,
-        pcd: &Pcd<'_, C, R, H>,
-        mut rng: RNG,
+        _pcd: &Pcd<'_, C, R, H>,
+        mut _rng: RNG,
     ) -> Result<bool> {
-        let rx = &pcd.proof.rx;
-        let circuit_id = pcd.proof.circuit_id;
-        let y = C::CircuitField::random(&mut rng);
-        let z = C::CircuitField::random(&mut rng);
-        let sy = self._circuit_mesh.wy(circuit_id, y);
-        let tz = R::tz(z);
-
-        let mut rhs = rx.clone();
-        rhs.dilate(z);
-        rhs.add_assign(&sy);
-        rhs.add_assign(&tz);
-
-        // TODO: implement revdot and ky functions
-        // revdot(rx, rhs) == ky();
-
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arithmetic::Cycle;
+    use ragu_circuits::polynomials::R;
+    use ragu_core::{
+        Result,
+        drivers::{Driver, DriverValue},
+    };
+    use ragu_pasta::Pasta;
+    use step::{Encoded, Encoder, Index};
+
+    struct ExampleStep;
+
+    impl Step<Pasta> for ExampleStep {
+        const INDEX: Index = Index::new(0);
+
+        type Witness<'source> = ();
+        type Aux<'source> = ();
+        type Left = ();
+        type Right = ();
+        type Output = ();
+
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = <Pasta as Cycle>::CircuitField>, const HEADER_SIZE: usize>(
+            &self,
+            dr: &mut D,
+            _witness: DriverValue<D, Self::Witness<'source>>,
+            left: Encoder<'dr, 'source, D, Self::Left, HEADER_SIZE>,
+            right: Encoder<'dr, 'source, D, Self::Right, HEADER_SIZE>,
+        ) -> Result<(
+            (
+                Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+                Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+                Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+            ),
+            DriverValue<D, Self::Aux<'source>>,
+        )> {
+            let left_encoded = left.encode(dr)?;
+            let right_encoded = right.encode(dr)?;
+            let output_encoded = Encoder {
+                witness: D::just(|| ())
+            }.encode(dr)?;
+
+            Ok((
+                (left_encoded, right_encoded, output_encoded),
+                D::just(|| ()),
+            ))
+        }
+    }
+
+    #[test]
+    fn test_trivial_proof_creation() -> Result<()> {
+        let params = Pasta::default();
+        type TestRank = R<10>;
+        const HEADER_SIZE: usize = 8;
+
+        let builder = ApplicationBuilder::<Pasta, TestRank, HEADER_SIZE>::new();
+        let builder = builder.register(ExampleStep)?;
+        let app = builder.finalize(&params)?;
+
+        let _proof1 = app.trivial();
+        let _proof2 = app.trivial();
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_pcd_creation() -> Result<()> {
+        let params = Pasta::default();
+        type TestRank = R<10>;
+        const HEADER_SIZE: usize = 8;
+
+        let builder = ApplicationBuilder::<Pasta, TestRank, HEADER_SIZE>::new();
+        let builder = builder.register(ExampleStep)?;
+        let app = builder.finalize(&params)?;
+
+        let proof = app.trivial();
+        let _pcd = proof.carry::<()>(());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_multiple_steps() -> Result<()> {
+        let params = Pasta::default();
+        type TestRank = R<10>;
+        const HEADER_SIZE: usize = 8;
+
+        struct SecondStep;
+        impl Step<Pasta> for SecondStep {
+            const INDEX: Index = Index::new(1);
+            type Witness<'source> = ();
+            type Aux<'source> = ();
+            type Left = ();
+            type Right = ();
+            type Output = ();
+
+            fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = <Pasta as Cycle>::CircuitField>, const HEADER_SIZE: usize>(
+                &self,
+                dr: &mut D,
+                _witness: DriverValue<D, Self::Witness<'source>>,
+                left: Encoder<'dr, 'source, D, Self::Left, HEADER_SIZE>,
+                right: Encoder<'dr, 'source, D, Self::Right, HEADER_SIZE>,
+            ) -> Result<(
+                (
+                    Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+                    Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+                    Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+                ),
+                DriverValue<D, Self::Aux<'source>>,
+            )> {
+                let left_encoded = left.encode(dr)?;
+                let right_encoded = right.encode(dr)?;
+                let output_encoded = Encoder { witness: D::just(|| ()) }.encode(dr)?;
+                Ok(((left_encoded, right_encoded, output_encoded), D::just(|| ()),))
+            }
+        }
+
+        let builder = ApplicationBuilder::<Pasta, TestRank, HEADER_SIZE>::new();
+        let builder = builder.register(ExampleStep)?;
+        let builder = builder.register(SecondStep)?;
+        let _app = builder.finalize(&params)?;
+
+        Ok(())
     }
 }

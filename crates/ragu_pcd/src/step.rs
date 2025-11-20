@@ -13,7 +13,7 @@ use ragu_core::{
 use ragu_primitives::{
     Element, GadgetExt,
     io::Buffer,
-    vec::{FixedVec, Len},
+    vec::{ConstLen, FixedVec, Len},
 };
 
 use alloc::vec::Vec;
@@ -194,13 +194,13 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
     }
 }
 pub struct Encoder<'dr, 'source: 'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_SIZE: usize> {
-    witness: DriverValue<D, H::Data<'source>>,
+    pub(crate) witness: DriverValue<D, H::Data<'source>>,
 }
 
 /// The result of running [`Header::encode`].
 pub enum Encoded<'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_SIZE: usize> {
     Gadget(<H::Output as GadgetKind<D::F>>::Rebind<'dr, D>),
-    Raw(FixedVec<Element<'dr, D>, OneLargerConstLen<HEADER_SIZE>>),
+    Raw(FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>),
 }
 
 impl<'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_SIZE: usize> Clone
