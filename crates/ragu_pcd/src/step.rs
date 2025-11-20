@@ -221,6 +221,16 @@ impl<'dr, D: Driver<'dr, F: PrimeField>, H: Header<D::F>, const HEADER_SIZE: usi
         Encoded::Gadget(gadget)
     }
 
+
+    /// Returns a reference to the gadget if this is a `Gadget` encoding.
+    /// Returns `None` if this is a `Raw` encoding.
+    pub fn as_gadget(&self) -> Option<&<H::Output as GadgetKind<D::F>>::Rebind<'dr, D>> {
+        match self {
+            Encoded::Gadget(g) => Some(g),
+            Encoded::Raw(_) => None,
+        }
+    }
+
     fn write(self, dr: &mut D, buf: &mut Vec<Element<'dr, D>>) -> Result<()> {
         match self {
             Encoded::Gadget(gadget) => {
