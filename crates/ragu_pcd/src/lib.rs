@@ -28,7 +28,7 @@ use step::{Adapter, rerandomize::Rerandomize};
 
 mod header;
 mod proof;
-pub mod step;
+mod step;
 
 /// Builder for a proof-carrying data application.
 ///
@@ -300,7 +300,7 @@ mod tests {
         let builder = builder.register(ExampleStep)?;
         let app = builder.finalize(&params)?;
 
-        let proof = app.trivial();
+        let _proof = app.trivial();
 
         Ok(())
     }

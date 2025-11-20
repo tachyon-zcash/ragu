@@ -125,15 +125,6 @@ impl<const N: usize> Len for TripleConstLen<N> {
     }
 }
 
-/// Represents one larger than a length determined at compile time.
-pub struct OneLargerConstLen<const N: usize>;
-
-impl<const N: usize> Len for OneLargerConstLen<N> {
-    fn len() -> usize {
-        N + 1
-    }
-}
-
 pub(crate) struct Adapter<C, S, R, const HEADER_SIZE: usize> {
     step: S,
     _marker: PhantomData<(C, R)>,
