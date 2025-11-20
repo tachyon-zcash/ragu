@@ -257,7 +257,12 @@ mod tests {
         type Right = ();
         type Output = ();
 
-        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = <Pasta as Cycle>::CircuitField>, const HEADER_SIZE: usize>(
+        fn witness<
+            'dr,
+            'source: 'dr,
+            D: Driver<'dr, F = <Pasta as Cycle>::CircuitField>,
+            const HEADER_SIZE: usize,
+        >(
             &self,
             dr: &mut D,
             _witness: DriverValue<D, Self::Witness<'source>>,
@@ -274,8 +279,9 @@ mod tests {
             let left_encoded = left.encode(dr)?;
             let right_encoded = right.encode(dr)?;
             let output_encoded = Encoder {
-                witness: D::just(|| ())
-            }.encode(dr)?;
+                witness: D::just(|| ()),
+            }
+            .encode(dr)?;
 
             Ok((
                 (left_encoded, right_encoded, output_encoded),
@@ -294,8 +300,7 @@ mod tests {
         let builder = builder.register(ExampleStep)?;
         let app = builder.finalize(&params)?;
 
-        let _proof1 = app.trivial();
-        let _proof2 = app.trivial();
+        let proof = app.trivial();
 
         Ok(())
     }
@@ -331,7 +336,12 @@ mod tests {
             type Right = ();
             type Output = ();
 
-            fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = <Pasta as Cycle>::CircuitField>, const HEADER_SIZE: usize>(
+            fn witness<
+                'dr,
+                'source: 'dr,
+                D: Driver<'dr, F = <Pasta as Cycle>::CircuitField>,
+                const HEADER_SIZE: usize,
+            >(
                 &self,
                 dr: &mut D,
                 _witness: DriverValue<D, Self::Witness<'source>>,
@@ -347,8 +357,14 @@ mod tests {
             )> {
                 let left_encoded = left.encode(dr)?;
                 let right_encoded = right.encode(dr)?;
-                let output_encoded = Encoder { witness: D::just(|| ()) }.encode(dr)?;
-                Ok(((left_encoded, right_encoded, output_encoded), D::just(|| ()),))
+                let output_encoded = Encoder {
+                    witness: D::just(|| ()),
+                }
+                .encode(dr)?;
+                Ok((
+                    (left_encoded, right_encoded, output_encoded),
+                    D::just(|| ()),
+                ))
             }
         }
 

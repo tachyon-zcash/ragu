@@ -22,8 +22,10 @@ pub struct Proof<C: Cycle, R: Rank> {
     // Split-accumulation instance polynomials.
     pub(crate) instance: AccumulatorInstance<C>,
 
-    // Deferred points for curve cycle.
+    // Endoscalar points to be processed in this curve in the cycle (native curve).
     pub(crate) endoscalars: Vec<C::HostCurve>,
+
+    // Deferred points to be processed in the next curve in the cycle (nested curve).
     pub(crate) deferreds: Vec<C::NestedCurve>,
 }
 
