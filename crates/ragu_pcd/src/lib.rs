@@ -15,6 +15,8 @@ use ragu_core::Result;
 
 use core::marker::PhantomData;
 
+mod step;
+
 /// Builder for an [`Application`](crate::Application) for proof-carrying data.
 pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     _marker: PhantomData<(C, R, [(); HEADER_SIZE], &'params ())>,
