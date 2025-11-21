@@ -1,10 +1,12 @@
 use arithmetic::Cycle;
 use ragu_circuits::{
+    CircuitObject,
     mesh::Mesh,
     polynomials::{Rank, structured, unstructured},
 };
 use rand::thread_rng;
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 use ff::Field;
@@ -22,11 +24,29 @@ pub struct Proof<C: Cycle, R: Rank> {
     // Split-accumulation instance polynomials.
     pub(crate) instance: AccumulatorInstance<C>,
 
-    // Endoscalar points to be processed in this curve in the cycle (native curve).
+    // Endoscalar points we want to endoscale this round (native to the circuit).
     pub(crate) endoscalars: Vec<C::HostCurve>,
 
     // Deferred points to be processed in the next curve in the cycle (nested curve).
     pub(crate) deferreds: Vec<C::NestedCurve>,
+
+    /// Staged circuits created in round.
+    pub staged_circuits: Vec<StagedCircuitData<C, R>>,
+}
+
+/// Data for a staged circuit that needs consistency verification.
+pub struct StagedCircuitData<C: Cycle, R: Rank> {
+    /// The final r(X) polynomial from the staged circuit.
+    pub(crate) final_rx: structured::Polynomial<C::CircuitField, R>,
+
+    /// The circuit ID (omega value) for mesh lookups.
+    pub(crate) circuit_id: C::CircuitField,
+
+    /// The ky polynomial (public inputs).
+    pub(crate) ky: Vec<C::CircuitField>,
+
+    /// The circuit object for computing s(X, y).
+    pub circuit: Box<dyn CircuitObject<C::CircuitField, R>>,
 }
 
 impl<C: Cycle, R: Rank> Proof<C, R> {
@@ -89,6 +109,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             },
             endoscalars: Vec::new(),
             deferreds: Vec::new(),
+            staged_circuits: Vec::new(),
         }
     }
 
@@ -146,6 +167,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             },
             endoscalars: Vec::new(),
             deferreds: Vec::new(),
+            staged_circuits: Vec::new(),
         }
     }
 

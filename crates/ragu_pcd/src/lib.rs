@@ -11,11 +11,12 @@ extern crate alloc;
 
 use arithmetic::Cycle;
 use ragu_circuits::{
-    CircuitExt,
     mesh::{self, Mesh, MeshBuilder},
     polynomials::Rank,
 };
-use ragu_core::{Error, Result};
+use ragu_core::{Error, Result, drivers::emulator::Emulator};
+use ragu_pasta::PoseidonFp;
+use ragu_primitives::Sponge;
 use rand::Rng;
 
 use alloc::collections::BTreeMap;
@@ -180,29 +181,71 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     fn merge<'source, RNG: Rng, S: Step<C>>(
         &self,
         _rng: &mut RNG,
-        step: S,
-        witness: S::Witness<'source>,
+        _step: S,
+        _witness: S::Witness<'source>,
         left: Pcd<'source, C, R, S::Left>,
         right: Pcd<'source, C, R, S::Right>,
-    ) -> Result<(Proof<C, R>, S::Aux<'source>)> {
+    ) -> Result<Proof<C, R>> {
+        // Simulate a dummy transcript object using Poseidon sponge construction, using an
+        // emulator driver to run the sponge permutation. The permutations are treated as
+        // as a fixed-length hash for fiat-shamir challenge derivation.
+        //
+        // TODO: Replace with a real transcript abstraction.
+        let mut em = Emulator::execute();
+        let mut _transcript = Sponge::new(&mut em, &PoseidonFp);
+
+        // Circuit ID of this proof.
         let circuit_id = mesh::omega_j(S::INDEX.map() as u32);
 
-        let circuit = Adapter::<C, S, R, HEADER_SIZE>::new(step);
-        let (_rx, aux) = circuit.rx::<R>((left.data, right.data, witness))?;
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // PHASE: Process endoscalars.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // TODO: Determine the endoscaling operations, representing deferreds from the
+        // other curve.
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // PHASE: Process `StagedObjects` for staging consistency from the previous cycle.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // Checks each staged circuit's constraint polynomial r(X) satisfies the mesh consistency equation.
+        for staged_data in &left.proof.staged_circuits {
+            let y_challenge = left.proof.instance.y.0;
+            let sy = self.circuit_mesh.wy(staged_data.circuit_id, y_challenge);
+            let ky_at_y = arithmetic::eval(&staged_data.ky, y_challenge);
+            let lhs = staged_data.final_rx.revdot(&sy);
+            if lhs != ky_at_y {
+                return Err(Error::InvalidWitness(
+                    "Staged circuit constraint check failed (left proof): rx.revdot(sy) != ky(y)"
+                        .into(),
+                ));
+            }
+        }
+
+        for staged_data in &right.proof.staged_circuits {
+            let y_challenge = right.proof.instance.y.0;
+            let sy = self.circuit_mesh.wy(staged_data.circuit_id, y_challenge);
+            let ky_at_y = arithmetic::eval(&staged_data.ky, y_challenge);
+            let lhs = staged_data.final_rx.revdot(&sy);
+            if lhs != ky_at_y {
+                return Err(Error::InvalidWitness(
+                    "Staged circuit constraint check failed (right proof): rx.revdot(sy) != ky(y)"
+                        .into(),
+                ));
+            }
+        }
 
         // TODO: Implement real accumulator folding. Currently just passing through
         // the left proof without combining it with the right proof.
-        Ok((
-            Proof {
-                _marker: PhantomData,
-                circuit_id,
-                witness: left.proof.witness,
-                instance: left.proof.instance,
-                endoscalars: left.proof.endoscalars,
-                deferreds: left.proof.deferreds,
-            },
-            aux,
-        ))
+        Ok(Proof {
+            _marker: PhantomData,
+            circuit_id,
+            witness: left.proof.witness,
+            instance: left.proof.instance,
+            endoscalars: left.proof.endoscalars,
+            deferreds: left.proof.deferreds,
+            staged_circuits: left.proof.staged_circuits,
+        })
     }
 
     /// Rerandomize proof-carrying data.
@@ -221,7 +264,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let data = pcd.data.clone();
         let rerandomized_proof = self.merge(rng, Rerandomize::new(), (), pcd, random_proof)?;
 
-        Ok(rerandomized_proof.0.carry(data))
+        Ok(rerandomized_proof.carry(data))
     }
 
     /// Verifies some [`Pcd`] for the provided [`Header`].
@@ -433,6 +476,27 @@ mod tests {
 
         // Currently decide() returns true always, but this exercises the API.
         assert!(is_valid, "Random proof should verify");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_merge_random_proofs() -> Result<()> {
+        let params = Pasta::default();
+        let builder = ApplicationBuilder::<Pasta, R<10>, HEADER_SIZE>::new();
+        let builder = builder.register(ExampleStep)?;
+        let app = builder.finalize(&params)?;
+
+        let left_pcd = app.random();
+        let right_pcd = app.random();
+
+        // This is currently a fake merge.
+        let merged_proof = app.merge(&mut thread_rng(), ExampleStep, (), left_pcd, right_pcd)?;
+
+        let pcd = merged_proof.carry::<()>(());
+        let is_valid = app.decide(&pcd, &mut thread_rng())?;
+
+        assert!(is_valid, "Merged proof should verify");
 
         Ok(())
     }
