@@ -1,5 +1,6 @@
 use super::header::Header;
 
+mod encoder;
 mod padded;
 
 /// Internal representation of a [`Step`] index distinguishing internal vs.
