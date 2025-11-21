@@ -210,7 +210,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// This will internally fold the [`Pcd`] with a random proof instance using
     /// an internal rerandomization step, such that the resulting proof is valid
     /// for the same [`Header`] but reveals nothing else about the original
-    /// proof. As a result, [`Application::verify`] should produce the same
+    /// proof. As a result, [`Application::decide`] should produce the same
     /// result on the provided `pcd` as it would the output of this method.
     pub fn rerandomize<'source, RNG: Rng, H: Header<C::CircuitField>>(
         &self,
@@ -225,11 +225,62 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     }
 
     /// Verifies some [`Pcd`] for the provided [`Header`].
-    pub fn verify<RNG: Rng, H: Header<C::CircuitField>>(
+    pub fn decide<RNG: Rng, H: Header<C::CircuitField>>(
         &self,
-        _pcd: &Pcd<'_, C, R, H>,
+        pcd: &Pcd<'_, C, R, H>,
         mut _rng: RNG,
     ) -> Result<bool> {
+        // Extract accumulator polynomials from witness
+        let witness = &pcd.proof.witness;
+        let instance = &pcd.proof.instance;
+
+        // 1. Check that a.revdot(b) == c.
+        let c_check = witness.a_poly.revdot(&witness.b_poly);
+        if c_check != instance.c {
+            return Ok(false);
+        }
+
+        // 2. Check that p_poly(u) == v.
+        let v_check = witness.p_poly.eval(instance.u.0);
+        if v_check != instance.v.0 {
+            return Ok(false);
+        }
+
+        // 3. Check mesh consistency: s_poly == mesh.xy(x, y).
+        let s_expected = self.circuit_mesh.xy(instance.x.0, instance.y.0);
+        if witness.s_poly != s_expected {
+            return Ok(false);
+        }
+
+        // 4. Verify commitment openings pedersen vector commitment (...implement full IPA verification obviously).
+        let a_commitment = witness
+            .a_poly
+            .commit(self.host_generators, witness.a_blinding);
+        if a_commitment != instance.a {
+            return Ok(false);
+        }
+
+        let b_commitment = witness
+            .b_poly
+            .commit(self.host_generators, witness.b_blinding);
+        if b_commitment != instance.b {
+            return Ok(false);
+        }
+
+        let p_commitment = witness
+            .p_poly
+            .commit(self.host_generators, witness.p_blinding);
+        if p_commitment != instance.p {
+            return Ok(false);
+        }
+
+        let s_commitment = witness
+            .s_poly
+            .commit(self.host_generators, witness.s_blinding);
+        if s_commitment != instance.s {
+            return Ok(false);
+        }
+
         Ok(true)
     }
 }
@@ -244,7 +295,10 @@ mod tests {
         drivers::{Driver, DriverValue},
     };
     use ragu_pasta::Pasta;
+    use rand::thread_rng;
     use step::{Encoded, Encoder, Index};
+
+    const HEADER_SIZE: usize = 8;
 
     struct ExampleStep;
 
@@ -293,10 +347,7 @@ mod tests {
     #[test]
     fn test_trivial_proof_creation() -> Result<()> {
         let params = Pasta::default();
-        type TestRank = R<10>;
-        const HEADER_SIZE: usize = 8;
-
-        let builder = ApplicationBuilder::<Pasta, TestRank, HEADER_SIZE>::new();
+        let builder = ApplicationBuilder::<Pasta, R<10>, HEADER_SIZE>::new();
         let builder = builder.register(ExampleStep)?;
         let app = builder.finalize(&params)?;
 
@@ -308,10 +359,7 @@ mod tests {
     #[test]
     fn test_pcd_creation() -> Result<()> {
         let params = Pasta::default();
-        type TestRank = R<10>;
-        const HEADER_SIZE: usize = 8;
-
-        let builder = ApplicationBuilder::<Pasta, TestRank, HEADER_SIZE>::new();
+        let builder = ApplicationBuilder::<Pasta, R<10>, HEADER_SIZE>::new();
         let builder = builder.register(ExampleStep)?;
         let app = builder.finalize(&params)?;
 
@@ -324,8 +372,6 @@ mod tests {
     #[test]
     fn test_multiple_steps() -> Result<()> {
         let params = Pasta::default();
-        type TestRank = R<10>;
-        const HEADER_SIZE: usize = 8;
 
         struct SecondStep;
         impl Step<Pasta> for SecondStep {
@@ -368,10 +414,26 @@ mod tests {
             }
         }
 
-        let builder = ApplicationBuilder::<Pasta, TestRank, HEADER_SIZE>::new();
+        let builder = ApplicationBuilder::<Pasta, R<10>, HEADER_SIZE>::new();
         let builder = builder.register(ExampleStep)?;
         let builder = builder.register(SecondStep)?;
         let _app = builder.finalize(&params)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_decide_random_proof() -> Result<()> {
+        let params = Pasta::default();
+        let builder = ApplicationBuilder::<Pasta, R<10>, HEADER_SIZE>::new();
+        let builder = builder.register(ExampleStep)?;
+        let app = builder.finalize(&params)?;
+
+        let pcd = app.random();
+        let is_valid = app.decide(&pcd, &mut thread_rng())?;
+
+        // Currently decide() returns true always, but this exercises the API.
+        assert!(is_valid, "Random proof should verify");
 
         Ok(())
     }
