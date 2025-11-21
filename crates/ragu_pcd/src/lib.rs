@@ -247,13 +247,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         }
 
         ///////////////////////////////////////////////////////////////////////////////////////
-        // Phase: Process the application circuits. The witness polynomials
-        // r(X) are over the `C::CircuitField`, and produce commitments to `C::HostCurve`
-        // curve points.
+        // Phase: Process the step circuit. The witness polynomial r(X) is over the
+        // `C::CircuitField`, and produce commitment to a `C::HostCurve` curve point.
         ///////////////////////////////////////////////////////////////////////////////////////
 
         ///////////////////////////////////////////////////////////////////////////////////////
-        // Task: Execute application logic via `Step::witness()` through the Adapter.
+        // Task: Execute application logic via `Step::witness()` through the `Adapter`.
         ///////////////////////////////////////////////////////////////////////////////////////
 
         // Create adapter which wraps the step and implements the `Circuit`.
