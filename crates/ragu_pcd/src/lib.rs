@@ -230,17 +230,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         pcd: &Pcd<'_, C, R, H>,
         mut _rng: RNG,
     ) -> Result<bool> {
-        // Extract accumulator polynomials from witness
         let witness = &pcd.proof.witness;
         let instance = &pcd.proof.instance;
 
-        // 1. Check that a.revdot(b) == c.
+        // 1. Check revdot: a.revdot(b) == c.
         let c_check = witness.a_poly.revdot(&witness.b_poly);
         if c_check != instance.c {
             return Ok(false);
         }
 
-        // 2. Check that p_poly(u) == v.
+        // 2. Check polynomial evaluation: p_poly(u) == v.
         let v_check = witness.p_poly.eval(instance.u.0);
         if v_check != instance.v.0 {
             return Ok(false);
@@ -252,7 +251,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             return Ok(false);
         }
 
-        // 4. Verify commitment openings pedersen vector commitment (...implement full IPA verification obviously).
+        // 4. Verify commitment openings with pedersen vector commitment (later implement full IPA verification obviously).
         let a_commitment = witness
             .a_poly
             .commit(self.host_generators, witness.a_blinding);
