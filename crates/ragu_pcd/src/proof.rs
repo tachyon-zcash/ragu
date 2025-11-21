@@ -227,3 +227,14 @@ pub struct ChallengePoint<F>(pub F);
 
 #[derive(Debug)]
 pub struct EvaluationPoint<F>(pub F);
+
+pub struct CommittedPolynomial<P, C: Cycle> {
+    pub poly: P,
+    pub blind: C::CircuitField,
+    pub commitment: C::HostCurve,
+}
+
+pub type CommittedStructured<R, C> =
+    CommittedPolynomial<structured::Polynomial<<C as Cycle>::CircuitField, R>, C>;
+pub type CommittedUnstructured<R, C> =
+    CommittedPolynomial<unstructured::Polynomial<<C as Cycle>::CircuitField, R>, C>;

@@ -8,7 +8,7 @@ use ragu_core::{
         emulator::{Emulator, Wireless},
     },
     gadgets::{GadgetKind, Kind},
-    maybe::Maybe,
+    maybe::{Maybe, MaybeKind},
 };
 use ragu_primitives::{
     Element, GadgetExt,
@@ -18,6 +18,7 @@ use ragu_primitives::{
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
+use ff::Field;
 
 use super::header::Header;
 
@@ -153,10 +154,22 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
-        _: &mut D,
-        _: DriverValue<D, Self::Instance<'source>>,
+        dr: &mut D,
+        _instance: DriverValue<D, Self::Instance<'source>>,
     ) -> Result<<Self::Output as GadgetKind<C::CircuitField>>::Rebind<'dr, D>> {
-        todo!()
+        // TODO: Adapter has Instance = (), so there's no instance data to process.
+        //
+        // We temporarily allocate `TripleConstLen` zero elements to satisfy the
+        // `Output` type (HEADER_SIZE * 3).
+        let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
+        for _ in 0..(HEADER_SIZE * 3) {
+            elements.push(Element::alloc(
+                dr,
+                <D::MaybeKind as MaybeKind>::maybe_just(|| C::CircuitField::ZERO),
+            )?);
+        }
+
+        Ok(FixedVec::try_from(elements).expect("correct length"))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

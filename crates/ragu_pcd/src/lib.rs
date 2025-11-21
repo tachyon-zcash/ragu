@@ -11,21 +11,26 @@ extern crate alloc;
 
 use arithmetic::Cycle;
 use ragu_circuits::{
+    CircuitExt,
     mesh::{self, Mesh, MeshBuilder},
     polynomials::Rank,
 };
 use ragu_core::{Error, Result, drivers::emulator::Emulator};
 use ragu_pasta::PoseidonFp;
 use ragu_primitives::Sponge;
-use rand::Rng;
+use rand::{Rng, rngs::OsRng};
 
 use alloc::collections::BTreeMap;
 use core::{any::TypeId, marker::PhantomData};
 
+use alloc::vec::Vec;
+use ff::Field;
 pub use header::Header;
 pub use proof::{Pcd, Proof};
 pub use step::Step;
 use step::{Adapter, rerandomize::Rerandomize};
+
+use crate::proof::{CommittedPolynomial, CommittedStructured};
 
 mod header;
 mod proof;
@@ -181,11 +186,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     fn merge<'source, RNG: Rng, S: Step<C>>(
         &self,
         _rng: &mut RNG,
-        _step: S,
-        _witness: S::Witness<'source>,
+        step: S,
+        witness: S::Witness<'source>,
         left: Pcd<'source, C, R, S::Left>,
         right: Pcd<'source, C, R, S::Right>,
     ) -> Result<Proof<C, R>> {
+        let _n = self.circuit_mesh.num_circuits();
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // PHASE: Initialize transcript and compute circuit ID.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
         // Simulate a dummy transcript object using Poseidon sponge construction, using an
         // emulator driver to run the sponge permutation. The permutations are treated as
         // as a fixed-length hash for fiat-shamir challenge derivation.
@@ -234,6 +245,67 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 ));
             }
         }
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // Phase: Process the application circuits. The witness polynomials
+        // r(X) are over the `C::CircuitField`, and produce commitments to `C::HostCurve`
+        // curve points.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // Task: Execute application logic via `Step::witness()` through the Adapter.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // Create adapter which wraps the step and implements the `Circuit`.
+        let adapter = Adapter::<C, S, R, HEADER_SIZE>::new(step);
+        let adapter_witness = (left.data, right.data, witness);
+
+        // Compute the witness r(X) polynomial for this step's execution.
+        let (rx_poly, _aux) = adapter.rx::<R>(adapter_witness)?;
+
+        // Commit to r(X) with random blinding.
+        let blinding = C::CircuitField::random(OsRng);
+        let commitment = rx_poly.commit(self.host_generators, blinding);
+
+        // Compute k(Y) polynomial.
+        // TODO: `Adapter` has Instance = (), which is currently stubbed.
+        let ky_poly = adapter.ky(())?;
+
+        // Convert the adapter into a `CircuitObject` to access circuit polynomial methods.
+        let _circuit_object = adapter.into_object::<R>()?;
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // Task: Collect all A polynomials (application and previous accumulators).
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        let mut a_polys: Vec<CommittedStructured<R, C>> = Vec::with_capacity(3);
+        let mut ky_polys: Vec<Vec<C::CircuitField>> = Vec::with_capacity(HEADER_SIZE);
+
+        // Append r(X) witness polynomial from the application circuit.
+        a_polys.push(CommittedPolynomial {
+            poly: rx_poly,
+            blind: blinding,
+            commitment,
+        });
+
+        // Append the previous accumulator A polynomials.
+        a_polys.push(CommittedPolynomial {
+            poly: left.proof.witness.a_poly.clone(),
+            blind: left.proof.witness.a_blinding,
+            commitment: left.proof.instance.a,
+        });
+        a_polys.push(CommittedPolynomial {
+            poly: right.proof.witness.a_poly.clone(),
+            blind: right.proof.witness.a_blinding,
+            commitment: right.proof.instance.a,
+        });
+
+        // Append k(Y) polynomial from the application circuit.
+        ky_polys.push(ky_poly);
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // Task: ...
+        ///////////////////////////////////////////////////////////////////////////////////////
 
         // TODO: Implement real accumulator folding. Currently just passing through
         // the left proof without combining it with the right proof.
