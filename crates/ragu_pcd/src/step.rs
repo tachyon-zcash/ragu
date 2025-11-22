@@ -27,7 +27,7 @@ enum StepIndex {
 /// * `0` is used for the rerandomization step (see [`rerandomize`]).
 pub(crate) const NUM_INTERNAL_STEPS: usize = 1;
 
-/// The index of a [`Step`] in an [`Application`].
+/// The index of a [`Step`] in an application.
 ///
 /// All steps added to an application have a unique index and must be inserted
 /// sequentially so that their location (and other metadata) can be identified

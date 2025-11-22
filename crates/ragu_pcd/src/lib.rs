@@ -37,7 +37,7 @@ pub mod header;
 mod proof;
 pub mod step;
 
-/// Builder for an [`Application`](crate::Application) for proof-carrying data.
+/// Builder for an [`Application`] for proof-carrying data.
 pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     circuit_mesh: MeshBuilder<'params, C::CircuitField, R>,
     num_application_steps: usize,
