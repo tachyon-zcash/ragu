@@ -15,6 +15,18 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) _marker: PhantomData<(C, R)>,
 }
 
+impl<C: Cycle, R: Rank> Clone for Proof<C, R> {
+    fn clone(&self) -> Self {
+        Proof {
+            circuit_id: self.circuit_id,
+            left_header: self.left_header.clone(),
+            right_header: self.right_header.clone(),
+            rx: self.rx.clone(),
+            _marker: PhantomData,
+        }
+    }
+}
+
 impl<C: Cycle, R: Rank> Proof<C, R> {
     /// Augment a recursive proof with some data, described by a [`Header`].
     pub fn carry<H: Header<C::CircuitField>>(self, data: H::Data<'_>) -> Pcd<'_, C, R, H> {
@@ -30,4 +42,13 @@ pub struct Pcd<'source, C: Cycle, R: Rank, H: Header<C::CircuitField>> {
 
     /// Arbitrary data encoded into a [`Header`].
     pub data: H::Data<'source>,
+}
+
+impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<'_, C, R, H> {
+    fn clone(&self) -> Self {
+        Pcd {
+            proof: self.proof.clone(),
+            data: self.data.clone(),
+        }
+    }
 }
