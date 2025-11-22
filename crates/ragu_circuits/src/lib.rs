@@ -131,8 +131,9 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
     fn rx<'witness, R: Rank>(
         &self,
         witness: Self::Witness<'witness>,
+        key: F,
     ) -> Result<(structured::Polynomial<F, R>, Self::Aux<'witness>)> {
-        rx::eval(self, witness)
+        rx::eval(self, witness, key)
     }
 
     /// Computes the public input polynomial $k(Y)$ for the given instance.

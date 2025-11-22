@@ -3,49 +3,46 @@
 #![cfg_attr(not(test), no_std)]
 #![allow(clippy::type_complexity)]
 #![deny(rustdoc::broken_intra_doc_links)]
-// #![deny(missing_docs)]
+#![deny(missing_docs)]
 #![doc(html_favicon_url = "https://tachyon.z.cash/assets/ragu/v1_favicon32.png")]
 #![doc(html_logo_url = "https://tachyon.z.cash/assets/ragu/v1_rustdoc128.png")]
 
 extern crate alloc;
 
-use arithmetic::Cycle;
+use arithmetic::{Cycle, eval};
+use ff::Field;
 use ragu_circuits::{
     CircuitExt,
-    mesh::{self, Mesh, MeshBuilder},
+    mesh::{Mesh, MeshBuilder, omega_j},
     polynomials::Rank,
 };
-use ragu_core::{Error, Result};
+use ragu_core::{
+    Error, Result,
+    drivers::emulator::{Emulator, Wireless},
+    maybe::{Always, Maybe, MaybeKind},
+};
+use ragu_primitives::GadgetExt;
 use rand::Rng;
 
-use alloc::collections::BTreeMap;
+use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::{any::TypeId, marker::PhantomData};
 
-pub use header::Header;
+use circuits::{dummy::Dummy, internal_circuit_index};
+use header::Header;
 pub use proof::{Pcd, Proof};
-pub use step::Step;
-use step::{Adapter, rerandomize::Rerandomize};
+use step::{Step, adapter::Adapter};
 
-mod header;
+mod circuits;
+pub mod header;
 mod proof;
-mod step;
+pub mod step;
 
-/// Builder for a proof-carrying data application.
-///
-/// ## Generic Parameters
-///
-/// * The [`R: Rank`](Rank) parameter defines the size of the polynomials used
-///   in the construction.
-/// * The [`C: Cycle`](Cycle) parameter defines the cycle of elliptic curves
-///   used.
-/// * The `HEADER_SIZE` parameter defines the _size_ of the headers in terms of
-///   the number of elements in the public inputs reserved for each header,
-///   including its discriminant (prefix).
+/// Builder for an [`Application`] for proof-carrying data.
 pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     circuit_mesh: MeshBuilder<'params, C::CircuitField, R>,
-    next_step_index: usize,
+    num_application_steps: usize,
     header_map: BTreeMap<header::Prefix, TypeId>,
-    _marker: PhantomData<C>,
+    _marker: PhantomData<[(); HEADER_SIZE]>,
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Default
@@ -59,90 +56,83 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Default
 impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     ApplicationBuilder<'params, C, R, HEADER_SIZE>
 {
-    /// Create a new [`ApplicationBuilder`] for proof-carrying data.
+    /// Create an empty [`ApplicationBuilder`] for proof-carrying data.
     pub fn new() -> Self {
-        let tmp = ApplicationBuilder {
+        ApplicationBuilder {
             circuit_mesh: MeshBuilder::new(),
-            next_step_index: 0,
+            num_application_steps: 0,
             header_map: BTreeMap::new(),
             _marker: PhantomData,
-        };
-        let tmp = tmp
-            .register(step::rerandomize::Rerandomize::<()>::new())
-            .expect("internal step");
-
-        tmp
+        }
     }
 
     /// Register a new application-defined [`Step`] in this context. The
     /// provided [`Step`]'s [`INDEX`](Step::INDEX) should be the next sequential
     /// index that has not been inserted yet.
     pub fn register<S: Step<C> + 'params>(mut self, step: S) -> Result<Self> {
-        if S::INDEX.map() != self.next_step_index {
+        // NB: all internal steps are registered after application steps, and so
+        // we can pass 0 to this function.
+        if S::INDEX.circuit_index(0) != self.num_application_steps {
             return Err(Error::Initialization(
                 "steps must be registered in sequential order".into(),
             ));
         }
 
-        match self
-            .header_map
-            .get(&<S::Output as Header<C::CircuitField>>::PREFIX)
-        {
+        self.prevent_duplicate_prefixes::<S::Output>()?;
+        self.prevent_duplicate_prefixes::<S::Left>()?;
+        self.prevent_duplicate_prefixes::<S::Right>()?;
+
+        self.circuit_mesh = self
+            .circuit_mesh
+            .register_circuit(Adapter::<C, S, R, HEADER_SIZE>::new(step))?;
+        self.num_application_steps += 1;
+
+        Ok(self)
+    }
+
+    fn prevent_duplicate_prefixes<H: Header<C::CircuitField>>(&mut self) -> Result<()> {
+        match self.header_map.get(&H::PREFIX) {
             Some(ty) => {
-                if *ty != TypeId::of::<S::Output>() {
+                if *ty != TypeId::of::<H>() {
                     return Err(Error::Initialization(
                         "two different Header implementations using the same prefix".into(),
                     ));
                 }
             }
             None => {
-                self.header_map.insert(
-                    <S::Output as Header<C::CircuitField>>::PREFIX,
-                    TypeId::of::<S::Output>(),
-                );
+                self.header_map.insert(H::PREFIX, TypeId::of::<H>());
             }
         }
 
-        self.circuit_mesh = self
-            .circuit_mesh
-            .register_circuit(Adapter::<C, S, R, HEADER_SIZE>::new(step))?;
-        self.next_step_index += 1;
-
-        Ok(self)
+        Ok(())
     }
 
-    /// Finalize the mesh and seed the base accumulator.
-    pub fn finalize(self, params: &'params C) -> Result<Application<'params, C, R, HEADER_SIZE>> {
-        // TODO: JIT-register all recursion circuits to the Vesta mesh before finalization.
+    /// Perform finalization and optimization steps to produce the
+    /// [`Application`].
+    pub fn finalize(mut self, params: &C) -> Result<Application<'params, C, R, HEADER_SIZE>> {
+        // First, insert all of the internal steps.
+        self.circuit_mesh =
+            self.circuit_mesh
+                .register_circuit(Adapter::<C, _, R, HEADER_SIZE>::new(
+                    step::rerandomize::Rerandomize::<()>::new(),
+                ))?;
 
-        // TODO: Before registering the recursion circuits,
-        // precompute the domain size, then register the recursion circuits
-        // and pass them the domain size accrordingly.
-        //
-        // let total_circuits = num_application_circuits (variable) + num_recursion_circuits (fixed).
-        // let domain_log2_size = compute_domain_log2_size(total_circuits);
-        //
-        // After, register recursion circuits, passing them the domain size.
-        // Then inside the recursion circuits, each circuit needs to validate
-        // the omega is in the expected domain.
-        //
-        // We should also add an assertion to check the expected circuit counts.
-
-        let circuit_mesh = self.circuit_mesh.finalize(params.circuit_poseidon())?;
+        // Then, insert all of the "internal circuits" used for recursion plumbing.
+        self.circuit_mesh = self.circuit_mesh.register_circuit(Dummy::<HEADER_SIZE>)?;
 
         Ok(Application {
+            circuit_mesh: self.circuit_mesh.finalize(params.circuit_poseidon())?,
+            num_application_steps: self.num_application_steps,
             _marker: PhantomData,
-            circuit_mesh,
-            host_generators: params.host_generators(),
         })
     }
 }
 
 /// The recursion context that is used to create and verify proof-carrying data.
 pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
-    _marker: PhantomData<(C, R, [(); HEADER_SIZE])>,
     circuit_mesh: Mesh<'params, C::CircuitField, R>,
-    host_generators: &'params C::HostGenerators,
+    num_application_steps: usize,
+    _marker: PhantomData<[(); HEADER_SIZE]>,
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
@@ -150,15 +140,28 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// This may or may not be identical to any previously constructed (trivial)
     /// proof, and so is not guaranteed to be freshly randomized.
     pub fn trivial(&self) -> Proof<C, R> {
-        // TODO: should we store the trivial proof and cache it?
-        Proof::trivial(&self.circuit_mesh, self.host_generators)
+        let rx = Dummy::<HEADER_SIZE>
+            .rx((), self.circuit_mesh.get_key())
+            .expect("should not fail")
+            .0;
+
+        Proof {
+            rx,
+            circuit_id: internal_circuit_index(
+                self.num_application_steps,
+                circuits::DUMMY_CIRCUIT_ID,
+            ),
+            left_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
+            right_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
+            _marker: PhantomData,
+        }
     }
 
     /// Creates a random trivial proof for the empty [`Header`] implementation
     /// `()`. This takes more time to generate because it cannot be cached
     /// within the [`Application`].
-    fn random<'source>(&self) -> Pcd<'source, C, R, ()> {
-        Proof::random(&self.circuit_mesh, self.host_generators).carry(())
+    fn random<'source, RNG: Rng>(&self, _rng: &mut RNG) -> Pcd<'source, C, R, ()> {
+        self.trivial().carry(())
     }
 
     /// Merge two PCD into one using a provided [`Step`].
@@ -177,7 +180,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     ///   [`Step::Left`] header.
     /// * `right`: the right PCD to merge in this step; must correspond to the
     ///   [`Step::Right`] header.
-    fn merge<'source, RNG: Rng, S: Step<C>>(
+    pub fn merge<'source, RNG: Rng, S: Step<C>>(
         &self,
         _rng: &mut RNG,
         step: S,
@@ -185,21 +188,22 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         left: Pcd<'source, C, R, S::Left>,
         right: Pcd<'source, C, R, S::Right>,
     ) -> Result<(Proof<C, R>, S::Aux<'source>)> {
-        let circuit_id = mesh::omega_j(S::INDEX.map() as u32);
-
+        let circuit_id = S::INDEX.circuit_index(self.num_application_steps);
         let circuit = Adapter::<C, S, R, HEADER_SIZE>::new(step);
-        let (_rx, aux) = circuit.rx::<R>((left.data, right.data, witness))?;
+        let (rx, aux) = circuit.rx::<R>(
+            (left.data, right.data, witness),
+            self.circuit_mesh.get_key(),
+        )?;
 
-        // TODO: Implement real accumulator folding. Currently just passing through
-        // the left proof without combining it with the right proof.
+        let ((left_header, right_header), aux) = aux;
+
         Ok((
             Proof {
-                _marker: PhantomData,
                 circuit_id,
-                witness: left.proof.witness,
-                instance: left.proof.instance,
-                endoscalars: left.proof.endoscalars,
-                deferreds: left.proof.deferreds,
+                left_header,
+                right_header,
+                rx,
+                _marker: PhantomData,
             },
             aux,
         ))
@@ -217,9 +221,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         pcd: Pcd<'source, C, R, H>,
         rng: &mut RNG,
     ) -> Result<Pcd<'source, C, R, H>> {
-        let random_proof = self.random();
+        let random_proof = self.random(rng);
         let data = pcd.data.clone();
-        let rerandomized_proof = self.merge(rng, Rerandomize::new(), (), pcd, random_proof)?;
+        let rerandomized_proof = self.merge(
+            rng,
+            step::rerandomize::Rerandomize::new(),
+            (),
+            pcd,
+            random_proof,
+        )?;
 
         Ok(rerandomized_proof.0.carry(data))
     }
@@ -227,152 +237,51 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// Verifies some [`Pcd`] for the provided [`Header`].
     pub fn verify<RNG: Rng, H: Header<C::CircuitField>>(
         &self,
-        _pcd: &Pcd<'_, C, R, H>,
-        mut _rng: RNG,
+        pcd: &Pcd<'_, C, R, H>,
+        mut rng: RNG,
     ) -> Result<bool> {
-        Ok(true)
-    }
-}
+        let rx = &pcd.proof.rx;
+        let circuit_id = omega_j(pcd.proof.circuit_id as u32);
+        let y = C::CircuitField::random(&mut rng);
+        let z = C::CircuitField::random(&mut rng);
+        let sy = self.circuit_mesh.wy(circuit_id, y);
+        let tz = R::tz(z);
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use arithmetic::Cycle;
-    use ragu_circuits::polynomials::R;
-    use ragu_core::{
-        Result,
-        drivers::{Driver, DriverValue},
-    };
-    use ragu_pasta::Pasta;
-    use step::{Encoded, Encoder, Index};
+        let mut rhs = rx.clone();
+        rhs.dilate(z);
+        rhs.add_assign(&sy);
+        rhs.add_assign(&tz);
 
-    struct ExampleStep;
+        let mut ky = Vec::with_capacity(1 + HEADER_SIZE * 3);
 
-    impl Step<Pasta> for ExampleStep {
-        const INDEX: Index = Index::new(0);
+        let mut emulator: Emulator<Wireless<Always<()>, _>> = Emulator::wireless();
+        let gadget = H::encode(&mut emulator, Always::maybe_just(|| pcd.data.clone()))?;
+        let gadget = step::padded::for_header::<H, HEADER_SIZE, _>(&mut emulator, gadget)?;
 
-        type Witness<'source> = ();
-        type Aux<'source> = ();
-        type Left = ();
-        type Right = ();
-        type Output = ();
-
-        fn witness<
-            'dr,
-            'source: 'dr,
-            D: Driver<'dr, F = <Pasta as Cycle>::CircuitField>,
-            const HEADER_SIZE: usize,
-        >(
-            &self,
-            dr: &mut D,
-            _witness: DriverValue<D, Self::Witness<'source>>,
-            left: Encoder<'dr, 'source, D, Self::Left, HEADER_SIZE>,
-            right: Encoder<'dr, 'source, D, Self::Right, HEADER_SIZE>,
-        ) -> Result<(
-            (
-                Encoded<'dr, D, Self::Left, HEADER_SIZE>,
-                Encoded<'dr, D, Self::Right, HEADER_SIZE>,
-                Encoded<'dr, D, Self::Output, HEADER_SIZE>,
-            ),
-            DriverValue<D, Self::Aux<'source>>,
-        )> {
-            let left_encoded = left.encode(dr)?;
-            let right_encoded = right.encode(dr)?;
-            let output_encoded = Encoder {
-                witness: D::just(|| ()),
-            }
-            .encode(dr)?;
-
-            Ok((
-                (left_encoded, right_encoded, output_encoded),
-                D::just(|| ()),
-            ))
-        }
-    }
-
-    #[test]
-    fn test_trivial_proof_creation() -> Result<()> {
-        let params = Pasta::default();
-        type TestRank = R<10>;
-        const HEADER_SIZE: usize = 8;
-
-        let builder = ApplicationBuilder::<Pasta, TestRank, HEADER_SIZE>::new();
-        let builder = builder.register(ExampleStep)?;
-        let app = builder.finalize(&params)?;
-
-        let _proof = app.trivial();
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_pcd_creation() -> Result<()> {
-        let params = Pasta::default();
-        type TestRank = R<10>;
-        const HEADER_SIZE: usize = 8;
-
-        let builder = ApplicationBuilder::<Pasta, TestRank, HEADER_SIZE>::new();
-        let builder = builder.register(ExampleStep)?;
-        let app = builder.finalize(&params)?;
-
-        let proof = app.trivial();
-        let _pcd = proof.carry::<()>(());
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_multiple_steps() -> Result<()> {
-        let params = Pasta::default();
-        type TestRank = R<10>;
-        const HEADER_SIZE: usize = 8;
-
-        struct SecondStep;
-        impl Step<Pasta> for SecondStep {
-            const INDEX: Index = Index::new(1);
-            type Witness<'source> = ();
-            type Aux<'source> = ();
-            type Left = ();
-            type Right = ();
-            type Output = ();
-
-            fn witness<
-                'dr,
-                'source: 'dr,
-                D: Driver<'dr, F = <Pasta as Cycle>::CircuitField>,
-                const HEADER_SIZE: usize,
-            >(
-                &self,
-                dr: &mut D,
-                _witness: DriverValue<D, Self::Witness<'source>>,
-                left: Encoder<'dr, 'source, D, Self::Left, HEADER_SIZE>,
-                right: Encoder<'dr, 'source, D, Self::Right, HEADER_SIZE>,
-            ) -> Result<(
-                (
-                    Encoded<'dr, D, Self::Left, HEADER_SIZE>,
-                    Encoded<'dr, D, Self::Right, HEADER_SIZE>,
-                    Encoded<'dr, D, Self::Output, HEADER_SIZE>,
-                ),
-                DriverValue<D, Self::Aux<'source>>,
-            )> {
-                let left_encoded = left.encode(dr)?;
-                let right_encoded = right.encode(dr)?;
-                let output_encoded = Encoder {
-                    witness: D::just(|| ()),
-                }
-                .encode(dr)?;
-                Ok((
-                    (left_encoded, right_encoded, output_encoded),
-                    D::just(|| ()),
-                ))
+        {
+            let mut buf = Vec::with_capacity(HEADER_SIZE);
+            gadget.write(&mut emulator, &mut buf)?;
+            for elem in buf {
+                ky.push(*elem.value().take());
             }
         }
 
-        let builder = ApplicationBuilder::<Pasta, TestRank, HEADER_SIZE>::new();
-        let builder = builder.register(ExampleStep)?;
-        let builder = builder.register(SecondStep)?;
-        let _app = builder.finalize(&params)?;
+        if pcd.proof.left_header.len() != HEADER_SIZE || pcd.proof.right_header.len() != HEADER_SIZE
+        {
+            return Err(Error::MalformedEncoding(
+                "{left,right}_header has incorrect size".into(),
+            ));
+        }
 
-        Ok(())
+        ky.extend(pcd.proof.left_header.iter().cloned());
+        ky.extend(pcd.proof.right_header.iter().cloned());
+        ky.push(C::CircuitField::ONE);
+
+        ky.reverse();
+        assert_eq!(ky.len(), 1 + HEADER_SIZE * 3);
+
+        let valid = rx.revdot(&rhs) == eval(ky.iter(), y);
+
+        Ok(valid)
     }
 }

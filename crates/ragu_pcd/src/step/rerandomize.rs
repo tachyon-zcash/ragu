@@ -66,3 +66,71 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         Ok(((left.clone(), right, left), D::just(|| ())))
     }
 }
+
+#[test]
+fn test_rerandomize_consistency() {
+    use crate::header::{Header, Prefix};
+    use ragu_circuits::{CircuitExt, polynomials};
+    use ragu_core::{
+        Result,
+        drivers::{Driver, DriverValue},
+        gadgets::{GadgetKind, Kind},
+        maybe::Maybe,
+    };
+    use ragu_pasta::{Fp, Pasta};
+    use ragu_primitives::Element;
+
+    const HEADER_SIZE: usize = 4;
+    type R = polynomials::R<8>;
+
+    struct Single;
+    impl Header<Fp> for Single {
+        const PREFIX: Prefix = Prefix::new(0);
+        type Data<'source> = Fp;
+        type Output = Kind![Fp; Element<'_, _>];
+        fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            dr: &mut D,
+            witness: DriverValue<D, Self::Data<'source>>,
+        ) -> Result<<Self::Output as GadgetKind<Fp>>::Rebind<'dr, D>> {
+            Element::alloc(dr, witness)
+        }
+    }
+
+    struct Pair;
+    impl Header<Fp> for Pair {
+        const PREFIX: Prefix = Prefix::new(1);
+        type Data<'source> = (Fp, Fp);
+        type Output = Kind![Fp; (Element<'_, _>, Element<'_, _>)];
+        fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            dr: &mut D,
+            witness: DriverValue<D, Self::Data<'source>>,
+        ) -> Result<<Self::Output as GadgetKind<Fp>>::Rebind<'dr, D>> {
+            let (a, b) = witness.cast();
+            let a = Element::alloc(dr, a)?;
+            let b = Element::alloc(dr, b)?;
+
+            Ok((a, b))
+        }
+    }
+
+    let circuit_single =
+        super::adapter::Adapter::<Pasta, Rerandomize<Single>, R, HEADER_SIZE>::new(
+            Rerandomize::new(),
+        )
+        .into_object::<R>()
+        .unwrap();
+    let circuit_pair = super::adapter::Adapter::<Pasta, Rerandomize<Pair>, R, HEADER_SIZE>::new(
+        Rerandomize::new(),
+    )
+    .into_object::<R>()
+    .unwrap();
+
+    let x = Fp::from(5u64);
+    let y = Fp::from(17u64);
+    let key = Fp::from(123u64);
+
+    let eval_single = circuit_single.sxy(x, y, key);
+    let eval_pair = circuit_pair.sxy(x, y, key);
+
+    assert_eq!(eval_single, eval_pair,);
+}

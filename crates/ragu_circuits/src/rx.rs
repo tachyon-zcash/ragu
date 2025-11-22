@@ -89,6 +89,7 @@ impl<'a, F: Field, R: Rank> Driver<'a> for Collector<'a, F, R> {
 pub fn eval<'witness, F: Field, C: Circuit<F>, R: Rank>(
     circuit: &C,
     witness: C::Witness<'witness>,
+    key: F,
 ) -> Result<(structured::Polynomial<F, R>, C::Aux<'witness>)> {
     let mut rx = structured::Polynomial::<F, R>::new();
     let aux = {
@@ -96,7 +97,8 @@ pub fn eval<'witness, F: Field, C: Circuit<F>, R: Rank>(
             rx: rx.forward(),
             available_b: None,
         };
-        dr.mul(|| Ok((Coeff::One, Coeff::One, Coeff::One)))?;
+        let keyinv = key.invert().unwrap(); // TODO(ebfull)
+        dr.mul(|| Ok((Coeff::Arbitrary(key), Coeff::Arbitrary(keyinv), Coeff::One)))?;
         let (io, aux) = circuit.witness(&mut dr, Always::maybe_just(|| witness))?;
         io.write(&mut dr, &mut ())?;
 

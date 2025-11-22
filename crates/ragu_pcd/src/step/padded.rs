@@ -22,17 +22,14 @@ pub struct Padded<'dr, D: Driver<'dr>, G: GadgetKind<D::F> + Write<D::F>, const 
     gadget: G::Rebind<'dr, D>,
 }
 
-pub fn from_header<
-    'dr,
-    H: Header<D::F>,
-    const HEADER_SIZE: usize,
-    D: Driver<'dr, F: PrimeField>,
->(
+/// Constructs a [`Padded`] gadget representing a gadget for a [`Header`] padded
+/// to some fixed size `HEADER_SIZE` encoding, including the header prefix.
+pub fn for_header<'dr, H: Header<D::F>, const HEADER_SIZE: usize, D: Driver<'dr, F: PrimeField>>(
     dr: &mut D,
     gadget: <H::Output as GadgetKind<D::F>>::Rebind<'dr, D>,
 ) -> Result<Padded<'dr, D, H::Output, HEADER_SIZE>> {
     Ok(Padded {
-        prefix: Element::constant(dr, D::F::from(H::PREFIX.map() as u64)),
+        prefix: Element::constant(dr, D::F::from(H::PREFIX.get())),
         gadget,
     })
 }
@@ -77,7 +74,7 @@ where
     fn write(&mut self, dr: &mut D, value: &Element<'dr, D>) -> Result<()> {
         if self.written >= N {
             return Err(ragu_core::Error::MalformedEncoding(
-                "padded buffer is too small to encode the gadget and prefix".into(),
+                alloc::format!("Header encoding size exceeded HEADER_SIZE ({})", N,).into(),
             ));
         }
         self.inner.write(dr, value)?;

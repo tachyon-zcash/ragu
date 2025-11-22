@@ -148,6 +148,13 @@ impl<F: PrimeField> From<F> for OmegaKey {
 }
 
 impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
+    /// Return the constraint system key for this mesh, used by the proof
+    /// generator.
+    // TODO(ebfull): We should ensure that this detail is not leaked outside of the Mesh.
+    pub fn get_key(&self) -> F {
+        self.key
+    }
+
     /// Evaluate the mesh polynomial unrestricted at $W$.
     pub fn xy(&self, x: F, y: F) -> unstructured::Polynomial<F, R> {
         let mut coeffs = unstructured::Polynomial::default();
