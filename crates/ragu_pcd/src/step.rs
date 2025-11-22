@@ -10,6 +10,7 @@ use super::header::Header;
 pub use encoder::{Encoded, Encoder};
 
 pub(crate) mod adapter;
+pub(crate) mod dummy;
 mod encoder;
 pub(crate) mod padded;
 pub(crate) mod rerandomize;
@@ -25,7 +26,8 @@ enum StepIndex {
 /// proof decompression.
 ///
 /// * `0` is used for the rerandomization step (see [`rerandomize`]).
-pub(crate) const NUM_INTERNAL_STEPS: usize = 1;
+/// * `1` is used for the dummy step (see [`dummy`]).
+pub(crate) const NUM_INTERNAL_STEPS: usize = 2;
 
 /// The index of a [`Step`] in an application.
 ///
@@ -75,6 +77,7 @@ fn test_index_map() {
     let num_application_steps = 10;
 
     assert_eq!(Index::internal(0).circuit_index(num_application_steps), 10);
+    assert_eq!(Index::internal(1).circuit_index(num_application_steps), 11);
     assert_eq!(Index::new(0).circuit_index(num_application_steps), 0);
     assert_eq!(Index::new(1).circuit_index(num_application_steps), 1);
 }

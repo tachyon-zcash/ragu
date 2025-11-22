@@ -106,3 +106,53 @@ fn rerandomization_flow() {
 
     assert!(app.verify(&trivial, &mut rng).unwrap());
 }
+
+#[test]
+fn test_rerandomization() {
+    let pasta = Pasta::baked();
+    let app = ApplicationBuilder::<Pasta, R<8>, 4>::new()
+        .register(Step0)
+        .unwrap()
+        .register(Step1)
+        .unwrap()
+        .finalize(&pasta)
+        .unwrap();
+
+    let mut rng = StdRng::seed_from_u64(1234);
+
+    let trivial = app.trivial().carry::<()>(());
+    assert!(app.verify(&trivial, &mut rng).unwrap());
+
+    let rerandomized = app.rerandomize(trivial, &mut rng).unwrap();
+
+    let result = app.verify(&rerandomized, &mut rng);
+    assert!(result.unwrap());
+
+    assert_eq!(rerandomized.data, ());
+}
+
+#[test]
+fn test_rerandomization_with_header() {
+    let pasta = Pasta::baked();
+    let app = ApplicationBuilder::<Pasta, R<8>, 4>::new()
+        .register(Step0)
+        .unwrap()
+        .register(Step1)
+        .unwrap()
+        .finalize(&pasta)
+        .unwrap();
+
+    let mut rng = StdRng::seed_from_u64(1234);
+
+    let trivial1 = app.trivial().carry::<()>(());
+    let trivial2 = app.trivial().carry::<()>(());
+    let (proof_with_header, _) = app.merge(&mut rng, Step0, (), trivial1, trivial2).unwrap();
+    let pcd_with_header = proof_with_header.carry::<HeaderA>(());
+
+    assert!(app.verify(&pcd_with_header, &mut rng).unwrap());
+    let rerandomized = app.rerandomize(pcd_with_header, &mut rng).unwrap();
+    let result = app.verify(&rerandomized, &mut rng);
+    assert!(result.unwrap());
+
+    assert_eq!(rerandomized.data, ());
+}

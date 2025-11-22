@@ -24,15 +24,13 @@ use ragu_core::{
 use ragu_primitives::GadgetExt;
 use rand::Rng;
 
-use alloc::{collections::BTreeMap, vec, vec::Vec};
+use alloc::{collections::BTreeMap, vec::Vec};
 use core::{any::TypeId, marker::PhantomData};
 
-use circuits::{dummy::Dummy, internal_circuit_index};
 use header::Header;
 pub use proof::{Pcd, Proof};
 use step::{Step, adapter::Adapter};
 
-mod circuits;
 pub mod header;
 mod proof;
 pub mod step;
@@ -118,7 +116,11 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
                 ))?;
 
         // Then, insert all of the "internal circuits" used for recursion plumbing.
-        self.circuit_mesh = self.circuit_mesh.register_circuit(Dummy)?;
+        self.circuit_mesh =
+            self.circuit_mesh
+                .register_circuit(Adapter::<C, _, R, HEADER_SIZE>::new(
+                    step::dummy::DummyStep::new(),
+                ))?;
 
         Ok(Application {
             circuit_mesh: self.circuit_mesh.finalize(params.circuit_poseidon())?,
@@ -140,19 +142,19 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// This may or may not be identical to any previously constructed (trivial)
     /// proof, and so is not guaranteed to be freshly randomized.
     pub fn trivial(&self) -> Proof<C, R> {
-        let rx = Dummy
-            .rx((), self.circuit_mesh.get_key())
-            .expect("should not fail")
-            .0;
+        let circuit = Adapter::<C, step::dummy::DummyStep, R, HEADER_SIZE>::new(
+            step::dummy::DummyStep::new(),
+        );
+        let (rx, ((left_header, right_header), _)) = circuit
+            .rx::<R>(((), (), ()), self.circuit_mesh.get_key())
+            .expect("should not fail");
 
         Proof {
             rx,
-            circuit_id: internal_circuit_index(
-                self.num_application_steps,
-                circuits::DUMMY_CIRCUIT_ID,
-            ),
-            left_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
-            right_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
+            circuit_id: <step::dummy::DummyStep as Step<C>>::INDEX
+                .circuit_index(self.num_application_steps),
+            left_header,
+            right_header,
             _marker: PhantomData,
         }
     }
@@ -252,13 +254,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         rhs.add_assign(&sy);
         rhs.add_assign(&tz);
 
+        if pcd.proof.left_header.len() != HEADER_SIZE || pcd.proof.right_header.len() != HEADER_SIZE
+        {
+            return Err(Error::MalformedEncoding(
+                "{left,right}_header has incorrect size".into(),
+            ));
+        }
+
         let mut ky = Vec::with_capacity(1 + HEADER_SIZE * 3);
-        ky.push(C::CircuitField::ONE);
 
         let mut emulator: Emulator<Wireless<Always<()>, _>> = Emulator::wireless();
         let gadget = H::encode(&mut emulator, Always::maybe_just(|| pcd.data.clone()))?;
         let gadget = step::padded::for_header::<H, HEADER_SIZE, _>(&mut emulator, gadget)?;
-
         {
             let mut buf = Vec::with_capacity(HEADER_SIZE);
             gadget.write(&mut emulator, &mut buf)?;
@@ -267,19 +274,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             }
         }
 
-        if pcd.proof.left_header.len() != HEADER_SIZE || pcd.proof.right_header.len() != HEADER_SIZE
-        {
-            return Err(Error::MalformedEncoding(
-                "{left,right}_header has incorrect size".into(),
-            ));
-        }
-
         ky.extend(pcd.proof.left_header.iter().cloned());
         ky.extend(pcd.proof.right_header.iter().cloned());
+
+        // Append F::ONE and reverse to match ky::eval() behavior
+        ky.push(C::CircuitField::ONE);
+        ky.reverse();
+
         assert_eq!(ky.len(), 1 + HEADER_SIZE * 3);
 
-        let valid = rx.revdot(&rhs) == eval(ky.iter(), y);
-
-        Ok(valid)
+        let lhs = rx.revdot(&rhs);
+        let rhs_eval = eval(ky.iter(), y);
+        Ok(lhs == rhs_eval)
     }
 }
