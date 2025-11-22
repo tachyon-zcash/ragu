@@ -14,7 +14,7 @@ use ff::Field;
 use ragu_circuits::{
     CircuitExt,
     mesh::{Mesh, MeshBuilder, omega_j},
-    polynomials::Rank,
+    polynomials::{Rank, structured, unstructured},
 };
 use ragu_core::{
     Error, Result,
@@ -27,6 +27,7 @@ use rand::Rng;
 use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::{any::TypeId, marker::PhantomData};
 
+use crate::proof::{AccumulatorInstance, AccumulatorWitness, ChallengePoint, EvaluationPoint};
 use circuits::{dummy::Dummy, internal_circuit_index};
 use header::Header;
 pub use proof::{Pcd, Proof};
@@ -109,7 +110,20 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
 
     /// Perform finalization and optimization steps to produce the
     /// [`Application`].
-    pub fn finalize(mut self, params: &C) -> Result<Application<'params, C, R, HEADER_SIZE>> {
+    pub fn finalize(
+        mut self,
+        params: &'params C,
+    ) -> Result<Application<'params, C, R, HEADER_SIZE>> {
+        // TODO: JIT-register the actual recursion circuits into the mesh before finalization.
+
+        // TODO: https://github.com/tachyon-zcash/ragu/issues/94.
+        //
+        // Before registering the recursion circuits, precompute the domain size,
+        // then register the recursion circuits and pass them the domain size
+        // accrordingly. After, registering recursion circuits, we pass them the
+        // domain size, and the recursion circuits need to validate the omega
+        // is in the expected domain.
+
         // First, insert all of the internal steps.
         self.circuit_mesh =
             self.circuit_mesh
@@ -123,6 +137,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         Ok(Application {
             circuit_mesh: self.circuit_mesh.finalize(params.circuit_poseidon())?,
             num_application_steps: self.num_application_steps,
+            host_generators: params.host_generators(),
             _marker: PhantomData,
         })
     }
@@ -132,6 +147,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
 pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     circuit_mesh: Mesh<'params, C::CircuitField, R>,
     num_application_steps: usize,
+    host_generators: &'params C::HostGenerators,
     _marker: PhantomData<[(); HEADER_SIZE]>,
 }
 
@@ -139,11 +155,42 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// Creates a trivial proof for the empty [`Header`] implementation `()`.
     /// This may or may not be identical to any previously constructed (trivial)
     /// proof, and so is not guaranteed to be freshly randomized.
+    ///
+    /// Uses deterministic blinding factors (ONE) to ensure commitments are never the
+    /// identity point while remaining cacheable. This is the base case for PCD accumulation.
     pub fn trivial(&self) -> Proof<C, R> {
         let rx = Dummy::<HEADER_SIZE>
             .rx((), self.circuit_mesh.get_key())
             .expect("should not fail")
             .0;
+
+        // Zero polynomials with determinstic blinding factor to avoid identity commitments.
+        let a_poly = structured::Polynomial::default();
+        let a_blinding = C::CircuitField::ONE;
+
+        let b_poly = structured::Polynomial::default();
+        let b_blinding = C::CircuitField::ONE;
+
+        let p_poly = unstructured::Polynomial::default();
+        let p_blinding = C::CircuitField::ONE;
+
+        // Trivial zero challenge points.
+        let x = C::CircuitField::ZERO;
+        let y = C::CircuitField::ZERO;
+
+        let s_poly = self.circuit_mesh.xy(x, y);
+        let s_blinding = C::CircuitField::ONE;
+
+        // Zero evaluations (consistent with zero polynomials).
+        let u = C::CircuitField::ZERO;
+        let v = C::CircuitField::ZERO;
+
+        let c = a_poly.revdot(&b_poly);
+
+        let s_commitment = s_poly.commit(self.host_generators, s_blinding);
+        let a_commitment = a_poly.commit(self.host_generators, a_blinding);
+        let b_commitment = b_poly.commit(self.host_generators, b_blinding);
+        let p_commitment = p_poly.commit(self.host_generators, p_blinding);
 
         Proof {
             rx,
@@ -153,6 +200,29 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             ),
             left_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
             right_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
+            witness: AccumulatorWitness {
+                s_poly,
+                s_blinding,
+                a_poly,
+                a_blinding,
+                b_poly,
+                b_blinding,
+                p_poly,
+                p_blinding,
+            },
+            instance: AccumulatorInstance {
+                a: a_commitment,
+                b: b_commitment,
+                c,
+                p: p_commitment,
+                u: ChallengePoint(u),
+                v: EvaluationPoint(v),
+                s: s_commitment,
+                x: ChallengePoint(x),
+                y: ChallengePoint(y),
+            },
+            endoscalars: Vec::new(),
+            deferreds: Vec::new(),
             _marker: PhantomData,
         }
     }
@@ -160,8 +230,72 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// Creates a random trivial proof for the empty [`Header`] implementation
     /// `()`. This takes more time to generate because it cannot be cached
     /// within the [`Application`].
-    fn random<'source, RNG: Rng>(&self, _rng: &mut RNG) -> Pcd<'source, C, R, ()> {
-        self.trivial().carry(())
+    fn random<'source, RNG: Rng>(&self, rng: &mut RNG) -> Pcd<'source, C, R, ()> {
+        let rx = Dummy::<HEADER_SIZE>
+            .rx((), self.circuit_mesh.get_key())
+            .expect("should not fail")
+            .0;
+
+        let a_poly = structured::Polynomial::<C::CircuitField, R>::random(&mut *rng);
+        let a_blinding = C::CircuitField::random(&mut *rng);
+
+        let b_poly = structured::Polynomial::<C::CircuitField, R>::random(&mut *rng);
+        let b_blinding = C::CircuitField::random(&mut *rng);
+
+        let p_poly = unstructured::Polynomial::<C::CircuitField, R>::random(&mut *rng);
+        let p_blinding = C::CircuitField::random(&mut *rng);
+
+        let x = C::CircuitField::random(&mut *rng);
+        let y = C::CircuitField::random(&mut *rng);
+
+        let s_poly = self.circuit_mesh.xy(x, y);
+        let s_blinding = C::CircuitField::random(&mut *rng);
+
+        let u = C::CircuitField::random(&mut *rng);
+        let v = p_poly.eval(u);
+        let c = a_poly.revdot(&b_poly);
+
+        let s_commitment = s_poly.commit(self.host_generators, s_blinding);
+        let a_commitment = a_poly.commit(self.host_generators, a_blinding);
+        let b_commitment = b_poly.commit(self.host_generators, b_blinding);
+        let p_commitment = p_poly.commit(self.host_generators, p_blinding);
+
+        Pcd {
+            proof: Proof {
+                rx,
+                circuit_id: internal_circuit_index(
+                    self.num_application_steps,
+                    circuits::DUMMY_CIRCUIT_ID,
+                ),
+                left_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
+                right_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
+                witness: AccumulatorWitness {
+                    s_poly,
+                    s_blinding,
+                    a_poly,
+                    a_blinding,
+                    b_poly,
+                    b_blinding,
+                    p_poly,
+                    p_blinding,
+                },
+                instance: AccumulatorInstance {
+                    a: a_commitment,
+                    b: b_commitment,
+                    c,
+                    p: p_commitment,
+                    u: ChallengePoint(u),
+                    v: EvaluationPoint(v),
+                    s: s_commitment,
+                    x: ChallengePoint(x),
+                    y: ChallengePoint(y),
+                },
+                endoscalars: Vec::new(),
+                deferreds: Vec::new(),
+                _marker: PhantomData,
+            },
+            data: (),
+        }
     }
 
     /// Merge two PCD into one using a provided [`Step`].
@@ -204,6 +338,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 right_header,
                 rx,
                 _marker: PhantomData,
+                witness: left.proof.witness,
+                instance: left.proof.instance,
+                endoscalars: left.proof.endoscalars,
+                deferreds: left.proof.deferreds,
             },
             aux,
         ))
@@ -283,5 +421,64 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let valid = rx.revdot(&rhs) == eval(ky.iter(), y);
 
         Ok(valid)
+    }
+
+    /// Verifies some [`Pcd`] for the provided [`Header`].
+    pub fn decide<RNG: Rng, H: Header<C::CircuitField>>(
+        &self,
+        pcd: &Pcd<'_, C, R, H>,
+        mut _rng: RNG,
+    ) -> Result<bool> {
+        let witness = &pcd.proof.witness;
+        let instance = &pcd.proof.instance;
+
+        // 1. Check revdot: a.revdot(b) == c.
+        let c_check = witness.a_poly.revdot(&witness.b_poly);
+        if c_check != instance.c {
+            return Ok(false);
+        }
+
+        // 2. Check polynomial evaluation: p_poly(u) == v.
+        let v_check = witness.p_poly.eval(instance.u.0);
+        if v_check != instance.v.0 {
+            return Ok(false);
+        }
+
+        // 3. Check mesh consistency: s_poly == mesh.xy(x, y).
+        let s_expected = self.circuit_mesh.xy(instance.x.0, instance.y.0);
+        if witness.s_poly != s_expected {
+            return Ok(false);
+        }
+
+        // 4. Verify commitment openings with pedersen vector commitment (later implement full IPA verification obviously).
+        let a_commitment = witness
+            .a_poly
+            .commit(self.host_generators, witness.a_blinding);
+        if a_commitment != instance.a {
+            return Ok(false);
+        }
+
+        let b_commitment = witness
+            .b_poly
+            .commit(self.host_generators, witness.b_blinding);
+        if b_commitment != instance.b {
+            return Ok(false);
+        }
+
+        let p_commitment = witness
+            .p_poly
+            .commit(self.host_generators, witness.p_blinding);
+        if p_commitment != instance.p {
+            return Ok(false);
+        }
+
+        let s_commitment = witness
+            .s_poly
+            .commit(self.host_generators, witness.s_blinding);
+        if s_commitment != instance.s {
+            return Ok(false);
+        }
+
+        Ok(true)
     }
 }
