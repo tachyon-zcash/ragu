@@ -413,30 +413,30 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // Task: Collect all A polynomials (application and previous accumulators).
         ///////////////////////////////////////////////////////////////////////////////////////
 
-        let mut a_polys: Vec<CommittedStructured<R, C>> = Vec::with_capacity(3);
-        let mut ky_polys: Vec<Vec<C::CircuitField>> = Vec::with_capacity(HEADER_SIZE);
+        let mut _a_polys: Vec<CommittedStructured<R, C>> = Vec::with_capacity(3);
+        let mut _ky_polys: Vec<Vec<C::CircuitField>> = Vec::with_capacity(HEADER_SIZE);
 
         // Append r(X) witness polynomial from the application circuit.
-        a_polys.push(CommittedPolynomial {
-            poly: rx_poly.clone(),
-            blind: blinding,
-            commitment,
+        _a_polys.push(CommittedPolynomial {
+            _poly: rx_poly.clone(),
+            _blind: blinding,
+            _commitment: commitment,
         });
 
         // Append the previous accumulator A polynomials.
-        a_polys.push(CommittedPolynomial {
-            poly: left.proof.witness.a_poly.clone(),
-            blind: left.proof.witness.a_blinding,
-            commitment: left.proof.instance.a,
+        _a_polys.push(CommittedPolynomial {
+            _poly: left.proof.witness.a_poly.clone(),
+            _blind: left.proof.witness.a_blinding,
+            _commitment: left.proof.instance.a,
         });
-        a_polys.push(CommittedPolynomial {
-            poly: right.proof.witness.a_poly.clone(),
-            blind: right.proof.witness.a_blinding,
-            commitment: right.proof.instance.a,
+        _a_polys.push(CommittedPolynomial {
+            _poly: right.proof.witness.a_poly.clone(),
+            _blind: right.proof.witness.a_blinding,
+            _commitment: right.proof.instance.a,
         });
 
         // Append k(Y) polynomial from the application circuit.
-        ky_polys.push(ky_poly);
+        _ky_polys.push(ky_poly);
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // Task: ...
