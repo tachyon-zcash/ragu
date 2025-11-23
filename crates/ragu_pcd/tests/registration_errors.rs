@@ -204,3 +204,39 @@ fn test_decide_random_proof() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_merge_random_proof() -> Result<()> {
+    let pasta = Pasta::default();
+
+    let app = ApplicationBuilder::<Pasta, R<8>, 4>::new()
+        .register(Step0)
+        .unwrap()
+        .register(Step1)
+        .unwrap()
+        .finalize(&pasta)
+        .unwrap();
+
+    let mut rng = StdRng::seed_from_u64(1234);
+
+    let trivial = app.trivial().carry::<()>(());
+    assert!(app.verify(&trivial, &mut rng).unwrap());
+
+    let trivial_2 = app.trivial().carry::<()>(());
+    assert!(app.verify(&trivial, &mut rng).unwrap());
+
+    let left_pcd = app.rerandomize(trivial.clone(), &mut rng).unwrap();
+    assert!(app.verify(&left_pcd, &mut rng).unwrap());
+
+    let right_pcd = app.rerandomize(trivial_2.clone(), &mut rng).unwrap();
+    assert!(app.verify(&right_pcd, &mut rng).unwrap());
+
+    let merged_proof = app.merge(&mut rng, Step0, (), left_pcd, right_pcd)?;
+    let pcd = merged_proof.0.carry::<()>(());
+
+    let is_valid = app.decide(&pcd, &mut rng)?;
+
+    assert!(is_valid, "Merged proof should verify");
+
+    Ok(())
+}

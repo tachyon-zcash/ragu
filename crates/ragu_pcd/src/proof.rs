@@ -1,6 +1,10 @@
 use arithmetic::Cycle;
-use ragu_circuits::polynomials::{Rank, structured, unstructured};
+use ragu_circuits::{
+    CircuitObject,
+    polynomials::{Rank, structured, unstructured},
+};
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
@@ -25,6 +29,24 @@ pub struct Proof<C: Cycle, R: Rank> {
 
     // Deferred points to be processed in the next curve in the cycle (nested curve).
     pub(crate) deferreds: Vec<C::NestedCurve>,
+
+    /// Staged circuits created in round.
+    pub staged_circuits: Vec<StagedCircuitData<C, R>>,
+}
+
+/// Data for a staged circuit that needs consistency verification.
+pub struct StagedCircuitData<C: Cycle, R: Rank> {
+    /// The final r(X) polynomial from the staged circuit.
+    pub(crate) final_rx: structured::Polynomial<C::CircuitField, R>,
+
+    /// The circuit ID (omega value) for mesh lookups.
+    pub(crate) circuit_id: C::CircuitField,
+
+    /// The ky polynomial (public inputs).
+    pub(crate) ky: Vec<C::CircuitField>,
+
+    /// The circuit object for computing s(X, y).
+    pub circuit: Box<dyn CircuitObject<C::CircuitField, R>>,
 }
 
 impl<C: Cycle, R: Rank> Clone for Proof<C, R> {
@@ -58,6 +80,7 @@ impl<C: Cycle, R: Rank> Clone for Proof<C, R> {
             },
             endoscalars: self.endoscalars.clone(),
             deferreds: self.deferreds.clone(),
+            staged_circuits: Vec::new(),
         }
     }
 }
