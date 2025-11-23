@@ -2,10 +2,10 @@
 
 use ff::Field;
 
+mod omega;
 pub mod structured;
 mod txz;
 pub mod unstructured;
-mod omega;
 
 mod private {
     pub trait Sealed {}

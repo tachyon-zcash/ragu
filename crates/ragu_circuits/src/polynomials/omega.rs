@@ -8,10 +8,9 @@ use ragu_core::{
 };
 use ragu_primitives::{Boolean, Element};
 
-
 /// Vaidates omega is valid 2^k root of unity for the domain size.
-/// 
-/// Checks that omega^(2^k) = 1, where k = log2_domain_size. 
+///
+/// Checks that omega^(2^k) = 1, where k = log2_domain_size.
 #[derive(Clone)]
 pub struct ValidateOmega {
     log2_domain_size: u32,
@@ -55,12 +54,12 @@ impl<F: Field> Routine<F> for ValidateOmega {
     > {
         let output = Boolean::alloc(
             dr,
-            D::with(|| { 
+            D::with(|| {
                 let mut value = *omega.value().take();
-                for _ in 0..self.log2_domain_size {  
+                for _ in 0..self.log2_domain_size {
                     value = value.square();
                 }
-                
+
                 Ok(value == F::ONE)
             })?,
         )?;
