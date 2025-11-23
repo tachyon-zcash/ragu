@@ -23,12 +23,15 @@ use ragu_core::{
 };
 use ragu_pasta::PoseidonFp;
 use ragu_primitives::{GadgetExt, Sponge};
-use rand::Rng;
+use rand::{Rng, rngs::OsRng};
 
 use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::{any::TypeId, marker::PhantomData};
 
-use crate::proof::{AccumulatorInstance, AccumulatorWitness, ChallengePoint, EvaluationPoint};
+use crate::proof::{
+    AccumulatorInstance, AccumulatorWitness, ChallengePoint, CommittedPolynomial,
+    CommittedStructured, EvaluationPoint,
+};
 use circuits::{dummy::Dummy, internal_circuit_index};
 use header::Header;
 pub use proof::{Pcd, Proof};
@@ -376,15 +379,68 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         }
 
         ///////////////////////////////////////////////////////////////////////////////////////
-        // Task: Execute application logic via `Step::witness()` through the `Adapter`.
+        // Phase: Process the application circuits. The witness polynomials
+        // r(X) are over the `C::CircuitField`, and produce commitments to `C::HostCurve`
+        // curve points.
         ///////////////////////////////////////////////////////////////////////////////////////
 
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // Task: Execute application logic via `Step::witness()` through the Adapter.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // Create adapter which wraps the step and implements the `Circuit`.
         let circuit_id = S::INDEX.circuit_index(self.num_application_steps);
         let circuit = Adapter::<C, S, R, HEADER_SIZE>::new(step);
-        let (rx, aux) = circuit.rx::<R>(
+
+        // Compute the witness r(X) polynomial for this step's execution.
+        let (rx_poly, aux) = circuit.rx::<R>(
             (left.data, right.data, witness),
             self.circuit_mesh.get_key(),
         )?;
+
+        // Commit to r(X) with random blinding.
+        let blinding = C::CircuitField::random(OsRng);
+        let commitment = rx_poly.clone().commit(self.host_generators, blinding);
+
+        // Compute k(Y) polynomial.
+        // TODO: `Adapter` has Instance = (), which is currently stubbed.
+        let ky_poly = circuit.ky(())?;
+
+        // Convert the adapter into a `CircuitObject` to access circuit polynomial methods.
+        let _circuit_object = circuit.into_object::<R>()?;
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // Task: Collect all A polynomials (application and previous accumulators).
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        let mut a_polys: Vec<CommittedStructured<R, C>> = Vec::with_capacity(3);
+        let mut ky_polys: Vec<Vec<C::CircuitField>> = Vec::with_capacity(HEADER_SIZE);
+
+        // Append r(X) witness polynomial from the application circuit.
+        a_polys.push(CommittedPolynomial {
+            poly: rx_poly.clone(),
+            blind: blinding,
+            commitment,
+        });
+
+        // Append the previous accumulator A polynomials.
+        a_polys.push(CommittedPolynomial {
+            poly: left.proof.witness.a_poly.clone(),
+            blind: left.proof.witness.a_blinding,
+            commitment: left.proof.instance.a,
+        });
+        a_polys.push(CommittedPolynomial {
+            poly: right.proof.witness.a_poly.clone(),
+            blind: right.proof.witness.a_blinding,
+            commitment: right.proof.instance.a,
+        });
+
+        // Append k(Y) polynomial from the application circuit.
+        ky_polys.push(ky_poly);
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // Task: ...
+        ///////////////////////////////////////////////////////////////////////////////////////
 
         let ((left_header, right_header), aux) = aux;
 
@@ -393,7 +449,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 circuit_id,
                 left_header,
                 right_header,
-                rx,
+                rx: rx_poly,
                 _marker: PhantomData,
                 witness: left.proof.witness,
                 instance: left.proof.instance,
