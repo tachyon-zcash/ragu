@@ -27,6 +27,7 @@ ragu_core = { path = "crates/ragu_core", version = "0.0.0" }
 ragu_circuits = { path = "crates/ragu_circuits", version = "0.0.0" }
 ragu_arithmetic = { path = "crates/ragu_arithmetic", version = "0.0.0" }
 ragu_primitives = { path = "crates/ragu_primitives", version = "0.0.0" }
+ragu_pcd = { path = "crates/ragu_pcd", version = "0.0.0" }
 
 [workspace]
 members = [

@@ -1,4 +1,8 @@
 //! # `ragu`
+//!
+//! This crate currently does not expose an API, as Ragu is under heavy
+//! development. Please see the [Ragu Book](https://tachyon.z.cash/_ragu/) for
+//! more information.
 
 #![no_std]
 #![allow(clippy::type_complexity)]
@@ -6,17 +10,3 @@
 #![deny(missing_docs)]
 #![doc(html_favicon_url = "https://tachyon.z.cash/assets/ragu/v1_favicon32.png")]
 #![doc(html_logo_url = "https://tachyon.z.cash/assets/ragu/v1_rustdoc128.png")]
-
-pub extern crate ragu_arithmetic as arithmetic;
-
-pub use ragu_core::*;
-
-/// Traits and utilities for synthesizing arithmetic circuits into polynomials.
-pub mod circuits {
-    pub use ragu_circuits::*;
-}
-
-/// Common low-level gadgets and algorithms.
-pub mod primitives {
-    pub use ragu_primitives::*;
-}

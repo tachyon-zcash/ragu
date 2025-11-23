@@ -117,7 +117,7 @@ pub trait Gadget<'dr, D: Driver<'dr>>: Clone {
     }
 }
 
-/// A driver-agnostic kindedness of a gadget.
+/// A driver-agnostic kindness of a gadget.
 ///
 /// The [`Gadget::Kind`] associated type is used to specify the driver-agnostic
 /// _kind_ of a gadget, using this trait to specify how gadgets can have their
