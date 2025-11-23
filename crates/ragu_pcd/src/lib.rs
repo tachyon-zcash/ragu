@@ -70,9 +70,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     /// provided [`Step`]'s [`INDEX`](Step::INDEX) should be the next sequential
     /// index that has not been inserted yet.
     pub fn register<S: Step<C> + 'params>(mut self, step: S) -> Result<Self> {
-        // NB: all internal steps are registered after application steps, and so
-        // we can pass 0 to this function.
-        if S::INDEX.circuit_index(0) != self.num_application_steps {
+        if S::INDEX.circuit_index(None) != self.num_application_steps {
             return Err(Error::Initialization(
                 "steps must be registered in sequential order".into(),
             ));
@@ -188,7 +186,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         left: Pcd<'source, C, R, S::Left>,
         right: Pcd<'source, C, R, S::Right>,
     ) -> Result<(Proof<C, R>, S::Aux<'source>)> {
-        let circuit_id = S::INDEX.circuit_index(self.num_application_steps);
+        let circuit_id = S::INDEX.circuit_index(Some(self.num_application_steps));
         let circuit = Adapter::<C, S, R, HEADER_SIZE>::new(step);
         let (rx, aux) = circuit.rx::<R>(
             (left.data, right.data, witness),
