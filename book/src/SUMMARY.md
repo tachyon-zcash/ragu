@@ -2,6 +2,9 @@
 
 [Introduction](Introduction.md)
   - [User Guide](guide/index.md)
+    - [Drivers](guide/drivers.md)
+    - [Gadgets](guide/gadgets.md)
+    - [Routines](guide/routines.md)
     - [Getting Started](guide/getting_started.md)
     - [Writing Circuits](guide/writing_circuits.md)
     - [Primitives](guide/primitives.md)
@@ -22,6 +25,5 @@
     - [Drivers](development/drivers/index.md)
       - [Emulator](development/drivers/emulator.md)
     - [Routines](development/routines.md)
-    - [Gadget System](design/gadgets.md)
     - [Circuit Polynomials](development/circuit_polynomials.md)
   - [Notation](notation.md)
