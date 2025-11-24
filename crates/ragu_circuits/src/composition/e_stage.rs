@@ -16,8 +16,14 @@ use ragu_primitives::{
     vec::{ConstLen, FixedVec},
 };
 
-/// Hardcoding the number of intermediary evaluations.
-pub const NUM_EVALS: usize = 23;
+/// Number of intermediate evaluations:
+/// - 1 circuit evaluation
+/// - 5 consistency evaluations (acc1_s_at_w, acc2_s_at_w, s1_acc1_at_y, s1_acc2_at_y, s2_at_x)
+/// - 3 a_polys evaluations at x (1 app circuit + 2 accumulators)
+/// - 1 a_polys evaluation at xz (app circuit only)
+/// - 2 accumulator b evaluations at x
+/// - 2 batched evaluations (batched_a_eval, batched_b_eval)
+pub const NUM_EVALS: usize = 14;
 
 ///////////////////////////////////////////////////////////////////////////////////////
 // E STAGING POLYNOMIAL
