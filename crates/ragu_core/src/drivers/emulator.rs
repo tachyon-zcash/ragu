@@ -93,12 +93,11 @@ pub enum MaybeWired<M: MaybeKind, F: Field> {
 }
 
 impl<M: MaybeKind, F: Field> MaybeWired<M, F> {
-    /// Retrieves the underlying wire value. This should only be called when
-    /// [`M` = `Always`], otherwise it will cause a compile-time failure.
-    pub fn value(self) -> F {
+    /// Retrieves the underlying wire assignment value.
+    pub fn value(self) -> M::Rebind<F> {
         match self {
-            MaybeWired::One => F::ONE,
-            MaybeWired::Assigned(value) => value.take(),
+            MaybeWired::One => M::maybe_just(|| F::ONE),
+            MaybeWired::Assigned(value) => value,
         }
     }
 
@@ -134,10 +133,12 @@ impl<M: MaybeKind, F: Field> LinearExpression<MaybeWired<M, F>, F> for MaybeDire
     }
 
     fn extend(self, with: impl IntoIterator<Item = (MaybeWired<M, F>, Coeff<F>)>) -> Self {
-        MaybeDirectSum(
-            self.0
-                .map(|sum| sum.extend(with.into_iter().map(|(wire, coeff)| (wire.value(), coeff)))),
-        )
+        MaybeDirectSum(self.0.map(|sum| {
+            sum.extend(
+                with.into_iter()
+                    .map(|(wire, coeff)| (wire.value().take(), coeff)),
+            )
+        }))
     }
 
     fn add(self, wire: &MaybeWired<M, F>) -> Self {
@@ -248,7 +249,11 @@ impl<F: Field> Emulator<Wired<Always<()>, F>> {
     /// expects a witness to exist. This method returns the actual wire
     /// assignments if it is successful.
     pub fn always_wires<'dr, G: Gadget<'dr, Self>>(&self, gadget: &G) -> Result<Vec<F>> {
-        Ok(self.wires(gadget)?.into_iter().map(|w| w.value()).collect())
+        Ok(self
+            .wires(gadget)?
+            .into_iter()
+            .map(|w| w.value().take())
+            .collect())
     }
 
     /// Creates a new [`Emulator`] driver in [`Wired`] mode, specifically for

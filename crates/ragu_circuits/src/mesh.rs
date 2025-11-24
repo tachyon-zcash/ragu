@@ -24,7 +24,7 @@ use arithmetic::Domain;
 use arithmetic::PoseidonPermutation;
 use arithmetic::bitreverse;
 use ff::PrimeField;
-use ragu_core::{Error, Result, drivers::emulator::Emulator};
+use ragu_core::{Error, Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{Element, Sponge};
 
 /// Builder for constructing a new [`Mesh`].
@@ -242,7 +242,7 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
 
     /// Compute a digest of this mesh.
     fn compute_mesh_digest<P: PoseidonPermutation<F>>(&self, poseidon: &P) -> F {
-        Emulator::emulate_wired((), |dr, _| {
+        Emulator::emulate_wireless((), |dr, _| {
             // Placeholder "nothing-up-my-sleeve challenges" (small primes).
             let mut w = F::from(2u64);
             let mut x = F::from(3u64);
@@ -252,12 +252,12 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
             for _ in 0..6 {
                 let eval = Element::constant(dr, self.wxy(w, x, y));
                 sponge.absorb(dr, &eval)?;
-                w = sponge.squeeze(dr)?.wire().clone().value();
-                x = sponge.squeeze(dr)?.wire().clone().value();
-                y = sponge.squeeze(dr)?.wire().clone().value();
+                w = *sponge.squeeze(dr)?.value().take();
+                x = *sponge.squeeze(dr)?.value().take();
+                y = *sponge.squeeze(dr)?.value().take();
             }
 
-            Ok(sponge.squeeze(dr)?.wire().clone().value())
+            Ok(*sponge.squeeze(dr)?.value().take())
         })
         .expect("mesh digest computation should always succeed")
     }
