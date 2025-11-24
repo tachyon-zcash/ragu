@@ -376,7 +376,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         ///////////////////////////////////////////////////////////////////////////////////////
         // Task: Execute application logic via `Step::witness()` through the `Adapter`.
         ///////////////////////////////////////////////////////////////////////////////////////
-        
+
         if let Some(index) = S::INDEX.get_application_index() {
             if index >= self.num_application_steps {
                 return Err(Error::Initialization(
