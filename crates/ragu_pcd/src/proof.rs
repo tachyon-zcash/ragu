@@ -301,3 +301,12 @@ pub type CommittedStructured<R, C> =
     CommittedPolynomial<structured::Polynomial<<C as Cycle>::CircuitField, R>, C>;
 pub type _CommittedUnstructured<R, C> =
     CommittedPolynomial<unstructured::Polynomial<<C as Cycle>::CircuitField, R>, C>;
+
+/// Cross polynomial evaluations at fiat-shamir challenges (w, x, y).
+pub struct ConsistencyEvaluations<C: Cycle> {
+    pub(crate) acc1_s_at_w: C::CircuitField,
+    pub(crate) acc2_s_at_w: C::CircuitField,
+    pub(crate) s1_acc1_at_y: C::CircuitField,
+    pub(crate) s1_acc2_at_y: C::CircuitField,
+    pub(crate) s2_at_x: C::CircuitField,
+}

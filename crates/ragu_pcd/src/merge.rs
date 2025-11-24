@@ -1,16 +1,18 @@
 use arithmetic::Cycle;
+use ff::Field;
 use ragu_circuits::{
     CircuitExt,
     composition::{
         error_stage::{EphemeralStageError, ErrorStage, IndirectionStageError},
         preamble_stage::EphemeralStagePreamble,
+        query_stage::{EphemeralStageQuery, IndirectionStageQuery, NUM_EVALS, QueryStage},
     },
     mesh::omega_j,
-    polynomials::Rank,
+    polynomials::{Rank, structured},
     staging::StageExt,
 };
 use ragu_core::{Error, Result, drivers::emulator::Emulator, maybe::Maybe};
-use ragu_primitives::{Point, Sponge};
+use ragu_primitives::{Element, Point, Sponge};
 use rand::{Rng, rngs::OsRng};
 
 use alloc::vec::Vec;
@@ -20,11 +22,10 @@ use ragu_primitives::vec::FixedVec;
 
 use crate::{
     Pcd, Proof,
-    proof::{CommittedPolynomial, CommittedStructured},
+    proof::{CommittedPolynomial, CommittedStructured, ConsistencyEvaluations},
     step::{Step, adapter::Adapter},
     verify::stub_step::StubStep,
 };
-use ff::Field;
 use ragu_primitives::GadgetExt;
 
 pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE: usize>(
@@ -284,7 +285,7 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
     let s2_blinding = C::CircuitField::random(OsRng);
     let s2_commitment = s2_poly.commit(host_generators, s2_blinding);
 
-    let _s_prime_prime: [CommittedPolynomial<_, C>; 1] = [CommittedPolynomial {
+    let s_prime_prime: [CommittedPolynomial<_, C>; 1] = [CommittedPolynomial {
         poly: s2_poly,
         _blind: s2_blinding,
         commitment: s2_commitment,
@@ -397,6 +398,247 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
 
     let e_point = Point::constant(&mut em, e_rx_nested_commitment)?;
     e_point.write(&mut em, &mut transcript)?;
+    ///////////////////////////////////////////////////////////////////////////////////////
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // PHASE: QUERY STAGE. This uses a two-layer nested commitments.
+    ///////////////////////////////////////////////////////////////////////////////////////
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // TASK: mu and nu challenge derivation for checking revdot claims are correct.
+    ///////////////////////////////////////////////////////////////////////////////////////
+
+    // TRANSCRIPT: Squeeze mu challenge.
+    let mu = transcript.squeeze(&mut em)?;
+    let mu_challenge = *mu.value().take();
+
+    // TRANSCRIPT: Squeeze nu challenge.
+    let nu = transcript.squeeze(&mut em)?;
+    let nu_challenge = *nu.value().take();
+
+    let mu_inv = mu_challenge.invert().unwrap();
+    let munu = mu_challenge * nu_challenge;
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // TASK: Folding A and B polynomials into single polynomials.
+    ///////////////////////////////////////////////////////////////////////////////////////
+
+    let a_poly = structured::Polynomial::fold(a_polys.iter().map(|a| &a.poly), mu_inv);
+    let a_blinding = C::CircuitField::random(OsRng);
+    let a_commitment = a_poly.commit(host_generators, a_blinding);
+
+    let a_folded: CommittedPolynomial<_, C> = CommittedPolynomial {
+        poly: a_poly,
+        _blind: a_blinding,
+        commitment: a_commitment,
+    };
+
+    let b_poly = structured::Polynomial::fold(b_polys.iter().map(|b| &b.poly), munu);
+    let b_blinding = C::CircuitField::random(OsRng);
+    let b_commitment = b_poly.commit(host_generators, b_blinding);
+
+    let b_folded: CommittedPolynomial<_, C> = CommittedPolynomial {
+        poly: b_poly,
+        _blind: b_blinding,
+        commitment: b_commitment,
+    };
+
+    let a_and_b_commmitments = [a_folded.commitment, b_folded.commitment];
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // TASK: A and B Nested Commitment
+    //////////////////////////////////////////////////////////////////////////////////////
+
+    // INNER LAYER: Staging polynomial (over Fq) that witnesses the A and B Vesta commitments.
+    let q1_rx = <EphemeralStageQuery<C::HostCurve, 2> as StageExt<C::ScalarField, R>>::rx(
+        &a_and_b_commmitments,
+    )?;
+
+    // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
+    let q1_binding = C::ScalarField::random(OsRng);
+    let q1_nested_commitment = q1_rx.commit(nested_generators, q1_binding);
+
+    let q1_point = Point::constant(&mut em, q1_nested_commitment)?;
+    q1_point.write(&mut em, &mut transcript)?;
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // TASK: x challenge derivation.
+    ///////////////////////////////////////////////////////////////////////////////////////
+
+    // TRANSCRIPT: Squeeze x challenge.
+    let x = transcript.squeeze(&mut em)?;
+    let x_challenge = *x.value().take();
+
+    let xz = x_challenge * z_challenge;
+    let txz_claimed = R::txz(x_challenge, z_challenge);
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // TASK: Compute S for mesh consistency.
+    ///////////////////////////////////////////////////////////////////////////////////////
+
+    let s_polynomial = circuit_mesh.xy(x_challenge, y_challenge);
+    let s_blinding = C::CircuitField::random(OsRng);
+    let s_commitment = s_polynomial.commit(host_generators, s_blinding);
+
+    let _s: CommittedPolynomial<_, C> = CommittedPolynomial {
+        poly: s_polynomial,
+        _blind: s_blinding,
+        commitment: s_commitment,
+    };
+
+    // INNER LAYER: Staging polynomial (over Fq) that witnesses the S Vesta commitment.
+    let q2_inner_rx =
+        <EphemeralStageQuery<C::HostCurve, 1> as StageExt<C::ScalarField, R>>::rx(&[s_commitment])?;
+
+    // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
+    let q2_blinding = C::ScalarField::random(OsRng);
+    let q2_nested_commitment = q2_inner_rx.commit(nested_generators, q2_blinding);
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // TASK: Compute evaluations.
+    ///////////////////////////////////////////////////////////////////////////////////////
+
+    let circuit_evaluations: [C::CircuitField; NUM_APP_CIRCUITS] =
+        [circuit_mesh.wxy(omega_j(circuit_id as u32), x_challenge, y_challenge)];
+
+    let consistency_evaluations = ConsistencyEvaluations::<C> {
+        acc1_s_at_w: left.proof.witness.s_poly.eval(w_challenge),
+        acc2_s_at_w: right.proof.witness.s_poly.eval(w_challenge),
+        s1_acc1_at_y: s_prime[0].poly.eval(y_challenge),
+        s1_acc2_at_y: s_prime[1].poly.eval(y_challenge),
+        s2_at_x: s_prime_prime[0].poly.eval(x_challenge),
+    };
+
+    let a_polys_evals_x: Vec<C::CircuitField> = a_polys
+        .iter()
+        .map(|a_poly| a_poly.poly.eval(x_challenge))
+        .collect();
+    let a_polys_evals_xz: Vec<C::CircuitField> = a_polys
+        .iter()
+        .take(NUM_APP_CIRCUITS)
+        .map(|a_poly| a_poly.poly.eval(xz))
+        .collect();
+    let acc_b_evals_x = [
+        left.proof.witness.b_poly.eval(x_challenge),
+        right.proof.witness.b_poly.eval(x_challenge),
+    ];
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // TASK: Compute batched polynomial evaluation claims.
+    ///////////////////////////////////////////////////////////////////////////////////////
+
+    let batched_a_eval = {
+        a_polys_evals_x
+            .iter()
+            .rev()
+            .fold(C::CircuitField::ZERO, |acc, &eval| acc * mu_inv + eval)
+    };
+    let batched_b_eval = {
+        let circuit_b_evals = a_polys_evals_xz
+            .iter()
+            .zip(circuit_evaluations.iter())
+            .map(|(&eval_xz, &circuit_eval)| eval_xz + txz_claimed + circuit_eval);
+
+        let b_evals: Vec<_> = circuit_b_evals
+            .chain(acc_b_evals_x.iter().copied())
+            .collect();
+
+        b_evals
+            .iter()
+            .rev()
+            .fold(C::CircuitField::ZERO, |acc, &eval| acc * munu + eval)
+    };
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // TASK: Absorb all evaluations into the transcript before deriving alpha.
+    ///////////////////////////////////////////////////////////////////////////////////////
+
+    for eval in circuit_evaluations {
+        let _ = Element::constant(&mut em, eval).write(&mut em, &mut transcript);
+    }
+
+    let _ = Element::constant(&mut em, consistency_evaluations.acc1_s_at_w)
+        .write(&mut em, &mut transcript);
+    let _ = Element::constant(&mut em, consistency_evaluations.acc2_s_at_w)
+        .write(&mut em, &mut transcript);
+    let _ = Element::constant(&mut em, consistency_evaluations.s1_acc1_at_y)
+        .write(&mut em, &mut transcript);
+    let _ = Element::constant(&mut em, consistency_evaluations.s1_acc2_at_y)
+        .write(&mut em, &mut transcript);
+    let _ =
+        Element::constant(&mut em, consistency_evaluations.s2_at_x).write(&mut em, &mut transcript);
+
+    for eval in a_polys_evals_x.iter().as_slice() {
+        let _ = Element::constant(&mut em, *eval).write(&mut em, &mut transcript);
+    }
+
+    for eval in a_polys_evals_xz.iter().as_slice() {
+        let _ = Element::constant(&mut em, *eval).write(&mut em, &mut transcript);
+    }
+
+    for eval in acc_b_evals_x {
+        let _ = Element::constant(&mut em, eval).write(&mut em, &mut transcript);
+    }
+
+    let _ = Element::constant(&mut em, batched_a_eval).write(&mut em, &mut transcript);
+    let _ = Element::constant(&mut em, batched_b_eval).write(&mut em, &mut transcript);
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // TASK: Collect evals – intermediate evaluations at challenge points used to
+    // construct the batched claims.
+    ///////////////////////////////////////////////////////////////////////////////////////
+
+    let mut intermediate_evals = Vec::with_capacity(NUM_EVALS);
+
+    intermediate_evals.extend_from_slice(&circuit_evaluations);
+
+    intermediate_evals.push(consistency_evaluations.acc1_s_at_w);
+    intermediate_evals.push(consistency_evaluations.acc2_s_at_w);
+    intermediate_evals.push(consistency_evaluations.s1_acc1_at_y);
+    intermediate_evals.push(consistency_evaluations.s1_acc2_at_y);
+    intermediate_evals.push(consistency_evaluations.s2_at_x);
+
+    intermediate_evals.extend(a_polys_evals_x.iter().copied());
+    intermediate_evals.extend(a_polys_evals_xz.iter().copied());
+
+    intermediate_evals.extend_from_slice(&acc_b_evals_x);
+
+    intermediate_evals.push(batched_a_eval);
+    intermediate_evals.push(batched_b_eval);
+
+    let intermediate_evals_array: [C::CircuitField; NUM_EVALS] = intermediate_evals
+        .try_into()
+        .expect("intermediate_evals should have exactly NUM_EVALS elements");
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // TASK: Compute E staging polynomial.
+    ///////////////////////////////////////////////////////////////////////////////////////
+
+    let q_staging_witness = (
+        [mu_challenge, nu_challenge, x_challenge],
+        [q1_nested_commitment, q2_nested_commitment],
+        intermediate_evals_array,
+    );
+
+    let q_rx = <QueryStage<C::NestedCurve> as StageExt<C::CircuitField, R>>::rx(q_staging_witness)?;
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // LAYER OF INDIRECTION: We now introduce another nested commitment layer to produce
+    // an Fp-hashable nested commitment for the transcript.
+    let q_rx_blinding = C::CircuitField::random(OsRng);
+    let q_rx_commitment = q_rx.commit(host_generators, q_rx_blinding);
+
+    // INNER LAYER: Staging polynomial (over Fq) that witnesses the D staged circuit Vesta commitment.
+    let q_rx_inner =
+        <IndirectionStageQuery<C::HostCurve> as StageExt<C::ScalarField, R>>::rx(q_rx_commitment)?;
+
+    // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
+    let q_rx_nested_commitment_blinding = C::ScalarField::random(OsRng);
+    let q_rx_nested_commitment =
+        q_rx_inner.commit(nested_generators, q_rx_nested_commitment_blinding);
+
+    let q_point = Point::constant(&mut em, q_rx_nested_commitment)?;
+    q_point.write(&mut em, &mut transcript)?;
     ///////////////////////////////////////////////////////////////////////////////////////
 
     ///////////////////////////////////////////////////////////////////////////////////////
