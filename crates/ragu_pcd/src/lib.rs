@@ -436,20 +436,20 @@ where
 
         // Append r(X) witness polynomial from the application circuit.
         a_polys.push(CommittedPolynomial {
-            poly: rx_poly.clone(),
-            blind: blinding,
+            _poly: rx_poly.clone(),
+            _blind: blinding,
             commitment: commitment,
         });
 
         // Append the previous accumulator A polynomials.
         a_polys.push(CommittedPolynomial {
-            poly: left.proof.witness.a_poly.clone(),
-            blind: left.proof.witness.a_blinding,
+            _poly: left.proof.witness.a_poly.clone(),
+            _blind: left.proof.witness.a_blinding,
             commitment: left.proof.instance.a,
         });
         a_polys.push(CommittedPolynomial {
-            poly: right.proof.witness.a_poly.clone(),
-            blind: right.proof.witness.a_blinding,
+            _poly: right.proof.witness.a_poly.clone(),
+            _blind: right.proof.witness.a_blinding,
             commitment: right.proof.instance.a,
         });
 
