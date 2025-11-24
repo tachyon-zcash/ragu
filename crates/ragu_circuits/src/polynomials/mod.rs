@@ -2,6 +2,8 @@
 
 use ff::Field;
 
+pub mod compute_c;
+pub mod horners;
 mod root_of_unity;
 pub mod structured;
 mod txz;

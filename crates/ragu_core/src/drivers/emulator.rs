@@ -278,7 +278,7 @@ impl<F: Field> Emulator<Wired<Always<()>, F>> {
 
 impl<M: Mode<F = F>, F: Field> Emulator<M> {
     /// Helper utility for executing a closure with this [`Emulator`].
-    fn with<R, W: Send>(
+    pub fn with<R, W: Send>(
         &mut self,
         witness: W,
         f: impl FnOnce(&mut Self, <M::MaybeKind as MaybeKind>::Rebind<W>) -> Result<R>,
