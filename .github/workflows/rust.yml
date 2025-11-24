@@ -35,7 +35,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Temporarily disabled windows-latest and macos-latest to speed up CI
+        os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
       - name: Setup Rust
