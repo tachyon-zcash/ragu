@@ -156,11 +156,6 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
         self.key
     }
 
-    /// Returns the number of circuits registered in this mesh.
-    pub fn num_circuits(&self) -> usize {
-        self.circuits.len()
-    }
-
     /// Evaluate the mesh polynomial unrestricted at $W$.
     pub fn xy(&self, x: F, y: F) -> unstructured::Polynomial<F, R> {
         let mut coeffs = unstructured::Polynomial::default();

@@ -13,8 +13,10 @@ use arithmetic::{Cycle, eval};
 use ff::Field;
 use ragu_circuits::{
     CircuitExt,
+    composition::b_stage::EphemeralStageB,
     mesh::{Mesh, MeshBuilder, omega_j},
     polynomials::{Rank, structured, unstructured},
+    staging::StageExt,
 };
 use ragu_core::{
     Error, Result,
@@ -22,7 +24,7 @@ use ragu_core::{
     maybe::{Always, Maybe, MaybeKind},
 };
 use ragu_pasta::PoseidonFp;
-use ragu_primitives::{GadgetExt, Sponge};
+use ragu_primitives::{GadgetExt, Point, Sponge};
 use rand::{Rng, rngs::OsRng};
 
 use alloc::{collections::BTreeMap, vec, vec::Vec};
@@ -142,6 +144,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             circuit_mesh: self.circuit_mesh.finalize(params.circuit_poseidon())?,
             num_application_steps: self.num_application_steps,
             host_generators: params.host_generators(),
+            nested_generators: params.nested_generators(),
             _marker: PhantomData,
         })
     }
@@ -152,10 +155,14 @@ pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     circuit_mesh: Mesh<'params, C::CircuitField, R>,
     num_application_steps: usize,
     host_generators: &'params C::HostGenerators,
+    nested_generators: &'params C::NestedGenerators,
     _marker: PhantomData<[(); HEADER_SIZE]>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE>
+where
+    C: Cycle<CircuitField = ragu_pasta::Fp>,
+{
     /// Creates a trivial proof for the empty [`Header`] implementation `()`.
     /// This may or may not be identical to any previously constructed (trivial)
     /// proof, and so is not guaranteed to be freshly randomized.
@@ -338,7 +345,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         //
         // TODO: Replace with a real transcript abstraction.
         let mut em = Emulator::execute();
-        let mut _transcript = Sponge::new(&mut em, &PoseidonFp);
+        let mut transcript = Sponge::new(&mut em, &PoseidonFp);
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // PHASE: Process endoscalars.
@@ -418,33 +425,60 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // Task: Collect all A polynomials (application and previous accumulators).
         ///////////////////////////////////////////////////////////////////////////////////////
 
-        let mut _a_polys: Vec<CommittedStructured<R, C>> = Vec::with_capacity(3);
-        let mut _ky_polys: Vec<Vec<C::CircuitField>> = Vec::with_capacity(HEADER_SIZE);
+        let mut a_polys: Vec<CommittedStructured<R, C>> =
+            Vec::with_capacity(self.num_application_steps + 2);
+        let mut _ky_polys: Vec<Vec<C::CircuitField>> =
+            Vec::with_capacity(self.num_application_steps);
 
         // Append r(X) witness polynomial from the application circuit.
-        _a_polys.push(CommittedPolynomial {
-            _poly: rx_poly.clone(),
-            _blind: blinding,
-            _commitment: commitment,
+        a_polys.push(CommittedPolynomial {
+            poly: rx_poly.clone(),
+            blind: blinding,
+            commitment: commitment,
         });
 
         // Append the previous accumulator A polynomials.
-        _a_polys.push(CommittedPolynomial {
-            _poly: left.proof.witness.a_poly.clone(),
-            _blind: left.proof.witness.a_blinding,
-            _commitment: left.proof.instance.a,
+        a_polys.push(CommittedPolynomial {
+            poly: left.proof.witness.a_poly.clone(),
+            blind: left.proof.witness.a_blinding,
+            commitment: left.proof.instance.a,
         });
-        _a_polys.push(CommittedPolynomial {
-            _poly: right.proof.witness.a_poly.clone(),
-            _blind: right.proof.witness.a_blinding,
-            _commitment: right.proof.instance.a,
+        a_polys.push(CommittedPolynomial {
+            poly: right.proof.witness.a_poly.clone(),
+            blind: right.proof.witness.a_blinding,
+            commitment: right.proof.instance.a,
         });
 
         // Append k(Y) polynomial from the application circuit.
         _ky_polys.push(ky_poly);
 
         ///////////////////////////////////////////////////////////////////////////////////////
-        // Task: ...
+        // PHASE: B STAGE.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // Collect application circuit commitments (Vesta points).
+        let a_commitments = a_polys
+            .iter()
+            .map(|c| c.commitment)
+            .collect::<Vec<_>>()
+            .try_into()
+            .map_err(|_| Error::CircuitBoundExceeded(self.num_application_steps))?;
+
+        // INNER LAYER: Staging polynomial (over Fq) that witnesses the Vesta commitments.
+        let b_inner_rx = <EphemeralStageB<C::HostCurve, { N + 2 }> as StageExt<
+            C::ScalarField,
+            R,
+        >>::rx(&a_commitments)?;
+
+        // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators.
+        let b_blinding = C::ScalarField::random(OsRng);
+        let b_rx_nested_commitment = b_inner_rx.commit(self.nested_generators, b_blinding);
+
+        let b_point = Point::constant(&mut em, b_rx_nested_commitment)?;
+        b_point.write(&mut em, &mut transcript)?;
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // PHASE: Return the proof.
         ///////////////////////////////////////////////////////////////////////////////////////
 
         Ok((
