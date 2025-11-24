@@ -16,17 +16,22 @@ use ragu_circuits::{
     CircuitExt,
     composition::staging::{
         b_stage::EphemeralStageB,
-        d_stage::{DStage, EphemeralStageD, IndirectionStageD},
+        d_stage::{DStage, EphemeralStageD, IndirectionStageD, NUM_CROSS_PRODUCTS},
         e_stage::{EStage, EphemeralStageE, IndirectionStageE, NUM_EVALS},
         g_stage::{EphemeralStageG, GStage, IndirectionStageG, KYStage},
     },
     mesh::{Mesh, MeshBuilder, omega_j},
-    polynomials::{Rank, structured, unstructured},
+    polynomials::{
+        Rank, compute_c::ComputeC, horners::EvaluateKyPolynomials, structured, unstructured,
+    },
     staging::StageExt,
 };
 use ragu_core::{
     Error, Result,
-    drivers::emulator::{Emulator, Wireless},
+    drivers::{
+        Driver,
+        emulator::{Emulator, Wireless},
+    },
     maybe::{Always, Maybe, MaybeKind},
 };
 use ragu_pasta::{Fp, PoseidonFp};
@@ -633,6 +638,7 @@ where
         ///////////////////////////////////////////////////////////////////////////////////////
 
         // The prover computes all of the error terms (cross products).
+        let len = a_polys.len();
         let mut cross_products = Vec::new();
         for (i, a) in a_polys.iter().enumerate() {
             for (j, b) in b_polys.iter().enumerate() {
@@ -1381,6 +1387,88 @@ where
         let k_point = Point::constant(&mut em, k_rx_nested_commitment)?;
         k_point.write(&mut em, &mut transcript)?;
         ///////////////////////////////////////////////////////////////////////////////////////
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Compute c value using routine outside circuit.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // Evaluate ky polynomials at y_challenge using Horner's routine.
+        let mut dr: Emulator<Wireless<Always<()>, Fp>> = Emulator::wireless();
+
+        let mu_inv = mu_challenge.invert().unwrap();
+        let ky_evaluated = dr
+            .with((&ky_coeff_array[..], y_challenge), |dr, inputs| {
+                let (ky_coeffs_slice, y_val) = inputs.cast();
+
+                // Allocate ky coefficients.
+                let mut ky_coeff_elems = Vec::with_capacity(HEADER_SIZE);
+                for i in 0..HEADER_SIZE {
+                    let coeff = ky_coeffs_slice.view().map(|s| s[i]);
+                    ky_coeff_elems.push(Element::alloc(dr, coeff)?);
+                }
+                let ky_coeff_fixed = ragu_primitives::vec::FixedVec::new(ky_coeff_elems)
+                    .expect("ky_coeff_elems length");
+
+                let y_elem = Element::alloc(dr, y_val)?;
+
+                let horner_routine = EvaluateKyPolynomials::<HEADER_SIZE>::new(HEADER_SIZE);
+                dr.routine(horner_routine, (ky_coeff_fixed, y_elem))
+            })
+            .expect("ky evaluation should succeed");
+
+        // Extract evaluated ky values and add previous accumulator c values.
+        let mut ky_values = Vec::with_capacity(3);
+        for ky_elem in ky_evaluated.iter().take(1) {
+            ky_values.push(*ky_elem.value().take());
+        }
+        ky_values.push(left.proof.instance.c);
+        ky_values.push(right.proof.instance.c);
+
+        // Compute c using the routine.
+        let _c = *dr
+            .with(
+                (
+                    (mu_challenge, nu_challenge, mu_inv),
+                    (&cross_products[..], &ky_values[..]),
+                ),
+                |dr, inputs| {
+                    let (challenges, slices) = inputs.cast();
+                    let (mu, nu, mu_inv) = challenges.cast();
+                    let (cross_slice, ky_slice) = slices.cast();
+
+                    let mu = Element::alloc(dr, mu)?;
+                    let nu = Element::alloc(dr, nu)?;
+                    let mu_inv = Element::alloc(dr, mu_inv)?;
+
+                    // Allocate cross products.
+                    let mut cross_elems = Vec::with_capacity(NUM_CROSS_PRODUCTS);
+                    for i in 0..NUM_CROSS_PRODUCTS {
+                        let val = cross_slice
+                            .view()
+                            .map(|s| if i < s.len() { s[i] } else { Fp::ZERO });
+                        cross_elems.push(Element::alloc(dr, val)?);
+                    }
+                    let cross_elems = ragu_primitives::vec::FixedVec::new(cross_elems)
+                        .expect("cross_elems length");
+
+                    // Allocate ky values.
+                    let mut ky_elems = Vec::with_capacity(3);
+                    for i in 0..3 {
+                        let val = ky_slice
+                            .view()
+                            .map(|s| if i < s.len() { s[i] } else { Fp::ZERO });
+                        ky_elems.push(Element::alloc(dr, val)?);
+                    }
+                    let ky_elems =
+                        ragu_primitives::vec::FixedVec::new(ky_elems).expect("ky_elems length");
+
+                    let input = (((mu, nu), mu_inv), (cross_elems, ky_elems));
+                    dr.routine(ComputeC::<NUM_CROSS_PRODUCTS, 3>::new(len), input)
+                },
+            )
+            .expect("c computation should succeed")
+            .value()
+            .take();
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // PHASE: Return the proof.
