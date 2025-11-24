@@ -293,7 +293,7 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<'_, C, R, H> {
 
 pub struct CommittedPolynomial<P, C: Cycle> {
     pub poly: P,
-    pub _blind: C::CircuitField,
+    pub blind: C::CircuitField,
     pub commitment: C::HostCurve,
 }
 
@@ -309,4 +309,17 @@ pub struct ConsistencyEvaluations<C: Cycle> {
     pub(crate) s1_acc1_at_y: C::CircuitField,
     pub(crate) s1_acc2_at_y: C::CircuitField,
     pub(crate) s2_at_x: C::CircuitField,
+}
+
+/// Polynomial evaluatons at the final batching challenge point u.
+pub struct FinalEvaluations<C: Cycle> {
+    pub(crate) a: C::CircuitField,
+    pub(crate) b: C::CircuitField,
+    pub(crate) acc1_p: C::CircuitField,
+    pub(crate) acc2_p: C::CircuitField,
+    pub(crate) acc1_s: C::CircuitField,
+    pub(crate) acc2_s: C::CircuitField,
+    pub(crate) s: C::CircuitField,
+    pub(crate) s1: [C::CircuitField; 2],
+    pub(crate) s2: C::CircuitField,
 }

@@ -1,4 +1,5 @@
-/// Staging macros.
+//! Staging macros.
+
 /// Ephemeral stage.
 ///
 /// This is used for creating nested commitments, which solves the issue

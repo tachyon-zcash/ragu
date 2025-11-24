@@ -2,6 +2,7 @@
 
 pub(crate) mod endoscalar;
 pub mod error_stage;
+pub mod evaluation_stage;
 pub mod instance;
 mod macros;
 pub mod preamble_stage;
