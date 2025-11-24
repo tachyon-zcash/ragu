@@ -50,9 +50,14 @@ impl Index {
     /// Requires the number of application steps that were registered in order
     /// to index properly. Do not call this and then later register more
     /// application steps.
-    pub(crate) fn circuit_index(&self, num_application_steps: usize) -> usize {
+    ///
+    /// ## Panics
+    ///
+    /// This will panic of called on an internal step without a provided
+    /// `num_application_steps` value.
+    pub(crate) fn circuit_index(&self, num_application_steps: Option<usize>) -> usize {
         match self.index {
-            StepIndex::Internal(i) => num_application_steps + i,
+            StepIndex::Internal(i) => num_application_steps.unwrap() + i,
             StepIndex::Application(i) => i,
         }
     }
@@ -68,11 +73,18 @@ impl Index {
             index: StepIndex::Internal(value),
         }
     }
+
+    pub(crate) fn get_application_index(&self) -> Option<usize> {
+        match self.index {
+            StepIndex::Internal(_) => None,
+            StepIndex::Application(i) => Some(i),
+        }
+    }
 }
 
 #[test]
 fn test_index_map() {
-    let num_application_steps = 10;
+    let num_application_steps = Some(10);
 
     assert_eq!(Index::internal(0).circuit_index(num_application_steps), 10);
     assert_eq!(Index::new(0).circuit_index(num_application_steps), 0);
@@ -116,5 +128,7 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
         DriverValue<D, Self::Aux<'source>>,
-    )>;
+    )>
+    where
+        Self: 'dr;
 }

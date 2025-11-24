@@ -77,9 +77,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     /// provided [`Step`]'s [`INDEX`](Step::INDEX) should be the next sequential
     /// index that has not been inserted yet.
     pub fn register<S: Step<C> + 'params>(mut self, step: S) -> Result<Self> {
-        // NB: all internal steps are registered after application steps, and so
-        // we can pass 0 to this function.
-        if S::INDEX.circuit_index(0) != self.num_application_steps {
+        if S::INDEX.circuit_index(None) != self.num_application_steps {
             return Err(Error::Initialization(
                 "steps must be registered in sequential order".into(),
             ));
@@ -396,7 +394,15 @@ where
         ///////////////////////////////////////////////////////////////////////////////////////
 
         // Create adapter which wraps the step and implements the `Circuit`.
-        let circuit_id = S::INDEX.circuit_index(self.num_application_steps);
+        if let Some(index) = S::INDEX.get_application_index() {
+            if index >= self.num_application_steps {
+                return Err(Error::Initialization(
+                    "attempted to use application Step index that exceeds Application registered steps".into(),
+                ));
+            }
+        }
+
+        let circuit_id = S::INDEX.circuit_index(Some(self.num_application_steps));
         let circuit = Adapter::<C, S, R, HEADER_SIZE>::new(step);
 
         // Compute the witness r(X) polynomial for this step's execution.
