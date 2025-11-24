@@ -68,9 +68,23 @@ $$
 X^{n - 1} p(1 / X) + X^n q(X)
 $$
 
-for $p, q \in \F[X]$ of maximal degree $n - 1$. The prover can commit to $p, q$
+for specially-constructed polynomials $p, q \in \F[X]$ of maximal degree $n - 1$. The prover can commit to $p, q$
 and the verifier can test at a random point to ensure correctness. The claim is
 then reduced to the equality $p(0) = c$.
+
+To construct $p$ and $q$, observe:
+
+$$
+c(X) = \underbrace{c_{0} + c_{1}X + \dots + c_{n-1}X^{n-1}}_{\text{lower half}} + \underbrace{c_{n}X^{n} + \dots + c_{2n-2}X^{2n-2}}_{\text{upper half}}
+$$
+
+Recall from above that the $n - 1$ degree coefficient, $c_{n-1}$, equals the mirrored dot product of the vectors, $\revdot{\v{a}}{\v{b}}$. To construct $p$, we take the lower half of $c$ and reverse its coefficients, so the $c_{n-1}$ coefficient becomes the constant term (and thus, $p(0) = c = \revdot{\v{a}}{\v{b}}$):
+
+$$
+p(X) = c_{n-1} + c_{n-2}X + \dots + c_{0}X^{n-1}
+$$
+
+$q(x)$ is constructed from the coefficients of the upper half.
 
 > This reduction requires the prover to compute $a \cdot b$, which can be done
 > efficiently with an FFT, but should still be performed as infrequently as

@@ -69,7 +69,10 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
     ) -> Result<(
         <Self::Output as GadgetKind<C::CircuitField>>::Rebind<'dr, D>,
         DriverValue<D, Self::Aux<'source>>,
-    )> {
+    )>
+    where
+        Self: 'dr,
+    {
         let (left, right, witness) = witness.cast();
 
         let left = Encoder::new(left);

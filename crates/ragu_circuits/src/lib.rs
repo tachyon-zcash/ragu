@@ -66,7 +66,9 @@ pub trait Circuit<F: Field>: Sized + Send + Sync {
         &self,
         dr: &mut D,
         instance: DriverValue<D, Self::Instance<'source>>,
-    ) -> Result<<Self::Output as GadgetKind<F>>::Rebind<'dr, D>>;
+    ) -> Result<<Self::Output as GadgetKind<F>>::Rebind<'dr, D>>
+    where
+        Self: 'dr;
 
     /// Given a witness type for this circuit, perform a computation using the
     /// provided [`Driver`] and return the `Self::Output` gadget that the verifier's
@@ -79,7 +81,9 @@ pub trait Circuit<F: Field>: Sized + Send + Sync {
     ) -> Result<(
         <Self::Output as GadgetKind<F>>::Rebind<'dr, D>,
         DriverValue<D, Self::Aux<'source>>,
-    )>;
+    )>
+    where
+        Self: 'dr;
 }
 
 /// Extension trait for all circuits.
