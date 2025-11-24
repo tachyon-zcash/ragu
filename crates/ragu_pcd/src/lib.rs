@@ -17,7 +17,7 @@ use ragu_circuits::{
     composition::staging::{
         b_stage::EphemeralStageB,
         d_stage::{DStage, EphemeralStageD, IndirectionStageD},
-        e_stage::{EStage, EphemeralStageE, IndirectionStageE},
+        e_stage::{EStage, EphemeralStageE, IndirectionStageE, NUM_EVALS},
         g_stage::{EphemeralStageG, GStage, IndirectionStageG, KYStage},
     },
     mesh::{Mesh, MeshBuilder, omega_j},
@@ -869,7 +869,7 @@ where
         // construct the batched claims.
         ///////////////////////////////////////////////////////////////////////////////////////
 
-        let mut intermediate_evals = Vec::with_capacity(23);
+        let mut intermediate_evals = Vec::with_capacity(NUM_EVALS);
 
         intermediate_evals.extend_from_slice(&circuit_evaluations);
 
@@ -887,9 +887,9 @@ where
         intermediate_evals.push(batched_a_eval);
         intermediate_evals.push(batched_b_eval);
 
-        let intermediate_evals_array: [Fp; 23] = intermediate_evals
+        let intermediate_evals_array: [Fp; NUM_EVALS] = intermediate_evals
             .try_into()
-            .expect("intermediate_evals should have exactly 23 elements");
+            .expect("intermediate_evals should have exactly NUM_EVALS elements");
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: Compute E staging polynomial.
