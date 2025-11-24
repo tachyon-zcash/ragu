@@ -633,12 +633,11 @@ where
         ///////////////////////////////////////////////////////////////////////////////////////
 
         // The prover computes all of the error terms (cross products).
-        let len = a_polys.len();
         let mut cross_products = Vec::new();
-        for i in 0..len {
-            for j in 0..len {
+        for (i, a) in a_polys.iter().enumerate() {
+            for (j, b) in b_polys.iter().enumerate() {
                 if i != j {
-                    let cross = a_polys[i].poly.revdot(&b_polys[j].poly);
+                    let cross = a.poly.revdot(&b.poly);
                     cross_products.push(cross);
                 }
             }
