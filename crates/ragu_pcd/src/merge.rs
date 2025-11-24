@@ -1,7 +1,9 @@
 use arithmetic::Cycle;
-use ragu_circuits::{CircuitExt, polynomials::Rank};
+use ragu_circuits::{
+    CircuitExt, composition::b_stage::EphemeralStageB, polynomials::Rank, staging::StageExt,
+};
 use ragu_core::{Error, Result, drivers::emulator::Emulator};
-use ragu_primitives::Sponge;
+use ragu_primitives::{Point, Sponge};
 use rand::{Rng, rngs::OsRng};
 
 use alloc::vec::Vec;
@@ -16,6 +18,7 @@ use crate::{
     verify::stub_step::StubStep,
 };
 use ff::Field;
+use ragu_primitives::GadgetExt;
 
 pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE: usize>(
     num_application_steps: usize,
@@ -28,7 +31,7 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
     right: Pcd<'source, C, R, S::Right>,
 ) -> Result<(Proof<C, R>, S::Aux<'source>)> {
     let host_generators = params.host_generators();
-    let _nested_generators = params.nested_generators();
+    let nested_generators = params.nested_generators();
     let circuit_poseidon = params.circuit_poseidon();
 
     ///////////////////////////////////////////////////////////////////////////////////////
@@ -41,7 +44,7 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
     //
     // TODO: Replace with a real transcript abstraction.
     let mut em = Emulator::execute();
-    let mut _transcript = Sponge::new(&mut em, circuit_poseidon);
+    let mut transcript = Sponge::new(&mut em, circuit_poseidon);
 
     ///////////////////////////////////////////////////////////////////////////////////////
     // PHASE: Process endoscalars.
@@ -130,26 +133,26 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
     // Task: Collect all A polynomials (application and previous accumulators).
     ///////////////////////////////////////////////////////////////////////////////////////
 
-    let mut _a_polys: Vec<CommittedStructured<R, C>> = Vec::new();
+    let mut a_polys: Vec<CommittedStructured<R, C>> = Vec::new();
     let mut _ky_polys: Vec<Vec<C::CircuitField>> = Vec::new();
 
     // Append r(X) witness polynomial from the application circuit.
-    _a_polys.push(CommittedPolynomial {
+    a_polys.push(CommittedPolynomial {
         _poly: rx.clone(),
         _blind: blinding,
-        _commitment: commitment,
+        commitment,
     });
 
     // Append the previous accumulator A polynomials.
-    _a_polys.push(CommittedPolynomial {
+    a_polys.push(CommittedPolynomial {
         _poly: left.proof.witness.a_poly.clone(),
         _blind: left.proof.witness.a_blinding,
-        _commitment: left.proof.instance.a,
+        commitment: left.proof.instance.a,
     });
-    _a_polys.push(CommittedPolynomial {
+    a_polys.push(CommittedPolynomial {
         _poly: right.proof.witness.a_poly.clone(),
         _blind: right.proof.witness.a_blinding,
-        _commitment: right.proof.instance.a,
+        commitment: right.proof.instance.a,
     });
 
     // Append k(Y) polynomial from previous accumulators.
@@ -157,7 +160,36 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
     _ky_polys.push(right_ky_poly);
 
     ///////////////////////////////////////////////////////////////////////////////////////
-    // Task: ...
+    // PHASE: B STAGE.
+    ///////////////////////////////////////////////////////////////////////////////////////
+
+    // Temporary: Total circuits (1 application step + 2 accumulators)
+    const NUM_CIRCUITS: usize = 3;
+    const _NUM_APP_CIRCUITS: usize = 1;
+
+    // Collect application circuit commitments (Vesta points).
+    let a_commitments = a_polys
+        .iter()
+        .map(|c| c.commitment)
+        .collect::<Vec<_>>()
+        .try_into()
+        .map_err(|_| Error::CircuitBoundExceeded(NUM_CIRCUITS))?;
+
+    // INNER LAYER: Staging polynomial (over Fq) that witnesses the Vesta commitments.
+    let b_inner_rx = <EphemeralStageB<C::HostCurve, NUM_CIRCUITS> as StageExt<
+        C::ScalarField,
+        R,
+    >>::rx(&a_commitments)?;
+
+    // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators.
+    let b_blinding = C::ScalarField::random(OsRng);
+    let b_rx_nested_commitment = b_inner_rx.commit(nested_generators, b_blinding);
+
+    let b_point = Point::constant(&mut em, b_rx_nested_commitment)?;
+    b_point.write(&mut em, &mut transcript)?;
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // PHASE: Return the proof.
     ///////////////////////////////////////////////////////////////////////////////////////
 
     Ok((
