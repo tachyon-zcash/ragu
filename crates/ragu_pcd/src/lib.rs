@@ -1234,12 +1234,10 @@ where
                 proc(xz, *eval_xz, *final_eval);
             }
 
-            drop(proc);
-
             let mut p_poly = f.poly.clone();
             let mut p_blind = f.blind;
 
-            let mut proc =
+            let mut add_poly =
                 |f: &dyn Fn(&mut unstructured::Polynomial<Fp, R>), eval_prime: Fp, blind| {
                     p_poly.scale(b_challenge);
                     p_blind *= b_challenge;
@@ -1250,48 +1248,48 @@ where
                     p_blind += blind;
                 };
 
-            proc(
+            add_poly(
                 &|p| p.add_structured(&a_folded.poly),
                 evaluations_final.a,
                 &a_folded.blind,
             );
-            proc(
+            add_poly(
                 &|p| p.add_structured(&b_folded.poly),
                 evaluations_final.b,
                 &b_folded.blind,
             );
-            proc(
+            add_poly(
                 &|p| p.add_assign(&left.proof.witness.p_poly),
                 evaluations_final.acc1_p,
                 &left.proof.witness.p_blinding,
             );
-            proc(
+            add_poly(
                 &|p| p.add_assign(&right.proof.witness.p_poly),
                 evaluations_final.acc2_p,
                 &right.proof.witness.p_blinding,
             );
-            proc(
+            add_poly(
                 &|p| p.add_assign(&left.proof.witness.s_poly),
                 evaluations_final.acc1_s,
                 &left.proof.witness.s_blinding,
             );
-            proc(
+            add_poly(
                 &|p| p.add_assign(&right.proof.witness.s_poly),
                 evaluations_final.acc2_s,
                 &right.proof.witness.s_blinding,
             );
-            proc(&|p| p.add_assign(&s.poly), evaluations_final.s, &s.blind);
-            proc(
+            add_poly(&|p| p.add_assign(&s.poly), evaluations_final.s, &s.blind);
+            add_poly(
                 &|p| p.add_assign(&s_prime[0].poly),
                 evaluations_final.s1[0],
                 &s_prime[0].blind,
             );
-            proc(
+            add_poly(
                 &|p| p.add_assign(&s_prime[1].poly),
                 evaluations_final.s1[1],
                 &s_prime[1].blind,
             );
-            proc(
+            add_poly(
                 &|p| p.add_structured(&s_prime_prime.poly),
                 evaluations_final.s2,
                 &s_prime_prime.blind,
@@ -1299,7 +1297,7 @@ where
 
             // Add proc calls for a_polys
             for (a_poly, final_eval) in a_polys.iter().zip(a_polys_final_evals.iter()) {
-                proc(
+                add_poly(
                     &|p| p.add_structured(&a_poly.poly),
                     *final_eval,
                     &a_poly.blind,
