@@ -13,7 +13,10 @@ use arithmetic::{Cycle, eval};
 use ff::Field;
 use ragu_circuits::{
     CircuitExt,
-    composition::b_stage::EphemeralStageB,
+    composition::{
+        b_stage::EphemeralStageB,
+        d_stage::{DStage, EphemeralStageD, IndirectionStageD},
+    },
     mesh::{Mesh, MeshBuilder, omega_j},
     polynomials::{Rank, structured, unstructured},
     staging::StageExt,
@@ -23,7 +26,7 @@ use ragu_core::{
     drivers::emulator::{Emulator, Wireless},
     maybe::{Always, Maybe, MaybeKind},
 };
-use ragu_pasta::PoseidonFp;
+use ragu_pasta::{Fp, PoseidonFp};
 use ragu_primitives::{GadgetExt, Point, Sponge};
 use rand::{Rng, rngs::OsRng};
 
@@ -436,19 +439,19 @@ where
 
         // Append r(X) witness polynomial from the application circuit.
         a_polys.push(CommittedPolynomial {
-            _poly: rx_poly.clone(),
+            poly: rx_poly.clone(),
             _blind: blinding,
             commitment,
         });
 
         // Append the previous accumulator A polynomials.
         a_polys.push(CommittedPolynomial {
-            _poly: left.proof.witness.a_poly.clone(),
+            poly: left.proof.witness.a_poly.clone(),
             _blind: left.proof.witness.a_blinding,
             commitment: left.proof.instance.a,
         });
         a_polys.push(CommittedPolynomial {
-            _poly: right.proof.witness.a_poly.clone(),
+            poly: right.proof.witness.a_poly.clone(),
             _blind: right.proof.witness.a_blinding,
             commitment: right.proof.instance.a,
         });
@@ -478,6 +481,201 @@ where
 
         let b_point = Point::constant(&mut em, b_rx_nested_commitment)?;
         b_point.write(&mut em, &mut transcript)?;
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // PHASE: D STAGE. This uses a two-layer nested commitments.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: W challenge derivation.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // TRANSCRIPT: Squeeze w challenge.
+        let w = transcript.squeeze(&mut em)?;
+        let w_challenge = *w.value().take();
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: S' Mesh Polynomials.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // COMPUTE S': For each previous accumulator, compute M(w, x_i, Y) for checking mesh consistency.
+        let s1_poly_acc1 = self.circuit_mesh.wx(w_challenge, left.proof.instance.x.0);
+        let s1_blinding_acc1 = C::CircuitField::random(OsRng);
+        let s1_commitment_acc1 = s1_poly_acc1.commit(self.host_generators, s1_blinding_acc1);
+
+        let s1_poly_acc2 = self.circuit_mesh.wx(w_challenge, right.proof.instance.x.0);
+        let s1_blinding_acc2 = C::CircuitField::random(OsRng);
+        let s1_commitment_acc2 = s1_poly_acc2.commit(self.host_generators, s1_blinding_acc2);
+
+        let s_prime: [CommittedPolynomial<_, C>; 2] = [
+            CommittedPolynomial {
+                poly: s1_poly_acc1,
+                _blind: s1_blinding_acc1,
+                commitment: s1_commitment_acc1,
+            },
+            CommittedPolynomial {
+                poly: s1_poly_acc2,
+                _blind: s1_blinding_acc2,
+                commitment: s1_commitment_acc2,
+            },
+        ];
+
+        let s_prime_commitments = [s_prime[0].commitment, s_prime[1].commitment];
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: S' Nested Commitment.
+        //////////////////////////////////////////////////////////////////////////////////////
+
+        // INNER LAYER: Staging polynomial (over Fq) that witnesses the S' Vesta commitments.
+        let d1_rx = <EphemeralStageD<C::HostCurve, 2> as StageExt<C::ScalarField, R>>::rx(
+            &s_prime_commitments,
+        )?;
+
+        // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
+        let d1_binding = C::ScalarField::random(OsRng);
+        let d1_nested_commitment = d1_rx.commit(self.nested_generators, d1_binding);
+
+        let d1_point = Point::constant(&mut em, d1_nested_commitment)?;
+        d1_point.write(&mut em, &mut transcript)?;
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Y and Z challenge derivation.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // TRANSCRIPT: Squeeze y challenge.
+        let y = transcript.squeeze(&mut em)?;
+        let y_challenge = *y.value().take();
+
+        // TRANSCRIPT: Squeeze z challenge.
+        let z = transcript.squeeze(&mut em)?;
+        let z_challenge = *z.value().take();
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: S'' Mesh Polynomial.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // COMPUTE S'': M(w, X, y) polynomial for final mesh consistency checks.
+        let s2_poly = self.circuit_mesh.wy(w_challenge, y_challenge);
+        let s2_blinding = C::CircuitField::random(OsRng);
+        let s2_commitment = s2_poly.commit(self.host_generators, s2_blinding);
+
+        let _s_prime_prime: [CommittedPolynomial<_, C>; 1] = [CommittedPolynomial {
+            poly: s2_poly,
+            _blind: s2_blinding,
+            commitment: s2_commitment,
+        }];
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: S'' Nested Commitment
+        //////////////////////////////////////////////////////////////////////////////////////
+
+        // INNER LAYER: Staging polynomial (over Fq) that witnesses the S'' Vesta commitment.
+        let d2_rx = <EphemeralStageD<C::HostCurve, 1> as StageExt<C::ScalarField, R>>::rx(&[
+            s2_commitment,
+        ])?;
+
+        // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
+        let d2_binding = C::ScalarField::random(OsRng);
+        let d2_nested_commitment = d2_rx.commit(self.nested_generators, d2_binding);
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Compute B polynomials for revdot verification.
+        //
+        //  For each application circuit: B_i(X) = A_i(X) * z + t(X,z) + M(circuit_id, X, y),
+        //  and this construction ensures: A_i (revdot) B_i = k_i(y).
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        let tz = R::tz(z_challenge);
+
+        let mut b_polys: Vec<CommittedStructured<R, C>> = a_polys
+            .iter()
+            .take(1)
+            .zip([circuit_id].iter())
+            .map(|(a, &circuit_id)| {
+                let mut b_poly = a.poly.clone();
+                b_poly.dilate(z_challenge);
+                b_poly.add_assign(&tz);
+                b_poly.add_assign(
+                    &self
+                        .circuit_mesh
+                        .wy(omega_j(circuit_id as u32), y_challenge),
+                );
+
+                let b_blinding = C::CircuitField::random(OsRng);
+                let b_commitment = b_poly.commit(self.host_generators, b_blinding);
+
+                CommittedPolynomial {
+                    poly: b_poly,
+                    _blind: b_blinding,
+                    commitment: b_commitment,
+                }
+            })
+            .collect();
+
+        // Append existing accumulator B polynomials.
+        b_polys.push(CommittedPolynomial {
+            poly: left.proof.witness.b_poly.clone(),
+            _blind: left.proof.witness.b_blinding,
+            commitment: left.proof.instance.b,
+        });
+        b_polys.push(CommittedPolynomial {
+            poly: right.proof.witness.b_poly.clone(),
+            _blind: right.proof.witness.b_blinding,
+            commitment: right.proof.instance.b,
+        });
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Compute error / slack term (from folding multiple revdot checks)
+        // before computing the u and v evaluations.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // The prover computes all of the error terms (cross products).
+        let len = a_polys.len();
+        let mut cross_products = Vec::new();
+        for i in 0..len {
+            for j in 0..len {
+                if i != j {
+                    let cross = a_polys[i].poly.revdot(&b_polys[j].poly);
+                    cross_products.push(cross);
+                }
+            }
+        }
+
+        let cross_products = cross_products
+            .clone()
+            .try_into()
+            .map_err(|_| Error::CircuitBoundExceeded(self.num_application_steps))?;
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Compute D staging polynomial.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        let d_staging_witness = (
+            [w_challenge, y_challenge, z_challenge],
+            [d1_nested_commitment, d2_nested_commitment],
+            cross_products,
+        );
+
+        let d_rx = <DStage<C::NestedCurve> as StageExt<Fp, R>>::rx(d_staging_witness)?;
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // LAYER OF INDIRECTION: We now introduce another nested commitment layer to produce
+        // an Fp-hashable nested commitment for the transcript.
+        let d_rx_blinding = C::CircuitField::random(OsRng);
+        let d_rx_commitment = d_rx.commit(self.host_generators, d_rx_blinding);
+
+        // INNER LAYER: Staging polynomial (over Fq) that witnesses the D staged circuit Vesta commitment.
+        let d_rx_inner =
+            <IndirectionStageD<C::HostCurve> as StageExt<C::ScalarField, R>>::rx(d_rx_commitment)?;
+
+        // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
+        let d_rx_nested_commitment_blinding = C::ScalarField::random(OsRng);
+        let d_rx_nested_commitment =
+            d_rx_inner.commit(self.nested_generators, d_rx_nested_commitment_blinding);
+
+        let d_point = Point::constant(&mut em, d_rx_nested_commitment)?;
+        d_point.write(&mut em, &mut transcript)?;
+        ///////////////////////////////////////////////////////////////////////////////////////
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // PHASE: Return the proof.
