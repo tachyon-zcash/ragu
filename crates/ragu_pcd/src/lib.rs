@@ -431,10 +431,8 @@ where
         // Task: Collect all A polynomials (application and previous accumulators).
         ///////////////////////////////////////////////////////////////////////////////////////
 
-        let mut a_polys: Vec<CommittedStructured<R, C>> =
-            Vec::with_capacity(self.num_application_steps + 2);
-        let mut _ky_polys: Vec<Vec<C::CircuitField>> =
-            Vec::with_capacity(self.num_application_steps);
+        let mut a_polys: Vec<CommittedStructured<R, C>> = vec![];
+        let mut _ky_polys: Vec<Vec<C::CircuitField>> = vec![];
 
         // Append r(X) witness polynomial from the application circuit.
         a_polys.push(CommittedPolynomial {
