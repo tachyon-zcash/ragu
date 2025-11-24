@@ -38,7 +38,7 @@ impl<'dr, 'source: 'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_SIZE: usiz
 /// The result of encoding a header within a step.
 ///
 /// This can either be a concrete gadget encoding (`Gadget`) or a raw
-/// fixed-length serialized form (`Raw`) padded/truncated to `HEADER_SIZE`.
+/// fixed-length serialized form (`Raw`) padded to `HEADER_SIZE`.
 pub enum Encoded<'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_SIZE: usize> {
     /// A gadget form of the header produced by `Header::encode`.
     Gadget(<H::Output as GadgetKind<D::F>>::Rebind<'dr, D>),

@@ -2,7 +2,7 @@
 
 A **gadget** is the fundamental unit of all algorithms expressed as arithmetic circuits. It consists of a collection of _wires_, the _witness_ information required to reason about their possible assignments, and the _constraints_ that impose invariants over these assignments. Gadgets consolidate these components into an opaque type that guards how the underlying wires are manipulated and optimizes how their witness information is represented.
 
-As an example, one of the simplest gadgets is the [`Boolean`][boolean-gadget] gadget which internally represents a wire that is constrained to be $0$ or $1$ together with the witness information (a `bool`) that describes its assignment. Wires always take the form of an associated type `D::Wire` based on the current [driver](drivers.md) `D`, and so the `Boolean` gadget could be represented by the Rust structure:
+As an example, one of the simplest gadgets is the [`Boolean`][boolean-gadget] gadget which internally represents a wire that is constrained to be $0$ or $1$ together with the witness information (a `bool`) that describes its assignment. Wires always take the form of an associated type `D::Wire` based on the [driver](drivers.md) `D`, and so the `Boolean` gadget could be represented by the Rust structure:
 
 ```rust
 pub struct Boolean<'dr, D: Driver<'dr>> {
@@ -13,7 +13,7 @@ pub struct Boolean<'dr, D: Driver<'dr>> {
 
 This structure acts as a guard type that ensures the underlying wire has been so-constrained, perhaps by a constructor function or another operation between `Boolean`s.
 
-More sophisticated gadgets can exist which collect many wires together, preserve more complicated invariants between them and use a richer structure to encode their contents. One such gadget could be a [`SpongeState`][spongestate-gadget], which contains the far more complicated type:
+More sophisticated gadgets can exist which collect many wires together, preserve more complicated invariants between them and use a richer structure to encode their contents. One such gadget could be a `SpongeState`, which contains the far more complicated type:
 
 ```rust
 pub struct SpongeState<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> {
@@ -40,30 +40,9 @@ Due to the above guarantees, types that implement [`Gadget`][gadget-trait] can b
 
 In order to transform a gadget from one driver to another, gadgets provide a [`map_gadget`][map-gadget-method] method implementation which uses the [`FromDriver`][fromdriver-trait] to map a gadget's constituent wires and witness data to a new [`Driver`][driver-trait].
 
-
-### [`GadgetKind`][gadgetkind-trait]
-
-The [`Gadget`][gadget-trait] trait is defined as
-
-```rust
-pub trait Gadget<'dr, D: Driver<'dr>>: Clone {
-    // ...
-}
-```
-
-so that any concrete [`Gadget`][gadget-trait] must be parameterized by a concrete [`Driver`][driver-trait]. But because gadgets can be transformed between drivers, a common interface is used to describe the _kind_ of a gadget agnostic to an actual driver. This is done through the [`GadgetKind<F>`][gadgetkind-trait] trait, which is defined as
-
-```rust
-pub unsafe trait GadgetKind<F: Field>: core::any::Any {
-    type Rebind<'dr, D: Driver<'dr, F = F>>: Gadget<'dr, D, Kind = Self>;
-}
-```
-
-where the generic associated type `Rebind<'dr, D>` allows an implementation of [`GadgetKind`][gadgetkind-trait] to specify how a concrete [`Gadget`][gadget-trait] type can be obtained from a concrete [`Driver`][driver-trait]. The [`Gadget`][gadget-trait] trait, in turn, has an associated type `Kind` that relates back to its corresponding [`GadgetKind`][gadgetkind-trait] implementation.
-
 ## Automatic Derivation
 
-The above API contract is relatively complicated, but also very constraining over the possible types that can implement [`Gadget`][gadget-trait] safely and correctly. As a result, it is possible to automatically derive nearly all implementations of the [`Gadget`][gadget-trait] trait using a procedural macro.
+The above API contract is relatively complicated, but also very constraining over the possible types that can implement [`Gadget`][gadget-trait] safely and correctly. As a result, it is possible to automatically derive nearly all implementations of the [`Gadget`][gadget-trait] trait using a [procedural macro](macro@ragu_core::gadgets::GadgetKind).
 
 The above example of `Boolean` can be rewritten as
 

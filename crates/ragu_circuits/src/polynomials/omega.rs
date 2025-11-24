@@ -47,24 +47,13 @@ impl<F: Field> Routine<F> for ValidateOmega {
 
     fn predict<'dr, D: Driver<'dr, F = F>>(
         &self,
-        dr: &mut D,
-        omega: &<Self::Input as GadgetKind<F>>::Rebind<'dr, D>,
+        _dr: &mut D,
+        _omega: &<Self::Input as GadgetKind<F>>::Rebind<'dr, D>,
     ) -> Result<
         Prediction<<Self::Output as GadgetKind<F>>::Rebind<'dr, D>, DriverValue<D, Self::Aux<'dr>>>,
     > {
-        let output = Boolean::alloc(
-            dr,
-            D::with(|| {
-                let mut value = *omega.value().take();
-                for _ in 0..self.log2_domain_size {
-                    value = value.square();
-                }
-
-                Ok(value == F::ONE)
-            })?,
-        )?;
-
-        Ok(Prediction::Known(output, D::just(|| ())))
+        // Prediction requires the same computation as execution. Return Unknown to defer to execute().
+        Ok(Prediction::Unknown(D::just(|| ())))
     }
 }
 
@@ -72,7 +61,6 @@ impl<F: Field> Routine<F> for ValidateOmega {
 mod tests {
     use super::*;
     use ff::PrimeField;
-    use ragu_core::maybe::MaybeKind;
     use ragu_pasta::Fp;
     use ragu_primitives::Simulator;
 
@@ -122,47 +110,6 @@ mod tests {
 
             Ok(())
         });
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_omega_match() -> Result<()> {
-        // Verifies predict and execute yield the same result.
-        use ragu_core::{maybe::Always, routines::Prediction};
-
-        let log2_domain_size = 8;
-        let validator = ValidateOmega::_new(log2_domain_size);
-
-        {
-            let omega = Fp::ROOT_OF_UNITY;
-            let reduced = Fp::S - log2_domain_size;
-            let omega = omega.pow([1 << reduced]);
-
-            Simulator::simulate(omega, |dr, witness| {
-                let omega_element = Element::alloc(dr, witness)?;
-
-                // Invoke routine prediction.
-                let prediction = validator.predict(dr, &omega_element)?;
-                let predicted_value = match prediction {
-                    Prediction::Known(output, _) => *output.wire(),
-                    Prediction::Unknown(_) => panic!("Expected Known prediction"),
-                };
-
-                // Invoke routine execution.
-                dr.reset();
-                let executed = validator.execute(dr, omega_element, Always::maybe_just(|| ()))?;
-                let executed_value = *executed.wire();
-
-                assert_eq!(
-                    predicted_value, executed_value,
-                    "predict and execute should yield the same result"
-                );
-                assert_eq!(predicted_value, Fp::ONE, "valid omega should return true");
-
-                Ok(())
-            })?;
-        }
 
         Ok(())
     }
