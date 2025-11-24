@@ -42,7 +42,11 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Adapter<C, S, R, H
 impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::CircuitField>
     for Adapter<C, S, R, HEADER_SIZE>
 {
-    type Instance<'source> = ();
+    type Instance<'source> = (
+        Vec<C::CircuitField>,
+        Vec<C::CircuitField>,
+        Vec<C::CircuitField>,
+    );
     type Witness<'source> = (
         <S::Left as Header<C::CircuitField>>::Data<'source>,
         <S::Right as Header<C::CircuitField>>::Data<'source>,
@@ -50,16 +54,36 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
     );
     type Output = Kind![C::CircuitField; FixedVec<Element<'_, _>, TripleConstLen<HEADER_SIZE>>];
     type Aux<'source> = (
-        (Vec<C::CircuitField>, Vec<C::CircuitField>),
+        (
+            Vec<C::CircuitField>,
+            Vec<C::CircuitField>,
+            Vec<C::CircuitField>,
+        ),
         S::Aux<'source>,
     );
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
-        _: &mut D,
-        _: DriverValue<D, Self::Instance<'source>>,
+        dr: &mut D,
+        instance: DriverValue<D, Self::Instance<'source>>,
     ) -> Result<<Self::Output as GadgetKind<C::CircuitField>>::Rebind<'dr, D>> {
-        unreachable!("instance method is not used by the Adapter")
+        let (output_header, left_header, right_header) = instance.cast();
+
+        let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
+
+        for value in output_header.snag() {
+            elements.push(Element::constant(dr, *value));
+        }
+
+        for value in left_header.snag() {
+            elements.push(Element::constant(dr, *value));
+        }
+
+        for value in right_header.snag() {
+            elements.push(Element::constant(dr, *value));
+        }
+
+        Ok(FixedVec::try_from(elements).expect("correct length"))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -85,6 +109,11 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         right.write(dr, &mut elements)?;
 
         let aux = D::just(|| {
+            let output_header = elements[0..HEADER_SIZE]
+                .iter()
+                .map(|e| *e.value().take())
+                .collect();
+
             let left_header = elements[HEADER_SIZE..HEADER_SIZE * 2]
                 .iter()
                 .map(|e| *e.value().take())
@@ -95,7 +124,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
                 .map(|e| *e.value().take())
                 .collect();
 
-            ((left_header, right_header), aux.take())
+            ((output_header, left_header, right_header), aux.take())
         });
 
         Ok((FixedVec::try_from(elements).expect("correct length"), aux))

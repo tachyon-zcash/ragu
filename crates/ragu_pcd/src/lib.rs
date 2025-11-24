@@ -398,13 +398,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             self.circuit_mesh.get_key(),
         )?;
 
+        let ((output_header, left_header, right_header), step_aux) = aux;
+
         // Commit to r(X) with random blinding.
         let blinding = C::CircuitField::random(OsRng);
         let commitment = rx_poly.clone().commit(self.host_generators, blinding);
 
-        // Compute k(Y) polynomial.
-        // TODO: `Adapter` has Instance = (), which is currently stubbed.
-        let ky_poly = circuit.ky(())?;
+        // Compute k(Y) polynomial using serialized headers.
+        let ky_poly = circuit.ky((
+            output_header.clone(),
+            left_header.clone(),
+            right_header.clone(),
+        ))?;
 
         // Convert the adapter into a `CircuitObject` to access circuit polynomial methods.
         let _circuit_object = circuit.into_object::<R>()?;
@@ -442,8 +447,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // Task: ...
         ///////////////////////////////////////////////////////////////////////////////////////
 
-        let ((left_header, right_header), aux) = aux;
-
         Ok((
             Proof {
                 circuit_id,
@@ -457,7 +460,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 deferreds: left.proof.deferreds,
                 staged_circuits: left.proof.staged_circuits,
             },
-            aux,
+            step_aux,
         ))
     }
 
