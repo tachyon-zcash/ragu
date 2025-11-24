@@ -471,10 +471,8 @@ where
             .map_err(|_| Error::CircuitBoundExceeded(self.num_application_steps))?;
 
         // INNER LAYER: Staging polynomial (over Fq) that witnesses the Vesta commitments.
-        let b_inner_rx = <EphemeralStageB<C::HostCurve, { N + 2 }> as StageExt<
-            C::ScalarField,
-            R,
-        >>::rx(&a_commitments)?;
+        let b_inner_rx =
+            <EphemeralStageB<C::HostCurve, 3> as StageExt<C::ScalarField, R>>::rx(&a_commitments)?;
 
         // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators.
         let b_blinding = C::ScalarField::random(OsRng);
