@@ -438,7 +438,7 @@ where
         a_polys.push(CommittedPolynomial {
             _poly: rx_poly.clone(),
             _blind: blinding,
-            commitment: commitment,
+            commitment,
         });
 
         // Append the previous accumulator A polynomials.
