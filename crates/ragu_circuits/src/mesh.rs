@@ -296,16 +296,6 @@ pub fn compute_domain(num_circuits: usize) -> u32 {
     num_circuits.next_power_of_two().trailing_zeros()
 }
 
-/// Vaidates omega is valid 2^k root of unity for the domain size.
-pub fn validate_omega_in_domain<F: PrimeField>(omega: F, log2_domain_size: u32) -> bool {
-    let mut value = omega;
-    for _ in 0..log2_domain_size {
-        value = value.square()
-    }
-
-    value == F::ONE
-}
-
 #[cfg(test)]
 mod tests {
     use super::{MeshBuilder, OmegaKey, omega_j};

@@ -2,6 +2,7 @@
 
 use ff::Field;
 
+mod omega;
 pub mod structured;
 mod txz;
 pub mod unstructured;
