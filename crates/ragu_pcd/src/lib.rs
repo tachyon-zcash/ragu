@@ -1361,14 +1361,12 @@ where
             application_ky_coffs.extend_from_slice(ky_poly);
         }
 
-        // KY polynomial size = 1 + HEADER_SIZE * 3 (output + left + right headers + 1)
-        // For HEADER_SIZE = 4, this is 13.
-        let ky_coeff_array: [C::CircuitField; 13] = application_ky_coffs
+        let ky_coeff_array: [C::CircuitField; KY_POLY_SIZE] = application_ky_coffs
             .try_into()
-            .map_err(|_| Error::CircuitBoundExceeded(13))?;
+            .map_err(|_| Error::CircuitBoundExceeded(KY_POLY_SIZE))?;
 
         // Build the K staging polynomial.
-        let k_rx = <KYStage<C::NestedCurve, 13> as StageExt<Fp, R>>::rx(ky_coeff_array)?;
+        let k_rx = <KYStage<C::NestedCurve, KY_POLY_SIZE> as StageExt<Fp, R>>::rx(ky_coeff_array)?;
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // LAYER OF INDIRECTION: We now introduce another nested commitment layer to produce
@@ -1394,6 +1392,14 @@ where
         // TASK: Compute c value using routine outside circuit.
         ///////////////////////////////////////////////////////////////////////////////////////
 
+        /// Number of circuits being folded together (1 application + 2 accumulators).
+        const NUM_CIRCUITS: usize = 3;
+
+        /// Size of the KY polynomial coefficients array.
+        /// This is 1 + HEADER_SIZE * 3 where HEADER_SIZE = 4.
+        /// (output_header + left_header + right_header + 1 for the constant term)
+        const KY_POLY_SIZE: usize = 13;
+
         // Evaluate ky polynomials at y_challenge using Horner's routine.
         let mut dr: Emulator<Wireless<Always<()>, Fp>> = Emulator::wireless();
 
@@ -1402,9 +1408,8 @@ where
             .with((&ky_coeff_array[..], y_challenge), |dr, inputs| {
                 let (ky_coeffs_slice, y_val) = inputs.cast();
 
-                // Allocate ky coefficients (size = 1 + HEADER_SIZE * 3 = 13).
-                let mut ky_coeff_elems = Vec::with_capacity(13);
-                for i in 0..13 {
+                let mut ky_coeff_elems = Vec::with_capacity(KY_POLY_SIZE);
+                for i in 0..KY_POLY_SIZE {
                     let coeff = ky_coeffs_slice.view().map(|s| s[i]);
                     ky_coeff_elems.push(Element::alloc(dr, coeff)?);
                 }
@@ -1413,13 +1418,13 @@ where
 
                 let y_elem = Element::alloc(dr, y_val)?;
 
-                let horner_routine = EvaluateKyPolynomials::<13>::new(13);
+                let horner_routine = EvaluateKyPolynomials::<KY_POLY_SIZE>::new(KY_POLY_SIZE);
                 dr.routine(horner_routine, (ky_coeff_fixed, y_elem))
             })
             .expect("ky evaluation should succeed");
 
         // Extract evaluated ky values and add previous accumulator c values.
-        let mut ky_values = Vec::with_capacity(3);
+        let mut ky_values = Vec::with_capacity(NUM_CIRCUITS);
         for ky_elem in ky_evaluated.iter().take(1) {
             ky_values.push(*ky_elem.value().take());
         }
@@ -1453,9 +1458,9 @@ where
                     let cross_elems = ragu_primitives::vec::FixedVec::new(cross_elems)
                         .expect("cross_elems length");
 
-                    // Allocate ky values.
-                    let mut ky_elems = Vec::with_capacity(3);
-                    for i in 0..3 {
+                    // Allocate ky values (one per circuit being folded).
+                    let mut ky_elems = Vec::with_capacity(NUM_CIRCUITS);
+                    for i in 0..NUM_CIRCUITS {
                         let val = ky_slice
                             .view()
                             .map(|s| if i < s.len() { s[i] } else { Fp::ZERO });
@@ -1465,7 +1470,10 @@ where
                         ragu_primitives::vec::FixedVec::new(ky_elems).expect("ky_elems length");
 
                     let input = (((mu, nu), mu_inv), (cross_elems, ky_elems));
-                    dr.routine(ComputeC::<NUM_CROSS_PRODUCTS, 3>::new(len), input)
+                    dr.routine(
+                        ComputeC::<NUM_CROSS_PRODUCTS, NUM_CIRCUITS>::new(len),
+                        input,
+                    )
                 },
             )
             .expect("c computation should succeed")
