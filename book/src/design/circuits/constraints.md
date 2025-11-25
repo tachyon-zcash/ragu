@@ -35,7 +35,7 @@ $$
 \v{d} = \v{0^n} = \begin{bmatrix} 0^0 \\ 0^1 \\ \dots \\ 0^{n-1} \end{bmatrix} =
 \begin{bmatrix} 1 \\ 0 \\ \dots \\ 0 \end{bmatrix} \\
 \sum\limits_{i=0}^{n-1}c_{i}d_{i}(z^{i} + z^{4n-1-i}) \\ 
-= c_{0}*1(1 + z^{4n-1}) + \sum\limits_{i=1}^{n-1}c_{i}*0(z^{i} + z^{4n-1-i}) \\ 
+= c_{0}*1(1 + z^{4n-1}) + \sum\limits_{i=1}^{n-1}\xcancel{c_{i}*0(z^{i} + z^{4n-1-i})} \\ 
 = c_{0}(1 + z^{4n-1})
 $$
 
