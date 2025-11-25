@@ -18,7 +18,7 @@ use ragu_circuits::{
         b_stage::EphemeralStageB,
         d_stage::{DStage, EphemeralStageD, IndirectionStageD, NUM_CROSS_PRODUCTS},
         e_stage::{EStage, EphemeralStageE, IndirectionStageE, NUM_EVALS},
-        g_stage::{EphemeralStageG, GStage, IndirectionStageG, KYStage},
+        g_stage::{EphemeralStageG, GStage, IndirectionStageG},
     },
     mesh::{Mesh, MeshBuilder, omega_j},
     polynomials::{
@@ -1080,7 +1080,7 @@ where
 
         final_evals.extend(a_polys_final_evals.iter().copied());
 
-        pub const NUM_FINAL_EVALS: usize = 16;
+        pub const NUM_FINAL_EVALS: usize = 13;
         let final_evals_array: [Fp; NUM_FINAL_EVALS] = final_evals
             .try_into()
             .expect("intermediate_evals should have exactly `NUM_FINAL_EVALS` elements");
@@ -1314,16 +1314,16 @@ where
         };
 
         // Convert to fixed arrays
-        let _eval_points: [Fp; 28] = eval_points
+        let _eval_points: [Fp; 19] = eval_points
             .try_into()
             .expect("eval_points length should match NUM_V_QUERIES");
-        let _intermediate_evals: [Fp; 28] = intermediate_evals
+        let _intermediate_evals: [Fp; 19] = intermediate_evals
             .try_into()
             .expect("intermediate_evals length should match NUM_V_QUERIES");
-        let _final_evals_for_queries: [Fp; 28] = final_evals_for_queries
+        let _final_evals_for_queries: [Fp; 19] = final_evals_for_queries
             .try_into()
             .expect("final_evals_for_queries length should match NUM_V_QUERIES");
-        let _inverses: [Fp; 28] = inverses
+        let _inverses: [Fp; 19] = inverses
             .try_into()
             .expect("inverses length should match NUM_V_QUERIES");
 
@@ -1351,42 +1351,42 @@ where
         let g2_point = Point::constant(&mut em, g2_nested_commitment)?;
         g2_point.write(&mut em, &mut transcript)?;
 
-        ///////////////////////////////////////////////////////////////////////////////////////
-        // TASK: Build KY staging polyhnomial for ky polynomial coefficients.
-        ///////////////////////////////////////////////////////////////////////////////////////
+        // ///////////////////////////////////////////////////////////////////////////////////////
+        // // TASK: Build KY staging polyhnomial for ky polynomial coefficients.
+        // ///////////////////////////////////////////////////////////////////////////////////////
 
-        // Append application circuits ky coefficients.
-        let mut application_ky_coffs = Vec::new();
-        for ky_poly in &ky_polys {
-            application_ky_coffs.extend_from_slice(ky_poly);
-        }
+        // // Append application circuits ky coefficients.
+        // let mut application_ky_coffs = Vec::new();
+        // for ky_poly in &ky_polys {
+        //     application_ky_coffs.extend_from_slice(ky_poly);
+        // }
 
-        let ky_coeff_array: [C::CircuitField; HEADER_SIZE] = application_ky_coffs
-            .try_into()
-            .map_err(|_| Error::CircuitBoundExceeded(HEADER_SIZE))?;
+        // let ky_coeff_array: [C::CircuitField; HEADER_SIZE] = application_ky_coffs
+        //     .try_into()
+        //     .map_err(|_| Error::CircuitBoundExceeded(HEADER_SIZE))?;
 
-        // Build the K staging polynomial.
-        let k_rx = <KYStage<C::NestedCurve, HEADER_SIZE> as StageExt<Fp, R>>::rx(ky_coeff_array)?;
+        // // Build the K staging polynomial.
+        // let k_rx = <KYStage<C::NestedCurve, HEADER_SIZE> as StageExt<Fp, R>>::rx(ky_coeff_array)?;
 
-        ///////////////////////////////////////////////////////////////////////////////////////
-        // LAYER OF INDIRECTION: We now introduce another nested commitment layer to produce
-        // an Fp-hashable nested commitment for the transcript.
-        let k_rx_blinding = C::CircuitField::random(OsRng);
-        let k_rx_commitment = k_rx.commit(self.host_generators, k_rx_blinding);
+        // ///////////////////////////////////////////////////////////////////////////////////////
+        // // LAYER OF INDIRECTION: We now introduce another nested commitment layer to produce
+        // // an Fp-hashable nested commitment for the transcript.
+        // let k_rx_blinding = C::CircuitField::random(OsRng);
+        // let k_rx_commitment = k_rx.commit(self.host_generators, k_rx_blinding);
 
-        // INNER LAYER: Staging polynomial (over Fq) that witnesses the D staged circuit Vesta commitment.
-        let k_rx_inner =
-            <IndirectionStageG<C::HostCurve> as StageExt<C::ScalarField, R>>::rx(k_rx_commitment)?;
+        // // INNER LAYER: Staging polynomial (over Fq) that witnesses the D staged circuit Vesta commitment.
+        // let k_rx_inner =
+        //     <IndirectionStageG<C::HostCurve> as StageExt<C::ScalarField, R>>::rx(k_rx_commitment)?;
 
-        // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
-        let k_rx_nested_commitment_blinding = C::ScalarField::random(OsRng);
-        let k_rx_nested_commitment =
-            k_rx_inner.commit(self.nested_generators, k_rx_nested_commitment_blinding);
+        // // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
+        // let k_rx_nested_commitment_blinding = C::ScalarField::random(OsRng);
+        // let k_rx_nested_commitment =
+        //     k_rx_inner.commit(self.nested_generators, k_rx_nested_commitment_blinding);
 
-        // TODO: Determine what nested commitments *shouldn't* be absorbed into the transcript, like this?
-        let k_point = Point::constant(&mut em, k_rx_nested_commitment)?;
-        k_point.write(&mut em, &mut transcript)?;
-        ///////////////////////////////////////////////////////////////////////////////////////
+        // // TODO: Determine what nested commitments *shouldn't* be absorbed into the transcript, like this?
+        // let k_point = Point::constant(&mut em, k_rx_nested_commitment)?;
+        // k_point.write(&mut em, &mut transcript)?;
+        // ///////////////////////////////////////////////////////////////////////////////////////
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: Compute c value using routine outside circuit.
