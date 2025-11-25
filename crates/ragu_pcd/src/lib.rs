@@ -18,7 +18,7 @@ use ragu_circuits::{
         b_stage::EphemeralStageB,
         d_stage::{DStage, EphemeralStageD, IndirectionStageD, NUM_CROSS_PRODUCTS},
         e_stage::{EStage, EphemeralStageE, IndirectionStageE, NUM_EVALS},
-        g_stage::{EphemeralStageG, GStage, IndirectionStageG},
+        g_stage::{EphemeralStageG, GStage, IndirectionStageG, KYStage},
     },
     mesh::{Mesh, MeshBuilder, omega_j},
     polynomials::{
@@ -1351,42 +1351,44 @@ where
         let g2_point = Point::constant(&mut em, g2_nested_commitment)?;
         g2_point.write(&mut em, &mut transcript)?;
 
-        // ///////////////////////////////////////////////////////////////////////////////////////
-        // // TASK: Build KY staging polyhnomial for ky polynomial coefficients.
-        // ///////////////////////////////////////////////////////////////////////////////////////
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Build KY staging polyhnomial for ky polynomial coefficients.
+        ///////////////////////////////////////////////////////////////////////////////////////
 
-        // // Append application circuits ky coefficients.
-        // let mut application_ky_coffs = Vec::new();
-        // for ky_poly in &ky_polys {
-        //     application_ky_coffs.extend_from_slice(ky_poly);
-        // }
+        // Append application circuits ky coefficients.
+        let mut application_ky_coffs = Vec::new();
+        for ky_poly in &ky_polys {
+            application_ky_coffs.extend_from_slice(ky_poly);
+        }
 
-        // let ky_coeff_array: [C::CircuitField; HEADER_SIZE] = application_ky_coffs
-        //     .try_into()
-        //     .map_err(|_| Error::CircuitBoundExceeded(HEADER_SIZE))?;
+        // KY polynomial size = 1 + HEADER_SIZE * 3 (output + left + right headers + 1)
+        // For HEADER_SIZE = 4, this is 13.
+        let ky_coeff_array: [C::CircuitField; 13] = application_ky_coffs
+            .try_into()
+            .map_err(|_| Error::CircuitBoundExceeded(13))?;
 
-        // // Build the K staging polynomial.
-        // let k_rx = <KYStage<C::NestedCurve, HEADER_SIZE> as StageExt<Fp, R>>::rx(ky_coeff_array)?;
+        // Build the K staging polynomial.
+        let k_rx = <KYStage<C::NestedCurve, 13> as StageExt<Fp, R>>::rx(ky_coeff_array)?;
 
-        // ///////////////////////////////////////////////////////////////////////////////////////
-        // // LAYER OF INDIRECTION: We now introduce another nested commitment layer to produce
-        // // an Fp-hashable nested commitment for the transcript.
-        // let k_rx_blinding = C::CircuitField::random(OsRng);
-        // let k_rx_commitment = k_rx.commit(self.host_generators, k_rx_blinding);
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // LAYER OF INDIRECTION: We now introduce another nested commitment layer to produce
+        // an Fp-hashable nested commitment for the transcript.
+        let k_rx_blinding = C::CircuitField::random(OsRng);
+        let k_rx_commitment = k_rx.commit(self.host_generators, k_rx_blinding);
 
-        // // INNER LAYER: Staging polynomial (over Fq) that witnesses the D staged circuit Vesta commitment.
-        // let k_rx_inner =
-        //     <IndirectionStageG<C::HostCurve> as StageExt<C::ScalarField, R>>::rx(k_rx_commitment)?;
+        // INNER LAYER: Staging polynomial (over Fq) that witnesses the D staged circuit Vesta commitment.
+        let k_rx_inner =
+            <IndirectionStageG<C::HostCurve> as StageExt<C::ScalarField, R>>::rx(k_rx_commitment)?;
 
-        // // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
-        // let k_rx_nested_commitment_blinding = C::ScalarField::random(OsRng);
-        // let k_rx_nested_commitment =
-        //     k_rx_inner.commit(self.nested_generators, k_rx_nested_commitment_blinding);
+        // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
+        let k_rx_nested_commitment_blinding = C::ScalarField::random(OsRng);
+        let k_rx_nested_commitment =
+            k_rx_inner.commit(self.nested_generators, k_rx_nested_commitment_blinding);
 
-        // // TODO: Determine what nested commitments *shouldn't* be absorbed into the transcript, like this?
-        // let k_point = Point::constant(&mut em, k_rx_nested_commitment)?;
-        // k_point.write(&mut em, &mut transcript)?;
-        // ///////////////////////////////////////////////////////////////////////////////////////
+        // TODO: Determine what nested commitments *shouldn't* be absorbed into the transcript, like this?
+        let k_point = Point::constant(&mut em, k_rx_nested_commitment)?;
+        k_point.write(&mut em, &mut transcript)?;
+        ///////////////////////////////////////////////////////////////////////////////////////
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: Compute c value using routine outside circuit.
@@ -1400,9 +1402,9 @@ where
             .with((&ky_coeff_array[..], y_challenge), |dr, inputs| {
                 let (ky_coeffs_slice, y_val) = inputs.cast();
 
-                // Allocate ky coefficients.
-                let mut ky_coeff_elems = Vec::with_capacity(HEADER_SIZE);
-                for i in 0..HEADER_SIZE {
+                // Allocate ky coefficients (size = 1 + HEADER_SIZE * 3 = 13).
+                let mut ky_coeff_elems = Vec::with_capacity(13);
+                for i in 0..13 {
                     let coeff = ky_coeffs_slice.view().map(|s| s[i]);
                     ky_coeff_elems.push(Element::alloc(dr, coeff)?);
                 }
@@ -1411,7 +1413,7 @@ where
 
                 let y_elem = Element::alloc(dr, y_val)?;
 
-                let horner_routine = EvaluateKyPolynomials::<HEADER_SIZE>::new(HEADER_SIZE);
+                let horner_routine = EvaluateKyPolynomials::<13>::new(13);
                 dr.routine(horner_routine, (ky_coeff_fixed, y_elem))
             })
             .expect("ky evaluation should succeed");
