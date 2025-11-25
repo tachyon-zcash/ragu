@@ -20,8 +20,8 @@ use ragu_primitives::{
 // G STAGING POLYNOMIAL
 ///////////////////////////////////////////////////////////////////////////////////////
 
-pub const NUM_FINAL_EVALS: usize = 16;
-pub const NUM_V_QUERIES: usize = 28;
+pub const NUM_FINAL_EVALS: usize = 13;
+pub const NUM_V_QUERIES: usize = 19;
 
 // Ephemeral stage used to create nested commitments.
 ephemeral_stage!(EphemeralStageG);
