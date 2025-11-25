@@ -1,8 +1,9 @@
 //! # `ragu`
 //!
 //! This crate currently does not expose an API, as Ragu is under heavy
-//! development. Please see the [Ragu Book](https://tachyon.z.cash/_ragu/) for
-//! more information.
+//! development. Please see the [Ragu
+//! Book](https://github.com/tachyon-zcash/ragu/tree/main/book) for more
+//! information.
 
 #![no_std]
 #![allow(clippy::type_complexity)]

@@ -1,5 +1,9 @@
 # Ragu Book
 
+This is the source for the official Ragu book.
+
+**Do not share this URL:** https://tachyon.z.cash/_ragu_INTERNAL_ONLY_H83J19XK1/
+
 ## Development
 
 You can render locally and test using `mdbook serve`. Ensure you have installed (using at least `Rust 1.88.0`)
