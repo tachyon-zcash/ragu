@@ -18,7 +18,7 @@ use ragu_circuits::{
         b_stage::EphemeralStageB,
         d_stage::{DStage, EphemeralStageD, IndirectionStageD},
         e_stage::{EStage, EphemeralStageE, IndirectionStageE, NUM_EVALS},
-        g_stage::{EphemeralStageG, GStage, IndirectionStageG},
+        g_stage::{EphemeralStageG, GStage, IndirectionStageG, KYStage},
     },
     mesh::{Mesh, MeshBuilder, omega_j},
     polynomials::{Rank, structured, unstructured},
@@ -1345,42 +1345,47 @@ where
         let g2_point = Point::constant(&mut em, g2_nested_commitment)?;
         g2_point.write(&mut em, &mut transcript)?;
 
-        // ///////////////////////////////////////////////////////////////////////////////////////
-        // // TASK: Build KY staging polyhnomial for ky polynomial coefficients.
-        // ///////////////////////////////////////////////////////////////////////////////////////
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Build KY staging polyhnomial for ky polynomial coefficients.
+        ///////////////////////////////////////////////////////////////////////////////////////
 
-        // // Append application circuits ky coefficients.
-        // let mut application_ky_coffs = Vec::new();
-        // for ky_poly in &ky_polys {
-        //     application_ky_coffs.extend_from_slice(ky_poly);
-        // }
+        /// Size of the KY polynomial coefficients array.
+        /// This is 1 + HEADER_SIZE * 3 where HEADER_SIZE = 4.
+        /// (output_header + left_header + right_header + 1 for the constant term)
+        pub const KY_POLY_SIZE: usize = 13;
 
-        // let ky_coeff_array: [C::CircuitField; HEADER_SIZE] = application_ky_coffs
-        //     .try_into()
-        //     .map_err(|_| Error::CircuitBoundExceeded(HEADER_SIZE))?;
+        // Append application circuits ky coefficients.
+        let mut application_ky_coffs = Vec::new();
+        for ky_poly in &ky_polys {
+            application_ky_coffs.extend_from_slice(ky_poly);
+        }
 
-        // // Build the K staging polynomial.
-        // let k_rx = <KYStage<C::NestedCurve, HEADER_SIZE> as StageExt<Fp, R>>::rx(ky_coeff_array)?;
+        let ky_coeff_array: [C::CircuitField; KY_POLY_SIZE] = application_ky_coffs
+            .try_into()
+            .map_err(|_| Error::CircuitBoundExceeded(KY_POLY_SIZE))?;
 
-        // ///////////////////////////////////////////////////////////////////////////////////////
-        // // LAYER OF INDIRECTION: We now introduce another nested commitment layer to produce
-        // // an Fp-hashable nested commitment for the transcript.
-        // let k_rx_blinding = C::CircuitField::random(OsRng);
-        // let k_rx_commitment = k_rx.commit(self.host_generators, k_rx_blinding);
+        // Build the K staging polynomial.
+        let k_rx = <KYStage<C::NestedCurve, KY_POLY_SIZE> as StageExt<Fp, R>>::rx(ky_coeff_array)?;
 
-        // // INNER LAYER: Staging polynomial (over Fq) that witnesses the D staged circuit Vesta commitment.
-        // let k_rx_inner =
-        //     <IndirectionStageG<C::HostCurve> as StageExt<C::ScalarField, R>>::rx(k_rx_commitment)?;
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // LAYER OF INDIRECTION: We now introduce another nested commitment layer to produce
+        // an Fp-hashable nested commitment for the transcript.
+        let k_rx_blinding = C::CircuitField::random(OsRng);
+        let k_rx_commitment = k_rx.commit(self.host_generators, k_rx_blinding);
 
-        // // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
-        // let k_rx_nested_commitment_blinding = C::ScalarField::random(OsRng);
-        // let k_rx_nested_commitment =
-        //     k_rx_inner.commit(self.nested_generators, k_rx_nested_commitment_blinding);
+        // INNER LAYER: Staging polynomial (over Fq) that witnesses the D staged circuit Vesta commitment.
+        let k_rx_inner =
+            <IndirectionStageG<C::HostCurve> as StageExt<C::ScalarField, R>>::rx(k_rx_commitment)?;
 
-        // // TODO: Determine what nested commitments *shouldn't* be absorbed into the transcript, like this?
-        // let k_point = Point::constant(&mut em, k_rx_nested_commitment)?;
-        // k_point.write(&mut em, &mut transcript)?;
-        // ///////////////////////////////////////////////////////////////////////////////////////
+        // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
+        let k_rx_nested_commitment_blinding = C::ScalarField::random(OsRng);
+        let k_rx_nested_commitment =
+            k_rx_inner.commit(self.nested_generators, k_rx_nested_commitment_blinding);
+
+        // TODO: Determine what nested commitments *shouldn't* be absorbed into the transcript, like this?
+        let k_point = Point::constant(&mut em, k_rx_nested_commitment)?;
+        k_point.write(&mut em, &mut transcript)?;
+        ///////////////////////////////////////////////////////////////////////////////////////
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // PHASE: Return the proof.
