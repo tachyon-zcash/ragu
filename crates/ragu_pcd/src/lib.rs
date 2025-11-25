@@ -22,7 +22,10 @@ use ragu_circuits::{
     },
     mesh::{Mesh, MeshBuilder, omega_j},
     polynomials::{
-        Rank, compute_c::ComputeC, horners::EvaluateKyPolynomials, structured, unstructured,
+        Rank,
+        compute_c::{ComputeC, KY_POLY_SIZE, NUM_CIRCUITS},
+        horners::EvaluateKyPolynomials,
+        structured, unstructured,
     },
     staging::StageExt,
 };
@@ -1391,14 +1394,6 @@ where
         ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: Compute c value using routine outside circuit.
         ///////////////////////////////////////////////////////////////////////////////////////
-
-        /// Number of circuits being folded together (1 application + 2 accumulators).
-        const NUM_CIRCUITS: usize = 3;
-
-        /// Size of the KY polynomial coefficients array.
-        /// This is 1 + HEADER_SIZE * 3 where HEADER_SIZE = 4.
-        /// (output_header + left_header + right_header + 1 for the constant term)
-        const KY_POLY_SIZE: usize = 13;
 
         // Evaluate ky polynomials at y_challenge using Horner's routine.
         let mut dr: Emulator<Wireless<Always<()>, Fp>> = Emulator::wireless();

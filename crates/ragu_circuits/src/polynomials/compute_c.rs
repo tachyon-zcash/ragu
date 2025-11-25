@@ -13,21 +13,29 @@ use ragu_primitives::{
     vec::{ConstLen, FixedVec},
 };
 
+/// Number of circuits being folded together (1 application + 2 accumulators).
+pub const NUM_CIRCUITS: usize = 3;
+
+/// Size of the KY polynomial coefficients array.
+/// This is 1 + HEADER_SIZE * 3 where HEADER_SIZE = 4.
+/// (output_header + left_header + right_header + 1 for the constant term)
+pub const KY_POLY_SIZE: usize = 13;
+
 #[derive(Clone)]
-pub struct ComputeC<const MAX_CROSS: usize, const MAX_CIRCUITS: usize> {
+pub struct ComputeC<const KY_POLY_SIZE: usize, const NUM_CIRCUITS: usize> {
     len: usize,
 }
 
-impl<const MAX_CROSS: usize, const MAX_CIRCUITS: usize> ComputeC<MAX_CROSS, MAX_CIRCUITS> {
+impl<const KY_POLY_SIZE: usize, const NUM_CIRCUITS: usize> ComputeC<KY_POLY_SIZE, NUM_CIRCUITS> {
     pub fn new(len: usize) -> Self {
         Self { len }
     }
 }
 
-impl<F: Field, const MAX_CROSS: usize, const MAX_CIRCUITS: usize> Routine<F>
-    for ComputeC<MAX_CROSS, MAX_CIRCUITS>
+impl<F: Field, const KY_POLY_SIZE: usize, const NUM_CIRCUITS: usize> Routine<F>
+    for ComputeC<KY_POLY_SIZE, NUM_CIRCUITS>
 {
-    type Input = Kind![F; (((Element<'_, _>, Element<'_, _>), Element<'_, _>), (FixedVec<Element<'_, _>, ConstLen<MAX_CROSS>>, FixedVec<Element<'_, _>, ConstLen<MAX_CIRCUITS>>))];
+    type Input = Kind![F; (((Element<'_, _>, Element<'_, _>), Element<'_, _>), (FixedVec<Element<'_, _>, ConstLen<KY_POLY_SIZE>>, FixedVec<Element<'_, _>, ConstLen<NUM_CIRCUITS>>))];
     type Output = Kind![F; Element<'_, _>];
     type Aux<'dr> = ();
 
@@ -132,8 +140,8 @@ mod tests {
     #[test]
     fn test_c_routine_equivalency() -> Result<()> {
         const LEN: usize = 3;
-        const MAX_CROSS: usize = 10;
-        const MAX_CIRCUITS: usize = 3;
+        const KY_POLY_SIZE: usize = 10;
+        const NUM_CIRCUITS: usize = 3;
 
         let mu = Fp::random(OsRng);
         let nu = Fp::random(OsRng);
@@ -146,9 +154,9 @@ mod tests {
 
         // Pad to fixed sizes (10 for cross products, 3 for ky)
         let mut cross_padded = cross_products.clone();
-        cross_padded.resize(MAX_CROSS, Fp::ZERO);
+        cross_padded.resize(KY_POLY_SIZE, Fp::ZERO);
         let mut ky_padded = ky_values.clone();
-        ky_padded.resize(MAX_CIRCUITS, Fp::ZERO);
+        ky_padded.resize(NUM_CIRCUITS, Fp::ZERO);
 
         let munu = mu * nu;
         let mut expected_c = Fp::ZERO;
@@ -193,7 +201,7 @@ mod tests {
 
         let input = (((mu_elem, nu_elem), mu_inv_elem), (cross_elems, ky_elems));
 
-        let routine = ComputeC::<MAX_CROSS, MAX_CIRCUITS>::new(LEN);
+        let routine = ComputeC::<KY_POLY_SIZE, NUM_CIRCUITS>::new(LEN);
         let result = em.routine(routine, input).unwrap();
         let computed_c = result.value().take();
 
