@@ -43,9 +43,9 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
     for Adapter<C, S, R, HEADER_SIZE>
 {
     type Instance<'source> = (
+        FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
+        FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
         <S::Output as Header<C::CircuitField>>::Data<'source>,
-        FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
-        FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
     );
     type Witness<'source> = (
         <S::Left as Header<C::CircuitField>>::Data<'source>,
@@ -63,7 +63,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         dr: &mut D,
         instance: DriverValue<D, Self::Instance<'source>>,
     ) -> Result<<Self::Output as GadgetKind<C::CircuitField>>::Rebind<'dr, D>> {
-        let (output, left_header, right_header) = instance.cast();
+        let (left_header, right_header, output) = instance.cast();
 
         let output_gadget = S::Output::encode(dr, output)?;
         let output_gadget = padded::for_header::<S::Output, HEADER_SIZE, _>(dr, output_gadget)?;

@@ -263,7 +263,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         let ky = {
             let adapter = Adapter::<C, VerifyAdapter<H>, R, HEADER_SIZE>::new(VerifyAdapter::new());
-            let instance = (pcd.data.clone(), left_header, right_header);
+            let instance = (left_header, right_header, pcd.data.clone());
             adapter.ky(instance)?
         };
 
