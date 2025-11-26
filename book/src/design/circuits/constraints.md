@@ -33,7 +33,35 @@ $$
 and notice that for all $z \in \F$ and for any choice of $\v{r}$ there exists a unique vector $\v{t}$ such that
 
 $$
-\revdot{\v{r}}{\v{t}} = -\sum_{i = 0}^{n - 1} \v{c}_i \big( \underline{ z^{2n - 1 - i} + z^{2n + i} } \big).
+\revdot{\v{r}}{\v{t}} = -\sum_{i = 0}^{n - 1} \v{c}_i \big( \underline{ z^{2n - 1 - i} + z^{2n + i} } \big). \\
+$$
+Where $\v{t}$ is computed like:
+$$
+\v{t} =  
+\begin{bmatrix}
+0 \\ 
+0 \\
+\dots \\
+0
+\end{bmatrix} ||
+\begin{bmatrix}
+0 \\ 
+0 \\
+\dots \\
+0
+\end{bmatrix} ||
+\begin{bmatrix}
+0 \\ 
+0 \\
+\dots \\
+0
+\end{bmatrix} ||
+\begin{bmatrix}
+z^{2n-1-(n-1)} + z^{2n+(n-1)} \\
+z^{2n-1-(n-2)} + z^{2n+(n-2)} \\
+\dots \\
+z^{2n-1} + z^{2n}
+\end{bmatrix}
 $$
 
 and so if for a random challenge $z$
