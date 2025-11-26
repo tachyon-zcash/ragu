@@ -19,6 +19,7 @@ use ragu_circuits::{
             c_circuit::{DCValueComputationStagedCircuit, DCValueComputationWitness},
             d_circuit::{DChallengeDerivationStagedCircuit, DChallengeDerivationWitness},
             e_circuit::{EChallengeDerivationStagedCircuit, EChallengeDerivationWitness},
+            g_circuit::{GVComputationStagedCircuit, GVComputationStagedWitness},
         },
         staging::{
             b_stage::EphemeralStageB,
@@ -1323,16 +1324,16 @@ where
         };
 
         // Convert to fixed arrays
-        let _eval_points: [Fp; 19] = eval_points
+        let eval_points: [Fp; 19] = eval_points
             .try_into()
             .expect("eval_points length should match NUM_V_QUERIES");
-        let _intermediate_evals: [Fp; 19] = intermediate_evals
+        let intermediate_evals: [Fp; 19] = intermediate_evals
             .try_into()
             .expect("intermediate_evals length should match NUM_V_QUERIES");
-        let _final_evals_for_queries: [Fp; 19] = final_evals_for_queries
+        let final_evals_for_queries: [Fp; 19] = final_evals_for_queries
             .try_into()
             .expect("final_evals_for_queries length should match NUM_V_QUERIES");
-        let _inverses: [Fp; 19] = inverses
+        let inverses: [Fp; 19] = inverses
             .try_into()
             .expect("inverses length should match NUM_V_QUERIES");
 
@@ -1522,6 +1523,11 @@ where
         let e_circuit =
             Staged::<Fp, R, _>::new(EChallengeDerivationStagedCircuit::<C::NestedCurve>::new());
 
+        let g_circuit =
+            Staged::<Fp, R, _>::new(GVComputationStagedCircuit::<C::NestedCurve>::new());
+
+        // TODO: Missing circuit for beta challenge verification.
+
         ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: Verify w, y, and z challenges in-circuit.
         ///////////////////////////////////////////////////////////////////////////////////////
@@ -1595,6 +1601,43 @@ where
         let (_e_rx, _e_aux) = e_circuit.rx::<R>(
             EChallengeDerivationWitness {
                 evals: intermediate_evals_array,
+                w_challenge,
+                y_challenge,
+                z_challenge,
+                mu_challenge,
+                nu_challenge,
+                x_challenge,
+                alpha_challenge,
+                u_challenge,
+                b_challenge,
+                b_staging_nested_commitment: b_rx_nested_commitment,
+                d1_nested_commitment,
+                d2_nested_commitment,
+                d_staging_nested_commitment: d_rx_nested_commitment,
+                e1_nested_commitment,
+                e2_nested_commitment,
+                e_staging_nested_commitment: e_rx_nested_commitment,
+                g1_nested_commitment,
+                g_staging_nested_commitment: g_rx_nested_commitment,
+                p_nested_commitment: g2_nested_commitment,
+                c,
+                v,
+            },
+            self.circuit_mesh.get_key(),
+        )?;
+
+        //////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Compute evaluation v in-circuit. This also checks alpha, u, and beta
+        // challenge derivation.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        let (_g_rx, _g_aux) = g_circuit.rx::<R>(
+            GVComputationStagedWitness {
+                evals: final_evals_array,
+                eval_points,
+                intermediate_evals,
+                final_evals_for_queries,
+                inverses,
                 w_challenge,
                 y_challenge,
                 z_challenge,

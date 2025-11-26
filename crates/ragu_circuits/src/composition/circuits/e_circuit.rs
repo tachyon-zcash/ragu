@@ -15,15 +15,13 @@ use ragu_primitives::{
     vec::{ConstLen, FixedVec},
 };
 
+use crate::composition::staging::e_stage::NUM_EVALS;
 use crate::{
     composition::staging::instance::{UnifiedRecursionInstance, UnifiedRecursionOutput},
     ephemeral_stage, indirection_stage,
     polynomials::{Rank, txz::Evaluate},
     staging::{Stage, StageBuilder, StagedCircuit},
 };
-
-/// Hardcoding the number of intermediary evaluations.
-pub const NUM_EVALS: usize = 14;
 
 ///////////////////////////////////////////////////////////////////////////////////////
 // E STAGING POLYNOMIAL
@@ -347,6 +345,7 @@ mod tests {
     use super::*;
     use crate::{
         CircuitExt,
+        composition::staging::e_stage::NUM_EVALS,
         staging::{StageBuilder, StageExt, Staged},
     };
     use ff::Field;
