@@ -165,4 +165,112 @@ mod tests {
 
         Ok(())
     }
+
+    /// Test that a small header (1 element) is properly padded to HEADER_SIZE.
+    #[test]
+    fn test_header_smaller_than_header_size() -> Result<()> {
+        use ff::Field;
+
+        let mut dr = Emulator::execute();
+        let dr = &mut dr;
+
+        // Small gadget with just 1 element
+        let small_gadget = Element::alloc(dr, Always::maybe_just(|| F::from(99u64)))?;
+
+        // Pad to size 8: prefix(1) + gadget(1) + padding(6) = 8
+        let padded_gadget = Padded::<'_, _, Kind![F; Element<'_, _>], 8> {
+            prefix: Element::constant(dr, F::from(7u64)),
+            gadget: small_gadget,
+        };
+
+        let mut buffer = vec![];
+        padded_gadget.write(dr, &mut buffer)?;
+
+        assert_eq!(buffer.len(), 8);
+        assert_eq!(*buffer[0].value().take(), F::from(7u64)); // prefix
+        assert_eq!(*buffer[1].value().take(), F::from(99u64)); // gadget
+        // Remaining should be zeros (padding)
+        for i in 2..8 {
+            assert_eq!(
+                *buffer[i].value().take(),
+                F::ZERO,
+                "padding at index {} should be zero",
+                i
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Test that padding is consistent - encoding same header twice produces identical results.
+    #[test]
+    fn test_padding_consistency() -> Result<()> {
+        let mut dr1 = Emulator::execute();
+        let mut dr2 = Emulator::execute();
+
+        // Create same gadget twice
+        let gadget1 = Element::alloc(&mut dr1, Always::maybe_just(|| F::from(123u64)))?;
+        let gadget2 = Element::alloc(&mut dr2, Always::maybe_just(|| F::from(123u64)))?;
+
+        let padded1 = Padded::<'_, _, Kind![F; Element<'_, _>], 6> {
+            prefix: Element::constant(&mut dr1, F::from(5u64)),
+            gadget: gadget1,
+        };
+        let padded2 = Padded::<'_, _, Kind![F; Element<'_, _>], 6> {
+            prefix: Element::constant(&mut dr2, F::from(5u64)),
+            gadget: gadget2,
+        };
+
+        let mut buf1 = vec![];
+        let mut buf2 = vec![];
+        padded1.write(&mut dr1, &mut buf1)?;
+        padded2.write(&mut dr2, &mut buf2)?;
+
+        assert_eq!(buf1.len(), buf2.len());
+        for (e1, e2) in buf1.iter().zip(buf2.iter()) {
+            assert_eq!(
+                *e1.value().take(),
+                *e2.value().take(),
+                "padding should be consistent"
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Test that a header exactly filling HEADER_SIZE works (no padding needed).
+    #[test]
+    fn test_header_exactly_header_size() -> Result<()> {
+        let mut dr = Emulator::execute();
+        let dr = &mut dr;
+
+        // Gadget with 4 elements + prefix = 5 = HEADER_SIZE
+        let gadget = MySillyGadget {
+            blah: FixedVec::try_from(vec![
+                Element::alloc(dr, Always::maybe_just(|| F::from(1u64)))?,
+                Element::alloc(dr, Always::maybe_just(|| F::from(2u64)))?,
+                Element::alloc(dr, Always::maybe_just(|| F::from(3u64)))?,
+                Element::alloc(dr, Always::maybe_just(|| F::from(4u64)))?,
+            ])
+            .unwrap(),
+        };
+
+        let padded_gadget = Padded::<'_, _, Kind![F; MySillyGadget<'_, _>], 5> {
+            prefix: Element::constant(dr, F::from(42u64)),
+            gadget,
+        };
+
+        let mut buffer = vec![];
+        padded_gadget.write(dr, &mut buffer)?;
+
+        // Should be exactly 5 elements with no padding
+        assert_eq!(buffer.len(), 5);
+        assert_eq!(*buffer[0].value().take(), F::from(42u64));
+        assert_eq!(*buffer[1].value().take(), F::from(1u64));
+        assert_eq!(*buffer[2].value().take(), F::from(2u64));
+        assert_eq!(*buffer[3].value().take(), F::from(3u64));
+        assert_eq!(*buffer[4].value().take(), F::from(4u64));
+
+        Ok(())
+    }
 }

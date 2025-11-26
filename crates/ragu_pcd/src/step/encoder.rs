@@ -112,3 +112,118 @@ impl<'dr, 'source: 'dr, D: Driver<'dr, F: PrimeField>, H: Header<D::F>, const HE
         ))
     }
 }
+
+/// Test that encoding the same header data twice produces identical field elements.
+/// If H::encode() is non-deterministic, verification would fail.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::header::{Header, Prefix};
+    use ragu_core::{
+        drivers::{Driver, DriverValue},
+        gadgets::{GadgetKind, Kind},
+        maybe::{Always, Maybe, MaybeKind},
+    };
+    use ragu_pasta::Fp;
+    use ragu_primitives::Element;
+
+    const HEADER_SIZE: usize = 4;
+
+    struct TestHeader;
+    impl Header<Fp> for TestHeader {
+        const PREFIX: Prefix = Prefix::new(0);
+        type Data<'source> = Fp;
+        type Output = Kind![Fp; Element<'_, _>];
+
+        fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            dr: &mut D,
+            witness: DriverValue<D, Self::Data<'source>>,
+        ) -> Result<<Self::Output as GadgetKind<Fp>>::Rebind<'dr, D>> {
+            Element::alloc(dr, witness)
+        }
+    }
+
+    #[test]
+    fn test_encode_determinism() -> Result<()> {
+        let data = Fp::from(42u64);
+
+        // Encode with first emulator
+        let mut dr1: Emulator<Wireless<Always<()>, Fp>> = Emulator::wireless();
+        let encoder1: Encoder<'_, '_, _, TestHeader, HEADER_SIZE> =
+            Encoder::new(Always::maybe_just(|| data));
+        let encoded1 = encoder1.encode(&mut dr1)?;
+        let mut buf1 = Vec::new();
+        encoded1.write(&mut dr1, &mut buf1)?;
+        let values1: Vec<Fp> = buf1.iter().map(|e| *e.value().take()).collect();
+
+        // Encode with second emulator
+        let mut dr2: Emulator<Wireless<Always<()>, Fp>> = Emulator::wireless();
+        let encoder2: Encoder<'_, '_, _, TestHeader, HEADER_SIZE> =
+            Encoder::new(Always::maybe_just(|| data));
+        let encoded2 = encoder2.encode(&mut dr2)?;
+        let mut buf2 = Vec::new();
+        encoded2.write(&mut dr2, &mut buf2)?;
+        let values2: Vec<Fp> = buf2.iter().map(|e| *e.value().take()).collect();
+
+        // Verify identical field elements
+        assert_eq!(values1, values2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_raw_encode_determinism() -> Result<()> {
+        let data = Fp::from(42u64);
+
+        // Raw encode with first emulator
+        let mut dr1: Emulator<Wireless<Always<()>, Fp>> = Emulator::wireless();
+        let encoder1: Encoder<'_, '_, _, TestHeader, HEADER_SIZE> =
+            Encoder::new(Always::maybe_just(|| data));
+        let encoded1 = encoder1.raw_encode(&mut dr1)?;
+        let mut buf1 = Vec::new();
+        encoded1.write(&mut dr1, &mut buf1)?;
+        let values1: Vec<Fp> = buf1.iter().map(|e| *e.value().take()).collect();
+
+        // Raw encode with second emulator
+        let mut dr2: Emulator<Wireless<Always<()>, Fp>> = Emulator::wireless();
+        let encoder2: Encoder<'_, '_, _, TestHeader, HEADER_SIZE> =
+            Encoder::new(Always::maybe_just(|| data));
+        let encoded2 = encoder2.raw_encode(&mut dr2)?;
+        let mut buf2 = Vec::new();
+        encoded2.write(&mut dr2, &mut buf2)?;
+        let values2: Vec<Fp> = buf2.iter().map(|e| *e.value().take()).collect();
+
+        // Verify identical field elements
+        assert_eq!(values1, values2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_encode_and_raw_encode_produce_same_values() -> Result<()> {
+        let data = Fp::from(42u64);
+
+        // Regular encode
+        let mut dr1: Emulator<Wireless<Always<()>, Fp>> = Emulator::wireless();
+        let encoder1: Encoder<'_, '_, _, TestHeader, HEADER_SIZE> =
+            Encoder::new(Always::maybe_just(|| data));
+        let encoded1 = encoder1.encode(&mut dr1)?;
+        let mut buf1 = Vec::new();
+        encoded1.write(&mut dr1, &mut buf1)?;
+        let values1: Vec<Fp> = buf1.iter().map(|e| *e.value().take()).collect();
+
+        // Raw encode
+        let mut dr2: Emulator<Wireless<Always<()>, Fp>> = Emulator::wireless();
+        let encoder2: Encoder<'_, '_, _, TestHeader, HEADER_SIZE> =
+            Encoder::new(Always::maybe_just(|| data));
+        let encoded2 = encoder2.raw_encode(&mut dr2)?;
+        let mut buf2 = Vec::new();
+        encoded2.write(&mut dr2, &mut buf2)?;
+        let values2: Vec<Fp> = buf2.iter().map(|e| *e.value().take()).collect();
+
+        // Both should produce same field element values
+        assert_eq!(values1, values2);
+
+        Ok(())
+    }
+}

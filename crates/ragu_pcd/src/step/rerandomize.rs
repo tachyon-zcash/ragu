@@ -134,3 +134,126 @@ fn test_rerandomize_consistency() {
 
     assert_eq!(eval_single, eval_pair,);
 }
+
+/// Test that encode and raw_encode for `()` right header produce DIFFERENT circuits.
+#[test]
+fn test_right_header_encode_vs_raw_encode_differ() {
+    use crate::header::{Header, Prefix};
+    use ragu_circuits::{CircuitExt, polynomials};
+    use ragu_core::{
+        Result,
+        drivers::{Driver, DriverValue},
+        gadgets::{GadgetKind, Kind},
+    };
+    use ragu_pasta::{Fp, Pasta};
+    use ragu_primitives::Element;
+
+    use super::{Encoded, Encoder, Index, Step};
+
+    const HEADER_SIZE: usize = 4;
+    type R = polynomials::R<8>;
+
+    struct TestHeader;
+    impl Header<Fp> for TestHeader {
+        const PREFIX: Prefix = Prefix::new(0);
+        type Data<'source> = Fp;
+        type Output = Kind![Fp; Element<'_, _>];
+        fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            dr: &mut D,
+            witness: DriverValue<D, Self::Data<'source>>,
+        ) -> Result<<Self::Output as GadgetKind<Fp>>::Rebind<'dr, D>> {
+            Element::alloc(dr, witness)
+        }
+    }
+
+    // Version using encode for right (current implementation)
+    struct RerandomizeEncode;
+    impl Step<Pasta> for RerandomizeEncode {
+        const INDEX: Index = Index::internal(0);
+        type Witness<'source> = ();
+        type Aux<'source> = ();
+        type Left = TestHeader;
+        type Right = ();
+        type Output = TestHeader;
+
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
+            &self,
+            dr: &mut D,
+            _: DriverValue<D, Self::Witness<'source>>,
+            left: Encoder<'dr, 'source, D, Self::Left, HS>,
+            right: Encoder<'dr, 'source, D, Self::Right, HS>,
+        ) -> Result<(
+            (
+                Encoded<'dr, D, Self::Left, HS>,
+                Encoded<'dr, D, Self::Right, HS>,
+                Encoded<'dr, D, Self::Output, HS>,
+            ),
+            DriverValue<D, Self::Aux<'source>>,
+        )>
+        where
+            Self: 'dr,
+        {
+            let left = left.raw_encode(dr)?;
+            let right = right.encode(dr)?; // Using encode (creates constant padding)
+            Ok(((left.clone(), right, left), D::just(|| ())))
+        }
+    }
+
+    // Version using raw_encode for right (alternative)
+    struct RerandomizeRawEncode;
+    impl Step<Pasta> for RerandomizeRawEncode {
+        const INDEX: Index = Index::internal(0);
+        type Witness<'source> = ();
+        type Aux<'source> = ();
+        type Left = TestHeader;
+        type Right = ();
+        type Output = TestHeader;
+
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
+            &self,
+            dr: &mut D,
+            _: DriverValue<D, Self::Witness<'source>>,
+            left: Encoder<'dr, 'source, D, Self::Left, HS>,
+            right: Encoder<'dr, 'source, D, Self::Right, HS>,
+        ) -> Result<(
+            (
+                Encoded<'dr, D, Self::Left, HS>,
+                Encoded<'dr, D, Self::Right, HS>,
+                Encoded<'dr, D, Self::Output, HS>,
+            ),
+            DriverValue<D, Self::Aux<'source>>,
+        )>
+        where
+            Self: 'dr,
+        {
+            let left = left.raw_encode(dr)?;
+            let right = right.raw_encode(dr)?; // Using raw_encode (creates witness padding)
+            Ok(((left.clone(), right, left), D::just(|| ())))
+        }
+    }
+
+    // These produce DIFFERENT circuits due to padding handling
+    let circuit_encode =
+        super::adapter::Adapter::<Pasta, RerandomizeEncode, R, HEADER_SIZE>::new(RerandomizeEncode)
+            .into_object::<R>()
+            .unwrap();
+    let circuit_raw_encode =
+        super::adapter::Adapter::<Pasta, RerandomizeRawEncode, R, HEADER_SIZE>::new(
+            RerandomizeRawEncode,
+        )
+        .into_object::<R>()
+        .unwrap();
+
+    let x = Fp::from(5u64);
+    let y = Fp::from(17u64);
+    let key = Fp::from(123u64);
+
+    let eval_encode = circuit_encode.sxy(x, y, key);
+    let eval_raw_encode = circuit_raw_encode.sxy(x, y, key);
+
+    // Assert they differ - this documents that encode vs raw_encode matters even for ()
+    assert_ne!(
+        eval_encode, eval_raw_encode,
+        "encode and raw_encode for () right header should produce different circuits due to padding"
+    );
+}

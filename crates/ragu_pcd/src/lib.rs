@@ -272,3 +272,171 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         Ok(valid)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ff::Field;
+    use ragu_circuits::polynomials::R;
+    use ragu_core::{
+        drivers::{Driver, DriverValue},
+        gadgets::{GadgetKind, Kind},
+        maybe::Maybe,
+    };
+    use ragu_pasta::{Fp, Pasta};
+    use ragu_primitives::{Element, Sponge};
+    use rand::{SeedableRng, rngs::StdRng};
+
+    use crate::{
+        header::Prefix,
+        step::{Encoded, Encoder, Index, Step},
+    };
+
+    struct TestLeafNode;
+    impl Header<Fp> for TestLeafNode {
+        const PREFIX: Prefix = Prefix::new(0);
+        type Data<'source> = Fp;
+        type Output = Kind![Fp; Element<'_, _>];
+
+        fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            dr: &mut D,
+            witness: DriverValue<D, Self::Data<'source>>,
+        ) -> Result<<Self::Output as GadgetKind<Fp>>::Rebind<'dr, D>> {
+            Element::alloc(dr, witness)
+        }
+    }
+
+    struct TestWitnessLeaf<'params> {
+        poseidon_params: &'params <Pasta as arithmetic::Cycle>::CircuitPoseidon,
+    }
+
+    impl<'params> Step<Pasta> for TestWitnessLeaf<'params> {
+        const INDEX: Index = Index::new(0);
+        type Witness<'source> = Fp;
+        type Aux<'source> = Fp;
+        type Left = ();
+        type Right = ();
+        type Output = TestLeafNode;
+
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
+            &self,
+            dr: &mut D,
+            witness: DriverValue<D, Self::Witness<'source>>,
+            _: Encoder<'dr, 'source, D, Self::Left, HEADER_SIZE>,
+            _: Encoder<'dr, 'source, D, Self::Right, HEADER_SIZE>,
+        ) -> Result<(
+            (
+                Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+                Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+                Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+            ),
+            DriverValue<D, Self::Aux<'source>>,
+        )>
+        where
+            Self: 'dr,
+        {
+            let leaf = Element::alloc(dr, witness)?;
+            let mut sponge = Sponge::new(dr, self.poseidon_params);
+            sponge.absorb(dr, &leaf)?;
+            let leaf = sponge.squeeze(dr)?;
+            let leaf_value = leaf.value().map(|v| *v);
+            let leaf_encoded = Encoded::from_gadget(leaf);
+
+            Ok((
+                (
+                    Encoded::from_gadget(()),
+                    Encoded::from_gadget(()),
+                    leaf_encoded,
+                ),
+                leaf_value,
+            ))
+        }
+    }
+
+    /// Test that proofs with malformed (wrong-sized) headers are rejected.
+    #[test]
+    fn test_wrong_header_sizes() -> Result<()> {
+        let pasta = Pasta::baked();
+        let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
+            .register(TestWitnessLeaf {
+                poseidon_params: pasta.circuit_poseidon(),
+            })?
+            .finalize(pasta)?;
+
+        let mut rng = StdRng::seed_from_u64(9999);
+        let trivial = app.trivial().carry::<()>(());
+
+        // Create a valid proof
+        let (valid_proof, aux) = app.merge(
+            &mut rng,
+            TestWitnessLeaf {
+                poseidon_params: pasta.circuit_poseidon(),
+            },
+            Fp::from(42u64),
+            trivial.clone(),
+            trivial.clone(),
+        )?;
+
+        // Verify the valid proof works
+        let valid_pcd = valid_proof.clone().carry::<TestLeafNode>(aux);
+        assert!(app.verify(&valid_pcd, &mut rng)?);
+
+        // Test with too many elements in left_header
+        {
+            let mut bad_proof = valid_proof.clone();
+            bad_proof.left_header.push(Fp::ZERO);
+            let bad_pcd = bad_proof.carry::<TestLeafNode>(aux);
+            assert!(
+                app.verify(&bad_pcd, &mut rng).is_err(),
+                "should reject proof with oversized left_header"
+            );
+        }
+
+        // Test with too few elements in left_header
+        {
+            let mut bad_proof = valid_proof.clone();
+            bad_proof.left_header.pop();
+            let bad_pcd = bad_proof.carry::<TestLeafNode>(aux);
+            assert!(
+                app.verify(&bad_pcd, &mut rng).is_err(),
+                "should reject proof with undersized left_header"
+            );
+        }
+
+        // Test with too many elements in right_header
+        {
+            let mut bad_proof = valid_proof.clone();
+            bad_proof.right_header.push(Fp::ZERO);
+            let bad_pcd = bad_proof.carry::<TestLeafNode>(aux);
+            assert!(
+                app.verify(&bad_pcd, &mut rng).is_err(),
+                "should reject proof with oversized right_header"
+            );
+        }
+
+        // Test with too few elements in right_header
+        {
+            let mut bad_proof = valid_proof.clone();
+            bad_proof.right_header.pop();
+            let bad_pcd = bad_proof.carry::<TestLeafNode>(aux);
+            assert!(
+                app.verify(&bad_pcd, &mut rng).is_err(),
+                "should reject proof with undersized right_header"
+            );
+        }
+
+        // Test with empty headers
+        {
+            let mut bad_proof = valid_proof;
+            bad_proof.left_header.clear();
+            bad_proof.right_header.clear();
+            let bad_pcd = bad_proof.carry::<TestLeafNode>(aux);
+            assert!(
+                app.verify(&bad_pcd, &mut rng).is_err(),
+                "should reject proof with empty headers"
+            );
+        }
+
+        Ok(())
+    }
+}

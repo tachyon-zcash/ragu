@@ -192,3 +192,44 @@ fn various_merging_operations() -> Result<()> {
 
     Ok(())
 }
+
+/// Test that mismatched data and proof fails verification.
+/// The prover creates a proof for header_a but claims the data is header_b.
+/// Verification should fail via the polynomial identity check.
+#[test]
+fn test_mismatched_data_and_proof() -> Result<()> {
+    let pasta = Pasta::baked();
+    let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
+        .register(WitnessLeaf {
+            poseidon_params: pasta.circuit_poseidon(),
+        })?
+        .register(Hash2 {
+            poseidon_params: pasta.circuit_poseidon(),
+        })?
+        .finalize(pasta)?;
+
+    let mut rng = StdRng::seed_from_u64(5678);
+    let trivial = app.trivial().carry::<()>(());
+
+    // Create a valid proof for value 42
+    let (proof_for_42, aux_42) = app.merge(
+        &mut rng,
+        WitnessLeaf {
+            poseidon_params: pasta.circuit_poseidon(),
+        },
+        Fp::from(42u64),
+        trivial.clone(),
+        trivial.clone(),
+    )?;
+
+    // Carry with the correct data - should verify
+    let pcd_correct = proof_for_42.clone().carry::<LeafNode>(aux_42);
+    assert!(app.verify(&pcd_correct, &mut rng)?);
+
+    // Carry with mismatched data - should fail verification
+    let wrong_data = Fp::from(999u64);
+    let pcd_mismatched = proof_for_42.carry::<LeafNode>(wrong_data);
+    assert!(!app.verify(&pcd_mismatched, &mut rng)?);
+
+    Ok(())
+}
