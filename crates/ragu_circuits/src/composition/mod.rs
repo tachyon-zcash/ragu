@@ -1,5 +1,6 @@
 //! TODO(ebfull): Proof composition circuits.
 
+pub mod circuits;
 pub(crate) mod endoscalar;
 pub mod error_stage;
 pub mod evaluation_stage;

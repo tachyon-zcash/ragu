@@ -182,7 +182,7 @@ fn register_steps_duplicate_prefix_should_fail() {
 fn test_decide_random_proof() -> Result<()> {
     let pasta = Pasta::default();
 
-    let app = ApplicationBuilder::<Pasta, R<8>, 4>::new()
+    let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
         .register(Step0)
         .unwrap()
         .register(Step1)
@@ -209,7 +209,7 @@ fn test_decide_random_proof() -> Result<()> {
 fn test_merge_random_proof() -> Result<()> {
     let pasta = Pasta::default();
 
-    let app = ApplicationBuilder::<Pasta, R<8>, 4>::new()
+    let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
         .register(Step0)
         .unwrap()
         .register(Step1)
