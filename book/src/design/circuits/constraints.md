@@ -65,8 +65,21 @@ $$
 \end{bmatrix}
 $$
 
-and so if for a random challenge $z$
+for a random challenge $z$, we have
 
+$$
+\revdot{\v{r}}{\v{r} \circ{\v{z^{4n}}} + \v{t}} = 
+\sum\limits_{i = 0}^{n - 1} \left(
+  (\v{a}_i \v{b}_i - \v{c}_i)  \big( \underline{z^{2n - 1 - i} + z^{2n + i} } \big)
+\right) + \sum\limits_{i = 0}^{n - 1} \v{c}_i \v{d}_i  \big( z^{i} + z^{4n - 1 - i} \big)
+$$
+Since the $\v{d} \in F^{n}$ component of the structured vector for a witness $= (0, 0, \dots, 0)$:
+$$
+\sum\limits_{i = 0}^{n - 1} \left(
+  (\v{a}_i \v{b}_i - \v{c}_i)  \big( \underline{z^{2n - 1 - i} + z^{2n + i} } \big)
+\right) + \xcancel{\sum\limits_{i = 0}^{n - 1} \v{c}_i \v{d}_i  \big( z^{i} + z^{4n - 1 - i} \big)}
+$$
+and thus if the expression
 $$
 \revdot{\v{r}}{\v{r} \circ{\v{z^{4n}}} + \v{t}} = 0
 $$
