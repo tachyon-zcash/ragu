@@ -15,7 +15,10 @@ use ff::Field;
 use ragu_circuits::{
     CircuitExt,
     composition::{
-        circuits::d_circuit::{DChallengeDerivationStagedCircuit, DChallengeDerivationWitness},
+        circuits::{
+            c_circuit::{DCValueComputationStagedCircuit, DCValueComputationWitness},
+            d_circuit::{DChallengeDerivationStagedCircuit, DChallengeDerivationWitness},
+        },
         staging::{
             b_stage::EphemeralStageB,
             d_stage::{DStage, EphemeralStageD, IndirectionStageD},
@@ -1509,13 +1512,53 @@ where
             NUM_CIRCUITS,
         >::new());
 
+        let c_circuit = Staged::<Fp, R, _>::new(DCValueComputationStagedCircuit::<
+            C::NestedCurve,
+            HEADER_SIZE,
+            NUM_APP_CIRCUITS,
+        >::new());
+
         ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: Verify w, y, and z challenges in-circuit.
         ///////////////////////////////////////////////////////////////////////////////////////
 
         let (_d_rx, _d_aux) = d_circuit.rx::<R>(
             DChallengeDerivationWitness {
+                cross_products: cross_products.clone(),
+                w_challenge,
+                y_challenge,
+                z_challenge,
+                mu_challenge,
+                nu_challenge,
+                x_challenge,
+                alpha_challenge,
+                u_challenge,
+                b_challenge,
+                b_staging_nested_commitment: b_rx_nested_commitment,
+                d1_nested_commitment,
+                d2_nested_commitment,
+                d_staging_nested_commitment: d_rx_nested_commitment,
+                e1_nested_commitment,
+                e2_nested_commitment,
+                e_staging_nested_commitment: e_rx_nested_commitment,
+                g1_nested_commitment,
+                g_staging_nested_commitment: g_rx_nested_commitment,
+                p_nested_commitment: g2_nested_commitment,
+                c,
+                v,
+            },
+            self.circuit_mesh.get_key(),
+        )?;
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Compute C in-circuit. The expected value of c = a.revdot(b).
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        let (_c_rx, _c_aux) = c_circuit.rx::<R>(
+            DCValueComputationWitness {
+                mu_inv,
                 cross_products,
+                ky_coeffs: application_ky_coeffs.clone(),
                 w_challenge,
                 y_challenge,
                 z_challenge,
