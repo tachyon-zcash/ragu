@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use arithmetic::CurveAffine;
 use ragu_primitives::vec::Len;
 
-use crate::polynomials::{KyPolyLen, Rank};
+use crate::polynomials::{Rank, TotalKyCoeffsLen};
 use crate::staging::Stage;
 use crate::{ephemeral_stage, indirection_stage};
 use ragu_core::Result;
@@ -105,28 +105,27 @@ impl<HostCurve: CurveAffine, R: Rank> Stage<<HostCurve>::Base, R> for GStage<Hos
 
 // K Stage.
 #[derive(Gadget)]
-pub struct KYStageOutput<'dr, D: Driver<'dr>, const HEADER_SIZE: usize> {
+pub struct KYStageOutput<'dr, D: Driver<'dr>, const HEADER_SIZE: usize, const NUM_CIRCUITS: usize> {
     #[ragu(gadget)]
-    pub ky_coefficients: FixedVec<Element<'dr, D>, KyPolyLen<HEADER_SIZE>>,
+    pub ky_coefficients: FixedVec<Element<'dr, D>, TotalKyCoeffsLen<HEADER_SIZE, NUM_CIRCUITS>>,
 }
 
-/// KY Stage: staging polynomial containing all ky coefficient data.
-/// HEADER_SIZE is the actual header size; the k(Y) polynomial size is `3 * HEADER_SIZE + 1`.
-pub struct KYStage<HostCurve, const HEADER_SIZE: usize> {
+/// KY Stage: staging polynomial containing all ky coefficient data for all circuits.
+pub struct KYStage<HostCurve, const HEADER_SIZE: usize, const NUM_CIRCUITS: usize> {
     _marker: core::marker::PhantomData<HostCurve>,
 }
 
-impl<HostCurve: CurveAffine, R: Rank, const HEADER_SIZE: usize> Stage<<HostCurve>::Base, R>
-    for KYStage<HostCurve, HEADER_SIZE>
+impl<HostCurve: CurveAffine, R: Rank, const HEADER_SIZE: usize, const NUM_CIRCUITS: usize>
+    Stage<<HostCurve>::Base, R> for KYStage<HostCurve, HEADER_SIZE, NUM_CIRCUITS>
 {
     type Parent = ();
 
     type Witness<'source> = Vec<<HostCurve>::Base>;
 
-    type OutputKind = Kind![<HostCurve>::Base; KYStageOutput<'_, _, HEADER_SIZE>];
+    type OutputKind = Kind![<HostCurve>::Base; KYStageOutput<'_, _, HEADER_SIZE, NUM_CIRCUITS>];
 
     fn values() -> usize {
-        KyPolyLen::<HEADER_SIZE>::len()
+        TotalKyCoeffsLen::<HEADER_SIZE, NUM_CIRCUITS>::len()
     }
 
     fn witness<'dr, 'source: 'dr, D>(
@@ -137,11 +136,11 @@ impl<HostCurve: CurveAffine, R: Rank, const HEADER_SIZE: usize> Stage<<HostCurve
         D: Driver<'dr, F = <HostCurve>::Base>,
         Self: 'dr,
     {
-        let ky_poly_size = KyPolyLen::<HEADER_SIZE>::len();
+        let total_ky_size = TotalKyCoeffsLen::<HEADER_SIZE, NUM_CIRCUITS>::len();
 
-        // Allocate the ky coefficients.
-        let mut ky_coefficients = Vec::with_capacity(ky_poly_size);
-        for i in 0..ky_poly_size {
+        // Allocate all ky coefficients for all circuits.
+        let mut ky_coefficients = Vec::with_capacity(total_ky_size);
+        for i in 0..total_ky_size {
             ky_coefficients.push(Element::alloc(dr, witness.view().map(|w| w[i]))?);
         }
         let ky_coefficients = FixedVec::new(ky_coefficients).expect("ky coefficients length");

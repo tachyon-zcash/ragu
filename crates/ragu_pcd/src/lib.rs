@@ -14,11 +14,14 @@ use arithmetic::{Cycle, eval, factor_iter};
 use ff::Field;
 use ragu_circuits::{
     CircuitExt,
-    composition::staging::{
-        b_stage::EphemeralStageB,
-        d_stage::{DStage, EphemeralStageD, IndirectionStageD},
-        e_stage::{EStage, EphemeralStageE, IndirectionStageE, NUM_EVALS},
-        g_stage::{EphemeralStageG, GStage, IndirectionStageG, KYStage},
+    composition::{
+        circuits::d_circuit::{DChallengeDerivationStagedCircuit, DChallengeDerivationWitness},
+        staging::{
+            b_stage::EphemeralStageB,
+            d_stage::{DStage, EphemeralStageD, IndirectionStageD},
+            e_stage::{EStage, EphemeralStageE, IndirectionStageE, NUM_EVALS},
+            g_stage::{EphemeralStageG, GStage, IndirectionStageG, KYStage},
+        },
     },
     mesh::{Mesh, MeshBuilder, omega_j},
     polynomials::{
@@ -27,7 +30,7 @@ use ragu_circuits::{
         horners::EvaluateKyPolynomials,
         structured, unstructured,
     },
-    staging::StageExt,
+    staging::{StageExt, Staged},
 };
 use ragu_core::{
     Error, Result,
@@ -1130,7 +1133,7 @@ where
         let mut inverses = Vec::new();
 
         // TODO: This should be it's own routine as well.
-        let (_v, p_poly, p_blind) = {
+        let (v, p_poly, p_blind) = {
             let mut v = Fp::ZERO;
 
             let mut proc = |point: Fp, eval, eval_prime| {
@@ -1375,8 +1378,8 @@ where
             return Err(Error::CircuitBoundExceeded(ky_poly_size));
         }
 
-        // Build the K staging polynomial.
-        let k_rx = <KYStage<C::NestedCurve, HEADER_SIZE> as StageExt<Fp, R>>::rx(
+        // Build the K staging polynomial (for application circuits only).
+        let k_rx = <KYStage<C::NestedCurve, HEADER_SIZE, NUM_APP_CIRCUITS> as StageExt<Fp, R>>::rx(
             application_ky_coeffs.clone(),
         )?;
 
@@ -1440,7 +1443,7 @@ where
         ky_values.push(right.proof.instance.c);
 
         // Compute c using the routine.
-        let _c = *dr
+        let c = *dr
             .with(
                 (
                     (mu_challenge, nu_challenge, mu_inv),
@@ -1490,6 +1493,53 @@ where
             .expect("c computation should succeed")
             .value()
             .take();
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // PHASE: STAGED CIRCUITS for collective verification (In-circuit verifiers).
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // TODO: Document the constraint costs of each circuit.
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Create the staged circuits.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        let d_circuit = Staged::<Fp, R, _>::new(DChallengeDerivationStagedCircuit::<
+            C::NestedCurve,
+            NUM_CIRCUITS,
+        >::new());
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Verify w, y, and z challenges in-circuit.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        let (_d_rx, _d_aux) = d_circuit.rx::<R>(
+            DChallengeDerivationWitness {
+                cross_products,
+                w_challenge,
+                y_challenge,
+                z_challenge,
+                mu_challenge,
+                nu_challenge,
+                x_challenge,
+                alpha_challenge,
+                u_challenge,
+                b_challenge,
+                b_staging_nested_commitment: b_rx_nested_commitment,
+                d1_nested_commitment,
+                d2_nested_commitment,
+                d_staging_nested_commitment: d_rx_nested_commitment,
+                e1_nested_commitment,
+                e2_nested_commitment,
+                e_staging_nested_commitment: e_rx_nested_commitment,
+                g1_nested_commitment,
+                g_staging_nested_commitment: g_rx_nested_commitment,
+                p_nested_commitment: g2_nested_commitment,
+                c,
+                v,
+            },
+            self.circuit_mesh.get_key(),
+        )?;
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // PHASE: Return the proof.
