@@ -26,6 +26,7 @@ use ragu_circuits::{
             d_stage::{DStage, EphemeralStageD, IndirectionStageD},
             e_stage::{EStage, EphemeralStageE, IndirectionStageE, NUM_EVALS},
             g_stage::{EphemeralStageG, GStage, IndirectionStageG, KYStage},
+            instance::UnifiedRecursionInstance,
         },
     },
     mesh::{Mesh, MeshBuilder, omega_j},
@@ -1529,6 +1530,40 @@ where
         // TODO: Missing circuit for beta challenge verification.
 
         ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Compute the unified k(Y) instance for all the recursion circuits
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // Since each circuit will have the same public instance k(Y), we can just
+        // compute it once.
+
+        let unified_instance = UnifiedRecursionInstance {
+            w_challenge,
+            y_challenge,
+            z_challenge,
+            mu_challenge,
+            nu_challenge,
+            x_challenge,
+            alpha_challenge,
+            u_challenge,
+            b_challenge,
+            b_staging_nested_commitment: b_rx_nested_commitment,
+            d1_nested_commitment,
+            d2_nested_commitment,
+            d_staging_nested_commitment: d_rx_nested_commitment,
+            e1_nested_commitment,
+            e2_nested_commitment,
+            e_staging_nested_commitment: e_rx_nested_commitment,
+            g1_nested_commitment,
+            g_staging_nested_commitment: g_rx_nested_commitment,
+            p_nested_commitment: g2_nested_commitment,
+            // TODO: Missing the ky_nested_commitment?
+            c,
+            v,
+        };
+
+        let _unified_ky = d_circuit.ky(unified_instance)?;
+
+        ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: Verify w, y, and z challenges in-circuit.
         ///////////////////////////////////////////////////////////////////////////////////////
 
@@ -1664,8 +1699,93 @@ where
         )?;
 
         ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Collect staged circuit data for next cycle verification
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // TODO: Uncomment after registering recursion circuits in the mesh.
+
+        // let d_circuit_object = d_circuit.clone().into_object()?;
+        // let c_circuit_object = c_circuit.clone().into_object()?;
+        // let e_circuit_object = e_circuit.clone().into_object()?;
+        // let g_circuit_object = g_circuit.clone().into_object()?;
+
+        // accumulator.staged_circuits = vec![
+        //     StagedCircuitData {
+        //         final_rx: d_rx,
+        //         ky: unified_ky.clone(),
+        //         circuit: d_circuit_object,
+        //     },
+        //     StagedCircuitData {
+        //         final_rx: c_rx,
+        //         ky: unified_ky.clone(),
+        //         circuit: c_circuit_object,
+        //     },
+        //     StagedCircuitData {
+        //         final_rx: e_rx,
+        //         ky: unified_ky.clone(),
+        //         circuit: e_circuit_object,
+        //     },
+        //     StagedCircuitData {
+        //         final_rx: g_rx,
+        //         ky: unified_ky.clone(),
+        //         circuit: g_circuit_object,
+        //     },
+        // ];
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Collect deferreds (Vesta points to be checked on Pallas side).
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        // Everything that's in a nested polynomial gets deferred. Deferreds should be:
+        //
+        // - All the ephemeral nested commitments witnessing this round's work,
+        // - All the staging polynomial nested commitments from D, E, G circuits,
+
+        let _deferreds = [
+            b_rx_nested_commitment, // B staging polynomial commitment
+            d1_nested_commitment,   // Witnesses S' commitments
+            d2_nested_commitment,   // Witnesses S'' commitments
+            d_rx_nested_commitment, // D staging polynomial commitment
+            e1_nested_commitment,   // Witnesses A and B commitments
+            e2_nested_commitment,   // Witnesses S commitment
+            e_rx_nested_commitment, // E staging polynomial commitment
+            g1_nested_commitment,   // Witnesses F commitment
+            g_rx_nested_commitment, // G staging polynomial commitment
+            k_rx_nested_commitment, // KY staging polynomial commitment
+        ];
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Compose the final accumulator.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        let _accumulator_witness = AccumulatorWitness::<C, R> {
+            s_poly: s.poly,
+            s_blinding: s.blind,
+            a_poly: a_folded.poly,
+            a_blinding: a_folded.blind,
+            b_poly: b_folded.poly,
+            b_blinding: b_folded.blind,
+            p_poly: p.poly,
+            p_blinding: p.blind,
+        };
+
+        let _accumulator_instance = AccumulatorInstance::<C> {
+            a: a_folded.commitment,
+            b: b_folded.commitment,
+            c,
+            p: p.commitment,
+            u: ChallengePoint(u_challenge),
+            v: EvaluationPoint(v),
+            s: s.commitment,
+            x: ChallengePoint(x_challenge),
+            y: ChallengePoint(y_challenge),
+        };
+
+        ///////////////////////////////////////////////////////////////////////////////////////
         // PHASE: Return the proof.
         ///////////////////////////////////////////////////////////////////////////////////////
+
+        // TODO: Swap out the proof with new accumulator.
 
         Ok((
             Proof {
