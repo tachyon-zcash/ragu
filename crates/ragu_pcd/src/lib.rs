@@ -22,7 +22,9 @@ use ragu_circuits::{
     },
     mesh::{Mesh, MeshBuilder, omega_j},
     polynomials::{
-        CrossProductsLen, KyPolyLen, Rank, compute_c::ComputeC, horners::EvaluateKyPolynomials,
+        CrossProductsLen, KyPolyLen, Rank,
+        compute_c::{ComputeRevdotClaim, RevdotClaimInput},
+        horners::EvaluateKyPolynomials,
         structured, unstructured,
     },
     staging::StageExt,
@@ -36,7 +38,10 @@ use ragu_core::{
     maybe::{Always, Maybe, MaybeKind},
 };
 use ragu_pasta::{Fp, PoseidonFp};
-use ragu_primitives::{Element, GadgetExt, Point, Sponge, vec::Len};
+use ragu_primitives::{
+    Element, GadgetExt, Point, Sponge,
+    vec::{FixedVec, Len},
+};
 use rand::{Rng, rngs::OsRng};
 
 use alloc::{collections::BTreeMap, vec, vec::Vec};
@@ -1414,8 +1419,8 @@ where
                         let coeff = ky_coeffs_slice.view().map(|s| s[i]);
                         ky_coeff_elems.push(Element::alloc(dr, coeff)?);
                     }
-                    let ky_coeff_fixed = ragu_primitives::vec::FixedVec::new(ky_coeff_elems)
-                        .expect("ky_coeff_elems length");
+                    let ky_coeff_fixed =
+                        FixedVec::new(ky_coeff_elems).expect("ky_coeff_elems length");
 
                     let y_elem = Element::alloc(dr, y_val)?;
 
@@ -1458,8 +1463,7 @@ where
                             .map(|s| if i < s.len() { s[i] } else { Fp::ZERO });
                         cross_elems.push(Element::alloc(dr, val)?);
                     }
-                    let cross_elems = ragu_primitives::vec::FixedVec::new(cross_elems)
-                        .expect("cross_elems length");
+                    let cross_elems = FixedVec::new(cross_elems).expect("cross_elems length");
 
                     // Allocate ky values (one per circuit being folded).
                     let mut ky_elems = Vec::with_capacity(NUM_CIRCUITS);
@@ -1472,8 +1476,15 @@ where
                     let ky_elems =
                         ragu_primitives::vec::FixedVec::new(ky_elems).expect("ky_elems length");
 
-                    let input = (((mu, nu), mu_inv), (cross_elems, ky_elems));
-                    dr.routine(ComputeC::<NUM_CIRCUITS>, input)
+                    let input = RevdotClaimInput {
+                        mu,
+                        nu,
+                        mu_inv,
+                        cross_products: cross_elems,
+                        ky_values: ky_elems,
+                    };
+
+                    dr.routine(ComputeRevdotClaim::<NUM_CIRCUITS>, input)
                 },
             )
             .expect("c computation should succeed")

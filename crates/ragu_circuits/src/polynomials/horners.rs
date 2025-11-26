@@ -1,4 +1,5 @@
-//! Routine for evaluating ky polynomials at challenge point y using Horner's method.
+//! Routine for evaluating the k(Y) polynomial at a challenge point y using Horner's method.
+
 use alloc::vec::Vec;
 use ff::Field;
 use ragu_core::{
@@ -45,6 +46,7 @@ impl<F: Field, const HEADER_SIZE: usize, const NUM_CIRCUITS: usize> Routine<F>
 
         let mut ky_elements = Vec::with_capacity(NUM_CIRCUITS);
 
+        // Evaluate each k(Y) polynomial at y.
         for circuit_idx in 0..NUM_CIRCUITS {
             let ky_start = circuit_idx * self.ky_degree;
 
@@ -54,7 +56,6 @@ impl<F: Field, const HEADER_SIZE: usize, const NUM_CIRCUITS: usize> Routine<F>
                 let global_idx = ky_start + coeff_idx;
                 let ky_coeff = ky_coefficients[global_idx].clone();
 
-                // result = result * y + coeff.
                 ky_at_y = ky_at_y.mul(dr, &y_challenge)?;
                 ky_at_y = ky_at_y.add(dr, &ky_coeff);
             }
@@ -74,21 +75,19 @@ impl<F: Field, const HEADER_SIZE: usize, const NUM_CIRCUITS: usize> Routine<F>
     > {
         let mut ky_elements = Vec::with_capacity(NUM_CIRCUITS);
 
-        // Evaluate each ky polynomial at y
+        // Evaluate each k(Y) polynomial at y.
         for circuit_idx in 0..NUM_CIRCUITS {
             let ky_start = circuit_idx * self.ky_degree;
             let ky_degree = self.ky_degree;
 
-            // Allocate the predicted ky value for this circuit
             let ky_elem = Element::alloc(
                 dr,
                 D::with(|| {
-                    // Extract coefficients and challenge within D::with context
                     let ky_coefficients: Vec<F> =
                         input.0.iter().map(|elem| *elem.value().take()).collect();
                     let y_challenge = *input.1.value().take();
 
-                    // Evaluate using Horner's method
+                    // Evaluate using Horner's method.
                     let mut ky_at_y = F::ZERO;
                     for coeff_idx in (0..ky_degree).rev() {
                         let global_idx = ky_start + coeff_idx;
@@ -150,7 +149,7 @@ mod tests {
             expected.push(ky_at_y);
         }
 
-        // Run the routine
+        // Run the routine using emulator driver.
         let mut em = Emulator::execute();
 
         let mut ky_elems = Vec::new();
