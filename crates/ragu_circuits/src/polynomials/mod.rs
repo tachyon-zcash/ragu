@@ -45,6 +45,18 @@ impl<const HEADER_SIZE: usize, const NUM_CIRCUITS: usize> Len
     }
 }
 
+/// Number of cross-product error terms.
+///
+/// L = NUM_CIRCUITS polynomials per fold (1 new witness + 2 incoming accumulators),
+/// so cross products = L * (L - 1) off-diagonal terms.
+pub struct CrossProductsLen<const NUM_CIRCUITS: usize>;
+
+impl<const NUM_CIRCUITS: usize> Len for CrossProductsLen<NUM_CIRCUITS> {
+    fn len() -> usize {
+        NUM_CIRCUITS * (NUM_CIRCUITS - 1)
+    }
+}
+
 mod private {
     pub trait Sealed {}
     impl<const RANK: u32> Sealed for super::R<RANK> {}

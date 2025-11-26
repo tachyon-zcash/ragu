@@ -22,7 +22,8 @@ use ragu_circuits::{
     },
     mesh::{Mesh, MeshBuilder, omega_j},
     polynomials::{
-        KyPolyLen, Rank, TotalKyCoeffsLen, horners::EvaluateKyPolynomials, structured, unstructured,
+        CrossProductsLen, KyPolyLen, Rank, compute_c::ComputeC, horners::EvaluateKyPolynomials,
+        structured, unstructured,
     },
     staging::StageExt,
 };
@@ -638,7 +639,6 @@ where
         ///////////////////////////////////////////////////////////////////////////////////////
 
         // The prover computes all of the error terms (cross products).
-        let len = a_polys.len();
         let mut cross_products = Vec::new();
         for (i, a) in a_polys.iter().enumerate() {
             for (j, b) in b_polys.iter().enumerate() {
@@ -649,10 +649,7 @@ where
             }
         }
 
-        let cross_products = cross_products
-            .clone()
-            .try_into()
-            .map_err(|_| Error::CircuitBoundExceeded(self.num_application_steps))?;
+        let cross_products: Vec<Fp> = cross_products.clone();
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: Compute D staging polynomial.
@@ -661,10 +658,10 @@ where
         let d_staging_witness = (
             [w_challenge, y_challenge, z_challenge],
             [d1_nested_commitment, d2_nested_commitment],
-            cross_products,
+            cross_products.clone(),
         );
 
-        let d_rx = <DStage<C::NestedCurve> as StageExt<Fp, R>>::rx(d_staging_witness)?;
+        let d_rx = <DStage<C::NestedCurve, 3> as StageExt<Fp, R>>::rx(d_staging_witness)?;
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // LAYER OF INDIRECTION: We now introduce another nested commitment layer to produce
@@ -1355,9 +1352,12 @@ where
         // TASK: Build KY staging polyhnomial for ky polynomial coefficients.
         ///////////////////////////////////////////////////////////////////////////////////////
 
+        // For Horner evaluation: 1 application circuit's k(Y) polynomial
+        const NUM_APP_CIRCUITS: usize = 1;
+
         const NUM_CIRCUITS: usize = 3;
         let ky_poly_size = KyPolyLen::<HEADER_SIZE>::len();
-        let total_ky_coeffs = TotalKyCoeffsLen::<HEADER_SIZE, NUM_CIRCUITS>::len();
+        let cross_products_size = CrossProductsLen::<NUM_CIRCUITS>::len();
 
         // Append application circuits ky coefficients.
         let mut application_ky_coeffs = Vec::with_capacity(ky_poly_size);
@@ -1402,11 +1402,8 @@ where
         // Evaluate ky polynomials at y_challenge using Horner's routine.
         let mut dr: Emulator<Wireless<Always<()>, Fp>> = Emulator::wireless();
 
-        // For Horner evaluation: 1 application circuit's k(Y) polynomial
-        const NUM_APP_CIRCUITS: usize = 1;
-
-        let _mu_inv = mu_challenge.invert().unwrap();
-        let _ky_evaluated = dr
+        let mu_inv = mu_challenge.invert().unwrap();
+        let ky_evaluated = dr
             .with(
                 (&application_ky_coeffs[..], y_challenge),
                 |dr: &mut Emulator<Wireless<Always<()>, Fp>>, inputs| {
@@ -1429,62 +1426,59 @@ where
             )
             .expect("ky evaluation should succeed");
 
-        // // Extract evaluated ky values and add previous accumulator c values.
-        // let mut ky_values = Vec::with_capacity(NUM_CIRCUITS);
-        // for ky_elem in ky_evaluated.iter().take(1) {
-        //     ky_values.push(*ky_elem.value().take());
-        // }
-        // ky_values.push(left.proof.instance.c);
-        // ky_values.push(right.proof.instance.c);
+        // Extract evaluated ky values and add previous accumulator c values.
+        let mut ky_values = Vec::with_capacity(NUM_CIRCUITS);
+        for ky_elem in ky_evaluated.iter().take(1) {
+            ky_values.push(*ky_elem.value().take());
+        }
+        ky_values.push(left.proof.instance.c);
+        ky_values.push(right.proof.instance.c);
 
-        // // Compute c using the routine.
-        // let _c = *dr
-        //     .with(
-        //         (
-        //             (mu_challenge, nu_challenge, mu_inv),
-        //             (&cross_products[..], &ky_values[..]),
-        //         ),
-        //         |dr, inputs| {
-        //             let (challenges, slices) = inputs.cast();
-        //             let (mu, nu, mu_inv) = challenges.cast();
-        //             let (cross_slice, ky_slice) = slices.cast();
+        // Compute c using the routine.
+        let _c = *dr
+            .with(
+                (
+                    (mu_challenge, nu_challenge, mu_inv),
+                    (&cross_products[..], &ky_values[..]),
+                ),
+                |dr: &mut Emulator<Wireless<Always<()>, Fp>>, inputs| {
+                    let (challenges, slices) = inputs.cast();
+                    let (mu, nu, mu_inv) = challenges.cast();
+                    let (cross_slice, ky_slice) = slices.cast();
 
-        //             let mu = Element::alloc(dr, mu)?;
-        //             let nu = Element::alloc(dr, nu)?;
-        //             let mu_inv = Element::alloc(dr, mu_inv)?;
+                    let mu = Element::alloc(dr, mu)?;
+                    let nu = Element::alloc(dr, nu)?;
+                    let mu_inv = Element::alloc(dr, mu_inv)?;
 
-        //             // Allocate cross products.
-        //             let mut cross_elems = Vec::with_capacity(NUM_CROSS_PRODUCTS);
-        //             for i in 0..NUM_CROSS_PRODUCTS {
-        //                 let val = cross_slice
-        //                     .view()
-        //                     .map(|s| if i < s.len() { s[i] } else { Fp::ZERO });
-        //                 cross_elems.push(Element::alloc(dr, val)?);
-        //             }
-        //             let cross_elems = ragu_primitives::vec::FixedVec::new(cross_elems)
-        //                 .expect("cross_elems length");
+                    // Allocate cross products.
+                    let mut cross_elems = Vec::with_capacity(cross_products_size);
+                    for i in 0..cross_products_size {
+                        let val = cross_slice
+                            .view()
+                            .map(|s| if i < s.len() { s[i] } else { Fp::ZERO });
+                        cross_elems.push(Element::alloc(dr, val)?);
+                    }
+                    let cross_elems = ragu_primitives::vec::FixedVec::new(cross_elems)
+                        .expect("cross_elems length");
 
-        //             // Allocate ky values (one per circuit being folded).
-        //             let mut ky_elems = Vec::with_capacity(NUM_CIRCUITS);
-        //             for i in 0..NUM_CIRCUITS {
-        //                 let val = ky_slice
-        //                     .view()
-        //                     .map(|s| if i < s.len() { s[i] } else { Fp::ZERO });
-        //                 ky_elems.push(Element::alloc(dr, val)?);
-        //             }
-        //             let ky_elems =
-        //                 ragu_primitives::vec::FixedVec::new(ky_elems).expect("ky_elems length");
+                    // Allocate ky values (one per circuit being folded).
+                    let mut ky_elems = Vec::with_capacity(NUM_CIRCUITS);
+                    for i in 0..NUM_CIRCUITS {
+                        let val = ky_slice
+                            .view()
+                            .map(|s| if i < s.len() { s[i] } else { Fp::ZERO });
+                        ky_elems.push(Element::alloc(dr, val)?);
+                    }
+                    let ky_elems =
+                        ragu_primitives::vec::FixedVec::new(ky_elems).expect("ky_elems length");
 
-        //             let input = (((mu, nu), mu_inv), (cross_elems, ky_elems));
-        //             dr.routine(
-        //                 ComputeC::<NUM_CROSS_PRODUCTS, NUM_CIRCUITS>::new(len),
-        //                 input,
-        //             )
-        //         },
-        //     )
-        //     .expect("c computation should succeed")
-        //     .value()
-        //     .take();
+                    let input = (((mu, nu), mu_inv), (cross_elems, ky_elems));
+                    dr.routine(ComputeC::<NUM_CIRCUITS>, input)
+                },
+            )
+            .expect("c computation should succeed")
+            .value()
+            .take();
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // PHASE: Return the proof.
