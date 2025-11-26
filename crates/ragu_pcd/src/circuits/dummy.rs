@@ -1,5 +1,5 @@
 use ff::Field;
-use ragu_circuits::Circuit;
+use ragu_circuits::{Circuit, polynomials::TripleConstLen};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
@@ -8,8 +8,6 @@ use ragu_core::{
 use ragu_primitives::{Element, vec::FixedVec};
 
 use alloc::vec;
-
-use crate::step::adapter::TripleConstLen;
 
 pub struct Dummy<const HEADER_SIZE: usize>;
 

@@ -1,8 +1,9 @@
 //! G staging polynomial.
 use alloc::vec::Vec;
 use arithmetic::CurveAffine;
+use ragu_primitives::vec::Len;
 
-use crate::polynomials::Rank;
+use crate::polynomials::{KyPolyLen, Rank};
 use crate::staging::Stage;
 use crate::{ephemeral_stage, indirection_stage};
 use ragu_core::Result;
@@ -106,11 +107,11 @@ impl<HostCurve: CurveAffine, R: Rank> Stage<<HostCurve>::Base, R> for GStage<Hos
 #[derive(Gadget)]
 pub struct KYStageOutput<'dr, D: Driver<'dr>, const HEADER_SIZE: usize> {
     #[ragu(gadget)]
-    pub ky_coefficients: FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>,
+    pub ky_coefficients: FixedVec<Element<'dr, D>, KyPolyLen<HEADER_SIZE>>,
 }
 
 /// KY Stage: staging polynomial containing all ky coefficient data.
-/// HEADER_SIZE is the number of field elements in the serialized header.
+/// HEADER_SIZE is the actual header size; the k(Y) polynomial size is `3 * HEADER_SIZE + 1`.
 pub struct KYStage<HostCurve, const HEADER_SIZE: usize> {
     _marker: core::marker::PhantomData<HostCurve>,
 }
@@ -120,12 +121,12 @@ impl<HostCurve: CurveAffine, R: Rank, const HEADER_SIZE: usize> Stage<<HostCurve
 {
     type Parent = ();
 
-    type Witness<'source> = [<HostCurve>::Base; HEADER_SIZE];
+    type Witness<'source> = Vec<<HostCurve>::Base>;
 
     type OutputKind = Kind![<HostCurve>::Base; KYStageOutput<'_, _, HEADER_SIZE>];
 
     fn values() -> usize {
-        HEADER_SIZE
+        KyPolyLen::<HEADER_SIZE>::len()
     }
 
     fn witness<'dr, 'source: 'dr, D>(
@@ -136,9 +137,11 @@ impl<HostCurve: CurveAffine, R: Rank, const HEADER_SIZE: usize> Stage<<HostCurve
         D: Driver<'dr, F = <HostCurve>::Base>,
         Self: 'dr,
     {
+        let ky_poly_size = KyPolyLen::<HEADER_SIZE>::len();
+
         // Allocate the ky coefficients.
-        let mut ky_coefficients = Vec::with_capacity(HEADER_SIZE);
-        for i in 0..HEADER_SIZE {
+        let mut ky_coefficients = Vec::with_capacity(ky_poly_size);
+        for i in 0..ky_poly_size {
             ky_coefficients.push(Element::alloc(dr, witness.view().map(|w| w[i]))?);
         }
         let ky_coefficients = FixedVec::new(ky_coefficients).expect("ky coefficients length");

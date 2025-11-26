@@ -1,29 +1,20 @@
 use arithmetic::Cycle;
-use ragu_circuits::{Circuit, polynomials::Rank};
+use ragu_circuits::{
+    Circuit,
+    polynomials::{Rank, TripleConstLen},
+};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
     gadgets::{GadgetKind, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{
-    Element,
-    vec::{FixedVec, Len},
-};
+use ragu_primitives::{Element, vec::FixedVec};
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use super::{Encoder, Header, Step};
-
-/// Represents triple a length determined at compile time.
-pub struct TripleConstLen<const N: usize>;
-
-impl<const N: usize> Len for TripleConstLen<N> {
-    fn len() -> usize {
-        N * 3
-    }
-}
 
 pub(crate) struct Adapter<C, S, R, const HEADER_SIZE: usize> {
     step: S,

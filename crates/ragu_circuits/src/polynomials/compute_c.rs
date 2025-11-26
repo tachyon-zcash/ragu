@@ -19,7 +19,7 @@ pub const NUM_CIRCUITS: usize = 3;
 /// Size of the KY polynomial coefficients array.
 /// This is 1 + HEADER_SIZE * 3 where HEADER_SIZE = 4.
 /// (output_header + left_header + right_header + 1 for the constant term)
-pub const KY_POLY_SIZE: usize = 13;
+// pub const KY_POLY_SIZE: usize = 13;
 
 #[derive(Clone)]
 pub struct ComputeC<const KY_POLY_SIZE: usize, const NUM_CIRCUITS: usize> {

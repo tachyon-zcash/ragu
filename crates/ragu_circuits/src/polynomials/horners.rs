@@ -13,23 +13,26 @@ use ragu_primitives::{
     vec::{ConstLen, FixedVec},
 };
 
-// Hardcode this for now.
-const NUM_CIRCUITS: usize = 1;
+use crate::polynomials::TotalKyCoeffsLen;
 
 #[derive(Clone)]
-pub struct EvaluateKyPolynomials<const TOTAL_KY_COEFFS: usize> {
+pub struct EvaluateKyPolynomials<const HEADER_SIZE: usize, const NUM_CIRCUITS: usize> {
     ky_degree: usize,
 }
 
-impl<const TOTAL_KY_COEFFS: usize> EvaluateKyPolynomials<TOTAL_KY_COEFFS> {
+impl<const HEADER_SIZE: usize, const NUM_CIRCUITS: usize>
+    EvaluateKyPolynomials<HEADER_SIZE, NUM_CIRCUITS>
+{
     pub fn new(ky_degree: usize) -> Self {
         Self { ky_degree }
     }
 }
 
-impl<F: Field, const TOTAL_KY_COEFFS: usize> Routine<F> for EvaluateKyPolynomials<TOTAL_KY_COEFFS> {
-    type Input = Kind![F; (FixedVec<Element<'_, _>, ConstLen<TOTAL_KY_COEFFS>>, Element<'_, _>)];
-    type Output = Kind![F; FixedVec<Element<'_, _>, ConstLen<1>>];
+impl<F: Field, const HEADER_SIZE: usize, const NUM_CIRCUITS: usize> Routine<F>
+    for EvaluateKyPolynomials<HEADER_SIZE, NUM_CIRCUITS>
+{
+    type Input = Kind![F; (FixedVec<Element<'_, _>, TotalKyCoeffsLen<HEADER_SIZE, NUM_CIRCUITS>>, Element<'_, _>)];
+    type Output = Kind![F; FixedVec<Element<'_, _>, ConstLen<NUM_CIRCUITS>>];
     type Aux<'dr> = ();
 
     fn execute<'dr, D: Driver<'dr, F = F>>(
@@ -51,7 +54,7 @@ impl<F: Field, const TOTAL_KY_COEFFS: usize> Routine<F> for EvaluateKyPolynomial
                 let global_idx = ky_start + coeff_idx;
                 let ky_coeff = ky_coefficients[global_idx].clone();
 
-                // result = result * y + coeff
+                // result = result * y + coeff.
                 ky_at_y = ky_at_y.mul(dr, &y_challenge)?;
                 ky_at_y = ky_at_y.add(dr, &ky_coeff);
             }
@@ -111,30 +114,34 @@ impl<F: Field, const TOTAL_KY_COEFFS: usize> Routine<F> for EvaluateKyPolynomial
 
 #[cfg(test)]
 mod tests {
+    use crate::polynomials::KyPolyLen;
+
     use super::*;
     use ff::Field;
     use ragu_core::drivers::emulator::Emulator;
     use ragu_pasta::Fp;
+    use ragu_primitives::vec::Len;
     use rand::rngs::OsRng;
 
     #[test]
     fn test_evaluate_ky_polynomials() {
         const NUM_CIRCUITS: usize = 3;
-        const KY_DEGREE: usize = 4;
-        const TOTAL_KY_COEFFS: usize = 12; // NUM_CIRCUITS * KY_DEGREE
+        const HEADER_SIZE: usize = 4;
+        let ky_degree = KyPolyLen::<HEADER_SIZE>::len();
+        let total_ky_coeffs = TotalKyCoeffsLen::<HEADER_SIZE, NUM_CIRCUITS>::len();
         let y_challenge = Fp::random(OsRng);
 
         let mut ky_coeffs = Vec::new();
-        for _ in 0..TOTAL_KY_COEFFS {
+        for _ in 0..total_ky_coeffs {
             ky_coeffs.push(Fp::random(OsRng));
         }
 
         let mut expected = Vec::new();
         for circuit_idx in 0..NUM_CIRCUITS {
-            let ky_start = circuit_idx * KY_DEGREE;
+            let ky_start = circuit_idx * ky_degree;
             let mut ky_at_y = Fp::ZERO;
 
-            for coeff_idx in (0..KY_DEGREE).rev() {
+            for coeff_idx in (0..ky_degree).rev() {
                 let global_idx = ky_start + coeff_idx;
                 ky_at_y *= y_challenge;
                 ky_at_y += ky_coeffs[global_idx];
@@ -154,7 +161,7 @@ mod tests {
         let ky_elems_fixed = FixedVec::new(ky_elems).unwrap();
         let y_elem = Element::constant(&mut em, y_challenge);
 
-        let routine = EvaluateKyPolynomials::<TOTAL_KY_COEFFS>::new(KY_DEGREE);
+        let routine = EvaluateKyPolynomials::<HEADER_SIZE, NUM_CIRCUITS>::new(ky_degree);
         let result = em.routine(routine, (ky_elems_fixed, y_elem)).unwrap();
 
         for (i, ky_elem) in result.iter().enumerate().take(NUM_CIRCUITS) {

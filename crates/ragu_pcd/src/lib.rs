@@ -16,16 +16,13 @@ use ragu_circuits::{
     CircuitExt,
     composition::staging::{
         b_stage::EphemeralStageB,
-        d_stage::{DStage, EphemeralStageD, IndirectionStageD, NUM_CROSS_PRODUCTS},
+        d_stage::{DStage, EphemeralStageD, IndirectionStageD},
         e_stage::{EStage, EphemeralStageE, IndirectionStageE, NUM_EVALS},
         g_stage::{EphemeralStageG, GStage, IndirectionStageG, KYStage},
     },
     mesh::{Mesh, MeshBuilder, omega_j},
     polynomials::{
-        Rank,
-        compute_c::{ComputeC, KY_POLY_SIZE, NUM_CIRCUITS},
-        horners::EvaluateKyPolynomials,
-        structured, unstructured,
+        KyPolyLen, Rank, TotalKyCoeffsLen, horners::EvaluateKyPolynomials, structured, unstructured,
     },
     staging::StageExt,
 };
@@ -38,7 +35,7 @@ use ragu_core::{
     maybe::{Always, Maybe, MaybeKind},
 };
 use ragu_pasta::{Fp, PoseidonFp};
-use ragu_primitives::{Element, GadgetExt, Point, Sponge};
+use ragu_primitives::{Element, GadgetExt, Point, Sponge, vec::Len};
 use rand::{Rng, rngs::OsRng};
 
 use alloc::{collections::BTreeMap, vec, vec::Vec};
@@ -1358,18 +1355,25 @@ where
         // TASK: Build KY staging polyhnomial for ky polynomial coefficients.
         ///////////////////////////////////////////////////////////////////////////////////////
 
+        const NUM_CIRCUITS: usize = 3;
+        let ky_poly_size = KyPolyLen::<HEADER_SIZE>::len();
+        let total_ky_coeffs = TotalKyCoeffsLen::<HEADER_SIZE, NUM_CIRCUITS>::len();
+
         // Append application circuits ky coefficients.
-        let mut application_ky_coffs = Vec::new();
+        let mut application_ky_coeffs = Vec::with_capacity(ky_poly_size);
         for ky_poly in &ky_polys {
-            application_ky_coffs.extend_from_slice(ky_poly);
+            application_ky_coeffs.extend_from_slice(ky_poly);
         }
 
-        let ky_coeff_array: [C::CircuitField; KY_POLY_SIZE] = application_ky_coffs
-            .try_into()
-            .map_err(|_| Error::CircuitBoundExceeded(KY_POLY_SIZE))?;
+        // Verify the length matches expected k(Y) polynomial size.
+        if application_ky_coeffs.len() != ky_poly_size {
+            return Err(Error::CircuitBoundExceeded(ky_poly_size));
+        }
 
         // Build the K staging polynomial.
-        let k_rx = <KYStage<C::NestedCurve, KY_POLY_SIZE> as StageExt<Fp, R>>::rx(ky_coeff_array)?;
+        let k_rx = <KYStage<C::NestedCurve, HEADER_SIZE> as StageExt<Fp, R>>::rx(
+            application_ky_coeffs.clone(),
+        )?;
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // LAYER OF INDIRECTION: We now introduce another nested commitment layer to produce
@@ -1398,82 +1402,89 @@ where
         // Evaluate ky polynomials at y_challenge using Horner's routine.
         let mut dr: Emulator<Wireless<Always<()>, Fp>> = Emulator::wireless();
 
-        let mu_inv = mu_challenge.invert().unwrap();
-        let ky_evaluated = dr
-            .with((&ky_coeff_array[..], y_challenge), |dr, inputs| {
-                let (ky_coeffs_slice, y_val) = inputs.cast();
+        // For Horner evaluation: 1 application circuit's k(Y) polynomial
+        const NUM_APP_CIRCUITS: usize = 1;
 
-                let mut ky_coeff_elems = Vec::with_capacity(KY_POLY_SIZE);
-                for i in 0..KY_POLY_SIZE {
-                    let coeff = ky_coeffs_slice.view().map(|s| s[i]);
-                    ky_coeff_elems.push(Element::alloc(dr, coeff)?);
-                }
-                let ky_coeff_fixed = ragu_primitives::vec::FixedVec::new(ky_coeff_elems)
-                    .expect("ky_coeff_elems length");
-
-                let y_elem = Element::alloc(dr, y_val)?;
-
-                let horner_routine = EvaluateKyPolynomials::<KY_POLY_SIZE>::new(KY_POLY_SIZE);
-                dr.routine(horner_routine, (ky_coeff_fixed, y_elem))
-            })
-            .expect("ky evaluation should succeed");
-
-        // Extract evaluated ky values and add previous accumulator c values.
-        let mut ky_values = Vec::with_capacity(NUM_CIRCUITS);
-        for ky_elem in ky_evaluated.iter().take(1) {
-            ky_values.push(*ky_elem.value().take());
-        }
-        ky_values.push(left.proof.instance.c);
-        ky_values.push(right.proof.instance.c);
-
-        // Compute c using the routine.
-        let _c = *dr
+        let _mu_inv = mu_challenge.invert().unwrap();
+        let _ky_evaluated = dr
             .with(
-                (
-                    (mu_challenge, nu_challenge, mu_inv),
-                    (&cross_products[..], &ky_values[..]),
-                ),
-                |dr, inputs| {
-                    let (challenges, slices) = inputs.cast();
-                    let (mu, nu, mu_inv) = challenges.cast();
-                    let (cross_slice, ky_slice) = slices.cast();
+                (&application_ky_coeffs[..], y_challenge),
+                |dr: &mut Emulator<Wireless<Always<()>, Fp>>, inputs| {
+                    let (ky_coeffs_slice, y_val) = inputs.cast();
 
-                    let mu = Element::alloc(dr, mu)?;
-                    let nu = Element::alloc(dr, nu)?;
-                    let mu_inv = Element::alloc(dr, mu_inv)?;
-
-                    // Allocate cross products.
-                    let mut cross_elems = Vec::with_capacity(NUM_CROSS_PRODUCTS);
-                    for i in 0..NUM_CROSS_PRODUCTS {
-                        let val = cross_slice
-                            .view()
-                            .map(|s| if i < s.len() { s[i] } else { Fp::ZERO });
-                        cross_elems.push(Element::alloc(dr, val)?);
+                    let mut ky_coeff_elems = Vec::with_capacity(ky_poly_size);
+                    for i in 0..ky_poly_size {
+                        let coeff = ky_coeffs_slice.view().map(|s| s[i]);
+                        ky_coeff_elems.push(Element::alloc(dr, coeff)?);
                     }
-                    let cross_elems = ragu_primitives::vec::FixedVec::new(cross_elems)
-                        .expect("cross_elems length");
+                    let ky_coeff_fixed = ragu_primitives::vec::FixedVec::new(ky_coeff_elems)
+                        .expect("ky_coeff_elems length");
 
-                    // Allocate ky values (one per circuit being folded).
-                    let mut ky_elems = Vec::with_capacity(NUM_CIRCUITS);
-                    for i in 0..NUM_CIRCUITS {
-                        let val = ky_slice
-                            .view()
-                            .map(|s| if i < s.len() { s[i] } else { Fp::ZERO });
-                        ky_elems.push(Element::alloc(dr, val)?);
-                    }
-                    let ky_elems =
-                        ragu_primitives::vec::FixedVec::new(ky_elems).expect("ky_elems length");
+                    let y_elem = Element::alloc(dr, y_val)?;
 
-                    let input = (((mu, nu), mu_inv), (cross_elems, ky_elems));
-                    dr.routine(
-                        ComputeC::<NUM_CROSS_PRODUCTS, NUM_CIRCUITS>::new(len),
-                        input,
-                    )
+                    let horner_routine =
+                        EvaluateKyPolynomials::<HEADER_SIZE, NUM_APP_CIRCUITS>::new(ky_poly_size);
+                    dr.routine(horner_routine, (ky_coeff_fixed, y_elem))
                 },
             )
-            .expect("c computation should succeed")
-            .value()
-            .take();
+            .expect("ky evaluation should succeed");
+
+        // // Extract evaluated ky values and add previous accumulator c values.
+        // let mut ky_values = Vec::with_capacity(NUM_CIRCUITS);
+        // for ky_elem in ky_evaluated.iter().take(1) {
+        //     ky_values.push(*ky_elem.value().take());
+        // }
+        // ky_values.push(left.proof.instance.c);
+        // ky_values.push(right.proof.instance.c);
+
+        // // Compute c using the routine.
+        // let _c = *dr
+        //     .with(
+        //         (
+        //             (mu_challenge, nu_challenge, mu_inv),
+        //             (&cross_products[..], &ky_values[..]),
+        //         ),
+        //         |dr, inputs| {
+        //             let (challenges, slices) = inputs.cast();
+        //             let (mu, nu, mu_inv) = challenges.cast();
+        //             let (cross_slice, ky_slice) = slices.cast();
+
+        //             let mu = Element::alloc(dr, mu)?;
+        //             let nu = Element::alloc(dr, nu)?;
+        //             let mu_inv = Element::alloc(dr, mu_inv)?;
+
+        //             // Allocate cross products.
+        //             let mut cross_elems = Vec::with_capacity(NUM_CROSS_PRODUCTS);
+        //             for i in 0..NUM_CROSS_PRODUCTS {
+        //                 let val = cross_slice
+        //                     .view()
+        //                     .map(|s| if i < s.len() { s[i] } else { Fp::ZERO });
+        //                 cross_elems.push(Element::alloc(dr, val)?);
+        //             }
+        //             let cross_elems = ragu_primitives::vec::FixedVec::new(cross_elems)
+        //                 .expect("cross_elems length");
+
+        //             // Allocate ky values (one per circuit being folded).
+        //             let mut ky_elems = Vec::with_capacity(NUM_CIRCUITS);
+        //             for i in 0..NUM_CIRCUITS {
+        //                 let val = ky_slice
+        //                     .view()
+        //                     .map(|s| if i < s.len() { s[i] } else { Fp::ZERO });
+        //                 ky_elems.push(Element::alloc(dr, val)?);
+        //             }
+        //             let ky_elems =
+        //                 ragu_primitives::vec::FixedVec::new(ky_elems).expect("ky_elems length");
+
+        //             let input = (((mu, nu), mu_inv), (cross_elems, ky_elems));
+        //             dr.routine(
+        //                 ComputeC::<NUM_CROSS_PRODUCTS, NUM_CIRCUITS>::new(len),
+        //                 input,
+        //             )
+        //         },
+        //     )
+        //     .expect("c computation should succeed")
+        //     .value()
+        //     .take();
 
         ///////////////////////////////////////////////////////////////////////////////////////
         // PHASE: Return the proof.
