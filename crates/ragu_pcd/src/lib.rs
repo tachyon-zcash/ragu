@@ -18,6 +18,7 @@ use ragu_circuits::{
         circuits::{
             c_circuit::{DCValueComputationStagedCircuit, DCValueComputationWitness},
             d_circuit::{DChallengeDerivationStagedCircuit, DChallengeDerivationWitness},
+            e_circuit::{EChallengeDerivationStagedCircuit, EChallengeDerivationWitness},
         },
         staging::{
             b_stage::EphemeralStageB,
@@ -1518,6 +1519,9 @@ where
             NUM_APP_CIRCUITS,
         >::new());
 
+        let e_circuit =
+            Staged::<Fp, R, _>::new(EChallengeDerivationStagedCircuit::<C::NestedCurve>::new());
+
         ///////////////////////////////////////////////////////////////////////////////////////
         // TASK: Verify w, y, and z challenges in-circuit.
         ///////////////////////////////////////////////////////////////////////////////////////
@@ -1559,6 +1563,38 @@ where
                 mu_inv,
                 cross_products,
                 ky_coeffs: application_ky_coeffs.clone(),
+                w_challenge,
+                y_challenge,
+                z_challenge,
+                mu_challenge,
+                nu_challenge,
+                x_challenge,
+                alpha_challenge,
+                u_challenge,
+                b_challenge,
+                b_staging_nested_commitment: b_rx_nested_commitment,
+                d1_nested_commitment,
+                d2_nested_commitment,
+                d_staging_nested_commitment: d_rx_nested_commitment,
+                e1_nested_commitment,
+                e2_nested_commitment,
+                e_staging_nested_commitment: e_rx_nested_commitment,
+                g1_nested_commitment,
+                g_staging_nested_commitment: g_rx_nested_commitment,
+                p_nested_commitment: g2_nested_commitment,
+                c,
+                v,
+            },
+            self.circuit_mesh.get_key(),
+        )?;
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // TASK: Compute T(X, z) in-circuit. This also checks mu and nu challenge derivation.
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        let (_e_rx, _e_aux) = e_circuit.rx::<R>(
+            EChallengeDerivationWitness {
+                evals: intermediate_evals_array,
                 w_challenge,
                 y_challenge,
                 z_challenge,

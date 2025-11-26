@@ -7,7 +7,7 @@ pub mod compute_c;
 pub mod horners;
 mod omega;
 pub mod structured;
-mod txz;
+pub(crate) mod txz;
 pub mod unstructured;
 
 /// Represents triple a length determined at compile time.
