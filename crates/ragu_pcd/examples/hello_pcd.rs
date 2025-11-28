@@ -10,16 +10,17 @@ use ragu_core::{
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::{
     ApplicationBuilder,
-    header::{Header, Prefix},
+    header::{Header, Suffix},
     step::{Encoded, Encoder, Index, Step},
 };
-use ragu_primitives::{Element, Sponge};
+use ragu_primitives::Element;
+use ragu_primitives::poseidon::Sponge;
 use rand::{SeedableRng, rngs::StdRng};
 
 struct LeafNode;
 
 impl<F: Field> Header<F> for LeafNode {
-    const PREFIX: Prefix = Prefix::new(0);
+    const SUFFIX: Suffix = Suffix::new(0);
     type Data<'source> = F;
     type Output = Kind![F; Element<'_, _>];
 
@@ -34,7 +35,7 @@ impl<F: Field> Header<F> for LeafNode {
 struct InternalNode;
 
 impl<F: Field> Header<F> for InternalNode {
-    const PREFIX: Prefix = Prefix::new(1);
+    const SUFFIX: Suffix = Suffix::new(1);
     type Data<'source> = F;
     type Output = Kind![F; Element<'_, _>];
 
@@ -146,50 +147,41 @@ fn main() -> Result<()> {
     println!("Building application...");
     let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
         .register(CreateLeaf {
-            poseidon_params: pasta.circuit_poseidon(),
+            poseidon_params: Pasta::circuit_poseidon(pasta),
         })?
         .register(CombineNodes {
-            poseidon_params: pasta.circuit_poseidon(),
+            poseidon_params: Pasta::circuit_poseidon(pasta),
         })?
-        .finalize(&pasta)?;
+        .finalize(pasta)?;
     println!("Registered CreateLeaf and CombineNodes\n");
 
-    println!("Creating trivial proof...");
-    let trivial = app.trivial().carry::<()>(());
-    assert!(app.verify(&trivial, &mut rng)?);
-    println!("Trivial proof verified\n");
-
     println!("Creating leaves...");
-    let leaf1 = app.merge(
+    let leaf1 = app.seed(
         &mut rng,
         CreateLeaf {
-            poseidon_params: pasta.circuit_poseidon(),
+            poseidon_params: Pasta::circuit_poseidon(pasta),
         },
         Fp::from(100u64),
-        trivial.clone(),
-        trivial.clone(),
     )?;
     let leaf1 = leaf1.0.carry(leaf1.1);
     assert!(app.verify(&leaf1, &mut rng)?);
 
-    let leaf2 = app.merge(
+    let leaf2 = app.seed(
         &mut rng,
         CreateLeaf {
-            poseidon_params: pasta.circuit_poseidon(),
+            poseidon_params: Pasta::circuit_poseidon(pasta),
         },
         Fp::from(200u64),
-        trivial.clone(),
-        trivial.clone(),
     )?;
     let leaf2 = leaf2.0.carry(leaf2.1);
     assert!(app.verify(&leaf2, &mut rng)?);
     println!("Created and verified leaf1 and leaf2\n");
 
     println!("Combining leaves...");
-    let node1 = app.merge(
+    let node1 = app.fuse(
         &mut rng,
         CombineNodes {
-            poseidon_params: pasta.circuit_poseidon(),
+            poseidon_params: Pasta::circuit_poseidon(pasta),
         },
         (),
         leaf1,
