@@ -40,26 +40,6 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Target: Stage<D::F, R>>
     }
 }
 
-/// Allocates stage wires on the underlying driver and collects
-/// them for later use by `StageGuard`.
-struct StageWireAllocator<'a, 'dr, D: Driver<'dr>> {
-    underlying: &'a mut D,
-    stage_wires: Vec<D::Wire>,
-}
-
-impl<'dr, D: Driver<'dr>> FromDriver<'_, '_, Emulator<Wireless<Empty, D::F>>>
-    for StageWireAllocator<'_, 'dr, D>
-{
-    type NewDriver = PhantomData<D::F>;
-
-    /// For every stage wire conversion, allocate a zero on the underlying driver.
-    fn convert_wire(&mut self, _: &()) -> Result<()> {
-        let stage_wire = self.underlying.alloc(|| Ok(Coeff::Zero))?;
-        self.stage_wires.push(stage_wire);
-        Ok(())
-    }
-}
-
 /// Injects pre-allocated stage wires into a gadget, and enforces equality
 /// between live wires and stage wires.
 struct EnforcingInjector<'a, 'dr, D: Driver<'dr>> {
@@ -176,43 +156,34 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
         // Invoke wireless emulator with dummy witness to get gadget structure.
         // The emulator never actually reads the witness values.
         let mut emulator = Emulator::<Wireless<Empty, D::F>>::wireless();
-        let dummy_gadget = Next::witness(&mut emulator, Empty)?;
+        let mut num_wires = Next::witness(&mut emulator, Empty)?.num_wires();
 
-        // Map the dummy gadget, allocating stage wires on the underlying driver.
-        let mut allocator = StageWireAllocator {
-            underlying: self.driver,
-            stage_wires: Vec::new(),
-        };
+        // Collect stage wires
+        let mut wires = Vec::with_capacity(num_wires);
+        for _ in 0..num_wires {
+            wires.push(self.driver.alloc(|| Ok(Coeff::Zero))?);
+        }
 
-        dummy_gadget.map(&mut allocator)?;
+        // Padding
+        while (num_wires / 2) < Next::num_multiplications() {
+            self.driver.alloc(|| Ok(Coeff::Zero))?;
+            num_wires += 1;
+        }
 
-        if allocator.stage_wires.len() > Next::values() {
+        // Check bounds
+        if num_wires > Next::values() {
             return Err(ragu_core::Error::MultiplicationBoundExceeded(
                 Next::num_multiplications(),
             ));
         }
 
-        let mut alloc_count = allocator.stage_wires.len();
-
-        while alloc_count < Next::values() {
-            allocator.underlying.alloc(|| Ok(Coeff::Zero))?;
-            alloc_count += 1;
-        }
-
-        if alloc_count % 2 == 1 {
-            allocator.underlying.alloc(|| Ok(Coeff::Zero))?;
-            alloc_count += 1;
-        }
-
-        assert_eq!(alloc_count / 2, Next::num_multiplications());
-
         Ok((
             StageGuard {
-                stage_wires: allocator.stage_wires,
+                stage_wires: wires,
                 _marker: PhantomData,
             },
             StageBuilder {
-                driver: allocator.underlying,
+                driver: self.driver,
                 _marker: PhantomData,
             },
         ))
