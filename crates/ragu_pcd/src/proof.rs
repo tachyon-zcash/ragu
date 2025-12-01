@@ -290,3 +290,14 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<'_, C, R, H> {
         }
     }
 }
+
+pub struct _CommittedPolynomial<P, C: Cycle> {
+    pub _poly: P,
+    pub _blind: C::CircuitField,
+    pub commitment: C::HostCurve,
+}
+
+pub type _CommittedStructured<R, C> =
+    _CommittedPolynomial<structured::Polynomial<<C as Cycle>::CircuitField, R>, C>;
+pub type _CommittedUnstructured<R, C> =
+    _CommittedPolynomial<unstructured::Polynomial<<C as Cycle>::CircuitField, R>, C>;
