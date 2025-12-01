@@ -13,7 +13,7 @@ use rand::Rng;
 
 use crate::{Pcd, header::Header, step::adapter::Adapter};
 
-mod stub_step;
+pub(crate) mod stub_step;
 use stub_step::StubStep;
 
 /// Verifies some [`Pcd`] for the provided [`Header`].
