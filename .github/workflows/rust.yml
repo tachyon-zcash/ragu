@@ -27,7 +27,7 @@ jobs:
         with:
           components: clippy
       - name: Run clippy
-        run: cargo clippy --all --locked -- -D warnings
+        run: cargo clippy --workspace --lib --tests --benches --locked -- -D warnings
 
   test:
     name: test (${{ matrix.os }})
