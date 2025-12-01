@@ -2,14 +2,20 @@ use arithmetic::Cycle;
 use ragu_circuits::{CircuitExt, polynomials::Rank};
 use ragu_core::{Error, Result, drivers::emulator::Emulator};
 use ragu_primitives::Sponge;
-use rand::Rng;
+use rand::{Rng, rngs::OsRng};
 
+use alloc::vec::Vec;
 use core::marker::PhantomData;
+
+use ragu_primitives::vec::FixedVec;
 
 use crate::{
     Pcd, Proof,
+    proof::{CommittedPolynomial, CommittedStructured},
     step::{Step, adapter::Adapter},
+    verify::stub_step::StubStep,
 };
+use ff::Field;
 
 pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE: usize>(
     num_application_steps: usize,
@@ -21,7 +27,7 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
     left: Pcd<'source, C, R, S::Left>,
     right: Pcd<'source, C, R, S::Right>,
 ) -> Result<(Proof<C, R>, S::Aux<'source>)> {
-    let _host_generators = params.host_generators();
+    let host_generators = params.host_generators();
     let _nested_generators = params.nested_generators();
     let circuit_poseidon = params.circuit_poseidon();
 
@@ -76,14 +82,83 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////
-    // Task: Execute application logic via `Step::witness()` through the `Adapter`.
+    // Phase: Process the application circuits. The witness polynomials
+    // r(X) are over the `C::CircuitField`, and produce commitments to `C::HostCurve`
+    // curve points.
+    ///////////////////////////////////////////////////////////////////////////////////////
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // Task: Execute application logic via `Step::witness()` through the Adapter.
     ///////////////////////////////////////////////////////////////////////////////////////
 
     let circuit_id = S::INDEX.circuit_index(Some(num_application_steps))?;
     let circuit = Adapter::<C, S, R, HEADER_SIZE>::new(step);
-    let (rx, aux) = circuit.rx::<R>((left.data, right.data, witness), circuit_mesh.get_key())?;
 
+    // Clone data before moving into rx computation.
+    let left_data = left.data.clone();
+    let right_data = right.data.clone();
+
+    // Compute r(X) polynomial for this step.
+    let (rx, aux) = circuit.rx::<R>((left.data, right.data, witness), circuit_mesh.get_key())?;
     let ((left_header, right_header), aux) = aux;
+
+    // Commit to r(X) with random blinding.
+    let blinding = C::CircuitField::random(OsRng);
+    let commitment = rx.clone().commit(host_generators, blinding);
+
+    // Reconstruct k(Y) public input polynomial for the left input PCD.
+    let left_ky_poly = {
+        let adapter = Adapter::<C, StubStep<S::Left>, R, HEADER_SIZE>::new(StubStep::new());
+        let left_header = FixedVec::try_from(left.proof.left_header.clone())
+            .map_err(|_| Error::MalformedEncoding("left header size".into()))?;
+        let right_header = FixedVec::try_from(left.proof.right_header.clone())
+            .map_err(|_| Error::MalformedEncoding("right header size".into()))?;
+        adapter.ky((left_header, right_header, left_data))?
+    };
+
+    // Reconstruct k(Y) public input polynomial for the right input PCD.
+    let right_ky_poly = {
+        let adapter = Adapter::<C, StubStep<S::Right>, R, HEADER_SIZE>::new(StubStep::new());
+        let left_header = FixedVec::try_from(right.proof.left_header.clone())
+            .map_err(|_| Error::MalformedEncoding("left header size".into()))?;
+        let right_header = FixedVec::try_from(right.proof.right_header.clone())
+            .map_err(|_| Error::MalformedEncoding("right header size".into()))?;
+        adapter.ky((left_header, right_header, right_data))?
+    };
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // Task: Collect all A polynomials (application and previous accumulators).
+    ///////////////////////////////////////////////////////////////////////////////////////
+
+    let mut _a_polys: Vec<CommittedStructured<R, C>> = Vec::new();
+    let mut _ky_polys: Vec<Vec<C::CircuitField>> = Vec::new();
+
+    // Append r(X) witness polynomial from the application circuit.
+    _a_polys.push(CommittedPolynomial {
+        _poly: rx.clone(),
+        _blind: blinding,
+        _commitment: commitment,
+    });
+
+    // Append the previous accumulator A polynomials.
+    _a_polys.push(CommittedPolynomial {
+        _poly: left.proof.witness.a_poly.clone(),
+        _blind: left.proof.witness.a_blinding,
+        _commitment: left.proof.instance.a,
+    });
+    _a_polys.push(CommittedPolynomial {
+        _poly: right.proof.witness.a_poly.clone(),
+        _blind: right.proof.witness.a_blinding,
+        _commitment: right.proof.instance.a,
+    });
+
+    // Append k(Y) polynomial from previous accumulators.
+    _ky_polys.push(left_ky_poly);
+    _ky_polys.push(right_ky_poly);
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // Task: ...
+    ///////////////////////////////////////////////////////////////////////////////////////
 
     Ok((
         Proof {
