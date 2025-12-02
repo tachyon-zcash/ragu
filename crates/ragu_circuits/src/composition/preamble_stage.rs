@@ -1,4 +1,5 @@
-//! B staging polynomial.
+//! Preamble staging polynomial.
+
 use crate::Rank;
 use crate::staging::Stage;
 use crate::{ephemeral_stage, indirection_stage};
@@ -16,11 +17,11 @@ use ragu_primitives::{
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////
-// B STAGING POLYNOMIAL
+// PREAMBLE STAGING POLYNOMIAL
 ///////////////////////////////////////////////////////////////////////////////////////
 
 // Ephemeral stage used to create nested commitments.
-ephemeral_stage!(EphemeralStageB);
+ephemeral_stage!(EphemeralStagePreamble);
 
 // Indirection stage used for an extra layer of nesting.
-indirection_stage!(IndirectionStageB);
+indirection_stage!(IndirectionStagePreamble);

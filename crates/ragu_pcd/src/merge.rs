@@ -1,6 +1,7 @@
 use arithmetic::Cycle;
 use ragu_circuits::{
-    CircuitExt, composition::b_stage::EphemeralStageB, polynomials::Rank, staging::StageExt,
+    CircuitExt, composition::preamble_stage::EphemeralStagePreamble, polynomials::Rank,
+    staging::StageExt,
 };
 use ragu_core::{Error, Result, drivers::emulator::Emulator};
 use ragu_primitives::{Point, Sponge};
@@ -160,7 +161,7 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
     _ky_polys.push(right_ky_poly);
 
     ///////////////////////////////////////////////////////////////////////////////////////
-    // PHASE: B STAGE.
+    // PHASE: PREAMBLE STAGE.
     ///////////////////////////////////////////////////////////////////////////////////////
 
     // Temporary: Total circuits (1 application step + 2 accumulators)
@@ -176,17 +177,17 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
         .map_err(|_| Error::CircuitBoundExceeded(NUM_CIRCUITS))?;
 
     // INNER LAYER: Staging polynomial (over Fq) that witnesses the Vesta commitments.
-    let b_inner_rx = <EphemeralStageB<C::HostCurve, NUM_CIRCUITS> as StageExt<
+    let preamble_rx = <EphemeralStagePreamble<C::HostCurve, NUM_CIRCUITS> as StageExt<
         C::ScalarField,
         R,
     >>::rx(&a_commitments)?;
 
     // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators.
-    let b_blinding = C::ScalarField::random(OsRng);
-    let b_rx_nested_commitment = b_inner_rx.commit(nested_generators, b_blinding);
+    let preamble_blinding = C::ScalarField::random(OsRng);
+    let preamble_rx_nested_commitment = preamble_rx.commit(nested_generators, preamble_blinding);
 
-    let b_point = Point::constant(&mut em, b_rx_nested_commitment)?;
-    b_point.write(&mut em, &mut transcript)?;
+    let preamble_point = Point::constant(&mut em, preamble_rx_nested_commitment)?;
+    preamble_point.write(&mut em, &mut transcript)?;
 
     ///////////////////////////////////////////////////////////////////////////////////////
     // PHASE: Return the proof.
