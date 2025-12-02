@@ -2,9 +2,8 @@
 
 use alloc::vec::Vec;
 use arithmetic::CurveAffine;
-use ragu_primitives::vec::Len;
 
-use crate::polynomials::{Rank, TotalKyCoeffsLen};
+use crate::polynomials::Rank;
 use crate::staging::Stage;
 use crate::{ephemeral_stage, indirection_stage};
 use ragu_core::Result;
@@ -97,62 +96,5 @@ impl<HostCurve: CurveAffine, R: Rank> Stage<<HostCurve>::Base, R> for Evaluation
             nested_commitments,
             evaluations,
         })
-    }
-}
-
-///////////////////////////////////////////////////////////////////////////////////////
-// KY STAGING POLYNOMIAL
-///////////////////////////////////////////////////////////////////////////////////////
-
-// Ephemeral stage used to create nested commitments.
-ephemeral_stage!(EphemeralStageKY);
-
-// Indirection stage used for an extra layer of nesting.
-indirection_stage!(IndirectionStageKY);
-
-// KY Stage.
-#[derive(Gadget)]
-pub struct KYStageOutput<'dr, D: Driver<'dr>, const NUM_CIRCUITS: usize, const HEADER_SIZE: usize> {
-    #[ragu(gadget)]
-    pub ky_coefficients: FixedVec<Element<'dr, D>, TotalKyCoeffsLen<NUM_CIRCUITS, HEADER_SIZE>>,
-}
-
-/// KY Stage: staging polynomial containing all ky coefficient data.
-pub struct KYStage<HostCurve, const NUM_CIRCUITS: usize, const HEADER_SIZE: usize> {
-    _marker: core::marker::PhantomData<HostCurve>,
-}
-
-impl<HostCurve: CurveAffine, R: Rank, const NUM_CIRCUITS: usize, const HEADER_SIZE: usize>
-    Stage<<HostCurve>::Base, R> for KYStage<HostCurve, NUM_CIRCUITS, HEADER_SIZE>
-{
-    type Parent = ();
-
-    type Witness<'source> =
-        FixedVec<<HostCurve>::Base, TotalKyCoeffsLen<NUM_CIRCUITS, HEADER_SIZE>>;
-
-    type OutputKind = Kind![<HostCurve>::Base; KYStageOutput<'_, _, NUM_CIRCUITS, HEADER_SIZE>];
-
-    fn values() -> usize {
-        TotalKyCoeffsLen::<NUM_CIRCUITS, HEADER_SIZE>::len()
-    }
-
-    fn witness<'dr, 'source: 'dr, D>(
-        dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<<Self::OutputKind as GadgetKind<<HostCurve>::Base>>::Rebind<'dr, D>>
-    where
-        D: Driver<'dr, F = <HostCurve>::Base>,
-        Self: 'dr,
-    {
-        // Allocate the ky coefficients.
-        let num_coeffs = TotalKyCoeffsLen::<NUM_CIRCUITS, HEADER_SIZE>::len();
-        let mut ky_coefficients = Vec::with_capacity(num_coeffs);
-
-        for i in 0..num_coeffs {
-            ky_coefficients.push(Element::alloc(dr, witness.view().map(|w| w[i]))?);
-        }
-        let ky_coefficients = FixedVec::new(ky_coefficients).expect("ky coefficients length");
-
-        Ok(KYStageOutput { ky_coefficients })
     }
 }

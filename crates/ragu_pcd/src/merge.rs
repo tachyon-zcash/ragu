@@ -1080,51 +1080,6 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
     g2_point.write(&mut em, &mut transcript)?;
 
     ///////////////////////////////////////////////////////////////////////////////////////
-    // TASK: Build KY staging polyhnomial for ky polynomial coefficients.
-    ///////////////////////////////////////////////////////////////////////////////////////
-
-    // TODO: Rethink this.
-
-    // // Append application circuits ky coefficients.
-    // let mut application_ky_coffs = Vec::new();
-    // for ky_poly in &ky_polys {
-    //     application_ky_coffs.extend_from_slice(ky_poly);
-    // }
-
-    // // Convert to FixedVec for KYStage.
-    // let ky_coeffs_vec = FixedVec::<_, TotalKyCoeffsLen<NUM_APP_CIRCUITS, HEADER_SIZE>>::try_from(
-    //     application_ky_coffs,
-    // )
-    // .map_err(|_| {
-    //     Error::CircuitBoundExceeded(TotalKyCoeffsLen::<NUM_APP_CIRCUITS, HEADER_SIZE>::len())
-    // })?;
-
-    // // Build the K staging polynomial.
-    // let k_rx = <KYStage<C::NestedCurve, NUM_APP_CIRCUITS, HEADER_SIZE> as StageExt<
-    //     C::CircuitField,
-    //     R,
-    // >>::rx(ky_coeffs_vec)?;
-
-    // ///////////////////////////////////////////////////////////////////////////////////////
-    // // LAYER OF INDIRECTION: We now introduce another nested commitment layer to produce
-    // // an Fp-hashable nested commitment for the transcript.
-    // let k_rx_blinding = C::CircuitField::random(OsRng);
-    // let k_rx_commitment = k_rx.commit(host_generators, k_rx_blinding);
-
-    // // INNER LAYER: Staging polynomial (over Fq) that witnesses the D staged circuit Vesta commitment.
-    // let k_rx_inner =
-    //     <IndirectionStageKY<C::HostCurve> as StageExt<C::ScalarField, R>>::rx(k_rx_commitment)?;
-
-    // // NESTED COMMITMENT: Commit to the epehemeral polynomial using Pallas generators (nested curve).
-    // let k_rx_nested_commitment_blinding = C::ScalarField::random(OsRng);
-    // let k_rx_nested_commitment =
-    //     k_rx_inner.commit(nested_generators, k_rx_nested_commitment_blinding);
-
-    // let k_point = Point::constant(&mut em, k_rx_nested_commitment)?;
-    // k_point.write(&mut em, &mut transcript)?;
-    /////////////////////////////////////////////////////////////////////////////////////
-
-    ///////////////////////////////////////////////////////////////////////////////////////
     // PHASE: Return the proof.
     ///////////////////////////////////////////////////////////////////////////////////////
 
