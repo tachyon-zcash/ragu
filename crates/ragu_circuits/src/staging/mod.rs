@@ -58,10 +58,10 @@
 //!
 //! ### Normal Stages
 //!
-//! [`StageExt::rx`] produces a staging polynomial for a given stage, given a
+//! `StageExt::rx()` produces a staging polynomial for a given stage, given a
 //! witness. The well-formedness check can be performed by applying a revdot
 //! claim between the resulting [`Polynomial`](structured::Polynomial) and the
-//! stage's [staging object](StageExt::into_object).
+//! stage's staging object via `StageExt::into_object()`.
 //!
 //! ```rust,ignore
 //! let a = MyStage::rx(my_stage_witness)?;
@@ -98,9 +98,9 @@
 //!
 //! Any implementation of [`StagedCircuit`] can be transformed into an
 //! implementation of [`Circuit`] using the [`Staged`] adaptor. The resulting
-//! [`StageExt::rx`] output contains the final witness polynomial $f(X)$, which
+//! `StageExt::rx()` output contains the final witness polynomial $f(X)$, which
 //! must be similarly checked to be well-formed using the
-//! [`StageExt::final_into_object`] method's staging object (obtained from the
+//! `StageExt::final_into_object()` method's staging object (obtained from the
 //! [`StagedCircuit::Final`] implementation).
 //!
 //! ### Combining the Stages
@@ -294,8 +294,9 @@ impl<F: Field, R: Rank, S: StagedCircuit<F, R>> Circuit<F> for Staged<F, R, S> {
     }
 }
 
+#[allow(dead_code)]
 /// Extension traits for staging circuits.
-pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
+pub(crate) trait StageExt<F: Field, R: Rank>: Stage<F, R> {
     /// Returns the number of multiplication gates used for allocations.
     fn num_multiplications() -> usize {
         (Self::values() + 1) / 2

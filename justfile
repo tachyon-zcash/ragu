@@ -28,7 +28,7 @@ book COMMAND: _book_setup
   mdbook {{COMMAND}} ./book --open
 
 # run CI checks locally (formatting, clippy, tests)
-ci_local:
+ci_local: fix
   @echo "Running formatting check..."
   cargo fmt --all -- --check
   @echo "Running clippy..."

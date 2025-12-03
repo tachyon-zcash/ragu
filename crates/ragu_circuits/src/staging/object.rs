@@ -9,7 +9,7 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub struct StageObject<R: Rank> {
+pub(crate) struct StageObject<R: Rank> {
     skip_multiplications: usize,
     num_multiplications: usize,
     _marker: core::marker::PhantomData<R>,
