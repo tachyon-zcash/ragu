@@ -14,7 +14,7 @@ use ragu_primitives::{GadgetExt, Sponge};
 use core::marker::PhantomData;
 
 use super::unified::{self, OutputBuilder};
-use crate::merge::stages::{native_error, native_preamble};
+use crate::stages::{native_error, native_preamble};
 
 pub const CIRCUIT_ID: usize = super::C_CIRCUIT_ID;
 

@@ -29,6 +29,7 @@ pub mod header;
 mod internal_circuits;
 mod merge;
 mod proof;
+mod stages;
 pub mod step;
 mod verify;
 
