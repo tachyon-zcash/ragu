@@ -1,4 +1,5 @@
 pub mod dummy;
+pub mod unified;
 
 const DUMMY_CIRCUIT_ID: usize = 0;
 
