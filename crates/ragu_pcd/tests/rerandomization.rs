@@ -92,7 +92,7 @@ impl<C: Cycle> Step<C> for Step1 {
 #[test]
 fn rerandomization_flow() {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, R<8>, 4>::new()
+    let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
         .register(Step0)
         .unwrap()
         .register(Step1)

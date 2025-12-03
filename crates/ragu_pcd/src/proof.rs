@@ -10,7 +10,7 @@ use alloc::{vec, vec::Vec};
 use core::marker::PhantomData;
 
 use super::{
-    circuits::{DUMMY_CIRCUIT_ID, dummy::Dummy, internal_circuit_index},
+    circuits::{dummy, internal_circuit_index},
     header::Header,
 };
 
@@ -18,11 +18,14 @@ pub fn trivial<C: Cycle, R: Rank, const HEADER_SIZE: usize>(
     num_application_steps: usize,
     mesh: &Mesh<'_, C::CircuitField, R>,
 ) -> Proof<C, R> {
-    let rx = Dummy.rx((), mesh.get_key()).expect("should not fail").0;
+    let rx = dummy::Circuit
+        .rx((), mesh.get_key())
+        .expect("should not fail")
+        .0;
 
     Proof {
         rx,
-        circuit_id: internal_circuit_index(num_application_steps, DUMMY_CIRCUIT_ID),
+        circuit_id: internal_circuit_index(num_application_steps, dummy::CIRCUIT_ID),
         left_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
         right_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
         _marker: PhantomData,
