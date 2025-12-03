@@ -1,7 +1,7 @@
-pub mod circuit_c;
-pub mod circuit_v;
+pub mod c;
 pub mod dummy;
 pub mod unified;
+pub mod v;
 
 const DUMMY_CIRCUIT_ID: usize = 0;
 const C_CIRCUIT_ID: usize = 1;

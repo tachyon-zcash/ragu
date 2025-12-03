@@ -15,7 +15,7 @@ use core::marker::PhantomData;
 
 use crate::{
     Pcd, Proof,
-    circuits::{self, internal_circuit_index},
+    internal_circuits::{self, internal_circuit_index},
     step::{Step, adapter::Adapter},
 };
 
@@ -271,7 +271,7 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
     })?;
 
     // Create the unified instance for circuit_c and circuit_v.
-    let unified_instance = &crate::circuits::unified::Instance {
+    let unified_instance = &internal_circuits::unified::Instance {
         nested_preamble_commitment,
         w,
         nested_s_prime_commitment,
@@ -292,8 +292,8 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
     };
 
     // Compute circuit_c witness polynomial (verifies w, y, z).
-    let circuit_c = crate::circuits::circuit_c::Circuit::<C, R>::new(circuit_poseidon);
-    let circuit_c_witness = crate::circuits::circuit_c::Witness {
+    let circuit_c = internal_circuits::c::Circuit::<C, R>::new(circuit_poseidon);
+    let circuit_c_witness = internal_circuits::c::Witness {
         unified_instance,
         error_witness: &error_witness,
     };
@@ -301,8 +301,8 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
     let (circuit_c_rx, _) = circuit_c_staged.rx::<R>(circuit_c_witness, circuit_mesh.get_key())?;
 
     // Compute circuit_v witness polynomial (verifies mu, nu, x, alpha, u, beta).
-    let circuit_v = crate::circuits::circuit_v::Circuit::<C, R>::new(circuit_poseidon);
-    let circuit_v_witness = crate::circuits::circuit_v::Witness {
+    let circuit_v = internal_circuits::v::Circuit::<C, R>::new(circuit_poseidon);
+    let circuit_v_witness = internal_circuits::v::Witness {
         unified_instance,
         query_witness: &query_witness,
         eval_witness: &eval_witness,
@@ -312,10 +312,8 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
 
     // Compute ky once - both circuit_c and circuit_v share the same Instance/Output types,
     // so they produce identical k(y) polynomials.
-    let ky = Staged::new(crate::circuits::circuit_c::Circuit::<C, R>::new(
-        circuit_poseidon,
-    ))
-    .ky(unified_instance)?;
+    let ky = Staged::new(internal_circuits::c::Circuit::<C, R>::new(circuit_poseidon))
+        .ky(unified_instance)?;
 
     // Assert that ky[1] == 0 (ensured by the `zero` field at the end of Output).
     assert_eq!(ky[1], C::CircuitField::ZERO);
@@ -332,7 +330,7 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
             &ky,
             circuit_mesh,
             num_application_steps,
-            circuits::circuit_c::CIRCUIT_ID,
+            internal_circuits::c::CIRCUIT_ID,
             rng,
         );
     }
@@ -350,7 +348,7 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
             &ky,
             circuit_mesh,
             num_application_steps,
-            circuits::circuit_v::CIRCUIT_ID,
+            internal_circuits::v::CIRCUIT_ID,
             rng,
         );
     }

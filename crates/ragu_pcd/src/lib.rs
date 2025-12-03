@@ -25,8 +25,8 @@ use header::Header;
 pub use proof::{Pcd, Proof};
 use step::{Step, adapter::Adapter};
 
-mod circuits;
 pub mod header;
+mod internal_circuits;
 mod merge;
 mod proof;
 pub mod step;
@@ -120,14 +120,14 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         // Then, insert all of the "internal circuits" used for recursion plumbing.
         self.circuit_mesh = self
             .circuit_mesh
-            .register_circuit(circuits::dummy::Circuit)?;
+            .register_circuit(internal_circuits::dummy::Circuit)?;
 
         self.circuit_mesh = self.circuit_mesh.register_circuit(Staged::new(
-            crate::circuits::circuit_c::Circuit::<C, R>::new(params.circuit_poseidon()),
+            crate::internal_circuits::c::Circuit::<C, R>::new(params.circuit_poseidon()),
         ))?;
 
         self.circuit_mesh = self.circuit_mesh.register_circuit(Staged::new(
-            crate::circuits::circuit_v::Circuit::<C, R>::new(params.circuit_poseidon()),
+            crate::internal_circuits::v::Circuit::<C, R>::new(params.circuit_poseidon()),
         ))?;
 
         Ok(Application {

@@ -10,8 +10,8 @@ use alloc::{vec, vec::Vec};
 use core::marker::PhantomData;
 
 use super::{
-    circuits::{dummy, internal_circuit_index},
     header::Header,
+    internal_circuits::{dummy, internal_circuit_index},
 };
 
 pub fn trivial<C: Cycle, R: Rank, const HEADER_SIZE: usize>(
