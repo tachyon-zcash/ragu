@@ -22,14 +22,14 @@ pub fn verify<C: Cycle, R: Rank, RNG: Rng, H: Header<C::CircuitField>, const HEA
     pcd: &Pcd<'_, C, R, H>,
     mut rng: RNG,
 ) -> Result<bool> {
-    let rx = &pcd.proof.rx;
+    let application_rx = &pcd.proof.application_rx;
     let circuit_id = omega_j(pcd.proof.circuit_id as u32);
     let y = C::CircuitField::random(&mut rng);
     let z = C::CircuitField::random(&mut rng);
     let sy = circuit_mesh.wy(circuit_id, y);
     let tz = R::tz(z);
 
-    let mut rhs = rx.clone();
+    let mut rhs = application_rx.clone();
     rhs.dilate(z);
     rhs.add_assign(&sy);
     rhs.add_assign(&tz);
@@ -46,7 +46,7 @@ pub fn verify<C: Cycle, R: Rank, RNG: Rng, H: Header<C::CircuitField>, const HEA
         adapter.ky(instance)?
     };
 
-    let valid = rx.revdot(&rhs) == eval(ky.iter(), y);
+    let valid = application_rx.revdot(&rhs) == eval(ky.iter(), y);
 
     Ok(valid)
 }
