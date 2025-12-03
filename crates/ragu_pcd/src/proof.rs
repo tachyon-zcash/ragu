@@ -14,21 +14,6 @@ use super::{
     header::Header,
 };
 
-pub fn trivial<C: Cycle, R: Rank, const HEADER_SIZE: usize>(
-    num_application_steps: usize,
-    mesh: &Mesh<'_, C::CircuitField, R>,
-) -> Proof<C, R> {
-    let application_rx = Dummy.rx((), mesh.get_key()).expect("should not fail").0;
-
-    Proof {
-        application_rx,
-        circuit_id: internal_circuit_index(num_application_steps, DUMMY_CIRCUIT_ID),
-        left_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
-        right_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
-        _marker: PhantomData,
-    }
-}
-
 /// Represents a recursive proof for the correctness of some computation.
 pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) circuit_id: usize,
@@ -73,5 +58,20 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<'_, C, R, H> {
             proof: self.proof.clone(),
             data: self.data.clone(),
         }
+    }
+}
+
+pub fn trivial<C: Cycle, R: Rank, const HEADER_SIZE: usize>(
+    num_application_steps: usize,
+    mesh: &Mesh<'_, C::CircuitField, R>,
+) -> Proof<C, R> {
+    let application_rx = Dummy.rx((), mesh.get_key()).expect("should not fail").0;
+
+    Proof {
+        application_rx,
+        circuit_id: internal_circuit_index(num_application_steps, DUMMY_CIRCUIT_ID),
+        left_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
+        right_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
+        _marker: PhantomData,
     }
 }
