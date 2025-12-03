@@ -14,7 +14,7 @@ use ragu_primitives::{GadgetExt, Sponge};
 use core::marker::PhantomData;
 
 use super::unified::{self, OutputBuilder};
-use crate::merge::stages::{error, preamble};
+use crate::merge::stages::{native_error, native_preamble};
 
 pub const CIRCUIT_ID: usize = super::C_CIRCUIT_ID;
 
@@ -34,11 +34,11 @@ impl<'a, C: Cycle, R> Circuit<'a, C, R> {
 
 pub struct Witness<'a, C: Cycle> {
     pub unified_instance: &'a unified::Instance<C>,
-    pub error_witness: &'a error::Witness<C::NestedCurve>,
+    pub error_witness: &'a native_error::Witness<C::NestedCurve>,
 }
 
 impl<C: Cycle, R: Rank> StagedCircuit<C::CircuitField, R> for Circuit<'_, C, R> {
-    type Final = error::Error<C::NestedCurve, R>;
+    type Final = native_error::Error<C::NestedCurve, R>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C>;
@@ -67,8 +67,8 @@ impl<C: Cycle, R: Rank> StagedCircuit<C::CircuitField, R> for Circuit<'_, C, R> 
     where
         Self: 'dr,
     {
-        let (_, builder) = builder.add_stage::<preamble::Preamble<C::CircuitField, R>>()?;
-        let (error, builder) = builder.add_stage::<error::Error<C::NestedCurve, R>>()?;
+        let (_, builder) = builder.add_stage::<native_preamble::Preamble<C::CircuitField, R>>()?;
+        let (error, builder) = builder.add_stage::<native_error::Error<C::NestedCurve, R>>()?;
         let dr = builder.finish();
 
         let error = error.enforced(dr, witness.view().map(|w| w.error_witness))?;

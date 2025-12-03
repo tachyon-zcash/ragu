@@ -50,7 +50,7 @@ pub struct Eval<C: CurveAffine, R> {
 }
 
 impl<C: CurveAffine, R: Rank> Stage<C::Base, R> for Eval<C, R> {
-    type Parent = super::query::Query<C, R>;
+    type Parent = super::native_query::Query<C, R>;
     type Witness<'source> = &'source Witness<C::Base>;
     type OutputKind = Kind![C::Base; Output<'_, _>];
 

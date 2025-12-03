@@ -14,7 +14,7 @@ use ragu_primitives::{GadgetExt, Sponge};
 use core::marker::PhantomData;
 
 use super::unified::{self, OutputBuilder};
-use crate::merge::stages::{eval, preamble, query};
+use crate::merge::stages::{native_eval, native_preamble, native_query};
 
 pub const CIRCUIT_ID: usize = super::V_CIRCUIT_ID;
 
@@ -34,12 +34,12 @@ impl<'a, C: Cycle, R> Circuit<'a, C, R> {
 
 pub struct Witness<'a, C: Cycle> {
     pub unified_instance: &'a unified::Instance<C>,
-    pub query_witness: &'a query::Witness<C::NestedCurve>,
-    pub eval_witness: &'a eval::Witness<C::CircuitField>,
+    pub query_witness: &'a native_query::Witness<C::NestedCurve>,
+    pub eval_witness: &'a native_eval::Witness<C::CircuitField>,
 }
 
 impl<C: Cycle, R: Rank> StagedCircuit<C::CircuitField, R> for Circuit<'_, C, R> {
-    type Final = eval::Eval<C::NestedCurve, R>;
+    type Final = native_eval::Eval<C::NestedCurve, R>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C>;
@@ -68,9 +68,9 @@ impl<C: Cycle, R: Rank> StagedCircuit<C::CircuitField, R> for Circuit<'_, C, R> 
     where
         Self: 'dr,
     {
-        let (_, builder) = builder.add_stage::<preamble::Preamble<C::CircuitField, R>>()?;
-        let (query, builder) = builder.add_stage::<query::Query<C::NestedCurve, R>>()?;
-        let (eval, builder) = builder.add_stage::<eval::Eval<C::NestedCurve, R>>()?;
+        let (_, builder) = builder.add_stage::<native_preamble::Preamble<C::CircuitField, R>>()?;
+        let (query, builder) = builder.add_stage::<native_query::Query<C::NestedCurve, R>>()?;
+        let (eval, builder) = builder.add_stage::<native_eval::Eval<C::NestedCurve, R>>()?;
         let dr = builder.finish();
 
         let query = query.unenforced(witness.view().map(|w| w.query_witness))?;

@@ -2,6 +2,7 @@ use arithmetic::Cycle;
 use ff::Field;
 use ragu_circuits::{
     CircuitExt,
+    mesh::{Mesh, omega_j},
     polynomials::Rank,
     staging::{StageExt, Staged},
 };
@@ -14,12 +15,13 @@ use core::marker::PhantomData;
 
 use crate::{
     Pcd, Proof,
+    circuits::{self, internal_circuit_index},
     step::{Step, adapter::Adapter},
 };
 
 pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE: usize>(
     num_application_steps: usize,
-    circuit_mesh: &ragu_circuits::mesh::Mesh<'_, C::CircuitField, R>,
+    circuit_mesh: &Mesh<'_, C::CircuitField, R>,
     params: &C,
     rng: &mut RNG,
     step: S,
@@ -39,7 +41,7 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
 
     // The preamble stage contains public inputs for circuits over the
     // C::CircuitField.
-    let preamble_rx = stages::preamble::Preamble::<C::CircuitField, R>::rx(())?;
+    let preamble_rx = stages::native_preamble::Preamble::<C::CircuitField, R>::rx(())?;
     let preamble_blind = C::CircuitField::random(&mut *rng);
     let preamble_commitment = preamble_rx.commit(host_generators, preamble_blind);
 
@@ -107,16 +109,16 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
     // Later, circuit_c is responsible for verifying that (w, y, z) are computed
     // correctly, and computing the `c` value given (mu, nu) as public inputs,
     // computed later.
-    let error_witness = stages::error::Witness {
+    let error_witness = stages::native_error::Witness {
         z,
         nested_s_doubleprime_commitment,
         error_terms: ragu_primitives::vec::FixedVec::try_from(vec![
             C::CircuitField::ZERO;
-            stages::error::ErrorTerms::len(
+            stages::native_error::ErrorTerms::len(
             )
         ])?,
     };
-    let error_rx = stages::error::Error::<C::NestedCurve, R>::rx(&error_witness)?;
+    let error_rx = stages::native_error::Error::<C::NestedCurve, R>::rx(&error_witness)?;
     let error_blind = C::CircuitField::random(&mut *rng);
     let error_commitment = error_rx.commit(host_generators, error_blind);
 
@@ -175,15 +177,16 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
     let nested_s_blind = C::ScalarField::random(&mut *rng);
     let nested_s_commitment = nested_s_rx.commit(nested_generators, nested_s_blind);
 
-    let query_witness = stages::query::Witness {
+    let query_witness = stages::native_query::Witness {
         x,
         nested_s_commitment,
         queries: ragu_primitives::vec::FixedVec::try_from(vec![
             C::CircuitField::ZERO;
-            stages::query::Queries::len()
+            stages::native_query::Queries::len(
+            )
         ])?,
     };
-    let query_rx = stages::query::Query::<C::NestedCurve, R>::rx(&query_witness)?;
+    let query_rx = stages::native_query::Query::<C::NestedCurve, R>::rx(&query_witness)?;
     let query_blind = C::CircuitField::random(&mut *rng);
     let query_commitment = query_rx.commit(host_generators, query_blind);
     let nested_query_rx = stages::nested_query::Stage::<C::HostCurve, R>::rx(query_commitment)?;
@@ -218,14 +221,14 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
             Ok(*sponge.squeeze(dr)?.value().take())
         })?;
 
-    let eval_witness = stages::eval::Witness {
+    let eval_witness = stages::native_eval::Witness {
         u,
         evals: ragu_primitives::vec::FixedVec::try_from(vec![
             C::CircuitField::ZERO;
-            stages::eval::Evals::len()
+            stages::native_eval::Evals::len()
         ])?,
     };
-    let eval_rx = stages::eval::Eval::<C::NestedCurve, R>::rx(&eval_witness)?;
+    let eval_rx = stages::native_eval::Eval::<C::NestedCurve, R>::rx(&eval_witness)?;
     let eval_blind = C::CircuitField::random(&mut *rng);
     let eval_commitment = eval_rx.commit(host_generators, eval_blind);
     let nested_eval_rx = stages::nested_eval::Stage::<C::HostCurve, R>::rx(eval_commitment)?;
@@ -293,18 +296,17 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
     {
         let tmp_y = C::CircuitField::random(&mut *rng);
         let tmp_z = C::CircuitField::random(&mut *rng);
-        let key = circuit_mesh.get_key();
 
         // Combine preamble and error stage polynomials with circuit_c.
         let mut combined_rx = preamble_rx.clone();
         combined_rx.add_assign(&error_rx);
         combined_rx.add_assign(&circuit_c_rx);
 
-        let circuit_c_obj = Staged::new(crate::circuits::circuit_c::Circuit::<C, R>::new(
-            circuit_poseidon,
-        ))
-        .into_object::<R>()?;
-        let sy = circuit_c_obj.sy(tmp_y, key);
+        let circuit_id = omega_j(internal_circuit_index(
+            num_application_steps,
+            circuits::circuit_c::CIRCUIT_ID,
+        ) as u32);
+        let sy = circuit_mesh.wy(circuit_id, tmp_y);
         let tz = R::tz(tmp_z);
 
         let mut rhs = combined_rx.clone();
@@ -319,7 +321,6 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
     {
         let tmp_y = C::CircuitField::random(&mut *rng);
         let tmp_z = C::CircuitField::random(&mut *rng);
-        let key = circuit_mesh.get_key();
 
         // Combine preamble, query, and eval stage polynomials with circuit_v.
         let mut combined_rx = preamble_rx.clone();
@@ -327,11 +328,11 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
         combined_rx.add_assign(&eval_rx);
         combined_rx.add_assign(&circuit_v_rx);
 
-        let circuit_v_obj = Staged::new(crate::circuits::circuit_v::Circuit::<C, R>::new(
-            circuit_poseidon,
-        ))
-        .into_object::<R>()?;
-        let sy = circuit_v_obj.sy(tmp_y, key);
+        let circuit_id = omega_j(internal_circuit_index(
+            num_application_steps,
+            circuits::circuit_v::CIRCUIT_ID,
+        ) as u32);
+        let sy = circuit_mesh.wy(circuit_id, tmp_y);
         let tz = R::tz(tmp_z);
 
         let mut rhs = combined_rx.clone();
@@ -457,8 +458,8 @@ pub mod stages {
     pub mod nested_s_prime;
 
     // Keep other stages as separate files:
-    pub mod error;
-    pub mod eval;
-    pub mod preamble;
-    pub mod query;
+    pub mod native_error;
+    pub mod native_eval;
+    pub mod native_preamble;
+    pub mod native_query;
 }

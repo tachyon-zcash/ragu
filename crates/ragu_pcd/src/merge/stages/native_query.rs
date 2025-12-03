@@ -55,7 +55,7 @@ pub struct Query<C: CurveAffine, R> {
 }
 
 impl<C: CurveAffine, R: Rank> Stage<C::Base, R> for Query<C, R> {
-    type Parent = super::preamble::Preamble<C::Base, R>;
+    type Parent = super::native_preamble::Preamble<C::Base, R>;
     type Witness<'source> = &'source Witness<C>;
     type OutputKind = Kind![C::Base; Output<'_, _, C>];
 
