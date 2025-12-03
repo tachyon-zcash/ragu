@@ -19,6 +19,34 @@ use crate::{
     step::{Step, adapter::Adapter},
 };
 
+/// Debug helper to assert that an rx polynomial is valid for a given internal circuit.
+///
+/// This samples random challenges and verifies the polynomial identity:
+/// `rx.revdot(rhs) == eval(ky, y)` where `rhs = rx * z + sy + tz`.
+fn debug_assert_rx_valid<C: Cycle, R: Rank, RNG: Rng>(
+    rx: &ragu_circuits::polynomials::structured::Polynomial<C::CircuitField, R>,
+    ky: &[C::CircuitField],
+    circuit_mesh: &Mesh<'_, C::CircuitField, R>,
+    num_application_steps: usize,
+    internal_circuit_id: usize,
+    rng: &mut RNG,
+) {
+    let tmp_y = C::CircuitField::random(&mut *rng);
+    let tmp_z = C::CircuitField::random(&mut *rng);
+
+    let circuit_id =
+        omega_j(internal_circuit_index(num_application_steps, internal_circuit_id) as u32);
+    let sy = circuit_mesh.wy(circuit_id, tmp_y);
+    let tz = R::tz(tmp_z);
+
+    let mut rhs = rx.clone();
+    rhs.dilate(tmp_z);
+    rhs.add_assign(&sy);
+    rhs.add_assign(&tz);
+
+    assert_eq!(rx.revdot(&rhs), arithmetic::eval(ky.iter(), tmp_y));
+}
+
 pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE: usize>(
     num_application_steps: usize,
     circuit_mesh: &Mesh<'_, C::CircuitField, R>,
@@ -294,53 +322,37 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
 
     // Assert that circuit_c rx is valid.
     {
-        let tmp_y = C::CircuitField::random(&mut *rng);
-        let tmp_z = C::CircuitField::random(&mut *rng);
-
         // Combine preamble and error stage polynomials with circuit_c.
         let mut combined_rx = preamble_rx.clone();
         combined_rx.add_assign(&error_rx);
         combined_rx.add_assign(&circuit_c_rx);
 
-        let circuit_id = omega_j(internal_circuit_index(
+        debug_assert_rx_valid::<C, R, _>(
+            &combined_rx,
+            &ky,
+            circuit_mesh,
             num_application_steps,
             circuits::circuit_c::CIRCUIT_ID,
-        ) as u32);
-        let sy = circuit_mesh.wy(circuit_id, tmp_y);
-        let tz = R::tz(tmp_z);
-
-        let mut rhs = combined_rx.clone();
-        rhs.dilate(tmp_z);
-        rhs.add_assign(&sy);
-        rhs.add_assign(&tz);
-
-        assert_eq!(combined_rx.revdot(&rhs), arithmetic::eval(ky.iter(), tmp_y));
+            rng,
+        );
     }
 
     // Assert that circuit_v rx is valid.
     {
-        let tmp_y = C::CircuitField::random(&mut *rng);
-        let tmp_z = C::CircuitField::random(&mut *rng);
-
         // Combine preamble, query, and eval stage polynomials with circuit_v.
         let mut combined_rx = preamble_rx.clone();
         combined_rx.add_assign(&query_rx);
         combined_rx.add_assign(&eval_rx);
         combined_rx.add_assign(&circuit_v_rx);
 
-        let circuit_id = omega_j(internal_circuit_index(
+        debug_assert_rx_valid::<C, R, _>(
+            &combined_rx,
+            &ky,
+            circuit_mesh,
             num_application_steps,
             circuits::circuit_v::CIRCUIT_ID,
-        ) as u32);
-        let sy = circuit_mesh.wy(circuit_id, tmp_y);
-        let tz = R::tz(tmp_z);
-
-        let mut rhs = combined_rx.clone();
-        rhs.dilate(tmp_z);
-        rhs.add_assign(&sy);
-        rhs.add_assign(&tz);
-
-        assert_eq!(combined_rx.revdot(&rhs), arithmetic::eval(ky.iter(), tmp_y));
+            rng,
+        );
     }
 
     let circuit_id = S::INDEX.circuit_index(Some(num_application_steps))?;
