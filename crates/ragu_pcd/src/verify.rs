@@ -22,8 +22,8 @@ pub fn verify<C: Cycle, R: Rank, RNG: Rng, H: Header<C::CircuitField>, const HEA
     pcd: &Pcd<'_, C, R, H>,
     mut rng: RNG,
 ) -> Result<bool> {
-    let application_rx = &pcd.proof.application_rx;
-    let circuit_id = omega_j(pcd.proof.application_circuit_id as u32);
+    let application_rx = &pcd.proof.application.rx;
+    let circuit_id = omega_j(pcd.proof.application.circuit_id as u32);
     let y = C::CircuitField::random(&mut rng);
     let z = C::CircuitField::random(&mut rng);
     let sy = circuit_mesh.wy(circuit_id, y);
@@ -34,10 +34,11 @@ pub fn verify<C: Cycle, R: Rank, RNG: Rng, H: Header<C::CircuitField>, const HEA
     rhs.add_assign(&sy);
     rhs.add_assign(&tz);
 
-    let left_header = FixedVec::<_, ConstLen<HEADER_SIZE>>::try_from(pcd.proof.left_header.clone())
-        .map_err(|_| Error::MalformedEncoding("left_header has incorrect size".into()))?;
+    let left_header =
+        FixedVec::<_, ConstLen<HEADER_SIZE>>::try_from(pcd.proof.application.left_header.clone())
+            .map_err(|_| Error::MalformedEncoding("left_header has incorrect size".into()))?;
     let right_header =
-        FixedVec::<_, ConstLen<HEADER_SIZE>>::try_from(pcd.proof.right_header.clone())
+        FixedVec::<_, ConstLen<HEADER_SIZE>>::try_from(pcd.proof.application.right_header.clone())
             .map_err(|_| Error::MalformedEncoding("right_header has incorrect size".into()))?;
 
     let ky = {

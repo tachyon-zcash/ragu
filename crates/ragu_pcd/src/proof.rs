@@ -16,20 +16,34 @@ use super::{
 
 /// Represents a recursive proof for the correctness of some computation.
 pub struct Proof<C: Cycle, R: Rank> {
-    pub(crate) application_circuit_id: usize,
+    pub(crate) application: ApplicationProof<C, R>,
+    pub(crate) _marker: PhantomData<(C, R)>,
+}
+
+pub struct ApplicationProof<C: Cycle, R: Rank> {
+    pub(crate) circuit_id: usize,
     pub(crate) left_header: Vec<C::CircuitField>,
     pub(crate) right_header: Vec<C::CircuitField>,
-    pub(crate) application_rx: structured::Polynomial<C::CircuitField, R>,
+    pub(crate) rx: structured::Polynomial<C::CircuitField, R>,
     pub(crate) _marker: PhantomData<(C, R)>,
 }
 
 impl<C: Cycle, R: Rank> Clone for Proof<C, R> {
     fn clone(&self) -> Self {
         Proof {
-            application_circuit_id: self.application_circuit_id,
+            application: self.application.clone(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<C: Cycle, R: Rank> Clone for ApplicationProof<C, R> {
+    fn clone(&self) -> Self {
+        ApplicationProof {
+            circuit_id: self.circuit_id,
             left_header: self.left_header.clone(),
             right_header: self.right_header.clone(),
-            application_rx: self.application_rx.clone(),
+            rx: self.rx.clone(),
             _marker: PhantomData,
         }
     }
@@ -65,16 +79,19 @@ pub fn trivial<C: Cycle, R: Rank, const HEADER_SIZE: usize>(
     num_application_steps: usize,
     mesh: &Mesh<'_, C::CircuitField, R>,
 ) -> Proof<C, R> {
-    let application_rx = dummy::Circuit
+    let rx = dummy::Circuit
         .rx((), mesh.get_key())
         .expect("should not fail")
         .0;
 
     Proof {
-        application_rx,
-        application_circuit_id: internal_circuits::index(num_application_steps, dummy::CIRCUIT_ID),
-        left_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
-        right_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
+        application: ApplicationProof {
+            rx,
+            circuit_id: internal_circuits::index(num_application_steps, dummy::CIRCUIT_ID),
+            left_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
+            right_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
+            _marker: PhantomData,
+        },
         _marker: PhantomData,
     }
 }
