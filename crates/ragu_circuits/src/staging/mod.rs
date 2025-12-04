@@ -260,6 +260,11 @@ impl<F: Field, R: Rank, S: StagedCircuit<F, R>> Staged<F, R, S> {
             _marker: core::marker::PhantomData,
         }
     }
+
+    /// Proxy for [`S::Final::final_into_object`](StageExt::final_into_object).
+    pub fn final_into_object<'a>(&self) -> Result<Box<dyn CircuitObject<F, R> + 'a>> {
+        S::Final::final_into_object()
+    }
 }
 
 impl<F: Field, R: Rank, S: StagedCircuit<F, R>> Circuit<F> for Staged<F, R, S> {
