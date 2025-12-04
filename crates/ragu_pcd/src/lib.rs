@@ -13,6 +13,7 @@ use arithmetic::Cycle;
 use ragu_circuits::{
     mesh::{Mesh, MeshBuilder},
     polynomials::Rank,
+    staging::Staged,
 };
 use ragu_core::{Error, Result};
 use rand::Rng;
@@ -20,15 +21,16 @@ use rand::Rng;
 use alloc::collections::BTreeMap;
 use core::{any::TypeId, marker::PhantomData};
 
-use circuits::dummy::Dummy;
 use header::Header;
+use internal_circuits::dummy;
 pub use proof::{Pcd, Proof};
 use step::{Step, adapter::Adapter};
 
-mod circuits;
 pub mod header;
+mod internal_circuits;
 mod merge;
 mod proof;
+mod stages;
 pub mod step;
 mod verify;
 
@@ -118,7 +120,11 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
                 ))?;
 
         // Then, insert all of the "internal circuits" used for recursion plumbing.
-        self.circuit_mesh = self.circuit_mesh.register_circuit(Dummy)?;
+        self.circuit_mesh = self.circuit_mesh.register_circuit(dummy::Circuit)?;
+
+        self.circuit_mesh = self.circuit_mesh.register_circuit(Staged::new(
+            crate::internal_circuits::c::Circuit::<C, R>::new(params.circuit_poseidon()),
+        ))?;
 
         Ok(Application {
             circuit_mesh: self.circuit_mesh.finalize(params.circuit_poseidon())?,
