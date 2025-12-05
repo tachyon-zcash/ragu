@@ -73,6 +73,30 @@ impl<'dr, D: Driver<'dr>, P: arithmetic::PoseidonPermutation<D::F>> Clone for Mo
 }
 
 /// The [Poseidon](https://eprint.iacr.org/2019/458) sponge function.
+///
+/// # Security Assumption
+///
+/// Ragu models Poseidon as a **random oracle** rather than merely assuming
+/// collision resistance. This stronger security assumption is justified because
+/// Poseidon is believed to be just as secure as a random oracle when properly
+/// instantiated.
+///
+/// # Usage in Ragu
+///
+/// While this implements a sponge construction with absorb/squeeze operations,
+/// Ragu's transcript construction uses Poseidon in a non-standard way:
+///
+/// * **Fixed-length hash**: The Poseidon permutation is effectively used as a
+///   fixed-length hash function rather than as a full sponge construction
+/// * **Pedersen mixture**: Pedersen commitments (e.g., nested commitments from
+///   staging polynomials) are absorbed into the transcript alongside direct
+///   field element absorption
+/// * **Single hash function**: Everything is hashed through a single hash
+///   function over `Fp`
+///
+/// This mixed approach leverages both the collision resistance of Pedersen
+/// commitments (vector commitments to polynomials) and Poseidon's random oracle
+/// properties.
 pub struct Sponge<'dr, D: Driver<'dr>, P: arithmetic::PoseidonPermutation<D::F>> {
     mode: Mode<'dr, D, P>,
     params: &'dr P,

@@ -300,6 +300,16 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
     }
 
     /// Compute a digest of this mesh.
+    ///
+    /// This function demonstrates Ragu's use of Poseidon as a **fixed-length hash**
+    /// rather than a full sponge construction. The mesh polynomial is evaluated at
+    /// multiple challenge points, and these evaluations are absorbed into the sponge.
+    /// New challenges are then squeezed out and used for subsequent evaluations,
+    /// creating a Fiat-Shamir-style transcript that models Poseidon as a random oracle.
+    ///
+    /// This approach is more efficient than a traditional sponge-based transcript for
+    /// Ragu's use case, where the transcript primarily consists of field elements and
+    /// Pedersen commitments.
     fn compute_mesh_digest<P: PoseidonPermutation<F>>(&self, poseidon: &P) -> F {
         Emulator::emulate_wireless((), |dr, _| {
             // Placeholder "nothing-up-my-sleeve challenges" (small primes).
