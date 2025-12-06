@@ -7,35 +7,60 @@ use ragu_macros::Gadget;
 use crate::Element;
 
 /// Represents a range-checked element of the CircuitField
-/// For now, it's just u8 values
+/// For now, it's just u64 values
 /// we perform the range check of an integer x in [0, BOUND) like this:
-/// x(x-1)(x-2)...(x-BOUND) = 0
+/// x(x-1)(x-2)...(x-(BOUND-1)) = 0
+/// So if BOUND = 256, we check that x(x-1)(x-2)...(x-255) = 0
 #[derive(Gadget)]
-pub struct RangeCheckedElement<'dr, D: Driver<'dr>, const BOUND: u8> {
+pub struct RangeCheckedElement<'dr, D: Driver<'dr>, const BOUND: u64> {
     #[ragu(gadget)]
     element: Element<'dr, D>,
 
     #[ragu(value)]
-    value: DriverValue<D, u8>,
+    value: DriverValue<D, u64>,
 }
 
-impl<'dr, D: Driver<'dr>, const BOUND: u8> RangeCheckedElement<'dr, D, BOUND> {
+impl<'dr, D: Driver<'dr>, const BOUND: u64> RangeCheckedElement<'dr, D, BOUND> {
     /// Allocates a new range-checked element.
-    pub fn alloc(dr: &mut D, value: DriverValue<D, u8>) -> Result<Self>
+    pub fn alloc(dr: &mut D, value: DriverValue<D, u64>) -> Result<Self>
     where
-        D::F: From<u8>,
+        D::F: From<u64>,
     {
-        let field_value = D::just(|| D::F::from(*value.snag()));
-        let element = Element::alloc(dr, field_value)?;
+        let element = Element::alloc(dr, value.view().map(|f| D::F::from(*f)))?;
         let mut current_product = element.clone();
-        for i in 1..BOUND {
-            let i = Element::constant(dr, D::F::from(i));
-            let element_minus_i = element.sub(dr, &i);
-            current_product = element_minus_i.mul(dr, &current_product)?;
+        let mut current_term = element.clone();
+        for _ in 1..BOUND {
+            current_term = current_term.sub(dr, &Element::one());
+            current_product = current_product.mul(dr, &current_term)?;
         }
-        dr.enforce_zero(|_| current_product.wire())?;
+        current_product.enforce_zero(dr)?;
         /*let one = Element::constant(dr, D::F::from(1));
         let element_minus_1 = element.sub(dr, &one);*/
         Ok(Self { element, value })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ragu_pasta::{Fp};
+    use ragu_core::maybe::{Always, MaybeKind};
+    use ragu_core::Error;
+    #[test]
+    fn test_valid_range_checked_element() {
+        let mut simulator = crate::Simulator::<Fp>::new();
+        let value = 100;
+        let _range_checked_element: RangeCheckedElement<'_, crate::Simulator<Fp>, 256> = RangeCheckedElement::alloc(&mut simulator, Always::maybe_just(|| value))
+            .unwrap();
+        assert!(simulator.num_multiplications() == 255);
+        assert!(simulator.num_linear_constraints() == 511);
+    }
+
+    #[test]
+    fn test_invalid_range_checked_element() {
+        let mut simulator = crate::Simulator::<Fp>::new();
+        let value = 257;
+        let result: Result<RangeCheckedElement<'_, crate::Simulator<Fp>, 256>> = RangeCheckedElement::alloc(&mut simulator, Always::maybe_just(|| value));
+        assert!(matches!(result, Err(Error::InvalidWitness(_))));
     }
 }
