@@ -23,10 +23,10 @@ mod lazy;
 mod point;
 mod poseidon;
 pub mod promotion;
+mod range_checked_element;
 mod simulator;
 mod util;
 pub mod vec;
-mod range_checked_element;
 
 pub use boolean::{Boolean, multipack};
 pub use element::{Element, multiadd};
@@ -34,8 +34,8 @@ pub use endoscalar::Endoscalar;
 pub use lazy::Lazy;
 pub use point::Point;
 pub use poseidon::Sponge;
-pub use simulator::Simulator;
 pub use range_checked_element::RangeCheckedElement;
+pub use simulator::Simulator;
 
 use ragu_core::{Result, drivers::Driver, gadgets::Gadget};
 

@@ -1,10 +1,10 @@
+use crate::Element;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
 use ragu_macros::Gadget;
-use crate::Element;
 
 /// Represents a range-checked element of the CircuitField
 /// For now, it's just u64 values
@@ -43,15 +43,15 @@ impl<'dr, D: Driver<'dr>, const BOUND: u64> RangeCheckedElement<'dr, D, BOUND> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ragu_pasta::{Fp};
-    use ragu_core::maybe::{Always, MaybeKind};
     use ragu_core::Error;
+    use ragu_core::maybe::{Always, MaybeKind};
+    use ragu_pasta::Fp;
     #[test]
     fn test_valid_range_checked_element() {
         let mut simulator = crate::Simulator::<Fp>::new();
         let value = 100;
-        let _range_checked_element: RangeCheckedElement<'_, crate::Simulator<Fp>, 256> = RangeCheckedElement::alloc(&mut simulator, Always::maybe_just(|| value))
-            .unwrap();
+        let _range_checked_element: RangeCheckedElement<'_, crate::Simulator<Fp>, 256> =
+            RangeCheckedElement::alloc(&mut simulator, Always::maybe_just(|| value)).unwrap();
         assert!(simulator.num_multiplications() == 255);
         assert!(simulator.num_linear_constraints() == 511);
     }
@@ -60,7 +60,8 @@ mod tests {
     fn test_invalid_range_checked_element() {
         let mut simulator = crate::Simulator::<Fp>::new();
         let value = 256;
-        let result: Result<RangeCheckedElement<'_, crate::Simulator<Fp>, 256>> = RangeCheckedElement::alloc(&mut simulator, Always::maybe_just(|| value));
+        let result: Result<RangeCheckedElement<'_, crate::Simulator<Fp>, 256>> =
+            RangeCheckedElement::alloc(&mut simulator, Always::maybe_just(|| value));
         assert!(matches!(result, Err(Error::InvalidWitness(_))));
     }
 
@@ -68,8 +69,8 @@ mod tests {
     fn test_zero_range_checked_element() {
         let mut simulator = crate::Simulator::<Fp>::new();
         let value = 0;
-        let _range_checked_element: RangeCheckedElement<'_, crate::Simulator<Fp>, 256> = RangeCheckedElement::alloc(&mut simulator, Always::maybe_just(|| value))
-            .unwrap();
+        let _range_checked_element: RangeCheckedElement<'_, crate::Simulator<Fp>, 256> =
+            RangeCheckedElement::alloc(&mut simulator, Always::maybe_just(|| value)).unwrap();
         assert!(simulator.num_multiplications() == 255);
         assert!(simulator.num_linear_constraints() == 511);
     }
@@ -78,8 +79,8 @@ mod tests {
     fn test_max_value_range_checked_element() {
         let mut simulator = crate::Simulator::<Fp>::new();
         let value = 255;
-        let _range_checked_element: RangeCheckedElement<'_, crate::Simulator<Fp>, 256> = RangeCheckedElement::alloc(&mut simulator, Always::maybe_just(|| value))
-            .unwrap();
+        let _range_checked_element: RangeCheckedElement<'_, crate::Simulator<Fp>, 256> =
+            RangeCheckedElement::alloc(&mut simulator, Always::maybe_just(|| value)).unwrap();
         assert!(simulator.num_multiplications() == 255);
         assert!(simulator.num_linear_constraints() == 511);
     }
