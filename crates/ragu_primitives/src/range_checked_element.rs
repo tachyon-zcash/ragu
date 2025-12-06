@@ -59,8 +59,28 @@ mod tests {
     #[test]
     fn test_invalid_range_checked_element() {
         let mut simulator = crate::Simulator::<Fp>::new();
-        let value = 257;
+        let value = 256;
         let result: Result<RangeCheckedElement<'_, crate::Simulator<Fp>, 256>> = RangeCheckedElement::alloc(&mut simulator, Always::maybe_just(|| value));
         assert!(matches!(result, Err(Error::InvalidWitness(_))));
+    }
+
+    #[test]
+    fn test_zero_range_checked_element() {
+        let mut simulator = crate::Simulator::<Fp>::new();
+        let value = 0;
+        let _range_checked_element: RangeCheckedElement<'_, crate::Simulator<Fp>, 256> = RangeCheckedElement::alloc(&mut simulator, Always::maybe_just(|| value))
+            .unwrap();
+        assert!(simulator.num_multiplications() == 255);
+        assert!(simulator.num_linear_constraints() == 511);
+    }
+
+    #[test]
+    fn test_max_value_range_checked_element() {
+        let mut simulator = crate::Simulator::<Fp>::new();
+        let value = 255;
+        let _range_checked_element: RangeCheckedElement<'_, crate::Simulator<Fp>, 256> = RangeCheckedElement::alloc(&mut simulator, Always::maybe_just(|| value))
+            .unwrap();
+        assert!(simulator.num_multiplications() == 255);
+        assert!(simulator.num_linear_constraints() == 511);
     }
 }
