@@ -21,7 +21,7 @@ use super::{
     stages::native::preamble,
     unified::{self, OutputBuilder},
 };
-use crate::routines::{
+use crate::components::{
     ErrorTermsLen,
     compute_c::{ComputeRevdotClaim, ErrorMatrix, RevdotClaimInput},
 };

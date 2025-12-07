@@ -15,12 +15,13 @@ use rand::Rng;
 use alloc::vec::Vec;
 
 use crate::{
-    Application, internal_circuits,
-    proof::{ApplicationProof, InternalCircuits, Pcd, PreambleProof, Proof},
-    routines::{
+    Application,
+    components::{
         ErrorTermsLen,
         compute_c::{ComputeRevdotClaim, ErrorMatrix, RevdotClaimInput},
     },
+    internal_circuits,
+    proof::{ApplicationProof, InternalCircuits, Pcd, PreambleProof, Proof},
     step::{Step, adapter::Adapter},
 };
 

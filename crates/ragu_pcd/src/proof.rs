@@ -19,13 +19,13 @@ use alloc::{vec, vec::Vec};
 
 use crate::{
     Application,
-    header::Header,
-    internal_circuits::{self, dummy},
-    merge::NUM_REVDOT_CLAIMS,
-    routines::{
+    components::{
         ErrorTermsLen,
         compute_c::{ComputeRevdotClaim, ErrorMatrix, RevdotClaimInput},
     },
+    header::Header,
+    internal_circuits::{self, dummy},
+    merge::NUM_REVDOT_CLAIMS,
 };
 
 /// Represents a recursive proof for the correctness of some computation.
