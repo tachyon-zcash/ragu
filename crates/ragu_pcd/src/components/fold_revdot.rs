@@ -12,8 +12,6 @@ use ragu_primitives::{
     vec::{ConstLen, FixedVec},
 };
 
-use alloc::vec::Vec;
-
 use super::ErrorTermsLen;
 
 /// Off-diagonal "error" terms of the matrix of revdot evaluations for a folding
@@ -28,11 +26,6 @@ impl<'dr, D: Driver<'dr>, const NUM_REVDOT_CLAIMS: usize> ErrorTerms<'dr, D, NUM
     /// Creates a new [`ErrorTerms`] from the given elements.
     pub fn new(elements: FixedVec<Element<'dr, D>, ErrorTermsLen<NUM_REVDOT_CLAIMS>>) -> Self {
         Self { elements }
-    }
-
-    /// Consumes the matrix and returns the underlying elements.
-    pub fn into_inner(self) -> Vec<Element<'dr, D>> {
-        self.elements.into_inner()
     }
 }
 
@@ -71,8 +64,8 @@ impl<F: Field, const NUM_REVDOT_CLAIMS: usize> Routine<F> for RevdotFolding<NUM_
         let munu = input.mu.mul(dr, &input.nu)?;
         let mu_inv = input.mu.invert(dr)?;
 
-        let mut error_terms = input.error_terms.into_inner().into_iter();
-        let mut ky_values = input.ky_values.into_inner().into_iter();
+        let mut error_terms = input.error_terms.elements.into_iter();
+        let mut ky_values = input.ky_values.into_iter();
 
         let mut result = Element::zero(dr);
         let mut row_power = Element::one();

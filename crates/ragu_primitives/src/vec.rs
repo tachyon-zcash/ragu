@@ -178,6 +178,15 @@ impl<T, L: Len> DerefMut for FixedVec<T, L> {
     }
 }
 
+impl<T, L: Len> IntoIterator for FixedVec<T, L> {
+    type Item = T;
+    type IntoIter = alloc::vec::IntoIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.v.into_iter()
+    }
+}
+
 impl<'dr, D: Driver<'dr>, G: Gadget<'dr, D>, L: Len> Gadget<'dr, D> for FixedVec<G, L> {
     type Kind = FixedVec<PhantomData<G::Kind>, L>;
 }
