@@ -14,7 +14,7 @@ use rand::Rng;
 
 use crate::{
     Application,
-    components::{ErrorTermsLen, fold_revdot},
+    components::fold_revdot::{self, ErrorTermsLen},
     internal_circuits::{self, NUM_REVDOT_CLAIMS},
     proof::{ApplicationProof, InternalCircuits, Pcd, PreambleProof, Proof},
     step::{Step, adapter::Adapter},

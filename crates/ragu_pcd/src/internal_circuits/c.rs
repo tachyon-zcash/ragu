@@ -19,7 +19,7 @@ use super::{
     stages::native::preamble,
     unified::{self, OutputBuilder},
 };
-use crate::components::{ErrorTermsLen, fold_revdot};
+use crate::components::fold_revdot::{self, ErrorTermsLen};
 
 pub const CIRCUIT_ID: usize = super::C_CIRCUIT_ID;
 pub const STAGED_ID: usize = super::C_STAGED_ID;

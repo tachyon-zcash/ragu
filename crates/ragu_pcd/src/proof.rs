@@ -19,7 +19,7 @@ use alloc::{vec, vec::Vec};
 
 use crate::{
     Application,
-    components::{ErrorTermsLen, fold_revdot},
+    components::fold_revdot::{self, ErrorTermsLen},
     header::Header,
     internal_circuits::{self, NUM_REVDOT_CLAIMS, dummy},
 };
