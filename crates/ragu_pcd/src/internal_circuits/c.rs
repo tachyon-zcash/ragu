@@ -3,7 +3,6 @@ use ragu_circuits::{
     polynomials::Rank,
     staging::{StageBuilder, Staged, StagedCircuit},
 };
-
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},

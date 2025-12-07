@@ -150,11 +150,12 @@ mod tests {
         let mu = Element::constant(&mut emulator, mu);
         let nu = Element::constant(&mut emulator, nu);
 
-        let error_vec: Vec<_> = error
+        let error_vec = error
             .iter()
             .map(|&v| Element::constant(&mut emulator, v))
-            .collect();
-        let error_matrix = ErrorMatrix::new(FixedVec::new(error_vec).unwrap());
+            .collect_fixed()
+            .unwrap();
+        let error_matrix = ErrorMatrix::new(error_vec);
 
         let ky_values = ky
             .iter()
