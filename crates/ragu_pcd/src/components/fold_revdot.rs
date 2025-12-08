@@ -1,4 +1,4 @@
-//! Routine for computing $c$, the product for the folded revdot claim.
+//! Operations and utilities for reasoning about folded revdot claims.
 
 use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::{

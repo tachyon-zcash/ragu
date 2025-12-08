@@ -8,7 +8,7 @@ use ragu_core::{
 };
 use ragu_primitives::{Element, GadgetExt, Point, Sponge};
 
-/// In-circuit computation of w = H(nested_preamble_commitment)
+/// Computation of w = H(nested_preamble_commitment)
 pub fn compute_w<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     dr: &mut D,
     nested_preamble_commitment: &Point<'dr, D, C::NestedCurve>,
@@ -19,14 +19,12 @@ pub fn compute_w<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     sponge.squeeze(dr)
 }
 
-/// Compute w using the emulator (for use outside circuit context)
+/// Compute $w$ challenge using the [`Emulator`] for use outside of circuit
+/// contexts.
 pub fn emulate_w<C: Cycle>(
     nested_preamble_commitment: C::NestedCurve,
     params: &C,
-) -> Result<C::CircuitField>
-where
-    C::NestedCurve: Send,
-{
+) -> Result<C::CircuitField> {
     Emulator::emulate_wireless(nested_preamble_commitment, |dr, comm| {
         let point = Point::alloc(dr, comm)?;
         Ok(*compute_w::<_, C>(dr, &point, params)?.value().take())
