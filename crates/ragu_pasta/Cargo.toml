@@ -36,3 +36,8 @@ group = { workspace = true }
 pasta_curves = { workspace = true }
 
 lazy_static = { workspace = true, optional = true }
+
+[dev-dependencies]
+halo2_poseidon = { git = "https://github.com/zcash/halo2.git", features = ["test-dependencies"] }
+ragu_core = { path = "../ragu_core", version = "0.0.0", package = "ragu_core" }
+ragu_primitives = { path = "../ragu_primitives", version = "0.0.0", package = "ragu_primitives" }

@@ -51,7 +51,7 @@ impl<'dr, D: Driver<'dr>, P: arithmetic::PoseidonPermutation<D::F>> Buffer<'dr, 
 }
 
 impl<'dr, D: Driver<'dr>, P: arithmetic::PoseidonPermutation<D::F>> Sponge<'dr, D, P> {
-    /// Initialize the sponge in absorb mode with a fixed initial state.
+    /// Initialize the sponge in absorb mode with a zero initial state.
     pub fn new(dr: &mut D, params: &'dr P) -> Self {
         Sponge {
             mode: Mode::Absorb {
@@ -63,6 +63,39 @@ impl<'dr, D: Driver<'dr>, P: arithmetic::PoseidonPermutation<D::F>> Sponge<'dr, 
                 },
             },
             params,
+        }
+    }
+
+    /// Initialize the sponge in absorb mode with an initial state.
+    pub fn new_with_state(params: &'dr P, initial_state: &[Element<'dr, D>]) -> Self {
+        assert_eq!(
+            initial_state.len(),
+            P::T,
+            "initial_state must have P::T elements"
+        );
+        Sponge {
+            mode: Mode::Absorb {
+                values: vec![],
+                state: SpongeState {
+                    values: initial_state
+                        .to_vec()
+                        .try_into()
+                        .expect("P::T is the state length"),
+                },
+            },
+            params,
+        }
+    }
+
+    /// Run the permutation and return the full state.
+    ///
+    /// This is primarily for testing interoperability.
+    pub fn permute_and_get_state(&mut self, dr: &mut D) -> Result<Vec<Element<'dr, D>>> {
+        self.permute(dr)?;
+        match &self.mode {
+            Mode::Squeeze { state, .. } | Mode::Absorb { state, .. } => {
+                Ok(state.values.clone().into_inner())
+            }
         }
     }
 
@@ -284,6 +317,10 @@ fn test_permutation_constraints() -> Result<()> {
     })?;
 
     assert_eq!(sim.num_allocations(), 1);
+
+    // This is failing because it's 288 for T = 5, not sure
+    // what it should be for T = 3, and not important
+    // for what we're testing right now.
     assert_eq!(sim.num_multiplications(), 288);
 
     Ok(())

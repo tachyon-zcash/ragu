@@ -41,6 +41,9 @@ mod common {
 mod poseidon_fp;
 mod poseidon_fq;
 
+#[cfg(test)]
+mod poseidon_consistency_test;
+
 pub use poseidon_fp::PoseidonFp;
 pub use poseidon_fq::PoseidonFq;
 
