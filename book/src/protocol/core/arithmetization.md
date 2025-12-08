@@ -72,13 +72,48 @@ $$
 \sum_{j=0}^{4n - 1} y^j \v{k}_j
 $$
 
-holds, then with high probability the $4n$ linear constraints are all satisfied as well. After some trivial manipulation, it is possible to define a vector $\v{s}$ such that this is equivalent to
+holds, then with high probability the $4n$ linear constraints are all satisfied as well. It is possible to define a vector $\v{s}$ such that this is equivalent to
 
 $$
 \revdot{\v{r}}{\v{s}} = \dot{\v{k}}{\v{y^{4n}}}
 $$
 
-for the witness vector $\v{r}$.
+for some structured [witness]() vector $\v{r}$.
+
+To define $\v{s}$, rewrite the above expression into
+
+$$
+\sum_{i=0}^{n-1}a_{i} \big( \sum_{j=0}^{4n-1}y^{j} \cdot u_{j,i}  \big) + \sum_{i=0}^{n-1}b_{i} \big(\sum_{j=0}^{4n-1}y^{j} \cdot v_{j,i}\big) + \sum_{i=0}^{n-1}c_{i} \big(\sum_{j=0}^{4n-1}y^{j} \cdot w_{j,i}\big)
+$$
+
+and properly arrange its $a$, $b$, and $c$ terms corresponding to a reversed structured vector (so it lines up when revdot'd with $\v{r}$), so you get:
+
+$$
+\v{s} = \begin{bmatrix}
+0 \\ \\
+0 \\ \\
+\dots \\ \\
+0
+\end{bmatrix} ||
+\begin{bmatrix}
+\sum_{j=0}^{4n-1} \v{u}_{j,n-1} \cdot y^{j} \\ \\
+\sum_{j=0}^{4n-1} \v{u}_{j,n-2} \cdot y^{j} \\ \\
+\dots \\ \\
+\sum_{j=0}^{4n-1} \v{u}_{j,0} \cdot y^{j} \\ \\
+\end{bmatrix} ||
+\begin{bmatrix}
+\sum_{j=0}^{4n-1} \v{v}_{j,0} \cdot y^{j} \\ \\
+\sum_{j=0}^{4n-1} \v{v}_{j,1} \cdot y^{j} \\ \\
+\dots \\ \\
+\sum_{j=0}^{4n-1} \v{v}_{j,n-1} \cdot y^{j} \\ \\
+\end{bmatrix} ||
+\begin{bmatrix}
+\sum_{j=0}^{4n-1} \v{w}_{j,n-1} \cdot y^{j} \\ \\
+\sum_{j=0}^{4n-1} \v{w}_{j,n-2} \cdot y^{j} \\ \\
+\dots \\ \\
+\sum_{j=0}^{4n-1} \v{w}_{j,0} \cdot y^{j} \\ \\
+\end{bmatrix}
+$$
 
 ## Consolidated Constraints
 
