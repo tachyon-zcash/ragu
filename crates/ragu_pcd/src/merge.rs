@@ -3,7 +3,7 @@ use ff::Field;
 use ragu_circuits::{CircuitExt, polynomials::Rank, staging::StageExt};
 use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{
-    Element, GadgetExt, Point, Sponge,
+    Element,
     vec::{CollectFixed, Len},
 };
 use rand::Rng;
@@ -43,7 +43,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     ) -> Result<(Proof<C, R>, S::Aux<'source>)> {
         let host_generators = self.params.host_generators();
         let nested_generators = self.params.nested_generators();
-        let circuit_poseidon = self.params.circuit_poseidon();
 
         // Compute the preamble (just a stub)
         let native_preamble_rx =
@@ -62,13 +61,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_preamble_rx.commit(nested_generators, nested_preamble_blind);
 
         // Compute w = H(nested_preamble_commitment)
-        let w: C::CircuitField =
-            Emulator::emulate_wireless(nested_preamble_commitment, |dr, comm| {
-                let point = Point::alloc(dr, comm)?;
-                let mut sponge = Sponge::new(dr, circuit_poseidon);
-                point.write(dr, &mut sponge)?;
-                Ok(*sponge.squeeze(dr)?.value().take())
-            })?;
+        let w =
+            crate::components::transcript::emulate_w::<C>(nested_preamble_commitment, self.params)?;
 
         // Generate dummy values for mu, nu, and error_terms (for now – these will be derived challenges)
         let mu = C::CircuitField::random(&mut *rng);
@@ -119,15 +113,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         };
 
         // C staged circuit.
-        let (c_rx, _) =
-            internal_circuits::c::Circuit::<C, R, NUM_REVDOT_CLAIMS>::new(circuit_poseidon)
-                .rx::<R>(
-                    internal_circuits::c::Witness {
-                        unified_instance,
-                        error_terms,
-                    },
-                    self.circuit_mesh.get_key(),
-                )?;
+        let (c_rx, _) = internal_circuits::c::Circuit::<C, R, NUM_REVDOT_CLAIMS>::new(self.params)
+            .rx::<R>(
+                internal_circuits::c::Witness {
+                    unified_instance,
+                    error_terms,
+                },
+                self.circuit_mesh.get_key(),
+            )?;
 
         // Application
         let application_circuit_id = S::INDEX.circuit_index(self.num_application_steps)?;

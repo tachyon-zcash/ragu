@@ -7,7 +7,7 @@ use ragu_circuits::{
 };
 use ragu_core::{drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{
-    Element, GadgetExt, Point, Sponge,
+    Element,
     vec::{CollectFixed, Len},
 };
 use rand::rngs::OsRng;
@@ -152,15 +152,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_preamble_rx.commit(self.params.nested_generators(), nested_preamble_blind);
 
         // Compute w = H(nested_preamble_commitment)
-        let circuit_poseidon = self.params.circuit_poseidon();
-        let w: C::CircuitField =
-            Emulator::emulate_wireless(nested_preamble_commitment, |dr, comm| {
-                let point = Point::alloc(dr, comm)?;
-                let mut sponge = Sponge::new(dr, circuit_poseidon);
-                point.write(dr, &mut sponge)?;
-                Ok(*sponge.squeeze(dr)?.value().take())
-            })
-            .expect("w computation should not fail");
+        let w =
+            crate::components::transcript::emulate_w::<C>(nested_preamble_commitment, self.params)
+                .expect("w computation should not fail");
 
         // Generate dummy values for mu, nu, and error_terms (for now – these will be derived challenges)
         let mu = C::CircuitField::random(OsRng);
@@ -208,7 +202,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nu,
         };
         let internal_circuit_c =
-            internal_circuits::c::Circuit::<C, R, NUM_REVDOT_CLAIMS>::new(circuit_poseidon);
+            internal_circuits::c::Circuit::<C, R, NUM_REVDOT_CLAIMS>::new(self.params);
         let internal_circuit_c_witness = internal_circuits::c::Witness {
             unified_instance: &unified_instance,
             error_terms,

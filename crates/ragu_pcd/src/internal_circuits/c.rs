@@ -9,7 +9,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element, GadgetExt, Sponge,
+    Element,
     vec::{CollectFixed, FixedVec, Len},
 };
 
@@ -24,15 +24,17 @@ use crate::components::fold_revdot::{self, ErrorTermsLen};
 pub const CIRCUIT_ID: usize = super::C_CIRCUIT_ID;
 pub const STAGED_ID: usize = super::C_STAGED_ID;
 
-pub struct Circuit<'a, C: Cycle, R, const NUM_REVDOT_CLAIMS: usize> {
-    circuit_poseidon: &'a C::CircuitPoseidon,
+pub struct Circuit<'params, C: Cycle, R, const NUM_REVDOT_CLAIMS: usize> {
+    circuit_poseidon: &'params C::CircuitPoseidon,
     _marker: PhantomData<(C, R)>,
 }
 
-impl<'a, C: Cycle, R: Rank, const NUM_REVDOT_CLAIMS: usize> Circuit<'a, C, R, NUM_REVDOT_CLAIMS> {
-    pub fn new(circuit_poseidon: &'a C::CircuitPoseidon) -> Staged<C::CircuitField, R, Self> {
+impl<'params, C: Cycle, R: Rank, const NUM_REVDOT_CLAIMS: usize>
+    Circuit<'params, C, R, NUM_REVDOT_CLAIMS>
+{
+    pub fn new(params: &'params C) -> Staged<C::CircuitField, R, Self> {
         Staged::new(Circuit {
-            circuit_poseidon,
+            circuit_poseidon: params.circuit_poseidon(),
             _marker: PhantomData,
         })
     }
@@ -85,9 +87,11 @@ impl<C: Cycle, R: Rank, const NUM_REVDOT_CLAIMS: usize> StagedCircuit<C::Circuit
                 .nested_preamble_commitment
                 .get(dr, unified_instance)?;
 
-            let mut sponge = Sponge::new(dr, self.circuit_poseidon);
-            nested_preamble_commitment.write(dr, &mut sponge)?;
-            let w = sponge.squeeze(dr)?;
+            let w = crate::components::transcript::compute_w::<_, C>(
+                dr,
+                &nested_preamble_commitment,
+                self.circuit_poseidon,
+            )?;
 
             // Use our local w value to impose upon the unified instance
             unified_output.w.set(w);

@@ -52,9 +52,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             mu: pcd.proof.internal_circuits.mu,
             nu: pcd.proof.internal_circuits.nu,
         };
-        let c = internal_circuits::c::Circuit::<C, R, NUM_REVDOT_CLAIMS>::new(
-            self.params.circuit_poseidon(),
-        );
+        let c = internal_circuits::c::Circuit::<C, R, NUM_REVDOT_CLAIMS>::new(self.params);
         let unified_ky = c.ky(&unified_instance)?;
 
         let mut combined_rx = pcd.proof.preamble.native_preamble_rx.clone();

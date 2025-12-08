@@ -25,7 +25,7 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
 ) -> Result<MeshBuilder<'params, C::CircuitField, R>> {
     let mesh = mesh.register_circuit(dummy::Circuit)?;
     let mesh = {
-        let c = c::Circuit::<C, R, NUM_REVDOT_CLAIMS>::new(params.circuit_poseidon());
+        let c = c::Circuit::<C, R, NUM_REVDOT_CLAIMS>::new(params);
         mesh.register_circuit_object(c.final_into_object()?)?
             .register_circuit(c)?
     };
