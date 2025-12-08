@@ -87,7 +87,7 @@ impl<C: Cycle, R: Rank, const NUM_REVDOT_CLAIMS: usize> StagedCircuit<C::Circuit
                 .nested_preamble_commitment
                 .get(dr, unified_instance)?;
 
-            let w = crate::components::transcript::compute_w::<_, C>(
+            let w = crate::components::transcript::derive_w::<_, C>(
                 dr,
                 &nested_preamble_commitment,
                 self.params,
