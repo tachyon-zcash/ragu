@@ -20,33 +20,20 @@ pub fn evaluate(input: LitInt) -> Result<TokenStream> {
 
 /// Generate a single MaybeCast implementation for a tuple of the given size.
 fn generate_impl_for_size(size: usize) -> TokenStream {
-    let mut generics = quote! {};
-    let mut tuple_types = quote! {};
-    let mut output_types = quote! {};
-    let mut empty_values = quote! {};
-    let mut cast_values = quote! {};
-
-    for i in 0..size {
-        let ty = format_ident!("T{}", i);
-        let idx = Index::from(i);
-
-        generics.extend(quote! { #ty: Send, });
-        tuple_types.extend(quote! { #ty, });
-        output_types.extend(quote! { K::Rebind<#ty>, });
-        empty_values.extend(quote! { K::empty(), });
-        cast_values.extend(quote! { K::maybe_just(|| self.#idx), });
-    }
+    let types: Vec<_> = (0..size).map(|i| format_ident!("T{}", i)).collect();
+    let indices = (0..size).map(Index::from);
+    let empties = std::iter::repeat_n(quote! { K::empty() }, size);
 
     quote! {
-        impl<#generics K: MaybeKind> MaybeCast<(#tuple_types), K> for (#tuple_types) {
-            type Output = (#output_types);
+        impl<#(#types: Send,)* K: MaybeKind> MaybeCast<(#(#types,)*), K> for (#(#types,)*) {
+            type Output = (#(K::Rebind<#types>,)*);
 
             fn empty() -> Self::Output {
-                (#empty_values)
+                (#(#empties,)*)
             }
 
             fn cast(self) -> Self::Output {
-                (#cast_values)
+                (#(K::maybe_just(|| self.#indices),)*)
             }
         }
     }
