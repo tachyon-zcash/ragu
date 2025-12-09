@@ -10,7 +10,7 @@ use core::marker::PhantomData;
 
 use crate::{
     header::Header,
-    step::{Encoded, Encoder, Step, StepIndex},
+    step::{Encoded, Encoder, Index, Step},
 };
 
 /// A stub step that is only used in verification to compute k(Y) via the
@@ -30,7 +30,7 @@ impl<H> StubStep<H> {
 
 impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for StubStep<H> {
     // This step is never registered, so we use a sentinel index.
-    const INDEX: StepIndex = StepIndex::Application(usize::MAX);
+    const INDEX: Index = Index::new(usize::MAX);
 
     type Witness<'source> = ();
     type Aux<'source> = ();

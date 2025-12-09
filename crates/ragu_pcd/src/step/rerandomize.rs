@@ -13,9 +13,9 @@ use ragu_core::{
 
 use core::marker::PhantomData;
 
-use super::{Encoded, Encoder, Header, Step, StepIndex};
+use super::{Encoded, Encoder, Header, Index, Step};
 
-use crate::step::InternalStepIndex::Rerandomize as INTERNAL_ID;
+pub(crate) use crate::step::InternalStepIndex::Rerandomize as INTERNAL_ID;
 
 pub(crate) struct Rerandomize<H> {
     _marker: PhantomData<H>,
@@ -30,7 +30,7 @@ impl<H> Rerandomize<H> {
 }
 
 impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
-    const INDEX: StepIndex = StepIndex::Internal(INTERNAL_ID);
+    const INDEX: Index = Index::internal(INTERNAL_ID);
 
     type Witness<'source> = ();
     type Aux<'source> = ();

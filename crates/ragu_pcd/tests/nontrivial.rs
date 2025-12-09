@@ -11,7 +11,7 @@ use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::{
     ApplicationBuilder,
     header::{Header, Prefix},
-    step::{Encoded, Encoder, Step, StepIndex},
+    step::{Encoded, Encoder, Index, Step},
 };
 use ragu_primitives::{Element, Sponge};
 use rand::{SeedableRng, rngs::StdRng};
@@ -51,7 +51,7 @@ struct Hash2<'params, C: Cycle> {
 }
 
 impl<C: Cycle> Step<C> for Hash2<'_, C> {
-    const INDEX: StepIndex = StepIndex::new(1);
+    const INDEX: Index = Index::new(1);
     type Witness<'source> = ();
     type Aux<'source> = C::CircuitField;
     type Left = LeafNode;
@@ -94,7 +94,7 @@ struct WitnessLeaf<'params, C: Cycle> {
 }
 
 impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
-    const INDEX: StepIndex = StepIndex::new(0);
+    const INDEX: Index = Index::new(0);
     type Witness<'source> = C::CircuitField;
     type Aux<'source> = C::CircuitField;
     type Left = ();

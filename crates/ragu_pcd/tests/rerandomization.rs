@@ -10,7 +10,7 @@ use ragu_pasta::Pasta;
 use ragu_pcd::{
     ApplicationBuilder,
     header::{Header, Prefix},
-    step::{Encoded, Encoder, Step, StepIndex},
+    step::{Encoded, Encoder, Index, Step},
 };
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -33,7 +33,7 @@ impl<F: Field> Header<F> for HeaderA {
 // Step0: () , ()  -> HeaderA
 struct Step0;
 impl<C: Cycle> Step<C> for Step0 {
-    const INDEX: StepIndex = StepIndex::new(0);
+    const INDEX: Index = Index::new(0);
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = ();
@@ -62,7 +62,7 @@ impl<C: Cycle> Step<C> for Step0 {
 
 struct Step1;
 impl<C: Cycle> Step<C> for Step1 {
-    const INDEX: StepIndex = StepIndex::new(1);
+    const INDEX: Index = Index::new(1);
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = HeaderA;

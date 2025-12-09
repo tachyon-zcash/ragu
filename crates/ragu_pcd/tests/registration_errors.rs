@@ -6,7 +6,7 @@ use ragu_core::{
     gadgets::GadgetKind,
 };
 use ragu_pasta::Pasta;
-use ragu_pcd::step::{Encoded, Encoder, Step, StepIndex};
+use ragu_pcd::step::{Encoded, Encoder, Index, Step};
 use ragu_pcd::{
     ApplicationBuilder,
     header::{Header, Prefix},
@@ -58,7 +58,7 @@ impl<F: Field> Header<F> for HPrefixAOther {
 // Step 0 -> produces HPrefixA
 struct Step0;
 impl<C: arithmetic::Cycle> Step<C> for Step0 {
-    const INDEX: StepIndex = StepIndex::new(0);
+    const INDEX: Index = Index::new(0);
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = ();
@@ -89,7 +89,7 @@ impl<C: arithmetic::Cycle> Step<C> for Step0 {
 // Step 1 -> consumes A and produces B
 struct Step1;
 impl<C: arithmetic::Cycle> Step<C> for Step1 {
-    const INDEX: StepIndex = StepIndex::new(1);
+    const INDEX: Index = Index::new(1);
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = HPrefixA;
@@ -120,7 +120,7 @@ impl<C: arithmetic::Cycle> Step<C> for Step1 {
 // Duplicate prefix step (index 1) producing different header with same prefix
 struct Step1Dup;
 impl<C: arithmetic::Cycle> Step<C> for Step1Dup {
-    const INDEX: StepIndex = StepIndex::new(1);
+    const INDEX: Index = Index::new(1);
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = HPrefixA;
