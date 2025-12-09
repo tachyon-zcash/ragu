@@ -78,7 +78,7 @@ $$
 \revdot{\v{r}}{\v{s}} = \dot{\v{k}}{\v{y^{4n}}}
 $$
 
-for some structured [witness]() vector $\v{r}$.
+for some structured [witness](../../implementation/circuits.md#witness-structure) vector $\v{r}$.
 
 To define $\v{s}$, rewrite the above expression into
 
