@@ -33,77 +33,90 @@ for some (sparse) public input vector $\v{k} \in \F^{4n}$ and fixed matrices $\v
 
 ## Multiplication Constraints
 
-The multiplication constraints over the witness can be rewritten as $\v{a} \circ \v{b} = \v{c}$. It is possible to _probabilistically_ reduce this to a dot product claim using a random challenge $z \in \F$:
+The multiplication constraints over the witness can be rewritten as
+$\v{a} \circ \v{b} = \v{c}$. It is possible to _probabilistically_ reduce this
+to a dot product claim using a random challenge $z \in \F$:
 
 $$
-\boxed{\v{a} \circ \v{b} = \v{c}} \;\Longleftrightarrow\; \boxed{\sum_{i=0}^{n-1} z^{i}\,\big(\mathbf a_i \mathbf b_i - \mathbf c_i\big) = 0} \;\Longleftrightarrow\; \boxed{\dot{\v{a}}{\v{z^{n}} \circ \v{b}} - \dot{\v{c}}{\v{z^{n}}} = 0}.
+\boxed{\v{a} \circ \v{b} = \v{c}} \;\Longleftrightarrow\;
+\boxed{\sum_{i=0}^{n-1} z^{i}\,\big(\mathbf a_i \mathbf b_i - \mathbf c_i\big) = 0}
+\;\Longleftrightarrow\;
+\boxed{\dot{\v{a}}{\v{z^{n}} \circ \v{b}} - \dot{\v{c}}{\v{z^{n}}} = 0}.
 $$
 
-By the definition of $\v{r}$ (as a [structured vector](../prelim/structured_vectors.md)) we can
-do something identical. Observe the expansion
-
-$$\revdot{\v{r}}{\v{r} \circ \v{z^{4n}}} =
-
-\sum\limits_{i = 0}^{n - 1} \Big(
-  \v{a}_i \v{b}_i  \big( \textcolor{green}{z^{2n - 1 - i} + z^{2n + i} } \big)
-+ {\v{c}_i \v{d}_i}  \big( {z^{i} + z^{4n - 1 - i}} \big)
-\Big)
+Define a [structured](../prelim/structured_vectors.md) witness vector
+$\v{r}=(\v{c}\|\rv{b}\|\v{a}\|\v{0})\in\F^{4n}$ (with $\v{d}=\v{0^n}$).
+Reminded that its reverse $\rv{r}=(\v{0}\|\rv{a}\|\v{b}\|\rv{c})$.
+We observe the expansion:
 
 $$
-
-and notice that for all $z \in \F$ and for any choice of $\v{r}$ there exists a unique vector[^tvectorcomputation] $\v{t} \in \F^{4n}$ such that
-
-$$
-\revdot{\v{r}}{\v{t}} = -\sum_{i = 0}^{n - 1} \v{c}_i \Big( \textcolor{green}{ z^{2n - 1 - i} + z^{2n + i} } \Big)
-$$
-
-and so by adding the two equalities, we get
-
-$$
-\revdot{\v{r}}{\v{r} \circ{\v{z^{4n}}} + \v{t}} = 
-\sum\limits_{i = 0}^{n - 1} \Big(
-  (\textcolor{blue}{\v{a}_i \v{b}_i - \v{c}_i})  \big( \textcolor{green}{z^{2n - 1 - i} + z^{2n + i} } \big)
- + {\v{c}_i \v{d}_i}  \big( {z^{i} + z^{4n - 1 - i}} \big)
-\Big).
+\begin{align*}
+\revdot{\v{r}}{\v{r} \circ \v{z^{4n}}}
+&=\dot{\rv{b}}{\rv{a}\circ\v{z^{n:2n}}} + \dot{\v{a}}{\v{b}\circ\v{z^{2n:3n}}}\\
+&=\dot{\v{b}}{\v{a}\circ\rv{z}^{\bf n:2n}} + \dot{\v{a}}{\v{b}\circ\v{z^{2n:3n}}}\\
+&=(\rv{z}^{\bf n:2n} + \v{z}^{\bf 2n:3n})\cdot \dot{\v{a}}{\v{b}}
+\end{align*}
 $$
 
-Therefore, if the expression
+For any $z\in\F$, let
+$\v{t} = (\v{0^{3n}}\|\, (\rv{z}^{\bf n:2n} + \v{z}^{\bf 2n:3n})\cdot \rv{1})$.
+We observe the expansion:
 
 $$
-\revdot{\v{r}}{\v{r} \circ{\v{z^{4n}}} + \v{t}} = 0
+\revdot{\v{r}}{\v{t}}
+=\dot{\rv{c}}{(\rv{z}^{\bf n:2n} + \v{z}^{\bf 2n:3n})\cdot \rv{1}}
+=\dot{\v{c}}{(\rv{z}^{\bf n:2n} + \v{z}^{\bf 2n:3n})\cdot \v{1}}
 $$
 
-holds for a random $z$, then $\textcolor{blue}{\v{a} \circ \v{b} = \v{c}}$ and ${\v{c} \circ \v{d} = \v{0^n}}$ each hold with high probability. (The latter claim is useless and redundant for our purposes, since $\v{d} = \v{0^n}$ for witness vectors anyway.)
+Therefore, for a random $z\sample\F$, the following expression holds with high
+probability _if and only if_ all multiplication constraints are satisfied:
+
+$$
+\revdot{\v{r}}{\v{r}\circ\v{z^{4n}} - \v{t}} = 0
+$$
+
+<details>
+<summary>Hints: what $\v{t}$ vector expands to</summary>
+ 
+Let $\v{t'} =(\rv{z}^{\bf n:2n} + \v{z}^{\bf 2n:3n}) = [z^{2n-1-i}+z^{2n+i}]_{i=0}^{n-1}$.
+    
+The first $3n$ entries are all zeros, the last $n$ entries is the reversal of $\v{t'}$
+ 
+$$
+\v{t}=(\v{0}\|\v{0}\|\v{0}\|\rv{t'})
+=(\v{0^{3n}}\| [z^{n+i} + z^{3n-1-i}]_{i=0}^{n-1})
+$$
+</details>
 
 ## Linear Constraints
 
-Given a choice of witness $\v{a}, \v{b}, \v{c}$, if for some random choice of $y \in \F$ the equality
+Given a choice of witness $\v{a},\v{b},\v{c}$ and some random $y\sample\F$, if
 
 $$
-\sum_{j=0}^{4n - 1} y^j \Bigg(
-    \sum_{i = 0}^{n - 1} \big( \v{u}_{j,i} \cdot \mathbf{a}_i \big) +
-    \sum_{i = 0}^{n - 1} \big( \v{v}_{j,i} \cdot \mathbf{b}_i \big) +
-    \sum_{i = 0}^{n - 1} \big( \v{w}_{j,i} \cdot \mathbf{c}_i \big)
-\Bigg) =
-\sum_{j=0}^{4n - 1} y^j \v{k}_j
+\sum_{j=0}^{q - 1} y^j \cdot \Bigg(
+    \dot{\v{u}_j}{\v{a}} + \dot{\v{u}_j}{\v{b}} + \dot{\v{w}_j}{\v{c}} - \v{k}_j
+\Bigg) = 0
 $$
 
-holds, then with high probability the $4n$ linear constraints are all satisfied as well. After some trivial manipulation, it is possible to define a vector $\v{s}$ such that this is equivalent to
+holds, then with high probability the $q$ linear constraints are all satisfied
+as well. Let
+$\v{s}=(\v{0}\| \sum_{j=0}^{q-1}y^j\cdot\rv{u}_j \| \sum_j y^j\cdot\v{v}_j \| \sum_j y^j\cdot \rv{w}_j)$,
+where each subvector is a random linear combination of the wiring constraints,
+we observe that:
 
 $$
-\revdot{\v{r}}{\v{s}} = \dot{\v{k}}{\v{y^{4n}}}
+\revdot{\v{r}}{\v{s}} = \dot{\v{k}}{\v{y^q}}
 $$
-
-for the witness vector $\v{r}$.
 
 ## Consolidated Constraints
 
-The equation for enforcing _multiplication constraints_ (using random challenge $z$) and _linear constraints_ (using random challenge $y$) can be combined into a single equation
+The equation for enforcing _multiplication constraints_ (using random challenge
+$z$) and _linear constraints_ (using random challenge $y$) can be combined into
+a single equation:
 
 $$
 \revdot{\v{r}}{\v{s} + \v{r} \circ{\v{z^{4n}}} - \v{t}} = \dot{\v{k}}{\v{y^{4n}}}
 $$
 
-because $\v{r} \circ \v{z^{4n}} - \v{t}$ is made independent of $\v{s}$ by random $z$ except at $\v{r}_0$, where $\v{s}_0 = 0$.
-
-[^tvectorcomputation]: $\v{t} \in \F^{4n}$ is defined such that $\v{t}_i = 0$ for all $i$ except that $\v{t}_{4n - 1 - i} = - (z^{2n - 1 - i} + z^{2n + i} )$ for $i$ between $0$ and $n -1$ inclusive.
+because $\v{r} \circ \v{z^{4n}} - \v{t}$ is made independent of $\v{s}$ by random
+$z$ except at $\v{r}_0$, where $\v{s}_0 = 0$.
