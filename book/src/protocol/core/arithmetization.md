@@ -9,7 +9,7 @@ Combining the power vector and vector reversal:
 $\rv{z}^{\mathbf{n:2n}}=(z^{2n-1},\ldots,z^n)$ and
 $\v{z^{2n:3n}}=(z^{2n},\ldots,z^{3n-1})$.
 
-**Userful Facts**:
+**Useful Facts**:
 A few arithmetic facts (assume all vectors have the same length):
 - $\dot{\v{a}\|\v{b}}{\v{c}\|\v{d}} = \dot{\v{a}}{\v{c}} + \dot{\v{b}}{\v{d}}$
 - $\alpha\cdot \dot{\v{a}}{\v{c}} + \beta\cdot \dot{\v{b}}{\v{c}} =
@@ -88,13 +88,13 @@ $$
 \sum_{j=0}^{4n - 1} y^j \v{k}_j
 $$
 
-holds, then with high probability the $4n$ linear constraints are all satisfied as well. After some trivial manipulation, it is possible to define a vector $\v{s}$ such that this is equivalent to
+holds, then with high probability the $4n$ linear constraints are all satisfied as well. It is possible to define a vector $\v{s}$[^svectorcomputation] such that this is equivalent to
 
 $$
 \revdot{\v{r}}{\v{s}} = \dot{\v{k}}{\v{y^{4n}}}
 $$
 
-for the witness vector $\v{r}$.
+for the [witness vector](../prelim/structured_vectors.md) $\v{r}$.
 
 ## Consolidated Constraints
 
@@ -107,3 +107,5 @@ $$
 because $\v{r} \circ \v{z^{4n}} - \v{t}$ is made independent of $\v{s}$ by random $z$ except at $\v{r}_0$, where $\v{s}_0 = 0$.
 
 [^tvectorcomputation]: $\v{t} \in \F^{4n}$ is defined such that $\v{t}_i = 0$ for all $i$ except that $\v{t}_{4n - 1 - i} = - (z^{2n - 1 - i} + z^{2n + i} )$ for $i$ between $0$ and $n -1$ inclusive.
+
+[^svectorcomputation]: Define $\v{s} = (\v{0^n} || \sum_{j=0}^{4n-1} y^{j} \v{\hat{u}}_{j} || \sum_{j} y^{j} \v{v}_{j} || \sum_{j} y^{j} \v{\hat{w}}_{j})$
