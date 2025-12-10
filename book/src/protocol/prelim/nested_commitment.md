@@ -51,9 +51,10 @@ multiplication in $\F_q$ circuit becomes efficient _endoscaling_.
 The $\F_q$ circuit will generate a proof which itself will be recursively
 (partial-) verified by an $\F_p$ circuit in the next recursion step.
 
-Furthermore, define $A(X)\in\F_q[X]$ the temporary polynomial that encodes $A$.
-Since $A(X)$ is only a part of the overall witness of the $\F_q$ circuit,
-we need to further ensure the consistency between its commitment $\mathring{A}$
+Furthermore, define $A(X)\in\F_q[X]$ the _partial witness polynomial_ (a.k.a.
+[staging polynomial](../extensions/staging.md)) that encodes $A$.
+Since $A(X)$ is only a partial witness of the $\F_q$ circuit,
+we need to further enforce the consistency between its commitment $\mathring{A}$
 and the overall witness polynomial commitment $R\in\G_{nested}=\com(r(X)\in\F_q[X])$.
 Both $\mathring{A}$ and $R$ are available to the next $\F_p$ circuit step.
 
@@ -68,14 +69,18 @@ Ensuring this consistency checks constitutes two _well-formedness_ requirements:
 
 The first statement is checked via a revdot product as part of the $\F_q$ circuit;
 the second statement is checked in-circuit as part of the "next $\F_p$" circuit.
-We will explain in details in the [staging section](../extensions/staging.md).
+See details in the [staging section](../extensions/staging.md).
 
-To summarize, in $i$-th PCD step, the recursion ("proofs/accumulators merging")
-circuit runs in $\F_p$, with nested commitments $\mathring{A}, \mathring{B},\ldots$ 
-as non-deterministic advice to be hashed into the transcript.
-The group operations over the original $A, B\in\G_{host}$ and part 1 of the
-well-formedness of the temporary polynomials underly these nested commitments
-are verified in $\F_q$ circuit in step $i+1$.
-Finally, the part 2 of the well-formedness regarding "multi-staged" commitments
-adding up to the overall witness commitment is carried out in step $i+2$ of
-the $\F_p$ recursion circuit.
+In each PCD step, both curves work together simultaneously in a cycle-fold inspired
+design. The $\F_p$ recursion circuit handles proof/accumulator merging and uses
+nested commitments $\mathring{A}, \mathring{B},\ldots$ as non-deterministic advice
+to hash into the transcript. In parallel, the $\F_q$ circuit performs the deferred
+group operations over the original commitments $A, B\in\G_{host}$ and checks part 1
+of the well-formedness of the partial witness polynomials underlying these nested
+commitments. Finally, part 2 of the well-formedness is enforced within the $\F_p$
+recursion circuit, verifying that the "partial/multi-staged" commitments add up
+to the overall witness commitment.
+
+To summarize, deferred operations for the next recursion step include:
+- Verify that partial witness polynomials (a.k.a. _staging polynomials_) are well-formed
+- Verify any deferred group operations (e.g. endoscaling) were computed correctly
