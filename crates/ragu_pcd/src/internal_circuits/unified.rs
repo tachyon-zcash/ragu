@@ -20,7 +20,7 @@ use crate::proof::Proof;
 pub type OutputKind<C: Cycle> = Kind![C::CircuitField; Output<'_, _, C>];
 
 /// The number of wires in an `Output` gadget.
-pub const NUM_WIRES: usize = 7;
+pub const NUM_WIRES: usize = 15;
 
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: Cycle> {
@@ -34,6 +34,16 @@ pub struct Output<'dr, D: Driver<'dr>, C: Cycle> {
     pub mu: Element<'dr, D>,
     #[ragu(gadget)]
     pub nu: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub nested_query_commitment: Point<'dr, D, C::NestedCurve>,
+    #[ragu(gadget)]
+    pub alpha: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub nested_f_commitment: Point<'dr, D, C::NestedCurve>,
+    #[ragu(gadget)]
+    pub u: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub nested_eval_commitment: Point<'dr, D, C::NestedCurve>,
 
     /// This is used to ensure k(Y) has a zero coefficient for the linear term.
     #[ragu(gadget)]
@@ -46,6 +56,11 @@ pub struct Instance<C: Cycle> {
     pub c: C::CircuitField,
     pub mu: C::CircuitField,
     pub nu: C::CircuitField,
+    pub nested_query_commitment: C::NestedCurve,
+    pub alpha: C::CircuitField,
+    pub nested_f_commitment: C::NestedCurve,
+    pub u: C::CircuitField,
+    pub nested_eval_commitment: C::NestedCurve,
 }
 
 /// An entry in the shared public inputs for an internal circuit.
@@ -89,6 +104,11 @@ pub struct OutputBuilder<'a, 'dr, D: Driver<'dr>, C: Cycle> {
     pub c: Slot<'a, 'dr, D, Element<'dr, D>, C>,
     pub mu: Slot<'a, 'dr, D, Element<'dr, D>, C>,
     pub nu: Slot<'a, 'dr, D, Element<'dr, D>, C>,
+    pub nested_query_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
+    pub alpha: Slot<'a, 'dr, D, Element<'dr, D>, C>,
+    pub nested_f_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
+    pub u: Slot<'a, 'dr, D, Element<'dr, D>, C>,
+    pub nested_eval_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle> Output<'dr, D, C> {
@@ -110,12 +130,25 @@ impl<'dr, D: Driver<'dr>, C: Cycle> Output<'dr, D, C> {
         let mu = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.mu))?;
         let nu = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.nu))?;
 
+        let nested_query_commitment =
+            Point::alloc(dr, proof.view().map(|p| p.query.nested_query_commitment))?;
+        let alpha = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.alpha))?;
+        let nested_f_commitment = Point::alloc(dr, proof.view().map(|p| p.f.nested_f_commitment))?;
+        let u = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.u))?;
+        let nested_eval_commitment =
+            Point::alloc(dr, proof.view().map(|p| p.eval.nested_eval_commitment))?;
+
         Ok(Output {
             nested_preamble_commitment,
             w,
             c,
             mu,
             nu,
+            nested_query_commitment,
+            alpha,
+            nested_f_commitment,
+            u,
+            nested_eval_commitment,
             zero: Element::zero(dr),
         })
     }
@@ -143,6 +176,11 @@ impl<'a, 'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle> OutputBuilder<'a, '
             c: element_slot!(c),
             mu: element_slot!(mu),
             nu: element_slot!(nu),
+            nested_query_commitment: point_slot!(nested_query_commitment),
+            alpha: element_slot!(alpha),
+            nested_f_commitment: point_slot!(nested_f_commitment),
+            u: element_slot!(u),
+            nested_eval_commitment: point_slot!(nested_eval_commitment),
         }
     }
 
@@ -157,6 +195,11 @@ impl<'a, 'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle> OutputBuilder<'a, '
             c: self.c.take(dr, instance)?,
             mu: self.mu.take(dr, instance)?,
             nu: self.nu.take(dr, instance)?,
+            nested_query_commitment: self.nested_query_commitment.take(dr, instance)?,
+            alpha: self.alpha.take(dr, instance)?,
+            nested_f_commitment: self.nested_f_commitment.take(dr, instance)?,
+            u: self.u.take(dr, instance)?,
+            nested_eval_commitment: self.nested_eval_commitment.take(dr, instance)?,
             zero: Element::zero(dr),
         })
     }

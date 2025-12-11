@@ -22,7 +22,7 @@ use super::{
 use crate::components::fold_revdot::{self, ErrorTermsLen};
 
 pub use crate::internal_circuits::InternalCircuitIndex::ClaimCircuit as CIRCUIT_ID;
-pub use crate::internal_circuits::InternalCircuitIndex::ClaimStage as STAGED_ID;
+pub use crate::internal_circuits::InternalCircuitIndex::ClaimStaged as STAGED_ID;
 
 pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize> {
     params: &'params C,

@@ -10,6 +10,7 @@ pub mod c;
 pub mod dummy;
 pub mod stages;
 pub mod unified;
+pub mod v;
 
 // TODO: Placeholder value for the number of revdot claims.
 pub const NUM_REVDOT_CLAIMS: usize = 3;
@@ -18,9 +19,13 @@ pub const NUM_REVDOT_CLAIMS: usize = 3;
 #[repr(usize)]
 pub enum InternalCircuitIndex {
     DummyCircuit = 0,
-    ClaimStage = 1,
+    ClaimStaged = 1,
     ClaimCircuit = 2,
-    PreambleStage = 3,
+    VStaged = 3,
+    VCircuit = 4,
+    PreambleStage = 5,
+    QueryStage = 6,
+    EvalStage = 7,
 }
 
 impl InternalCircuitIndex {
@@ -39,9 +44,20 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
         mesh.register_circuit_object(c.final_into_object()?)?
             .register_circuit(c)?
     };
+    let mesh = {
+        let v = v::Circuit::<C, R, HEADER_SIZE, NUM_REVDOT_CLAIMS>::new(params);
+        mesh.register_circuit_object(v.final_into_object()?)?
+            .register_circuit(v)?
+    };
 
     let mesh = mesh.register_circuit_object(
         stages::native::preamble::Stage::<C, R, HEADER_SIZE>::into_object()?,
+    )?;
+    let mesh = mesh.register_circuit_object(
+        stages::native::query::Stage::<C, R, HEADER_SIZE>::into_object()?,
+    )?;
+    let mesh = mesh.register_circuit_object(
+        stages::native::eval::Stage::<C, R, HEADER_SIZE>::into_object()?,
     )?;
     Ok(mesh)
 }

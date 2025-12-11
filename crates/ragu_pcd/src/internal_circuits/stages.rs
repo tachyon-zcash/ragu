@@ -3,8 +3,7 @@
 /// The `parent` argument specifies the Parent stage type for this stage.
 /// Use `()` for stages with no parent, or a path like `super::nested_preamble::Stage`
 /// for stages that depend on another.
-// TODO: this macro is currently unused
-macro_rules! _define_nested_point_stage {
+macro_rules! define_nested_point_stage {
     (
         $(#[$meta:meta])*
         $mod_name:ident,
@@ -105,8 +104,13 @@ macro_rules! define_nested_multi_point_stage {
 
 pub mod nested {
     define_nested_multi_point_stage!(preamble, parent = ());
+    define_nested_point_stage!(query, parent = ());
+    define_nested_point_stage!(f, parent = ());
+    define_nested_point_stage!(eval, parent = ());
 }
 
 pub mod native {
+    pub mod eval;
     pub mod preamble;
+    pub mod query;
 }

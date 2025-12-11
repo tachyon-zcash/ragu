@@ -40,10 +40,28 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             internal_circuits::stages::native::preamble::STAGING_ID,
         );
 
+        // Query verification.
+        let query_valid = verifier.check_stage(
+            &pcd.proof.query.native_query_rx,
+            internal_circuits::stages::native::query::STAGING_ID,
+        );
+
+        // Eval verification.
+        let eval_valid = verifier.check_stage(
+            &pcd.proof.eval.native_eval_rx,
+            internal_circuits::stages::native::eval::STAGING_ID,
+        );
+
         // Internal circuit c verification
         let c_stage_valid = verifier.check_stage(
             &pcd.proof.internal_circuits.c_rx,
             internal_circuits::c::STAGED_ID,
+        );
+
+        // Internal circuit v verification
+        let v_stage_valid = verifier.check_stage(
+            &pcd.proof.internal_circuits.v_rx,
+            internal_circuits::v::STAGED_ID,
         );
 
         let unified_instance = internal_circuits::unified::Instance {
@@ -52,19 +70,50 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             c: pcd.proof.internal_circuits.c,
             mu: pcd.proof.internal_circuits.mu,
             nu: pcd.proof.internal_circuits.nu,
+            nested_query_commitment: pcd.proof.query.nested_query_commitment,
+            alpha: pcd.proof.internal_circuits.alpha,
+            nested_f_commitment: pcd.proof.f.nested_f_commitment,
+            u: pcd.proof.internal_circuits.u,
+            nested_eval_commitment: pcd.proof.eval.nested_eval_commitment,
         };
-        let c =
-            internal_circuits::c::Circuit::<C, R, HEADER_SIZE, NUM_REVDOT_CLAIMS>::new(self.params);
-        let unified_ky = c.ky(&unified_instance)?;
 
-        let mut combined_rx = pcd.proof.preamble.native_preamble_rx.clone();
-        combined_rx.add_assign(&pcd.proof.internal_circuits.c_rx);
+        // C circuit verification with ky.
+        // C's final stage is preamble, so combine preamble_rx with c_rx.
+        let c_circuit_valid = {
+            let c = internal_circuits::c::Circuit::<C, R, HEADER_SIZE, NUM_REVDOT_CLAIMS>::new(
+                self.params,
+            );
+            let c_unified_ky = c.ky(&unified_instance)?;
 
-        let c_circuit_valid = verifier.check_internal_circuit(
-            &combined_rx,
-            internal_circuits::c::CIRCUIT_ID,
-            &unified_ky,
-        );
+            let mut c_combined_rx = pcd.proof.preamble.native_preamble_rx.clone();
+            c_combined_rx.add_assign(&pcd.proof.internal_circuits.c_rx);
+
+            verifier.check_internal_circuit(
+                &c_combined_rx,
+                internal_circuits::c::CIRCUIT_ID,
+                &c_unified_ky,
+            )
+        };
+
+        // V circuit verification with ky.
+        // V's final stage is eval, so combine preamble_rx + query_rx + eval_rx with v_rx.
+        let v_circuit_valid = {
+            let v = internal_circuits::v::Circuit::<C, R, HEADER_SIZE, NUM_REVDOT_CLAIMS>::new(
+                self.params,
+            );
+            let v_unified_ky = v.ky(&unified_instance)?;
+
+            let mut v_combined_rx = pcd.proof.preamble.native_preamble_rx.clone();
+            v_combined_rx.add_assign(&pcd.proof.query.native_query_rx);
+            v_combined_rx.add_assign(&pcd.proof.eval.native_eval_rx);
+            v_combined_rx.add_assign(&pcd.proof.internal_circuits.v_rx);
+
+            verifier.check_internal_circuit(
+                &v_combined_rx,
+                internal_circuits::v::CIRCUIT_ID,
+                &v_unified_ky,
+            )
+        };
 
         // Application verification
         let left_header = FixedVec::<_, ConstLen<HEADER_SIZE>>::try_from(
@@ -88,7 +137,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             &application_ky,
         );
 
-        Ok(preamble_valid && c_stage_valid && c_circuit_valid && application_valid)
+        Ok(preamble_valid
+            && query_valid
+            && eval_valid
+            && c_stage_valid
+            && v_stage_valid
+            && c_circuit_valid
+            && v_circuit_valid
+            && application_valid)
     }
 }
 

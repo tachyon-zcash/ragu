@@ -12,7 +12,10 @@ use crate::{
     Application,
     components::fold_revdot::{self, ErrorTermsLen},
     internal_circuits::{self, NUM_REVDOT_CLAIMS, stages, unified},
-    proof::{ApplicationProof, InternalCircuits, Pcd, PreambleProof, Proof},
+    proof::{
+        ApplicationProof, EvalProof, FProof, InternalCircuits, Pcd, PreambleProof, Proof,
+        QueryProof,
+    },
     step::{Step, adapter::Adapter},
 };
 
@@ -54,17 +57,19 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let native_preamble_commitment =
             native_preamble_rx.commit(host_generators, native_preamble_blind);
 
-        let nested_preamble_points: [C::HostCurve; 5] = [
+        let nested_preamble_points: [C::HostCurve; 7] = [
             native_preamble_commitment,
             left.proof.application.commitment,
             right.proof.application.commitment,
             left.proof.internal_circuits.c_rx_commitment,
             right.proof.internal_circuits.c_rx_commitment,
+            left.proof.internal_circuits.v_rx_commitment,
+            right.proof.internal_circuits.v_rx_commitment,
         ];
 
         // Compute nested preamble
         let nested_preamble_rx =
-            stages::nested::preamble::Stage::<C::HostCurve, R, 5>::rx(&nested_preamble_points)?;
+            stages::nested::preamble::Stage::<C::HostCurve, R, 7>::rx(&nested_preamble_points)?;
         let nested_preamble_blind: <C as Cycle>::ScalarField = C::ScalarField::random(&mut *rng);
         let nested_preamble_commitment =
             nested_preamble_rx.commit(nested_generators, nested_preamble_blind);
@@ -73,13 +78,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let w =
             crate::components::transcript::emulate_w::<C>(nested_preamble_commitment, self.params)?;
 
-        // Generate dummy values for mu, nu, and error_terms (for now – these will be derived challenges)
-        let mu = C::CircuitField::random(&mut *rng);
-        let nu = C::CircuitField::random(&mut *rng);
-
+        // TODO: Generate error terms and nested commitment.
         let error_terms = ErrorTermsLen::<NUM_REVDOT_CLAIMS>::range()
             .map(|_| C::CircuitField::random(&mut *rng))
             .collect_fixed()?;
+
+        // TODO: dummy challenge (stubbed for now).
+        let mu = C::CircuitField::random(&mut *rng);
+        let nu = C::CircuitField::random(&mut *rng);
 
         // Compute c by running the routine in a wireless emulator
         let c: C::CircuitField =
@@ -109,6 +115,67 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 .take())
             })?;
 
+        // Compute query witness (stubbed for now).
+        let query_witness = internal_circuits::stages::native::query::Witness {
+            queries: internal_circuits::stages::native::query::Queries::range()
+                .map(|_| C::CircuitField::ZERO)
+                .collect_fixed()?,
+        };
+
+        let native_query_rx =
+            internal_circuits::stages::native::query::Stage::<C, R, HEADER_SIZE>::rx(
+                &query_witness,
+            )?;
+        let native_query_blind = C::CircuitField::random(&mut *rng);
+        let native_query_commitment = native_query_rx.commit(host_generators, native_query_blind);
+
+        let nested_query_rx =
+            internal_circuits::stages::nested::query::Stage::<C::HostCurve, R>::rx(
+                native_query_commitment,
+            )?;
+        let nested_query_blind = C::ScalarField::random(&mut *rng);
+        let nested_query_commitment = nested_query_rx.commit(nested_generators, nested_query_blind);
+
+        // Derive challenge alpha = H(nested_query_commitment).
+        let alpha = crate::components::transcript::emulate_alpha::<C>(
+            nested_query_commitment,
+            self.params,
+        )?;
+
+        // Compute the F polynomial commitment (stubbed for now).
+        let native_f_rx =
+            ragu_circuits::polynomials::structured::Polynomial::<C::CircuitField, R>::new();
+        let native_f_blind = C::CircuitField::random(&mut *rng);
+        let native_f_commitment = native_f_rx.commit(host_generators, native_f_blind);
+
+        let nested_f_rx = internal_circuits::stages::nested::f::Stage::<C::HostCurve, R>::rx(
+            native_f_commitment,
+        )?;
+        let nested_f_blind = C::ScalarField::random(&mut *rng);
+        let nested_f_commitment = nested_f_rx.commit(nested_generators, nested_f_blind);
+
+        // Derive u = H(alpha, nested_f_commitment).
+        let u =
+            crate::components::transcript::emulate_u::<C>(alpha, nested_f_commitment, self.params)?;
+
+        // Compute eval witness (stubbed for now).
+        let eval_witness = internal_circuits::stages::native::eval::Witness {
+            u,
+            evals: internal_circuits::stages::native::eval::Evals::range()
+                .map(|_| C::CircuitField::ZERO)
+                .collect_fixed()?,
+        };
+        let native_eval_rx =
+            internal_circuits::stages::native::eval::Stage::<C, R, HEADER_SIZE>::rx(&eval_witness)?;
+        let native_eval_blind = C::CircuitField::random(&mut *rng);
+        let native_eval_commitment = native_eval_rx.commit(host_generators, native_eval_blind);
+
+        let nested_eval_rx = internal_circuits::stages::nested::eval::Stage::<C::HostCurve, R>::rx(
+            native_eval_commitment,
+        )?;
+        let nested_eval_blind = C::ScalarField::random(&mut *rng);
+        let nested_eval_commitment = nested_eval_rx.commit(nested_generators, nested_eval_blind);
+
         // Create the unified instance.
         let unified_instance = &unified::Instance {
             nested_preamble_commitment,
@@ -116,6 +183,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             c,
             mu,
             nu,
+            nested_query_commitment,
+            alpha,
+            nested_f_commitment,
+            u,
+            nested_eval_commitment,
         };
 
         // C staged circuit.
@@ -130,6 +202,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 )?;
         let c_rx_blind = C::CircuitField::random(&mut *rng);
         let c_rx_commitment = c_rx.commit(host_generators, c_rx_blind);
+
+        // V staged circuit.
+        let (v_rx, _) =
+            internal_circuits::v::Circuit::<C, R, HEADER_SIZE, NUM_REVDOT_CLAIMS>::new(self.params)
+                .rx::<R>(
+                    internal_circuits::v::Witness {
+                        unified_instance,
+                        query_witness: &query_witness,
+                        eval_witness: &eval_witness,
+                    },
+                    self.circuit_mesh.get_key(),
+                )?;
+        let v_rx_blind = C::CircuitField::random(&mut *rng);
+        let v_rx_commitment = v_rx.commit(host_generators, v_rx_blind);
 
         // Application
         let application_circuit_id = S::INDEX.circuit_index(self.num_application_steps)?;
@@ -153,14 +239,43 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     nested_preamble_commitment,
                     nested_preamble_blind,
                 },
+                query: QueryProof {
+                    native_query_rx,
+                    native_query_blind,
+                    native_query_commitment,
+                    nested_query_rx,
+                    nested_query_blind,
+                    nested_query_commitment,
+                },
+                f: FProof {
+                    native_f_rx,
+                    native_f_blind,
+                    native_f_commitment,
+                    nested_f_rx,
+                    nested_f_blind,
+                    nested_f_commitment,
+                },
+                eval: EvalProof {
+                    native_eval_rx,
+                    native_eval_blind,
+                    native_eval_commitment,
+                    nested_eval_rx,
+                    nested_eval_blind,
+                    nested_eval_commitment,
+                },
                 internal_circuits: InternalCircuits {
                     w,
                     c,
                     c_rx,
-                    c_rx_blind,
                     c_rx_commitment,
+                    c_rx_blind,
+                    v_rx,
+                    v_rx_commitment,
+                    v_rx_blind,
                     mu,
                     nu,
+                    alpha,
+                    u,
                 },
                 application: ApplicationProof {
                     circuit_id: application_circuit_id,
