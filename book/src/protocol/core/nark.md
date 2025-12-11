@@ -1,24 +1,35 @@
 # Non-interactive Argument of Knowledge
 
+## Intuition
+
+The previous constraint system reduces to a single consolidated revdot product
+check. In this section, we establish a transformation from revdot products to
+polynomial multiplication, where the revdot result appears as a coefficient in
+the product polynomial. We then apply polynomial decomposition and reversal to
+convert this "coefficient query" into standard "evaluation queries" that
+polynomial oracles can handle. This enables us to build a Polynomial IOP, which
+we later compile with a PCS to obtain a NARK.
+
 ## Revdot Products to Polynomial Predicates
 
-The satisfiability of our [Bootle16 constraint system](./arithmetization.md)
-culminates in a single
-[consolidated constraint](./arithmetization.md#consolidated-constraints):
-$\revdot{\v{r}}{\v{r} \circ{\v{z^{4n}}} - \v{t} + \v{s}} = \dot{\v{k}}{\v{y^{4n}}}$
-where
+Let's start with where we ended up in our arithmetization. The satisfiability
+of our [Bootle16 constraint system](./arithmetization.md) culminates in a
+single [consolidated constraint](./arithmetization.md#consolidated-constraints):
+
+$$\revdot{\v{r}}{\v{r} \circ{\v{z^{4n}}} - \v{t} + \v{s}} = \dot{\v{k}}{\v{y^{4n}}}$$
+
+where:
 - the witness vector $\v{r}=(\v{c}\|\rv{b}\|\v{a}\|\v{0})\in\F^{4n}$
 - the circuit wiring vector
-$\v{s}=(\v{0^n}\| \sum_{j=0}^{4n-1}y^j\cdot\rv{u}_j \| \sum_j y^j\cdot\v{v}_j \| \sum_j y^j\cdot \rv{w}_j)$,
+$\v{s}=(\v{0^n}\| \sum_{j=0}^{4n-1}y^j\cdot\rv{u}_j \| \sum_j y^j\cdot\v{v}_j \| \sum_j y^j\cdot \rv{w}_j)$
 - the `mul` constraint vector
-$\v{t} = (\v{0^{3n}}\|\, (\rv{z}^{\bf n:2n} + \v{z}^{\bf 2n:3n})\cdot \rv{1})$,
+$\v{t} = (\v{0^{3n}}\|\, (\rv{z}^{\bf n:2n} + \v{z}^{\bf 2n:3n})\cdot \rv{1})$
 - the public input vector $\v{k}\in\F^{4n}$
- 
-To design a Polynomial Interactive Oracle Proof (PIOP) for our constraints,
-we first need to translate $\revdot{\v{p}}{\v{q}} = c$ into an equivalent
-relation among polynomials. As it turns out, the coefficients of the product of
-two polynomials are discrete convolutions, thus for $p, q\in\F[X]$ with
-coefficients $\v{p}, \v{q}\in\F^{4n}$:
+
+Now we need to express this in terms of polynomials. The connection comes from
+a fundamental property of polynomial multiplication: the coefficients of a
+product polynomial are discrete convolutions. For polynomials $p, q\in\F[X]$
+with coefficient vectors $\v{p}, \v{q}\in\F^{4n}$:
 
 $$
 p(X)\cdot q(X) =c(X)= \sum_{k=0}^{8n-2}c_k\cdot X^k
@@ -26,54 +37,71 @@ p(X)\cdot q(X) =c(X)= \sum_{k=0}^{8n-2}c_k\cdot X^k
 \text{ and } c_{4n-1}=\dot{\rv{p}}{\v{q}}
 $$
 
-Thus, if we multiply $\hat{r}(X)\cdot r(zX)$, we know that **its $(4n-1)$-degree
-term has a coefficient that equals to $\revdot{\v{r}}{\v{r} \circ{\v{z^{4n}}}}$**.
-Denote the coefficient vector of the product polynomial as $\v{c}\in\F^{8n-1}$.
-All of our polynomials have degree $<4n$, but their product $c(X)$ doubles that.
-Given that we only care about the $4n$-th coefficient and we want to avoid
-constructing an oracle for polynomials with degree $\geq 4n$ due to cost, the
-prover needs to first linearly decompose the product polynomial into components
-of max degree $4n-1$: $c(X) = c_{lo}(X) + X^{4n}\cdot c_{hi}(X)$ where
-$\v{c}_{lo}=\v{c}_{[:4n]}, \v{c}_{hi}=\v{c}_{[4n:]}$.
+This is exactly what we need! If we multiply $\hat{r}(X)\cdot r(zX)$, the
+coefficient of its $X^{4n-1}$ term equals
+$\revdot{\v{r}}{\v{r} \circ{\v{z^{4n}}}}$—the left side of our constraint.
 
-Define $c_1(X)=\hat{c}_{lo}(X), c_2(X)=c_{hi}(X)$, we have 
-$c(X)=\hat{c}_1(X) + X^{4n}\cdot c_2(X)$. We apply vector reversal to get
-$\v{c}_1=\rv{c}_{lo}=(c_{4n-1},\ldots,c_0)$. Notice that our $c_1(X)$ definition
-switches the target coefficient $c_{4n-1}$ to the front, as the constant term,
-which can be easily queried via $c_1(0)$. Putting it together, in order to
-prove $4n$-th coefficient value of $p(X)\cdot q(X)$, the prover first commits 
-to $p(X), q(X), c_1(X), c_2(X)$, then the verifier can check the decomposition
-by querying them at a random point $x\in\F$, and further verify that $c_1(0)$
-evaluates to the expected value.
+But there's a problem. Our witness polynomials have degree less than $4n$, so
+their product $c(X)$ has degree up to $8n-2$. We could commit to this
+product directly, but that's expensive—committing to degree-$8n$ polynomials
+costs roughly twice as much as degree-$4n$ polynomials. And we only care about
+one coefficient (the $c_{4n-1}$ term), so paying double for the whole thing
+seems wasteful.
+
+### The Decomposition Trick
+
+Instead of committing to the full product, we decompose it into two smaller pieces:
+
+$$c(X) = c_{lo}(X) + X^{4n}\cdot c_{hi}(X)$$
+
+where $\v{c}_{lo}=\v{c}_{[:4n]}$ and $\v{c}_{hi}=\v{c}_{[4n:]}$. Both pieces
+now have degree less than $4n$, which is exactly what we want.
+
+But we still need to extract that $c_{4n-1}$ coefficient—it's buried as the
+last coefficient of $c_{lo}$. This is where the reversal trick comes in. Define:
+
+$$c_1(X)=\hat{c}_{lo}(X), \quad c_2(X)=c_{hi}(X)$$
+
+By reversing the coefficient vector of $c_{lo}$, we get
+$\v{c}_1=\rv{c}_{lo}=(c_{4n-1},\ldots,c_0)$. Notice what happened: **the
+coefficient we care about, $c_{4n-1}$, is now the constant term of $c_1(X)$**.
+And we can check the constant term by evaluating at zero.
+The prover commits to $c_1(X)$ and $c_2(X)$, and the verifier can:
+1. Check the decomposition is correct by querying at a random point $x$
+2. Extract the coefficient value by querying $c_1(0)$
+
+That's the transformation: we've turned a coefficient check into evaluation
+queries that our PCS can handle efficiently.
 
 ## Polynomial IOP
 
-Now we define the overall Polynomial IOP protocol for the Bootle16 CS.
+Now that we understand how to turn our coefficient check into polynomial
+evaluations, let's build out the complete Polynomial IOP protocol.
 
-Directly mapping from the consolidated arithmetization, let's give constituent 
-polynomials a name to refer to. We simply interpret all the coefficient vectors
-back to polynomials with respective indeterminates.
+We'll start by taking all those coefficient vectors from our arithmetization
+and interpreting them as polynomials.
 
-- **witness polynomial**: 
+- **witness polynomial**:
   $r(X)=\sum_{i=0}^{n-1} (c_iX^i+b_iX^{2n-1-i}+a_iX^{2n+i})$
-  - dilated witness polynomial: $r(XZ)$ corresponding to $\v{r}\circ\v{z^{4n}}$ 
+  - dilated witness polynomial: $r(XZ)$ corresponding to $\v{r}\circ\v{z^{4n}}$
   fixated at $z\in\F$
-- **wiring/circuit polynomial**: 
+- **wiring/circuit polynomial**:
     $$
     s(X,Y)=\sum_{j=0}^{4n-1} Y^j\cdot\left(\sum_{i=0}^{n-1} (
-        \v{u}_j^{(i)}\cdot X^{2n-1-i} + 
-        \v{v}_j^{(i)}\cdot X^{2n+i} + 
-        \v{w}_j^{(i)}\cdot X^{4n-1-i} 
+        \v{u}_j^{(i)}\cdot X^{2n-1-i} +
+        \v{v}_j^{(i)}\cdot X^{2n+i} +
+        \v{w}_j^{(i)}\cdot X^{4n-1-i}
     )\right)
     $$
 - **gate polynomial**:
   $t(X, Z)=\sum_{i=0}^{n-1} (Z^{2n-1-i}+Z^{2n+i})\cdot X^{4n-1-i}$
 - **public input polynomial**: $k(Y) = \sum_{j=0}^{4n-1} \v{k}_j\cdot Y^j$
 
-Denote $\mathcal{O}^p$ as a polynomial oracle sent by the prover with which the
-verifier can send open query against such as $p(z)=y$. These oracles are later
-compiled using PCS such that prover sends polynomial commitments, and verifier
-can query evaluations at any points with an evaluation/opening proof.
+We'll use the notation $\mathcal{O}^p$ for a polynomial oracle provided by the
+prover. Think of an oracle as a black box that the verifier can query—they can
+ask "what does $p$ evaluate to at point $z$?" and get back both the answer and
+a proof it's correct. When we compile this with a PCS later, these oracles
+become polynomial commitments with evaluation proofs.
 
 ```mermaid
 sequenceDiagram
@@ -93,27 +121,79 @@ sequenceDiagram
     Note over V: query oracles and verify predicates
 ```
 
-In the final step, the verifier:
-- sample $x\sample\F$
-- query $\mathcal{O}^r$ at $0, x, xz$, query $\mathcal{O}^{c_1}$ at $0, x^{-1}$,
-query $\mathcal{O}^{c_2}$ at $x$ 
-- locally evaluate $s(x,y), t(x,z), k(y),k(0)$
-- checks:
-  $$
-  \begin{cases}
-    r(x) \cdot (r(xz) + s(x,y)- t(x,z))\iseq x^{4n-1}c_1(x^{-1}) + x^{4n} c_2(x)
-        &\text{correct decomposition}\\
-    c_1(0)\iseq k(y) &\text{consolidated CS check}\\
-    r(0)\iseq k(0)\iseq 1 &\text{public "one"}
-  \end{cases}
-  $$
+Here's how the protocol flows:
 
-There are a few inefficiencies in this PIOP:
-- Prover: computing the product polynomial and then decompose to $c_1(X), c_2(X)$
-is expensive, involving at least 3 FFT of degree $8n-2$[^prod-cost].
-- Verifier: evaluating $s(x,y)$ is $O(n)$ operation with linear cost.
-- Verifier: multiple polynomial oracle queries requires multiple PCS evaluation
-whose verifier is linear-time when using Bulletproof PCS.
+1. **Setup**: The circuit polynomials $s(X, Y)$ and $t(X, Z)$ are shared
+   between prover and verifier. These encode the structure of the circuit and
+   don't change per proof.
+
+2. **Public input**: The public input polynomial $k(Y)$ is shared.
+
+3. **Witness commitment**: The prover commits to the witness polynomial $r(X)$.
+
+4. **Random challenges**: The verifier sends random challenges $z, y\in\F$.
+   These are used to partially evaluate $s(X,y), t(X,z)$ such that the
+   consolidated revdot product corresponds to a predicate about _univariate
+   polynomials only_.
+
+5. **Product and decomposition**: The prover computes the product polynomial
+   $\hat{r}(X) \cdot r(zX)$, decomposes it into $c_1(X)$ and $c_2(X)$ using the
+   trick we described earlier, and commits to both.
+
+6. **Verification**: The verifier runs the checks we'll describe below.
+
+### The Verification Checks
+
+The verifier samples a random point $x\sample\F$ and queries the oracles at
+specific points. Let's walk through what gets checked and why:
+
+The verifier queries:
+- $\mathcal{O}^r$ at $0, x, xz$
+- $\mathcal{O}^{c_1}$ at $0, x^{-1}$
+- $\mathcal{O}^{c_2}$ at $x$
+
+Then computes locally:
+- $s(x,y), t(x,z), k(y), k(0)$
+
+And verifies three equations:
+$$
+\begin{cases}
+  r(x) \cdot (r(xz) + s(x,y)- t(x,z))\iseq x^{4n-1}c_1(x^{-1}) + x^{4n} c_2(x)
+      &\text{correct decomposition}\\
+  c_1(0)\iseq k(y) &\text{consolidated CS check}\\
+  r(0)\iseq k(0)\iseq 1 &\text{public "one"}
+\end{cases}
+$$
+
+The first equation checks that $c_1(X)$ and $c_2(X)$ are actually the
+decomposition of the product polynomial. The second equation is the main
+constraint check—remember, $c_1(0)$ extracts the coefficient we care about. The
+third equation enforces that the first element of the witness is the public
+constant `ONE`, which is a convention in our constraint system.
+
+### Performance Characteristics
+
+This PIOP works, but it's not as efficient as we'd like. Here are the main
+bottlenecks:
+
+**Prover overhead**: Computing the product polynomial $\hat{r}(X) \cdot r(zX)$
+and then decomposing it into $c_1(X)$ and $c_2(X)$ is expensive. We need at
+least 3 FFTs over a domain of size $8n-2$[^prod-cost]—two to transform the
+multiplicands into evaluation form, multiply them pointwise, then one inverse
+FFT to get back to coefficients before we can decompose. This is the most
+expensive step for the prover.
+
+**Verifier computation**: The verifier needs to evaluate $s(x,y)$ locally,
+which is an $O(n)$ operation. For large circuits, this linear cost becomes
+noticeable.
+
+**Multiple PCS queries**: The verifier makes multiple polynomial oracle queries
+(to $r$, $c_1$, and $c_2$), and each requires a PCS evaluation proof. When
+using [Bulletproofs-based PCS](../prelim/bulletproofs.md), verification is
+linear time per query, so these costs add up.
+
+These inefficiencies are addressed in the next sections through various
+optimizations, but the core protocol structure remains the same.
 
 [^prod-cost]: FFT two multiplicands, each of polynomial of degree $4n-1$, over
 an evaluation domain of size $\geq 8n-2$, then IFFT back to get the coefficient
@@ -121,7 +201,11 @@ of the product polynomial before decomposing.
 
 ## NARK
 
-Compiling the Polynomial IOP with PCS and Fiat-Shamir will render a 
-Non-interactive Argument of Knowledge (NARK). For cleaner presentation, we present
-the interactive version of the NARK used in `ragu`.
+To get from our Polynomial IOP to a practical proof system, we need two more
+pieces: a Polynomial Commitment Scheme (PCS) to instantiate the oracles, and
+the Fiat-Shamir transformation to make everything non-interactive. The result
+is a Non-interactive Argument of Knowledge (NARK).
 
+For clarity, we'll present the interactive version of the NARK used in `ragu`.
+The non-interactive version follows directly by replacing verifier challenges
+with hash-derived values.
