@@ -59,12 +59,18 @@ $$
 
 Define a [structured](../prelim/structured_vectors.md) witness vector
 $\v{r}=(\v{c}\|\rv{b}\|\v{a}\|\v{0})\in\F^{4n}$ (with $\v{d}=\v{0^n}$).
-Reminded that its reverse $\rv{r}=(\v{0}\|\rv{a}\|\v{b}\|\rv{c})$.
+Recall that its reverse is $\rv{r}=(\v{0}\|\rv{a}\|\v{b}\|\rv{c})$.
 We observe the expansion:
 
 $$
 \begin{align*}
-\revdot{\v{r}}{\v{r} \circ \v{z^{4n}}}
+\revdot{\v{r}}{\v{r} \circ \v{z^{4n}}}=
+\bigg\langle
+  \begin{alignat*}{1}
+  \v{c} \|\rv{b} &\|\v{a} \|\v{0}, \\
+  \v{0} \|\rv{a}\circ\v{z}^{\bf n:2n} &\| \v{b}\circ\v{z}^{\bf 2n:3n} \|\rv{c}\circ\v{z}^{\bf 3n:4n}
+  \end{alignat*}
+\bigg\rangle
 &=\dot{\rv{b}}{\rv{a}\circ\v{z^{n:2n}}} + \dot{\v{a}}{\v{b}\circ\v{z^{2n:3n}}}\\
 &=\dot{\v{b}}{\v{a}\circ\rv{z}^{\bf n:2n}} + \dot{\v{a}}{\v{b}\circ\v{z^{2n:3n}}}\\
 &=(\rv{z}^{\bf n:2n} + \v{z}^{\bf 2n:3n})\cdot \dot{\v{a}}{\v{b}}
@@ -101,24 +107,30 @@ $$
 $$
 </details>
 
+```admonish note
+Going forward, we fix the length of the public input vector to $q=4n$.
+This eliminates the extra parameter $q$ at no cost because the zero-padding
+is implied and not actually memory-allocated in code.
+```
+
 ## Linear Constraints
 
 Given a choice of witness $\v{a},\v{b},\v{c}$ and some random $y\sample\F$, if
 
 $$
-\sum_{j=0}^{q - 1} y^j \cdot \Bigg(
-    \dot{\v{u}_j}{\v{a}} + \dot{\v{u}_j}{\v{b}} + \dot{\v{w}_j}{\v{c}} - \v{k}_j
+\sum_{j=0}^{4n - 1} y^j \cdot \Bigg(
+    \dot{\v{u}_j}{\v{a}} + \dot{\v{v}_j}{\v{b}} + \dot{\v{w}_j}{\v{c}} - \v{k}_j
 \Bigg) = 0
 $$
 
-holds, then with high probability the $q$ linear constraints are all satisfied
+holds, then with high probability the $4n$ linear constraints are all satisfied
 as well. Let
-$\v{s}=(\v{0}\| \sum_{j=0}^{q-1}y^j\cdot\rv{u}_j \| \sum_j y^j\cdot\v{v}_j \| \sum_j y^j\cdot \rv{w}_j)$,
+$\v{s}=(\v{0}\| \sum_{j=0}^{4n-1}y^j\cdot\rv{u}_j \| \sum_j y^j\cdot\v{v}_j \| \sum_j y^j\cdot \rv{w}_j)$,
 where each subvector is a random linear combination of the wiring constraints,
 we observe that:
 
 $$
-\revdot{\v{r}}{\v{s}} = \dot{\v{k}}{\v{y^q}}
+\revdot{\v{r}}{\v{s}} = \dot{\v{k}}{\v{y^{4n}}}
 $$
 
 ## Consolidated Constraints
