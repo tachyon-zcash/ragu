@@ -42,7 +42,7 @@ pub fn derive_alpha<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     sponge.squeeze(dr)
 }
 
-/// Compute $alpha$ challenge using the [`Emulator`] for use outside of circuit
+/// Compute $\alpha$ challenge using the [`Emulator`] for use outside of circuit
 /// contexts.
 pub fn emulate_alpha<C: Cycle>(
     nested_query_commitment: C::NestedCurve,

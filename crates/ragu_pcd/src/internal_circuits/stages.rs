@@ -3,7 +3,6 @@
 /// The `parent` argument specifies the Parent stage type for this stage.
 /// Use `()` for stages with no parent, or a path like `super::nested_preamble::Stage`
 /// for stages that depend on another.
-// TODO: this macro is currently unused
 macro_rules! define_nested_point_stage {
     (
         $(#[$meta:meta])*
