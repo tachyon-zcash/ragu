@@ -51,10 +51,12 @@ Here, the PCD produced in **Step 1** is used as input to two independent steps
 computational integrity is established inductively, and can be computed in
 parallel.
 
-> **Ragu's Approach**: Ragu provides a PCD framework in which every step is
-uniformly treated as an arity-2 node in a PCD tree, always accepting two proofs
-as input. This simplifies the design at the cost of reduced flexibility and
-performance in situations where only IVC (linear-chain) semantics are necessary.
+```admonish info title="Ragu's Approach"
+Ragu provides a PCD framework in which every step is uniformly treated as an
+arity-2 node in a PCD tree, always accepting two proofs as input. This simplifies
+the design at the cost of reduced flexibility and performance in situations where
+only IVC (linear-chain) semantics are necessary.
+```
 
 ## Accumulation and Folding Schemes
 
@@ -65,9 +67,11 @@ formalized and generalized as an [accumulation
 scheme](https://eprint.iacr.org/2020/499) (or [folding
 scheme](https://eprint.iacr.org/2021/370)).
 
-> **Ragu's Approach**: Ragu implements a construction very similar to the
-original Halo protocol, with some performance improvements and simplifications
-that emerged immediately after its publication.
+```admonish info title="Ragu's Approach"
+Ragu implements a construction very similar to the original Halo protocol, with
+some performance improvements and simplifications that emerged immediately after
+its publication.
+```
 
 [Halo]: https://eprint.iacr.org/2019/1021
 

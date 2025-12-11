@@ -24,7 +24,7 @@ _install_binstall:
   @which cargo-binstall >/dev/null 2>&1 || cargo install cargo-binstall
 
 _book_setup: _install_binstall
-  @cargo binstall -y mdbook@0.4.52 mdbook-katex@0.9.4 mdbook-mermaid@0.16.2 mdbook-linkcheck@0.7.7
+  @cargo binstall -y mdbook@0.4.52 mdbook-katex@0.9.4 mdbook-mermaid@0.16.2 mdbook-linkcheck@0.7.7 mdbook-admonish@1.20.0
   @cargo binstall -y typos-cli
 
 # locally [build | serve | watch] Ragu book

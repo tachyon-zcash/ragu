@@ -11,6 +11,10 @@ after = ["links"]
 [preprocessor.mermaid]
 command = "mdbook-mermaid"
 
+[preprocessor.admonish]
+command = "mdbook-admonish"
+assets_version = "3.0.0"
+
 [output]
 
 [output.html]
