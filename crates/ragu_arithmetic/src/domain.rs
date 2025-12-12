@@ -189,31 +189,59 @@ impl<F: PrimeField> Domain<F> {
         )
     }
 
-    /// The Lagrange polynomial for index i is a polynomial of degree n-1
-    /// that is 1 at x = omega^i and 0 at all other omega^j for j != i.
-    pub fn evaluate_lagrange_polynomial(&self, x: F, index: usize) -> F {
-        assert!(index < self.n, "index must be less than domain size");
-
-        // Compute omega^i
-        let omega_i = self.omega.pow([index as u64]);
-
-        // If x == omega^i, then ell_i(omega^i) = 1
-        if x == omega_i {
-            return F::ONE;
+    /// Evaluates Lagrange basis polynomials at the specified indices for a given point `x`.
+    /// Utilizes batch inversion (Montgomery's trick) for efficiency.
+    /// 
+    /// Returns `None` if `x` is in the domain (i.e., `x^n == 1`), otherwise returns a vector
+    /// of evaluations corresponding to each index in `indices`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any index in `indices` is greater than or equal to `n`.
+    ///
+    /// # Implementation
+    ///
+    /// For each index `i`, we need to compute:
+    ///
+    /// $$ \ell_i(x) = (x - \omega^i)^{-1} \cdot \frac{(x^n - 1) \omega^i}{n} $$
+    pub fn ell_at_indices(&self, x: F, indices: &[usize]) -> Option<Vec<F>> {
+        // Check if x is in the domain
+        let xn = x.pow([self.n as u64]);
+        if xn == F::ONE {
+            // x is in the domain, caller should handle this case explicitly
+            return None;
         }
 
-        // Compute x^n
-        let xn = x.pow([self.n as u64]);
+        // Compute omega^i for each index
+        let omega_powers: Vec<F> = indices
+            .iter()
+            .map(|&i| {
+                assert!(i < self.n, "index {} must be less than domain size {}", i, self.n);
+                self.omega.pow([i as u64])
+            })
+            .collect();
 
-        // If x^n == 1, then x is in the domain but not at omega^i, so ell_i(x) = 0
-        if xn == F::ONE {
-            return F::ZERO;
+        // Compute (x - omega^i) for each index
+        let mut denominators: Vec<F> = omega_powers
+            .iter()
+            .map(|&omega_i| x - omega_i)
+            .collect();
+
+        // Batch invert all denominators using Montgomery's trick
+        {
+            let mut scratch = denominators.clone();
+            ff::BatchInverter::invert_with_external_scratch(&mut denominators, &mut scratch);
         }
 
         // Compute ell_i(x) = (x - omega^i)^{-1} * (x^n - 1) * omega^i / n
-        let numerator = (xn - F::ONE) * omega_i * self.n_inv;
-        let denominator = x - omega_i;
-        numerator * denominator.invert().unwrap()
+        let xn_minus_1_over_n = (xn - F::ONE) * self.n_inv;
+        Some(
+            denominators
+                .into_iter()
+                .zip(omega_powers.iter())
+                .map(|(inv_denom, &omega_i)| inv_denom * xn_minus_1_over_n * omega_i)
+                .collect(),
+        )
     }
 }
 

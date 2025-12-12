@@ -281,8 +281,7 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
     }
 
     /// Computes the polynomial restricted at $W$ based on the provided
-    /// closures, using individual Lagrange polynomial evaluations instead of
-    /// batch computation.
+    /// closures, using batch Lagrange polynomial evaluation.
     fn w_non_contiguous<T>(
         &self,
         w: F,
@@ -302,12 +301,16 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
             }
             // If w is not in omega_lookup, the circuit is not defined and defaults to zero
         } else {
-            // w is not in the domain, compute individual Lagrange coefficients
-            // only for circuits that exist
-            for (i, circuit) in self.circuits.iter().enumerate() {
-                let j = bitreverse(i as u32, self.domain.log2_n()) as usize;
-                let coeff = self.domain.evaluate_lagrange_polynomial(w, j);
-                add_poly(&**circuit, coeff, &mut result);
+            // w is not in the domain, collect all indices we need and use batch evaluation
+            let indices: Vec<usize> = (0..self.circuits.len())
+                .map(|i| bitreverse(i as u32, self.domain.log2_n()) as usize)
+                .collect();
+
+            // ell_at_indices returns None if w is in the domain, but we already checked that above
+            if let Some(coeffs) = self.domain.ell_at_indices(w, &indices) {
+                for (circuit, coeff) in self.circuits.iter().zip(coeffs.iter()) {
+                    add_poly(&**circuit, *coeff, &mut result);
+                }
             }
         }
 
