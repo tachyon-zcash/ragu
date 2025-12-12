@@ -15,9 +15,6 @@ pub mod v;
 // TODO: Placeholder value for the number of revdot claims.
 pub const NUM_NATIVE_REVDOT_CLAIMS: usize = 3;
 
-/// The number of internal circuits registered by [`register_all`].
-pub const NUM_INTERNAL_CIRCUITS: usize = 8;
-
 #[derive(Clone, Copy, Debug)]
 #[repr(usize)]
 pub enum InternalCircuitIndex {
@@ -31,6 +28,10 @@ pub enum InternalCircuitIndex {
     EvalStage = 7,
 }
 
+/// The number of internal circuits registered by [`register_all`],
+/// and the number of variants in [`InternalCircuitIndex`].
+pub const NUM_INTERNAL_CIRCUITS: usize = 8;
+
 impl InternalCircuitIndex {
     pub fn circuit_index(self, num_application_steps: usize) -> CircuitIndex {
         CircuitIndex::new(num_application_steps + super::step::NUM_INTERNAL_STEPS + self as usize)
@@ -40,16 +41,14 @@ impl InternalCircuitIndex {
 pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
     mesh: MeshBuilder<'params, C::CircuitField, R>,
     params: &'params C,
-    log2_domain_size: u32,
+    log2_circuits: u32,
 ) -> Result<MeshBuilder<'params, C::CircuitField, R>> {
     let initial_count = mesh.circuit_count();
 
     let mesh = mesh.register_circuit(dummy::Circuit)?;
     let mesh = {
-        let c = c::Circuit::<C, R, HEADER_SIZE, NUM_NATIVE_REVDOT_CLAIMS>::new(
-            params,
-            log2_domain_size,
-        );
+        let c =
+            c::Circuit::<C, R, HEADER_SIZE, NUM_NATIVE_REVDOT_CLAIMS>::new(params, log2_circuits);
         mesh.register_circuit_object(c.final_into_object()?)?
             .register_circuit(c)?
     };

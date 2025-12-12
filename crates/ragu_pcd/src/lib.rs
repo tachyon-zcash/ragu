@@ -109,24 +109,24 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
                     step::rerandomize::Rerandomize::<()>::new(),
                 ))?;
 
-        // Compute domain size from known constants.
+        // Compute log2_circuits from known constants.
         let total_circuits = self.num_application_steps
             + step::NUM_INTERNAL_STEPS
             + internal_circuits::NUM_INTERNAL_CIRCUITS;
-        let log2_domain_size = total_circuits.next_power_of_two().trailing_zeros();
+        let log2_circuits = total_circuits.next_power_of_two().trailing_zeros();
 
         // Then, insert all of the internal circuits used for recursion plumbing.
         self.circuit_mesh = internal_circuits::register_all::<C, R, HEADER_SIZE>(
             self.circuit_mesh,
             params,
-            log2_domain_size,
+            log2_circuits,
         )?;
 
-        // Verify total circuit count matches expectation.
+        // Verify circuit count matches expectation.
         debug_assert_eq!(
-            self.circuit_mesh.circuit_count(),
-            total_circuits,
-            "circuit count mismatch"
+            self.circuit_mesh.log2_circuits(),
+            log2_circuits,
+            "log2_circuits mismatch"
         );
 
         Ok(Application {
@@ -147,10 +147,8 @@ pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
-    /// Returns the log2 of the mesh domain size.
-    ///
-    /// This is used for circuit ID in-domain checks.
-    pub(crate) fn log2_domain_size(&self) -> u32 {
+    /// Returns log2 of the mesh circuit count, used for circuit ID root-of-unity checks.
+    pub(crate) fn log2_circuits(&self) -> u32 {
         let total_circuits = self.num_application_steps
             + step::NUM_INTERNAL_STEPS
             + internal_circuits::NUM_INTERNAL_CIRCUITS;

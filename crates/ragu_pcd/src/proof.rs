@@ -475,7 +475,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let internal_circuit_c =
             internal_circuits::c::Circuit::<C, R, HEADER_SIZE, NUM_NATIVE_REVDOT_CLAIMS>::new(
                 self.params,
-                self.log2_domain_size(),
+                self.log2_circuits(),
             );
         let internal_circuit_c_witness = internal_circuits::c::Witness {
             unified_instance: &unified_instance,
