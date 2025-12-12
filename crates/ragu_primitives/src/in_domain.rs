@@ -4,7 +4,7 @@ use ragu_core::{Result, drivers::Driver};
 
 use crate::Element;
 
-/// A wrapper around an [`Element`] that the provided value `omega` is a valid
+/// A wrapper around an [`Element`] that constrains `omega` to be a valid
 /// $2^k$ root of unity.
 pub struct InDomain<'dr, D: Driver<'dr>> {
     element: Element<'dr, D>,
@@ -68,6 +68,7 @@ mod tests {
             (Fp::ONE, 30, true),
             (Fp::ONE, 31, true),
             (Fp::ONE, 32, true),
+            (Fp::ONE, 1000, true),
             // -1 is a 2^k root of unity where k >= 1
             (-Fp::ONE, 0, false),
             (-Fp::ONE, 1, true),

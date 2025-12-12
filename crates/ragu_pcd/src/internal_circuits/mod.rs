@@ -40,12 +40,9 @@ impl InternalCircuitIndex {
 pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
     mesh: MeshBuilder<'params, C::CircuitField, R>,
     params: &'params C,
+    log2_domain_size: u32,
 ) -> Result<MeshBuilder<'params, C::CircuitField, R>> {
     let initial_count = mesh.circuit_count();
-
-    // Predict final circuit count before registration.
-    let expected_final_circuits = initial_count + NUM_INTERNAL_CIRCUITS;
-    let log2_domain_size = expected_final_circuits.next_power_of_two().trailing_zeros();
 
     let mesh = mesh.register_circuit(dummy::Circuit)?;
     let mesh = {
@@ -72,16 +69,11 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
         stages::native::eval::Stage::<C, R, HEADER_SIZE>::into_object()?,
     )?;
 
-    // Verify prediction was correct (defense in depth).
+    // Verify we registered the expected number of circuits.
     assert_eq!(
         mesh.circuit_count() - initial_count,
         NUM_INTERNAL_CIRCUITS,
         "internal circuit count mismatch"
-    );
-    assert_eq!(
-        mesh.circuit_count(),
-        expected_final_circuits,
-        "circuit count prediction mismatch"
     );
 
     Ok(mesh)

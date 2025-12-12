@@ -109,9 +109,25 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
                     step::rerandomize::Rerandomize::<()>::new(),
                 ))?;
 
+        // Compute domain size from known constants.
+        let total_circuits = self.num_application_steps
+            + step::NUM_INTERNAL_STEPS
+            + internal_circuits::NUM_INTERNAL_CIRCUITS;
+        let log2_domain_size = total_circuits.next_power_of_two().trailing_zeros();
+
         // Then, insert all of the internal circuits used for recursion plumbing.
-        self.circuit_mesh =
-            internal_circuits::register_all::<C, R, HEADER_SIZE>(self.circuit_mesh, params)?;
+        self.circuit_mesh = internal_circuits::register_all::<C, R, HEADER_SIZE>(
+            self.circuit_mesh,
+            params,
+            log2_domain_size,
+        )?;
+
+        // Verify total circuit count matches expectation.
+        debug_assert_eq!(
+            self.circuit_mesh.circuit_count(),
+            total_circuits,
+            "circuit count mismatch"
+        );
 
         Ok(Application {
             circuit_mesh: self.circuit_mesh.finalize(params.circuit_poseidon())?,
