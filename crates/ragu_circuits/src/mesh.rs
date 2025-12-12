@@ -238,7 +238,6 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
         }
 
         result
-
     }
 
     /// Compute a digest of this mesh.
@@ -481,5 +480,4 @@ mod tests {
 
         Ok(())
     }
-
 }

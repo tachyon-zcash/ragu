@@ -141,10 +141,7 @@ impl<F: PrimeField> Domain<F> {
             .collect();
 
         // Compute (x - omega_i)^{-1} for each omega power
-        let mut denominators: Vec<F> = omega_powers
-            .iter()
-            .map(|&omega_i| x - omega_i)
-            .collect();
+        let mut denominators: Vec<F> = omega_powers.iter().map(|&omega_i| x - omega_i).collect();
 
         // Batch invert all denominators using Montgomery's trick
         {
@@ -162,7 +159,6 @@ impl<F: PrimeField> Domain<F> {
                 .collect(),
         )
     }
-
 }
 
 #[test]
