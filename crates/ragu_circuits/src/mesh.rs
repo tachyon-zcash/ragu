@@ -74,6 +74,11 @@ impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
         }
     }
 
+    /// Returns the number of circuits currently registered in this builder.
+    pub fn circuit_count(&self) -> usize {
+        self.circuits.len()
+    }
+
     /// Registers a new circuit.
     pub fn register_circuit<C>(self, circuit: C) -> Result<Self>
     where

@@ -15,6 +15,9 @@ pub mod v;
 // TODO: Placeholder value for the number of revdot claims.
 pub const NUM_NATIVE_REVDOT_CLAIMS: usize = 3;
 
+/// The number of internal circuits registered by [`register_all`].
+pub const NUM_INTERNAL_CIRCUITS: usize = 8;
+
 #[derive(Clone, Copy, Debug)]
 #[repr(usize)]
 pub enum InternalCircuitIndex {
@@ -38,6 +41,8 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
     mesh: MeshBuilder<'params, C::CircuitField, R>,
     params: &'params C,
 ) -> Result<MeshBuilder<'params, C::CircuitField, R>> {
+    let initial_count = mesh.circuit_count();
+
     let mesh = mesh.register_circuit(dummy::Circuit)?;
     let mesh = {
         let c = c::Circuit::<C, R, HEADER_SIZE, NUM_NATIVE_REVDOT_CLAIMS>::new(params);
@@ -59,5 +64,12 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
     let mesh = mesh.register_circuit_object(
         stages::native::eval::Stage::<C, R, HEADER_SIZE>::into_object()?,
     )?;
+
+    assert_eq!(
+        mesh.circuit_count() - initial_count,
+        NUM_INTERNAL_CIRCUITS,
+        "NUM_INTERNAL_CIRCUITS constant is out of sync with register_all"
+    );
+
     Ok(mesh)
 }
