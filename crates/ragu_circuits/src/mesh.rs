@@ -182,6 +182,20 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
         )
     }
 
+    /// Evaluate the mesh polynomial unrestricted at $X$ using non-contiguous
+    /// Lagrange polynomial evaluation.
+    pub fn wy_non_contiguous(&self, w: F, y: F) -> structured::Polynomial<F, R> {
+        self.w_non_contiguous(
+            w,
+            structured::Polynomial::default,
+            |circuit, circuit_coeff, poly| {
+                let mut tmp = circuit.sy(y, self.key);
+                tmp.scale(circuit_coeff);
+                poly.add_assign(&tmp);
+            },
+        )
+    }
+
     /// Evaluate the mesh polynomial unrestricted at $Y$.
     pub fn wx(&self, w: F, x: F) -> unstructured::Polynomial<F, R> {
         self.w(
@@ -195,9 +209,35 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
         )
     }
 
+    /// Evaluate the mesh polynomial unrestricted at $Y$ using non-contiguous
+    /// Lagrange polynomial evaluation.
+    pub fn wx_non_contiguous(&self, w: F, x: F) -> unstructured::Polynomial<F, R> {
+        self.w_non_contiguous(
+            w,
+            unstructured::Polynomial::default,
+            |circuit, circuit_coeff, poly| {
+                let mut tmp = circuit.sx(x, self.key);
+                tmp.scale(circuit_coeff);
+                poly.add_assign(&tmp);
+            },
+        )
+    }
+
     /// Evaluate the mesh polynomial at the provided point.
     pub fn wxy(&self, w: F, x: F, y: F) -> F {
         self.w(
+            w,
+            || F::ZERO,
+            |circuit, circuit_coeff, poly| {
+                *poly += circuit.sxy(x, y, self.key) * circuit_coeff;
+            },
+        )
+    }
+
+    /// Evaluate the mesh polynomial at the provided point using non-contiguous
+    /// Lagrange polynomial evaluation.
+    pub fn wxy_non_contiguous(&self, w: F, x: F, y: F) -> F {
+        self.w_non_contiguous(
             w,
             || F::ZERO,
             |circuit, circuit_coeff, poly| {
@@ -235,6 +275,40 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
             }
         } else {
             // In this case, the circuit is not defined and defaults to the zero polynomial.
+        }
+
+        result
+    }
+
+    /// Computes the polynomial restricted at $W$ based on the provided
+    /// closures, using individual Lagrange polynomial evaluations instead of
+    /// batch computation.
+    fn w_non_contiguous<T>(
+        &self,
+        w: F,
+        init: impl FnOnce() -> T,
+        add_poly: impl Fn(&dyn CircuitObject<F, R>, F, &mut T),
+    ) -> T {
+        let mut result = init();
+
+        // Check if w is in the domain (i.e., w^n == 1)
+        let wn = w.pow([self.domain.n() as u64]);
+        if wn == F::ONE {
+            // w is in the domain, so only one Lagrange polynomial is non-zero
+            if let Some(i) = self.omega_lookup.get(&OmegaKey::from(w)) {
+                if let Some(circuit) = self.circuits.get(*i) {
+                    add_poly(&**circuit, F::ONE, &mut result);
+                }
+            }
+            // If w is not in omega_lookup, the circuit is not defined and defaults to zero
+        } else {
+            // w is not in the domain, compute individual Lagrange coefficients
+            // only for circuits that exist
+            for (i, circuit) in self.circuits.iter().enumerate() {
+                let j = bitreverse(i as u32, self.domain.log2_n()) as usize;
+                let coeff = self.domain.evaluate_lagrange_polynomial(w, j);
+                add_poly(&**circuit, coeff, &mut result);
+            }
         }
 
         result
@@ -476,6 +550,99 @@ mod tests {
             let wxy = mesh.wxy(w, x, y);
             let xy = mesh.xy(x, y);
             assert_eq!(wxy, xy.eval(w), "Failed for num_circuits={}", num_circuits);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_non_contiguous_equivalence() -> Result<()> {
+        let poseidon = Pasta::baked().circuit_poseidon();
+
+        // Build a mesh with several circuits
+        let mesh = MeshBuilder::<Fp, TestRank>::new()
+            .register_circuit(SquareCircuit { times: 2 })?
+            .register_circuit(SquareCircuit { times: 5 })?
+            .register_circuit(SquareCircuit { times: 10 })?
+            .register_circuit(SquareCircuit { times: 11 })?
+            .register_circuit(SquareCircuit { times: 19 })?
+            .finalize(poseidon)?;
+
+        // Test with random points
+        for _ in 0..10 {
+            let w = Fp::random(thread_rng());
+            let x = Fp::random(thread_rng());
+            let y = Fp::random(thread_rng());
+
+            // Test wxy
+            let wxy_result = mesh.wxy(w, x, y);
+            let wxy_non_contiguous_result = mesh.wxy_non_contiguous(w, x, y);
+            assert_eq!(
+                wxy_result, wxy_non_contiguous_result,
+                "wxy and wxy_non_contiguous produced different results"
+            );
+
+            // Test wy - compare by evaluating at multiple points
+            let wy_result = mesh.wy(w, y);
+            let wy_non_contiguous_result = mesh.wy_non_contiguous(w, y);
+            for _ in 0..5 {
+                let eval_point = Fp::random(thread_rng());
+                assert_eq!(
+                    wy_result.eval(eval_point),
+                    wy_non_contiguous_result.eval(eval_point),
+                    "wy and wy_non_contiguous produced different results"
+                );
+            }
+
+            // Test wx - compare by evaluating at multiple points
+            let wx_result = mesh.wx(w, x);
+            let wx_non_contiguous_result = mesh.wx_non_contiguous(w, x);
+            for _ in 0..5 {
+                let eval_point = Fp::random(thread_rng());
+                assert_eq!(
+                    wx_result.eval(eval_point),
+                    wx_non_contiguous_result.eval(eval_point),
+                    "wx and wx_non_contiguous produced different results"
+                );
+            }
+        }
+
+        // Also test with domain points (w = omega^i)
+        let mut w = Fp::ONE;
+        for _ in 0..mesh.domain.n() {
+            let x = Fp::random(thread_rng());
+            let y = Fp::random(thread_rng());
+
+            let wxy_result = mesh.wxy(w, x, y);
+            let wxy_non_contiguous_result = mesh.wxy_non_contiguous(w, x, y);
+            assert_eq!(
+                wxy_result, wxy_non_contiguous_result,
+                "wxy and wxy_non_contiguous produced different results at domain point"
+            );
+
+            let wy_result = mesh.wy(w, y);
+            let wy_non_contiguous_result = mesh.wy_non_contiguous(w, y);
+            for _ in 0..5 {
+                let eval_point = Fp::random(thread_rng());
+                assert_eq!(
+                    wy_result.eval(eval_point),
+                    wy_non_contiguous_result.eval(eval_point),
+                    "wy and wy_non_contiguous produced different results at domain point"
+                );
+            }
+
+            let wx_result = mesh.wx(w, x);
+            let wx_non_contiguous_result = mesh.wx_non_contiguous(w, x);
+            for _ in 0..5 {
+                let eval_point = Fp::random(thread_rng());
+                assert_eq!(
+                    wx_result.eval(eval_point),
+                    wx_non_contiguous_result.eval(eval_point),
+                    "wx and wx_non_contiguous produced different results at domain point"
+                );
+            }
+
+            w *= mesh.domain.omega();
         }
 
         Ok(())

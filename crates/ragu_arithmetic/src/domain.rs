@@ -188,6 +188,33 @@ impl<F: PrimeField> Domain<F> {
                 .collect(),
         )
     }
+
+    /// The Lagrange polynomial for index i is a polynomial of degree n-1
+    /// that is 1 at x = omega^i and 0 at all other omega^j for j != i.
+    pub fn evaluate_lagrange_polynomial(&self, x: F, index: usize) -> F {
+        assert!(index < self.n, "index must be less than domain size");
+
+        // Compute omega^i
+        let omega_i = self.omega.pow([index as u64]);
+
+        // If x == omega^i, then ell_i(omega^i) = 1
+        if x == omega_i {
+            return F::ONE;
+        }
+
+        // Compute x^n
+        let xn = x.pow([self.n as u64]);
+
+        // If x^n == 1, then x is in the domain but not at omega^i, so ell_i(x) = 0
+        if xn == F::ONE {
+            return F::ZERO;
+        }
+
+        // Compute ell_i(x) = (x - omega^i)^{-1} * (x^n - 1) * omega^i / n
+        let numerator = (xn - F::ONE) * omega_i * self.n_inv;
+        let denominator = x - omega_i;
+        numerator * denominator.invert().unwrap()
+    }
 }
 
 #[test]
