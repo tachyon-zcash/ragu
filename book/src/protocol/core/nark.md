@@ -34,7 +34,7 @@ with coefficient vectors $\v{p}, \v{q}\in\F^{4n}$:
 $$
 p(X)\cdot q(X) =c(X)= \sum_{k=0}^{8n-2}c_k\cdot X^k
 \quad\text{where }c_k=\sum_{i+j=k}\v{p}_i\cdot \v{q}_j
-\text{ and } c_{4n-1}=\dot{\rv{p}}{\v{q}}
+\text{ and } c_{4n-1}=\revdot{\v{p}}{\v{q}}
 $$
 
 This is exactly what we need! If we multiply $\hat{r}(X)\cdot r(zX)$, the
@@ -54,8 +54,8 @@ Instead of committing to the full product, we decompose it into two smaller piec
 
 $$c(X) = c_{lo}(X) + X^{4n}\cdot c_{hi}(X)$$
 
-where $\v{c}_{lo}=\v{c}_{[:4n]}$ and $\v{c}_{hi}=\v{c}_{[4n:]}$. Both pieces
-now have degree less than $4n$, which is exactly what we want.
+where $\v{c}_{lo}=\v{c}_{[:4n]}\in\F^{4n}$ and $\v{c}_{hi}=\v{c}_{[4n:]}\in\F^{4n-1}$.
+Both pieces now have degree less than $4n$, which is exactly what we want.
 
 But we still need to extract that $c_{4n-1}$ coefficient—it's buried as the
 last coefficient of $c_{lo}$. This is where the reversal trick comes in. Define:
@@ -193,7 +193,7 @@ These inefficiencies are addressed in the next sections through various
 optimizations, but the core protocol structure remains the same.
 
 [^prod-cost]: FFT two multiplicands, each of polynomial of degree $4n-1$, over
-an evaluation domain of size $\geq 8n-2$, then IFFT back to get the coefficient
+an evaluation domain of size $\geq 8n-1$, then IFFT back to get the coefficient
 of the product polynomial before decomposing.
 
 ## NARK
