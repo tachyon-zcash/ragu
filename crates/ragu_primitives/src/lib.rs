@@ -23,6 +23,7 @@ mod lazy;
 mod point;
 mod poseidon;
 pub mod promotion;
+pub mod raw;
 mod simulator;
 mod util;
 pub mod vec;
