@@ -245,6 +245,62 @@ impl<F: PrimeField> Domain<F> {
                 .collect(),
         )
     }
+
+    /// Similar to [`Self::ell`], but returns Lagrange evaluations at bit-reversed indices.
+    /// For each i from 0 to `amount-1`, computes the index as `bitreverse(i, log2_n)`
+    /// and returns the Lagrange evaluation at that index.
+    ///
+    /// This matches the pattern used in `w_non_contiguous` where indices are derived
+    /// via bit-reversal for non-contiguous circuit access.
+    ///
+    /// Returns `None` if `x` is in the domain, otherwise returns a vector where
+    /// `result[i]` contains `ell_{bitreverse(i, log2_n)}(x)`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the provided `amount` exceeds `n`.
+    pub fn ell2(&self, x: F, amount: usize) -> Option<Vec<F>> {
+        assert!(amount <= self.n);
+
+        let xn = x.pow([self.n as u64]);
+        if xn == F::ONE {
+            return None;
+        }
+
+        // Compute omega^j for each j, using ROOT_OF_UNITY for consistency across domain sizes
+        // omega^j = ROOT_OF_UNITY^(j * 2^(F::S - log2_n))
+        let shift = F::S - self.log2_n;
+        let omega_powers: Vec<F> = (0..amount)
+            .map(|j| {
+                // Compute j * 2^(F::S - log2_n) by left-shifting j
+                let exponent = (j as u64) << shift;
+                F::ROOT_OF_UNITY.pow([exponent])
+            })
+            .collect();
+
+        // Compute (x - omega_i)^{-1} for each omega power
+        let mut denominators: Vec<F> = omega_powers
+            .iter()
+            .map(|&omega_i| x - omega_i)
+            .collect();
+
+        // Batch invert all denominators using Montgomery's trick
+        {
+            let mut scratch = denominators.clone();
+            ff::BatchInverter::invert_with_external_scratch(&mut denominators, &mut scratch);
+        }
+
+        // Compute ell_i(x) = (x - omega_i)^{-1} * (x^n - 1) * omega_i / n
+        let xn_minus_1_over_n = (xn - F::ONE) * self.n_inv;
+        Some(
+            denominators
+                .into_iter()
+                .zip(omega_powers.iter())
+                .map(|(inv_denom, &omega_i)| inv_denom * xn_minus_1_over_n * omega_i)
+                .collect(),
+        )
+    }
+
 }
 
 #[test]

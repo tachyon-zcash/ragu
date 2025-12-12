@@ -182,10 +182,10 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
         )
     }
 
-    /// Evaluate the mesh polynomial unrestricted at $X$ using non-contiguous
-    /// Lagrange polynomial evaluation.
-    pub fn wy_non_contiguous(&self, w: F, y: F) -> structured::Polynomial<F, R> {
-        self.w_non_contiguous(
+    /// Evaluate the mesh polynomial unrestricted at $X$ using ell2 with
+    /// direct circuit iteration.
+    pub fn wy2(&self, w: F, y: F) -> structured::Polynomial<F, R> {
+        self.w2(
             w,
             structured::Polynomial::default,
             |circuit, circuit_coeff, poly| {
@@ -209,10 +209,10 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
         )
     }
 
-    /// Evaluate the mesh polynomial unrestricted at $Y$ using non-contiguous
-    /// Lagrange polynomial evaluation.
-    pub fn wx_non_contiguous(&self, w: F, x: F) -> unstructured::Polynomial<F, R> {
-        self.w_non_contiguous(
+    /// Evaluate the mesh polynomial unrestricted at $Y$ using ell2 with
+    /// direct circuit iteration.
+    pub fn wx2(&self, w: F, x: F) -> unstructured::Polynomial<F, R> {
+        self.w2(
             w,
             unstructured::Polynomial::default,
             |circuit, circuit_coeff, poly| {
@@ -222,6 +222,7 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
             },
         )
     }
+
 
     /// Evaluate the mesh polynomial at the provided point.
     pub fn wxy(&self, w: F, x: F, y: F) -> F {
@@ -234,10 +235,10 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
         )
     }
 
-    /// Evaluate the mesh polynomial at the provided point using non-contiguous
-    /// Lagrange polynomial evaluation.
-    pub fn wxy_non_contiguous(&self, w: F, x: F, y: F) -> F {
-        self.w_non_contiguous(
+    /// Evaluate the mesh polynomial at the provided point using ell2 with
+    /// direct circuit iteration.
+    pub fn wxy2(&self, w: F, x: F, y: F) -> F {
+        self.w2(
             w,
             || F::ZERO,
             |circuit, circuit_coeff, poly| {
@@ -245,6 +246,7 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
             },
         )
     }
+
 
     /// Computes the polynomial restricted at $W$ based on the provided
     /// closures.
@@ -281,8 +283,8 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
     }
 
     /// Computes the polynomial restricted at $W$ based on the provided
-    /// closures, using batch Lagrange polynomial evaluation.
-    fn w_non_contiguous<T>(
+    /// closures, using ell2 with circuit-order iteration.
+    fn w2<T>(
         &self,
         w: F,
         init: impl FnOnce() -> T,
@@ -301,15 +303,13 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
             }
             // If w is not in omega_lookup, the circuit is not defined and defaults to zero
         } else {
-            // w is not in the domain, collect all indices we need and use batch evaluation
-            let indices: Vec<usize> = (0..self.circuits.len())
-                .map(|i| bitreverse(i as u32, self.domain.log2_n()) as usize)
-                .collect();
-
-            // ell_at_indices returns None if w is in the domain, but we already checked that above
-            if let Some(coeffs) = self.domain.ell_at_indices(w, &indices) {
-                for (circuit, coeff) in self.circuits.iter().zip(coeffs.iter()) {
-                    add_poly(&**circuit, *coeff, &mut result);
+            // w is not in the domain, use ell2 for Lagrange coefficients
+            // ell2 returns coefficients for omega^j (j = 0, 1, 2, ...)
+            // Circuit i is assigned to omega^bitreverse(i), so we need coefficient ell[bitreverse(i)]
+            if let Some(ell) = self.domain.ell2(w, self.domain.n()) {
+                for (i, circuit) in self.circuits.iter().enumerate() {
+                    let j = bitreverse(i as u32, self.domain.log2_n()) as usize;
+                    add_poly(&**circuit, ell[j], &mut result);
                 }
             }
         }
@@ -559,7 +559,7 @@ mod tests {
     }
 
     #[test]
-    fn test_non_contiguous_equivalence() -> Result<()> {
+    fn test_w2_equivalence() -> Result<()> {
         let poseidon = Pasta::baked().circuit_poseidon();
 
         // Build a mesh with several circuits
@@ -577,35 +577,35 @@ mod tests {
             let x = Fp::random(thread_rng());
             let y = Fp::random(thread_rng());
 
-            // Test wxy
+            // Test wxy vs wxy2
             let wxy_result = mesh.wxy(w, x, y);
-            let wxy_non_contiguous_result = mesh.wxy_non_contiguous(w, x, y);
+            let wxy2_result = mesh.wxy2(w, x, y);
             assert_eq!(
-                wxy_result, wxy_non_contiguous_result,
-                "wxy and wxy_non_contiguous produced different results"
+                wxy_result, wxy2_result,
+                "wxy and wxy2 produced different results"
             );
 
-            // Test wy - compare by evaluating at multiple points
+            // Test wy vs wy2 - compare by evaluating at multiple points
             let wy_result = mesh.wy(w, y);
-            let wy_non_contiguous_result = mesh.wy_non_contiguous(w, y);
+            let wy2_result = mesh.wy2(w, y);
             for _ in 0..5 {
                 let eval_point = Fp::random(thread_rng());
                 assert_eq!(
                     wy_result.eval(eval_point),
-                    wy_non_contiguous_result.eval(eval_point),
-                    "wy and wy_non_contiguous produced different results"
+                    wy2_result.eval(eval_point),
+                    "wy and wy2 produced different results"
                 );
             }
 
-            // Test wx - compare by evaluating at multiple points
+            // Test wx vs wx2 - compare by evaluating at multiple points
             let wx_result = mesh.wx(w, x);
-            let wx_non_contiguous_result = mesh.wx_non_contiguous(w, x);
+            let wx2_result = mesh.wx2(w, x);
             for _ in 0..5 {
                 let eval_point = Fp::random(thread_rng());
                 assert_eq!(
                     wx_result.eval(eval_point),
-                    wx_non_contiguous_result.eval(eval_point),
-                    "wx and wx_non_contiguous produced different results"
+                    wx2_result.eval(eval_point),
+                    "wx and wx2 produced different results"
                 );
             }
         }
@@ -617,31 +617,31 @@ mod tests {
             let y = Fp::random(thread_rng());
 
             let wxy_result = mesh.wxy(w, x, y);
-            let wxy_non_contiguous_result = mesh.wxy_non_contiguous(w, x, y);
+            let wxy2_result = mesh.wxy2(w, x, y);
             assert_eq!(
-                wxy_result, wxy_non_contiguous_result,
-                "wxy and wxy_non_contiguous produced different results at domain point"
+                wxy_result, wxy2_result,
+                "wxy and wxy2 produced different results at domain point"
             );
 
             let wy_result = mesh.wy(w, y);
-            let wy_non_contiguous_result = mesh.wy_non_contiguous(w, y);
+            let wy2_result = mesh.wy2(w, y);
             for _ in 0..5 {
                 let eval_point = Fp::random(thread_rng());
                 assert_eq!(
                     wy_result.eval(eval_point),
-                    wy_non_contiguous_result.eval(eval_point),
-                    "wy and wy_non_contiguous produced different results at domain point"
+                    wy2_result.eval(eval_point),
+                    "wy and wy2 produced different results at domain point"
                 );
             }
 
             let wx_result = mesh.wx(w, x);
-            let wx_non_contiguous_result = mesh.wx_non_contiguous(w, x);
+            let wx2_result = mesh.wx2(w, x);
             for _ in 0..5 {
                 let eval_point = Fp::random(thread_rng());
                 assert_eq!(
                     wx_result.eval(eval_point),
-                    wx_non_contiguous_result.eval(eval_point),
-                    "wx and wx_non_contiguous produced different results at domain point"
+                    wx2_result.eval(eval_point),
+                    "wx and wx2 produced different results at domain point"
                 );
             }
 
