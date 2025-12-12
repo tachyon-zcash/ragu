@@ -191,7 +191,7 @@ impl<F: PrimeField> Domain<F> {
 
     /// Evaluates Lagrange basis polynomials at the specified indices for a given point `x`.
     /// Utilizes batch inversion (Montgomery's trick) for efficiency.
-    /// 
+    ///
     /// Returns `None` if `x` is in the domain (i.e., `x^n == 1`), otherwise returns a vector
     /// of evaluations corresponding to each index in `indices`.
     ///
@@ -216,16 +216,18 @@ impl<F: PrimeField> Domain<F> {
         let omega_powers: Vec<F> = indices
             .iter()
             .map(|&i| {
-                assert!(i < self.n, "index {} must be less than domain size {}", i, self.n);
+                assert!(
+                    i < self.n,
+                    "index {} must be less than domain size {}",
+                    i,
+                    self.n
+                );
                 self.omega.pow([i as u64])
             })
             .collect();
 
         // Compute (x - omega^i) for each index
-        let mut denominators: Vec<F> = omega_powers
-            .iter()
-            .map(|&omega_i| x - omega_i)
-            .collect();
+        let mut denominators: Vec<F> = omega_powers.iter().map(|&omega_i| x - omega_i).collect();
 
         // Batch invert all denominators using Montgomery's trick
         {
