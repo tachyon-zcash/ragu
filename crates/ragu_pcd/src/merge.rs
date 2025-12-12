@@ -194,10 +194,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let (c_rx, _) =
             internal_circuits::c::Circuit::<C, R, HEADER_SIZE, NUM_NATIVE_REVDOT_CLAIMS>::new(
                 self.params,
+                self.log2_domain_size(),
             )
             .rx::<R>(
                 internal_circuits::c::Witness {
                     unified_instance,
+                    preamble_witness: &preamble_witness,
                     error_terms,
                 },
                 self.circuit_mesh.get_key(),

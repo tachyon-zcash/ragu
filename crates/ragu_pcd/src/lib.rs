@@ -131,6 +131,16 @@ pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+    /// Returns the log2 of the mesh domain size.
+    ///
+    /// This is used for circuit ID in-domain checks.
+    pub(crate) fn log2_domain_size(&self) -> u32 {
+        let total_circuits = self.num_application_steps
+            + step::NUM_INTERNAL_STEPS
+            + internal_circuits::NUM_INTERNAL_CIRCUITS;
+        total_circuits.next_power_of_two().trailing_zeros()
+    }
+
     /// Creates a random trivial proof for the empty [`Header`] implementation
     /// `()`. This takes more time to generate because it cannot be cached
     /// within the [`Application`].
