@@ -290,31 +290,31 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
         init: impl FnOnce() -> T,
         add_poly: impl Fn(&dyn CircuitObject<F, R>, F, &mut T),
     ) -> T {
+        // Compute the Lagrange coefficients for the provided `w`.
+        let ell = self.domain.ell2(w, self.domain.n());
+
         let mut result = init();
 
-        // Check if w is in the domain (i.e., w^n == 1)
-        let wn = w.pow([self.domain.n() as u64]);
-        if wn == F::ONE {
-            // w is in the domain, so only one Lagrange polynomial is non-zero
-            if let Some(i) = self.omega_lookup.get(&OmegaKey::from(w)) {
-                if let Some(circuit) = self.circuits.get(*i) {
-                    add_poly(&**circuit, F::ONE, &mut result);
+        if let Some(ell) = ell {
+            // The provided `w` was not in the domain, and `ell` are the
+            // coefficients we need to use to separate each (partial) circuit
+            // evaluation.
+            for (j, coeff) in ell.iter().enumerate() {
+                let i = bitreverse(j as u32, self.domain.log2_n()) as usize;
+                if let Some(circuit) = self.circuits.get(i) {
+                    add_poly(&**circuit, *coeff, &mut result);
                 }
             }
-            // If w is not in omega_lookup, the circuit is not defined and defaults to zero
+        } else if let Some(i) = self.omega_lookup.get(&OmegaKey::from(w)) {
+            if let Some(circuit) = self.circuits.get(*i) {
+                add_poly(&**circuit, F::ONE, &mut result);
+            }
         } else {
-            // w is not in the domain, use ell2 for Lagrange coefficients
-            // ell2 returns coefficients for omega^j (j = 0, 1, 2, ...)
-            // Circuit i is assigned to omega^bitreverse(i), so we need coefficient ell[bitreverse(i)]
-            if let Some(ell) = self.domain.ell2(w, self.domain.n()) {
-                for (i, circuit) in self.circuits.iter().enumerate() {
-                    let j = bitreverse(i as u32, self.domain.log2_n()) as usize;
-                    add_poly(&**circuit, ell[j], &mut result);
-                }
-            }
+            // In this case, the circuit is not defined and defaults to the zero polynomial.
         }
 
         result
+
     }
 
     /// Compute a digest of this mesh.
