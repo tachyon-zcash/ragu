@@ -79,6 +79,11 @@ impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
         self.circuits.len()
     }
 
+    /// Returns the log2 of the smallest power-of-2 domain size that fits all circuits.
+    pub fn log2_circuits(&self) -> u32 {
+        self.circuits.len().next_power_of_two().trailing_zeros()
+    }
+
     /// Registers a new circuit.
     pub fn register_circuit<C>(self, circuit: C) -> Result<Self>
     where
@@ -104,8 +109,7 @@ impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
 
     /// Builds the final [`Mesh`].
     pub fn finalize<P: PoseidonPermutation<F>>(self, poseidon: &P) -> Result<Mesh<'params, F, R>> {
-        // Compute the smallest power-of-2 domain size that fits all circuits.
-        let log2_circuits = self.circuits.len().next_power_of_two().trailing_zeros();
+        let log2_circuits = self.log2_circuits();
         let domain = Domain::<F>::new(log2_circuits);
 
         // Build omega^j -> i lookup table.

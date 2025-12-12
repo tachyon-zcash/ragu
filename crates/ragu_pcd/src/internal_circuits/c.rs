@@ -10,7 +10,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element, InDomain,
+    Element,
     vec::{CollectFixed, FixedVec, Len},
 };
 
@@ -20,24 +20,27 @@ use super::{
     stages::native::preamble,
     unified::{self, OutputBuilder},
 };
-use crate::components::fold_revdot::{self, ErrorTermsLen};
+use crate::components::{
+    fold_revdot::{self, ErrorTermsLen},
+    root_of_unity::RootOfUnity,
+};
 
 pub use crate::internal_circuits::InternalCircuitIndex::ClaimCircuit as CIRCUIT_ID;
 pub use crate::internal_circuits::InternalCircuitIndex::ClaimStaged as STAGED_ID;
 
 pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize> {
     params: &'params C,
-    log2_domain_size: u32,
+    log2_circuits: u32,
     _marker: PhantomData<R>,
 }
 
 impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize>
     Circuit<'params, C, R, HEADER_SIZE, NUM_REVDOT_CLAIMS>
 {
-    pub fn new(params: &'params C, log2_domain_size: u32) -> Staged<C::CircuitField, R, Self> {
+    pub fn new(params: &'params C, log2_circuits: u32) -> Staged<C::CircuitField, R, Self> {
         Staged::new(Circuit {
             params,
-            log2_domain_size,
+            log2_circuits,
             _marker: PhantomData,
         })
     }
@@ -81,21 +84,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize
     {
         let (preamble_guard, builder) =
             builder.add_stage::<preamble::Stage<C, R, HEADER_SIZE>>()?;
-        let preamble_output =
-            preamble_guard.unenforced(witness.view().map(|w| w.preamble_witness))?;
         let dr = builder.finish();
 
+        let preamble_output =
+            preamble_guard.enforced(dr, witness.view().map(|w| w.preamble_witness))?;
+
         // Check that circuit IDs are valid domain elements.
-        InDomain::new(
-            dr,
-            preamble_output.left.circuit_id.clone(),
-            self.log2_domain_size,
-        )?;
-        InDomain::new(
-            dr,
-            preamble_output.right.circuit_id.clone(),
-            self.log2_domain_size,
-        )?;
+        // TODO: We shouldn't do it like this, was just experimenting with the gadget. Instead,
+        // we should store circuit_id as `RootOfUnity` inside `ProofInputs`.
+        RootOfUnity::unchecked(preamble_output.left.circuit_id.clone(), self.log2_circuits)
+            .enforce(dr)?;
+        RootOfUnity::unchecked(preamble_output.right.circuit_id.clone(), self.log2_circuits)
+            .enforce(dr)?;
 
         let unified_instance = &witness.view().map(|w| w.unified_instance);
         let mut unified_output = OutputBuilder::new();

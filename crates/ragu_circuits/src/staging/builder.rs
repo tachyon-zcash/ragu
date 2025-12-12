@@ -125,6 +125,7 @@ impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R> + 'dr> StageGuard<'dr, D, R
     /// into the resulting gadget.
     pub fn unenforced<'source: 'dr>(
         self,
+        _dr: &mut D,
         witness: DriverValue<D, S::Witness<'source>>,
     ) -> Result<<S::OutputKind as GadgetKind<D::F>>::Rebind<'dr, D>> {
         let mut emulator: Emulator<Wireless<D::MaybeKind, D::F>> = Emulator::wireless();

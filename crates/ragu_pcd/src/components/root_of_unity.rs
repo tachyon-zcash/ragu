@@ -1,51 +1,106 @@
-//! Gadget for asserting that an element is within a domain of roots of unity.
+//! Gadget for asserting that an element is a root of unity.
 
-use ragu_core::{Result, drivers::Driver};
+use core::ops::Deref;
 
-use crate::Element;
+use ff::Field;
+use ragu_core::{
+    Result,
+    drivers::{Driver, FromDriver},
+    gadgets::{Gadget, GadgetKind},
+};
+use ragu_primitives::Element;
 
-/// A wrapper around an [`Element`] that constrains `omega` to be a valid
-/// $2^k$ root of unity.
-pub struct InDomain<'dr, D: Driver<'dr>> {
+/// A wrapper around an [`Element`] that should be constrained to be a $2^k$ root of unity.
+///
+/// The `k` value is stored in the gadget and used when [`Self::enforce`] is called.
+pub struct RootOfUnity<'dr, D: Driver<'dr>> {
     element: Element<'dr, D>,
+    k: u32,
 }
 
-impl<'dr, D: Driver<'dr>> InDomain<'dr, D> {
-    /// Creates an `InDomain` wrapper which constrains that `omega`^(2^k) - 1 == 0.
+impl<'dr, D: Driver<'dr>> Clone for RootOfUnity<'dr, D> {
+    fn clone(&self) -> Self {
+        RootOfUnity {
+            element: self.element.clone(),
+            k: self.k,
+        }
+    }
+}
+
+impl<'dr, D: Driver<'dr>> RootOfUnity<'dr, D> {
+    /// Wrap an element without adding constraints.
+    ///
+    /// Use [`Self::enforce`] to add the root-of-unity constraint later.
+    pub fn unchecked(element: Element<'dr, D>, k: u32) -> Self {
+        RootOfUnity { element, k }
+    }
+
+    /// Enforce that the element is a $2^k$ root of unity.
     ///
     /// This costs `k` multiplication constraints plus one linear constraint.
-    pub fn new(dr: &mut D, omega: Element<'dr, D>, k: u32) -> Result<Self> {
-        let mut value = omega.clone();
-        for _ in 0..k {
+    pub fn enforce(&self, dr: &mut D) -> Result<()> {
+        let mut value = self.element.clone();
+        for _ in 0..self.k {
             value = value.square(dr)?;
         }
-
         let one = Element::one();
         let diff = value.sub(dr, &one);
-
         diff.enforce_zero(dr)?;
-
-        Ok(InDomain { element: omega })
+        Ok(())
     }
+}
 
-    /// Returns the inner element, which is guaranteed to be in the domain.
-    pub fn into_inner(self) -> Element<'dr, D> {
-        self.element
-    }
+impl<'dr, D: Driver<'dr>> Deref for RootOfUnity<'dr, D> {
+    type Target = Element<'dr, D>;
 
-    /// Returns a reference to the inner element, which is guaranteed to be in the domain.
-    pub fn element(&self) -> &Element<'dr, D> {
+    fn deref(&self) -> &Self::Target {
         &self.element
+    }
+}
+
+/// The [`GadgetKind`] for [`RootOfUnity`].
+pub struct RootOfUnityKind<F: Field>(core::marker::PhantomData<F>);
+
+unsafe impl<F: Field> GadgetKind<F> for RootOfUnityKind<F> {
+    type Rebind<'dr, D: Driver<'dr, F = F>> = RootOfUnity<'dr, D>;
+
+    fn map_gadget<'dr, 'new_dr, D: Driver<'dr, F = F>, ND: FromDriver<'dr, 'new_dr, D>>(
+        this: &Self::Rebind<'dr, D>,
+        ndr: &mut ND,
+    ) -> Result<Self::Rebind<'new_dr, ND::NewDriver>> {
+        Ok(RootOfUnity {
+            element: this.element.map(ndr)?,
+            k: this.k,
+        })
+    }
+
+    fn enforce_equal_gadget<'dr, D2: Driver<'dr, F = F, Wire = D::Wire>, D: Driver<'dr, F = F>>(
+        dr: &mut D2,
+        a: &Self::Rebind<'dr, D>,
+        b: &Self::Rebind<'dr, D>,
+    ) -> Result<()> {
+        a.element.enforce_equal(dr, &b.element)?;
+        debug_assert_eq!(a.k, b.k, "RootOfUnity k values must match");
+
+        Ok(())
+    }
+}
+
+impl<'dr, D: Driver<'dr>> Gadget<'dr, D> for RootOfUnity<'dr, D> {
+    type Kind = RootOfUnityKind<D::F>;
+
+    fn num_wires(&self) -> usize {
+        self.element.num_wires()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Simulator;
     use alloc::{vec, vec::Vec};
     use ff::Field;
     use ragu_pasta::{Fp, fp};
+    use ragu_primitives::Simulator;
 
     // (omega, k, should_pass)
     fn test_cases() -> Vec<(Fp, u32, bool)> {
@@ -99,11 +154,12 @@ mod tests {
     }
 
     #[test]
-    fn test_in_domain() -> Result<()> {
+    fn test_root_of_unity() -> Result<()> {
         for (i, (omega, k, should_pass)) in test_cases().into_iter().enumerate() {
             let result = Simulator::simulate(omega, |dr, witness| {
                 let omega = Element::alloc(dr, witness)?;
-                InDomain::new(dr, omega, k)?;
+                let root = RootOfUnity::unchecked(omega, k);
+                root.enforce(dr)?;
                 Ok(())
             });
 

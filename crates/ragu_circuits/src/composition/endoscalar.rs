@@ -146,8 +146,8 @@ impl<C: CurveAffine, R: Rank, const NUM_SLOTS: usize> StagedCircuit<C::Base, R>
         let (slots_guard, dr) = dr.add_stage::<SlotStage<C, NUM_SLOTS>>()?;
         let dr = dr.finish();
 
-        let endoscalar = endoscalar_guard.unenforced(witness.view().map(|w| w.endoscalar))?;
-        let slots = slots_guard.unenforced(witness.view().map(|w| w.slots.clone()))?;
+        let endoscalar = endoscalar_guard.unenforced(dr, witness.view().map(|w| w.endoscalar))?;
+        let slots = slots_guard.unenforced(dr, witness.view().map(|w| w.slots.clone()))?;
 
         let input = Point::alloc(dr, witness.view().map(|w| w.input))?;
         let dummy = Point::constant(dr, C::generator())?;
