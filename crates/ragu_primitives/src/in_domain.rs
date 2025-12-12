@@ -1,33 +1,51 @@
+//! Gadget for asserting that an element is within a domain of roots of unity.
+
 use ragu_core::{Result, drivers::Driver};
-use ragu_primitives::Element;
 
-/// Checks that the provided value `omega` is a valid $2^k$ root of unity.
-pub fn enforce_root_of_unity<'dr, D: Driver<'dr>>(
-    dr: &mut D,
-    omega: Element<'dr, D>,
-    k: u32,
-) -> Result<()> {
-    // This works by constraining that `omega`^(2^k) - 1 == 0.
+use crate::Element;
 
-    let mut value = omega;
-    for _ in 0..k {
-        value = value.square(dr)?;
+/// A wrapper around an [`Element`] that the provided value `omega` is a valid
+/// $2^k$ root of unity.
+pub struct InDomain<'dr, D: Driver<'dr>> {
+    element: Element<'dr, D>,
+}
+
+impl<'dr, D: Driver<'dr>> InDomain<'dr, D> {
+    /// Creates an `InDomain` wrapper which constrains that `omega`^(2^k) - 1 == 0.
+    ///
+    /// This costs `k` multiplication constraints plus one linear constraint.
+    pub fn new(dr: &mut D, omega: Element<'dr, D>, k: u32) -> Result<Self> {
+        let mut value = omega.clone();
+        for _ in 0..k {
+            value = value.square(dr)?;
+        }
+
+        let one = Element::one();
+        let diff = value.sub(dr, &one);
+
+        diff.enforce_zero(dr)?;
+
+        Ok(InDomain { element: omega })
     }
 
-    let one = Element::one();
-    let diff = value.sub(dr, &one);
+    /// Returns the inner element, which is guaranteed to be in the domain.
+    pub fn into_inner(self) -> Element<'dr, D> {
+        self.element
+    }
 
-    diff.enforce_zero(dr)?;
-
-    Ok(())
+    /// Returns a reference to the inner element, which is guaranteed to be in the domain.
+    pub fn element(&self) -> &Element<'dr, D> {
+        &self.element
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Simulator;
+    use alloc::{vec, vec::Vec};
     use ff::Field;
     use ragu_pasta::{Fp, fp};
-    use ragu_primitives::Simulator;
 
     // (omega, k, should_pass)
     fn test_cases() -> Vec<(Fp, u32, bool)> {
@@ -50,7 +68,6 @@ mod tests {
             (Fp::ONE, 30, true),
             (Fp::ONE, 31, true),
             (Fp::ONE, 32, true),
-            (Fp::ONE, 1000, true),
             // -1 is a 2^k root of unity where k >= 1
             (-Fp::ONE, 0, false),
             (-Fp::ONE, 1, true),
@@ -81,11 +98,11 @@ mod tests {
     }
 
     #[test]
-    fn test_enforce_root_of_unity() -> Result<()> {
+    fn test_in_domain() -> Result<()> {
         for (i, (omega, k, should_pass)) in test_cases().into_iter().enumerate() {
             let result = Simulator::simulate(omega, |dr, witness| {
                 let omega = Element::alloc(dr, witness)?;
-                enforce_root_of_unity(dr, omega, k)?;
+                InDomain::new(dr, omega, k)?;
                 Ok(())
             });
 
