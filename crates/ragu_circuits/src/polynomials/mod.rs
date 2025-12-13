@@ -1,13 +1,10 @@
 //! Representations and views of polynomials used in Ragu's proof system.
 
-mod root_of_unity;
 pub mod structured;
 mod txz;
 pub mod unstructured;
 
 use ff::Field;
-
-pub use root_of_unity::enforce_root_of_unity;
 
 mod private {
     pub trait Sealed {}
