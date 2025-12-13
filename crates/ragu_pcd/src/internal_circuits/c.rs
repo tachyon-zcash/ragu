@@ -144,6 +144,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize
         }
 
         // TODO: Error stage's nested_s_doubleprime_commitment must equal the one in unified output
+
         Ok((unified_output.finish(dr, unified_instance)?, D::just(|| ())))
     }
 }

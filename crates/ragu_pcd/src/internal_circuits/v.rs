@@ -10,7 +10,6 @@ use ragu_core::{
     gadgets::{Gadget, GadgetKind},
     maybe::Maybe,
 };
-use ragu_primitives::{GadgetExt, Sponge};
 
 use core::marker::PhantomData;
 
@@ -91,31 +90,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize
             .nested_f_commitment
             .get(dr, unified_instance)?;
 
-        // Computation of (mu, nu) = H(nested_error_commitment).
+        // Derive (mu, nu) = H(nested_error_commitment).
         let (mu, nu) = {
             let nested_error_commitment = unified_output
                 .nested_error_commitment
                 .get(dr, unified_instance)?;
-            let mut sponge = Sponge::new(dr, self.params.circuit_poseidon());
-            nested_error_commitment.write(dr, &mut sponge)?;
-            let mu = sponge.squeeze(dr)?;
-            let nu = sponge.squeeze(dr)?;
-
-            (mu, nu)
+            transcript::derive_mu_nu::<_, C>(dr, &nested_error_commitment, self.params)?
         };
 
-        // Computation of x = H(mu, nested_ab_commitment).
+        // Derive x = H(mu, nested_ab_commitment) and enforce query stage's x matches.
         {
             let nested_ab_commitment = unified_output
                 .nested_ab_commitment
                 .get(dr, unified_instance)?;
-
-            let mut sponge = Sponge::new(dr, self.params.circuit_poseidon());
-            sponge.absorb(dr, &mu)?;
-            nested_ab_commitment.write(dr, &mut sponge)?;
-            let x = sponge.squeeze(dr)?;
-
-            // Query stage's x must equal x.
+            let x = transcript::derive_x::<_, C>(dr, &mu, &nested_ab_commitment, self.params)?;
             x.enforce_equal(dr, &query.x)?;
         }
 

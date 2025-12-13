@@ -135,15 +135,14 @@ impl<'dr, D: Driver<'dr>, C: Cycle> Output<'dr, D, C> {
             dr,
             proof.view().map(|p| p.preamble.nested_preamble_commitment),
         )?;
+        let w = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.w))?;
         let nested_error_commitment =
             Point::alloc(dr, proof.view().map(|p| p.error.nested_error_commitment))?;
-        let nested_ab_commitment =
-            Point::alloc(dr, proof.view().map(|p| p.ab.nested_ab_commitment))?;
-        let w = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.w))?;
-        let c = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.c))?;
         let mu = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.mu))?;
         let nu = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.nu))?;
-
+        let c = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.c))?;
+        let nested_ab_commitment =
+            Point::alloc(dr, proof.view().map(|p| p.ab.nested_ab_commitment))?;
         let nested_query_commitment =
             Point::alloc(dr, proof.view().map(|p| p.query.nested_query_commitment))?;
         let alpha = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.alpha))?;
