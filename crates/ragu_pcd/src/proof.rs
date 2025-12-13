@@ -330,7 +330,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         );
 
         let native_preamble_rx =
-            stages::native::preamble::Stage::<C, R, HEADER_SIZE>::rx(&preamble_witness)
+            stages::native::preamble::Stage::<C, R, HEADER_SIZE>::new(self.log2_circuits())
+                .rx_configured(&preamble_witness)
                 .expect("preamble rx should not fail");
         let native_preamble_blind = C::CircuitField::random(&mut *rng);
         let native_preamble_commitment =
