@@ -20,10 +20,7 @@ use super::{
     stages::native::preamble,
     unified::{self, OutputBuilder},
 };
-use crate::components::{
-    fold_revdot::{self, ErrorTermsLen},
-    root_of_unity::RootOfUnity,
-};
+use crate::components::fold_revdot::{self, ErrorTermsLen};
 
 pub use crate::internal_circuits::InternalCircuitIndex::ClaimCircuit as CIRCUIT_ID;
 pub use crate::internal_circuits::InternalCircuitIndex::ClaimStaged as STAGED_ID;
@@ -82,20 +79,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize
     where
         Self: 'dr,
     {
-        let (preamble_guard, builder) =
-            builder.add_stage::<preamble::Stage<C, R, HEADER_SIZE>>()?;
+        let preamble_stage = preamble::Stage::new(self.log2_circuits);
+        let (preamble_guard, builder) = builder.configure_stage(preamble_stage)?;
         let dr = builder.finish();
 
-        let preamble_output =
-            preamble_guard.enforced(dr, witness.view().map(|w| w.preamble_witness))?;
+        let _ = preamble_guard.enforced(dr, witness.view().map(|w| w.preamble_witness))?;
 
-        // Check that circuit IDs are valid domain elements.
-        // TODO: We shouldn't do it like this, was just experimenting with the gadget. Instead,
-        // we should store circuit_id as `RootOfUnity` inside `ProofInputs`.
-        RootOfUnity::unchecked(preamble_output.left.circuit_id.clone(), self.log2_circuits)
-            .enforce(dr)?;
-        RootOfUnity::unchecked(preamble_output.right.circuit_id.clone(), self.log2_circuits)
-            .enforce(dr)?;
+        // Circuit IDs are validated as roots of unity during preamble allocation.
 
         let unified_instance = &witness.view().map(|w| w.unified_instance);
         let mut unified_output = OutputBuilder::new();

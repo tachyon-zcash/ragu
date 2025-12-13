@@ -2,95 +2,65 @@
 
 use core::ops::Deref;
 
-use ff::Field;
 use ragu_core::{
     Result,
-    drivers::{Driver, FromDriver},
-    gadgets::{Gadget, GadgetKind},
+    drivers::{Driver, DriverValue},
+    gadgets::Gadget,
 };
-use ragu_primitives::Element;
+use ragu_primitives::{
+    Element,
+    raw::{Raw, Stable},
+};
 
-/// A wrapper around an [`Element`] that should be constrained to be a $2^k$ root of unity.
+/// Wrapper type for log2 of domain size that implements `Stable<u32>`.
 ///
-/// The `k` value is stored in the gadget and used when [`Self::enforce`] is called.
-pub struct RootOfUnity<'dr, D: Driver<'dr>> {
+/// This type asserts that within a given circuit synthesis context, all instances
+/// will dereference to the same value, satisfying the fungibility requirement.
+#[derive(Copy, Clone)]
+pub struct Log2DomainSize(pub u32);
+
+impl Deref for Log2DomainSize {
+    type Target = u32;
+    fn deref(&self) -> &u32 {
+        &self.0
+    }
+}
+
+impl Stable<u32> for Log2DomainSize {}
+
+/// A gadget representing a validated root of unity in the evaluation domain.
+#[derive(Gadget)]
+pub struct RootOfUnity<'dr, #[ragu(driver)] D: Driver<'dr>, S: Stable<u32>> {
+    #[ragu(gadget)]
     element: Element<'dr, D>,
-    k: u32,
+    #[ragu(gadget)]
+    log2: Raw<'dr, D, u32, S>,
 }
 
-impl<'dr, D: Driver<'dr>> Clone for RootOfUnity<'dr, D> {
-    fn clone(&self) -> Self {
-        RootOfUnity {
-            element: self.element.clone(),
-            k: self.k,
-        }
-    }
-}
+impl<'dr, D: Driver<'dr>, S: Stable<u32>> RootOfUnity<'dr, D, S> {
+    pub fn alloc(dr: &mut D, omega: DriverValue<D, D::F>, log2_circuits: S) -> Result<Self> {
+        let element = Element::alloc(dr, omega)?;
 
-impl<'dr, D: Driver<'dr>> RootOfUnity<'dr, D> {
-    /// Wrap an element without adding constraints.
-    ///
-    /// Use [`Self::enforce`] to add the root-of-unity constraint later.
-    pub fn unchecked(element: Element<'dr, D>, k: u32) -> Self {
-        RootOfUnity { element, k }
-    }
-
-    /// Enforce that the element is a $2^k$ root of unity.
-    ///
-    /// This costs `k` multiplication constraints plus one linear constraint.
-    pub fn enforce(&self, dr: &mut D) -> Result<()> {
-        let mut value = self.element.clone();
-        for _ in 0..self.k {
+        let mut value = element.clone();
+        for _ in 0..*log2_circuits {
             value = value.square(dr)?;
         }
         let one = Element::one();
         let diff = value.sub(dr, &one);
         diff.enforce_zero(dr)?;
-        Ok(())
+
+        Ok(RootOfUnity {
+            element,
+            log2: Raw::new(log2_circuits),
+        })
     }
 }
 
-impl<'dr, D: Driver<'dr>> Deref for RootOfUnity<'dr, D> {
+impl<'dr, D: Driver<'dr>, S: Stable<u32>> Deref for RootOfUnity<'dr, D, S> {
     type Target = Element<'dr, D>;
 
     fn deref(&self) -> &Self::Target {
         &self.element
-    }
-}
-
-/// The [`GadgetKind`] for [`RootOfUnity`].
-pub struct RootOfUnityKind<F: Field>(core::marker::PhantomData<F>);
-
-unsafe impl<F: Field> GadgetKind<F> for RootOfUnityKind<F> {
-    type Rebind<'dr, D: Driver<'dr, F = F>> = RootOfUnity<'dr, D>;
-
-    fn map_gadget<'dr, 'new_dr, D: Driver<'dr, F = F>, ND: FromDriver<'dr, 'new_dr, D>>(
-        this: &Self::Rebind<'dr, D>,
-        ndr: &mut ND,
-    ) -> Result<Self::Rebind<'new_dr, ND::NewDriver>> {
-        Ok(RootOfUnity {
-            element: this.element.map(ndr)?,
-            k: this.k,
-        })
-    }
-
-    fn enforce_equal_gadget<'dr, D2: Driver<'dr, F = F, Wire = D::Wire>, D: Driver<'dr, F = F>>(
-        dr: &mut D2,
-        a: &Self::Rebind<'dr, D>,
-        b: &Self::Rebind<'dr, D>,
-    ) -> Result<()> {
-        a.element.enforce_equal(dr, &b.element)?;
-        debug_assert_eq!(a.k, b.k, "RootOfUnity k values must match");
-
-        Ok(())
-    }
-}
-
-impl<'dr, D: Driver<'dr>> Gadget<'dr, D> for RootOfUnity<'dr, D> {
-    type Kind = RootOfUnityKind<D::F>;
-
-    fn num_wires(&self) -> usize {
-        self.element.num_wires()
     }
 }
 
@@ -101,6 +71,19 @@ mod tests {
     use ff::Field;
     use ragu_pasta::{Fp, fp};
     use ragu_primitives::Simulator;
+
+    /// Test wrapper for k that implements Stable<u32>.
+    #[derive(Copy, Clone)]
+    struct TestK(u32);
+
+    impl Deref for TestK {
+        type Target = u32;
+        fn deref(&self) -> &u32 {
+            &self.0
+        }
+    }
+
+    impl Stable<u32> for TestK {}
 
     // (omega, k, should_pass)
     fn test_cases() -> Vec<(Fp, u32, bool)> {
@@ -154,12 +137,10 @@ mod tests {
     }
 
     #[test]
-    fn test_root_of_unity() -> Result<()> {
+    fn test_enforce_root_of_unity() -> Result<()> {
         for (i, (omega, k, should_pass)) in test_cases().into_iter().enumerate() {
             let result = Simulator::simulate(omega, |dr, witness| {
-                let omega = Element::alloc(dr, witness)?;
-                let root = RootOfUnity::unchecked(omega, k);
-                root.enforce(dr)?;
+                RootOfUnity::alloc(dr, witness, TestK(k))?;
                 Ok(())
             });
 
