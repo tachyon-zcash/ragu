@@ -45,8 +45,7 @@
 //!    state that affects synthesis.
 //!
 //! 3. **No non-witness runtime state.** Any runtime data must be _stable_
-//!    (identical across all instances of that type). See `Raw` for handling
-//!    stable non-witness values.
+//!    (identical across all instances of that type).
 //!
 //! Wires are fungible by definition, and witness data cannot affect synthesis,
 //! so gadgets containing only these (plus `PhantomData` and nested gadgets)
