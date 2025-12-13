@@ -29,8 +29,19 @@ use alloc::collections::BTreeMap;
 use core::{any::TypeId, marker::PhantomData};
 
 use header::Header;
+use internal_circuits::NUM_INTERNAL_CIRCUITS;
 pub use proof::{Pcd, Proof};
-use step::{Step, adapter::Adapter};
+use step::{NUM_INTERNAL_STEPS, Step, adapter::Adapter};
+
+/// Computes the total circuit count and log2 domain exponent.
+///
+/// This is used to pre-compute the domain size before registration occurs,
+/// ensuring all circuits know the correct log2_circuits value.
+fn circuit_counts(num_application_steps: usize) -> (usize, u32) {
+    let total = num_application_steps + NUM_INTERNAL_STEPS + NUM_INTERNAL_CIRCUITS;
+    let log2 = total.next_power_of_two().trailing_zeros();
+    (total, log2)
+}
 
 /// Builder for an [`Application`] for proof-carrying data.
 pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
@@ -102,6 +113,9 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         mut self,
         params: &'params C,
     ) -> Result<Application<'params, C, R, HEADER_SIZE>> {
+        // Pre-compute the circuit counts before registration.
+        let (expected_num_circuits, log2_circuits) = circuit_counts(self.num_application_steps);
+
         // First, insert all of the internal steps.
         self.circuit_mesh =
             self.circuit_mesh
@@ -110,8 +124,15 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
                 ))?;
 
         // Then, insert all of the internal circuits used for recursion plumbing.
-        self.circuit_mesh =
-            internal_circuits::register_all::<C, R, HEADER_SIZE>(self.circuit_mesh, params)?;
+        self.circuit_mesh = internal_circuits::register_all::<C, R, HEADER_SIZE>(
+            self.circuit_mesh,
+            params,
+            log2_circuits,
+        )?;
+
+        // Verify that the pre-computed counts match the actual mesh state.
+        assert_eq!(expected_num_circuits, self.circuit_mesh.num_circuits());
+        assert_eq!(log2_circuits, self.circuit_mesh.log2_circuits());
 
         Ok(Application {
             circuit_mesh: self.circuit_mesh.finalize(params.circuit_poseidon())?,

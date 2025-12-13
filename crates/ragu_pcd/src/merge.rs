@@ -10,7 +10,10 @@ use rand::Rng;
 
 use crate::{
     Application,
-    components::fold_revdot::{self, ErrorTermsLen},
+    components::{
+        fold_revdot::{self, ErrorTermsLen},
+        root_of_unity::Log2Circuits,
+    },
     internal_circuits::{self, NUM_NATIVE_REVDOT_CLAIMS, stages, unified},
     proof::{
         ApplicationProof, EvalProof, FProof, InternalCircuits, Pcd, PreambleProof, Proof,
@@ -44,6 +47,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         left: Pcd<'source, C, R, S::Left>,
         right: Pcd<'source, C, R, S::Right>,
     ) -> Result<(Proof<C, R>, S::Aux<'source>)> {
+        let log2_circuits = Log2Circuits::new(crate::circuit_counts(self.num_application_steps).1);
+
         let host_generators = self.params.host_generators();
         let nested_generators = self.params.nested_generators();
 
@@ -52,7 +57,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Compute native preamble
         let native_preamble_rx =
-            stages::native::preamble::Stage::<C, R, HEADER_SIZE>::rx(&preamble_witness)?;
+            stages::native::preamble::Stage::<C, R, HEADER_SIZE>::new(log2_circuits)
+                .rx_configured(&preamble_witness)?;
         let native_preamble_blind = C::CircuitField::random(&mut *rng);
         let native_preamble_commitment =
             native_preamble_rx.commit(host_generators, native_preamble_blind);
@@ -194,6 +200,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let (c_rx, _) =
             internal_circuits::c::Circuit::<C, R, HEADER_SIZE, NUM_NATIVE_REVDOT_CLAIMS>::new(
                 self.params,
+                log2_circuits,
             )
             .rx::<R>(
                 internal_circuits::c::Witness {
@@ -209,6 +216,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let (v_rx, _) =
             internal_circuits::v::Circuit::<C, R, HEADER_SIZE, NUM_NATIVE_REVDOT_CLAIMS>::new(
                 self.params,
+                log2_circuits,
             )
             .rx::<R>(
                 internal_circuits::v::Witness {

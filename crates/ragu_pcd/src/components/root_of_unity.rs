@@ -1,25 +1,71 @@
-use ragu_core::{Result, drivers::Driver};
-use ragu_primitives::Element;
+use ragu_core::{
+    Result,
+    drivers::{Driver, DriverValue},
+    gadgets::Gadget,
+};
+use ragu_primitives::{
+    Element,
+    raw::{Raw, Stable},
+};
 
-/// Checks that the provided value `omega` is a valid $2^k$ root of unity.
-pub fn enforce_root_of_unity<'dr, D: Driver<'dr>>(
-    dr: &mut D,
-    omega: Element<'dr, D>,
-    k: u32,
-) -> Result<()> {
-    // This works by constraining that `omega`^(2^k) - 1 == 0.
+use core::ops::Deref;
 
-    let mut value = omega;
-    for _ in 0..k {
-        value = value.square(dr)?;
+/// A stable wrapper around the log2 of the circuit domain size.
+///
+/// This type implements [`Stable<u32>`], guaranteeing that all instances
+/// dereference to the same value. This allows it to be used with [`Raw`]
+/// to embed configuration data in gadgets while preserving fungibility.
+#[derive(Clone, Copy)]
+pub struct Log2Circuits(u32);
+
+impl Log2Circuits {
+    /// Create a new Log2Circuits from a raw u32 value.
+    pub fn new(log2: u32) -> Self {
+        Log2Circuits(log2)
     }
+}
 
-    let one = Element::one();
-    let diff = value.sub(dr, &one);
+impl Stable<u32> for Log2Circuits {}
 
-    diff.enforce_zero(dr)?;
+impl Deref for Log2Circuits {
+    type Target = u32;
 
-    Ok(())
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+/// A gadget representing a validated root of unity in a domain.
+///
+/// This gadget wraps an [`Element`] and enforces that ω^(2^k) = 1 during
+/// construction, where k is the log2 of the domain size.
+#[derive(Gadget)]
+pub struct RootOfUnity<'dr, D: Driver<'dr>, S: Stable<u32>> {
+    #[ragu(gadget)]
+    element: Element<'dr, D>,
+    #[ragu(gadget)]
+    log2: Raw<'dr, D, u32, S>,
+}
+
+impl<'dr, D: Driver<'dr>, S: Stable<u32>> RootOfUnity<'dr, D, S> {
+    /// Allocate a root of unity from witness, validating that ω^(2^k) = 1.
+    pub fn alloc(dr: &mut D, omega: DriverValue<D, D::F>, log2_domain_size: S) -> Result<Self> {
+        let element = Element::alloc(dr, omega)?;
+
+        // Enforce that omega^(2^k) = 1 by constraining omega^(2^k) - 1 == 0.
+        let mut value = element.clone();
+        for _ in 0..*log2_domain_size {
+            value = value.square(dr)?;
+        }
+        let one = Element::one();
+        let diff = value.sub(dr, &one);
+        diff.enforce_zero(dr)?;
+
+        Ok(RootOfUnity {
+            element,
+            log2: Raw::new(log2_domain_size),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -28,6 +74,19 @@ mod tests {
     use ff::Field;
     use ragu_pasta::{Fp, fp};
     use ragu_primitives::Simulator;
+
+    /// Test wrapper for k that implements Stable<u32>.
+    #[derive(Copy, Clone)]
+    struct TestK(u32);
+
+    impl Deref for TestK {
+        type Target = u32;
+        fn deref(&self) -> &u32 {
+            &self.0
+        }
+    }
+
+    impl Stable<u32> for TestK {}
 
     // (omega, k, should_pass)
     fn test_cases() -> Vec<(Fp, u32, bool)> {
@@ -84,8 +143,7 @@ mod tests {
     fn test_enforce_root_of_unity() -> Result<()> {
         for (i, (omega, k, should_pass)) in test_cases().into_iter().enumerate() {
             let result = Simulator::simulate(omega, |dr, witness| {
-                let omega = Element::alloc(dr, witness)?;
-                enforce_root_of_unity(dr, omega, k)?;
+                RootOfUnity::alloc(dr, witness, TestK(k))?;
                 Ok(())
             });
 

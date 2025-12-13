@@ -17,7 +17,10 @@ use alloc::{vec, vec::Vec};
 
 use crate::{
     Application,
-    components::fold_revdot::{self, ErrorTermsLen},
+    components::{
+        fold_revdot::{self, ErrorTermsLen},
+        root_of_unity::Log2Circuits,
+    },
     header::Header,
     internal_circuits::{self, NUM_NATIVE_REVDOT_CLAIMS, dummy, stages},
 };
@@ -232,6 +235,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     }
 
     fn try_trivial<RNG: Rng>(&self, rng: &mut RNG) -> Result<Proof<C, R>> {
+        let log2_circuits = Log2Circuits::new(crate::circuit_counts(self.num_application_steps).1);
+
         // Dummy application rx commitment
         let application_rx = dummy::Circuit
             .rx((), self.circuit_mesh.get_key())
@@ -330,7 +335,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         );
 
         let native_preamble_rx =
-            stages::native::preamble::Stage::<C, R, HEADER_SIZE>::rx(&preamble_witness)
+            stages::native::preamble::Stage::<C, R, HEADER_SIZE>::new(log2_circuits)
+                .rx_configured(&preamble_witness)
                 .expect("preamble rx should not fail");
         let native_preamble_blind = C::CircuitField::random(&mut *rng);
         let native_preamble_commitment =
@@ -475,6 +481,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let internal_circuit_c =
             internal_circuits::c::Circuit::<C, R, HEADER_SIZE, NUM_NATIVE_REVDOT_CLAIMS>::new(
                 self.params,
+                log2_circuits,
             );
         let internal_circuit_c_witness = internal_circuits::c::Witness {
             unified_instance: &unified_instance,
@@ -491,6 +498,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let internal_circuit_v =
             internal_circuits::v::Circuit::<C, R, HEADER_SIZE, NUM_NATIVE_REVDOT_CLAIMS>::new(
                 self.params,
+                log2_circuits,
             );
         let internal_circuit_v_witness = internal_circuits::v::Witness {
             unified_instance: &unified_instance,

@@ -17,21 +17,27 @@ use super::stages::native::{
     eval as native_eval, preamble as native_preamble, query as native_query,
 };
 use super::unified::{self, OutputBuilder};
+use crate::components::root_of_unity::Log2Circuits;
 
 pub use crate::internal_circuits::InternalCircuitIndex::VCircuit as CIRCUIT_ID;
 pub use crate::internal_circuits::InternalCircuitIndex::VStaged as STAGED_ID;
 
 pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize> {
     params: &'params C,
+    log2_circuits: Log2Circuits,
     _marker: PhantomData<(C, R)>,
 }
 
 impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize>
     Circuit<'params, C, R, HEADER_SIZE, NUM_REVDOT_CLAIMS>
 {
-    pub fn new(params: &'params C) -> Staged<C::CircuitField, R, Self> {
+    pub fn new(
+        params: &'params C,
+        log2_circuits: Log2Circuits,
+    ) -> Staged<C::CircuitField, R, Self> {
         Staged::new(Circuit {
             params,
+            log2_circuits,
             _marker: PhantomData,
         })
     }
@@ -75,7 +81,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize
     where
         Self: 'dr,
     {
-        let (_, builder) = builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
+        let (_, builder) = builder.configure_stage(
+            native_preamble::Stage::<C, R, HEADER_SIZE>::new(self.log2_circuits),
+        )?;
         let (query, builder) = builder.add_stage::<native_query::Stage<C, R, HEADER_SIZE>>()?;
         let (eval, builder) = builder.add_stage::<native_eval::Stage<C, R, HEADER_SIZE>>()?;
         let dr = builder.finish();

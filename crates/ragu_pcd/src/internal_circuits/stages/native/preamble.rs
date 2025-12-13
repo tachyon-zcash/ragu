@@ -16,6 +16,7 @@ use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use crate::{
+    components::root_of_unity::{Log2Circuits, RootOfUnity},
     header::Header,
     internal_circuits::unified,
     proof::{Pcd, Proof},
@@ -50,7 +51,7 @@ pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize> 
     #[ragu(gadget)]
     pub output_header: HeaderVec<'dr, D, HEADER_SIZE>,
     #[ragu(gadget)]
-    pub circuit_id: Element<'dr, D>,
+    pub circuit_id: RootOfUnity<'dr, D, Log2Circuits>,
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
 }
@@ -59,10 +60,15 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     ProofInputs<'dr, D, C, HEADER_SIZE>
 {
     /// Allocate ProofInputs from a proof reference and pre-computed output header.
+    ///
+    /// This validates that the circuit_id is a valid 2^k root of unity where
+    /// k = *log2_circuits, closing a soundness gap where malicious proofs
+    /// could supply arbitrary invalid circuit selectors.
     pub fn alloc<R: Rank>(
         dr: &mut D,
         proof: DriverValue<D, &Proof<C, R>>,
         output_header: DriverValue<D, &[D::F; HEADER_SIZE]>,
+        log2_circuits: Log2Circuits,
     ) -> Result<Self> {
         fn alloc_header<'dr, D: Driver<'dr>, const N: usize>(
             dr: &mut D,
@@ -83,9 +89,10 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 proof.view().map(|p| p.application.left_header.as_slice()),
             )?,
             output_header: alloc_header(dr, output_header.view().map(|h| h.as_slice()))?,
-            circuit_id: Element::alloc(
+            circuit_id: RootOfUnity::alloc(
                 dr,
                 proof.view().map(|p| p.application.circuit_id.omega_j()),
+                log2_circuits,
             )?,
             unified: unified::Output::alloc_from_proof(dr, proof)?,
         })
@@ -162,9 +169,18 @@ impl<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> Witness<'a, C, R, HEADER_S
     }
 }
 
-#[derive(Default)]
 pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
+    log2_circuits: Log2Circuits,
     _marker: PhantomData<(C, R)>,
+}
+
+impl<C: Cycle, R, const HEADER_SIZE: usize> Stage<C, R, HEADER_SIZE> {
+    pub fn new(log2_circuits: Log2Circuits) -> Self {
+        Stage {
+            log2_circuits,
+            _marker: PhantomData,
+        }
+    }
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
@@ -191,12 +207,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
             dr,
             witness.view().map(|w| w.left),
             witness.view().map(|w| &w.left_output_header),
+            self.log2_circuits,
         )?;
 
         let right = ProofInputs::alloc(
             dr,
             witness.view().map(|w| w.right),
             witness.view().map(|w| &w.right_output_header),
+            self.log2_circuits,
         )?;
 
         Ok(Output { left, right })
