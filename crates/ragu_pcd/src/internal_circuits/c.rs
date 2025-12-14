@@ -9,7 +9,7 @@ use ragu_core::{
     gadgets::GadgetKind,
     maybe::Maybe,
 };
-use ragu_primitives::{Element, vec::CollectFixed};
+use ragu_primitives::{Element, GadgetExt, Sponge, vec::CollectFixed};
 
 use core::marker::PhantomData;
 
@@ -101,18 +101,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize
         let unified_instance = &witness.view().map(|w| w.unified_instance);
         let mut unified_output = OutputBuilder::new();
 
-        // Computation of w
+        // Create transcript sponge for Fiat-Shamir challenge derivation.
+        let mut transcript = Sponge::new(dr, self.params.circuit_poseidon());
+
+        // Derive w = H(nested_preamble_commitment)
         {
             // Grab nested_preamble_commitment from the unified instance
             let nested_preamble_commitment = unified_output
                 .nested_preamble_commitment
                 .get(dr, unified_instance)?;
 
-            let w = crate::components::transcript::derive_w::<_, C>(
-                dr,
-                &nested_preamble_commitment,
-                self.params,
-            )?;
+            nested_preamble_commitment.write(dr, &mut transcript)?;
+            let w = transcript.squeeze(dr)?;
 
             // Use our local w value to impose upon the unified instance
             unified_output.w.set(w);

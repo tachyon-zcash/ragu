@@ -3,14 +3,17 @@ use ff::Field;
 use ragu_circuits::{CircuitExt, polynomials::Rank, staging::StageExt};
 use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{
-    Element,
+    Element, Point,
     vec::{CollectFixed, Len},
 };
 use rand::Rng;
 
 use crate::{
     Application, circuit_counts,
-    components::fold_revdot::{self, ErrorTermsLen},
+    components::{
+        fold_revdot::{self, ErrorTermsLen},
+        transcript::TranscriptEmulator,
+    },
     internal_circuits::{self, NUM_NATIVE_REVDOT_CLAIMS, stages, unified},
     proof::{
         ABProof, ApplicationProof, ErrorProof, EvalProof, FProof, InternalCircuits, Pcd,
@@ -47,6 +50,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let host_generators = self.params.host_generators();
         let nested_generators = self.params.nested_generators();
 
+        // Create a long-lived emulator and transcript for Fiat-Shamir challenge derivation.
+        // All challenges are derived from this single transcript, ensuring proper binding.
+        let mut em = Emulator::execute();
+        let mut transcript = TranscriptEmulator::<_, C>::new(&mut em, self.params);
+
         // Create preamble witness from PCDs.
         let preamble_witness = stages::native::preamble::Witness::from_pcds(&left, &right)?;
 
@@ -74,9 +82,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nested_preamble_commitment =
             nested_preamble_rx.commit(nested_generators, nested_preamble_blind);
 
-        // Compute w = H(nested_preamble_commitment)
-        let w =
-            crate::components::transcript::emulate_w::<C>(nested_preamble_commitment, self.params)?;
+        // Derive w = H(nested_preamble_commitment)
+        let nested_preamble_point = Point::constant(&mut em, nested_preamble_commitment)?;
+        let w = *transcript
+            .derive_w(&mut em, &nested_preamble_point)?
+            .value()
+            .take();
 
         // We compute a nested commitment to s' = m(w, x_i, Y).
         let x0 = left.proof.internal_circuits.x;
@@ -98,11 +109,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_s_prime_rx.commit(nested_generators, nested_s_prime_blind);
 
         // Derive (y, z) = H(w, nested_s_prime_commitment).
-        let (y, z) = crate::components::transcript::emulate_y_z::<C>(
-            w,
-            nested_s_prime_commitment,
-            self.params,
-        )?;
+        let nested_s_prime_point = Point::constant(&mut em, nested_s_prime_commitment)?;
+        let (y_elem, z_elem) = transcript.derive_y_z(&mut em, &nested_s_prime_point)?;
+        let y = *y_elem.value().take();
+        let z = *z_elem.value().take();
 
         // Given (w, y), we can compute m(w, X, y) and commit to it.
         let mesh_wy = self.circuit_mesh.wy(w, y);
@@ -139,10 +149,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nested_error_commitment = nested_error_rx.commit(nested_generators, nested_error_blind);
 
         // Derive (mu, nu) = H(nested_error_commitment)
-        let (mu, nu) = crate::components::transcript::emulate_mu_nu::<C>(
-            nested_error_commitment,
-            self.params,
-        )?;
+        let nested_error_point = Point::constant(&mut em, nested_error_commitment)?;
+        let (mu_elem, nu_elem) = transcript.derive_mu_nu(&mut em, &nested_error_point)?;
+        let mu = *mu_elem.value().take();
+        let nu = *nu_elem.value().take();
 
         // Compute c by running the routine in a wireless emulator
         let c: C::CircuitField =
@@ -189,8 +199,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nested_ab_commitment = nested_ab_rx.commit(nested_generators, nested_ab_blind);
 
         // Derive x = H(nu, nested_ab_commitment).
-        let x =
-            crate::components::transcript::emulate_x::<C>(nu, nested_ab_commitment, self.params)?;
+        let nested_ab_point = Point::constant(&mut em, nested_ab_commitment)?;
+        let x = *transcript
+            .derive_x(&mut em, &nested_ab_point)?
+            .value()
+            .take();
 
         // Compute commitment to mesh polynomial at (x, y).
         let mesh_xy = self.circuit_mesh.xy(x, y);
@@ -225,10 +238,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nested_query_commitment = nested_query_rx.commit(nested_generators, nested_query_blind);
 
         // Derive challenge alpha = H(nested_query_commitment).
-        let alpha = crate::components::transcript::emulate_alpha::<C>(
-            nested_query_commitment,
-            self.params,
-        )?;
+        let nested_query_point = Point::constant(&mut em, nested_query_commitment)?;
+        let alpha = *transcript
+            .derive_alpha(&mut em, &nested_query_point)?
+            .value()
+            .take();
 
         // Compute the F polynomial commitment (stubbed for now).
         let native_f_rx =
@@ -243,8 +257,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nested_f_commitment = nested_f_rx.commit(nested_generators, nested_f_blind);
 
         // Derive u = H(alpha, nested_f_commitment).
-        let u =
-            crate::components::transcript::emulate_u::<C>(alpha, nested_f_commitment, self.params)?;
+        let nested_f_point = Point::constant(&mut em, nested_f_commitment)?;
+        let u = *transcript
+            .derive_u(&mut em, &nested_f_point)?
+            .value()
+            .take();
 
         // Compute eval witness (stubbed for now).
         let eval_witness = internal_circuits::stages::native::eval::Witness {
@@ -265,8 +282,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nested_eval_commitment = nested_eval_rx.commit(nested_generators, nested_eval_blind);
 
         // Derive beta = H(nested_eval_commitment).
-        let beta =
-            crate::components::transcript::emulate_beta::<C>(nested_eval_commitment, self.params)?;
+        let nested_eval_point = Point::constant(&mut em, nested_eval_commitment)?;
+        let beta = *transcript
+            .derive_beta(&mut em, &nested_eval_point)?
+            .value()
+            .take();
 
         // Create the unified instance.
         let unified_instance = &unified::Instance {

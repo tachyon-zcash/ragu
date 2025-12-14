@@ -1,195 +1,113 @@
 //! Transcript routines for computing Fiat-Shamir challenges.
 
 use arithmetic::Cycle;
-use ragu_core::{
-    Result,
-    drivers::{Driver, emulator::Emulator},
-    maybe::Maybe,
-};
+use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::{Element, GadgetExt, Point, Sponge};
 
-/// Computation of w = H(nested_preamble_commitment)
-pub fn derive_w<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
-    dr: &mut D,
-    nested_preamble_commitment: &Point<'dr, D, C::NestedCurve>,
-    params: &'dr C,
-) -> Result<Element<'dr, D>> {
-    let mut sponge = Sponge::new(dr, params.circuit_poseidon());
-    nested_preamble_commitment.write(dr, &mut sponge)?;
-    sponge.squeeze(dr)
+/// A long-lived transcript for Fiat-Shamir challenge derivation.
+pub struct TranscriptEmulator<'dr, D: Driver<'dr>, C: Cycle>
+where
+    D: Driver<'dr, F = C::CircuitField>,
+{
+    sponge: Sponge<'dr, D, C::CircuitPoseidon>,
 }
 
-/// Compute $w$ challenge using the [`Emulator`] for use outside of circuit
-/// contexts.
-pub fn emulate_w<C: Cycle>(
-    nested_preamble_commitment: C::NestedCurve,
-    params: &C,
-) -> Result<C::CircuitField> {
-    Emulator::emulate_wireless(nested_preamble_commitment, |dr, comm| {
-        let point = Point::alloc(dr, comm)?;
-        Ok(*derive_w::<_, C>(dr, &point, params)?.value().take())
-    })
-}
+impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle> TranscriptEmulator<'dr, D, C> {
+    /// Create a new transcript emulator with an initialized sponge.
+    pub fn new(dr: &mut D, params: &'dr C) -> Self {
+        Self {
+            sponge: Sponge::new(dr, params.circuit_poseidon()),
+        }
+    }
 
-/// Computation of (y, z) = H(w, nested_s_prime_commitment)
-pub fn derive_y_z<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
-    dr: &mut D,
-    w: &Element<'dr, D>,
-    nested_s_prime_commitment: &Point<'dr, D, C::NestedCurve>,
-    params: &'dr C,
-) -> Result<(Element<'dr, D>, Element<'dr, D>)> {
-    let mut sponge = Sponge::new(dr, params.circuit_poseidon());
-    sponge.absorb(dr, w)?;
-    nested_s_prime_commitment.write(dr, &mut sponge)?;
-    let y = sponge.squeeze(dr)?;
-    let z = sponge.squeeze(dr)?;
-    Ok((y, z))
-}
+    /// Absorb a point commitment into the transcript.
+    pub fn absorb_point(
+        &mut self,
+        dr: &mut D,
+        point: &Point<'dr, D, C::NestedCurve>,
+    ) -> Result<()> {
+        point.write(dr, &mut self.sponge)
+    }
 
-/// Compute $(y, z)$ challenges using the [`Emulator`] for use outside of circuit
-/// contexts.
-pub fn emulate_y_z<C: Cycle>(
-    w: C::CircuitField,
-    nested_s_prime_commitment: C::NestedCurve,
-    params: &C,
-) -> Result<(C::CircuitField, C::CircuitField)> {
-    Emulator::emulate_wireless((w, nested_s_prime_commitment), |dr, witness| {
-        let (w, comm) = witness.cast();
-        let w_elem = Element::alloc(dr, w)?;
-        let point = Point::alloc(dr, comm)?;
-        let (y, z) = derive_y_z::<_, C>(dr, &w_elem, &point, params)?;
-        Ok((*y.value().take(), *z.value().take()))
-    })
-}
+    /// Squeeze a single challenge from the transcript.
+    pub fn squeeze(&mut self, dr: &mut D) -> Result<Element<'dr, D>> {
+        self.sponge.squeeze(dr)
+    }
 
-/// Computation of alpha = H(nested_query_commitment)
-pub fn derive_alpha<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
-    dr: &mut D,
-    nested_query_commitment: &Point<'dr, D, C::NestedCurve>,
-    params: &'dr C,
-) -> Result<Element<'dr, D>> {
-    let mut sponge = Sponge::new(dr, params.circuit_poseidon());
-    nested_query_commitment.write(dr, &mut sponge)?;
-    sponge.squeeze(dr)
-}
+    /// Squeeze a pair of challenges from the transcript.
+    pub fn squeeze_pair(&mut self, dr: &mut D) -> Result<(Element<'dr, D>, Element<'dr, D>)> {
+        let first = self.sponge.squeeze(dr)?;
+        let second = self.sponge.squeeze(dr)?;
+        Ok((first, second))
+    }
 
-/// Compute $\alpha$ challenge using the [`Emulator`] for use outside of circuit
-/// contexts.
-pub fn emulate_alpha<C: Cycle>(
-    nested_query_commitment: C::NestedCurve,
-    params: &C,
-) -> Result<C::CircuitField> {
-    Emulator::emulate_wireless(nested_query_commitment, |dr, comm| {
-        let point = Point::alloc(dr, comm)?;
-        Ok(*derive_alpha::<_, C>(dr, &point, params)?.value().take())
-    })
-}
+    /// Absorb nested_preamble_commitment and squeeze the w challenge.
+    pub fn derive_w(
+        &mut self,
+        dr: &mut D,
+        nested_preamble_commitment: &Point<'dr, D, C::NestedCurve>,
+    ) -> Result<Element<'dr, D>> {
+        self.absorb_point(dr, nested_preamble_commitment)?;
+        self.squeeze(dr)
+    }
 
-/// Computation of u = H(alpha, nested_f_commitment)
-pub fn derive_u<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
-    dr: &mut D,
-    alpha: &Element<'dr, D>,
-    nested_f_commitment: &Point<'dr, D, C::NestedCurve>,
-    params: &'dr C,
-) -> Result<Element<'dr, D>> {
-    let mut sponge = Sponge::new(dr, params.circuit_poseidon());
-    sponge.absorb(dr, alpha)?;
-    nested_f_commitment.write(dr, &mut sponge)?;
-    sponge.squeeze(dr)
-}
+    /// Absorb nested_s_prime_commitment and squeeze (y, z) challenges.
+    pub fn derive_y_z(
+        &mut self,
+        dr: &mut D,
+        nested_s_prime_commitment: &Point<'dr, D, C::NestedCurve>,
+    ) -> Result<(Element<'dr, D>, Element<'dr, D>)> {
+        self.absorb_point(dr, nested_s_prime_commitment)?;
+        self.squeeze_pair(dr)
+    }
 
-/// Compute $u$ challenge using the [`Emulator`] for use outside of circuit
-/// contexts.
-pub fn emulate_u<C: Cycle>(
-    alpha: C::CircuitField,
-    nested_f_commitment: C::NestedCurve,
-    params: &C,
-) -> Result<C::CircuitField> {
-    Emulator::emulate_wireless((alpha, nested_f_commitment), |dr, witness| {
-        let (alpha, comm) = witness.cast();
-        let alpha_elem = Element::alloc(dr, alpha)?;
-        let point = Point::alloc(dr, comm)?;
-        Ok(*derive_u::<_, C>(dr, &alpha_elem, &point, params)?
-            .value()
-            .take())
-    })
-}
+    /// Absorb nested_error_commitment and squeeze (mu, nu) challenges.
+    pub fn derive_mu_nu(
+        &mut self,
+        dr: &mut D,
+        nested_error_commitment: &Point<'dr, D, C::NestedCurve>,
+    ) -> Result<(Element<'dr, D>, Element<'dr, D>)> {
+        self.absorb_point(dr, nested_error_commitment)?;
+        self.squeeze_pair(dr)
+    }
 
-/// Computation of (mu, nu) = H(nested_error_commitment)
-pub fn derive_mu_nu<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
-    dr: &mut D,
-    nested_error_commitment: &Point<'dr, D, C::NestedCurve>,
-    params: &'dr C,
-) -> Result<(Element<'dr, D>, Element<'dr, D>)> {
-    let mut sponge = Sponge::new(dr, params.circuit_poseidon());
-    nested_error_commitment.write(dr, &mut sponge)?;
-    let mu = sponge.squeeze(dr)?;
-    let nu = sponge.squeeze(dr)?;
-    Ok((mu, nu))
-}
+    /// Absorb nested_ab_commitment and squeeze the x challenge.
+    pub fn derive_x(
+        &mut self,
+        dr: &mut D,
+        nested_ab_commitment: &Point<'dr, D, C::NestedCurve>,
+    ) -> Result<Element<'dr, D>> {
+        self.absorb_point(dr, nested_ab_commitment)?;
+        self.squeeze(dr)
+    }
 
-/// Compute $(mu, nu)$ challenges using the [`Emulator`] for use outside of circuit
-/// contexts.
-pub fn emulate_mu_nu<C: Cycle>(
-    nested_error_commitment: C::NestedCurve,
-    params: &C,
-) -> Result<(C::CircuitField, C::CircuitField)> {
-    Emulator::emulate_wireless(nested_error_commitment, |dr, comm| {
-        let point = Point::alloc(dr, comm)?;
-        let (mu, nu) = derive_mu_nu::<_, C>(dr, &point, params)?;
-        Ok((*mu.value().take(), *nu.value().take()))
-    })
-}
+    /// Absorb nested_query_commitment and squeeze the alpha challenge.
+    pub fn derive_alpha(
+        &mut self,
+        dr: &mut D,
+        nested_query_commitment: &Point<'dr, D, C::NestedCurve>,
+    ) -> Result<Element<'dr, D>> {
+        self.absorb_point(dr, nested_query_commitment)?;
+        self.squeeze(dr)
+    }
 
-/// Computation of x = H(mu, nu, nested_ab_commitment)
-pub fn derive_x<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
-    dr: &mut D,
-    nu: &Element<'dr, D>,
-    nested_ab_commitment: &Point<'dr, D, C::NestedCurve>,
-    params: &'dr C,
-) -> Result<Element<'dr, D>> {
-    let mut sponge = Sponge::new(dr, params.circuit_poseidon());
-    sponge.absorb(dr, nu)?;
-    nested_ab_commitment.write(dr, &mut sponge)?;
-    sponge.squeeze(dr)
-}
+    /// Absorb nested_f_commitment and squeeze the u challenge.
+    pub fn derive_u(
+        &mut self,
+        dr: &mut D,
+        nested_f_commitment: &Point<'dr, D, C::NestedCurve>,
+    ) -> Result<Element<'dr, D>> {
+        self.absorb_point(dr, nested_f_commitment)?;
+        self.squeeze(dr)
+    }
 
-/// Compute $x$ challenge using the [`Emulator`] for use outside of circuit
-/// contexts.
-pub fn emulate_x<C: Cycle>(
-    nu: C::CircuitField,
-    nested_ab_commitment: C::NestedCurve,
-    params: &C,
-) -> Result<C::CircuitField> {
-    Emulator::emulate_wireless((nu, nested_ab_commitment), |dr, witness| {
-        let (nu, comm) = witness.cast();
-        let nu_elem = Element::alloc(dr, nu)?;
-        let point = Point::alloc(dr, comm)?;
-        Ok(*derive_x::<_, C>(dr, &nu_elem, &point, params)?
-            .value()
-            .take())
-    })
-}
-
-/// Computation of beta = H(nested_eval_commitment)
-pub fn derive_beta<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
-    dr: &mut D,
-    nested_eval_commitment: &Point<'dr, D, C::NestedCurve>,
-    params: &'dr C,
-) -> Result<Element<'dr, D>> {
-    let mut sponge = Sponge::new(dr, params.circuit_poseidon());
-    nested_eval_commitment.write(dr, &mut sponge)?;
-    sponge.squeeze(dr)
-}
-
-/// Compute $\beta$ challenge using the [`Emulator`] for use outside of circuit
-/// contexts.
-pub fn emulate_beta<C: Cycle>(
-    nested_eval_commitment: C::NestedCurve,
-    params: &C,
-) -> Result<C::CircuitField> {
-    Emulator::emulate_wireless(nested_eval_commitment, |dr, comm| {
-        let point = Point::alloc(dr, comm)?;
-        Ok(*derive_beta::<_, C>(dr, &point, params)?.value().take())
-    })
+    /// Absorb nested_eval_commitment and squeeze the beta challenge.
+    pub fn derive_beta(
+        &mut self,
+        dr: &mut D,
+        nested_eval_commitment: &Point<'dr, D, C::NestedCurve>,
+    ) -> Result<Element<'dr, D>> {
+        self.absorb_point(dr, nested_eval_commitment)?;
+        self.squeeze(dr)
+    }
 }
