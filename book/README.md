@@ -11,6 +11,7 @@ You can render locally and test using `mdbook serve`. Ensure you have installed 
 * `mdbook v0.4.52`
 * `mdbook-katex v0.9.4`
 * `mdbook-mermaid v0.16.2`
+* `mdbook-admonition v1.20.0`
 * (optional) `mdbookkit v1.1.1` (for `mdbook-rustdoc-link`)
     * This renders links to the Ragu documentation from within the book.
     * Must be enabled by uncommenting `[preprocessor.rustdoc-link] after = ["links"]` in `book.toml`.
