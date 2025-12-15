@@ -17,7 +17,7 @@ use super::{
     stages::native::{error as native_error, preamble as native_preamble},
     unified::{self, OutputBuilder},
 };
-use crate::components::{fold_revdot, root_of_unity::enforce_root_of_unity};
+use crate::components::{fold_revdot, root_of_unity};
 
 pub use crate::internal_circuits::InternalCircuitIndex::ClaimCircuit as CIRCUIT_ID;
 pub use crate::internal_circuits::InternalCircuitIndex::ClaimStaged as STAGED_ID;
@@ -87,12 +87,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize
         let error_output = error_guard.enforced(dr, witness.view().map(|w| w.error_witness))?;
 
         // Check that circuit IDs are valid domain elements.
-        enforce_root_of_unity(
+        root_of_unity::enforce(
             dr,
             preamble_output.left.circuit_id.clone(),
             self.log2_circuits,
         )?;
-        enforce_root_of_unity(
+        root_of_unity::enforce(
             dr,
             preamble_output.right.circuit_id.clone(),
             self.log2_circuits,
