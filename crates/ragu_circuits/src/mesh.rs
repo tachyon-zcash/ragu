@@ -182,6 +182,20 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
         )
     }
 
+    /// Evaluate the mesh polynomial unrestricted at $X$ using ell2 with
+    /// direct circuit iteration.
+    pub fn wy2(&self, w: F, y: F) -> structured::Polynomial<F, R> {
+        self.w2(
+            w,
+            structured::Polynomial::default,
+            |circuit, circuit_coeff, poly| {
+                let mut tmp = circuit.sy(y, self.key);
+                tmp.scale(circuit_coeff);
+                poly.add_assign(&tmp);
+            },
+        )
+    }
+
     /// Evaluate the mesh polynomial unrestricted at $Y$.
     pub fn wx(&self, w: F, x: F) -> unstructured::Polynomial<F, R> {
         self.w(
@@ -195,6 +209,21 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
         )
     }
 
+    /// Evaluate the mesh polynomial unrestricted at $Y$ using ell2 with
+    /// direct circuit iteration.
+    pub fn wx2(&self, w: F, x: F) -> unstructured::Polynomial<F, R> {
+        self.w2(
+            w,
+            unstructured::Polynomial::default,
+            |circuit, circuit_coeff, poly| {
+                let mut tmp = circuit.sx(x, self.key);
+                tmp.scale(circuit_coeff);
+                poly.add_assign(&tmp);
+            },
+        )
+    }
+
+
     /// Evaluate the mesh polynomial at the provided point.
     pub fn wxy(&self, w: F, x: F, y: F) -> F {
         self.w(
@@ -206,8 +235,21 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
         )
     }
 
+    /// Evaluate the mesh polynomial at the provided point using ell2 with
+    /// direct circuit iteration.
+    pub fn wxy2(&self, w: F, x: F, y: F) -> F {
+        self.w2(
+            w,
+            || F::ZERO,
+            |circuit, circuit_coeff, poly| {
+                *poly += circuit.sxy(x, y, self.key) * circuit_coeff;
+            },
+        )
+    }
+
+
     /// Computes the polynomial restricted at $W$ based on the provided
-    /// closures, using ell with circuit-order iteration.
+    /// closures.
     fn w<T>(
         &self,
         w: F,
@@ -216,6 +258,40 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
     ) -> T {
         // Compute the Lagrange coefficients for the provided `w`.
         let ell = self.domain.ell(w, self.domain.n());
+
+        let mut result = init();
+
+        if let Some(ell) = ell {
+            // The provided `w` was not in the domain, and `ell` are the
+            // coefficients we need to use to separate each (partial) circuit
+            // evaluation.
+            for (j, coeff) in ell.iter().enumerate() {
+                let i = bitreverse(j as u32, self.domain.log2_n()) as usize;
+                if let Some(circuit) = self.circuits.get(i) {
+                    add_poly(&**circuit, *coeff, &mut result);
+                }
+            }
+        } else if let Some(i) = self.omega_lookup.get(&OmegaKey::from(w)) {
+            if let Some(circuit) = self.circuits.get(*i) {
+                add_poly(&**circuit, F::ONE, &mut result);
+            }
+        } else {
+            // In this case, the circuit is not defined and defaults to the zero polynomial.
+        }
+
+        result
+    }
+
+    /// Computes the polynomial restricted at $W$ based on the provided
+    /// closures, using ell2 with circuit-order iteration.
+    fn w2<T>(
+        &self,
+        w: F,
+        init: impl FnOnce() -> T,
+        add_poly: impl Fn(&dyn CircuitObject<F, R>, F, &mut T),
+    ) -> T {
+        // Compute the Lagrange coefficients for the provided `w`.
+        let ell = self.domain.ell2(w, self.domain.n());
 
         let mut result = init();
 
@@ -482,4 +558,96 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_w2_equivalence() -> Result<()> {
+        let poseidon = Pasta::baked().circuit_poseidon();
+
+        // Build a mesh with several circuits
+        let mesh = MeshBuilder::<Fp, TestRank>::new()
+            .register_circuit(SquareCircuit { times: 2 })?
+            .register_circuit(SquareCircuit { times: 5 })?
+            .register_circuit(SquareCircuit { times: 10 })?
+            .register_circuit(SquareCircuit { times: 11 })?
+            .register_circuit(SquareCircuit { times: 19 })?
+            .finalize(poseidon)?;
+
+        // Test with random points
+        for _ in 0..10 {
+            let w = Fp::random(thread_rng());
+            let x = Fp::random(thread_rng());
+            let y = Fp::random(thread_rng());
+
+            // Test wxy vs wxy2
+            let wxy_result = mesh.wxy(w, x, y);
+            let wxy2_result = mesh.wxy2(w, x, y);
+            assert_eq!(
+                wxy_result, wxy2_result,
+                "wxy and wxy2 produced different results"
+            );
+
+            // Test wy vs wy2 - compare by evaluating at multiple points
+            let wy_result = mesh.wy(w, y);
+            let wy2_result = mesh.wy2(w, y);
+            for _ in 0..5 {
+                let eval_point = Fp::random(thread_rng());
+                assert_eq!(
+                    wy_result.eval(eval_point),
+                    wy2_result.eval(eval_point),
+                    "wy and wy2 produced different results"
+                );
+            }
+
+            // Test wx vs wx2 - compare by evaluating at multiple points
+            let wx_result = mesh.wx(w, x);
+            let wx2_result = mesh.wx2(w, x);
+            for _ in 0..5 {
+                let eval_point = Fp::random(thread_rng());
+                assert_eq!(
+                    wx_result.eval(eval_point),
+                    wx2_result.eval(eval_point),
+                    "wx and wx2 produced different results"
+                );
+            }
+        }
+
+        // Also test with domain points (w = omega^i)
+        let mut w = Fp::ONE;
+        for _ in 0..mesh.domain.n() {
+            let x = Fp::random(thread_rng());
+            let y = Fp::random(thread_rng());
+
+            let wxy_result = mesh.wxy(w, x, y);
+            let wxy2_result = mesh.wxy2(w, x, y);
+            assert_eq!(
+                wxy_result, wxy2_result,
+                "wxy and wxy2 produced different results at domain point"
+            );
+
+            let wy_result = mesh.wy(w, y);
+            let wy2_result = mesh.wy2(w, y);
+            for _ in 0..5 {
+                let eval_point = Fp::random(thread_rng());
+                assert_eq!(
+                    wy_result.eval(eval_point),
+                    wy2_result.eval(eval_point),
+                    "wy and wy2 produced different results at domain point"
+                );
+            }
+
+            let wx_result = mesh.wx(w, x);
+            let wx2_result = mesh.wx2(w, x);
+            for _ in 0..5 {
+                let eval_point = Fp::random(thread_rng());
+                assert_eq!(
+                    wx_result.eval(eval_point),
+                    wx2_result.eval(eval_point),
+                    "wx and wx2 produced different results at domain point"
+                );
+            }
+
+            w *= mesh.domain.omega();
+        }
+
+        Ok(())
+    }
 }
