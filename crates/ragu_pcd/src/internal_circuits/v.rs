@@ -1,3 +1,4 @@
+use crate::components::transcript::TranscriptEmulator;
 use arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::{Rank, txz::Evaluate},
@@ -9,7 +10,6 @@ use ragu_core::{
     gadgets::{Gadget, GadgetKind},
     maybe::Maybe,
 };
-use ragu_primitives::{GadgetExt, Sponge};
 
 use core::marker::PhantomData;
 
@@ -86,27 +86,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize
         let unified_instance = &witness.view().map(|w| w.unified_instance);
         let mut unified_output = OutputBuilder::new();
 
-        // Create transcript sponge for Fiat-Shamir challenge derivation.
-        let mut transcript = Sponge::new(dr, self.params.circuit_poseidon());
-
-        // Advance sponge state.
-        {
-            let nested_preamble_commitment = unified_output
-                .nested_preamble_commitment
-                .get(dr, unified_instance)?;
-            nested_preamble_commitment.write(dr, &mut transcript)?;
-            transcript.squeeze(dr)?;
-        }
+        // Rekey transcript with w from c.rs to continue Fiat-Shamir challenge derivation.
+        let w = unified_output.w.get(dr, unified_instance)?;
+        let mut transcript = TranscriptEmulator::<_, C>::rekey(dr, self.params, &w)?;
 
         // Derive (y, z) = H(w, nested_s_prime_commitment).
         let (y, z) = {
             let nested_s_prime_commitment = unified_output
                 .nested_s_prime_commitment
                 .get(dr, unified_instance)?;
-            nested_s_prime_commitment.write(dr, &mut transcript)?;
-            let y = transcript.squeeze(dr)?;
-            let z = transcript.squeeze(dr)?;
-            (y, z)
+            transcript.derive_y_z(dr, &nested_s_prime_commitment)?
         };
         unified_output.y.set(y);
         unified_output.z.set(z.clone());
@@ -116,10 +105,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize
             let nested_error_commitment = unified_output
                 .nested_error_commitment
                 .get(dr, unified_instance)?;
-            nested_error_commitment.write(dr, &mut transcript)?;
-            let mu = transcript.squeeze(dr)?;
-            let nu = transcript.squeeze(dr)?;
-            (mu, nu)
+            transcript.derive_mu_nu(dr, &nested_error_commitment)?
         };
         unified_output.mu.set(mu);
         unified_output.nu.set(nu.clone());
@@ -129,8 +115,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize
             let nested_ab_commitment = unified_output
                 .nested_ab_commitment
                 .get(dr, unified_instance)?;
-            nested_ab_commitment.write(dr, &mut transcript)?;
-            let x = transcript.squeeze(dr)?;
+            let x = transcript.derive_x(dr, &nested_ab_commitment)?;
             x.enforce_equal(dr, &query.x)?;
             x
         };
@@ -146,8 +131,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize
             let nested_query_commitment = unified_output
                 .nested_query_commitment
                 .get(dr, unified_instance)?;
-            nested_query_commitment.write(dr, &mut transcript)?;
-            transcript.squeeze(dr)?
+            transcript.derive_alpha(dr, &nested_query_commitment)?
         };
         unified_output.alpha.set(alpha);
 
@@ -156,8 +140,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize
             let nested_f_commitment = unified_output
                 .nested_f_commitment
                 .get(dr, unified_instance)?;
-            nested_f_commitment.write(dr, &mut transcript)?;
-            let u = transcript.squeeze(dr)?;
+            let u = transcript.derive_u(dr, &nested_f_commitment)?;
             // Eval stage's u must equal u.
             u.enforce_equal(dr, &eval.u)?;
             u
@@ -169,8 +152,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize
             let nested_eval_commitment = unified_output
                 .nested_eval_commitment
                 .get(dr, unified_instance)?;
-            nested_eval_commitment.write(dr, &mut transcript)?;
-            transcript.squeeze(dr)?
+            transcript.derive_beta(dr, &nested_eval_commitment)?
         };
         unified_output.beta.set(beta);
 

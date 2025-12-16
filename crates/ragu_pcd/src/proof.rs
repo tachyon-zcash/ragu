@@ -571,12 +571,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nested_preamble_commitment =
             nested_preamble_rx.commit(self.params.nested_generators(), nested_preamble_blind);
 
-        // Compute w = H(nested_preamble_commitment)
+        // Derive w = H(nested_preamble_commitment)
         let nested_preamble_point = Point::constant(&mut em, nested_preamble_commitment)?;
         let w = *transcript
             .derive_w(&mut em, &nested_preamble_point)?
             .value()
             .take();
+
+        // Rekey transcript with w for v.rs challenge derivations.
+        // v.rs rekeys with w to continue the transcript without re-deriving from preamble.
+        let w_elem = Element::constant(&mut em, w);
+        let mut transcript = TranscriptEmulator::<_, C>::rekey(&mut em, self.params, &w_elem)?;
 
         // We compute a nested commitment to s' = m(w, x_i, Y).
         let mesh_wx0 = unstructured::Polynomial::new();

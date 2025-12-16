@@ -89,6 +89,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             .value()
             .take();
 
+        // Rekey transcript with w for v.rs challenge derivations.
+        // v.rs rekeys with w to continue the transcript without re-deriving from preamble.
+        let w_elem = Element::constant(&mut em, w);
+        let mut transcript = TranscriptEmulator::<_, C>::rekey(&mut em, self.params, &w_elem)?;
+
         // We compute a nested commitment to s' = m(w, x_i, Y).
         let x0 = left.proof.internal_circuits.x;
         let x1 = right.proof.internal_circuits.x;

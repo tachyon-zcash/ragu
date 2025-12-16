@@ -20,6 +20,17 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle> TranscriptEmulator<'dr,
         }
     }
 
+    /// Create a transcript emulator rekeyed with a digest element.
+    ///
+    /// This is used when continuing a transcript from a previous circuit.
+    /// The digest should be the last squeezed element from the previous circuit's
+    /// transcript (e.g., `w` from c.rs).
+    pub fn rekey(dr: &mut D, params: &'dr C, digest: &Element<'dr, D>) -> Result<Self> {
+        let mut transcript = Self::new(dr, params);
+        transcript.sponge.absorb(dr, digest)?;
+        Ok(transcript)
+    }
+
     /// Absorb a point commitment into the transcript.
     pub fn absorb_point(
         &mut self,
