@@ -8,7 +8,11 @@ use ragu_primitives::{
 
 /// Computes the batched quotient V via Horner-style accumulation:
 ///
+<<<<<<< HEAD
 /// `V = sum_i {alpha^i * (challenge_eval[i] - opening_evals[i]) / (u - query_points[i])}`
+=======
+/// `V = sum_i {alpha^i * (final_evals[i] - intermediate_evals[i]) / (u - eval_points[i])}`
+>>>>>>> 7c958f9 (docs: fmt)
 pub fn compute_v<'dr, D: Driver<'dr>, L: Len>(
     dr: &mut D,
     alpha: &Element<'dr, D>,
