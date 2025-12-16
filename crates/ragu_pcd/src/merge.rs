@@ -1,7 +1,7 @@
 use arithmetic::Cycle;
 use ff::Field;
 use ragu_circuits::{CircuitExt, polynomials::Rank, staging::StageExt};
-use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
+use ragu_core::{Error, Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{
     Element,
     vec::{CollectFixed, FixedVec, Len},
@@ -9,16 +9,21 @@ use ragu_primitives::{
 use rand::Rng;
 
 use alloc::vec;
+use alloc::vec::Vec;
 
 use crate::{
     Application, circuit_counts,
-    components::fold_revdot::{self, ErrorTermsLen, NativeParameters, Parameters},
+    components::{
+        fold_revdot::{self, ErrorTermsLen, NativeParameters, Parameters},
+        ky,
+    },
     internal_circuits::{self, stages, unified},
     proof::{
         ABProof, ApplicationProof, ErrorProof, EvalProof, FProof, InternalCircuits, MeshWyProof,
         MeshXyProof, Pcd, PreambleProof, Proof, QueryProof, SPrimeProof,
     },
     step::{Step, adapter::Adapter},
+    verify::{stub_step::StubStep, stub_unified::StubUnified},
 };
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
@@ -135,6 +140,104 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_s_prime_commitment,
             self.params,
         )?;
+
+        // Compute k(y) for the left and right application circuits.
+        let left_app_ky = {
+            let adapter = Adapter::<C, StubStep<S::Left>, R, HEADER_SIZE>::new(StubStep::new());
+            let left_header = FixedVec::try_from(left.proof.application.left_header.clone())
+                .map_err(|_| Error::MalformedEncoding("left header size".into()))?;
+            let right_header = FixedVec::try_from(left.proof.application.right_header.clone())
+                .map_err(|_| Error::MalformedEncoding("right header size".into()))?;
+            ky::emulate(&adapter, (left_header, right_header, left.data.clone()), y)?
+        };
+
+        let right_app_ky = {
+            let adapter = Adapter::<C, StubStep<S::Right>, R, HEADER_SIZE>::new(StubStep::new());
+            let left_header = FixedVec::try_from(right.proof.application.left_header.clone())
+                .map_err(|_| Error::MalformedEncoding("left header size".into()))?;
+            let right_header = FixedVec::try_from(right.proof.application.right_header.clone())
+                .map_err(|_| Error::MalformedEncoding("right header size".into()))?;
+            ky::emulate(&adapter, (left_header, right_header, right.data.clone()), y)?
+        };
+
+        // Compute k(y) for the left and right unified (C/V) circuits.
+        let left_unified_ky = {
+            let stub = StubUnified::<C>::new();
+            let left_unified_instance = unified::Instance {
+                nested_preamble_commitment: left.proof.preamble.nested_preamble_commitment,
+                w: left.proof.internal_circuits.w,
+                nested_s_prime_commitment: left.proof.s_prime.nested_s_prime_commitment,
+                y: left.proof.internal_circuits.y,
+                z: left.proof.internal_circuits.z,
+                nested_s_doubleprime_commitment: left
+                    .proof
+                    .s_doubleprime
+                    .nested_s_doubleprime_commitment,
+                nested_error_m_commitment: left.proof.error.nested_error_m_commitment,
+                mu: left.proof.internal_circuits.mu,
+                nu: left.proof.internal_circuits.nu,
+                nested_error_n_commitment: left.proof.error.nested_error_n_commitment,
+                mu_prime: left.proof.internal_circuits.mu_prime,
+                nu_prime: left.proof.internal_circuits.nu_prime,
+                c: left.proof.internal_circuits.c,
+                nested_ab_commitment: left.proof.ab.nested_ab_commitment,
+                x: left.proof.internal_circuits.x,
+                nested_s_commitment: left.proof.s.nested_s_commitment,
+                nested_query_commitment: left.proof.query.nested_query_commitment,
+                alpha: left.proof.internal_circuits.alpha,
+                nested_f_commitment: left.proof.f.nested_f_commitment,
+                u: left.proof.internal_circuits.u,
+                nested_eval_commitment: left.proof.eval.nested_eval_commitment,
+                beta: left.proof.internal_circuits.beta,
+            };
+            ky::emulate(&stub, &left_unified_instance, y)?
+        };
+
+        let right_unified_ky = {
+            let stub = StubUnified::<C>::new();
+            let right_unified_instance = unified::Instance {
+                nested_preamble_commitment: right.proof.preamble.nested_preamble_commitment,
+                w: right.proof.internal_circuits.w,
+                nested_s_prime_commitment: right.proof.s_prime.nested_s_prime_commitment,
+                y: right.proof.internal_circuits.y,
+                z: right.proof.internal_circuits.z,
+                nested_s_doubleprime_commitment: right
+                    .proof
+                    .s_doubleprime
+                    .nested_s_doubleprime_commitment,
+                nested_error_m_commitment: right.proof.error.nested_error_m_commitment,
+                mu: right.proof.internal_circuits.mu,
+                nu: right.proof.internal_circuits.nu,
+                nested_error_n_commitment: right.proof.error.nested_error_n_commitment,
+                mu_prime: right.proof.internal_circuits.mu_prime,
+                nu_prime: right.proof.internal_circuits.nu_prime,
+                c: right.proof.internal_circuits.c,
+                nested_ab_commitment: right.proof.ab.nested_ab_commitment,
+                x: right.proof.internal_circuits.x,
+                nested_s_commitment: right.proof.s.nested_s_commitment,
+                nested_query_commitment: right.proof.query.nested_query_commitment,
+                alpha: right.proof.internal_circuits.alpha,
+                nested_f_commitment: right.proof.f.nested_f_commitment,
+                u: right.proof.internal_circuits.u,
+                nested_eval_commitment: right.proof.eval.nested_eval_commitment,
+                beta: right.proof.internal_circuits.beta,
+            };
+            ky::emulate(&stub, &right_unified_instance, y)?
+        };
+
+        // Get the accumulated c values from the input PCDs.
+        let left_acc_c = left.proof.internal_circuits.c;
+        let right_acc_c = right.proof.internal_circuits.c;
+
+        // Collect all k(y) values from the left and right PCDs.
+        let _ky_values: Vec<C::CircuitField> = vec![
+            left_unified_ky,
+            left_acc_c,
+            left_app_ky,
+            right_unified_ky,
+            right_acc_c,
+            right_app_ky,
+        ];
 
         // Given (w, y), we can compute m(w, X, y) and commit to it.
         let mesh_wy = self.circuit_mesh.wy(w, y);
