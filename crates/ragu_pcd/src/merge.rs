@@ -9,7 +9,7 @@ use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{
     Element, GadgetExt, Point,
     poseidon::Sponge,
-    vec::{CollectFixed, FixedVec},
+    vec::{CollectFixed, FixedVec, Len},
 };
 use rand::Rng;
 
@@ -17,7 +17,10 @@ use alloc::vec;
 
 use crate::{
     Application, circuit_counts,
-    components::fold_revdot::{self, NativeParameters},
+    components::{
+        batched_quotient,
+        fold_revdot::{self, NativeParameters},
+    },
     internal_circuits::{self, stages, unified},
     proof::{
         ABProof, ApplicationProof, ErrorProof, EvalProof, FProof, InternalCircuits, MeshWyProof,
@@ -114,6 +117,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let saved_sponge_state = sponge
             .save_state(&mut dr)
             .expect("save_state should succeed after absorbing");
+
         // Extract raw field values for the error_n witness
         let sponge_state_elements = saved_sponge_state
             .clone()
@@ -161,6 +165,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             sponge_state_elements,
         )?;
 
+        let error = ErrorProof {
+            native_error_m_rx,
+            native_error_m_blind,
+            native_error_m_commitment,
+            nested_error_m_rx,
+            nested_error_m_blind,
+            nested_error_m_commitment,
+            native_error_n_rx,
+            native_error_n_blind,
+            native_error_n_commitment,
+            nested_error_n_rx,
+            nested_error_n_blind,
+            nested_error_n_commitment,
+        };
+
         // Derive (mu', nu') = H(nested_error_n_commitment).
         Point::constant(&mut dr, nested_error_n_commitment)?.write(&mut dr, &mut sponge)?;
         let mu_prime = *sponge.squeeze(&mut dr)?.value().take();
@@ -193,12 +212,29 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         Point::constant(&mut dr, f.nested_f_commitment)?.write(&mut dr, &mut sponge)?;
         let u = *sponge.squeeze(&mut dr)?.value().take();
 
+        // Compute eval witness (stubbed for now).
+        let eval_witness = internal_circuits::stages::native::eval::Witness {
+            u,
+            evals: internal_circuits::stages::native::eval::Evals::range()
+                .map(|_| C::CircuitField::ZERO)
+                .collect_fixed()?,
+            intermediate_evals: internal_circuits::stages::native::eval::Evals::range()
+                .map(|_| C::CircuitField::ZERO)
+                .collect_fixed()?,
+            final_evals_for_queries: internal_circuits::stages::native::eval::Evals::range()
+                .map(|_| C::CircuitField::ZERO)
+                .collect_fixed()?,
+        };
+
         // Phase 14: Eval.
-        let eval = self.compute_eval(rng)?;
+        let eval = self.compute_eval(rng, &eval_witness)?;
 
         // Derive beta = H(nested_eval_commitment).
         Point::constant(&mut dr, eval.nested_eval_commitment)?.write(&mut dr, &mut sponge)?;
         let beta = *sponge.squeeze(&mut dr)?.value().take();
+
+        // Compute V.
+        let v = self.compute_v(alpha, u, &eval_witness)?;
 
         // Phase 15: Unified instance.
         let unified_instance = &unified::Instance {
@@ -222,6 +258,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             u,
             nested_eval_commitment: eval.nested_eval_commitment,
             beta,
+            v,
         };
 
         // Phase 16: Internal circuits.
@@ -243,6 +280,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             alpha,
             u,
             beta,
+            v,
         )?;
 
         Ok((
@@ -250,20 +288,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 preamble,
                 s_prime,
                 mesh_wy,
-                error: ErrorProof {
-                    native_error_m_rx,
-                    native_error_m_blind,
-                    native_error_m_commitment,
-                    nested_error_m_rx,
-                    nested_error_m_blind,
-                    nested_error_m_commitment,
-                    native_error_n_rx,
-                    native_error_n_blind,
-                    native_error_n_commitment,
-                    nested_error_n_rx,
-                    nested_error_n_blind,
-                    nested_error_n_commitment,
-                },
+                error,
                 ab,
                 mesh_xy,
                 query,
@@ -867,12 +892,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     }
 
     /// Compute the eval proof.
-    fn compute_eval<RNG: Rng>(&self, rng: &mut RNG) -> Result<EvalProof<C, R>> {
-        let eval_witness = internal_circuits::stages::native::eval::Witness {
-            evals: FixedVec::from_fn(|_| C::CircuitField::todo()),
-        };
+    fn compute_eval<RNG: Rng>(
+        &self,
+        rng: &mut RNG,
+        eval_witness: &internal_circuits::stages::native::eval::Witness<C::CircuitField>,
+    ) -> Result<EvalProof<C, R>> {
         let native_eval_rx =
-            internal_circuits::stages::native::eval::Stage::<C, R, HEADER_SIZE>::rx(&eval_witness)?;
+            internal_circuits::stages::native::eval::Stage::<C, R, HEADER_SIZE>::rx(eval_witness)?;
         let native_eval_blind = C::CircuitField::random(&mut *rng);
         let native_eval_commitment =
             native_eval_rx.commit(self.params.host_generators(), native_eval_blind);
@@ -897,6 +923,51 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         })
     }
 
+    /// Compute v, the batched polynomial verification value.
+    fn compute_v(
+        &self,
+        alpha: C::CircuitField,
+        u: C::CircuitField,
+        eval_witness: &internal_circuits::stages::native::eval::Witness<C::CircuitField>,
+    ) -> Result<C::CircuitField> {
+        Emulator::emulate_wireless((alpha, u, eval_witness), |dr, witness| {
+            let (alpha, u, eval_witness) = witness.cast();
+
+            let alpha = Element::alloc(dr, alpha)?;
+            let u = Element::alloc(dr, u)?;
+
+            let evals = internal_circuits::stages::native::eval::Evals::range()
+                .map(|i| Element::alloc(dr, eval_witness.view().map(|ew| ew.evals[i])))
+                .try_collect_fixed()?;
+
+            let intermediate_evals = internal_circuits::stages::native::eval::Evals::range()
+                .map(|i| Element::alloc(dr, eval_witness.view().map(|ew| ew.intermediate_evals[i])))
+                .try_collect_fixed()?;
+
+            let final_evals_for_queries = internal_circuits::stages::native::eval::Evals::range()
+                .map(|i| {
+                    Element::alloc(
+                        dr,
+                        eval_witness.view().map(|ew| ew.final_evals_for_queries[i]),
+                    )
+                })
+                .try_collect_fixed()?;
+
+            Ok(
+                *batched_quotient::compute_v::<_, internal_circuits::stages::native::eval::Evals>(
+                    dr,
+                    &alpha,
+                    &u,
+                    &evals,
+                    &intermediate_evals,
+                    &final_evals_for_queries,
+                )?
+                .value()
+                .take(),
+            )
+        })
+    }
+
     /// Compute internal circuits.
     fn compute_internal_circuits<RNG: Rng>(
         &self,
@@ -917,6 +988,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         alpha: C::CircuitField,
         u: C::CircuitField,
         beta: C::CircuitField,
+        v: C::CircuitField,
     ) -> Result<InternalCircuits<C, R>> {
         // compute_c staged circuit.
         let (c_rx, _) =
@@ -996,6 +1068,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             c_rx,
             c_rx_commitment,
             c_rx_blind,
+            v,
             v_rx,
             v_rx_commitment,
             v_rx_blind,

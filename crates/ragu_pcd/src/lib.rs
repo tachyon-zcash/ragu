@@ -243,10 +243,10 @@ mod constraint_benchmark_tests {
         }
 
         check_constraints!(DummyCircuit,    mul = 1,    lin = 3);
-        check_constraints!(Hashes1Circuit,  mul = 2030, lin = 3192);
-        check_constraints!(Hashes2Circuit,  mul = 1931, lin = 2951);
-        check_constraints!(FoldCircuit,     mul = 1704, lin = 2506);
-        check_constraints!(ComputeCCircuit, mul = 1074, lin = 1229);
-        check_constraints!(ComputeVCircuit, mul = 184,  lin = 247);
+        check_constraints!(Hashes1Circuit,  mul = 2034, lin = 3199);
+        check_constraints!(Hashes2Circuit,  mul = 1933, lin = 2952);
+        check_constraints!(FoldCircuit,     mul = 1706, lin = 2507);
+        check_constraints!(ComputeCCircuit, mul = 1075, lin = 1230);
+        check_constraints!(ComputeVCircuit, mul = 191,  lin = 248);
     }
 }

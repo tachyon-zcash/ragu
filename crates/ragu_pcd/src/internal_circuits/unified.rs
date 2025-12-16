@@ -20,7 +20,7 @@ use crate::{components::suffix::Suffix, proof::Proof};
 pub type InternalOutputKind<C: Cycle> = Kind![C::CircuitField; Suffix<'_, _, Output<'_, _, C>>];
 
 /// The number of wires in an `Output` gadget.
-pub const NUM_WIRES: usize = 28;
+pub const NUM_WIRES: usize = 29;
 
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: Cycle> {
@@ -64,6 +64,8 @@ pub struct Output<'dr, D: Driver<'dr>, C: Cycle> {
     pub nested_eval_commitment: Point<'dr, D, C::NestedCurve>,
     #[ragu(gadget)]
     pub beta: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub v: Element<'dr, D>,
 }
 
 pub struct Instance<C: Cycle> {
@@ -87,6 +89,7 @@ pub struct Instance<C: Cycle> {
     pub u: C::CircuitField,
     pub nested_eval_commitment: C::NestedCurve,
     pub beta: C::CircuitField,
+    pub v: C::CircuitField,
 }
 
 /// An entry in the shared public inputs for an internal circuit.
@@ -145,6 +148,7 @@ pub struct OutputBuilder<'a, 'dr, D: Driver<'dr>, C: Cycle> {
     pub u: Slot<'a, 'dr, D, Element<'dr, D>, C>,
     pub nested_eval_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
     pub beta: Slot<'a, 'dr, D, Element<'dr, D>, C>,
+    pub v: Slot<'a, 'dr, D, Element<'dr, D>, C>,
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle> Output<'dr, D, C> {
@@ -187,6 +191,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle> Output<'dr, D, C> {
         let nested_eval_commitment =
             Point::alloc(dr, proof.view().map(|p| p.eval.nested_eval_commitment))?;
         let beta = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.beta))?;
+        let v = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.v))?;
 
         Ok(Output {
             nested_preamble_commitment,
@@ -209,6 +214,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle> Output<'dr, D, C> {
             u,
             nested_eval_commitment,
             beta,
+            v,
         })
     }
 }
@@ -250,6 +256,7 @@ impl<'a, 'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle> OutputBuilder<'a, '
             u: element_slot!(u),
             nested_eval_commitment: point_slot!(nested_eval_commitment),
             beta: element_slot!(beta),
+            v: element_slot!(v),
         }
     }
 
@@ -292,6 +299,7 @@ impl<'a, 'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle> OutputBuilder<'a, '
             u: self.u.take(dr, instance)?,
             nested_eval_commitment: self.nested_eval_commitment.take(dr, instance)?,
             beta: self.beta.take(dr, instance)?,
+            v: self.v.take(dr, instance)?,
         })
     }
 }

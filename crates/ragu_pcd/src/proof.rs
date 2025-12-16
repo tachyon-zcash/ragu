@@ -59,6 +59,7 @@ pub(crate) struct InternalCircuits<C: Cycle, R: Rank> {
     pub(crate) c_rx: structured::Polynomial<C::CircuitField, R>,
     pub(crate) c_rx_blind: C::CircuitField,
     pub(crate) c_rx_commitment: C::HostCurve,
+    pub(crate) v: C::CircuitField,
     pub(crate) v_rx: structured::Polynomial<C::CircuitField, R>,
     pub(crate) v_rx_blind: C::CircuitField,
     pub(crate) v_rx_commitment: C::HostCurve,
@@ -324,6 +325,7 @@ impl<C: Cycle, R: Rank> Clone for InternalCircuits<C, R> {
             alpha: self.alpha,
             u: self.u,
             beta: self.beta,
+            v: self.v,
         }
     }
 }
@@ -516,6 +518,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 c_rx: dummy_rx.clone(),
                 c_rx_blind: host_blind,
                 c_rx_commitment: dummy_commitment,
+                v: C::CircuitField::ZERO,
                 v_rx: dummy_rx.clone(),
                 v_rx_blind: host_blind,
                 v_rx_commitment: dummy_commitment,
