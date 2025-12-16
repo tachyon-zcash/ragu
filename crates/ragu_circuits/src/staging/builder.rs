@@ -16,7 +16,6 @@ use super::{Stage, StageExt};
 use crate::polynomials::Rank;
 
 /// Builder object for synthesizing a staged circuit witness.
-#[must_use = "StageBuilder must be consumed via `add_stage`, `configure_stage`, or `finish`"]
 pub struct StageBuilder<
     'a,
     'dr,
@@ -89,8 +88,10 @@ impl<'dr, D: Driver<'dr>> FromDriver<'_, 'dr, Emulator<Wireless<D::MaybeKind, D:
 ///
 /// - [`enforced`](Self::enforced) - run witness and enforce constraints
 /// - [`unenforced`](Self::unenforced) - run witness without constraints
-/// - [`skip`](Self::skip) - skip the stage without producing a gadget
-#[must_use = "StageGuard must be consumed via `enforced`, `unenforced`, or `skip`"]
+///
+/// To skip a stage without producing a gadget, use [`StageBuilder::skip_stage`]
+/// instead of `add_stage`.
+#[must_use = "StageGuard must be consumed via `enforced` or `unenforced`"]
 pub struct StageGuard<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R>> {
     stage: S,
     stage_wires: Vec<D::Wire>,
@@ -98,21 +99,6 @@ pub struct StageGuard<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R>> {
 }
 
 impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R> + 'dr> StageGuard<'dr, D, R, S> {
-    /// Explicitly skip this stage without producing a gadget.
-    ///
-    /// The stage wires have already been allocated at the correct positions,
-    /// but no witness computation or constraint enforcement is performed.
-    /// Use this method to make the skip behavior explicit rather than relying
-    /// on implicit drop.
-    ///
-    /// The `_dr` parameter is unused but required for API consistency with
-    /// [`enforced`](Self::enforced) and [`unenforced`](Self::unenforced),
-    /// ensuring `skip` is called after [`StageBuilder::finish`].
-    pub fn skip(self, _dr: &mut D) {
-        // Consumes self, dropping the pre-allocated stage wires.
-        // The wire positions remain reserved in the circuit layout.
-    }
-
     /// Enforce constraints and inject stage wires.
     ///
     /// Runs the stage's witness method on the real driver (enforcing all
@@ -222,6 +208,18 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
         Next: Stage<D::F, R, Parent = Current> + Default + 'dr,
     {
         self.configure_stage(Next::default())
+    }
+
+    /// Skip the next stage without producing a gadget.
+    ///
+    /// This allocates the stage wire positions but does not return a guard,
+    /// so it's used when you need to reserve the wire positions for a stage
+    /// but don't need to compute its witness or produce its output gadget.
+    pub fn skip_stage<Next: Stage<D::F, R, Parent = Current> + Default + 'dr>(
+        self,
+    ) -> Result<StageBuilder<'a, 'dr, D, R, Next, Target>> {
+        let (_, builder) = self.add_stage::<Next>()?;
+        Ok(builder)
     }
 }
 

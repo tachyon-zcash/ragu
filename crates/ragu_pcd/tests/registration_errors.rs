@@ -162,7 +162,7 @@ fn register_steps_success_and_finalize() {
 #[test]
 #[should_panic]
 fn register_steps_out_of_order_should_fail() {
-    let _ = ApplicationBuilder::<Pasta, R<13>, 4>::new()
+    ApplicationBuilder::<Pasta, R<13>, 4>::new()
         .register(Step1)
         .unwrap();
 }
@@ -170,7 +170,7 @@ fn register_steps_out_of_order_should_fail() {
 #[test]
 #[should_panic]
 fn register_steps_duplicate_suffix_should_fail() {
-    let _ = ApplicationBuilder::<Pasta, R<13>, 4>::new()
+    ApplicationBuilder::<Pasta, R<13>, 4>::new()
         .register(Step0)
         .unwrap()
         .register(Step1Dup)

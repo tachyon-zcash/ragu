@@ -42,7 +42,6 @@ pub(crate) fn circuit_counts(num_application_steps: usize) -> (usize, u32) {
 }
 
 /// Builder for an [`Application`] for proof-carrying data.
-#[must_use = "ApplicationBuilder must be consumed via `register` or `finalize`"]
 pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     circuit_mesh: MeshBuilder<'params, C::CircuitField, R>,
     num_application_steps: usize,
