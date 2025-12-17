@@ -84,11 +84,14 @@ impl<'dr, D: Driver<'dr>> FromDriver<'_, 'dr, Emulator<Wireless<D::MaybeKind, D:
 /// Guard type returned by `add_stage` that holds pre-allocated stage wires.
 ///
 /// The stage wires are allocated at the correct positions, but the actual
-/// witness computation is deferred until either [`unenforced`](Self::unenforced)
-/// or [`enforced`](Self::enforced) is called.
+/// witness computation is deferred until one of the consuming methods is called:
 ///
-/// Implicitly, dropping this guard without calling either method effectively "skips"
-/// the stage, where the wire positions are reserved but no gadget is returned.
+/// - [`enforced`](Self::enforced) - run witness and enforce constraints
+/// - [`unenforced`](Self::unenforced) - run witness without constraints
+///
+/// To skip a stage without producing a gadget, use [`StageBuilder::skip_stage`]
+/// instead of `add_stage`.
+#[must_use = "StageGuard must be consumed via `enforced` or `unenforced`"]
 pub struct StageGuard<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R>> {
     stage: S,
     stage_wires: Vec<D::Wire>,
@@ -205,6 +208,18 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
         Next: Stage<D::F, R, Parent = Current> + Default + 'dr,
     {
         self.configure_stage(Next::default())
+    }
+
+    /// Skip the next stage without producing a gadget.
+    ///
+    /// This allocates the stage wire positions but does not return a guard,
+    /// so it's used when you need to reserve the wire positions for a stage
+    /// but don't need to compute its witness or produce its output gadget.
+    pub fn skip_stage<Next: Stage<D::F, R, Parent = Current> + Default + 'dr>(
+        self,
+    ) -> Result<StageBuilder<'a, 'dr, D, R, Next, Target>> {
+        let (_, builder) = self.add_stage::<Next>()?;
+        Ok(builder)
     }
 }
 
