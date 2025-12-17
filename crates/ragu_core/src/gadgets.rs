@@ -229,14 +229,17 @@ pub unsafe trait GadgetKind<F: Field>: core::any::Any {
 /// ```
 ///
 /// This automatically derives [`Gadget`], [`GadgetKind`] and [`Clone`]
-/// implementations for your struct. The fields are annotated with
+/// implementations for your struct. Fields can be annotated to specify their
+/// type:
+/// * Fields without any annotation default to gadget fields, which are
+///   converted using [`GadgetKind::map_gadget`].
 /// * `#[ragu(wire)]` for fields that represent wires in the driver, which are
 ///   converted using [`FromDriver::convert_wire`].
 /// * `#[ragu(value)]` for fields that represent driver-specific values, which
 ///   are converted or cloned using
 ///   [`DriverValue::just`](crate::maybe::Maybe::just).
-/// * `#[ragu(gadget)]` for fields that are themselves gadgets, which are
-///   converted using [`GadgetKind::map_gadget`].
+/// * `#[ragu(gadget)]` can be used to explicitly mark gadget fields, but is
+///   optional since this is the default behavior.
 /// * `#[ragu(phantom)]` for `PhantomData` fields.
 ///
 /// The macro assumes by default that the driver type is `D` and determines the
