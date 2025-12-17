@@ -21,6 +21,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) mesh_xy: MeshXyProof<C, R>,
     pub(crate) query: QueryProof<C, R>,
     pub(crate) f: FProof<C, R>,
+    pub(crate) p: PProof<C, R>,
     pub(crate) eval: EvalProof<C, R>,
     pub(crate) internal_circuits: InternalCircuits<C, R>,
     pub(crate) application: ApplicationProof<C, R>,
@@ -94,14 +95,27 @@ pub(crate) struct QueryProof<C: Cycle, R: Rank> {
 }
 
 /// F polynomial proof with native and nested layer commitments.
+///
+/// The F polynomial is an unstructured polynomial that batches quotient polynomials
+/// `(p(X) - p(a)) / (X - a)` using the alpha challenge.
 pub(crate) struct FProof<C: Cycle, R: Rank> {
-    pub(crate) native_f_rx: structured::Polynomial<C::CircuitField, R>,
+    pub(crate) native_f_rx: unstructured::Polynomial<C::CircuitField, R>,
     pub(crate) native_f_blind: C::CircuitField,
     pub(crate) native_f_commitment: C::HostCurve,
 
     pub(crate) nested_f_rx: structured::Polynomial<C::ScalarField, R>,
     pub(crate) nested_f_blind: C::ScalarField,
     pub(crate) nested_f_commitment: C::NestedCurve,
+}
+
+/// P polynomial proof for accumulation.
+///
+/// The P polynomial batches F with all queried polynomials using the beta challenge.
+/// The expected evaluation `v = P(u)` is checked in the decision procedure.
+pub(crate) struct PProof<C: Cycle, R: Rank> {
+    pub(crate) p: unstructured::Polynomial<C::CircuitField, R>,
+    pub(crate) p_blind: C::CircuitField,
+    pub(crate) p_commitment: C::HostCurve,
 }
 
 /// Evaluation stage proof with native and nested layer commitments.
@@ -191,6 +205,7 @@ impl<C: Cycle, R: Rank> Clone for Proof<C, R> {
             mesh_xy: self.mesh_xy.clone(),
             query: self.query.clone(),
             f: self.f.clone(),
+            p: self.p.clone(),
             eval: self.eval.clone(),
             internal_circuits: self.internal_circuits.clone(),
             application: self.application.clone(),
@@ -356,6 +371,16 @@ impl<C: Cycle, R: Rank> Clone for FProof<C, R> {
     }
 }
 
+impl<C: Cycle, R: Rank> Clone for PProof<C, R> {
+    fn clone(&self) -> Self {
+        PProof {
+            p: self.p.clone(),
+            p_blind: self.p_blind,
+            p_commitment: self.p_commitment,
+        }
+    }
+}
+
 impl<C: Cycle, R: Rank> Clone for EvalProof<C, R> {
     fn clone(&self) -> Self {
         EvalProof {
@@ -495,12 +520,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 nested_query_commitment: nested_g,
             },
             f: FProof {
-                native_f_rx: zero_structured_host.clone(),
+                native_f_rx: zero_unstructured.clone(),
                 native_f_blind: host_blind,
                 native_f_commitment: host_g,
                 nested_f_rx: zero_structured_nested.clone(),
                 nested_f_blind: nested_blind,
                 nested_f_commitment: nested_g,
+            },
+            p: PProof {
+                p: zero_unstructured.clone(),
+                p_blind: host_blind,
+                p_commitment: host_g,
             },
             eval: EvalProof {
                 native_eval_rx: zero_structured_host.clone(),

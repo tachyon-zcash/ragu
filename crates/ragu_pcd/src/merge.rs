@@ -1,4 +1,6 @@
-use arithmetic::{Cycle, PrimeFieldExt};
+use alloc::{boxed::Box, vec::Vec};
+use arithmetic::Cycle;
+use arithmetic::PrimeFieldExt;
 use ff::Field;
 use ragu_circuits::{
     CircuitExt,
@@ -19,12 +21,13 @@ use crate::{
     Application, circuit_counts,
     components::{
         batched_quotient,
+        f_polynomial::{compute_f_polynomial, safe_factor_iter},
         fold_revdot::{self, NativeParameters},
     },
     internal_circuits::{self, stages, unified},
     proof::{
         ABProof, ApplicationProof, ErrorProof, EvalProof, FProof, InternalCircuits, MeshWyProof,
-        MeshXyProof, Pcd, PreambleProof, Proof, QueryProof, SPrimeProof,
+        MeshXyProof, PProof, Pcd, PreambleProof, Proof, QueryProof, SPrimeProof,
     },
     step::{Step, adapter::Adapter},
 };
@@ -209,7 +212,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let alpha = *sponge.squeeze(&mut dr)?.value().take();
 
         // Phase 13: F polynomial.
-        let f = self.compute_f(rng)?;
+        let f = self.compute_f(
+            rng, &left, &right, &ab, &mesh_xy, &mesh_wy, &s_prime, w, x, y, z, alpha,
+        )?;
 
         // Derive u = H(nested_f_commitment).
         Point::constant(&mut dr, f.nested_f_commitment)?.write(&mut dr, &mut sponge)?;
@@ -237,6 +242,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Compute (partial) batched quotient evaluation V.
         let v = self.compute_v(alpha, u, &eval_witness)?;
+
+        // Phase 14: P polynomial.
+        let p = self.compute_p(rng)?;
 
         // Phase 15: Unified instance.
         let unified_instance = &unified::Instance {
@@ -297,6 +305,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 mesh_xy,
                 query,
                 f,
+                p,
                 eval,
                 internal_circuits,
                 application: application_proof,
@@ -867,9 +876,158 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     }
 
     /// Compute the F polynomial proof.
-    fn compute_f<RNG: Rng>(&self, rng: &mut RNG) -> Result<FProof<C, R>> {
-        let native_f_rx =
-            ragu_circuits::polynomials::structured::Polynomial::<C::CircuitField, R>::new();
+    #[allow(clippy::too_many_arguments)]
+    fn compute_f<RNG_: Rng>(
+        &self,
+        rng: &mut RNG_,
+        left: &Proof<C, R>,
+        right: &Proof<C, R>,
+        ab: &ABProof<C, R>,
+        mesh_xy: &MeshXyProof<C, R>,
+        mesh_wy: &MeshWyProof<C, R>,
+        s_prime: &SPrimeProof<C, R>,
+        w: C::CircuitField,
+        x: C::CircuitField,
+        y: C::CircuitField,
+        z: C::CircuitField,
+        alpha: C::CircuitField,
+    ) -> Result<FProof<C, R>> {
+        // Previous x challenges from left and right proofs.
+        let x0 = left.internal_circuits.x;
+        let x1 = right.internal_circuits.x;
+
+        // Extract polynomials from proof components.
+        let a = &ab.a;
+        let b = &ab.b;
+        let mesh_wx0 = &s_prime.mesh_wx0;
+        let mesh_wx1 = &s_prime.mesh_wx1;
+
+        // Compute and commit to the F polynomial which aggregates quotient
+        // polynomials using the alpha challenge.
+        let native_f_rx = {
+            // Collect coefficients from current polynomials.
+            let a_coeffs: Vec<_> = a.iter_coeffs().collect();
+            let b_coeffs: Vec<_> = b.iter_coeffs().collect();
+            let mesh_xy_coeffs: Vec<_> = mesh_xy.mesh_xy.iter_coeffs().collect();
+            let mesh_wx0_coeffs: Vec<_> = mesh_wx0.iter_coeffs().collect();
+            let mesh_wx1_coeffs: Vec<_> = mesh_wx1.iter_coeffs().collect();
+            let mesh_wy_coeffs: Vec<_> = mesh_wy.mesh_wy.iter_coeffs().collect();
+
+            // Collect coefficients from previous proofs' polynomials.
+            let left_s_coeffs: Vec<_> = left.mesh_xy.mesh_xy.iter_coeffs().collect();
+            let right_s_coeffs: Vec<_> = right.mesh_xy.mesh_xy.iter_coeffs().collect();
+            let left_app_rx_coeffs: Vec<_> = left.application.rx.iter_coeffs().collect();
+            let right_app_rx_coeffs: Vec<_> = right.application.rx.iter_coeffs().collect();
+
+            // Collect P polynomial coefficients from previous proofs.
+            let left_p_coeffs: Vec<_> = left.p.p.iter_coeffs().collect();
+            let right_p_coeffs: Vec<_> = right.p.p.iter_coeffs().collect();
+
+            // Compute xz = x * z for dilated polynomial queries.
+            let xz = x * z;
+
+            // Circuit IDs for mesh queries.
+            // Include left and right application circuit IDs plus all internal circuit IDs.
+            let left_circuit_id = left.application.circuit_id.omega_j::<C::CircuitField>();
+            let right_circuit_id = right.application.circuit_id.omega_j::<C::CircuitField>();
+            // All internal circuit IDs.
+            use internal_circuits::InternalCircuitIndex;
+            let circuit_id = |idx: InternalCircuitIndex| {
+                idx.circuit_index(self.num_application_steps)
+                    .omega_j::<C::CircuitField>()
+            };
+
+            // Build query list for F polynomial batching.
+            // Order follows reference: A, B, P polys, S polys, circuit IDs, S', S'', app polys.
+            #[allow(clippy::vec_init_then_push)]
+            let queries: Vec<Box<dyn Iterator<Item = C::CircuitField>>> = {
+                let mut q: Vec<Box<dyn Iterator<Item = C::CircuitField>>> = Vec::new();
+                // Queries 1-2: Folded A and B polynomials at x.
+                q.push(safe_factor_iter(a_coeffs.clone(), x));
+                q.push(safe_factor_iter(b_coeffs.clone(), x));
+                // Queries 3-4: Previous accumulators' P polynomials at their u challenges.
+                q.push(safe_factor_iter(
+                    left_p_coeffs.clone(),
+                    left.internal_circuits.u,
+                ));
+                q.push(safe_factor_iter(
+                    right_p_coeffs.clone(),
+                    right.internal_circuits.u,
+                ));
+                // Queries 5-6: Previous accumulators' s polynomials at w.
+                q.push(safe_factor_iter(left_s_coeffs.clone(), w));
+                q.push(safe_factor_iter(right_s_coeffs.clone(), w));
+                // Queries 7-17: Current S polynomial (mesh_xy) at all circuit IDs.
+                // Application circuit IDs.
+                q.push(safe_factor_iter(mesh_xy_coeffs.clone(), left_circuit_id));
+                q.push(safe_factor_iter(mesh_xy_coeffs.clone(), right_circuit_id));
+                // Internal circuit IDs (all 9 internal circuits).
+                q.push(safe_factor_iter(
+                    mesh_xy_coeffs.clone(),
+                    circuit_id(InternalCircuitIndex::DummyCircuit),
+                ));
+                q.push(safe_factor_iter(
+                    mesh_xy_coeffs.clone(),
+                    circuit_id(InternalCircuitIndex::ComputeCStaged),
+                ));
+                q.push(safe_factor_iter(
+                    mesh_xy_coeffs.clone(),
+                    circuit_id(InternalCircuitIndex::ComputeCCircuit),
+                ));
+                q.push(safe_factor_iter(
+                    mesh_xy_coeffs.clone(),
+                    circuit_id(InternalCircuitIndex::ComputeVStaged),
+                ));
+                q.push(safe_factor_iter(
+                    mesh_xy_coeffs.clone(),
+                    circuit_id(InternalCircuitIndex::ComputeVCircuit),
+                ));
+                q.push(safe_factor_iter(
+                    mesh_xy_coeffs.clone(),
+                    circuit_id(InternalCircuitIndex::ErrorMStage),
+                ));
+                q.push(safe_factor_iter(
+                    mesh_xy_coeffs.clone(),
+                    circuit_id(InternalCircuitIndex::ErrorNStage),
+                ));
+                q.push(safe_factor_iter(
+                    mesh_xy_coeffs.clone(),
+                    circuit_id(InternalCircuitIndex::QueryStage),
+                ));
+                q.push(safe_factor_iter(
+                    mesh_xy_coeffs.clone(),
+                    circuit_id(InternalCircuitIndex::EvalStage),
+                ));
+                // Query 18: Current S polynomial (mesh_xy) at w.
+                q.push(safe_factor_iter(mesh_xy_coeffs.clone(), w));
+                // Queries 19-20: S' polynomials at previous y challenges.
+                q.push(safe_factor_iter(
+                    mesh_wx0_coeffs.clone(),
+                    left.internal_circuits.y,
+                ));
+                q.push(safe_factor_iter(
+                    mesh_wx1_coeffs.clone(),
+                    right.internal_circuits.y,
+                ));
+                // Queries 12-13: S' polynomials at current y challenge.
+                q.push(safe_factor_iter(mesh_wx0_coeffs.clone(), y));
+                q.push(safe_factor_iter(mesh_wx1_coeffs.clone(), y));
+                // Queries 14-16: S'' polynomial at previous x challenges and current x.
+                q.push(safe_factor_iter(mesh_wy_coeffs.clone(), x0));
+                q.push(safe_factor_iter(mesh_wy_coeffs.clone(), x1));
+                q.push(safe_factor_iter(mesh_wy_coeffs.clone(), x));
+                // Queries 17-18: Application rx polynomials at x.
+                q.push(safe_factor_iter(left_app_rx_coeffs.clone(), x));
+                q.push(safe_factor_iter(right_app_rx_coeffs.clone(), x));
+                // Queries 19-20: Application rx polynomials at xz (dilated).
+                q.push(safe_factor_iter(left_app_rx_coeffs, xz));
+                q.push(safe_factor_iter(right_app_rx_coeffs, xz));
+
+                q
+            };
+
+            compute_f_polynomial::<C::CircuitField, R>(queries, alpha)
+        };
         let native_f_blind = C::CircuitField::random(&mut *rng);
         let native_f_commitment = native_f_rx.commit(self.params.host_generators(), native_f_blind);
 
@@ -921,6 +1079,23 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_eval_rx,
             nested_eval_blind,
             nested_eval_commitment,
+        })
+    }
+
+    /// Compute the P polynomial proof.
+    ///
+    /// The P polynomial batches F with all queried polynomials using the beta challenge.
+    fn compute_p<RNG: Rng>(&self, rng: &mut RNG) -> Result<PProof<C, R>> {
+        // TODO: Compute real P polynomial by batching F with all queried polynomials using beta
+        // (Stub with empty P polynomial).
+        let p = ragu_circuits::polynomials::unstructured::Polynomial::<C::CircuitField, R>::new();
+        let p_blind = C::CircuitField::random(&mut *rng);
+        let p_commitment = p.commit(self.params.host_generators(), p_blind);
+
+        Ok(PProof {
+            p,
+            p_blind,
+            p_commitment,
         })
     }
 
