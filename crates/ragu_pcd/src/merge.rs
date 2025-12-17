@@ -169,10 +169,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 nested_s_prime_commitment: left.proof.s_prime.nested_s_prime_commitment,
                 y: left.proof.internal_circuits.y,
                 z: left.proof.internal_circuits.z,
-                nested_s_doubleprime_commitment: left
-                    .proof
-                    .s_doubleprime
-                    .nested_s_doubleprime_commitment,
                 nested_error_m_commitment: left.proof.error.nested_error_m_commitment,
                 mu: left.proof.internal_circuits.mu,
                 nu: left.proof.internal_circuits.nu,
@@ -182,7 +178,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 c: left.proof.internal_circuits.c,
                 nested_ab_commitment: left.proof.ab.nested_ab_commitment,
                 x: left.proof.internal_circuits.x,
-                nested_s_commitment: left.proof.s.nested_s_commitment,
                 nested_query_commitment: left.proof.query.nested_query_commitment,
                 alpha: left.proof.internal_circuits.alpha,
                 nested_f_commitment: left.proof.f.nested_f_commitment,
@@ -201,10 +196,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 nested_s_prime_commitment: right.proof.s_prime.nested_s_prime_commitment,
                 y: right.proof.internal_circuits.y,
                 z: right.proof.internal_circuits.z,
-                nested_s_doubleprime_commitment: right
-                    .proof
-                    .s_doubleprime
-                    .nested_s_doubleprime_commitment,
                 nested_error_m_commitment: right.proof.error.nested_error_m_commitment,
                 mu: right.proof.internal_circuits.mu,
                 nu: right.proof.internal_circuits.nu,
@@ -214,7 +205,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 c: right.proof.internal_circuits.c,
                 nested_ab_commitment: right.proof.ab.nested_ab_commitment,
                 x: right.proof.internal_circuits.x,
-                nested_s_commitment: right.proof.s.nested_s_commitment,
                 nested_query_commitment: right.proof.query.nested_query_commitment,
                 alpha: right.proof.internal_circuits.alpha,
                 nested_f_commitment: right.proof.f.nested_f_commitment,
