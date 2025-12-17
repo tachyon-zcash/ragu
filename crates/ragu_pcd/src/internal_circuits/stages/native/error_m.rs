@@ -11,7 +11,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element, Point,
+    Element,
     vec::{CollectFixed, FixedVec, Len},
 };
 
@@ -27,8 +27,6 @@ use crate::components::fold_revdot::{ErrorTermsLen, Parameters};
 pub struct Witness<C: Cycle, P: Parameters> {
     /// The z challenge derived from hashing w and nested_s_prime_commitment.
     pub z: C::CircuitField,
-    /// The nested s'' commitment point.
-    pub nested_s_doubleprime_commitment: C::NestedCurve,
     /// Error term elements for layer 1.
     /// Outer: N claims, Inner: M²-M error terms per claim.
     pub error_terms: FixedVec<FixedVec<C::CircuitField, ErrorTermsLen<P::M>>, P::N>,
@@ -36,13 +34,10 @@ pub struct Witness<C: Cycle, P: Parameters> {
 
 /// Output gadget for the error_m stage.
 #[derive(Gadget)]
-pub struct Output<'dr, D: Driver<'dr>, C: Cycle, P: Parameters> {
+pub struct Output<'dr, D: Driver<'dr>, P: Parameters> {
     /// The witnessed z challenge element.
     #[ragu(gadget)]
     pub z: Element<'dr, D>,
-    /// The nested s'' commitment point.
-    #[ragu(gadget)]
-    pub nested_s_doubleprime_commitment: Point<'dr, D, C::NestedCurve>,
     /// Error term elements for layer 1.
     /// Outer: N claims, Inner: M²-M error terms per claim.
     #[ragu(gadget)]
@@ -60,13 +55,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, P: Parameters> staging::Stage<
 {
     type Parent = super::preamble::Stage<C, R, HEADER_SIZE>;
     type Witness<'source> = &'source Witness<C, P>;
-    type OutputKind = Kind![C::CircuitField; Output<'_, _, C, P>];
+    type OutputKind = Kind![C::CircuitField; Output<'_, _, P>];
 
     fn values() -> usize {
-        // 1 for z + 2 for S'' + N * (M² - M) error terms
+        // 1 for z + N * (M² - M) error terms
         let error_terms_per_claim = ErrorTermsLen::<P::M>::len();
         let total_error_terms = P::N::len() * error_terms_per_claim;
-        1 + 2 + total_error_terms
+        1 + total_error_terms
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -78,10 +73,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, P: Parameters> staging::Stage<
         Self: 'dr,
     {
         let z = Element::alloc(dr, witness.view().map(|w| w.z))?;
-        let nested_s_doubleprime_commitment = Point::alloc(
-            dr,
-            witness.view().map(|w| w.nested_s_doubleprime_commitment),
-        )?;
 
         // Allocate nested error terms
         let error_terms: FixedVec<FixedVec<Element<'dr, D>, ErrorTermsLen<P::M>>, P::N> =
@@ -95,10 +86,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, P: Parameters> staging::Stage<
                 .into_iter()
                 .collect_fixed()?;
 
-        Ok(Output {
-            z,
-            nested_s_doubleprime_commitment,
-            error_terms,
-        })
+        Ok(Output { z, error_terms })
     }
 }

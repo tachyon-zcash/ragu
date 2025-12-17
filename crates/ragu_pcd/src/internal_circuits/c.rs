@@ -132,11 +132,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, P: Parameters> StagedCircuit<C
         unified_output.y.set(y);
         unified_output.z.set(z);
 
-        // Error_m stage's nested_s_doubleprime_commitment must equal the one in unified output
-        unified_output
-            .nested_s_doubleprime_commitment
-            .set(error_m.nested_s_doubleprime_commitment);
-
         // Compute c, the folded revdot product claim using two-layer reduction.
         {
             // Derive (mu, nu) from nested_error_m_commitment

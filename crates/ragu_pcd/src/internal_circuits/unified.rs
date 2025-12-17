@@ -20,7 +20,7 @@ use crate::{components::suffix::Suffix, proof::Proof};
 pub type InternalOutputKind<C: Cycle> = Kind![C::CircuitField; Suffix<'_, _, Output<'_, _, C>>];
 
 /// The number of wires in an `Output` gadget.
-pub const NUM_WIRES: usize = 32;
+pub const NUM_WIRES: usize = 28;
 
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: Cycle> {
@@ -34,8 +34,6 @@ pub struct Output<'dr, D: Driver<'dr>, C: Cycle> {
     pub y: Element<'dr, D>,
     #[ragu(gadget)]
     pub z: Element<'dr, D>,
-    #[ragu(gadget)]
-    pub nested_s_doubleprime_commitment: Point<'dr, D, C::NestedCurve>,
     #[ragu(gadget)]
     pub nested_error_m_commitment: Point<'dr, D, C::NestedCurve>,
     #[ragu(gadget)]
@@ -54,8 +52,6 @@ pub struct Output<'dr, D: Driver<'dr>, C: Cycle> {
     pub nested_ab_commitment: Point<'dr, D, C::NestedCurve>,
     #[ragu(gadget)]
     pub x: Element<'dr, D>,
-    #[ragu(gadget)]
-    pub nested_s_commitment: Point<'dr, D, C::NestedCurve>,
     #[ragu(gadget)]
     pub nested_query_commitment: Point<'dr, D, C::NestedCurve>,
     #[ragu(gadget)]
@@ -76,7 +72,6 @@ pub struct Instance<C: Cycle> {
     pub nested_s_prime_commitment: C::NestedCurve,
     pub y: C::CircuitField,
     pub z: C::CircuitField,
-    pub nested_s_doubleprime_commitment: C::NestedCurve,
     pub nested_error_m_commitment: C::NestedCurve,
     pub mu: C::CircuitField,
     pub nu: C::CircuitField,
@@ -86,7 +81,6 @@ pub struct Instance<C: Cycle> {
     pub c: C::CircuitField,
     pub nested_ab_commitment: C::NestedCurve,
     pub x: C::CircuitField,
-    pub nested_s_commitment: C::NestedCurve,
     pub nested_query_commitment: C::NestedCurve,
     pub alpha: C::CircuitField,
     pub nested_f_commitment: C::NestedCurve,
@@ -136,7 +130,6 @@ pub struct OutputBuilder<'a, 'dr, D: Driver<'dr>, C: Cycle> {
     pub nested_s_prime_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
     pub y: Slot<'a, 'dr, D, Element<'dr, D>, C>,
     pub z: Slot<'a, 'dr, D, Element<'dr, D>, C>,
-    pub nested_s_doubleprime_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
     pub nested_error_m_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
     pub mu: Slot<'a, 'dr, D, Element<'dr, D>, C>,
     pub nu: Slot<'a, 'dr, D, Element<'dr, D>, C>,
@@ -146,7 +139,6 @@ pub struct OutputBuilder<'a, 'dr, D: Driver<'dr>, C: Cycle> {
     pub c: Slot<'a, 'dr, D, Element<'dr, D>, C>,
     pub nested_ab_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
     pub x: Slot<'a, 'dr, D, Element<'dr, D>, C>,
-    pub nested_s_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
     pub nested_query_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
     pub alpha: Slot<'a, 'dr, D, Element<'dr, D>, C>,
     pub nested_f_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
@@ -175,12 +167,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle> Output<'dr, D, C> {
         )?;
         let y = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.y))?;
         let z = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.z))?;
-        let nested_s_doubleprime_commitment = Point::alloc(
-            dr,
-            proof
-                .view()
-                .map(|p| p.s_doubleprime.nested_s_doubleprime_commitment),
-        )?;
         let nested_error_m_commitment =
             Point::alloc(dr, proof.view().map(|p| p.error.nested_error_m_commitment))?;
         let mu = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.mu))?;
@@ -193,7 +179,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle> Output<'dr, D, C> {
         let nested_ab_commitment =
             Point::alloc(dr, proof.view().map(|p| p.ab.nested_ab_commitment))?;
         let x = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.x))?;
-        let nested_s_commitment = Point::alloc(dr, proof.view().map(|p| p.s.nested_s_commitment))?;
         let nested_query_commitment =
             Point::alloc(dr, proof.view().map(|p| p.query.nested_query_commitment))?;
         let alpha = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.alpha))?;
@@ -209,7 +194,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle> Output<'dr, D, C> {
             nested_s_prime_commitment,
             y,
             z,
-            nested_s_doubleprime_commitment,
             nested_error_m_commitment,
             mu,
             nu,
@@ -219,7 +203,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle> Output<'dr, D, C> {
             c,
             nested_ab_commitment,
             x,
-            nested_s_commitment,
             nested_query_commitment,
             alpha,
             nested_f_commitment,
@@ -252,7 +235,6 @@ impl<'a, 'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle> OutputBuilder<'a, '
             nested_s_prime_commitment: point_slot!(nested_s_prime_commitment),
             y: element_slot!(y),
             z: element_slot!(z),
-            nested_s_doubleprime_commitment: point_slot!(nested_s_doubleprime_commitment),
             nested_error_m_commitment: point_slot!(nested_error_m_commitment),
             mu: element_slot!(mu),
             nu: element_slot!(nu),
@@ -262,7 +244,6 @@ impl<'a, 'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle> OutputBuilder<'a, '
             c: element_slot!(c),
             nested_ab_commitment: point_slot!(nested_ab_commitment),
             x: element_slot!(x),
-            nested_s_commitment: point_slot!(nested_s_commitment),
             nested_query_commitment: point_slot!(nested_query_commitment),
             alpha: element_slot!(alpha),
             nested_f_commitment: point_slot!(nested_f_commitment),
@@ -285,9 +266,6 @@ impl<'a, 'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle> OutputBuilder<'a, '
                 nested_s_prime_commitment: self.nested_s_prime_commitment.take(dr, instance)?,
                 y: self.y.take(dr, instance)?,
                 z: self.z.take(dr, instance)?,
-                nested_s_doubleprime_commitment: self
-                    .nested_s_doubleprime_commitment
-                    .take(dr, instance)?,
                 nested_error_m_commitment: self.nested_error_m_commitment.take(dr, instance)?,
                 mu: self.mu.take(dr, instance)?,
                 nu: self.nu.take(dr, instance)?,
@@ -297,7 +275,6 @@ impl<'a, 'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle> OutputBuilder<'a, '
                 c: self.c.take(dr, instance)?,
                 nested_ab_commitment: self.nested_ab_commitment.take(dr, instance)?,
                 x: self.x.take(dr, instance)?,
-                nested_s_commitment: self.nested_s_commitment.take(dr, instance)?,
                 nested_query_commitment: self.nested_query_commitment.take(dr, instance)?,
                 alpha: self.alpha.take(dr, instance)?,
                 nested_f_commitment: self.nested_f_commitment.take(dr, instance)?,

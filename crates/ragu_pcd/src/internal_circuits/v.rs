@@ -109,11 +109,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, P: Parameters> StagedCircuit<C
 
         unified_output.x.set(x.clone());
 
-        // Query stage's nested_s_commitment must equal the one in unified output.
-        unified_output
-            .nested_s_commitment
-            .set(query.nested_s_commitment);
-
         // Derive alpha challenge.
         let alpha = {
             let nested_query_commitment = unified_output

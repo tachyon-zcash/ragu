@@ -15,8 +15,8 @@ use crate::{
     components::fold_revdot::{self, ErrorTermsLen, NativeParameters, Parameters},
     internal_circuits::{self, stages, unified},
     proof::{
-        ABProof, ApplicationProof, ErrorProof, EvalProof, FProof, InternalCircuits, Pcd,
-        PreambleProof, Proof, QueryProof, SDoublePrimeProof, SPrimeProof, SProof,
+        ABProof, ApplicationProof, ErrorProof, EvalProof, FProof, InternalCircuits, MeshWyProof,
+        MeshXyProof, Pcd, PreambleProof, Proof, QueryProof, SPrimeProof,
     },
     step::{Step, adapter::Adapter},
 };
@@ -142,18 +142,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mesh_wy_blind = C::CircuitField::random(&mut *rng);
         let mesh_wy_commitment = mesh_wy.commit(host_generators, mesh_wy_blind);
 
-        // We compute a nested commitment to S'' = m(w, X, y).
-        let nested_s_doubleprime_rx =
-            stages::nested::s_doubleprime::Stage::<C::HostCurve, R>::rx(mesh_wy_commitment)?;
-        let nested_s_doubleprime_blind = C::ScalarField::random(&mut *rng);
-        let nested_s_doubleprime_commitment =
-            nested_s_doubleprime_rx.commit(nested_generators, nested_s_doubleprime_blind);
-
         // Compute error_m stage (Layer 1: N instances of M-sized reductions).
         // The inclusion of z binds the error stage to the earlier "transcript".
         let error_m_witness = stages::native::error_m::Witness::<C, NativeParameters> {
             z,
-            nested_s_doubleprime_commitment,
             error_terms: <<NativeParameters as Parameters>::N>::range()
                 .map(|_| {
                     ErrorTermsLen::<<NativeParameters as Parameters>::M>::range()
@@ -170,9 +162,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let native_error_m_commitment =
             native_error_m_rx.commit(host_generators, native_error_m_blind);
 
-        // Nested error_m commitment
-        let nested_error_m_rx =
-            stages::nested::error::Stage::<C::HostCurve, R>::rx(native_error_m_commitment)?;
+        // Nested error_m commitment (includes both native_error_m_commitment and mesh_wy_commitment)
+        let nested_error_m_rx = stages::nested::error::Stage::<C::HostCurve, R, 2>::rx(&[
+            native_error_m_commitment,
+            mesh_wy_commitment,
+        ])?;
         let nested_error_m_blind = C::ScalarField::random(&mut *rng);
         let nested_error_m_commitment =
             nested_error_m_rx.commit(nested_generators, nested_error_m_blind);
@@ -201,7 +195,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Nested error_n commitment
         let nested_error_n_rx =
-            stages::nested::error::Stage::<C::HostCurve, R>::rx(native_error_n_commitment)?;
+            stages::nested::error::Stage::<C::HostCurve, R, 1>::rx(&[native_error_n_commitment])?;
         let nested_error_n_blind = C::ScalarField::random(&mut *rng);
         let nested_error_n_commitment =
             nested_error_n_rx.commit(nested_generators, nested_error_n_blind);
@@ -312,14 +306,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mesh_xy_blind = C::CircuitField::random(&mut *rng);
         let mesh_xy_commitment = mesh_xy.commit(host_generators, mesh_xy_blind);
 
-        let nested_s_rx = stages::nested::s::Stage::<C::HostCurve, R>::rx(mesh_xy_commitment)?;
-        let nested_s_blind = C::ScalarField::random(&mut *rng);
-        let nested_s_commitment = nested_s_rx.commit(nested_generators, nested_s_blind);
-
         // Compute query witness (stubbed for now).
         let query_witness = internal_circuits::stages::native::query::Witness {
             x,
-            nested_s_commitment,
             queries: internal_circuits::stages::native::query::Queries::range()
                 .map(|_| C::CircuitField::ZERO)
                 .collect_fixed()?,
@@ -332,10 +321,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let native_query_blind = C::CircuitField::random(&mut *rng);
         let native_query_commitment = native_query_rx.commit(host_generators, native_query_blind);
 
-        let nested_query_rx =
-            internal_circuits::stages::nested::query::Stage::<C::HostCurve, R>::rx(
-                native_query_commitment,
-            )?;
+        // Nested query commitment (includes both native_query_commitment and mesh_xy_commitment)
+        let nested_query_rx = stages::nested::query::Stage::<C::HostCurve, R, 2>::rx(&[
+            native_query_commitment,
+            mesh_xy_commitment,
+        ])?;
         let nested_query_blind = C::ScalarField::random(&mut *rng);
         let nested_query_commitment = nested_query_rx.commit(nested_generators, nested_query_blind);
 
@@ -390,7 +380,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_s_prime_commitment,
             y,
             z,
-            nested_s_doubleprime_commitment,
             nested_error_m_commitment,
             mu,
             nu,
@@ -400,7 +389,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             c,
             nested_ab_commitment,
             x,
-            nested_s_commitment,
             nested_query_commitment,
             alpha,
             nested_f_commitment,
@@ -473,13 +461,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     nested_s_prime_blind,
                     nested_s_prime_commitment,
                 },
-                s_doubleprime: SDoublePrimeProof {
+                mesh_wy: MeshWyProof {
                     mesh_wy,
                     mesh_wy_blind,
                     mesh_wy_commitment,
-                    nested_s_doubleprime_rx,
-                    nested_s_doubleprime_blind,
-                    nested_s_doubleprime_commitment,
                 },
                 error: ErrorProof {
                     native_error_m_rx,
@@ -506,13 +491,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     nested_ab_blind,
                     nested_ab_commitment,
                 },
-                s: SProof {
+                mesh_xy: MeshXyProof {
                     mesh_xy,
                     mesh_xy_blind,
                     mesh_xy_commitment,
-                    nested_s_rx,
-                    nested_s_blind,
-                    nested_s_commitment,
                 },
                 query: QueryProof {
                     native_query_rx,

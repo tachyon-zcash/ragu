@@ -9,7 +9,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element, Point,
+    Element,
     vec::{CollectFixed, FixedVec, Len},
 };
 
@@ -30,21 +30,16 @@ impl Len for Queries {
 pub struct Witness<C: Cycle> {
     /// The x challenge derived from hashing mu and nested_ab_commitment.
     pub x: C::CircuitField,
-    /// The nested s commitment (mesh polynomial at (x, y)).
-    pub nested_s_commitment: C::NestedCurve,
     /// Query elements.
     pub queries: FixedVec<C::CircuitField, Queries>,
 }
 
 /// Output gadget for the query stage.
 #[derive(Gadget)]
-pub struct Output<'dr, D: Driver<'dr>, C: Cycle> {
+pub struct Output<'dr, D: Driver<'dr>> {
     /// The witnessed x challenge element.
     #[ragu(gadget)]
     pub x: Element<'dr, D>,
-    /// The nested s commitment (mesh polynomial at (x, y)).
-    #[ragu(gadget)]
-    pub nested_s_commitment: Point<'dr, D, C::NestedCurve>,
     /// Query elements.
     #[ragu(gadget)]
     pub queries: FixedVec<Element<'dr, D>, Queries>,
@@ -61,11 +56,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
 {
     type Parent = super::preamble::Stage<C, R, HEADER_SIZE>;
     type Witness<'source> = &'source Witness<C>;
-    type OutputKind = Kind![C::CircuitField; Output<'_, _, C>];
+    type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
     fn values() -> usize {
-        // x challenge + nested_s_commitment (2 coords) + queries
-        1 + 2 + Queries::len()
+        // x challenge + queries
+        1 + Queries::len()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -77,14 +72,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
         Self: 'dr,
     {
         let x = Element::alloc(dr, witness.view().map(|w| w.x))?;
-        let nested_s_commitment = Point::alloc(dr, witness.view().map(|w| w.nested_s_commitment))?;
         let queries = Queries::range()
             .map(|i| Element::alloc(dr, witness.view().map(|w| w.queries[i])))
             .try_collect_fixed()?;
-        Ok(Output {
-            x,
-            nested_s_commitment,
-            queries,
-        })
+        Ok(Output { x, queries })
     }
 }
