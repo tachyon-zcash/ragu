@@ -1,7 +1,7 @@
 //! This module provides the [`Application::verify`] method implementation.
 
-mod stub_step;
-mod stub_unified;
+pub(crate) mod stub_step;
+pub(crate) mod stub_unified;
 
 use arithmetic::Cycle;
 use ff::PrimeField;

@@ -1,7 +1,7 @@
 use arithmetic::{Cycle, PrimeFieldExt};
 use ff::Field;
 use ragu_circuits::{CircuitExt, polynomials::Rank, staging::StageExt};
-use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
+use ragu_core::{Error, Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{
     Element, GadgetExt, Point,
     poseidon::Sponge,
@@ -11,13 +11,17 @@ use rand::Rng;
 
 use crate::{
     Application, circuit_counts,
-    components::fold_revdot::{self, NativeParameters},
+    components::{
+        fold_revdot::{self, NativeParameters, Parameters},
+        ky,
+    },
     internal_circuits::{self, stages, unified},
     proof::{
         ABProof, ApplicationProof, ErrorProof, EvalProof, FProof, InternalCircuits, MeshWyProof,
         MeshXyProof, Pcd, PreambleProof, Proof, QueryProof, SPrimeProof,
     },
     step::{Step, adapter::Adapter},
+    verify::{stub_step::StubStep, stub_unified::StubUnified},
 };
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
@@ -143,6 +147,80 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let y = *sponge.squeeze(&mut dr)?.value().take();
         let z = *sponge.squeeze(&mut dr)?.value().take();
 
+        // Compute k(y) for the left and right application circuits.
+        let left_app_ky = {
+            let adapter = Adapter::<C, StubStep<S::Left>, R, HEADER_SIZE>::new(StubStep::new());
+            let left_header = FixedVec::try_from(left.proof.application.left_header.clone())
+                .map_err(|_| Error::MalformedEncoding("left header size".into()))?;
+            let right_header = FixedVec::try_from(left.proof.application.right_header.clone())
+                .map_err(|_| Error::MalformedEncoding("right header size".into()))?;
+            ky::emulate(&adapter, (left_header, right_header, left.data.clone()), y)?
+        };
+
+        let right_app_ky = {
+            let adapter = Adapter::<C, StubStep<S::Right>, R, HEADER_SIZE>::new(StubStep::new());
+            let left_header = FixedVec::try_from(right.proof.application.left_header.clone())
+                .map_err(|_| Error::MalformedEncoding("left header size".into()))?;
+            let right_header = FixedVec::try_from(right.proof.application.right_header.clone())
+                .map_err(|_| Error::MalformedEncoding("right header size".into()))?;
+            ky::emulate(&adapter, (left_header, right_header, right.data.clone()), y)?
+        };
+
+        // Compute k(y) for the left and right unified (C/V) circuits.
+        let left_unified_ky = {
+            let stub = StubUnified::<C>::new();
+            let left_unified_instance = unified::Instance {
+                nested_preamble_commitment: left.proof.preamble.nested_preamble_commitment,
+                w: left.proof.internal_circuits.w,
+                nested_s_prime_commitment: left.proof.s_prime.nested_s_prime_commitment,
+                y: left.proof.internal_circuits.y,
+                z: left.proof.internal_circuits.z,
+                nested_error_m_commitment: left.proof.error.nested_error_m_commitment,
+                mu: left.proof.internal_circuits.mu,
+                nu: left.proof.internal_circuits.nu,
+                nested_error_n_commitment: left.proof.error.nested_error_n_commitment,
+                mu_prime: left.proof.internal_circuits.mu_prime,
+                nu_prime: left.proof.internal_circuits.nu_prime,
+                c: left.proof.internal_circuits.c,
+                nested_ab_commitment: left.proof.ab.nested_ab_commitment,
+                x: left.proof.internal_circuits.x,
+                nested_query_commitment: left.proof.query.nested_query_commitment,
+                alpha: left.proof.internal_circuits.alpha,
+                nested_f_commitment: left.proof.f.nested_f_commitment,
+                u: left.proof.internal_circuits.u,
+                nested_eval_commitment: left.proof.eval.nested_eval_commitment,
+                beta: left.proof.internal_circuits.beta,
+            };
+            ky::emulate(&stub, &left_unified_instance, y)?
+        };
+
+        let right_unified_ky = {
+            let stub = StubUnified::<C>::new();
+            let right_unified_instance = unified::Instance {
+                nested_preamble_commitment: right.proof.preamble.nested_preamble_commitment,
+                w: right.proof.internal_circuits.w,
+                nested_s_prime_commitment: right.proof.s_prime.nested_s_prime_commitment,
+                y: right.proof.internal_circuits.y,
+                z: right.proof.internal_circuits.z,
+                nested_error_m_commitment: right.proof.error.nested_error_m_commitment,
+                mu: right.proof.internal_circuits.mu,
+                nu: right.proof.internal_circuits.nu,
+                nested_error_n_commitment: right.proof.error.nested_error_n_commitment,
+                mu_prime: right.proof.internal_circuits.mu_prime,
+                nu_prime: right.proof.internal_circuits.nu_prime,
+                c: right.proof.internal_circuits.c,
+                nested_ab_commitment: right.proof.ab.nested_ab_commitment,
+                x: right.proof.internal_circuits.x,
+                nested_query_commitment: right.proof.query.nested_query_commitment,
+                alpha: right.proof.internal_circuits.alpha,
+                nested_f_commitment: right.proof.f.nested_f_commitment,
+                u: right.proof.internal_circuits.u,
+                nested_eval_commitment: right.proof.eval.nested_eval_commitment,
+                beta: right.proof.internal_circuits.beta,
+            };
+            ky::emulate(&stub, &right_unified_instance, y)?
+        };
+
         // Given (w, y), we can compute m(w, X, y) and commit to it.
         let mesh_wy = self.circuit_mesh.wy(w, y);
         let mesh_wy_blind = C::CircuitField::random(&mut *rng);
@@ -195,25 +273,45 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mu = *mu.value().take();
         let nu = *sponge.squeeze(&mut dr)?.value().take();
 
+        let ky_values_left = [left_unified_ky, left_app_ky];
+        let ky_values_right = [right_unified_ky, right_app_ky];
+
         // Compute collapsed values (layer 1 folding) now that mu, nu are known.
-        let collapsed =
-            Emulator::emulate_wireless((mu, nu, &error_m_witness.error_terms), |dr, witness| {
-                let (mu, nu, error_terms_m) = witness.cast();
+        let collapsed = Emulator::emulate_wireless(
+            (
+                mu,
+                nu,
+                &error_m_witness.error_terms,
+                &ky_values_left,
+                &ky_values_right,
+            ),
+            |dr, witness| {
+                let (mu, nu, error_terms_m, ky_left, ky_right) = witness.cast();
                 let mu = Element::alloc(dr, mu)?;
                 let nu = Element::alloc(dr, nu)?;
-                // TODO: compute ky_values properly
-                let ky_values = FixedVec::from_fn(|_| Element::todo(dr));
+
+                let ky_values_left: FixedVec<_, <NativeParameters as Parameters>::M> =
+                    FixedVec::try_from_fn(|i| Element::alloc(dr, ky_left.view().map(|k| k[i])))?;
+                let ky_values_right: FixedVec<_, <NativeParameters as Parameters>::M> =
+                    FixedVec::try_from_fn(|i| Element::alloc(dr, ky_right.view().map(|k| k[i])))?;
+
+                let ky_per_instance = [&ky_values_left, &ky_values_right];
 
                 FixedVec::try_from_fn(|i| {
                     let errors = FixedVec::try_from_fn(|j| {
                         Element::alloc(dr, error_terms_m.view().map(|et| et[i][j]))
                     })?;
                     let v = fold_revdot::compute_c_m::<_, NativeParameters>(
-                        dr, &mu, &nu, &errors, &ky_values,
+                        dr,
+                        &mu,
+                        &nu,
+                        &errors,
+                        ky_per_instance[i],
                     )?;
                     Ok(*v.value().take())
                 })
-            })?;
+            },
+        )?;
 
         // Compute error_n stage (Layer 2: Single N-sized reduction).
         let error_n_witness = stages::native::error_n::Witness::<C, NativeParameters> {

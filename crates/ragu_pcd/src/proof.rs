@@ -18,9 +18,13 @@ use alloc::{vec, vec::Vec};
 
 use crate::{
     Application, circuit_counts,
-    components::fold_revdot::{self, NativeParameters},
+    components::{
+        fold_revdot::{self, NativeParameters, Parameters},
+        ky,
+    },
     header::Header,
     internal_circuits::{self, dummy, stages},
+    verify::stub_unified::StubUnified,
 };
 
 /// Represents a recursive proof for the correctness of some computation.
@@ -716,30 +720,81 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mu = *mu.value().take();
         let nu = *sponge.squeeze(&mut dr)?.value().take();
 
+        let app_ky = C::CircuitField::ONE;
+
+        // Compute k(y) values for the layer 1 instances.
+        let dummy_unified_instance = internal_circuits::unified::Instance {
+            nested_preamble_commitment: dummy_proof.preamble.nested_preamble_commitment,
+            w: dummy_proof.internal_circuits.w,
+            nested_s_prime_commitment: dummy_proof.s_prime.nested_s_prime_commitment,
+            y: dummy_proof.internal_circuits.y,
+            z: dummy_proof.internal_circuits.z,
+            nested_error_m_commitment: dummy_proof.error.nested_error_m_commitment,
+            mu: dummy_proof.internal_circuits.mu,
+            nu: dummy_proof.internal_circuits.nu,
+            nested_error_n_commitment: dummy_proof.error.nested_error_n_commitment,
+            mu_prime: dummy_proof.internal_circuits.mu_prime,
+            nu_prime: dummy_proof.internal_circuits.nu_prime,
+            c: dummy_proof.internal_circuits.c,
+            nested_ab_commitment: dummy_proof.ab.nested_ab_commitment,
+            x: dummy_proof.internal_circuits.x,
+            nested_query_commitment: dummy_proof.query.nested_query_commitment,
+            alpha: dummy_proof.internal_circuits.alpha,
+            nested_f_commitment: dummy_proof.f.nested_f_commitment,
+            u: dummy_proof.internal_circuits.u,
+            nested_eval_commitment: dummy_proof.eval.nested_eval_commitment,
+            beta: dummy_proof.internal_circuits.beta,
+        };
+
+        // Compute k(y) for dummy_proof's unified output using the derived y.
+        let unified_ky = {
+            let stub = StubUnified::<C>::new();
+            ky::emulate(&stub, &dummy_unified_instance, y)?
+        };
+
+        let ky_values_trivial = [unified_ky, app_ky];
+
         // Compute collapsed values (layer 1 folding) now that mu, nu are known.
-        let collapsed =
-            Emulator::emulate_wireless((mu, nu, &error_m_witness.error_terms), |dr, witness| {
-                let (mu, nu, error_terms_m) = witness.cast();
+        let collapsed = Emulator::emulate_wireless(
+            (
+                mu,
+                nu,
+                &error_m_witness.error_terms,
+                &ky_values_trivial,
+                &ky_values_trivial,
+            ),
+            |dr, witness| {
+                let (mu, nu, error_terms_m, ky_left, ky_right) = witness.cast();
                 let mu = Element::alloc(dr, mu)?;
                 let nu = Element::alloc(dr, nu)?;
-                // TODO: compute ky_values properly
-                let ky_values = FixedVec::from_fn(|_| Element::todo(dr));
+
+                let ky_values_left: FixedVec<_, <NativeParameters as Parameters>::M> =
+                    FixedVec::try_from_fn(|i| Element::alloc(dr, ky_left.view().map(|k| k[i])))?;
+                let ky_values_right: FixedVec<_, <NativeParameters as Parameters>::M> =
+                    FixedVec::try_from_fn(|i| Element::alloc(dr, ky_right.view().map(|k| k[i])))?;
+
+                let ky_per_instance = [&ky_values_left, &ky_values_right];
 
                 FixedVec::try_from_fn(|i| {
                     let errors = FixedVec::try_from_fn(|j| {
                         Element::alloc(dr, error_terms_m.view().map(|et| et[i][j]))
                     })?;
                     let v = fold_revdot::compute_c_m::<_, NativeParameters>(
-                        dr, &mu, &nu, &errors, &ky_values,
+                        dr,
+                        &mu,
+                        &nu,
+                        &errors,
+                        ky_per_instance[i],
                     )?;
                     Ok(*v.value().take())
                 })
-            })?;
+            },
+        )?;
 
         // Compute error_n stage (Layer 2: Single N-sized reduction)
         let error_n_witness = stages::native::error_n::Witness::<C, NativeParameters> {
-            error_terms: FixedVec::from_fn(|_| C::CircuitField::todo()),
-            collapsed,
+            error_terms: FixedVec::from_fn(|_| C::CircuitField::ZERO),
+            collapsed: collapsed.clone(),
             sponge_state_elements,
         };
         let native_error_n_rx =
@@ -765,27 +820,26 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mu_prime = *sponge.squeeze(&mut dr)?.value().take();
         let nu_prime = *sponge.squeeze(&mut dr)?.value().take();
 
-        // Compute c, the folded revdot product claim (layer 2 only).
-        // Layer 1 was already computed above to produce the collapsed values.
-        let c: C::CircuitField = Emulator::emulate_wireless(
-            (
-                mu_prime,
-                nu_prime,
-                &error_n_witness.error_terms,
-                &error_n_witness.collapsed,
-            ),
+        // Compute c, the folded revdot product claim using two-layer reduction.
+        // Use the pre-computed collapsed values from layer 1.
+        let c = Emulator::emulate_wireless(
+            (mu_prime, nu_prime, &error_n_witness.error_terms, &collapsed),
             |dr, witness| {
-                let (mu_prime, nu_prime, error_terms_n, collapsed) = witness.cast();
+                let (mu_prime, nu_prime, error_terms_n, collapsed_vals) = witness.cast();
 
                 let mu_prime = Element::alloc(dr, mu_prime)?;
                 let nu_prime = Element::alloc(dr, nu_prime)?;
 
+                // Allocate error_n error terms
                 let error_terms_n = FixedVec::try_from_fn(|i| {
                     Element::alloc(dr, error_terms_n.view().map(|et| et[i]))
                 })?;
 
-                let collapsed =
-                    FixedVec::try_from_fn(|i| Element::alloc(dr, collapsed.view().map(|c| c[i])))?;
+                // Allocate collapsed values from layer 1.
+                let collapsed: FixedVec<_, <NativeParameters as Parameters>::N> =
+                    FixedVec::try_from_fn(|i| {
+                        Element::alloc(dr, collapsed_vals.view().map(|cv| cv[i]))
+                    })?;
 
                 // Layer 2: Single N-sized reduction using collapsed as ky_values
                 let c = fold_revdot::compute_c_n::<_, NativeParameters>(
