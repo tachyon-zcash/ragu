@@ -820,8 +820,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mu_prime = *sponge.squeeze(&mut dr)?.value().take();
         let nu_prime = *sponge.squeeze(&mut dr)?.value().take();
 
-        // Compute c, the folded revdot product claim using two-layer reduction.
-        // Use the pre-computed collapsed values from layer 1.
+        // Compute c, the folded revdot product claim (layer 2 only).
+        // Layer 1 was already computed above to produce the collapsed values.
         let c = Emulator::emulate_wireless(
             (mu_prime, nu_prime, &error_n_witness.error_terms, &collapsed),
             |dr, witness| {

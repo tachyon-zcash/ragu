@@ -273,7 +273,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mu = *mu.value().take();
         let nu = *sponge.squeeze(&mut dr)?.value().take();
 
-        let ky_values_left = [left_unified_ky, left_app_ky];
+        let ky_values_left: [<C as Cycle>::CircuitField; 2] = [left_unified_ky, left_app_ky];
         let ky_values_right = [right_unified_ky, right_app_ky];
 
         // Compute collapsed values (layer 1 folding) now that mu, nu are known.
