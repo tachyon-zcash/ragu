@@ -1,4 +1,6 @@
-//! Transcript routines for computing Fiat-Shamir challenges.
+//! Functions to derive deterministic challenges from polynomial commitments via
+//! Poseidon hashing, implementing the Fiat-Shamir transform for the PCD
+//! protocol.
 
 use arithmetic::Cycle;
 use ragu_core::{
@@ -8,7 +10,7 @@ use ragu_core::{
 };
 use ragu_primitives::{Element, GadgetExt, Point, Sponge};
 
-/// Computation of w = H(nested_preamble_commitment)
+/// Computation of $w = H(\\text{nested\\_preamble\\_commitment})$.
 pub fn derive_w<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     dr: &mut D,
     nested_preamble_commitment: &Point<'dr, D, C::NestedCurve>,
@@ -19,7 +21,7 @@ pub fn derive_w<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     sponge.squeeze(dr)
 }
 
-/// Compute $w$ challenge using the [`Emulator`] for use outside of circuit
+/// Computes $w$ challenge using the [`Emulator`] for use outside of circuit
 /// contexts.
 pub fn emulate_w<C: Cycle>(
     nested_preamble_commitment: C::NestedCurve,
@@ -31,7 +33,7 @@ pub fn emulate_w<C: Cycle>(
     })
 }
 
-/// Computation of (y, z) = H(w, nested_s_prime_commitment)
+/// Computation of $(y, z) = H(w, \\text{nested\\_s\\_prime\\_commitment})$.
 pub fn derive_y_z<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     dr: &mut D,
     w: &Element<'dr, D>,
@@ -46,8 +48,8 @@ pub fn derive_y_z<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     Ok((y, z))
 }
 
-/// Compute $(y, z)$ challenges using the [`Emulator`] for use outside of circuit
-/// contexts.
+/// Computes $(y, z)$ challenges using the [`Emulator`] for use outside of
+/// circuit contexts.
 pub fn emulate_y_z<C: Cycle>(
     w: C::CircuitField,
     nested_s_prime_commitment: C::NestedCurve,
@@ -62,7 +64,7 @@ pub fn emulate_y_z<C: Cycle>(
     })
 }
 
-/// Computation of alpha = H(nested_query_commitment)
+/// Computation of $\\alpha = H(\\text{nested\\_query\\_commitment})$.
 pub fn derive_alpha<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     dr: &mut D,
     nested_query_commitment: &Point<'dr, D, C::NestedCurve>,
@@ -73,8 +75,8 @@ pub fn derive_alpha<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     sponge.squeeze(dr)
 }
 
-/// Compute $\alpha$ challenge using the [`Emulator`] for use outside of circuit
-/// contexts.
+/// Computes $\\alpha$ challenge using the [`Emulator`] for use outside of
+/// circuit contexts.
 pub fn emulate_alpha<C: Cycle>(
     nested_query_commitment: C::NestedCurve,
     params: &C,
@@ -85,7 +87,7 @@ pub fn emulate_alpha<C: Cycle>(
     })
 }
 
-/// Computation of u = H(alpha, nested_f_commitment)
+/// Computation of $u = H(\\alpha, \\text{nested\\_f\\_commitment})$.
 pub fn derive_u<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     dr: &mut D,
     alpha: &Element<'dr, D>,
@@ -98,7 +100,7 @@ pub fn derive_u<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     sponge.squeeze(dr)
 }
 
-/// Compute $u$ challenge using the [`Emulator`] for use outside of circuit
+/// Computes $u$ challenge using the [`Emulator`] for use outside of circuit
 /// contexts.
 pub fn emulate_u<C: Cycle>(
     alpha: C::CircuitField,
@@ -115,7 +117,11 @@ pub fn emulate_u<C: Cycle>(
     })
 }
 
-/// Computation of (mu, nu) = H(nested_error_commitment)
+/// Computation of $(\\mu, \\nu) = H(C)$ where $C \in E_p$.
+/// 
+/// This is used to derive $(\mu, \nu)$ from
+/// $\\text{nested\\_error\\_m\\_commitment}$ and $(\mu', \nu')$ from
+/// $\\text{nested\\_error\\_n\\_commitment}$.
 pub fn derive_mu_nu<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     dr: &mut D,
     nested_error_commitment: &Point<'dr, D, C::NestedCurve>,
@@ -128,8 +134,8 @@ pub fn derive_mu_nu<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     Ok((mu, nu))
 }
 
-/// Compute $(mu, nu)$ challenges using the [`Emulator`] for use outside of circuit
-/// contexts.
+/// Computes $(\\mu, \\nu)$ challenges using the [`Emulator`] for use outside of
+/// circuit contexts.
 pub fn emulate_mu_nu<C: Cycle>(
     nested_error_commitment: C::NestedCurve,
     params: &C,
@@ -141,37 +147,37 @@ pub fn emulate_mu_nu<C: Cycle>(
     })
 }
 
-/// Computation of x = H(nu, nested_ab_commitment)
+/// Computation of $x = H(\\nu', \\text{nested\\_ab\\_commitment})$.
 pub fn derive_x<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     dr: &mut D,
-    nu: &Element<'dr, D>,
+    nu_prime: &Element<'dr, D>,
     nested_ab_commitment: &Point<'dr, D, C::NestedCurve>,
     params: &'dr C,
 ) -> Result<Element<'dr, D>> {
     let mut sponge = Sponge::new(dr, params.circuit_poseidon());
-    sponge.absorb(dr, nu)?;
+    sponge.absorb(dr, nu_prime)?;
     nested_ab_commitment.write(dr, &mut sponge)?;
     sponge.squeeze(dr)
 }
 
-/// Compute $x$ challenge using the [`Emulator`] for use outside of circuit
+/// Computes $x$ challenge using the [`Emulator`] for use outside of circuit
 /// contexts.
 pub fn emulate_x<C: Cycle>(
-    nu: C::CircuitField,
+    nu_prime: C::CircuitField,
     nested_ab_commitment: C::NestedCurve,
     params: &C,
 ) -> Result<C::CircuitField> {
-    Emulator::emulate_wireless((nu, nested_ab_commitment), |dr, witness| {
-        let (nu, comm) = witness.cast();
-        let nu_elem = Element::alloc(dr, nu)?;
+    Emulator::emulate_wireless((nu_prime, nested_ab_commitment), |dr, witness| {
+        let (nu_prime, comm) = witness.cast();
+        let nu_prime = Element::alloc(dr, nu_prime)?;
         let point = Point::alloc(dr, comm)?;
-        Ok(*derive_x::<_, C>(dr, &nu_elem, &point, params)?
+        Ok(*derive_x::<_, C>(dr, &nu_prime, &point, params)?
             .value()
             .take())
     })
 }
 
-/// Computation of beta = H(nested_eval_commitment)
+/// Computation of $\\beta = H(\\text{nested\\_eval\\_commitment})$.
 pub fn derive_beta<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     dr: &mut D,
     nested_eval_commitment: &Point<'dr, D, C::NestedCurve>,
@@ -182,7 +188,7 @@ pub fn derive_beta<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     sponge.squeeze(dr)
 }
 
-/// Compute $\beta$ challenge using the [`Emulator`] for use outside of circuit
+/// Computes $\\beta$ challenge using the [`Emulator`] for use outside of circuit
 /// contexts.
 pub fn emulate_beta<C: Cycle>(
     nested_eval_commitment: C::NestedCurve,
