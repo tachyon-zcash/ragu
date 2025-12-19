@@ -1001,7 +1001,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let c_rx_blind = C::CircuitField::random(&mut *rng);
         let c_rx_commitment = c_rx.commit(self.params.host_generators(), c_rx_blind);
 
-        // compute_v staged circuit.
+        // V staged circuit.
         let (v_rx, _) = internal_circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new().rx::<R>(
             internal_circuits::compute_v::Witness {
                 unified_instance,
