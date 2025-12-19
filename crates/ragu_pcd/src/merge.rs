@@ -199,7 +199,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mesh_xy = self.compute_mesh_xy(rng, x, y);
 
         // Phase 12: Query.
-        let query = self.compute_query(rng, mesh_xy.mesh_xy_commitment)?;
+        let query_witness = internal_circuits::stages::native::query::Witness {
+            queries: FixedVec::from_fn(|_| C::CircuitField::todo()),
+        };
+        let query = self.compute_query(rng, mesh_xy.mesh_xy_commitment, &query_witness)?;
 
         // Derive alpha = H(nested_query_commitment).
         Point::constant(&mut dr, query.nested_query_commitment)?.write(&mut dr, &mut sponge)?;
@@ -212,6 +215,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         Point::constant(&mut dr, f.nested_f_commitment)?.write(&mut dr, &mut sponge)?;
         let u = *sponge.squeeze(&mut dr)?.value().take();
 
+        // Phase 14: Eval.
         // Compute eval witness (stubbed for now).
         let eval_witness = internal_circuits::stages::native::eval::Witness {
             u,
@@ -225,8 +229,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 .map(|_| C::CircuitField::ZERO)
                 .collect_fixed()?,
         };
-
-        // Phase 14: Eval.
         let eval = self.compute_eval(rng, &eval_witness)?;
 
         // Derive beta = H(nested_eval_commitment).
@@ -268,6 +270,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             &preamble_witness,
             &error_m_witness,
             &error_n_witness,
+            &query_witness,
+            &eval_witness,
             w,
             y,
             z,
@@ -831,14 +835,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         &self,
         rng: &mut RNG,
         mesh_xy_commitment: C::HostCurve,
+        query_witness: &internal_circuits::stages::native::query::Witness<C>,
     ) -> Result<QueryProof<C, R>> {
-        let query_witness = internal_circuits::stages::native::query::Witness {
-            queries: FixedVec::from_fn(|_| C::CircuitField::todo()),
-        };
-
         let native_query_rx =
             internal_circuits::stages::native::query::Stage::<C, R, HEADER_SIZE>::rx(
-                &query_witness,
+                query_witness,
             )?;
         let native_query_blind = C::CircuitField::random(&mut *rng);
         let native_query_commitment =
@@ -976,6 +977,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         preamble_witness: &stages::native::preamble::Witness<'_, C, R, HEADER_SIZE>,
         error_m_witness: &stages::native::error_m::Witness<C, NativeParameters>,
         error_n_witness: &stages::native::error_n::Witness<C, NativeParameters>,
+        query_witness: &stages::native::query::Witness<C>,
+        eval_witness: &stages::native::eval::Witness<C::CircuitField>,
         w: C::CircuitField,
         y: C::CircuitField,
         z: C::CircuitField,
@@ -1003,9 +1006,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let c_rx_blind = C::CircuitField::random(&mut *rng);
         let c_rx_commitment = c_rx.commit(self.params.host_generators(), c_rx_blind);
 
-        // compute_v staged circuit.
+        // V staged circuit.
         let (v_rx, _) = internal_circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new().rx::<R>(
-            internal_circuits::compute_v::Witness { unified_instance },
+            internal_circuits::compute_v::Witness {
+                unified_instance,
+                query_witness,
+                eval_witness,
+            },
             self.circuit_mesh.get_key(),
         )?;
         let v_rx_blind = C::CircuitField::random(&mut *rng);

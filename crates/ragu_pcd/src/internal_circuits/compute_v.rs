@@ -16,6 +16,7 @@ use super::{
     stages::native::{eval as native_eval, preamble as native_preamble, query as native_query},
     unified::{self, OutputBuilder},
 };
+use crate::components::batched_quotient;
 pub use crate::internal_circuits::InternalCircuitIndex::ComputeVCircuit as CIRCUIT_ID;
 pub use crate::internal_circuits::InternalCircuitIndex::ComputeVStaged as STAGED_ID;
 
@@ -33,6 +34,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Circuit<C, R, HEADER_SIZE> {
 
 pub struct Witness<'a, C: Cycle> {
     pub unified_instance: &'a unified::Instance<C>,
+    pub query_witness: &'a native_query::Witness<C>,
+    pub eval_witness: &'a native_eval::Witness<C::CircuitField>,
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> StagedCircuit<C::CircuitField, R>
@@ -68,15 +71,33 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> StagedCircuit<C::CircuitField,
         Self: 'dr,
     {
         let builder = builder.skip_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
-        let builder = builder.skip_stage::<native_query::Stage<C, R, HEADER_SIZE>>()?;
-        let builder = builder.skip_stage::<native_eval::Stage<C, R, HEADER_SIZE>>()?;
+        let (query, builder) = builder.add_stage::<native_query::Stage<C, R, HEADER_SIZE>>()?;
+        let (eval, builder) = builder.add_stage::<native_eval::Stage<C, R, HEADER_SIZE>>()?;
         let dr = builder.finish();
+
+        let _query = query.enforced(dr, witness.view().map(|w| w.query_witness))?;
+        let eval = eval.enforced(dr, witness.view().map(|w| w.eval_witness))?;
 
         let unified_instance = &witness.view().map(|w| w.unified_instance);
         let mut unified_output = OutputBuilder::new();
 
         let x = unified_output.x.get(dr, unified_instance)?;
         let z = unified_output.z.get(dr, unified_instance)?;
+        let alpha = unified_output.alpha.get(dr, unified_instance)?;
+
+        // Compute V in-circuit via batched quotient.
+        {
+            let v = batched_quotient::compute_v::<_, native_eval::Evals>(
+                dr,
+                &alpha,
+                &eval.u,
+                &eval.evals,
+                &eval.intermediate_evals,
+                &eval.final_evals_for_queries,
+            )?;
+
+            unified_output.v.set(v);
+        }
 
         let _txz = dr.routine(Evaluate::new(R::RANK), (x, z))?;
 

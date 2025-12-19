@@ -120,12 +120,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         };
 
         // compute_v circuit verification with ky.
-        // compute_v skips all stages (preamble, query, eval), so only check v_rx.
-        let v_circuit_valid = verifier.check_internal_circuit(
-            &pcd.proof.internal_circuits.v_rx,
-            internal_circuits::compute_v::CIRCUIT_ID,
-            unified_ky,
-        );
+        // compute_v skips preamble but adds query and eval stages.
+        let v_circuit_valid = {
+            let mut v_combined_rx = pcd.proof.query.native_query_rx.clone();
+            v_combined_rx.add_assign(&pcd.proof.eval.native_eval_rx);
+            v_combined_rx.add_assign(&pcd.proof.internal_circuits.v_rx);
+
+            verifier.check_internal_circuit(
+                &v_combined_rx,
+                internal_circuits::compute_v::CIRCUIT_ID,
+                unified_ky,
+            )
+        };
 
         // Hashes_1 circuit verification with unified_bridge_ky.
         // Hashes_1's final stage is error_n, so combine preamble_rx + error_m_rx + error_n_rx with hashes_1_rx.

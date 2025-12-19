@@ -247,6 +247,6 @@ mod constraint_benchmark_tests {
         check_constraints!(Hashes2Circuit,  mul = 1933, lin = 2952);
         check_constraints!(FoldCircuit,     mul = 1706, lin = 2507);
         check_constraints!(ComputeCCircuit, mul = 1075, lin = 1230);
-        check_constraints!(ComputeVCircuit, mul = 191,  lin = 248);
+        check_constraints!(ComputeVCircuit, mul = 216,  lin = 299);
     }
 }
