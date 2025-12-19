@@ -33,7 +33,7 @@ use io::{Buffer, Write};
 use promotion::Demoted;
 
 pub use boolean::{Boolean, multipack};
-pub use element::{Element, multiadd};
+pub use element::{Element, FieldExt, multiadd};
 pub use endoscalar::Endoscalar;
 pub use lazy::Lazy;
 pub use point::Point;

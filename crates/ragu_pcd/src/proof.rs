@@ -8,7 +8,7 @@ use ragu_circuits::{
 };
 use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{
-    Element, GadgetExt, Point,
+    Element, FieldExt, GadgetExt, Point,
     poseidon::Sponge,
     vec::{CollectFixed, FixedVec},
 };
@@ -671,7 +671,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Compute error_m stage (Layer 1: N instances of M-sized reductions)
         let error_m_witness = stages::native::error_m::Witness::<C, NativeParameters> {
-            error_terms: FixedVec::from_fn(|_| FixedVec::from_fn(|_| C::CircuitField::ZERO)),
+            error_terms: FixedVec::from_fn(|_| FixedVec::from_fn(|_| C::CircuitField::todo())),
         };
         let native_error_m_rx =
             stages::native::error_m::Stage::<C, R, HEADER_SIZE, NativeParameters>::rx(
@@ -718,8 +718,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Compute error_n stage (Layer 2: Single N-sized reduction)
         let error_n_witness = stages::native::error_n::Witness::<C, NativeParameters> {
-            error_terms: FixedVec::from_fn(|_| C::CircuitField::ZERO),
-            collapsed: FixedVec::from_fn(|_| C::CircuitField::ZERO),
+            error_terms: FixedVec::from_fn(|_| C::CircuitField::todo()),
+            collapsed: FixedVec::from_fn(|_| C::CircuitField::todo()),
             sponge_state_elements,
         };
         let native_error_n_rx =
@@ -777,8 +777,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 })?;
 
                 // Layer 1: N instances of M-sized reductions
-                // ky_values stay as zeros for now
-                let ky_values_m = FixedVec::from_fn(|_| Element::zero(dr));
+                // TODO: compute ky_values properly
+                let ky_values_m = FixedVec::from_fn(|_| Element::todo(dr));
 
                 let mut collapsed = vec![];
                 for error_terms_i in error_terms_m.iter() {
@@ -838,7 +838,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Compute query witness (stubbed for now).
         let query_witness = internal_circuits::stages::native::query::Witness {
-            queries: FixedVec::from_fn(|_| C::CircuitField::ZERO),
+            queries: FixedVec::from_fn(|_| C::CircuitField::todo()),
         };
 
         let native_query_rx =
@@ -885,7 +885,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Compute eval witness (stubbed for now).
         let eval_witness = internal_circuits::stages::native::eval::Witness {
-            evals: FixedVec::from_fn(|_| C::CircuitField::ZERO),
+            evals: FixedVec::from_fn(|_| C::CircuitField::todo()),
         };
         let native_eval_rx =
             internal_circuits::stages::native::eval::Stage::<C, R, HEADER_SIZE>::rx(&eval_witness)?;

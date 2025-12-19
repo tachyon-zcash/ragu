@@ -119,7 +119,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, P: Parameters> StagedCircuit<C
         let nu = unified_output.nu.get(dr, unified_instance)?;
 
         // TODO: Compute ky values properly based on the preamble
-        let ky_values = FixedVec::from_fn(|_| Element::zero(dr));
+        let ky_values = FixedVec::from_fn(|_| Element::todo(dr));
 
         for (i, error_terms) in error_m.error_terms.iter().enumerate() {
             fold_revdot::compute_c_m::<_, P>(dr, &mu, &nu, error_terms, &ky_values)?
