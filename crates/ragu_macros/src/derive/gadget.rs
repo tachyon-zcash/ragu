@@ -132,10 +132,14 @@ pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenS
                     (false, false, false, true) => {
                         res.push((fid, FieldType::Phantom));
                     }
+                    (false, false, false, false) => {
+                        // Default to gadget when no annotation is present
+                        res.push((fid, FieldType::Gadget));
+                    }
                     _ => {
                         return Err(Error::new(
                             fid.span(),
-                            "field attributes must be one of: #[ragu(value)], #[ragu(wire)], #[ragu(gadget)], or #[ragu(phantom)]",
+                            "field cannot have multiple annotations; use only one of: #[ragu(value)], #[ragu(wire)], #[ragu(gadget)], or #[ragu(phantom)]",
                         ));
                     }
                 }
@@ -529,4 +533,43 @@ fn test_gadget_derive() {
 
         ).to_string()
     );
+}
+
+#[rustfmt::skip]
+#[test]
+fn test_gadget_derive_default_gadget() {
+    use syn::parse_quote;
+
+    // Test that gadget fields are assumed by default (no annotation needed)
+    let input: DeriveInput = parse_quote! {
+        #[derive(Gadget)]
+        pub struct CompositeGadget<'mydr, #[ragu(driver)] MyD: Driver<'mydr>> {
+            // No annotation: should default to gadget
+            field_a: SomeGadget<'mydr, MyD>,
+            // Explicit annotation still works
+            #[ragu(gadget)]
+            field_b: AnotherGadget<'mydr, MyD>,
+            // Wire and value still need explicit annotations
+            #[ragu(wire)]
+            wire_field: MyD::W,
+            #[ragu(value)]
+            value_field: DriverValue<MyD, bool>,
+        }
+    };
+
+    let result = derive(input, RaguCorePath::default()).unwrap();
+
+    // Verify both field_a (no annotation) and field_b (explicit annotation) are treated as gadgets
+    let result_str = result.to_string();
+
+    // Both should call Gadget::map
+    assert!(result_str.contains("Gadget :: map (& this . field_a"));
+    assert!(result_str.contains("Gadget :: map (& this . field_b"));
+
+    // Both should call Gadget::enforce_equal
+    assert!(result_str.contains("Gadget :: enforce_equal (& a . field_a"));
+    assert!(result_str.contains("Gadget :: enforce_equal (& a . field_b"));
+
+    // Wire should use Driver::enforce_equal
+    assert!(result_str.contains("Driver :: enforce_equal (dr , & a . wire_field"));
 }

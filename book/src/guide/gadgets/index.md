@@ -98,13 +98,18 @@ pub struct Boolean<'dr, D: Driver<'dr>> {
 }
 ```
 
-where `#[ragu(...)]` annotations are used on fields to indicate whether the
-field is a `wire`, a `value` (witness data), a `gadget`, or a `phantom` ([marker
-type](core::marker::PhantomData)). The procedural macro provided by Ragu will
-automatically implement `Gadget` and `GadgetKind` as necessary.
+The `#[derive(Gadget)]` macro uses `#[ragu(...)]` annotations to identify field
+types:
+
+* **`#[ragu(wire)]`** - for raw wires of type `D::Wire`
+* **`#[ragu(value)]`** - for witness data of type `DriverValue<D, T>`
+* **`#[ragu(phantom)]`** - for marker types like `PhantomData`
+* **`#[ragu(gadget)]`** - for fields that are themselves gadgets _(optional)_
+
+**Fields without any annotation default to gadget fields.** You only need explicit annotations when mixing gadgets with wires, values, or phantom types. If you mistakenly omit an annotation on a wire or value field, the compiler will produce a helpful error because those types don't implement `Gadget`.
 
 [boolean-gadget]: ragu_primitives::Boolean
-[spongestate-gadget]: ragu_primitives::SpongeState
+[spongestate-gadget]: ragu_primitives::poseidon::SpongeState
 [fixedvec-gadget]: ragu_primitives::vec::FixedVec
 [len-trait]: ragu_primitives::vec::Len
 [element-gadget]: ragu_primitives::Element

@@ -139,6 +139,7 @@ mod tests {
 
             assert_eq!(dr.num_allocations(), 0);
             assert_eq!(dr.num_multiplications(), 76);
+            assert_eq!(dr.num_linear_constraints(), 152);
 
             Ok(())
         })?;

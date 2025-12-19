@@ -21,7 +21,7 @@ mod foreign;
 pub mod io;
 mod lazy;
 mod point;
-mod poseidon;
+pub mod poseidon;
 pub mod promotion;
 mod simulator;
 mod util;
@@ -37,7 +37,6 @@ pub use element::{Element, multiadd};
 pub use endoscalar::Endoscalar;
 pub use lazy::Lazy;
 pub use point::Point;
-pub use poseidon::Sponge;
 pub use simulator::Simulator;
 
 /// Primitive extension trait for all gadgets.

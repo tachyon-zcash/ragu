@@ -2,11 +2,7 @@ use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::Element;
 
 /// Checks that the provided value `omega` is a valid $2^k$ root of unity.
-pub fn enforce_root_of_unity<'dr, D: Driver<'dr>>(
-    dr: &mut D,
-    omega: Element<'dr, D>,
-    k: u32,
-) -> Result<()> {
+pub fn enforce<'dr, D: Driver<'dr>>(dr: &mut D, omega: Element<'dr, D>, k: u32) -> Result<()> {
     // This works by constraining that `omega`^(2^k) - 1 == 0.
 
     let mut value = omega;
@@ -81,11 +77,11 @@ mod tests {
     }
 
     #[test]
-    fn test_enforce_root_of_unity() -> Result<()> {
+    fn test_enforce() -> Result<()> {
         for (i, (omega, k, should_pass)) in test_cases().into_iter().enumerate() {
             let result = Simulator::simulate(omega, |dr, witness| {
                 let omega = Element::alloc(dr, witness)?;
-                enforce_root_of_unity(dr, omega, k)?;
+                enforce(dr, omega, k)?;
                 Ok(())
             });
 

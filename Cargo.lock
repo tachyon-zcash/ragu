@@ -426,6 +426,7 @@ dependencies = [
  "ragu_macros",
  "ragu_pasta",
  "rand 0.8.5",
+ "thiserror",
 ]
 
 [[package]]

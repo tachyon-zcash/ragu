@@ -32,6 +32,7 @@ default = []
 arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", package = "ragu_arithmetic" }
 ff = { workspace = true }
 ragu_core = { path = "../ragu_core", version = "0.0.0" }
+thiserror = "2.0.12"
 
 # Needed for the `Write` derive macro.
 ragu_macros = { path = "../ragu_macros", version = "0.0.0" }

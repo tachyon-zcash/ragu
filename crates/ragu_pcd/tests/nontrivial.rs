@@ -13,7 +13,7 @@ use ragu_pcd::{
     header::{Header, Suffix},
     step::{Encoded, Encoder, Index, Step},
 };
-use ragu_primitives::{Element, Sponge};
+use ragu_primitives::{Element, poseidon::Sponge};
 use rand::{SeedableRng, rngs::StdRng};
 
 struct LeafNode;

@@ -1,3 +1,9 @@
+//! Poseidon sponge hash function implementation.
+//!
+//! This module provides [`Sponge`], an implementation of the
+//! [Poseidon](https://eprint.iacr.org/2019/458) sponge construction for
+//! in-circuit hashing.
+
 use arithmetic::Coeff;
 use ff::Field;
 use ragu_core::{
@@ -12,14 +18,29 @@ use core::{marker::PhantomData, panic};
 
 use crate::{
     Element,
-    io::Buffer,
+    io::{Buffer, Write},
     multiadd,
     vec::{FixedVec, Len},
 };
 
-pub struct T<F: Field, P: arithmetic::PoseidonPermutation<F>>(F, P);
+/// Error type for sponge save operations.
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveError {
+    /// Cannot save: sponge is already in squeeze mode.
+    #[error("sponge is already in squeeze mode")]
+    AlreadyInSqueezeMode,
+    /// Cannot save: no values have been absorbed (permutation would not occur).
+    #[error("no values have been absorbed")]
+    NothingAbsorbed,
+}
 
-impl<F: Field, P: arithmetic::PoseidonPermutation<F>> Len for T<F, P> {
+/// A type-level length marker for the Poseidon state size (`P::T`).
+///
+/// This type implements [`Len`] and is used to parameterize [`FixedVec`]
+/// containers holding sponge state elements.
+pub struct PoseidonStateLen<F: Field, P: arithmetic::PoseidonPermutation<F>>(PhantomData<(F, P)>);
+
+impl<F: Field, P: arithmetic::PoseidonPermutation<F>> Len for PoseidonStateLen<F, P> {
     fn len() -> usize {
         P::T
     }
@@ -139,15 +160,87 @@ impl<'dr, D: Driver<'dr>, P: arithmetic::PoseidonPermutation<D::F>> Sponge<'dr, 
         // Second attempt, which always succeeds
         self.absorb(dr, value)
     }
+
+    /// Save the internal [`SpongeState`].
+    ///
+    /// This method requires the [`Sponge`] to have absorbed elements that are
+    /// still pending for permutation internally. This method will perform a
+    /// permutation, consume the sponge, and return the raw [`SpongeState`].
+    ///
+    /// Later, the [`SpongeState`] can be used to resume squeezing via
+    /// [`Self::resume_and_squeeze`].
+    ///
+    /// # Errors
+    /// - [`SaveError::AlreadyInSqueezeMode`] if in the squeezing mode already
+    /// - [`SaveError::NothingAbsorbed`] if no pending absorbed values are
+    ///   present
+    pub fn save_state(
+        mut self,
+        dr: &mut D,
+    ) -> core::result::Result<SpongeState<'dr, D, P>, SaveError> {
+        match &self.mode {
+            Mode::Squeeze { .. } => Err(SaveError::AlreadyInSqueezeMode),
+            Mode::Absorb { values, .. } => {
+                if values.is_empty() {
+                    Err(SaveError::NothingAbsorbed)
+                } else {
+                    // permute() absorbs pending values into state
+                    self.permute(dr).expect("permutation should not fail");
+                    // After permute in absorb mode, we're still in absorb mode with cleared buffer
+                    match self.mode {
+                        Mode::Absorb { state, .. } => Ok(state),
+                        Mode::Squeeze { .. } => unreachable!(),
+                    }
+                }
+            }
+        }
+    }
+
+    /// Resume a [`Sponge`] from a saved [`SpongeState`] and immediately squeeze
+    /// one value from the sponge.
+    pub fn resume_and_squeeze(
+        dr: &mut D,
+        state: SpongeState<'dr, D, P>,
+        params: &'dr P,
+    ) -> Result<(Element<'dr, D>, Self)> {
+        let mut sponge = Sponge {
+            mode: Mode::Squeeze {
+                values: state.get_rate(),
+                state,
+            },
+            params,
+        };
+        // get_rate() returns rate elements, so squeeze won't need permutation
+        let element = sponge.squeeze(dr)?;
+        Ok((element, sponge))
+    }
 }
 
-#[derive(Gadget)]
+/// The raw state of a Poseidon sponge permutation.
+///
+/// This type holds `P::T` field elements representing the internal state
+/// of the sponge. It can be used to save and resume sponge progress via
+/// [`Sponge::save_state`] and [`Sponge::resume_and_squeeze`].
+#[derive(Gadget, Write)]
 pub struct SpongeState<'dr, D: Driver<'dr>, P: arithmetic::PoseidonPermutation<D::F>> {
     #[ragu(gadget)]
-    values: FixedVec<Element<'dr, D>, T<D::F, P>>,
+    values: FixedVec<Element<'dr, D>, PoseidonStateLen<D::F, P>>,
 }
 
 impl<'dr, D: Driver<'dr>, P: arithmetic::PoseidonPermutation<D::F>> SpongeState<'dr, D, P> {
+    /// Create a [`SpongeState`] from a [`FixedVec`] of [`Element`]s.
+    ///
+    /// The vector must have exactly `P::T` elements (enforced by the
+    /// [`PoseidonStateLen`] type parameter).
+    pub fn from_elements(values: FixedVec<Element<'dr, D>, PoseidonStateLen<D::F, P>>) -> Self {
+        Self { values }
+    }
+
+    /// Consume this [`SpongeState`] and return the raw [`Element`]s.
+    pub fn into_elements(self) -> FixedVec<Element<'dr, D>, PoseidonStateLen<D::F, P>> {
+        self.values
+    }
+
     fn get_rate(&self) -> Vec<Element<'dr, D>> {
         let mut tmp = self.values.clone().into_inner();
         tmp.truncate(P::RATE);
@@ -264,27 +357,165 @@ impl<F: Field, P: arithmetic::PoseidonPermutation<F>> Routine<F> for Permutation
     }
 }
 
-#[test]
-fn test_permutation_constraints() -> Result<()> {
+#[cfg(test)]
+mod tests {
+    use super::*;
     use arithmetic::Cycle;
+    use ragu_core::maybe::Maybe;
     use ragu_pasta::{Fp, Pasta};
 
     type Simulator = crate::Simulator<Fp>;
 
-    let params = Pasta::baked();
+    #[test]
+    fn test_permutation_constraints() -> Result<()> {
+        let params = Pasta::baked();
 
-    let sim = Simulator::simulate(Fp::from(1), |dr, value| {
-        let mut sponge =
-            Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(dr, params.circuit_poseidon());
-        let value = Element::alloc(dr, value)?;
-        sponge.absorb(dr, &value)?;
-        sponge.squeeze(dr)?;
+        let sim = Simulator::simulate(Fp::from(1), |dr, value| {
+            let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
+                dr,
+                params.circuit_poseidon(),
+            );
+            let value = Element::alloc(dr, value)?;
+            sponge.absorb(dr, &value)?;
+            sponge.squeeze(dr)?;
+
+            Ok(())
+        })?;
+
+        assert_eq!(sim.num_allocations(), 1);
+        assert_eq!(sim.num_multiplications(), 288);
 
         Ok(())
-    })?;
+    }
 
-    assert_eq!(sim.num_allocations(), 1);
-    assert_eq!(sim.num_multiplications(), 288);
+    #[test]
+    fn test_save_state_nothing_absorbed() -> Result<()> {
+        let params = Pasta::baked();
 
-    Ok(())
+        Simulator::simulate((), |dr, _| {
+            let sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
+                dr,
+                params.circuit_poseidon(),
+            );
+            // Try to save without absorbing anything
+            let result = sponge.save_state(dr);
+            assert!(matches!(result, Err(SaveError::NothingAbsorbed)));
+
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_save_state_already_in_squeeze_mode() -> Result<()> {
+        let params = Pasta::baked();
+
+        Simulator::simulate(Fp::from(1), |dr, value| {
+            let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
+                dr,
+                params.circuit_poseidon(),
+            );
+            let value = Element::alloc(dr, value)?;
+            sponge.absorb(dr, &value)?;
+            // Squeeze to enter squeeze mode
+            sponge.squeeze(dr)?;
+            // Now try to save - should fail
+            let result = sponge.save_state(dr);
+            assert!(matches!(result, Err(SaveError::AlreadyInSqueezeMode)));
+
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_save_state_succeeds_after_absorb() -> Result<()> {
+        let params = Pasta::baked();
+
+        Simulator::simulate(Fp::from(1), |dr, value| {
+            let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
+                dr,
+                params.circuit_poseidon(),
+            );
+            let value = Element::alloc(dr, value)?;
+            sponge.absorb(dr, &value)?;
+            // Save should succeed
+            let _state = sponge.save_state(dr).expect("save_state should succeed");
+
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_resume_and_squeeze() -> Result<()> {
+        let params = Pasta::baked();
+
+        Simulator::simulate(Fp::from(42), |dr, value| {
+            let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
+                dr,
+                params.circuit_poseidon(),
+            );
+            let value = Element::alloc(dr, value)?;
+            sponge.absorb(dr, &value)?;
+            let state = sponge.save_state(dr).expect("save_state should succeed");
+
+            // Resume and squeeze
+            let (element, _sponge) =
+                Sponge::resume_and_squeeze(dr, state, params.circuit_poseidon())?;
+
+            // Just verify we got an element (the actual value depends on Poseidon params)
+            let _ = element.value().take();
+
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_save_resume_produces_same_output_as_normal_sponge() -> Result<()> {
+        use core::cell::Cell;
+
+        let params = Pasta::baked();
+
+        // Use Cell to extract the output values from inside the closures
+        let normal_output = Cell::new(Fp::ZERO);
+        let save_resume_output = Cell::new(Fp::ZERO);
+
+        // Run normal sponge flow and get squeezed value
+        Simulator::simulate(Fp::from(123), |dr, value| {
+            let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
+                dr,
+                params.circuit_poseidon(),
+            );
+            let value = Element::alloc(dr, value)?;
+            sponge.absorb(dr, &value)?;
+            let squeezed = sponge.squeeze(dr)?;
+            normal_output.set(*squeezed.value().take());
+            Ok(())
+        })?;
+
+        // Run save/resume flow and get squeezed value
+        Simulator::simulate(Fp::from(123), |dr, value| {
+            let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
+                dr,
+                params.circuit_poseidon(),
+            );
+            let value = Element::alloc(dr, value)?;
+            sponge.absorb(dr, &value)?;
+            let state = sponge.save_state(dr).expect("save_state should succeed");
+            let (squeezed, _) = Sponge::resume_and_squeeze(dr, state, params.circuit_poseidon())?;
+            save_resume_output.set(*squeezed.value().take());
+            Ok(())
+        })?;
+
+        // Both should produce identical output
+        assert_eq!(normal_output.get(), save_resume_output.get());
+
+        Ok(())
+    }
 }

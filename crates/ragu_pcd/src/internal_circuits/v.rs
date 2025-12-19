@@ -1,4 +1,3 @@
-use crate::components::transcript;
 use arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::{Rank, txz::Evaluate},
@@ -7,31 +6,26 @@ use ragu_circuits::{
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Gadget, GadgetKind},
+    gadgets::GadgetKind,
     maybe::Maybe,
 };
 
 use core::marker::PhantomData;
 
-use super::stages::native::{
-    eval as native_eval, preamble as native_preamble, query as native_query,
+use super::{
+    stages::native::{eval as native_eval, preamble as native_preamble, query as native_query},
+    unified::{self, OutputBuilder},
 };
-use super::unified::{self, OutputBuilder};
-
 pub use crate::internal_circuits::InternalCircuitIndex::VCircuit as CIRCUIT_ID;
 pub use crate::internal_circuits::InternalCircuitIndex::VStaged as STAGED_ID;
 
-pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize> {
-    params: &'params C,
+pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize>
-    Circuit<'params, C, R, HEADER_SIZE, NUM_REVDOT_CLAIMS>
-{
-    pub fn new(params: &'params C) -> Staged<C::CircuitField, R, Self> {
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Circuit<C, R, HEADER_SIZE> {
+    pub fn new() -> Staged<C::CircuitField, R, Self> {
         Staged::new(Circuit {
-            params,
             _marker: PhantomData,
         })
     }
@@ -39,12 +33,10 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAI
 
 pub struct Witness<'a, C: Cycle> {
     pub unified_instance: &'a unified::Instance<C>,
-    pub query_witness: &'a native_query::Witness<C>,
-    pub eval_witness: &'a native_eval::Witness<C::CircuitField>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize>
-    StagedCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, NUM_REVDOT_CLAIMS>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> StagedCircuit<C::CircuitField, R>
+    for Circuit<C, R, HEADER_SIZE>
 {
     type Final = native_eval::Stage<C, R, HEADER_SIZE>;
 
@@ -75,90 +67,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize
     where
         Self: 'dr,
     {
-        let (_, builder) = builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
-        let (query, builder) = builder.add_stage::<native_query::Stage<C, R, HEADER_SIZE>>()?;
-        let (eval, builder) = builder.add_stage::<native_eval::Stage<C, R, HEADER_SIZE>>()?;
+        let builder = builder.skip_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
+        let builder = builder.skip_stage::<native_query::Stage<C, R, HEADER_SIZE>>()?;
+        let builder = builder.skip_stage::<native_eval::Stage<C, R, HEADER_SIZE>>()?;
         let dr = builder.finish();
-
-        let query = query.enforced(dr, witness.view().map(|w| w.query_witness))?;
-        let eval = eval.enforced(dr, witness.view().map(|w| w.eval_witness))?;
 
         let unified_instance = &witness.view().map(|w| w.unified_instance);
         let mut unified_output = OutputBuilder::new();
 
-        let nested_f_commitment = unified_output
-            .nested_f_commitment
-            .get(dr, unified_instance)?;
+        let x = unified_output.x.get(dr, unified_instance)?;
+        let z = unified_output.z.get(dr, unified_instance)?;
 
-        // Derive (y, z) = H(w, nested_s_prime_commitment).
-        let (y, z) = {
-            let w = unified_output.w.get(dr, unified_instance)?;
-            let nested_s_prime_commitment = unified_output
-                .nested_s_prime_commitment
-                .get(dr, unified_instance)?;
-            transcript::derive_y_z::<_, C>(dr, &w, &nested_s_prime_commitment, self.params)?
-        };
-        unified_output.y.set(y);
-        unified_output.z.set(z.clone());
-
-        // Derive (mu, nu) = H(nested_error_commitment).
-        let (mu, nu) = {
-            let nested_error_commitment = unified_output
-                .nested_error_commitment
-                .get(dr, unified_instance)?;
-            transcript::derive_mu_nu::<_, C>(dr, &nested_error_commitment, self.params)?
-        };
-
-        // Derive x = H(nu, nested_ab_commitment) and enforce query stage's x matches.
-        let x = {
-            let nested_ab_commitment = unified_output
-                .nested_ab_commitment
-                .get(dr, unified_instance)?;
-            let x = transcript::derive_x::<_, C>(dr, &nu, &nested_ab_commitment, self.params)?;
-            x.enforce_equal(dr, &query.x)?;
-            x
-        };
-
-        unified_output.mu.set(mu);
-        unified_output.nu.set(nu);
-        unified_output.x.set(x.clone());
-
-        // Query stage's nested_s_commitment must equal the one in unified output.
-        unified_output
-            .nested_s_commitment
-            .set(query.nested_s_commitment);
-
-        // Derive alpha challenge.
-        let alpha = {
-            let nested_query_commitment = unified_output
-                .nested_query_commitment
-                .get(dr, unified_instance)?;
-            transcript::derive_alpha::<_, C>(dr, &nested_query_commitment, self.params)?
-        };
-        unified_output.alpha.set(alpha.clone());
-
-        // Derive u challenge.
-        {
-            let u = transcript::derive_u::<_, C>(dr, &alpha, &nested_f_commitment, self.params)?;
-
-            // Eval stage's u must equal u.
-            u.enforce_equal(dr, &eval.u)?;
-
-            unified_output.u.set(u);
-        }
-
-        // Derive beta = H(nested_eval_commitment).
-        {
-            let nested_eval_commitment = unified_output
-                .nested_eval_commitment
-                .get(dr, unified_instance)?;
-            let beta = transcript::derive_beta::<_, C>(dr, &nested_eval_commitment, self.params)?;
-            unified_output.beta.set(beta);
-        }
-
-        // TODO: what to do with txz? launder out as aux data?
-        let evaluate_txz = Evaluate::new(R::RANK);
-        let _txz = dr.routine(evaluate_txz, (x, z))?;
+        let _txz = dr.routine(Evaluate::new(R::RANK), (x, z))?;
 
         Ok((unified_output.finish(dr, unified_instance)?, D::just(|| ())))
     }

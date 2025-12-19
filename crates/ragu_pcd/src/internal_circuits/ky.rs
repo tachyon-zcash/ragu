@@ -1,3 +1,11 @@
+//! Circuit for computing the first layer of the revdot reductions, primarily to
+//! compute the $k(Y)$ evaluations and also to invoke the $n$ parallel size-$m$
+//! revdot folding operations.
+//!
+//! This circuit is built using the preamble (for access to unified instances
+//! and so forth), error_m (for layer 1 error terms), and error_n (for layer 2
+//! error terms and collapsed values) native stages.
+
 use arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::Rank,
@@ -6,9 +14,10 @@ use ragu_circuits::{
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::GadgetKind,
+    gadgets::{Gadget, GadgetKind},
     maybe::Maybe,
 };
+use ragu_primitives::{Element, vec::FixedVec};
 
 use core::marker::PhantomData;
 
@@ -23,15 +32,17 @@ use crate::components::{
     root_of_unity,
 };
 
-pub use crate::internal_circuits::InternalCircuitIndex::ClaimCircuit as CIRCUIT_ID;
-pub use crate::internal_circuits::InternalCircuitIndex::ClaimStaged as STAGED_ID;
+pub use crate::internal_circuits::InternalCircuitIndex::KyCircuit as CIRCUIT_ID;
+pub use crate::internal_circuits::InternalCircuitIndex::KyStaged as STAGED_ID;
 
+/// Circuit that verifies layer 1 revdot folding.
 pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize, P: Parameters> {
     log2_circuits: u32,
     _marker: PhantomData<(C, R, P)>,
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, P: Parameters> Circuit<C, R, HEADER_SIZE, P> {
+    /// Create a new ky circuit.
     pub fn new(log2_circuits: u32) -> Staged<C::CircuitField, R, Self> {
         Staged::new(Circuit {
             log2_circuits,
@@ -40,9 +51,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, P: Parameters> Circuit<C, R, H
     }
 }
 
+/// Witness for the ky circuit.
 pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, P: Parameters> {
+    /// The unified instance containing challenges.
     pub unified_instance: &'a unified::Instance<C>,
+    /// Witness for the preamble stage.
     pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
+    /// Witness for the error_m stage (layer 1 error terms).
+    pub error_m_witness: &'a native_error_m::Witness<C, P>,
+    /// Witness for the error_n stage (layer 2 error terms + collapsed values).
     pub error_n_witness: &'a native_error_n::Witness<C, P>,
 }
 
@@ -80,37 +97,33 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, P: Parameters> StagedCircuit<C
     {
         let (preamble, builder) =
             builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
-        let builder = builder.skip_stage::<native_error_m::Stage<C, R, HEADER_SIZE, P>>()?;
+        let (error_m, builder) =
+            builder.add_stage::<native_error_m::Stage<C, R, HEADER_SIZE, P>>()?;
         let (error_n, builder) =
             builder.add_stage::<native_error_n::Stage<C, R, HEADER_SIZE, P>>()?;
         let dr = builder.finish();
 
         let preamble = preamble.enforced(dr, witness.view().map(|w| w.preamble_witness))?;
+        let error_m = error_m.enforced(dr, witness.view().map(|w| w.error_m_witness))?;
         let error_n = error_n.enforced(dr, witness.view().map(|w| w.error_n_witness))?;
+
+        let unified_instance = &witness.view().map(|w| w.unified_instance);
+        let mut unified_output = OutputBuilder::new();
 
         // Check that circuit IDs are valid domain elements.
         root_of_unity::enforce(dr, preamble.left.circuit_id.clone(), self.log2_circuits)?;
         root_of_unity::enforce(dr, preamble.right.circuit_id.clone(), self.log2_circuits)?;
 
-        let unified_instance = &witness.view().map(|w| w.unified_instance);
-        let mut unified_output = OutputBuilder::new();
+        // Get mu, nu from unified instance
+        let mu = unified_output.mu.get(dr, unified_instance)?;
+        let nu = unified_output.nu.get(dr, unified_instance)?;
 
-        // Get mu_prime, nu_prime from unified instance
-        let mu_prime = unified_output.mu_prime.get(dr, unified_instance)?;
-        let nu_prime = unified_output.nu_prime.get(dr, unified_instance)?;
+        // TODO: Compute ky values properly based on the preamble
+        let ky_values = FixedVec::from_fn(|_| Element::zero(dr));
 
-        // Compute c, the folded revdot product claim.
-        // Layer 1 folding is verified by circuit_ky; we use error_n.collapsed directly.
-        {
-            // Layer 2: Single N-sized reduction using collapsed from error_n as ky_values
-            let c = fold_revdot::compute_c_n::<_, P>(
-                dr,
-                &mu_prime,
-                &nu_prime,
-                &error_n.error_terms,
-                &error_n.collapsed,
-            )?;
-            unified_output.c.set(c);
+        for (i, error_terms) in error_m.error_terms.iter().enumerate() {
+            fold_revdot::compute_c_m::<_, P>(dr, &mu, &nu, error_terms, &ky_values)?
+                .enforce_equal(dr, &error_n.collapsed[i])?;
         }
 
         Ok((unified_output.finish(dr, unified_instance)?, D::just(|| ())))

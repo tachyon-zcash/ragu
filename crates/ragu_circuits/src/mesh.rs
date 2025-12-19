@@ -18,7 +18,7 @@
 use arithmetic::{Domain, PoseidonPermutation, bitreverse};
 use ff::PrimeField;
 use ragu_core::{Error, Result, drivers::emulator::Emulator, maybe::Maybe};
-use ragu_primitives::{Element, Sponge};
+use ragu_primitives::{Element, poseidon::Sponge};
 
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec::Vec};
 

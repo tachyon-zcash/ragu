@@ -149,7 +149,7 @@ impl<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> Witness<'a, C, R, HEADER_S
             let mut elements = Vec::with_capacity(HEADER_SIZE);
             padded.write(&mut emulator, &mut elements)?;
 
-            let values: Vec<F> = elements.into_iter().map(|e| *e.value().take()).collect();
+            let values: Vec<_> = elements.into_iter().map(|e| *e.value().take()).collect();
             vec_to_array(&values)
         }
 

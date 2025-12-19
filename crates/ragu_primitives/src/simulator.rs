@@ -140,7 +140,9 @@ impl<'dr, F: Field> Driver<'dr> for Simulator<F> {
                 // Even if the output is known, we still need to execute the
                 // routine to ensure consistency with the prediction.
                 let expected = routine.execute(self, input, aux)?;
-                output.enforce_equal(self, &expected)?;
+                // Assert equality without creating constraints in the main
+                // simulator by running the check on a disposable clone.
+                output.enforce_equal(&mut self.clone(), &expected)?;
                 Ok(output)
             }
             Prediction::Unknown(aux) => routine.execute(self, input, aux),

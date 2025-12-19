@@ -28,8 +28,6 @@ impl Len for Evals {
 
 /// Witness data for the eval stage.
 pub struct Witness<F> {
-    /// The u challenge derived from hashing alpha and the nested F commitment.
-    pub u: F,
     /// Eval elements.
     pub evals: FixedVec<F, Evals>,
 }
@@ -37,9 +35,6 @@ pub struct Witness<F> {
 /// Output gadget for the eval stage.
 #[derive(Gadget)]
 pub struct Output<'dr, D: Driver<'dr>> {
-    /// The witnessed u challenge element.
-    #[ragu(gadget)]
-    pub u: Element<'dr, D>,
     /// Eval elements.
     #[ragu(gadget)]
     pub evals: FixedVec<Element<'dr, D>, Evals>,
@@ -59,8 +54,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
     fn values() -> usize {
-        // challenge u + evals
-        1 + Evals::len()
+        Evals::len()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -71,10 +65,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     where
         Self: 'dr,
     {
-        let u = Element::alloc(dr, witness.view().map(|w| w.u))?;
         let evals = Evals::range()
             .map(|i| Element::alloc(dr, witness.view().map(|w| w.evals[i])))
             .try_collect_fixed()?;
-        Ok(Output { u, evals })
+        Ok(Output { evals })
     }
 }

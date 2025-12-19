@@ -51,7 +51,6 @@
 
 # Appendices
 
-- [Cryptography Background](appendix/math.md)
 - [Bootle16 v.s. R1CS](appendix/cs.md)
 - [Related Work](appendix/related.md)
 - [Terminology](appendix/terminology.md)
