@@ -420,7 +420,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
     fn try_trivial<RNG: Rng>(&self, rng: &mut RNG) -> Result<Proof<C, R>> {
         // Dummy application rx commitment
-        let application_rx = dummy::Circuit
+        let application_rx = dummy::Circuit::<HEADER_SIZE>::new()
             .rx((), self.circuit_mesh.get_key())
             .expect("should not fail")
             .0;
@@ -429,7 +429,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             application_rx.commit(self.params.host_generators(), application_blind);
 
         // Dummy c_rx commitment
-        let c_rx_dummy_rx = dummy::Circuit
+        let c_rx_dummy_rx = dummy::Circuit::<HEADER_SIZE>::new()
             .rx((), self.circuit_mesh.get_key())
             .expect("should not fail")
             .0;
@@ -438,7 +438,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             c_rx_dummy_rx.commit(self.params.host_generators(), c_rx_dummy_blind);
 
         // Dummy v_rx commitment
-        let v_rx_dummy_rx = dummy::Circuit
+        let v_rx_dummy_rx = dummy::Circuit::<HEADER_SIZE>::new()
             .rx((), self.circuit_mesh.get_key())
             .expect("should not fail")
             .0;
@@ -447,7 +447,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             v_rx_dummy_rx.commit(self.params.host_generators(), v_rx_dummy_blind);
 
         // Dummy hashes_1_rx commitment
-        let hashes_1_rx_dummy_rx = dummy::Circuit
+        let hashes_1_rx_dummy_rx = dummy::Circuit::<HEADER_SIZE>::new()
             .rx((), self.circuit_mesh.get_key())
             .expect("should not fail")
             .0;
@@ -456,7 +456,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             hashes_1_rx_dummy_rx.commit(self.params.host_generators(), hashes_1_rx_dummy_blind);
 
         // Dummy hashes_2_rx commitment
-        let hashes_2_rx_dummy_rx = dummy::Circuit
+        let hashes_2_rx_dummy_rx = dummy::Circuit::<HEADER_SIZE>::new()
             .rx((), self.circuit_mesh.get_key())
             .expect("should not fail")
             .0;
@@ -465,7 +465,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             hashes_2_rx_dummy_rx.commit(self.params.host_generators(), hashes_2_rx_dummy_blind);
 
         // Dummy ky_rx commitment
-        let ky_rx_dummy_rx = dummy::Circuit
+        let ky_rx_dummy_rx = dummy::Circuit::<HEADER_SIZE>::new()
             .rx((), self.circuit_mesh.get_key())
             .expect("should not fail")
             .0;
@@ -564,8 +564,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             },
             application: ApplicationProof {
                 circuit_id: dummy_circuit_id,
-                left_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
-                right_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
+                left_header: vec![C::CircuitField::todo(); HEADER_SIZE],
+                right_header: vec![C::CircuitField::todo(); HEADER_SIZE],
                 rx: application_rx.clone(),
                 blind: C::CircuitField::random(&mut *rng),
                 commitment: application_commitment,
@@ -596,12 +596,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             },
         };
 
-        // Preamble witness with zero output headers and dummy proof references.
+        let trivial_output_header: [C::CircuitField; HEADER_SIZE] = core::array::from_fn(|i| {
+            if i == HEADER_SIZE - 1 {
+                // Suffix for the trivial proof.
+                C::CircuitField::ONE
+            } else {
+                C::CircuitField::ZERO
+            }
+        });
+
+        // Preamble witness with encoded output headers and dummy proof references.
         let preamble_witness = stages::native::preamble::Witness::new(
             &dummy_proof,
             &dummy_proof,
-            [C::CircuitField::ZERO; HEADER_SIZE],
-            [C::CircuitField::ZERO; HEADER_SIZE],
+            trivial_output_header,
+            trivial_output_header,
         );
 
         let native_preamble_rx =
@@ -720,7 +729,19 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mu = *mu.value().take();
         let nu = *sponge.squeeze(&mut dr)?.value().take();
 
-        let app_ky = C::CircuitField::ONE;
+        // Compute app k(y).
+        let app_ky = {
+            use crate::step::adapter::Adapter;
+            use crate::verify::stub_step::StubStep;
+            use ragu_primitives::vec::FixedVec;
+
+            let adapter = Adapter::<C, StubStep<()>, R, HEADER_SIZE>::new(StubStep::new());
+            let left_header: FixedVec<_, _> =
+                FixedVec::try_from(dummy_proof.application.left_header.clone())?;
+            let right_header: FixedVec<_, _> =
+                FixedVec::try_from(dummy_proof.application.right_header.clone())?;
+            ky::emulate(&adapter, (left_header, right_header, ()), y)?
+        };
 
         // Compute k(y) values for the layer 1 instances.
         let dummy_unified_instance = internal_circuits::unified::Instance {
@@ -1139,8 +1160,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             application: ApplicationProof {
                 rx: application_rx,
                 circuit_id: dummy::CIRCUIT_ID.circuit_index(self.num_application_steps),
-                left_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
-                right_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
+                left_header: vec![C::CircuitField::todo(); HEADER_SIZE],
+                right_header: vec![C::CircuitField::todo(); HEADER_SIZE],
                 blind: application_blind,
                 commitment: application_commitment,
             },

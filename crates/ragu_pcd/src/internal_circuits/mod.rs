@@ -55,7 +55,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
 ) -> Result<MeshBuilder<'params, C::CircuitField, R>> {
     let initial_num_circuits = mesh.num_circuits();
 
-    let mesh = mesh.register_circuit(dummy::Circuit)?;
+    let mesh = mesh.register_circuit(dummy::Circuit::<HEADER_SIZE>::new())?;
     let mesh = {
         let hashes_1 = hashes_1::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(params);
         mesh.register_circuit_object(hashes_1.final_into_object()?)?
