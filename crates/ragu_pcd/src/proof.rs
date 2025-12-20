@@ -793,7 +793,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Compute error_n stage (Layer 2: Single N-sized reduction)
         let error_n_witness = stages::native::error_n::Witness::<C, NativeParameters> {
-            error_terms: FixedVec::from_fn(|_| C::CircuitField::ZERO),
+            error_terms: FixedVec::from_fn(|_| C::CircuitField::todo()),
             collapsed: collapsed.clone(),
             sponge_state_elements,
         };
