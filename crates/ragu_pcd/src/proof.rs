@@ -598,7 +598,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         let trivial_output_header: [C::CircuitField; HEADER_SIZE] = core::array::from_fn(|i| {
             if i == HEADER_SIZE - 1 {
-                // Suffix for the trivial proof.
+                // Suffix for the () type.
                 C::CircuitField::ONE
             } else {
                 C::CircuitField::ZERO

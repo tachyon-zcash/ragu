@@ -57,7 +57,7 @@ impl<F: PrimeFieldExt, const HEADER_SIZE: usize> ragu_circuits::Circuit<F>
         for _ in 0..(HEADER_SIZE - 1) {
             elements.push(Element::zero(dr));
         }
-        // Suffix for the trivial proof.
+        // Suffix for the () type.
         elements.push(Element::one());
 
         FixedVec::try_from(elements)
