@@ -1,27 +1,19 @@
 use arithmetic::Cycle;
-use ff::PrimeField;
 use ragu_circuits::{polynomials::Rank, staging};
 use ragu_core::{
     Error, Result,
-    drivers::{Driver, DriverValue, emulator::Emulator},
+    drivers::{Driver, DriverValue},
     gadgets::{Gadget, GadgetKind, Kind},
-    maybe::{Always, Maybe, MaybeKind},
+    maybe::Maybe,
 };
 use ragu_primitives::{
     Element, GadgetExt,
     vec::{CollectFixed, ConstLen, FixedVec},
 };
 
-use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use crate::{
-    components::ky::Ky,
-    header::Header,
-    internal_circuits::unified,
-    proof::{Pcd, Proof},
-    step::padded,
-};
+use crate::{components::ky::Ky, internal_circuits::unified, proof::Proof};
 
 pub use crate::internal_circuits::InternalCircuitIndex::PreambleStage as STAGING_ID;
 
@@ -64,50 +56,6 @@ impl<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> Witness<'a, C, R, HEADER_S
             right,
         })
     }
-
-    /// Create a witness from two PCDs.
-    ///
-    /// Output headers are computed outside the circuit using the encoder pattern.
-    /// Other data (input headers, circuit IDs, unified instance) is accessed
-    /// directly from the proof references during circuit synthesis.
-    pub fn from_pcds<HL, HR>(
-        left: &'a Pcd<'_, C, R, HL>,
-        right: &'a Pcd<'_, C, R, HR>,
-    ) -> Result<Self>
-    where
-        HL: Header<C::CircuitField>,
-        HR: Header<C::CircuitField>,
-    {
-        // TODO: Implement Buffer for arrays/slices to avoid Vec allocation here.
-        /// Encode header data into a fixed-size field element array.
-        fn encode_output_header<F: PrimeField, H: Header<F>, const HEADER_SIZE: usize>(
-            data: H::Data<'_>,
-        ) -> Result<[F; HEADER_SIZE]> {
-            fn vec_to_array<F: Copy, const N: usize>(v: &[F]) -> Result<[F; N]> {
-                v.try_into().map_err(|_| Error::VectorLengthMismatch {
-                    expected: N,
-                    actual: v.len(),
-                })
-            }
-
-            let mut emulator = Emulator::execute();
-            let gadget = H::encode(&mut emulator, Always::maybe_just(|| data))?;
-            let padded = padded::for_header::<H, HEADER_SIZE, _>(&mut emulator, gadget)?;
-
-            let mut elements = Vec::with_capacity(HEADER_SIZE);
-            padded.write(&mut emulator, &mut elements)?;
-
-            let values: Vec<_> = elements.into_iter().map(|e| *e.value().take()).collect();
-            vec_to_array(&values)
-        }
-
-        Witness::new(
-            &left.proof,
-            &right.proof,
-            &encode_output_header::<C::CircuitField, HL, HEADER_SIZE>(left.data.clone())?,
-            &encode_output_header::<C::CircuitField, HR, HEADER_SIZE>(right.data.clone())?,
-        )
-    }
 }
 
 #[derive(Gadget)]
@@ -126,7 +74,7 @@ pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize> 
 
 impl<'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize> ProofInputs<'dr, D, C, HEADER_SIZE> {
     /// Compute k(y) for application circuit headers.
-    pub fn application_ky(&self, dr: &mut D, y: Element<'dr, D>) -> Result<Element<'dr, D>> {
+    pub fn application_ky(&self, dr: &mut D, y: &Element<'dr, D>) -> Result<Element<'dr, D>> {
         let mut ky = Ky::new(dr, y);
         self.left_header.write(dr, &mut ky)?;
         self.right_header.write(dr, &mut ky)?;
@@ -135,7 +83,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize> ProofInputs<'dr, D
     }
 
     /// Compute k(y) for unified circuit instance.
-    pub fn unified_ky(&self, dr: &mut D, y: Element<'dr, D>) -> Result<Element<'dr, D>> {
+    pub fn unified_ky(&self, dr: &mut D, y: &Element<'dr, D>) -> Result<Element<'dr, D>> {
         let mut ky = Ky::new(dr, y);
         self.unified.write(dr, &mut ky)?;
         Element::zero(dr).write(dr, &mut ky)?;

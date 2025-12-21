@@ -1,7 +1,7 @@
 use arithmetic::{Cycle, PrimeFieldExt};
 use ff::Field;
 use ragu_circuits::{CircuitExt, polynomials::Rank, staging::StageExt};
-use ragu_core::{Error, Result, drivers::emulator::Emulator, maybe::Maybe};
+use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{
     Element, GadgetExt, Point,
     poseidon::Sponge,
@@ -13,17 +13,13 @@ use alloc::vec;
 
 use crate::{
     Application, circuit_counts,
-    components::{
-        fold_revdot::{self, NativeParameters},
-        ky,
-    },
+    components::fold_revdot::{self, NativeParameters},
     internal_circuits::{self, stages, unified},
     proof::{
         ABProof, ApplicationProof, ErrorProof, EvalProof, FProof, InternalCircuits, MeshWyProof,
         MeshXyProof, Pcd, PreambleProof, Proof, QueryProof, SPrimeProof,
     },
     step::{Step, adapter::Adapter},
-    verify::{stub_step::StubStep, stub_unified::StubUnified},
 };
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
@@ -54,6 +50,42 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let host_generators = self.params.host_generators();
         let nested_generators = self.params.nested_generators();
 
+        // PHASE ONE: Application circuit.
+        //
+        // We process the application circuit first because it consumes the
+        // `Pcd`'s `data` fields inside of the `Step` circuit. The adaptor
+        // handles encoding for us, so that we can use the resulting (encoded)
+        // headers to construct the proof. We can also then use the encoded
+        // headers later to construct witnesses for other internal circuits
+        // constructed during the merge step.
+        //
+        // This block will return the enclosed left/right `Proof` structures.
+        let (left, right, application_proof, application_aux) = {
+            let circuit_id = S::INDEX.circuit_index(self.num_application_steps)?;
+            let (rx, aux) = Adapter::<C, S, R, HEADER_SIZE>::new(step).rx::<R>(
+                (left.data, right.data, witness),
+                self.circuit_mesh.get_key(),
+            )?;
+            let blind = C::CircuitField::random(&mut *rng);
+            let commitment = rx.commit(host_generators, blind);
+
+            let ((left_header, right_header), aux) = aux;
+
+            (
+                left.proof,
+                right.proof,
+                ApplicationProof {
+                    circuit_id,
+                    left_header: left_header.into_inner(),
+                    right_header: right_header.into_inner(),
+                    rx,
+                    blind,
+                    commitment,
+                },
+                aux,
+            )
+        };
+
         // The preamble stage commits to all of the C::CircuitField elements
         // used as public inputs to the circuits being merged together. This
         // includes the unified instance values for both proofs, but also their
@@ -61,7 +93,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // the mesh domain that corresponds to the Step circuit being checked).
         //
         // Let's assemble the witness needed to generate the preamble stage.
-        let preamble_witness = stages::native::preamble::Witness::from_pcds(&left, &right)?;
+        let preamble_witness = stages::native::preamble::Witness::new(
+            &left,
+            &right,
+            &application_proof.left_header,
+            &application_proof.right_header,
+        )?;
 
         // Now, compute the partial witness polynomial (stage polynomial) for
         // the preamble.
@@ -81,18 +118,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // merge operations that produced each of the two input proofs.
         let nested_preamble_witness = stages::nested::preamble::Witness {
             native_preamble: native_preamble_commitment,
-            left_application: left.proof.application.commitment,
-            right_application: right.proof.application.commitment,
-            left_ky: left.proof.internal_circuits.ky_rx_commitment,
-            right_ky: right.proof.internal_circuits.ky_rx_commitment,
-            left_c: left.proof.internal_circuits.c_rx_commitment,
-            right_c: right.proof.internal_circuits.c_rx_commitment,
-            left_v: left.proof.internal_circuits.v_rx_commitment,
-            right_v: right.proof.internal_circuits.v_rx_commitment,
-            left_hashes_1: left.proof.internal_circuits.hashes_1_rx_commitment,
-            right_hashes_1: right.proof.internal_circuits.hashes_1_rx_commitment,
-            left_hashes_2: left.proof.internal_circuits.hashes_2_rx_commitment,
-            right_hashes_2: right.proof.internal_circuits.hashes_2_rx_commitment,
+            left_application: left.application.commitment,
+            right_application: right.application.commitment,
+            left_ky: left.internal_circuits.ky_rx_commitment,
+            right_ky: right.internal_circuits.ky_rx_commitment,
+            left_c: left.internal_circuits.c_rx_commitment,
+            right_c: right.internal_circuits.c_rx_commitment,
+            left_v: left.internal_circuits.v_rx_commitment,
+            right_v: right.internal_circuits.v_rx_commitment,
+            left_hashes_1: left.internal_circuits.hashes_1_rx_commitment,
+            right_hashes_1: right.internal_circuits.hashes_1_rx_commitment,
+            left_hashes_2: left.internal_circuits.hashes_2_rx_commitment,
+            right_hashes_2: right.internal_circuits.hashes_2_rx_commitment,
         };
 
         // Compute the stage polynomial that commits to the `C::HostCurve`
@@ -121,8 +158,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // In order to check that the two proofs' commitments to s (the mesh polynomial
         // evaluated at (x_0, y_0) and (x_1, y_1)) are correct, we need to
         // compute s' = m(w, x_i, Y) for both proofs.
-        let x0 = left.proof.internal_circuits.x;
-        let x1 = right.proof.internal_circuits.x;
+        let x0 = left.internal_circuits.x;
+        let x1 = right.internal_circuits.x;
 
         // ... commit to both...
         let mesh_wx0 = self.circuit_mesh.wx(w, x0);
@@ -151,51 +188,22 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Compute k(y) values for the folding claims
         let (left_application_ky, right_application_ky, left_unified_ky, right_unified_ky) = {
-            // Application k(y) for left child proof
-            let left_application_ky = {
-                let adapter = Adapter::<C, StubStep<S::Left>, R, HEADER_SIZE>::new(StubStep::new());
-                let left_header = FixedVec::try_from(left.proof.application.left_header.clone())
-                    .map_err(|_| Error::MalformedEncoding("left child left header size".into()))?;
-                let right_header = FixedVec::try_from(left.proof.application.right_header.clone())
-                    .map_err(|_| Error::MalformedEncoding("left child right header size".into()))?;
-                ky::emulate(&adapter, (left_header, right_header, left.data.clone()), y)?
-            };
+            use ragu_circuits::staging::Stage;
 
-            // Application k(y) for right child proof
-            let right_application_ky = {
-                let adapter =
-                    Adapter::<C, StubStep<S::Right>, R, HEADER_SIZE>::new(StubStep::new());
-                let left_header = FixedVec::try_from(right.proof.application.left_header.clone())
-                    .map_err(|_| {
-                    Error::MalformedEncoding("right child left header size".into())
-                })?;
-                let right_header = FixedVec::try_from(right.proof.application.right_header.clone())
-                    .map_err(|_| {
-                        Error::MalformedEncoding("right child right header size".into())
-                    })?;
-                ky::emulate(&adapter, (left_header, right_header, right.data.clone()), y)?
-            };
+            let preamble = Emulator::emulate_wireless(&preamble_witness, |dr, witness| {
+                stages::native::preamble::Stage::<C, R, HEADER_SIZE>::default().witness(dr, witness)
+            })?;
 
-            // Unified k(y) for left child proof
-            let left_unified_ky = {
-                let stub = StubUnified::<C>::new();
-                let unified_instance = unified::Instance::from_proof(&left.proof);
-                ky::emulate(&stub, &unified_instance, y)?
-            };
+            Emulator::emulate_wireless(y, |dr, y| {
+                let y = Element::alloc(dr, y)?;
 
-            // Unified k(y) for right child proof
-            let right_unified_ky = {
-                let stub = StubUnified::<C>::new();
-                let unified_instance = unified::Instance::from_proof(&right.proof);
-                ky::emulate(&stub, &unified_instance, y)?
-            };
-
-            (
-                left_application_ky,
-                right_application_ky,
-                left_unified_ky,
-                right_unified_ky,
-            )
+                Ok((
+                    *preamble.left.application_ky(dr, &y)?.value().take(),
+                    *preamble.right.application_ky(dr, &y)?.value().take(),
+                    *preamble.left.unified_ky(dr, &y)?.value().take(),
+                    *preamble.right.unified_ky(dr, &y)?.value().take(),
+                ))
+            })?
         };
 
         // Given (w, y), we can compute m(w, X, y) and commit to it.
@@ -545,18 +553,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let ky_rx_blind = C::CircuitField::random(&mut *rng);
         let ky_rx_commitment = ky_rx.commit(host_generators, ky_rx_blind);
 
-        // Application
-        let application_circuit_id = S::INDEX.circuit_index(self.num_application_steps)?;
-        let (application_rx, aux) = Adapter::<C, S, R, HEADER_SIZE>::new(step).rx::<R>(
-            (left.data, right.data, witness),
-            self.circuit_mesh.get_key(),
-        )?;
-        let application_rx_blind = C::CircuitField::random(&mut *rng);
-        let application_rx_commitment =
-            application_rx.commit(host_generators, application_rx_blind);
-
-        let ((left_header, right_header), aux) = aux;
-
         Ok((
             Proof {
                 preamble: PreambleProof {
@@ -666,16 +662,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     u,
                     beta,
                 },
-                application: ApplicationProof {
-                    circuit_id: application_circuit_id,
-                    left_header: left_header.into_inner(),
-                    right_header: right_header.into_inner(),
-                    rx: application_rx,
-                    blind: application_rx_blind,
-                    commitment: application_rx_commitment,
-                },
+                application: application_proof,
             },
-            aux,
+            // We return the application auxillary data for potential use by the
+            // caller.
+            application_aux,
         ))
     }
 }

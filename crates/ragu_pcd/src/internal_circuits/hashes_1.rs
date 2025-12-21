@@ -141,22 +141,22 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         {
             preamble
                 .left
-                .application_ky(dr, y.clone())?
+                .application_ky(dr, &y)?
                 .enforce_equal(dr, &error_n.left_application_ky)?;
 
             preamble
                 .right
-                .application_ky(dr, y.clone())?
+                .application_ky(dr, &y)?
                 .enforce_equal(dr, &error_n.right_application_ky)?;
 
             preamble
                 .left
-                .unified_ky(dr, y.clone())?
+                .unified_ky(dr, &y)?
                 .enforce_equal(dr, &error_n.left_unified_ky)?;
 
             preamble
                 .right
-                .unified_ky(dr, y)?
+                .unified_ky(dr, &y)?
                 .enforce_equal(dr, &error_n.right_unified_ky)?;
         }
 
