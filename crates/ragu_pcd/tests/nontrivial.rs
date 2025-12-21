@@ -137,6 +137,34 @@ impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
 }
 
 #[test]
+fn seed_creates_valid_proof() -> Result<()> {
+    let pasta = Pasta::baked();
+    let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
+        .register(WitnessLeaf {
+            poseidon_params: pasta.circuit_poseidon(),
+        })?
+        .register(Hash2 {
+            poseidon_params: pasta.circuit_poseidon(),
+        })?
+        .finalize(pasta)?;
+
+    let mut rng = StdRng::seed_from_u64(1234);
+
+    let (proof, aux) = app.seed(
+        &mut rng,
+        WitnessLeaf {
+            poseidon_params: pasta.circuit_poseidon(),
+        },
+        Fp::from(1234u64),
+    )?;
+    let pcd = proof.carry::<LeafNode>(aux);
+
+    assert!(app.verify(&pcd, &mut rng)?);
+
+    Ok(())
+}
+
+#[test]
 fn various_merging_operations() -> Result<()> {
     let pasta = Pasta::baked();
     let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
