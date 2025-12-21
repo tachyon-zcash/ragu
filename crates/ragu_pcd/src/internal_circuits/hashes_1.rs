@@ -29,29 +29,33 @@ use super::{
     },
     unified::{self, OutputBuilder},
 };
-use crate::components::fold_revdot;
+use crate::components::{fold_revdot, root_of_unity};
 
 pub use crate::internal_circuits::InternalCircuitIndex::Hashes1Circuit as CIRCUIT_ID;
 pub use crate::internal_circuits::InternalCircuitIndex::Hashes1Staged as STAGED_ID;
 
 pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
     params: &'params C,
+    log2_circuits: u32,
     _marker: PhantomData<(R, FP)>,
 }
 
 impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     Circuit<'params, C, R, HEADER_SIZE, FP>
 {
-    pub fn new(params: &'params C) -> Staged<C::CircuitField, R, Self> {
+    pub fn new(params: &'params C, log2_circuits: u32) -> Staged<C::CircuitField, R, Self> {
         Staged::new(Circuit {
             params,
+            log2_circuits,
             _marker: PhantomData,
         })
     }
 }
 
-pub struct Witness<'a, C: Cycle, FP: fold_revdot::Parameters> {
+pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
     pub unified_instance: &'a unified::Instance<C>,
+    pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
+    pub error_m_witness: &'a native_error_m::Witness<C, FP>,
     pub error_n_witness: &'a native_error_n::Witness<C, FP>,
 }
 
@@ -61,7 +65,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     type Final = native_error_n::Stage<C, R, HEADER_SIZE, FP>;
 
     type Instance<'source> = &'source unified::Instance<C>;
-    type Witness<'source> = Witness<'source, C, FP>;
+    type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
     type Output = unified::InternalOutputKind<C>;
     type Aux<'source> = ();
 
@@ -87,13 +91,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     where
         Self: 'dr,
     {
-        let builder = builder.skip_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
-        let builder = builder.skip_stage::<native_error_m::Stage<C, R, HEADER_SIZE, FP>>()?;
+        let (preamble, builder) =
+            builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
+        let (error_m, builder) =
+            builder.add_stage::<native_error_m::Stage<C, R, HEADER_SIZE, FP>>()?;
         let (error_n, builder) =
             builder.add_stage::<native_error_n::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();
 
+        let preamble = preamble.enforced(dr, witness.view().map(|w| w.preamble_witness))?;
+        let _error_m = error_m.enforced(dr, witness.view().map(|w| w.error_m_witness))?;
         let error_n = error_n.enforced(dr, witness.view().map(|w| w.error_n_witness))?;
+
+        // Verify circuit IDs are valid roots of unity in the mesh domain.
+        root_of_unity::enforce(dr, preamble.left.circuit_id.clone(), self.log2_circuits)?;
+        root_of_unity::enforce(dr, preamble.right.circuit_id.clone(), self.log2_circuits)?;
 
         let unified_instance = &witness.view().map(|w| w.unified_instance);
         let mut unified_output = OutputBuilder::new();

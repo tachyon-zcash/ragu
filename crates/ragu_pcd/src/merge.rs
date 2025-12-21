@@ -498,10 +498,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let (hashes_1_rx, _) =
             internal_circuits::hashes_1::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(
                 self.params,
+                circuit_counts(self.num_application_steps).1,
             )
             .rx::<R>(
                 internal_circuits::hashes_1::Witness {
                     unified_instance,
+                    preamble_witness: &preamble_witness,
+                    error_m_witness: &error_m_witness,
                     error_n_witness: &error_n_witness,
                 },
                 self.circuit_mesh.get_key(),
@@ -526,10 +529,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Ky staged circuit (layer 1 folding verification).
         let (ky_rx, _) =
-            internal_circuits::ky::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(
-                circuit_counts(self.num_application_steps).1,
-            )
-            .rx::<R>(
+            internal_circuits::ky::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new().rx::<R>(
                 internal_circuits::ky::Witness {
                     unified_instance,
                     preamble_witness: &preamble_witness,

@@ -28,14 +28,13 @@ use super::{
     },
     unified::{self, OutputBuilder},
 };
-use crate::components::{fold_revdot, ky::Ky, root_of_unity};
+use crate::components::{fold_revdot, ky::Ky};
 
 pub use crate::internal_circuits::InternalCircuitIndex::KyCircuit as CIRCUIT_ID;
 pub use crate::internal_circuits::InternalCircuitIndex::KyStaged as STAGED_ID;
 
 /// Circuit that verifies layer 1 revdot folding.
 pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
-    log2_circuits: u32,
     _marker: PhantomData<(C, R, FP)>,
 }
 
@@ -43,9 +42,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     Circuit<C, R, HEADER_SIZE, FP>
 {
     /// Create a new ky circuit.
-    pub fn new(log2_circuits: u32) -> Staged<C::CircuitField, R, Self> {
+    pub fn new() -> Staged<C::CircuitField, R, Self> {
         Staged::new(Circuit {
-            log2_circuits,
             _marker: PhantomData,
         })
     }
@@ -103,16 +101,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             builder.add_stage::<native_error_n::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();
 
-        let preamble = preamble.enforced(dr, witness.view().map(|w| w.preamble_witness))?;
-        let error_m = error_m.enforced(dr, witness.view().map(|w| w.error_m_witness))?;
-        let error_n = error_n.enforced(dr, witness.view().map(|w| w.error_n_witness))?;
+        let preamble = preamble.unenforced(dr, witness.view().map(|w| w.preamble_witness))?;
+        let error_m = error_m.unenforced(dr, witness.view().map(|w| w.error_m_witness))?;
+        let error_n = error_n.unenforced(dr, witness.view().map(|w| w.error_n_witness))?;
 
         let unified_instance = &witness.view().map(|w| w.unified_instance);
         let mut unified_output = OutputBuilder::new();
-
-        // Check that circuit IDs are valid domain elements.
-        root_of_unity::enforce(dr, preamble.left.circuit_id.clone(), self.log2_circuits)?;
-        root_of_unity::enforce(dr, preamble.right.circuit_id.clone(), self.log2_circuits)?;
 
         // Get y, mu, nu from unified instance
         let y = unified_output.y.get(dr, unified_instance)?;
