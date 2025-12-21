@@ -22,13 +22,13 @@ pub trait Parameters: 'static + Send + Sync + Clone + Copy + Default {
     type M: Len;
 }
 
-/// Default parameters for native revdot folding (N=3, M=3).
+/// Default parameters for native revdot folding
 #[derive(Clone, Copy, Default)]
 pub struct NativeParameters;
 
 impl Parameters for NativeParameters {
-    type N = ConstLen<14>;
-    type M = ConstLen<7>;
+    type N = ConstLen<17>;
+    type M = ConstLen<6>;
 }
 
 /// Represents the number of "error" terms produced during a folding operation
