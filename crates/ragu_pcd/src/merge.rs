@@ -923,6 +923,22 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             let left_p_coeffs: Vec<_> = left.p.p.iter_coeffs().collect();
             let right_p_coeffs: Vec<_> = right.p.p.iter_coeffs().collect();
 
+            // Collect internal circuit rx polynomial coefficients from previous proofs.
+            let left_c_rx_coeffs: Vec<_> = left.internal_circuits.c_rx.iter_coeffs().collect();
+            let right_c_rx_coeffs: Vec<_> = right.internal_circuits.c_rx.iter_coeffs().collect();
+            let left_v_rx_coeffs: Vec<_> = left.internal_circuits.v_rx.iter_coeffs().collect();
+            let right_v_rx_coeffs: Vec<_> = right.internal_circuits.v_rx.iter_coeffs().collect();
+            let left_hashes_1_rx_coeffs: Vec<_> =
+                left.internal_circuits.hashes_1_rx.iter_coeffs().collect();
+            let right_hashes_1_rx_coeffs: Vec<_> =
+                right.internal_circuits.hashes_1_rx.iter_coeffs().collect();
+            let left_hashes_2_rx_coeffs: Vec<_> =
+                left.internal_circuits.hashes_2_rx.iter_coeffs().collect();
+            let right_hashes_2_rx_coeffs: Vec<_> =
+                right.internal_circuits.hashes_2_rx.iter_coeffs().collect();
+            let left_ky_rx_coeffs: Vec<_> = left.internal_circuits.ky_rx.iter_coeffs().collect();
+            let right_ky_rx_coeffs: Vec<_> = right.internal_circuits.ky_rx.iter_coeffs().collect();
+
             // Compute xz = x * z for dilated polynomial queries.
             let xz = x * z;
 
@@ -930,6 +946,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             // Include left and right application circuit IDs plus all internal circuit IDs.
             let left_circuit_id = left.application.circuit_id.omega_j::<C::CircuitField>();
             let right_circuit_id = right.application.circuit_id.omega_j::<C::CircuitField>();
+
             // All internal circuit IDs.
             use internal_circuits::InternalCircuitIndex;
             let circuit_id = |idx: InternalCircuitIndex| {
@@ -1008,14 +1025,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 ));
                 q.push(safe_factor_iter(
                     mesh_xy_coeffs.clone(),
-                    circuit_id(InternalCircuitIndex::BridgeStaged),
-                ));
-                q.push(safe_factor_iter(
-                    mesh_xy_coeffs.clone(),
-                    circuit_id(InternalCircuitIndex::BridgeCircuit),
-                ));
-                q.push(safe_factor_iter(
-                    mesh_xy_coeffs.clone(),
                     circuit_id(InternalCircuitIndex::PreambleStage),
                 ));
                 q.push(safe_factor_iter(
@@ -1058,6 +1067,30 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 // Queries 37-38: Application rx polynomials at xz (dilated).
                 q.push(safe_factor_iter(left_app_rx_coeffs, xz));
                 q.push(safe_factor_iter(right_app_rx_coeffs, xz));
+
+                // Queries 39-50: Internal circuit rx polynomials at x.
+                q.push(safe_factor_iter(left_c_rx_coeffs.clone(), x));
+                q.push(safe_factor_iter(right_c_rx_coeffs.clone(), x));
+                q.push(safe_factor_iter(left_v_rx_coeffs.clone(), x));
+                q.push(safe_factor_iter(right_v_rx_coeffs.clone(), x));
+                q.push(safe_factor_iter(left_hashes_1_rx_coeffs.clone(), x));
+                q.push(safe_factor_iter(right_hashes_1_rx_coeffs.clone(), x));
+                q.push(safe_factor_iter(left_hashes_2_rx_coeffs.clone(), x));
+                q.push(safe_factor_iter(right_hashes_2_rx_coeffs.clone(), x));
+                q.push(safe_factor_iter(left_ky_rx_coeffs.clone(), x));
+                q.push(safe_factor_iter(right_ky_rx_coeffs.clone(), x));
+
+                // Queries 51-62: Internal circuit rx polynomials at xz (dilated).
+                q.push(safe_factor_iter(left_c_rx_coeffs, xz));
+                q.push(safe_factor_iter(right_c_rx_coeffs, xz));
+                q.push(safe_factor_iter(left_v_rx_coeffs, xz));
+                q.push(safe_factor_iter(right_v_rx_coeffs, xz));
+                q.push(safe_factor_iter(left_hashes_1_rx_coeffs, xz));
+                q.push(safe_factor_iter(right_hashes_1_rx_coeffs, xz));
+                q.push(safe_factor_iter(left_hashes_2_rx_coeffs, xz));
+                q.push(safe_factor_iter(right_hashes_2_rx_coeffs, xz));
+                q.push(safe_factor_iter(left_ky_rx_coeffs, xz));
+                q.push(safe_factor_iter(right_ky_rx_coeffs, xz));
 
                 q
             };
