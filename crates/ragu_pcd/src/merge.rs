@@ -199,9 +199,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let x = *sponge.squeeze(&mut dr)?.value().take();
 
         // Compute commitment to mesh polynomial at (x, y).
-        let mesh_xy = self.circuit_mesh.xy(x, y);
-        let mesh_xy_blind = C::CircuitField::random(&mut *rng);
-        let mesh_xy_commitment = mesh_xy.commit(host_generators, mesh_xy_blind);
+        let mesh_xy = self.compute_mesh_xy(rng, x, y);
 
         // Compute query witness (stubbed for now).
         let query_witness = internal_circuits::stages::native::query::Witness {
@@ -218,7 +216,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // Nested query commitment (includes both native_query_commitment and mesh_xy_commitment)
         let nested_query_witness = stages::nested::query::Witness {
             native_query: native_query_commitment,
-            mesh_xy: mesh_xy_commitment,
+            mesh_xy: mesh_xy.mesh_xy_commitment,
         };
         let nested_query_rx =
             stages::nested::query::Stage::<C::HostCurve, R>::rx(&nested_query_witness)?;
@@ -393,11 +391,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     nested_error_n_commitment,
                 },
                 ab,
-                mesh_xy: MeshXyProof {
-                    mesh_xy,
-                    mesh_xy_blind,
-                    mesh_xy_commitment,
-                },
+                mesh_xy,
                 query: QueryProof {
                     native_query_rx,
                     native_query_blind,
@@ -953,5 +947,25 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_ab_blind,
             nested_ab_commitment,
         })
+    }
+
+    /// Compute mesh_xy proof.
+    fn compute_mesh_xy<RNG: Rng>(
+        &self,
+        rng: &mut RNG,
+        x: C::CircuitField,
+        y: C::CircuitField,
+    ) -> MeshXyProof<C, R> {
+        let host_generators = self.params.host_generators();
+
+        let mesh_xy = self.circuit_mesh.xy(x, y);
+        let mesh_xy_blind = C::CircuitField::random(&mut *rng);
+        let mesh_xy_commitment = mesh_xy.commit(host_generators, mesh_xy_blind);
+
+        MeshXyProof {
+            mesh_xy,
+            mesh_xy_blind,
+            mesh_xy_commitment,
+        }
     }
 }
