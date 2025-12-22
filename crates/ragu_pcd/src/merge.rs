@@ -957,14 +957,38 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 // Queries 5-6: Previous accumulators' s polynomials at w.
                 q.push(safe_factor_iter(left_s_coeffs.clone(), w));
                 q.push(safe_factor_iter(right_s_coeffs.clone(), w));
-                // Queries 7-17: Current S polynomial (mesh_xy) at all circuit IDs.
-                // Application circuit IDs.
+                // Queries 7-26: Current S polynomial (mesh_xy) at all circuit IDs.
+                // Application circuit IDs (2).
                 q.push(safe_factor_iter(mesh_xy_coeffs.clone(), left_circuit_id));
                 q.push(safe_factor_iter(mesh_xy_coeffs.clone(), right_circuit_id));
-                // Internal circuit IDs (all 9 internal circuits).
+                // Internal circuit IDs (all 18 internal circuits).
                 q.push(safe_factor_iter(
                     mesh_xy_coeffs.clone(),
                     circuit_id(InternalCircuitIndex::DummyCircuit),
+                ));
+                q.push(safe_factor_iter(
+                    mesh_xy_coeffs.clone(),
+                    circuit_id(InternalCircuitIndex::Hashes1Staged),
+                ));
+                q.push(safe_factor_iter(
+                    mesh_xy_coeffs.clone(),
+                    circuit_id(InternalCircuitIndex::Hashes1Circuit),
+                ));
+                q.push(safe_factor_iter(
+                    mesh_xy_coeffs.clone(),
+                    circuit_id(InternalCircuitIndex::Hashes2Staged),
+                ));
+                q.push(safe_factor_iter(
+                    mesh_xy_coeffs.clone(),
+                    circuit_id(InternalCircuitIndex::Hashes2Circuit),
+                ));
+                q.push(safe_factor_iter(
+                    mesh_xy_coeffs.clone(),
+                    circuit_id(InternalCircuitIndex::FoldStaged),
+                ));
+                q.push(safe_factor_iter(
+                    mesh_xy_coeffs.clone(),
+                    circuit_id(InternalCircuitIndex::FoldCircuit),
                 ));
                 q.push(safe_factor_iter(
                     mesh_xy_coeffs.clone(),
@@ -984,6 +1008,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 ));
                 q.push(safe_factor_iter(
                     mesh_xy_coeffs.clone(),
+                    circuit_id(InternalCircuitIndex::BridgeStaged),
+                ));
+                q.push(safe_factor_iter(
+                    mesh_xy_coeffs.clone(),
+                    circuit_id(InternalCircuitIndex::BridgeCircuit),
+                ));
+                q.push(safe_factor_iter(
+                    mesh_xy_coeffs.clone(),
+                    circuit_id(InternalCircuitIndex::PreambleStage),
+                ));
+                q.push(safe_factor_iter(
+                    mesh_xy_coeffs.clone(),
                     circuit_id(InternalCircuitIndex::ErrorMStage),
                 ));
                 q.push(safe_factor_iter(
@@ -998,9 +1034,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     mesh_xy_coeffs.clone(),
                     circuit_id(InternalCircuitIndex::EvalStage),
                 ));
-                // Query 18: Current S polynomial (mesh_xy) at w.
+                // Query 27: Current S polynomial (mesh_xy) at w.
                 q.push(safe_factor_iter(mesh_xy_coeffs.clone(), w));
-                // Queries 19-20: S' polynomials at previous y challenges.
+                // Queries 28-29: S' polynomials at previous y challenges.
                 q.push(safe_factor_iter(
                     mesh_wx0_coeffs.clone(),
                     left.internal_circuits.y,
@@ -1009,17 +1045,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     mesh_wx1_coeffs.clone(),
                     right.internal_circuits.y,
                 ));
-                // Queries 12-13: S' polynomials at current y challenge.
+                // Queries 30-31: S' polynomials at current y challenge.
                 q.push(safe_factor_iter(mesh_wx0_coeffs.clone(), y));
                 q.push(safe_factor_iter(mesh_wx1_coeffs.clone(), y));
-                // Queries 14-16: S'' polynomial at previous x challenges and current x.
+                // Queries 32-34: S'' polynomial at previous x challenges and current x.
                 q.push(safe_factor_iter(mesh_wy_coeffs.clone(), x0));
                 q.push(safe_factor_iter(mesh_wy_coeffs.clone(), x1));
                 q.push(safe_factor_iter(mesh_wy_coeffs.clone(), x));
-                // Queries 17-18: Application rx polynomials at x.
+                // Queries 35-36: Application rx polynomials at x.
                 q.push(safe_factor_iter(left_app_rx_coeffs.clone(), x));
                 q.push(safe_factor_iter(right_app_rx_coeffs.clone(), x));
-                // Queries 19-20: Application rx polynomials at xz (dilated).
+                // Queries 37-38: Application rx polynomials at xz (dilated).
                 q.push(safe_factor_iter(left_app_rx_coeffs, xz));
                 q.push(safe_factor_iter(right_app_rx_coeffs, xz));
 
