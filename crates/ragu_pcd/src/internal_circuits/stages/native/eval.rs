@@ -33,12 +33,12 @@ impl Len for Evals {
 pub struct Witness<F> {
     /// The u challenge derived from hashing alpha and the nested F commitment.
     pub u: F,
-    /// Query points at which polynomials are opened: point_i.
-    pub evals: FixedVec<F, Evals>,
-    /// Polynomial evaluations at query points: f_i(point_i).
-    pub intermediate_evals: FixedVec<F, Evals>,
-    /// Polynomial evaluations at u challenge: f_i(u).
-    pub final_evals_for_queries: FixedVec<F, Evals>,
+    /// Query points at which polynomials are opened: z_i.
+    pub query_points: FixedVec<F, Evals>,
+    /// Polynomial evaluations at query points: f_i(z_i).
+    pub opening_evals: FixedVec<F, Evals>,
+    /// Polynomial evaluations at challenge point u: f_i(u).
+    pub challenge_evals: FixedVec<F, Evals>,
 }
 
 /// Output gadget for the eval stage.
@@ -47,15 +47,15 @@ pub struct Output<'dr, D: Driver<'dr>> {
     /// The witnessed u challenge element.
     #[ragu(gadget)]
     pub u: Element<'dr, D>,
-    /// Query points at which polynomials are opened: point_i.
+    /// Query points at which polynomials are opened: z_i.
     #[ragu(gadget)]
-    pub evals: FixedVec<Element<'dr, D>, Evals>,
-    /// Polynomial evaluations at query points: f_i(point_i).
+    pub query_points: FixedVec<Element<'dr, D>, Evals>,
+    /// Polynomial evaluations at query points: f_i(z_i).
     #[ragu(gadget)]
-    pub intermediate_evals: FixedVec<Element<'dr, D>, Evals>,
-    /// Polynomial evaluations at u challenge: f_i(u).
+    pub opening_evals: FixedVec<Element<'dr, D>, Evals>,
+    /// Polynomial evaluations at challenge point u: f_i(u).
     #[ragu(gadget)]
-    pub final_evals_for_queries: FixedVec<Element<'dr, D>, Evals>,
+    pub challenge_evals: FixedVec<Element<'dr, D>, Evals>,
 }
 
 /// The eval stage of the merge witness.
@@ -72,7 +72,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
     fn values() -> usize {
-        // u + evals + intermediate_evals + final_evals_for_queries
+        // u + query_points + opening_evals + challenge_evals
         1 + 3 * Evals::len()
     }
 
@@ -86,23 +86,23 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     {
         let u = Element::alloc(dr, witness.view().map(|w| w.u))?;
 
-        let evals = Evals::range()
-            .map(|i| Element::alloc(dr, witness.view().map(|w| w.evals[i])))
+        let query_points = Evals::range()
+            .map(|i| Element::alloc(dr, witness.view().map(|w| w.query_points[i])))
             .try_collect_fixed()?;
 
-        let intermediate_evals = Evals::range()
-            .map(|i| Element::alloc(dr, witness.view().map(|w| w.intermediate_evals[i])))
+        let opening_evals = Evals::range()
+            .map(|i| Element::alloc(dr, witness.view().map(|w| w.opening_evals[i])))
             .try_collect_fixed()?;
 
-        let final_evals_for_queries = Evals::range()
-            .map(|i| Element::alloc(dr, witness.view().map(|w| w.final_evals_for_queries[i])))
+        let challenge_evals = Evals::range()
+            .map(|i| Element::alloc(dr, witness.view().map(|w| w.challenge_evals[i])))
             .try_collect_fixed()?;
 
         Ok(Output {
             u,
-            evals,
-            intermediate_evals,
-            final_evals_for_queries,
+            query_points,
+            opening_evals,
+            challenge_evals,
         })
     }
 }

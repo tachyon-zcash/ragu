@@ -219,14 +219,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // Compute eval witness (stubbed for now).
         let eval_witness = internal_circuits::stages::native::eval::Witness {
             u,
-            evals: internal_circuits::stages::native::eval::Evals::range()
-                .map(|_| C::CircuitField::ZERO)
+            query_points: internal_circuits::stages::native::eval::Evals::range()
+                .map(|_| C::CircuitField::todo())
                 .collect_fixed()?,
-            intermediate_evals: internal_circuits::stages::native::eval::Evals::range()
-                .map(|_| C::CircuitField::ZERO)
+            opening_evals: internal_circuits::stages::native::eval::Evals::range()
+                .map(|_| C::CircuitField::todo())
                 .collect_fixed()?,
-            final_evals_for_queries: internal_circuits::stages::native::eval::Evals::range()
-                .map(|_| C::CircuitField::ZERO)
+            challenge_evals: internal_circuits::stages::native::eval::Evals::range()
+                .map(|_| C::CircuitField::todo())
                 .collect_fixed()?,
         };
         let eval = self.compute_eval(rng, &eval_witness)?;
@@ -235,7 +235,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         Point::constant(&mut dr, eval.nested_eval_commitment)?.write(&mut dr, &mut sponge)?;
         let beta = *sponge.squeeze(&mut dr)?.value().take();
 
-        // Compute V.
+        // Compute (partial) batched quotient evaluation V.
         let v = self.compute_v(alpha, u, &eval_witness)?;
 
         // Phase 15: Unified instance.
@@ -937,21 +937,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             let alpha = Element::alloc(dr, alpha)?;
             let u = Element::alloc(dr, u)?;
 
-            let evals = internal_circuits::stages::native::eval::Evals::range()
-                .map(|i| Element::alloc(dr, eval_witness.view().map(|ew| ew.evals[i])))
+            let query_points = internal_circuits::stages::native::eval::Evals::range()
+                .map(|i| Element::alloc(dr, eval_witness.view().map(|ew| ew.query_points[i])))
                 .try_collect_fixed()?;
 
-            let intermediate_evals = internal_circuits::stages::native::eval::Evals::range()
-                .map(|i| Element::alloc(dr, eval_witness.view().map(|ew| ew.intermediate_evals[i])))
+            let opening_evals = internal_circuits::stages::native::eval::Evals::range()
+                .map(|i| Element::alloc(dr, eval_witness.view().map(|ew| ew.opening_evals[i])))
                 .try_collect_fixed()?;
 
-            let final_evals_for_queries = internal_circuits::stages::native::eval::Evals::range()
-                .map(|i| {
-                    Element::alloc(
-                        dr,
-                        eval_witness.view().map(|ew| ew.final_evals_for_queries[i]),
-                    )
-                })
+            let challenge_evals = internal_circuits::stages::native::eval::Evals::range()
+                .map(|i| Element::alloc(dr, eval_witness.view().map(|ew| ew.challenge_evals[i])))
                 .try_collect_fixed()?;
 
             Ok(
@@ -959,9 +954,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     dr,
                     &alpha,
                     &u,
-                    &evals,
-                    &intermediate_evals,
-                    &final_evals_for_queries,
+                    &query_points,
+                    &opening_evals,
+                    &challenge_evals,
                 )?
                 .value()
                 .take(),
@@ -1006,7 +1001,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let c_rx_blind = C::CircuitField::random(&mut *rng);
         let c_rx_commitment = c_rx.commit(self.params.host_generators(), c_rx_blind);
 
-        // V staged circuit.
+        // compute_v staged circuit.
         let (v_rx, _) = internal_circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new().rx::<R>(
             internal_circuits::compute_v::Witness {
                 unified_instance,

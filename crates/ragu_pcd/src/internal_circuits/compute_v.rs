@@ -91,9 +91,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> StagedCircuit<C::CircuitField,
                 dr,
                 &alpha,
                 &eval.u,
-                &eval.evals,
-                &eval.intermediate_evals,
-                &eval.final_evals_for_queries,
+                &eval.query_points,
+                &eval.opening_evals,
+                &eval.challenge_evals,
             )?;
 
             unified_output.v.set(v);
