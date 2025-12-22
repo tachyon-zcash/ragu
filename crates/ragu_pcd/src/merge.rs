@@ -51,8 +51,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         left: Pcd<'source, C, R, S::Left>,
         right: Pcd<'source, C, R, S::Right>,
     ) -> Result<(Proof<C, R>, S::Aux<'source>)> {
-        let host_generators = self.params.host_generators();
-
         // PHASE ONE: Application circuit.
         //
         // We process the application circuit first because it consumes the
@@ -245,85 +243,26 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             beta,
         };
 
-        // compute_c staged circuit.
-        let (c_rx, _) =
-            internal_circuits::compute_c::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new()
-                .rx::<R>(
-                    internal_circuits::compute_c::Witness {
-                        unified_instance,
-                        error_n_witness: &error_n_witness,
-                    },
-                    self.circuit_mesh.get_key(),
-                )?;
-        let c_rx_blind = C::CircuitField::random(&mut *rng);
-        let c_rx_commitment = c_rx.commit(host_generators, c_rx_blind);
-
-        // compute_v staged circuit.
-        let (v_rx, _) = internal_circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new().rx::<R>(
-            internal_circuits::compute_v::Witness { unified_instance },
-            self.circuit_mesh.get_key(),
+        // Compute internal circuits.
+        let internal_circuits = self.compute_internal_circuits(
+            rng,
+            unified_instance,
+            &preamble_witness,
+            &error_m_witness,
+            &error_n_witness,
+            w,
+            y,
+            z,
+            c,
+            mu,
+            nu,
+            mu_prime,
+            nu_prime,
+            x,
+            alpha,
+            u,
+            beta,
         )?;
-        let v_rx_blind = C::CircuitField::random(&mut *rng);
-        let v_rx_commitment = v_rx.commit(host_generators, v_rx_blind);
-
-        // Hashes_1 staged circuit.
-        let (hashes_1_rx, _) =
-            internal_circuits::hashes_1::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(
-                self.params,
-                circuit_counts(self.num_application_steps).1,
-            )
-            .rx::<R>(
-                internal_circuits::hashes_1::Witness {
-                    unified_instance,
-                    preamble_witness: &preamble_witness,
-                    error_m_witness: &error_m_witness,
-                    error_n_witness: &error_n_witness,
-                },
-                self.circuit_mesh.get_key(),
-            )?;
-        let hashes_1_rx_blind = C::CircuitField::random(&mut *rng);
-        let hashes_1_rx_commitment = hashes_1_rx.commit(host_generators, hashes_1_rx_blind);
-
-        // Hashes_2 staged circuit.
-        let (hashes_2_rx, _) =
-            internal_circuits::hashes_2::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(
-                self.params,
-            )
-            .rx::<R>(
-                internal_circuits::hashes_2::Witness {
-                    unified_instance,
-                    error_n_witness: &error_n_witness,
-                },
-                self.circuit_mesh.get_key(),
-            )?;
-        let hashes_2_rx_blind = C::CircuitField::random(&mut *rng);
-        let hashes_2_rx_commitment = hashes_2_rx.commit(host_generators, hashes_2_rx_blind);
-
-        // fold staged circuit (layer 1 folding verification).
-        let (ky_rx, _) =
-            internal_circuits::fold::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new()
-                .rx::<R>(
-                    internal_circuits::fold::Witness {
-                        unified_instance,
-                        error_m_witness: &error_m_witness,
-                        error_n_witness: &error_n_witness,
-                    },
-                    self.circuit_mesh.get_key(),
-                )?;
-        let ky_rx_blind = C::CircuitField::random(&mut *rng);
-        let ky_rx_commitment = ky_rx.commit(host_generators, ky_rx_blind);
-
-        // Bridge staged circuit.
-        let (bridge_rx, _) =
-            internal_circuits::bridge::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new()
-                .rx::<R>(
-                    internal_circuits::bridge::Witness {
-                        preamble_witness: &preamble_witness,
-                    },
-                    self.circuit_mesh.get_key(),
-                )?;
-        let bridge_rx_blind = C::CircuitField::random(&mut *rng);
-        let bridge_rx_commitment = bridge_rx.commit(host_generators, bridge_rx_blind);
 
         Ok((
             Proof {
@@ -349,38 +288,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 query,
                 f,
                 eval,
-                internal_circuits: InternalCircuits {
-                    w,
-                    y,
-                    z,
-                    c,
-                    c_rx,
-                    c_rx_commitment,
-                    c_rx_blind,
-                    v_rx,
-                    v_rx_commitment,
-                    v_rx_blind,
-                    hashes_1_rx,
-                    hashes_1_rx_blind,
-                    hashes_1_rx_commitment,
-                    hashes_2_rx,
-                    hashes_2_rx_blind,
-                    hashes_2_rx_commitment,
-                    ky_rx,
-                    ky_rx_blind,
-                    ky_rx_commitment,
-                    bridge_rx,
-                    bridge_rx_blind,
-                    bridge_rx_commitment,
-                    mu,
-                    nu,
-                    mu_prime,
-                    nu_prime,
-                    x,
-                    alpha,
-                    u,
-                    beta,
-                },
+                internal_circuits,
                 application: application_proof,
             },
             // We return the application auxillary data for potential use by the
@@ -738,8 +646,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         )
     }
 
-    /// Compute error_n proof (layer 2 of the fold).
-    #[allow(clippy::type_complexity)]
+    // Compute error_n proof (layer 2 of the fold).
     fn compute_error_n<RNG: Rng>(
         &self,
         rng: &mut RNG,
@@ -748,6 +655,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         right_application_ky: C::CircuitField,
         left_unified_ky: C::CircuitField,
         right_unified_ky: C::CircuitField,
+        left_bridge_ky: C::CircuitField,
+        right_bridge_ky: C::CircuitField,
         sponge_state_elements: FixedVec<
             C::CircuitField,
             ragu_primitives::poseidon::PoseidonStateLen<C::CircuitField, C::CircuitPoseidon>,
@@ -765,9 +674,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         ),
         stages::native::error_n::Witness<C, NativeParameters>,
     )> {
-        let host_generators = self.params.host_generators();
-        let nested_generators = self.params.nested_generators();
-
         let error_n_witness = stages::native::error_n::Witness::<C, NativeParameters> {
             error_terms: FixedVec::from_fn(|_| C::CircuitField::todo()),
             collapsed,
@@ -775,6 +681,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             right_application_ky,
             left_unified_ky,
             right_unified_ky,
+            left_bridge_ky,
+            right_bridge_ky,
             sponge_state_elements,
         };
         let native_error_n_rx =
@@ -783,7 +691,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             )?;
         let native_error_n_blind = C::CircuitField::random(&mut *rng);
         let native_error_n_commitment =
-            native_error_n_rx.commit(host_generators, native_error_n_blind);
+            native_error_n_rx.commit(self.params.host_generators(), native_error_n_blind);
 
         // Nested error_n commitment
         let nested_error_n_witness = stages::nested::error_n::Witness {
@@ -793,7 +701,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             stages::nested::error_n::Stage::<C::HostCurve, R>::rx(&nested_error_n_witness)?;
         let nested_error_n_blind = C::ScalarField::random(&mut *rng);
         let nested_error_n_commitment =
-            nested_error_n_rx.commit(nested_generators, nested_error_n_blind);
+            nested_error_n_rx.commit(self.params.nested_generators(), nested_error_n_blind);
 
         Ok((
             (
@@ -999,6 +907,142 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_eval_rx,
             nested_eval_blind,
             nested_eval_commitment,
+        })
+    }
+
+    /// Compute internal circuits.
+    #[allow(clippy::too_many_arguments)]
+    fn compute_internal_circuits<RNG: Rng>(
+        &self,
+        rng: &mut RNG,
+        unified_instance: &unified::Instance<C>,
+        preamble_witness: &stages::native::preamble::Witness<'_, C, R, HEADER_SIZE>,
+        error_m_witness: &stages::native::error_m::Witness<C, NativeParameters>,
+        error_n_witness: &stages::native::error_n::Witness<C, NativeParameters>,
+        w: C::CircuitField,
+        y: C::CircuitField,
+        z: C::CircuitField,
+        c: C::CircuitField,
+        mu: C::CircuitField,
+        nu: C::CircuitField,
+        mu_prime: C::CircuitField,
+        nu_prime: C::CircuitField,
+        x: C::CircuitField,
+        alpha: C::CircuitField,
+        u: C::CircuitField,
+        beta: C::CircuitField,
+    ) -> Result<InternalCircuits<C, R>> {
+        let host_generators = self.params.host_generators();
+
+        // compute_c staged circuit.
+        let (c_rx, _) =
+            internal_circuits::compute_c::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new()
+                .rx::<R>(
+                    internal_circuits::compute_c::Witness {
+                        unified_instance,
+                        error_n_witness,
+                    },
+                    self.circuit_mesh.get_key(),
+                )?;
+        let c_rx_blind = C::CircuitField::random(&mut *rng);
+        let c_rx_commitment = c_rx.commit(host_generators, c_rx_blind);
+
+        // compute_v staged circuit.
+        let (v_rx, _) = internal_circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new().rx::<R>(
+            internal_circuits::compute_v::Witness { unified_instance },
+            self.circuit_mesh.get_key(),
+        )?;
+        let v_rx_blind = C::CircuitField::random(&mut *rng);
+        let v_rx_commitment = v_rx.commit(host_generators, v_rx_blind);
+
+        // Hashes_1 staged circuit.
+        let (hashes_1_rx, _) =
+            internal_circuits::hashes_1::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(
+                self.params,
+                circuit_counts(self.num_application_steps).1,
+            )
+            .rx::<R>(
+                internal_circuits::hashes_1::Witness {
+                    unified_instance,
+                    preamble_witness,
+                    error_m_witness,
+                    error_n_witness,
+                },
+                self.circuit_mesh.get_key(),
+            )?;
+        let hashes_1_rx_blind = C::CircuitField::random(&mut *rng);
+        let hashes_1_rx_commitment = hashes_1_rx.commit(host_generators, hashes_1_rx_blind);
+
+        // Hashes_2 staged circuit.
+        let (hashes_2_rx, _) =
+            internal_circuits::hashes_2::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(
+                self.params,
+            )
+            .rx::<R>(
+                internal_circuits::hashes_2::Witness {
+                    unified_instance,
+                    error_n_witness,
+                },
+                self.circuit_mesh.get_key(),
+            )?;
+        let hashes_2_rx_blind = C::CircuitField::random(&mut *rng);
+        let hashes_2_rx_commitment = hashes_2_rx.commit(host_generators, hashes_2_rx_blind);
+
+        // fold staged circuit (layer 1 folding verification).
+        let (ky_rx, _) =
+            internal_circuits::fold::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new()
+                .rx::<R>(
+                    internal_circuits::fold::Witness {
+                        unified_instance,
+                        error_m_witness,
+                        error_n_witness,
+                    },
+                    self.circuit_mesh.get_key(),
+                )?;
+        let ky_rx_blind = C::CircuitField::random(&mut *rng);
+        let ky_rx_commitment = ky_rx.commit(host_generators, ky_rx_blind);
+
+        // Bridge staged circuit.
+        let (bridge_rx, _) =
+            internal_circuits::bridge::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new()
+                .rx::<R>(
+                    internal_circuits::bridge::Witness { preamble_witness },
+                    self.circuit_mesh.get_key(),
+                )?;
+        let bridge_rx_blind = C::CircuitField::random(&mut *rng);
+        let bridge_rx_commitment = bridge_rx.commit(self.params.host_generators(), bridge_rx_blind);
+
+        Ok(InternalCircuits {
+            w,
+            y,
+            z,
+            c,
+            c_rx,
+            c_rx_commitment,
+            c_rx_blind,
+            v_rx,
+            v_rx_commitment,
+            v_rx_blind,
+            hashes_1_rx,
+            hashes_1_rx_blind,
+            hashes_1_rx_commitment,
+            hashes_2_rx,
+            hashes_2_rx_blind,
+            hashes_2_rx_commitment,
+            ky_rx,
+            ky_rx_blind,
+            ky_rx_commitment,
+            bridge_rx,
+            bridge_rx_blind,
+            bridge_rx_commitment,
+            mu,
+            nu,
+            mu_prime,
+            nu_prime,
+            x,
+            alpha,
+            u,
+            beta,
         })
     }
 }
