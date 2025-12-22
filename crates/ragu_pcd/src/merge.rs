@@ -115,29 +115,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             right_unified_ky,
             left_bridge_ky,
             right_bridge_ky,
-        ) = {
-            let preamble = Emulator::emulate_wireless(&preamble_witness, |dr, witness| {
-                stages::native::preamble::Stage::<C, R, HEADER_SIZE>::default().witness(dr, witness)
-            })?;
-
-            Emulator::emulate_wireless(y, |dr, y| {
-                let y = Element::alloc(dr, y)?;
-
-                let (left_application, left_bridge) =
-                    preamble.left.application_and_bridge_ky(dr, &y)?;
-                let (right_application, right_bridge) =
-                    preamble.right.application_and_bridge_ky(dr, &y)?;
-
-                Ok((
-                    *left_application.value().take(),
-                    *right_application.value().take(),
-                    *preamble.left.unified_ky(dr, &y)?.value().take(),
-                    *preamble.right.unified_ky(dr, &y)?.value().take(),
-                    *left_bridge.value().take(),
-                    *right_bridge.value().take(),
-                ))
-            })?
-        };
+        ) = self.compute_ky_values(&preamble_witness, y)?;
 
         // Given (w, y), we can compute m(w, X, y) and commit to it.
         let mesh_wy = self.circuit_mesh.wy(w, y);
@@ -775,6 +753,42 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_s_prime_rx,
             nested_s_prime_blind,
             nested_s_prime_commitment,
+        })
+    }
+
+    /// Compute k(y) values from preamble witness.
+    fn compute_ky_values(
+        &self,
+        preamble_witness: &stages::native::preamble::Witness<'_, C, R, HEADER_SIZE>,
+        y: C::CircuitField,
+    ) -> Result<(
+        C::CircuitField,
+        C::CircuitField,
+        C::CircuitField,
+        C::CircuitField,
+        C::CircuitField,
+        C::CircuitField,
+    )> {
+        let preamble = Emulator::emulate_wireless(preamble_witness, |dr, witness| {
+            stages::native::preamble::Stage::<C, R, HEADER_SIZE>::default().witness(dr, witness)
+        })?;
+
+        Emulator::emulate_wireless(y, |dr, y| {
+            let y = Element::alloc(dr, y)?;
+
+            let (left_application, left_bridge) =
+                preamble.left.application_and_bridge_ky(dr, &y)?;
+            let (right_application, right_bridge) =
+                preamble.right.application_and_bridge_ky(dr, &y)?;
+
+            Ok((
+                *left_application.value().take(),
+                *right_application.value().take(),
+                *preamble.left.unified_ky(dr, &y)?.value().take(),
+                *preamble.right.unified_ky(dr, &y)?.value().take(),
+                *left_bridge.value().take(),
+                *right_bridge.value().take(),
+            ))
         })
     }
 }
