@@ -165,8 +165,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         )?;
 
         // Compute error_n stage (Layer 2: Single N-sized reduction).
-        let error_n_witness = stages::native::error_n::Witness::<C, NativeParameters> {
-            error_terms: FixedVec::from_fn(|_| C::CircuitField::todo()),
+        let (
+            (native_error_n_rx, native_error_n_blind, native_error_n_commitment),
+            (nested_error_n_rx, nested_error_n_blind, nested_error_n_commitment),
+            error_n_witness,
+        ) = self.compute_error_n(
+            rng,
             collapsed,
             left_application_ky,
             right_application_ky,
@@ -175,24 +179,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             left_bridge_ky,
             right_bridge_ky,
             sponge_state_elements,
-        };
-        let native_error_n_rx =
-            stages::native::error_n::Stage::<C, R, HEADER_SIZE, NativeParameters>::rx(
-                &error_n_witness,
-            )?;
-        let native_error_n_blind = C::CircuitField::random(&mut *rng);
-        let native_error_n_commitment =
-            native_error_n_rx.commit(host_generators, native_error_n_blind);
-
-        // Nested error_n commitment
-        let nested_error_n_witness = stages::nested::error_n::Witness {
-            native_error_n: native_error_n_commitment,
-        };
-        let nested_error_n_rx =
-            stages::nested::error_n::Stage::<C::HostCurve, R>::rx(&nested_error_n_witness)?;
-        let nested_error_n_blind = C::ScalarField::random(&mut *rng);
-        let nested_error_n_commitment =
-            nested_error_n_rx.commit(nested_generators, nested_error_n_blind);
+        )?;
 
         // Derive (mu', nu') = H(nested_error_n_commitment)
         Point::constant(&mut dr, nested_error_n_commitment)?.write(&mut dr, &mut sponge)?;
@@ -874,5 +861,77 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 })
             },
         )
+    }
+
+    /// Compute error_n proof (layer 2 of the fold).
+    #[allow(clippy::type_complexity)]
+    fn compute_error_n<RNG: Rng>(
+        &self,
+        rng: &mut RNG,
+        collapsed: FixedVec<C::CircuitField, <NativeParameters as fold_revdot::Parameters>::N>,
+        left_application_ky: C::CircuitField,
+        right_application_ky: C::CircuitField,
+        left_unified_ky: C::CircuitField,
+        right_unified_ky: C::CircuitField,
+        sponge_state_elements: FixedVec<
+            C::CircuitField,
+            ragu_primitives::poseidon::PoseidonStateLen<C::CircuitField, C::CircuitPoseidon>,
+        >,
+    ) -> Result<(
+        (
+            ragu_circuits::polynomials::structured::Polynomial<C::CircuitField, R>,
+            C::CircuitField,
+            C::HostCurve,
+        ),
+        (
+            ragu_circuits::polynomials::structured::Polynomial<C::ScalarField, R>,
+            C::ScalarField,
+            C::NestedCurve,
+        ),
+        stages::native::error_n::Witness<C, NativeParameters>,
+    )> {
+        let host_generators = self.params.host_generators();
+        let nested_generators = self.params.nested_generators();
+
+        let error_n_witness = stages::native::error_n::Witness::<C, NativeParameters> {
+            error_terms: FixedVec::from_fn(|_| C::CircuitField::todo()),
+            collapsed,
+            left_application_ky,
+            right_application_ky,
+            left_unified_ky,
+            right_unified_ky,
+            sponge_state_elements,
+        };
+        let native_error_n_rx =
+            stages::native::error_n::Stage::<C, R, HEADER_SIZE, NativeParameters>::rx(
+                &error_n_witness,
+            )?;
+        let native_error_n_blind = C::CircuitField::random(&mut *rng);
+        let native_error_n_commitment =
+            native_error_n_rx.commit(host_generators, native_error_n_blind);
+
+        // Nested error_n commitment
+        let nested_error_n_witness = stages::nested::error_n::Witness {
+            native_error_n: native_error_n_commitment,
+        };
+        let nested_error_n_rx =
+            stages::nested::error_n::Stage::<C::HostCurve, R>::rx(&nested_error_n_witness)?;
+        let nested_error_n_blind = C::ScalarField::random(&mut *rng);
+        let nested_error_n_commitment =
+            nested_error_n_rx.commit(nested_generators, nested_error_n_blind);
+
+        Ok((
+            (
+                native_error_n_rx,
+                native_error_n_blind,
+                native_error_n_commitment,
+            ),
+            (
+                nested_error_n_rx,
+                nested_error_n_blind,
+                nested_error_n_commitment,
+            ),
+            error_n_witness,
+        ))
     }
 }
