@@ -7,14 +7,14 @@ use ragu_circuits::{
 use ragu_core::Result;
 
 pub mod bridge;
-pub mod c;
+pub mod compute_c;
+pub mod compute_v;
 pub mod dummy;
+pub mod fold;
 pub mod hashes_1;
 pub mod hashes_2;
-pub mod ky;
 pub mod stages;
 pub mod unified;
-pub mod v;
 
 pub use crate::components::fold_revdot::NativeParameters;
 
@@ -26,12 +26,12 @@ pub enum InternalCircuitIndex {
     Hashes1Circuit = 2,
     Hashes2Staged = 3,
     Hashes2Circuit = 4,
-    KyStaged = 5,
-    KyCircuit = 6,
-    ClaimStaged = 7,
-    ClaimCircuit = 8,
-    VStaged = 9,
-    VCircuit = 10,
+    FoldStaged = 5,
+    FoldCircuit = 6,
+    ComputeCStaged = 7,
+    ComputeCCircuit = 8,
+    ComputeVStaged = 9,
+    ComputeVCircuit = 10,
     BridgeStaged = 11,
     BridgeCircuit = 12,
     PreambleStage = 13,
@@ -71,19 +71,19 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
             .register_circuit(hashes_2)?
     };
     let mesh = {
-        let ky = ky::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new();
-        mesh.register_circuit_object(ky.final_into_object()?)?
-            .register_circuit(ky)?
+        let fold = fold::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new();
+        mesh.register_circuit_object(fold.final_into_object()?)?
+            .register_circuit(fold)?
     };
     let mesh = {
-        let c = c::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new();
-        mesh.register_circuit_object(c.final_into_object()?)?
-            .register_circuit(c)?
+        let compute_c = compute_c::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new();
+        mesh.register_circuit_object(compute_c.final_into_object()?)?
+            .register_circuit(compute_c)?
     };
     let mesh = {
-        let v = v::Circuit::<C, R, HEADER_SIZE>::new();
-        mesh.register_circuit_object(v.final_into_object()?)?
-            .register_circuit(v)?
+        let compute_v = compute_v::Circuit::<C, R, HEADER_SIZE>::new();
+        mesh.register_circuit_object(compute_v.final_into_object()?)?
+            .register_circuit(compute_v)?
     };
     let mesh = {
         let bridge = bridge::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new();

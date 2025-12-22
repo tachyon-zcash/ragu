@@ -58,22 +58,22 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             internal_circuits::stages::native::eval::STAGING_ID,
         );
 
-        // Internal circuit c verification
+        // Internal circuit compute_c verification
         let c_stage_valid = verifier.check_stage(
             &pcd.proof.internal_circuits.c_rx,
-            internal_circuits::c::STAGED_ID,
+            internal_circuits::compute_c::STAGED_ID,
         );
 
-        // Internal circuit v verification
+        // Internal circuit compute_v verification
         let v_stage_valid = verifier.check_stage(
             &pcd.proof.internal_circuits.v_rx,
-            internal_circuits::v::STAGED_ID,
+            internal_circuits::compute_v::STAGED_ID,
         );
 
-        // Internal circuit ky stage verification
-        let ky_stage_valid = verifier.check_stage(
+        // Internal circuit fold stage verification
+        let fold_stage_valid = verifier.check_stage(
             &pcd.proof.internal_circuits.ky_rx,
-            internal_circuits::ky::STAGED_ID,
+            internal_circuits::fold::STAGED_ID,
         );
 
         // Internal circuit hashes_1 stage verification
@@ -111,24 +111,24 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             },
         )?;
 
-        // C circuit verification with ky.
-        // C skips preamble and error_m, so only combine error_n_rx with c_rx.
+        // compute_c circuit verification with ky.
+        // compute_c skips preamble and error_m, so only combine error_n_rx with c_rx.
         let c_circuit_valid = {
             let mut c_combined_rx = pcd.proof.error.native_error_n_rx.clone();
             c_combined_rx.add_assign(&pcd.proof.internal_circuits.c_rx);
 
             verifier.check_internal_circuit(
                 &c_combined_rx,
-                internal_circuits::c::CIRCUIT_ID,
+                internal_circuits::compute_c::CIRCUIT_ID,
                 unified_ky,
             )
         };
 
-        // V circuit verification with ky.
-        // V skips all stages (preamble, query, eval), so only check v_rx.
+        // compute_v circuit verification with ky.
+        // compute_v skips all stages (preamble, query, eval), so only check v_rx.
         let v_circuit_valid = verifier.check_internal_circuit(
             &pcd.proof.internal_circuits.v_rx,
-            internal_circuits::v::CIRCUIT_ID,
+            internal_circuits::compute_v::CIRCUIT_ID,
             unified_ky,
         );
 
@@ -160,16 +160,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             )
         };
 
-        // Ky circuit verification with ky.
-        // Ky skips preamble, so only combine error_m_rx + error_n_rx with ky_rx.
-        let ky_circuit_valid = {
-            let mut ky_combined_rx = pcd.proof.error.native_error_m_rx.clone();
-            ky_combined_rx.add_assign(&pcd.proof.error.native_error_n_rx);
-            ky_combined_rx.add_assign(&pcd.proof.internal_circuits.ky_rx);
+        // fold circuit verification with ky.
+        // fold skips preamble, so only combine error_m_rx + error_n_rx with ky_rx.
+        let fold_circuit_valid = {
+            let mut fold_combined_rx = pcd.proof.error.native_error_m_rx.clone();
+            fold_combined_rx.add_assign(&pcd.proof.error.native_error_n_rx);
+            fold_combined_rx.add_assign(&pcd.proof.internal_circuits.ky_rx);
 
             verifier.check_internal_circuit(
-                &ky_combined_rx,
-                internal_circuits::ky::CIRCUIT_ID,
+                &fold_combined_rx,
+                internal_circuits::fold::CIRCUIT_ID,
                 unified_ky,
             )
         };
@@ -200,7 +200,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             && eval_valid
             && c_stage_valid
             && v_stage_valid
-            && ky_stage_valid
+            && fold_stage_valid
             && hashes_1_stage_valid
             && hashes_2_stage_valid
             && bridge_stage_valid
@@ -208,7 +208,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             && v_circuit_valid
             && hashes_1_valid
             && hashes_2_valid
-            && ky_circuit_valid
+            && fold_circuit_valid
             && bridge_circuit_valid
             && application_valid)
     }

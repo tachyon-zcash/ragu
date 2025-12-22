@@ -16,8 +16,8 @@ use super::{
     stages::native::{eval as native_eval, preamble as native_preamble, query as native_query},
     unified::{self, OutputBuilder},
 };
-pub use crate::internal_circuits::InternalCircuitIndex::VCircuit as CIRCUIT_ID;
-pub use crate::internal_circuits::InternalCircuitIndex::VStaged as STAGED_ID;
+pub use crate::internal_circuits::InternalCircuitIndex::ComputeVCircuit as CIRCUIT_ID;
+pub use crate::internal_circuits::InternalCircuitIndex::ComputeVStaged as STAGED_ID;
 
 pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize> {
     _marker: PhantomData<(C, R)>,

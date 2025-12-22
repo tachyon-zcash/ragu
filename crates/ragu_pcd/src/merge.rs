@@ -500,21 +500,22 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             beta,
         };
 
-        // C staged circuit.
-        let (c_rx, _) = internal_circuits::c::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new()
-            .rx::<R>(
-                internal_circuits::c::Witness {
-                    unified_instance,
-                    error_n_witness: &error_n_witness,
-                },
-                self.circuit_mesh.get_key(),
-            )?;
+        // compute_c staged circuit.
+        let (c_rx, _) =
+            internal_circuits::compute_c::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new()
+                .rx::<R>(
+                    internal_circuits::compute_c::Witness {
+                        unified_instance,
+                        error_n_witness: &error_n_witness,
+                    },
+                    self.circuit_mesh.get_key(),
+                )?;
         let c_rx_blind = C::CircuitField::random(&mut *rng);
         let c_rx_commitment = c_rx.commit(host_generators, c_rx_blind);
 
-        // V staged circuit.
-        let (v_rx, _) = internal_circuits::v::Circuit::<C, R, HEADER_SIZE>::new().rx::<R>(
-            internal_circuits::v::Witness { unified_instance },
+        // compute_v staged circuit.
+        let (v_rx, _) = internal_circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new().rx::<R>(
+            internal_circuits::compute_v::Witness { unified_instance },
             self.circuit_mesh.get_key(),
         )?;
         let v_rx_blind = C::CircuitField::random(&mut *rng);
@@ -553,16 +554,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let hashes_2_rx_blind = C::CircuitField::random(&mut *rng);
         let hashes_2_rx_commitment = hashes_2_rx.commit(host_generators, hashes_2_rx_blind);
 
-        // Ky staged circuit (layer 1 folding verification).
+        // fold staged circuit (layer 1 folding verification).
         let (ky_rx, _) =
-            internal_circuits::ky::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new().rx::<R>(
-                internal_circuits::ky::Witness {
-                    unified_instance,
-                    error_m_witness: &error_m_witness,
-                    error_n_witness: &error_n_witness,
-                },
-                self.circuit_mesh.get_key(),
-            )?;
+            internal_circuits::fold::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new()
+                .rx::<R>(
+                    internal_circuits::fold::Witness {
+                        unified_instance,
+                        error_m_witness: &error_m_witness,
+                        error_n_witness: &error_n_witness,
+                    },
+                    self.circuit_mesh.get_key(),
+                )?;
         let ky_rx_blind = C::CircuitField::random(&mut *rng);
         let ky_rx_commitment = ky_rx.commit(host_generators, ky_rx_blind);
 
