@@ -98,31 +98,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // In order to check that the two proofs' commitments to s (the mesh polynomial
         // evaluated at (x_0, y_0) and (x_1, y_1)) are correct, we need to
         // compute s' = m(w, x_i, Y) for both proofs.
-        let x0 = left.internal_circuits.x;
-        let x1 = right.internal_circuits.x;
-
-        // ... commit to both...
-        let mesh_wx0 = self.circuit_mesh.wx(w, x0);
-        let mesh_wx0_blind = C::CircuitField::random(&mut *rng);
-        let mesh_wx0_commitment = mesh_wx0.commit(host_generators, mesh_wx0_blind);
-        let mesh_wx1 = self.circuit_mesh.wx(w, x1);
-        let mesh_wx1_blind = C::CircuitField::random(&mut *rng);
-        let mesh_wx1_commitment = mesh_wx1.commit(host_generators, mesh_wx1_blind);
-        // ... and then compute the nested commitment S' that contains them.
-        let nested_s_prime_witness = stages::nested::s_prime::Witness {
-            mesh_wx0: mesh_wx0_commitment,
-            mesh_wx1: mesh_wx1_commitment,
-        };
-        let nested_s_prime_rx =
-            stages::nested::s_prime::Stage::<C::HostCurve, R>::rx(&nested_s_prime_witness)?;
-        let nested_s_prime_blind = C::ScalarField::random(&mut *rng);
-        let nested_s_prime_commitment =
-            nested_s_prime_rx.commit(nested_generators, nested_s_prime_blind);
+        let s_prime = self.compute_s_prime(rng, w, &left, &right)?;
 
         // Once S' is committed, we can compute the challenges (y, z).
         //
         // Derive (y, z) = H(nested_s_prime_commitment).
-        Point::constant(&mut dr, nested_s_prime_commitment)?.write(&mut dr, &mut sponge)?;
+        Point::constant(&mut dr, s_prime.nested_s_prime_commitment)?.write(&mut dr, &mut sponge)?;
         let y = *sponge.squeeze(&mut dr)?.value().take();
         let z = *sponge.squeeze(&mut dr)?.value().take();
 
@@ -427,7 +408,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let unified_instance = &unified::Instance {
             nested_preamble_commitment: preamble.nested_preamble_commitment,
             w,
-            nested_s_prime_commitment,
+            nested_s_prime_commitment: s_prime.nested_s_prime_commitment,
             y,
             z,
             nested_error_m_commitment,
@@ -530,17 +511,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         Ok((
             Proof {
                 preamble,
-                s_prime: SPrimeProof {
-                    mesh_wx0,
-                    mesh_wx0_blind,
-                    mesh_wx0_commitment,
-                    mesh_wx1,
-                    mesh_wx1_blind,
-                    mesh_wx1_commitment,
-                    nested_s_prime_rx,
-                    nested_s_prime_blind,
-                    nested_s_prime_commitment,
-                },
+                s_prime,
                 mesh_wy: MeshWyProof {
                     mesh_wy,
                     mesh_wy_blind,
@@ -760,5 +731,50 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             },
             preamble_witness,
         ))
+    }
+
+    /// Compute the S' proof.
+    fn compute_s_prime<RNG: Rng>(
+        &self,
+        rng: &mut RNG,
+        w: C::CircuitField,
+        left: &Proof<C, R>,
+        right: &Proof<C, R>,
+    ) -> Result<SPrimeProof<C, R>> {
+        let host_generators = self.params.host_generators();
+        let nested_generators = self.params.nested_generators();
+
+        let x0 = left.internal_circuits.x;
+        let x1 = right.internal_circuits.x;
+
+        // ... commit to both...
+        let mesh_wx0 = self.circuit_mesh.wx(w, x0);
+        let mesh_wx0_blind = C::CircuitField::random(&mut *rng);
+        let mesh_wx0_commitment = mesh_wx0.commit(host_generators, mesh_wx0_blind);
+        let mesh_wx1 = self.circuit_mesh.wx(w, x1);
+        let mesh_wx1_blind = C::CircuitField::random(&mut *rng);
+        let mesh_wx1_commitment = mesh_wx1.commit(host_generators, mesh_wx1_blind);
+        // ... and then compute the nested commitment S' that contains them.
+        let nested_s_prime_witness = stages::nested::s_prime::Witness {
+            mesh_wx0: mesh_wx0_commitment,
+            mesh_wx1: mesh_wx1_commitment,
+        };
+        let nested_s_prime_rx =
+            stages::nested::s_prime::Stage::<C::HostCurve, R>::rx(&nested_s_prime_witness)?;
+        let nested_s_prime_blind = C::ScalarField::random(&mut *rng);
+        let nested_s_prime_commitment =
+            nested_s_prime_rx.commit(nested_generators, nested_s_prime_blind);
+
+        Ok(SPrimeProof {
+            mesh_wx0,
+            mesh_wx0_blind,
+            mesh_wx0_commitment,
+            mesh_wx1,
+            mesh_wx1_blind,
+            mesh_wx1_commitment,
+            nested_s_prime_rx,
+            nested_s_prime_blind,
+            nested_s_prime_commitment,
+        })
     }
 }
