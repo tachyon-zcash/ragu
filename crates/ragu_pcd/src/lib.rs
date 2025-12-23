@@ -11,7 +11,8 @@ extern crate alloc;
 
 mod components;
 pub mod header;
-mod internal_circuits;
+#[doc(hidden)]
+pub mod internal_circuits;
 mod merge;
 mod proof;
 pub mod step;

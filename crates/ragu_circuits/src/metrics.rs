@@ -1,3 +1,8 @@
+//! Circuit metrics evaluation.
+//!
+//! This module provides utilities for evaluating circuit constraint counts
+//! without performing actual proof generation.
+
 use arithmetic::Coeff;
 use ff::Field;
 use ragu_core::{
@@ -98,6 +103,10 @@ impl<'dr, F: Field> Driver<'dr> for Counter<F> {
     }
 }
 
+/// Evaluates the constraint counts of a circuit without generating a proof.
+///
+/// Returns [`CircuitMetrics`] containing the number of multiplication and
+/// linear constraints used by the circuit.
 pub fn eval<F: Field, C: Circuit<F>>(circuit: &C) -> Result<CircuitMetrics> {
     let mut collector = Counter {
         available_b: false,

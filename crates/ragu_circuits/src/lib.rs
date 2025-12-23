@@ -17,7 +17,7 @@ extern crate alloc;
 pub mod composition;
 mod ky;
 pub mod mesh;
-mod metrics;
+pub mod metrics;
 pub mod polynomials;
 mod rx;
 mod s;
