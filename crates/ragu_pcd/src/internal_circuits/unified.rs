@@ -213,6 +213,14 @@ impl<'dr, D: Driver<'dr>, C: Cycle> Output<'dr, D, C> {
     }
 }
 
+impl<'a, 'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle> Default
+    for OutputBuilder<'a, 'dr, D, C>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<'a, 'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle> OutputBuilder<'a, 'dr, D, C> {
     pub fn new() -> Self {
         macro_rules! point_slot {
