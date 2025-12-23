@@ -133,8 +133,17 @@ fn constraint_headroom() {
 }
 
 fn print_row(name: &str, muls: usize, linear: usize, max_muls: usize, max_linear: usize) {
-    let mul_headroom = max_muls.saturating_sub(muls);
-    let linear_headroom = max_linear.saturating_sub(linear);
+    assert!(
+        muls <= max_muls,
+        "{name} exceeds max multiplication constraints: {muls} > {max_muls}"
+    );
+    assert!(
+        linear <= max_linear,
+        "{name} exceeds max linear constraints: {linear} > {max_linear}"
+    );
+
+    let mul_headroom = max_muls - muls;
+    let linear_headroom = max_linear - linear;
     let mul_usage = (muls as f64 / max_muls as f64) * 100.0;
 
     println!(
