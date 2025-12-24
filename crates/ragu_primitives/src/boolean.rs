@@ -93,6 +93,13 @@ impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
     pub fn element(&self) -> Element<'dr, D> {
         Element::promote(self.wire.clone(), self.value().fe())
     }
+
+    /// Constructs a new boolean from a wire and a witness value.
+    /// This is necessary for constructing a Boolean from a raw wire
+    /// when the boolean constraint is enforced through other means.
+    pub fn promote(wire: D::Wire, value: DriverValue<D, bool>) -> Self {
+        Boolean { wire, value }
+    }
 }
 
 impl<F: Field> Write<F> for Kind![F; @Boolean<'_, _>] {
