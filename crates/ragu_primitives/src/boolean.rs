@@ -79,6 +79,50 @@ impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
         })
     }
 
+    /// Computes the OR of two booleans, using the identity:
+    /// a OR b = a + b - a*b. This costs one multiplication
+    /// constraint and two linear constraints.
+    pub fn or(&self, dr: &mut D, other: &Self) -> Result<Self> {
+        // a OR b = a + b - a*b
+        let result = D::just(|| self.value.snag() | other.value.snag());
+        let (a, b, ab) = dr.mul(|| {
+            let a = self.value.coeff().take();
+            let b = other.value.coeff().take();
+            let ab_val = if *self.value.snag() && *other.value.snag() {
+                D::F::ONE
+            } else {
+                D::F::ZERO
+            };
+            Ok((a, b, Coeff::Arbitrary(ab_val)))
+        })?;
+
+        dr.enforce_equal(&a, self.wire())?;
+        dr.enforce_equal(&b, other.wire())?;
+
+        // wire = a + b - ab
+        let wire = dr.add(|lc| lc.add(self.wire()).add(other.wire()).sub(&ab));
+
+        Ok(Boolean {
+            value: result,
+            wire,
+        })
+    }
+
+    /// Selects between two elements based on this boolean's value.
+    /// Returns `if_true` when true, `if_false` when false.
+    /// This costs one multiplication constraint and two linear constraints.
+    pub fn select(
+        &self,
+        dr: &mut D,
+        if_true: &Element<'dr, D>,
+        if_false: &Element<'dr, D>,
+    ) -> Result<Element<'dr, D>> {
+        // Result = if_false + cond * (if_true - if_false)
+        let diff = if_true.sub(dr, if_false);
+        let cond_times_diff = self.element().mul(dr, &diff)?;
+        Ok(if_false.add(dr, &cond_times_diff))
+    }
+
     /// Returns the witness value of this boolean.
     pub fn value(&self) -> DriverValue<D, bool> {
         self.value.clone()
@@ -232,6 +276,61 @@ fn test_multipack_vector() -> Result<()> {
         assert_eq!(*vals[0].value().take(), F::from(22));
         assert_eq!(*vals[0].wire(), F::from(22));
 
+        Ok(())
+    })?;
+
+    Ok(())
+}
+
+#[test]
+fn test_or() -> Result<()> {
+    type F = ragu_pasta::Fp;
+    type Simulator = crate::Simulator<F>;
+
+    for (a_in, b_in) in [(false, false), (false, true), (true, false), (true, true)] {
+        Simulator::simulate((a_in, b_in), |dr, witness| {
+            let (a_val, b_val) = witness.cast();
+            let a = Boolean::alloc(dr, a_val.clone())?;
+            let b = Boolean::alloc(dr, b_val.clone())?;
+
+            dr.reset();
+            let result = a.or(dr, &b)?;
+
+            assert_eq!(result.value().take(), a_val.take() || b_val.take());
+            Ok(())
+        })?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_select() -> Result<()> {
+    type F = ragu_pasta::Fp;
+    type Simulator = crate::Simulator<F>;
+
+    Simulator::simulate((true, F::from(10u64), F::from(20u64)), |dr, witness| {
+        let (cond, if_true, if_false) = witness.cast();
+        let cond = Boolean::alloc(dr, cond)?;
+        let if_true = Element::alloc(dr, if_true)?;
+        let if_false = Element::alloc(dr, if_false)?;
+
+        dr.reset();
+        let result = cond.select(dr, &if_true, &if_false)?;
+
+        assert_eq!(*result.value().take(), F::from(10u64));
+        Ok(())
+    })?;
+
+    Simulator::simulate((false, F::from(10u64), F::from(20u64)), |dr, witness| {
+        let (cond, if_true, if_false) = witness.cast();
+        let cond = Boolean::alloc(dr, cond)?;
+        let if_true = Element::alloc(dr, if_true)?;
+        let if_false = Element::alloc(dr, if_false)?;
+
+        let result = cond.select(dr, &if_true, &if_false)?;
+
+        assert_eq!(*result.value().take(), F::from(20u64));
         Ok(())
     })?;
 
