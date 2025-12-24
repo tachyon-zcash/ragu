@@ -30,61 +30,61 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Preamble verification
         let preamble_valid = verifier.check_stage(
-            &pcd.proof.preamble.native_preamble_rx,
+            &pcd.proof.preamble.native.poly,
             internal_circuits::stages::native::preamble::STAGING_ID,
         );
 
         // Error_m stage verification (Layer 1).
         let error_m_valid = verifier.check_stage(
-            &pcd.proof.error.native_error_m_rx,
+            &pcd.proof.error.native_m.poly,
             internal_circuits::stages::native::error_m::STAGING_ID,
         );
 
         // Error_n stage verification (Layer 2).
         let error_n_valid = verifier.check_stage(
-            &pcd.proof.error.native_error_n_rx,
+            &pcd.proof.error.native_n.poly,
             internal_circuits::stages::native::error_n::STAGING_ID,
         );
 
         // Query verification.
         let query_valid = verifier.check_stage(
-            &pcd.proof.query.native_query_rx,
+            &pcd.proof.query.native.poly,
             internal_circuits::stages::native::query::STAGING_ID,
         );
 
         // Eval verification.
         let eval_valid = verifier.check_stage(
-            &pcd.proof.eval.native_eval_rx,
+            &pcd.proof.eval.native.poly,
             internal_circuits::stages::native::eval::STAGING_ID,
         );
 
         // Internal circuit compute_c verification
         let c_stage_valid = verifier.check_stage(
-            &pcd.proof.internal_circuits.c_rx,
+            &pcd.proof.internal_circuits.c_rx.poly,
             internal_circuits::compute_c::STAGED_ID,
         );
 
         // Internal circuit compute_v verification
         let v_stage_valid = verifier.check_stage(
-            &pcd.proof.internal_circuits.v_rx,
+            &pcd.proof.internal_circuits.v_rx.poly,
             internal_circuits::compute_v::STAGED_ID,
         );
 
         // Internal circuit fold stage verification
         let fold_stage_valid = verifier.check_stage(
-            &pcd.proof.internal_circuits.ky_rx,
+            &pcd.proof.internal_circuits.ky_rx.poly,
             internal_circuits::fold::STAGED_ID,
         );
 
         // Internal circuit hashes_1 stage verification
         let hashes_1_stage_valid = verifier.check_stage(
-            &pcd.proof.internal_circuits.hashes_1_rx,
+            &pcd.proof.internal_circuits.hashes_1_rx.poly,
             internal_circuits::hashes_1::STAGED_ID,
         );
 
         // Internal circuit hashes_2 stage verification
         let hashes_2_stage_valid = verifier.check_stage(
-            &pcd.proof.internal_circuits.hashes_2_rx,
+            &pcd.proof.internal_circuits.hashes_2_rx.poly,
             internal_circuits::hashes_2::STAGED_ID,
         );
 
@@ -109,8 +109,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // compute_c circuit verification with ky.
         // compute_c skips preamble and error_m, so only combine error_n_rx with c_rx.
         let c_circuit_valid = {
-            let mut c_combined_rx = pcd.proof.error.native_error_n_rx.clone();
-            c_combined_rx.add_assign(&pcd.proof.internal_circuits.c_rx);
+            let mut c_combined_rx = pcd.proof.error.native_n.poly.clone();
+            c_combined_rx.add_assign(&pcd.proof.internal_circuits.c_rx.poly);
 
             verifier.check_internal_circuit(
                 &c_combined_rx,
@@ -122,7 +122,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // compute_v circuit verification with ky.
         // compute_v skips all stages (preamble, query, eval), so only check v_rx.
         let v_circuit_valid = verifier.check_internal_circuit(
-            &pcd.proof.internal_circuits.v_rx,
+            &pcd.proof.internal_circuits.v_rx.poly,
             internal_circuits::compute_v::CIRCUIT_ID,
             unified_ky,
         );
@@ -131,10 +131,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // Hashes_1's final stage is error_n, so combine preamble_rx + error_m_rx + error_n_rx with hashes_1_rx.
         // Uses unified_bridge_ky to bind ApplicationProof headers to preamble output headers.
         let hashes_1_valid = {
-            let mut hashes_1_combined_rx = pcd.proof.preamble.native_preamble_rx.clone();
-            hashes_1_combined_rx.add_assign(&pcd.proof.error.native_error_m_rx);
-            hashes_1_combined_rx.add_assign(&pcd.proof.error.native_error_n_rx);
-            hashes_1_combined_rx.add_assign(&pcd.proof.internal_circuits.hashes_1_rx);
+            let mut hashes_1_combined_rx = pcd.proof.preamble.native.poly.clone();
+            hashes_1_combined_rx.add_assign(&pcd.proof.error.native_m.poly);
+            hashes_1_combined_rx.add_assign(&pcd.proof.error.native_n.poly);
+            hashes_1_combined_rx.add_assign(&pcd.proof.internal_circuits.hashes_1_rx.poly);
 
             verifier.check_internal_circuit(
                 &hashes_1_combined_rx,
@@ -146,8 +146,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // Hashes_2 circuit verification with ky.
         // Hashes_2 skips preamble and error_m, so only combine error_n_rx with hashes_2_rx.
         let hashes_2_valid = {
-            let mut hashes_2_combined_rx = pcd.proof.error.native_error_n_rx.clone();
-            hashes_2_combined_rx.add_assign(&pcd.proof.internal_circuits.hashes_2_rx);
+            let mut hashes_2_combined_rx = pcd.proof.error.native_n.poly.clone();
+            hashes_2_combined_rx.add_assign(&pcd.proof.internal_circuits.hashes_2_rx.poly);
 
             verifier.check_internal_circuit(
                 &hashes_2_combined_rx,
@@ -159,9 +159,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // fold circuit verification with ky.
         // fold skips preamble, so only combine error_m_rx + error_n_rx with ky_rx.
         let fold_circuit_valid = {
-            let mut fold_combined_rx = pcd.proof.error.native_error_m_rx.clone();
-            fold_combined_rx.add_assign(&pcd.proof.error.native_error_n_rx);
-            fold_combined_rx.add_assign(&pcd.proof.internal_circuits.ky_rx);
+            let mut fold_combined_rx = pcd.proof.error.native_m.poly.clone();
+            fold_combined_rx.add_assign(&pcd.proof.error.native_n.poly);
+            fold_combined_rx.add_assign(&pcd.proof.internal_circuits.ky_rx.poly);
 
             verifier.check_internal_circuit(
                 &fold_combined_rx,
