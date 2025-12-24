@@ -72,9 +72,7 @@ pub(crate) struct ApplicationProof<C: Cycle, R: Rank> {
     pub(crate) circuit_id: CircuitIndex,
     pub(crate) left_header: Vec<C::CircuitField>,
     pub(crate) right_header: Vec<C::CircuitField>,
-    pub(crate) rx: structured::Polynomial<C::CircuitField, R>,
-    pub(crate) blind: C::CircuitField,
-    pub(crate) commitment: C::HostCurve,
+    pub(crate) native: NativeStructured<C, R>,
 }
 
 /// Preamble stage proof with native and nested layer commitments.
@@ -184,9 +182,7 @@ impl<C: Cycle, R: Rank> Clone for ApplicationProof<C, R> {
             circuit_id: self.circuit_id,
             left_header: self.left_header.clone(),
             right_header: self.right_header.clone(),
-            rx: self.rx.clone(),
-            blind: self.blind,
-            commitment: self.commitment,
+            native: self.native.clone(),
         }
     }
 }
@@ -445,9 +441,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 circuit_id: dummy_circuit_id,
                 left_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
                 right_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
-                rx: dummy_rx,
-                blind: host_blind,
-                commitment: dummy_commitment,
+                native: CommittedPolynomial {
+                    poly: dummy_rx,
+                    blind: host_blind,
+                    commitment: dummy_commitment,
+                },
             },
         }
     }

@@ -304,9 +304,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 circuit_id,
                 left_header: left_header.into_inner(),
                 right_header: right_header.into_inner(),
-                rx,
-                blind,
-                commitment,
+                native: CommittedPolynomial {
+                    poly: rx,
+                    blind,
+                    commitment,
+                },
             },
             aux,
         ))
@@ -352,8 +354,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // merge operations that produced each of the two input proofs.
         let nested_preamble_witness = stages::nested::preamble::Witness {
             native_preamble: native_preamble_commitment,
-            left_application: left.application.commitment,
-            right_application: right.application.commitment,
+            left_application: left.application.native.commitment,
+            right_application: right.application.native.commitment,
             left_ky: left.internal_circuits.ky_rx.commitment,
             right_ky: right.internal_circuits.ky_rx.commitment,
             left_c: left.internal_circuits.c_rx.commitment,

@@ -172,7 +172,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Application verification (application_ky was computed earlier with unified_ky)
         let application_valid = verifier.check_circuit(
-            &pcd.proof.application.rx,
+            &pcd.proof.application.native.poly,
             pcd.proof.application.circuit_id,
             application_ky,
         );
