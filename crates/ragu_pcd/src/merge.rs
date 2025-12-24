@@ -21,8 +21,8 @@ use crate::{
     internal_circuits::{self, stages, unified},
     proof::{
         ABProof, ApplicationProof, CommittedPolynomial, ErrorProof, EvalProof, FProof,
-        InternalCircuits, MeshWyProof, MeshXyProof, NativeStructured, NestedStructured, Pcd,
-        PreambleProof, Proof, QueryProof, SPrimeProof,
+        InternalCircuits, KyValues, MeshWyProof, MeshXyProof, NativeStructured, NestedStructured,
+        Pcd, PreambleProof, Proof, QueryProof, SPrimeProof,
     },
     step::{Step, adapter::Adapter},
 };
@@ -88,14 +88,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let z = *sponge.squeeze(&mut dr)?.value().take();
 
         // Phase 4: K(y) values for the folding claims.
-        let (
-            left_application_ky,
-            right_application_ky,
-            left_unified_ky,
-            right_unified_ky,
-            left_unified_bridge_ky,
-            right_unified_bridge_ky,
-        ) = self.compute_ky_values(&preamble_witness, y)?;
+        let ky = self.compute_ky_values(&preamble_witness, y)?;
 
         // Phase 5: Mesh WY.
         let mesh_wy = self.compute_mesh_wy(rng, w, y);
@@ -129,30 +122,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nu = *sponge.squeeze(&mut dr)?.value().take();
 
         // Phase 7: Collapsed values (layer 1 folding).
-        let collapsed = self.compute_collapsed(
-            &error_m_witness,
-            left_application_ky,
-            right_application_ky,
-            left_unified_ky,
-            right_unified_ky,
-            left_unified_bridge_ky,
-            right_unified_bridge_ky,
-            mu,
-            nu,
-        )?;
+        let collapsed = self.compute_collapsed(&error_m_witness, &ky, mu, nu)?;
 
         // Phase 8: Error N (Layer 2: Single N-sized reduction).
-        let (native_error_n, nested_error_n, error_n_witness) = self.compute_error_n(
-            rng,
-            collapsed,
-            left_application_ky,
-            right_application_ky,
-            left_unified_ky,
-            right_unified_ky,
-            left_unified_bridge_ky,
-            right_unified_bridge_ky,
-            sponge_state_elements,
-        )?;
+        let (native_error_n, nested_error_n, error_n_witness) =
+            self.compute_error_n(rng, collapsed, &ky, sponge_state_elements)?;
 
         // Derive (mu', nu') = H(nested_error_n_commitment).
         Point::constant(&mut dr, nested_error_n.commitment)?.write(&mut dr, &mut sponge)?;
@@ -441,14 +415,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         &self,
         preamble_witness: &stages::native::preamble::Witness<'_, C, R, HEADER_SIZE>,
         y: C::CircuitField,
-    ) -> Result<(
-        C::CircuitField,
-        C::CircuitField,
-        C::CircuitField,
-        C::CircuitField,
-        C::CircuitField,
-        C::CircuitField,
-    )> {
+    ) -> Result<KyValues<C::CircuitField>> {
         let preamble = Emulator::emulate_wireless(preamble_witness, |dr, witness| {
             stages::native::preamble::Stage::<C, R, HEADER_SIZE>::default().witness(dr, witness)
         })?;
@@ -463,14 +430,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             let (right_unified_ky, right_unified_bridge_ky) =
                 preamble.right.unified_ky_values(dr, &y)?;
 
-            Ok((
-                *left_application.value().take(),
-                *right_application.value().take(),
-                *left_unified_ky.value().take(),
-                *right_unified_ky.value().take(),
-                *left_unified_bridge_ky.value().take(),
-                *right_unified_bridge_ky.value().take(),
-            ))
+            Ok(KyValues {
+                left_application: *left_application.value().take(),
+                right_application: *right_application.value().take(),
+                left_unified: *left_unified_ky.value().take(),
+                right_unified: *right_unified_ky.value().take(),
+                left_bridge: *left_unified_bridge_ky.value().take(),
+                right_bridge: *right_unified_bridge_ky.value().take(),
+            })
         })
     }
 
@@ -544,67 +511,38 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     fn compute_collapsed(
         &self,
         error_m_witness: &stages::native::error_m::Witness<C, NativeParameters>,
-        left_application_ky: C::CircuitField,
-        right_application_ky: C::CircuitField,
-        left_unified_ky: C::CircuitField,
-        right_unified_ky: C::CircuitField,
-        left_unified_bridge_ky: C::CircuitField,
-        right_unified_bridge_ky: C::CircuitField,
+        ky: &KyValues<C::CircuitField>,
         mu: C::CircuitField,
         nu: C::CircuitField,
     ) -> Result<FixedVec<C::CircuitField, <NativeParameters as fold_revdot::Parameters>::N>> {
-        Emulator::emulate_wireless(
-            (
-                mu,
-                nu,
-                &error_m_witness.error_terms,
-                left_application_ky,
-                right_application_ky,
-                left_unified_ky,
-                right_unified_ky,
-                left_unified_bridge_ky,
-                right_unified_bridge_ky,
-            ),
-            |dr, witness| {
-                let (
-                    mu,
-                    nu,
-                    error_terms_m,
-                    left_application_ky,
-                    right_application_ky,
-                    left_unified_ky,
-                    right_unified_ky,
-                    left_unified_bridge_ky,
-                    right_unified_bridge_ky,
-                ) = witness.cast();
-                let mu = Element::alloc(dr, mu)?;
-                let nu = Element::alloc(dr, nu)?;
+        Emulator::emulate_wireless((mu, nu, &error_m_witness.error_terms, ky), |dr, witness| {
+            let (mu, nu, error_terms_m, ky) = witness.cast();
+            let mu = Element::alloc(dr, mu)?;
+            let nu = Element::alloc(dr, nu)?;
 
-                let mut ky_values = vec![
-                    Element::alloc(dr, left_application_ky)?,
-                    Element::alloc(dr, right_application_ky)?,
-                    Element::alloc(dr, left_unified_ky)?,
-                    Element::alloc(dr, right_unified_ky)?,
-                    Element::alloc(dr, left_unified_bridge_ky)?,
-                    Element::alloc(dr, right_unified_bridge_ky)?,
-                ]
-                .into_iter();
+            let mut ky_values = vec![
+                Element::alloc(dr, ky.view().map(|ky| ky.left_application))?,
+                Element::alloc(dr, ky.view().map(|ky| ky.right_application))?,
+                Element::alloc(dr, ky.view().map(|ky| ky.left_unified))?,
+                Element::alloc(dr, ky.view().map(|ky| ky.right_unified))?,
+                Element::alloc(dr, ky.view().map(|ky| ky.left_bridge))?,
+                Element::alloc(dr, ky.view().map(|ky| ky.right_bridge))?,
+            ]
+            .into_iter();
 
-                let fold_c = fold_revdot::FoldC::new(dr, &mu, &nu)?;
+            let fold_c = fold_revdot::FoldC::new(dr, &mu, &nu)?;
 
-                FixedVec::try_from_fn(|i| {
-                    let errors = FixedVec::try_from_fn(|j| {
-                        Element::alloc(dr, error_terms_m.view().map(|et| et[i][j]))
-                    })?;
-                    let ky_values = FixedVec::from_fn(|_| {
-                        ky_values.next().unwrap_or_else(|| Element::zero(dr))
-                    });
+            FixedVec::try_from_fn(|i| {
+                let errors = FixedVec::try_from_fn(|j| {
+                    Element::alloc(dr, error_terms_m.view().map(|et| et[i][j]))
+                })?;
+                let ky_values =
+                    FixedVec::from_fn(|_| ky_values.next().unwrap_or_else(|| Element::zero(dr)));
 
-                    let v = fold_c.compute_m::<NativeParameters>(dr, &errors, &ky_values)?;
-                    Ok(*v.value().take())
-                })
-            },
-        )
+                let v = fold_c.compute_m::<NativeParameters>(dr, &errors, &ky_values)?;
+                Ok(*v.value().take())
+            })
+        })
     }
 
     /// Compute error_n stage (Layer 2: Single N-sized reduction).
@@ -612,12 +550,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         &self,
         rng: &mut RNG,
         collapsed: FixedVec<C::CircuitField, <NativeParameters as fold_revdot::Parameters>::N>,
-        left_application_ky: C::CircuitField,
-        right_application_ky: C::CircuitField,
-        left_unified_ky: C::CircuitField,
-        right_unified_ky: C::CircuitField,
-        left_unified_bridge_ky: C::CircuitField,
-        right_unified_bridge_ky: C::CircuitField,
+        ky: &KyValues<C::CircuitField>,
         sponge_state_elements: FixedVec<
             C::CircuitField,
             ragu_primitives::poseidon::PoseidonStateLen<C::CircuitField, C::CircuitPoseidon>,
@@ -630,12 +563,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let error_n_witness = stages::native::error_n::Witness::<C, NativeParameters> {
             error_terms: FixedVec::from_fn(|_| C::CircuitField::todo()),
             collapsed,
-            left_application_ky,
-            right_application_ky,
-            left_unified_ky,
-            right_unified_ky,
-            left_unified_bridge_ky,
-            right_unified_bridge_ky,
+            left_application_ky: ky.left_application,
+            right_application_ky: ky.right_application,
+            left_unified_ky: ky.left_unified,
+            right_unified_ky: ky.right_unified,
+            left_unified_bridge_ky: ky.left_bridge,
+            right_unified_bridge_ky: ky.right_bridge,
             sponge_state_elements,
         };
         let native_error_n_rx =

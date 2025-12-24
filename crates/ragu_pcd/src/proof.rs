@@ -58,6 +58,16 @@ pub(crate) type NestedStructured<C, R> = CommittedPolynomial<
     <C as Cycle>::NestedCurve,
 >;
 
+/// K(y) values for left and right proofs used in folding verification.
+pub(crate) struct KyValues<F> {
+    pub(crate) left_application: F,
+    pub(crate) right_application: F,
+    pub(crate) left_unified: F,
+    pub(crate) right_unified: F,
+    pub(crate) left_bridge: F,
+    pub(crate) right_bridge: F,
+}
+
 /// Represents a recursive proof for the correctness of some computation.
 pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) preamble: PreambleProof<C, R>,
