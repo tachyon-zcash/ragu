@@ -304,11 +304,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 circuit_id,
                 left_header: left_header.into_inner(),
                 right_header: right_header.into_inner(),
-                native: CommittedPolynomial {
-                    poly: rx,
-                    blind,
-                    commitment,
-                },
+                native: CommittedPolynomial::new(rx, blind, commitment),
             },
             aux,
         ))
@@ -381,16 +377,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         Ok((
             PreambleProof {
-                native: CommittedPolynomial {
-                    poly: native_preamble_rx,
-                    blind: native_preamble_blind,
-                    commitment: native_preamble_commitment,
-                },
-                nested: CommittedPolynomial {
-                    poly: nested_preamble_rx,
-                    blind: nested_preamble_blind,
-                    commitment: nested_preamble_commitment,
-                },
+                native: CommittedPolynomial::new(
+                    native_preamble_rx,
+                    native_preamble_blind,
+                    native_preamble_commitment,
+                ),
+                nested: CommittedPolynomial::new(
+                    nested_preamble_rx,
+                    nested_preamble_blind,
+                    nested_preamble_commitment,
+                ),
             },
             preamble_witness,
         ))
@@ -430,21 +426,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_s_prime_rx.commit(self.params.nested_generators(), nested_s_prime_blind);
 
         Ok(SPrimeProof {
-            mesh_wx0: CommittedPolynomial {
-                poly: mesh_wx0,
-                blind: mesh_wx0_blind,
-                commitment: mesh_wx0_commitment,
-            },
-            mesh_wx1: CommittedPolynomial {
-                poly: mesh_wx1,
-                blind: mesh_wx1_blind,
-                commitment: mesh_wx1_commitment,
-            },
-            nested: CommittedPolynomial {
-                poly: nested_s_prime_rx,
-                blind: nested_s_prime_blind,
-                commitment: nested_s_prime_commitment,
-            },
+            mesh_wx0: CommittedPolynomial::new(mesh_wx0, mesh_wx0_blind, mesh_wx0_commitment),
+            mesh_wx1: CommittedPolynomial::new(mesh_wx1, mesh_wx1_blind, mesh_wx1_commitment),
+            nested: CommittedPolynomial::new(
+                nested_s_prime_rx,
+                nested_s_prime_blind,
+                nested_s_prime_commitment,
+            ),
         })
     }
 
@@ -498,11 +486,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mesh_wy_commitment = mesh_wy.commit(self.params.host_generators(), mesh_wy_blind);
 
         MeshWyProof {
-            mesh_wy: CommittedPolynomial {
-                poly: mesh_wy,
-                blind: mesh_wy_blind,
-                commitment: mesh_wy_commitment,
-            },
+            mesh_wy: CommittedPolynomial::new(mesh_wy, mesh_wy_blind, mesh_wy_commitment),
         }
     }
 
@@ -539,16 +523,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_error_m_rx.commit(self.params.nested_generators(), nested_error_m_blind);
 
         Ok((
-            CommittedPolynomial {
-                poly: native_error_m_rx,
-                blind: native_error_m_blind,
-                commitment: native_error_m_commitment,
-            },
-            CommittedPolynomial {
-                poly: nested_error_m_rx,
-                blind: nested_error_m_blind,
-                commitment: nested_error_m_commitment,
-            },
+            CommittedPolynomial::new(
+                native_error_m_rx,
+                native_error_m_blind,
+                native_error_m_commitment,
+            ),
+            CommittedPolynomial::new(
+                nested_error_m_rx,
+                nested_error_m_blind,
+                nested_error_m_commitment,
+            ),
             error_m_witness,
         ))
     }
@@ -673,16 +657,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_error_n_rx.commit(self.params.nested_generators(), nested_error_n_blind);
 
         Ok((
-            CommittedPolynomial {
-                poly: native_error_n_rx,
-                blind: native_error_n_blind,
-                commitment: native_error_n_commitment,
-            },
-            CommittedPolynomial {
-                poly: nested_error_n_rx,
-                blind: nested_error_n_blind,
-                commitment: nested_error_n_commitment,
-            },
+            CommittedPolynomial::new(
+                native_error_n_rx,
+                native_error_n_blind,
+                native_error_n_commitment,
+            ),
+            CommittedPolynomial::new(
+                nested_error_n_rx,
+                nested_error_n_blind,
+                nested_error_n_commitment,
+            ),
             error_n_witness,
         ))
     }
@@ -750,21 +734,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_ab_rx.commit(self.params.nested_generators(), nested_ab_blind);
 
         Ok(ABProof {
-            a: CommittedPolynomial {
-                poly: a,
-                blind: a_blind,
-                commitment: a_commitment,
-            },
-            b: CommittedPolynomial {
-                poly: b,
-                blind: b_blind,
-                commitment: b_commitment,
-            },
-            nested: CommittedPolynomial {
-                poly: nested_ab_rx,
-                blind: nested_ab_blind,
-                commitment: nested_ab_commitment,
-            },
+            a: CommittedPolynomial::new(a, a_blind, a_commitment),
+            b: CommittedPolynomial::new(b, b_blind, b_commitment),
+            nested: CommittedPolynomial::new(nested_ab_rx, nested_ab_blind, nested_ab_commitment),
         })
     }
 
@@ -782,11 +754,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mesh_xy_commitment = mesh_xy.commit(self.params.host_generators(), mesh_xy_blind);
 
         MeshXyProof {
-            mesh_xy: CommittedPolynomial {
-                poly: mesh_xy,
-                blind: mesh_xy_blind,
-                commitment: mesh_xy_commitment,
-            },
+            mesh_xy: CommittedPolynomial::new(mesh_xy, mesh_xy_blind, mesh_xy_commitment),
         }
     }
 
@@ -822,16 +790,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_query_rx.commit(self.params.nested_generators(), nested_query_blind);
 
         Ok(QueryProof {
-            native: CommittedPolynomial {
-                poly: native_query_rx,
-                blind: native_query_blind,
-                commitment: native_query_commitment,
-            },
-            nested: CommittedPolynomial {
-                poly: nested_query_rx,
-                blind: nested_query_blind,
-                commitment: nested_query_commitment,
-            },
+            native: CommittedPolynomial::new(
+                native_query_rx,
+                native_query_blind,
+                native_query_commitment,
+            ),
+            nested: CommittedPolynomial::new(
+                nested_query_rx,
+                nested_query_blind,
+                nested_query_commitment,
+            ),
         })
     }
 
@@ -852,16 +820,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_f_rx.commit(self.params.nested_generators(), nested_f_blind);
 
         Ok(FProof {
-            native: CommittedPolynomial {
-                poly: native_f_rx,
-                blind: native_f_blind,
-                commitment: native_f_commitment,
-            },
-            nested: CommittedPolynomial {
-                poly: nested_f_rx,
-                blind: nested_f_blind,
-                commitment: nested_f_commitment,
-            },
+            native: CommittedPolynomial::new(native_f_rx, native_f_blind, native_f_commitment),
+            nested: CommittedPolynomial::new(nested_f_rx, nested_f_blind, nested_f_commitment),
         })
     }
 
@@ -887,16 +847,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_eval_rx.commit(self.params.nested_generators(), nested_eval_blind);
 
         Ok(EvalProof {
-            native: CommittedPolynomial {
-                poly: native_eval_rx,
-                blind: native_eval_blind,
-                commitment: native_eval_commitment,
-            },
-            nested: CommittedPolynomial {
-                poly: nested_eval_rx,
-                blind: nested_eval_blind,
-                commitment: nested_eval_commitment,
-            },
+            native: CommittedPolynomial::new(
+                native_eval_rx,
+                native_eval_blind,
+                native_eval_commitment,
+            ),
+            nested: CommittedPolynomial::new(
+                nested_eval_rx,
+                nested_eval_blind,
+                nested_eval_commitment,
+            ),
         })
     }
 
@@ -1004,31 +964,19 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             alpha,
             u,
             beta,
-            c_rx: CommittedPolynomial {
-                poly: c_rx,
-                blind: c_rx_blind,
-                commitment: c_rx_commitment,
-            },
-            v_rx: CommittedPolynomial {
-                poly: v_rx,
-                blind: v_rx_blind,
-                commitment: v_rx_commitment,
-            },
-            hashes_1_rx: CommittedPolynomial {
-                poly: hashes_1_rx,
-                blind: hashes_1_rx_blind,
-                commitment: hashes_1_rx_commitment,
-            },
-            hashes_2_rx: CommittedPolynomial {
-                poly: hashes_2_rx,
-                blind: hashes_2_rx_blind,
-                commitment: hashes_2_rx_commitment,
-            },
-            ky_rx: CommittedPolynomial {
-                poly: ky_rx,
-                blind: ky_rx_blind,
-                commitment: ky_rx_commitment,
-            },
+            c_rx: CommittedPolynomial::new(c_rx, c_rx_blind, c_rx_commitment),
+            v_rx: CommittedPolynomial::new(v_rx, v_rx_blind, v_rx_commitment),
+            hashes_1_rx: CommittedPolynomial::new(
+                hashes_1_rx,
+                hashes_1_rx_blind,
+                hashes_1_rx_commitment,
+            ),
+            hashes_2_rx: CommittedPolynomial::new(
+                hashes_2_rx,
+                hashes_2_rx_blind,
+                hashes_2_rx_commitment,
+            ),
+            ky_rx: CommittedPolynomial::new(ky_rx, ky_rx_blind, ky_rx_commitment),
         })
     }
 }

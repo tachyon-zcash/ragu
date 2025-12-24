@@ -18,13 +18,19 @@ pub(crate) struct CommittedPolynomial<P, F, G> {
     pub(crate) commitment: G,
 }
 
+impl<P, F, G> CommittedPolynomial<P, F, G> {
+    pub(crate) fn new(poly: P, blind: F, commitment: G) -> Self {
+        Self {
+            poly,
+            blind,
+            commitment,
+        }
+    }
+}
+
 impl<P: Clone, F: Copy, G: Copy> Clone for CommittedPolynomial<P, F, G> {
     fn clone(&self) -> Self {
-        CommittedPolynomial {
-            poly: self.poly.clone(),
-            blind: self.blind,
-            commitment: self.commitment,
-        }
+        Self::new(self.poly.clone(), self.blind, self.commitment)
     }
 }
 
@@ -349,21 +355,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let zero_unstructured = unstructured::Polynomial::<C::CircuitField, R>::new();
 
         // Zero committed polynomials
-        let zero_native_structured = || CommittedPolynomial {
-            poly: zero_structured_host.clone(),
-            blind: host_blind,
-            commitment: host_g,
-        };
-        let zero_nested_structured = || CommittedPolynomial {
-            poly: zero_structured_nested.clone(),
-            blind: nested_blind,
-            commitment: nested_g,
-        };
-        let zero_native_unstructured = || CommittedPolynomial {
-            poly: zero_unstructured.clone(),
-            blind: host_blind,
-            commitment: host_g,
-        };
+        let zero_native_structured =
+            || CommittedPolynomial::new(zero_structured_host.clone(), host_blind, host_g);
+        let zero_nested_structured =
+            || CommittedPolynomial::new(zero_structured_nested.clone(), nested_blind, nested_g);
+        let zero_native_unstructured =
+            || CommittedPolynomial::new(zero_unstructured.clone(), host_blind, host_g);
 
         // Dummy circuit rx for application field
         let dummy_rx = dummy::Circuit
@@ -373,11 +370,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let dummy_commitment = dummy_rx.commit(self.params.host_generators(), host_blind);
         let dummy_circuit_id = dummy::CIRCUIT_ID.circuit_index(self.num_application_steps);
 
-        let dummy_native_structured = || CommittedPolynomial {
-            poly: dummy_rx.clone(),
-            blind: host_blind,
-            commitment: dummy_commitment,
-        };
+        let dummy_native_structured =
+            || CommittedPolynomial::new(dummy_rx.clone(), host_blind, dummy_commitment);
 
         Proof {
             preamble: PreambleProof {
@@ -441,11 +435,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 circuit_id: dummy_circuit_id,
                 left_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
                 right_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
-                native: CommittedPolynomial {
-                    poly: dummy_rx,
-                    blind: host_blind,
-                    commitment: dummy_commitment,
-                },
+                native: CommittedPolynomial::new(dummy_rx, host_blind, dummy_commitment),
             },
         }
     }
