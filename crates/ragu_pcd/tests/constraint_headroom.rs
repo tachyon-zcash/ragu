@@ -113,23 +113,6 @@ fn constraint_headroom() {
             max_linear,
         );
     }
-
-    {
-        let circuit = internal_circuits::bridge::Circuit::<
-            Pasta,
-            TestRank,
-            HEADER_SIZE,
-            NativeParameters,
-        >::new();
-        let m = metrics::eval(&circuit).expect("metrics should succeed");
-        print_row(
-            "Bridge",
-            m.num_multiplication_constraints,
-            m.num_linear_constraints,
-            max_muls,
-            max_linear,
-        );
-    }
 }
 
 fn print_row(name: &str, muls: usize, linear: usize, max_muls: usize, max_linear: usize) {
