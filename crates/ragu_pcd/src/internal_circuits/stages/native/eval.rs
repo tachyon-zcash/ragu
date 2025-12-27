@@ -21,11 +21,23 @@ pub use crate::internal_circuits::InternalCircuitIndex::EvalStage as STAGING_ID;
 ///
 /// Each query represents a polynomial opening that
 /// contributes to the batched verification.
+///
+/// Query breakdown (56 total):
+/// - 2: A, B polynomials at x
+/// - 2: Previous P polynomials at their u challenges
+/// - 2: Previous S polynomials at w
+/// - 18: Current mesh_xy at circuit IDs (2 app + 16 internal)
+/// - 1: Current mesh_xy at w
+/// - 4: S' polynomials at previous/current y
+/// - 3: S'' polynomial at x0, x1, x
+/// - 4: Application rx polynomials at x and xz
+/// - 10: Internal circuit rx polynomials at x
+/// - 10: Internal circuit rx polynomials at xz
 pub struct Evals;
 
 impl Len for Evals {
     fn len() -> usize {
-        5
+        56
     }
 }
 

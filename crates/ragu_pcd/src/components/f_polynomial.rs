@@ -6,21 +6,6 @@ use alloc::{boxed::Box, vec::Vec};
 use ff::Field;
 use ragu_circuits::polynomials::{Rank, unstructured};
 
-/// A safe wrapper around `arithmetic::factor_iter` that handles empty polynomials
-/// by returning an empty iterator instead of panicking.
-///
-/// This is needed because stub/trivial proofs may have empty polynomials.
-pub fn safe_factor_iter<'a, F: Field + 'a>(
-    coeffs: Vec<F>,
-    point: F,
-) -> Box<dyn Iterator<Item = F> + 'a> {
-    if coeffs.is_empty() || coeffs.len() == 1 {
-        Box::new(core::iter::empty())
-    } else {
-        arithmetic::factor_iter(coeffs, point)
-    }
-}
-
 pub fn compute_f_polynomial<F: Field, R: Rank>(
     queries: Vec<Box<dyn Iterator<Item = F>>>,
     alpha: F,
