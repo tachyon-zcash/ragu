@@ -52,7 +52,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         right: Pcd<'source, C, R, S::Right>,
     ) -> Result<(Proof<C, R>, S::Aux<'source>)> {
         // The two proofs being fused are checked simultaneously as part of the
-        // same transcript.
+        // same transcript. We simulate this transcript with an `Emulator` in
+        // order to construct valid witnesses for the circuits that certify the
+        // fuse operation.
         let mut dr = Emulator::execute();
         let mut transcript = Sponge::new(&mut dr, self.params.circuit_poseidon());
 
@@ -100,26 +102,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         ) = self.compute_error_m(rng, mesh_wy.mesh_wy_commitment)?;
         Point::constant(&mut dr, nested_error_m_commitment)?.write(&mut dr, &mut transcript)?;
 
-        // Save transcript state for bridging transcript between hashes_1 and hashes_2
+        // Save a copy of the transcript state. This is used as part of the
+        // witness for the error_n stage, so that the hashes_2 circuit can
+        // resume the sponge state from the end of hashes_1.
         let saved_transcript_state = transcript
-            .save_state(&mut dr)
-            .expect("save_state should succeed after absorbing");
-        // Extract raw field values for the error_n witness
-        let transcript_state_elements = saved_transcript_state
             .clone()
+            .save_state(&mut dr)
+            .expect("save_state should succeed after absorbing")
             .into_elements()
             .into_iter()
             .map(|e| *e.value().take())
             .collect_fixed()?;
 
-        // Derive (mu, nu) = H(nested_error_m_commitment).
-        let (mu, mut transcript) = Sponge::resume_and_squeeze(
-            &mut dr,
-            saved_transcript_state,
-            self.params.circuit_poseidon(),
-        )?;
-        let mu = *mu.value().take();
+        let mu = *transcript.squeeze(&mut dr)?.value().take();
         let nu = *transcript.squeeze(&mut dr)?.value().take();
+
         // Phase 7: Collapsed values (layer 1 folding).
         let collapsed = self.compute_collapsed(
             &error_m_witness,
@@ -147,7 +144,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             right_unified_ky,
             left_unified_bridge_ky,
             right_unified_bridge_ky,
-            transcript_state_elements,
+            saved_transcript_state,
         )?;
 
         // Derive (mu', nu') = H(nested_error_n_commitment).

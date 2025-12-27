@@ -57,10 +57,34 @@ enum Mode<'dr, D: Driver<'dr>, P: arithmetic::PoseidonPermutation<D::F>> {
     },
 }
 
+impl<'dr, D: Driver<'dr>, P: arithmetic::PoseidonPermutation<D::F>> Clone for Mode<'dr, D, P> {
+    fn clone(&self) -> Self {
+        match self {
+            Mode::Squeeze { values, state } => Mode::Squeeze {
+                values: values.clone(),
+                state: state.clone(),
+            },
+            Mode::Absorb { values, state } => Mode::Absorb {
+                values: values.clone(),
+                state: state.clone(),
+            },
+        }
+    }
+}
+
 /// The [Poseidon](https://eprint.iacr.org/2019/458) sponge function.
 pub struct Sponge<'dr, D: Driver<'dr>, P: arithmetic::PoseidonPermutation<D::F>> {
     mode: Mode<'dr, D, P>,
     params: &'dr P,
+}
+
+impl<'dr, D: Driver<'dr>, P: arithmetic::PoseidonPermutation<D::F>> Clone for Sponge<'dr, D, P> {
+    fn clone(&self) -> Self {
+        Sponge {
+            mode: self.mode.clone(),
+            params: self.params,
+        }
+    }
 }
 
 impl<'dr, D: Driver<'dr>, P: arithmetic::PoseidonPermutation<D::F>> Buffer<'dr, D>
