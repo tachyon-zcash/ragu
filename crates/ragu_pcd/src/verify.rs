@@ -36,13 +36,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Error_m stage verification (Layer 1).
         let error_m_valid = verifier.check_stage(
-            &pcd.proof.error.native_error_m_rx,
+            &pcd.proof.error_m.native_rx,
             internal_circuits::stages::native::error_m::STAGING_ID,
         );
 
         // Error_n stage verification (Layer 2).
         let error_n_valid = verifier.check_stage(
-            &pcd.proof.error.native_error_n_rx,
+            &pcd.proof.error_n.native_rx,
             internal_circuits::stages::native::error_n::STAGING_ID,
         );
 
@@ -110,8 +110,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let hashes_1_circuit_valid = {
             let mut rx = pcd.proof.internal_circuits.hashes_1_rx.clone();
             rx.add_assign(&pcd.proof.preamble.native_preamble_rx);
-            // NB: pcd.proof.error.native_error_m_rx is skipped.
-            rx.add_assign(&pcd.proof.error.native_error_n_rx);
+            // NB: pcd.proof.error_m.native_rx is skipped.
+            rx.add_assign(&pcd.proof.error_n.native_rx);
 
             verifier.check_internal_circuit(
                 &rx,
@@ -126,8 +126,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let hashes_2_circuit_valid = {
             let mut rx = pcd.proof.internal_circuits.hashes_2_rx.clone();
             // NB: pcd.proof.preamble.native_preamble_rx is skipped.
-            // NB: pcd.proof.error.native_error_m_rx is skipped.
-            rx.add_assign(&pcd.proof.error.native_error_n_rx);
+            // NB: pcd.proof.error_m.native_rx is skipped.
+            rx.add_assign(&pcd.proof.error_n.native_rx);
 
             verifier.check_internal_circuit(
                 &rx,
@@ -140,8 +140,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let fold_circuit_valid = {
             let mut rx = pcd.proof.internal_circuits.ky_rx.clone();
             // NB: pcd.proof.preamble.native_preamble_rx is skipped.
-            rx.add_assign(&pcd.proof.error.native_error_m_rx);
-            rx.add_assign(&pcd.proof.error.native_error_n_rx);
+            rx.add_assign(&pcd.proof.error_m.native_rx);
+            rx.add_assign(&pcd.proof.error_n.native_rx);
 
             verifier.check_internal_circuit(&rx, internal_circuits::fold::CIRCUIT_ID, unified_ky)
         };
@@ -150,8 +150,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let c_circuit_valid = {
             let mut rx = pcd.proof.internal_circuits.c_rx.clone();
             rx.add_assign(&pcd.proof.preamble.native_preamble_rx);
-            rx.add_assign(&pcd.proof.error.native_error_m_rx);
-            rx.add_assign(&pcd.proof.error.native_error_n_rx);
+            rx.add_assign(&pcd.proof.error_m.native_rx);
+            rx.add_assign(&pcd.proof.error_n.native_rx);
 
             verifier.check_internal_circuit(
                 &rx,
@@ -164,8 +164,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let v_circuit_valid = {
             let rx = pcd.proof.internal_circuits.v_rx.clone();
             // NB: pcd.proof.preamble.native_preamble_rx is skipped.
-            // NB: pcd.proof.error.native_error_m_rx is skipped.
-            // NB: pcd.proof.error.native_error_n_rx is skipped.
+            // NB: pcd.proof.error_m.native_rx is skipped.
+            // NB: pcd.proof.error_n.native_rx is skipped.
 
             verifier.check_internal_circuit(
                 &rx,

@@ -16,7 +16,8 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) preamble: PreambleProof<C, R>,
     pub(crate) s_prime: SPrimeProof<C, R>,
     pub(crate) mesh_wy: MeshWyProof<C, R>,
-    pub(crate) error: ErrorProof<C, R>,
+    pub(crate) error_m: ErrorMProof<C, R>,
+    pub(crate) error_n: ErrorNProof<C, R>,
     pub(crate) ab: ABProof<C, R>,
     pub(crate) mesh_xy: MeshXyProof<C, R>,
     pub(crate) query: QueryProof<C, R>,
@@ -114,25 +115,24 @@ pub(crate) struct EvalProof<C: Cycle, R: Rank> {
     pub(crate) nested_eval_commitment: C::NestedCurve,
 }
 
-/// Error stage proof with native and nested layer commitments for both layers.
-pub(crate) struct ErrorProof<C: Cycle, R: Rank> {
-    // Layer 1 (error_m): N instances of M-sized reductions
-    pub(crate) native_error_m_rx: structured::Polynomial<C::CircuitField, R>,
-    pub(crate) native_error_m_blind: C::CircuitField,
-    pub(crate) native_error_m_commitment: C::HostCurve,
+/// Error M stage proof (Layer 1: N instances of M-sized reductions).
+pub(crate) struct ErrorMProof<C: Cycle, R: Rank> {
+    pub(crate) native_rx: structured::Polynomial<C::CircuitField, R>,
+    pub(crate) native_blind: C::CircuitField,
+    pub(crate) native_commitment: C::HostCurve,
+    pub(crate) nested_rx: structured::Polynomial<C::ScalarField, R>,
+    pub(crate) nested_blind: C::ScalarField,
+    pub(crate) nested_commitment: C::NestedCurve,
+}
 
-    pub(crate) nested_error_m_rx: structured::Polynomial<C::ScalarField, R>,
-    pub(crate) nested_error_m_blind: C::ScalarField,
-    pub(crate) nested_error_m_commitment: C::NestedCurve,
-
-    // Layer 2 (error_n): Single N-sized reduction
-    pub(crate) native_error_n_rx: structured::Polynomial<C::CircuitField, R>,
-    pub(crate) native_error_n_blind: C::CircuitField,
-    pub(crate) native_error_n_commitment: C::HostCurve,
-
-    pub(crate) nested_error_n_rx: structured::Polynomial<C::ScalarField, R>,
-    pub(crate) nested_error_n_blind: C::ScalarField,
-    pub(crate) nested_error_n_commitment: C::NestedCurve,
+/// Error N stage proof (Layer 2: Single N-sized reduction).
+pub(crate) struct ErrorNProof<C: Cycle, R: Rank> {
+    pub(crate) native_rx: structured::Polynomial<C::CircuitField, R>,
+    pub(crate) native_blind: C::CircuitField,
+    pub(crate) native_commitment: C::HostCurve,
+    pub(crate) nested_rx: structured::Polynomial<C::ScalarField, R>,
+    pub(crate) nested_blind: C::ScalarField,
+    pub(crate) nested_commitment: C::NestedCurve,
 }
 
 /// A/B polynomial proof for folding. A and B depend on (mu, nu).
@@ -185,7 +185,8 @@ impl<C: Cycle, R: Rank> Clone for Proof<C, R> {
             preamble: self.preamble.clone(),
             s_prime: self.s_prime.clone(),
             mesh_wy: self.mesh_wy.clone(),
-            error: self.error.clone(),
+            error_m: self.error_m.clone(),
+            error_n: self.error_n.clone(),
             ab: self.ab.clone(),
             mesh_xy: self.mesh_xy.clone(),
             query: self.query.clone(),
@@ -259,21 +260,28 @@ impl<C: Cycle, R: Rank> Clone for MeshXyProof<C, R> {
     }
 }
 
-impl<C: Cycle, R: Rank> Clone for ErrorProof<C, R> {
+impl<C: Cycle, R: Rank> Clone for ErrorMProof<C, R> {
     fn clone(&self) -> Self {
-        ErrorProof {
-            native_error_m_rx: self.native_error_m_rx.clone(),
-            native_error_m_blind: self.native_error_m_blind,
-            native_error_m_commitment: self.native_error_m_commitment,
-            nested_error_m_rx: self.nested_error_m_rx.clone(),
-            nested_error_m_blind: self.nested_error_m_blind,
-            nested_error_m_commitment: self.nested_error_m_commitment,
-            native_error_n_rx: self.native_error_n_rx.clone(),
-            native_error_n_blind: self.native_error_n_blind,
-            native_error_n_commitment: self.native_error_n_commitment,
-            nested_error_n_rx: self.nested_error_n_rx.clone(),
-            nested_error_n_blind: self.nested_error_n_blind,
-            nested_error_n_commitment: self.nested_error_n_commitment,
+        ErrorMProof {
+            native_rx: self.native_rx.clone(),
+            native_blind: self.native_blind,
+            native_commitment: self.native_commitment,
+            nested_rx: self.nested_rx.clone(),
+            nested_blind: self.nested_blind,
+            nested_commitment: self.nested_commitment,
+        }
+    }
+}
+
+impl<C: Cycle, R: Rank> Clone for ErrorNProof<C, R> {
+    fn clone(&self) -> Self {
+        ErrorNProof {
+            native_rx: self.native_rx.clone(),
+            native_blind: self.native_blind,
+            native_commitment: self.native_commitment,
+            nested_rx: self.nested_rx.clone(),
+            nested_blind: self.nested_blind,
+            nested_commitment: self.nested_commitment,
         }
     }
 }
@@ -454,19 +462,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 mesh_wy_blind: host_blind,
                 mesh_wy_commitment: host_g,
             },
-            error: ErrorProof {
-                native_error_m_rx: zero_structured_host.clone(),
-                native_error_m_blind: host_blind,
-                native_error_m_commitment: host_g,
-                nested_error_m_rx: zero_structured_nested.clone(),
-                nested_error_m_blind: nested_blind,
-                nested_error_m_commitment: nested_g,
-                native_error_n_rx: zero_structured_host.clone(),
-                native_error_n_blind: host_blind,
-                native_error_n_commitment: host_g,
-                nested_error_n_rx: zero_structured_nested.clone(),
-                nested_error_n_blind: nested_blind,
-                nested_error_n_commitment: nested_g,
+            error_m: ErrorMProof {
+                native_rx: zero_structured_host.clone(),
+                native_blind: host_blind,
+                native_commitment: host_g,
+                nested_rx: zero_structured_nested.clone(),
+                nested_blind: nested_blind,
+                nested_commitment: nested_g,
+            },
+            error_n: ErrorNProof {
+                native_rx: zero_structured_host.clone(),
+                native_blind: host_blind,
+                native_commitment: host_g,
+                nested_rx: zero_structured_nested.clone(),
+                nested_blind: nested_blind,
+                nested_commitment: nested_g,
             },
             ab: ABProof {
                 a: zero_structured_host.clone(),

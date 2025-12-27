@@ -168,11 +168,11 @@ impl<'dr, D: Driver<'dr>, C: Cycle> Output<'dr, D, C> {
         let y = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.y))?;
         let z = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.z))?;
         let nested_error_m_commitment =
-            Point::alloc(dr, proof.view().map(|p| p.error.nested_error_m_commitment))?;
+            Point::alloc(dr, proof.view().map(|p| p.error_m.nested_commitment))?;
         let mu = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.mu))?;
         let nu = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.nu))?;
         let nested_error_n_commitment =
-            Point::alloc(dr, proof.view().map(|p| p.error.nested_error_n_commitment))?;
+            Point::alloc(dr, proof.view().map(|p| p.error_n.nested_commitment))?;
         let mu_prime = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.mu_prime))?;
         let nu_prime = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.nu_prime))?;
         let c = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.c))?;
