@@ -56,6 +56,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         left: Pcd<'source, C, R, S::Left>,
         right: Pcd<'source, C, R, S::Right>,
     ) -> Result<(Proof<C, R>, S::Aux<'source>)> {
+        // Compute the application circuit's witness first, since it processes
+        // the data fields of the two proofs being fused.
+        let (left, right, application, application_aux) =
+            self.compute_application_proof(rng, step, witness, left, right)?;
+
         // The two proofs being fused are checked simultaneously as part of the
         // same transcript. We simulate this transcript with an `Emulator` in
         // order to construct valid witnesses for the circuits that certify the
@@ -63,18 +68,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mut dr = Emulator::execute();
         let mut transcript = Sponge::new(&mut dr, self.params.circuit_poseidon());
 
-        // Phase 1: Application circuit.
-        let (left, right, application_proof, application_aux) =
-            self.compute_application_proof(rng, step, witness, left, right)?;
-
-        // Phase 2: Preamble.
-        let (preamble, preamble_witness) = self.compute_preamble(
-            rng,
-            &left,
-            &right,
-            &application_proof.left_header,
-            &application_proof.right_header,
-        )?;
+        // Compute the preamble, the first prover messages in the transcript
+        // that bind to the common inputs of the protocol.
+        let (preamble, preamble_witness) =
+            self.compute_preamble(rng, &left, &right, &application)?;
         Point::constant(&mut dr, preamble.nested_commitment)?.write(&mut dr, &mut transcript)?;
         let w = *transcript.squeeze(&mut dr)?.value().take();
 
@@ -152,8 +149,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Phase 12: Eval.
         let eval = self.compute_eval(rng)?;
-
-        // Derive beta = H(nested_eval_commitment).
         Point::constant(&mut dr, eval.nested_commitment)?.write(&mut dr, &mut transcript)?;
         let beta = *transcript.squeeze(&mut dr)?.value().take();
 
@@ -204,7 +199,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 eval,
                 challenges,
                 circuits,
-                application: application_proof,
+                application,
             },
             // We return the application auxillary data for potential use by the
             // caller.
@@ -273,15 +268,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         rng: &mut RNG,
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
-        left_header: &'a [C::CircuitField],
-        right_header: &'a [C::CircuitField],
+        application: &ApplicationProof<C, R>,
     ) -> Result<(
         PreambleProof<C, R>,
         stages::native::preamble::Witness<'a, C, R, HEADER_SIZE>,
     )> {
         // Let's assemble the witness needed to generate the preamble stage.
-        let preamble_witness =
-            stages::native::preamble::Witness::new(left, right, left_header, right_header)?;
+        let preamble_witness = stages::native::preamble::Witness::new(
+            left,
+            right,
+            &application.left_header,
+            &application.right_header,
+        )?;
 
         // Now, compute the partial witness polynomial (stage polynomial) for
         // the preamble.
