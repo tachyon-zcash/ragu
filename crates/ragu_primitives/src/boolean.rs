@@ -55,7 +55,7 @@ impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
     pub fn not(&self, dr: &mut D) -> Self {
         // The wire w is transformed into 1 - w, its logical NOT.
         let wire = dr.add(|lc| lc.add(&D::ONE).sub(self.wire()));
-        let value = D::just(|| !self.value.snag());
+        let value = self.value().not();
         Boolean { wire, value }
     }
 
@@ -79,6 +79,22 @@ impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
         })
     }
 
+    /// Selects between two elements based on this boolean's value.
+    /// Returns `a` when false, `b` when true.
+    ///
+    /// This costs one multiplication constraint and two linear constraints.
+    pub fn conditional_select(
+        &self,
+        dr: &mut D,
+        a: &Element<'dr, D>,
+        b: &Element<'dr, D>,
+    ) -> Result<Element<'dr, D>> {
+        // Result = a + cond * (b - a)
+        let diff = b.sub(dr, a);
+        let cond_times_diff = self.element().mul(dr, &diff)?;
+        Ok(a.add(dr, &cond_times_diff))
+    }
+
     /// Returns the witness value of this boolean.
     pub fn value(&self) -> DriverValue<D, bool> {
         self.value.clone()
@@ -93,6 +109,57 @@ impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
     pub fn element(&self) -> Element<'dr, D> {
         Element::promote(self.wire.clone(), self.value().fe())
     }
+}
+
+/// Returns a boolean indicating whether the element is zero, using the standard
+/// "inverse trick" for zero checking in arithmetic circuits.
+pub(crate) fn is_zero<'dr, D: Driver<'dr>>(
+    dr: &mut D,
+    x: &Element<'dr, D>,
+) -> Result<Boolean<'dr, D>> {
+    // We enforce the constraints:
+    //
+    // - x * is_zero = 0
+    // - x * inv = 1 - is_zero
+    //
+    // Given `x != 0`, the first constraint guarantees `is_zero = 0` as desired.
+    // Given `x == 0`, the first constraint leaves `is_zero` unconstrained, but
+    // the second constraint reduces to `0 = 1 - is_zero`, which reduces to
+    // `is_zero = 1`, as desired. `inv` always has a solution, meaning it is
+    // complete. By construction, `is_zero` is boolean constrained for all
+    // satisfying assignments of these two constraints.
+
+    let is_zero = x.value().map(|v| *v == D::F::ZERO);
+
+    // Constraint 1: x * is_zero = 0.
+    let (x_wire, is_zero_wire, zero_product) = dr.mul(|| {
+        Ok((
+            x.value().arbitrary().take(),
+            is_zero.coeff().take(),
+            Coeff::Zero,
+        ))
+    })?;
+    dr.enforce_equal(&x_wire, x.wire())?;
+    dr.enforce_zero(|lc| lc.add(&zero_product))?;
+
+    // Constraint 2: x * inv = 1 - is_zero.
+    let (x_wire, _, is_not_zero) = dr.mul(|| {
+        Ok((
+            x.value().arbitrary().take(),
+            x.value()
+                .map(|x| x.invert().unwrap_or(D::F::ZERO))
+                .arbitrary()
+                .take(),
+            is_zero.not().coeff().take(),
+        ))
+    })?;
+    dr.enforce_equal(&x_wire, x.wire())?;
+    dr.enforce_zero(|lc| lc.add(&is_not_zero).sub(&D::ONE).add(&is_zero_wire))?;
+
+    Ok(Boolean {
+        wire: is_zero_wire,
+        value: is_zero,
+    })
 }
 
 impl<F: Field> Write<F> for Kind![F; @Boolean<'_, _>] {
@@ -181,6 +248,40 @@ fn test_boolean_alloc() -> Result<()> {
 }
 
 #[test]
+fn test_conditional_select() -> Result<()> {
+    type F = ragu_pasta::Fp;
+    type Simulator = crate::Simulator<F>;
+
+    // condition = true (returns b)
+    Simulator::simulate((true, F::from(1u64), F::from(2u64)), |dr, witness| {
+        let (cond, a, b) = witness.cast();
+        let cond = Boolean::alloc(dr, cond)?;
+        let a = Element::alloc(dr, a)?;
+        let b = Element::alloc(dr, b)?;
+
+        let result = cond.conditional_select(dr, &a, &b)?;
+        assert_eq!(*result.value().take(), F::from(2u64));
+
+        Ok(())
+    })?;
+
+    // condition = false (returns a)
+    Simulator::simulate((false, F::from(1u64), F::from(2u64)), |dr, witness| {
+        let (cond, a, b) = witness.cast();
+        let cond = Boolean::alloc(dr, cond)?;
+        let a = Element::alloc(dr, a)?;
+        let b = Element::alloc(dr, b)?;
+
+        let result = cond.conditional_select(dr, &a, &b)?;
+        assert_eq!(*result.value().take(), F::from(1u64));
+
+        Ok(())
+    })?;
+
+    Ok(())
+}
+
+#[test]
 fn test_multipack() -> Result<()> {
     use alloc::vec::Vec;
 
@@ -205,6 +306,52 @@ fn test_multipack() -> Result<()> {
     })?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ragu_core::maybe::Maybe;
+
+    type F = ragu_pasta::Fp;
+    type Simulator = crate::Simulator<F>;
+
+    #[test]
+    fn test_is_equal_same() -> Result<()> {
+        let sim = Simulator::simulate((F::from(123u64), F::from(123u64)), |dr, witness| {
+            let (a_val, b_val) = witness.cast();
+            let a = Element::alloc(dr, a_val)?;
+            let b = Element::alloc(dr, b_val)?;
+
+            dr.reset();
+            let eq = a.is_equal(dr, &b)?;
+
+            assert!(eq.value().take(), "Expected a == b");
+            Ok(())
+        })?;
+
+        assert_eq!(sim.num_multiplications(), 2);
+        assert_eq!(sim.num_linear_constraints(), 4);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_is_not_equal() -> Result<()> {
+        Simulator::simulate((F::from(1u64), F::from(123u64)), |dr, witness| {
+            let (a_val, b_val) = witness.cast();
+            let a = Element::alloc(dr, a_val)?;
+            let b = Element::alloc(dr, b_val)?;
+
+            dr.reset();
+            let eq = a.is_equal(dr, &b)?;
+
+            assert!(!eq.value().take(), "Expected a != b");
+            Ok(())
+        })?;
+
+        Ok(())
+    }
 }
 
 #[test]

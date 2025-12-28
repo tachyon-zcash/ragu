@@ -10,7 +10,10 @@ use ragu_core::{
 
 use alloc::vec::Vec;
 
-use crate::io::{Buffer, Write};
+use crate::{
+    Boolean,
+    io::{Buffer, Write},
+};
 
 /// Represents a wire and its corresponding field element value, but generally
 /// does not guarantee any particular constraint has been imposed on the wire.
@@ -294,6 +297,17 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
             value: quotient_value,
             wire: quotient,
         })
+    }
+
+    /// Returns a boolean indicating whether this element is zero.
+    pub fn is_zero(&self, dr: &mut D) -> Result<Boolean<'dr, D>> {
+        crate::boolean::is_zero(dr, self)
+    }
+
+    /// Returns a boolean indicating whether this element equals another.
+    pub fn is_equal(&self, dr: &mut D, other: &Self) -> Result<Boolean<'dr, D>> {
+        let diff = self.sub(dr, other);
+        diff.is_zero(dr)
     }
 }
 
