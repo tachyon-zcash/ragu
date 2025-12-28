@@ -168,8 +168,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let v_circuit_valid = {
             let rx = pcd.proof.circuits.compute_v_rx.clone();
             // NB: pcd.proof.preamble.stage_rx is skipped.
-            // NB: pcd.proof.error_m.stage_rx is skipped.
-            // NB: pcd.proof.error_n.stage_rx is skipped.
+            // NB: pcd.proof.query.stage_rx is skipped.
+            // NB: pcd.proof.eval.stage_rx is skipped.
 
             verifier.check_internal_circuit(
                 &rx,

@@ -51,13 +51,13 @@ pub(crate) struct ApplicationProof<C: Cycle, R: Rank> {
 pub(crate) struct PreambleProof<C: Cycle, R: Rank> {
     pub(crate) stage_rx: structured::Polynomial<C::CircuitField, R>,
     pub(crate) stage_blind: C::CircuitField,
-    /// This can be computed using stage_rx / stage_blind
+    /// Computed as stage_rx.commit(generators, stage_blind)
     pub(crate) stage_commitment: C::HostCurve,
 
-    /// This can be computed using stage_commitment
+    /// Computed from stage_commitment and child proof commitments
     pub(crate) nested_rx: structured::Polynomial<C::ScalarField, R>,
     pub(crate) nested_blind: C::ScalarField,
-    /// This can be computed using nested_rx / nested_blind
+    /// Computed as nested_rx.commit(generators, nested_blind)
     pub(crate) nested_commitment: C::NestedCurve,
 }
 
