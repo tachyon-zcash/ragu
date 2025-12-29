@@ -46,6 +46,7 @@ runs:
 
     # Cache cargo registry and git separately (shared across all jobs)
     - name: Cache cargo registry
+      id: registry-cache
       uses: actions/cache@v4
       with:
         path: |
@@ -67,6 +68,7 @@ runs:
           ${{ runner.os }}-target-${{ inputs.targets }}-${{ inputs.cache-suffix }}-
 
     - name: Fetch dependencies
+      if: steps.registry-cache.outputs.cache-hit != 'true'
       shell: bash
       run: cargo fetch --locked
 
