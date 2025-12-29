@@ -4,6 +4,7 @@ pub(crate) mod adapter;
 mod encoder;
 pub(crate) mod padded;
 pub(crate) mod rerandomize;
+pub(crate) mod trivial;
 
 use arithmetic::Cycle;
 use ragu_circuits::mesh::CircuitIndex;
@@ -21,6 +22,8 @@ pub use encoder::{Encoded, Encoder};
 pub(crate) enum InternalStepIndex {
     /// Internal step for [`self::rerandomize`].
     Rerandomize = 0,
+    /// Internal step that produces a valid trivial proof for rerandomization.
+    Trivial = 1,
 }
 
 /// Internal representation of a [`Step`] index distinguishing internal vs.
@@ -32,7 +35,7 @@ enum StepIndex {
 
 /// The number of internal steps used by Ragu for things like rerandomization or
 /// proof decompression.
-pub(crate) const NUM_INTERNAL_STEPS: usize = 1;
+pub(crate) const NUM_INTERNAL_STEPS: usize = 2;
 
 /// The index of a [`Step`] in an application.
 ///

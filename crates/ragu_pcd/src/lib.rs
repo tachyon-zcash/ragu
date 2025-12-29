@@ -99,11 +99,19 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         params: &'params C::Params,
     ) -> Result<Application<'params, C, R, HEADER_SIZE>> {
         // First, insert all of the internal steps.
-        self.circuit_mesh =
-            self.circuit_mesh
-                .register_circuit(Adapter::<C, _, R, HEADER_SIZE>::new(
-                    step::rerandomize::Rerandomize::<()>::new(),
-                ))?;
+        {
+            self.circuit_mesh =
+                self.circuit_mesh
+                    .register_circuit(Adapter::<C, _, R, HEADER_SIZE>::new(
+                        step::rerandomize::Rerandomize::<()>::new(),
+                    ))?;
+
+            self.circuit_mesh =
+                self.circuit_mesh
+                    .register_circuit(Adapter::<C, _, R, HEADER_SIZE>::new(
+                        step::trivial::Trivial::new(),
+                    ))?;
+        }
 
         // Then, insert all of the internal circuits used for recursion plumbing.
         {
@@ -190,12 +198,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         rng: &mut RNG,
     ) -> Result<Pcd<'source, C, R, H>> {
         let data = pcd.data.clone();
+
+        // Seed a trivial proof for rerandomization.
+        // TODO: this is a temporary hack that allows the base case logic to be simple
+        let seeded_trivial = self.seed(rng, step::trivial::Trivial::new(), ())?.0;
+
         let rerandomized_proof = self.fuse(
             rng,
             step::rerandomize::Rerandomize::new(),
             (),
             pcd,
-            self.trivial_pcd(),
+            seeded_trivial.carry(()),
         )?;
 
         Ok(rerandomized_proof.0.carry(data))
