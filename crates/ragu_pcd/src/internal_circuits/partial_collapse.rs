@@ -21,7 +21,10 @@ use ragu_core::{
 };
 use ragu_primitives::{Element, vec::FixedVec};
 
-use core::marker::PhantomData;
+use core::{
+    iter::{once, repeat_n},
+    marker::PhantomData,
+};
 
 use super::{
     stages::native::{
@@ -32,6 +35,10 @@ use super::{
 use crate::components::fold_revdot;
 
 pub use crate::internal_circuits::InternalCircuitIndex::PartialCollapseCircuit as CIRCUIT_ID;
+
+/// Number of circuits that use the unified k(y) value per proof.
+// TODO: this constant seems brittle because it may vary between the two fields.
+pub const NUM_UNIFIED_CIRCUITS: usize = 4;
 
 /// Circuit that verifies layer 1 revdot folding.
 pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
@@ -108,16 +115,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let nu = unified_output.nu.get(dr, unified_instance)?;
         let fold_products = fold_revdot::FoldProducts::new(dr, &mu, &nu)?;
 
-        // Read k(y) values from error_n stage (computed and verified in hashes_1).
-        let mut ky_values = [
-            error_n.left_application_ky,
-            error_n.right_application_ky,
-            error_n.left_unified_ky,
-            error_n.right_unified_ky,
-            error_n.left_unified_bridge_ky,
-            error_n.right_unified_bridge_ky,
-        ]
-        .into_iter();
+        // Read k(y) values from error_n stage.
+        let mut ky_values = once(error_n.left_application_ky)
+            .chain(once(error_n.left_unified_bridge_ky))
+            .chain(repeat_n(error_n.left_unified_ky, NUM_UNIFIED_CIRCUITS))
+            .chain(once(error_n.right_application_ky))
+            .chain(once(error_n.right_unified_bridge_ky))
+            .chain(repeat_n(error_n.right_unified_ky, NUM_UNIFIED_CIRCUITS));
 
         for (i, error_terms) in error_m.error_terms.iter().enumerate() {
             let ky_values =
