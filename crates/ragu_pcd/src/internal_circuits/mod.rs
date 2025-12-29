@@ -222,7 +222,7 @@ mod test_params {
         check_constraints!(Hashes1Circuit,         mul = 1937, lin = 2815);
         check_constraints!(Hashes2Circuit,         mul = 2047, lin = 2952);
         check_constraints!(PartialCollapseCircuit, mul = 1891, lin = 2650);
-        check_constraints!(FullCollapseCircuit,    mul = 1870, lin = 2607);
+        check_constraints!(FullCollapseCircuit,    mul = 1876, lin = 2620);
         check_constraints!(ComputeVCircuit,        mul = 266,  lin = 248);
     }
 

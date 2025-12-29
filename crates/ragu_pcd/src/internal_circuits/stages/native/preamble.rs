@@ -7,7 +7,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element, GadgetExt,
+    Boolean, Element, GadgetExt,
     vec::{CollectFixed, ConstLen, FixedVec},
 };
 
@@ -107,6 +107,12 @@ impl<'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize> ProofInputs<'dr, D
         self.right_header.write(dr, &mut ky)?;
         self.output_header.write(dr, &mut ky)?;
         ky.finish(dr)
+    }
+
+    /// Returns true if this child proof is a trivial proof (output header suffix == 1).
+    pub fn is_trivial(&self, dr: &mut D) -> Result<Boolean<'dr, D>> {
+        let suffix = &self.output_header[HEADER_SIZE - 1];
+        suffix.is_equal(dr, &Element::one())
     }
 }
 
