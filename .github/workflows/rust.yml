@@ -4,12 +4,47 @@ on:
     branches: [main]
   pull_request:
 
+# Cancel in-progress runs when a new commit is pushed to the same branch/PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Detect which files changed to conditionally run jobs
+  changes:
+    name: detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      book: ${{ steps.filter.outputs.book }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - '**/*.rs'
+              - '**/Cargo.toml'
+              - '**/Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/rust.yml'
+              - '.github/actions/**'
+            book:
+              - 'book/**'
+
   fmt:
     name: rustfmt
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,6 +57,8 @@ jobs:
 
   clippy:
     name: clippy
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,6 +71,8 @@ jobs:
 
   test:
     name: test (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -44,11 +83,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: Setup Rust
         uses: ./.github/actions/rust-setup
+        with:
+          cache-suffix: release
       - name: Run tests
         run: cargo test --release --all --locked
 
   test-32-bit:
     name: test (i686-unknown-linux-gnu)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -57,11 +100,14 @@ jobs:
         with:
           targets: i686-unknown-linux-gnu
           install-multilib: "true"
+          cache-suffix: release
       - name: Run 32-bit tests
         run: cargo test --release --all --locked --target i686-unknown-linux-gnu
 
   coverage:
     name: code coverage
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -70,6 +116,7 @@ jobs:
         with:
           components: llvm-tools-preview
           tools: cargo-llvm-cov
+          cache-suffix: coverage
       - name: Generate coverage report
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
       - name: Upload to Codecov
@@ -81,21 +128,29 @@ jobs:
 
   bitrot:
     name: bitrot check
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Setup Rust
         uses: ./.github/actions/rust-setup
+        with:
+          cache-suffix: all-features
       - name: Build benchmarks and examples
         run: cargo build --benches --examples --all-features
 
   docs:
     name: docs
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Setup Rust
         uses: ./.github/actions/rust-setup
+        with:
+          cache-suffix: docs
       - name: Check intra-doc links
         run: cargo doc --no-deps --all --locked --document-private-items
         env:
@@ -103,6 +158,8 @@ jobs:
 
   book:
     name: ragu book
+    needs: changes
+    if: needs.changes.outputs.book == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
