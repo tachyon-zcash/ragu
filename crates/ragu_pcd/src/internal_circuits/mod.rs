@@ -160,6 +160,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
 mod test_params {
     use super::*;
     use crate::*;
+    use ff::PrimeField;
     use ragu_circuits::polynomials::R;
     use ragu_circuits::staging::{Stage, StageExt};
     use ragu_pasta::Pasta;
@@ -308,5 +309,35 @@ mod test_params {
         print_stage!(ErrorN);
         print_stage!(Query);
         print_stage!(Eval);
+    }
+
+    /// Test that the mesh digest hasn't changed unexpectedly.
+    ///
+    /// This test verifies that gadget refactorings don't accidentally change the
+    /// underlying circuit polynomial. If a refactoring produces the same digest,
+    /// then it's mathematically equivalent.
+    #[test]
+    fn test_mesh_digest() {
+        let pasta = Pasta::baked();
+
+        let app = ApplicationBuilder::<Pasta, R<13>, HEADER_SIZE>::new()
+            .register_dummy_circuits(NUM_APP_STEPS)
+            .unwrap()
+            .finalize(pasta)
+            .unwrap();
+
+        let digest = app.circuit_mesh.get_key();
+
+        let expected: [u8; 32] = [
+            0xe4, 0xd4, 0xda, 0x14, 0x24, 0x86, 0xa9, 0x9b, 0x11, 0x4d, 0xd7, 0x5e, 0xf9, 0x4c,
+            0x72, 0xea, 0xa9, 0x7c, 0xcc, 0xbc, 0xf2, 0xfb, 0x56, 0xda, 0x7c, 0x9b, 0xe0, 0x80,
+            0x7c, 0xef, 0xdb, 0x11,
+        ];
+
+        assert_eq!(
+            digest.to_repr().as_ref(),
+            &expected,
+            "Mesh digest changed unexpectedly!"
+        );
     }
 }
