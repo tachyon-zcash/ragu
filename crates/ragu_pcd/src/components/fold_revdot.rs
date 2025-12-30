@@ -53,6 +53,11 @@ impl<L: Len> Len for ErrorTermsLen<L> {
     }
 }
 
+/// Returns an iterator over off-diagonal (i, j) pairs where i != j.
+fn off_diagonal_pairs(n: usize) -> impl Iterator<Item = (usize, usize)> {
+    (0..n).flat_map(move |i| (0..n).filter_map(move |j| (i != j).then_some((i, j))))
+}
+
 /// Reduction step for polynomials in the first layer of revdot folding.
 ///
 /// This takes a slice of polynomials (less than or equal to M * N in length)
@@ -117,9 +122,7 @@ fn compute_errors_impl<F: Field, R: Rank, Outer: Len, Inner: Len>(
         .map(|(a_chunk, b_chunk)| {
             // Computed using the cartesian product of indices, filtering out
             // diagonal entries.
-            (0..Inner::len())
-                .flat_map(|i| (0..Inner::len()).filter_map(move |j| (i != j).then_some((i, j))))
-                // Missing entries are zero polynomials, producing zero revdot products.
+            off_diagonal_pairs(Inner::len())
                 .map(|(i, j)| {
                     a_chunk
                         .get(i)
