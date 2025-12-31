@@ -1,11 +1,11 @@
-//! Circuit for routing `NestedCurve` commitments to endoscaling slots,
-//! collecting commitments from the unified instance and placing them
-//! into the aggregate stage for endoscaling.
+//! Circuit for routing `NestedCurve` commitments to endoscaling slots.
+
+pub use crate::internal_circuits::InternalCircuitIndex::RoutingCircuit as CIRCUIT_ID;
 
 use arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::Rank,
-    staging::{StageBuilder, StagedCircuit},
+    staging::{StageBuilder, Staged, StagedCircuit},
 };
 use ragu_core::{
     Result,
@@ -21,16 +21,30 @@ use super::{
     unified::{self, OutputBuilder},
 };
 
+/// Number of endoscaling slots for routing the commitments.
+///
+/// This matches the number of nested commitments in the unified instance:
+/// - nested_preamble_commitment
+/// - nested_s_prime_commitment
+/// - nested_error_m_commitment
+/// - nested_error_n_commitment
+/// - nested_ab_commitment
+/// - nested_query_commitment
+/// - nested_f_commitment
+/// - nested_eval_commitment
+/// - TODO: nested_p_commitment
+pub const NUM_SLOTS: usize = 8;
+
 /// The routing circuit that places commitments into aggregate slots for endoscaling.
 pub struct Circuit<C: Cycle, R: Rank, const NUM_SLOTS: usize> {
     _marker: PhantomData<(C, R)>,
 }
 
 impl<C: Cycle, R: Rank, const NUM_SLOTS: usize> Circuit<C, R, NUM_SLOTS> {
-    pub fn new() -> Self {
-        Self {
+    pub fn new() -> Staged<C::CircuitField, R, Self> {
+        Staged::new(Circuit {
             _marker: PhantomData,
-        }
+        })
     }
 }
 

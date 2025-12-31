@@ -101,6 +101,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 internal_circuits::compute_v::CIRCUIT_ID,
                 &[&pcd.proof.circuits.compute_v_rx],
             );
+            verifier.internal_circuit(
+                internal_circuits::routing::CIRCUIT_ID,
+                &[
+                    &pcd.proof.circuits.routing_rx,
+                    &pcd.proof.aggregate.stage_rx,
+                ],
+            );
         }
 
         // Stage checks.
@@ -140,6 +147,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             verifier.stage(
                 internal_circuits::stages::native::eval::STAGING_ID,
                 &[&pcd.proof.eval.stage_rx],
+            );
+            verifier.stage(
+                internal_circuits::stages::native::aggregate::STAGING_ID,
+                &[&pcd.proof.aggregate.stage_rx],
             );
         }
 

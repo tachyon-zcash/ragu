@@ -29,6 +29,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) query: QueryProof<C, R>,
     pub(crate) f: FProof<C, R>,
     pub(crate) eval: EvalProof<C, R>,
+    pub(crate) aggregate: AggregateProof<C, R>,
     pub(crate) challenges: Challenges<C>,
     pub(crate) circuits: CircuitCommitments<C, R>,
     pub(crate) v: C::CircuitField,
@@ -168,6 +169,17 @@ pub(crate) struct EvalProof<C: Cycle, R: Rank> {
     pub(crate) nested_commitment: C::NestedCurve,
 }
 
+/// Aggregate stage proof for routing nested commitments to endoscaling slots.
+///
+/// This stage is used by the routing circuit to place commitment coordinates
+/// into the verified rx polynomial for endoscaling.
+#[derive(Clone)]
+pub(crate) struct AggregateProof<C: Cycle, R: Rank> {
+    pub(crate) stage_rx: structured::Polynomial<C::CircuitField, R>,
+    pub(crate) stage_blind: C::CircuitField,
+    pub(crate) stage_commitment: C::HostCurve,
+}
+
 /// Fiat-Shamir challenges derived during proof generation.
 #[derive(Clone)]
 pub(crate) struct Challenges<C: Cycle> {
@@ -238,7 +250,7 @@ impl<C: Cycle> Challenges<C> {
     }
 }
 
-/// Circuit polynomial commitments (hashes, partial_collapse, full_collapse, compute_v).
+/// Circuit polynomial commitments (hashes, partial_collapse, full_collapse, compute_v, routing).
 #[derive(Clone)]
 pub(crate) struct CircuitCommitments<C: Cycle, R: Rank> {
     pub(crate) hashes_1_rx: structured::Polynomial<C::CircuitField, R>,
@@ -256,6 +268,9 @@ pub(crate) struct CircuitCommitments<C: Cycle, R: Rank> {
     pub(crate) compute_v_rx: structured::Polynomial<C::CircuitField, R>,
     pub(crate) compute_v_blind: C::CircuitField,
     pub(crate) compute_v_commitment: C::HostCurve,
+    pub(crate) routing_rx: structured::Polynomial<C::CircuitField, R>,
+    pub(crate) routing_blind: C::CircuitField,
+    pub(crate) routing_commitment: C::HostCurve,
 }
 
 impl<C: Cycle, R: Rank> Proof<C, R> {
@@ -399,6 +414,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 nested_blind,
                 nested_commitment,
             },
+            aggregate: AggregateProof {
+                stage_rx: zero_structured_host.clone(),
+                stage_blind: host_blind,
+                stage_commitment: host_commitment,
+            },
             challenges: Challenges::trivial(),
             circuits: CircuitCommitments {
                 hashes_1_rx: zero_structured_host.clone(),
@@ -413,9 +433,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 full_collapse_rx: zero_structured_host.clone(),
                 full_collapse_blind: host_blind,
                 full_collapse_commitment: host_commitment,
-                compute_v_rx: zero_structured_host,
+                compute_v_rx: zero_structured_host.clone(),
                 compute_v_blind: host_blind,
                 compute_v_commitment: host_commitment,
+                routing_rx: zero_structured_host,
+                routing_blind: host_blind,
+                routing_commitment: host_commitment,
             },
             v: C::CircuitField::ZERO,
         }

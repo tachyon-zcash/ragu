@@ -14,7 +14,7 @@ use ragu_core::{
 use ragu_primitives::{
     Element, GadgetExt, Point,
     poseidon::Sponge,
-    vec::{CollectFixed, FixedVec},
+    vec::{CollectFixed, ConstLen, FixedVec},
 };
 use rand::Rng;
 
@@ -30,8 +30,8 @@ use crate::{
         total_circuit_counts, unified,
     },
     proof::{
-        ABProof, ApplicationProof, Challenges, CircuitCommitments, ErrorMProof, ErrorNProof,
-        EvalProof, FProof, Pcd, PreambleProof, Proof, QueryProof, SPrimeProof,
+        ABProof, AggregateProof, ApplicationProof, Challenges, CircuitCommitments, ErrorMProof,
+        ErrorNProof, EvalProof, FProof, Pcd, PreambleProof, Proof, QueryProof, SPrimeProof,
     },
     step::{Step, adapter::Adapter},
 };
@@ -244,6 +244,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         let v = Self::compute_v(&mut dr, &x, &z)?;
 
+        let aggregate = self.compute_aggregate(
+            rng, &preamble, &s_prime, &error_m, &error_n, &ab, &query, &f, &eval,
+        )?;
+
         let challenges = Challenges::new(
             &w, &y, &z, &mu, &nu, &mu_prime, &nu_prime, &x, &alpha, &u, &beta,
         );
@@ -276,6 +280,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 query,
                 f,
                 eval,
+                aggregate,
                 challenges,
                 circuits,
                 v,
@@ -545,6 +550,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 internal_circuits::compute_v::CIRCUIT_ID,
                 &[&proof.circuits.compute_v_rx],
             );
+            ctx.internal_circuit(
+                internal_circuits::routing::CIRCUIT_ID,
+                &[&proof.circuits.routing_rx, &proof.aggregate.stage_rx],
+            );
         }
 
         // Stages (all k(y)=0, batched across both proofs)
@@ -584,6 +593,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         ctx.stage(
             internal_circuits::stages::native::eval::STAGING_ID,
             &[&left.eval.stage_rx, &right.eval.stage_rx],
+        );
+        ctx.stage(
+            internal_circuits::stages::native::aggregate::STAGING_ID,
+            &[&left.aggregate.stage_rx, &right.aggregate.stage_rx],
         );
 
         // Compute real error terms from the assembled polynomial pairs
@@ -1084,6 +1097,42 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let compute_v_rx_commitment =
             compute_v_rx.commit(C::host_generators(self.params), compute_v_rx_blind);
 
+        // Routing staged circuit: collect all nested commitments from unified instance for endoscaling.
+        let aggregate_witness = stages::native::aggregate::Witness::<
+            C::NestedCurve,
+            { internal_circuits::routing::NUM_SLOTS },
+        > {
+            commitments:
+                FixedVec::<_, ConstLen<{ internal_circuits::routing::NUM_SLOTS }>>::from_fn(|i| {
+                    match i {
+                        0 => unified_instance.nested_preamble_commitment,
+                        1 => unified_instance.nested_s_prime_commitment,
+                        2 => unified_instance.nested_error_m_commitment,
+                        3 => unified_instance.nested_error_n_commitment,
+                        4 => unified_instance.nested_ab_commitment,
+                        5 => unified_instance.nested_query_commitment,
+                        6 => unified_instance.nested_f_commitment,
+                        7 => unified_instance.nested_eval_commitment,
+                        _ => unreachable!(),
+                    }
+                }),
+        };
+        let (routing_rx, _) = internal_circuits::routing::Circuit::<
+            C,
+            R,
+            { internal_circuits::routing::NUM_SLOTS },
+        >::new()
+        .rx::<R>(
+            internal_circuits::routing::Witness {
+                unified_instance,
+                aggregate_witness: &aggregate_witness,
+            },
+            self.circuit_mesh.get_key(),
+        )?;
+        let routing_rx_blind = C::CircuitField::random(&mut *rng);
+        let routing_rx_commitment =
+            routing_rx.commit(C::host_generators(self.params), routing_rx_blind);
+
         Ok(CircuitCommitments {
             hashes_1_rx,
             hashes_1_blind: hashes_1_rx_blind,
@@ -1100,6 +1149,56 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             compute_v_rx,
             compute_v_blind: compute_v_rx_blind,
             compute_v_commitment: compute_v_rx_commitment,
+            routing_rx,
+            routing_blind: routing_rx_blind,
+            routing_commitment: routing_rx_commitment,
+        })
+    }
+
+    /// Compute the aggregate stage proof.
+    fn compute_aggregate<RNG: Rng>(
+        &self,
+        rng: &mut RNG,
+        preamble: &PreambleProof<C, R>,
+        s_prime: &SPrimeProof<C, R>,
+        error_m: &ErrorMProof<C, R>,
+        error_n: &ErrorNProof<C, R>,
+        ab: &ABProof<C, R>,
+        query: &QueryProof<C, R>,
+        f: &FProof<C, R>,
+        eval: &EvalProof<C, R>,
+    ) -> Result<AggregateProof<C, R>> {
+        let aggregate_witness = stages::native::aggregate::Witness::<
+            C::NestedCurve,
+            { internal_circuits::routing::NUM_SLOTS },
+        > {
+            commitments:
+                FixedVec::<_, ConstLen<{ internal_circuits::routing::NUM_SLOTS }>>::from_fn(|i| {
+                    match i {
+                        0 => preamble.nested_commitment,
+                        1 => s_prime.nested_s_prime_commitment,
+                        2 => error_m.nested_commitment,
+                        3 => error_n.nested_commitment,
+                        4 => ab.nested_commitment,
+                        5 => query.nested_commitment,
+                        6 => f.nested_commitment,
+                        7 => eval.nested_commitment,
+                        _ => unreachable!(),
+                    }
+                }),
+        };
+
+        let stage_rx = stages::native::aggregate::Stage::<
+            C::NestedCurve,
+            { internal_circuits::routing::NUM_SLOTS },
+        >::rx(&aggregate_witness)?;
+        let stage_blind = C::CircuitField::random(&mut *rng);
+        let stage_commitment = stage_rx.commit(C::host_generators(self.params), stage_blind);
+
+        Ok(AggregateProof {
+            stage_rx,
+            stage_blind,
+            stage_commitment,
         })
     }
 }

@@ -26,20 +26,22 @@ pub enum InternalCircuitIndex {
     ErrorNStage = 2,
     QueryStage = 3,
     EvalStage = 4,
+    AggregateStage = 5,
     // Final stage objects
-    ErrorNFinalStaged = 5,
-    EvalFinalStaged = 6,
+    ErrorNFinalStaged = 6,
+    EvalFinalStaged = 7,
     // Actual circuits
-    Hashes1Circuit = 7,
-    Hashes2Circuit = 8,
-    PartialCollapseCircuit = 9,
-    FullCollapseCircuit = 10,
-    ComputeVCircuit = 11,
+    Hashes1Circuit = 8,
+    Hashes2Circuit = 9,
+    PartialCollapseCircuit = 10,
+    FullCollapseCircuit = 11,
+    ComputeVCircuit = 12,
+    RoutingCircuit = 13,
 }
 
 /// The number of internal circuits registered by [`register_all`],
 /// and the number of variants in [`InternalCircuitIndex`].
-pub const NUM_INTERNAL_CIRCUITS: usize = 12;
+pub const NUM_INTERNAL_CIRCUITS: usize = 14;
 
 /// Compute the total circuit count and log2 domain size from the number of
 /// application-defined steps.
@@ -96,6 +98,12 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
         mesh = mesh.register_circuit_object(
             stages::native::eval::Stage::<C, R, HEADER_SIZE>::into_object()?,
         )?;
+
+        // aggregate stage (used by routing circuit for endoscaling slots)
+        mesh = mesh.register_circuit_object(stages::native::aggregate::Stage::<
+            C::NestedCurve,
+            { routing::NUM_SLOTS },
+        >::into_object()?)?;
     }
 
     // Insert the "final stage polynomials" for each stage.
@@ -145,6 +153,9 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
 
         // compute_v
         mesh = mesh.register_circuit(compute_v::Circuit::<C, R, HEADER_SIZE>::new())?;
+
+        // routing
+        mesh = mesh.register_circuit(routing::Circuit::<C, R, { routing::NUM_SLOTS }>::new())?;
     }
 
     // Verify we registered the expected number of circuits.

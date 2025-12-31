@@ -37,8 +37,8 @@ use crate::components::fold_revdot;
 pub use crate::internal_circuits::InternalCircuitIndex::PartialCollapseCircuit as CIRCUIT_ID;
 
 /// Number of circuits that use the unified k(y) value per proof.
-// TODO: this constant seems brittle because it may vary between the two fields.
-pub const NUM_UNIFIED_CIRCUITS: usize = 4;
+/// TODO: this constant seems brittle because it may vary between the two fields.
+pub const NUM_UNIFIED_CIRCUITS: usize = 5;
 
 /// Circuit that verifies layer 1 revdot folding.
 pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {

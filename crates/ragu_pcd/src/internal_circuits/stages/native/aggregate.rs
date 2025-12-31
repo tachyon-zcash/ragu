@@ -1,5 +1,7 @@
 //! Aggregate stage for routing nested commitments to endoscaling slots.
 
+pub use crate::internal_circuits::InternalCircuitIndex::AggregateStage as STAGING_ID;
+
 use arithmetic::CurveAffine;
 use ragu_circuits::{polynomials::Rank, staging};
 use ragu_core::{
