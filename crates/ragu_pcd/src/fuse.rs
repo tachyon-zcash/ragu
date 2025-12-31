@@ -935,7 +935,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
     /// Compute the F polynomial proof.
     fn compute_f<RNG: Rng>(&self, rng: &mut RNG) -> Result<FProof<C, R>> {
-        let poly = ragu_circuits::polynomials::structured::Polynomial::<C::CircuitField, R>::new();
+        let poly =
+            ragu_circuits::polynomials::unstructured::Polynomial::<C::CircuitField, R>::new();
         let blind = C::CircuitField::random(&mut *rng);
         let commitment = poly.commit(C::host_generators(self.params), blind);
 

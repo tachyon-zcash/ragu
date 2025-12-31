@@ -147,7 +147,7 @@ pub(crate) struct QueryProof<C: Cycle, R: Rank> {
 /// F polynomial proof with native and nested layer commitments.
 #[derive(Clone)]
 pub(crate) struct FProof<C: Cycle, R: Rank> {
-    pub(crate) poly: structured::Polynomial<C::CircuitField, R>,
+    pub(crate) poly: unstructured::Polynomial<C::CircuitField, R>,
     pub(crate) blind: C::CircuitField,
     pub(crate) commitment: C::HostCurve,
 
@@ -398,7 +398,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 nested_commitment,
             },
             f: FProof {
-                poly: zero_structured_host.clone(),
+                poly: zero_unstructured.clone(),
                 blind: host_blind,
                 commitment: host_commitment,
                 nested_rx: zero_structured_nested.clone(),
