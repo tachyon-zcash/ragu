@@ -11,6 +11,7 @@ pub mod full_collapse;
 pub mod hashes_1;
 pub mod hashes_2;
 pub mod partial_collapse;
+pub mod routing;
 pub mod stages;
 pub mod unified;
 

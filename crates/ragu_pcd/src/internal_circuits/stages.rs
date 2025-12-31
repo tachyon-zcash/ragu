@@ -151,6 +151,7 @@ pub mod nested {
 }
 
 pub mod native {
+    pub mod aggregate;
     pub mod error_m;
     pub mod error_n;
     pub mod eval;

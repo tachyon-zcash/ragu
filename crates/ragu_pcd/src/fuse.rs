@@ -29,7 +29,7 @@ use crate::{
         stages::{self, native::error_n::KyValues},
         total_circuit_counts, unified,
     },
-    proof,
+    proof::{self, Aggregate},
     step::{Step, adapter::Adapter},
 };
 
@@ -251,6 +251,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             &w, &y, &z, &mu, &nu, &mu_prime, &nu_prime, &x, &alpha, &u, &beta,
         );
 
+        // Compute internal circuits first so we have their commitments for aggregate.
         let circuits = self.compute_internal_circuits(
             rng,
             &preamble,
@@ -270,6 +271,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             &challenges,
         )?;
 
+        let aggregate = self.compute_aggregate(
+            rng,
+            &application,
+            &preamble,
+            &s_prime,
+            &error_m,
+            &error_n,
+            &ab,
+            &query,
+            &f,
+            &eval,
+            &circuits,
+        )?;
+
         Ok((
             Proof {
                 application,
@@ -282,6 +297,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 f,
                 eval,
                 p,
+                aggregate,
                 challenges,
                 circuits,
             },
@@ -1243,6 +1259,57 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             },
             eval_witness,
         ))
+    }
+
+    /// Compute the aggregate proof for routing HostCurve commitments to endoscaling slots.
+    ///
+    /// Collects all 18 HostCurve commitments into a single aggregate stage.
+    /// Consistency verification happens in the next fuse operation on the Fq side.
+    fn compute_aggregate<RNG: Rng>(
+        &self,
+        rng: &mut RNG,
+        application: &proof::Application<C, R>,
+        preamble: &proof::Preamble<C, R>,
+        s_prime: &proof::SPrime<C, R>,
+        error_m: &proof::ErrorM<C, R>,
+        error_n: &proof::ErrorN<C, R>,
+        ab: &proof::AB<C, R>,
+        query: &proof::Query<C, R>,
+        f: &proof::F<C, R>,
+        eval: &proof::Eval<C, R>,
+        circuits: &proof::InternalCircuits<C, R>,
+    ) -> Result<proof::Aggregate<C, R>> {
+        let routing_witness = internal_circuits::routing::Witness::<C>::new(
+            application.commitment,
+            preamble.stage_commitment,
+            s_prime.mesh_wx0_commitment,
+            s_prime.mesh_wx1_commitment,
+            error_m.mesh_wy_commitment,
+            error_m.stage_commitment,
+            error_n.stage_commitment,
+            ab.a_commitment,
+            ab.b_commitment,
+            query.mesh_xy_commitment,
+            query.stage_commitment,
+            f.commitment,
+            eval.stage_commitment,
+            circuits.hashes_1_commitment,
+            circuits.hashes_2_commitment,
+            circuits.partial_collapse_commitment,
+            circuits.full_collapse_commitment,
+            circuits.compute_v_commitment,
+        );
+
+        let (nested_rx, _) = internal_circuits::routing::Circuit::<C, R>::new()
+            .rx::<R>(&routing_witness, C::ScalarField::ONE)?;
+        let nested_blind = C::ScalarField::random(&mut *rng);
+        let nested_commitment = nested_rx.commit(C::nested_generators(self.params), nested_blind);
+
+        Ok(Aggregate {
+            nested_rx,
+            nested_blind,
+            nested_commitment,
+        })
     }
 
     /// Compute internal circuits.

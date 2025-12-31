@@ -30,6 +30,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) f: F<C, R>,
     pub(crate) eval: Eval<C, R>,
     pub(crate) p: P<C, R>,
+    pub(crate) aggregate: Aggregate<C, R>,
     pub(crate) challenges: Challenges<C>,
     pub(crate) circuits: InternalCircuits<C, R>,
 }
@@ -180,6 +181,14 @@ pub(crate) struct P<C: Cycle, R: Rank> {
 
     /// $v = p(u)$
     pub(crate) v: C::CircuitField,
+}
+
+/// Aggregate proof for routing `HostCurve` commitments to endoscaling slots.
+#[derive(Clone)]
+pub(crate) struct Aggregate<C: Cycle, R: Rank> {
+    pub(crate) nested_rx: structured::Polynomial<C::ScalarField, R>,
+    pub(crate) nested_blind: C::ScalarField,
+    pub(crate) nested_commitment: C::NestedCurve,
 }
 
 /// Fiat-Shamir challenges derived during proof generation.
@@ -420,6 +429,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
 
                 // p(X) = 0 => v = p(u) = 0
                 v: C::CircuitField::ZERO,
+            },
+            aggregate: Aggregate {
+                nested_rx: zero_structured_nested.clone(),
+                nested_blind,
+                nested_commitment,
             },
             challenges: Challenges::trivial(),
             circuits: InternalCircuits {
