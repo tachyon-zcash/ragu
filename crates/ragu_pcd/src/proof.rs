@@ -15,28 +15,28 @@ use ragu_primitives::Element;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::{Application, header::Header};
+use crate::header::Header;
 
 /// Represents a recursive proof for the correctness of some computation.
 #[derive(Clone)]
 pub struct Proof<C: Cycle, R: Rank> {
-    pub(crate) application: ApplicationProof<C, R>,
-    pub(crate) preamble: PreambleProof<C, R>,
-    pub(crate) s_prime: SPrimeProof<C, R>,
-    pub(crate) error_m: ErrorMProof<C, R>,
-    pub(crate) error_n: ErrorNProof<C, R>,
-    pub(crate) ab: ABProof<C, R>,
-    pub(crate) query: QueryProof<C, R>,
-    pub(crate) f: FProof<C, R>,
-    pub(crate) eval: EvalProof<C, R>,
-    pub(crate) p: PProof<C, R>,
+    pub(crate) application: Application<C, R>,
+    pub(crate) preamble: Preamble<C, R>,
+    pub(crate) s_prime: SPrime<C, R>,
+    pub(crate) error_m: ErrorM<C, R>,
+    pub(crate) error_n: ErrorN<C, R>,
+    pub(crate) ab: AB<C, R>,
+    pub(crate) query: Query<C, R>,
+    pub(crate) f: F<C, R>,
+    pub(crate) eval: Eval<C, R>,
+    pub(crate) p: P<C, R>,
     pub(crate) challenges: Challenges<C>,
-    pub(crate) circuits: CircuitCommitments<C, R>,
+    pub(crate) circuits: InternalCircuits<C, R>,
 }
 
 /// Application-specific proof data including circuit ID, headers, and commitment.
 #[derive(Clone)]
-pub(crate) struct ApplicationProof<C: Cycle, R: Rank> {
+pub(crate) struct Application<C: Cycle, R: Rank> {
     pub(crate) circuit_id: CircuitIndex,
     pub(crate) left_header: Vec<C::CircuitField>,
     pub(crate) right_header: Vec<C::CircuitField>,
@@ -47,7 +47,7 @@ pub(crate) struct ApplicationProof<C: Cycle, R: Rank> {
 
 /// Preamble stage proof with native and nested layer commitments.
 #[derive(Clone)]
-pub(crate) struct PreambleProof<C: Cycle, R: Rank> {
+pub(crate) struct Preamble<C: Cycle, R: Rank> {
     pub(crate) stage_rx: structured::Polynomial<C::CircuitField, R>,
     pub(crate) stage_blind: C::CircuitField,
     /// Computed as stage_rx.commit(generators, stage_blind)
@@ -62,7 +62,7 @@ pub(crate) struct PreambleProof<C: Cycle, R: Rank> {
 
 /// S' stage proof: m(w, x_i, Y) and nested commitment.
 #[derive(Clone)]
-pub(crate) struct SPrimeProof<C: Cycle, R: Rank> {
+pub(crate) struct SPrime<C: Cycle, R: Rank> {
     pub(crate) mesh_wx0_poly: unstructured::Polynomial<C::CircuitField, R>,
     pub(crate) mesh_wx0_blind: C::CircuitField,
     pub(crate) mesh_wx0_commitment: C::HostCurve,
@@ -78,7 +78,7 @@ pub(crate) struct SPrimeProof<C: Cycle, R: Rank> {
 
 /// Error M stage proof with mesh_wy bundled (Layer 1: N instances of M-sized reductions).
 #[derive(Clone)]
-pub(crate) struct ErrorMProof<C: Cycle, R: Rank> {
+pub(crate) struct ErrorM<C: Cycle, R: Rank> {
     // Mesh m(w, X, y) components
     pub(crate) mesh_wy_poly: structured::Polynomial<C::CircuitField, R>,
     pub(crate) mesh_wy_blind: C::CircuitField,
@@ -97,7 +97,7 @@ pub(crate) struct ErrorMProof<C: Cycle, R: Rank> {
 
 /// Error N stage proof (Layer 2: Single N-sized reduction).
 #[derive(Clone)]
-pub(crate) struct ErrorNProof<C: Cycle, R: Rank> {
+pub(crate) struct ErrorN<C: Cycle, R: Rank> {
     pub(crate) stage_rx: structured::Polynomial<C::CircuitField, R>,
     pub(crate) stage_blind: C::CircuitField,
     pub(crate) stage_commitment: C::HostCurve,
@@ -108,7 +108,7 @@ pub(crate) struct ErrorNProof<C: Cycle, R: Rank> {
 
 /// A/B polynomial proof for folding. A and B depend on (mu, nu).
 #[derive(Clone)]
-pub(crate) struct ABProof<C: Cycle, R: Rank> {
+pub(crate) struct AB<C: Cycle, R: Rank> {
     pub(crate) a_poly: structured::Polynomial<C::CircuitField, R>,
     pub(crate) a_blind: C::CircuitField,
     pub(crate) a_commitment: C::HostCurve,
@@ -127,7 +127,7 @@ pub(crate) struct ABProof<C: Cycle, R: Rank> {
 
 /// Query stage proof with mesh_xy bundled.
 #[derive(Clone)]
-pub(crate) struct QueryProof<C: Cycle, R: Rank> {
+pub(crate) struct Query<C: Cycle, R: Rank> {
     // Mesh m(x, y) components
     pub(crate) mesh_xy_poly: unstructured::Polynomial<C::CircuitField, R>,
     pub(crate) mesh_xy_blind: C::CircuitField,
@@ -146,7 +146,7 @@ pub(crate) struct QueryProof<C: Cycle, R: Rank> {
 
 /// F polynomial proof with native and nested layer commitments.
 #[derive(Clone)]
-pub(crate) struct FProof<C: Cycle, R: Rank> {
+pub(crate) struct F<C: Cycle, R: Rank> {
     pub(crate) poly: unstructured::Polynomial<C::CircuitField, R>,
     pub(crate) blind: C::CircuitField,
     pub(crate) commitment: C::HostCurve,
@@ -158,7 +158,7 @@ pub(crate) struct FProof<C: Cycle, R: Rank> {
 
 /// Evaluation stage proof with native and nested layer commitments.
 #[derive(Clone)]
-pub(crate) struct EvalProof<C: Cycle, R: Rank> {
+pub(crate) struct Eval<C: Cycle, R: Rank> {
     pub(crate) stage_rx: structured::Polynomial<C::CircuitField, R>,
     pub(crate) stage_blind: C::CircuitField,
     pub(crate) stage_commitment: C::HostCurve,
@@ -170,7 +170,7 @@ pub(crate) struct EvalProof<C: Cycle, R: Rank> {
 
 /// Batch polynomial evaluation proof.
 #[derive(Clone)]
-pub(crate) struct PProof<C: Cycle, R: Rank> {
+pub(crate) struct P<C: Cycle, R: Rank> {
     /// $p(X)$
     pub(crate) poly: unstructured::Polynomial<C::CircuitField, R>,
     /// Blinding factor for $p(X)$ commitment
@@ -254,7 +254,7 @@ impl<C: Cycle> Challenges<C> {
 
 /// Circuit polynomial commitments (hashes, partial_collapse, full_collapse, compute_v).
 #[derive(Clone)]
-pub(crate) struct CircuitCommitments<C: Cycle, R: Rank> {
+pub(crate) struct InternalCircuits<C: Cycle, R: Rank> {
     pub(crate) hashes_1_rx: structured::Polynomial<C::CircuitField, R>,
     pub(crate) hashes_1_blind: C::CircuitField,
     pub(crate) hashes_1_commitment: C::HostCurve,
@@ -298,7 +298,7 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<'_, C, R, H> {
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, HEADER_SIZE> {
     /// Creates a minimal trivial proof wrapped as a PCD with empty header.
     /// Used internally for rerandomization.
     pub(crate) fn trivial_pcd<'source>(&self) -> Pcd<'source, C, R, ()> {
@@ -328,7 +328,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             zero_structured_nested.commit(C::nested_generators(self.params), nested_blind);
 
         Proof {
-            application: ApplicationProof {
+            application: Application {
                 circuit_id: CircuitIndex::new(0),
                 left_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
                 right_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
@@ -336,7 +336,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 blind: host_blind,
                 commitment: host_commitment,
             },
-            preamble: PreambleProof {
+            preamble: Preamble {
                 stage_rx: zero_structured_host.clone(),
                 stage_blind: host_blind,
                 stage_commitment: host_commitment,
@@ -344,7 +344,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 nested_blind,
                 nested_commitment,
             },
-            s_prime: SPrimeProof {
+            s_prime: SPrime {
                 mesh_wx0_poly: zero_unstructured.clone(),
                 mesh_wx0_blind: host_blind,
                 mesh_wx0_commitment: host_commitment,
@@ -355,7 +355,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 nested_s_prime_blind: nested_blind,
                 nested_s_prime_commitment: nested_commitment,
             },
-            error_m: ErrorMProof {
+            error_m: ErrorM {
                 mesh_wy_poly: zero_structured_host.clone(),
                 mesh_wy_blind: host_blind,
                 mesh_wy_commitment: host_commitment,
@@ -366,7 +366,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 nested_blind,
                 nested_commitment,
             },
-            error_n: ErrorNProof {
+            error_n: ErrorN {
                 stage_rx: zero_structured_host.clone(),
                 stage_blind: host_blind,
                 stage_commitment: host_commitment,
@@ -374,7 +374,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 nested_blind,
                 nested_commitment,
             },
-            ab: ABProof {
+            ab: AB {
                 a_poly: zero_structured_host.clone(),
                 a_blind: host_blind,
                 a_commitment: host_commitment,
@@ -386,7 +386,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 nested_blind,
                 nested_commitment,
             },
-            query: QueryProof {
+            query: Query {
                 mesh_xy_poly: zero_unstructured.clone(),
                 mesh_xy_blind: host_blind,
                 mesh_xy_commitment: host_commitment,
@@ -397,7 +397,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 nested_blind,
                 nested_commitment,
             },
-            f: FProof {
+            f: F {
                 poly: zero_unstructured.clone(),
                 blind: host_blind,
                 commitment: host_commitment,
@@ -405,7 +405,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 nested_blind,
                 nested_commitment,
             },
-            eval: EvalProof {
+            eval: Eval {
                 stage_rx: zero_structured_host.clone(),
                 stage_blind: host_blind,
                 stage_commitment: host_commitment,
@@ -413,7 +413,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 nested_blind,
                 nested_commitment,
             },
-            p: PProof {
+            p: P {
                 poly: zero_unstructured.clone(),
                 blind: host_blind,
                 commitment: host_commitment,
@@ -422,7 +422,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 v: C::CircuitField::ZERO,
             },
             challenges: Challenges::trivial(),
-            circuits: CircuitCommitments {
+            circuits: InternalCircuits {
                 hashes_1_rx: zero_structured_host.clone(),
                 hashes_1_blind: host_blind,
                 hashes_1_commitment: host_commitment,

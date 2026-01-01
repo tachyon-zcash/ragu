@@ -22,17 +22,14 @@ use alloc::{borrow::Cow, vec::Vec};
 use core::iter::{once, repeat_n};
 
 use crate::{
-    Application,
+    Application, Pcd, Proof,
     components::fold_revdot::{self, NativeParameters},
     internal_circuits::{
         self, InternalCircuitIndex,
         stages::{self, native::error_n::KyValues},
         total_circuit_counts, unified,
     },
-    proof::{
-        ABProof, ApplicationProof, Challenges, CircuitCommitments, ErrorMProof, ErrorNProof,
-        EvalProof, FProof, PProof, Pcd, PreambleProof, Proof, QueryProof, SPrimeProof,
-    },
+    proof,
     step::{Step, adapter::Adapter},
 };
 
@@ -132,7 +129,7 @@ impl<'m, 'rx, F: PrimeField, R: Rank> ProverContext<'m, 'rx, F, R> {
 
     /// Add a raw claim without any mesh polynomial transformation.
     ///
-    /// Used for ABProof claims where k(y) = c (the revdot product).
+    /// Used for proof::AB claims where k(y) = c (the revdot product).
     fn raw_claim(
         &mut self,
         a: &'rx structured::Polynomial<F, R>,
@@ -250,7 +247,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             rng, &beta, &u, &left, &right, &s_prime, &error_m, &ab, &query, &f,
         )?;
 
-        let challenges = Challenges::new(
+        let challenges = proof::Challenges::new(
             &w, &y, &z, &mu, &nu, &mu_prime, &nu_prime, &x, &alpha, &u, &beta,
         );
 
@@ -315,7 +312,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     ) -> Result<(
         Proof<C, R>,
         Proof<C, R>,
-        ApplicationProof<C, R>,
+        proof::Application<C, R>,
         S::Aux<'source>,
     )> {
         let circuit_id = S::INDEX.circuit_index(self.num_application_steps)?;
@@ -331,7 +328,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         Ok((
             left.proof,
             right.proof,
-            ApplicationProof {
+            proof::Application {
                 circuit_id,
                 left_header: left_header.into_inner(),
                 right_header: right_header.into_inner(),
@@ -355,9 +352,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         rng: &mut RNG,
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
-        application: &ApplicationProof<C, R>,
+        application: &proof::Application<C, R>,
     ) -> Result<(
-        PreambleProof<C, R>,
+        proof::Preamble<C, R>,
         stages::native::preamble::Witness<'a, C, R, HEADER_SIZE>,
     )> {
         // Let's assemble the witness needed to generate the preamble stage.
@@ -409,7 +406,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nested_commitment = nested_rx.commit(C::nested_generators(self.params), nested_blind);
 
         Ok((
-            PreambleProof {
+            proof::Preamble {
                 stage_rx,
                 stage_blind,
                 stage_commitment,
@@ -432,7 +429,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         w: &Element<'dr, D>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-    ) -> Result<SPrimeProof<C, R>>
+    ) -> Result<proof::SPrime<C, R>>
     where
         D: Driver<'dr, F = C::CircuitField, MaybeKind = Always<()>>,
     {
@@ -460,7 +457,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nested_s_prime_commitment =
             nested_s_prime_rx.commit(C::nested_generators(self.params), nested_s_prime_blind);
 
-        Ok(SPrimeProof {
+        Ok(proof::SPrime {
             mesh_wx0_poly,
             mesh_wx0_blind,
             mesh_wx0_commitment,
@@ -490,7 +487,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         left: &'rx Proof<C, R>,
         right: &'rx Proof<C, R>,
     ) -> Result<(
-        ErrorMProof<C, R>,
+        proof::ErrorM<C, R>,
         stages::native::error_m::Witness<C, NativeParameters>,
         ProverContext<'_, 'rx, C::CircuitField, R>,
     )>
@@ -510,7 +507,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // Assemble a/b polynomials from both proofs for error term computation.
         let mut ctx = ProverContext::new(&self.circuit_mesh, self.num_application_steps, y, z);
         for proof in [left, right] {
-            // Child ABProof claim (k(y) = child's c)
+            // Child proof::AB claim (k(y) = child's c)
             ctx.raw_claim(&proof.ab.a_poly, &proof.ab.b_poly);
 
             // Application circuit (uses application k(y))
@@ -622,7 +619,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nested_commitment = nested_rx.commit(C::nested_generators(self.params), nested_blind);
 
         Ok((
-            ErrorMProof {
+            proof::ErrorM {
                 mesh_wy_poly,
                 mesh_wy_blind,
                 mesh_wy_commitment,
@@ -659,7 +656,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             ragu_primitives::poseidon::PoseidonStateLen<C::CircuitField, C::CircuitPoseidon>,
         >,
     ) -> Result<(
-        ErrorNProof<C, R>,
+        proof::ErrorN<C, R>,
         stages::native::error_n::Witness<C, NativeParameters>,
         FixedVec<
             structured::Polynomial<C::CircuitField, R>,
@@ -774,7 +771,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nested_commitment = nested_rx.commit(C::nested_generators(self.params), nested_blind);
 
         Ok((
-            ErrorNProof {
+            proof::ErrorN {
                 stage_rx,
                 stage_blind,
                 stage_commitment,
@@ -796,12 +793,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         u: &Element<'dr, D>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-        s_prime: &SPrimeProof<C, R>,
-        error_m: &ErrorMProof<C, R>,
-        ab: &ABProof<C, R>,
-        query: &QueryProof<C, R>,
-        f: &FProof<C, R>,
-    ) -> Result<PProof<C, R>>
+        s_prime: &proof::SPrime<C, R>,
+        error_m: &proof::ErrorM<C, R>,
+        ab: &proof::AB<C, R>,
+        query: &proof::Query<C, R>,
+        f: &proof::F<C, R>,
+    ) -> Result<proof::P<C, R>>
     where
         D: Driver<'dr, F = C::CircuitField, MaybeKind = Always<()>>,
     {
@@ -850,7 +847,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // Compute v = p(u)
         let v = poly.eval(u);
 
-        Ok(PProof {
+        Ok(proof::P {
             poly,
             blind,
             commitment,
@@ -875,7 +872,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         >,
         mu_prime: &Element<'dr, D>,
         nu_prime: &Element<'dr, D>,
-    ) -> Result<ABProof<C, R>>
+    ) -> Result<proof::AB<C, R>>
     where
         D: Driver<'dr, F = C::CircuitField, MaybeKind = Always<()>>,
     {
@@ -906,7 +903,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nested_blind = C::ScalarField::random(&mut *rng);
         let nested_commitment = nested_rx.commit(C::nested_generators(self.params), nested_blind);
 
-        Ok(ABProof {
+        Ok(proof::AB {
             a_poly,
             a_blind,
             a_commitment,
@@ -931,11 +928,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         x: &Element<'dr, D>,
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
-        error_m: &ErrorMProof<C, R>,
+        error_m: &proof::ErrorM<C, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
     ) -> Result<(
-        QueryProof<C, R>,
+        proof::Query<C, R>,
         internal_circuits::stages::native::query::Witness<C>,
     )>
     where
@@ -1010,7 +1007,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nested_commitment = nested_rx.commit(C::nested_generators(self.params), nested_blind);
 
         Ok((
-            QueryProof {
+            proof::Query {
                 mesh_xy_poly,
                 mesh_xy_blind,
                 mesh_xy_commitment,
@@ -1034,13 +1031,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         z: &Element<'dr, D>,
         x: &Element<'dr, D>,
         alpha: &Element<'dr, D>,
-        s_prime: &SPrimeProof<C, R>,
-        error_m: &ErrorMProof<C, R>,
-        ab: &ABProof<C, R>,
-        query: &QueryProof<C, R>,
+        s_prime: &proof::SPrime<C, R>,
+        error_m: &proof::ErrorM<C, R>,
+        ab: &proof::AB<C, R>,
+        query: &proof::Query<C, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-    ) -> Result<FProof<C, R>>
+    ) -> Result<proof::F<C, R>>
     where
         D: Driver<'dr, F = C::CircuitField, MaybeKind = Always<()>>,
     {
@@ -1179,7 +1176,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nested_blind = C::ScalarField::random(&mut *rng);
         let nested_commitment = nested_rx.commit(C::nested_generators(self.params), nested_blind);
 
-        Ok(FProof {
+        Ok(proof::F {
             poly,
             blind,
             commitment,
@@ -1196,12 +1193,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         u: &Element<'dr, D>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-        s_prime: &SPrimeProof<C, R>,
-        error_m: &ErrorMProof<C, R>,
-        ab: &ABProof<C, R>,
-        query: &QueryProof<C, R>,
+        s_prime: &proof::SPrime<C, R>,
+        error_m: &proof::ErrorM<C, R>,
+        ab: &proof::AB<C, R>,
+        query: &proof::Query<C, R>,
     ) -> Result<(
-        EvalProof<C, R>,
+        proof::Eval<C, R>,
         internal_circuits::stages::native::eval::Witness<C::CircuitField>,
     )>
     where
@@ -1236,7 +1233,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nested_commitment = nested_rx.commit(C::nested_generators(self.params), nested_blind);
 
         Ok((
-            EvalProof {
+            proof::Eval {
                 stage_rx,
                 stage_blind,
                 stage_commitment,
@@ -1252,22 +1249,22 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     fn compute_internal_circuits<RNG: Rng>(
         &self,
         rng: &mut RNG,
-        preamble: &PreambleProof<C, R>,
-        s_prime: &SPrimeProof<C, R>,
-        error_m: &ErrorMProof<C, R>,
-        error_n: &ErrorNProof<C, R>,
-        ab: &ABProof<C, R>,
-        query: &QueryProof<C, R>,
-        f: &FProof<C, R>,
-        eval: &EvalProof<C, R>,
-        p: &PProof<C, R>,
+        preamble: &proof::Preamble<C, R>,
+        s_prime: &proof::SPrime<C, R>,
+        error_m: &proof::ErrorM<C, R>,
+        error_n: &proof::ErrorN<C, R>,
+        ab: &proof::AB<C, R>,
+        query: &proof::Query<C, R>,
+        f: &proof::F<C, R>,
+        eval: &proof::Eval<C, R>,
+        p: &proof::P<C, R>,
         preamble_witness: &stages::native::preamble::Witness<'_, C, R, HEADER_SIZE>,
         error_m_witness: &stages::native::error_m::Witness<C, NativeParameters>,
         error_n_witness: &stages::native::error_n::Witness<C, NativeParameters>,
         query_witness: &internal_circuits::stages::native::query::Witness<C>,
         eval_witness: &internal_circuits::stages::native::eval::Witness<C::CircuitField>,
-        challenges: &Challenges<C>,
-    ) -> Result<CircuitCommitments<C, R>> {
+        challenges: &proof::Challenges<C>,
+    ) -> Result<proof::InternalCircuits<C, R>> {
         // Build unified instance from proof structs and challenges.
         let unified_instance = &unified::Instance {
             nested_preamble_commitment: preamble.nested_commitment,
@@ -1380,7 +1377,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let compute_v_rx_commitment =
             compute_v_rx.commit(C::host_generators(self.params), compute_v_rx_blind);
 
-        Ok(CircuitCommitments {
+        Ok(proof::InternalCircuits {
             hashes_1_rx,
             hashes_1_blind: hashes_1_rx_blind,
             hashes_1_commitment: hashes_1_rx_commitment,

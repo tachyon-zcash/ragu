@@ -16,7 +16,7 @@ use ragu_primitives::{Element, io::Write};
 
 use core::marker::PhantomData;
 
-use crate::{internal_circuits::NUM_INTERNAL_CIRCUITS, proof::Proof};
+use crate::{Proof, internal_circuits::NUM_INTERNAL_CIRCUITS};
 
 pub use crate::internal_circuits::InternalCircuitIndex::QueryStage as STAGING_ID;
 

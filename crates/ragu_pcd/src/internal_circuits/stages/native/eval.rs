@@ -13,7 +13,7 @@ use ragu_primitives::{Element, io::Write};
 
 use core::marker::PhantomData;
 
-use crate::proof::Proof;
+use crate::Proof;
 
 pub use crate::internal_circuits::InternalCircuitIndex::EvalStage as STAGING_ID;
 

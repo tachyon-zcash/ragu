@@ -14,9 +14,7 @@ use ragu_primitives::{
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use crate::{
-    components::ky::Ky, header::Header, internal_circuits::unified, proof::Proof, step::padded,
-};
+use crate::{Proof, components::ky::Ky, header::Header, internal_circuits::unified, step::padded};
 
 pub use crate::internal_circuits::InternalCircuitIndex::PreambleStage as STAGING_ID;
 
