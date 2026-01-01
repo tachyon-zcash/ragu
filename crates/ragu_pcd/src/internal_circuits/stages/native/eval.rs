@@ -17,7 +17,8 @@ use crate::Proof;
 
 pub use crate::internal_circuits::InternalCircuitIndex::EvalStage as STAGING_ID;
 
-/// Pre-computed polynomial evaluations at u for a child proof.
+/// Pre-computed polynomial evaluations at $u$ (from the parent fuse operation)
+/// for a child proof.
 pub struct ChildEvaluationsWitness<F> {
     pub application: F,
     pub preamble: F,
