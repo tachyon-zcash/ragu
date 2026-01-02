@@ -282,6 +282,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             &query,
             &f,
             &eval,
+            &p,
             &circuits,
         )?;
 
@@ -1263,7 +1264,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
     /// Compute the aggregate proof for routing HostCurve commitments to endoscaling slots.
     ///
-    /// Collects all 18 HostCurve commitments into a single aggregate stage.
+    /// Collects all 19 HostCurve commitments into a single aggregate stage.
     /// Consistency verification happens in the next fuse operation on the Fq side.
     fn compute_aggregate<RNG: Rng>(
         &self,
@@ -1277,6 +1278,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         query: &proof::Query<C, R>,
         f: &proof::F<C, R>,
         eval: &proof::Eval<C, R>,
+        p: &proof::P<C, R>,
         circuits: &proof::InternalCircuits<C, R>,
     ) -> Result<Aggregate<C, R>> {
         let aggregate_witness = stages::native::aggregate::Witness {
@@ -1294,17 +1296,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 10 => query.stage_commitment,
                 11 => f.commitment,
                 12 => eval.stage_commitment,
-                13 => circuits.hashes_1_commitment,
-                14 => circuits.hashes_2_commitment,
-                15 => circuits.partial_collapse_commitment,
-                16 => circuits.full_collapse_commitment,
-                17 => circuits.compute_v_commitment,
-                _ => unreachable!("18 slots"),
+                13 => p.commitment,
+                14 => circuits.hashes_1_commitment,
+                15 => circuits.hashes_2_commitment,
+                16 => circuits.partial_collapse_commitment,
+                17 => circuits.full_collapse_commitment,
+                18 => circuits.compute_v_commitment,
+                _ => unreachable!("19 slots"),
             }),
         };
 
         let nested_rx =
-            stages::native::aggregate::Stage::<C::HostCurve, 18>::rx(&aggregate_witness)?;
+            stages::native::aggregate::Stage::<C::HostCurve, 19>::rx(&aggregate_witness)?;
         let nested_blind = C::ScalarField::random(&mut *rng);
         let nested_commitment = nested_rx.commit(C::nested_generators(self.params), nested_blind);
 
