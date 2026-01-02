@@ -1278,30 +1278,33 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         f: &proof::F<C, R>,
         eval: &proof::Eval<C, R>,
         circuits: &proof::InternalCircuits<C, R>,
-    ) -> Result<proof::Aggregate<C, R>> {
-        let routing_witness = internal_circuits::routing::Witness::<C>::new(
-            application.commitment,
-            preamble.stage_commitment,
-            s_prime.mesh_wx0_commitment,
-            s_prime.mesh_wx1_commitment,
-            error_m.mesh_wy_commitment,
-            error_m.stage_commitment,
-            error_n.stage_commitment,
-            ab.a_commitment,
-            ab.b_commitment,
-            query.mesh_xy_commitment,
-            query.stage_commitment,
-            f.commitment,
-            eval.stage_commitment,
-            circuits.hashes_1_commitment,
-            circuits.hashes_2_commitment,
-            circuits.partial_collapse_commitment,
-            circuits.full_collapse_commitment,
-            circuits.compute_v_commitment,
-        );
+    ) -> Result<Aggregate<C, R>> {
+        let aggregate_witness = stages::native::aggregate::Witness {
+            commitments: FixedVec::from_fn(|i| match i {
+                0 => application.commitment,
+                1 => preamble.stage_commitment,
+                2 => s_prime.mesh_wx0_commitment,
+                3 => s_prime.mesh_wx1_commitment,
+                4 => error_m.mesh_wy_commitment,
+                5 => error_m.stage_commitment,
+                6 => error_n.stage_commitment,
+                7 => ab.a_commitment,
+                8 => ab.b_commitment,
+                9 => query.mesh_xy_commitment,
+                10 => query.stage_commitment,
+                11 => f.commitment,
+                12 => eval.stage_commitment,
+                13 => circuits.hashes_1_commitment,
+                14 => circuits.hashes_2_commitment,
+                15 => circuits.partial_collapse_commitment,
+                16 => circuits.full_collapse_commitment,
+                17 => circuits.compute_v_commitment,
+                _ => unreachable!("18 slots"),
+            }),
+        };
 
-        let (nested_rx, _) = internal_circuits::routing::Circuit::<C, R>::new()
-            .rx::<R>(&routing_witness, C::ScalarField::ONE)?;
+        let nested_rx =
+            stages::native::aggregate::Stage::<C::HostCurve, 18>::rx(&aggregate_witness)?;
         let nested_blind = C::ScalarField::random(&mut *rng);
         let nested_commitment = nested_rx.commit(C::nested_generators(self.params), nested_blind);
 
