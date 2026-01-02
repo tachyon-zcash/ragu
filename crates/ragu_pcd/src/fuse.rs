@@ -273,6 +273,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         let aggregate = self.compute_aggregate(
             rng,
+            &left,
+            &right,
             &application,
             &preamble,
             &s_prime,
@@ -1264,11 +1266,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
     /// Compute the aggregate proof for routing HostCurve commitments to endoscaling slots.
     ///
-    /// Collects all 19 HostCurve commitments into a single aggregate stage.
+    /// Collects all 31 HostCurve commitments into a single aggregate stage:
+    /// - 19 from the current proof
+    /// - 12 from child proofs (matching nested::preamble contents)
+    ///
     /// Consistency verification happens in the next fuse operation on the Fq side.
     fn compute_aggregate<RNG: Rng>(
         &self,
         rng: &mut RNG,
+        left: &Proof<C, R>,
+        right: &Proof<C, R>,
         application: &proof::Application<C, R>,
         preamble: &proof::Preamble<C, R>,
         s_prime: &proof::SPrime<C, R>,
@@ -1283,6 +1290,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     ) -> Result<Aggregate<C, R>> {
         let aggregate_witness = stages::native::aggregate::Witness {
             commitments: FixedVec::from_fn(|i| match i {
+                // Current proof commitments (slots 0-18)
                 0 => application.commitment,
                 1 => preamble.stage_commitment,
                 2 => s_prime.mesh_wx0_commitment,
@@ -1302,12 +1310,25 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 16 => circuits.partial_collapse_commitment,
                 17 => circuits.full_collapse_commitment,
                 18 => circuits.compute_v_commitment,
-                _ => unreachable!("19 slots"),
+                // Child proof commitments (slots 19-30, matching nested::preamble)
+                19 => left.application.commitment,
+                20 => right.application.commitment,
+                21 => left.circuits.hashes_1_commitment,
+                22 => right.circuits.hashes_1_commitment,
+                23 => left.circuits.hashes_2_commitment,
+                24 => right.circuits.hashes_2_commitment,
+                25 => left.circuits.partial_collapse_commitment,
+                26 => right.circuits.partial_collapse_commitment,
+                27 => left.circuits.full_collapse_commitment,
+                28 => right.circuits.full_collapse_commitment,
+                29 => left.circuits.compute_v_commitment,
+                30 => right.circuits.compute_v_commitment,
+                _ => unreachable!("31 slots"),
             }),
         };
 
         let nested_rx =
-            stages::native::aggregate::Stage::<C::HostCurve, 19>::rx(&aggregate_witness)?;
+            stages::native::aggregate::Stage::<C::HostCurve, 31>::rx(&aggregate_witness)?;
         let nested_blind = C::ScalarField::random(&mut *rng);
         let nested_commitment = nested_rx.commit(C::nested_generators(self.params), nested_blind);
 
