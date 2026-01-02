@@ -1,20 +1,17 @@
 //! This module provides the [`Application::verify`] method implementation.
 
 use arithmetic::Cycle;
-use ff::{Field, PrimeField};
-use ragu_circuits::{
-    mesh::{CircuitIndex, Mesh},
-    polynomials::{Rank, structured},
-};
+use ff::Field;
+use ragu_circuits::polynomials::Rank;
 use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::Element;
 use rand::Rng;
 
-use alloc::{borrow::Cow, vec::Vec};
 use core::iter::{once, repeat, repeat_n};
 
 use crate::{
     Application, Pcd,
+    components::claim_builder::ClaimBuilder,
     header::Header,
     internal_circuits::{
         self, InternalCircuitIndex, partial_collapse::NUM_UNIFIED_CIRCUITS,
@@ -68,12 +65,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             })?;
 
         // Build a and b polynomials for each revdot claim.
-        let mut verifier = Verifier::new(&self.circuit_mesh, self.num_application_steps, y, z);
+        let mut verifier = ClaimBuilder::new(&self.circuit_mesh, self.num_application_steps, y, z);
 
         // Circuit checks.
         {
             // ABProof raw claim (a revdot b = c)
-            verifier.raw_claim(&pcd.proof.ab.a_poly, &pcd.proof.ab.b_poly);
+            verifier.raw(&pcd.proof.ab.a_poly, &pcd.proof.ab.b_poly);
 
             verifier.circuit(pcd.proof.application.circuit_id, &pcd.proof.application.rx);
             verifier.internal_circuit(
@@ -165,8 +162,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 .chain(repeat_n(unified_ky, NUM_UNIFIED_CIRCUITS))
                 .chain(repeat(C::CircuitField::ZERO));
 
+            let (a, b) = verifier.polys();
             ky_values
-                .zip(verifier.a.iter().zip(verifier.b.iter()))
+                .zip(a.iter().zip(b.iter()))
                 .all(|(ky, (a, b))| a.revdot(b) == ky)
         };
 
@@ -174,97 +172,5 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let p_eval_claim = pcd.proof.p.poly.eval(pcd.proof.challenges.u) == pcd.proof.p.v;
 
         Ok(revdot_claims && p_eval_claim)
-    }
-}
-
-struct Verifier<'m, 'rx, F: PrimeField, R: Rank> {
-    circuit_mesh: &'m Mesh<'m, F, R>,
-    num_application_steps: usize,
-    y: F,
-    z: F,
-    tz: structured::Polynomial<F, R>,
-    a: Vec<Cow<'rx, structured::Polynomial<F, R>>>,
-    b: Vec<Cow<'rx, structured::Polynomial<F, R>>>,
-}
-
-impl<'m, 'rx, F: PrimeField, R: Rank> Verifier<'m, 'rx, F, R> {
-    fn new(circuit_mesh: &'m Mesh<'m, F, R>, num_application_steps: usize, y: F, z: F) -> Self {
-        Self {
-            circuit_mesh,
-            num_application_steps,
-            y,
-            z,
-            tz: R::tz(z),
-            a: Vec::new(),
-            b: Vec::new(),
-        }
-    }
-
-    fn circuit(&mut self, circuit_id: CircuitIndex, rx: &'rx structured::Polynomial<F, R>) {
-        self.circuit_impl(circuit_id, Cow::Borrowed(rx));
-    }
-
-    fn circuit_impl(
-        &mut self,
-        circuit_id: CircuitIndex,
-        rx: Cow<'rx, structured::Polynomial<F, R>>,
-    ) {
-        let sy = self.circuit_mesh.circuit_y(circuit_id, self.y);
-        let mut b = rx.as_ref().clone();
-        b.dilate(self.z);
-        b.add_assign(&sy);
-        b.add_assign(&self.tz);
-
-        self.a.push(rx);
-        self.b.push(Cow::Owned(b));
-    }
-
-    fn internal_circuit(
-        &mut self,
-        id: InternalCircuitIndex,
-        rxs: &[&'rx structured::Polynomial<F, R>],
-    ) {
-        assert!(!rxs.is_empty(), "must provide at least one rx polynomial");
-        let circuit_id = id.circuit_index(self.num_application_steps);
-
-        let rx = if rxs.len() == 1 {
-            Cow::Borrowed(rxs[0])
-        } else {
-            let mut sum = rxs[0].clone();
-            for rx in &rxs[1..] {
-                sum.add_assign(rx);
-            }
-            Cow::Owned(sum)
-        };
-
-        self.circuit_impl(circuit_id, rx);
-    }
-
-    fn stage(&mut self, id: InternalCircuitIndex, rxs: &[&'rx structured::Polynomial<F, R>]) {
-        assert!(!rxs.is_empty(), "must provide at least one rx polynomial");
-
-        let circuit_id = id.circuit_index(self.num_application_steps);
-        let sy = self.circuit_mesh.circuit_y(circuit_id, self.y);
-
-        let a = if rxs.len() == 1 {
-            Cow::Borrowed(rxs[0])
-        } else {
-            Cow::Owned(structured::Polynomial::fold(rxs.iter().copied(), self.z))
-        };
-
-        self.a.push(a);
-        self.b.push(Cow::Owned(sy));
-    }
-
-    /// Add a raw claim without any mesh polynomial transformation.
-    ///
-    /// Used for ABProof claims where k(y) = c (the revdot product).
-    fn raw_claim(
-        &mut self,
-        a: &'rx structured::Polynomial<F, R>,
-        b: &'rx structured::Polynomial<F, R>,
-    ) {
-        self.a.push(Cow::Borrowed(a));
-        self.b.push(Cow::Borrowed(b));
     }
 }

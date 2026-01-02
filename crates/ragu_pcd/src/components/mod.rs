@@ -1,5 +1,6 @@
 //! Reusable or isolated internal components.
 
+pub mod claim_builder;
 pub mod fold_revdot;
 pub mod horner;
 pub mod ky;

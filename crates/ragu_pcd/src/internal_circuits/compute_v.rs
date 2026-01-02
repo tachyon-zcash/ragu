@@ -12,9 +12,12 @@ use ragu_core::{
 use ragu_primitives::{Element, GadgetExt, vec::Len};
 
 use alloc::vec::Vec;
-use core::{borrow::Borrow, iter, marker::PhantomData};
+use core::marker::PhantomData;
 
-use crate::components::fold_revdot::{NativeParameters, Parameters};
+use crate::components::{
+    claim_builder::CircuitClaimBuilder,
+    fold_revdot::{NativeParameters, Parameters},
+};
 
 use super::{
     stages::native::{eval as native_eval, preamble as native_preamble, query as native_query},
@@ -279,71 +282,6 @@ fn fold_two_layer<'dr, D: Driver<'dr>, P: Parameters>(
     Element::fold(dr, results.iter(), layer2_scale)
 }
 
-struct SourceBuilder<'dr, D: Driver<'dr>> {
-    z: Element<'dr, D>,
-    txz: Element<'dr, D>,
-    ax: Vec<Element<'dr, D>>,
-    bx: Vec<Element<'dr, D>>,
-}
-
-impl<'dr, D: Driver<'dr>> SourceBuilder<'dr, D> {
-    fn new(z: Element<'dr, D>, txz: Element<'dr, D>) -> Self {
-        Self {
-            z,
-            txz,
-            ax: Vec::new(),
-            bx: Vec::new(),
-        }
-    }
-
-    fn direct(&mut self, ax_eval: &Element<'dr, D>, bx_eval: &Element<'dr, D>) {
-        self.ax.push(ax_eval.clone());
-        self.bx.push(bx_eval.clone());
-    }
-
-    fn application(
-        &mut self,
-        dr: &mut D,
-        ax_eval: &Element<'dr, D>,
-        bx_eval: &Element<'dr, D>,
-        bx_mesh: &Element<'dr, D>,
-    ) {
-        self.ax.push(ax_eval.clone());
-        self.bx.push(bx_eval.add(dr, bx_mesh).add(dr, &self.txz));
-    }
-
-    fn internal<'b>(
-        &'b mut self,
-        dr: &mut D,
-        ax_evals: impl IntoIterator<Item = &'b Element<'dr, D>>,
-        bx_evals: impl IntoIterator<Item = &'b Element<'dr, D>>,
-        bx_mesh: &'b Element<'dr, D>,
-    ) {
-        self.ax.push(Element::sum(dr, ax_evals));
-        self.bx.push(Element::sum(
-            dr,
-            bx_evals
-                .into_iter()
-                .chain(iter::once(bx_mesh).chain(iter::once(&self.txz))),
-        ));
-    }
-
-    fn stage<I>(&mut self, dr: &mut D, ax_evals: I, bx_mesh: &Element<'dr, D>) -> Result<()>
-    where
-        I: IntoIterator<Item: Borrow<Element<'dr, D>>>,
-        I::IntoIter: DoubleEndedIterator,
-    {
-        self.ax
-            .push(Element::fold(dr, ax_evals.into_iter(), &self.z)?);
-        self.bx.push(bx_mesh.clone());
-        Ok(())
-    }
-
-    fn build(self) -> (Vec<Element<'dr, D>>, Vec<Element<'dr, D>>) {
-        (self.ax, self.bx)
-    }
-}
-
 /// Computes the expected value of $a(x), b(x)$ given the evaluations at $x$ of
 /// every constituent polynomial at $x, xz$. This function is the authoritative
 /// source of the protocol's (recursive) description of the revdot folding
@@ -362,12 +300,12 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
 ) -> Result<(Element<'dr, D>, Element<'dr, D>)> {
     let both = [&query.left, &query.right];
 
-    let mut builder = SourceBuilder::new(z.clone(), txz.clone());
+    let mut builder = CircuitClaimBuilder::new(z.clone(), txz.clone());
 
     // Process the claims specific to each child proof.
     for child in both.iter() {
         // << a_i, b_i >> accumulation.
-        builder.direct(&child.a_poly_at_x, &child.b_poly_at_x);
+        builder.raw(&child.a_poly_at_x, &child.b_poly_at_x);
 
         // Application circuit check, given the evaluation m(circuit_id_i, x, y)
         // for adversarially chosen omega^j = circuit_id.
@@ -516,7 +454,7 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
         &query.fixed_mesh.eval_stage,
     )?;
 
-    let (ax_sources, bx_sources) = builder.build();
+    let (ax_sources, bx_sources) = builder.into_vecs();
     let ax = fold_two_layer::<_, P>(dr, &ax_sources, mu_inv, mu_prime_inv)?;
     let bx = fold_two_layer::<_, P>(dr, &bx_sources, munu, mu_prime_nu_prime)?;
     Ok((ax, bx))

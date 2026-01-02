@@ -1,8 +1,7 @@
 use arithmetic::Cycle;
-use ff::{Field, PrimeField};
+use ff::Field;
 use ragu_circuits::{
     CircuitExt,
-    mesh::{CircuitIndex, Mesh},
     polynomials::{Rank, structured, unstructured},
     staging::{Stage, StageExt},
 };
@@ -18,12 +17,15 @@ use ragu_primitives::{
 };
 use rand::Rng;
 
-use alloc::{borrow::Cow, vec::Vec};
+use alloc::vec::Vec;
 use core::iter::{once, repeat_n};
 
 use crate::{
     Application, Pcd, Proof,
-    components::fold_revdot::{self, NativeParameters},
+    components::{
+        claim_builder::ClaimBuilder,
+        fold_revdot::{self, NativeParameters},
+    },
     internal_circuits::{
         self, InternalCircuitIndex,
         stages::{
@@ -101,7 +103,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // commitments (stage commitments, interstitial polynomials like
         // s_prime and f(X)) are witnessed from their unified instances and
         // committed via the preamble stage.
-        let (error_m, error_m_witness, prover_context) =
+        let (error_m, error_m_witness, claim_builder) =
             self.compute_errors_m(rng, &w, &y, &z, &left, &right)?;
         Point::constant(&mut dr, error_m.nested_commitment)?.write(&mut dr, &mut transcript)?;
 
@@ -127,7 +129,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             rng,
             &preamble_witness,
             &error_m_witness,
-            prover_context,
+            claim_builder,
             &y,
             &mu,
             &nu,
@@ -411,7 +413,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// stage with the mesh_wy commitment bundled into the nested layer.
     ///
     /// Also assembles the a/b polynomial vectors from both proofs for error term
-    /// computation, returning a `ProverContext` so the caller can fold polynomials
+    /// computation, returning a `ClaimBuilder` so the caller can fold polynomials
     /// after mu/nu are derived from the transcript.
     fn compute_errors_m<'dr, 'rx, D, RNG: Rng>(
         &self,
@@ -424,7 +426,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     ) -> Result<(
         proof::ErrorM<C, R>,
         stages::native::error_m::Witness<C, NativeParameters>,
-        ProverContext<'_, 'rx, C::CircuitField, R>,
+        ClaimBuilder<'_, 'rx, C::CircuitField, R>,
     )>
     where
         D: Driver<'dr, F = C::CircuitField, MaybeKind = Always<()>>,
@@ -440,10 +442,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             mesh_wy_poly.commit(C::host_generators(self.params), mesh_wy_blind);
 
         // Assemble a/b polynomials from both proofs for error term computation.
-        let mut ctx = ProverContext::new(&self.circuit_mesh, self.num_application_steps, y, z);
+        let mut ctx = ClaimBuilder::new(&self.circuit_mesh, self.num_application_steps, y, z);
         for proof in [left, right] {
             // Child proof::AB claim (k(y) = child's c)
-            ctx.raw_claim(&proof.ab.a_poly, &proof.ab.b_poly);
+            ctx.raw(&proof.ab.a_poly, &proof.ab.b_poly);
 
             // Application circuit (uses application k(y))
             ctx.circuit(proof.application.circuit_id, &proof.application.rx);
@@ -532,7 +534,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         );
 
         // Compute real error terms from the assembled polynomial pairs
-        let error_terms = fold_revdot::compute_errors_m::<_, R, NativeParameters>(&ctx.a, &ctx.b);
+        let (a, b) = ctx.polys();
+        let error_terms = fold_revdot::compute_errors_m::<_, R, NativeParameters>(a, b);
 
         // Error M stage commitment
         let error_m_witness =
@@ -572,7 +575,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
     /// Compute errors_n stage (Layer 2: Single N-sized reduction).
     ///
-    /// Takes ownership of the ProverContext, folds the layer-1 polynomials using
+    /// Takes ownership of the ClaimBuilder, folds the layer-1 polynomials using
     /// mu/nu, computes k(y) values from the preamble witness, performs layer 1
     /// folding to get collapsed values, then builds the error_n stage witness
     /// and commitments. Returns the folded `a` and `b` polynomials for use by
@@ -582,7 +585,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         rng: &mut RNG,
         preamble_witness: &stages::native::preamble::Witness<'_, C, R, HEADER_SIZE>,
         error_m_witness: &stages::native::error_m::Witness<C, NativeParameters>,
-        prover_context: ProverContext<'_, '_, C::CircuitField, R>,
+        claim_builder: ClaimBuilder<'_, '_, C::CircuitField, R>,
         y: &Element<'dr, D>,
         mu: &Element<'dr, D>,
         nu: &Element<'dr, D>,
@@ -610,9 +613,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nu = *nu.value().take();
         let mu_inv = mu.invert().expect("mu must be non-zero");
         let munu = mu * nu;
-        let a = fold_revdot::fold_polys_m::<_, R, NativeParameters>(&prover_context.a, mu_inv);
-        let b = fold_revdot::fold_polys_m::<_, R, NativeParameters>(&prover_context.b, munu);
-        drop(prover_context);
+        let (ctx_a, ctx_b) = claim_builder.polys();
+        let a = fold_revdot::fold_polys_m::<_, R, NativeParameters>(ctx_a, mu_inv);
+        let b = fold_revdot::fold_polys_m::<_, R, NativeParameters>(ctx_b, munu);
+        drop(claim_builder);
 
         let (ky, collapsed) = Emulator::emulate_wireless(
             (preamble_witness, &error_m_witness.error_terms, y, mu, nu),
@@ -1333,112 +1337,5 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             compute_v_blind: compute_v_rx_blind,
             compute_v_commitment: compute_v_rx_commitment,
         })
-    }
-}
-
-/// Context for the prover to assemble a/b polynomial vectors for error term
-/// computation.
-///
-/// TODO: Extract shared logic with `Verifier` into a common `ClaimBuilder` trait.
-struct ProverContext<'m, 'rx, F: PrimeField, R: Rank> {
-    circuit_mesh: &'m Mesh<'m, F, R>,
-    num_application_steps: usize,
-    y: F,
-    z: F,
-    tz: structured::Polynomial<F, R>,
-    a: Vec<Cow<'rx, structured::Polynomial<F, R>>>,
-    b: Vec<Cow<'rx, structured::Polynomial<F, R>>>,
-}
-
-impl<'m, 'rx, F: PrimeField, R: Rank> ProverContext<'m, 'rx, F, R> {
-    /// Create a new prover context for assembling revdot claim polynomials.
-    fn new(circuit_mesh: &'m Mesh<'m, F, R>, num_application_steps: usize, y: F, z: F) -> Self {
-        Self {
-            circuit_mesh,
-            num_application_steps,
-            y,
-            z,
-            tz: R::tz(z),
-            a: Vec::new(),
-            b: Vec::new(),
-        }
-    }
-
-    /// Add a circuit claim with mesh polynomial transformation.
-    ///
-    /// Sets a = rx, b = rx(z) + s(y) + t(z).
-    fn circuit(&mut self, circuit_id: CircuitIndex, rx: &'rx structured::Polynomial<F, R>) {
-        self.circuit_impl(circuit_id, Cow::Borrowed(rx));
-    }
-
-    fn circuit_impl(
-        &mut self,
-        circuit_id: CircuitIndex,
-        rx: Cow<'rx, structured::Polynomial<F, R>>,
-    ) {
-        let sy = self.circuit_mesh.circuit_y(circuit_id, self.y);
-        let mut b = rx.as_ref().clone();
-        b.dilate(self.z);
-        b.add_assign(&sy);
-        b.add_assign(&self.tz);
-
-        self.a.push(rx);
-        self.b.push(Cow::Owned(b));
-    }
-
-    /// Add an internal circuit claim, summing multiple stage polynomials.
-    ///
-    /// Sets a = sum(rxs), b = sum(rxs)(z) + s(y) + t(z).
-    /// Used for hashes, collapse, and compute_v circuits.
-    fn internal_circuit(
-        &mut self,
-        id: InternalCircuitIndex,
-        rxs: &[&'rx structured::Polynomial<F, R>],
-    ) {
-        assert!(!rxs.is_empty(), "must provide at least one rx polynomial");
-        let circuit_id = id.circuit_index(self.num_application_steps);
-
-        let rx = if rxs.len() == 1 {
-            Cow::Borrowed(rxs[0])
-        } else {
-            let mut sum = rxs[0].clone();
-            for rx in &rxs[1..] {
-                sum.add_assign(rx);
-            }
-            Cow::Owned(sum)
-        };
-
-        self.circuit_impl(circuit_id, rx);
-    }
-
-    /// Add a stage claim for batching stage polynomial verification.
-    ///
-    /// Sets a = fold(rxs, z), b = s(y). Used for k(y) = 0 stage checks.
-    fn stage(&mut self, id: InternalCircuitIndex, rxs: &[&'rx structured::Polynomial<F, R>]) {
-        assert!(!rxs.is_empty(), "must provide at least one rx polynomial");
-
-        let circuit_id = id.circuit_index(self.num_application_steps);
-        let sy = self.circuit_mesh.circuit_y(circuit_id, self.y);
-
-        let a = if rxs.len() == 1 {
-            Cow::Borrowed(rxs[0])
-        } else {
-            Cow::Owned(structured::Polynomial::fold(rxs.iter().copied(), self.z))
-        };
-
-        self.a.push(a);
-        self.b.push(Cow::Owned(sy));
-    }
-
-    /// Add a raw claim without any mesh polynomial transformation.
-    ///
-    /// Used for proof::AB claims where k(y) = c (the revdot product).
-    fn raw_claim(
-        &mut self,
-        a: &'rx structured::Polynomial<F, R>,
-        b: &'rx structured::Polynomial<F, R>,
-    ) {
-        self.a.push(Cow::Borrowed(a));
-        self.b.push(Cow::Borrowed(b));
     }
 }
