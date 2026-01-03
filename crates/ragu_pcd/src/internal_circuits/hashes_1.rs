@@ -256,18 +256,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             let left_application_ky = preamble.left.application_ky(dr, &y)?;
             let right_application_ky = preamble.right.application_ky(dr, &y)?;
 
-            left_application_ky.enforce_equal(dr, &error_n.left_application_ky)?;
-            right_application_ky.enforce_equal(dr, &error_n.right_application_ky)?;
+            left_application_ky.enforce_equal(dr, &error_n.left.application)?;
+            right_application_ky.enforce_equal(dr, &error_n.right.application)?;
 
             let (left_unified_ky, left_unified_bridge_ky) =
                 preamble.left.unified_ky_values(dr, &y)?;
             let (right_unified_ky, right_unified_bridge_ky) =
                 preamble.right.unified_ky_values(dr, &y)?;
 
-            left_unified_ky.enforce_equal(dr, &error_n.left_unified_ky)?;
-            right_unified_ky.enforce_equal(dr, &error_n.right_unified_ky)?;
-            left_unified_bridge_ky.enforce_equal(dr, &error_n.left_unified_bridge_ky)?;
-            right_unified_bridge_ky.enforce_equal(dr, &error_n.right_unified_bridge_ky)?;
+            left_unified_ky.enforce_equal(dr, &error_n.left.unified)?;
+            right_unified_ky.enforce_equal(dr, &error_n.right.unified)?;
+            left_unified_bridge_ky.enforce_equal(dr, &error_n.left.unified_bridge)?;
+            right_unified_bridge_ky.enforce_equal(dr, &error_n.right.unified_bridge)?;
         }
 
         // Absorb nested_error_m_commitment and verify saved sponge state

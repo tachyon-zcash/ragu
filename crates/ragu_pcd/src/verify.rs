@@ -42,6 +42,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             return Ok(false);
         }
 
+        // Validate that the `left_header` and `right_header` lengths match
+        // `HEADER_SIZE`. Alternatively, the `Proof` structure could be
+        // parameterized on the `HEADER_SIZE`, but this appeared to be simpler.
+        if pcd.proof.application.left_header.len() != HEADER_SIZE
+            || pcd.proof.application.right_header.len() != HEADER_SIZE
+        {
+            return Ok(false);
+        }
+
         // Compute unified k(y), unified_bridge k(y), and application k(y).
         let (unified_ky, unified_bridge_ky, application_ky) =
             Emulator::emulate_wireless((&pcd.proof, pcd.data.clone(), y), |dr, witness| {

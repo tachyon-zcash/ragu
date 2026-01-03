@@ -121,13 +121,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 
         // Read k(y) values from error_n stage, plus child c values from preamble.
         let mut ky_elements = once(preamble.left.unified.c.clone())
-            .chain(once(error_n.left_application_ky))
-            .chain(once(error_n.left_unified_bridge_ky))
-            .chain(repeat_n(error_n.left_unified_ky, NUM_UNIFIED_CIRCUITS))
+            .chain(once(error_n.left.application))
+            .chain(once(error_n.left.unified_bridge))
+            .chain(repeat_n(error_n.left.unified, NUM_UNIFIED_CIRCUITS))
             .chain(once(preamble.right.unified.c.clone()))
-            .chain(once(error_n.right_application_ky))
-            .chain(once(error_n.right_unified_bridge_ky))
-            .chain(repeat_n(error_n.right_unified_ky, NUM_UNIFIED_CIRCUITS));
+            .chain(once(error_n.right.application))
+            .chain(once(error_n.right.unified_bridge))
+            .chain(repeat_n(error_n.right.unified, NUM_UNIFIED_CIRCUITS));
 
         for (i, error_terms) in error_m.error_terms.iter().enumerate() {
             let ky_elements =

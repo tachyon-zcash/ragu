@@ -79,10 +79,12 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         Ok(self)
     }
 
-    /// Register `count` trivial circuits to simulate application steps.
+    /// Register `count` trivial circuits to simulate application steps
+    /// registration.
     ///
     /// This is useful for testing internal circuit behavior with a non-zero
-    /// number of application steps, without needing real [`Step`] implementations.
+    /// number of application steps, without needing real [`Step`]
+    /// implementations.
     #[cfg(test)]
     pub(crate) fn register_dummy_circuits(mut self, count: usize) -> Result<Self> {
         for _ in 0..count {
@@ -178,8 +180,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// Seed a new computation by running a step with trivial inputs.
     ///
     /// This is the entry point for creating leaf nodes in a PCD tree.
-    /// Internally creates minimal trivial proofs with () headers and
-    /// fuses them with the provided step to produce a valid proof.
+    /// Internally creates minimal trivial proofs with `()` headers and fuses
+    /// them with the provided step to produce a valid proof.
     pub fn seed<'source, RNG: Rng, S: Step<C, Left = (), Right = ()>>(
         &self,
         rng: &mut RNG,

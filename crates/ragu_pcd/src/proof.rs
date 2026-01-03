@@ -17,9 +17,29 @@ use alloc::vec::Vec;
 
 use crate::header::Header;
 
+/// Represents proof-carrying data, a recursive proof for the correctness of
+/// some accompanying data.
+pub struct Pcd<'source, C: Cycle, R: Rank, H: Header<C::CircuitField>> {
+    /// The recursive proof for the accompanying data.
+    pub proof: Proof<C, R>,
+
+    /// Data needed to witness a [`Header`] within a [`Step`](super::Step).
+    pub data: H::Data<'source>,
+}
+
+impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<'_, C, R, H> {
+    fn clone(&self) -> Self {
+        Pcd {
+            proof: self.proof.clone(),
+            data: self.data.clone(),
+        }
+    }
+}
+
 /// Represents a recursive proof for the correctness of some computation.
 #[derive(Clone)]
 pub struct Proof<C: Cycle, R: Rank> {
+    /// Application-specific proof data.
     pub(crate) application: Application<C, R>,
     pub(crate) preamble: Preamble<C, R>,
     pub(crate) s_prime: SPrime<C, R>,
@@ -37,10 +57,30 @@ pub struct Proof<C: Cycle, R: Rank> {
 /// Application-specific proof data including circuit ID, headers, and commitment.
 #[derive(Clone)]
 pub(crate) struct Application<C: Cycle, R: Rank> {
+    /// The circuit ID for the registered `Step` that the prover claims to have
+    /// used to produce this proof. The prover could have used any circuit ID
+    /// within the mesh here, but because circuits impose a discriminant public
+    /// input in the linear term (including internal circuits) the verifier can
+    /// prevent the use of invalid circuits.
+    ///
+    /// It is, however, very important for the verifier (or recursive
+    /// verification circuit) to check that the circuit ID is valid within the
+    /// mesh domain by ensuring it is part of its domain. See the
+    /// [`crate::components::root_of_unity`] module for information.
     pub(crate) circuit_id: CircuitIndex,
+
+    /// The `left_header` the prover claims to have used as the output header
+    /// of the left child proof.
     pub(crate) left_header: Vec<C::CircuitField>,
+
+    /// The `right_header` the prover claims to have used as the output header
+    /// of the right child proof.
     pub(crate) right_header: Vec<C::CircuitField>,
+
+    /// The witness polynomial the prover claims satisfies the application
+    /// `Step` circuit identified.
     pub(crate) rx: structured::Polynomial<C::CircuitField, R>,
+
     pub(crate) blind: C::CircuitField,
     pub(crate) commitment: C::HostCurve,
 }
@@ -276,25 +316,6 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// Augment a recursive proof with some data, described by a [`Header`].
     pub fn carry<H: Header<C::CircuitField>>(self, data: H::Data<'_>) -> Pcd<'_, C, R, H> {
         Pcd { proof: self, data }
-    }
-}
-
-/// Represents proof-carrying data, a recursive proof for the correctness of
-/// some accompanying data.
-pub struct Pcd<'source, C: Cycle, R: Rank, H: Header<C::CircuitField>> {
-    /// The recursive proof for the accompanying data.
-    pub proof: Proof<C, R>,
-
-    /// Arbitrary data encoded into a [`Header`].
-    pub data: H::Data<'source>,
-}
-
-impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<'_, C, R, H> {
-    fn clone(&self) -> Self {
-        Pcd {
-            proof: self.proof.clone(),
-            data: self.data.clone(),
-        }
     }
 }
 

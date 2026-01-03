@@ -164,13 +164,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> StagedCircuit<C::CircuitField,
                 horner.finish(dr)
             };
 
-            // When NOT in base case, enforce witnessed_v == computed_v.
-            // In base case (both children trivial), prover may witness any v value.
-            let witnessed_v = unified_output.v.get(dr, unified_instance)?;
-            preamble
-                .is_base_case(dr)?
-                .not(dr)
-                .conditional_enforce_equal(dr, &witnessed_v, &computed_v)?;
+            unified_output.v.set(computed_v);
         }
 
         Ok((unified_output.finish(dr, unified_instance)?, D::just(|| ())))

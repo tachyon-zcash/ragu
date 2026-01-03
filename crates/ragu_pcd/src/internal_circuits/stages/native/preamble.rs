@@ -20,19 +20,23 @@ pub use crate::internal_circuits::InternalCircuitIndex::PreambleStage as STAGING
 
 type HeaderVec<'dr, D, const HEADER_SIZE: usize> = FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>;
 
+/// Witness data for a single child proof in the preamble stage.
+pub struct ChildWitness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+    /// Output header for this child proof.
+    pub output_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
+    /// Reference to the child proof.
+    pub proof: &'a Proof<C, R>,
+}
+
 /// Witness for the native preamble stage.
 ///
 /// Contains references to the left and right proofs, plus output headers
 /// computed outside the circuit.
 pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
-    /// Output header for left proof.
-    pub left_output_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
-    /// Output header for right proof.
-    pub right_output_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
-    /// Left proof.
-    pub left: &'a Proof<C, R>,
-    /// Right proof.
-    pub right: &'a Proof<C, R>,
+    /// Left child proof witness.
+    pub left: ChildWitness<'a, C, R, HEADER_SIZE>,
+    /// Right child proof witness.
+    pub right: ChildWitness<'a, C, R, HEADER_SIZE>,
 }
 
 impl<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> Witness<'a, C, R, HEADER_SIZE> {
@@ -44,20 +48,36 @@ impl<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> Witness<'a, C, R, HEADER_S
         right_output_header: &[C::CircuitField],
     ) -> Result<Self> {
         Ok(Witness {
-            left_output_header: FixedVec::try_from(left_output_header.to_vec())?,
-            right_output_header: FixedVec::try_from(right_output_header.to_vec())?,
-            left,
-            right,
+            left: ChildWitness {
+                output_header: FixedVec::try_from(left_output_header.to_vec())?,
+                proof: left,
+            },
+            right: ChildWitness {
+                output_header: FixedVec::try_from(right_output_header.to_vec())?,
+                proof: right,
+            },
         })
     }
 }
 
+/// Headers claimed by a child proof for its own left and right children.
+#[derive(Gadget)]
+pub struct ChildHeaders<'dr, D: Driver<'dr>, const HEADER_SIZE: usize> {
+    /// Left child header (grandchild from current perspective).
+    #[ragu(gadget)]
+    pub left: HeaderVec<'dr, D, HEADER_SIZE>,
+    /// Right child header (grandchild from current perspective).
+    #[ragu(gadget)]
+    pub right: HeaderVec<'dr, D, HEADER_SIZE>,
+}
+
+/// Processed inputs from a single child proof in the preamble stage.
 #[derive(Gadget)]
 pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize> {
+    /// Headers this child proof claimed for its own children.
     #[ragu(gadget)]
-    pub left_header: HeaderVec<'dr, D, HEADER_SIZE>,
-    #[ragu(gadget)]
-    pub right_header: HeaderVec<'dr, D, HEADER_SIZE>,
+    pub children: ChildHeaders<'dr, D, HEADER_SIZE>,
+    /// Output header of this child proof.
     #[ragu(gadget)]
     pub output_header: HeaderVec<'dr, D, HEADER_SIZE>,
     #[ragu(gadget)]
@@ -72,7 +92,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize> ProofInputs<'dr, D
     ///
     /// Returns `(unified_ky, unified_bridge_ky)` where:
     /// - `unified_ky` = k(y) for `(unified, 0)`
-    /// - `unified_bridge_ky` = k(y) for `(unified, left_header, right_header, 0)`
+    /// - `unified_bridge_ky` = k(y) for `(unified, children.left, children.right, 0)`
     pub fn unified_ky_values(
         &self,
         dr: &mut D,
@@ -88,8 +108,8 @@ impl<'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize> ProofInputs<'dr, D
                 ky.finish(dr)?
             }),
             ({
-                self.left_header.write(dr, &mut ky)?;
-                self.right_header.write(dr, &mut ky)?;
+                self.children.left.write(dr, &mut ky)?;
+                self.children.right.write(dr, &mut ky)?;
                 Element::zero(dr).write(dr, &mut ky)?;
                 ky.finish(dr)?
             }),
@@ -98,11 +118,11 @@ impl<'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize> ProofInputs<'dr, D
 
     /// Compute k(y) for the application circuit instance.
     ///
-    /// Returns `application_ky` = k(y) for `(left_header, right_header, output_header)`.
+    /// Returns `application_ky` = k(y) for `(children.left, children.right, output_header)`.
     pub fn application_ky(&self, dr: &mut D, y: &Element<'dr, D>) -> Result<Element<'dr, D>> {
         let mut ky = Ky::new(y);
-        self.left_header.write(dr, &mut ky)?;
-        self.right_header.write(dr, &mut ky)?;
+        self.children.left.write(dr, &mut ky)?;
+        self.children.right.write(dr, &mut ky)?;
         self.output_header.write(dr, &mut ky)?;
         ky.finish(dr)
     }
@@ -143,14 +163,16 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         }
 
         Ok(ProofInputs {
-            right_header: alloc_header(
-                dr,
-                proof.view().map(|p| p.application.right_header.as_slice()),
-            )?,
-            left_header: alloc_header(
-                dr,
-                proof.view().map(|p| p.application.left_header.as_slice()),
-            )?,
+            children: ChildHeaders {
+                left: alloc_header(
+                    dr,
+                    proof.view().map(|p| p.application.left_header.as_slice()),
+                )?,
+                right: alloc_header(
+                    dr,
+                    proof.view().map(|p| p.application.right_header.as_slice()),
+                )?,
+            },
             output_header: alloc_header(dr, output_header.view().map(|h| &h[..]))?,
             circuit_id: Element::alloc(
                 dr,
@@ -235,14 +257,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     {
         let left = ProofInputs::alloc(
             dr,
-            witness.view().map(|w| w.left),
-            witness.view().map(|w| &w.left_output_header),
+            witness.view().map(|w| w.left.proof),
+            witness.view().map(|w| &w.left.output_header),
         )?;
 
         let right = ProofInputs::alloc(
             dr,
-            witness.view().map(|w| w.right),
-            witness.view().map(|w| &w.right_output_header),
+            witness.view().map(|w| w.right.proof),
+            witness.view().map(|w| &w.right.output_header),
         )?;
 
         Ok(Output { left, right })

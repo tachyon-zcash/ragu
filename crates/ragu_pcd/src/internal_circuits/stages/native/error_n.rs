@@ -22,14 +22,22 @@ pub use crate::internal_circuits::InternalCircuitIndex::ErrorNStage as STAGING_I
 
 use crate::components::fold_revdot::{self, ErrorTermsLen};
 
+/// $k(Y)$ evaluation values for a single child proof.
+pub struct ChildKyValues<F> {
+    /// k(y) for the application circuit.
+    pub application: F,
+    /// k(y) for the unified circuit.
+    pub unified: F,
+    /// k(y) for the header-unified binding.
+    pub unified_bridge: F,
+}
+
 /// $k(Y)$ evaluation values computed during fuse operation.
 pub struct KyValues<F> {
-    pub left_application: F,
-    pub right_application: F,
-    pub left_unified: F,
-    pub right_unified: F,
-    pub left_unified_bridge: F,
-    pub right_unified_bridge: F,
+    /// k(y) values for the left child proof.
+    pub left: ChildKyValues<F>,
+    /// k(y) values for the right child proof.
+    pub right: ChildKyValues<F>,
 }
 
 /// Witness data for the error_n stage (layer 2).
@@ -54,6 +62,20 @@ pub struct Witness<C: Cycle, FP: fold_revdot::Parameters> {
         FixedVec<C::CircuitField, PoseidonStateLen<C::CircuitField, C::CircuitPoseidon>>,
 }
 
+/// k(y) output gadgets for a single child proof.
+#[derive(Gadget)]
+pub struct ChildKyOutputs<'dr, D: Driver<'dr>> {
+    /// k(y) for the application circuit.
+    #[ragu(gadget)]
+    pub application: Element<'dr, D>,
+    /// k(y) for the unified circuit.
+    #[ragu(gadget)]
+    pub unified: Element<'dr, D>,
+    /// k(y) for the header-unified binding.
+    #[ragu(gadget)]
+    pub unified_bridge: Element<'dr, D>,
+}
+
 /// Output gadget for the error_n stage.
 #[derive(Gadget)]
 pub struct Output<
@@ -68,24 +90,12 @@ pub struct Output<
     /// Collapsed values from layer 1 folding (N values).
     #[ragu(gadget)]
     pub collapsed: FixedVec<Element<'dr, D>, FP::N>,
-    /// k(y) for left application circuit.
+    /// k(y) values for left child proof.
     #[ragu(gadget)]
-    pub left_application_ky: Element<'dr, D>,
-    /// k(y) for right application circuit.
+    pub left: ChildKyOutputs<'dr, D>,
+    /// k(y) values for right child proof.
     #[ragu(gadget)]
-    pub right_application_ky: Element<'dr, D>,
-    /// k(y) for left unified circuit.
-    #[ragu(gadget)]
-    pub left_unified_ky: Element<'dr, D>,
-    /// k(y) for right unified circuit.
-    #[ragu(gadget)]
-    pub right_unified_ky: Element<'dr, D>,
-    /// k(y) for left child's header-unified binding.
-    #[ragu(gadget)]
-    pub left_unified_bridge_ky: Element<'dr, D>,
-    /// k(y) for right child's header-unified binding.
-    #[ragu(gadget)]
-    pub right_unified_bridge_ky: Element<'dr, D>,
+    pub right: ChildKyOutputs<'dr, D>,
     /// Sponge state saved after absorbing nested_error_m_commitment.
     /// Used to bridge the Fiat-Shamir transcript between hashes_1 and hashes_2.
     #[ragu(gadget)]
@@ -127,16 +137,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let collapsed = FP::N::range()
             .map(|i| Element::alloc(dr, witness.view().map(|w| w.collapsed[i])))
             .try_collect_fixed()?;
-        let left_application_ky =
-            Element::alloc(dr, witness.view().map(|w| w.ky.left_application))?;
-        let right_application_ky =
-            Element::alloc(dr, witness.view().map(|w| w.ky.right_application))?;
-        let left_unified_ky = Element::alloc(dr, witness.view().map(|w| w.ky.left_unified))?;
-        let right_unified_ky = Element::alloc(dr, witness.view().map(|w| w.ky.right_unified))?;
-        let left_unified_bridge_ky =
-            Element::alloc(dr, witness.view().map(|w| w.ky.left_unified_bridge))?;
-        let right_unified_bridge_ky =
-            Element::alloc(dr, witness.view().map(|w| w.ky.right_unified_bridge))?;
+        let left = ChildKyOutputs {
+            application: Element::alloc(dr, witness.view().map(|w| w.ky.left.application))?,
+            unified: Element::alloc(dr, witness.view().map(|w| w.ky.left.unified))?,
+            unified_bridge: Element::alloc(dr, witness.view().map(|w| w.ky.left.unified_bridge))?,
+        };
+        let right = ChildKyOutputs {
+            application: Element::alloc(dr, witness.view().map(|w| w.ky.right.application))?,
+            unified: Element::alloc(dr, witness.view().map(|w| w.ky.right.unified))?,
+            unified_bridge: Element::alloc(dr, witness.view().map(|w| w.ky.right.unified_bridge))?,
+        };
         let sponge_state = SpongeState::from_elements(FixedVec::try_from_fn(|i| {
             Element::alloc(dr, witness.view().map(|w| w.sponge_state_elements[i]))
         })?);
@@ -144,12 +154,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         Ok(Output {
             error_terms,
             collapsed,
-            left_application_ky,
-            right_application_ky,
-            left_unified_ky,
-            right_unified_ky,
-            left_unified_bridge_ky,
-            right_unified_bridge_ky,
+            left,
+            right,
             sponge_state,
         })
     }
