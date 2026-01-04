@@ -9,12 +9,12 @@ use ragu_core::{
     gadgets::GadgetKind,
     maybe::Maybe,
 };
-use ragu_primitives::{Element, GadgetExt, vec::Len};
+use ragu_primitives::{Element, GadgetExt};
 
 use alloc::vec::Vec;
 use core::{borrow::Borrow, iter, marker::PhantomData};
 
-use crate::components::fold_revdot::{NativeParameters, Parameters};
+use crate::components::fold_revdot::{NativeParameters, Parameters, fold_two_layer};
 
 use super::{
     stages::native::{eval as native_eval, preamble as native_preamble, query as native_query},
@@ -260,25 +260,6 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
     }
 }
 
-fn fold_two_layer<'dr, D: Driver<'dr>, P: Parameters>(
-    dr: &mut D,
-    sources: &[Element<'dr, D>],
-    layer1_scale: &Element<'dr, D>,
-    layer2_scale: &Element<'dr, D>,
-) -> Result<Element<'dr, D>> {
-    let mut results = Vec::with_capacity(P::N::len());
-
-    for chunk in sources.chunks(P::M::len()) {
-        results.push(Element::fold(dr, chunk.iter(), layer1_scale)?);
-    }
-
-    while results.len() < P::N::len() {
-        results.push(Element::zero(dr));
-    }
-
-    Element::fold(dr, results.iter(), layer2_scale)
-}
-
 struct SourceBuilder<'dr, D: Driver<'dr>> {
     z: Element<'dr, D>,
     txz: Element<'dr, D>,
@@ -333,8 +314,7 @@ impl<'dr, D: Driver<'dr>> SourceBuilder<'dr, D> {
         I: IntoIterator<Item: Borrow<Element<'dr, D>>>,
         I::IntoIter: DoubleEndedIterator,
     {
-        self.ax
-            .push(Element::fold(dr, ax_evals.into_iter(), &self.z)?);
+        self.ax.push(Element::fold(dr, ax_evals, &self.z)?);
         self.bx.push(bx_mesh.clone());
         Ok(())
     }

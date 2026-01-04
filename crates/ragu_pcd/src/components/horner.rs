@@ -11,11 +11,9 @@ use ragu_primitives::{Element, io::Buffer};
 /// natural ordering for Horner's method: for $p(x) = a_n x^n + \cdots + a_0$,
 /// write $a_n$ first and $a_0$ last.
 ///
-/// This differs from
+/// This is consistent with
 /// [`Polynomial::fold`](ragu_circuits::polynomials::structured::Polynomial::fold)
-/// and [`Element::fold`](Element::fold), which expect lower-to-higher degree
-/// ordering from the caller, even though they also use Horner's method
-/// internally by reversing the provided iterators.
+/// and [`Element::fold`](Element::fold), which also expect descending order.
 ///
 /// Unlike [`Ky`](super::ky::Ky), this does not add a trailing constant term.
 pub struct Horner<'a, 'dr, D: Driver<'dr>> {

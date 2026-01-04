@@ -311,23 +311,23 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
         diff.is_zero(dr)
     }
 
-    /// Folds an iterator of elements into a single element with successive
-    /// powers of the provided scale factor.
-    // TODO: This should require the caller to provide the higher degree terms
-    // first, rather than taking a DoubleEndedIterator and reversing it
-    // internally. This is a less strict requirement for the API, but also helps
-    // force us to rewrite the protocols to use a consistent ordering later.
+    /// Computes a weighted sum of the elements yielded by an iterator by the
+    /// powers of the provided `scale_factor`.
+    ///
+    /// Horner's method is used to evaluate the weighted sum, effectively
+    /// scaling the first element by the highest power of `scale_factor` and the
+    /// last element by nothing at all.
     pub fn fold<E: Borrow<Element<'dr, D>>>(
         dr: &mut D,
-        elements: impl DoubleEndedIterator<Item = E>,
-        scale: &Element<'dr, D>,
+        elements: impl IntoIterator<Item = E>,
+        scale_factor: &Element<'dr, D>,
     ) -> Result<Self> {
-        let mut iter = elements.rev();
+        let mut iter = elements.into_iter();
         let Some(first) = iter.next() else {
             return Ok(Element::zero(dr));
         };
         iter.try_fold(first.borrow().clone(), |acc, elem| {
-            acc.mul(dr, scale)
+            acc.mul(dr, scale_factor)
                 .map(|scaled| scaled.add(dr, elem.borrow()))
         })
     }
