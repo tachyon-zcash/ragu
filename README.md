@@ -1,5 +1,5 @@
 <p align="center">
-  <img width="300" height="80" src="https://tachyon.z.cash/assets/ragu/v1_github600x160.png">
+  <img width="300" height="80" src="https://tachyon.z.cash/assets/ragu/v1/github-600x160.png">
 </p>
 
 ---
