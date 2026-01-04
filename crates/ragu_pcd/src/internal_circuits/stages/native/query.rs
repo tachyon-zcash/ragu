@@ -423,13 +423,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal_circuits::stages::native::tests::{
-        TEST_HEADER_SIZE, TestR, assert_stage_values,
-    };
+    use crate::internal_circuits::stages::native::tests::{HEADER_SIZE, R, assert_stage_values};
     use ragu_pasta::Pasta;
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<Pasta, TestR, { TEST_HEADER_SIZE }>::default());
+        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }>::default());
     }
 }

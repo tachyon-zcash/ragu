@@ -167,11 +167,9 @@ pub mod native {
             maybe::Empty,
         };
 
-        pub(crate) type TestR = ragu_circuits::polynomials::R<13>;
-
-        pub(crate) use crate::internal_circuits::test_params::HEADER_SIZE as TEST_HEADER_SIZE;
-
+        pub(crate) type R = ragu_circuits::polynomials::R<13>;
         pub(crate) use crate::components::fold_revdot::NativeParameters;
+        pub(crate) use crate::internal_circuits::test_params::HEADER_SIZE;
 
         pub(crate) fn assert_stage_values<F, R, S>(stage: &S)
         where

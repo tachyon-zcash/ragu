@@ -163,10 +163,11 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
 pub(crate) mod test_params {
     use super::*;
     use crate::*;
-    use ragu_circuits::polynomials::R;
     use ragu_circuits::staging::{Stage, StageExt};
     use ragu_pasta::Pasta;
     use stages::native::{error_m, error_n, eval, preamble, query};
+
+    pub(crate) type R = ragu_circuits::polynomials::R<13>;
 
     // When changing HEADER_SIZE, update the constraint counts by running:
     //   cargo test -p ragu_pcd --release print_internal_circuit -- --nocapture
@@ -178,18 +179,18 @@ pub(crate) mod test_params {
     // steps are present.
     const NUM_APP_STEPS: usize = 6000;
 
-    type Preamble = preamble::Stage<Pasta, R<13>, HEADER_SIZE>;
-    type ErrorM = error_m::Stage<Pasta, R<13>, HEADER_SIZE, NativeParameters>;
-    type ErrorN = error_n::Stage<Pasta, R<13>, HEADER_SIZE, NativeParameters>;
-    type Query = query::Stage<Pasta, R<13>, HEADER_SIZE>;
-    type Eval = eval::Stage<Pasta, R<13>, HEADER_SIZE>;
+    type Preamble = preamble::Stage<Pasta, R, HEADER_SIZE>;
+    type ErrorM = error_m::Stage<Pasta, R, HEADER_SIZE, NativeParameters>;
+    type ErrorN = error_n::Stage<Pasta, R, HEADER_SIZE, NativeParameters>;
+    type Query = query::Stage<Pasta, R, HEADER_SIZE>;
+    type Eval = eval::Stage<Pasta, R, HEADER_SIZE>;
 
     #[rustfmt::skip]
     #[test]
     fn test_internal_circuit_constraint_counts() {
         let pasta = Pasta::baked();
 
-        let app = ApplicationBuilder::<Pasta, R<13>, HEADER_SIZE>::new()
+        let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
             .register_dummy_circuits(NUM_APP_STEPS)
             .unwrap()
             .finalize(pasta)
@@ -252,7 +253,7 @@ pub(crate) mod test_params {
     fn print_internal_circuit_constraint_counts() {
         let pasta = Pasta::baked();
 
-        let app = ApplicationBuilder::<Pasta, R<13>, HEADER_SIZE>::new()
+        let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
             .register_dummy_circuits(NUM_APP_STEPS)
             .unwrap()
             .finalize(pasta)
