@@ -12,12 +12,17 @@ use ragu_core::{
 use ragu_primitives::{Element, GadgetExt};
 
 use alloc::vec::Vec;
-use core::{borrow::Borrow, iter, marker::PhantomData};
+use core::{iter, marker::PhantomData};
 
+use crate::components::claim_builder::{self, ClaimProcessor, ClaimSource, RxComponent};
 use crate::components::fold_revdot::{NativeParameters, Parameters, fold_two_layer};
 
 use super::{
-    stages::native::{eval as native_eval, preamble as native_preamble, query as native_query},
+    InternalCircuitIndex,
+    stages::native::{
+        eval as native_eval, preamble as native_preamble,
+        query::{self as native_query, ChildEvaluations, FixedMeshEvaluations},
+    },
     unified::{self, OutputBuilder},
 };
 use crate::components::horner::Horner;
@@ -260,67 +265,201 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
     }
 }
 
-struct SourceBuilder<'dr, D: Driver<'dr>> {
-    z: Element<'dr, D>,
-    txz: Element<'dr, D>,
+// ============================================================================
+// Evaluation Context Implementation (for compute_v circuit)
+// ============================================================================
+
+/// Rx type for evaluation context: (at_x, at_xz) tuple.
+type RxEval<'a, 'dr, D> = (&'a Element<'dr, D>, &'a Element<'dr, D>);
+
+/// Source providing rx evaluations from query output.
+struct EvaluationSource<'a, 'dr, D: Driver<'dr>> {
+    left: &'a ChildEvaluations<'dr, D>,
+    right: &'a ChildEvaluations<'dr, D>,
+}
+
+impl<'a, 'dr, D: Driver<'dr>> ClaimSource for EvaluationSource<'a, 'dr, D> {
+    /// For most components: (at_x, at_xz) tuple.
+    /// For AbA/AbB: (at_x, at_x) where second is unused by processor.
+    type Rx = RxEval<'a, 'dr, D>;
+
+    /// For app circuits: the mesh evaluation at the circuit's omega^j.
+    type AppCircuitId = &'a Element<'dr, D>;
+
+    fn rx(&self, component: RxComponent) -> impl Iterator<Item = Self::Rx> {
+        use RxComponent::*;
+        match component {
+            // Raw claims: both values are at_x (processor only uses first element)
+            AbA => [
+                (&self.left.a_poly_at_x, &self.left.a_poly_at_x),
+                (&self.right.a_poly_at_x, &self.right.a_poly_at_x),
+            ]
+            .into_iter(),
+            AbB => [
+                (&self.left.b_poly_at_x, &self.left.b_poly_at_x),
+                (&self.right.b_poly_at_x, &self.right.b_poly_at_x),
+            ]
+            .into_iter(),
+            // Circuit claims: (at_x, at_xz) tuple
+            Application => [
+                (&self.left.application_at_x, &self.left.application_at_xz),
+                (&self.right.application_at_x, &self.right.application_at_xz),
+            ]
+            .into_iter(),
+            Hashes1 => [
+                (&self.left.hashes_1_at_x, &self.left.hashes_1_at_xz),
+                (&self.right.hashes_1_at_x, &self.right.hashes_1_at_xz),
+            ]
+            .into_iter(),
+            Hashes2 => [
+                (&self.left.hashes_2_at_x, &self.left.hashes_2_at_xz),
+                (&self.right.hashes_2_at_x, &self.right.hashes_2_at_xz),
+            ]
+            .into_iter(),
+            PartialCollapse => [
+                (
+                    &self.left.partial_collapse_at_x,
+                    &self.left.partial_collapse_at_xz,
+                ),
+                (
+                    &self.right.partial_collapse_at_x,
+                    &self.right.partial_collapse_at_xz,
+                ),
+            ]
+            .into_iter(),
+            FullCollapse => [
+                (
+                    &self.left.full_collapse_at_x,
+                    &self.left.full_collapse_at_xz,
+                ),
+                (
+                    &self.right.full_collapse_at_x,
+                    &self.right.full_collapse_at_xz,
+                ),
+            ]
+            .into_iter(),
+            ComputeV => [
+                (&self.left.compute_v_at_x, &self.left.compute_v_at_xz),
+                (&self.right.compute_v_at_x, &self.right.compute_v_at_xz),
+            ]
+            .into_iter(),
+            PreambleStage => [
+                (&self.left.preamble_at_x, &self.left.preamble_at_xz),
+                (&self.right.preamble_at_x, &self.right.preamble_at_xz),
+            ]
+            .into_iter(),
+            ErrorMStage => [
+                (&self.left.error_m_at_x, &self.left.error_m_at_xz),
+                (&self.right.error_m_at_x, &self.right.error_m_at_xz),
+            ]
+            .into_iter(),
+            ErrorNStage => [
+                (&self.left.error_n_at_x, &self.left.error_n_at_xz),
+                (&self.right.error_n_at_x, &self.right.error_n_at_xz),
+            ]
+            .into_iter(),
+            QueryStage => [
+                (&self.left.query_at_x, &self.left.query_at_xz),
+                (&self.right.query_at_x, &self.right.query_at_xz),
+            ]
+            .into_iter(),
+            EvalStage => [
+                (&self.left.eval_at_x, &self.left.eval_at_xz),
+                (&self.right.eval_at_x, &self.right.eval_at_xz),
+            ]
+            .into_iter(),
+        }
+    }
+
+    fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
+        [
+            &self.left.new_mesh_xy_at_old_circuit_id,
+            &self.right.new_mesh_xy_at_old_circuit_id,
+        ]
+        .into_iter()
+    }
+}
+
+/// Processor that builds evaluation vectors for revdot claims.
+struct EvaluationProcessor<'a, 'dr, D: Driver<'dr>> {
+    dr: &'a mut D,
+    z: &'a Element<'dr, D>,
+    txz: &'a Element<'dr, D>,
+    fixed_mesh: &'a FixedMeshEvaluations<'dr, D>,
     ax: Vec<Element<'dr, D>>,
     bx: Vec<Element<'dr, D>>,
 }
 
-impl<'dr, D: Driver<'dr>> SourceBuilder<'dr, D> {
-    fn new(z: Element<'dr, D>, txz: Element<'dr, D>) -> Self {
+impl<'a, 'dr, D: Driver<'dr>> EvaluationProcessor<'a, 'dr, D> {
+    fn new(
+        dr: &'a mut D,
+        z: &'a Element<'dr, D>,
+        txz: &'a Element<'dr, D>,
+        fixed_mesh: &'a FixedMeshEvaluations<'dr, D>,
+    ) -> Self {
         Self {
+            dr,
             z,
             txz,
+            fixed_mesh,
             ax: Vec::new(),
             bx: Vec::new(),
         }
     }
 
-    fn direct(&mut self, ax_eval: &Element<'dr, D>, bx_eval: &Element<'dr, D>) {
-        self.ax.push(ax_eval.clone());
-        self.bx.push(bx_eval.clone());
+    fn build(self) -> (Vec<Element<'dr, D>>, Vec<Element<'dr, D>>) {
+        (self.ax, self.bx)
+    }
+}
+
+impl<'a, 'dr, D: Driver<'dr>> ClaimProcessor<RxEval<'a, 'dr, D>, &'a Element<'dr, D>>
+    for EvaluationProcessor<'a, 'dr, D>
+{
+    fn raw_claim(&mut self, (ax, _): RxEval<'a, 'dr, D>, (bx, _): RxEval<'a, 'dr, D>) {
+        // For raw claims, we use the at_x values directly (at_xz is unused)
+        self.ax.push(ax.clone());
+        self.bx.push(bx.clone());
     }
 
-    fn application(
+    fn circuit(&mut self, mesh: &'a Element<'dr, D>, (rx_x, rx_xz): RxEval<'a, 'dr, D>) {
+        // b(x) = rx(xz) + mesh + t(xz)
+        self.ax.push(rx_x.clone());
+        self.bx
+            .push(rx_xz.add(self.dr, mesh).add(self.dr, self.txz));
+    }
+
+    fn internal_circuit(
         &mut self,
-        dr: &mut D,
-        ax_eval: &Element<'dr, D>,
-        bx_eval: &Element<'dr, D>,
-        bx_mesh: &Element<'dr, D>,
+        id: InternalCircuitIndex,
+        rxs: impl Iterator<Item = RxEval<'a, 'dr, D>>,
     ) {
-        self.ax.push(ax_eval.clone());
-        self.bx.push(bx_eval.add(dr, bx_mesh).add(dr, &self.txz));
-    }
+        let (ax_evals, bx_evals): (Vec<_>, Vec<_>) = rxs.unzip();
+        let mesh = self.fixed_mesh.circuit_mesh(id);
 
-    fn internal<'b>(
-        &'b mut self,
-        dr: &mut D,
-        ax_evals: impl IntoIterator<Item = &'b Element<'dr, D>>,
-        bx_evals: impl IntoIterator<Item = &'b Element<'dr, D>>,
-        bx_mesh: &'b Element<'dr, D>,
-    ) {
-        self.ax.push(Element::sum(dr, ax_evals));
+        // a(x) = sum of all rx(x)
+        self.ax.push(Element::sum(self.dr, ax_evals));
+        // b(x) = sum of all rx(xz) + mesh + t(xz)
         self.bx.push(Element::sum(
-            dr,
+            self.dr,
             bx_evals
                 .into_iter()
-                .chain(iter::once(bx_mesh).chain(iter::once(&self.txz))),
+                .chain(iter::once(mesh).chain(iter::once(self.txz))),
         ));
     }
 
-    fn stage<I>(&mut self, dr: &mut D, ax_evals: I, bx_mesh: &Element<'dr, D>) -> Result<()>
-    where
-        I: IntoIterator<Item: Borrow<Element<'dr, D>>>,
-        I::IntoIter: DoubleEndedIterator,
-    {
-        self.ax.push(Element::fold(dr, ax_evals, &self.z)?);
-        self.bx.push(bx_mesh.clone());
-        Ok(())
-    }
+    fn stage(
+        &mut self,
+        id: InternalCircuitIndex,
+        rxs: impl Iterator<Item = RxEval<'a, 'dr, D>>,
+    ) -> Result<()> {
+        let ax_evals: Vec<_> = rxs.map(|(ax, _)| ax).collect();
+        let mesh = self.fixed_mesh.circuit_mesh(id);
 
-    fn build(self) -> (Vec<Element<'dr, D>>, Vec<Element<'dr, D>>) {
-        (self.ax, self.bx)
+        // a(x) = fold of all rx(x) with z (Horner's rule)
+        self.ax.push(Element::fold(self.dr, ax_evals, self.z)?);
+        // b(x) = mesh (s_y evaluated at circuit's omega^j)
+        self.bx.push(mesh.clone());
+        Ok(())
     }
 }
 
@@ -340,163 +479,16 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
     munu: &Element<'dr, D>,
     mu_prime_nu_prime: &Element<'dr, D>,
 ) -> Result<(Element<'dr, D>, Element<'dr, D>)> {
-    let both = [&query.left, &query.right];
+    // Build ax/bx evaluation vectors using the unified claim building abstraction.
+    // This ensures the ordering matches claim_builder::build_claims() exactly.
+    let source = EvaluationSource {
+        left: &query.left,
+        right: &query.right,
+    };
+    let mut processor = EvaluationProcessor::new(dr, z, txz, &query.fixed_mesh);
+    claim_builder::build_claims(&source, &mut processor)?;
 
-    let mut builder = SourceBuilder::new(z.clone(), txz.clone());
-
-    // Process the claims specific to each child proof.
-    for child in both.iter() {
-        // << a_i, b_i >> accumulation.
-        builder.direct(&child.a_poly_at_x, &child.b_poly_at_x);
-
-        // Application circuit check, given the evaluation m(circuit_id_i, x, y)
-        // for adversarially chosen omega^j = circuit_id.
-        builder.application(
-            dr,
-            &child.application_at_x,
-            &child.application_at_xz,
-            &child.new_mesh_xy_at_old_circuit_id,
-        );
-
-        // hashes_1 internal circuit
-        builder.internal(
-            dr,
-            [
-                &child.hashes_1_at_x,
-                &child.preamble_at_x,
-                &child.error_n_at_x,
-            ],
-            [
-                &child.hashes_1_at_xz,
-                &child.preamble_at_xz,
-                &child.error_n_at_xz,
-            ],
-            &query.fixed_mesh.hashes_1_circuit,
-        );
-
-        // hashes_2 internal circuit
-        builder.internal(
-            dr,
-            [&child.hashes_2_at_x, &child.error_n_at_x],
-            [&child.hashes_2_at_xz, &child.error_n_at_xz],
-            &query.fixed_mesh.hashes_2_circuit,
-        );
-
-        // partial_collapse internal circuit
-        builder.internal(
-            dr,
-            [
-                &child.partial_collapse_at_x,
-                &child.preamble_at_x,
-                &child.error_m_at_x,
-                &child.error_n_at_x,
-            ],
-            [
-                &child.partial_collapse_at_xz,
-                &child.preamble_at_xz,
-                &child.error_m_at_xz,
-                &child.error_n_at_xz,
-            ],
-            &query.fixed_mesh.partial_collapse_circuit,
-        );
-
-        // full_collapse internal circuit
-        builder.internal(
-            dr,
-            [
-                &child.full_collapse_at_x,
-                &child.preamble_at_x,
-                &child.error_m_at_x,
-                &child.error_n_at_x,
-            ],
-            [
-                &child.full_collapse_at_xz,
-                &child.preamble_at_xz,
-                &child.error_m_at_xz,
-                &child.error_n_at_xz,
-            ],
-            &query.fixed_mesh.full_collapse_circuit,
-        );
-
-        // compute_v internal circuit (recursively!)
-        builder.internal(
-            dr,
-            [
-                &child.compute_v_at_x,
-                &child.preamble_at_x,
-                &child.query_at_x,
-                &child.eval_at_x,
-            ],
-            [
-                &child.compute_v_at_xz,
-                &child.preamble_at_xz,
-                &child.query_at_xz,
-                &child.eval_at_xz,
-            ],
-            &query.fixed_mesh.compute_v_circuit,
-        );
-    }
-
-    // Stage checks; these each share the same revdot claim because they're of
-    // the form << r_i, s >> = 0.
-
-    // ErrorNFinalStaged
-    builder.stage(
-        dr,
-        both.iter().flat_map(|child| {
-            [
-                &child.hashes_1_at_x,
-                &child.hashes_2_at_x,
-                &child.partial_collapse_at_x,
-                &child.full_collapse_at_x,
-            ]
-        }),
-        &query.fixed_mesh.error_n_final_staged,
-    )?;
-
-    // EvalFinalStaged
-    builder.stage(
-        dr,
-        both.iter().map(|child| &child.compute_v_at_x),
-        &query.fixed_mesh.eval_final_staged,
-    )?;
-
-    // PreambleStage (stages::native::preamble)
-    builder.stage(
-        dr,
-        both.iter().map(|child| &child.preamble_at_x),
-        &query.fixed_mesh.preamble_stage,
-    )?;
-
-    // ErrorMStage (stages::native::error_m)
-    builder.stage(
-        dr,
-        both.iter().map(|child| &child.error_m_at_x),
-        &query.fixed_mesh.error_m_stage,
-    )?;
-
-    // ErrorNStage (stages::native::error_n)
-    builder.stage(
-        dr,
-        both.iter().map(|child| &child.error_n_at_x),
-        &query.fixed_mesh.error_n_stage,
-    )?;
-
-    // QueryStage (stages::native::query)
-    builder.stage(
-        dr,
-        both.iter().map(|child| &child.query_at_x),
-        &query.fixed_mesh.query_stage,
-    )?;
-
-    // EvalStage (stages::native::eval)
-    builder.stage(
-        dr,
-        both.iter().map(|child| &child.eval_at_x),
-        &query.fixed_mesh.eval_stage,
-    )?;
-
-    let (ax_sources, bx_sources) = builder.build();
+    let (ax_sources, bx_sources) = processor.build();
     let ax = fold_two_layer::<_, P>(dr, &ax_sources, mu_inv, mu_prime_inv)?;
     let bx = fold_two_layer::<_, P>(dr, &bx_sources, munu, mu_prime_nu_prime)?;
     Ok((ax, bx))

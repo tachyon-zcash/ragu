@@ -120,14 +120,25 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let fold_products = fold_revdot::FoldProducts::new(dr, &mu, &nu)?;
 
         // Read k(y) values from error_n stage, plus child c values from preamble.
-        let mut ky_elements = once(preamble.left.unified.c.clone())
-            .chain(once(error_n.left.application))
-            .chain(once(error_n.left.unified_bridge))
-            .chain(repeat_n(error_n.left.unified, NUM_UNIFIED_CIRCUITS))
-            .chain(once(preamble.right.unified.c.clone()))
-            .chain(once(error_n.right.application))
-            .chain(once(error_n.right.unified_bridge))
-            .chain(repeat_n(error_n.right.unified, NUM_UNIFIED_CIRCUITS));
+        // Ordering must match build_claims() interleaved order: for each claim type,
+        // left then right proof.
+        let mut ky_elements = once((
+            preamble.left.unified.c.clone(),
+            preamble.right.unified.c.clone(),
+        ))
+        .chain(once((
+            error_n.left.application.clone(),
+            error_n.right.application.clone(),
+        )))
+        .chain(once((
+            error_n.left.unified_bridge.clone(),
+            error_n.right.unified_bridge.clone(),
+        )))
+        .chain(repeat_n(
+            (error_n.left.unified.clone(), error_n.right.unified.clone()),
+            NUM_UNIFIED_CIRCUITS,
+        ))
+        .flat_map(|(l, r)| [l, r]);
 
         for (i, error_terms) in error_m.error_terms.iter().enumerate() {
             let ky_elements =

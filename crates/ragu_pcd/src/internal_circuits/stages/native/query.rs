@@ -177,6 +177,28 @@ impl<'dr, D: Driver<'dr>> FixedMeshEvaluations<'dr, D> {
             compute_v_circuit: Element::alloc(dr, witness.view().map(|w| w.compute_v_circuit))?,
         })
     }
+
+    /// Look up the mesh evaluation for the given internal circuit index.
+    pub fn circuit_mesh(
+        &self,
+        id: crate::internal_circuits::InternalCircuitIndex,
+    ) -> &Element<'dr, D> {
+        use crate::internal_circuits::InternalCircuitIndex::*;
+        match id {
+            Hashes1Circuit => &self.hashes_1_circuit,
+            Hashes2Circuit => &self.hashes_2_circuit,
+            PartialCollapseCircuit => &self.partial_collapse_circuit,
+            FullCollapseCircuit => &self.full_collapse_circuit,
+            ComputeVCircuit => &self.compute_v_circuit,
+            PreambleStage => &self.preamble_stage,
+            ErrorMStage => &self.error_m_stage,
+            ErrorNStage => &self.error_n_stage,
+            QueryStage => &self.query_stage,
+            EvalStage => &self.eval_stage,
+            ErrorNFinalStaged => &self.error_n_final_staged,
+            EvalFinalStaged => &self.eval_final_staged,
+        }
+    }
 }
 
 /// Gadget for a child proof's polynomial evaluations.
