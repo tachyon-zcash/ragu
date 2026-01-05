@@ -67,7 +67,7 @@ jobs:
         with:
           components: clippy
       - name: Run clippy
-        run: cargo clippy --workspace --lib --tests --benches --locked -- -D warnings
+        run: cargo clippy --workspace --lib --tests --benches --locked --features test-fixtures -- -D warnings
 
   test:
     name: test (${{ matrix.os }})
@@ -86,7 +86,7 @@ jobs:
         with:
           cache-suffix: release
       - name: Run tests
-        run: cargo test --release --all --locked
+        run: cargo test --release --all --locked --features test-fixtures
 
   test-32-bit:
     name: test (i686-unknown-linux-gnu)
@@ -102,7 +102,7 @@ jobs:
           install-multilib: "true"
           cache-suffix: release
       - name: Run 32-bit tests
-        run: cargo test --release --all --locked --target i686-unknown-linux-gnu
+        run: cargo test --release --all --locked --target i686-unknown-linux-gnu --features test-fixtures
 
   coverage:
     name: code coverage

@@ -27,6 +27,7 @@ all-features = true
 
 [features]
 default = []
+test-fixtures = []
 
 [dependencies]
 arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", package = "ragu_arithmetic" }
@@ -39,3 +40,9 @@ rand = { workspace = true }
 
 [dev-dependencies]
 ragu_pasta = { path = "../ragu_pasta", version = "0.0.0", features = ["baked"] }
+criterion = { workspace = true }
+
+[[bench]]
+name = "pcd"
+harness = false
+required-features = ["test-fixtures"]

@@ -17,6 +17,10 @@ mod proof;
 pub mod step;
 mod verify;
 
+#[cfg(any(test, feature = "test-fixtures"))]
+#[doc(hidden)]
+pub mod test_fixtures;
+
 use arithmetic::Cycle;
 use ragu_circuits::{
     mesh::{Mesh, MeshBuilder},

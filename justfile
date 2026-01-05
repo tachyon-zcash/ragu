@@ -9,7 +9,7 @@ build_release *ARGS:
   cargo build --release --workspace --all-targets {{ARGS}}
 
 lint:
-  cargo clippy --workspace --lib --tests --benches -- -D warnings
+  cargo clippy --workspace --lib --tests --benches --features test-fixtures -- -D warnings
   cargo fmt --all -- --check
   typos
   mdbook build ./book
@@ -31,14 +31,22 @@ _book_setup: _install_binstall
 book COMMAND: _book_setup
   mdbook {{COMMAND}} ./book --open
 
+# run all tests
+test *ARGS:
+  cargo test --workspace --features test-fixtures {{ARGS}}
+
+# run all benchmarks
+bench *ARGS:
+  cargo bench --workspace --features test-fixtures {{ARGS}}
+
 # run CI checks locally (formatting, clippy, tests)
 ci_local: _book_setup
   @echo "Running formatting check..."
   cargo fmt --all -- --check
   @echo "Running clippy..."
-  cargo clippy --all --locked -- -D warnings
+  cargo clippy --all --locked --features test-fixtures -- -D warnings
   @echo "Running tests..."
-  cargo test --release --all --locked
+  cargo test --release --all --locked --features test-fixtures
   @echo "Building benchmarks and examples..."
   cargo build --benches --examples --all-features
   @echo "Checking documentation..."
