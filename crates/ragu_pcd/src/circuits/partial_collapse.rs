@@ -119,9 +119,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let nu = unified_output.nu.get(dr, unified_instance)?;
         let fold_products = fold_revdot::FoldProducts::new(dr, &mu, &nu)?;
 
-        // Read k(y) values from error_n stage, plus child c values from preamble.
-        // Ordering must match build_claims() interleaved order: for each claim type,
-        // left then right proof.
+        // Read k(y) values from error_n stage, plus child c values from
+        // preamble. Ordering must match claim_builder. Interleaved order: for
+        // each claim type, left then right proof. Final stage claims (ky = 0)
+        // are at the end.
         let mut ky_elements = once((
             preamble.left.unified.c.clone(),
             preamble.right.unified.c.clone(),

@@ -88,6 +88,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 let mu = Element::alloc(dr, mu)?;
                 let nu = Element::alloc(dr, nu)?;
 
+                // This must match the order that the claims are arranged in
+                // `claim_builder`. (Stage claims where ky = 0 are at the end.)
                 let mut ky_elements = once((
                     preamble.left.unified.c.clone(),
                     preamble.right.unified.c.clone(),
