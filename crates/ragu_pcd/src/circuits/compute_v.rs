@@ -88,7 +88,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> StagedCircuit<C::CircuitField,
         let (eval, builder) = builder.add_stage::<native_eval::Stage<C, R, HEADER_SIZE>>()?;
         let dr = builder.finish();
 
-        let preamble = preamble.enforced(dr, witness.view().map(|w| w.preamble_witness))?;
+        let preamble = preamble.unenforced(dr, witness.view().map(|w| w.preamble_witness))?;
 
         // TODO: these are unenforced for now, because query/eval stages aren't
         // supposed to contain anything (yet) besides Elements, which require no

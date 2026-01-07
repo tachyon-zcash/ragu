@@ -98,6 +98,22 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
         }
     }
 
+    /// Verifies that this point lies on the curve by enforcing the curve equation.
+    pub fn verify_on_curve(&self, dr: &mut D) -> Result<()> {
+        let x2 = self.x.square(dr)?;
+        let x3 = self.x.mul(dr, &x2)?;
+        let y2 = self.y.square(dr)?;
+
+        // x^3 + b - y^2 = 0
+        dr.enforce_zero(|lc| {
+            lc.add(x3.wire())
+                .add_term(&D::ONE, Coeff::Arbitrary(C::b()))
+                .sub(y2.wire())
+        })?;
+
+        Ok(())
+    }
+
     /// Apply the endomorphism iff the provided condition is true.
     pub fn conditional_endo(&self, dr: &mut D, condition: &Boolean<'dr, D>) -> Result<Self> {
         // x' = x + (x(ZETA - 1)) * condition

@@ -152,6 +152,26 @@ pub struct OutputBuilder<'a, 'dr, D: Driver<'dr>, C: Cycle> {
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle> Output<'dr, D, C> {
+    /// Verifies that all curve points in this output lie on the curve.
+    ///
+    /// This is useful when the Output is obtained from stage wires (via `unenforced()`)
+    /// rather than allocated fresh. Unlike allocation which includes curve equation
+    /// constraints automatically, this must be called explicitly.
+    pub fn verify_points_on_curve(&self, dr: &mut D) -> Result<()>
+    where
+        D: Driver<'dr, F = C::CircuitField>,
+    {
+        self.nested_preamble_commitment.verify_on_curve(dr)?;
+        self.nested_s_prime_commitment.verify_on_curve(dr)?;
+        self.nested_error_m_commitment.verify_on_curve(dr)?;
+        self.nested_error_n_commitment.verify_on_curve(dr)?;
+        self.nested_ab_commitment.verify_on_curve(dr)?;
+        self.nested_query_commitment.verify_on_curve(dr)?;
+        self.nested_f_commitment.verify_on_curve(dr)?;
+        self.nested_eval_commitment.verify_on_curve(dr)?;
+        Ok(())
+    }
+
     /// Allocate an Output from a proof reference.
     pub fn alloc_from_proof<R: Rank>(
         dr: &mut D,

@@ -63,8 +63,8 @@ fn test_internal_circuit_constraint_counts() {
     check_constraints!(Hashes1Circuit,         mul = 2045, lin = 3423);
     check_constraints!(Hashes2Circuit,         mul = 1879, lin = 2952);
     check_constraints!(PartialCollapseCircuit, mul = 1756, lin = 1919);
-    check_constraints!(FullCollapseCircuit,    mul = 811 , lin = 809);
-    check_constraints!(ComputeVCircuit,        mul = 956 , lin = 1384);
+    check_constraints!(FullCollapseCircuit,    mul = 859 , lin = 921);
+    check_constraints!(ComputeVCircuit,        mul = 699 , lin = 854);
 }
 
 #[rustfmt::skip]

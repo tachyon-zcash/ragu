@@ -77,7 +77,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             builder.add_stage::<native_error_n::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();
 
+        // Use unenforced() to avoid wire equality constraints, then verify curve points explicitly.
         let preamble = preamble.unenforced(dr, witness.view().map(|w| w.preamble_witness))?;
+        preamble.verify_points_on_curve(dr)?;
         let error_n = error_n.unenforced(dr, witness.view().map(|w| w.error_n_witness))?;
 
         let unified_instance = &witness.view().map(|w| w.unified_instance);
