@@ -9,19 +9,37 @@
 //! constraints; that is the purpose of this module's [`Emulator`].
 //!
 //! The [`Emulator`] driver never checks multiplication or linear constraints,
-//! but it _can_ be used to collect and compute wire assignments. In the latter
-//! case, it should be instantiated in the [`Wired`] mode. Otherwise, the
-//! [`Wireless`] mode is appropriate.
+//! but it _can_ be used to collect and compute wire assignments.
+//! When instantiated in [`Wireless`] mode, the emulator simply executes the
+//! circuit code natively without wires (i.e., `Wire=()`), saving memory.
+//! Whereas in [`Wired`] mode, the emulator tracks wire assignments which can
+//! be extracted afterwards.
+//!
+//! While [`Mode`] implies wire availability, each mode is further parameterized
+//! by a [`MaybeKind`] to indicate witness availability.
+//!
+//! * `Wireless<Empty, F>`: used mostly for wire counting and other static
+//!   structure analyses. Driver still executes natively, but with `Empty`
+//!   witness. Constructed via [`Emulator::counter`].
+//! * `Wireless<Always<()>, F>`: used for native witness execution/generation,
+//!   constructed via [`Emulator::execute`] or directly execute the logic with
+//!   [`Emulator::emulate_wireless`].
+//! * `Wired<Always<()>, F>`: used for native execution with wire extraction,
+//!   constructed via [`Emulator::extractor`] or directly execute the logic with
+//!   [`Emulator::emulate_wired`].
+//! * `Wired<Empty, F>`: unused, theoretically could be constructed via
+//!   `Emulator::wired` (marked private for now).
+//!
+//! Sometimes, withness availability depends on other drivers' behavior, such as
+//! when invoking an [`Emulator`] within generic circuit code itself. In such
+//! cases, `Emulator::wired` and [`Emulator::wireless`] can be used to create
+//! emulators parameterized by [`Mode::MaybeKind`].
 //!
 //! ### Wire Extraction
 //!
 //! One of the common uses of an [`Emulator`] instantiated in [`Wired`] mode is
 //! for computing the expected wire assignments for a [`Gadget`] after executing
-//! a [`Routine`] or some other circuit code. Of course, wire assignments never
-//! exist when a witness does not exist. Still, [`Wired`] mode is parameterized
-//! by a [`MaybeKind`] so that a wired [`Emulator`] can be invoked in contexts
-//! where witness availability depends on another driver's behavior, such as
-//! invoking an [`Emulator`] within circuit code itself.
+//! a [`Routine`] or some other circuit code.
 //!
 //! ### Routines
 //!
@@ -32,7 +50,7 @@
 //! ## Usage
 //!
 //! The [`Emulator`] can be instantiated in [`Wired`] mode using
-//! [`Emulator::wired`], and in [`Wireless`] mode using [`Emulator::wireless`].
+//! `Emulator::wired`, and in [`Wireless`] mode using [`Emulator::wireless`].
 //!
 //! There are two shorthand methods for constructing an [`Emulator`]:
 //! * [`Emulator::extractor`] can be used to create a wired [`Emulator`] when a
