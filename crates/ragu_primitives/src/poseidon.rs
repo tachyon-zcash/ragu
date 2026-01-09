@@ -86,8 +86,6 @@ impl<'dr, D: Driver<'dr>, P: arithmetic::PoseidonPermutation<D::F>> Clone for Mo
 /// While this implements a sponge construction with absorb/squeeze operations,
 /// Ragu's transcript construction uses Poseidon in a non-standard way:
 ///
-/// * **Fixed-length hash**: The Poseidon permutation is effectively used as a
-///   fixed-length hash function rather than as a full sponge construction
 /// * **Pedersen mixture**: Pedersen commitments (e.g., nested commitments from
 ///   staging polynomials) are absorbed into the transcript alongside direct
 ///   field element absorption
