@@ -28,7 +28,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         pcd: &Pcd<'_, C, R, H>,
         mut rng: RNG,
     ) -> Result<bool> {
-        // Sample verification challenges y and z.
+        // Sample verification challenges w, y, and z.
+        let w = C::CircuitField::random(&mut rng);
         let y = C::CircuitField::random(&mut rng);
         let z = C::CircuitField::random(&mut rng);
 
@@ -88,7 +89,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // Check polynomial evaluation claim.
         let p_eval_claim = pcd.proof.p.poly.eval(pcd.proof.challenges.u) == pcd.proof.p.v;
 
-        Ok(revdot_claims && p_eval_claim)
+        // Check mesh_xy polynomial evaluation at the sampled w.
+        // mesh_xy_poly is m(W, x, y) - the mesh evaluated at current x, y, free in W.
+        let mesh_xy_claim = {
+            let x = pcd.proof.challenges.x;
+            let y = pcd.proof.challenges.y;
+            let poly_eval = pcd.proof.query.mesh_xy_poly.eval(w);
+            let expected = self.circuit_mesh.wxy(w, x, y);
+            poly_eval == expected
+        };
+
+        // TODO: Add checks for mesh_wx0_poly, mesh_wx1_poly, and mesh_wy_poly.
+        // - mesh_wx0/wx1: need child proof x challenges (x₀, x₁) which "disappear" in preamble
+        // - mesh_wy: interstitial value that will be elided later
+
+        Ok(revdot_claims && p_eval_claim && mesh_xy_claim)
     }
 }
 
