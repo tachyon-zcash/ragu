@@ -33,7 +33,7 @@ macro_rules! define_nested_stage {
                 gadgets::{Gadget, GadgetKind, Kind},
                 maybe::Maybe,
             };
-            use ragu_primitives::Point;
+            use ragu_primitives::{Point, io::Write};
 
             use core::marker::PhantomData;
 
@@ -47,7 +47,7 @@ macro_rules! define_nested_stage {
             }
 
             /// Output gadget for this nested stage.
-            #[derive(Gadget)]
+            #[derive(Gadget, Write)]
             pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine> {
                 $(
                     #[ragu(gadget)]
@@ -102,34 +102,34 @@ macro_rules! define_nested_stage {
 
 pub mod preamble;
 
-define_nested_stage!(s_prime, parent = (), fields = {
+define_nested_stage!(s_prime, parent = super::preamble::Stage<C, R>, fields = {
     mesh_wx0: C,
     mesh_wx1: C,
 });
 
-define_nested_stage!(error_m, parent = (), fields = {
+define_nested_stage!(error_m, parent = super::s_prime::Stage<C, R>, fields = {
     native_error_m: C,
     mesh_wy: C,
 });
 
-define_nested_stage!(error_n, parent = (), fields = {
+define_nested_stage!(error_n, parent = super::error_m::Stage<C, R>, fields = {
     native_error_n: C,
 });
 
-define_nested_stage!(ab, parent = (), fields = {
+define_nested_stage!(ab, parent = super::error_n::Stage<C, R>, fields = {
     a: C,
     b: C,
 });
 
-define_nested_stage!(query, parent = (), fields = {
+define_nested_stage!(query, parent = super::ab::Stage<C, R>, fields = {
     native_query: C,
     mesh_xy: C,
 });
 
-define_nested_stage!(f, parent = (), fields = {
+define_nested_stage!(f, parent = super::query::Stage<C, R>, fields = {
     native_f: C,
 });
 
-define_nested_stage!(eval, parent = (), fields = {
+define_nested_stage!(eval, parent = super::f::Stage<C, R>, fields = {
     native_eval: C,
 });

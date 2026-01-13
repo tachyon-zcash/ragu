@@ -8,7 +8,7 @@ use ragu_core::{
     gadgets::{Gadget, GadgetKind, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::Point;
+use ragu_primitives::{Point, io::Write};
 
 use core::marker::PhantomData;
 
@@ -58,7 +58,7 @@ pub struct Witness<C: CurveAffine> {
 }
 
 /// Output gadget for a single child proof in the nested preamble stage.
-#[derive(Gadget)]
+#[derive(Gadget, Write)]
 pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine> {
     /// Point commitment from the child's application circuit.
     #[ragu(gadget)]
@@ -94,7 +94,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> ChildOutput<'dr, D, C> {
 }
 
 /// Output gadget for the nested preamble stage.
-#[derive(Gadget)]
+#[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine> {
     /// Point commitment from the native preamble stage.
     #[ragu(gadget)]
