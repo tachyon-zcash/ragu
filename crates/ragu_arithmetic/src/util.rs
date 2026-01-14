@@ -17,6 +17,17 @@ where
     result
 }
 
+/// Computes the first `n` powers of `base`, i.e., z^0, z^1, z^2, ..., z^{n-1}.
+pub fn powers<F: Field>(base: F, n: usize) -> Vec<F> {
+    let mut result = Vec::with_capacity(n);
+    let mut cur = F::ONE;
+    for _ in 0..n {
+        result.push(cur);
+        cur *= base;
+    }
+    result
+}
+
 /// Computes $\langle \mathbf{a} , \mathbf{b} \rangle$ where $\mathbf{a}, \mathbf{b} \in \mathbb{F}^n$
 /// are defined by the provided equal-length iterators.
 ///

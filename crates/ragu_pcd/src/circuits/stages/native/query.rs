@@ -28,18 +28,6 @@ pub struct XzQueryWitness<T> {
     pub at_xz: T,
 }
 
-impl<T> XzQueryWitness<T> {
-    /// Evaluate a polynomial at both x and xz.
-    ///
-    /// The closure `f` should evaluate the polynomial at the given point.
-    pub fn eval(x: T, xz: T, f: impl Fn(T) -> T) -> Self {
-        XzQueryWitness {
-            at_x: f(x),
-            at_xz: f(xz),
-        }
-    }
-}
-
 /// Gadget for a polynomial evaluated at both x and xz.
 #[derive(Gadget)]
 pub struct XzQuery<'dr, D: Driver<'dr>> {
@@ -159,22 +147,70 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
         mesh_xy: &unstructured::Polynomial<F, R>,
         mesh_wy: &structured::Polynomial<F, R>,
     ) -> Self {
+        // Collect all structured polynomials for batch evaluation
+        let polys = [
+            &proof.preamble.stage_rx,
+            &proof.error_m.stage_rx,
+            &proof.error_n.stage_rx,
+            &proof.query.stage_rx,
+            &proof.eval.stage_rx,
+            &proof.application.rx,
+            &proof.circuits.hashes_1_rx,
+            &proof.circuits.hashes_2_rx,
+            &proof.circuits.partial_collapse_rx,
+            &proof.circuits.full_collapse_rx,
+            &proof.circuits.compute_v_rx,
+        ];
+
+        // Batch evaluate at x and xz
+        let x_evals = structured::Polynomial::batch_eval(&polys, x);
+        let xz_evals = structured::Polynomial::batch_eval(&polys, xz);
+
         ChildEvaluationsWitness {
-            preamble: XzQueryWitness::eval(x, xz, |pt| proof.preamble.stage_rx.eval(pt)),
-            error_m: XzQueryWitness::eval(x, xz, |pt| proof.error_m.stage_rx.eval(pt)),
-            error_n: XzQueryWitness::eval(x, xz, |pt| proof.error_n.stage_rx.eval(pt)),
-            query: XzQueryWitness::eval(x, xz, |pt| proof.query.stage_rx.eval(pt)),
-            eval: XzQueryWitness::eval(x, xz, |pt| proof.eval.stage_rx.eval(pt)),
-            application: XzQueryWitness::eval(x, xz, |pt| proof.application.rx.eval(pt)),
-            hashes_1: XzQueryWitness::eval(x, xz, |pt| proof.circuits.hashes_1_rx.eval(pt)),
-            hashes_2: XzQueryWitness::eval(x, xz, |pt| proof.circuits.hashes_2_rx.eval(pt)),
-            partial_collapse: XzQueryWitness::eval(x, xz, |pt| {
-                proof.circuits.partial_collapse_rx.eval(pt)
-            }),
-            full_collapse: XzQueryWitness::eval(x, xz, |pt| {
-                proof.circuits.full_collapse_rx.eval(pt)
-            }),
-            compute_v: XzQueryWitness::eval(x, xz, |pt| proof.circuits.compute_v_rx.eval(pt)),
+            preamble: XzQueryWitness {
+                at_x: x_evals[0],
+                at_xz: xz_evals[0],
+            },
+            error_m: XzQueryWitness {
+                at_x: x_evals[1],
+                at_xz: xz_evals[1],
+            },
+            error_n: XzQueryWitness {
+                at_x: x_evals[2],
+                at_xz: xz_evals[2],
+            },
+            query: XzQueryWitness {
+                at_x: x_evals[3],
+                at_xz: xz_evals[3],
+            },
+            eval: XzQueryWitness {
+                at_x: x_evals[4],
+                at_xz: xz_evals[4],
+            },
+            application: XzQueryWitness {
+                at_x: x_evals[5],
+                at_xz: xz_evals[5],
+            },
+            hashes_1: XzQueryWitness {
+                at_x: x_evals[6],
+                at_xz: xz_evals[6],
+            },
+            hashes_2: XzQueryWitness {
+                at_x: x_evals[7],
+                at_xz: xz_evals[7],
+            },
+            partial_collapse: XzQueryWitness {
+                at_x: x_evals[8],
+                at_xz: xz_evals[8],
+            },
+            full_collapse: XzQueryWitness {
+                at_x: x_evals[9],
+                at_xz: xz_evals[9],
+            },
+            compute_v: XzQueryWitness {
+                at_x: x_evals[10],
+                at_xz: xz_evals[10],
+            },
             a_poly_at_x: proof.ab.a_poly.eval(x),
             b_poly_at_x: proof.ab.b_poly.eval(x),
             child_mesh_xy_at_current_w: proof.query.mesh_xy_poly.eval(w),

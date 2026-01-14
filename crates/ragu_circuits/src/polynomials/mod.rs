@@ -6,6 +6,8 @@ pub mod unstructured;
 
 use ff::Field;
 
+use alloc::vec::Vec;
+
 mod private {
     pub trait Sealed {}
     impl<const RANK: u32> Sealed for super::R<RANK> {}
@@ -36,6 +38,11 @@ pub trait Rank:
     /// Returns $\log_2(n) = \text{RANK} - 2$.
     fn log2_n() -> u32 {
         Self::RANK - 2
+    }
+
+    /// Returns the power of z: z^0, z^1, z^2, ..., z^{Self::num_coeffs()-1},
+    fn powers<F: Field>(z: F) -> Vec<F> {
+        arithmetic::powers(z, Self::num_coeffs())
     }
 
     /// Computes the coefficients of $$t(X, z) = -\sum_{i=0}^{n - 1} X^{4n - 1 - i} (z^{2n - 1 - i} + z^{2n + i})$$ for some $z \in \mathbb{F}$.
