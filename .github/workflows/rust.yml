@@ -86,7 +86,9 @@ jobs:
         with:
           cache-suffix: release
       - name: Run tests
-        run: cargo test --release --all --locked
+        run: |
+          cargo test --release --all --locked
+          cargo test --release --all --locked --all-features
 
   test-32-bit:
     name: test (i686-unknown-linux-gnu)

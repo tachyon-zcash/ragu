@@ -20,6 +20,7 @@ mod endoscalar;
 mod foreign;
 pub mod io;
 mod lazy;
+pub mod maybe_rayon;
 mod point;
 pub mod poseidon;
 pub mod promotion;

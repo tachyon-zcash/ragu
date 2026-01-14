@@ -39,6 +39,8 @@ ci_local: _book_setup
   cargo clippy --all --locked -- -D warnings
   @echo "Running tests..."
   cargo test --release --all --locked
+  @echo "Running tests (all features enabled)..."
+  cargo test --release --all --locked --all-features
   @echo "Building benchmarks and examples..."
   cargo build --benches --examples --all-features
   @echo "Checking documentation..."
