@@ -2,6 +2,9 @@
 
 use arithmetic::CurveAffine;
 use ff::Field;
+use ragu_primitives::maybe_rayon::MaybeParIter;
+#[cfg(feature = "parallel")]
+use ragu_primitives::maybe_rayon::ParallelIterator;
 use rand::Rng;
 
 use alloc::vec::Vec;
@@ -231,6 +234,51 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
         }
 
         result
+    }
+
+    /// Evaluate this polynomial at a point `z`, using precomputed z powers
+    /// (prepared via `Rank::powers(z)`).
+    fn eval_with(&self, powers: &[F]) -> F {
+        assert!(powers.len() >= R::num_coeffs());
+
+        let mut result = F::ZERO;
+        let mut idx = 0;
+
+        for c in self.w.iter() {
+            result += *c * powers[idx];
+            idx += 1;
+        }
+        idx += self.first_padding();
+
+        for b in self.v.iter().rev() {
+            result += *b * powers[idx];
+            idx += 1;
+        }
+
+        for a in self.u.iter() {
+            result += *a * powers[idx];
+            idx += 1;
+        }
+        idx += self.second_padding();
+
+        for d in self.d.iter().rev() {
+            result += *d * powers[idx];
+            idx += 1;
+        }
+
+        result
+    }
+
+    /// Evaluate multiple polynomials at the same point (shares power precomputation)
+    /// Uses parallel iteration when "parallel" feature is enabled
+    pub fn batch_eval(polys: &[&Self], z: F) -> Vec<F> {
+        if polys.is_empty() {
+            return Vec::new();
+        }
+
+        // Full precomputation amortized across all polynomials
+        let powers = R::powers(z);
+        polys.par_iter().map(|p| p.eval_with(&powers)).collect()
     }
 
     /// Compute a commitment to this polynomial using the provided generators.

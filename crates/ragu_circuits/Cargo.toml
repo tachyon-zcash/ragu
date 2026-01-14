@@ -21,6 +21,7 @@ all-features = true
 
 [features]
 default = []
+parallel = ["ragu_primitives/parallel"]
 
 [dependencies]
 arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", package = "ragu_arithmetic" }

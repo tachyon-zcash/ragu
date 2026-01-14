@@ -2,7 +2,10 @@
 
 use arithmetic::Cycle;
 use ff::PrimeField;
-use ragu_circuits::{polynomials::Rank, staging};
+use ragu_circuits::{
+    polynomials::{Rank, structured},
+    staging,
+};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
@@ -40,22 +43,42 @@ pub struct ChildEvaluationsWitness<F> {
 impl<F: PrimeField> ChildEvaluationsWitness<F> {
     /// Create child evaluations witness from a proof evaluated at point u.
     pub fn from_proof<C: Cycle<CircuitField = F>, R: Rank>(proof: &Proof<C, R>, u: F) -> Self {
+        // Collect all structured polynomials for batch evaluation
+        let structured_polys = [
+            &proof.application.rx,
+            &proof.preamble.native_rx,
+            &proof.error_n.native_rx,
+            &proof.error_m.native_rx,
+            &proof.ab.a_poly,
+            &proof.ab.b_poly,
+            &proof.query.native_rx,
+            &proof.eval.native_rx,
+            &proof.circuits.hashes_1_rx,
+            &proof.circuits.hashes_2_rx,
+            &proof.circuits.partial_collapse_rx,
+            &proof.circuits.full_collapse_rx,
+            &proof.circuits.compute_v_rx,
+        ];
+
+        // Batch evaluate all structured polynomials at u
+        let evals = structured::Polynomial::batch_eval(&structured_polys, u);
+
         ChildEvaluationsWitness {
-            application: proof.application.rx.eval(u),
-            preamble: proof.preamble.native_rx.eval(u),
-            error_n: proof.error_n.native_rx.eval(u),
-            error_m: proof.error_m.native_rx.eval(u),
-            a_poly: proof.ab.a_poly.eval(u),
-            b_poly: proof.ab.b_poly.eval(u),
-            query: proof.query.native_rx.eval(u),
+            application: evals[0],
+            preamble: evals[1],
+            error_n: evals[2],
+            error_m: evals[3],
+            a_poly: evals[4],
+            b_poly: evals[5],
+            query: evals[6],
             mesh_xy_poly: proof.query.mesh_xy_poly.eval(u),
-            eval: proof.eval.native_rx.eval(u),
+            eval: evals[7],
             p_poly: proof.p.poly.eval(u),
-            hashes_1: proof.circuits.hashes_1_rx.eval(u),
-            hashes_2: proof.circuits.hashes_2_rx.eval(u),
-            partial_collapse: proof.circuits.partial_collapse_rx.eval(u),
-            full_collapse: proof.circuits.full_collapse_rx.eval(u),
-            compute_v: proof.circuits.compute_v_rx.eval(u),
+            hashes_1: evals[8],
+            hashes_2: evals[9],
+            partial_collapse: evals[10],
+            full_collapse: evals[11],
+            compute_v: evals[12],
         }
     }
 }
