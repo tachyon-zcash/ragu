@@ -14,7 +14,7 @@ use ragu_primitives::{
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use super::super::{Encoder, Step};
+use super::super::Step;
 use crate::Header;
 
 /// Represents triple a length determined at compile time.
@@ -82,9 +82,6 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         Self: 'dr,
     {
         let (left, right, witness) = witness.cast();
-
-        let left = Encoder::new(left);
-        let right = Encoder::new(right);
 
         let ((left, right, output), aux) = self
             .step

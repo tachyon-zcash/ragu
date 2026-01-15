@@ -11,7 +11,7 @@ use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::{
     ApplicationBuilder,
     header::{Header, Suffix},
-    step::{Encoded, Encoder, Index, Step},
+    step::{Encoded, Index, Step},
 };
 use ragu_primitives::{Element, poseidon::Sponge};
 use rand::{SeedableRng, rngs::StdRng};
@@ -62,8 +62,8 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
         &self,
         dr: &mut D,
         _: DriverValue<D, Self::Witness<'source>>,
-        left: Encoder<'dr, 'source, D, Self::Left, HEADER_SIZE>,
-        right: Encoder<'dr, 'source, D, Self::Right, HEADER_SIZE>,
+        left: DriverValue<D, C::CircuitField>,
+        right: DriverValue<D, C::CircuitField>,
     ) -> Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
@@ -75,8 +75,8 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
     where
         Self: 'dr,
     {
-        let left = left.encode(dr)?;
-        let right = right.encode(dr)?;
+        let left = Encoded::new(dr, left)?;
+        let right = Encoded::new(dr, right)?;
 
         let mut sponge = Sponge::new(dr, self.poseidon_params);
         sponge.absorb(dr, left.as_gadget())?;
@@ -105,8 +105,8 @@ impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
         &self,
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
-        _: Encoder<'dr, 'source, D, Self::Left, HEADER_SIZE>,
-        _: Encoder<'dr, 'source, D, Self::Right, HEADER_SIZE>,
+        _left: DriverValue<D, ()>,
+        _right: DriverValue<D, ()>,
     ) -> Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,

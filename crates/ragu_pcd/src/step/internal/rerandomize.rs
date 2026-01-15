@@ -13,7 +13,7 @@ use ragu_core::{
 
 use core::marker::PhantomData;
 
-use super::super::{Encoded, Encoder, Index, Step};
+use super::super::{Encoded, Index, Step};
 use crate::Header;
 
 pub(crate) use crate::step::InternalStepIndex::Rerandomize as INTERNAL_ID;
@@ -44,8 +44,8 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         &self,
         dr: &mut D,
         _: DriverValue<D, Self::Witness<'source>>,
-        left: Encoder<'dr, 'source, D, Self::Left, HEADER_SIZE>,
-        right: Encoder<'dr, 'source, D, Self::Right, HEADER_SIZE>,
+        left: DriverValue<D, H::Data<'source>>,
+        right: DriverValue<D, ()>,
     ) -> Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
@@ -54,8 +54,10 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         ),
         DriverValue<D, Self::Aux<'source>>,
     )> {
-        let left = left.raw_encode(dr)?;
-        let right = right.encode(dr)?;
+        // Use uniform encoding for left to ensure circuit uniformity across header types
+        let left = Encoded::new_uniform(dr, left)?;
+        // Use standard encoding for right (trivial header)
+        let right = Encoded::new(dr, right)?;
 
         // TODO(ebfull): It's possible that the witness for this step needs to
         // be populated with some random data, for actual re-randomization

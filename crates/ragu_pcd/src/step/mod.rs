@@ -12,7 +12,7 @@ use ragu_core::{
 
 use super::header::Header;
 
-pub use encoder::{Encoded, Encoder};
+pub use encoder::Encoded;
 
 #[derive(Copy, Clone)]
 #[repr(usize)]
@@ -151,8 +151,8 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
         &self,
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
-        left: Encoder<'dr, 'source, D, Self::Left, HEADER_SIZE>,
-        right: Encoder<'dr, 'source, D, Self::Right, HEADER_SIZE>,
+        left: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data<'source>>,
+        right: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data<'source>>,
     ) -> Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,

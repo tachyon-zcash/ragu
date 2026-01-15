@@ -6,7 +6,7 @@ use ragu_core::{
     gadgets::GadgetKind,
 };
 use ragu_pasta::Pasta;
-use ragu_pcd::step::{Encoded, Encoder, Index, Step};
+use ragu_pcd::step::{Encoded, Index, Step};
 use ragu_pcd::{
     ApplicationBuilder,
     header::{Header, Suffix},
@@ -68,8 +68,8 @@ impl<C: arithmetic::Cycle> Step<C> for Step0 {
         &self,
         dr: &mut D,
         _: DriverValue<D, Self::Witness<'source>>,
-        left: Encoder<'dr, 'source, D, Self::Left, HEADER_SIZE>,
-        right: Encoder<'dr, 'source, D, Self::Right, HEADER_SIZE>,
+        left: DriverValue<D, ()>,
+        right: DriverValue<D, ()>,
     ) -> Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
@@ -78,8 +78,8 @@ impl<C: arithmetic::Cycle> Step<C> for Step0 {
         ),
         DriverValue<D, Self::Aux<'source>>,
     )> {
-        let left = left.encode(dr)?;
-        let right = right.encode(dr)?;
+        let left = Encoded::new(dr, left)?;
+        let right = Encoded::new(dr, right)?;
         let output = Encoded::from_gadget(());
 
         Ok(((left, right, output), D::just(|| ())))
@@ -99,8 +99,8 @@ impl<C: arithmetic::Cycle> Step<C> for Step1 {
         &self,
         dr: &mut D,
         _: DriverValue<D, Self::Witness<'source>>,
-        left: Encoder<'dr, 'source, D, Self::Left, HEADER_SIZE>,
-        right: Encoder<'dr, 'source, D, Self::Right, HEADER_SIZE>,
+        left: DriverValue<D, ()>,
+        right: DriverValue<D, ()>,
     ) -> Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
@@ -109,8 +109,8 @@ impl<C: arithmetic::Cycle> Step<C> for Step1 {
         ),
         DriverValue<D, Self::Aux<'source>>,
     )> {
-        let left = left.encode(dr)?;
-        let right = right.encode(dr)?;
+        let left = Encoded::new(dr, left)?;
+        let right = Encoded::new(dr, right)?;
         let output = Encoded::from_gadget(());
 
         Ok(((left, right, output), D::just(|| ())))
@@ -130,8 +130,8 @@ impl<C: arithmetic::Cycle> Step<C> for Step1Dup {
         &self,
         dr: &mut D,
         _: DriverValue<D, Self::Witness<'source>>,
-        left: Encoder<'dr, 'source, D, Self::Left, HEADER_SIZE>,
-        right: Encoder<'dr, 'source, D, Self::Right, HEADER_SIZE>,
+        left: DriverValue<D, ()>,
+        right: DriverValue<D, ()>,
     ) -> Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
@@ -140,8 +140,8 @@ impl<C: arithmetic::Cycle> Step<C> for Step1Dup {
         ),
         DriverValue<D, Self::Aux<'source>>,
     )> {
-        let left = left.encode(dr)?;
-        let right = right.encode(dr)?;
+        let left = Encoded::new(dr, left)?;
+        let right = Encoded::new(dr, right)?;
         let output = Encoded::from_gadget(());
 
         Ok(((left, right, output), D::just(|| ())))
