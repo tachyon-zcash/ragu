@@ -12,7 +12,7 @@ use syn::{
     spanned::Spanned,
 };
 
-use crate::path_resolution::{RaguArithmeticPath, RaguCorePath, RaguPcdPath};
+use crate::path_resolution::{RaguArithmeticPath, RaguCircuitsPath, RaguCorePath, RaguPcdPath};
 
 // ============================================================================
 // Attribute Parsing
@@ -353,12 +353,8 @@ fn generate_header_impl(
     }
 }
 
-/// Extract the Cycle type parameter from step generics.
-/// Returns (cycle_ident, other_generics).
-fn extract_cycle_param(generics: &Generics) -> Result<(Ident, Vec<&syn::GenericParam>)> {
-    let mut cycle_ident = None;
-    let mut other_params = Vec::new();
-
+/// Extract the Cycle type parameter identifier from step generics.
+fn extract_cycle_param(generics: &Generics) -> Result<Ident> {
     for param in &generics.params {
         if let syn::GenericParam::Type(ty) = param {
             // Check if this type has a Cycle bound
@@ -370,18 +366,15 @@ fn extract_cycle_param(generics: &Generics) -> Result<(Ident, Vec<&syn::GenericP
                 }
             });
             if has_cycle_bound {
-                cycle_ident = Some(ty.ident.clone());
-            } else {
-                other_params.push(param);
+                return Ok(ty.ident.clone());
             }
-        } else {
-            other_params.push(param);
         }
     }
 
-    cycle_ident
-        .map(|c| (c, other_params))
-        .ok_or_else(|| Error::new(generics.span(), "step struct must have a `C: Cycle` type parameter"))
+    Err(Error::new(
+        generics.span(),
+        "step struct must have a `C: Cycle` type parameter",
+    ))
 }
 
 /// Generate the Step trait implementation for a step struct.
@@ -399,7 +392,7 @@ fn generate_step_impl(
     let output_type = step.attr.output.as_ref().unwrap();
 
     let generics = &step.item.generics;
-    let (cycle_ident, _other_params) = extract_cycle_param(generics)?;
+    let cycle_ident = extract_cycle_param(generics)?;
 
     // Build the impl generics (lifetime params + Cycle param)
     let impl_generics = generics;
@@ -471,6 +464,7 @@ fn generate_step_impl(
 fn generate_build_fn(
     steps: &[ExtractedStep],
     ragu_arithmetic: &RaguArithmeticPath,
+    ragu_circuits: &RaguCircuitsPath,
     ragu_core: &RaguCorePath,
     ragu_pcd: &RaguPcdPath,
 ) -> TokenStream {
@@ -481,13 +475,11 @@ fn generate_build_fn(
         }
     }).collect();
 
-    // Note: We use resolved paths for Cycle to handle different crate aliasing.
-    // Rank is still hardcoded as ::ragu_circuits as that's the standard path.
     quote! {
         /// Build the application by registering all steps.
         ///
         /// Each step struct must implement `fn new(params: &'params C::Params) -> Self`.
-        pub fn build<'params, C: #ragu_arithmetic::Cycle, R: ::ragu_circuits::polynomials::Rank, const HEADER_SIZE: usize>(
+        pub fn build<'params, C: #ragu_arithmetic::Cycle, R: #ragu_circuits::polynomials::Rank, const HEADER_SIZE: usize>(
             params: &'params C::Params,
         ) -> #ragu_core::Result<#ragu_pcd::Application<'params, C, R, HEADER_SIZE>> {
             #ragu_pcd::ApplicationBuilder::new()
@@ -505,6 +497,7 @@ fn generate_build_fn(
 pub fn evaluate(
     module: ItemMod,
     ragu_arithmetic: RaguArithmeticPath,
+    ragu_circuits: RaguCircuitsPath,
     ragu_core: RaguCorePath,
     ragu_pcd: RaguPcdPath,
 ) -> Result<TokenStream> {
@@ -531,7 +524,7 @@ pub fn evaluate(
     let step_impls = step_impls?;
 
     // Generate build function
-    let build_fn = generate_build_fn(&processor.steps, &ragu_arithmetic, &ragu_core, &ragu_pcd);
+    let build_fn = generate_build_fn(&processor.steps, &ragu_arithmetic, &ragu_circuits, &ragu_core, &ragu_pcd);
 
     // Other items from the module
     let other_items = &processor.other_items;

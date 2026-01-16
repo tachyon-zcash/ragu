@@ -14,6 +14,9 @@ use syn::{Error, Ident, Path, Result, parse_quote};
 pub struct RaguArithmeticPath(Path);
 
 #[derive(Clone)]
+pub struct RaguCircuitsPath(Path);
+
+#[derive(Clone)]
 pub struct RaguCorePath(Path);
 
 #[derive(Clone)]
@@ -23,6 +26,12 @@ pub struct RaguPcdPath(Path);
 pub struct RaguPrimitivesPath(Path);
 
 impl ToTokens for RaguArithmeticPath {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        self.0.to_tokens(tokens)
+    }
+}
+
+impl ToTokens for RaguCircuitsPath {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         self.0.to_tokens(tokens)
     }
@@ -49,6 +58,12 @@ impl ToTokens for RaguPrimitivesPath {
 impl Default for RaguArithmeticPath {
     fn default() -> Self {
         Self(parse_quote! { ::ragu_arithmetic })
+    }
+}
+
+impl Default for RaguCircuitsPath {
+    fn default() -> Self {
+        Self(parse_quote! { ::ragu_circuits })
     }
 }
 
@@ -86,6 +101,23 @@ fn ragu_arithmetic_path() -> Result<Path> {
             return Err(Error::new(
                 Span::call_site(),
                 "Failed to find ragu_arithmetic crate. Ensure it is included in your Cargo.toml.",
+            ));
+        }
+    })
+}
+
+fn ragu_circuits_path() -> Result<Path> {
+    // ragu_circuits is not re-exported from the umbrella `ragu` crate
+    Ok(match crate_name("ragu_circuits") {
+        Ok(FoundCrate::Itself) => parse_quote! { ::ragu_circuits },
+        Ok(FoundCrate::Name(name)) => {
+            let name: Ident = format_ident!("{}", name);
+            parse_quote! { ::#name }
+        }
+        Err(_) => {
+            return Err(Error::new(
+                Span::call_site(),
+                "Failed to find ragu_circuits crate. Ensure it is included in your Cargo.toml.",
             ));
         }
     })
@@ -153,6 +185,12 @@ fn ragu_primitives_path() -> Result<Path> {
 impl RaguArithmeticPath {
     pub fn resolve() -> Result<Self> {
         ragu_arithmetic_path().map(Self)
+    }
+}
+
+impl RaguCircuitsPath {
+    pub fn resolve() -> Result<Self> {
+        ragu_circuits_path().map(Self)
     }
 }
 

@@ -129,8 +129,15 @@ pub fn define_application(_attr: TokenStream, input: TokenStream) -> TokenStream
     let input = parse_macro_input!(input as ItemMod);
     macro_body(|| {
         let ragu_arithmetic_path = path_resolution::RaguArithmeticPath::resolve()?;
+        let ragu_circuits_path = path_resolution::RaguCircuitsPath::resolve()?;
         let ragu_core_path = path_resolution::RaguCorePath::resolve()?;
         let ragu_pcd_path = path_resolution::RaguPcdPath::resolve()?;
-        proc::application::evaluate(input, ragu_arithmetic_path, ragu_core_path, ragu_pcd_path)
+        proc::application::evaluate(
+            input,
+            ragu_arithmetic_path,
+            ragu_circuits_path,
+            ragu_core_path,
+            ragu_pcd_path,
+        )
     })
 }
