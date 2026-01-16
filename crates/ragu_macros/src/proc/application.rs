@@ -135,6 +135,13 @@ struct ExtractedStep {
     step_index: usize,
 }
 
+/// Tracks declaration order for resolving implicit defaults.
+#[derive(Clone)]
+enum DeclKind {
+    Header(usize), // index into headers vec
+    Step(usize),   // index into steps vec
+}
+
 /// Check if an attribute matches a given name.
 fn is_attr(attr: &Attribute, name: &str) -> bool {
     attr.path().is_ident(name)
@@ -157,6 +164,8 @@ fn take_attr(attrs: &mut Vec<Attribute>, name: &str) -> Option<Attribute> {
 struct ModuleProcessor {
     headers: Vec<ExtractedHeader>,
     steps: Vec<ExtractedStep>,
+    /// Tracks the interleaved declaration order of steps and headers.
+    declaration_order: Vec<DeclKind>,
     other_items: Vec<Item>,
     mod_attrs: Vec<Attribute>,
     mod_vis: Visibility,
@@ -175,6 +184,7 @@ impl ModuleProcessor {
         let mut processor = ModuleProcessor {
             headers: Vec::new(),
             steps: Vec::new(),
+            declaration_order: Vec::new(),
             other_items: Vec::new(),
             mod_attrs: module.attrs,
             mod_vis: module.vis,
@@ -194,6 +204,7 @@ impl ModuleProcessor {
                             attr: header_attr,
                             suffix_index: header_count,
                         });
+                        processor.declaration_order.push(DeclKind::Header(header_count));
                         header_count += 1;
                     } else if let Some(attr) = take_attr(&mut s.attrs, "step") {
                         let step_attr = StepAttr::parse(&attr)?;
@@ -202,6 +213,7 @@ impl ModuleProcessor {
                             attr: step_attr,
                             step_index: step_count,
                         });
+                        processor.declaration_order.push(DeclKind::Step(step_count));
                         step_count += 1;
                     } else {
                         processor.other_items.push(Item::Struct(s));
@@ -214,25 +226,90 @@ impl ModuleProcessor {
         Ok(processor)
     }
 
-    /// Resolve default `output` for steps (next header after step declaration).
-    /// This requires tracking interleaved declaration order.
-    fn resolve_step_defaults(&mut self) -> Result<()> {
-        // For simplicity in this prototype, we use explicit outputs.
-        // A full implementation would track interleaved declaration order.
-        for step in &mut self.steps {
-            if step.attr.left.is_none() {
-                step.attr.left = Some(syn::parse_quote!(()));
-            }
-            if step.attr.right.is_none() {
-                step.attr.right = Some(syn::parse_quote!(()));
-            }
-            if step.attr.output.is_none() {
-                return Err(Error::new(
-                    step.item.ident.span(),
-                    "step requires explicit `output` (implicit resolution not yet implemented)",
-                ));
+    /// Find the header that follows a step in declaration order.
+    /// Returns None if no header follows the step.
+    fn next_header_after_step(&self, step_idx: usize) -> Option<&Ident> {
+        // Find position of this step in declaration order
+        let step_pos = self.declaration_order.iter().position(|d| {
+            matches!(d, DeclKind::Step(idx) if *idx == step_idx)
+        })?;
+
+        // Look for the next header after this position
+        for decl in &self.declaration_order[step_pos + 1..] {
+            if let DeclKind::Header(header_idx) = decl {
+                return Some(&self.headers[*header_idx].item.ident);
             }
         }
+        None
+    }
+
+    /// Find the output type of the previous step in declaration order.
+    /// Returns None if this is the first step or no step precedes it.
+    fn previous_step_output(&self, step_idx: usize) -> Option<&Type> {
+        // Find position of this step in declaration order
+        let step_pos = self.declaration_order.iter().position(|d| {
+            matches!(d, DeclKind::Step(idx) if *idx == step_idx)
+        })?;
+
+        // Look backwards for the previous step
+        for decl in self.declaration_order[..step_pos].iter().rev() {
+            if let DeclKind::Step(prev_step_idx) = decl {
+                // Return that step's output type (which must be resolved by now)
+                return self.steps[*prev_step_idx].attr.output.as_ref();
+            }
+        }
+        None
+    }
+
+    /// Resolve default `output`, `left`, and `right` for steps based on declaration order.
+    ///
+    /// Rules:
+    /// - `output` defaults to the next header declared after the step
+    /// - `left` and `right` default to the previous step's output, or `()` for the first step
+    fn resolve_step_defaults(&mut self) -> Result<()> {
+        // We need to process steps in declaration order so that previous step outputs
+        // are resolved before we try to use them.
+        let step_indices: Vec<usize> = self.declaration_order
+            .iter()
+            .filter_map(|d| match d {
+                DeclKind::Step(idx) => Some(*idx),
+                _ => None,
+            })
+            .collect();
+
+        for step_idx in step_indices {
+            // Resolve output: default to next header
+            if self.steps[step_idx].attr.output.is_none() {
+                if let Some(next_header) = self.next_header_after_step(step_idx) {
+                    let header_ident = next_header.clone();
+                    self.steps[step_idx].attr.output = Some(syn::parse_quote!(#header_ident));
+                } else {
+                    return Err(Error::new(
+                        self.steps[step_idx].item.ident.span(),
+                        "step has no explicit `output` and no header follows it in declaration order",
+                    ));
+                }
+            }
+
+            // Resolve left: default to previous step's output, or ()
+            if self.steps[step_idx].attr.left.is_none() {
+                if let Some(prev_output) = self.previous_step_output(step_idx) {
+                    self.steps[step_idx].attr.left = Some(prev_output.clone());
+                } else {
+                    self.steps[step_idx].attr.left = Some(syn::parse_quote!(()));
+                }
+            }
+
+            // Resolve right: default to previous step's output, or ()
+            if self.steps[step_idx].attr.right.is_none() {
+                if let Some(prev_output) = self.previous_step_output(step_idx) {
+                    self.steps[step_idx].attr.right = Some(prev_output.clone());
+                } else {
+                    self.steps[step_idx].attr.right = Some(syn::parse_quote!(()));
+                }
+            }
+        }
+
         Ok(())
     }
 }
