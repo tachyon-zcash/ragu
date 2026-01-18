@@ -13,9 +13,13 @@ use rand::Rng;
 use core::iter::once;
 
 use crate::{
-    Application, Pcd, Proof, circuits::native::stages::preamble::ProofInputs, components::claims,
+    Application, Pcd, Proof,
+    circuits::native::stages::preamble::ProofInputs,
+    components::{claims, endoscalar::NumStepsLen},
     header::Header,
+    proof::NUM_P_COMMITMENTS,
 };
+use ragu_primitives::vec::Len;
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     /// Verifies some [`Pcd`] for the provided [`Header`].
@@ -68,7 +72,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mut builder = claims::Builder::new(&self.native_mesh, self.num_application_steps, y, z);
         claims::native::build(&source, &mut builder)?;
 
-        // Check all revdot claims.
+        // Check all native revdot claims.
         let revdot_claims = {
             let ky_source = native::SingleProofKySource {
                 raw_c: pcd.proof.ab.c,
@@ -79,6 +83,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
             native::ky_values(&ky_source)
                 .zip(builder.a.iter().zip(builder.b.iter()))
+                .all(|(ky, (a, b))| a.revdot(b) == ky)
+        };
+
+        // Check all nested revdot claims.
+        let nested_revdot_claims = {
+            let num_steps = NumStepsLen::<NUM_P_COMMITMENTS>::len();
+            let nested_source = nested::SingleProofSource { proof: &pcd.proof };
+            let y_nested = C::ScalarField::random(&mut rng);
+            let z_nested = C::ScalarField::random(&mut rng);
+            let mut nested_builder = claims::Builder::new(&self.nested_mesh, 0, y_nested, z_nested);
+            claims::nested::build(&nested_source, &mut nested_builder, num_steps)?;
+
+            let ky_source = nested::SingleProofKySource::<C::ScalarField>::new();
+            nested::ky_values(&ky_source)
+                .zip(nested_builder.a.iter().zip(nested_builder.b.iter()))
                 .all(|(ky, (a, b))| a.revdot(b) == ky)
         };
 
@@ -107,7 +126,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // - mesh_wx0/wx1: need child proof x challenges (x₀, x₁) which "disappear" in preamble
         // - mesh_wy: interstitial value that will be elided later
 
-        Ok(revdot_claims && p_eval_claim && p_commitment_claim && mesh_xy_claim)
+        Ok(revdot_claims
+            && nested_revdot_claims
+            && p_eval_claim
+            && p_commitment_claim
+            && mesh_xy_claim)
     }
 }
 
@@ -183,6 +206,66 @@ mod native {
 
         fn zero(&self) -> F {
             F::ZERO
+        }
+    }
+}
+
+mod nested {
+    use super::*;
+    use crate::components::claims::{
+        Source,
+        nested::{KySource, RxComponent},
+    };
+
+    pub use crate::components::claims::nested::ky_values;
+
+    /// Source for nested field rx polynomials for single-proof verification.
+    pub struct SingleProofSource<'rx, C: Cycle, R: Rank> {
+        pub proof: &'rx Proof<C, R>,
+    }
+
+    impl<'rx, C: Cycle, R: Rank> Source for SingleProofSource<'rx, C, R> {
+        type RxComponent = RxComponent;
+        type Rx = &'rx structured::Polynomial<C::ScalarField, R>;
+        type AppCircuitId = ();
+
+        fn rx(&self, component: RxComponent) -> impl Iterator<Item = Self::Rx> {
+            use RxComponent::*;
+            let poly = match component {
+                EndoscalarStage => &self.proof.p.endoscalar_rx,
+                PointsStage => &self.proof.p.points_rx,
+                EndoscalingStep(step) => &self.proof.p.step_rxs[step], // TODO
+            };
+            core::iter::once(poly)
+        }
+
+        fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
+            core::iter::empty()
+        }
+    }
+
+    /// Source for k(y) values for nested single-proof verification.
+    pub struct SingleProofKySource<F>(core::marker::PhantomData<F>);
+
+    impl<F> SingleProofKySource<F> {
+        pub fn new() -> Self {
+            Self(core::marker::PhantomData)
+        }
+    }
+
+    impl<F: Field> KySource for SingleProofKySource<F> {
+        type Ky = F;
+
+        fn one(&self) -> F {
+            F::ONE
+        }
+
+        fn zero(&self) -> F {
+            F::ZERO
+        }
+
+        fn num_circuit_claims(&self) -> usize {
+            NumStepsLen::<NUM_P_COMMITMENTS>::len() // num_steps * 1 proof
         }
     }
 }
