@@ -23,7 +23,7 @@ use ragu_core::drivers::Driver;
 use ragu_primitives::Element;
 
 use super::{Builder, Source};
-use crate::circuits::{self, InternalCircuitIndex};
+use crate::circuits::{self, native::InternalCircuitIndex};
 
 /// Number of circuits that use the unified k(y) value per proof.
 ///

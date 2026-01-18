@@ -16,9 +16,11 @@ use ragu_primitives::Element;
 
 use core::marker::PhantomData;
 
-use crate::{Proof, circuits::NUM_INTERNAL_CIRCUITS};
+use crate::Proof;
 
-pub(crate) use crate::circuits::InternalCircuitIndex::QueryStage as STAGING_ID;
+use crate::circuits::native::{InternalCircuitIndex, NUM_INTERNAL_CIRCUITS};
+
+pub(crate) use InternalCircuitIndex::QueryStage as STAGING_ID;
 
 /// Witness for a polynomial evaluated at both x and xz.
 pub struct XzQueryWitness<T> {
@@ -261,8 +263,8 @@ impl<'dr, D: Driver<'dr>> FixedMeshEvaluations<'dr, D> {
     }
 
     /// Look up the mesh evaluation for the given internal circuit index.
-    pub fn circuit_mesh(&self, id: crate::circuits::InternalCircuitIndex) -> &Element<'dr, D> {
-        use crate::circuits::InternalCircuitIndex::*;
+    pub fn circuit_mesh(&self, id: InternalCircuitIndex) -> &Element<'dr, D> {
+        use InternalCircuitIndex::*;
         match id {
             Hashes1Circuit => &self.hashes_1_circuit,
             Hashes2Circuit => &self.hashes_2_circuit,

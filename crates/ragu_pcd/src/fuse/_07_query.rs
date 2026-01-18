@@ -21,9 +21,10 @@ use rand::Rng;
 
 use crate::{
     Application, Proof,
-    circuits::{self, InternalCircuitIndex, native::stages::query, nested},
+    circuits::{self, native, native::stages::query, nested},
     proof,
 };
+use native::InternalCircuitIndex;
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     pub(super) fn compute_query<'dr, D, RNG: Rng>(

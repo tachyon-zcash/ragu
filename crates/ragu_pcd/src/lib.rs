@@ -120,9 +120,9 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         // Then, insert all of the internal circuits used for recursion plumbing.
         {
             let (total_circuits, log2_circuits) =
-                circuits::total_circuit_counts(self.num_application_steps);
+                circuits::native::total_circuit_counts(self.num_application_steps);
 
-            self.native_mesh = circuits::register_all_native::<C, R, HEADER_SIZE>(
+            self.native_mesh = circuits::native::register_all::<C, R, HEADER_SIZE>(
                 self.native_mesh,
                 params,
                 log2_circuits,

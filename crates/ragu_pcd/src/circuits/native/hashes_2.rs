@@ -79,7 +79,7 @@ use super::{
 };
 use crate::components::fold_revdot;
 
-pub(crate) use crate::circuits::InternalCircuitIndex::Hashes2Circuit as CIRCUIT_ID;
+pub(crate) use super::InternalCircuitIndex::Hashes2Circuit as CIRCUIT_ID;
 
 /// Second hash circuit for Fiat-Shamir challenge derivation.
 ///

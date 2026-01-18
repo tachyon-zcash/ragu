@@ -22,9 +22,7 @@ use rand::Rng;
 use alloc::vec::Vec;
 
 use crate::{
-    Application, Proof,
-    circuits::{InternalCircuitIndex, nested::stages::f},
-    proof,
+    Application, Proof, circuits::native::InternalCircuitIndex, circuits::nested::stages::f, proof,
 };
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {

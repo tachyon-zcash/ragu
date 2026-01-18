@@ -98,7 +98,7 @@ use super::{
 };
 use crate::components::{fold_revdot, root_of_unity, suffix::WithSuffix};
 
-pub(crate) use crate::circuits::InternalCircuitIndex::Hashes1Circuit as CIRCUIT_ID;
+pub(crate) use super::InternalCircuitIndex::Hashes1Circuit as CIRCUIT_ID;
 
 /// Public output of the first hash circuit.
 ///

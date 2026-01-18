@@ -22,7 +22,7 @@ use crate::{
     Proof, circuits::native::unified, components::ky::Ky, header::Header, step::internal::padded,
 };
 
-pub(crate) use crate::circuits::InternalCircuitIndex::PreambleStage as STAGING_ID;
+pub(crate) use crate::circuits::native::InternalCircuitIndex::PreambleStage as STAGING_ID;
 
 type HeaderVec<'dr, D, const HEADER_SIZE: usize> = FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>;
 

@@ -6,7 +6,7 @@ use rand::Rng;
 
 use crate::{
     Application,
-    circuits::{self, native, total_circuit_counts},
+    circuits::{self, native, native::total_circuit_counts},
     components::fold_revdot::NativeParameters,
     proof,
 };

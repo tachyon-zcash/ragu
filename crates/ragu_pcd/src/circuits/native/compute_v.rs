@@ -65,6 +65,7 @@ use crate::components::claims::{
 };
 use crate::components::fold_revdot::{NativeParameters, Parameters, fold_two_layer};
 
+use super::InternalCircuitIndex;
 use super::{
     stages::{
         eval as native_eval, preamble as native_preamble,
@@ -72,10 +73,9 @@ use super::{
     },
     unified::{self, OutputBuilder},
 };
-use crate::circuits::InternalCircuitIndex;
 use crate::components::horner::Horner;
 
-pub(crate) use crate::circuits::InternalCircuitIndex::ComputeVCircuit as CIRCUIT_ID;
+pub(crate) use super::InternalCircuitIndex::ComputeVCircuit as CIRCUIT_ID;
 
 /// Circuit that computes and verifies the claimed evaluation value [$v$].
 ///
@@ -324,7 +324,7 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
     where
         D::F: ff::PrimeField,
     {
-        use crate::circuits::InternalCircuitIndex::{self, *};
+        use super::InternalCircuitIndex::{self, *};
 
         let internal_denom = |dr: &mut D, idx: InternalCircuitIndex| -> Result<Element<'dr, D>> {
             let omega_j = Element::constant(dr, idx.circuit_index(num_application_steps).omega_j());

@@ -66,7 +66,7 @@ use super::{
 };
 use crate::components::fold_revdot;
 
-pub(crate) use crate::circuits::InternalCircuitIndex::FullCollapseCircuit as CIRCUIT_ID;
+pub(crate) use super::InternalCircuitIndex::FullCollapseCircuit as CIRCUIT_ID;
 
 /// Circuit that verifies layer 2 of the two-layer revdot reduction.
 ///

@@ -18,7 +18,7 @@ use ragu_primitives::{
 
 use core::marker::PhantomData;
 
-pub(crate) use crate::circuits::InternalCircuitIndex::ErrorNStage as STAGING_ID;
+pub(crate) use crate::circuits::native::InternalCircuitIndex::ErrorNStage as STAGING_ID;
 
 use crate::components::fold_revdot::{self, ErrorTermsLen};
 

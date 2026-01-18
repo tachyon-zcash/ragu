@@ -1,6 +1,9 @@
 use super::*;
 use crate::*;
-use native::stages::{error_m, error_n, eval, preamble, query};
+use native::{
+    InternalCircuitIndex,
+    stages::{error_m, error_n, eval, preamble, query},
+};
 use ragu_circuits::staging::{Stage, StageExt};
 use ragu_pasta::Pasta;
 
