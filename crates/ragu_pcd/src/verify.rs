@@ -159,6 +159,7 @@ mod native {
                 PartialCollapse => &self.proof.circuits.partial_collapse_rx,
                 FullCollapse => &self.proof.circuits.full_collapse_rx,
                 ComputeV => &self.proof.circuits.compute_v_rx,
+                EndoscaleChallenges => &self.proof.circuits.endoscale_challenges_rx,
                 Preamble => &self.proof.preamble.native_rx,
                 ErrorM => &self.proof.error_m.native_rx,
                 ErrorN => &self.proof.error_n.native_rx,

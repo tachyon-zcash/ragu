@@ -28,10 +28,10 @@ use crate::circuits::{self, native::InternalCircuitIndex};
 /// Number of circuits that use the unified k(y) value per proof.
 ///
 /// This is the count of internal circuits (hashes_1, hashes_2, partial_collapse,
-/// full_collapse) that share the same unified k(y) value. The unified_ky iterator
-/// from [`KySource`] is repeated this many times in [`ky_values`].
+/// full_collapse, endoscale_challenges) that share the same unified k(y) value.
+/// The unified_ky iterator from [`KySource`] is repeated this many times in [`ky_values`].
 // TODO: this constant seems brittle because it may vary between the two fields.
-pub const NUM_UNIFIED_CIRCUITS: usize = 4;
+pub const NUM_UNIFIED_CIRCUITS: usize = 5;
 
 /// Enum identifying which native field rx polynomial to retrieve from a proof.
 #[derive(Clone, Copy, Debug)]
@@ -62,6 +62,8 @@ pub enum RxComponent {
     Query,
     /// The eval native rx polynomial.
     Eval,
+    /// The endoscale_challenges internal circuit rx polynomial.
+    EndoscaleChallenges,
 }
 
 /// Trait that processes claim values into accumulated outputs.
@@ -208,6 +210,14 @@ where
         );
     }
 
+    // endoscale_challenges: staged on error_n for consistency
+    for (ec, en) in source.rx(EndoscaleChallenges).zip(source.rx(ErrorN)) {
+        processor.internal_circuit(
+            circuits::native::endoscale_challenges::CIRCUIT_ID,
+            [ec, en].into_iter(),
+        );
+    }
+
     // Stages (aggregated: collect all proofs' rxs together)
 
     // ErrorMFinalStaged: only partial_collapse uses error_m as final stage
@@ -216,13 +226,14 @@ where
         source.rx(PartialCollapse),
     )?;
 
-    // ErrorNFinalStaged: hashes_1, hashes_2, full_collapse use error_n as final stage
+    // ErrorNFinalStaged: hashes_1, hashes_2, full_collapse, endoscale_challenges use error_n as final stage
     processor.stage(
         InternalCircuitIndex::ErrorNFinalStaged,
         source
             .rx(Hashes1)
             .chain(source.rx(Hashes2))
-            .chain(source.rx(FullCollapse)),
+            .chain(source.rx(FullCollapse))
+            .chain(source.rx(EndoscaleChallenges)),
     )?;
 
     // EvalFinalStaged: all compute_v rxs
