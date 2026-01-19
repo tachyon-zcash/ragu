@@ -12,11 +12,8 @@
 
 ## Resources
 
-The Ragu Book provides high-level documentation about Ragu, how it can be used, how it is designed, and how to contribute. The source code for the book lives in this repository in the [`book`](https://github.com/tachyon-zcash/ragu/tree/main/book) subdirectory.
-
-#### [Documentation](https://docs.rs/ragu/)
-
-> 📖 We also host a copy of the internal documentation that is continually rendered based on the `main` branch. This is primarily for developers of Ragu.
+* [The Ragu Book](https://tachyon.z.cash/ragu/) provides high-level documentation about Ragu, how it can be used, how it is designed, and how to contribute. The source code for the book lives in this repository in the [`book`](https://github.com/tachyon-zcash/ragu/tree/main/book) subdirectory.
+* Unofficial (internal) library documentation is [continually rendered](https://tachyon.z.cash/ragu/internal/ragu/) based on the `main` branch. This is primarily for developers of Ragu.
 
 ## License
 

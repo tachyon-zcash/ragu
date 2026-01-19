@@ -1,8 +1,6 @@
 # Ragu Book
 
-This is the source for the official Ragu book.
-
-**Do not share this URL:** https://tachyon.z.cash/_ragu_INTERNAL_ONLY_H83J19XK1/
+This is the source for the [official Ragu book.](https://tachyon.z.cash/ragu/)
 
 ## Development
 

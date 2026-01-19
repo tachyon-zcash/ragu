@@ -11,7 +11,7 @@
 * This book contains documentation about [how to use Ragu](guide/getting_started.md), the [protocol design](protocol/index.md), and [implementation details](implementation/arch.md).
 * [The official Ragu source code repository.](https://github.com/tachyon-zcash/ragu)
 * [Crate documentation](https://docs.rs/ragu) is available for official Ragu crate releases.
-* [Internal documentation](https://tachyon.z.cash/_ragu_INTERNAL_ONLY_H83J19XK1/internal/ragu/) is available for Ragu developers.
+* [Internal documentation](https://tachyon.z.cash/ragu/internal/ragu/) is available for Ragu developers.
 * This book's [source code](https://github.com/tachyon-zcash/ragu/tree/main/book) is developed within the Ragu repository.
 
 ## License
