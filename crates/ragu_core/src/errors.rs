@@ -38,6 +38,11 @@ pub enum Error {
     #[error("invalid witness: {0}")]
     InvalidWitness(Box<dyn error::Error + Send + Sync + 'static>),
 
+    /// Mesh keys may be invalid if initialization is buggy or mesh digest
+    /// is accidentally zero (astronomically unlikely).
+    #[error("invalid mesh key, cannot be zero")]
+    InvalidMeshKey,
+
     /// Synthesis can fail if data cannot be decoded from a stream like a proof
     /// string
     #[error("malformed encoding: {0}")]
