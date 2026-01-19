@@ -78,6 +78,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 partial_collapse_circuit: registry_at(PartialCollapseCircuit),
                 full_collapse_circuit: registry_at(FullCollapseCircuit),
                 compute_v_circuit: registry_at(ComputeVCircuit),
+                endoscale_challenges_circuit: registry_at(EndoscaleChallengesCircuit),
             },
             registry_wxy: registry_xy_poly.eval(w),
             left: query::ChildEvaluationsWitness::from_proof(

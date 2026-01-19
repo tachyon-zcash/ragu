@@ -411,6 +411,10 @@ impl<'a, 'dr, D: Driver<'dr>> Source for EvaluationSource<'a, 'dr, D> {
             PartialCollapse => (&self.left.partial_collapse, &self.right.partial_collapse),
             FullCollapse => (&self.left.full_collapse, &self.right.full_collapse),
             ComputeV => (&self.left.compute_v, &self.right.compute_v),
+            EndoscaleChallenges => (
+                &self.left.endoscale_challenges,
+                &self.right.endoscale_challenges,
+            ),
             Preamble => (&self.left.preamble, &self.right.preamble),
             ErrorM => (&self.left.error_m, &self.right.error_m),
             ErrorN => (&self.left.error_n, &self.right.error_n),
