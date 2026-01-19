@@ -1,4 +1,9 @@
 //! # `ragu_pcd`
+//!
+//! Proof-Carrying Data (PCD) implementation for the Ragu proof system.
+//!
+//! This crate provides functionality for creating, folding, and verifying recursive
+//! proofs using an arity-2 PCD scheme where each step accepts two child proofs.
 
 #![cfg_attr(not(test), no_std)]
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]

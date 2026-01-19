@@ -36,20 +36,55 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<'_, C, R, H> {
     }
 }
 
-/// Represents a recursive proof for the correctness of some computation.
+/// The cryptographic proof structure containing staged witness polynomials,
+/// commitments, and accumulated claims. Use [`Proof::carry`] to bundle with
+/// application data into [`Pcd`].
 #[derive(Clone)]
 pub struct Proof<C: Cycle, R: Rank> {
+    /// Circuit identifier, left/right header commitments, and the application
+    /// witness polynomial with its blinding factor and commitment.
     pub(crate) application: Application<C, R>,
+
+    /// Native and nested curve witness polynomials, blinds, and commitments
+    /// that establish the initial transcript state.
     pub(crate) preamble: Preamble<C, R>,
+
+    /// Mesh polynomials `wx0`, `wx1` on the host curve, plus nested curve
+    /// s-prime witness for circuit selector evaluation.
     pub(crate) s_prime: SPrime<C, R>,
+
+    /// Native and nested curve components for the N-sized revdot claim reduction.
     pub(crate) error_n: ErrorN<C, R>,
+
+    /// Mesh `wy` polynomial plus native and nested curve components for
+    /// the M-sized revdot claim reductions.
     pub(crate) error_m: ErrorM<C, R>,
+
+    /// Folding polynomials `a(X)` and `b(X)` with their commitments, the
+    /// revdot product scalar `c`, and nested curve components.
     pub(crate) ab: AB<C, R>,
+
+    /// Mesh `xy` polynomial plus native and nested curve components for
+    /// batched polynomial queries at challenge points.
     pub(crate) query: Query<C, R>,
+
+    /// Batched verification polynomial combining evaluation claims, with
+    /// nested curve components.
     pub(crate) f: F<C, R>,
+
+    /// Native and nested curve staged witnesses for the IPA evaluation stage.
     pub(crate) eval: Eval<C, R>,
+
+    /// Final batch proof: polynomial `p(X)`, its blinding factor, commitment,
+    /// and evaluation `v = p(u)` at the challenge point.
     pub(crate) p: P<C, R>,
+
+    /// Fiat-Shamir challenges: `w`, `y`, `z`, `mu`, `nu`, `mu_prime`, `nu_prime`,
+    /// `x`, `alpha`, `u`, `beta`.
     pub(crate) challenges: Challenges<C>,
+
+    /// Witness polynomials for internal recursion circuits: `hashes_1`,
+    /// `hashes_2`, `partial_collapse`, `full_collapse`, and `compute_v`.
     pub(crate) circuits: InternalCircuits<C, R>,
 }
 
