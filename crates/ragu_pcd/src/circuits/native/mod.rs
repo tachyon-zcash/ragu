@@ -12,6 +12,7 @@ use crate::step;
 pub mod stages;
 
 pub(crate) mod compute_v;
+pub(crate) mod endoscale_challenges;
 pub(crate) mod full_collapse;
 pub(crate) mod hashes_1;
 pub(crate) mod hashes_2;
@@ -37,11 +38,12 @@ pub(crate) enum InternalCircuitIndex {
     PartialCollapseCircuit = 10,
     FullCollapseCircuit = 11,
     ComputeVCircuit = 12,
+    EndoscaleChallengesCircuit = 13,
 }
 
 /// The number of internal circuits registered by [`register_all`] and
 /// [`super::nested::register_all`], and the number of variants in [`InternalCircuitIndex`].
-pub(crate) const NUM_INTERNAL_CIRCUITS: usize = 13;
+pub(crate) const NUM_INTERNAL_CIRCUITS: usize = 14;
 
 /// Compute the total circuit count and log2 domain size from the number of
 /// application-defined steps.
@@ -154,6 +156,14 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         mesh = mesh.register_circuit(compute_v::Circuit::<C, R, HEADER_SIZE>::new(
             num_application_steps,
         ))?;
+
+        // endoscale_challenges
+        mesh = mesh.register_circuit(endoscale_challenges::Circuit::<
+            C,
+            R,
+            HEADER_SIZE,
+            NativeParameters,
+        >::new())?;
     }
 
     // Verify we registered the expected number of circuits.
