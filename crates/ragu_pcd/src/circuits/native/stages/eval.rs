@@ -35,6 +35,7 @@ pub struct ChildEvaluationsWitness<F> {
     pub partial_collapse: F,
     pub full_collapse: F,
     pub compute_v: F,
+    pub endoscale_challenges: F,
 }
 
 impl<F: PrimeField> ChildEvaluationsWitness<F> {
@@ -56,6 +57,7 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
             partial_collapse: proof.circuits.partial_collapse_rx.eval(u),
             full_collapse: proof.circuits.full_collapse_rx.eval(u),
             compute_v: proof.circuits.compute_v_rx.eval(u),
+            endoscale_challenges: proof.circuits.endoscale_challenges_rx.eval(u),
         }
     }
 }
@@ -116,6 +118,8 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
     pub full_collapse: Element<'dr, D>,
     #[ragu(gadget)]
     pub compute_v: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub endoscale_challenges: Element<'dr, D>,
 }
 
 impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
@@ -140,6 +144,10 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
             partial_collapse: Element::alloc(dr, witness.view().map(|w| w.partial_collapse))?,
             full_collapse: Element::alloc(dr, witness.view().map(|w| w.full_collapse))?,
             compute_v: Element::alloc(dr, witness.view().map(|w| w.compute_v))?,
+            endoscale_challenges: Element::alloc(
+                dr,
+                witness.view().map(|w| w.endoscale_challenges),
+            )?,
         })
     }
 }
@@ -181,8 +189,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
     fn values() -> usize {
-        // 2 * ChildEvaluations (15 each) + current step elements (6)
-        2 * 15 + 6
+        // 2 * ChildEvaluations (16 each) + current step elements (6)
+        2 * 16 + 6
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
