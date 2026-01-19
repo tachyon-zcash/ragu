@@ -1,3 +1,4 @@
+use arithmetic::{CurveAffine, FixedGenerators};
 use ff::Field;
 use ragu_core::Result;
 
@@ -9,6 +10,7 @@ use crate::{
     registry,
 };
 
+/// Represents a stage's polynomial structure.
 #[derive(Clone)]
 pub struct StageMask<R: Rank> {
     skip_multiplications: usize,
@@ -53,6 +55,38 @@ impl<R: Rank> StageMask<R> {
             num_multiplications,
             _marker: core::marker::PhantomData,
         })
+    }
+
+    /// Returns the number of skipped multiplications for this stage.
+    pub fn skip_multiplications(&self) -> usize {
+        self.skip_multiplications
+    }
+
+    /// Returns the number of active multiplications for this stage.
+    pub fn num_multiplications(&self) -> usize {
+        self.num_multiplications
+    }
+
+    /// Returns the generator index for the i-th A coefficient of this stage.
+    pub fn generator_index_for_a(&self, coefficient_index: usize) -> usize {
+        assert!(
+            coefficient_index < self.num_multiplications,
+            "coefficient_index {} exceeds num_multiplications {}",
+            coefficient_index,
+            self.num_multiplications
+        );
+
+        2 * R::n() + 1 + self.skip_multiplications + coefficient_index
+    }
+
+    /// Returns the generator point for the i-th A coefficient of this stage.
+    pub fn generator_for_a_coefficient<C: CurveAffine>(
+        &self,
+        generators: &impl FixedGenerators<C>,
+        coefficient_index: usize,
+    ) -> C {
+        let idx = self.generator_index_for_a(coefficient_index);
+        generators.g()[idx]
     }
 }
 
@@ -219,22 +253,25 @@ mod tests {
     use core::marker::PhantomData;
 
     use ff::Field;
-    use group::prime::PrimeCurveAffine;
+    use group::{Curve, prime::PrimeCurveAffine};
     use proptest::prelude::*;
-    use ragu_arithmetic::{Coeff, Uendo};
+    use ragu_arithmetic::{Coeff, Cycle, FixedGenerators, Uendo};
     use ragu_core::{
         Result,
         drivers::{Driver, DriverValue, LinearExpression, emulator::Emulator},
         gadgets::{Consistent, Gadget, GadgetKind},
         maybe::Maybe,
     };
-    use ragu_pasta::{EpAffine, Fp, Fq};
+    use ragu_pasta::{EpAffine, EqAffine, Fp, Fq, Pasta};
     use ragu_primitives::{Element, Endoscalar, Point, io::Write};
-    use rand::Rng;
+    use rand::{Rng, thread_rng};
 
     use crate::{
-        CircuitExt, CircuitObject, metrics, polynomials::Rank, registry, s::sy,
-        staging::StageBuilder, tests::SquareCircuit,
+        CircuitExt, CircuitObject, metrics,
+        polynomials::{Rank, structured},
+        registry, s::sy,
+        staging::StageBuilder,
+        tests::SquareCircuit,
     };
 
     use super::{
@@ -626,5 +663,63 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_generator_for_a_coefficient() {
+        let pasta = Pasta::baked();
+        let generators = Pasta::host_generators(pasta);
+
+        let stage = StageObject::<R>::new(2, 4).unwrap();
+
+        for i in 0..4 {
+            let gen_idx = stage.generator_index_for_a(i);
+            let expected_gen = generators.g()[gen_idx];
+            let actual_gen = stage.generator_for_a_coefficient(generators, i);
+            assert_eq!(actual_gen, expected_gen);
+        }
+    }
+
+    #[test]
+    fn test_a_only_commitment_for_challenge_smuggling() {
+        let pasta = Pasta::baked();
+        let generators = Pasta::host_generators(pasta);
+
+        let stage = StageObject::<R>::new(1, 3).unwrap();
+        let blind = Fp::ZERO;
+
+        let challenges = [Fp::from(42u64), Fp::from(123u64), Fp::from(456u64)];
+        let mut rx: structured::Polynomial<Fp, R> = structured::Polynomial::new();
+        {
+            let rx = rx.forward();
+
+            rx.a.push(Fp::ZERO);
+            rx.b.push(Fp::ZERO);
+            rx.c.push(Fp::ZERO);
+
+            rx.a.push(Fp::ZERO);
+            rx.b.push(Fp::ZERO);
+            rx.c.push(Fp::ZERO);
+
+            for &challenge in &challenges {
+                rx.a.push(challenge);
+                rx.b.push(Fp::ZERO);
+                rx.c.push(Fp::ZERO);
+            }
+        }
+
+        let poly_commitment: EqAffine = rx.commit(generators, blind);
+
+        let mut manual_commitment = EqAffine::identity();
+        for (i, &challenge) in challenges.iter().enumerate() {
+            let a_gen = stage.generator_for_a_coefficient(generators, i);
+            let contrib = a_gen * challenge;
+            manual_commitment = (manual_commitment.to_curve() + contrib).to_affine();
+        }
+
+        assert_eq!(
+            poly_commitment, manual_commitment,
+            "A-only commitment should match for challenge smuggling"
+        );
     }
 }
