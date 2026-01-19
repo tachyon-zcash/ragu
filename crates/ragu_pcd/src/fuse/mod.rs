@@ -206,6 +206,10 @@ impl<'rx, C: Cycle, R: Rank> Source for FuseProofSource<'rx, C, R> {
                 &self.left.circuits.compute_v_rx,
                 &self.right.circuits.compute_v_rx,
             ),
+            EndoscaleChallenges => (
+                &self.left.circuits.endoscale_challenges_rx,
+                &self.right.circuits.endoscale_challenges_rx,
+            ),
             Preamble => (
                 &self.left.preamble.native_rx,
                 &self.right.preamble.native_rx,
