@@ -20,6 +20,7 @@ use crate::{
 };
 
 use super::{Wire, WireSum};
+use crate::DriverExt;
 
 struct Collector<F: Field, R: Rank> {
     result: unstructured::Polynomial<F, R>,
@@ -164,10 +165,12 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     let mut outputs = vec![];
     let (io, _) = circuit.witness(&mut collector, Empty)?;
     io.write(&mut collector, &mut outputs)?;
+    // Bind circuit witness outputs to k(Y) coefficients k_j
     for output in outputs {
-        collector.enforce_zero(|lc| lc.add(output.wire()))?;
+        collector.enforce_public_output(|lc| lc.add(output.wire()))?;
     }
-    collector.enforce_zero(|lc| lc.add(&one))?;
+    // Bind constant ONE wire to k_0 (=1)
+    collector.enforce_one(|lc| lc.add(&one))?;
 
     collector.result[0..collector.linear_constraints].reverse();
     assert_eq!(collector.result[0], collector.one);

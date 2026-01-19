@@ -11,7 +11,7 @@ use ragu_primitives::GadgetExt;
 
 use alloc::vec;
 
-use crate::{Circuit, polynomials::Rank};
+use crate::{Circuit, DriverExt, polynomials::Rank};
 
 use super::{Wire, WireSum};
 
@@ -163,10 +163,12 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(circuit: &C, x: F, y: F, key: F) -
 
     let (io, _) = circuit.witness(&mut dr, Empty)?;
     io.write(&mut dr, &mut outputs)?;
+    // Bind circuit witness outputs to k(Y) coefficients k_j
     for output in outputs {
-        dr.enforce_zero(|lc| lc.add(output.wire()))?;
+        dr.enforce_public_output(|lc| lc.add(output.wire()))?;
     }
-    dr.enforce_zero(|lc| lc.add(&one))?;
+    // Bind constant ONE wire to k_0 (=1)
+    dr.enforce_one(|lc| lc.add(&one))?;
 
     Ok(dr.result)
 }

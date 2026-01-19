@@ -13,7 +13,7 @@ use alloc::{vec, vec::Vec};
 use core::cell::RefCell;
 
 use crate::{
-    Circuit,
+    Circuit, DriverExt,
     polynomials::{Rank, structured},
 };
 
@@ -334,10 +334,12 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
             let (io, _) = circuit.witness(&mut collector, Empty)?;
             io.write(&mut collector, &mut outputs)?;
 
+            // Bind circuit witness outputs to k(Y) coefficients k_j
             for output in outputs {
-                collector.enforce_zero(|lc| lc.add(output.wire()))?;
+                collector.enforce_public_output(|lc| lc.add(output.wire()))?;
             }
-            collector.enforce_zero(|lc| lc.add(&one))?;
+            // Bind constant ONE wire to k_0 (=1)
+            collector.enforce_one(|lc| lc.add(&one))?;
             assert_eq!(collector.linear_constraints, num_linear_constraints);
         }
 

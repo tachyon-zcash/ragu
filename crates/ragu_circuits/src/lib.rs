@@ -170,3 +170,51 @@ pub trait CircuitObject<F: Field, R: Rank>: Send + Sync {
     /// Returns the number of constraints: `(multiplication, linear)`.
     fn constraint_counts(&self) -> (usize, usize);
 }
+
+/// Extension trait for drivers for internal use, **NOT for circuit implementors**.
+///
+/// User-defined circuits takes `dr: Driver` to specify internal constraints,
+/// but the enforcement of public outputs and constant ONE bindings are left to
+/// Ragu's drivers (e.g., `s::sxy::Collector`) that wrap the inner circuits.
+///
+/// # Default Behavior
+///
+/// For now, this trait is only implemented by wiring polynomial evaluation driver
+/// under `s` module. Enforcing public inputs is just accumulating evaluations
+/// of another linear constraint (no different from others), thus both methods
+/// default to call `enforce_zero`.
+///
+/// However, future drivers may override these methods. For example, circuit
+/// simulators that also track public inputs enforcement. For them, enforcing
+/// public outputs are semantically different from `enforce_zero`.
+pub(crate) trait DriverExt<'dr>: Driver<'dr> {
+    /// Binds a circuit output wires (i.e. the output of [`Circuit::witness`])
+    /// to the public output values (i.e. `k_j` for `j \in {1,..., q-1}` where
+    /// `q` is the number of linear constraints).
+    ///
+    /// # Invocation Order
+    ///
+    /// Invoke with the output wires in the same order as the serialized output
+    /// of `Circuit::instance`. Also make sure to invoke before `enforce_one`,
+    /// so that the order of public outputs matches that of coefficients in k(Y).
+    /// See [`ky::eval`] for details.
+    fn enforce_public_output(
+        &mut self,
+        lc: impl Fn(Self::LCenforce) -> Self::LCenforce,
+    ) -> Result<()> {
+        self.enforce_zero(lc)
+    }
+
+    /// Binds the constant ONE wire to k_0 in the public input polynomial `k(Y)`.
+    ///
+    /// # Invocation Order
+    ///
+    /// Make sure to invoke after `enforce_public_input`, so that the order
+    /// of public outputs matches the order of coefficients in k(Y).
+    /// See [`ky::eval`] for details.
+    fn enforce_one(&mut self, lc: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
+        self.enforce_zero(lc)
+    }
+}
+
+impl<'dr, D: Driver<'dr>> DriverExt<'dr> for D {}
