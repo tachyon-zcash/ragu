@@ -63,11 +63,12 @@ fn test_internal_circuit_constraint_counts() {
         }};
     }
 
-    check_constraints!(Hashes1Circuit,         mul = 2045, lin = 3423);
-    check_constraints!(Hashes2Circuit,         mul = 1879, lin = 2952);
-    check_constraints!(PartialCollapseCircuit, mul = 1756, lin = 1919);
-    check_constraints!(FullCollapseCircuit,    mul = 811 , lin = 809);
-    check_constraints!(ComputeVCircuit,        mul = 1404, lin = 2280);
+    check_constraints!(Hashes1Circuit,              mul = 2045, lin = 3423);
+    check_constraints!(Hashes2Circuit,              mul = 1879, lin = 2952);
+    check_constraints!(PartialCollapseCircuit,      mul = 1756, lin = 1919);
+    check_constraints!(FullCollapseCircuit,         mul = 811 , lin = 809);
+    check_constraints!(ComputeVCircuit,             mul = 1412, lin = 2288);
+    check_constraints!(EndoscaleChallengesCircuit,  mul = 1339, lin = 1864);
 }
 
 #[rustfmt::skip]
@@ -83,8 +84,8 @@ fn test_internal_stage_parameters() {
     check_stage!(Preamble, skip =   0, num = 225);
     check_stage!(ErrorN,  skip = 225, num = 186);
     check_stage!(ErrorM,  skip = 411, num = 399);
-    check_stage!(Query,   skip = 225, num =  34);
-    check_stage!(Eval,    skip = 259, num =  18);
+    check_stage!(Query,   skip = 225, num =  37);
+    check_stage!(Eval,    skip = 262, num =  19);
 }
 
 /// Helper test to print current constraint counts in copy-pasteable format.
@@ -113,6 +114,10 @@ fn print_internal_circuit_constraint_counts() {
             InternalCircuitIndex::FullCollapseCircuit,
         ),
         ("ComputeVCircuit", InternalCircuitIndex::ComputeVCircuit),
+        (
+            "EndoscaleChallengesCircuit",
+            InternalCircuitIndex::EndoscaleChallengesCircuit,
+        ),
     ];
 
     println!("\n// Copy-paste the following into test_internal_circuit_constraint_counts:");

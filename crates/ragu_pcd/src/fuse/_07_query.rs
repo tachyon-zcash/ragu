@@ -78,6 +78,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 partial_collapse_circuit: mesh_at(PartialCollapseCircuit),
                 full_collapse_circuit: mesh_at(FullCollapseCircuit),
                 compute_v_circuit: mesh_at(ComputeVCircuit),
+                endoscale_challenges_circuit: mesh_at(EndoscaleChallengesCircuit),
             },
             mesh_wxy: mesh_xy_poly.eval(w),
             left: query::ChildEvaluationsWitness::from_proof(

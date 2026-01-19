@@ -421,6 +421,10 @@ impl<'a, 'dr, D: Driver<'dr>> Source for EvaluationSource<'a, 'dr, D> {
                 self.left.compute_v.to_eval(),
                 self.right.compute_v.to_eval(),
             ),
+            EndoscaleChallenges => (
+                self.left.endoscale_challenges.to_eval(),
+                self.right.endoscale_challenges.to_eval(),
+            ),
             Preamble => (self.left.preamble.to_eval(), self.right.preamble.to_eval()),
             ErrorM => (self.left.error_m.to_eval(), self.right.error_m.to_eval()),
             ErrorN => (self.left.error_n.to_eval(), self.right.error_n.to_eval()),
