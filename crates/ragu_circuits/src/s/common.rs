@@ -19,46 +19,46 @@ use arithmetic::Coeff;
 use ff::Field;
 use ragu_core::drivers::LinearExpression;
 
-/// An evaluated value at a wire position.
+/// Represents a wire's evaluated monomial during polynomial synthesis.
 ///
-/// During polynomial evaluation, this type represents the evaluated value of a
-/// wire in the wiring polynomial $s(X, Y)$. Unlike traditional wire handles
-/// that index into a constraint system, a `WireEval` directly contains the
-/// computed value at a particular position in the polynomial.
+/// In the wiring polynomial $s(X, Y)$, each wire corresponds to a monomial
+/// $x^j$ for some exponent $j$. When evaluating $s(x, y)$ at concrete points,
+/// wires become field elements rather than indices.
 ///
 /// # Variants
 ///
-/// * `Value(F)` - The evaluated value of a wire (or linear combination of wires
-///   from [`Driver::add`]).
-/// * `One` - A special variant that corresponds to the ONE wire.
+/// - `Value(F)` — Holds the evaluated monomial for a wire from [`Driver::mul`],
+///   or a linear combination of such evaluations from [`Driver::add`].
 ///
-/// Note that `One` here has nothing to do with $x^0 = 1$ (the constant term).
-/// During circuit arithmetization, the `ONE` wire corresponds to a specific term
-/// in the overall wiring polynomial $s(X, Y)$. While the evaluation of this
-/// wire depends on evaluation point $x$ (or $y$), the type system requires
-/// `const Driver::ONE: Wire` to be a constant value. Thus we introduce this
-/// special variant to represent the evaluation for the `ONE` wire.
-/// Technically, `WireEval::One` is another `WireEval::Value(_)`.
+/// - `One` — Represents the ONE wire. This variant exists because
+///   `const Driver::ONE` must be a compile-time constant, but the ONE wire's
+///   actual evaluation (e.g., $x^{4n-1}$) depends on the evaluation point.
+///   [`WireEvalSum::add_term`] resolves `One` to the cached evaluation at
+///   runtime.
 ///
-/// # Relationship to `Driver::Wire`
-///
-/// When a circuit is executed under a standard constraint system driver,
-/// `Wire` represents an index. When executed under a polynomial evaluation
-/// driver (like `Evaluator`), `Wire` is bound to this `WireEval` type,
-/// allowing the same gadget code to compute polynomial evaluations instead
-/// of building constraints.
-///
+/// [`Driver::mul`]: ragu_core::drivers::Driver::mul
 /// [`Driver::add`]: ragu_core::drivers::Driver::add
+/// [`WireEvalSum::add_term`]: WireEvalSum::add_term
 #[derive(Clone)]
 pub(super) enum WireEval<F> {
     Value(F),
     One,
 }
 
-/// Accumulates linear combinations of wire evaluations during polynomial evaluation.
+/// An accumulator for linear combinations of [`WireEval`]s during polynomial evaluation.
+///
+/// Implements [`LinearExpression`] to support [`Driver::add`], which builds
+/// linear combinations of wires. The accumulator tracks both the running sum
+/// and the context needed to resolve [`WireEval::One`] variants.
+///
+/// [`Driver::add`]: ragu_core::drivers::Driver::add
 pub(super) struct WireEvalSum<F: Field> {
+    /// Running sum of accumulated wire evaluations.
     pub(super) value: F,
+    /// Cached evaluation of the ONE wire, used to resolve [`WireEval::One`].
     one: F,
+    /// Coefficient multiplier for subsequently added terms; supports nested
+    /// [`Driver::add`](ragu_core::drivers::Driver::add) calls.
     gain: Coeff<F>,
 }
 
