@@ -24,9 +24,9 @@ use alloc::vec;
 
 use crate::{Circuit, polynomials::Rank};
 
-use super::{Monomial, MonomialSum};
+use super::{WireEval, WireEvalSum};
 
-/// Driver that computes the full evaluation $s(x, y)$.
+/// A driver that computes the full evaluation $s(x, y)$.
 struct Evaluator<F, R> {
     result: F,
     multiplication_constraints: usize,
@@ -38,23 +38,23 @@ struct Evaluator<F, R> {
     current_u_x: F, // x^{2 * n - 1 - i}
     current_v_x: F, // x^{2 * n + i}
     current_w_x: F, // x^{4 * n - 1 - i}
-    available_b: Option<Monomial<F>>,
+    available_b: Option<WireEval<F>>,
     _marker: core::marker::PhantomData<R>,
 }
 
 impl<F: Field, R: Rank> DriverTypes for Evaluator<F, R> {
     type MaybeKind = Empty;
-    type LCadd = MonomialSum<F>;
-    type LCenforce = MonomialSum<F>;
+    type LCadd = WireEvalSum<F>;
+    type LCenforce = WireEvalSum<F>;
     type ImplField = F;
-    type ImplWire = Monomial<F>;
+    type ImplWire = WireEval<F>;
 }
 
 impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<F, R> {
     type F = F;
-    type Wire = Monomial<F>;
+    type Wire = WireEval<F>;
 
-    const ONE: Self::Wire = Monomial::One;
+    const ONE: Self::Wire = WireEval::One;
 
     fn alloc(&mut self, _: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
         if let Some(wire) = self.available_b.take() {
@@ -85,11 +85,11 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<F, R> {
         self.current_v_x *= self.x;
         self.current_w_x *= self.x_inv;
 
-        Ok((Monomial::Value(a), Monomial::Value(b), Monomial::Value(c)))
+        Ok((WireEval::Value(a), WireEval::Value(b), WireEval::Value(c)))
     }
 
     fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {
-        Monomial::Value(lc(MonomialSum::new(self.one)).value)
+        WireEval::Value(lc(WireEvalSum::new(self.one)).value)
     }
 
     fn enforce_zero(&mut self, lc: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
@@ -100,7 +100,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<F, R> {
         self.linear_constraints += 1;
 
         self.result *= self.y;
-        self.result += lc(MonomialSum::new(self.one)).value;
+        self.result += lc(WireEvalSum::new(self.one)).value;
 
         Ok(())
     }

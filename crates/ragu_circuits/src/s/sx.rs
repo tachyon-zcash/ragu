@@ -18,7 +18,7 @@
 //!   ($x^{2n-1-i}$, $x^{2n+i}$, $x^{4n-1-i}$ for the $i$-th multiplication gate).
 //!
 //! - `add()`: accumulates a linear combination of these evaluations and returns
-//!   the sum (actually `MonomialSum`) as a handle to the virtual wire.
+//!   the sum as a handle to the virtual wire.
 //!
 //! - `enforce_zero()`: stores the accumulated sum as coefficient $c_j$ and
 //!   advances to the next constraint.
@@ -48,9 +48,9 @@ use crate::{
     },
 };
 
-use super::{Monomial, MonomialSum};
+use super::{WireEval, WireEvalSum};
 
-/// Driver that computes the partial evaluation $s(x, Y)$.
+/// A driver that computes the partial evaluation $s(x, Y)$.
 struct Evaluator<F: Field, R: Rank> {
     result: unstructured::Polynomial<F, R>,
     multiplication_constraints: usize,
@@ -61,23 +61,23 @@ struct Evaluator<F: Field, R: Rank> {
     current_u_x: F, // x^{2 * n - 1 - i}
     current_v_x: F, // x^{2 * n + i}
     current_w_x: F, // x^{4 * n - 1 - i}
-    available_b: Option<Monomial<F>>,
+    available_b: Option<WireEval<F>>,
     _marker: core::marker::PhantomData<R>,
 }
 
 impl<F: Field, R: Rank> DriverTypes for Evaluator<F, R> {
     type MaybeKind = Empty;
-    type LCadd = MonomialSum<F>;
-    type LCenforce = MonomialSum<F>;
+    type LCadd = WireEvalSum<F>;
+    type LCenforce = WireEvalSum<F>;
     type ImplField = F;
-    type ImplWire = Monomial<F>;
+    type ImplWire = WireEval<F>;
 }
 
 impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<F, R> {
     type F = F;
-    type Wire = Monomial<F>;
+    type Wire = WireEval<F>;
 
-    const ONE: Self::Wire = Monomial::One;
+    const ONE: Self::Wire = WireEval::One;
 
     fn alloc(&mut self, _: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
         if let Some(monomial) = self.available_b.take() {
@@ -108,11 +108,11 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<F, R> {
         self.current_v_x *= self.x;
         self.current_w_x *= self.x_inv;
 
-        Ok((Monomial::Value(a), Monomial::Value(b), Monomial::Value(c)))
+        Ok((WireEval::Value(a), WireEval::Value(b), WireEval::Value(c)))
     }
 
     fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {
-        Monomial::Value(lc(MonomialSum::new(self.one)).value)
+        WireEval::Value(lc(WireEvalSum::new(self.one)).value)
     }
 
     fn enforce_zero(&mut self, lc: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
@@ -122,7 +122,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<F, R> {
         }
         self.linear_constraints += 1;
 
-        self.result[q] = lc(MonomialSum::new(self.one)).value;
+        self.result[q] = lc(WireEvalSum::new(self.one)).value;
 
         Ok(())
     }
