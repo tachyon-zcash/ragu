@@ -8,10 +8,9 @@ Ragu employs a Fiat-Shamir transform to make the interactive proof protocol non-
 
 ## Transcript Construction
 
-Ragu's transcript construction differs from standard sponge-based approaches:
+Ragu's transcript construction:
 
-- **Single hash function over $\F_p$**: All transcript operations use a single Poseidon instance over the circuit field
-- **Fixed-length hash usage**: The Poseidon permutation is effectively used as a fixed-length hash rather than as a full sponge construction
+- **Single hash function over $\F_p$**: All transcript operations use a single Poseidon instance over the circuit field as a standard sponge construction
 - **Hybrid commitment scheme**: The transcript combines two cryptographic primitives:
   - **Pedersen commitments**: Staging polynomials create Pedersen vector commitments (collision-resistant hashes of witness data)
   - **Poseidon hashing**: These commitments, along with other protocol elements, are absorbed into the Poseidon-based transcript

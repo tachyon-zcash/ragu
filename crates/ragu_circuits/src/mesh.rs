@@ -300,6 +300,11 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
     }
 
     /// Compute a digest of this mesh.
+    ///
+    /// The mesh polynomial is evaluated at multiple challenge points, and these
+    /// evaluations are absorbed into a Poseidon sponge. New challenges are then
+    /// squeezed out and used for subsequent evaluations, creating a Fiat-Shamir-style
+    /// transcript that models Poseidon as a random oracle.
     fn compute_mesh_digest<P: PoseidonPermutation<F>>(&self, poseidon: &P) -> F {
         Emulator::emulate_wireless((), |dr, _| {
             // Placeholder "nothing-up-my-sleeve challenges" (small primes).
