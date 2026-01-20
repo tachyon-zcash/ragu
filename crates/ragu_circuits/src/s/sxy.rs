@@ -24,7 +24,7 @@ use alloc::vec;
 
 use crate::{Circuit, polynomials::Rank};
 
-use super::{WireEval, WireEvalSum};
+use super::common::{WireEval, WireEvalSum};
 
 /// A driver that computes the full evaluation $s(x, y)$.
 struct Evaluator<F, R> {

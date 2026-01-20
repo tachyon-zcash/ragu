@@ -48,7 +48,7 @@ use crate::{
     },
 };
 
-use super::{WireEval, WireEvalSum};
+use super::common::{WireEval, WireEvalSum};
 
 /// A driver that computes the partial evaluation $s(x, Y)$.
 struct Evaluator<F: Field, R: Rank> {
