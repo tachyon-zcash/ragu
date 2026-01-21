@@ -94,7 +94,7 @@
 //!
 //! ### Final Stage
 //!
-//! The final witness circuit is implemented using the [`MultiStageCircuit`] trait,
+//! The [`MultiStageCircuit`] trait implements the overall circuit witness (combining all stages),
 //! which is similar to the [`Circuit`] trait. The notable difference is that
 //! during witness generation the circuit has access to a [`StageBuilder`] which
 //! is used to load stages into the circuit synthesis according to the
