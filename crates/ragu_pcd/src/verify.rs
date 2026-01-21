@@ -47,8 +47,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             return Ok(false);
         }
 
-        // Compute unified k(y), unified_bridge k(y), and application k(y).
-        let (unified_ky, unified_bridge_ky, application_ky) =
+        // Compute unified k(y), unified_bridge k(y), application k(y), and endoscale k(y).
+        let (unified_ky, unified_bridge_ky, application_ky, endoscale_ky) =
             Emulator::emulate_wireless((&pcd.proof, pcd.data.clone(), y), |dr, witness| {
                 let (proof, data, y) = witness.cast();
                 let y = Element::alloc(dr, y)?;
@@ -59,8 +59,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 let unified_ky = *unified_ky.value().take();
                 let unified_bridge_ky = *unified_bridge_ky.value().take();
                 let application_ky = *proof_inputs.application_ky(dr, &y)?.value().take();
+                let endoscale_ky = *proof_inputs.endoscale_ky(dr, &y)?.value().take();
 
-                Ok((unified_ky, unified_bridge_ky, application_ky))
+                Ok((unified_ky, unified_bridge_ky, application_ky, endoscale_ky))
             })?;
 
         // Build a and b polynomials for each revdot claim.
@@ -75,6 +76,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 application_ky,
                 unified_bridge_ky,
                 unified_ky,
+                endoscale_ky,
             };
 
             native::ky_values(&ky_source)
@@ -180,6 +182,7 @@ mod native {
         pub application_ky: F,
         pub unified_bridge_ky: F,
         pub unified_ky: F,
+        pub endoscale_ky: F,
     }
 
     impl<F: Field> KySource for SingleProofKySource<F> {
@@ -199,6 +202,10 @@ mod native {
 
         fn unified_ky(&self) -> impl Iterator<Item = F> + Clone {
             once(self.unified_ky)
+        }
+
+        fn endoscale_ky(&self) -> impl Iterator<Item = F> {
+            once(self.endoscale_ky)
         }
 
         fn zero(&self) -> F {

@@ -141,6 +141,36 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         let suffix = &self.output_header[HEADER_SIZE - 1];
         suffix.is_equal(dr, &Element::one())
     }
+
+    /// Compute k(y) for the endoscale_challenges circuit instance.
+    ///
+    /// The endoscale_challenges circuit outputs `(unified, y_coeff, 0, z_coeff, 0, suffix)`
+    /// where y_coeff and z_coeff are field-scaled endoscalars derived from the y and z
+    /// challenges. This computes the k(y) value that accounts for those smuggled coefficients.
+    pub fn endoscale_ky(&self, dr: &mut D, y: &Element<'dr, D>) -> Result<Element<'dr, D>>
+    where
+        D::F: ff::WithSmallOrderMulGroup<3>,
+    {
+        use ragu_primitives::{compute_endoscalar, extract_endoscalar};
+
+        // Get the y and z challenges from the unified instance
+        let challenge_y = *self.unified.y.value().take();
+        let challenge_z = *self.unified.z.value().take();
+
+        // Compute field-scaled endoscalars (same as what the circuit does)
+        let y_coeff: D::F = compute_endoscalar(extract_endoscalar(challenge_y));
+        let z_coeff: D::F = compute_endoscalar(extract_endoscalar(challenge_z));
+
+        // Build k(y) for (unified, y_coeff, 0, z_coeff, 0, suffix=0)
+        let mut ky = Ky::new(y);
+        self.unified.write(dr, &mut ky)?;
+        Element::constant(dr, y_coeff).write(dr, &mut ky)?;
+        Element::zero(dr).write(dr, &mut ky)?; // y_zero
+        Element::constant(dr, z_coeff).write(dr, &mut ky)?;
+        Element::zero(dr).write(dr, &mut ky)?; // z_zero
+        Element::zero(dr).write(dr, &mut ky)?; // suffix
+        ky.finish(dr)
+    }
 }
 
 impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize>

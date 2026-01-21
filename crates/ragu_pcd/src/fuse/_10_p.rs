@@ -156,6 +156,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     proof.circuits.compute_v_blind,
                     proof.circuits.compute_v_commitment,
                 );
+                acc.acc(
+                    &proof.circuits.endoscale_challenges_rx,
+                    proof.circuits.endoscale_challenges_blind,
+                    proof.circuits.endoscale_challenges_commitment,
+                );
             }
 
             acc.acc(
