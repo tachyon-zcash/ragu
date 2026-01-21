@@ -70,7 +70,7 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     {
         // preamble stage
         registry = registry
-            .register_circuit_object(stages::preamble::Stage::<C, R, HEADER_SIZE>::into_object()?)?;
+            .register_circuit_object(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)?;
 
         // error_m stage
         registry = registry.register_circuit_object(stages::error_m::Stage::<
@@ -78,7 +78,7 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             R,
             HEADER_SIZE,
             NativeParameters,
-        >::into_object()?)?;
+        >::mask()?)?;
 
         // error_n stage
         registry = registry.register_circuit_object(stages::error_n::Stage::<
@@ -86,15 +86,15 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             R,
             HEADER_SIZE,
             NativeParameters,
-        >::into_object()?)?;
+        >::mask()?)?;
 
         // query stage
-        registry = registry
-            .register_circuit_object(stages::query::Stage::<C, R, HEADER_SIZE>::into_object()?)?;
+        registry =
+            registry.register_circuit_object(stages::query::Stage::<C, R, HEADER_SIZE>::mask()?)?;
 
         // eval stage
-        registry = registry
-            .register_circuit_object(stages::eval::Stage::<C, R, HEADER_SIZE>::into_object()?)?;
+        registry =
+            registry.register_circuit_object(stages::eval::Stage::<C, R, HEADER_SIZE>::mask()?)?;
     }
 
     // Insert the "final stage polynomials" for each stage.
@@ -108,7 +108,7 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             R,
             HEADER_SIZE,
             NativeParameters,
-        >::final_into_object()?)?;
+        >::final_mask()?)?;
 
         // preamble -> error_n -> [CIRCUIT] (hashes_1, hashes_2, full_collapse)
         registry = registry.register_circuit_object(stages::error_n::Stage::<
@@ -116,12 +116,11 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             R,
             HEADER_SIZE,
             NativeParameters,
-        >::final_into_object()?)?;
+        >::final_mask()?)?;
 
         // preamble -> query -> eval -> [CIRCUIT] (compute_v)
-        registry = registry.register_circuit_object(
-            stages::eval::Stage::<C, R, HEADER_SIZE>::final_into_object()?,
-        )?;
+        registry = registry
+            .register_circuit_object(stages::eval::Stage::<C, R, HEADER_SIZE>::final_mask()?)?;
     }
 
     // Insert the internal circuits.
