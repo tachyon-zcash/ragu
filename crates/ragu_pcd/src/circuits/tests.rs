@@ -174,7 +174,7 @@ fn test_native_mesh_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fp!(0x1277dee2ad8fa4dddc022539e29ed544f6cd96261ee1baaa22819611e9e3e593);
+    let expected = fp!(0x0552d54111d86d2eac11a6b457c48b38e8c77a5156934226e94c7fd6508341e2);
 
     assert_eq!(
         app.native_mesh.get_key(),
@@ -198,7 +198,7 @@ fn test_nested_mesh_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fq!(0x0a8eeda61431380b0121a2a396891b6441a8314d1ceb4c59b595a369933d3403);
+    let expected = fq!(0x23a59efeef759f7c0882ee8542c5d642b8c5900941cf397299956deb35aa846a);
 
     assert_eq!(
         app.nested_mesh.get_key(),
