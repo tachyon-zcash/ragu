@@ -9,11 +9,28 @@
 //!
 //! In contrast, [`sy`] requires deferred computation through a virtual wire
 //! system with reference counting, because $s(X, y)$ coefficients cannot be
-//! computed in streaming order during synthesis (see [`sy`] module documentation).
+//! computed in streaming order during synthesis (see [`sy`] module
+//! documentation).
+//!
+//! ### Immediate Evaluation
+//!
+//! Both [`sx`] and [`sxy`] evaluate the wiring polynomial by interpreting
+//! circuit synthesis operations directly. Wires become evaluated monomials
+//! (field elements) rather than indices, and linear combinations become
+//! immediate field arithmetic.
+//!
+//! ### `ONE` Wire Evaluation
+//!
+//! The `ONE` wire corresponds to the $c$ wire from gate 0, with monomial $x^{4n
+//! - 1}$. Since [`Driver::ONE`] must be a compile-time constant, it cannot hold
+//! this computed value. Instead, [`WireEval::One`] serves as a sentinel that
+//! [`WireEvalSum::add_term`] resolves to the cached $x^{4n - 1}$ value at
+//! runtime.
 //!
 //! [`sx`]: super::sx
 //! [`sxy`]: super::sxy
 //! [`sy`]: super::sy
+//! [`Driver::ONE`]: ragu_core::drivers::Driver::ONE
 
 use arithmetic::Coeff;
 use ff::Field;
@@ -30,9 +47,9 @@ use ragu_core::drivers::LinearExpression;
 /// - `Value(F)` — Holds the evaluated monomial for a wire from [`Driver::mul`],
 ///   or a linear combination of such evaluations from [`Driver::add`].
 ///
-/// - `One` — Represents the ONE wire. This variant exists because
-///   `const Driver::ONE` must be a compile-time constant, but the ONE wire's
-///   actual evaluation (e.g., $x^{4n-1}$) depends on the evaluation point.
+/// - `One` — Represents the ONE wire. This variant exists because `Driver::ONE`
+///   must be a compile-time constant, but the `ONE` wire's actual evaluation
+///   (e.g., $x^{4n-1}$) depends on the evaluation point.
 ///   [`WireEvalSum::add_term`] resolves `One` to the cached evaluation at
 ///   runtime.
 ///
@@ -45,7 +62,8 @@ pub(super) enum WireEval<F> {
     One,
 }
 
-/// An accumulator for linear combinations of [`WireEval`]s during polynomial evaluation.
+/// An accumulator for linear combinations of [`WireEval`]s during polynomial
+/// evaluation.
 ///
 /// Implements [`LinearExpression`] to support [`Driver::add`], which builds
 /// linear combinations of wires. The accumulator tracks both the running sum
@@ -55,10 +73,11 @@ pub(super) enum WireEval<F> {
 pub(super) struct WireEvalSum<F: Field> {
     /// Running sum of accumulated wire evaluations.
     pub(super) value: F,
-    /// Cached evaluation of the ONE wire, used to resolve [`WireEval::One`].
+
+    /// Cached evaluation of the `ONE` wire, used to resolve [`WireEval::One`].
     one: F,
-    /// Coefficient multiplier for subsequently added terms; supports nested
-    /// [`Driver::add`](ragu_core::drivers::Driver::add) calls.
+
+    /// Coefficient multiplier for subsequently added terms.
     gain: Coeff<F>,
 }
 

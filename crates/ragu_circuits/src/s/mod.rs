@@ -12,10 +12,10 @@
 //! The full wiring polynomial $s(X, Y)$ can be written as
 //!
 //! $$
-//! s(X, Y) = \sum_{j=0}^{q-1} Y^j \left(\sum_{i=0}^{n-1} (
-//!   \mathbf{u}\_{i,j} X^{2n-1-i} +
-//!   \mathbf{v}\_{i,j} X^{2n+i} +
-//!   \mathbf{w}\_{i,j} X^{4n-1-i}
+//! s(X, Y) = \sum_{j = 0}^{q - 1} Y^j \left(\sum_{i = 0}^{n - 1} (
+//!   \mathbf{u}\_{i,j} X^{2n - 1 - i} +
+//!   \mathbf{v}\_{i,j} X^{2n + i} +
+//!   \mathbf{w}\_{i,j} X^{4n - 1 - i}
 //! )\right)
 //! $$
 //!
