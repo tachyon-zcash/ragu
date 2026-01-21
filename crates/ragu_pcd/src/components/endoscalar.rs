@@ -435,9 +435,9 @@ mod tests {
 
             let staged = Staged::new(step_circuit.clone());
 
-            let endoscalar_s = EndoscalarStage::into_object()?;
-            let points_s = PointsStage::<EpAffine, NUM_POINTS>::into_object()?;
-            let final_s = PointsStage::<EpAffine, NUM_POINTS>::final_into_object()?;
+            let endoscalar_mask = EndoscalarStage::mask()?;
+            let points_mask = PointsStage::<EpAffine, NUM_POINTS>::mask()?;
+            let final_mask = PointsStage::<EpAffine, NUM_POINTS>::final_mask()?;
 
             let endoscalar_rx = <EndoscalarStage as StageExt<Fp, R>>::rx(endoscalar)?;
             let points_rx = <PointsStage<EpAffine, NUM_POINTS> as StageExt<Fp, R>>::rx(&points)?;
@@ -455,9 +455,9 @@ mod tests {
             let y = Fp::random(thread_rng());
 
             // Verify revdot identities for each stage.
-            assert_eq!(endoscalar_rx.revdot(&endoscalar_s.sy(y, key)), Fp::ZERO);
-            assert_eq!(points_rx.revdot(&points_s.sy(y, key)), Fp::ZERO);
-            assert_eq!(final_rx.revdot(&final_s.sy(y, key)), Fp::ZERO);
+            assert_eq!(endoscalar_rx.revdot(&endoscalar_mask.sy(y, key)), Fp::ZERO);
+            assert_eq!(points_rx.revdot(&points_mask.sy(y, key)), Fp::ZERO);
+            assert_eq!(final_rx.revdot(&final_mask.sy(y, key)), Fp::ZERO);
 
             // Verify combined circuit identity.
             let mut lhs = final_rx.clone();

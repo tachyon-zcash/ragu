@@ -9,13 +9,13 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub struct StageObject<R: Rank> {
+pub struct StageMask<R: Rank> {
     skip_multiplications: usize,
     num_multiplications: usize,
     _marker: core::marker::PhantomData<R>,
 }
 
-impl<R: Rank> StageObject<R> {
+impl<R: Rank> StageMask<R> {
     /// Creates a new staging circuit polynomial with the given
     /// `skip_multiplications` and `num_multiplications` values. Witnesses that
     /// satisfy this circuit will have all non-`ONE` multiplication gate wires
@@ -35,11 +35,11 @@ impl<R: Rank> StageObject<R> {
         })
     }
 
-    /// Creates a new staging circuit polynomial with the given
+    /// Creates the final staging circuit polynomial with the given
     /// `skip_multiplications` and maximum possible multiplications.
     /// The number of multiplications will be `R::n() - skip_multiplications - 1`,
     /// which is the maximum before bounds are reached.
-    pub fn new_max(skip_multiplications: usize) -> Result<Self> {
+    pub fn new_final(skip_multiplications: usize) -> Result<Self> {
         if skip_multiplications + 1 > R::n() {
             return Err(ragu_core::Error::MultiplicationBoundExceeded(R::n()));
         }
@@ -55,9 +55,9 @@ impl<R: Rank> StageObject<R> {
     }
 }
 
-impl<F: Field, R: Rank> CircuitObject<F, R> for StageObject<R> {
+impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
     fn sxy(&self, x: F, y: F, key: F) -> F {
-        // Bound is enforced in `StageObject::new`.
+        // Bound is enforced in `StageMask::new`.
         assert!(self.skip_multiplications + self.num_multiplications < R::n());
         let reserved: usize = R::n() - self.skip_multiplications - self.num_multiplications - 1;
 
@@ -104,7 +104,7 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageObject<R> {
     }
 
     fn sx(&self, x: F, key: F) -> unstructured::Polynomial<F, R> {
-        // Bound is enforced in `StageObject::new`.
+        // Bound is enforced in `StageMask::new`.
         assert!(self.skip_multiplications + self.num_multiplications < R::n());
         let reserved: usize = R::n() - self.skip_multiplications - self.num_multiplications - 1;
 
@@ -158,7 +158,7 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageObject<R> {
     }
 
     fn sy(&self, y: F, key: F) -> structured::Polynomial<F, R> {
-        // Bound is enforced in `StageObject::new`.
+        // Bound is enforced in `StageMask::new`.
         assert!(self.skip_multiplications + self.num_multiplications < R::n());
         let reserved: usize = R::n() - self.skip_multiplications - self.num_multiplications - 1;
 
@@ -238,10 +238,10 @@ mod tests {
 
     use super::{
         super::{Stage, StageExt},
-        StageObject,
+        StageMask,
     };
 
-    impl<F: Field, R: Rank> crate::Circuit<F> for StageObject<R> {
+    impl<F: Field, R: Rank> crate::Circuit<F> for StageMask<R> {
         type Instance<'source> = ();
         type Witness<'source> = ();
         type Output = ();
@@ -356,8 +356,8 @@ mod tests {
         let rx1_b = MyStage1::rx(endoscalar_b)?;
         let rx2 = MyStage2::rx((p1, p2))?;
 
-        let circ1 = MyStage1::into_object()?;
-        let circ2 = MyStage2::into_object()?;
+        let circ1 = MyStage1::mask()?;
+        let circ2 = MyStage2::mask()?;
 
         let z = Fp::random(thread_rng());
         let y = Fp::random(thread_rng());
@@ -388,32 +388,32 @@ mod tests {
 
     #[test]
     fn test_skip_multiplications_zero() {
-        let stage_object = StageObject::<R>::new(0, 5).unwrap();
+        let stage_mask = StageMask::<R>::new(0, 5).unwrap();
 
         let x = Fp::random(thread_rng());
         let y = Fp::random(thread_rng());
         let k = Fp::random(thread_rng());
 
-        let sxy = stage_object.sxy(x, y, k);
-        let sx = stage_object.sx(x, k);
-        let sy = stage_object.sy(y, k);
+        let sxy = stage_mask.sxy(x, y, k);
+        let sx = stage_mask.sx(x, k);
+        let sy = stage_mask.sy(y, k);
 
         assert_eq!(sxy, sx.eval(y));
         assert_eq!(sxy, sy.eval(x));
     }
 
     #[test]
-    fn test_stage_object_all_multiplications() {
+    fn test_stage_mask_all_multiplications() {
         // Edge case: skip = 0, num = R::n() - 1, reserved = 0.
-        let stage = StageObject::<R>::new(0, R::n() - 1).unwrap();
+        let stage = StageMask::<R>::new(0, R::n() - 1).unwrap();
         let x = Fp::random(thread_rng());
         let y = Fp::random(thread_rng());
         let k = Fp::random(thread_rng());
 
-        let comparison = stage.clone().into_object::<R>().unwrap();
+        let comparison_mask = stage.clone().into_object::<R>().unwrap();
 
         let xn_minus_1 = x.pow_vartime([(4 * R::n() - 1) as u64]);
-        let comparison_sxy = comparison.sxy(x, y, k) - xn_minus_1;
+        let comparison_sxy = comparison_mask.sxy(x, y, k) - xn_minus_1;
 
         assert_eq!(stage.sxy(x, y, k), comparison_sxy);
     }
@@ -427,10 +427,10 @@ mod tests {
         let y = Fp::random(thread_rng());
         let k = Fp::ZERO;
 
-        let circuit_obj = circuit.into_object::<R>().unwrap();
+        let circuit_mask = circuit.into_object::<R>().unwrap();
         let x = Fp::random(thread_rng());
-        let sxy_result = circuit_obj.sy(y, k).eval(x);
-        let sxy_direct = circuit_obj.sxy(x, y, k);
+        let sxy_result = circuit_mask.sy(y, k).eval(x);
+        let sxy_direct = circuit_mask.sxy(x, y, k);
         assert_eq!(
             sxy_result, sxy_direct,
             "sy.eval(x) should match sxy(x, y, k) even with k = 0"
@@ -460,18 +460,18 @@ mod tests {
     }
 
     #[test]
-    fn test_stage_object_exact_boundary() {
-        let result = StageObject::<R>::new(R::n() - 2, 1);
+    fn test_stage_mask_exact_boundary() {
+        let result = StageMask::<R>::new(R::n() - 2, 1);
         assert!(result.is_ok(), "Should accept skip + num + 1 == R::n()");
 
-        let result = StageObject::<R>::new(R::n() - 1, 1);
+        let result = StageMask::<R>::new(R::n() - 1, 1);
         assert!(result.is_err(), "Should reject skip + num + 1 > R::n()");
     }
 
     #[test]
-    fn test_stage_object_reserved_zero() {
+    fn test_stage_mask_reserved_zero() {
         // When reserved = 0, all gates except one are used.
-        let stage = StageObject::<R>::new(0, R::n() - 1).expect("skip multiplications");
+        let stage = StageMask::<R>::new(0, R::n() - 1).expect("skip multiplications");
 
         let x = Fp::random(thread_rng());
         let y = Fp::random(thread_rng());
@@ -486,11 +486,11 @@ mod tests {
     }
 
     #[test]
-    fn test_stage_object_reserved_computation() {
+    fn test_stage_mask_reserved_computation() {
         // Check we're computing reserved correctly.
         for skip in 0..10 {
             for num in 0..(R::n() - skip - 1) {
-                let _ = StageObject::<R>::new(skip, num).expect("skip multiplications");
+                let _ = StageMask::<R>::new(skip, num).expect("skip multiplications");
                 let expected_reserved = R::n() - skip - num - 1;
 
                 let num_linear_from_gates = 3 * (skip + expected_reserved);
@@ -507,8 +507,8 @@ mod tests {
         fn test_exy_proptest(skip in 0..R::n(), num in 0..R::n()) {
             prop_assume!(skip + 1 + num <= R::n());
 
-            let stage_object = StageObject::<R>::new(skip, num).unwrap();
-            let comparison_object = stage_object.clone().into_object::<R>().unwrap();
+            let stage_mask = StageMask::<R>::new(skip, num).unwrap();
+            let comparison_mask = stage_mask.clone().into_object::<R>().unwrap();
 
             let k = Fp::random(thread_rng());
 
@@ -517,12 +517,12 @@ mod tests {
 
                 // This adjusts for the single "ONE" constraint which is always skipped
                 // in staging witnesses.
-                let sxy = comparison_object.sxy(x, y, k) - xn_minus_1;
-                let mut sx = comparison_object.sx(x, k);
+                let sxy = comparison_mask.sxy(x, y, k) - xn_minus_1;
+                let mut sx = comparison_mask.sx(x, k);
                 {
                     sx[0] -= xn_minus_1;
                 }
-                let mut sy = comparison_object.sy(y, k);
+                let mut sy = comparison_mask.sy(y, k);
                 {
                     let sy = sy.backward();
                     sy.c[0] -= Fp::ONE;
@@ -530,9 +530,9 @@ mod tests {
 
                 prop_assert_eq!(sy.eval(x), sxy);
                 prop_assert_eq!(sx.eval(y), sxy);
-                prop_assert_eq!(stage_object.sxy(x, y, k), sxy);
-                prop_assert_eq!(stage_object.sx(x, k).eval(y), sxy);
-                prop_assert_eq!(stage_object.sy(y, k).eval(x), sxy);
+                prop_assert_eq!(stage_mask.sxy(x, y, k), sxy);
+                prop_assert_eq!(stage_mask.sx(x, k).eval(y), sxy);
+                prop_assert_eq!(stage_mask.sy(y, k).eval(x), sxy);
 
                 Ok(())
             };
@@ -607,12 +607,12 @@ mod tests {
 
         let rx = ConstrainedStage::rx(valid_witness).unwrap();
 
-        let stage_obj = ConstrainedStage::into_object::<'_>().unwrap();
+        let stage_mask = ConstrainedStage::mask::<'_>().unwrap();
 
-        // rx.revdot(&stage_object) == 0 for well-formed stages
+        // rx.revdot(&stage_mask) == 0 for well-formed stages
         let y = Fp::random(thread_rng());
         let k = Fp::ONE;
-        let sy = stage_obj.sy(y, k);
+        let sy = stage_mask.sy(y, k);
 
         let check = rx.revdot(&sy);
         assert_eq!(
@@ -626,11 +626,11 @@ mod tests {
     fn test_constraint_counts_matches_metrics() {
         for skip in 0..10 {
             for num in 0..(R::n() - skip - 1) {
-                let stage_object = StageObject::<R>::new(skip, num).unwrap();
+                let stage_mask = StageMask::<R>::new(skip, num).unwrap();
                 let (mul_from_method, linear_from_method) =
-                    <StageObject<R> as CircuitObject<Fp, R>>::constraint_counts(&stage_object);
+                    <StageMask<R> as CircuitObject<Fp, R>>::constraint_counts(&stage_mask);
 
-                let metrics = metrics::eval::<Fp, _>(&stage_object).unwrap();
+                let metrics = metrics::eval::<Fp, _>(&stage_mask).unwrap();
 
                 assert_eq!(
                     mul_from_method, metrics.num_multiplication_constraints,

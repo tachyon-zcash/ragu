@@ -61,13 +61,15 @@
 //! [`StageExt::rx`] produces a staging polynomial for a given stage, given a
 //! witness. The well-formedness check can be performed by applying a revdot
 //! claim between the resulting [`Polynomial`](structured::Polynomial) and the
-//! stage's [staging object](StageExt::into_object).
+//! stage's [staging mask](StageExt::mask).
 //!
 //! ```rust,ignore
 //! let a = MyStage::rx(my_stage_witness)?;
 //!
-//! let obj = MyStage::into_object()?;
-//! assert_eq!(a.revdot(&obj), Fp::ZERO);
+//! let mask = MyStage::mask()?;
+//! let y = Fp::random(thread_rng());
+//! let mesh_key = Fp::random(thread_rng());
+//! assert_eq!(a.revdot(&mask.sy(y, mesh_key)), Fp::ZERO);
 //! ```
 //!
 //! If two or more stage polynomials must satisfy the same well-formedness
@@ -84,8 +86,10 @@
 //! combined.scale(z);
 //! combined.add_assign(&b);
 //!
-//! let obj = MyStage::into_object()?;
-//! assert_eq!(combined.revdot(&obj), Fp::ZERO);
+//! let mask = MyStage::mask()?;
+//! let y = Fp::random(thread_rng());
+//! let mesh_key = Fp::random(thread_rng());
+//! assert_eq!(combined.revdot(&mask.sy(y, mesh_key)), Fp::ZERO);
 //! ```
 //!
 //! ### Final Stage
@@ -100,7 +104,7 @@
 //! implementation of [`Circuit`] using the [`Staged`] adaptor. The resulting
 //! [`StageExt::rx`] output contains the final witness polynomial $f(X)$, which
 //! must be similarly checked to be well-formed using the
-//! [`StageExt::final_into_object`] method's staging object (obtained from the
+//! [`StageExt::final_mask`] method's staging mask (obtained from the
 //! [`StagedCircuit::Final`] implementation).
 //!
 //! ### Combining the Stages
@@ -109,7 +113,7 @@
 //! together with the final staging polynomial, producing the desired $r(X)$.
 
 mod builder;
-mod object;
+mod mask;
 
 use ff::Field;
 use ragu_core::{
@@ -263,9 +267,9 @@ impl<F: Field, R: Rank, S: StagedCircuit<F, R>> Staged<F, R, S> {
         }
     }
 
-    /// Proxy for [`S::Final::final_into_object`](StageExt::final_into_object).
-    pub fn final_into_object<'a>(&self) -> Result<Box<dyn CircuitObject<F, R> + 'a>> {
-        S::Final::final_into_object()
+    /// Proxy for [`S::Final::final_mask`](StageExt::final_mask).
+    pub fn final_mask<'a>(&self) -> Result<Box<dyn CircuitObject<F, R> + 'a>> {
+        S::Final::final_mask()
     }
 }
 
@@ -367,8 +371,8 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
     /// Staging circuits do not behave like normal circuits because they do not
     /// have a `ONE` wire and are used solely for partial witness commitments.
     /// As a result, they must be computed differently.
-    fn into_object<'a>() -> Result<Box<dyn CircuitObject<F, R> + 'a>> {
-        Ok(Box::new(object::StageObject::new(
+    fn mask<'a>() -> Result<Box<dyn CircuitObject<F, R> + 'a>> {
+        Ok(Box::new(mask::StageMask::new(
             Self::skip_multiplications(),
             Self::num_multiplications(),
         )?))
@@ -377,8 +381,8 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
     /// Creates a circuit object that can be used to enforce well-formedness
     /// checks on any final witness (stage) that has this stage as its
     /// [`StagedCircuit::Final`] stage.
-    fn final_into_object<'a>() -> Result<Box<dyn CircuitObject<F, R> + 'a>> {
-        Ok(Box::new(object::StageObject::new_max(
+    fn final_mask<'a>() -> Result<Box<dyn CircuitObject<F, R> + 'a>> {
+        Ok(Box::new(mask::StageMask::new_final(
             Self::skip_multiplications() + Self::num_multiplications(),
         )?))
     }
