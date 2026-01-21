@@ -28,11 +28,14 @@ use crate::circuits::{self, native::InternalCircuitIndex};
 /// Number of circuits using unified k(y) in [`build`].
 ///
 /// These circuits use [`unified::InternalOutputKind`]:
-/// [`hashes_2`], [`partial_collapse`], [`full_collapse`], [`compute_v`],
-/// [`endoscale_challenges`].
+/// [`hashes_2`], [`partial_collapse`], [`full_collapse`], [`compute_v`].
 ///
 /// Note: [`hashes_1`] separately uses `unified_bridge_ky` because its public
 /// inputs include child proof headers (see [`hashes_1::Output`]).
+///
+/// Note: [`endoscale_challenges`] uses a custom k(y) via [`KySource::endoscale_ky`]
+/// because its output includes smuggled challenge coefficients beyond the standard
+/// unified fields.
 ///
 /// [`hashes_1`]: crate::circuits::native::hashes_1
 /// [`hashes_1::Output`]: crate::circuits::native::hashes_1::Output
@@ -42,7 +45,7 @@ use crate::circuits::{self, native::InternalCircuitIndex};
 /// [`compute_v`]: crate::circuits::native::compute_v
 /// [`endoscale_challenges`]: crate::circuits::native::endoscale_challenges
 /// [`unified::InternalOutputKind`]: crate::circuits::native::unified::InternalOutputKind
-pub const NUM_UNIFIED_CIRCUITS: usize = 5;
+pub const NUM_UNIFIED_CIRCUITS: usize = 4;
 
 /// Enum identifying which native field rx polynomial to retrieve from a proof.
 #[derive(Clone, Copy, Debug)]
@@ -294,6 +297,13 @@ pub trait KySource {
     /// The `+ Clone` bound is required for `repeat_n` in [`ky_values`].
     fn unified_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
 
+    /// Iterator over endoscale_challenges k(y) values.
+    ///
+    /// The endoscale_challenges circuit outputs `(unified, y_coeff, 0, z_coeff, 0, suffix)`
+    /// where y_coeff and z_coeff are field-scaled endoscalars derived from the y and z
+    /// challenges. This k(y) accounts for those smuggled coefficients.
+    fn endoscale_ky(&self) -> impl Iterator<Item = Self::Ky>;
+
     /// The zero value for stage claims.
     fn zero(&self) -> Self::Ky;
 }
@@ -302,6 +312,7 @@ pub trait KySource {
 ///
 /// Chains the k(y) sources in the order required by [`build`],
 /// with `unified_ky` repeated [`NUM_UNIFIED_CIRCUITS`] times,
+/// then `endoscale_ky` for the endoscale_challenges circuit,
 /// followed by infinite zeros for stage claims.
 pub fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
     source
@@ -309,6 +320,7 @@ pub fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
         .chain(source.application_ky())
         .chain(source.unified_bridge_ky())
         .chain(repeat_n(source.unified_ky(), NUM_UNIFIED_CIRCUITS).flatten())
+        .chain(source.endoscale_ky())
         .chain(core::iter::repeat(source.zero()))
 }
 
@@ -321,6 +333,8 @@ pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
     pub right_bridge: Element<'dr, D>,
     pub left_unified: Element<'dr, D>,
     pub right_unified: Element<'dr, D>,
+    pub left_endoscale: Element<'dr, D>,
+    pub right_endoscale: Element<'dr, D>,
     pub zero: Element<'dr, D>,
 }
 
@@ -341,6 +355,10 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
 
     fn unified_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
         once(self.left_unified.clone()).chain(once(self.right_unified.clone()))
+    }
+
+    fn endoscale_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
+        once(self.left_endoscale.clone()).chain(once(self.right_endoscale.clone()))
     }
 
     fn zero(&self) -> Element<'dr, D> {

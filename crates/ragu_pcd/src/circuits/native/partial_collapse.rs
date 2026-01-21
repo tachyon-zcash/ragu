@@ -177,6 +177,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             right_bridge: error_n.right.unified_bridge.clone(),
             left_unified: error_n.left.unified.clone(),
             right_unified: error_n.right.unified.clone(),
+            left_endoscale: error_n.left.endoscale.clone(),
+            right_endoscale: error_n.right.endoscale.clone(),
             zero: Element::zero(dr),
         };
         let mut ky = ky_values(&ky);

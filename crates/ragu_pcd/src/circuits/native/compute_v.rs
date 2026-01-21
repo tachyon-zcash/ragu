@@ -276,6 +276,7 @@ struct InternalCircuitDenominators<'dr, D: Driver<'dr>> {
     partial_collapse_circuit: Element<'dr, D>,
     full_collapse_circuit: Element<'dr, D>,
     compute_v_circuit: Element<'dr, D>,
+    endoscale_challenges_circuit: Element<'dr, D>,
 }
 
 /// Denominator component of all quotient polynomial evaluations.
@@ -340,6 +341,7 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
         let partial_collapse_circuit = inverter.add_circuit(dr, PartialCollapseCircuit)?;
         let full_collapse_circuit = inverter.add_circuit(dr, FullCollapseCircuit)?;
         let compute_v_circuit = inverter.add_circuit(dr, ComputeVCircuit)?;
+        let endoscale_challenges_circuit = inverter.add_circuit(dr, EndoscaleChallengesCircuit)?;
 
         let inverted = inverter.invert(dr)?;
 
@@ -376,6 +378,7 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
                 partial_collapse_circuit: inverted[partial_collapse_circuit].clone(),
                 full_collapse_circuit: inverted[full_collapse_circuit].clone(),
                 compute_v_circuit: inverted[compute_v_circuit].clone(),
+                endoscale_challenges_circuit: inverted[endoscale_challenges_circuit].clone(),
             },
         })
     }
@@ -643,19 +646,20 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HE
     ].into_iter()
     // m(\omega^j, x, y) evaluations for each internal index j
     .chain([
-        (&query.fixed_registry.preamble_stage,           &d.internal.preamble_stage),
-        (&query.fixed_registry.error_n_stage,            &d.internal.error_n_stage),
-        (&query.fixed_registry.error_m_stage,            &d.internal.error_m_stage),
-        (&query.fixed_registry.query_stage,              &d.internal.query_stage),
-        (&query.fixed_registry.eval_stage,               &d.internal.eval_stage),
-        (&query.fixed_registry.error_m_final_staged,     &d.internal.error_m_final_staged),
-        (&query.fixed_registry.error_n_final_staged,     &d.internal.error_n_final_staged),
-        (&query.fixed_registry.eval_final_staged,        &d.internal.eval_final_staged),
-        (&query.fixed_registry.hashes_1_circuit,         &d.internal.hashes_1_circuit),
-        (&query.fixed_registry.hashes_2_circuit,         &d.internal.hashes_2_circuit),
-        (&query.fixed_registry.partial_collapse_circuit, &d.internal.partial_collapse_circuit),
-        (&query.fixed_registry.full_collapse_circuit,    &d.internal.full_collapse_circuit),
-        (&query.fixed_registry.compute_v_circuit,        &d.internal.compute_v_circuit),
+        (&query.fixed_registry.preamble_stage,                &d.internal.preamble_stage),
+        (&query.fixed_registry.error_n_stage,                 &d.internal.error_n_stage),
+        (&query.fixed_registry.error_m_stage,                 &d.internal.error_m_stage),
+        (&query.fixed_registry.query_stage,                   &d.internal.query_stage),
+        (&query.fixed_registry.eval_stage,                    &d.internal.eval_stage),
+        (&query.fixed_registry.error_m_final_staged,          &d.internal.error_m_final_staged),
+        (&query.fixed_registry.error_n_final_staged,          &d.internal.error_n_final_staged),
+        (&query.fixed_registry.eval_final_staged,             &d.internal.eval_final_staged),
+        (&query.fixed_registry.hashes_1_circuit,              &d.internal.hashes_1_circuit),
+        (&query.fixed_registry.hashes_2_circuit,              &d.internal.hashes_2_circuit),
+        (&query.fixed_registry.partial_collapse_circuit,      &d.internal.partial_collapse_circuit),
+        (&query.fixed_registry.full_collapse_circuit,         &d.internal.full_collapse_circuit),
+        (&query.fixed_registry.compute_v_circuit,             &d.internal.compute_v_circuit),
+        (&query.fixed_registry.endoscale_challenges_circuit,  &d.internal.endoscale_challenges_circuit),
     ].into_iter().map(|(v, denom)| (&eval.registry_xy, v, denom)))
     .chain([
         // m(circuit_id_i, x, y) evaluations for the ith child proof
@@ -678,17 +682,18 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HE
     .chain([(&eval.left, &query.left), (&eval.right, &query.right)]
         .into_iter()
         .flat_map(|(eval, query)| [
-            (&eval.preamble,         &query.preamble),
-            (&eval.error_n,          &query.error_n),
-            (&eval.error_m,          &query.error_m),
-            (&eval.query,            &query.query),
-            (&eval.eval,             &query.eval),
-            (&eval.application,      &query.application),
-            (&eval.hashes_1,         &query.hashes_1),
-            (&eval.hashes_2,         &query.hashes_2),
-            (&eval.partial_collapse, &query.partial_collapse),
-            (&eval.full_collapse,    &query.full_collapse),
-            (&eval.compute_v,        &query.compute_v),
+            (&eval.preamble,             &query.preamble),
+            (&eval.error_n,              &query.error_n),
+            (&eval.error_m,              &query.error_m),
+            (&eval.query,                &query.query),
+            (&eval.eval,                 &query.eval),
+            (&eval.application,          &query.application),
+            (&eval.hashes_1,             &query.hashes_1),
+            (&eval.hashes_2,             &query.hashes_2),
+            (&eval.partial_collapse,     &query.partial_collapse),
+            (&eval.full_collapse,        &query.full_collapse),
+            (&eval.compute_v,            &query.compute_v),
+            (&eval.endoscale_challenges, &query.endoscale_challenges),
         ].into_iter().map(|(e, q)| (e, q, &d.challenges.xz))))
 }
 
