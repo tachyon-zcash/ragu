@@ -19,13 +19,13 @@ use crate::components::endoscalar::{EndoscalarStage, EndoscalingStep, NumStepsLe
 /// endoscaling verification.
 ///
 /// This is the sum of:
-/// - 2 proofs × 15 commitment components = 30
+/// - 2 proofs × 16 commitment components = 32
 /// - 6 stage proof components (mesh_wx0, mesh_wx1, mesh_wy, ab.a, ab.b, mesh_xy)
 /// - 1 f.commitment (base polynomial)
 ///
-/// The endoscaling circuits process these 37 points across
+/// The endoscaling circuits process these 39 points across
 /// `NumStepsLen::<NUM_ENDOSCALING_POINTS>::len()` = 9 steps.
-pub(crate) const NUM_ENDOSCALING_POINTS: usize = 37;
+pub(crate) const NUM_ENDOSCALING_POINTS: usize = 39;
 
 /// Index of internal nested circuits registered into the mesh.
 ///

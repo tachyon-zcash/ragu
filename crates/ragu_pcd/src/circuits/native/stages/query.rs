@@ -113,6 +113,7 @@ pub struct FixedMeshWitness<F> {
     pub partial_collapse_circuit: F,
     pub full_collapse_circuit: F,
     pub compute_v_circuit: F,
+    pub endoscale_challenges_circuit: F,
 }
 
 /// Witness for a child proof's polynomial evaluations.
@@ -139,6 +140,8 @@ pub struct ChildEvaluationsWitness<F> {
     pub full_collapse: XzQueryWitness<F>,
     /// Compute V circuit rx polynomial evaluations.
     pub compute_v: XzQueryWitness<F>,
+    /// Endoscale challenges circuit rx polynomial evaluations.
+    pub endoscale_challenges: XzQueryWitness<F>,
     /// A polynomial evaluation at x.
     pub a_poly_at_x: F,
     /// B polynomial evaluation at x.
@@ -177,6 +180,9 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
                 proof.circuits.full_collapse_rx.eval(pt)
             }),
             compute_v: XzQueryWitness::eval(x, xz, |pt| proof.circuits.compute_v_rx.eval(pt)),
+            endoscale_challenges: XzQueryWitness::eval(x, xz, |pt| {
+                proof.circuits.endoscale_challenges_rx.eval(pt)
+            }),
             a_poly_at_x: proof.ab.a_poly.eval(x),
             b_poly_at_x: proof.ab.b_poly.eval(x),
             child_mesh_xy_at_current_w: proof.query.mesh_xy_poly.eval(w),
@@ -228,6 +234,8 @@ pub struct FixedMeshEvaluations<'dr, D: Driver<'dr>> {
     pub full_collapse_circuit: Element<'dr, D>,
     #[ragu(gadget)]
     pub compute_v_circuit: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub endoscale_challenges_circuit: Element<'dr, D>,
 }
 
 impl<'dr, D: Driver<'dr>> FixedMeshEvaluations<'dr, D> {
@@ -259,6 +267,10 @@ impl<'dr, D: Driver<'dr>> FixedMeshEvaluations<'dr, D> {
                 witness.view().map(|w| w.full_collapse_circuit),
             )?,
             compute_v_circuit: Element::alloc(dr, witness.view().map(|w| w.compute_v_circuit))?,
+            endoscale_challenges_circuit: Element::alloc(
+                dr,
+                witness.view().map(|w| w.endoscale_challenges_circuit),
+            )?,
         })
     }
 
@@ -279,6 +291,7 @@ impl<'dr, D: Driver<'dr>> FixedMeshEvaluations<'dr, D> {
             ErrorMFinalStaged => &self.error_m_final_staged,
             ErrorNFinalStaged => &self.error_n_final_staged,
             EvalFinalStaged => &self.eval_final_staged,
+            EndoscaleChallengesCircuit => &self.endoscale_challenges_circuit,
         }
     }
 }
@@ -319,6 +332,9 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
     /// Compute V circuit rx polynomial evaluations.
     #[ragu(gadget)]
     pub compute_v: XzQuery<'dr, D>,
+    /// Endoscale challenges circuit rx polynomial evaluations.
+    #[ragu(gadget)]
+    pub endoscale_challenges: XzQuery<'dr, D>,
     /// A polynomial evaluation at x.
     #[ragu(gadget)]
     pub a_poly_at_x: Element<'dr, D>,
@@ -354,6 +370,10 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
             partial_collapse: XzQuery::alloc(dr, witness.view().map(|w| &w.partial_collapse))?,
             full_collapse: XzQuery::alloc(dr, witness.view().map(|w| &w.full_collapse))?,
             compute_v: XzQuery::alloc(dr, witness.view().map(|w| &w.compute_v))?,
+            endoscale_challenges: XzQuery::alloc(
+                dr,
+                witness.view().map(|w| &w.endoscale_challenges),
+            )?,
             a_poly_at_x: Element::alloc(dr, witness.view().map(|w| w.a_poly_at_x))?,
             b_poly_at_x: Element::alloc(dr, witness.view().map(|w| w.b_poly_at_x))?,
             child_mesh_xy_at_current_w: Element::alloc(
@@ -405,8 +425,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
     fn values() -> usize {
-        // FixedMeshEvaluations (12) + mesh_wxy (1) + 2 * ChildEvaluations (27 each)
-        NUM_INTERNAL_CIRCUITS + 1 + 2 * 27
+        // FixedMeshEvaluations (14) + mesh_wxy (1) + 2 * ChildEvaluations (29 each)
+        NUM_INTERNAL_CIRCUITS + 1 + 2 * 29
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

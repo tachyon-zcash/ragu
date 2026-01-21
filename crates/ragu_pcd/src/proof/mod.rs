@@ -190,9 +190,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 full_collapse_rx: zero_structured_host.clone(),
                 full_collapse_blind: host_blind,
                 full_collapse_commitment: host_commitment,
-                compute_v_rx: zero_structured_host,
+                compute_v_rx: zero_structured_host.clone(),
                 compute_v_blind: host_blind,
                 compute_v_commitment: host_commitment,
+                endoscale_challenges_rx: zero_structured_host,
+                endoscale_challenges_blind: host_blind,
+                endoscale_challenges_commitment: host_commitment,
             },
         }
     }

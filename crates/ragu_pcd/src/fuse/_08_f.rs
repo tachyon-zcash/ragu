@@ -94,6 +94,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             factor_iter(query.mesh_xy_poly.iter_coeffs(), omega_j(ComputeVCircuit)),
             factor_iter(
                 query.mesh_xy_poly.iter_coeffs(),
+                omega_j(EndoscaleChallengesCircuit),
+            ),
+            factor_iter(
+                query.mesh_xy_poly.iter_coeffs(),
                 left.application.circuit_id.omega_j(),
             ),
             factor_iter(
@@ -128,6 +132,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             factor_iter(left.circuits.full_collapse_rx.iter_coeffs(), xz),
             factor_iter(left.circuits.compute_v_rx.iter_coeffs(), x),
             factor_iter(left.circuits.compute_v_rx.iter_coeffs(), xz),
+            factor_iter(left.circuits.endoscale_challenges_rx.iter_coeffs(), x),
+            factor_iter(left.circuits.endoscale_challenges_rx.iter_coeffs(), xz),
             factor_iter(right.preamble.native_rx.iter_coeffs(), x),
             factor_iter(right.preamble.native_rx.iter_coeffs(), xz),
             factor_iter(right.error_n.native_rx.iter_coeffs(), x),
@@ -150,6 +156,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             factor_iter(right.circuits.full_collapse_rx.iter_coeffs(), xz),
             factor_iter(right.circuits.compute_v_rx.iter_coeffs(), x),
             factor_iter(right.circuits.compute_v_rx.iter_coeffs(), xz),
+            factor_iter(right.circuits.endoscale_challenges_rx.iter_coeffs(), x),
+            factor_iter(right.circuits.endoscale_challenges_rx.iter_coeffs(), xz),
         ];
 
         let mut coeffs = Vec::new();

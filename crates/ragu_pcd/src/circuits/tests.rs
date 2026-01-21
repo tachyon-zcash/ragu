@@ -63,11 +63,12 @@ fn test_internal_circuit_constraint_counts() {
         }};
     }
 
-    check_constraints!(Hashes1Circuit,         mul = 2045, lin = 3423);
-    check_constraints!(Hashes2Circuit,         mul = 1879, lin = 2952);
-    check_constraints!(PartialCollapseCircuit, mul = 1756, lin = 1919);
-    check_constraints!(FullCollapseCircuit,    mul = 811 , lin = 809);
-    check_constraints!(ComputeVCircuit,        mul = 1404, lin = 2280);
+    check_constraints!(Hashes1Circuit,              mul = 2046, lin = 3423);
+    check_constraints!(Hashes2Circuit,              mul = 1880, lin = 2952);
+    check_constraints!(PartialCollapseCircuit,      mul = 1757, lin = 1919);
+    check_constraints!(FullCollapseCircuit,         mul = 812 , lin = 809);
+    check_constraints!(ComputeVCircuit,             mul = 1423, lin = 2310);
+    check_constraints!(EndoscaleChallengesCircuit,  mul = 1340, lin = 1868);
 }
 
 #[rustfmt::skip]
@@ -81,10 +82,10 @@ fn test_internal_stage_parameters() {
     }
 
     check_stage!(Preamble, skip =   0, num = 225);
-    check_stage!(ErrorN,  skip = 225, num = 186);
-    check_stage!(ErrorM,  skip = 411, num = 399);
-    check_stage!(Query,   skip = 225, num =  34);
-    check_stage!(Eval,    skip = 259, num =  18);
+    check_stage!(ErrorN,  skip = 225, num = 187);
+    check_stage!(ErrorM,  skip = 412, num = 399);
+    check_stage!(Query,   skip = 225, num =  37);
+    check_stage!(Eval,    skip = 262, num =  19);
 }
 
 /// Helper test to print current constraint counts in copy-pasteable format.
@@ -113,6 +114,10 @@ fn print_internal_circuit_constraint_counts() {
             InternalCircuitIndex::FullCollapseCircuit,
         ),
         ("ComputeVCircuit", InternalCircuitIndex::ComputeVCircuit),
+        (
+            "EndoscaleChallengesCircuit",
+            InternalCircuitIndex::EndoscaleChallengesCircuit,
+        ),
     ];
 
     println!("\n// Copy-paste the following into test_internal_circuit_constraint_counts:");
@@ -169,7 +174,7 @@ fn test_native_mesh_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fp!(0x1277dee2ad8fa4dddc022539e29ed544f6cd96261ee1baaa22819611e9e3e593);
+    let expected = fp!(0x0552d54111d86d2eac11a6b457c48b38e8c77a5156934226e94c7fd6508341e2);
 
     assert_eq!(
         app.native_mesh.get_key(),
@@ -193,7 +198,7 @@ fn test_nested_mesh_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fq!(0x0a8eeda61431380b0121a2a396891b6441a8314d1ceb4c59b595a369933d3403);
+    let expected = fq!(0x23a59efeef759f7c0882ee8542c5d642b8c5900941cf397299956deb35aa846a);
 
     assert_eq!(
         app.nested_mesh.get_key(),

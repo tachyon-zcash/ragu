@@ -210,4 +210,7 @@ pub(crate) struct InternalCircuits<C: Cycle, R: Rank> {
     pub(crate) compute_v_rx: structured::Polynomial<C::CircuitField, R>,
     pub(crate) compute_v_blind: C::CircuitField,
     pub(crate) compute_v_commitment: C::HostCurve,
+    pub(crate) endoscale_challenges_rx: structured::Polynomial<C::CircuitField, R>,
+    pub(crate) endoscale_challenges_blind: C::CircuitField,
+    pub(crate) endoscale_challenges_commitment: C::HostCurve,
 }
