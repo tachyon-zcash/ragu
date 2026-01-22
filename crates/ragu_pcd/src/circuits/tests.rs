@@ -36,7 +36,7 @@ fn test_internal_circuit_constraint_counts() {
         .finalize(pasta)
         .unwrap();
 
-    let circuits = app.native_mesh.circuits();
+    let circuits = app.native_registry.circuits();
 
     macro_rules! check_constraints {
         ($variant:ident, mul = $mul:expr, lin = $lin:expr) => {{
@@ -99,7 +99,7 @@ fn print_internal_circuit_constraint_counts() {
         .finalize(pasta)
         .unwrap();
 
-    let circuits = app.native_mesh.circuits();
+    let circuits = app.native_registry.circuits();
 
     let variants = [
         ("Hashes1Circuit", InternalCircuitIndex::Hashes1Circuit),
@@ -154,13 +154,13 @@ fn print_internal_stage_parameters() {
     print_stage!(Eval);
 }
 
-/// Test that the native mesh digest hasn't changed unexpectedly.
+/// Test that the native registry digest hasn't changed unexpectedly.
 ///
 /// This test verifies that gadget refactorings don't accidentally change the
-/// underlying circuit polynomial. If a refactoring produces the same digest,
+/// underlying wiring polynomial. If a refactoring produces the same digest,
 /// then it's mathematically equivalent.
 #[test]
-fn test_native_mesh_digest() {
+fn test_native_registry_digest() {
     let pasta = Pasta::baked();
 
     let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
@@ -172,19 +172,19 @@ fn test_native_mesh_digest() {
     let expected = fp!(0x1277dee2ad8fa4dddc022539e29ed544f6cd96261ee1baaa22819611e9e3e593);
 
     assert_eq!(
-        app.native_mesh.get_key(),
+        app.native_registry.get_key(),
         expected,
-        "Native mesh digest changed unexpectedly!"
+        "Native registry digest changed unexpectedly!"
     );
 }
 
-/// Test that the nested mesh digest hasn't changed unexpectedly.
+/// Test that the nested registry digest hasn't changed unexpectedly.
 ///
 /// This test verifies that gadget refactorings don't accidentally change the
-/// underlying circuit polynomial. If a refactoring produces the same digest,
+/// underlying wiring polynomial. If a refactoring produces the same digest,
 /// then it's mathematically equivalent.
 #[test]
-fn test_nested_mesh_digest() {
+fn test_nested_registry_digest() {
     let pasta = Pasta::baked();
 
     let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
@@ -196,16 +196,16 @@ fn test_nested_mesh_digest() {
     let expected = fq!(0x0a8eeda61431380b0121a2a396891b6441a8314d1ceb4c59b595a369933d3403);
 
     assert_eq!(
-        app.nested_mesh.get_key(),
+        app.nested_registry.get_key(),
         expected,
-        "Nested mesh digest changed unexpectedly!"
+        "Nested registry digest changed unexpectedly!"
     );
 }
 
-/// Helper test to print current mesh digests in copy-pasteable format.
-/// Run with: `cargo test -p ragu_pcd --release print_mesh_digests -- --nocapture`
+/// Helper test to print current registry digests in copy-pasteable format.
+/// Run with: `cargo test -p ragu_pcd --release print_registry_digests -- --nocapture`
 #[test]
-fn print_mesh_digests() {
+fn print_registry_digests() {
     use ff::PrimeField;
 
     let pasta = Pasta::baked();
@@ -216,8 +216,8 @@ fn print_mesh_digests() {
         .finalize(pasta)
         .unwrap();
 
-    let native_digest = app.native_mesh.get_key();
-    let nested_digest = app.nested_mesh.get_key();
+    let native_digest = app.native_registry.get_key();
+    let nested_digest = app.nested_registry.get_key();
 
     // Convert to big-endian hex for repr256! format
     let native_bytes: Vec<u8> = native_digest
@@ -235,7 +235,7 @@ fn print_mesh_digests() {
         .cloned()
         .collect();
 
-    println!("\n// Copy-paste the following into the mesh digest tests:");
+    println!("\n// Copy-paste the following into the registry digest tests:");
     println!(
         "    let expected = fp!(0x{});",
         native_bytes

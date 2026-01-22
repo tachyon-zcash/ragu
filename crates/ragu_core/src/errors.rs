@@ -98,8 +98,8 @@ fn test_error_display() {
     assert_eq!(
         format!(
             "{}",
-            Error::Initialization("mesh registration failed".into())
+            Error::Initialization("registry registration failed".into())
         ),
-        "initialization failed: mesh registration failed"
+        "initialization failed: registry registration failed"
     );
 }

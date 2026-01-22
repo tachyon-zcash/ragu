@@ -3,8 +3,8 @@
 use arithmetic::Cycle;
 use ff::Field;
 use ragu_circuits::{
-    mesh::CircuitIndex,
     polynomials::{Rank, structured},
+    registry::CircuitIndex,
 };
 use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::Element;
@@ -29,10 +29,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let y = C::CircuitField::random(&mut rng);
         let z = C::CircuitField::random(&mut rng);
 
-        // Validate that the application circuit_id is within the mesh domain.
+        // Validate that the application circuit_id is within the registry domain.
         // (Internal circuit IDs are constants and don't need this check.)
         if !self
-            .native_mesh
+            .native_registry
             .circuit_in_domain(pcd.proof.application.circuit_id)
         {
             return Ok(false);
@@ -65,7 +65,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Build a and b polynomials for each revdot claim.
         let source = native::SingleProofSource { proof: &pcd.proof };
-        let mut builder = claims::Builder::new(&self.native_mesh, self.num_application_steps, y, z);
+        let mut builder =
+            claims::Builder::new(&self.native_registry, self.num_application_steps, y, z);
         claims::native::build(&source, &mut builder)?;
 
         // Check all native revdot claims.
@@ -87,7 +88,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             let nested_source = nested::SingleProofSource { proof: &pcd.proof };
             let y_nested = C::ScalarField::random(&mut rng);
             let z_nested = C::ScalarField::random(&mut rng);
-            let mut nested_builder = claims::Builder::new(&self.nested_mesh, 0, y_nested, z_nested);
+            let mut nested_builder =
+                claims::Builder::new(&self.nested_registry, 0, y_nested, z_nested);
             claims::nested::build(&nested_source, &mut nested_builder)?;
 
             let ky_source = nested::SingleProofKySource::<C::ScalarField>::new();
@@ -107,25 +109,25 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             .commit(C::host_generators(self.params), pcd.proof.p.blind)
             == pcd.proof.p.commitment;
 
-        // Check mesh_xy polynomial evaluation at the sampled w.
-        // mesh_xy_poly is m(W, x, y) - the mesh evaluated at current x, y, free in W.
-        let mesh_xy_claim = {
+        // Check registry_xy polynomial evaluation at the sampled w.
+        // registry_xy_poly is m(W, x, y) - the registry evaluated at current x, y, free in W.
+        let registry_xy_claim = {
             let x = pcd.proof.challenges.x;
             let y = pcd.proof.challenges.y;
-            let poly_eval = pcd.proof.query.mesh_xy_poly.eval(w);
-            let expected = self.native_mesh.wxy(w, x, y);
+            let poly_eval = pcd.proof.query.registry_xy_poly.eval(w);
+            let expected = self.native_registry.wxy(w, x, y);
             poly_eval == expected
         };
 
-        // TODO: Add checks for mesh_wx0_poly, mesh_wx1_poly, and mesh_wy_poly.
-        // - mesh_wx0/wx1: need child proof x challenges (x₀, x₁) which "disappear" in preamble
-        // - mesh_wy: interstitial value that will be elided later
+        // TODO: Add checks for registry_wx0_poly, registry_wx1_poly, and registry_wy_poly.
+        // - registry_wx0/wx1: need child proof x challenges (x₀, x₁) which "disappear" in preamble
+        // - registry_wy: interstitial value that will be elided later
 
         Ok(native_revdot_claims
             && nested_revdot_claims
             && p_eval_claim
             && p_commitment_claim
-            && mesh_xy_claim)
+            && registry_xy_claim)
     }
 }
 

@@ -12,8 +12,8 @@ mod _11_circuits;
 
 use arithmetic::Cycle;
 use ragu_circuits::{
-    mesh::CircuitIndex,
     polynomials::{Rank, structured},
+    registry::CircuitIndex,
 };
 use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{GadgetExt, Point, poseidon::Sponge, vec::CollectFixed};

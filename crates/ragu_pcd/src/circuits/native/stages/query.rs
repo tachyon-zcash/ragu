@@ -98,8 +98,8 @@ impl<'dr, D: Driver<'dr>> XzQuery<'dr, D> {
     }
 }
 
-/// Pre-computed evaluations of mesh_xy at each internal circuit's omega^j.
-pub struct FixedMeshWitness<F> {
+/// Pre-computed evaluations of registry_xy at each internal circuit's omega^j.
+pub struct FixedRegistryWitness<F> {
     pub preamble_stage: F,
     pub error_n_stage: F,
     pub error_m_stage: F,
@@ -143,12 +143,12 @@ pub struct ChildEvaluationsWitness<F> {
     pub a_poly_at_x: F,
     /// B polynomial evaluation at x.
     pub b_poly_at_x: F,
-    /// Child's mesh_xy polynomial evaluated at current step's w.
-    pub child_mesh_xy_at_current_w: F,
-    /// Current mesh_xy polynomial evaluated at child's circuit_id.
-    pub current_mesh_xy_at_child_circuit_id: F,
-    /// Current mesh_wy polynomial evaluated at child's x.
-    pub current_mesh_wy_at_child_x: F,
+    /// Child's registry_xy polynomial evaluated at current step's w.
+    pub child_registry_xy_at_current_w: F,
+    /// Current registry_xy polynomial evaluated at child's circuit_id.
+    pub current_registry_xy_at_child_circuit_id: F,
+    /// Current registry_wy polynomial evaluated at child's x.
+    pub current_registry_wy_at_child_x: F,
 }
 
 impl<F: PrimeField> ChildEvaluationsWitness<F> {
@@ -158,8 +158,8 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
         w: F,
         x: F,
         xz: F,
-        mesh_xy: &unstructured::Polynomial<F, R>,
-        mesh_wy: &structured::Polynomial<F, R>,
+        registry_xy: &unstructured::Polynomial<F, R>,
+        registry_wy: &structured::Polynomial<F, R>,
     ) -> Self {
         ChildEvaluationsWitness {
             preamble: XzQueryWitness::eval(x, xz, |pt| proof.preamble.native_rx.eval(pt)),
@@ -179,29 +179,29 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
             compute_v: XzQueryWitness::eval(x, xz, |pt| proof.circuits.compute_v_rx.eval(pt)),
             a_poly_at_x: proof.ab.a_poly.eval(x),
             b_poly_at_x: proof.ab.b_poly.eval(x),
-            child_mesh_xy_at_current_w: proof.query.mesh_xy_poly.eval(w),
-            current_mesh_xy_at_child_circuit_id: mesh_xy
+            child_registry_xy_at_current_w: proof.query.registry_xy_poly.eval(w),
+            current_registry_xy_at_child_circuit_id: registry_xy
                 .eval(proof.application.circuit_id.omega_j()),
-            current_mesh_wy_at_child_x: mesh_wy.eval(proof.challenges.x),
+            current_registry_wy_at_child_x: registry_wy.eval(proof.challenges.x),
         }
     }
 }
 
 /// Witness data for the query stage.
 pub struct Witness<C: Cycle> {
-    /// Pre-computed mesh_xy evaluations at each internal circuit's omega^j.
-    pub fixed_mesh: FixedMeshWitness<C::CircuitField>,
-    /// m(w, x, y) - verifies mesh_xy/mesh_wy consistency at current coordinates.
-    pub mesh_wxy: C::CircuitField,
+    /// Pre-computed registry_xy evaluations at each internal circuit's omega^j.
+    pub fixed_registry: FixedRegistryWitness<C::CircuitField>,
+    /// m(w, x, y) - verifies registry_xy/registry_wy consistency at current coordinates.
+    pub registry_wxy: C::CircuitField,
     /// Left child proof polynomial evaluations.
     pub left: ChildEvaluationsWitness<C::CircuitField>,
     /// Right child proof polynomial evaluations.
     pub right: ChildEvaluationsWitness<C::CircuitField>,
 }
 
-/// Evaluations of mesh_xy at each internal circuit's circuit_id (omega^j).
+/// Evaluations of registry_xy at each internal circuit's circuit_id (omega^j).
 #[derive(Gadget)]
-pub struct FixedMeshEvaluations<'dr, D: Driver<'dr>> {
+pub struct FixedRegistryEvaluations<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
     pub preamble_stage: Element<'dr, D>,
     #[ragu(gadget)]
@@ -230,10 +230,10 @@ pub struct FixedMeshEvaluations<'dr, D: Driver<'dr>> {
     pub compute_v_circuit: Element<'dr, D>,
 }
 
-impl<'dr, D: Driver<'dr>> FixedMeshEvaluations<'dr, D> {
-    /// Allocate fixed mesh evaluations from pre-computed witness values.
-    pub fn alloc(dr: &mut D, witness: DriverValue<D, &FixedMeshWitness<D::F>>) -> Result<Self> {
-        Ok(FixedMeshEvaluations {
+impl<'dr, D: Driver<'dr>> FixedRegistryEvaluations<'dr, D> {
+    /// Allocate fixed registry evaluations from pre-computed witness values.
+    pub fn alloc(dr: &mut D, witness: DriverValue<D, &FixedRegistryWitness<D::F>>) -> Result<Self> {
+        Ok(FixedRegistryEvaluations {
             preamble_stage: Element::alloc(dr, witness.view().map(|w| w.preamble_stage))?,
             error_n_stage: Element::alloc(dr, witness.view().map(|w| w.error_n_stage))?,
             error_m_stage: Element::alloc(dr, witness.view().map(|w| w.error_m_stage))?,
@@ -262,8 +262,8 @@ impl<'dr, D: Driver<'dr>> FixedMeshEvaluations<'dr, D> {
         })
     }
 
-    /// Look up the mesh evaluation for the given internal circuit index.
-    pub fn circuit_mesh(&self, id: InternalCircuitIndex) -> &Element<'dr, D> {
+    /// Look up the registry evaluation for the given internal circuit index.
+    pub fn circuit_registry(&self, id: InternalCircuitIndex) -> &Element<'dr, D> {
         use InternalCircuitIndex::*;
         match id {
             Hashes1Circuit => &self.hashes_1_circuit,
@@ -325,15 +325,15 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
     /// B polynomial evaluation at x.
     #[ragu(gadget)]
     pub b_poly_at_x: Element<'dr, D>,
-    /// Child's mesh_xy polynomial evaluated at current step's w.
+    /// Child's registry_xy polynomial evaluated at current step's w.
     #[ragu(gadget)]
-    pub child_mesh_xy_at_current_w: Element<'dr, D>,
-    /// Current mesh_xy polynomial evaluated at child's circuit_id.
+    pub child_registry_xy_at_current_w: Element<'dr, D>,
+    /// Current registry_xy polynomial evaluated at child's circuit_id.
     #[ragu(gadget)]
-    pub current_mesh_xy_at_child_circuit_id: Element<'dr, D>,
-    /// Current mesh_wy polynomial evaluated at child's x.
+    pub current_registry_xy_at_child_circuit_id: Element<'dr, D>,
+    /// Current registry_wy polynomial evaluated at child's x.
     #[ragu(gadget)]
-    pub current_mesh_wy_at_child_x: Element<'dr, D>,
+    pub current_registry_wy_at_child_x: Element<'dr, D>,
 }
 
 impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
@@ -356,19 +356,19 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
             compute_v: XzQuery::alloc(dr, witness.view().map(|w| &w.compute_v))?,
             a_poly_at_x: Element::alloc(dr, witness.view().map(|w| w.a_poly_at_x))?,
             b_poly_at_x: Element::alloc(dr, witness.view().map(|w| w.b_poly_at_x))?,
-            child_mesh_xy_at_current_w: Element::alloc(
+            child_registry_xy_at_current_w: Element::alloc(
                 dr,
-                witness.view().map(|w| w.child_mesh_xy_at_current_w),
+                witness.view().map(|w| w.child_registry_xy_at_current_w),
             )?,
-            current_mesh_xy_at_child_circuit_id: Element::alloc(
+            current_registry_xy_at_child_circuit_id: Element::alloc(
                 dr,
                 witness
                     .view()
-                    .map(|w| w.current_mesh_xy_at_child_circuit_id),
+                    .map(|w| w.current_registry_xy_at_child_circuit_id),
             )?,
-            current_mesh_wy_at_child_x: Element::alloc(
+            current_registry_wy_at_child_x: Element::alloc(
                 dr,
-                witness.view().map(|w| w.current_mesh_wy_at_child_x),
+                witness.view().map(|w| w.current_registry_wy_at_child_x),
             )?,
         })
     }
@@ -377,12 +377,12 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
 /// Output gadget for the query stage.
 #[derive(Gadget)]
 pub struct Output<'dr, D: Driver<'dr>> {
-    /// Fixed mesh evaluations at each internal circuit's omega^j.
+    /// Fixed registry evaluations at each internal circuit's omega^j.
     #[ragu(gadget)]
-    pub fixed_mesh: FixedMeshEvaluations<'dr, D>,
-    /// m(w, x, y) - verifies mesh_xy/mesh_wy consistency at current coordinates.
+    pub fixed_registry: FixedRegistryEvaluations<'dr, D>,
+    /// m(w, x, y) - verifies registry_xy/registry_wy consistency at current coordinates.
     #[ragu(gadget)]
-    pub mesh_wxy: Element<'dr, D>,
+    pub registry_wxy: Element<'dr, D>,
     /// Left child proof polynomial evaluations.
     #[ragu(gadget)]
     pub left: ChildEvaluations<'dr, D>,
@@ -405,7 +405,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
     fn values() -> usize {
-        // FixedMeshEvaluations (12) + mesh_wxy (1) + 2 * ChildEvaluations (27 each)
+        // FixedRegistryEvaluations (12) + registry_wxy (1) + 2 * ChildEvaluations (27 each)
         NUM_INTERNAL_CIRCUITS + 1 + 2 * 27
     }
 
@@ -417,13 +417,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     where
         Self: 'dr,
     {
-        let fixed_mesh = FixedMeshEvaluations::alloc(dr, witness.view().map(|w| &w.fixed_mesh))?;
-        let mesh_wxy = Element::alloc(dr, witness.view().map(|w| w.mesh_wxy))?;
+        let fixed_registry =
+            FixedRegistryEvaluations::alloc(dr, witness.view().map(|w| &w.fixed_registry))?;
+        let registry_wxy = Element::alloc(dr, witness.view().map(|w| w.registry_wxy))?;
         let left = ChildEvaluations::alloc(dr, witness.view().map(|w| &w.left))?;
         let right = ChildEvaluations::alloc(dr, witness.view().map(|w| &w.right))?;
         Ok(Output {
-            fixed_mesh,
-            mesh_wxy,
+            fixed_registry,
+            registry_wxy,
             left,
             right,
         })

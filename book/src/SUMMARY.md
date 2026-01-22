@@ -32,7 +32,7 @@
       - [Wiring Consistency](protocol/core/accumulation/wiring.md)
       - [Revdot Product](protocol/core/accumulation/revdot.md)
   - [Extensions](protocol/extensions/index.md)
-    - [Mesh Polynomial](protocol/extensions/mesh.md)
+    - [Registry Polynomial](protocol/extensions/registry.md)
     - [Endoscalars](protocol/extensions/endoscalar.md)
     - [Staging](protocol/extensions/staging.md)
   - [Recursion](protocol/recursion/index.md)

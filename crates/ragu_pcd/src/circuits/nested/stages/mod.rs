@@ -105,13 +105,13 @@ macro_rules! define_nested_stage {
 pub mod preamble;
 
 define_nested_stage!(s_prime, parent = super::preamble::Stage<C, R>, fields = {
-    mesh_wx0: C,
-    mesh_wx1: C,
+    registry_wx0: C,
+    registry_wx1: C,
 });
 
 define_nested_stage!(error_m, parent = super::s_prime::Stage<C, R>, fields = {
     native_error_m: C,
-    mesh_wy: C,
+    registry_wy: C,
 });
 
 define_nested_stage!(error_n, parent = super::error_m::Stage<C, R>, fields = {
@@ -125,7 +125,7 @@ define_nested_stage!(ab, parent = super::error_n::Stage<C, R>, fields = {
 
 define_nested_stage!(query, parent = super::ab::Stage<C, R>, fields = {
     native_query: C,
-    mesh_xy: C,
+    registry_xy: C,
 });
 
 define_nested_stage!(f, parent = super::query::Stage<C, R>, fields = {

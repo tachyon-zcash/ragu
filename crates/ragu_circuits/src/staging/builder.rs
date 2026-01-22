@@ -15,7 +15,7 @@ use core::marker::PhantomData;
 use super::{Stage, StageExt};
 use crate::polynomials::Rank;
 
-/// Builder object for synthesizing a staged circuit witness.
+/// Builder object for synthesizing a multi-stage circuit witness.
 pub struct StageBuilder<
     'a,
     'dr,

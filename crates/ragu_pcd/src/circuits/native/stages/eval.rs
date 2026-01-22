@@ -27,7 +27,7 @@ pub struct ChildEvaluationsWitness<F> {
     pub a_poly: F,
     pub b_poly: F,
     pub query: F,
-    pub mesh_xy_poly: F,
+    pub registry_xy_poly: F,
     pub eval: F,
     pub p_poly: F,
     pub hashes_1: F,
@@ -48,7 +48,7 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
             a_poly: proof.ab.a_poly.eval(u),
             b_poly: proof.ab.b_poly.eval(u),
             query: proof.query.native_rx.eval(u),
-            mesh_xy_poly: proof.query.mesh_xy_poly.eval(u),
+            registry_xy_poly: proof.query.registry_xy_poly.eval(u),
             eval: proof.eval.native_rx.eval(u),
             p_poly: proof.p.poly.eval(u),
             hashes_1: proof.circuits.hashes_1_rx.eval(u),
@@ -62,12 +62,12 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
 
 /// Pre-computed polynomial evaluations at u for the current step.
 pub struct CurrentStepWitness<F> {
-    pub mesh_wx0: F,
-    pub mesh_wx1: F,
-    pub mesh_wy: F,
+    pub registry_wx0: F,
+    pub registry_wx1: F,
+    pub registry_wy: F,
     pub a_poly: F,
     pub b_poly: F,
-    pub mesh_xy: F,
+    pub registry_xy: F,
 }
 
 /// Witness for the eval stage.
@@ -101,7 +101,7 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
     pub query: Element<'dr, D>,
     #[ragu(gadget)]
-    pub mesh_xy_poly: Element<'dr, D>,
+    pub registry_xy_poly: Element<'dr, D>,
     #[ragu(gadget)]
     pub eval: Element<'dr, D>,
     #[ragu(gadget)]
@@ -132,7 +132,7 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
             a_poly: Element::alloc(dr, witness.view().map(|w| w.a_poly))?,
             b_poly: Element::alloc(dr, witness.view().map(|w| w.b_poly))?,
             query: Element::alloc(dr, witness.view().map(|w| w.query))?,
-            mesh_xy_poly: Element::alloc(dr, witness.view().map(|w| w.mesh_xy_poly))?,
+            registry_xy_poly: Element::alloc(dr, witness.view().map(|w| w.registry_xy_poly))?,
             eval: Element::alloc(dr, witness.view().map(|w| w.eval))?,
             p_poly: Element::alloc(dr, witness.view().map(|w| w.p_poly))?,
             hashes_1: Element::alloc(dr, witness.view().map(|w| w.hashes_1))?,
@@ -152,17 +152,17 @@ pub struct Output<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
     pub right: ChildEvaluations<'dr, D>,
     #[ragu(gadget)]
-    pub mesh_wx0: Element<'dr, D>,
+    pub registry_wx0: Element<'dr, D>,
     #[ragu(gadget)]
-    pub mesh_wx1: Element<'dr, D>,
+    pub registry_wx1: Element<'dr, D>,
     #[ragu(gadget)]
-    pub mesh_wy: Element<'dr, D>,
+    pub registry_wy: Element<'dr, D>,
     #[ragu(gadget)]
     pub a_poly: Element<'dr, D>,
     #[ragu(gadget)]
     pub b_poly: Element<'dr, D>,
     #[ragu(gadget)]
-    pub mesh_xy: Element<'dr, D>,
+    pub registry_xy: Element<'dr, D>,
 }
 
 /// The eval stage of the fuse witness.
@@ -193,21 +193,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     {
         let left = ChildEvaluations::alloc(dr, witness.view().map(|w| &w.left))?;
         let right = ChildEvaluations::alloc(dr, witness.view().map(|w| &w.right))?;
-        let mesh_wx0 = Element::alloc(dr, witness.view().map(|w| w.current.mesh_wx0))?;
-        let mesh_wx1 = Element::alloc(dr, witness.view().map(|w| w.current.mesh_wx1))?;
-        let mesh_wy = Element::alloc(dr, witness.view().map(|w| w.current.mesh_wy))?;
+        let registry_wx0 = Element::alloc(dr, witness.view().map(|w| w.current.registry_wx0))?;
+        let registry_wx1 = Element::alloc(dr, witness.view().map(|w| w.current.registry_wx1))?;
+        let registry_wy = Element::alloc(dr, witness.view().map(|w| w.current.registry_wy))?;
         let a_poly = Element::alloc(dr, witness.view().map(|w| w.current.a_poly))?;
         let b_poly = Element::alloc(dr, witness.view().map(|w| w.current.b_poly))?;
-        let mesh_xy = Element::alloc(dr, witness.view().map(|w| w.current.mesh_xy))?;
+        let registry_xy = Element::alloc(dr, witness.view().map(|w| w.current.registry_xy))?;
         Ok(Output {
             left,
             right,
-            mesh_wx0,
-            mesh_wx1,
-            mesh_wy,
+            registry_wx0,
+            registry_wx1,
+            registry_wy,
             a_poly,
             b_poly,
-            mesh_xy,
+            registry_xy,
         })
     }
 }

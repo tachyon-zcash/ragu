@@ -31,8 +31,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         proof::Application<C, R>,
         S::Aux<'source>,
     )> {
-        let (rx, aux) = Adapter::<C, S, R, HEADER_SIZE>::new(step)
-            .rx::<R>((left.data, right.data, witness), self.native_mesh.get_key())?;
+        let (rx, aux) = Adapter::<C, S, R, HEADER_SIZE>::new(step).rx::<R>(
+            (left.data, right.data, witness),
+            self.native_registry.get_key(),
+        )?;
         let blind = C::CircuitField::random(&mut *rng);
         let commitment = rx.commit(C::host_generators(self.params), blind);
 

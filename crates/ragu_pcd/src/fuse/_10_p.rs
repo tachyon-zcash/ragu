@@ -15,7 +15,7 @@ use core::ops::AddAssign;
 use ragu_circuits::{
     CircuitExt,
     polynomials::{Rank, unstructured},
-    staging::{StageExt, Staged},
+    staging::{MultiStage, StageExt},
 };
 use ragu_core::{
     Result,
@@ -121,9 +121,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     proof.query.native_commitment,
                 );
                 acc.acc(
-                    &proof.query.mesh_xy_poly,
-                    proof.query.mesh_xy_blind,
-                    proof.query.mesh_xy_commitment,
+                    &proof.query.registry_xy_poly,
+                    proof.query.registry_xy_blind,
+                    proof.query.registry_xy_commitment,
                 );
                 acc.acc(
                     &proof.eval.native_rx,
@@ -159,26 +159,26 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             }
 
             acc.acc(
-                &s_prime.mesh_wx0_poly,
-                s_prime.mesh_wx0_blind,
-                s_prime.mesh_wx0_commitment,
+                &s_prime.registry_wx0_poly,
+                s_prime.registry_wx0_blind,
+                s_prime.registry_wx0_commitment,
             );
             acc.acc(
-                &s_prime.mesh_wx1_poly,
-                s_prime.mesh_wx1_blind,
-                s_prime.mesh_wx1_commitment,
+                &s_prime.registry_wx1_poly,
+                s_prime.registry_wx1_blind,
+                s_prime.registry_wx1_commitment,
             );
             acc.acc(
-                &error_m.mesh_wy_poly,
-                error_m.mesh_wy_blind,
-                error_m.mesh_wy_commitment,
+                &error_m.registry_wy_poly,
+                error_m.registry_wy_blind,
+                error_m.registry_wy_commitment,
             );
             acc.acc(&ab.a_poly, ab.a_blind, ab.a_commitment);
             acc.acc(&ab.b_poly, ab.b_blind, ab.b_commitment);
             acc.acc(
-                &query.mesh_xy_poly,
-                query.mesh_xy_blind,
-                query.mesh_xy_commitment,
+                &query.registry_xy_poly,
+                query.registry_xy_blind,
+                query.registry_xy_commitment,
             );
         }
 
@@ -200,12 +200,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
             // Create rx polynomials for each endoscaling step circuit
             let num_steps = NumStepsLen::<NUM_ENDOSCALING_POINTS>::len();
-            let key = self.nested_mesh.get_key();
+            let key = self.nested_registry.get_key();
             let mut step_rxs = Vec::with_capacity(num_steps);
             for step in 0..num_steps {
                 let step_circuit =
                     EndoscalingStep::<C::HostCurve, R, NUM_ENDOSCALING_POINTS>::new(step);
-                let staged = Staged::new(step_circuit);
+                let staged = MultiStage::new(step_circuit);
                 let (step_rx, _) = staged.rx::<R>(
                     EndoscalingStepWitness {
                         endoscalar: beta_endo,

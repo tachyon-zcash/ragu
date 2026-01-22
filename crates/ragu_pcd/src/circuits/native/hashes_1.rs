@@ -33,13 +33,13 @@
 //! ### Valid circuit IDs
 //!
 //! The circuit IDs in the [`preamble`][super::stages::preamble] are
-//! enforced to be valid roots of unity in the mesh domain (the domain over
+//! enforced to be valid roots of unity in the registry domain (the domain over
 //! which circuits are indexed). Other circuits can thus assume this check has
 //! been performed.
 //!
 //! ## Staging
 //!
-//! This circuit is a staged circuit based on the
+//! This circuit is a multi-stage circuit based on the
 //! [`error_n`][super::stages::error_n] stage, which inherits in the
 //! following chain:
 //! - [`preamble`][super::stages::preamble] (unenforced)
@@ -75,7 +75,7 @@
 use arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::Rank,
-    staging::{StageBuilder, Staged, StagedCircuit},
+    staging::{MultiStage, MultiStageCircuit, StageBuilder},
 };
 use ragu_core::{
     Result,
@@ -137,15 +137,18 @@ pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revd
 impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     Circuit<'params, C, R, HEADER_SIZE, FP>
 {
-    /// Creates a new staged circuit.
+    /// Creates a new multi-stage circuit.
     ///
     /// # Parameters
     ///
     /// - `params`: Curve cycle parameters providing Poseidon configuration.
-    /// - `log2_circuits`: Log₂ of the mesh domain size (number of circuits).
+    /// - `log2_circuits`: Log₂ of the registry domain size (number of circuits).
     ///   Used to verify circuit IDs are valid roots of unity.
-    pub fn new(params: &'params C::Params, log2_circuits: u32) -> Staged<C::CircuitField, R, Self> {
-        Staged::new(Circuit {
+    pub fn new(
+        params: &'params C::Params,
+        log2_circuits: u32,
+    ) -> MultiStage<C::CircuitField, R, Self> {
+        MultiStage::new(Circuit {
             params,
             log2_circuits,
             _marker: PhantomData,
@@ -176,7 +179,7 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    StagedCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, FP>
+    MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, FP>
 {
     type Final = native_error_n::Stage<C, R, HEADER_SIZE, FP>;
 
@@ -216,7 +219,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let preamble = preamble.unenforced(dr, witness.view().map(|w| w.preamble_witness))?;
         let error_n = error_n.unenforced(dr, witness.view().map(|w| w.error_n_witness))?;
 
-        // Verify circuit IDs are valid roots of unity in the mesh domain.
+        // Verify circuit IDs are valid roots of unity in the registry domain.
         root_of_unity::enforce(dr, preamble.left.circuit_id.clone(), self.log2_circuits)?;
         root_of_unity::enforce(dr, preamble.right.circuit_id.clone(), self.log2_circuits)?;
 

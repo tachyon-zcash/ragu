@@ -66,7 +66,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     preamble_witness,
                     error_n_witness,
                 },
-                self.native_mesh.get_key(),
+                self.native_registry.get_key(),
             )?;
         let hashes_1_rx_blind = C::CircuitField::random(&mut *rng);
         let hashes_1_rx_commitment =
@@ -79,7 +79,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                         unified_instance,
                         error_n_witness,
                     },
-                    self.native_mesh.get_key(),
+                    self.native_registry.get_key(),
                 )?;
         let hashes_2_rx_blind = C::CircuitField::random(&mut *rng);
         let hashes_2_rx_commitment =
@@ -94,7 +94,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                         error_m_witness,
                         error_n_witness,
                     },
-                    self.native_mesh.get_key(),
+                    self.native_registry.get_key(),
                 )?;
         let partial_collapse_rx_blind = C::CircuitField::random(&mut *rng);
         let partial_collapse_rx_commitment =
@@ -107,7 +107,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     preamble_witness,
                     error_n_witness,
                 },
-                self.native_mesh.get_key(),
+                self.native_registry.get_key(),
             )?;
         let full_collapse_rx_blind = C::CircuitField::random(&mut *rng);
         let full_collapse_rx_commitment =
@@ -122,7 +122,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                         query_witness,
                         eval_witness,
                     },
-                    self.native_mesh.get_key(),
+                    self.native_registry.get_key(),
                 )?;
         let compute_v_rx_blind = C::CircuitField::random(&mut *rng);
         let compute_v_rx_commitment =

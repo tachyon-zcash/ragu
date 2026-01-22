@@ -15,8 +15,8 @@ use core::iter::{once, repeat_n};
 
 use ff::PrimeField;
 use ragu_circuits::{
-    mesh::CircuitIndex,
     polynomials::{Rank, structured},
+    registry::CircuitIndex,
 };
 use ragu_core::Result;
 use ragu_core::drivers::Driver;
@@ -76,7 +76,7 @@ pub trait Processor<Rx, AppCircuitId> {
     fn circuit(&mut self, app_id: AppCircuitId, rx: Rx);
 
     /// Process an internal circuit claim (sum of rxs, k(y) = internal_ky).
-    /// The processor looks up mesh via InternalCircuitIndex from its stored context.
+    /// The processor looks up registry via InternalCircuitIndex from its stored context.
     fn internal_circuit(&mut self, id: InternalCircuitIndex, rxs: impl Iterator<Item = Rx>);
 
     /// Process a stage claim (fold of rxs, k(y) = 0).

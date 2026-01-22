@@ -25,7 +25,7 @@
 //! This circuit uses [`eval`] as its final stage, which inherits in the
 //! following chain:
 //! - [`preamble`] (enforced) - provides child proof data
-//! - [`query`] (unenforced) - provides mesh and polynomial evaluations
+//! - [`query`] (unenforced) - provides registry and polynomial evaluations
 //! - [`eval`] (unenforced) - provides evaluation component polynomials
 //!
 //! ## Public Inputs
@@ -46,7 +46,7 @@
 use arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::{Rank, txz::Evaluate},
-    staging::{StageBuilder, Staged, StagedCircuit},
+    staging::{MultiStage, MultiStageCircuit, StageBuilder},
 };
 use ragu_core::{
     Result,
@@ -69,7 +69,7 @@ use super::InternalCircuitIndex;
 use super::{
     stages::{
         eval as native_eval, preamble as native_preamble,
-        query::{self as native_query, ChildEvaluations, FixedMeshEvaluations, RxEval},
+        query::{self as native_query, ChildEvaluations, FixedRegistryEvaluations, RxEval},
     },
     unified::{self, OutputBuilder},
 };
@@ -90,8 +90,8 @@ pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize> {
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Circuit<C, R, HEADER_SIZE> {
-    pub fn new(num_application_steps: usize) -> Staged<C::CircuitField, R, Self> {
-        Staged::new(Circuit {
+    pub fn new(num_application_steps: usize) -> MultiStage<C::CircuitField, R, Self> {
+        MultiStage::new(Circuit {
             num_application_steps,
             _marker: PhantomData,
         })
@@ -111,13 +111,13 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     pub unified_instance: &'a unified::Instance<C>,
     /// Witness for the preamble stage (provides child proof data).
     pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
-    /// Witness for the query stage (provides mesh and polynomial evaluations).
+    /// Witness for the query stage (provides registry and polynomial evaluations).
     pub query_witness: &'a native_query::Witness<C>,
     /// Witness for the eval stage (provides evaluation component polynomials).
     pub eval_witness: &'a native_eval::Witness<C::CircuitField>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> StagedCircuit<C::CircuitField, R>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitField, R>
     for Circuit<C, R, HEADER_SIZE>
 {
     type Final = native_eval::Stage<C, R, HEADER_SIZE>;
@@ -149,7 +149,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> StagedCircuit<C::CircuitField,
     where
         Self: 'dr,
     {
-        // Set up staged circuit pipeline: preamble -> query -> eval.
+        // Set up multi-stage circuit pipeline: preamble -> query -> eval.
         // Each stage provides data needed for the v computation.
         let (preamble, builder) =
             builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
@@ -387,7 +387,7 @@ impl<'a, 'dr, D: Driver<'dr>> Source for EvaluationSource<'a, 'dr, D> {
     type RxComponent = RxComponent;
     type Rx = RxEval<'a, 'dr, D>;
 
-    /// For app circuits: the mesh evaluation at the circuit's omega^j.
+    /// For app circuits: the registry evaluation at the circuit's omega^j.
     type AppCircuitId = &'a Element<'dr, D>;
 
     fn rx(&self, component: RxComponent) -> impl Iterator<Item = Self::Rx> {
@@ -432,8 +432,8 @@ impl<'a, 'dr, D: Driver<'dr>> Source for EvaluationSource<'a, 'dr, D> {
 
     fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
         [
-            &self.left.current_mesh_xy_at_child_circuit_id,
-            &self.right.current_mesh_xy_at_child_circuit_id,
+            &self.left.current_registry_xy_at_child_circuit_id,
+            &self.right.current_registry_xy_at_child_circuit_id,
         ]
         .into_iter()
     }
@@ -448,7 +448,7 @@ struct EvaluationProcessor<'a, 'dr, D: Driver<'dr>> {
     dr: &'a mut D,
     z: &'a Element<'dr, D>,
     txz: &'a Element<'dr, D>,
-    fixed_mesh: &'a FixedMeshEvaluations<'dr, D>,
+    fixed_registry: &'a FixedRegistryEvaluations<'dr, D>,
     ax: Vec<Element<'dr, D>>,
     bx: Vec<Element<'dr, D>>,
 }
@@ -458,13 +458,13 @@ impl<'a, 'dr, D: Driver<'dr>> EvaluationProcessor<'a, 'dr, D> {
         dr: &'a mut D,
         z: &'a Element<'dr, D>,
         txz: &'a Element<'dr, D>,
-        fixed_mesh: &'a FixedMeshEvaluations<'dr, D>,
+        fixed_registry: &'a FixedRegistryEvaluations<'dr, D>,
     ) -> Self {
         Self {
             dr,
             z,
             txz,
-            fixed_mesh,
+            fixed_registry,
             ax: Vec::new(),
             bx: Vec::new(),
         }
@@ -483,11 +483,11 @@ impl<'a, 'dr, D: Driver<'dr>> Processor<RxEval<'a, 'dr, D>, &'a Element<'dr, D>>
         self.bx.push(b.x().clone());
     }
 
-    fn circuit(&mut self, mesh: &'a Element<'dr, D>, rx: RxEval<'a, 'dr, D>) {
-        // b(x) = rx(xz) + mesh + t(xz)
+    fn circuit(&mut self, sy: &'a Element<'dr, D>, rx: RxEval<'a, 'dr, D>) {
+        // b(x) = rx(xz) + s_y + t(xz)
         self.ax.push(rx.x().clone());
         self.bx
-            .push(rx.xz().add(self.dr, mesh).add(self.dr, self.txz));
+            .push(rx.xz().add(self.dr, sy).add(self.dr, self.txz));
     }
 
     fn internal_circuit(
@@ -495,7 +495,7 @@ impl<'a, 'dr, D: Driver<'dr>> Processor<RxEval<'a, 'dr, D>, &'a Element<'dr, D>>
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = RxEval<'a, 'dr, D>>,
     ) {
-        let mesh = self.fixed_mesh.circuit_mesh(id);
+        let sy = self.fixed_registry.circuit_registry(id);
 
         let mut a_sum = Element::zero(self.dr);
         let mut b_sum = Element::zero(self.dr);
@@ -507,9 +507,8 @@ impl<'a, 'dr, D: Driver<'dr>> Processor<RxEval<'a, 'dr, D>, &'a Element<'dr, D>>
 
         // a(x) = sum of all rx(x)
         self.ax.push(a_sum);
-        // b(x) = sum of all rx(xz) + mesh + t(xz)
-        self.bx
-            .push(b_sum.add(self.dr, mesh).add(self.dr, self.txz));
+        // b(x) = sum of all rx(xz) + s_y + t(xz)
+        self.bx.push(b_sum.add(self.dr, sy).add(self.dr, self.txz));
     }
 
     fn stage(
@@ -517,13 +516,13 @@ impl<'a, 'dr, D: Driver<'dr>> Processor<RxEval<'a, 'dr, D>, &'a Element<'dr, D>>
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = RxEval<'a, 'dr, D>>,
     ) -> Result<()> {
-        let mesh = self.fixed_mesh.circuit_mesh(id);
+        let sy = self.fixed_registry.circuit_registry(id);
 
         // a(x) = fold of all rx(x) with z (Horner's rule)
         self.ax
             .push(Element::fold(self.dr, rxs.map(|rx| rx.x()), self.z)?);
-        // b(x) = mesh (s_y evaluated at circuit's omega^j)
-        self.bx.push(mesh.clone());
+        // b(x) = s_y evaluated at circuit's omega^j
+        self.bx.push(sy.clone());
         Ok(())
     }
 }
@@ -555,7 +554,7 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
         left: &query.left,
         right: &query.right,
     };
-    let mut processor = EvaluationProcessor::new(dr, z, txz, &query.fixed_mesh);
+    let mut processor = EvaluationProcessor::new(dr, z, txz, &query.fixed_registry);
     claims::build(&source, &mut processor)?;
 
     let (ax_sources, bx_sources) = processor.build();
@@ -575,9 +574,9 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
 ///
 /// The queries are organized into groups:
 /// 1. **Child proof $p(u) = v$ checks** - Verify child proof evaluations
-/// 2. **Mesh polynomial transitions** - $m(W,x,y) \to m(w,x,Y) \to m(w,X,y) \to s(W,x,y)$
-/// 3. **Internal circuit mesh evaluations** - $m(\omega^j, x, y)$ for each internal index
-/// 4. **Application circuit mesh evaluations** - $m(\text{circuit\_id}, x, y)$
+/// 2. **Registry polynomial transitions** - $m(W,x,y) \to m(w,x,Y) \to m(w,X,y) \to s(W,x,y)$
+/// 3. **Internal circuit registry evaluations** - $m(\omega^j, x, y)$ for each internal index
+/// 4. **Application circuit registry evaluations** - $m(\text{circuit\_id}, x, y)$
 /// 5. **$a(x), b(x)$ polynomial queries** - Including verifier-computed values
 /// 6. **Stage/circuit evaluations** - At both $x$ and $xz$ points
 ///
@@ -601,39 +600,39 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize>(
         (&eval.left.p_poly,        &preamble.left.unified.v,                     &d.left.u),
         (&eval.right.p_poly,       &preamble.right.unified.v,                    &d.right.u),
         // m(W, x_i, y_i) -> m(w, x_i, Y)
-        (&eval.left.mesh_xy_poly,  &query.left.child_mesh_xy_at_current_w,       &d.challenges.w),
-        (&eval.right.mesh_xy_poly, &query.right.child_mesh_xy_at_current_w,      &d.challenges.w),
-        (&eval.mesh_wx0,           &query.left.child_mesh_xy_at_current_w,       &d.left.y),
-        (&eval.mesh_wx1,           &query.right.child_mesh_xy_at_current_w,      &d.right.y),
+        (&eval.left.registry_xy_poly,  &query.left.child_registry_xy_at_current_w,       &d.challenges.w),
+        (&eval.right.registry_xy_poly, &query.right.child_registry_xy_at_current_w,      &d.challenges.w),
+        (&eval.registry_wx0,           &query.left.child_registry_xy_at_current_w,       &d.left.y),
+        (&eval.registry_wx1,           &query.right.child_registry_xy_at_current_w,      &d.right.y),
         // m(w, x_i, Y) -> m(w, X, y)
-        (&eval.mesh_wx0,           &query.left.current_mesh_wy_at_child_x,       &d.challenges.y),
-        (&eval.mesh_wx1,           &query.right.current_mesh_wy_at_child_x,      &d.challenges.y),
-        (&eval.mesh_wy,            &query.left.current_mesh_wy_at_child_x,       &d.left.x),
-        (&eval.mesh_wy,            &query.right.current_mesh_wy_at_child_x,      &d.right.x),
+        (&eval.registry_wx0,           &query.left.current_registry_wy_at_child_x,       &d.challenges.y),
+        (&eval.registry_wx1,           &query.right.current_registry_wy_at_child_x,      &d.challenges.y),
+        (&eval.registry_wy,            &query.left.current_registry_wy_at_child_x,       &d.left.x),
+        (&eval.registry_wy,            &query.right.current_registry_wy_at_child_x,      &d.right.x),
         // m(w, X, y) -> s(W, x, y)
-        (&eval.mesh_wy,            &query.mesh_wxy,                              &d.challenges.x),
-        (&eval.mesh_xy,            &query.mesh_wxy,                              &d.challenges.w),
+        (&eval.registry_wy,            &query.registry_wxy,                              &d.challenges.x),
+        (&eval.registry_xy,            &query.registry_wxy,                              &d.challenges.w),
     ].into_iter()
     // m(\omega^j, x, y) evaluations for each internal index j
     .chain([
-        (&query.fixed_mesh.preamble_stage,           &d.internal.preamble_stage),
-        (&query.fixed_mesh.error_n_stage,            &d.internal.error_n_stage),
-        (&query.fixed_mesh.error_m_stage,            &d.internal.error_m_stage),
-        (&query.fixed_mesh.query_stage,              &d.internal.query_stage),
-        (&query.fixed_mesh.eval_stage,               &d.internal.eval_stage),
-        (&query.fixed_mesh.error_m_final_staged,     &d.internal.error_m_final_staged),
-        (&query.fixed_mesh.error_n_final_staged,     &d.internal.error_n_final_staged),
-        (&query.fixed_mesh.eval_final_staged,        &d.internal.eval_final_staged),
-        (&query.fixed_mesh.hashes_1_circuit,         &d.internal.hashes_1_circuit),
-        (&query.fixed_mesh.hashes_2_circuit,         &d.internal.hashes_2_circuit),
-        (&query.fixed_mesh.partial_collapse_circuit, &d.internal.partial_collapse_circuit),
-        (&query.fixed_mesh.full_collapse_circuit,    &d.internal.full_collapse_circuit),
-        (&query.fixed_mesh.compute_v_circuit,        &d.internal.compute_v_circuit),
-    ].into_iter().map(|(v, denom)| (&eval.mesh_xy, v, denom)))
+        (&query.fixed_registry.preamble_stage,           &d.internal.preamble_stage),
+        (&query.fixed_registry.error_n_stage,            &d.internal.error_n_stage),
+        (&query.fixed_registry.error_m_stage,            &d.internal.error_m_stage),
+        (&query.fixed_registry.query_stage,              &d.internal.query_stage),
+        (&query.fixed_registry.eval_stage,               &d.internal.eval_stage),
+        (&query.fixed_registry.error_m_final_staged,     &d.internal.error_m_final_staged),
+        (&query.fixed_registry.error_n_final_staged,     &d.internal.error_n_final_staged),
+        (&query.fixed_registry.eval_final_staged,        &d.internal.eval_final_staged),
+        (&query.fixed_registry.hashes_1_circuit,         &d.internal.hashes_1_circuit),
+        (&query.fixed_registry.hashes_2_circuit,         &d.internal.hashes_2_circuit),
+        (&query.fixed_registry.partial_collapse_circuit, &d.internal.partial_collapse_circuit),
+        (&query.fixed_registry.full_collapse_circuit,    &d.internal.full_collapse_circuit),
+        (&query.fixed_registry.compute_v_circuit,        &d.internal.compute_v_circuit),
+    ].into_iter().map(|(v, denom)| (&eval.registry_xy, v, denom)))
     .chain([
         // m(circuit_id_i, x, y) evaluations for the ith child proof
-        (&eval.mesh_xy,            &query.left.current_mesh_xy_at_child_circuit_id,  &d.left.circuit_id),
-        (&eval.mesh_xy,            &query.right.current_mesh_xy_at_child_circuit_id, &d.right.circuit_id),
+        (&eval.registry_xy,            &query.left.current_registry_xy_at_child_circuit_id,  &d.left.circuit_id),
+        (&eval.registry_xy,            &query.right.current_registry_xy_at_child_circuit_id, &d.right.circuit_id),
         // a_i(x), b_i(x) polynomial queries at x for each child proof
         (&eval.left.a_poly,        &query.left.a_poly_at_x,                          &d.challenges.x),
         (&eval.left.b_poly,        &query.left.b_poly_at_x,                          &d.challenges.x),

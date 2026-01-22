@@ -27,7 +27,7 @@
 //!
 //! ## Staging
 //!
-//! This circuit is a staged circuit based on the
+//! This circuit is a multi-stage circuit based on the
 //! [`error_n`][super::stages::error_n] stage, which inherits in the
 //! following chain:
 //! - [`preamble`][super::stages::preamble] (skipped)
@@ -61,7 +61,7 @@
 use arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::Rank,
-    staging::{StageBuilder, Staged, StagedCircuit},
+    staging::{MultiStage, MultiStageCircuit, StageBuilder},
 };
 use ragu_core::{
     Result,
@@ -95,13 +95,13 @@ pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revd
 impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     Circuit<'params, C, R, HEADER_SIZE, FP>
 {
-    /// Creates a new staged circuit.
+    /// Creates a new multi-stage circuit.
     ///
     /// # Parameters
     ///
     /// - `params`: Curve cycle parameters providing Poseidon configuration.
-    pub fn new(params: &'params C::Params) -> Staged<C::CircuitField, R, Self> {
-        Staged::new(Circuit {
+    pub fn new(params: &'params C::Params) -> MultiStage<C::CircuitField, R, Self> {
+        MultiStage::new(Circuit {
             params,
             _marker: PhantomData,
         })
@@ -125,7 +125,7 @@ pub struct Witness<'a, C: Cycle, FP: fold_revdot::Parameters> {
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    StagedCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, FP>
+    MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, FP>
 {
     type Final = native_error_n::Stage<C, R, HEADER_SIZE, FP>;
 

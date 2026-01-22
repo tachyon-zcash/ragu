@@ -52,7 +52,7 @@
 //! The final coefficient order is:
 //! 1. $c\_0$: `ONE` wire constraint (the constant $x^{4n - 1}$)
 //! 2. $c\_1, \ldots, c\_k$: public output constraints
-//! 3. $c\_{k+1}$: mesh key binding constraint
+//! 3. $c\_{k+1}$: registry key binding constraint
 //! 4. $c\_{k+2}, \ldots, c\_{q-1}$: circuit-specific constraints
 //!
 //! [`Driver`]: ragu_core::drivers::Driver
@@ -278,16 +278,16 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<F, R> {
 ///
 /// - `circuit`: The circuit whose wiring polynomial to evaluate.
 /// - `x`: The evaluation point for the $X$ variable.
-/// - `key`: The mesh key that binds this evaluation to a [`Mesh`] context by
+/// - `key`: The registry key that binds this evaluation to a [`Registry`] context by
 ///   enforcing `key_wire - key = 0` as a constraint. This randomizes
-///   evaluations of $s(x, Y)$, preventing trivial forgeries across mesh
+///   evaluations of $s(x, Y)$, preventing trivial forgeries across registry
 ///   contexts.
 ///
 /// # Special Cases
 ///
 /// If $x = 0$, returns the zero polynomial since all monomials vanish.
 ///
-/// [`Mesh`]: crate::mesh::Mesh
+/// [`Registry`]: crate::registry::Registry
 pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     circuit: &C,
     x: F,
@@ -323,7 +323,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     // Gate 0: key_wire = a, one = c (the `ONE` wire).
     let (key_wire, _, one) = evaluator.mul(|| unreachable!())?;
 
-    // Mesh key constraint: key_wire - key = 0.
+    // Registry key constraint: key_wire - key = 0.
     evaluator.enforce_zero(|lc| {
         lc.add(&key_wire)
             .add_term(&one, Coeff::NegativeArbitrary(key))

@@ -16,7 +16,7 @@ pub struct StageMask<R: Rank> {
 }
 
 impl<R: Rank> StageMask<R> {
-    /// Creates a new staging circuit polynomial with the given
+    /// Creates a new staging wiring polynomial with the given
     /// `skip_multiplications` and `num_multiplications` values. Witnesses that
     /// satisfy this circuit will have all non-`ONE` multiplication gate wires
     /// enforced to equal zero except for the
@@ -35,7 +35,7 @@ impl<R: Rank> StageMask<R> {
         })
     }
 
-    /// Creates the final staging circuit polynomial with the given
+    /// Creates the final staging wiring polynomial with the given
     /// `skip_multiplications` and maximum possible multiplications.
     /// The number of multiplications will be `R::n() - skip_multiplications - 1`,
     /// which is the maximum before bounds are reached.
@@ -422,7 +422,7 @@ mod tests {
     fn test_placeholder_constraint_with_zero_k() {
         // We should verify the polynomial evaluations are consistent even when k = 0
         // (which would make the circuit unsatisfiable), but we gauard against this
-        // during mesh finalization.
+        // during registry finalization.
         let circuit = SquareCircuit { times: 2 };
         let y = Fp::random(thread_rng());
         let k = Fp::ZERO;

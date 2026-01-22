@@ -49,7 +49,7 @@
 use arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::Rank,
-    staging::{StageBuilder, Staged, StagedCircuit},
+    staging::{MultiStage, MultiStageCircuit, StageBuilder},
 };
 use ragu_core::{
     Result,
@@ -81,9 +81,9 @@ pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Param
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     Circuit<C, R, HEADER_SIZE, FP>
 {
-    /// Creates a new staged circuit for layer 2 revdot verification.
-    pub fn new() -> Staged<C::CircuitField, R, Self> {
-        Staged::new(Circuit {
+    /// Creates a new multi-stage circuit for layer 2 revdot verification.
+    pub fn new() -> MultiStage<C::CircuitField, R, Self> {
+        MultiStage::new(Circuit {
             _marker: PhantomData,
         })
     }
@@ -113,7 +113,7 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    StagedCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, FP>
+    MultiStageCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, FP>
 {
     type Final = error_n::Stage<C, R, HEADER_SIZE, FP>;
 

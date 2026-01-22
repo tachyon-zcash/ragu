@@ -1,6 +1,6 @@
 # Polynomial Management
 
-## Circuit Polynomials
+## Wiring Polynomials
 
 Individual arithmetic circuits are defined by the [structured vector](../protocol/prelim/structured_vectors.md) $\v{s} \in \F^{4n}$ that describes the [linear constraints](../protocol/prelim/cs.md) enforced over the witness, given a concrete choice of random challenge $y$. This vector is the coefficient vector of a special polynomial
 
@@ -12,11 +12,11 @@ s(X, Y) = \sum\limits_{j=0}^{4n - 1} Y^j \Big(
 \Big)
 $$
 
-at the restriction $Y = y$. This is known as the "circuit polynomial."
+at the restriction $Y = y$. This is known as the "wiring polynomial."
 
 ## Synthesis
 
-Ragu will directly synthesize circuit code into (partial) evaluations of the reduced circuit polynomial. There are two operations that influence this polynomial:
+Ragu will directly synthesize circuit code into (partial) evaluations of the reduced wiring polynomial. There are two operations that influence this polynomial:
 
 * `enforce_zero` creates a [linear constraint](../protocol/prelim/cs.md#linear-constraints) that enforces that a linear combination of wires must equal zero. This produces a new term in $Y^j$ for some unused $j$.
 * `mul` creates new wires $(a, b, c)$ that must satisfy a [multiplication constraint](../protocol/prelim/cs.md#multiplication-constraints) $ab = c$. This allocates (or assigns) the corresponding powers $(X^{2n + i}, X^{2n - 1 - i}, X^i)$ for some unused $i$.

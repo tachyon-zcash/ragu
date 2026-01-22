@@ -4,7 +4,7 @@ mod encoder;
 pub(crate) mod internal;
 
 use arithmetic::Cycle;
-use ragu_circuits::mesh::CircuitIndex;
+use ragu_circuits::registry::CircuitIndex;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},

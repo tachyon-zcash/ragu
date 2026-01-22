@@ -1,18 +1,18 @@
-//! Management of polynomials that encode large sets of circuit polynomials for
+//! Management of polynomials that encode large sets of wiring polynomials for
 //! efficient querying.
 //!
 //! ## Overview
 //!
 //! Individual circuits in Ragu are represented by a bivariate polynomial
 //! $s_i(X, Y)$. Multiple circuits are used over any particular field throughout
-//! Ragu's PCD construction, and so the [`Mesh`] structure represents a larger
+//! Ragu's PCD construction, and so the [`Registry`] structure represents a larger
 //! polynomial $m(W, X, Y)$ that interpolates such that $m(\omega^i, X, Y) =
 //! s_i(X, Y)$ for some $\omega \in \mathbb{F}$ of sufficiently high $2^k$ order
 //! to encode all circuits for both PCD and for application circuits.
 //!
-//! The [`MeshBuilder`] structure is used to construct a new [`Mesh`] by
-//! inserting circuits and performing a [`finalize`](MeshBuilder::finalize) step
-//! to compile the added circuits into a mesh polynomial representation that can
+//! The [`RegistryBuilder`] structure is used to construct a new [`Registry`] by
+//! inserting circuits and performing a [`finalize`](RegistryBuilder::finalize) step
+//! to compile the added circuits into a registry polynomial representation that can
 //! be efficiently evaluated at different restrictions.
 
 use arithmetic::{Domain, PoseidonPermutation, bitreverse};
@@ -27,7 +27,7 @@ use crate::{
     polynomials::{Rank, structured, unstructured},
 };
 
-/// Represents a simple numeric index of a circuit in the mesh.
+/// Represents a simple numeric index of a circuit in the registry.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(transparent)]
 pub struct CircuitIndex(u32);
@@ -40,7 +40,7 @@ impl CircuitIndex {
 
     /// Returns $\omega^j$ field element that corresponds to this $i$th circuit index.
     ///
-    /// The $i$th circuit added to any [`Mesh`] (for a given [`PrimeField`] `F`) is
+    /// The $i$th circuit added to any [`Registry`] (for a given [`PrimeField`] `F`) is
     /// assigned the domain element of smallest multiplicative order not yet
     /// assigned to any circuit prior to $i$. This corresponds with $\Omega^{f(i)}$
     /// where $f(i)$ is the [`S`](PrimeField::S)-bit reversal of `i` and $\Omega$ is
@@ -48,26 +48,26 @@ impl CircuitIndex {
     /// `F`.
     ///
     /// Notably, the result of this function does not depend on the actual size of
-    /// the [`Mesh`]'s interpolation polynomial domain.
+    /// the [`Registry`]'s interpolation polynomial domain.
     pub fn omega_j<F: PrimeField>(self) -> F {
         let bit_reversal_id = bitreverse(self.0, F::S);
         F::ROOT_OF_UNITY.pow([bit_reversal_id.into()])
     }
 }
 
-/// Builder for constructing a new [`Mesh`].
-pub struct MeshBuilder<'params, F: PrimeField, R: Rank> {
+/// Builder for constructing a new [`Registry`].
+pub struct RegistryBuilder<'params, F: PrimeField, R: Rank> {
     circuits: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
 }
 
-impl<F: PrimeField, R: Rank> Default for MeshBuilder<'_, F, R> {
+impl<F: PrimeField, R: Rank> Default for RegistryBuilder<'_, F, R> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
-    /// Creates a new empty [`Mesh`] builder.
+impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
+    /// Creates a new empty [`Registry`] builder.
     pub fn new() -> Self {
         Self {
             circuits: Vec::new(),
@@ -107,8 +107,11 @@ impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
         Ok(self)
     }
 
-    /// Builds the final [`Mesh`].
-    pub fn finalize<P: PoseidonPermutation<F>>(self, poseidon: &P) -> Result<Mesh<'params, F, R>> {
+    /// Builds the final [`Registry`].
+    pub fn finalize<P: PoseidonPermutation<F>>(
+        self,
+        poseidon: &P,
+    ) -> Result<Registry<'params, F, R>> {
         let log2_circuits = self.log2_circuits();
         let domain = Domain::<F>::new(log2_circuits);
 
@@ -129,18 +132,18 @@ impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
             omega_lookup.insert(omega_j, i);
         }
 
-        // Create provisional mesh (circuits still have placeholder K).
-        let mut mesh = Mesh {
+        // Create provisional registry (circuits still have placeholder K).
+        let mut registry = Registry {
             domain,
             circuits: self.circuits,
             omega_lookup,
             key: F::ONE,
         };
 
-        // Set mesh key to H(M(w, x, y))
-        mesh.key = mesh.compute_mesh_digest(poseidon);
+        // Set registry key to H(M(w, x, y))
+        registry.key = registry.compute_registry_digest(poseidon);
 
-        Ok(mesh)
+        Ok(registry)
     }
 }
 
@@ -148,7 +151,7 @@ impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
 /// may make reference to the others or be executed in similar contexts. The
 /// circuits are combined together using an interpolation polynomial so that
 /// they can be queried efficiently.
-pub struct Mesh<'params, F: PrimeField, R: Rank> {
+pub struct Registry<'params, F: PrimeField, R: Rank> {
     domain: Domain<F>,
     circuits: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
 
@@ -156,7 +159,7 @@ pub struct Mesh<'params, F: PrimeField, R: Rank> {
     /// of the circuits vector.
     omega_lookup: BTreeMap<OmegaKey, usize>,
 
-    /// Key used to unpredictably change the mesh polynomial's evaluation at
+    /// Key used to unpredictably change the registry polynomial's evaluation at
     /// non-trivial points.
     key: F,
 }
@@ -184,20 +187,20 @@ impl<F: PrimeField> From<F> for OmegaKey {
     }
 }
 
-impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
-    /// Return the constraint system key for this mesh, used by the proof
+impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
+    /// Return the constraint system key for this registry, used by the proof
     /// generator.
-    // TODO(ebfull): We should ensure that this detail is not leaked outside of the Mesh.
+    // TODO(ebfull): We should ensure that this detail is not leaked outside of the Registry.
     pub fn get_key(&self) -> F {
         self.key
     }
 
-    /// Returns a slice of the circuit objects in this mesh.
+    /// Returns a slice of the circuit objects in this registry.
     pub fn circuits(&self) -> &[Box<dyn CircuitObject<F, R> + '_>] {
         &self.circuits
     }
 
-    /// Evaluate the mesh polynomial unrestricted at $W$.
+    /// Evaluate the registry polynomial unrestricted at $W$.
     pub fn xy(&self, x: F, y: F) -> unstructured::Polynomial<F, R> {
         let mut coeffs = unstructured::Polynomial::default();
         for (i, circuit) in self.circuits.iter().enumerate() {
@@ -212,15 +215,15 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
     }
 
     /// Index the $i$th circuit to field element $\omega^j$ as $w$, and evaluate
-    /// the mesh polynomial unrestricted at $X$.
+    /// the registry polynomial unrestricted at $X$.
     ///
-    /// Wraps [`Mesh::wy`]. See [`CircuitIndex::omega_j`] for more details.
+    /// Wraps [`Registry::wy`]. See [`CircuitIndex::omega_j`] for more details.
     pub fn circuit_y(&self, i: CircuitIndex, y: F) -> structured::Polynomial<F, R> {
         let w: F = i.omega_j();
         self.wy(w, y)
     }
 
-    /// Returns true if the circuit's $\omega^j$ value is in the mesh domain.
+    /// Returns true if the circuit's $\omega^j$ value is in the registry domain.
     ///
     /// See [`CircuitIndex::omega_j`] for details on the $\omega^j$ mapping.
     pub fn circuit_in_domain(&self, i: CircuitIndex) -> bool {
@@ -228,7 +231,7 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
         self.domain.contains(w)
     }
 
-    /// Evaluate the mesh polynomial unrestricted at $X$.
+    /// Evaluate the registry polynomial unrestricted at $X$.
     pub fn wy(&self, w: F, y: F) -> structured::Polynomial<F, R> {
         self.w(
             w,
@@ -241,7 +244,7 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
         )
     }
 
-    /// Evaluate the mesh polynomial unrestricted at $Y$.
+    /// Evaluate the registry polynomial unrestricted at $Y$.
     pub fn wx(&self, w: F, x: F) -> unstructured::Polynomial<F, R> {
         self.w(
             w,
@@ -254,7 +257,7 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
         )
     }
 
-    /// Evaluate the mesh polynomial at the provided point.
+    /// Evaluate the registry polynomial at the provided point.
     pub fn wxy(&self, w: F, x: F, y: F) -> F {
         self.w(
             w,
@@ -299,8 +302,8 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
         result
     }
 
-    /// Compute a digest of this mesh.
-    fn compute_mesh_digest<P: PoseidonPermutation<F>>(&self, poseidon: &P) -> F {
+    /// Compute a digest of this registry.
+    fn compute_registry_digest<P: PoseidonPermutation<F>>(&self, poseidon: &P) -> F {
         Emulator::emulate_wireless((), |dr, _| {
             // Placeholder "nothing-up-my-sleeve challenges" (small primes).
             let mut w = F::from(2u64);
@@ -308,10 +311,10 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
             let mut y = F::from(5u64);
 
             let mut sponge = Sponge::<'_, _, P>::new(dr, poseidon);
-            // FIXME(security): 6 iterations is insufficient to fully bind the mesh
+            // FIXME(security): 6 iterations is insufficient to fully bind the registry
             // polynomial. This should be increased to a value that overdetermines the
             // polynomial (exceeds the degrees of freedom an adversary could exploit).
-            // Currently limited by mesh evaluation performance; See #78 and #316.
+            // Currently limited by registry evaluation performance; See #78 and #316.
             for _ in 0..6 {
                 let eval = Element::constant(dr, self.wxy(w, x, y));
                 sponge.absorb(dr, &eval)?;
@@ -322,13 +325,13 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
 
             Ok(*sponge.squeeze(dr)?.value().take())
         })
-        .expect("mesh digest computation should always succeed")
+        .expect("registry digest computation should always succeed")
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CircuitIndex, MeshBuilder, OmegaKey};
+    use super::{CircuitIndex, OmegaKey, RegistryBuilder};
     use crate::polynomials::R;
     use crate::tests::SquareCircuit;
     use alloc::collections::BTreeSet;
@@ -366,10 +369,10 @@ mod tests {
     type TestRank = R<8>;
 
     #[test]
-    fn test_mesh_circuit_consistency() -> Result<()> {
+    fn test_registry_circuit_consistency() -> Result<()> {
         let poseidon = Pasta::circuit_poseidon(Pasta::baked());
 
-        let mesh = MeshBuilder::<Fp, TestRank>::new()
+        let registry = RegistryBuilder::<Fp, TestRank>::new()
             .register_circuit(SquareCircuit { times: 2 })?
             .register_circuit(SquareCircuit { times: 5 })?
             .register_circuit(SquareCircuit { times: 10 })?
@@ -384,29 +387,29 @@ mod tests {
         let x = Fp::random(thread_rng());
         let y = Fp::random(thread_rng());
 
-        let xy_poly = mesh.xy(x, y);
-        let wy_poly = mesh.wy(w, y);
-        let wx_poly = mesh.wx(w, x);
+        let xy_poly = registry.xy(x, y);
+        let wy_poly = registry.wy(w, y);
+        let wx_poly = registry.wx(w, x);
 
-        let wxy_value = mesh.wxy(w, x, y);
+        let wxy_value = registry.wxy(w, x, y);
 
         assert_eq!(wxy_value, xy_poly.eval(w));
         assert_eq!(wxy_value, wy_poly.eval(x));
         assert_eq!(wxy_value, wx_poly.eval(y));
 
         let mut w = Fp::ONE;
-        for _ in 0..mesh.domain.n() {
-            let xy_poly = mesh.xy(x, y);
-            let wy_poly = mesh.wy(w, y);
-            let wx_poly = mesh.wx(w, x);
+        for _ in 0..registry.domain.n() {
+            let xy_poly = registry.xy(x, y);
+            let wy_poly = registry.wy(w, y);
+            let wx_poly = registry.wx(w, x);
 
-            let wxy_value = mesh.wxy(w, x, y);
+            let wxy_value = registry.wxy(w, x, y);
 
             assert_eq!(wxy_value, xy_poly.eval(w));
             assert_eq!(wxy_value, wy_poly.eval(x));
             assert_eq!(wxy_value, wx_poly.eval(y));
 
-            w *= mesh.domain.omega();
+            w *= registry.domain.omega();
         }
 
         Ok(())
@@ -444,11 +447,11 @@ mod tests {
     }
 
     #[test]
-    fn test_single_circuit_mesh() -> Result<()> {
+    fn test_single_circuit_registry() -> Result<()> {
         let poseidon = Pasta::circuit_poseidon(Pasta::baked());
 
         // Checks that a single circuit can be finalized without bit-shift overflows.
-        let _mesh = MeshBuilder::<Fp, TestRank>::new()
+        let _registry = RegistryBuilder::<Fp, TestRank>::new()
             .register_circuit(SquareCircuit { times: 1 })?
             .finalize(poseidon)?;
 
@@ -470,7 +473,7 @@ mod tests {
 
                 assert_eq!(
                     omega_from_function, omega_from_finalization,
-                    "Omega mismatch for circuit {} in mesh of size {}",
+                    "Omega mismatch for circuit {} in registry of size {}",
                     id, num_circuits
                 );
             }
@@ -498,29 +501,29 @@ mod tests {
     }
 
     #[test]
-    fn test_non_power_of_two_mesh_sizes() -> Result<()> {
+    fn test_non_power_of_two_registry_sizes() -> Result<()> {
         let poseidon = Pasta::circuit_poseidon(Pasta::baked());
 
         type TestRank = crate::polynomials::R<8>;
         for num_circuits in 0..21 {
-            let mut builder = MeshBuilder::<Fp, TestRank>::new();
+            let mut builder = RegistryBuilder::<Fp, TestRank>::new();
 
             for i in 0..num_circuits {
                 builder = builder.register_circuit(SquareCircuit { times: i })?;
             }
 
-            let mesh = builder.finalize(poseidon)?;
+            let registry = builder.finalize(poseidon)?;
 
             // Verify domain size is next power of 2
             let expected_domain_size = num_circuits.next_power_of_two();
-            assert_eq!(mesh.domain.n(), expected_domain_size);
+            assert_eq!(registry.domain.n(), expected_domain_size);
 
             let w = Fp::random(thread_rng());
             let x = Fp::random(thread_rng());
             let y = Fp::random(thread_rng());
 
-            let wxy = mesh.wxy(w, x, y);
-            let xy = mesh.xy(x, y);
+            let wxy = registry.wxy(w, x, y);
+            let xy = registry.xy(x, y);
             assert_eq!(wxy, xy.eval(w), "Failed for num_circuits={}", num_circuits);
         }
 
@@ -531,7 +534,7 @@ mod tests {
     fn test_circuit_in_domain() -> Result<()> {
         let poseidon = Pasta::circuit_poseidon(Pasta::baked());
 
-        let mesh = MeshBuilder::<Fp, TestRank>::new()
+        let registry = RegistryBuilder::<Fp, TestRank>::new()
             .register_circuit(SquareCircuit { times: 2 })?
             .register_circuit(SquareCircuit { times: 5 })?
             .register_circuit(SquareCircuit { times: 10 })?
@@ -541,19 +544,19 @@ mod tests {
         // All registered circuit indices should be in the domain
         for i in 0..4 {
             assert!(
-                mesh.circuit_in_domain(CircuitIndex::new(i)),
+                registry.circuit_in_domain(CircuitIndex::new(i)),
                 "Circuit {} should be in domain",
                 i
             );
         }
 
         // Indices beyond the domain size should not be in the domain
-        // The mesh has 4 circuits, so domain size is 4 (2^2)
+        // The registry has 4 circuits, so domain size is 4 (2^2)
         // CircuitIndex::omega_j uses F::S-bit reversal, which maps indices
         // beyond the domain to non-domain elements
         for i in [1 << 16, 1 << 20, 1 << 30] {
             assert!(
-                !mesh.circuit_in_domain(CircuitIndex::new(i)),
+                !registry.circuit_in_domain(CircuitIndex::new(i)),
                 "Circuit {} should not be in domain",
                 i
             );

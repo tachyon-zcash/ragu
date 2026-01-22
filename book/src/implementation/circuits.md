@@ -1,6 +1,6 @@
 # Circuit Representation
 
-> Normal circuit, staged circuits etc.
+> Normal circuit, multi-stage circuits etc.
 
 ## Maybe Values
 

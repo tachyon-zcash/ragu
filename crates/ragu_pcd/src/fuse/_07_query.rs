@@ -51,50 +51,50 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let y = *y.value().take();
         let xz = x * *z.value().take();
 
-        let mesh_xy_poly = self.native_mesh.xy(x, y);
-        let mesh_xy_blind = C::CircuitField::random(&mut *rng);
-        let mesh_xy_commitment =
-            mesh_xy_poly.commit(C::host_generators(self.params), mesh_xy_blind);
+        let registry_xy_poly = self.native_registry.xy(x, y);
+        let registry_xy_blind = C::CircuitField::random(&mut *rng);
+        let registry_xy_commitment =
+            registry_xy_poly.commit(C::host_generators(self.params), registry_xy_blind);
 
-        let mesh_at = |idx: InternalCircuitIndex| -> C::CircuitField {
+        let registry_at = |idx: InternalCircuitIndex| -> C::CircuitField {
             let circuit_id = idx.circuit_index(self.num_application_steps);
-            mesh_xy_poly.eval(circuit_id.omega_j())
+            registry_xy_poly.eval(circuit_id.omega_j())
         };
 
         let query_witness = query::Witness {
-            fixed_mesh: query::FixedMeshWitness {
+            fixed_registry: query::FixedRegistryWitness {
                 // TODO: these can all be evaluated at the same time; in fact,
-                // that's what mesh.xy is supposed to allow.
-                preamble_stage: mesh_at(PreambleStage),
-                error_m_stage: mesh_at(ErrorMStage),
-                error_n_stage: mesh_at(ErrorNStage),
-                query_stage: mesh_at(QueryStage),
-                eval_stage: mesh_at(EvalStage),
-                error_m_final_staged: mesh_at(ErrorMFinalStaged),
-                error_n_final_staged: mesh_at(ErrorNFinalStaged),
-                eval_final_staged: mesh_at(EvalFinalStaged),
-                hashes_1_circuit: mesh_at(Hashes1Circuit),
-                hashes_2_circuit: mesh_at(Hashes2Circuit),
-                partial_collapse_circuit: mesh_at(PartialCollapseCircuit),
-                full_collapse_circuit: mesh_at(FullCollapseCircuit),
-                compute_v_circuit: mesh_at(ComputeVCircuit),
+                // that's what registry.xy is supposed to allow.
+                preamble_stage: registry_at(PreambleStage),
+                error_m_stage: registry_at(ErrorMStage),
+                error_n_stage: registry_at(ErrorNStage),
+                query_stage: registry_at(QueryStage),
+                eval_stage: registry_at(EvalStage),
+                error_m_final_staged: registry_at(ErrorMFinalStaged),
+                error_n_final_staged: registry_at(ErrorNFinalStaged),
+                eval_final_staged: registry_at(EvalFinalStaged),
+                hashes_1_circuit: registry_at(Hashes1Circuit),
+                hashes_2_circuit: registry_at(Hashes2Circuit),
+                partial_collapse_circuit: registry_at(PartialCollapseCircuit),
+                full_collapse_circuit: registry_at(FullCollapseCircuit),
+                compute_v_circuit: registry_at(ComputeVCircuit),
             },
-            mesh_wxy: mesh_xy_poly.eval(w),
+            registry_wxy: registry_xy_poly.eval(w),
             left: query::ChildEvaluationsWitness::from_proof(
                 left,
                 w,
                 x,
                 xz,
-                &mesh_xy_poly,
-                &error_m.mesh_wy_poly,
+                &registry_xy_poly,
+                &error_m.registry_wy_poly,
             ),
             right: query::ChildEvaluationsWitness::from_proof(
                 right,
                 w,
                 x,
                 xz,
-                &mesh_xy_poly,
-                &error_m.mesh_wy_poly,
+                &registry_xy_poly,
+                &error_m.registry_wy_poly,
             ),
         };
 
@@ -104,7 +104,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         let nested_query_witness = nested::stages::query::Witness {
             native_query: native_commitment,
-            mesh_xy: mesh_xy_commitment,
+            registry_xy: registry_xy_commitment,
         };
         let nested_rx = nested::stages::query::Stage::<C::HostCurve, R>::rx(&nested_query_witness)?;
         let nested_blind = C::ScalarField::random(&mut *rng);
@@ -112,9 +112,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         Ok((
             proof::Query {
-                mesh_xy_poly,
-                mesh_xy_blind,
-                mesh_xy_commitment,
+                registry_xy_poly,
+                registry_xy_blind,
+                registry_xy_commitment,
                 native_rx,
                 native_blind,
                 native_commitment,

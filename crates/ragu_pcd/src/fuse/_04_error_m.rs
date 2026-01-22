@@ -51,13 +51,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let y = *y.value().take();
         let z = *z.value().take();
 
-        let mesh_wy_poly = self.native_mesh.wy(w, y);
-        let mesh_wy_blind = C::CircuitField::random(&mut *rng);
-        let mesh_wy_commitment =
-            mesh_wy_poly.commit(C::host_generators(self.params), mesh_wy_blind);
+        let registry_wy_poly = self.native_registry.wy(w, y);
+        let registry_wy_blind = C::CircuitField::random(&mut *rng);
+        let registry_wy_commitment =
+            registry_wy_poly.commit(C::host_generators(self.params), registry_wy_blind);
 
         let source = FuseProofSource { left, right };
-        let mut builder = claims::Builder::new(&self.native_mesh, self.num_application_steps, y, z);
+        let mut builder =
+            claims::Builder::new(&self.native_registry, self.num_application_steps, y, z);
         claims::native::build(&source, &mut builder)?;
 
         let error_terms =
@@ -73,7 +74,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         let nested_error_m_witness = nested::stages::error_m::Witness {
             native_error_m: native_commitment,
-            mesh_wy: mesh_wy_commitment,
+            registry_wy: registry_wy_commitment,
         };
         let nested_rx =
             nested::stages::error_m::Stage::<C::HostCurve, R>::rx(&nested_error_m_witness)?;
@@ -82,9 +83,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         Ok((
             proof::ErrorM {
-                mesh_wy_poly,
-                mesh_wy_blind,
-                mesh_wy_commitment,
+                registry_wy_poly,
+                registry_wy_blind,
+                registry_wy_commitment,
                 native_rx,
                 native_blind,
                 native_commitment,

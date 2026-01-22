@@ -6,8 +6,8 @@ pub(crate) use components::*;
 use arithmetic::Cycle;
 use ff::Field;
 use ragu_circuits::{
-    mesh::CircuitIndex,
     polynomials::{Rank, structured, unstructured},
+    registry::CircuitIndex,
 };
 use ragu_primitives::vec::Len;
 
@@ -96,12 +96,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 nested_commitment,
             },
             s_prime: SPrime {
-                mesh_wx0_poly: zero_unstructured.clone(),
-                mesh_wx0_blind: host_blind,
-                mesh_wx0_commitment: host_commitment,
-                mesh_wx1_poly: zero_unstructured.clone(),
-                mesh_wx1_blind: host_blind,
-                mesh_wx1_commitment: host_commitment,
+                registry_wx0_poly: zero_unstructured.clone(),
+                registry_wx0_blind: host_blind,
+                registry_wx0_commitment: host_commitment,
+                registry_wx1_poly: zero_unstructured.clone(),
+                registry_wx1_blind: host_blind,
+                registry_wx1_commitment: host_commitment,
                 nested_s_prime_rx: zero_structured_nested.clone(),
                 nested_s_prime_blind: nested_blind,
                 nested_s_prime_commitment: nested_commitment,
@@ -115,9 +115,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 nested_commitment,
             },
             error_m: ErrorM {
-                mesh_wy_poly: zero_structured_host.clone(),
-                mesh_wy_blind: host_blind,
-                mesh_wy_commitment: host_commitment,
+                registry_wy_poly: zero_structured_host.clone(),
+                registry_wy_blind: host_blind,
+                registry_wy_commitment: host_commitment,
                 native_rx: zero_structured_host.clone(),
                 native_blind: host_blind,
                 native_commitment: host_commitment,
@@ -138,9 +138,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 nested_commitment,
             },
             query: Query {
-                mesh_xy_poly: zero_unstructured.clone(),
-                mesh_xy_blind: host_blind,
-                mesh_xy_commitment: host_commitment,
+                registry_xy_poly: zero_unstructured.clone(),
+                registry_xy_blind: host_blind,
+                registry_xy_commitment: host_commitment,
                 native_rx: zero_structured_host.clone(),
                 native_blind: host_blind,
                 native_commitment: host_commitment,

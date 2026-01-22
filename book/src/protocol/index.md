@@ -1,6 +1,6 @@
 # Protocol Overview
 
-> a progressive explanation: from the core Split-accumulation based PCD then extend with meshing and staging to get the final PCD
+> a progressive explanation: from the core Split-accumulation based PCD then extend with the registry and staging to get the final PCD
 
 Ragu implements the ECDLP-based recursive SNARK construction from [Halo [BGH19]](https://eprint.iacr.org/2019/1021) with some simplifications and adaptations based on modern techniques from the literature of [accumulation](https://eprint.iacr.org/2020/499)/[folding](https://eprint.iacr.org/2021/370) in the years that followed. The main _external_ ingredients of Ragu are:
 

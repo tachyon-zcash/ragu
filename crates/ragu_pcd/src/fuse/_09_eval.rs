@@ -42,16 +42,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             left: eval::ChildEvaluationsWitness::from_proof(left, u),
             right: eval::ChildEvaluationsWitness::from_proof(right, u),
             current: eval::CurrentStepWitness {
-                // TODO: the mesh evaluations here could _theoretically_ be more
+                // TODO: the registry evaluations here could _theoretically_ be more
                 // efficient if they're computed simultaneously with assistance
-                // from the mesh itself, rather than individually evaluated for
+                // from the registry itself, rather than individually evaluated for
                 // each of these restrictions.
-                mesh_wx0: s_prime.mesh_wx0_poly.eval(u),
-                mesh_wx1: s_prime.mesh_wx1_poly.eval(u),
-                mesh_wy: error_m.mesh_wy_poly.eval(u),
+                registry_wx0: s_prime.registry_wx0_poly.eval(u),
+                registry_wx1: s_prime.registry_wx1_poly.eval(u),
+                registry_wy: error_m.registry_wy_poly.eval(u),
                 a_poly: ab.a_poly.eval(u),
                 b_poly: ab.b_poly.eval(u),
-                mesh_xy: query.mesh_xy_poly.eval(u),
+                registry_xy: query.registry_xy_poly.eval(u),
             },
         };
         let native_rx = eval::Stage::<C, R, HEADER_SIZE>::rx(&eval_witness)?;

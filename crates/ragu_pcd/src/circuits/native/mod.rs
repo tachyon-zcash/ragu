@@ -1,7 +1,7 @@
 use arithmetic::Cycle;
 use ragu_circuits::{
-    mesh::{CircuitIndex, MeshBuilder},
     polynomials::Rank,
+    registry::{CircuitIndex, RegistryBuilder},
     staging::StageExt,
 };
 use ragu_core::Result;
@@ -27,7 +27,7 @@ pub(crate) enum InternalCircuitIndex {
     ErrorNStage = 2,
     QueryStage = 3,
     EvalStage = 4,
-    // Final stage objects
+    // Final stage masks
     ErrorMFinalStaged = 5,
     ErrorNFinalStaged = 6,
     EvalFinalStaged = 7,
@@ -57,23 +57,23 @@ impl InternalCircuitIndex {
     }
 }
 
-/// Register internal native circuits into the provided mesh.
+/// Register internal native circuits into the provided registry.
 pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
-    mut mesh: MeshBuilder<'params, C::CircuitField, R>,
+    mut registry: RegistryBuilder<'params, C::CircuitField, R>,
     params: &'params C::Params,
     log2_circuits: u32,
     num_application_steps: usize,
-) -> Result<MeshBuilder<'params, C::CircuitField, R>> {
-    let initial_num_circuits = mesh.num_circuits();
+) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
+    let initial_num_circuits = registry.num_circuits();
 
     // Insert the stages.
     {
         // preamble stage
-        mesh =
-            mesh.register_circuit_object(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)?;
+        registry = registry
+            .register_circuit_object(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)?;
 
         // error_m stage
-        mesh = mesh.register_circuit_object(stages::error_m::Stage::<
+        registry = registry.register_circuit_object(stages::error_m::Stage::<
             C,
             R,
             HEADER_SIZE,
@@ -81,7 +81,7 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         >::mask()?)?;
 
         // error_n stage
-        mesh = mesh.register_circuit_object(stages::error_n::Stage::<
+        registry = registry.register_circuit_object(stages::error_n::Stage::<
             C,
             R,
             HEADER_SIZE,
@@ -89,10 +89,12 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         >::mask()?)?;
 
         // query stage
-        mesh = mesh.register_circuit_object(stages::query::Stage::<C, R, HEADER_SIZE>::mask()?)?;
+        registry =
+            registry.register_circuit_object(stages::query::Stage::<C, R, HEADER_SIZE>::mask()?)?;
 
         // eval stage
-        mesh = mesh.register_circuit_object(stages::eval::Stage::<C, R, HEADER_SIZE>::mask()?)?;
+        registry =
+            registry.register_circuit_object(stages::eval::Stage::<C, R, HEADER_SIZE>::mask()?)?;
     }
 
     // Insert the "final stage polynomials" for each stage.
@@ -101,7 +103,7 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     // stage is only registered once here.
     {
         // preamble -> error_n -> error_m -> [CIRCUIT] (partial_collapse)
-        mesh = mesh.register_circuit_object(stages::error_m::Stage::<
+        registry = registry.register_circuit_object(stages::error_m::Stage::<
             C,
             R,
             HEADER_SIZE,
@@ -109,7 +111,7 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         >::final_mask()?)?;
 
         // preamble -> error_n -> [CIRCUIT] (hashes_1, hashes_2, full_collapse)
-        mesh = mesh.register_circuit_object(stages::error_n::Stage::<
+        registry = registry.register_circuit_object(stages::error_n::Stage::<
             C,
             R,
             HEADER_SIZE,
@@ -117,24 +119,28 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         >::final_mask()?)?;
 
         // preamble -> query -> eval -> [CIRCUIT] (compute_v)
-        mesh =
-            mesh.register_circuit_object(stages::eval::Stage::<C, R, HEADER_SIZE>::final_mask()?)?;
+        registry = registry
+            .register_circuit_object(stages::eval::Stage::<C, R, HEADER_SIZE>::final_mask()?)?;
     }
 
     // Insert the internal circuits.
     {
         // hashes_1
-        mesh = mesh.register_circuit(
-            hashes_1::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(params, log2_circuits),
-        )?;
+        registry = registry.register_circuit(hashes_1::Circuit::<
+            C,
+            R,
+            HEADER_SIZE,
+            NativeParameters,
+        >::new(params, log2_circuits))?;
 
         // hashes_2
-        mesh = mesh.register_circuit(
-            hashes_2::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(params),
-        )?;
+        registry =
+            registry.register_circuit(
+                hashes_2::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(params),
+            )?;
 
         // partial_collapse
-        mesh = mesh.register_circuit(partial_collapse::Circuit::<
+        registry = registry.register_circuit(partial_collapse::Circuit::<
             C,
             R,
             HEADER_SIZE,
@@ -142,23 +148,25 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         >::new())?;
 
         // full_collapse
-        mesh =
-            mesh.register_circuit(
-                full_collapse::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(),
-            )?;
+        registry = registry.register_circuit(full_collapse::Circuit::<
+            C,
+            R,
+            HEADER_SIZE,
+            NativeParameters,
+        >::new())?;
 
         // compute_v
-        mesh = mesh.register_circuit(compute_v::Circuit::<C, R, HEADER_SIZE>::new(
+        registry = registry.register_circuit(compute_v::Circuit::<C, R, HEADER_SIZE>::new(
             num_application_steps,
         ))?;
     }
 
     // Verify we registered the expected number of circuits.
     assert_eq!(
-        mesh.num_circuits(),
+        registry.num_circuits(),
         initial_num_circuits + NUM_INTERNAL_CIRCUITS,
         "internal circuit count mismatch"
     );
 
-    Ok(mesh)
+    Ok(registry)
 }

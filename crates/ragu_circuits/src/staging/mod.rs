@@ -52,7 +52,7 @@
 //! ## Usage
 //!
 //! The [`Stage`] trait allows you to define a **stage** for your multi-stage
-//! circuit polynomial. Stages are (currently) designed so that they must be
+//! wiring polynomial. Stages are (currently) designed so that they must be
 //! built on top of previous stages, with the trivial `()` implementation for a
 //! root stage provided by Ragu.
 //!
@@ -68,8 +68,8 @@
 //!
 //! let mask = MyStage::mask()?;
 //! let y = Fp::random(thread_rng());
-//! let mesh_key = Fp::random(thread_rng());
-//! assert_eq!(a.revdot(&mask.sy(y, mesh_key)), Fp::ZERO);
+//! let registry_key = Fp::random(thread_rng());
+//! assert_eq!(a.revdot(&mask.sy(y, registry_key)), Fp::ZERO);
 //! ```
 //!
 //! If two or more stage polynomials must satisfy the same well-formedness
@@ -88,24 +88,24 @@
 //!
 //! let mask = MyStage::mask()?;
 //! let y = Fp::random(thread_rng());
-//! let mesh_key = Fp::random(thread_rng());
-//! assert_eq!(combined.revdot(&mask.sy(y, mesh_key)), Fp::ZERO);
+//! let registry_key = Fp::random(thread_rng());
+//! assert_eq!(combined.revdot(&mask.sy(y, registry_key)), Fp::ZERO);
 //! ```
 //!
 //! ### Final Stage
 //!
-//! The final witness circuit is implemented using the [`StagedCircuit`] trait,
+//! The [`MultiStageCircuit`] trait implements the overall circuit witness (combining all stages),
 //! which is similar to the [`Circuit`] trait. The notable difference is that
 //! during witness generation the circuit has access to a [`StageBuilder`] which
 //! is used to load stages into the circuit synthesis according to the
 //! implementation's hierarchy.
 //!
-//! Any implementation of [`StagedCircuit`] can be transformed into an
-//! implementation of [`Circuit`] using the [`Staged`] adaptor. The resulting
+//! Any implementation of [`MultiStageCircuit`] can be transformed into an
+//! implementation of [`Circuit`] using the [`MultiStage`] adaptor. The resulting
 //! [`StageExt::rx`] output contains the final witness polynomial $f(X)$, which
 //! must be similarly checked to be well-formed using the
 //! [`StageExt::final_mask`] method's staging mask (obtained from the
-//! [`StagedCircuit::Final`] implementation).
+//! [`MultiStageCircuit::Final`] implementation).
 //!
 //! ### Combining the Stages
 //!
@@ -192,8 +192,8 @@ impl<F: Field, R: Rank> Stage<F, R> for () {
 
 /// Represents an actual circuit (much like a [`Circuit`]) with portions of its
 /// witness computed in stages.
-pub trait StagedCircuit<F: Field, R: Rank>: Sized + Send + Sync {
-    /// The final stage of this staged circuit.
+pub trait MultiStageCircuit<F: Field, R: Rank>: Sized + Send + Sync {
+    /// The final stage of this multi-stage circuit.
     type Final: Stage<F, R>;
 
     /// The type of data that is needed to construct the expected output of this
@@ -208,14 +208,14 @@ pub trait StagedCircuit<F: Field, R: Rank>: Sized + Send + Sync {
     type Output: Write<F>;
 
     /// Auxiliary data produced during the computation of the
-    /// [`witness`](StagedCircuit::witness) method that may be useful, such as
+    /// [`witness`](MultiStageCircuit::witness) method that may be useful, such as
     /// interstitial witness material that is needed for future synthesis.
     type Aux<'source>: Send;
 
     /// Given an instance type for this circuit, use the provided [`Driver`] to
     /// return a `Self::Output` gadget that the _some_ corresponding witness
     /// should have produced as a result of the
-    /// [`witness`](StagedCircuit::witness) method. This can be seen as
+    /// [`witness`](MultiStageCircuit::witness) method. This can be seen as
     /// "short-circuiting" the computation involving the witness, which a
     /// verifier would not have in its possession.
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
@@ -229,7 +229,7 @@ pub trait StagedCircuit<F: Field, R: Rank>: Sized + Send + Sync {
     /// Given a witness type for this circuit, perform a computation using the
     /// provided [`Driver`] and return the `Self::Output` gadget that the
     /// verifier's instance should produce as a result of the
-    /// [`instance`](StagedCircuit::instance) method.
+    /// [`instance`](MultiStageCircuit::instance) method.
     fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: StageBuilder<'a, 'dr, D, R, (), Self::Final>,
@@ -242,26 +242,26 @@ pub trait StagedCircuit<F: Field, R: Rank>: Sized + Send + Sync {
         Self: 'dr;
 }
 
-/// Wrapper type that implements [`Circuit`] for a given [`StagedCircuit`].
-pub struct Staged<F: Field, R: Rank, S: StagedCircuit<F, R>> {
+/// Wrapper type that implements [`Circuit`] for a given [`MultiStageCircuit`].
+pub struct MultiStage<F: Field, R: Rank, S: MultiStageCircuit<F, R>> {
     circuit: S,
     _marker: core::marker::PhantomData<(F, R)>,
 }
 
-impl<F: Field, R: Rank, S: StagedCircuit<F, R> + Clone> Clone for Staged<F, R, S> {
+impl<F: Field, R: Rank, S: MultiStageCircuit<F, R> + Clone> Clone for MultiStage<F, R, S> {
     fn clone(&self) -> Self {
-        Staged {
+        MultiStage {
             circuit: self.circuit.clone(),
             _marker: core::marker::PhantomData,
         }
     }
 }
 
-impl<F: Field, R: Rank, S: StagedCircuit<F, R>> Staged<F, R, S> {
+impl<F: Field, R: Rank, S: MultiStageCircuit<F, R>> MultiStage<F, R, S> {
     /// Creates a new [`Circuit`] implementation from the given staged
     /// `circuit`.
     pub fn new(circuit: S) -> Self {
-        Staged {
+        MultiStage {
             circuit,
             _marker: core::marker::PhantomData,
         }
@@ -273,7 +273,7 @@ impl<F: Field, R: Rank, S: StagedCircuit<F, R>> Staged<F, R, S> {
     }
 }
 
-impl<F: Field, R: Rank, S: StagedCircuit<F, R>> Circuit<F> for Staged<F, R, S> {
+impl<F: Field, R: Rank, S: MultiStageCircuit<F, R>> Circuit<F> for MultiStage<F, R, S> {
     type Instance<'source> = S::Instance<'source>;
     type Witness<'source> = S::Witness<'source>;
     type Output = S::Output;
@@ -380,7 +380,7 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
 
     /// Creates a circuit object that can be used to enforce well-formedness
     /// checks on any final witness (stage) that has this stage as its
-    /// [`StagedCircuit::Final`] stage.
+    /// [`MultiStageCircuit::Final`] stage.
     fn final_mask<'a>() -> Result<Box<dyn CircuitObject<F, R> + 'a>> {
         Ok(Box::new(mask::StageMask::new_final(
             Self::skip_multiplications() + Self::num_multiplications(),

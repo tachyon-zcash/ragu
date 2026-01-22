@@ -3,8 +3,8 @@
 use alloc::{borrow::Cow, vec::Vec};
 use ff::PrimeField;
 use ragu_circuits::{
-    mesh::{CircuitIndex, Mesh},
     polynomials::{Rank, structured},
+    registry::{CircuitIndex, Registry},
 };
 
 pub mod native;
@@ -60,9 +60,9 @@ pub trait Source {
 /// Processor that builds polynomial vectors for revdot claims.
 ///
 /// Accumulates (a, b) polynomial pairs for each claim type, using
-/// the mesh polynomial to transform rx polynomials appropriately.
+/// the registry polynomial to transform rx polynomials appropriately.
 pub struct Builder<'m, 'rx, F: PrimeField, R: Rank> {
-    pub(crate) mesh: &'m Mesh<'m, F, R>,
+    pub(crate) registry: &'m Registry<'m, F, R>,
     pub(crate) num_application_steps: usize,
     pub(crate) y: F,
     pub(crate) z: F,
@@ -75,9 +75,9 @@ pub struct Builder<'m, 'rx, F: PrimeField, R: Rank> {
 
 impl<'m, 'rx, F: PrimeField, R: Rank> Builder<'m, 'rx, F, R> {
     /// Create a new claim builder.
-    pub fn new(mesh: &'m Mesh<'m, F, R>, num_application_steps: usize, y: F, z: F) -> Self {
+    pub fn new(registry: &'m Registry<'m, F, R>, num_application_steps: usize, y: F, z: F) -> Self {
         Self {
-            mesh,
+            registry,
             num_application_steps,
             y,
             z,
@@ -92,7 +92,7 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Builder<'m, 'rx, F, R> {
         circuit_id: CircuitIndex,
         rx: Cow<'rx, structured::Polynomial<F, R>>,
     ) {
-        let sy = self.mesh.circuit_y(circuit_id, self.y);
+        let sy = self.registry.circuit_y(circuit_id, self.y);
         let mut b = rx.as_ref().clone();
         b.dilate(self.z);
         b.add_assign(&sy);
@@ -109,7 +109,7 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Builder<'m, 'rx, F, R> {
         mut rxs: impl Iterator<Item = &'rx structured::Polynomial<F, R>>,
     ) -> ragu_core::Result<()> {
         let first = rxs.next().expect("must provide at least one rx polynomial");
-        let sy = self.mesh.circuit_y(circuit_id, self.y);
+        let sy = self.registry.circuit_y(circuit_id, self.y);
 
         let a = match rxs.next() {
             None => Cow::Borrowed(first),

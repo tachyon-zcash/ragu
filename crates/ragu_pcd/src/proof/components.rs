@@ -3,8 +3,8 @@
 use arithmetic::Cycle;
 use ff::Field;
 use ragu_circuits::{
-    mesh::CircuitIndex,
     polynomials::{Rank, structured, unstructured},
+    registry::CircuitIndex,
 };
 use ragu_core::{
     drivers::Driver,
@@ -36,12 +36,12 @@ pub(crate) struct Preamble<C: Cycle, R: Rank> {
 
 #[derive(Clone)]
 pub(crate) struct SPrime<C: Cycle, R: Rank> {
-    pub(crate) mesh_wx0_poly: unstructured::Polynomial<C::CircuitField, R>,
-    pub(crate) mesh_wx0_blind: C::CircuitField,
-    pub(crate) mesh_wx0_commitment: C::HostCurve,
-    pub(crate) mesh_wx1_poly: unstructured::Polynomial<C::CircuitField, R>,
-    pub(crate) mesh_wx1_blind: C::CircuitField,
-    pub(crate) mesh_wx1_commitment: C::HostCurve,
+    pub(crate) registry_wx0_poly: unstructured::Polynomial<C::CircuitField, R>,
+    pub(crate) registry_wx0_blind: C::CircuitField,
+    pub(crate) registry_wx0_commitment: C::HostCurve,
+    pub(crate) registry_wx1_poly: unstructured::Polynomial<C::CircuitField, R>,
+    pub(crate) registry_wx1_blind: C::CircuitField,
+    pub(crate) registry_wx1_commitment: C::HostCurve,
     pub(crate) nested_s_prime_rx: structured::Polynomial<C::ScalarField, R>,
     pub(crate) nested_s_prime_blind: C::ScalarField,
     pub(crate) nested_s_prime_commitment: C::NestedCurve,
@@ -49,9 +49,9 @@ pub(crate) struct SPrime<C: Cycle, R: Rank> {
 
 #[derive(Clone)]
 pub(crate) struct ErrorM<C: Cycle, R: Rank> {
-    pub(crate) mesh_wy_poly: structured::Polynomial<C::CircuitField, R>,
-    pub(crate) mesh_wy_blind: C::CircuitField,
-    pub(crate) mesh_wy_commitment: C::HostCurve,
+    pub(crate) registry_wy_poly: structured::Polynomial<C::CircuitField, R>,
+    pub(crate) registry_wy_blind: C::CircuitField,
+    pub(crate) registry_wy_commitment: C::HostCurve,
     pub(crate) native_rx: structured::Polynomial<C::CircuitField, R>,
     pub(crate) native_blind: C::CircuitField,
     pub(crate) native_commitment: C::HostCurve,
@@ -86,9 +86,9 @@ pub(crate) struct AB<C: Cycle, R: Rank> {
 
 #[derive(Clone)]
 pub(crate) struct Query<C: Cycle, R: Rank> {
-    pub(crate) mesh_xy_poly: unstructured::Polynomial<C::CircuitField, R>,
-    pub(crate) mesh_xy_blind: C::CircuitField,
-    pub(crate) mesh_xy_commitment: C::HostCurve,
+    pub(crate) registry_xy_poly: unstructured::Polynomial<C::CircuitField, R>,
+    pub(crate) registry_xy_blind: C::CircuitField,
+    pub(crate) registry_xy_commitment: C::HostCurve,
     pub(crate) native_rx: structured::Polynomial<C::CircuitField, R>,
     pub(crate) native_blind: C::CircuitField,
     pub(crate) native_commitment: C::HostCurve,

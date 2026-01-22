@@ -621,15 +621,15 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, F
 ///
 /// - `circuit`: The circuit whose wiring polynomial to evaluate.
 /// - `y`: The evaluation point for the $Y$ variable.
-/// - `key`: The mesh key that binds this evaluation to a [`Mesh`] context by
+/// - `key`: The registry key that binds this evaluation to a [`Registry`] context by
 ///   enforcing `key_wire - key = 0` as a constraint. This randomizes
-///   evaluations of $s(X, y)$, preventing trivial forgeries across mesh
+///   evaluations of $s(X, y)$, preventing trivial forgeries across registry
 ///   contexts.
 /// - `num_linear_constraints`: The total number of linear constraints expected
 ///   from synthesis. Used to initialize `current_y = y^{q-1}` for reverse
 ///   Horner iteration.
 ///
-/// [`Mesh`]: crate::mesh::Mesh
+/// [`Registry`]: crate::registry::Registry
 pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     circuit: &C,
     y: F,

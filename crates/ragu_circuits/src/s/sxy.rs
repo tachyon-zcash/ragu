@@ -255,12 +255,12 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<F, R> {
 /// - `circuit`: The circuit whose wiring polynomial to evaluate.
 /// - `x`: The evaluation point for the $X$ variable.
 /// - `y`: The evaluation point for the $Y$ variable.
-/// - `key`: The mesh key that binds this evaluation to a [`Mesh`] context by
+/// - `key`: The registry key that binds this evaluation to a [`Registry`] context by
 ///   enforcing `key_wire - key = 0` as a constraint. This randomizes
-///   evaluations of $s(x, y)$, preventing trivial forgeries across mesh
+///   evaluations of $s(x, y)$, preventing trivial forgeries across registry
 ///   contexts.
 ///
-/// [`Mesh`]: crate::mesh::Mesh
+/// [`Registry`]: crate::registry::Registry
 pub fn eval<F: Field, C: Circuit<F>, R: Rank>(circuit: &C, x: F, y: F, key: F) -> Result<F> {
     if x == F::ZERO {
         // The polynomial is zero if x is zero.
