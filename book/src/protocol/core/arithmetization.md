@@ -24,21 +24,26 @@ and later used in [Sonic](https://eprint.iacr.org/2019/099) and
 [Halo](https://eprint.iacr.org/2019/1021) papers.
 It describes any NP relation $\Rel=\set{(x,w): \Cir(x,w)=1}$
 with public instance $x$ and secret satisfying witness $w$ using a set of
-_multiplication constraints_ and _linear constraints_ over the
-witness vectors $\v{a},\v{b},\v{c}\in\F^n$ and public input vector $\v{k}\in\F^q$.
+constraints over the witness vectors $\v{a},\v{b},\v{c}\in\F^n$ and public input
+vector $\v{k}\in\F^{4n}$.
 
-**Multiplication/Hadamard Constraints**:
-$\v{a}_i \cdot \v{b}_i = \v{c}_i$ for $i\in\set{0,\ldots,n-1}$:
-each corresponding to the left, right, and output wire of a `mul` gate ($n$ in total).
+The witness vectors $\v{a}, \v{b}, \v{c} \in \F^n$ must satisfy $n$
+_multiplication constraints_, where the $i$th such constraint takes the form
+$\v{a}_i \cdot \v{b}_i = \v{c}_i$. In addition, the witness must satisfy a set
+of $4n$ _linear constraints_, where the $j$th such constraint is of the form
 
-**Linear Constraints**:
-$\dot{\v{u}_j}{\v{a}} + \dot{\v{v}_j}{\v{b}} + \dot{\v{w}_j}{\v{c}}-\v{k}_j=0$ for
-$\forall j\in\set{0,\ldots,q-1}$: corresponding to the internal wiring among
-`mul` gates and public input/output, checked by the `enforce_zero` gate.
-All $q$ tuples $(\v{u}_j, \v{v}_j, \v{w}_j)$
-are fixed and publicly known as they only depend on the circuit structure
-describing the computation, not the satisfying secret assignments.
-We further enforce a `ONE` public input: $\v{c}_0=\v{k}_0=1$.
+$$
+\sum_{i = 0}^{n - 1} \big( \v{u}_{j,i} \cdot \mathbf{a}_i \big) +
+\sum_{i = 0}^{n - 1} \big( \v{v}_{j,i} \cdot \mathbf{b}_i \big) +
+\sum_{i = 0}^{n - 1} \big( \v{w}_{j,i} \cdot \mathbf{c}_i \big) =
+\v{k}_j
+$$
+
+for some (sparse) public input vector $\v{k} \in \F^{4n}$ and fixed matrices
+$\v{u}, \v{v}, \v{w} \in \F^{n \times 4n}$, where
+$\v{u_{j}}, \v{v_{j}}, \v{w_{j}} \in \F^{4n}$ denote the _j-th row_ of those
+matrices. Because $n$ is fixed, individual circuits vary only by these matrices
+after this reduction.
 
 Bootle16 CS is practically identical to the more commonly known R1CS, as they
 are linear-time interreducible, thus equivalent for all practical purposes.
