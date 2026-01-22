@@ -246,25 +246,25 @@ fn bench_sponge_ops(c: &mut Criterion) {
 
 criterion_group! {
     name = element_ops;
-    config = Criterion::default().sample_size(20);
+    config = Criterion::default();
     targets = bench_element_ops
 }
 
 criterion_group! {
     name = point_ops;
-    config = Criterion::default().sample_size(20);
+    config = Criterion::default();
     targets = bench_point_ops
 }
 
 criterion_group! {
     name = boolean_ops;
-    config = Criterion::default().sample_size(20);
+    config = Criterion::default();
     targets = bench_boolean_ops
 }
 
 criterion_group! {
     name = sponge_ops;
-    config = Criterion::default().sample_size(10).warm_up_time(std::time::Duration::from_secs(1));
+    config = Criterion::default();
     targets = bench_sponge_ops
 }
 

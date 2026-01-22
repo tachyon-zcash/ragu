@@ -156,7 +156,7 @@ fn bench_verify(c: &mut Criterion) {
 
 criterion_group! {
     name = poseidon;
-    config = Criterion::default().sample_size(10).warm_up_time(std::time::Duration::from_secs(1));
+    config = Criterion::default();
     targets =
         bench_application_build,
         bench_seed,
