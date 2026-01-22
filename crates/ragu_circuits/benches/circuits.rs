@@ -295,7 +295,7 @@ fn bench_mesh_evaluations(c: &mut Criterion) {
 
 criterion_group! {
     name = poly_commits;
-    config = Criterion::default().sample_size(50);
+    config = Criterion::default().sample_size(10);
     targets =
         bench_structured,
         bench_unstructured
@@ -303,7 +303,7 @@ criterion_group! {
 
 criterion_group! {
     name = poly_ops;
-    config = Criterion::default().sample_size(50);
+    config = Criterion::default().sample_size(10);
     targets =
         bench_revdot,
         bench_fold,
@@ -313,7 +313,7 @@ criterion_group! {
 
 criterion_group! {
     name = circuit_synthesis;
-    config = Criterion::default().sample_size(50);
+    config = Criterion::default().sample_size(10);
     targets =
         bench_circuit_into_object,
         bench_circuit_rx,
@@ -324,7 +324,7 @@ criterion_group! {
 
 criterion_group! {
     name = mesh_ops;
-    config = Criterion::default().sample_size(50).warm_up_time(std::time::Duration::from_secs(3));
+    config = Criterion::default().sample_size(10).warm_up_time(std::time::Duration::from_secs(1));
     targets =
         bench_mesh_finalize,
         bench_mesh_evaluations
