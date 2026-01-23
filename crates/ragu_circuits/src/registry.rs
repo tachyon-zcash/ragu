@@ -233,9 +233,8 @@ impl<F: PrimeField> From<F> for OmegaKey {
 impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
     /// Return the constraint system key for this registry, used by the proof
     /// generator.
-    // TODO(ebfull): We should ensure that this detail is not leaked outside of the Registry.
-    pub fn get_key(&self) -> F {
-        self.key
+    pub fn key(&self) -> &Key<F> {
+        &self.key
     }
 
     /// Returns a slice of the circuit objects in this registry.

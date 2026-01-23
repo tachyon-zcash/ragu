@@ -200,7 +200,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
             // Create rx polynomials for each endoscaling step circuit
             let num_steps = NumStepsLen::<NUM_ENDOSCALING_POINTS>::len();
-            let key = self.nested_registry.get_key();
+            let key = self.nested_registry.key();
             let mut step_rxs = Vec::with_capacity(num_steps);
             for step in 0..num_steps {
                 let step_circuit =
