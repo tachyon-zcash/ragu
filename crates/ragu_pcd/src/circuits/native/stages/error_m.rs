@@ -3,11 +3,12 @@
 //! This stage handles N separate M-sized revdot claim reductions.
 
 use arithmetic::Cycle;
+use ff::Field;
 use ragu_circuits::{polynomials::Rank, staging};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Gadget, GadgetKind, Kind},
+    gadgets::{ConstraintFreeKind, Gadget, GadgetKind, Kind},
     maybe::Maybe,
 };
 use ragu_primitives::{
@@ -76,6 +77,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         Ok(Output { error_terms })
     }
 }
+
+// Output only contains nested FixedVec<FixedVec<Element>>, which has no internal constraints.
+impl<F: Field, FP: fold_revdot::Parameters> ConstraintFreeKind for Kind![F; @Output<'_, _, FP>] {}
 
 #[cfg(test)]
 mod tests {

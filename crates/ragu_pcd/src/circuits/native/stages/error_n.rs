@@ -3,11 +3,12 @@
 //! This stage handles the final N-sized revdot claim reduction.
 
 use arithmetic::Cycle;
+use ff::Field;
 use ragu_circuits::{polynomials::Rank, staging};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Gadget, GadgetKind, Kind},
+    gadgets::{ConstraintFreeKind, Gadget, GadgetKind, Kind},
     maybe::Maybe,
 };
 use ragu_primitives::{
@@ -159,6 +160,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             sponge_state,
         })
     }
+}
+
+// ChildKyOutputs only contains Element fields, which have no internal constraints.
+impl<F: Field> ConstraintFreeKind for Kind![F; @ChildKyOutputs<'_, _>] {}
+
+// Only contains constraint-free types: FixedVec<Element>, ChildKyOutputs, and
+// SpongeState (which contains FixedVec<Element>).
+impl<F: Field, FP: fold_revdot::Parameters, P: arithmetic::PoseidonPermutation<F>>
+    ConstraintFreeKind for Kind![F; @Output<'_, _, FP, P>]
+{
 }
 
 #[cfg(test)]

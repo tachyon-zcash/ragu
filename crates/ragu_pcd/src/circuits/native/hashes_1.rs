@@ -216,7 +216,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             builder.add_stage::<native_error_n::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();
 
-        let preamble = preamble.unenforced(dr, witness.view().map(|w| w.preamble_witness))?;
+        // Preamble contains Points but is loaded unenforced. The curve membership constraints
+        // are checked by the routing circuits.
+        let preamble =
+            preamble.unenforced_unchecked(dr, witness.view().map(|w| w.preamble_witness))?;
+        // error_n stage contains only Elements (no internal constraints).
         let error_n = error_n.unenforced(dr, witness.view().map(|w| w.error_n_witness))?;
 
         // Verify circuit IDs are valid roots of unity in the registry domain.

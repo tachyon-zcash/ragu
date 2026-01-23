@@ -151,11 +151,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let (error_m, builder) =
             builder.add_stage::<native_error_m::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();
-        let preamble = preamble.unenforced(dr, witness.view().map(|w| w.preamble_witness))?;
+        // Preamble contains Points but is loaded unenforced. The curve membership constraints
+        // are checked by the routing circuits (similar to #172 for endoscalar).
+        let preamble =
+            preamble.unenforced_unchecked(dr, witness.view().map(|w| w.preamble_witness))?;
 
-        // TODO: these are unenforced for now, because error_n/error_m stages
-        // aren't supposed to contain anything (yet) besides Elements, which
-        // require no enforcement logic. Re-evaluate this in the future.
+        // error_n/error_m stages contain only Elements (no internal constraints).
         let error_n = error_n.unenforced(dr, witness.view().map(|w| w.error_n_witness))?;
         let error_m = error_m.unenforced(dr, witness.view().map(|w| w.error_m_witness))?;
 

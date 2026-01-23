@@ -1,12 +1,12 @@
 //! Eval stage for fuse operations.
 
 use arithmetic::Cycle;
-use ff::PrimeField;
+use ff::{Field, PrimeField};
 use ragu_circuits::{polynomials::Rank, staging};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Gadget, GadgetKind, Kind},
+    gadgets::{ConstraintFreeKind, Gadget, GadgetKind, Kind},
     maybe::Maybe,
 };
 use ragu_primitives::{Element, io::Write};
@@ -211,6 +211,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
         })
     }
 }
+
+// ChildEvaluations only contains Element fields, which have no internal constraints.
+impl<F: Field> ConstraintFreeKind for Kind![F; @ChildEvaluations<'_, _>] {}
+
+// Output only contains constraint-free types: ChildEvaluations and Elements.
+impl<F: Field> ConstraintFreeKind for Kind![F; @Output<'_, _>] {}
 
 #[cfg(test)]
 mod tests {

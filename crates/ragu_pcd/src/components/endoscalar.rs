@@ -278,12 +278,12 @@ impl<C: CurveAffine, R: Rank, const NUM_POINTS: usize> MultiStageCircuit<C::Base
         let (points_guard, dr) = dr.add_stage::<PointsStage<C, NUM_POINTS>>()?;
         let dr = dr.finish();
 
-        // Stages are loaded unenforced here. Curve membership for points and
-        // boolean constraints for these stages are enforced by the routing
-        // circuits (see #172). This only constrains the Horner accumulation
-        // relationship between inputs and interstitials.
-        let endoscalar = endoscalar_guard.unenforced(dr, witness.view().map(|w| w.endoscalar))?;
-        let points = points_guard.unenforced(dr, witness.view().map(|w| w.points))?;
+        // Boolean constraints for endoscalar and curve membership for points are
+        // enforced by the routing circuits (see #172). This only constrains the
+        // Horner accumulation relationship.
+        let endoscalar =
+            endoscalar_guard.unenforced_unchecked(dr, witness.view().map(|w| w.endoscalar))?;
+        let points = points_guard.unenforced_unchecked(dr, witness.view().map(|w| w.points))?;
 
         // acc = initial or previous interstitial, depending on step index
         let mut acc = self
