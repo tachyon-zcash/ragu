@@ -321,3 +321,21 @@ pub use ragu_macros::Gadget;
 /// macro that it should perform the substitution without qualifications, which
 /// works fine in most cases.
 pub use ragu_macros::gadget_kind as Kind;
+
+/// Marker trait for gadget kinds with no internal constraints.
+///
+/// This trait indicates that a gadget type contains only field element wires
+/// with no internal constraints. Gadgets implementing this trait can be safely
+/// used with `StageGuard::unenforced()` in the final stage of a
+/// `MultiStageCircuit` because no constraints are skipped.
+///
+/// Implement for:
+/// - `Element<F>` - just a field element wire (auto-implemented)
+/// - `()` - unit type with no wires
+/// - `(Element, Element)` - tuple of constraint-free gadgets
+///
+/// **Do not** implement for:
+/// - `Point<F, C>` - enforces curve equation constraint
+/// - `Boolean<F>` - enforces bit constraint `b·(1-b) = 0`
+/// - `Endoscalar<F>` - contains `Boolean` fields with constraints
+pub trait ConstraintFreeKind {}

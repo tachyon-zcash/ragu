@@ -8,7 +8,7 @@ use core::marker::PhantomData;
 use crate::{
     Result,
     drivers::{Driver, FromDriver},
-    gadgets::{Gadget, GadgetKind},
+    gadgets::{ConstraintFreeKind, Gadget, GadgetKind},
 };
 
 mod unit_impl {
@@ -40,6 +40,9 @@ mod unit_impl {
             Ok(())
         }
     }
+
+    // Unit type has no wires and no constraints.
+    impl ConstraintFreeKind for () {}
 }
 
 mod array_impl {
@@ -83,6 +86,9 @@ mod array_impl {
             Ok(())
         }
     }
+
+    // Arrays are constraint-free if their element type is constraint-free.
+    impl<G: ConstraintFreeKind, const N: usize> ConstraintFreeKind for [PhantomData<G>; N] {}
 }
 
 mod pair_impl {
@@ -118,6 +124,12 @@ mod pair_impl {
             Ok(())
         }
     }
+
+    // Tuples are constraint-free if both elements are constraint-free.
+    impl<G1: ConstraintFreeKind, G2: ConstraintFreeKind> ConstraintFreeKind
+        for (PhantomData<G1>, PhantomData<G2>)
+    {
+    }
 }
 
 mod box_impl {
@@ -149,4 +161,7 @@ mod box_impl {
             G::enforce_equal_gadget(dr, a, b)
         }
     }
+
+    // Box is constraint-free if its inner type is constraint-free.
+    impl<G: ConstraintFreeKind> ConstraintFreeKind for PhantomData<Box<G>> {}
 }
