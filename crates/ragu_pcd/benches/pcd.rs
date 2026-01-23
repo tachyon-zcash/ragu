@@ -113,7 +113,7 @@ fn bench_verify(c: &mut Criterion) {
         .unwrap();
     let leaf1 = leaf1.0.carry(leaf1.1);
 
-    c.bench_function("pcd/poseidon/verify_leaf1", |b| {
+    c.bench_function("pcd/poseidon/verify_leaf", |b| {
         b.iter(|| assert!(app.verify(&leaf1, &mut rng).unwrap()))
     });
 
@@ -127,10 +127,6 @@ fn bench_verify(c: &mut Criterion) {
         )
         .unwrap();
     let leaf2 = leaf2.0.carry(leaf2.1);
-
-    c.bench_function("pcd/poseidon/verify_leaf2", |b| {
-        b.iter(|| assert!(app.verify(&leaf2, &mut rng).unwrap()))
-    });
 
     let node1 = app
         .fuse(

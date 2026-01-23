@@ -47,17 +47,6 @@ fn bench_fft_ops(c: &mut Criterion) {
                 BatchSize::SmallInput,
             )
         });
-
-        c.bench_function(&format!("arithmetic/fft/ifft_2_{}", k), |b| {
-            b.iter_batched(
-                || (0..n).map(|_| Fp::random(&mut rng)).collect::<Vec<_>>(),
-                |mut data| {
-                    domain.ifft(&mut data);
-                    data
-                },
-                BatchSize::SmallInput,
-            )
-        });
     }
 }
 
@@ -77,16 +66,6 @@ fn bench_domain_ops(c: &mut Criterion) {
             )
         });
     }
-
-    // Partial ell evaluation
-    let domain = Domain::<Fp>::new(10);
-    c.bench_function("arithmetic/domain/ell_2_10_partial_256", |b| {
-        b.iter_batched(
-            || Fp::random(&mut rng),
-            |x| domain.ell(x, 256),
-            BatchSize::SmallInput,
-        )
-    });
 }
 
 fn bench_poly_ops(c: &mut Criterion) {

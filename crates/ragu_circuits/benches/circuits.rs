@@ -156,62 +156,36 @@ fn bench_circuit_ky(c: &mut Criterion) {
     });
 }
 
-// ============ SQUARE CIRCUIT BENCHMARKS ============
-// These benchmarks correlate to the test cases in mesh.rs and staging/mask.rs
-
 fn bench_square_circuit_into_object(c: &mut Criterion) {
-    // Correlates to test_single_circuit_mesh using SquareCircuit { times: 1 }
-    c.bench_function("circuits/synthesis/square_into_object_times_2", |b| {
-        b.iter(|| CircuitExt::<Fp>::into_object::<R<13>>(SquareCircuit { times: 2 }))
-    });
-
-    // Larger circuit with more multiplications
-    c.bench_function("circuits/synthesis/square_into_object_times_10", |b| {
-        b.iter(|| CircuitExt::<Fp>::into_object::<R<13>>(SquareCircuit { times: 10 }))
-    });
+    for times in [2, 10] {
+        c.bench_function(
+            &format!("circuits/synthesis/square_into_object_times_{}", times),
+            |b| b.iter(|| CircuitExt::<Fp>::into_object::<R<13>>(SquareCircuit { times })),
+        );
+    }
 }
 
 fn bench_square_circuit_rx(c: &mut Criterion) {
     let mut rng = mock_rng();
 
-    // Correlates to test cases using SquareCircuit { times: 2 }
-    c.bench_function("circuits/witness/square_rx_times_2", |b| {
-        b.iter_batched(
-            || (Fp::random(&mut rng), Fp::random(&mut rng)),
-            |(witness, key)| SquareCircuit { times: 2 }.rx::<R<13>>(witness, key),
-            criterion::BatchSize::SmallInput,
-        )
-    });
-
-    // Larger circuit with more multiplications (correlates to test_mesh_circuit_consistency)
-    c.bench_function("circuits/witness/square_rx_times_10", |b| {
-        b.iter_batched(
-            || (Fp::random(&mut rng), Fp::random(&mut rng)),
-            |(witness, key)| SquareCircuit { times: 10 }.rx::<R<13>>(witness, key),
-            criterion::BatchSize::SmallInput,
-        )
-    });
+    for times in [2, 10] {
+        c.bench_function(
+            &format!("circuits/witness/square_rx_times_{}", times),
+            |b| {
+                b.iter_batched(
+                    || (Fp::random(&mut rng), Fp::random(&mut rng)),
+                    |(witness, key)| SquareCircuit { times }.rx::<R<13>>(witness, key),
+                    criterion::BatchSize::SmallInput,
+                )
+            },
+        );
+    }
 }
 
 // ============ MESH BENCHMARKS ============
 
 fn bench_mesh_finalize(c: &mut Criterion) {
     let poseidon = Pasta::circuit_poseidon(Pasta::baked());
-
-    c.bench_function("circuits/mesh/finalize_4_circuits", |b| {
-        b.iter(|| {
-            MeshBuilder::<Fp, R<5>>::new()
-                .register_circuit(MySimpleCircuit)
-                .unwrap()
-                .register_circuit(MySimpleCircuit)
-                .unwrap()
-                .register_circuit(MySimpleCircuit)
-                .unwrap()
-                .register_circuit(MySimpleCircuit)
-                .unwrap()
-                .finalize(poseidon)
-        })
-    });
 
     // Correlates to test_mesh_circuit_consistency using varied SquareCircuit configurations
     c.bench_function("circuits/mesh/finalize_8_square_circuits", |b| {
