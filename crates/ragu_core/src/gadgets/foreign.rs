@@ -18,6 +18,8 @@ mod unit_impl {
         type Kind = ();
     }
 
+    /// Safety: `Rebind<'dr, D> = ()`, which is unconditionally `Send`
+    /// regardless of `D::Wire`.
     unsafe impl<F: Field> GadgetKind<F> for () {
         type Rebind<'dr, D: Driver<'dr, F = F>> = ();
 
@@ -49,6 +51,10 @@ mod array_impl {
         type Kind = [PhantomData<G::Kind>; N];
     }
 
+    /// Safety: `G: GadgetKind<F>` implies that `G::Rebind<'dr, D>` is `Send`
+    /// when `D::Wire` is `Send`, by the safety contract of `GadgetKind`. Because
+    /// `[G::Rebind<'dr, D>; N]` only contains `G::Rebind<'dr, D>`, it is also
+    /// `Send` when `D::Wire` is `Send`.
     unsafe impl<F: Field, G: GadgetKind<F>, const N: usize> GadgetKind<F> for [PhantomData<G>; N] {
         type Rebind<'dr, D: Driver<'dr, F = F>> = [G::Rebind<'dr, D>; N];
 
@@ -92,6 +98,10 @@ mod pair_impl {
         type Kind = (PhantomData<G1::Kind>, PhantomData<G2::Kind>);
     }
 
+    /// Safety: `G1: GadgetKind<F>` and `G2: GadgetKind<F>` imply that both
+    /// `G1::Rebind<'dr, D>` and `G2::Rebind<'dr, D>` are `Send` when `D::Wire`
+    /// is `Send`, by the safety contract of `GadgetKind`. Because the tuple
+    /// only contains these two types, it is also `Send` when `D::Wire` is `Send`.
     unsafe impl<F: Field, G1: GadgetKind<F>, G2: GadgetKind<F>> GadgetKind<F>
         for (PhantomData<G1>, PhantomData<G2>)
     {
@@ -127,6 +137,10 @@ mod box_impl {
         type Kind = PhantomData<Box<G::Kind>>;
     }
 
+    /// Safety: `G: GadgetKind<F>` implies that `G::Rebind<'dr, D>` is `Send`
+    /// when `D::Wire` is `Send`, by the safety contract of `GadgetKind`. Because
+    /// `Box<G::Rebind<'dr, D>>` is `Send` when its contents are `Send`, it is
+    /// also `Send` when `D::Wire` is `Send`.
     unsafe impl<F: Field, G: GadgetKind<F>> GadgetKind<F> for PhantomData<Box<G>> {
         type Rebind<'dr, D: Driver<'dr, F = F>> = Box<G::Rebind<'dr, D>>;
 
