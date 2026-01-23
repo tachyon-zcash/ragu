@@ -5,7 +5,7 @@ use ragu_core::{
         Driver, DriverValue, FromDriver,
         emulator::{Emulator, Wireless},
     },
-    gadgets::{Gadget, GadgetKind},
+    gadgets::{ConstraintFreeKind, Gadget, GadgetKind},
     maybe::Empty,
 };
 
@@ -98,6 +98,29 @@ pub struct StageGuard<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R>> {
     _marker: PhantomData<(&'dr (), R, S)>,
 }
 
+impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R> + 'dr> StageGuard<'dr, D, R, S>
+where
+    S::OutputKind: ConstraintFreeKind,
+{
+    /// Inject stage wires without enforcing constraints.
+    ///
+    /// This method is only available for stages with constraint-free outputs
+    /// (like `Element<F>`). The trait bound ensures at compile-time that no
+    /// internal constraints are being skipped.
+    ///
+    /// For stages with constrained outputs, use [`enforced`](Self::enforced) instead.
+    ///
+    /// Runs the stage's witness method on a wireless emulator (not on the
+    /// underlying driver), then substitutes the pre-allocated stage wires
+    /// into the resulting gadget.
+    pub fn unenforced<'source: 'dr>(
+        self,
+        dr: &mut D,
+        witness: DriverValue<D, S::Witness<'source>>,
+    ) -> Result<<S::OutputKind as GadgetKind<D::F>>::Rebind<'dr, D>> {
+        self.unenforced_unchecked(dr, witness)
+    }
+}
 impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R> + 'dr> StageGuard<'dr, D, R, S> {
     /// Enforce constraints and inject stage wires.
     ///
@@ -121,12 +144,19 @@ impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R> + 'dr> StageGuard<'dr, D, R
         computed_gadget.map(&mut injector)
     }
 
-    /// Inject stage wires without enforcing constraints.
+    /// Inject stage wires without enforcing constraints (unchecked).
     ///
-    /// Runs the stage's witness method on a wireless emulator (not on the
-    /// underlying driver), then substitutes the pre-allocated stage wires
-    /// into the resulting gadget.
-    pub fn unenforced<'source: 'dr>(
+    /// # Safety
+    ///
+    /// This method bypasses compile-time checks and allows using `unenforced`
+    /// on stages with constrained outputs. Only use this when:
+    ///
+    /// 1. The constraints are intentionally being checked elsewhere
+    /// 2. You have verified the constraint enforcement happens in another circuit
+    /// 3. There is a clear audit trail (issue reference) documenting the decision
+    ///
+    /// Using this method signals to auditors that constraint skipping is intentional.
+    pub fn unenforced_unchecked<'source: 'dr>(
         self,
         _dr: &mut D,
         witness: DriverValue<D, S::Witness<'source>>,
