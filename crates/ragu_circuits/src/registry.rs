@@ -16,7 +16,7 @@
 //! be efficiently evaluated at different restrictions.
 
 use arithmetic::{Domain, PoseidonPermutation, bitreverse};
-use ff::PrimeField;
+use ff::{Field, PrimeField};
 use ragu_core::{Error, Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{Element, poseidon::Sponge};
 
@@ -137,13 +137,57 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
             domain,
             circuits: self.circuits,
             omega_lookup,
-            key: F::ONE,
+            key: Key::default(),
         };
-
-        // Set registry key to H(M(w, x, y))
-        registry.key = registry.compute_registry_digest(poseidon);
+        registry.key = Key::new(registry.compute_registry_digest(poseidon));
 
         Ok(registry)
+    }
+}
+
+/// Registry key binds to the registry definition as a short digest, preventing
+/// circuit substitution attacks.
+///
+/// Each [`Registry`] collects a set of circuits. To prevent an adversary from
+/// substituting one circuit for another after the registery is finalized, we
+/// retroactively bind all constituent circuits to a deterministic digest.
+/// The key is computed during [`RegistryBuilder::finalize`], and will be used
+/// during evaluations of the registry polynomial and member circuits' wiring
+/// polynomials. Effectively, each member circuit is augmented with an additional
+/// linear constraint that binds it to this registry key. Thus, evaluations of
+/// the wiring polynomial (and the registry polynomial) are randomized.
+///
+/// See [#78] for the safety argument.
+///
+/// [#78]: https://github.com/tachyon-zcash/ragu/issues/78
+pub struct Key<F: Field> {
+    /// Registry digest value
+    val: F,
+    /// Cached inverse of digest
+    inv: F,
+}
+
+impl<F: Field> Default for Key<F> {
+    fn default() -> Self {
+        Self::new(F::ONE)
+    }
+}
+
+impl<F: Field> Key<F> {
+    /// Creates a new registry key from a field element, panic if zero.
+    pub fn new(val: F) -> Self {
+        let inv = val.invert().expect("registry digest should never be zero");
+        Self { val, inv }
+    }
+
+    /// Returns the registry key value.
+    pub fn value(&self) -> F {
+        self.val
+    }
+
+    /// Returns the cached inverse of the registry key.
+    pub fn inverse(&self) -> F {
+        self.inv
     }
 }
 
@@ -159,9 +203,8 @@ pub struct Registry<'params, F: PrimeField, R: Rank> {
     /// of the circuits vector.
     omega_lookup: BTreeMap<OmegaKey, usize>,
 
-    /// Key used to unpredictably change the registry polynomial's evaluation at
-    /// non-trivial points.
-    key: F,
+    /// Registry key used to bind circuits to this registry.
+    key: Key<F>,
 }
 
 /// Represents a key for identifying a unique $\omega^j$ value where $\omega$ is
