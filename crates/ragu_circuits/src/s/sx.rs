@@ -81,6 +81,7 @@ use crate::{
         Rank,
         unstructured::{self, Polynomial},
     },
+    registry,
 };
 
 use super::common::{WireEval, WireEvalSum};
@@ -291,7 +292,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<F, R> {
 pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     circuit: &C,
     x: F,
-    key: F,
+    key: &registry::Key<F>,
 ) -> Result<unstructured::Polynomial<F, R>> {
     if x == F::ZERO {
         return Ok(Polynomial::new());
@@ -326,7 +327,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     // Registry key constraint: key_wire - key = 0.
     evaluator.enforce_zero(|lc| {
         lc.add(&key_wire)
-            .add_term(&one, Coeff::NegativeArbitrary(key))
+            .add_term(&one, Coeff::NegativeArbitrary(key.value()))
     })?;
 
     let mut outputs = vec![];

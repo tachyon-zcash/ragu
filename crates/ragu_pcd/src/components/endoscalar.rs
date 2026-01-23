@@ -330,6 +330,7 @@ mod tests {
     use ragu_circuits::{
         CircuitExt,
         polynomials::{self},
+        registry,
         staging::{MultiStage, StageExt},
     };
     use ragu_core::{
@@ -441,13 +442,13 @@ mod tests {
 
             let endoscalar_rx = <EndoscalarStage as StageExt<Fp, R>>::rx(endoscalar)?;
             let points_rx = <PointsStage<EpAffine, NUM_POINTS> as StageExt<Fp, R>>::rx(&points)?;
-            let key = Fp::ONE;
+            let key = registry::Key::default();
             let (final_rx, _) = staged.rx::<R>(
                 EndoscalingStepWitness {
                     endoscalar,
                     points: &points,
                 },
-                key,
+                &key,
             )?;
 
             let staged_s = staged.clone().into_object()?;
@@ -455,15 +456,15 @@ mod tests {
             let y = Fp::random(thread_rng());
 
             // Verify revdot identities for each stage.
-            assert_eq!(endoscalar_rx.revdot(&endoscalar_mask.sy(y, key)), Fp::ZERO);
-            assert_eq!(points_rx.revdot(&points_mask.sy(y, key)), Fp::ZERO);
-            assert_eq!(final_rx.revdot(&final_mask.sy(y, key)), Fp::ZERO);
+            assert_eq!(endoscalar_rx.revdot(&endoscalar_mask.sy(y, &key)), Fp::ZERO);
+            assert_eq!(points_rx.revdot(&points_mask.sy(y, &key)), Fp::ZERO);
+            assert_eq!(final_rx.revdot(&final_mask.sy(y, &key)), Fp::ZERO);
 
             // Verify combined circuit identity.
             let mut lhs = final_rx.clone();
             lhs.add_assign(&endoscalar_rx);
             lhs.add_assign(&points_rx);
-            assert_eq!(lhs.revdot(&staged_s.sy(y, key)), arithmetic::eval(&ky, y));
+            assert_eq!(lhs.revdot(&staged_s.sy(y, &key)), arithmetic::eval(&ky, y));
         }
 
         Ok(())
@@ -505,13 +506,13 @@ mod tests {
 
             let staged = MultiStage::new(step_circuit.clone());
 
-            let key = Fp::ONE;
+            let key = registry::Key::default();
             let (final_rx, _) = staged.rx::<R>(
                 EndoscalingStepWitness {
                     endoscalar,
                     points: &points,
                 },
-                key,
+                &key,
             )?;
 
             let staged_s = staged.clone().into_object()?;
@@ -525,7 +526,7 @@ mod tests {
             let mut lhs = final_rx.clone();
             lhs.add_assign(&endoscalar_rx);
             lhs.add_assign(&points_rx);
-            assert_eq!(lhs.revdot(&staged_s.sy(y, key)), arithmetic::eval(&ky, y));
+            assert_eq!(lhs.revdot(&staged_s.sy(y, &key)), arithmetic::eval(&ky, y));
         }
 
         Ok(())

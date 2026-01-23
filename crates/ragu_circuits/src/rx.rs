@@ -9,7 +9,7 @@ use ragu_core::{
 };
 use ragu_primitives::GadgetExt;
 
-use super::{Circuit, Rank, structured};
+use super::{Circuit, Rank, registry, structured};
 
 struct Evaluator<'a, F: Field, R: Rank> {
     rx: structured::View<'a, F, R, structured::Forward>,
@@ -89,7 +89,7 @@ impl<'a, F: Field, R: Rank> Driver<'a> for Evaluator<'a, F, R> {
 pub fn eval<'witness, F: Field, C: Circuit<F>, R: Rank>(
     circuit: &C,
     witness: C::Witness<'witness>,
-    key: F,
+    key: &registry::Key<F>,
 ) -> Result<(structured::Polynomial<F, R>, C::Aux<'witness>)> {
     let mut rx = structured::Polynomial::<F, R>::new();
     let aux = {
@@ -97,8 +97,13 @@ pub fn eval<'witness, F: Field, C: Circuit<F>, R: Rank>(
             rx: rx.forward(),
             available_b: None,
         };
-        let keyinv = key.invert().into_option().ok_or(Error::InvalidMeshKey)?;
-        dr.mul(|| Ok((Coeff::Arbitrary(key), Coeff::Arbitrary(keyinv), Coeff::One)))?;
+        dr.mul(|| {
+            Ok((
+                Coeff::Arbitrary(key.value()),
+                Coeff::Arbitrary(key.inverse()),
+                Coeff::One,
+            ))
+        })?;
         let (io, aux) = circuit.witness(&mut dr, Always::maybe_just(|| witness))?;
         io.write(&mut dr, &mut ())?;
 

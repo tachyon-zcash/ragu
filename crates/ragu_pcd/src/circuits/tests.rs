@@ -228,6 +228,7 @@ fn print_registry_digests() {
         .cloned()
         .collect();
     let nested_bytes: Vec<u8> = nested_digest
+        .value()
         .to_repr()
         .as_ref()
         .iter()

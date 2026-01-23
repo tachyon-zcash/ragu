@@ -111,14 +111,14 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
         }
 
         impl<F: Field, C: Circuit<F>, R: Rank> CircuitObject<F, R> for ProcessedCircuit<C> {
-            fn sxy(&self, x: F, y: F, key: F) -> F {
+            fn sxy(&self, x: F, y: F, key: &registry::Key<F>) -> F {
                 s::sxy::eval::<_, _, R>(&self.circuit, x, y, key)
                     .expect("should succeed if metrics succeeded")
             }
-            fn sx(&self, x: F, key: F) -> unstructured::Polynomial<F, R> {
+            fn sx(&self, x: F, key: &registry::Key<F>) -> unstructured::Polynomial<F, R> {
                 s::sx::eval(&self.circuit, x, key).expect("should succeed if metrics succeeded")
             }
-            fn sy(&self, y: F, key: F) -> structured::Polynomial<F, R> {
+            fn sy(&self, y: F, key: &registry::Key<F>) -> structured::Polynomial<F, R> {
                 s::sy::eval(&self.circuit, y, key, self.metrics.num_linear_constraints)
                     .expect("should succeed if metrics succeeded")
             }
@@ -141,7 +141,7 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
     fn rx<'witness, R: Rank>(
         &self,
         witness: Self::Witness<'witness>,
-        key: F,
+        key: &registry::Key<F>,
     ) -> Result<(structured::Polynomial<F, R>, Self::Aux<'witness>)> {
         rx::eval(self, witness, key)
     }
@@ -159,13 +159,13 @@ impl<F: Field, C: Circuit<F>> CircuitExt<F> for C {}
 /// See [`CircuitExt::into_object`].
 pub trait CircuitObject<F: Field, R: Rank>: Send + Sync {
     /// Evaluates the polynomial $s(x, y)$ for some $x, y \in \mathbb{F}$.
-    fn sxy(&self, x: F, y: F, key: F) -> F;
+    fn sxy(&self, x: F, y: F, key: &registry::Key<F>) -> F;
 
     /// Computes the polynomial restriction $s(x, Y)$ for some $x \in \mathbb{F}$.
-    fn sx(&self, x: F, key: F) -> unstructured::Polynomial<F, R>;
+    fn sx(&self, x: F, key: &registry::Key<F>) -> unstructured::Polynomial<F, R>;
 
     /// Computes the polynomial restriction $s(X, y)$ for some $y \in \mathbb{F}$.
-    fn sy(&self, y: F, key: F) -> structured::Polynomial<F, R>;
+    fn sy(&self, y: F, key: &registry::Key<F>) -> structured::Polynomial<F, R>;
 
     /// Returns the number of constraints: `(multiplication, linear)`.
     fn constraint_counts(&self) -> (usize, usize);
