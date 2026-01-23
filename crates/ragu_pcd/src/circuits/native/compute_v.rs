@@ -120,7 +120,7 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitField, R>
     for Circuit<C, R, HEADER_SIZE>
 {
-    type Final = native_eval::Stage<C, R, HEADER_SIZE>;
+    type Last = native_eval::Stage<C, R, HEADER_SIZE>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE>;
@@ -140,7 +140,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
 
     fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
-        builder: StageBuilder<'a, 'dr, D, R, (), Self::Final>,
+        builder: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<(
         <Self::Output as GadgetKind<C::CircuitField>>::Rebind<'dr, D>,

@@ -252,7 +252,7 @@ pub struct EndoscalingStepWitness<'source, C: CurveAffine, const NUM_POINTS: usi
 impl<C: CurveAffine, R: Rank, const NUM_POINTS: usize> MultiStageCircuit<C::Base, R>
     for EndoscalingStep<C, R, NUM_POINTS>
 {
-    type Final = PointsStage<C, NUM_POINTS>;
+    type Last = PointsStage<C, NUM_POINTS>;
     type Instance<'source> = ();
     type Witness<'source> = EndoscalingStepWitness<'source, C, NUM_POINTS>;
     type Output = Kind![C::Base; ()];
@@ -268,7 +268,7 @@ impl<C: CurveAffine, R: Rank, const NUM_POINTS: usize> MultiStageCircuit<C::Base
 
     fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
         &self,
-        dr: StageBuilder<'a, 'dr, D, R, (), Self::Final>,
+        dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<(
         <Self::Output as GadgetKind<C::Base>>::Rebind<'dr, D>,
