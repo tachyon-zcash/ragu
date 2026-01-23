@@ -2,8 +2,8 @@ use arithmetic::Cycle;
 use criterion::{Criterion, criterion_group, criterion_main};
 use ff::Field;
 use ragu_circuits::CircuitExt;
-use ragu_circuits::mesh::MeshBuilder;
 use ragu_circuits::polynomials::{R, structured, unstructured};
+use ragu_circuits::registry::RegistryBuilder;
 use ragu_circuits::test_fixtures::{MySimpleCircuit, SquareCircuit};
 use ragu_pasta::{Fp, Pasta};
 use rand::rngs::mock::StepRng;
@@ -182,15 +182,15 @@ fn bench_square_circuit_rx(c: &mut Criterion) {
     }
 }
 
-// ============ MESH BENCHMARKS ============
+// ============ REGISTRY BENCHMARKS ============
 
-fn bench_mesh_finalize(c: &mut Criterion) {
+fn bench_registry_finalize(c: &mut Criterion) {
     let poseidon = Pasta::circuit_poseidon(Pasta::baked());
 
-    // Correlates to test_mesh_circuit_consistency using varied SquareCircuit configurations
-    c.bench_function("circuits/mesh/finalize_8_square_circuits", |b| {
+    // Correlates to test_registry_circuit_consistency using varied SquareCircuit configurations
+    c.bench_function("circuits/registry/finalize_8_square_circuits", |b| {
         b.iter(|| {
-            MeshBuilder::<Fp, R<25>>::new()
+            RegistryBuilder::<Fp, R<25>>::new()
                 .register_circuit(SquareCircuit { times: 2 })
                 .unwrap()
                 .register_circuit(SquareCircuit { times: 5 })
@@ -212,9 +212,9 @@ fn bench_mesh_finalize(c: &mut Criterion) {
     });
 }
 
-fn bench_mesh_evaluations(c: &mut Criterion) {
+fn bench_registry_evaluations(c: &mut Criterion) {
     let poseidon = Pasta::circuit_poseidon(Pasta::baked());
-    let mesh = MeshBuilder::<Fp, R<5>>::new()
+    let registry = RegistryBuilder::<Fp, R<5>>::new()
         .register_circuit(MySimpleCircuit)
         .unwrap()
         .register_circuit(MySimpleCircuit)
@@ -228,31 +228,31 @@ fn bench_mesh_evaluations(c: &mut Criterion) {
 
     let mut rng = mock_rng();
 
-    c.bench_function("circuits/mesh/xy", |b| {
+    c.bench_function("circuits/registry/xy", |b| {
         b.iter_batched(
             || (Fp::random(&mut rng), Fp::random(&mut rng)),
-            |(x, y)| mesh.xy(x, y),
+            |(x, y)| registry.xy(x, y),
             criterion::BatchSize::SmallInput,
         )
     });
 
-    c.bench_function("circuits/mesh/wy", |b| {
+    c.bench_function("circuits/registry/wy", |b| {
         b.iter_batched(
             || (Fp::random(&mut rng), Fp::random(&mut rng)),
-            |(w, y)| mesh.wy(w, y),
+            |(w, y)| registry.wy(w, y),
             criterion::BatchSize::SmallInput,
         )
     });
 
-    c.bench_function("circuits/mesh/wx", |b| {
+    c.bench_function("circuits/registry/wx", |b| {
         b.iter_batched(
             || (Fp::random(&mut rng), Fp::random(&mut rng)),
-            |(w, x)| mesh.wx(w, x),
+            |(w, x)| registry.wx(w, x),
             criterion::BatchSize::SmallInput,
         )
     });
 
-    c.bench_function("circuits/mesh/wxy", |b| {
+    c.bench_function("circuits/registry/wxy", |b| {
         b.iter_batched(
             || {
                 (
@@ -261,7 +261,7 @@ fn bench_mesh_evaluations(c: &mut Criterion) {
                     Fp::random(&mut rng),
                 )
             },
-            |(w, x, y)| mesh.wxy(w, x, y),
+            |(w, x, y)| registry.wxy(w, x, y),
             criterion::BatchSize::SmallInput,
         )
     });
@@ -297,11 +297,11 @@ criterion_group! {
 }
 
 criterion_group! {
-    name = mesh_ops;
+    name = registry_ops;
     config = Criterion::default();
     targets =
-        bench_mesh_finalize,
-        bench_mesh_evaluations
+        bench_registry_finalize,
+        bench_registry_evaluations
 }
 
-criterion_main!(poly_commits, poly_ops, circuit_synthesis, mesh_ops);
+criterion_main!(poly_commits, poly_ops, circuit_synthesis, registry_ops);
