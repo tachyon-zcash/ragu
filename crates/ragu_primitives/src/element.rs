@@ -1,6 +1,7 @@
 use arithmetic::Coeff;
 use arithmetic::PrimeFieldExt;
 use ff::{Field, PrimeField};
+use ragu_core::gadgets::ConstraintFreeKind;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue, LinearExpression},
@@ -361,6 +362,8 @@ impl<F: Field> Write<F> for Kind![F; @Element<'_, _>] {
         buf.write(dr, this)
     }
 }
+
+impl<F: Field> ConstraintFreeKind for Kind![F; @Element<'_, _>] {}
 
 /// Simple buffer that collects pushed values into a vector.
 impl<'dr, D: Driver<'dr>> Buffer<'dr, D> for Vec<Element<'dr, D>> {

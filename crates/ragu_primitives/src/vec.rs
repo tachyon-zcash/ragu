@@ -22,7 +22,7 @@ use ff::Field;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, FromDriver},
-    gadgets::{Gadget, GadgetKind},
+    gadgets::{ConstraintFreeKind, Gadget, GadgetKind},
 };
 
 use alloc::vec::Vec;
@@ -241,3 +241,6 @@ unsafe impl<F: Field, G: GadgetKind<F>, L: Len> GadgetKind<F> for FixedVec<Phant
         Ok(())
     }
 }
+
+// FixedVec is constraint-free if its element type is constraint-free.
+impl<G: ConstraintFreeKind, L: Len> ConstraintFreeKind for FixedVec<PhantomData<G>, L> {}
