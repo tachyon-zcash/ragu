@@ -145,19 +145,16 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
     }
 }
 
-/// Registry key binds to the registry definition as a short digest, preventing
-/// circuit substitution attacks.
+/// Registry key binds the registry polynomial to the Fiat-Shamir transcript.
 ///
-/// Each [`Registry`] collects a set of circuits. To prevent an adversary from
-/// substituting one circuit for another after the registery is finalized, we
-/// retroactively bind all constituent circuits to a deterministic digest.
-/// The key is computed during [`RegistryBuilder::finalize`], and will be used
-/// during evaluations of the registry polynomial and member circuits' wiring
-/// polynomials. Effectively, each member circuit is augmented with an additional
-/// linear constraint that binds it to this registry key. Thus, evaluations of
-/// the wiring polynomial (and the registry polynomial) are randomized.
+/// Since the registry polynomial is under developer control with many degrees
+/// of freedom, we need to bind its (succint) description to the transcript
+/// to avoid "weak Fiat-Shamir attack" or any backdoors.
+/// The key is computed during [`RegistryBuilder::finalize`] and used during
+/// polynomial evaluations, effectively augmenting each circuit with a linear
+/// constraint.
 ///
-/// See [#78] for the safety argument.
+/// See [#78] for the security argument.
 ///
 /// [#78]: https://github.com/tachyon-zcash/ragu/issues/78
 pub struct Key<F: Field> {
@@ -175,7 +172,7 @@ impl<F: Field> Default for Key<F> {
 
 impl<F: Field> Key<F> {
     /// Creates a new registry key from a field element, panic if zero.
-    pub fn new(val: F) -> Self {
+    pub(crate) fn new(val: F) -> Self {
         let inv = val.invert().expect("registry digest should never be zero");
         Self { val, inv }
     }
