@@ -51,20 +51,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let y = *y.value().take();
         let xz = x * *z.value().take();
 
-        let registry_xy_poly = self.native_registry.xy(x, y);
+        let registry_xy = self.native_registry.xy_with_evals(x, y);
         let registry_xy_blind = C::CircuitField::random(&mut *rng);
-        let registry_xy_commitment =
-            registry_xy_poly.commit(C::host_generators(self.params), registry_xy_blind);
+        let registry_xy_commitment = registry_xy
+            .poly
+            .commit(C::host_generators(self.params), registry_xy_blind);
 
         let registry_at = |idx: InternalCircuitIndex| -> C::CircuitField {
-            let circuit_id = idx.circuit_index();
-            registry_xy_poly.eval(circuit_id.omega_j())
+            registry_xy.circuit_eval(idx.circuit_index(self.num_application_steps))
         };
 
         let query_witness = query::Witness {
             fixed_registry: query::FixedRegistryWitness {
-                // TODO: these can all be evaluated at the same time; in fact,
-                // that's what registry.xy is supposed to allow.
                 preamble_stage: registry_at(PreambleStage),
                 error_m_stage: registry_at(ErrorMStage),
                 error_n_stage: registry_at(ErrorNStage),
@@ -79,13 +77,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 full_collapse_circuit: registry_at(FullCollapseCircuit),
                 compute_v_circuit: registry_at(ComputeVCircuit),
             },
-            registry_wxy: registry_xy_poly.eval(w),
+            registry_wxy: registry_xy.poly.eval(w),
             left: query::ChildEvaluationsWitness::from_proof(
                 left,
                 w,
                 x,
                 xz,
-                &registry_xy_poly,
+                &registry_xy.poly,
                 &error_m.registry_wy_poly,
             ),
             right: query::ChildEvaluationsWitness::from_proof(
@@ -93,7 +91,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 w,
                 x,
                 xz,
-                &registry_xy_poly,
+                &registry_xy.poly,
                 &error_m.registry_wy_poly,
             ),
         };
@@ -112,7 +110,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         Ok((
             proof::Query {
-                registry_xy_poly,
+                registry_xy_poly: registry_xy.poly,
                 registry_xy_blind,
                 registry_xy_commitment,
                 native_rx,
