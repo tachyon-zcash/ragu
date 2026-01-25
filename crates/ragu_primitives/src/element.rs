@@ -4,7 +4,7 @@ use ff::{Field, PrimeField};
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue, LinearExpression},
-    gadgets::{Gadget, Kind},
+    gadgets::{Consistent, Gadget, Kind},
     maybe::Maybe,
 };
 
@@ -349,6 +349,12 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
         elements
             .into_iter()
             .fold(Element::zero(dr), |acc, elem| acc.add(dr, elem.borrow()))
+    }
+}
+
+impl<'dr, D: Driver<'dr>> Consistent<'dr, D> for Element<'dr, D> {
+    fn enforce_consistent(&self, _: &mut D) -> Result<()> {
+        Ok(())
     }
 }
 

@@ -3,7 +3,7 @@ use ff::{Field, PrimeField};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue, LinearExpression},
-    gadgets::{Gadget, Kind},
+    gadgets::{Consistent, Gadget, Kind},
     maybe::Maybe,
 };
 
@@ -237,6 +237,20 @@ pub fn multipack<'dr, D: Driver<'dr, F: ff::PrimeField>>(
     }
 
     Ok(v)
+}
+
+impl<'dr, D: Driver<'dr>> Consistent<'dr, D> for Boolean<'dr, D> {
+    fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
+        // Enforce the bit constraint
+        let (a, b, c) = dr.mul(|| {
+            let v = self.value.coeff().take();
+            Ok((v, v, v))
+        })?;
+        dr.enforce_equal(&a, self.wire())?;
+        dr.enforce_equal(&b, self.wire())?;
+        dr.enforce_equal(&c, self.wire())?;
+        Ok(())
+    }
 }
 
 #[test]
