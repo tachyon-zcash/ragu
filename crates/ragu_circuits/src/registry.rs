@@ -17,7 +17,7 @@
 
 use blake2b_simd::Params;
 use ff::{Field, FromUniformBytes, PrimeField};
-use ragu_arithmetic::{Domain, bitreverse};
+use ragu_arithmetic::{CurveAffine, Domain, FixedGenerators, bitreverse};
 use ragu_core::{Error, Result};
 
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec, vec::Vec};
@@ -66,7 +66,7 @@ impl CircuitIndex {
 /// and circuit evaluations $s_i(x, y)$
 pub struct RegistryAtXY<F: PrimeField, R: Rank> {
     /// The polynomial $m(W, x, y)$ in coefficient form.
-    pub poly: unstructured::Polynomial<F, R>,
+    poly: unstructured::Polynomial<F, R>,
     /// Circuit evaluations $s_i(x, y)$ indexed by circuit number.
     circuit_evals: Vec<F>,
 }
@@ -75,6 +75,30 @@ impl<F: PrimeField, R: Rank> RegistryAtXY<F, R> {
     /// Get the evaluation for a specific circuit: $s_i(x, y)$.
     pub fn circuit_eval(&self, idx: CircuitIndex) -> F {
         self.circuit_evals[idx.0 as usize]
+    }
+
+    /// Evaluate the polynomial $m(W, x, y)$ at a specific point $w$.
+    pub fn eval(&self, w: F) -> F {
+        self.poly.eval(w)
+    }
+
+    /// Commit to the polynomial $m(W, x, y)$.
+    pub fn commit<C: CurveAffine<ScalarExt = F>>(
+        &self,
+        generators: &impl FixedGenerators<C>,
+        blind: F,
+    ) -> C {
+        self.poly.commit(generators, blind)
+    }
+
+    /// Borrow the underlying polynomial.
+    pub fn poly(&self) -> &unstructured::Polynomial<F, R> {
+        &self.poly
+    }
+
+    /// Consume and return the underlying polynomial.
+    pub fn into_poly(self) -> unstructured::Polynomial<F, R> {
+        self.poly
     }
 }
 
@@ -381,7 +405,7 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
         let mut lagrange_vals = vec![F::ZERO; self.domain.n()];
 
         for (i, circuit) in self.circuits.iter().enumerate() {
-            let eval = circuit.sxy(x, y, self.key);
+            let eval = circuit.sxy(x, y, &self.key);
             circuit_evals.push(eval);
             let j = bitreverse(i as u32, self.domain.log2_n()) as usize;
             lagrange_vals[j] = eval;

@@ -53,12 +53,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         let registry_xy = self.native_registry.xy_with_evals(x, y);
         let registry_xy_blind = C::CircuitField::random(&mut *rng);
-        let registry_xy_commitment = registry_xy
-            .poly
-            .commit(C::host_generators(self.params), registry_xy_blind);
+        let registry_xy_commitment =
+            registry_xy.commit(C::host_generators(self.params), registry_xy_blind);
 
         let registry_at = |idx: InternalCircuitIndex| -> C::CircuitField {
-            registry_xy.circuit_eval(idx.circuit_index(self.num_application_steps))
+            registry_xy.circuit_eval(idx.circuit_index())
         };
 
         let query_witness = query::Witness {
@@ -77,13 +76,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 full_collapse_circuit: registry_at(FullCollapseCircuit),
                 compute_v_circuit: registry_at(ComputeVCircuit),
             },
-            registry_wxy: registry_xy.poly.eval(w),
+            registry_wxy: registry_xy.eval(w),
             left: query::ChildEvaluationsWitness::from_proof(
                 left,
                 w,
                 x,
                 xz,
-                &registry_xy.poly,
+                registry_xy.poly(),
                 &error_m.registry_wy_poly,
             ),
             right: query::ChildEvaluationsWitness::from_proof(
@@ -91,7 +90,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 w,
                 x,
                 xz,
-                &registry_xy.poly,
+                registry_xy.poly(),
                 &error_m.registry_wy_poly,
             ),
         };
@@ -110,7 +109,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         Ok((
             proof::Query {
-                registry_xy_poly: registry_xy.poly,
+                registry_xy_poly: registry_xy.into_poly(),
                 registry_xy_blind,
                 registry_xy_commitment,
                 native_rx,
