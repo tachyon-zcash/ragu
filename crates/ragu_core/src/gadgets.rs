@@ -321,3 +321,19 @@ pub use ragu_macros::Gadget;
 /// macro that it should perform the substitution without qualifications, which
 /// works fine in most cases.
 pub use ragu_macros::gadget_kind as Kind;
+
+/// A gadget that can enforce its internal consistency constraints on existing wires.
+///
+/// This trait is a subtrait of [`Gadget`] that allows gadgets to verify their
+/// internal invariants without re-allocating wires. For constraint-free gadgets
+/// like `Element`, this is a no-op. For gadgets with internal constraints like
+/// `Point`, this enforces the curve equation using the gadget's existing wires.
+///
+/// This enables efficient staged enforcement by eliminating fresh wire allocations
+/// and equality constraints entirely, making `.enforced()` as efficient as
+/// `.unenforced()` for constraint-free stages while still correctly enforcing
+/// constraints for mixed stages.
+pub trait Consistent<'dr, D: Driver<'dr>>: Gadget<'dr, D> {
+    /// Enforce internal consistency constraints on this gadget's wires.
+    fn enforce_consistent(&self, dr: &mut D) -> Result<()>;
+}
