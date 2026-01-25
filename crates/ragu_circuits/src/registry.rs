@@ -15,7 +15,7 @@
 //! to compile the added circuits into a registry polynomial representation that can
 //! be efficiently evaluated at different restrictions.
 
-use arithmetic::{Domain, PoseidonPermutation, bitreverse};
+use arithmetic::{CurveAffine, Domain, FixedGenerators, PoseidonPermutation, bitreverse};
 use ff::PrimeField;
 use ragu_core::{Error, Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{Element, poseidon::Sponge};
@@ -60,7 +60,7 @@ impl CircuitIndex {
 /// and circuit evaluations $s_i(x, y)$
 pub struct RegistryAtXY<F: PrimeField, R: Rank> {
     /// The polynomial $m(W, x, y)$ in coefficient form.
-    pub poly: unstructured::Polynomial<F, R>,
+    poly: unstructured::Polynomial<F, R>,
     /// Circuit evaluations $s_i(x, y)$ indexed by circuit number.
     circuit_evals: Vec<F>,
 }
@@ -69,6 +69,30 @@ impl<F: PrimeField, R: Rank> RegistryAtXY<F, R> {
     /// Get the evaluation for a specific circuit: $s_i(x, y)$.
     pub fn circuit_eval(&self, idx: CircuitIndex) -> F {
         self.circuit_evals[idx.0 as usize]
+    }
+
+    /// Evaluate the polynomial $m(W, x, y)$ at a specific point $w$.
+    pub fn eval(&self, w: F) -> F {
+        self.poly.eval(w)
+    }
+
+    /// Commit to the polynomial $m(W, x, y)$.
+    pub fn commit<C: CurveAffine<ScalarExt = F>>(
+        &self,
+        generators: &impl FixedGenerators<C>,
+        blind: F,
+    ) -> C {
+        self.poly.commit(generators, blind)
+    }
+
+    /// Borrow the underlying polynomial.
+    pub fn poly(&self) -> &unstructured::Polynomial<F, R> {
+        &self.poly
+    }
+
+    /// Consume and return the underlying polynomial.
+    pub fn into_poly(self) -> unstructured::Polynomial<F, R> {
+        self.poly
     }
 }
 
