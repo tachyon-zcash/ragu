@@ -23,7 +23,7 @@ use ragu_circuits::polynomials::Rank;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Gadget, GadgetKind, Kind},
+    gadgets::{Consistent, Gadget, GadgetKind, Kind},
     maybe::Maybe,
 };
 use ragu_primitives::{Element, Point, io::Write};
@@ -148,6 +148,20 @@ pub struct Output<'dr, D: Driver<'dr>, C: Cycle> {
     /// Expected evaluation at the challenge point for consistency verification.
     #[ragu(gadget)]
     pub v: Element<'dr, D>,
+}
+
+impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle> Consistent<'dr, D> for Output<'dr, D, C> {
+    fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
+        self.nested_preamble_commitment.enforce_consistent(dr)?;
+        self.nested_s_prime_commitment.enforce_consistent(dr)?;
+        self.nested_error_m_commitment.enforce_consistent(dr)?;
+        self.nested_error_n_commitment.enforce_consistent(dr)?;
+        self.nested_ab_commitment.enforce_consistent(dr)?;
+        self.nested_query_commitment.enforce_consistent(dr)?;
+        self.nested_f_commitment.enforce_consistent(dr)?;
+        self.nested_eval_commitment.enforce_consistent(dr)?;
+        Ok(())
+    }
 }
 
 /// Native (non-gadget) representation of unified public inputs.

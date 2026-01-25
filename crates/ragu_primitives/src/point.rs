@@ -3,7 +3,7 @@ use ff::{Field, WithSmallOrderMulGroup};
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue, LinearExpression},
-    gadgets::Gadget,
+    gadgets::{Consistent, Gadget},
     maybe::Maybe,
 };
 
@@ -199,6 +199,21 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
             x: x_s,
             y: y_s,
             _marker: PhantomData,
+        })
+    }
+}
+
+impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Consistent<'dr, D> for Point<'dr, D, C> {
+    fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
+        // Enforce the curve equation: x^3 + b - y^2 = 0
+        let x2 = self.x.square(dr)?;
+        let x3 = self.x.mul(dr, &x2)?;
+        let y2 = self.y.square(dr)?;
+
+        dr.enforce_zero(|lc| {
+            lc.add(x3.wire())
+                .add_term(&D::ONE, Coeff::Arbitrary(C::b()))
+                .sub(y2.wire())
         })
     }
 }

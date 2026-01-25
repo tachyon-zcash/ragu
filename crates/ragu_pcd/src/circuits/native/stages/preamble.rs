@@ -7,7 +7,7 @@ use ragu_circuits::{polynomials::Rank, staging};
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Gadget, GadgetKind, Kind},
+    gadgets::{Consistent, Gadget, GadgetKind, Kind},
     maybe::Maybe,
 };
 use ragu_primitives::{
@@ -77,6 +77,14 @@ pub struct ChildHeaders<'dr, D: Driver<'dr>, const HEADER_SIZE: usize> {
     pub right: HeaderVec<'dr, D, HEADER_SIZE>,
 }
 
+impl<'dr, D: Driver<'dr>, const HEADER_SIZE: usize> Consistent<'dr, D>
+    for ChildHeaders<'dr, D, HEADER_SIZE>
+{
+    fn enforce_consistent(&self, _: &mut D) -> Result<()> {
+        Ok(())
+    }
+}
+
 /// Processed inputs from a single child proof in the preamble stage.
 #[derive(Gadget)]
 pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize> {
@@ -90,6 +98,14 @@ pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize> 
     pub circuit_id: Element<'dr, D>,
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
+}
+
+impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize>
+    Consistent<'dr, D> for ProofInputs<'dr, D, C, HEADER_SIZE>
+{
+    fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
+        self.unified.enforce_consistent(dr)
+    }
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize> ProofInputs<'dr, D, C, HEADER_SIZE> {
@@ -225,6 +241,15 @@ pub struct Output<'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize> {
     pub left: ProofInputs<'dr, D, C, HEADER_SIZE>,
     #[ragu(gadget)]
     pub right: ProofInputs<'dr, D, C, HEADER_SIZE>,
+}
+
+impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize>
+    Consistent<'dr, D> for Output<'dr, D, C, HEADER_SIZE>
+{
+    fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
+        self.left.enforce_consistent(dr)?;
+        self.right.enforce_consistent(dr)
+    }
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize> Output<'dr, D, C, HEADER_SIZE> {

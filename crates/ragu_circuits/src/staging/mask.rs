@@ -558,6 +558,12 @@ mod tests {
         b: Element<'dr, D>,
     }
 
+    impl<'dr, D: Driver<'dr>> ragu_core::gadgets::Consistent<'dr, D> for TwoElements<'dr, D> {
+        fn enforce_consistent(&self, _: &mut D) -> ragu_core::Result<()> {
+            Ok(())
+        }
+    }
+
     impl Stage<Fp, R> for ConstrainedStage {
         type Parent = ();
         type Witness<'source> = (Fp, Fp);

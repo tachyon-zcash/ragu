@@ -6,7 +6,7 @@ use ff::Field;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverTypes, DriverValue, FromDriver},
-    gadgets::{Gadget, GadgetKind},
+    gadgets::{Consistent, Gadget, GadgetKind},
     maybe::Empty,
 };
 
@@ -151,6 +151,13 @@ pub struct DemotedKind<F: Field, G: GadgetKind<F>> {
 
 impl<'dr, D: Driver<'dr>, G: Gadget<'dr, D>> Gadget<'dr, D> for Demoted<'dr, D, G> {
     type Kind = DemotedKind<D::F, G::Kind>;
+}
+
+impl<'dr, D: Driver<'dr>, G: Gadget<'dr, D>> Consistent<'dr, D> for Demoted<'dr, D, G> {
+    fn enforce_consistent(&self, _: &mut D) -> Result<()> {
+        // No-op: Consistency should be enforced after promotion.
+        Ok(())
+    }
 }
 
 unsafe impl<F: Field, G: GadgetKind<F>> GadgetKind<F> for DemotedKind<F, G> {
