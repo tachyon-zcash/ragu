@@ -21,11 +21,11 @@
 //!
 //! ### `ONE` Wire Evaluation
 //!
-//! The `ONE` wire corresponds to the $c$ wire from gate 0, with monomial $x^{4n
-//!     - 1}$. Since [`Driver::ONE`] must be a compile-time constant, it cannot
-//!     hold this computed value. Instead, [`WireEval::One`] serves as a
-//!     sentinel that [`WireEvalSum::add_term`] resolves to the cached $x^{4n -
-//!     1}$ value at runtime.
+//! The `ONE` wire corresponds to the $c$ wire from gate 0, with monomial
+//! $x^{4n-1}$. Since [`Driver::ONE`] must be a compile-time constant, it cannot
+//! hold this computed value. Instead, [`WireEval::One`] serves as a sentinel
+//! that [`WireEvalSum::add_term`] resolves to the cached $x^{4n - 1}$ value
+//! at runtime.
 //!
 //! [`sx`]: super::sx
 //! [`sxy`]: super::sxy

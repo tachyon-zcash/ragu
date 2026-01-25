@@ -66,7 +66,69 @@
 //! [`enforce_zero`]: ragu_core::drivers::Driver::enforce_zero
 //! [wiring polynomials]: http://TODO
 
+use arithmetic::Coeff;
+use ragu_core::{
+    Result,
+    drivers::{Driver, LinearExpression},
+};
+
 mod common;
 pub mod sx;
 pub mod sxy;
 pub mod sy;
+
+/// An extension trait for [`Driver`] for common (internal) $s(X, Y)$ constraint
+/// enforcement.
+///
+/// # Public Input Enforcement
+///
+/// Algebraically, all linear constraints relate linear combinations of wires to
+/// elements in the public input vector. However, circuits are usually concerned
+/// with enforcing that combinations of wires equal zero, and hence
+/// [`enforce_zero`] is offered as the primary API even though it is technically
+/// a special case that constrains against an element of the (sparse) public
+/// input vector that is implicitly assigned to zero.
+///
+/// This trait provides [`enforce_public_outputs`] and [`enforce_one`] methods
+/// to explicitly denote when constraints _actually_ intend to bind against
+/// designated coefficients of the low-degree $k(Y)$ public input polynomial.
+/// Internally, these just proxy to `enforce_zero` anyway.
+///
+/// [`enforce_zero`]: ragu_core::drivers::Driver::enforce_zero
+/// [`enforce_public_outputs`]: DriverExt::enforce_public_outputs
+/// [`enforce_one`]: DriverExt::enforce_one
+trait DriverExt<'dr>: Driver<'dr> {
+    /// Enforces public output constraints by binding output wires to
+    /// coefficients of $k(Y)$.
+    fn enforce_public_outputs<'w>(
+        &mut self,
+        outputs: impl IntoIterator<Item = &'w Self::Wire>,
+    ) -> Result<()>
+    where
+        Self::Wire: 'w,
+    {
+        outputs
+            .into_iter()
+            .try_for_each(|output| self.enforce_zero(|lc| lc.add(output)))
+    }
+
+    /// Enforces the special `ONE` constraint that is enforced against the
+    /// constant term of $k(Y)$.
+    fn enforce_one(&mut self) -> Result<()> {
+        self.enforce_zero(|lc| lc.add(&Self::ONE))
+    }
+
+    /// Enforces the registry key constraint that binds a key wire to the registry's
+    /// random key value.
+    ///
+    /// This method enforces the linear constraint `key_wire - key = 0`, which
+    /// randomizes non-trivial evaluations of the wiring polynomial.
+    fn enforce_registry_key(&mut self, key_wire: &Self::Wire, key: Self::F) -> Result<()> {
+        self.enforce_zero(|lc| {
+            lc.add(key_wire)
+                .add_term(&Self::ONE, Coeff::NegativeArbitrary(key))
+        })
+    }
+}
+
+impl<'dr, D: Driver<'dr>> DriverExt<'dr> for D {}

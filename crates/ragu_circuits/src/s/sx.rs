@@ -66,7 +66,7 @@ use arithmetic::Coeff;
 use ff::Field;
 use ragu_core::{
     Error, Result,
-    drivers::{Driver, DriverTypes, LinearExpression, emulator::Emulator},
+    drivers::{Driver, DriverTypes, emulator::Emulator},
     gadgets::GadgetKind,
     maybe::Empty,
     routines::{Prediction, Routine},
@@ -83,7 +83,10 @@ use crate::{
     },
 };
 
-use super::common::{WireEval, WireEvalSum};
+use super::{
+    DriverExt,
+    common::{WireEval, WireEvalSum},
+};
 
 /// A [`Driver`] that computes the partial evaluation $s(x, Y)$.
 ///
@@ -320,26 +323,20 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
         available_b: None,
         _marker: core::marker::PhantomData,
     };
-    // Gate 0: key_wire = a, one = c (the `ONE` wire).
-    let (key_wire, _, one) = evaluator.mul(|| unreachable!())?;
 
-    // Registry key constraint: key_wire - key = 0.
-    evaluator.enforce_zero(|lc| {
-        lc.add(&key_wire)
-            .add_term(&one, Coeff::NegativeArbitrary(key))
-    })?;
+    // Allocate the key_wire and ONE wires
+    let (key_wire, _, _one) = evaluator.mul(|| unreachable!())?;
+
+    // Registry key constraint
+    evaluator.enforce_registry_key(&key_wire, key)?;
 
     let mut outputs = vec![];
     let (io, _) = circuit.witness(&mut evaluator, Empty)?;
     io.write(&mut evaluator, &mut outputs)?;
 
-    // Public output constraints (one per output wire).
-    for output in outputs {
-        evaluator.enforce_zero(|lc| lc.add(output.wire()))?;
-    }
-
-    // `ONE` wire constraint.
-    evaluator.enforce_zero(|lc| lc.add(&one))?;
+    // Enforcing public inputs
+    evaluator.enforce_public_outputs(outputs.iter().map(|output| output.wire()))?;
+    evaluator.enforce_one()?;
 
     // Reverse to canonical coefficient order (see module docs).
     evaluator.result[0..evaluator.linear_constraints].reverse();

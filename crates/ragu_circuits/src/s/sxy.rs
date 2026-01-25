@@ -52,7 +52,7 @@ use arithmetic::Coeff;
 use ff::Field;
 use ragu_core::{
     Error, Result,
-    drivers::{Driver, DriverTypes, LinearExpression, emulator::Emulator},
+    drivers::{Driver, DriverTypes, emulator::Emulator},
     gadgets::GadgetKind,
     maybe::Empty,
     routines::{Prediction, Routine},
@@ -63,7 +63,10 @@ use alloc::vec;
 
 use crate::{Circuit, polynomials::Rank};
 
-use super::common::{WireEval, WireEvalSum};
+use super::{
+    DriverExt,
+    common::{WireEval, WireEvalSum},
+};
 
 /// A [`Driver`] that computes the full evaluation $s(x, y)$.
 ///
@@ -296,23 +299,20 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(circuit: &C, x: F, y: F, key: F) -
         _marker: core::marker::PhantomData,
     };
 
-    let (key_wire, _, one) = evaluator.mul(|| unreachable!())?;
+    // Allocate the key_wire and ONE wires
+    let (key_wire, _, _one) = evaluator.mul(|| unreachable!())?;
 
-    // Enforce linear constraint key_wire = key to randomize non-trivial
-    // evaluations of this wiring polynomial.
-    evaluator.enforce_zero(|lc| {
-        lc.add(&key_wire)
-            .add_term(&one, Coeff::NegativeArbitrary(key))
-    })?;
+    // Registry key constraint
+    evaluator.enforce_registry_key(&key_wire, key)?;
 
     let mut outputs = vec![];
 
     let (io, _) = circuit.witness(&mut evaluator, Empty)?;
     io.write(&mut evaluator, &mut outputs)?;
-    for output in outputs {
-        evaluator.enforce_zero(|lc| lc.add(output.wire()))?;
-    }
-    evaluator.enforce_zero(|lc| lc.add(&one))?;
+
+    // Enforcing public inputs
+    evaluator.enforce_public_outputs(outputs.iter().map(|output| output.wire()))?;
+    evaluator.enforce_one()?;
 
     Ok(evaluator.result)
 }

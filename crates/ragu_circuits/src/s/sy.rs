@@ -80,6 +80,7 @@ use ragu_primitives::GadgetExt;
 use alloc::{vec, vec::Vec};
 use core::cell::RefCell;
 
+use super::DriverExt;
 use crate::{
     Circuit,
     polynomials::{Rank, structured},
@@ -662,23 +663,19 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
                 _marker: core::marker::PhantomData,
             };
 
-            let (key_wire, _, one) = evaluator.mul(|| unreachable!())?;
+            // Allocate the key_wire and ONE wires
+            let (key_wire, _, _one) = evaluator.mul(|| unreachable!())?;
 
-            // Enforce linear constraint key_wire = key to randomize non-trivial
-            // evaluations of this wiring polynomial.
-            evaluator.enforce_zero(|lc| {
-                lc.add(&key_wire)
-                    .add_term(&one, Coeff::NegativeArbitrary(key))
-            })?;
+            // Registry key constraint
+            evaluator.enforce_registry_key(&key_wire, key)?;
 
             let mut outputs = vec![];
             let (io, _) = circuit.witness(&mut evaluator, Empty)?;
             io.write(&mut evaluator, &mut outputs)?;
 
-            for output in outputs {
-                evaluator.enforce_zero(|lc| lc.add(output.wire()))?;
-            }
-            evaluator.enforce_zero(|lc| lc.add(&one))?;
+            // Enforcing public inputs
+            evaluator.enforce_public_outputs(outputs.iter().map(|output| output.wire()))?;
+            evaluator.enforce_one()?;
 
             // Invariant: synthesis must produce exactly the expected number of
             // linear constraints.
