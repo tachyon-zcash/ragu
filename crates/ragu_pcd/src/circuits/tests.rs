@@ -172,7 +172,7 @@ fn test_native_registry_digest() {
     let expected = fp!(0x1277dee2ad8fa4dddc022539e29ed544f6cd96261ee1baaa22819611e9e3e593);
 
     assert_eq!(
-        app.native_registry.get_key(),
+        app.native_registry.key().value(),
         expected,
         "Native registry digest changed unexpectedly!"
     );
@@ -196,7 +196,7 @@ fn test_nested_registry_digest() {
     let expected = fq!(0x0a8eeda61431380b0121a2a396891b6441a8314d1ceb4c59b595a369933d3403);
 
     assert_eq!(
-        app.nested_registry.get_key(),
+        app.nested_registry.key().value(),
         expected,
         "Nested registry digest changed unexpectedly!"
     );
@@ -216,11 +216,12 @@ fn print_registry_digests() {
         .finalize(pasta)
         .unwrap();
 
-    let native_digest = app.native_registry.get_key();
-    let nested_digest = app.nested_registry.get_key();
+    let native_digest = app.native_registry.key();
+    let nested_digest = app.nested_registry.key();
 
     // Convert to big-endian hex for repr256! format
     let native_bytes: Vec<u8> = native_digest
+        .value()
         .to_repr()
         .as_ref()
         .iter()
@@ -228,6 +229,7 @@ fn print_registry_digests() {
         .cloned()
         .collect();
     let nested_bytes: Vec<u8> = nested_digest
+        .value()
         .to_repr()
         .as_ref()
         .iter()

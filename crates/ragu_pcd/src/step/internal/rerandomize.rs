@@ -75,7 +75,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
 #[test]
 fn test_rerandomize_consistency() {
     use crate::header::{Header, Suffix};
-    use ragu_circuits::{CircuitExt, polynomials};
+    use ragu_circuits::{CircuitExt, polynomials, registry};
     use ragu_core::{
         Result,
         drivers::{Driver, DriverValue},
@@ -132,10 +132,10 @@ fn test_rerandomize_consistency() {
 
     let x = Fp::from(5u64);
     let y = Fp::from(17u64);
-    let key = Fp::from(123u64);
+    let key = registry::Key::default();
 
-    let eval_single = circuit_single.sxy(x, y, key);
-    let eval_pair = circuit_pair.sxy(x, y, key);
+    let eval_single = circuit_single.sxy(x, y, &key);
+    let eval_pair = circuit_pair.sxy(x, y, &key);
 
     assert_eq!(eval_single, eval_pair,);
 }

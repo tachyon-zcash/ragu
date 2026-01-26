@@ -9,14 +9,14 @@ use ragu_core::{
 };
 use ragu_primitives::GadgetExt;
 
-use super::{Circuit, Rank, structured};
+use super::{Circuit, Rank, registry, structured};
 
-struct Collector<'a, F: Field, R: Rank> {
+struct Evaluator<'a, F: Field, R: Rank> {
     rx: structured::View<'a, F, R, structured::Forward>,
     available_b: Option<usize>,
 }
 
-impl<F: Field, R: Rank> DriverTypes for Collector<'_, F, R> {
+impl<F: Field, R: Rank> DriverTypes for Evaluator<'_, F, R> {
     type ImplField = F;
     type ImplWire = ();
     type MaybeKind = Always<()>;
@@ -24,7 +24,7 @@ impl<F: Field, R: Rank> DriverTypes for Collector<'_, F, R> {
     type LCenforce = ();
 }
 
-impl<'a, F: Field, R: Rank> Driver<'a> for Collector<'a, F, R> {
+impl<'a, F: Field, R: Rank> Driver<'a> for Evaluator<'a, F, R> {
     type F = F;
     type Wire = ();
     const ONE: Self::Wire = ();
@@ -89,16 +89,21 @@ impl<'a, F: Field, R: Rank> Driver<'a> for Collector<'a, F, R> {
 pub fn eval<'witness, F: Field, C: Circuit<F>, R: Rank>(
     circuit: &C,
     witness: C::Witness<'witness>,
-    key: F,
+    key: &registry::Key<F>,
 ) -> Result<(structured::Polynomial<F, R>, C::Aux<'witness>)> {
     let mut rx = structured::Polynomial::<F, R>::new();
     let aux = {
-        let mut dr = Collector {
+        let mut dr = Evaluator {
             rx: rx.forward(),
             available_b: None,
         };
-        let keyinv = key.invert().unwrap(); // TODO(ebfull)
-        dr.mul(|| Ok((Coeff::Arbitrary(key), Coeff::Arbitrary(keyinv), Coeff::One)))?;
+        dr.mul(|| {
+            Ok((
+                Coeff::Arbitrary(key.value()),
+                Coeff::Arbitrary(key.inverse()),
+                Coeff::One,
+            ))
+        })?;
         let (io, aux) = circuit.witness(&mut dr, Always::maybe_just(|| witness))?;
         io.write(&mut dr, &mut ())?;
 

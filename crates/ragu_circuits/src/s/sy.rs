@@ -83,6 +83,7 @@ use core::cell::RefCell;
 use crate::{
     Circuit,
     polynomials::{Rank, structured},
+    registry,
 };
 
 /// An index identifying a wire in the evaluator.
@@ -633,7 +634,7 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, F
 pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     circuit: &C,
     y: F,
-    key: F,
+    key: &registry::Key<F>,
     num_linear_constraints: usize,
 ) -> Result<structured::Polynomial<F, R>> {
     let mut sy = structured::Polynomial::<F, R>::new();
@@ -668,7 +669,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
             // evaluations of this wiring polynomial.
             evaluator.enforce_zero(|lc| {
                 lc.add(&key_wire)
-                    .add_term(&one, Coeff::NegativeArbitrary(key))
+                    .add_term(&one, Coeff::NegativeArbitrary(key.value()))
             })?;
 
             let mut outputs = vec![];
