@@ -1,9 +1,5 @@
 # NARK
 
-> Ragu's NARK upon which split-accumulation is built
-
-## PIOP
-
 ## Revdot Products to Polynomial Predicates
 
 Let's start with where we ended up in our arithmetization. The satisfiability
