@@ -105,7 +105,7 @@
 //! [`StageExt::rx`] output contains the final witness polynomial $f(X)$, which
 //! must be similarly checked to be well-formed using the
 //! [`StageExt::final_mask`] method's staging mask (obtained from the
-//! [`MultiStageCircuit::Final`] implementation).
+//! [`MultiStageCircuit::Last`] implementation).
 //!
 //! ### Combining the Stages
 //!
@@ -193,8 +193,16 @@ impl<F: Field, R: Rank> Stage<F, R> for () {
 /// Represents an actual circuit (much like a [`Circuit`]) with portions of its
 /// witness computed in stages.
 pub trait MultiStageCircuit<F: Field, R: Rank>: Sized + Send + Sync {
-    /// The final stage of this multi-stage circuit.
-    type Final: Stage<F, R>;
+    /// The last explicitly defined stage of this multi-stage circuit.
+    ///
+    /// The witness polynomial has the form `r(X) = r'(X) + a(X) + b(X) + ...`
+    /// where `a(X), b(X), ...` are stage polynomials (defined via [`Stage`],
+    /// independently committable) and `r'(X)` is the "final" witness.
+    ///
+    /// `Last` is the final polynomial in the `a(X), b(X), ...` sequence. The "final"
+    /// witness `r'(X)` is computed implicitly in [`witness`](Self::witness), which
+    /// consumes outputs from all stage polynomials.
+    type Last: Stage<F, R>;
 
     /// The type of data that is needed to construct the expected output of this
     /// circuit.
@@ -232,7 +240,7 @@ pub trait MultiStageCircuit<F: Field, R: Rank>: Sized + Send + Sync {
     /// [`instance`](MultiStageCircuit::instance) method.
     fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
         &self,
-        dr: StageBuilder<'a, 'dr, D, R, (), Self::Final>,
+        dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<(
         <Self::Output as GadgetKind<F>>::Rebind<'dr, D>,
@@ -267,9 +275,9 @@ impl<F: Field, R: Rank, S: MultiStageCircuit<F, R>> MultiStage<F, R, S> {
         }
     }
 
-    /// Proxy for [`S::Final::final_mask`](StageExt::final_mask).
+    /// Proxy for [`S::Last::final_mask`](StageExt::final_mask).
     pub fn final_mask<'a>(&self) -> Result<Box<dyn CircuitObject<F, R> + 'a>> {
-        S::Final::final_mask()
+        S::Last::final_mask()
     }
 }
 
@@ -380,7 +388,7 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
 
     /// Creates a circuit object that can be used to enforce well-formedness
     /// checks on any final witness (stage) that has this stage as its
-    /// [`MultiStageCircuit::Final`] stage.
+    /// [`MultiStageCircuit::Last`] stage.
     fn final_mask<'a>() -> Result<Box<dyn CircuitObject<F, R> + 'a>> {
         Ok(Box::new(mask::StageMask::new_final(
             Self::skip_multiplications() + Self::num_multiplications(),

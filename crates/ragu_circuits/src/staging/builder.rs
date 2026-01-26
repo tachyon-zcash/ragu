@@ -1,3 +1,42 @@
+//! Multi-stage circuit witness computation with staged wire allocation.
+//!
+//! The staging system separates witness computation into explicit **stage
+//! polynomials** (`a(X), b(X), ...`) that can be committed independently,
+//! and an implicit **final witness** (`r'(X)`) that consumes their outputs.
+//! Together these form the full witness polynomial:
+//!
+//! ```text
+//! r(X) = r'(X) + a(X) + b(X) + ...
+//! ```
+//!
+//! This enables the prover to commit to portions of the witness before
+//! computing the full circuit.
+//!
+//! ## Two-Phase Builder Pattern
+//!
+//! The [`StageBuilder`] uses a two-phase protocol:
+//!
+//! 1. **Wire reservation** — Call [`add_stage`](StageBuilder::add_stage) for
+//!    each stage polynomial. This reserves non-overlapping wire positions
+//!    without computing values yet, ensuring all provers agree on wire layout.
+//!
+//! 2. **Witness computation** — Call [`finish`](StageBuilder::finish) to get
+//!    the driver, then populate each stage via [`StageGuard::enforced`] or
+//!    [`StageGuard::unenforced`]. The remaining code computes `r'(X)`.
+//!
+//! After phase 1, the witness polynomial has a fixed structure:
+//!
+//! ```text
+//! r(X) = [a(X): wires 0-99] + [b(X): wires 100-101] + [r'(X): wires 102+]
+//! ```
+//!
+//! ## Example
+//!
+//! See the `compute_v` module in `ragu_pcd` crate for a real-world multi-stage
+//! circuit, or the [staging chapter] in the book.
+//!
+//! [staging chapter]: https://tachyon.z.cash/ragu/protocol/extensions/staging
+
 use arithmetic::Coeff;
 use ragu_core::{
     Result,
