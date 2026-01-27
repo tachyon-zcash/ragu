@@ -35,7 +35,6 @@ struct Step0;
 impl<C: Cycle> Step<C> for Step0 {
     const INDEX: Index = Index::new(0);
     type Witness<'source> = ();
-    type Aux<'source> = ();
     type Left = ();
     type Right = ();
     type Output = HeaderA;
@@ -51,7 +50,7 @@ impl<C: Cycle> Step<C> for Step0 {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        DriverValue<D, Self::Aux<'source>>,
+        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data<'source>>,
     )> {
         let left = Encoded::new(dr, left)?;
         let right = Encoded::new(dr, right)?;
@@ -64,7 +63,6 @@ struct Step1;
 impl<C: Cycle> Step<C> for Step1 {
     const INDEX: Index = Index::new(1);
     type Witness<'source> = ();
-    type Aux<'source> = ();
     type Left = HeaderA;
     type Right = HeaderA;
     type Output = HeaderA;
@@ -80,7 +78,7 @@ impl<C: Cycle> Step<C> for Step1 {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        DriverValue<D, Self::Aux<'source>>,
+        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data<'source>>,
     )> {
         let left = Encoded::new(dr, left)?;
         let right = Encoded::new(dr, right)?;
@@ -102,8 +100,7 @@ fn rerandomization_flow() {
 
     let mut rng = StdRng::seed_from_u64(1234);
 
-    let seeded = app.seed(&mut rng, Step0, ()).unwrap().0;
-    let seeded = seeded.carry::<HeaderA>(());
+    let seeded = app.seed(&mut rng, Step0, ()).unwrap();
     assert!(app.verify(&seeded, &mut rng).unwrap());
 
     // Rerandomize
@@ -112,9 +109,7 @@ fn rerandomization_flow() {
 
     let fused = app
         .fuse(&mut rng, Step1, (), seeded.clone(), seeded)
-        .unwrap()
-        .0;
-    let fused = fused.carry::<HeaderA>(());
+        .unwrap();
     assert!(app.verify(&fused, &mut rng).unwrap());
 
     let fused = app.rerandomize(fused, &mut rng).unwrap();
