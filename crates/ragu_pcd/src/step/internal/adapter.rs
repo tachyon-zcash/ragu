@@ -59,7 +59,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
             FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
             FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
         ),
-        S::Aux<'source>,
+        <S::Output as Header<C::CircuitField>>::Data<'source>,
     );
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -83,7 +83,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
     {
         let (left, right, witness) = witness.cast();
 
-        let ((left, right, output), aux) = self
+        let ((left, right, output), output_data) = self
             .step
             .witness::<_, HEADER_SIZE>(dr, witness, left, right)?;
 
@@ -92,7 +92,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         right.write(dr, &mut elements)?;
         output.write(dr, &mut elements)?;
 
-        let aux = D::with(|| {
+        let result = D::with(|| {
             let left_header = elements[0..HEADER_SIZE]
                 .iter()
                 .map(|e| *e.value().take())
@@ -103,9 +103,9 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
                 .map(|e| *e.value().take())
                 .collect_fixed()?;
 
-            Ok(((left_header, right_header), aux.take()))
+            Ok(((left_header, right_header), output_data.take()))
         })?;
 
-        Ok((FixedVec::try_from(elements)?, aux))
+        Ok((FixedVec::try_from(elements)?, result))
     }
 }

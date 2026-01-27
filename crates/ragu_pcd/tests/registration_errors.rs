@@ -60,7 +60,6 @@ struct Step0;
 impl<C: arithmetic::Cycle> Step<C> for Step0 {
     const INDEX: Index = Index::new(0);
     type Witness<'source> = ();
-    type Aux<'source> = ();
     type Left = ();
     type Right = ();
     type Output = HSuffixA;
@@ -76,7 +75,7 @@ impl<C: arithmetic::Cycle> Step<C> for Step0 {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        DriverValue<D, Self::Aux<'source>>,
+        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data<'source>>,
     )> {
         let left = Encoded::new(dr, left)?;
         let right = Encoded::new(dr, right)?;
@@ -91,7 +90,6 @@ struct Step1;
 impl<C: arithmetic::Cycle> Step<C> for Step1 {
     const INDEX: Index = Index::new(1);
     type Witness<'source> = ();
-    type Aux<'source> = ();
     type Left = HSuffixA;
     type Right = HSuffixA;
     type Output = HSuffixB;
@@ -107,7 +105,7 @@ impl<C: arithmetic::Cycle> Step<C> for Step1 {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        DriverValue<D, Self::Aux<'source>>,
+        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data<'source>>,
     )> {
         let left = Encoded::new(dr, left)?;
         let right = Encoded::new(dr, right)?;
@@ -122,7 +120,6 @@ struct Step1Dup;
 impl<C: arithmetic::Cycle> Step<C> for Step1Dup {
     const INDEX: Index = Index::new(1);
     type Witness<'source> = ();
-    type Aux<'source> = ();
     type Left = HSuffixA;
     type Right = HSuffixA;
     type Output = HSuffixAOther;
@@ -138,7 +135,7 @@ impl<C: arithmetic::Cycle> Step<C> for Step1Dup {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        DriverValue<D, Self::Aux<'source>>,
+        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data<'source>>,
     )> {
         let left = Encoded::new(dr, left)?;
         let right = Encoded::new(dr, right)?;
