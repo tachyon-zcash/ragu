@@ -192,7 +192,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
                 let mu_prime = unified_output.mu_prime.get(dr, unified_instance)?;
                 let nu_prime = unified_output.nu_prime.get(dr, unified_instance)?;
             
-                let invs = batch_invert(dr, &[mu.clone(), mu_prime.clone()])?;
+                let invs = batch_invert(dr, &[&mu, &mu_prime])?;
                 let mu_inv = &invs[0];
                 let mu_prime_inv = &invs[1];
                 
@@ -271,7 +271,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
 /// Requires n ≥ 2. For single inversions, call `.invert()` directly.
 fn batch_invert<'dr, D: Driver<'dr>>(
     dr: &mut D,
-    elements: &[Element<'dr, D>],
+    elements: &[&Element<'dr, D>],
 ) -> Result<Vec<Element<'dr, D>>>
 where
     D::F: ff::PrimeField,
@@ -281,13 +281,13 @@ where
     let mut products = Vec::with_capacity(n);
     products.push(elements[0].clone());
     for i in 1..n {
-        products.push(products[i - 1].mul(dr, &elements[i])?);
+        products.push(products[i - 1].mul(dr, elements[i])?);
     }
 
     let mut inv = products[n - 1].invert(dr)?;
     for i in (1..n).rev() {
         products[i] = products[i - 1].mul(dr, &inv)?;
-        inv = inv.mul(dr, &elements[i])?;
+        inv = inv.mul(dr, elements[i])?;
     }
     products[0] = inv;
 
@@ -393,41 +393,42 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
             to_invert.push(u.sub(dr, &omega_j));
         }
 
-        let inv = batch_invert(dr, &to_invert)?;
+        let mut inv = batch_invert(dr, &to_invert.iter().collect::<Vec<_>>())?.into_iter();
+        macro_rules! next { () => { inv.next().expect("batch_invert must return exactly 25 elements") } }
         
         Ok(Denominators {
             left: ChildDenominators {
-                u: inv[0].clone(),          // (u - left.u)^-1
-                y: inv[1].clone(),          // (u - left.y)^-1
-                x: inv[2].clone(),          // (u - left.x)^-1
-                circuit_id: inv[3].clone(), // (u - left.circuit_id)^-1
+                u: next!(),          // (u - left.u)^-1
+                y: next!(),          // (u - left.y)^-1
+                x: next!(),          // (u - left.x)^-1
+                circuit_id: next!(), // (u - left.circuit_id)^-1
             },
             right: ChildDenominators {
-                u: inv[4].clone(),          // (u - right.u)^-1
-                y: inv[5].clone(),          // (u - right.y)^-1
-                x: inv[6].clone(),          // (u - right.x)^-1
-                circuit_id: inv[7].clone(), // (u - right.circuit_id)^-1
+                u: next!(),          // (u - right.u)^-1
+                y: next!(),          // (u - right.y)^-1
+                x: next!(),          // (u - right.x)^-1
+                circuit_id: next!(), // (u - right.circuit_id)^-1
             },
             challenges: ChallengeDenominators {
-                w: inv[8].clone(),          // (u - w)^-1
-                x: inv[9].clone(),          // (u - x)^-1
-                y: inv[10].clone(),         // (u - y)^-1
-                xz: inv[11].clone(),        // (u - xz)^-1
+                w: next!(),   // (u - w)^-1
+                x: next!(),   // (u - x)^-1
+                y: next!(),   // (u - y)^-1
+                xz: next!(),  // (u - xz)^-1
             },
             internal: InternalCircuitDenominators {
-                preamble_stage: inv[12].clone(),           // (u - ω^j_preamble)^-1
-                error_n_stage: inv[13].clone(),            // (u - ω^j_error_n)^-1
-                error_m_stage: inv[14].clone(),            // (u - ω^j_error_m)^-1
-                query_stage: inv[15].clone(),              // (u - ω^j_query)^-1
-                eval_stage: inv[16].clone(),               // (u - ω^j_eval)^-1
-                error_m_final_staged: inv[17].clone(),     // (u - ω^j_error_m_final)^-1
-                error_n_final_staged: inv[18].clone(),     // (u - ω^j_error_n_final)^-1
-                eval_final_staged: inv[19].clone(),        // (u - ω^j_eval_final)^-1
-                hashes_1_circuit: inv[20].clone(),         // (u - ω^j_hashes_1)^-1
-                hashes_2_circuit: inv[21].clone(),         // (u - ω^j_hashes_2)^-1
-                partial_collapse_circuit: inv[22].clone(), // (u - ω^j_partial_collapse)^-1
-                full_collapse_circuit: inv[23].clone(),    // (u - ω^j_full_collapse)^-1
-                compute_v_circuit: inv[24].clone(),        // (u - ω^j_compute_v)^-1
+                preamble_stage: next!(),           // (u - ω^j_preamble)^-1
+                error_n_stage: next!(),            // (u - ω^j_error_n)^-1
+                error_m_stage: next!(),            // (u - ω^j_error_m)^-1
+                query_stage: next!(),              // (u - ω^j_query)^-1
+                eval_stage: next!(),               // (u - ω^j_eval)^-1
+                error_m_final_staged: next!(),     // (u - ω^j_error_m_final)^-1
+                error_n_final_staged: next!(),     // (u - ω^j_error_n_final)^-1
+                eval_final_staged: next!(),        // (u - ω^j_eval_final)^-1
+                hashes_1_circuit: next!(),         // (u - ω^j_hashes_1)^-1
+                hashes_2_circuit: next!(),         // (u - ω^j_hashes_2)^-1
+                partial_collapse_circuit: next!(), // (u - ω^j_partial_collapse)^-1
+                full_collapse_circuit: next!(),    // (u - ω^j_full_collapse)^-1
+                compute_v_circuit: next!(),        // (u - ω^j_compute_v)^-1
             },
         })
     }
