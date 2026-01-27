@@ -15,7 +15,6 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "--cfg gungraun"
 
 jobs:
   changes:
@@ -55,12 +54,6 @@ jobs:
         with:
           cache-suffix: bench
 
-      - name: Cache apt packages
-        uses: actions/cache@v4
-        with:
-          path: /var/cache/apt
-          key: ${{ runner.os }}-apt-valgrind
-
       - name: Install Valgrind
         run: |
           sudo apt-get update
@@ -82,51 +75,8 @@ jobs:
       - name: Ensure baseline path exists
         run: mkdir -p ./bench-baseline
 
-      - name: Check for baseline data
-        id: check-baseline
-        if: github.event_name == 'pull_request'
-        run: |
-          if [ -f ./bench-baseline/data.json ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Missing baseline. Checkout base branch
-        if: github.event_name == 'pull_request' && !steps.check-baseline.outputs.exists
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.base_ref }}
-          path: baseline-src
-
-      - name: Missing baseline. Run baseline benchmarks
-        id: baseline-bench
-        if: github.event_name == 'pull_request' && !steps.check-baseline.outputs.exists
-        continue-on-error: true
-        working-directory: baseline-src
-        run: cargo bench --workspace -- --save-summary=json
-
-      - name: Missing baseline. Transform baseline results
-        if: steps.baseline-bench.outcome == 'success'
-        working-directory: baseline-src
-        run: |
-          find target/gungraun -name 'summary.json' -exec cat {} + | jq --from-file ../.github/scripts/transform-gungraun.jq --slurp > bench-output.json
-
-      - name: Missing baseline. Establish baseline benchmark results
-        if: steps.baseline-bench.outcome == 'success'
-        uses: benchmark-action/github-action-benchmark@v1
-        with:
-          name: Ragu Benchmarks
-          tool: customSmallerIsBetter
-          output-file-path: baseline-src/bench-output.json
-          external-data-json-path: ./bench-baseline/data.json
-          auto-push: false
-          comment-always: false
-          comment-on-alert: false
-          fail-on-alert: false
-          skip-fetch-gh-pages: true
-          summary-always: false
-
       - name: Run benchmarks
-        run: cargo bench --workspace -- --save-summary=json
+        run: cargo bench --workspace --features unstable-test-fixtures -- --save-summary=json
 
       - name: Transform to github-action-benchmark format
         run: |

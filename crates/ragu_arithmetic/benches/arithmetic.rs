@@ -1,75 +1,18 @@
-use ff::Field;
+mod setup;
+
 use gungraun::{library_benchmark, library_benchmark_group, main};
-use pasta_curves::group::prime::PrimeCurveAffine;
 use pasta_curves::{EpAffine, Fp, Fq};
 use ragu_arithmetic::{Domain, dot, eval, factor, geosum, mul, poly_with_roots};
-use rand::Rng;
-use rand::rngs::mock::StepRng;
+use setup::{f, setup_domain_ell, setup_domain_fft, setup_rng, setup_with_rng, vec_affine, vec_f};
 use std::hint::black_box;
 
-fn mock_rng() -> StepRng {
-    StepRng::new(u64::from_le_bytes(*b"ynottryt"), 0xCA05_CA05_CA05_CA05)
-}
-
-fn random_fp_vec(rng: &mut impl Rng, n: usize) -> Vec<Fp> {
-    (0..n).map(|_| Fp::random(&mut *rng)).collect()
-}
-
-fn random_fq_vec(rng: &mut impl Rng, n: usize) -> Vec<Fq> {
-    (0..n).map(|_| Fq::random(&mut *rng)).collect()
-}
-
-fn random_points(rng: &mut impl Rng, n: usize) -> Vec<EpAffine> {
-    (0..n)
-        .map(|_| (EpAffine::generator() * Fq::random(&mut *rng)).into())
-        .collect()
-}
-
-fn random_fp(rng: &mut impl Rng) -> Fp {
-    Fp::random(rng)
-}
-
-fn setup_msm(mut rng: StepRng, n: usize) -> (Vec<Fq>, Vec<EpAffine>) {
-    (random_fq_vec(&mut rng, n), random_points(&mut rng, n))
-}
-
-fn setup_fft(mut rng: StepRng, k: u32) -> (Domain<Fp>, Vec<Fp>) {
-    let domain = Domain::new(k);
-    let data = random_fp_vec(&mut rng, domain.n());
-    (domain, data)
-}
-
-fn setup_domain_ell(mut rng: StepRng, k: u32) -> (Domain<Fp>, Fp, usize) {
-    let domain = Domain::new(k);
-    let n = domain.n();
-    (domain, random_fp(&mut rng), n)
-}
-
-fn setup_roots(mut rng: StepRng, n: usize) -> Vec<Fp> {
-    random_fp_vec(&mut rng, n)
-}
-
-fn setup_eval(mut rng: StepRng, n: usize) -> (Vec<Fp>, Fp) {
-    (random_fp_vec(&mut rng, n), random_fp(&mut rng))
-}
-
-fn setup_factor(mut rng: StepRng, n: usize) -> (Vec<Fp>, Fp) {
-    (random_fp_vec(&mut rng, n), random_fp(&mut rng))
-}
-
-fn setup_dot(mut rng: StepRng, n: usize) -> (Vec<Fp>, Vec<Fp>) {
-    (random_fp_vec(&mut rng, n), random_fp_vec(&mut rng, n))
-}
-
-fn setup_geosum(mut rng: StepRng, n: usize) -> (Fp, usize) {
-    (random_fp(&mut rng), n)
-}
-
-#[library_benchmark]
-#[bench::n64(args = (mock_rng(), 64), setup = setup_msm)]
-#[bench::n256(args = (mock_rng(), 256), setup = setup_msm)]
-#[bench::n1024(args = (mock_rng(), 1024), setup = setup_msm)]
-#[bench::n4096(args = (mock_rng(), 4096), setup = setup_msm)]
+#[library_benchmark(setup = setup_rng)]
+#[benches::with_setup(
+    ((vec_f::< 64, Fq>, vec_affine::< 64>)),
+    ((vec_f::< 256, Fq>, vec_affine::< 256>)),
+    ((vec_f::< 1024, Fq>, vec_affine::< 1024>)),
+    ((vec_f::< 4096, Fq>, vec_affine::< 4096>)),
+)]
 fn msm_mul((coeffs, bases): (Vec<Fq>, Vec<EpAffine>)) {
     black_box(mul(coeffs.iter(), bases.iter()));
 }
@@ -79,18 +22,15 @@ library_benchmark_group!(
     benchmarks = msm_mul
 );
 
-#[library_benchmark]
-#[bench::k10(args = (mock_rng(), 10), setup = setup_fft)]
-#[bench::k14(args = (mock_rng(), 14), setup = setup_fft)]
-#[bench::k18(args = (mock_rng(), 18), setup = setup_fft)]
+#[library_benchmark(setup = setup_domain_fft)]
+#[benches::multiple(10, 14, 18)]
 fn fft((domain, mut data): (Domain<Fp>, Vec<Fp>)) {
     domain.fft(&mut data);
     black_box(data);
 }
 
-#[library_benchmark]
-#[bench::k10(args = (mock_rng(), 10), setup = setup_domain_ell)]
-#[bench::k14(args = (mock_rng(), 14), setup = setup_domain_ell)]
+#[library_benchmark(setup = setup_domain_ell)]
+#[benches::multiple(10, 14)]
 fn ell((domain, x, n): (Domain<Fp>, Fp, usize)) {
     black_box(domain.ell(x, n));
 }
@@ -100,26 +40,32 @@ library_benchmark_group!(
     benchmarks = fft, ell
 );
 
-#[library_benchmark]
-#[bench::n16(args = (mock_rng(), 16), setup = setup_roots)]
-#[bench::n64(args = (mock_rng(), 64), setup = setup_roots)]
-#[bench::n256(args = (mock_rng(), 256), setup = setup_roots)]
-#[bench::n1024(args = (mock_rng(), 1024), setup = setup_roots)]
-fn with_roots(roots: Vec<Fp>) {
+#[library_benchmark(setup = setup_rng)]
+#[benches::with_setup(
+    ((vec_f::< 16, Fp>,)),
+    ((vec_f::< 64, Fp>,)),
+    ((vec_f::< 256, Fp>,)),
+    ((vec_f::< 1024, Fp>,)),
+)]
+fn with_roots((roots,): (Vec<Fp>,)) {
     black_box(poly_with_roots(&roots));
 }
 
-#[library_benchmark]
-#[bench::n256(args = (mock_rng(), 256), setup = setup_eval)]
-#[bench::n4096(args = (mock_rng(), 4096), setup = setup_eval)]
-#[bench::n65536(args = (mock_rng(), 65536), setup = setup_eval)]
+#[library_benchmark(setup = setup_rng)]
+#[benches::with_setup(
+    ((vec_f::< 256, Fp>, f)),
+    ((vec_f::< 4096, Fp>, f)),
+    ((vec_f::< 65536, Fp>, f)),
+)]
 fn poly_eval((coeffs, x): (Vec<Fp>, Fp)) {
     black_box(eval(&coeffs, x));
 }
 
-#[library_benchmark]
-#[bench::n256(args = (mock_rng(), 256), setup = setup_factor)]
-#[bench::n4096(args = (mock_rng(), 4096), setup = setup_factor)]
+#[library_benchmark(setup = setup_rng)]
+#[benches::with_setup(
+    ((vec_f::< 256, Fp>, f::<Fp>)),
+    ((vec_f::< 4096, Fp>, f::<Fp>)),
+)]
 fn poly_factor((coeffs, x): (Vec<Fp>, Fp)) {
     black_box(factor(coeffs, x));
 }
@@ -129,18 +75,19 @@ library_benchmark_group!(
     benchmarks = with_roots, poly_eval, poly_factor
 );
 
-#[library_benchmark]
-#[bench::n256(args = (mock_rng(), 256), setup = setup_dot)]
-#[bench::n4096(args = (mock_rng(), 4096), setup = setup_dot)]
-#[bench::n65536(args = (mock_rng(), 65536), setup = setup_dot)]
+#[library_benchmark(setup = setup_rng)]
+#[benches::with_setup(
+    ((vec_f::< 256, Fp>, vec_f::< 256, Fp>)),
+    ((vec_f::< 4096, Fp>, vec_f::< 4096, Fp>)),
+    ((vec_f::< 65536, Fp>, vec_f::< 65536, Fp>)),
+)]
 fn field_dot((a, b): (Vec<Fp>, Vec<Fp>)) {
     black_box(dot(&a, &b));
 }
 
-#[library_benchmark]
-#[bench::n256(args = (mock_rng(), 256), setup = setup_geosum)]
-#[bench::n4096(args = (mock_rng(), 4096), setup = setup_geosum)]
-fn field_geosum((r, n): (Fp, usize)) {
+#[library_benchmark(setup = setup_with_rng)]
+#[benches::with_setup((256, (f,)), (4096, (f,)))]
+fn field_geosum((n, (r,)): (usize, (Fp,))) {
     black_box(geosum(r, n));
 }
 

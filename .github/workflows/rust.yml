@@ -67,7 +67,7 @@ jobs:
         with:
           components: clippy
       - name: Run clippy
-        run: RUSTFLAGS='--cfg gungraun' cargo clippy --workspace --lib --tests --benches --locked -- -D warnings
+        run: cargo clippy --workspace --lib --tests --benches --locked --features unstable-test-fixtures -- -D warnings
 
   test:
     name: test (${{ matrix.os }})

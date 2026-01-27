@@ -17,7 +17,7 @@ mod proof;
 pub mod step;
 mod verify;
 
-#[cfg(any(test, gungraun))]
+#[cfg(any(test, feature = "unstable-test-fixtures"))]
 #[doc(hidden)]
 pub mod test_fixtures;
 

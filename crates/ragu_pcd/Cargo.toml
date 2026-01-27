@@ -27,9 +27,7 @@ all-features = true
 
 [features]
 default = []
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(gungraun)'] }
+unstable-test-fixtures = ["arithmetic/unstable-test-fixtures"]
 
 [lib]
 bench = false
