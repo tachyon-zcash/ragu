@@ -60,7 +60,7 @@ pub const NUM_WIRES: usize = 29;
 /// [`hashes_1`]: super::hashes_1
 /// [`hashes_2`]: super::hashes_2
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, C: Cycle> {
+pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     // Commitments from current proof components (on the nested curve)
     /// Commitment from the preamble proof component.
     #[ragu(gadget)]
@@ -254,7 +254,7 @@ impl<'a, 'dr, D: Driver<'dr>, T: Clone, C: Cycle> Slot<'a, 'dr, D, T, C> {
 /// 4. Call [`finish`](Self::finish) to build the final output with suffix
 ///
 /// Any slots not explicitly filled will be allocated during finalization.
-pub struct OutputBuilder<'a, 'dr, D: Driver<'dr>, C: Cycle> {
+pub struct OutputBuilder<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     pub nested_preamble_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
     pub w: Slot<'a, 'dr, D, Element<'dr, D>, C>,
     pub nested_s_prime_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
@@ -278,7 +278,7 @@ pub struct OutputBuilder<'a, 'dr, D: Driver<'dr>, C: Cycle> {
     pub v: Slot<'a, 'dr, D, Element<'dr, D>, C>,
 }
 
-impl<'dr, D: Driver<'dr>, C: Cycle> Output<'dr, D, C> {
+impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
     /// Allocates an [`Output`] directly from a current proof reference.
     ///
     /// This is a convenience method that extracts all fields from the current
@@ -287,10 +287,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle> Output<'dr, D, C> {
     pub fn alloc_from_proof<R: Rank>(
         dr: &mut D,
         proof: DriverValue<D, &Proof<C, R>>,
-    ) -> Result<Self>
-    where
-        D: Driver<'dr, F = C::CircuitField>,
-    {
+    ) -> Result<Self> {
         let nested_preamble_commitment =
             Point::alloc(dr, proof.view().map(|p| p.preamble.nested_commitment))?;
         let w = Element::alloc(dr, proof.view().map(|p| p.challenges.w))?;
@@ -347,7 +344,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle> Output<'dr, D, C> {
     }
 }
 
-impl<'a, 'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle> OutputBuilder<'a, 'dr, D, C> {
+impl<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> OutputBuilder<'a, 'dr, D, C> {
     /// Creates a new builder with allocation functions for each field.
     ///
     /// All slots start empty and will allocate from the [`Instance`] when

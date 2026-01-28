@@ -50,7 +50,7 @@ macro_rules! define_nested_stage {
 
             /// Output gadget for this nested stage.
             #[derive(Gadget, Write)]
-            pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine> {
+            pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
                 $(
                     #[ragu(gadget)]
                     pub $field_name: Point<'dr, D, C>,

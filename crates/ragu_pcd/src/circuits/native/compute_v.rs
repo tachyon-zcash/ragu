@@ -311,7 +311,7 @@ struct Denominators<'dr, D: Driver<'dr>> {
 
 impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
     #[rustfmt::skip]
-    fn new<C: Cycle, const HEADER_SIZE: usize>(
+    fn new<C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>(
         dr: &mut D,
         u: &Element<'dr, D>,
         w: &Element<'dr, D>,
@@ -587,7 +587,7 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
 /// [`compute_f`]: crate::Application::compute_f
 /// [$\alpha$]: unified::Output::alpha
 #[rustfmt::skip]
-fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize>(
+fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>(
     eval: &'a native_eval::Output<'dr, D>,
     query: &'a native_query::Output<'dr, D>,
     preamble: &'a native_preamble::Output<'dr, D, C, HEADER_SIZE>,

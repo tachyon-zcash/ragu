@@ -110,7 +110,7 @@ pub(crate) use super::InternalCircuitIndex::Hashes1Circuit as CIRCUIT_ID;
 /// Other internal circuits use only the [`unified::Output`] to avoid the
 /// overhead of witnessing headers in circuits that do not require them.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize> {
+pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize> {
     /// The unified instance shared across internal circuits.
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,

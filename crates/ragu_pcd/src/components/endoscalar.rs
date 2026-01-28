@@ -153,7 +153,7 @@ where
 
 /// Output gadget containing initial, inputs, and interstitials. See [`PointsWitness`].
 #[derive(Gadget)]
-pub struct Points<'dr, D: Driver<'dr>, C: CurveAffine, const NUM_POINTS: usize> {
+pub struct Points<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, const NUM_POINTS: usize> {
     #[ragu(gadget)]
     pub initial: Point<'dr, D, C>,
     #[ragu(gadget)]

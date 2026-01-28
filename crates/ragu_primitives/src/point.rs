@@ -13,7 +13,7 @@ use crate::{Boolean, Element, io::Write};
 
 /// Represents an affine point on a curve defined over the circuit's field.
 #[derive(Gadget, Write)]
-pub struct Point<'dr, D: Driver<'dr>, C: CurveAffine> {
+pub struct Point<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     #[ragu(gadget)]
     x: Element<'dr, D>,
     #[ragu(gadget)]
