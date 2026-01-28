@@ -201,26 +201,28 @@ fn test_fft() {
     use ff::Field;
     use pasta_curves::Fp as F;
 
-    let params = Domain::<F>::new(4);
+    for log2_n in 1..=8 {
+        let params = Domain::<F>::new(log2_n);
 
-    let coeffs = (0..params.n)
-        .map(|i| F::DELTA.pow([(i + 1) as u64]))
-        .collect::<Vec<_>>();
-    let mut evals = coeffs.clone();
+        let coeffs = (0..params.n)
+            .map(|i| F::DELTA.pow([(i + 1) as u64]))
+            .collect::<Vec<_>>();
+        let mut evals = coeffs.clone();
 
-    params.fft(&mut evals);
+        params.fft(&mut evals);
 
-    {
-        let mut p = F::ONE;
-        for e in evals.iter().take(params.n) {
-            assert_eq!(*e, eval(&coeffs, p));
-            p *= params.omega;
+        {
+            let mut p = F::ONE;
+            for e in evals.iter().take(params.n) {
+                assert_eq!(*e, eval(&coeffs, p));
+                p *= params.omega;
+            }
         }
-    }
 
-    let mut coeffs_recovered = evals.clone();
-    params.ifft(&mut coeffs_recovered);
-    assert_eq!(coeffs, coeffs_recovered);
+        let mut coeffs_recovered = evals.clone();
+        params.ifft(&mut coeffs_recovered);
+        assert_eq!(coeffs, coeffs_recovered);
+    }
 }
 
 #[test]

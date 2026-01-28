@@ -82,3 +82,47 @@ pub(crate) fn fft<R: Ring>(log2_n: u32, input: &mut [R::R], omega: R::F) {
         m <<= 1;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::Domain;
+    use alloc::vec::Vec;
+    use pasta_curves::Fp;
+
+    fn naive_dft<F: PrimeField>(input: &[F], omega: F) -> Vec<F> {
+        let n = input.len();
+        (0..n)
+            .map(|k| {
+                input.iter().enumerate().fold(F::ZERO, |acc, (j, x)| {
+                    acc + *x * omega.pow([(k * j) as u64])
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_fft_matches_naive_dft() {
+        for log2_n in 1..=8 {
+            let domain = Domain::<Fp>::new(log2_n);
+            let n = 1 << log2_n;
+
+            let input: Vec<Fp> = (0..n)
+                .map(|i| Fp::from((i * i + 7 * i + 13) as u64))
+                .collect();
+
+            let mut fft_result = input.clone();
+            fft::<FFTField<Fp>>(log2_n, &mut fft_result, domain.omega());
+
+            let dft_result = naive_dft(&input, domain.omega());
+
+            for i in 0..n {
+                assert_eq!(
+                    fft_result[i], dft_result[i],
+                    "FFT differs from DFT at index {} for size 2^{}",
+                    i, log2_n
+                );
+            }
+        }
+    }
+}
