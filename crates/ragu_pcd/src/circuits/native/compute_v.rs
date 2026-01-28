@@ -54,7 +54,9 @@ use ragu_core::{
     gadgets::GadgetKind,
     maybe::Maybe,
 };
-use ragu_primitives::{Element, Endoscalar, GadgetExt};
+use ragu_primitives::{
+    BatchInverter, BatchInverterStatePending, BatchInverterToken, Element, Endoscalar, GadgetExt,
+};
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -326,46 +328,149 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
     {
         use super::InternalCircuitIndex::{self, *};
 
-        let internal_denom = |dr: &mut D, idx: InternalCircuitIndex| -> Result<Element<'dr, D>> {
-            let omega_j = Element::constant(dr, idx.circuit_index(num_application_steps).omega_j());
-            u.sub(dr, &omega_j).invert(dr)
-        };
+        let internal_circuit_ids = [
+            PreambleStage,
+            ErrorNStage,
+            ErrorMStage,
+            QueryStage,
+            EvalStage,
+            ErrorNFinalStaged,
+            ErrorMFinalStaged,
+            EvalFinalStaged,
+            Hashes1Circuit,
+            Hashes2Circuit,
+            PartialCollapseCircuit,
+            FullCollapseCircuit,
+            ComputeVCircuit,
+        ];
 
         let xz = x.mul(dr, z)?;
 
+        // Compute all differences.
+        let left_u = u.sub(dr, &preamble.left.unified.u);
+        let left_y = u.sub(dr, &preamble.left.unified.y);
+        let left_x = u.sub(dr, &preamble.left.unified.x);
+        let left_circuit_id = u.sub(dr, &preamble.left.circuit_id);
+        let right_u = u.sub(dr, &preamble.right.unified.u);
+        let right_y = u.sub(dr, &preamble.right.unified.y);
+        let right_x = u.sub(dr, &preamble.right.unified.x);
+        let right_circuit_id = u.sub(dr, &preamble.right.circuit_id);
+        let challenges_w = u.sub(dr, w);
+        let challenges_x = u.sub(dr, x);
+        let challenges_y = u.sub(dr, y);
+        let challenges_xz = u.sub(dr, &xz);
+        let internals = internal_circuit_ids
+            .iter()
+            .map(|idx| {
+                let omega_j =
+                    Element::constant(dr, idx.circuit_index(num_application_steps).omega_j());
+                u.sub(dr, &omega_j)
+            })
+            .collect::<Vec<Element<'dr, D>>>();
+
+        // Reserve slots in the batch inverter.
+        let mut batch = BatchInverter::<D::F, BatchInverterStatePending>::new();
+        let t_left_u = batch.reserve();
+        let t_left_y = batch.reserve();
+        let t_left_x = batch.reserve();
+        let t_left_circuit_id = batch.reserve();
+        let t_right_u = batch.reserve();
+        let t_right_y = batch.reserve();
+        let t_right_x = batch.reserve();
+        let t_right_circuit_id = batch.reserve();
+        let t_challenges_w = batch.reserve();
+        let t_challenges_x = batch.reserve();
+        let t_challenges_y = batch.reserve();
+        let t_challenges_xz = batch.reserve();
+        let t_internals = internals
+            .iter()
+            .map(|_| batch.reserve())
+            .collect::<Vec<BatchInverterToken>>();
+
+        // Fill the batch inverter and resolve only when the driver is not `Empty`.
+        let resolved = D::with(|| {
+            batch.fill(&t_left_u, *left_u.value().take());
+            batch.fill(&t_left_y, *left_y.value().take());
+            batch.fill(&t_left_x, *left_x.value().take());
+            batch.fill(&t_left_circuit_id, *left_circuit_id.value().take());
+            batch.fill(&t_right_u, *right_u.value().take());
+            batch.fill(&t_right_y, *right_y.value().take());
+            batch.fill(&t_right_x, *right_x.value().take());
+            batch.fill(&t_right_circuit_id, *right_circuit_id.value().take());
+            batch.fill(&t_challenges_w, *challenges_w.value().take());
+            batch.fill(&t_challenges_x, *challenges_x.value().take());
+            batch.fill(&t_challenges_y, *challenges_y.value().take());
+            batch.fill(&t_challenges_xz, *challenges_xz.value().take());
+            for (internal, t_internal) in internals.iter().zip(t_internals.iter()) {
+                batch.fill(t_internal, *internal.value().take());
+            }
+
+            Ok(batch.resolve())
+        })?;
+
+        // Helper that retrieves the inverted value from the resolved batch inverted and uses it to
+        // invert the provided element with.
+        let retrieve_and_invert = |dr: &mut D,
+                                   element: &Element<'dr, D>,
+                                   token: &BatchInverterToken|
+         -> Result<Element<'dr, D>> {
+            let inv = resolved.view().map(|r| {
+                r.retrieve(token)
+                    .expect("token should not be out of bounds")
+            });
+            element.invert_with(dr, inv)
+        };
+
+        // Helper that given an internal circuit index, retrieves the inverted value from the
+        // resolved batch inverter and uses it to invert the element with.
+        let internal_retrieve_and_invert =
+            |dr: &mut D, idx: InternalCircuitIndex| -> Result<Element<'dr, D>> {
+                let i = internal_circuit_ids
+                    .iter()
+                    .position(|&i| i == idx)
+                    .expect("InternalCircuitIndex should exist");
+                let token = t_internals.get(i).expect("should not fail");
+                let element = internals.get(i).expect("should not fail");
+                let inv = resolved.view().map(|r| {
+                    r.retrieve(token)
+                        .expect("token should not be out of bounds")
+                });
+                element.invert_with(dr, inv)
+            };
+
         Ok(Denominators {
             left: ChildDenominators {
-                u:          u.sub(dr, &preamble.left.unified.u).invert(dr)?,
-                y:          u.sub(dr, &preamble.left.unified.y).invert(dr)?,
-                x:          u.sub(dr, &preamble.left.unified.x).invert(dr)?,
-                circuit_id: u.sub(dr, &preamble.left.circuit_id).invert(dr)?,
+                u:          retrieve_and_invert(dr, &left_u, &t_left_u)?,
+                y:          retrieve_and_invert(dr, &left_y, &t_left_y)?,
+                x:          retrieve_and_invert(dr, &left_x, &t_left_x)?,
+                circuit_id: retrieve_and_invert(dr, &left_circuit_id, &t_left_circuit_id)?,
             },
             right: ChildDenominators {
-                u:          u.sub(dr, &preamble.right.unified.u).invert(dr)?,
-                y:          u.sub(dr, &preamble.right.unified.y).invert(dr)?,
-                x:          u.sub(dr, &preamble.right.unified.x).invert(dr)?,
-                circuit_id: u.sub(dr, &preamble.right.circuit_id).invert(dr)?,
+                u:          retrieve_and_invert(dr, &right_u, &t_right_u)?,
+                y:          retrieve_and_invert(dr, &right_y, &t_right_y)?,
+                x:          retrieve_and_invert(dr, &right_x, &t_right_x)?,
+                circuit_id: retrieve_and_invert(dr, &right_circuit_id, &t_right_circuit_id)?,
             },
             challenges: ChallengeDenominators {
-                w:  u.sub(dr, w).invert(dr)?,
-                x:  u.sub(dr, x).invert(dr)?,
-                y:  u.sub(dr, y).invert(dr)?,
-                xz: u.sub(dr, &xz).invert(dr)?,
+                w:  retrieve_and_invert(dr, &challenges_w, &t_challenges_w)?,
+                x:  retrieve_and_invert(dr, &challenges_x, &t_challenges_x)?,
+                y:  retrieve_and_invert(dr, &challenges_y, &t_challenges_y)?,
+                xz: retrieve_and_invert(dr, &challenges_xz, &t_challenges_xz)?,
             },
             internal: InternalCircuitDenominators {
-                preamble_stage:           internal_denom(dr, PreambleStage)?,
-                error_n_stage:            internal_denom(dr, ErrorNStage)?,
-                error_m_stage:            internal_denom(dr, ErrorMStage)?,
-                query_stage:              internal_denom(dr, QueryStage)?,
-                eval_stage:               internal_denom(dr, EvalStage)?,
-                error_m_final_staged:     internal_denom(dr, ErrorMFinalStaged)?,
-                error_n_final_staged:     internal_denom(dr, ErrorNFinalStaged)?,
-                eval_final_staged:        internal_denom(dr, EvalFinalStaged)?,
-                hashes_1_circuit:         internal_denom(dr, Hashes1Circuit)?,
-                hashes_2_circuit:         internal_denom(dr, Hashes2Circuit)?,
-                partial_collapse_circuit: internal_denom(dr, PartialCollapseCircuit)?,
-                full_collapse_circuit:    internal_denom(dr, FullCollapseCircuit)?,
-                compute_v_circuit:        internal_denom(dr, ComputeVCircuit)?,
+                preamble_stage:           internal_retrieve_and_invert(dr, PreambleStage)?,
+                error_n_stage:            internal_retrieve_and_invert(dr, ErrorNStage)?,
+                error_m_stage:            internal_retrieve_and_invert(dr, ErrorMStage)?,
+                query_stage:              internal_retrieve_and_invert(dr, QueryStage)?,
+                eval_stage:               internal_retrieve_and_invert(dr, EvalStage)?,
+                error_m_final_staged:     internal_retrieve_and_invert(dr, ErrorMFinalStaged)?,
+                error_n_final_staged:     internal_retrieve_and_invert(dr, ErrorNFinalStaged)?,
+                eval_final_staged:        internal_retrieve_and_invert(dr, EvalFinalStaged)?,
+                hashes_1_circuit:         internal_retrieve_and_invert(dr, Hashes1Circuit)?,
+                hashes_2_circuit:         internal_retrieve_and_invert(dr, Hashes2Circuit)?,
+                partial_collapse_circuit: internal_retrieve_and_invert(dr, PartialCollapseCircuit)?,
+                full_collapse_circuit:    internal_retrieve_and_invert(dr, FullCollapseCircuit)?,
+                compute_v_circuit:        internal_retrieve_and_invert(dr, ComputeVCircuit)?,
             },
         })
     }

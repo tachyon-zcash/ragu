@@ -36,6 +36,9 @@ pub use element::{Element, multiadd};
 pub use endoscalar::{Endoscalar, compute_endoscalar, extract_endoscalar};
 pub use point::Point;
 pub use simulator::Simulator;
+pub use util::{
+    BatchInverter, BatchInverterStatePending, BatchInverterStateResolved, BatchInverterToken,
+};
 
 /// Primitive extension trait for all gadgets.
 pub trait GadgetExt<'dr, D: Driver<'dr>>: Gadget<'dr, D> {
