@@ -1,3 +1,9 @@
+//! Circuit constraint analysis and metrics collection.
+//!
+//! This module provides constraint system analysis by simulating circuit
+//! execution without computing actual values, counting the number of
+//! multiplication and linear constraints a circuit requires.
+
 use arithmetic::Coeff;
 use ff::Field;
 use ragu_core::{

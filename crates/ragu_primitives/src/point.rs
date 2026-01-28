@@ -1,3 +1,8 @@
+//! Elliptic curve point gadget for in-circuit curve operations.
+//!
+//! Provides the [`Point`] type representing an affine curve point with
+//! constrained coordinates for in-circuit elliptic curve arithmetic.
+
 use arithmetic::{Coeff, CurveAffine};
 use ff::{Field, WithSmallOrderMulGroup};
 use ragu_core::{

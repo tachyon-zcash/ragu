@@ -1,3 +1,9 @@
+//! Proof and proof-carrying data structures.
+//!
+//! Defines the [`Proof`] structure containing witness polynomials, commitments,
+//! and accumulated claims, along with [`Pcd`] which bundles a [`Proof`] with the
+//! data that a [`Header`] succinctly encodes.
+
 #![allow(dead_code)]
 
 pub(crate) mod components;

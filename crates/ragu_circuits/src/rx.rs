@@ -1,3 +1,8 @@
+//! Assembly of the $r(X)$ witness polynomial.
+//!
+//! The [`eval`] function in this module processes some witness data for a
+//! particular [`Circuit`] and assembles the corresponding $r(X)$ polynomial.
+
 use arithmetic::Coeff;
 use ff::Field;
 use ragu_core::{

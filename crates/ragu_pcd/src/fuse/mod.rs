@@ -1,3 +1,8 @@
+//! Proof fusion implementation for combining child proofs.
+//!
+//! Implements the core [`Application::fuse`] operation that takes two child
+//! proofs and produces a new proof, computing each proof component in sequence.
+
 mod _01_application;
 mod _02_preamble;
 mod _03_s_prime;
