@@ -67,6 +67,21 @@ impl<F: Field> BatchInverter<F, Pending> {
         Token { index }
     }
 
+    /// Reserves a slot for a future value while still returning a retrieval token.
+    ///
+    /// Before resolving the batch inverter, the reserved slot must be [filled][Self::fill].
+    pub fn reserve(&mut self) -> Token {
+        self.add(F::ZERO)
+    }
+
+    /// Fills a previously reserved slot with the provided element.
+    pub fn fill(&mut self, token: &Token, element: F) {
+        if token.index >= self.len() {
+            return;
+        }
+        self.elements[token.index] = element;
+    }
+
     /// Resolves all pending inversion requests.
     ///
     /// Returns:
@@ -92,8 +107,13 @@ impl<F: Field> BatchInverter<F, Pending> {
 impl<F: Field> BatchInverter<F, Resolved> {
     /// Returns a reference to the inverted value for the provided token or `None` if out of
     /// bounds.
-    pub fn retrieve(&self, token: &Token) -> Option<&F> {
+    pub fn retrieve_ref(&self, token: &Token) -> Option<&F> {
         self.elements.get(token.index)
+    }
+
+    /// Returns the inverted value for the provided token or `None` if out of bounds.
+    pub fn retrieve(&self, token: &Token) -> Option<F> {
+        self.elements.get(token.index).copied()
     }
 }
 
