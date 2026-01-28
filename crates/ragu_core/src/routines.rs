@@ -76,3 +76,60 @@ pub enum Prediction<T, A> {
     /// the driver should simply execute it to obtain the result.
     Unknown(A),
 }
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    use crate::drivers::emulator::{Emulator, Wired};
+    use crate::maybe::Maybe;
+    use arithmetic::Coeff;
+    use ragu_pasta::Fp;
+
+    #[derive(Clone)]
+    struct TestRoutine;
+
+    impl Routine<Fp> for TestRoutine {
+        type Input = ();
+        type Output = ();
+        type Aux<'dr> = Fp;
+
+        fn execute<'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            _input: (),
+            aux: DriverValue<D, Self::Aux<'dr>>,
+        ) -> Result<()> {
+            // Use the value from aux
+            let precomputed_square = aux.take();
+            let input_val = Fp::from(5u64);
+            let (_a, _b, _c) = dr.mul(|| {
+                Ok((
+                    Coeff::from(input_val),
+                    Coeff::from(input_val),
+                    Coeff::from(precomputed_square),
+                ))
+            })?;
+            Ok(())
+        }
+
+        fn predict<'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            _dr: &mut D,
+            _input: &(),
+        ) -> Result<Prediction<(), DriverValue<D, Self::Aux<'dr>>>> {
+            // Precompute the expensive operation and pass it as aux
+            let input_val = Fp::from(5u64);
+            let precomputed_square = input_val * input_val; // 25
+            Ok(Prediction::Unknown(D::just(|| precomputed_square)))
+        }
+    }
+
+    #[test]
+    fn test_routine() {
+        let routine = TestRoutine;
+
+        let mut emulator1 = Emulator::<Wired<Fp>>::extractor();
+        emulator1.routine(routine.clone(), ()).unwrap();
+    }
+}

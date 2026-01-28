@@ -24,3 +24,20 @@ pub fn eval<F: Field, C: Circuit<F>>(circuit: &C, instance: C::Instance<'_>) -> 
         .rev()
         .collect())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::SquareCircuit;
+    use ragu_pasta::Fp;
+
+    #[test]
+    fn test_ky() {
+        let circuit = SquareCircuit { times: 10 };
+        let instance: Fp = Fp::from(3);
+        let ky = eval::<Fp, _>(&circuit, instance).unwrap();
+        assert_eq!(ky.len(), 2);
+        assert_eq!(ky[0], Fp::ONE);
+        assert_eq!(ky[1], Fp::from(3));
+    }
+}

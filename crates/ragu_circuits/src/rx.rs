@@ -110,3 +110,29 @@ pub fn eval<'witness, F: Field, C: Circuit<F>, R: Rank>(
     };
     Ok((rx, aux))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::polynomials::R;
+    use crate::tests::SquareCircuit;
+    use ragu_pasta::Fp;
+
+    #[test]
+    fn test_rx() {
+        let circuit = SquareCircuit { times: 10 };
+        let witness: Fp = Fp::from(3);
+        let key = Fp::ONE;
+        let (rx, _aux) = eval::<Fp, _, R<6>>(&circuit, witness, key).unwrap();
+        let mut coeffs = rx.iter_coeffs().collect::<Vec<_>>();
+        let size_of_vec = coeffs.len() / 4;
+        let c = coeffs.drain(..size_of_vec).collect::<Vec<_>>();
+        let b = coeffs.drain(..size_of_vec).rev().collect::<Vec<_>>();
+        let a = coeffs.drain(..size_of_vec).collect::<Vec<_>>();
+        let d = coeffs.drain(..size_of_vec).rev().collect::<Vec<_>>();
+        for i in 0..size_of_vec {
+            assert_eq!(a[i] * b[i], c[i]);
+            assert_eq!(d[i], Fp::ZERO);
+        }
+    }
+}

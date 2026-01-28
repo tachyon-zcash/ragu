@@ -42,3 +42,30 @@ impl<F: Field> Circuit<F> for () {
         Ok(((), D::just(|| ())))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::Circuit;
+    use ragu_core::drivers::emulator::{Emulator, Wired};
+    use ragu_core::maybe::{Always, MaybeKind};
+    use ragu_pasta::Fp;
+
+    #[test]
+    fn test_trivial() {
+        let circuit = ();
+        let instance = ();
+        let mut dr = Emulator::<Wired<Fp>>::extractor();
+
+        assert!(
+            circuit
+                .instance(&mut dr, Always::maybe_just(|| instance))
+                .is_ok()
+        );
+
+        assert!(
+            circuit
+                .witness(&mut dr, Always::maybe_just(|| instance))
+                .is_ok()
+        );
+    }
+}
