@@ -7,6 +7,12 @@ use ragu_core::maybe::{Maybe, MaybeKind};
 
 use core::borrow::Borrow;
 
+mod batch_inverter;
+pub use batch_inverter::{
+    BatchInverter, Pending as BatchInverterStatePending, Resolved as BatchInverterStateResolved,
+    Token as BatchInverterToken,
+};
+
 /// Extension trait for `Maybe` that provides helper methods kept internal to
 /// this crate.
 pub(crate) trait InternalMaybe<T: Send>: Maybe<T> {
