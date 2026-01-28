@@ -18,7 +18,7 @@ pub(crate) mod hashes_2;
 pub(crate) mod partial_collapse;
 pub(crate) mod unified;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]
 pub(crate) enum InternalCircuitIndex {
     // Native stages
