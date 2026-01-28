@@ -312,6 +312,7 @@ struct Denominators<'dr, D: Driver<'dr>> {
 }
 
 impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
+    #[rustfmt::skip]
     fn new<C: Cycle, const HEADER_SIZE: usize>(
         dr: &mut D,
         u: &Element<'dr, D>,
@@ -439,37 +440,37 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
 
         Ok(Denominators {
             left: ChildDenominators {
-                u: retrieve_and_invert(dr, &left_u, &t_left_u)?,
-                y: retrieve_and_invert(dr, &left_y, &t_left_y)?,
-                x: retrieve_and_invert(dr, &left_x, &t_left_x)?,
+                u:          retrieve_and_invert(dr, &left_u, &t_left_u)?,
+                y:          retrieve_and_invert(dr, &left_y, &t_left_y)?,
+                x:          retrieve_and_invert(dr, &left_x, &t_left_x)?,
                 circuit_id: retrieve_and_invert(dr, &left_circuit_id, &t_left_circuit_id)?,
             },
             right: ChildDenominators {
-                u: retrieve_and_invert(dr, &right_u, &t_right_u)?,
-                y: retrieve_and_invert(dr, &right_y, &t_right_y)?,
-                x: retrieve_and_invert(dr, &right_x, &t_right_x)?,
+                u:          retrieve_and_invert(dr, &right_u, &t_right_u)?,
+                y:          retrieve_and_invert(dr, &right_y, &t_right_y)?,
+                x:          retrieve_and_invert(dr, &right_x, &t_right_x)?,
                 circuit_id: retrieve_and_invert(dr, &right_circuit_id, &t_right_circuit_id)?,
             },
             challenges: ChallengeDenominators {
-                w: retrieve_and_invert(dr, &challenges_w, &t_challenges_w)?,
-                x: retrieve_and_invert(dr, &challenges_x, &t_challenges_x)?,
-                y: retrieve_and_invert(dr, &challenges_y, &t_challenges_y)?,
+                w:  retrieve_and_invert(dr, &challenges_w, &t_challenges_w)?,
+                x:  retrieve_and_invert(dr, &challenges_x, &t_challenges_x)?,
+                y:  retrieve_and_invert(dr, &challenges_y, &t_challenges_y)?,
                 xz: retrieve_and_invert(dr, &challenges_xz, &t_challenges_xz)?,
             },
             internal: InternalCircuitDenominators {
-                preamble_stage: internal_retrieve_and_invert(dr, PreambleStage)?,
-                error_n_stage: internal_retrieve_and_invert(dr, ErrorNStage)?,
-                error_m_stage: internal_retrieve_and_invert(dr, ErrorMStage)?,
-                query_stage: internal_retrieve_and_invert(dr, QueryStage)?,
-                eval_stage: internal_retrieve_and_invert(dr, EvalStage)?,
-                error_m_final_staged: internal_retrieve_and_invert(dr, ErrorMFinalStaged)?,
-                error_n_final_staged: internal_retrieve_and_invert(dr, ErrorNFinalStaged)?,
-                eval_final_staged: internal_retrieve_and_invert(dr, EvalFinalStaged)?,
-                hashes_1_circuit: internal_retrieve_and_invert(dr, Hashes1Circuit)?,
-                hashes_2_circuit: internal_retrieve_and_invert(dr, Hashes2Circuit)?,
+                preamble_stage:           internal_retrieve_and_invert(dr, PreambleStage)?,
+                error_n_stage:            internal_retrieve_and_invert(dr, ErrorNStage)?,
+                error_m_stage:            internal_retrieve_and_invert(dr, ErrorMStage)?,
+                query_stage:              internal_retrieve_and_invert(dr, QueryStage)?,
+                eval_stage:               internal_retrieve_and_invert(dr, EvalStage)?,
+                error_m_final_staged:     internal_retrieve_and_invert(dr, ErrorMFinalStaged)?,
+                error_n_final_staged:     internal_retrieve_and_invert(dr, ErrorNFinalStaged)?,
+                eval_final_staged:        internal_retrieve_and_invert(dr, EvalFinalStaged)?,
+                hashes_1_circuit:         internal_retrieve_and_invert(dr, Hashes1Circuit)?,
+                hashes_2_circuit:         internal_retrieve_and_invert(dr, Hashes2Circuit)?,
                 partial_collapse_circuit: internal_retrieve_and_invert(dr, PartialCollapseCircuit)?,
-                full_collapse_circuit: internal_retrieve_and_invert(dr, FullCollapseCircuit)?,
-                compute_v_circuit: internal_retrieve_and_invert(dr, ComputeVCircuit)?,
+                full_collapse_circuit:    internal_retrieve_and_invert(dr, FullCollapseCircuit)?,
+                compute_v_circuit:        internal_retrieve_and_invert(dr, ComputeVCircuit)?,
             },
         })
     }
