@@ -32,6 +32,8 @@ pub struct Token {
 /// Uses the [typestate][typestate] pattern to ensure compile-time safety:
 /// - [`Pending`] state: Elements can be [added][Self::add].
 /// - [`Resolved`] state: Inverted elements can be [retrieved][Self::retrieve].
+///
+/// [typestate]: https://cliffle.com/blog/rust-typestate/
 pub struct BatchInverter<F, S: State> {
     elements: Vec<F>,
     _state: PhantomData<S>,
@@ -40,10 +42,7 @@ pub struct BatchInverter<F, S: State> {
 impl<F: Field> BatchInverter<F, Pending> {
     /// Creates an empty batch inverter in the default pending state.
     pub fn new() -> Self {
-        Self {
-            elements: Vec::new(),
-            _state: PhantomData,
-        }
+        Self::default()
     }
 
     /// Creates an empty batch inverter with the specified capacity.
@@ -57,6 +56,11 @@ impl<F: Field> BatchInverter<F, Pending> {
     /// Returns the number of elements pending inversion.
     pub fn len(&self) -> usize {
         self.elements.len()
+    }
+
+    /// Returns `true` if there are no elements in the batch inverter.
+    pub fn is_empty(&self) -> bool {
+        self.elements.is_empty()
     }
 
     /// Adds an element to be inverted and returns a token that can be used to retrieve the
@@ -99,6 +103,15 @@ impl<F: Field> BatchInverter<F, Pending> {
 
         BatchInverter {
             elements: self.elements,
+            _state: PhantomData,
+        }
+    }
+}
+
+impl<F: Field> Default for BatchInverter<F, Pending> {
+    fn default() -> Self {
+        Self {
+            elements: Vec::new(),
             _state: PhantomData,
         }
     }

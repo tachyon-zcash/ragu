@@ -55,8 +55,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    BatchInverter, BatchInverterStatePending, BatchInverterStateResolved, BatchInverterToken,
-    Element, Endoscalar, GadgetExt,
+    BatchInverter, BatchInverterStatePending, BatchInverterToken, Element, Endoscalar, GadgetExt,
 };
 
 use alloc::vec::Vec;
