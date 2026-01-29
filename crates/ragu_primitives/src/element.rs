@@ -43,7 +43,7 @@ use crate::{
 /// because it only represents a wire it is preferable to demote by extracting
 /// the wire using [`Element::wire`]. Promotion via [`Element::promote`] takes a
 /// bare wire instead of a demoted gadget to encourage this.
-#[derive(Gadget)]
+#[derive(Gadget, Consistent)]
 pub struct Element<'dr, D: Driver<'dr>> {
     /// A wire created by the driver
     #[ragu(wire)]
@@ -349,12 +349,6 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
         elements
             .into_iter()
             .fold(Element::zero(dr), |acc, elem| acc.add(dr, elem.borrow()))
-    }
-}
-
-impl<'dr, D: Driver<'dr>> Consistent<'dr, D> for Element<'dr, D> {
-    fn enforce_consistent(&self, _: &mut D) -> Result<()> {
-        Ok(())
     }
 }
 
