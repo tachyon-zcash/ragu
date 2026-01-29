@@ -64,7 +64,7 @@ pub struct RoutineShape {
 }
 
 impl RoutineShape {
-    /// Creates a new routine shape with the given dimensions.
+    /// Creates a new routine shape.
     pub const fn new(num_multiplications: usize, num_constraints: usize) -> Self {
         Self {
             num_multiplications,
@@ -74,7 +74,7 @@ impl RoutineShape {
 }
 
 /// Information about a single routine invocation, captured during discovery.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RoutineInfo {
     /// The shape (dimensions) of this routine invocation.
     pub shape: RoutineShape,
