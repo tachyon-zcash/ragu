@@ -18,9 +18,10 @@
 //! The [`Wireless`] mode is parameterized by a [`MaybeKind`] to indicate
 //! witness availability:
 //!
-//! * `Wireless<Empty, F>`: used mostly for wire counting and other static
-//!   structure analyses. Driver still executes natively, but with `Empty`
-//!   witness. Constructed via [`Emulator::counter`].
+//! * `Wireless<Empty, F>`: used for counting operations and other static
+//!   structure analyses without requiring witness values. Constructed via
+//!   [`Emulator::counter`]. Operation counts are available via
+//!   [`Emulator::num_multiplications`] and [`Emulator::num_constraints`].
 //! * `Wireless<Always<()>, F>`: used for native witness execution/generation,
 //!   constructed via [`Emulator::execute`] or directly execute the logic with
 //!   [`Emulator::emulate_wireless`].
@@ -60,8 +61,8 @@
 //! * [`Emulator::execute`] creates a wireless [`Emulator`] for native witness
 //!   execution/generation. This is the common case of executing circuit code
 //!   natively.
-//! * [`Emulator::counter`] creates a wireless [`Emulator`] for wire counting
-//!   and static analysis without witness data.
+//! * [`Emulator::counter`] creates a wireless [`Emulator`] for counting
+//!   operations (multiplications and constraints) without witness data.
 //!
 //! In [`Wired`] mode, wire assignments can be extracted from a gadget using
 //! [`Emulator::wires`], which returns a `Vec<F>` of field elements.
@@ -76,7 +77,7 @@ use crate::{
     drivers::{Coeff, DirectSum, Driver, DriverTypes, FromDriver, LinearExpression},
     gadgets::{Gadget, GadgetKind},
     maybe::{Always, Empty, MaybeKind},
-    routines::{Prediction, Routine},
+    routines::{Prediction, Routine, RoutineShape},
 };
 
 /// Mode that an [`Emulator`] may be running in; usually either [`Wired`] or
@@ -198,7 +199,45 @@ impl<M: MaybeKind, F: Field> Mode for Wireless<M, F> {
 ///
 /// The [`Emulator`] driver is parameterized on a [`Mode`], which determines
 /// whether wire assignments are tracked or not ([`Wired`] vs. [`Wireless`]).
-pub struct Emulator<M: Mode>(PhantomData<M>);
+///
+/// ## Operation Counting
+///
+/// The [`Emulator`] tracks the number of multiplication gates and linear
+/// constraints encountered during execution. This is useful for determining
+/// the shape of routines without requiring witness values. Access these counts
+/// via [`num_multiplications`](Emulator::num_multiplications) and
+/// [`num_constraints`](Emulator::num_constraints).
+pub struct Emulator<M: Mode> {
+    num_multiplications: usize,
+    num_constraints: usize,
+    _marker: PhantomData<M>,
+}
+
+impl<M: Mode> Emulator<M> {
+    /// Returns the number of multiplication gates encountered.
+    pub fn num_multiplications(&self) -> usize {
+        self.num_multiplications
+    }
+
+    /// Returns the number of linear constraints encountered.
+    pub fn num_constraints(&self) -> usize {
+        self.num_constraints
+    }
+
+    /// Returns the current operation counts as a [`RoutineShape`].
+    ///
+    /// This is useful for verifying that a routine's reported shape matches
+    /// its actual execution.
+    pub fn shape(&self) -> RoutineShape {
+        RoutineShape::new(self.num_multiplications, self.num_constraints)
+    }
+
+    /// Resets the operation counters to zero.
+    pub fn reset_counters(&mut self) {
+        self.num_multiplications = 0;
+        self.num_constraints = 0;
+    }
+}
 
 impl<F: Field> Emulator<Wired<F>> {
     /// Extract the wires from a gadget produced using a wired [`Emulator`].
@@ -232,7 +271,11 @@ impl<F: Field> Emulator<Wired<F>> {
     /// This is useful for extracting wire assignments from a [`Gadget`] using
     /// [`Emulator::wires`].
     pub fn extractor() -> Self {
-        Emulator(PhantomData)
+        Emulator {
+            num_multiplications: 0,
+            num_constraints: 0,
+            _marker: PhantomData,
+        }
     }
 
     /// Helper utility for executing a closure with a freshly created wired
@@ -250,15 +293,35 @@ impl<M: MaybeKind, F: Field> Emulator<Wireless<M, F>> {
     /// Creates a new [`Emulator`] driver in [`Wireless`] mode, parameterized on
     /// the existence of a witness.
     pub fn wireless() -> Self {
-        Emulator(PhantomData)
+        Emulator {
+            num_multiplications: 0,
+            num_constraints: 0,
+            _marker: PhantomData,
+        }
     }
 }
 
 impl<F: Field> Emulator<Wireless<Empty, F>> {
-    /// Creates a new [`Emulator`] driver in [`Wireless`] mode, usually for
-    /// counting wires or other static analysis on the circuit structure.
+    /// Creates a new [`Emulator`] driver in [`Wireless`] mode for counting
+    /// operations and static analysis on the circuit structure.
+    ///
+    /// This mode does not require witness values, making it suitable for
+    /// determining routine shapes. Access operation counts via
+    /// [`num_multiplications`](Emulator::num_multiplications) and
+    /// [`num_constraints`](Emulator::num_constraints).
     pub fn counter() -> Self {
         Self::wireless()
+    }
+
+    /// Derives a [`RoutineShape`] by running a closure through a counter
+    /// [`Emulator`].
+    ///
+    /// This is useful for implementing [`Routine::shape`] without manually
+    /// calculating the number of multiplications and constraints.
+    pub fn derive_shape(f: impl FnOnce(&mut Self)) -> RoutineShape {
+        let mut dr = Self::counter();
+        f(&mut dr);
+        dr.shape()
     }
 }
 
@@ -314,12 +377,14 @@ impl<'dr, M: MaybeKind, F: Field> Driver<'dr> for Emulator<Wireless<M, F>> {
         &mut self,
         _: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
     ) -> Result<(Self::Wire, Self::Wire, Self::Wire)> {
+        self.num_multiplications += 1;
         Ok(((), (), ()))
     }
 
     fn add(&mut self, _: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {}
 
     fn enforce_zero(&mut self, _: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
+        self.num_constraints += 1;
         Ok(())
     }
 
@@ -354,6 +419,7 @@ impl<'dr, F: Field> Driver<'dr> for Emulator<Wired<F>> {
         // Despite wires existing, the emulator does not enforce multiplication
         // constraints.
 
+        self.num_multiplications += 1;
         Ok((
             WiredValue::Assigned(a.value()),
             WiredValue::Assigned(b.value()),
@@ -370,6 +436,7 @@ impl<'dr, F: Field> Driver<'dr> for Emulator<Wired<F>> {
         // Despite wires existing, the emulator does not enforce linear
         // constraints.
 
+        self.num_constraints += 1;
         Ok(())
     }
 
