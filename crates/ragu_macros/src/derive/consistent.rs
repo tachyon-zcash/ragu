@@ -58,8 +58,15 @@ pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenS
 
             for f in fields {
                 let fid = f.ident.clone().expect("fields contains only named fields");
+                let is_value = f.attrs.iter().any(|a| attr_is(a, "value"));
+                let is_wire = f.attrs.iter().any(|a| attr_is(a, "wire"));
                 let is_gadget = f.attrs.iter().any(|a| attr_is(a, "gadget"));
-                res.push((fid, is_gadget));
+                let is_phantom = f.attrs.iter().any(|a| attr_is(a, "phantom"));
+
+                // Treat as gadget if explicitly marked OR if no annotation present
+                // (matches Gadget derive behavior)
+                let should_enforce = is_gadget || (!is_value && !is_wire && !is_phantom);
+                res.push((fid, should_enforce));
             }
 
             res
@@ -72,9 +79,9 @@ pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenS
         }
     };
 
-    // Generate enforce_consistent calls only for fields marked with #[ragu(gadget)]
-    let enforce_calls = fields.iter().filter_map(|(id, is_gadget)| {
-        if *is_gadget {
+    // Generate enforce_consistent calls for gadget fields (explicit or defaulted)
+    let enforce_calls = fields.iter().filter_map(|(id, should_enforce)| {
+        if *should_enforce {
             Some(quote! { #ragu_core_path::gadgets::Consistent::enforce_consistent(&self.#id, dr)?; })
         } else {
             None
@@ -188,6 +195,37 @@ fn test_consistent_derive_multiple_gadgets() {
                 fn enforce_consistent(&self, dr: &mut D) -> ::ragu_core::Result<()> {
                     ::ragu_core::gadgets::Consistent::enforce_consistent(&self.point_a, dr)?;
                     ::ragu_core::gadgets::Consistent::enforce_consistent(&self.point_b, dr)?;
+                    Ok(())
+                }
+            }
+        ).to_string()
+    );
+}
+
+#[rustfmt::skip]
+#[test]
+fn test_consistent_derive_unannotated_defaults_to_gadget() {
+    use syn::parse_quote;
+
+    // Unannotated fields should be treated as gadgets (matching Gadget derive behavior)
+    let input: DeriveInput = parse_quote! {
+        #[derive(Consistent)]
+        struct CompositeGadget<'dr, D: Driver<'dr>> {
+            unannotated: Point<'dr, D>,  // No annotation - should be treated as gadget
+            #[ragu(wire)]
+            wire: D::Wire,
+        }
+    };
+
+    let result = derive(input, RaguCorePath::default()).unwrap();
+
+    assert_eq!(
+        result.to_string(),
+        quote!(
+            #[automatically_derived]
+            impl<'dr, D: Driver<'dr> > ::ragu_core::gadgets::Consistent<'dr, D> for CompositeGadget<'dr, D> {
+                fn enforce_consistent(&self, dr: &mut D) -> ::ragu_core::Result<()> {
+                    ::ragu_core::gadgets::Consistent::enforce_consistent(&self.unannotated, dr)?;
                     Ok(())
                 }
             }
