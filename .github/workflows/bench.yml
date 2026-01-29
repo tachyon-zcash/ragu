@@ -1,0 +1,106 @@
+name: Benchmarks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  changes:
+    name: detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - '**/*.rs'
+              - '**/Cargo.toml'
+              - '**/Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/bench.yml'
+              - '.github/actions/**'
+
+  bench:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: ./.github/actions/rust-setup
+        with:
+          cache-suffix: bench
+
+      - name: Install Valgrind
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y valgrind
+
+      - name: Install gungraun-runner
+        uses: taiki-e/install-action@v2
+        with:
+          tool: gungraun-runner@0.17.0
+
+      - name: Load baseline
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@v4
+        with:
+          path: ./bench-baseline
+          key: ${{ github.workflow }}-${{ github.base_ref }}-dummy
+          restore-keys: ${{ github.workflow }}-${{ github.base_ref }}-
+
+      - name: Ensure baseline path exists
+        run: mkdir -p ./bench-baseline
+
+      - name: Run benchmarks
+        run: cargo bench --workspace --features unstable-test-fixtures -- --save-summary=json
+
+      - name: Transform to github-action-benchmark format
+        run: |
+          find target/gungraun -name 'summary.json' -exec cat {} + | jq --from-file .github/scripts/transform-gungraun.jq --slurp > bench-output.json
+
+      - name: Report benchmark results
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: Ragu Benchmarks
+          tool: customSmallerIsBetter
+          output-file-path: bench-output.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          external-data-json-path: ./bench-baseline/data.json
+          auto-push: false
+          comment-always: ${{ github.event_name == 'pull_request' }}
+          comment-on-alert: ${{ github.event_name == 'pull_request' }}
+          fail-on-alert: false
+          save-data-file: ${{ github.event_name == 'push' }}
+          skip-fetch-gh-pages: true
+          summary-always: true
+
+      - name: Save baseline
+        if: github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: ./bench-baseline
+          key: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.sha }}

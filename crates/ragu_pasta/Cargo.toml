@@ -29,6 +29,9 @@ ff = { workspace = true }
 group = { workspace = true }
 pasta_curves = { workspace = true }
 
+[lib]
+bench = false
+
 [dependencies]
 arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", package = "ragu_arithmetic" }
 ff = { workspace = true }

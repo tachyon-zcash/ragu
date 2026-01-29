@@ -21,6 +21,15 @@ all-features = true
 
 [features]
 default = []
+unstable-test-fixtures = [
+  'ragu_arithmetic/unstable-test-fixtures',
+  'ragu_circuits/unstable-test-fixtures',
+  'ragu_pcd/unstable-test-fixtures',
+  'ragu_primitives/unstable-test-fixtures',
+]
+
+[lib]
+bench = false
 
 [dependencies]
 ragu_core = { path = "crates/ragu_core", version = "0.0.0" }
@@ -58,3 +67,4 @@ pasta_curves = "0.5.1"
 rand = "0.8.5"
 lazy_static = "1.5.0"
 proptest = "1.7.0"
+gungraun = "0.17.0"

@@ -29,6 +29,9 @@ all-features = true
 alloc = []
 default = ["alloc"]
 
+[lib]
+bench = false
+
 [dependencies]
 arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", package = "ragu_arithmetic" }
 ff = { workspace = true }

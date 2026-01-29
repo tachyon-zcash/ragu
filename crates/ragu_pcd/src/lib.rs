@@ -17,6 +17,13 @@ mod proof;
 pub mod step;
 mod verify;
 
+#[cfg(any(test, feature = "unstable-test-fixtures"))]
+#[doc(hidden)]
+pub mod test_fixtures;
+
+#[cfg(test)]
+mod tests;
+
 use arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::Rank,

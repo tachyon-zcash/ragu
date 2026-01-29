@@ -1,22 +1,21 @@
+//! Nontrivial test fixtures with Poseidon hashing.
+
 use arithmetic::Cycle;
 use ff::Field;
-use ragu_circuits::polynomials::R;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
     gadgets::{GadgetKind, Kind},
     maybe::Maybe,
 };
-use ragu_pasta::{Fp, Pasta};
-use ragu_pcd::{
-    ApplicationBuilder,
+use ragu_primitives::{Element, poseidon::Sponge};
+
+use crate::{
     header::{Header, Suffix},
     step::{Encoded, Index, Step},
 };
-use ragu_primitives::{Element, poseidon::Sponge};
-use rand::{SeedableRng, rngs::StdRng};
 
-struct LeafNode;
+pub struct LeafNode;
 
 impl<F: Field> Header<F> for LeafNode {
     const SUFFIX: Suffix = Suffix::new(0);
@@ -31,7 +30,7 @@ impl<F: Field> Header<F> for LeafNode {
     }
 }
 
-struct InternalNode;
+pub struct InternalNode;
 
 impl<F: Field> Header<F> for InternalNode {
     const SUFFIX: Suffix = Suffix::new(1);
@@ -46,8 +45,8 @@ impl<F: Field> Header<F> for InternalNode {
     }
 }
 
-struct Hash2<'params, C: Cycle> {
-    poseidon_params: &'params C::CircuitPoseidon,
+pub struct Hash2<'params, C: Cycle> {
+    pub poseidon_params: &'params C::CircuitPoseidon,
 }
 
 impl<C: Cycle> Step<C> for Hash2<'_, C> {
@@ -89,8 +88,8 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
     }
 }
 
-struct WitnessLeaf<'params, C: Cycle> {
-    poseidon_params: &'params C::CircuitPoseidon,
+pub struct WitnessLeaf<'params, C: Cycle> {
+    pub poseidon_params: &'params C::CircuitPoseidon,
 }
 
 impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
@@ -134,54 +133,4 @@ impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
             leaf_value,
         ))
     }
-}
-
-#[test]
-fn various_merging_operations() -> Result<()> {
-    let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
-        .register(WitnessLeaf {
-            poseidon_params: Pasta::circuit_poseidon(pasta),
-        })?
-        .register(Hash2 {
-            poseidon_params: Pasta::circuit_poseidon(pasta),
-        })?
-        .finalize(pasta)?;
-
-    let mut rng = StdRng::seed_from_u64(1234);
-
-    let leaf1 = app.seed(
-        &mut rng,
-        WitnessLeaf {
-            poseidon_params: Pasta::circuit_poseidon(pasta),
-        },
-        Fp::from(42u64),
-    )?;
-    let leaf1 = leaf1.0.carry(leaf1.1);
-    assert!(app.verify(&leaf1, &mut rng)?);
-
-    let leaf2 = app.seed(
-        &mut rng,
-        WitnessLeaf {
-            poseidon_params: Pasta::circuit_poseidon(pasta),
-        },
-        Fp::from(42u64),
-    )?;
-    let leaf2 = leaf2.0.carry(leaf2.1);
-    assert!(app.verify(&leaf2, &mut rng)?);
-
-    let node1 = app.fuse(
-        &mut rng,
-        Hash2 {
-            poseidon_params: Pasta::circuit_poseidon(pasta),
-        },
-        (),
-        leaf1,
-        leaf2,
-    )?;
-    let node1 = node1.0.carry::<InternalNode>(node1.1);
-
-    assert!(app.verify(&node1, &mut rng)?);
-
-    Ok(())
 }

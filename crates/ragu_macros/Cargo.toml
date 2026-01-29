@@ -17,6 +17,7 @@ keywords = []
 
 [lib]
 proc-macro = true
+bench = false
 
 [dependencies]
 quote = "1.0.40"

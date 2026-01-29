@@ -22,4 +22,7 @@ all-features = true
 [features]
 default = []
 
+[lib]
+bench = false
+
 [dependencies]

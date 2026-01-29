@@ -26,6 +26,10 @@ mod trivial;
 #[cfg(test)]
 mod tests;
 
+#[cfg(any(test, feature = "unstable-test-fixtures"))]
+#[doc(hidden)]
+pub mod test_fixtures;
+
 use ff::Field;
 use ragu_core::{
     Error, Result,
