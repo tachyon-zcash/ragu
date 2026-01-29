@@ -17,6 +17,20 @@
 //! [`RoutineShape`] describes resource consumption (multiplication gates, linear constraints)
 //! for floor planning. [`RoutineRegistry`] tracks invocations during circuit discovery,
 //! mapping each [`RoutineId`] to its [`RoutineInfo`] entries for structural analysis.
+//!
+//! ## Design Decisions
+//!
+//! - **Type-based identity**: [`RoutineId`] uses [`TypeId`] because routines are fungible
+//!   by type. [`TypeId`] is known before synthesis, whereas a constraint hash would require
+//!   synthesizing first.
+//!
+//! - **G/H polynomial split**: Routines have internal (G) and external (H) polynomial
+//!   parts. G depends on routine structure and is cacheable, whereas H depends on witness
+//!   values and varies per proof.
+//!
+//! - **Discovery vs. synthesis**: [`RoutineRegistry`] captures structural information
+//!   during discovery (via [`Emulator::counter`](crate::drivers::emulator::Emulator::counter)).
+//!   Memoization eligibility (input patterns) is determined at synthesis time.
 
 use core::any::TypeId;
 
