@@ -146,45 +146,37 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
 }
 
 /// Key that binds the registry polynomial $m(W, X, Y)$ to prevent Fiat-Shamir
-/// soudness attack.
+/// soundness attacks.
 ///
-/// In Fiat-Shamir transformed protocols, public info such as the proving
+/// In Fiat-Shamir transformed protocols, common inputs such as the proving
 /// statement (i.e., circuit descriptions) must be included in the transcript
 /// before any prover messages or verifier challenges. Otherwise, malicious
 /// provers may adapatively choose another statement during, or even after,
 /// generating a proof. In the literature, this is known as
 /// [weak Fiat-Shamir attacks](https://eprint.iacr.org/2023/1400).
 ///
-/// To prevent such attacks, one can salt the registry digest `H(m(W,X,Y))`
-/// to the transcript before any prover messages, forcing a fixed instance.
-/// However, the registry `m` contains the description of a recursive verifier
-/// whose logic depends on a transcript salted with the very digest
-/// `H(m(W,X,Y))` itself, creating a circular dependency.
+/// To prevent such attacks, one can salt the registry digest $H(m(W, X, Y))$ to
+/// the transcript before any prover messages, forcing a fixed instance.
+/// However, the registry polynomial $m$ contains the description of a recursive
+/// verifier whose logic depends on a transcript salted with the very digest
+/// itself, creating a circular dependency.
 ///
-/// Previously, many preprocessing recursive proofs solve this self-reference
-/// problem by externalizing the circuit description into a verification key (vk)
-/// that is generated ahead of time and passed in as public input to the
-/// recursive verifier. However, Ragu avoid preprocessing by design, requiring
-/// an alternative solution.
+/// Many preprocessing recursive SNARKs avoid this self-reference problem
+/// implicitly because the circuit descriptions are encoded in a verification
+/// key that is generated ahead of time and carried through public inputs to the
+/// recursive verifier. Ragu avoids preprocessing by design, and does not use
+/// verification keys, which suggests an alternative solution.
 ///
 /// # Binding a polynomial through its evaluation
 ///
-/// Apart from its cryptographic hash digest, we can characterize a polynomial
-/// through its evaluation at fixed point. Obviously, the evaluation
-/// `e_0 = m(w_0, x_0, y_0)` alone where `w_0, x_0, y_0` are public constants is
-/// insufficient since many other polynomials also agree at this point.
+/// Polynomials of bounded degree are overdetermined by their evaluation at a
+/// sufficient number of distinct points. Starting from public constants, we
+/// iteratively evaluate $e_i = m(w_i, x_i, y_i)$ where each evaluation point
+/// $(w_{i+1}, x_{i+1}, y_{i+1})$ is seeded by hashing the prior evaluation $e_i$.
+/// The final evaluation serves as the binding key.
 ///
-/// If we seed another evaluation point by hashing the first eval `e_0`, namely
-/// `w_1, x_1, y_1 = H(e_0)`, and evaluate `e_1 = m(w_1, x_1, y_1)`. Then the
-/// `e_1` is much more tightly bound to `m`, since polynomials must agrees
-/// at both `(w_0, x_0, y_0)` and `(w_1, x_1, y_1)` to collide. Continuing this
-/// process `d` times, we obtain `e_d` as the binding evaluation to `m`.
-/// The soundness argument reduces to the Schwartz-Zippel lemma.
-///
-/// Note that for computationally bounded adversaries, a smaller constant `d` is
-/// likely sufficient thanks to the unpredictability of next evaluation point.
-/// In practice, we can choose `d` to balance security and performance.
-///
+/// The number of iterations must exceed the degrees of freedom an adversary
+/// could exploit to adaptively modify circuits.
 /// See [#78] for the security argument.
 ///
 /// # Break self-reference without preprocessing

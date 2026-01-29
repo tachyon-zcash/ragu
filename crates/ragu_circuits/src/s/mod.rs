@@ -123,10 +123,14 @@ trait DriverExt<'dr>: Driver<'dr> {
     ///
     /// This method enforces the linear constraint `key_wire - key = 0`, which
     /// randomizes non-trivial evaluations of the wiring polynomial.
-    fn enforce_registry_key(&mut self, key_wire: &Self::Wire, key: Self::F) -> Result<()> {
+    fn enforce_registry_key(
+        &mut self,
+        key_wire: &Self::Wire,
+        key: &crate::registry::Key<Self::F>,
+    ) -> Result<()> {
         self.enforce_zero(|lc| {
             lc.add(key_wire)
-                .add_term(&Self::ONE, Coeff::NegativeArbitrary(key))
+                .add_term(&Self::ONE, Coeff::NegativeArbitrary(key.value()))
         })
     }
 }
