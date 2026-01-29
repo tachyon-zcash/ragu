@@ -53,7 +53,6 @@ struct Hash2<'params, C: Cycle> {
 impl<C: Cycle> Step<C> for Hash2<'_, C> {
     const INDEX: Index = Index::new(1);
     type Witness<'source> = ();
-    type Aux<'source> = C::CircuitField;
     type Left = LeafNode;
     type Right = LeafNode;
     type Output = InternalNode;
@@ -70,7 +69,7 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        DriverValue<D, Self::Aux<'source>>,
+        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data<'source>>,
     )>
     where
         Self: 'dr,
@@ -96,7 +95,6 @@ struct WitnessLeaf<'params, C: Cycle> {
 impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
     const INDEX: Index = Index::new(0);
     type Witness<'source> = C::CircuitField;
-    type Aux<'source> = C::CircuitField;
     type Left = ();
     type Right = ();
     type Output = LeafNode;
@@ -113,7 +111,7 @@ impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        DriverValue<D, Self::Aux<'source>>,
+        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data<'source>>,
     )>
     where
         Self: 'dr,
@@ -157,7 +155,6 @@ fn various_merging_operations() -> Result<()> {
         },
         Fp::from(42u64),
     )?;
-    let leaf1 = leaf1.0.carry(leaf1.1);
     assert!(app.verify(&leaf1, &mut rng)?);
 
     let leaf2 = app.seed(
@@ -167,7 +164,6 @@ fn various_merging_operations() -> Result<()> {
         },
         Fp::from(42u64),
     )?;
-    let leaf2 = leaf2.0.carry(leaf2.1);
     assert!(app.verify(&leaf2, &mut rng)?);
 
     let node1 = app.fuse(
@@ -179,8 +175,6 @@ fn various_merging_operations() -> Result<()> {
         leaf1,
         leaf2,
     )?;
-    let node1 = node1.0.carry::<InternalNode>(node1.1);
-
     assert!(app.verify(&node1, &mut rng)?);
 
     Ok(())
