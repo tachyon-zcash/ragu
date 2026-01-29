@@ -59,7 +59,7 @@ pub const NUM_WIRES: usize = 29;
 ///
 /// [`hashes_1`]: super::hashes_1
 /// [`hashes_2`]: super::hashes_2
-#[derive(Gadget, Write)]
+#[derive(Gadget, Write, Consistent)]
 pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     // Commitments from current proof components (on the nested curve)
     /// Commitment from the preamble proof component.
@@ -148,20 +148,6 @@ pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     /// Expected evaluation at the challenge point for consistency verification.
     #[ragu(gadget)]
     pub v: Element<'dr, D>,
-}
-
-impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle> Consistent<'dr, D> for Output<'dr, D, C> {
-    fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
-        self.nested_preamble_commitment.enforce_consistent(dr)?;
-        self.nested_s_prime_commitment.enforce_consistent(dr)?;
-        self.nested_error_m_commitment.enforce_consistent(dr)?;
-        self.nested_error_n_commitment.enforce_consistent(dr)?;
-        self.nested_ab_commitment.enforce_consistent(dr)?;
-        self.nested_query_commitment.enforce_consistent(dr)?;
-        self.nested_f_commitment.enforce_consistent(dr)?;
-        self.nested_eval_commitment.enforce_consistent(dr)?;
-        Ok(())
-    }
 }
 
 /// Native (non-gadget) representation of unified public inputs.
