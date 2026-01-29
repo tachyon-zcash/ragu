@@ -67,6 +67,19 @@ pub trait Routine<F: Field>: Clone + Send {
 /// `Known(T, A)` represents a known prediction of output `T` and `Unknown(A)`
 /// represents an unpredictable result, in either case `A` represents auxiliary
 /// data that may be useful for execution.
+///
+/// # Design note
+///
+/// [`Routine::predict`] is witness-oriented, but circuit synthesis drivers
+/// piggyback on it just for the auxiliary data. This bundles two concerns:
+///
+/// - **Auxiliary data**: all drivers can benefit from avoiding redundant work.
+/// - **`Known` vs `Unknown`**: witness drivers can use this to short-circuit
+///   execution or parallelize witness generation.
+///
+/// Circuit synthesis drivers use [`into_aux`] to ignore this distinction.
+///
+/// [`into_aux`]: Prediction::into_aux
 pub enum Prediction<T, A> {
     /// The routine has provided the resulting `T` value and some auxiliary
     /// information that may be useful for actual execution.
