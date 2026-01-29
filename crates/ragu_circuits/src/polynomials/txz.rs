@@ -3,10 +3,13 @@
 use ff::Field;
 use ragu_core::{
     Error, Result,
-    drivers::{Driver, DriverValue},
+    drivers::{
+        Driver, DriverValue,
+        emulator::{Emulator, Wireless},
+    },
     gadgets::{GadgetKind, Kind},
-    maybe::Maybe,
-    routines::{Prediction, Routine},
+    maybe::{Empty, Maybe},
+    routines::{Prediction, Routine, RoutineShape},
 };
 use ragu_primitives::Element;
 
@@ -39,6 +42,15 @@ impl<F: Field, R: Rank> Routine<F> for Evaluate<R> {
     type Input = Kind![F; (Element<'_, _>, Element<'_, _>)];
     type Output = Kind![F; Element<'_, _>];
     type Aux<'dr> = (F, F);
+
+    fn shape(&self) -> RoutineShape {
+        Emulator::derive_shape(|dr: &mut Emulator<Wireless<Empty, F>>| {
+            let x = Element::zero(dr);
+            let z = Element::zero(dr);
+            let aux = Empty;
+            let _ = self.execute(dr, (x, z), aux);
+        })
+    }
 
     fn execute<'dr, D: Driver<'dr, F = F>>(
         &self,
@@ -143,6 +155,7 @@ impl<F: Field, R: Rank> Routine<F> for Evaluate<R> {
 mod tests {
     use super::*;
     use crate::polynomials::R;
+    use ragu_core::routines::Routine;
     use ragu_pasta::Fp;
     use ragu_primitives::Simulator;
 
@@ -155,6 +168,11 @@ mod tests {
         let z = Fp::random(&mut rand::rng());
         let evaluator = Evaluate::<TestRank>::new();
 
+        // Verify shape() matches actual execution
+        let shape = <Evaluate<TestRank> as Routine<Fp>>::shape(&evaluator);
+        assert_eq!(shape.num_multiplications, 76);
+        assert_eq!(shape.num_constraints, 152);
+
         Simulator::simulate((x, z), |dr, witness| {
             let (x, z) = witness.cast();
             let x = Element::alloc(dr, x)?;
@@ -164,8 +182,8 @@ mod tests {
             dr.routine(evaluator.clone(), (x, z))?;
 
             assert_eq!(dr.num_allocations(), 0);
-            assert_eq!(dr.num_multiplications(), 76);
-            assert_eq!(dr.num_linear_constraints(), 152);
+            assert_eq!(dr.num_multiplications(), shape.num_multiplications);
+            assert_eq!(dr.num_linear_constraints(), shape.num_constraints);
 
             Ok(())
         })?;
