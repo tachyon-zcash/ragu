@@ -91,8 +91,8 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           external-data-json-path: ./bench-baseline/data.json
           auto-push: false
-          comment-always: ${{ github.event_name == 'pull_request' }}
-          comment-on-alert: ${{ github.event_name == 'pull_request' }}
+          comment-always: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+          comment-on-alert: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
           fail-on-alert: false
           save-data-file: ${{ github.event_name == 'push' }}
           skip-fetch-gh-pages: true
