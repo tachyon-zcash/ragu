@@ -16,7 +16,7 @@ use crate::circuits::nested::InternalCircuitIndex;
 
 /// Enum identifying which nested field rx polynomial to retrieve from a proof.
 #[derive(Clone, Copy, Debug)]
-pub enum RxComponent {
+pub(crate) enum RxComponent {
     /// EndoscalarStage rx polynomial.
     EndoscalarStage,
     /// PointsStage rx polynomial.
@@ -28,7 +28,7 @@ pub enum RxComponent {
 /// Trait for processing nested claim values into accumulated outputs.
 ///
 /// This trait defines how to process rx values from a [`Source`].
-pub trait Processor<Rx> {
+pub(crate) trait Processor<Rx> {
     /// Process an internal circuit claim (EndoscalingStep) - sums rxs then processes.
     fn internal_circuit(&mut self, id: InternalCircuitIndex, rxs: impl Iterator<Item = Rx>);
 
@@ -66,7 +66,7 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx structured::Polynomial<F, R
 /// 2. Stage checks (k(y) = 0): EndoscalarStage, PointsStage, PointsFinalStaged
 ///
 /// This ordering must match the ky_elements ordering from [`ky_values`].
-pub fn build<S, P>(source: &S, processor: &mut P) -> Result<()>
+pub(crate) fn build<S, P>(source: &S, processor: &mut P) -> Result<()>
 where
     S: Source<RxComponent = RxComponent>,
     P: Processor<S::Rx>,
@@ -116,7 +116,7 @@ where
 }
 
 /// Trait for providing k(y) values for nested claim verification.
-pub trait KySource {
+pub(crate) trait KySource {
     /// The k(y) value type.
     type Ky: Clone;
 
@@ -132,7 +132,7 @@ pub trait KySource {
 /// Returns:
 /// - `num_steps` ones (for EndoscalingStep circuit checks, single-proof verification)
 /// - Infinite zeros (for stage checks)
-pub fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
+pub(crate) fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
     use crate::circuits::nested::NUM_ENDOSCALING_POINTS;
     use crate::components::endoscalar::NumStepsLen;
     use ragu_primitives::vec::Len;

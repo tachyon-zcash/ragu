@@ -7,8 +7,8 @@ use ragu_circuits::{
     registry::{CircuitIndex, Registry},
 };
 
-pub mod native;
-pub mod nested;
+pub(crate) mod native;
+pub(crate) mod nested;
 
 /// Sum an iterator of polynomials, borrowing if only one element.
 ///
@@ -39,7 +39,7 @@ pub(crate) fn sum_polynomials<'rx, F: PrimeField, R: Rank>(
 ///
 /// Implementors provide access to rx values for all proofs they manage.
 /// The `RxComponent` associated type defines which components can be requested.
-pub trait Source {
+pub(crate) trait Source {
     /// The type identifying which rx component to retrieve.
     /// For native claims, this is [`native::RxComponent`].
     type RxComponent: Copy;
@@ -61,7 +61,7 @@ pub trait Source {
 ///
 /// Accumulates (a, b) polynomial pairs for each claim type, using
 /// the registry polynomial to transform rx polynomials appropriately.
-pub struct Builder<'m, 'rx, F: PrimeField, R: Rank> {
+pub(crate) struct Builder<'m, 'rx, F: PrimeField, R: Rank> {
     pub(crate) registry: &'m Registry<'m, F, R>,
     pub(crate) num_application_steps: usize,
     pub(crate) y: F,
@@ -75,7 +75,12 @@ pub struct Builder<'m, 'rx, F: PrimeField, R: Rank> {
 
 impl<'m, 'rx, F: PrimeField, R: Rank> Builder<'m, 'rx, F, R> {
     /// Create a new claim builder.
-    pub fn new(registry: &'m Registry<'m, F, R>, num_application_steps: usize, y: F, z: F) -> Self {
+    pub(crate) fn new(
+        registry: &'m Registry<'m, F, R>,
+        num_application_steps: usize,
+        y: F,
+        z: F,
+    ) -> Self {
         Self {
             registry,
             num_application_steps,

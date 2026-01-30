@@ -31,11 +31,11 @@ use crate::circuits::{self, native::InternalCircuitIndex};
 /// full_collapse) that share the same unified k(y) value. The unified_ky iterator
 /// from [`KySource`] is repeated this many times in [`ky_values`].
 // TODO: this constant seems brittle because it may vary between the two fields.
-pub const NUM_UNIFIED_CIRCUITS: usize = 4;
+pub(crate) const NUM_UNIFIED_CIRCUITS: usize = 4;
 
 /// Enum identifying which native field rx polynomial to retrieve from a proof.
 #[derive(Clone, Copy, Debug)]
-pub enum RxComponent {
+pub(crate) enum RxComponent {
     /// The `a` polynomial from the AB proof (revdot claim).
     AbA,
     /// The `b` polynomial from the AB proof (revdot claim).
@@ -68,7 +68,7 @@ pub enum RxComponent {
 ///
 /// This trait defines how to process rx values from a [`Source`].
 /// Different implementations handle polynomial vs evaluation contexts.
-pub trait Processor<Rx, AppCircuitId> {
+pub(crate) trait Processor<Rx, AppCircuitId> {
     /// Process a raw claim (a/b directly, k(y) = c).
     fn raw_claim(&mut self, a: Rx, b: Rx);
 
@@ -128,7 +128,7 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx structured::Polynomial<F, R
 ///
 /// This ordering must match the ky_elements ordering in `partial_collapse.rs`
 /// and `fuse.rs` `compute_errors_n`.
-pub fn build<S, P>(source: &S, processor: &mut P) -> Result<()>
+pub(crate) fn build<S, P>(source: &S, processor: &mut P) -> Result<()>
 where
     S: Source<RxComponent = RxComponent>,
     P: Processor<S::Rx, S::AppCircuitId>,
@@ -247,7 +247,7 @@ where
 }
 
 /// Trait for providing k(y) values for claim verification.
-pub trait KySource {
+pub(crate) trait KySource {
     /// The k(y) value type.
     type Ky: Clone;
 
@@ -273,7 +273,7 @@ pub trait KySource {
 /// Chains the k(y) sources in the order required by [`build`],
 /// with `unified_ky` repeated [`NUM_UNIFIED_CIRCUITS`] times,
 /// followed by infinite zeros for stage claims.
-pub fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
+pub(crate) fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
     source
         .raw_c()
         .chain(source.application_ky())
@@ -282,16 +282,16 @@ pub fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
         .chain(core::iter::repeat(source.zero()))
 }
 
-pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
-    pub left_raw_c: Element<'dr, D>,
-    pub right_raw_c: Element<'dr, D>,
-    pub left_app: Element<'dr, D>,
-    pub right_app: Element<'dr, D>,
-    pub left_bridge: Element<'dr, D>,
-    pub right_bridge: Element<'dr, D>,
-    pub left_unified: Element<'dr, D>,
-    pub right_unified: Element<'dr, D>,
-    pub zero: Element<'dr, D>,
+pub(crate) struct TwoProofKySource<'dr, D: Driver<'dr>> {
+    pub(crate) left_raw_c: Element<'dr, D>,
+    pub(crate) right_raw_c: Element<'dr, D>,
+    pub(crate) left_app: Element<'dr, D>,
+    pub(crate) right_app: Element<'dr, D>,
+    pub(crate) left_bridge: Element<'dr, D>,
+    pub(crate) right_bridge: Element<'dr, D>,
+    pub(crate) left_unified: Element<'dr, D>,
+    pub(crate) right_unified: Element<'dr, D>,
+    pub(crate) zero: Element<'dr, D>,
 }
 
 impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {

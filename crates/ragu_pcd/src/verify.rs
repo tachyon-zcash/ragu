@@ -138,7 +138,7 @@ mod native {
         native::{KySource, RxComponent},
     };
 
-    pub use crate::components::claims::native::ky_values;
+    pub(super) use crate::components::claims::native::ky_values;
 
     pub struct SingleProofSource<'rx, C: Cycle, R: Rank> {
         pub proof: &'rx Proof<C, R>,
@@ -214,7 +214,7 @@ mod nested {
         nested::{KySource, RxComponent},
     };
 
-    pub use crate::components::claims::nested::ky_values;
+    pub(super) use crate::components::claims::nested::ky_values;
 
     /// Source for nested field rx polynomials for single-proof verification.
     pub struct SingleProofSource<'rx, C: Cycle, R: Rank> {
