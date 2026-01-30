@@ -19,6 +19,7 @@ extern crate alloc;
 
 pub mod drivers;
 mod errors;
+pub mod floor_plan;
 pub mod gadgets;
 pub mod maybe;
 pub mod routines;
