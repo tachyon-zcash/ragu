@@ -7,8 +7,8 @@
 //! synthesis).
 //!
 //! Routines are reusable circuit components identified by [`RoutineId`], which wraps
-//! [`TypeId`]. Different type parameters yield different identities (e.g., `Evaluate<R<10>>`
-//! and `Evaluate<R<13>>` are distinct routines).
+//! a type name string. Different type parameters yield different identities (eg.
+//! `Evaluate<R<10>>` and `Evaluate<R<13>>` are distinct routines).
 //!
 //! Routines must be **fungible by type**: all instances of a concrete routine type produce
 //! identical constraints. Encode constraint-affecting parameters as type parameters, not
@@ -20,9 +20,8 @@
 //!
 //! ## Design Decisions
 //!
-//! - **Type-based identity**: [`RoutineId`] uses [`TypeId`] because routines are fungible
-//!   by type. [`TypeId`] is known before synthesis, whereas a constraint hash would require
-//!   synthesizing first.
+//! - **Type-based identity**: [`RoutineId`] uses [`core::any::type_name`] because routines
+//!   are fungible by type.
 //!
 //! - **G/H polynomial split**: Routines have internal (G) and external (H) polynomial
 //!   parts. G depends on routine structure and is cacheable, whereas H depends on witness
@@ -31,8 +30,6 @@
 //! - **Discovery vs. synthesis**: [`RoutineRegistry`] captures structural information
 //!   during discovery (via [`Emulator::counter`](crate::drivers::emulator::Emulator::counter)).
 //!   Memoization eligibility (input patterns) is determined at synthesis time.
-
-use core::any::TypeId;
 
 use alloc::{collections::BTreeMap, vec::Vec};
 use ff::Field;
@@ -44,13 +41,16 @@ use crate::{
 };
 
 /// Uniquely identifies a routine type for memoization and floor planning.
+///
+/// Uses [`core::any::type_name`] internally, which works for all types including
+/// those with lifetime parameters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RoutineId(TypeId);
+pub struct RoutineId(&'static str);
 
 impl RoutineId {
     /// Creates a `RoutineId` for the given routine type.
-    pub fn of<R: 'static>() -> Self {
-        Self(TypeId::of::<R>())
+    pub fn of<R>() -> Self {
+        Self(core::any::type_name::<R>())
     }
 }
 
