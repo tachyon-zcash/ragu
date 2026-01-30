@@ -9,10 +9,8 @@
   - [Requirements](guide/requirements.md)
   - [Getting Started](guide/getting_started.md)
   - [Writing Circuits](guide/writing_circuits.md)
-  - [Gadgets](guide/gadgets/index.md)
-    - [Simple Gadgets](guide/gadgets/simple.md)
-    - [The GadgetKind Trait](guide/gadgets/gadgetkind.md)
-    - [The Kind! Macro](guide/gadgets/kind.md)
+  - [Gadgets](guide/gadgets.md)
+    - [Available Gadgets](guide/available-gadgets.md)
   - [Routines](guide/routines.md)
   - [Drivers](guide/drivers.md)
   - [Configuration](guide/configuration.md)
@@ -46,6 +44,7 @@
   - [Drivers](implementation/drivers/index.md)
     - [Emulator](implementation/drivers/emulator.md)
     - [Writing Custom Drivers](implementation/drivers/custom.md)
+  - [Gadgets](implementation/gadgets.md)
 
 ---
 

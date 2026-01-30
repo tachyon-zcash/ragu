@@ -1,8 +1,8 @@
-# Simple Gadgets
+# Available Gadgets
 
 ## [`Element`][element-gadget]
 
-Arguably the simplest gadget is [`Element`][element-gadget], which internally represents a wire along with its known assignment (an arbitrary field element). In fact, it is implemented as follows:
+The simplest gadget is [`Element`][element-gadget], which internally represents a wire along with its known assignment (an arbitrary field element). In fact, it is implemented as follows:
 
 ```rust
 #[derive(Gadget)]
