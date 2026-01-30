@@ -19,6 +19,7 @@ use blake2b_simd::Params;
 use ff::{Field, FromUniformBytes, PrimeField};
 use ragu_arithmetic::{Domain, bitreverse};
 use ragu_core::{Error, Result};
+use ragu_core::{floor_plan::FloorPlan, routines::RoutineRegistry};
 
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec::Vec};
 
@@ -81,6 +82,8 @@ pub struct RegistryBuilder<'params, F: PrimeField, R: Rank> {
     internal_masks: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
     internal_circuits: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
     application_steps: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
+    /// Routine registries for floor planning, one per circuit in concatenation order.
+    routine_registries: Vec<RoutineRegistry>,
 }
 
 impl<F: PrimeField, R: Rank> Default for RegistryBuilder<'_, F, R> {
@@ -96,6 +99,7 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
             internal_masks: Vec::new(),
             internal_circuits: Vec::new(),
             application_steps: Vec::new(),
+            routine_registries: Vec::new(),
         }
     }
 
@@ -115,20 +119,46 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
     }
 
     /// Registers an application step circuit.
-    pub fn register_circuit<C>(mut self, circuit: C) -> Result<Self>
+    pub fn register_circuit<C>(self, circuit: C) -> Result<Self>
+    where
+        C: Circuit<F> + 'params,
+    {
+        self.register_circuit_with_registry(circuit, RoutineRegistry::new())
+    }
+
+    /// Registers an application step circuit with its routine registry for floor planning.
+    pub fn register_circuit_with_registry<C>(
+        mut self,
+        circuit: C,
+        routine_registry: RoutineRegistry,
+    ) -> Result<Self>
     where
         C: Circuit<F> + 'params,
     {
         self.application_steps.push(circuit.into_object()?);
+        self.routine_registries.push(routine_registry);
         Ok(self)
     }
 
     /// Registers an internal circuit.
-    pub fn register_internal_circuit<C>(mut self, circuit: C) -> Result<Self>
+    pub fn register_internal_circuit<C>(self, circuit: C) -> Result<Self>
+    where
+        C: Circuit<F> + 'params,
+    {
+        self.register_internal_circuit_with_registry(circuit, RoutineRegistry::new())
+    }
+
+    /// Registers an internal circuit with its routine registry for floor planning.
+    pub fn register_internal_circuit_with_registry<C>(
+        mut self,
+        circuit: C,
+        routine_registry: RoutineRegistry,
+    ) -> Result<Self>
     where
         C: Circuit<F> + 'params,
     {
         self.internal_circuits.push(circuit.into_object()?);
+        self.routine_registries.push(routine_registry);
         Ok(self)
     }
 
@@ -138,6 +168,7 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
         S: Stage<F, R>,
     {
         self.internal_masks.push(S::mask()?);
+        self.routine_registries.push(RoutineRegistry::new());
         Ok(self)
     }
 
@@ -147,6 +178,7 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
         S: Stage<F, R>,
     {
         self.internal_masks.push(S::final_mask()?);
+        self.routine_registries.push(RoutineRegistry::new());
         Ok(self)
     }
 
@@ -196,12 +228,17 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
             omega_lookup.insert(omega_j, i);
         }
 
-        // Create provisional registry (circuits still have placeholder K)
+        // Compute floor plan from routine registries.
+        let registry_refs: Vec<&RoutineRegistry> = self.routine_registries.iter().collect();
+        let floor_plan = FloorPlan::from_registries(&registry_refs, R::n());
+
+        // Create provisional registry (circuits still have placeholder K).
         let mut registry = Registry {
             domain,
             circuits,
             omega_lookup,
             key: Key::default(),
+            floor_plan,
         };
         registry.key = Key::new(registry.compute_registry_digest());
 
@@ -306,6 +343,9 @@ pub struct Registry<'params, F: PrimeField, R: Rank> {
 
     /// Registry key used to bind circuits to this registry.
     key: Key<F>,
+
+    /// Floor plan for routine placement optimization.
+    floor_plan: FloorPlan,
 }
 
 /// Represents a key for identifying a unique $\omega^j$ value where $\omega$ is
@@ -336,6 +376,11 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
     /// generator.
     pub fn key(&self) -> &Key<F> {
         &self.key
+    }
+
+    /// Returns the floor plan for routine placement optimization.
+    pub fn floor_plan(&self) -> &FloorPlan {
+        &self.floor_plan
     }
 
     /// Returns a slice of the circuit objects in this registry.
