@@ -128,6 +128,11 @@ impl RoutineRegistry {
     pub fn exit_routine(&mut self) {
         self.current_nesting_level = self.current_nesting_level.saturating_sub(1);
     }
+
+    /// Returns an iterator over registered routine types and their invocations.
+    pub fn iter(&self) -> impl Iterator<Item = (&RoutineId, &[RoutineInfo])> {
+        self.entries.iter().map(|(k, v)| (k, v.as_slice()))
+    }
 }
 
 /// Sections of a circuit that take a [`Gadget`](crate::gadgets::Gadget) as
