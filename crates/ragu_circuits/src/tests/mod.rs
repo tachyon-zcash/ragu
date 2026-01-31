@@ -17,8 +17,7 @@ use crate::{
     registry,
 };
 use ragu_core::maybe::Always;
-use ragu_core::routines::Prediction;
-use ragu_core::routines::Routine;
+use ragu_core::routines::{Prediction, Routine, RoutineShape};
 use ragu_primitives::Simulator;
 
 /// Dummy circuit.
@@ -201,6 +200,10 @@ impl Routine<Fp> for TestRoutine {
     type Input = Kind![Fp; Element<'_, _>];
     type Output = Kind![Fp; Element<'_, _>];
     type Aux<'dr> = Fp;
+
+    fn shape(&self) -> RoutineShape {
+        RoutineShape::new(0, 0)
+    }
 
     fn execute<'dr, D: Driver<'dr, F = Fp>>(
         &self,
