@@ -87,6 +87,7 @@ pub(crate) fn fft<R: Ring>(log2_n: u32, input: &mut [R::R], omega: R::F) {
 mod tests {
     use super::*;
     use crate::domain::Domain;
+    use alloc::vec;
     use alloc::vec::Vec;
     use pasta_curves::Fp;
 
@@ -124,5 +125,15 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_fft_single_element() {
+        let domain = Domain::<Fp>::new(0);
+        let mut data = vec![Fp::from(42u64)];
+
+        fft::<FFTField<Fp>>(0, &mut data, domain.omega());
+
+        assert_eq!(data[0], Fp::from(42u64));
     }
 }

@@ -277,3 +277,12 @@ fn test_contains() {
     assert!(!domain.contains(F::from(3u64)));
     assert!(!domain.contains(F::DELTA));
 }
+
+#[test]
+#[should_panic]
+fn test_domain_exceeds_max_boundary_panics() {
+    use pasta_curves::Fp as F;
+
+    let over_max = F::S + 1;
+    let _domain = Domain::<F>::new(over_max);
+}
