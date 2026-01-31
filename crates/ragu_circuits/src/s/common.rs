@@ -34,7 +34,56 @@
 
 use ff::Field;
 use ragu_arithmetic::Coeff;
-use ragu_core::drivers::LinearExpression;
+use ragu_core::{drivers::LinearExpression, floor_plan::MeshPosition, routines::RoutineId};
+
+use alloc::collections::BTreeMap;
+
+/// Cached polynomial contribution from a routine at a canonical floor plan position.
+#[derive(Clone, Copy, Debug)]
+pub struct CachedRoutine<F> {
+    /// The routine's contribution to the polynomial evaluation.
+    pub contribution: F,
+
+    /// Number of multiplication gates consumed by this routine.
+    pub num_multiplications: usize,
+
+    /// Number of linear constraints consumed by this routine.
+    pub num_constraints: usize,
+}
+
+/// Cache for routine contributions, keyed by `(RoutineId, canonical_position)`.
+#[derive(Default, Clone)]
+pub struct MemoCache<F> {
+    entries: BTreeMap<(RoutineId, MeshPosition), CachedRoutine<F>>,
+}
+
+impl<F: Clone> MemoCache<F> {
+    /// Creates an empty cache.
+    pub fn new() -> Self {
+        Self {
+            entries: BTreeMap::new(),
+        }
+    }
+
+    /// Retrieves a cached routine contribution by canonical position.
+    pub fn get(
+        &self,
+        routine_id: &RoutineId,
+        canonical_position: MeshPosition,
+    ) -> Option<&CachedRoutine<F>> {
+        self.entries.get(&(*routine_id, canonical_position))
+    }
+
+    /// Stores a routine contribution in the cache.
+    pub fn insert(
+        &mut self,
+        routine_id: RoutineId,
+        canonical_position: MeshPosition,
+        entry: CachedRoutine<F>,
+    ) {
+        self.entries.insert((routine_id, canonical_position), entry);
+    }
+}
 
 /// Represents a wire's evaluated monomial during polynomial synthesis.
 ///
