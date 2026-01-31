@@ -67,13 +67,14 @@ use ff::Field;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverTypes, emulator::Emulator},
+    floor_plan::{FloorPlan, MeshPosition},
     gadgets::GadgetKind,
     maybe::Empty,
-    routines::Routine,
+    routines::{Routine, RoutineId},
 };
 use ragu_primitives::GadgetExt;
 
-use alloc::vec;
+use alloc::{collections::BTreeMap, vec};
 
 use crate::{
     Circuit,
@@ -102,7 +103,7 @@ use super::{
 /// [`common`]: super::common
 /// [`Driver`]: ragu_core::drivers::Driver
 /// [`Driver::enforce_zero`]: ragu_core::drivers::Driver::enforce_zero
-struct Evaluator<F: Field, R: Rank> {
+struct Evaluator<'fp, F: Field, R: Rank> {
     /// Accumulated polynomial coefficients, built in reverse synthesis order.
     ///
     /// Each [`enforce_zero`](Driver::enforce_zero) call appends one
@@ -147,6 +148,12 @@ struct Evaluator<F: Field, R: Rank> {
     /// [`Driver::alloc`]: ragu_core::drivers::Driver::alloc
     available_b: Option<WireEval<F>>,
 
+    /// Floor plan for canonical routine placement.
+    floor_plan: &'fp FloorPlan,
+
+    /// Invocation counts per routine type for memoization.
+    invocation_counts: BTreeMap<RoutineId, usize>,
+
     /// Marker for the rank type parameter.
     _marker: core::marker::PhantomData<R>,
 }
@@ -158,7 +165,7 @@ struct Evaluator<F: Field, R: Rank> {
 /// - `LCadd` / `LCenforce`: Use [`WireEvalSum`] to accumulate linear
 ///   combinations as immediate field element sums.
 /// - `ImplWire`: [`WireEval`] represents wires as evaluated monomials.
-impl<F: Field, R: Rank> DriverTypes for Evaluator<F, R> {
+impl<F: Field, R: Rank> DriverTypes for Evaluator<'_, F, R> {
     type MaybeKind = Empty;
     type LCadd = WireEvalSum<F>;
     type LCenforce = WireEvalSum<F>;
@@ -166,7 +173,7 @@ impl<F: Field, R: Rank> DriverTypes for Evaluator<F, R> {
     type ImplWire = WireEval<F>;
 }
 
-impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<F, R> {
+impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
     type F = F;
     type Wire = WireEval<F>;
 
@@ -249,11 +256,32 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<F, R> {
     }
 
     /// Executes a routine with isolated allocation state.
+    ///
+    /// Tracks the routine's mesh position and invocation count for memoization.
+    /// The canonical position from the floor plan can be used to cache and reuse
+    /// polynomial evaluations across circuits.
     fn routine<Ro: Routine<Self::F> + 'dr>(
         &mut self,
         routine: Ro,
         input: <Ro::Input as GadgetKind<Self::F>>::Rebind<'dr, Self>,
     ) -> Result<<Ro::Output as GadgetKind<Self::F>>::Rebind<'dr, Self>> {
+        let routine_id = RoutineId::of::<Ro>();
+
+        // Track invocation count and get current mesh position
+        let invocation_index = *self.invocation_counts.get(&routine_id).unwrap_or(&0);
+        self.invocation_counts
+            .entry(routine_id)
+            .and_modify(|c| *c += 1)
+            .or_insert(1);
+
+        let _current_position =
+            MeshPosition::new(self.multiplication_constraints, self.linear_constraints);
+
+        // Look up canonical position from floor plan (for future memoization)
+        let _canonical_position = self
+            .floor_plan
+            .get_invocation(&routine_id, invocation_index);
+
         // Temporarily store currently `available_b` to reset the allocation
         // logic within the routine.
         let tmp = self.available_b.take();
@@ -293,6 +321,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     circuit: &C,
     x: F,
     key: &registry::Key<F>,
+    floor_plan: &FloorPlan,
 ) -> Result<unstructured::Polynomial<F, R>> {
     if x == F::ZERO {
         return Ok(Polynomial::new());
@@ -319,6 +348,8 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
         current_w_x,
         one: current_w_x,
         available_b: None,
+        floor_plan,
+        invocation_counts: BTreeMap::new(),
         _marker: core::marker::PhantomData,
     };
 

@@ -79,6 +79,7 @@ fn test_rerandomize_consistency() {
     use ragu_core::{
         Result,
         drivers::{Driver, DriverValue},
+        floor_plan::FloorPlan,
         gadgets::{GadgetKind, Kind},
         maybe::Maybe,
     };
@@ -133,9 +134,10 @@ fn test_rerandomize_consistency() {
     let x = Fp::from(5u64);
     let y = Fp::from(17u64);
     let key = registry::Key::default();
+    let floor_plan = FloorPlan::default();
 
-    let eval_single = circuit_single.sxy(x, y, &key);
-    let eval_pair = circuit_pair.sxy(x, y, &key);
+    let eval_single = circuit_single.sxy(x, y, &key, &floor_plan);
+    let eval_pair = circuit_pair.sxy(x, y, &key, &floor_plan);
 
     assert_eq!(eval_single, eval_pair,);
 }

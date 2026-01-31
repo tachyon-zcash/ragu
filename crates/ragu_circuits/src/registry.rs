@@ -17,7 +17,10 @@
 
 use arithmetic::{Domain, PoseidonPermutation, bitreverse};
 use ff::{Field, PrimeField};
-use ragu_core::{Error, Result, drivers::emulator::Emulator, maybe::Maybe};
+use ragu_core::{
+    Error, Result, drivers::emulator::Emulator, floor_plan::FloorPlan, maybe::Maybe,
+    routines::RoutineRegistry,
+};
 use ragu_primitives::{Element, poseidon::Sponge};
 
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec::Vec};
@@ -63,6 +66,7 @@ impl CircuitIndex {
 /// Builder for constructing a new [`Registry`].
 pub struct RegistryBuilder<'params, F: PrimeField, R: Rank> {
     circuits: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
+    routine_registries: Vec<RoutineRegistry>,
 }
 
 impl<F: PrimeField, R: Rank> Default for RegistryBuilder<'_, F, R> {
@@ -76,6 +80,7 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
     pub fn new() -> Self {
         Self {
             circuits: Vec::new(),
+            routine_registries: Vec::new(),
         }
     }
 
@@ -94,13 +99,34 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
     where
         C: Circuit<F> + 'params,
     {
-        self.register_circuit_object(circuit.into_object()?)
+        self.register_circuit_with_registry(circuit, RoutineRegistry::new())
+    }
+
+    /// Registers a new circuit with its routine registry for floor planning.
+    pub fn register_circuit_with_registry<C>(
+        self,
+        circuit: C,
+        routine_registry: RoutineRegistry,
+    ) -> Result<Self>
+    where
+        C: Circuit<F> + 'params,
+    {
+        self.register_circuit_object_with_registry(circuit.into_object()?, routine_registry)
     }
 
     /// Registers a new circuit using a bare circuit object.
     pub fn register_circuit_object(
+        self,
+        circuit: Box<dyn CircuitObject<F, R> + 'params>,
+    ) -> Result<Self> {
+        self.register_circuit_object_with_registry(circuit, RoutineRegistry::new())
+    }
+
+    /// Registers a new circuit object with its routine registry.
+    pub fn register_circuit_object_with_registry(
         mut self,
         circuit: Box<dyn CircuitObject<F, R> + 'params>,
+        routine_registry: RoutineRegistry,
     ) -> Result<Self> {
         let id = self.circuits.len();
         if id >= R::num_coeffs() {
@@ -108,6 +134,7 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
         }
 
         self.circuits.push(circuit);
+        self.routine_registries.push(routine_registry);
 
         Ok(self)
     }
@@ -137,12 +164,17 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
             omega_lookup.insert(omega_j, i);
         }
 
+        // Compute floor plan from routine registries.
+        let registry_refs: Vec<&RoutineRegistry> = self.routine_registries.iter().collect();
+        let floor_plan = FloorPlan::from_registries(&registry_refs, R::n());
+
         // Create provisional registry (circuits still have placeholder K).
         let mut registry = Registry {
             domain,
             circuits: self.circuits,
             omega_lookup,
             key: Key::default(),
+            floor_plan,
         };
         registry.key = Key::new(registry.compute_registry_digest(poseidon));
 
@@ -247,6 +279,9 @@ pub struct Registry<'params, F: PrimeField, R: Rank> {
 
     /// Registry key used to bind circuits to this registry.
     key: Key<F>,
+
+    /// Floor plan for routine placement optimization.
+    floor_plan: FloorPlan,
 }
 
 /// Represents a key for identifying a unique $\omega^j$ value where $\omega$ is
@@ -279,6 +314,11 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
         &self.key
     }
 
+    /// Returns the floor plan for routine placement optimization.
+    pub fn floor_plan(&self) -> &FloorPlan {
+        &self.floor_plan
+    }
+
     /// Returns a slice of the circuit objects in this registry.
     pub fn circuits(&self) -> &[Box<dyn CircuitObject<F, R> + '_>] {
         &self.circuits
@@ -289,7 +329,7 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
         let mut coeffs = unstructured::Polynomial::default();
         for (i, circuit) in self.circuits.iter().enumerate() {
             let j = bitreverse(i as u32, self.domain.log2_n()) as usize;
-            coeffs[j] = circuit.sxy(x, y, &self.key);
+            coeffs[j] = circuit.sxy(x, y, &self.key, &self.floor_plan);
         }
         // Convert from the Lagrange basis.
         let domain = &self.domain;
@@ -321,7 +361,7 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
             w,
             structured::Polynomial::default,
             |circuit, circuit_coeff, poly| {
-                let mut tmp = circuit.sy(y, &self.key);
+                let mut tmp = circuit.sy(y, &self.key, &self.floor_plan);
                 tmp.scale(circuit_coeff);
                 poly.add_assign(&tmp);
             },
@@ -334,7 +374,7 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
             w,
             unstructured::Polynomial::default,
             |circuit, circuit_coeff, poly| {
-                let mut tmp = circuit.sx(x, &self.key);
+                let mut tmp = circuit.sx(x, &self.key, &self.floor_plan);
                 tmp.scale(circuit_coeff);
                 poly.add_unstructured(&tmp);
             },
@@ -347,7 +387,7 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
             w,
             || F::ZERO,
             |circuit, circuit_coeff, poly| {
-                *poly += circuit.sxy(x, y, &self.key) * circuit_coeff;
+                *poly += circuit.sxy(x, y, &self.key, &self.floor_plan) * circuit_coeff;
             },
         )
     }

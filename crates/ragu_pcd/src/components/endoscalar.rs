@@ -336,6 +336,7 @@ mod tests {
     use ragu_core::{
         Result,
         drivers::emulator::{Emulator, Wired},
+        floor_plan::FloorPlan,
         maybe::Maybe,
     };
     use ragu_pasta::{Ep, EpAffine, Fp, Fq};
@@ -454,17 +455,30 @@ mod tests {
             let staged_s = staged.clone().into_object()?;
             let ky = staged.ky(())?;
             let y = Fp::random(thread_rng());
+            let floor_plan = FloorPlan::default();
 
             // Verify revdot identities for each stage.
-            assert_eq!(endoscalar_rx.revdot(&endoscalar_mask.sy(y, &key)), Fp::ZERO);
-            assert_eq!(points_rx.revdot(&points_mask.sy(y, &key)), Fp::ZERO);
-            assert_eq!(final_rx.revdot(&final_mask.sy(y, &key)), Fp::ZERO);
+            assert_eq!(
+                endoscalar_rx.revdot(&endoscalar_mask.sy(y, &key, &floor_plan)),
+                Fp::ZERO
+            );
+            assert_eq!(
+                points_rx.revdot(&points_mask.sy(y, &key, &floor_plan)),
+                Fp::ZERO
+            );
+            assert_eq!(
+                final_rx.revdot(&final_mask.sy(y, &key, &floor_plan)),
+                Fp::ZERO
+            );
 
             // Verify combined circuit identity.
             let mut lhs = final_rx.clone();
             lhs.add_assign(&endoscalar_rx);
             lhs.add_assign(&points_rx);
-            assert_eq!(lhs.revdot(&staged_s.sy(y, &key)), arithmetic::eval(&ky, y));
+            assert_eq!(
+                lhs.revdot(&staged_s.sy(y, &key, &floor_plan)),
+                arithmetic::eval(&ky, y)
+            );
         }
 
         Ok(())
@@ -518,6 +532,7 @@ mod tests {
             let staged_s = staged.clone().into_object()?;
             let ky = staged.ky(())?;
             let y = Fp::random(thread_rng());
+            let floor_plan = FloorPlan::default();
 
             let endoscalar_rx = <EndoscalarStage as StageExt<Fp, R>>::rx(endoscalar)?;
             let points_rx = <PointsStage<EpAffine, NUM_POINTS> as StageExt<Fp, R>>::rx(&points)?;
@@ -526,7 +541,10 @@ mod tests {
             let mut lhs = final_rx.clone();
             lhs.add_assign(&endoscalar_rx);
             lhs.add_assign(&points_rx);
-            assert_eq!(lhs.revdot(&staged_s.sy(y, &key)), arithmetic::eval(&ky, y));
+            assert_eq!(
+                lhs.revdot(&staged_s.sy(y, &key, &floor_plan)),
+                arithmetic::eval(&ky, y)
+            );
         }
 
         Ok(())
