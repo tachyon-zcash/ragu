@@ -13,7 +13,8 @@ use ragu_circuits::{Circuit, CircuitExt};
 use ragu_pasta::{Fp, Pasta};
 use setup::{
     builder_squares, f, key, rand_structured_poly, rand_structured_poly_vec,
-    rand_unstructured_poly, registry_simple, setup_poseidon, setup_rng, setup_with_rng,
+    rand_unstructured_poly, registry_simple, registry_squares, setup_poseidon, setup_rng,
+    setup_with_rng,
 };
 
 #[library_benchmark(setup = setup_with_rng)]
@@ -155,9 +156,27 @@ fn wxy((registry, (w, x, y)): (Registry<'_, Fp, R<5>>, (Fp, Fp, Fp))) {
     black_box(registry.wxy(w, x, y));
 }
 
+#[library_benchmark(setup = setup_with_rng)]
+#[bench::wxy_combined(registry_simple(), (f, f, f))]
+fn wxy_combined((registry, (w, x, y)): (Registry<'_, Fp, R<5>>, (Fp, Fp, Fp))) {
+    black_box(registry.wxy_combined(w, x, y));
+}
+
+#[library_benchmark(setup = setup_with_rng)]
+#[bench::wxy_squares(registry_squares(), (f, f, f))]
+fn wxy_squares((registry, (w, x, y)): (Registry<'_, Fp, R<25>>, (Fp, Fp, Fp))) {
+    black_box(registry.wxy(w, x, y));
+}
+
+#[library_benchmark(setup = setup_with_rng)]
+#[bench::wxy_combined_squares(registry_squares(), (f, f, f))]
+fn wxy_combined_squares((registry, (w, x, y)): (Registry<'_, Fp, R<25>>, (Fp, Fp, Fp))) {
+    black_box(registry.wxy_combined(w, x, y));
+}
+
 library_benchmark_group!(
     name = registry_ops;
-    benchmarks = register, finalize, xy, wy, wx, wxy
+    benchmarks = register, finalize, xy, wy, wx, wxy, wxy_combined, wxy_squares, wxy_combined_squares
 );
 
 main!(

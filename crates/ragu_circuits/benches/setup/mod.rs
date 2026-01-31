@@ -112,3 +112,7 @@ pub fn builder_simple<'a>() -> RegistryBuilder<'a, Fp, R<5>> {
 pub fn registry_simple<'a>() -> Registry<'a, Fp, R<5>> {
     builder_simple().finalize(setup_poseidon()).unwrap()
 }
+
+pub fn registry_squares<'a>() -> Registry<'a, Fp, R<25>> {
+    builder_squares().finalize(setup_poseidon()).unwrap()
+}
