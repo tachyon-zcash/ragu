@@ -8,7 +8,7 @@ use ff::{Field, PrimeField};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue, LinearExpression},
-    gadgets::{Gadget, Kind},
+    gadgets::{Consistent, Gadget, Kind},
     maybe::Maybe,
 };
 
@@ -35,6 +35,18 @@ pub struct Boolean<'dr, D: Driver<'dr>> {
 }
 
 impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
+    /// Enforces the bit constraint on multiplication gate outputs.
+    ///
+    /// Given a multiplication gate where a * b = c, this enforces a = b = c.
+    fn enforce_bit_constraint(dr: &mut D, a: &D::Wire, b: &D::Wire, c: &D::Wire) -> Result<()> {
+        // enforces a = b  =>  c = a^2
+        dr.enforce_equal(a, b)?;
+        // enforces a = c  =>  a = a^2
+        //                 =>  (a - 0) * (a - 1) = 0
+        //                 =>  (a = 0) OR (a = 1)
+        dr.enforce_equal(a, c)
+    }
+
     /// Allocates a boolean with the provided witness value.
     ///
     /// This costs one multiplication constraint and two linear constraints.
@@ -44,13 +56,7 @@ impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
             Ok((value, value, value))
         })?;
 
-        // enforces a = b  =>  c = a^2
-        dr.enforce_equal(&a, &b)?;
-
-        // enforces a = c  =>  a = a^2
-        //                 =>  (a - 0) * (a - 1) = 0
-        //                 =>  (a = 0) OR (a = 1)
-        dr.enforce_equal(&a, &c)?;
+        Self::enforce_bit_constraint(dr, &a, &b, &c)?;
 
         // NB: We can take any of the three wires we want.
         Ok(Boolean { value, wire: c })
@@ -242,6 +248,17 @@ pub fn multipack<'dr, D: Driver<'dr, F: ff::PrimeField>>(
     }
 
     Ok(v)
+}
+
+impl<'dr, D: Driver<'dr>> Consistent<'dr, D> for Boolean<'dr, D> {
+    fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
+        let (a, b, c) = dr.mul(|| {
+            let v = self.value.coeff().take();
+            Ok((v, v, v))
+        })?;
+        Self::enforce_bit_constraint(dr, &a, &b, &c)?;
+        dr.enforce_equal(&a, self.wire())
+    }
 }
 
 #[test]

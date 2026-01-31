@@ -159,9 +159,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
         // be validated (Points, Booleans, etc.).
         let preamble = preamble.enforced(dr, witness.view().map(|w| w.preamble_witness))?;
 
-        // TODO: Query and eval stages are unenforced because they currently
-        // contain only Elements, which require no enforcement logic. Re-evaluate
-        // if additional gadget types are added in the future.
         let query = query.unenforced(dr, witness.view().map(|w| w.query_witness))?;
         let eval = eval.unenforced(dr, witness.view().map(|w| w.eval_witness))?;
 

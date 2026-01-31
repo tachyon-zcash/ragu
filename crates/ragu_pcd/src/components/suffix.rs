@@ -2,7 +2,7 @@ use ff::Field;
 use ragu_core::{
     Result,
     drivers::Driver,
-    gadgets::{Gadget, GadgetKind, Kind},
+    gadgets::{Consistent, Gadget, GadgetKind, Kind},
 };
 use ragu_primitives::{
     Element,
@@ -33,5 +33,14 @@ impl<F: Field, K: GadgetKind<F> + Write<F>> Write<F> for Kind![F; @WithSuffix<'_
     ) -> Result<()> {
         K::write_gadget(&this.inner, dr, buf)?;
         buf.write(dr, &this.suffix)
+    }
+}
+
+impl<'dr, D: Driver<'dr>, G: GadgetKind<D::F>> Consistent<'dr, D> for WithSuffix<'dr, D, G>
+where
+    G::Rebind<'dr, D>: Consistent<'dr, D>,
+{
+    fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
+        self.inner.enforce_consistent(dr)
     }
 }

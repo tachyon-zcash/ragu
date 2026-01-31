@@ -1,3 +1,4 @@
+pub mod consistent;
 pub mod gadget;
 pub mod gadgetwrite;
 

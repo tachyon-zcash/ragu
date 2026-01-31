@@ -225,11 +225,11 @@ mod tests {
     use ragu_core::{
         Result,
         drivers::{Driver, DriverValue, LinearExpression, emulator::Emulator},
-        gadgets::{Gadget, GadgetKind},
+        gadgets::{Consistent, Gadget, GadgetKind},
         maybe::Maybe,
     };
     use ragu_pasta::{EpAffine, Fp, Fq};
-    use ragu_primitives::{Element, Endoscalar, Point};
+    use ragu_primitives::{Element, Endoscalar, Point, io::Write};
     use rand::{Rng, thread_rng};
 
     use crate::{
@@ -532,7 +532,7 @@ mod tests {
     #[derive(Default)]
     struct ConstrainedStage;
 
-    #[derive(ragu_core::gadgets::Gadget, ragu_primitives::io::Write)]
+    #[derive(Gadget, Consistent, Write)]
     struct TwoElements<'dr, #[ragu(driver)] D: Driver<'dr>> {
         #[ragu(gadget)]
         a: Element<'dr, D>,

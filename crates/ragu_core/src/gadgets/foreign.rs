@@ -8,7 +8,7 @@ use core::marker::PhantomData;
 use crate::{
     Result,
     drivers::{Driver, FromDriver},
-    gadgets::{Gadget, GadgetKind},
+    gadgets::{Consistent, Gadget, GadgetKind},
 };
 
 mod unit_impl {
@@ -39,6 +39,12 @@ mod unit_impl {
             _: &Self::Rebind<'dr, D2>,
             _: &Self::Rebind<'dr, D2>,
         ) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'dr, D: Driver<'dr>> Consistent<'dr, D> for () {
+        fn enforce_consistent(&self, _: &mut D) -> Result<()> {
             Ok(())
         }
     }
@@ -89,6 +95,15 @@ mod array_impl {
             Ok(())
         }
     }
+
+    impl<'dr, D: Driver<'dr>, G: Consistent<'dr, D>, const N: usize> Consistent<'dr, D> for [G; N] {
+        fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
+            for item in self.iter() {
+                item.enforce_consistent(dr)?;
+            }
+            Ok(())
+        }
+    }
 }
 
 mod pair_impl {
@@ -128,6 +143,16 @@ mod pair_impl {
             Ok(())
         }
     }
+
+    impl<'dr, D: Driver<'dr>, G1: Consistent<'dr, D>, G2: Consistent<'dr, D>> Consistent<'dr, D>
+        for (G1, G2)
+    {
+        fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
+            self.0.enforce_consistent(dr)?;
+            self.1.enforce_consistent(dr)?;
+            Ok(())
+        }
+    }
 }
 
 mod box_impl {
@@ -161,6 +186,12 @@ mod box_impl {
             b: &Self::Rebind<'dr, D2>,
         ) -> Result<()> {
             G::enforce_equal_gadget(dr, a, b)
+        }
+    }
+
+    impl<'dr, D: Driver<'dr>, G: Consistent<'dr, D>> Consistent<'dr, D> for Box<G> {
+        fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
+            (**self).enforce_consistent(dr)
         }
     }
 }

@@ -45,7 +45,7 @@ use ragu_core::{
         Driver, DriverValue, FromDriver,
         emulator::{Emulator, Wireless},
     },
-    gadgets::{Gadget, GadgetKind},
+    gadgets::{Consistent, Gadget, GadgetKind},
     maybe::Empty,
 };
 
@@ -80,29 +80,7 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Target: Stage<D::F, R>>
     }
 }
 
-/// Injects pre-allocated stage wires into a gadget and enforces equality
-/// between the live wires and the stage wires.
-struct EnforcingInjector<'a, 'dr, D: Driver<'dr>> {
-    driver: &'a mut D,
-    stage_wires: core::slice::Iter<'a, D::Wire>,
-}
-
-impl<'dr, D: Driver<'dr>> FromDriver<'dr, 'dr, D> for EnforcingInjector<'_, 'dr, D> {
-    type NewDriver = D;
-
-    fn convert_wire(&mut self, live_wire: &D::Wire) -> Result<D::Wire> {
-        let stage_wire = self
-            .stage_wires
-            .next()
-            .ok_or_else(|| ragu_core::Error::InvalidWitness("not enough stage wires".into()))?;
-
-        self.driver.enforce_equal(live_wire, stage_wire)?;
-
-        Ok(stage_wire.clone())
-    }
-}
-
-/// Injects pre-allocated stage wires into a gadget without enforcing constraints.
+/// Injects pre-allocated stage wires into a gadget, without enforcing constraints.
 struct StageWireInjector<'a, 'dr, D: Driver<'dr>> {
     stage_wires: core::slice::Iter<'a, D::Wire>,
     _marker: PhantomData<&'dr ()>,
@@ -140,23 +118,36 @@ pub struct StageGuard<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R>> {
 }
 
 impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R> + 'dr> StageGuard<'dr, D, R, S> {
-    /// Enforces constraints and injects stage wires.
+    /// Inject stage wires and enforce internal consistency constraints.
     ///
-    /// Runs the stage's witness method on the real driver (enforcing all
-    /// internal constraints), then enforces equality between the computed
-    /// wires and the pre-allocated stage wires.
-    pub fn enforced<'a, 'source: 'dr>(
+    /// Runs the stage's witness method on a wireless emulator, substitutes
+    /// the pre-allocated stage wires, then calls `enforce_consistent()` on
+    /// the result to enforce internal constraints (e.g., curve equations
+    /// for Points).
+    pub fn enforced<'source: 'dr>(
         self,
-        driver: &'a mut D,
+        dr: &mut D,
+        witness: DriverValue<D, S::Witness<'source>>,
+    ) -> Result<<S::OutputKind as GadgetKind<D::F>>::Rebind<'dr, D>>
+    where
+        <S::OutputKind as GadgetKind<D::F>>::Rebind<'dr, D>: Consistent<'dr, D>,
+    {
+        let output = self.unenforced_inner(witness)?;
+        output.enforce_consistent(dr)?;
+        Ok(output)
+    }
+
+    /// Internal helper that injects stage wires without enforcing constraints.
+    fn unenforced_inner<'source: 'dr>(
+        self,
         witness: DriverValue<D, S::Witness<'source>>,
     ) -> Result<<S::OutputKind as GadgetKind<D::F>>::Rebind<'dr, D>> {
-        // Run witness on the real driver, enforcing all constraints.
-        let computed_gadget = self.stage.witness(driver, witness)?;
+        let mut emulator: Emulator<Wireless<D::MaybeKind, D::F>> = Emulator::wireless();
+        let computed_gadget = self.stage.witness(&mut emulator, witness)?;
 
-        // Map the computed gadget, enforcing equality and substituting stage wires.
-        let mut injector = EnforcingInjector {
-            driver,
+        let mut injector = StageWireInjector::<D> {
             stage_wires: self.stage_wires.iter(),
+            _marker: PhantomData,
         };
 
         computed_gadget.map(&mut injector)
@@ -172,15 +163,7 @@ impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R> + 'dr> StageGuard<'dr, D, R
         _dr: &mut D,
         witness: DriverValue<D, S::Witness<'source>>,
     ) -> Result<<S::OutputKind as GadgetKind<D::F>>::Rebind<'dr, D>> {
-        let mut emulator: Emulator<Wireless<D::MaybeKind, D::F>> = Emulator::wireless();
-        let computed_gadget = self.stage.witness(&mut emulator, witness)?;
-
-        let mut injector = StageWireInjector::<D> {
-            stage_wires: self.stage_wires.iter(),
-            _marker: PhantomData,
-        };
-
-        computed_gadget.map(&mut injector)
+        self.unenforced_inner(witness)
     }
 }
 

@@ -7,7 +7,7 @@ use ragu_circuits::{polynomials::Rank, staging};
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Gadget, GadgetKind, Kind},
+    gadgets::{Consistent, Gadget, GadgetKind, Kind},
     maybe::Maybe,
 };
 use ragu_primitives::{
@@ -67,7 +67,7 @@ impl<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> Witness<'a, C, R, HEADER_S
 }
 
 /// Headers claimed by a child proof for its own left and right children.
-#[derive(Gadget)]
+#[derive(Gadget, Consistent)]
 pub struct ChildHeaders<'dr, D: Driver<'dr>, const HEADER_SIZE: usize> {
     /// Left child header (grandchild from current perspective).
     #[ragu(gadget)]
@@ -78,7 +78,7 @@ pub struct ChildHeaders<'dr, D: Driver<'dr>, const HEADER_SIZE: usize> {
 }
 
 /// Processed inputs from a single child proof in the preamble stage.
-#[derive(Gadget)]
+#[derive(Gadget, Consistent)]
 pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>
 {
     /// Headers this child proof claimed for its own children.
@@ -222,7 +222,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
 }
 
 /// Output of the native preamble stage.
-#[derive(Gadget)]
+#[derive(Gadget, Consistent)]
 pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize> {
     #[ragu(gadget)]
     pub left: ProofInputs<'dr, D, C, HEADER_SIZE>,

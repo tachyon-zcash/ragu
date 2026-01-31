@@ -23,7 +23,7 @@ use ragu_circuits::polynomials::Rank;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Gadget, GadgetKind, Kind},
+    gadgets::{Consistent, Gadget, GadgetKind, Kind},
     maybe::Maybe,
 };
 use ragu_primitives::{Element, Point, io::Write};
@@ -59,7 +59,7 @@ pub const NUM_WIRES: usize = 29;
 ///
 /// [`hashes_1`]: super::hashes_1
 /// [`hashes_2`]: super::hashes_2
-#[derive(Gadget, Write)]
+#[derive(Gadget, Write, Consistent)]
 pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     // Commitments from current proof components (on the nested curve)
     /// Commitment from the preamble proof component.

@@ -9,7 +9,7 @@ use ff::{Field, PrimeField};
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue, LinearExpression},
-    gadgets::{Gadget, Kind},
+    gadgets::{Consistent, Gadget, Kind},
     maybe::Maybe,
 };
 
@@ -48,7 +48,7 @@ use crate::{
 /// because it only represents a wire it is preferable to demote by extracting
 /// the wire using [`Element::wire`]. Promotion via [`Element::promote`] takes a
 /// bare wire instead of a demoted gadget to encourage this.
-#[derive(Gadget)]
+#[derive(Gadget, Consistent)]
 pub struct Element<'dr, D: Driver<'dr>> {
     /// A wire created by the driver
     #[ragu(wire)]

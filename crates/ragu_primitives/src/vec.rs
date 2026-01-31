@@ -22,7 +22,7 @@ use ff::Field;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, FromDriver},
-    gadgets::{Gadget, GadgetKind},
+    gadgets::{Consistent, Gadget, GadgetKind},
 };
 
 use alloc::vec::Vec;
@@ -206,6 +206,15 @@ impl<T, L: Len> IntoIterator for FixedVec<T, L> {
 
 impl<'dr, D: Driver<'dr>, G: Gadget<'dr, D>, L: Len> Gadget<'dr, D> for FixedVec<G, L> {
     type Kind = FixedVec<PhantomData<G::Kind>, L>;
+}
+
+impl<'dr, D: Driver<'dr>, G: Consistent<'dr, D>, L: Len> Consistent<'dr, D> for FixedVec<G, L> {
+    fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
+        for item in self.iter() {
+            item.enforce_consistent(dr)?;
+        }
+        Ok(())
+    }
 }
 
 /// Safety: `G: GadgetKind<D::F>` implies that `G::Rebind<'dr, D>` is `Send`

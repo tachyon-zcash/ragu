@@ -8,7 +8,7 @@ use ff::{Field, WithSmallOrderMulGroup};
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue, LinearExpression},
-    gadgets::Gadget,
+    gadgets::{Consistent, Gadget},
     maybe::Maybe,
 };
 
@@ -38,8 +38,24 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
         }
     }
 
+    /// Enforce the curve equation: x^3 + b - y^2 = 0.
+    fn enforce_curve_equation(
+        dr: &mut D,
+        x3: &Element<'dr, D>,
+        y2: &Element<'dr, D>,
+    ) -> Result<()> {
+        dr.enforce_zero(|lc| {
+            lc.add(x3.wire())
+                .add_term(&D::ONE, Coeff::Arbitrary(C::b()))
+                .sub(y2.wire())
+        })
+    }
+
     /// Allocate a point on the curve. This will return an error if the provided
     /// point is at infinity.
+    ///
+    /// This method uses [`Element::alloc_square`] to allocate coordinates and
+    /// then enforces the curve equation.
     pub fn alloc(dr: &mut D, p: DriverValue<D, C>) -> Result<Self> {
         let coordinates = D::with(|| {
             let coordinates = p.take().coordinates().into_option();
@@ -52,12 +68,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
         let x3 = x.mul(dr, &x2)?;
         let (y, y2) = Element::alloc_square(dr, coordinates.view().map(|p| *p.y()))?;
 
-        // x^3 + b - y^2 = 0
-        dr.enforce_zero(|lc| {
-            lc.add(x3.wire())
-                .add_term(&D::ONE, Coeff::Arbitrary(C::b()))
-                .sub(y2.wire())
-        })?;
+        Self::enforce_curve_equation(dr, &x3, &y2)?;
 
         Ok(Point::new_unchecked(x, y))
     }
@@ -205,6 +216,16 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
             y: y_s,
             _marker: PhantomData,
         })
+    }
+}
+
+impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Consistent<'dr, D> for Point<'dr, D, C> {
+    fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
+        let x2 = self.x.square(dr)?;
+        let x3 = self.x.mul(dr, &x2)?;
+        let y2 = self.y.square(dr)?;
+
+        Self::enforce_curve_equation(dr, &x3, &y2)
     }
 }
 
