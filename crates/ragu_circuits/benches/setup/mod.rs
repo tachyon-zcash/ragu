@@ -2,7 +2,7 @@ use arithmetic::Cycle;
 use ff::Field;
 use ragu_circuits::polynomials::{R, structured, unstructured};
 use ragu_circuits::registry::{Key, Registry, RegistryBuilder};
-use ragu_circuits::test_fixtures::{MySimpleCircuit, SquareCircuit};
+use ragu_circuits::test_fixtures::{MySimpleCircuit, RoutineCircuit, SquareCircuit};
 use ragu_pasta::{Fp, Pasta};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -113,6 +113,27 @@ pub fn registry_simple<'a>() -> Registry<'a, Fp, R<5>> {
     builder_simple().finalize(setup_poseidon()).unwrap()
 }
 
-pub fn registry_squares<'a>() -> Registry<'a, Fp, R<25>> {
-    builder_squares().finalize(setup_poseidon()).unwrap()
+/// Registry with circuits that use routines (for memoization benchmarks).
+pub fn builder_routines<'a>() -> RegistryBuilder<'a, Fp, R<25>> {
+    RegistryBuilder::<'a, Fp, R<25>>::new()
+        .register_circuit(RoutineCircuit { num_calls: 5 })
+        .unwrap()
+        .register_circuit(RoutineCircuit { num_calls: 5 })
+        .unwrap()
+        .register_circuit(RoutineCircuit { num_calls: 5 })
+        .unwrap()
+        .register_circuit(RoutineCircuit { num_calls: 5 })
+        .unwrap()
+        .register_circuit(RoutineCircuit { num_calls: 5 })
+        .unwrap()
+        .register_circuit(RoutineCircuit { num_calls: 5 })
+        .unwrap()
+        .register_circuit(RoutineCircuit { num_calls: 5 })
+        .unwrap()
+        .register_circuit(RoutineCircuit { num_calls: 5 })
+        .unwrap()
+}
+
+pub fn registry_routines<'a>() -> Registry<'a, Fp, R<25>> {
+    builder_routines().finalize(setup_poseidon()).unwrap()
 }

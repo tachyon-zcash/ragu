@@ -4,6 +4,7 @@
 //!
 //! - [`MySimpleCircuit`]: Proves knowledge of a and b such that a^5 = b^2 and outputs c = a+b, d = a-b.
 //! - [`SquareCircuit`]: Parameterized circuit that squares an input `times` times.
+//! - [`RoutineCircuit`]: Circuit that calls a routine multiple times (for memoization benchmarks).
 
 use ff::Field;
 use ragu_core::{
@@ -11,6 +12,7 @@ use ragu_core::{
     drivers::{Driver, DriverValue, LinearExpression},
     gadgets::{GadgetKind, Kind},
     maybe::Maybe,
+    routines::{Prediction, Routine, RoutineShape},
 };
 use ragu_primitives::Element;
 
@@ -101,5 +103,76 @@ impl<F: Field> Circuit<F> for SquareCircuit {
         }
 
         Ok((a, D::just(|| ())))
+    }
+}
+
+/// A routine that squares an element.
+#[derive(Clone)]
+pub struct SquareRoutine;
+
+impl<F: Field> Routine<F> for SquareRoutine {
+    type Input = Kind![F; Element<'_, _>];
+    type Output = Kind![F; Element<'_, _>];
+    type Aux<'dr> = ();
+
+    fn shape(&self) -> RoutineShape {
+        RoutineShape::new(1, 0)
+    }
+
+    fn execute<'dr, D: Driver<'dr, F = F>>(
+        &self,
+        dr: &mut D,
+        input: <Self::Input as GadgetKind<F>>::Rebind<'dr, D>,
+        _aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<<Self::Output as GadgetKind<F>>::Rebind<'dr, D>> {
+        input.square(dr)
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = F>>(
+        &self,
+        _dr: &mut D,
+        _input: &<Self::Input as GadgetKind<F>>::Rebind<'dr, D>,
+    ) -> Result<
+        Prediction<<Self::Output as GadgetKind<F>>::Rebind<'dr, D>, DriverValue<D, Self::Aux<'dr>>>,
+    > {
+        Ok(Prediction::Unknown(D::just(|| ())))
+    }
+}
+
+/// A circuit that calls a routine multiple times.
+pub struct RoutineCircuit {
+    /// Number of routine calls.
+    pub num_calls: usize,
+}
+
+impl<F: Field> Circuit<F> for RoutineCircuit {
+    type Instance<'instance> = F;
+    type Output = Kind![F; Element<'_, _>];
+    type Witness<'witness> = F;
+    type Aux<'witness> = ();
+
+    fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = F>>(
+        &self,
+        dr: &mut D,
+        instance: DriverValue<D, Self::Instance<'instance>>,
+    ) -> Result<<Self::Output as GadgetKind<F>>::Rebind<'dr, D>> {
+        Element::alloc(dr, instance)
+    }
+
+    fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = F>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'witness>>,
+    ) -> Result<(
+        <Self::Output as GadgetKind<F>>::Rebind<'dr, D>,
+        DriverValue<D, Self::Aux<'witness>>,
+    )> {
+        let mut value = Element::alloc(dr, witness)?;
+
+        for _ in 0..self.num_calls {
+            value = dr.routine(SquareRoutine, value)?;
+        }
+
+        Ok((value, D::just(|| ())))
     }
 }
