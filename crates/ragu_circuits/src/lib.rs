@@ -141,6 +141,17 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
                 s::sxy::eval::<_, _, R>(&self.circuit, x, y, key, floor_plan)
                     .expect("should succeed if metrics succeeded")
             }
+            fn sxy_with_cache(
+                &self,
+                x: F,
+                y: F,
+                key: &registry::Key<F>,
+                floor_plan: &FloorPlan,
+                cache: &mut s::MemoCache<F>,
+            ) -> F {
+                s::sxy::eval_with_cache::<_, _, R>(&self.circuit, x, y, key, floor_plan, cache)
+                    .expect("should succeed if metrics succeeded")
+            }
             fn sx(
                 &self,
                 x: F,
@@ -203,6 +214,16 @@ impl<F: Field, C: Circuit<F>> CircuitExt<F> for C {}
 pub trait CircuitObject<F: Field, R: Rank>: Send + Sync {
     /// Evaluates the polynomial $s(x, y)$ for some $x, y \in \mathbb{F}$.
     fn sxy(&self, x: F, y: F, key: &registry::Key<F>, floor_plan: &FloorPlan) -> F;
+
+    /// Evaluates $s(x, y)$ with memoization. Cache hits skip constraint accumulation.
+    fn sxy_with_cache(
+        &self,
+        x: F,
+        y: F,
+        key: &registry::Key<F>,
+        floor_plan: &FloorPlan,
+        cache: &mut s::MemoCache<F>,
+    ) -> F;
 
     /// Computes the polynomial restriction $s(x, Y)$ for some $x \in \mathbb{F}$.
     fn sx(

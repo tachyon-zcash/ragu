@@ -104,6 +104,18 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
         placeholder + y.pow_vartime([(3 * reserved) as u64]) * c1 + c2
     }
 
+    fn sxy_with_cache(
+        &self,
+        x: F,
+        y: F,
+        key: &registry::Key<F>,
+        floor_plan: &FloorPlan,
+        _cache: &mut crate::s::MemoCache<F>,
+    ) -> F {
+        // No routines, so just delegate.
+        self.sxy(x, y, key, floor_plan)
+    }
+
     fn sx(
         &self,
         x: F,
