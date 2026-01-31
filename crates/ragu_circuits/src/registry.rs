@@ -23,6 +23,8 @@ use ragu_core::{floor_plan::FloorPlan, routines::RoutineRegistry};
 
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec::Vec};
 
+use crate::s::MemoCache;
+
 use crate::{
     Circuit, CircuitExt, CircuitObject,
     polynomials::{Rank, structured, unstructured},
@@ -456,6 +458,37 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
         )
     }
 
+    /// Evaluates the registry polynomial with inter-circuit memoization.
+    ///
+    /// Routines at the same floor plan position share cached contributions.
+    /// Result is identical to [`wxy`](Self::wxy).
+    pub fn wxy_combined(&self, w: F, x: F, y: F) -> F {
+        // Compute the Lagrange coefficients for the provided `w`.
+        let ell = self.domain.ell(w, self.domain.n());
+
+        let mut result = F::ZERO;
+
+        if let Some(ell) = ell {
+            // Lagrange interpolation with shared cache
+            let mut cache = MemoCache::new();
+
+            for (j, coeff) in ell.iter().enumerate() {
+                let i = bitreverse(j as u32, self.domain.log2_n()) as usize;
+                if let Some(circuit) = self.circuits.get(i) {
+                    let sxy = circuit.sxy_with_cache(x, y, &self.key, &self.floor_plan, &mut cache);
+                    result += sxy * coeff;
+                }
+            }
+        } else if let Some(i) = self.omega_lookup.get(&OmegaKey::from(w)) {
+            // w in domain: single circuit
+            if let Some(circuit) = self.circuits.get(*i) {
+                result = circuit.sxy(x, y, &self.key, &self.floor_plan);
+            }
+        }
+
+        result
+    }
+
     /// Computes the polynomial restricted at $W$ based on the provided
     /// closures.
     fn w<T>(
@@ -757,6 +790,36 @@ mod tests {
                 i
             );
         }
+
+        Ok(())
+    }
+
+    /// wxy_combined produces identical results to wxy (both in and out of domain).
+    #[test]
+    fn test_wxy_combined_equals_wxy() -> Result<()> {
+        let poseidon = Pasta::circuit_poseidon(Pasta::baked());
+        let registry = RegistryBuilder::<Fp, TestRank>::new()
+            .register_circuit(SquareCircuit { times: 2 })?
+            .register_circuit(SquareCircuit { times: 5 })?
+            .register_circuit(SquareCircuit { times: 10 })?
+            .register_circuit(SquareCircuit { times: 11 })?
+            .register_circuit(SquareCircuit { times: 19 })?
+            .register_circuit(SquareCircuit { times: 19 })?
+            .register_circuit(SquareCircuit { times: 19 })?
+            .register_circuit(SquareCircuit { times: 19 })?
+            .finalize(poseidon)?;
+
+        let w = Fp::random(thread_rng());
+        let x = Fp::random(thread_rng());
+        let y = Fp::random(thread_rng());
+
+        assert_eq!(registry.wxy(w, x, y), registry.wxy_combined(w, x, y));
+
+        let w_in_domain = registry.domain.omega();
+        assert_eq!(
+            registry.wxy(w_in_domain, x, y),
+            registry.wxy_combined(w_in_domain, x, y)
+        );
 
         Ok(())
     }
