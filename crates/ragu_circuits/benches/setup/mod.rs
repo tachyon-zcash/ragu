@@ -77,8 +77,8 @@ pub fn setup_poseidon<'a>() -> &'a <Pasta as Cycle>::CircuitPoseidon {
     Pasta::circuit_poseidon(Pasta::baked())
 }
 
-pub fn builder_squares<'a>() -> RegistryBuilder<'a, Fp, R<25>> {
-    RegistryBuilder::<'a, Fp, R<25>>::new()
+pub fn builder_squares<'a>() -> RegistryBuilder<'a, Fp, R<25>, 0> {
+    RegistryBuilder::<'a, Fp, R<25>, 0>::new()
         .register_circuit(SquareCircuit { times: 2 })
         .unwrap()
         .register_circuit(SquareCircuit { times: 10 })
@@ -97,8 +97,8 @@ pub fn builder_squares<'a>() -> RegistryBuilder<'a, Fp, R<25>> {
         .unwrap()
 }
 
-pub fn builder_simple<'a>() -> RegistryBuilder<'a, Fp, R<5>> {
-    RegistryBuilder::<'a, Fp, R<5>>::new()
+pub fn builder_simple<'a>() -> RegistryBuilder<'a, Fp, R<5>, 0> {
+    RegistryBuilder::<'a, Fp, R<5>, 0>::new()
         .register_circuit(MySimpleCircuit)
         .unwrap()
         .register_circuit(MySimpleCircuit)

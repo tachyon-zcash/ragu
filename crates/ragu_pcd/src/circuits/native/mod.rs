@@ -1,15 +1,11 @@
 //! Native curve circuits for recursive verification.
 
 use arithmetic::Cycle;
-use ragu_circuits::{
-    polynomials::Rank,
-    registry::{CircuitIndex, RegistryBuilder},
-    staging::StageExt,
-};
+use ragu_circuits::{polynomials::Rank, registry::CircuitIndex, staging::StageExt};
 use ragu_core::Result;
 
 use super::NativeParameters;
-use crate::step;
+use crate::{NativeRegistryBuilder, step};
 
 pub mod stages;
 
@@ -59,22 +55,27 @@ impl InternalCircuitIndex {
     }
 }
 
-/// Register internal native circuits into the provided registry.
+/// Register internal native circuits into the provided registry's offset buffer.
+///
+/// All circuits registered here will be placed in the offset/prefix buffer,
+/// before any application circuits.
 pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
-    mut registry: RegistryBuilder<'params, C::CircuitField, R>,
+    mut registry: NativeRegistryBuilder<'params, C, R>,
     params: &'params C::Params,
     log2_circuits: u32,
-) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
-    let initial_num_circuits = registry.num_circuits();
+) -> Result<NativeRegistryBuilder<'params, C, R>> {
+    let initial_offset_circuits = registry.num_offset_circuits();
 
     // Insert the stages.
     {
         // preamble stage
-        registry = registry
-            .register_circuit_object(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)?;
+        registry =
+            registry.register_offset_circuit_object(
+                stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?,
+            )?;
 
         // error_m stage
-        registry = registry.register_circuit_object(stages::error_m::Stage::<
+        registry = registry.register_offset_circuit_object(stages::error_m::Stage::<
             C,
             R,
             HEADER_SIZE,
@@ -82,7 +83,7 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         >::mask()?)?;
 
         // error_n stage
-        registry = registry.register_circuit_object(stages::error_n::Stage::<
+        registry = registry.register_offset_circuit_object(stages::error_n::Stage::<
             C,
             R,
             HEADER_SIZE,
@@ -91,11 +92,14 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
 
         // query stage
         registry =
-            registry.register_circuit_object(stages::query::Stage::<C, R, HEADER_SIZE>::mask()?)?;
+            registry.register_offset_circuit_object(
+                stages::query::Stage::<C, R, HEADER_SIZE>::mask()?,
+            )?;
 
         // eval stage
         registry =
-            registry.register_circuit_object(stages::eval::Stage::<C, R, HEADER_SIZE>::mask()?)?;
+            registry
+                .register_offset_circuit_object(stages::eval::Stage::<C, R, HEADER_SIZE>::mask()?)?;
     }
 
     // Insert the "final stage polynomials" for each stage.
@@ -104,7 +108,7 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     // stage is only registered once here.
     {
         // preamble -> error_n -> error_m -> [CIRCUIT] (partial_collapse)
-        registry = registry.register_circuit_object(stages::error_m::Stage::<
+        registry = registry.register_offset_circuit_object(stages::error_m::Stage::<
             C,
             R,
             HEADER_SIZE,
@@ -112,7 +116,7 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         >::final_mask()?)?;
 
         // preamble -> error_n -> [CIRCUIT] (hashes_1, hashes_2, full_collapse)
-        registry = registry.register_circuit_object(stages::error_n::Stage::<
+        registry = registry.register_offset_circuit_object(stages::error_n::Stage::<
             C,
             R,
             HEADER_SIZE,
@@ -120,14 +124,16 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         >::final_mask()?)?;
 
         // preamble -> query -> eval -> [CIRCUIT] (compute_v)
-        registry = registry
-            .register_circuit_object(stages::eval::Stage::<C, R, HEADER_SIZE>::final_mask()?)?;
+        registry =
+            registry.register_offset_circuit_object(
+                stages::eval::Stage::<C, R, HEADER_SIZE>::final_mask()?,
+            )?;
     }
 
     // Insert the internal circuits.
     {
         // hashes_1
-        registry = registry.register_circuit(hashes_1::Circuit::<
+        registry = registry.register_offset_circuit(hashes_1::Circuit::<
             C,
             R,
             HEADER_SIZE,
@@ -135,13 +141,15 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         >::new(params, log2_circuits))?;
 
         // hashes_2
-        registry =
-            registry.register_circuit(
-                hashes_2::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(params),
-            )?;
+        registry = registry.register_offset_circuit(hashes_2::Circuit::<
+            C,
+            R,
+            HEADER_SIZE,
+            NativeParameters,
+        >::new(params))?;
 
         // partial_collapse
-        registry = registry.register_circuit(partial_collapse::Circuit::<
+        registry = registry.register_offset_circuit(partial_collapse::Circuit::<
             C,
             R,
             HEADER_SIZE,
@@ -149,7 +157,7 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         >::new())?;
 
         // full_collapse
-        registry = registry.register_circuit(full_collapse::Circuit::<
+        registry = registry.register_offset_circuit(full_collapse::Circuit::<
             C,
             R,
             HEADER_SIZE,
@@ -157,13 +165,14 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         >::new())?;
 
         // compute_v
-        registry = registry.register_circuit(compute_v::Circuit::<C, R, HEADER_SIZE>::new())?;
+        registry =
+            registry.register_offset_circuit(compute_v::Circuit::<C, R, HEADER_SIZE>::new())?;
     }
 
-    // Verify we registered the expected number of circuits.
+    // Verify we registered the expected number of circuits to the offset buffer.
     assert_eq!(
-        registry.num_circuits(),
-        initial_num_circuits + NUM_INTERNAL_CIRCUITS,
+        registry.num_offset_circuits(),
+        initial_offset_circuits + NUM_INTERNAL_CIRCUITS,
         "internal circuit count mismatch"
     );
 

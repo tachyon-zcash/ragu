@@ -127,7 +127,7 @@ fn register() {
 
 #[library_benchmark]
 #[bench::finalize(setup_poseidon(), builder_squares())]
-fn finalize(poseidon: &<Pasta as Cycle>::CircuitPoseidon, builder: RegistryBuilder<Fp, R<25>>) {
+fn finalize(poseidon: &<Pasta as Cycle>::CircuitPoseidon, builder: RegistryBuilder<Fp, R<25>, 0>) {
     black_box(builder.finalize(poseidon)).unwrap();
 }
 

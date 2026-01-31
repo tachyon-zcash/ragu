@@ -7,13 +7,16 @@ use arithmetic::Cycle;
 use ragu_circuits::{
     CircuitExt,
     polynomials::Rank,
-    registry::{CircuitIndex, RegistryBuilder},
+    registry::CircuitIndex,
     staging::{MultiStage, StageExt},
 };
 use ragu_core::Result;
 use ragu_primitives::vec::Len;
 
-use crate::components::endoscalar::{EndoscalarStage, EndoscalingStep, NumStepsLen, PointsStage};
+use crate::{
+    NestedRegistryBuilder,
+    components::endoscalar::{EndoscalarStage, EndoscalingStep, NumStepsLen, PointsStage},
+};
 
 /// Number of curve points accumulated during `compute_p` for nested field
 /// endoscaling verification.
@@ -58,8 +61,8 @@ pub mod stages;
 
 /// Register internal nested circuits into the provided registry.
 pub(crate) fn register_all<'params, C: Cycle, R: Rank>(
-    mut registry: RegistryBuilder<'params, C::ScalarField, R>,
-) -> Result<RegistryBuilder<'params, C::ScalarField, R>> {
+    mut registry: NestedRegistryBuilder<'params, C, R>,
+) -> Result<NestedRegistryBuilder<'params, C, R>> {
     registry = registry.register_circuit_object(EndoscalarStage::mask()?)?;
 
     registry = registry

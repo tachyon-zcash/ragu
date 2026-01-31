@@ -61,32 +61,55 @@ impl CircuitIndex {
 }
 
 /// Builder for constructing a new [`Registry`].
-pub struct RegistryBuilder<'params, F: PrimeField, R: Rank> {
+///
+/// The `OFFSET` parameter specifies how many slots at the beginning of the
+/// registry are reserved for internal circuits. These slots are pre-filled
+/// with trivial circuits on creation and can be replaced using internal
+/// registration methods.
+pub struct RegistryBuilder<'params, F: PrimeField, R: Rank, const OFFSET: usize> {
     circuits: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
+    /// Number of offset circuits that have been registered (0..OFFSET)
+    num_offset_registered: usize,
 }
 
-impl<F: PrimeField, R: Rank> Default for RegistryBuilder<'_, F, R> {
+impl<F: PrimeField, R: Rank, const OFFSET: usize> Default for RegistryBuilder<'_, F, R, OFFSET> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
-    /// Creates a new empty [`Registry`] builder.
+impl<'params, F: PrimeField, R: Rank, const OFFSET: usize> RegistryBuilder<'params, F, R, OFFSET> {
+    /// Creates a new [`Registry`] builder.
     pub fn new() -> Self {
+        let mut circuits = Vec::new();
+
+        // Pre-fill offset slots with trivial circuits
+        for _ in 0..OFFSET {
+            circuits.push(
+                ().into_object()
+                    .expect("trivial circuit creation should never fail"),
+            );
+        }
+
         Self {
-            circuits: Vec::new(),
+            circuits,
+            num_offset_registered: 0,
         }
     }
 
     /// Returns the number of circuits currently registered in this builder.
     pub fn num_circuits(&self) -> usize {
-        self.circuits.len()
+        self.circuits.len() - OFFSET + self.num_offset_registered
     }
 
     /// Returns the log2 of the smallest power-of-2 domain size that fits all circuits.
     pub fn log2_circuits(&self) -> u32 {
-        self.circuits.len().next_power_of_two().trailing_zeros()
+        self.num_circuits().next_power_of_two().trailing_zeros()
+    }
+
+    /// Returns the number of offset circuits that have been registered
+    pub fn num_offset_circuits(&self) -> usize {
+        self.num_offset_registered
     }
 
     /// Registers a new circuit.
@@ -112,11 +135,68 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
         Ok(self)
     }
 
+    /// Registers a new circuit in the offset/prefix buffer.
+    ///
+    /// This replaces a trivial circuit in the pre-allocated offset slots.
+    ///
+    /// # Internal API
+    ///
+    /// This is an internal method used by Ragu for registering internal circuits
+    /// in the offset buffer. It should not be used by application code.
+    pub fn register_offset_circuit<C>(self, circuit: C) -> Result<Self>
+    where
+        C: Circuit<F> + 'params,
+    {
+        self.register_offset_circuit_object(circuit.into_object()?)
+    }
+
+    /// Registers a new circuit object in the offset/prefix buffer.
+    ///
+    /// This replaces a trivial circuit in the pre-allocated offset slots.
+    ///
+    /// # Internal API
+    ///
+    /// This is an internal method used by Ragu for registering internal circuits
+    /// in the offset buffer. It should not be used by application code.
+    #[doc(hidden)]
+    pub fn register_offset_circuit_object(
+        mut self,
+        circuit: Box<dyn CircuitObject<F, R> + 'params>,
+    ) -> Result<Self> {
+        if self.num_offset_registered >= OFFSET {
+            return Err(Error::Initialization(
+                alloc::format!(
+                    "offset circuit buffer full: {} circuits already registered in {} offset slots",
+                    self.num_offset_registered,
+                    OFFSET
+                )
+                .into(),
+            ));
+        }
+
+        // Replace the trivial circuit at the current offset position
+        self.circuits[self.num_offset_registered] = circuit;
+        self.num_offset_registered += 1;
+
+        Ok(self)
+    }
+
     /// Builds the final [`Registry`].
     pub fn finalize<P: PoseidonPermutation<F>>(
         self,
         poseidon: &P,
     ) -> Result<Registry<'params, F, R>> {
+        if self.num_offset_registered < OFFSET {
+            return Err(Error::Initialization(
+                alloc::format!(
+                    "not all offset circuits registered: {}/{} registered",
+                    self.num_offset_registered,
+                    OFFSET
+                )
+                .into(),
+            ));
+        }
+
         let log2_circuits = self.log2_circuits();
         let domain = Domain::<F>::new(log2_circuits);
 
@@ -427,6 +507,9 @@ mod tests {
     use ragu_pasta::{Fp, Pasta};
     use rand::thread_rng;
 
+    type TestRank = R<8>;
+    type TestRegistryBuilder<'a> = RegistryBuilder<'a, Fp, TestRank, 0>;
+
     #[test]
     fn test_omega_j_multiplicative_order() {
         /// Return the 2^k multiplicative order of f (assumes f is a 2^k root of unity).
@@ -450,13 +533,11 @@ mod tests {
         assert_eq!(order(CircuitIndex::new(7).omega_j::<Fp>()), 8);
     }
 
-    type TestRank = R<8>;
-
     #[test]
     fn test_registry_circuit_consistency() -> Result<()> {
         let poseidon = Pasta::circuit_poseidon(Pasta::baked());
 
-        let registry = RegistryBuilder::<Fp, TestRank>::new()
+        let registry = TestRegistryBuilder::new()
             .register_circuit(SquareCircuit { times: 2 })?
             .register_circuit(SquareCircuit { times: 5 })?
             .register_circuit(SquareCircuit { times: 10 })?
@@ -535,7 +616,7 @@ mod tests {
         let poseidon = Pasta::circuit_poseidon(Pasta::baked());
 
         // Checks that a single circuit can be finalized without bit-shift overflows.
-        let _registry = RegistryBuilder::<Fp, TestRank>::new()
+        let _registry = TestRegistryBuilder::new()
             .register_circuit(SquareCircuit { times: 1 })?
             .finalize(poseidon)?;
 
@@ -588,9 +669,8 @@ mod tests {
     fn test_non_power_of_two_registry_sizes() -> Result<()> {
         let poseidon = Pasta::circuit_poseidon(Pasta::baked());
 
-        type TestRank = crate::polynomials::R<8>;
         for num_circuits in 0..21 {
-            let mut builder = RegistryBuilder::<Fp, TestRank>::new();
+            let mut builder = TestRegistryBuilder::new();
 
             for i in 0..num_circuits {
                 builder = builder.register_circuit(SquareCircuit { times: i })?;
@@ -618,7 +698,7 @@ mod tests {
     fn test_circuit_in_domain() -> Result<()> {
         let poseidon = Pasta::circuit_poseidon(Pasta::baked());
 
-        let registry = RegistryBuilder::<Fp, TestRank>::new()
+        let registry = TestRegistryBuilder::new()
             .register_circuit(SquareCircuit { times: 2 })?
             .register_circuit(SquareCircuit { times: 5 })?
             .register_circuit(SquareCircuit { times: 10 })?
@@ -654,5 +734,90 @@ mod tests {
     fn zero_registry_key_panics() {
         use ff::Field;
         let _ = super::Key::new(<Fp as Field>::ZERO);
+    }
+
+    #[test]
+    fn test_registry_with_offset() -> Result<()> {
+        const OFFSET: usize = 3;
+        type OffsetRegistryBuilder<'a> = RegistryBuilder<'a, Fp, TestRank, OFFSET>;
+
+        let poseidon = Pasta::circuit_poseidon(Pasta::baked());
+
+        // Create a builder with 3 offset slots
+        let builder = OffsetRegistryBuilder::new();
+
+        // Verify initial state - no circuits registered yet (dummy circuits don't count)
+        assert_eq!(
+            builder.num_circuits(),
+            0,
+            "should start with 0 registered circuits"
+        );
+        assert_eq!(
+            builder.num_offset_circuits(),
+            0,
+            "no offset circuits registered yet"
+        );
+
+        // Register 2 circuits in the offset buffer
+        let builder = builder
+            .register_offset_circuit(SquareCircuit { times: 2 })?
+            .register_offset_circuit(SquareCircuit { times: 3 })?;
+
+        assert_eq!(
+            builder.num_offset_circuits(),
+            2,
+            "2 offset circuits registered"
+        );
+        assert_eq!(builder.num_circuits(), 2, "2 total registered circuits");
+
+        // Register 2 application circuits
+        let builder = builder
+            .register_circuit(SquareCircuit { times: 4 })?
+            .register_circuit(SquareCircuit { times: 5 })?;
+
+        assert_eq!(builder.num_offset_circuits(), 2, "still 2 offset circuits");
+        assert_eq!(
+            builder.num_circuits(),
+            4,
+            "now 4 total registered circuits (2 offset + 2 application)"
+        );
+
+        // Finalize the registry - this should fail because not all offset slots are filled
+        let result = builder.finalize(poseidon);
+        assert!(
+            result.is_err(),
+            "should fail because only 2/3 offset circuits registered"
+        );
+
+        // Now fill the third offset slot
+        let builder = OffsetRegistryBuilder::new()
+            .register_offset_circuit(SquareCircuit { times: 1 })?
+            .register_offset_circuit(SquareCircuit { times: 2 })?
+            .register_offset_circuit(SquareCircuit { times: 3 })?
+            .register_circuit(SquareCircuit { times: 4 })?
+            .register_circuit(SquareCircuit { times: 5 })?;
+        assert_eq!(builder.num_circuits(), 5, "5 total registered circuits");
+        let registry = builder.finalize(poseidon)?;
+        assert_eq!(registry.circuits().len(), OFFSET + 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_offset_buffer_overflow() -> Result<()> {
+        const OFFSET: usize = 2;
+        type OffsetRegistryBuilder<'a> = RegistryBuilder<'a, Fp, TestRank, OFFSET>;
+
+        let builder = OffsetRegistryBuilder::new()
+            .register_offset_circuit(SquareCircuit { times: 1 })?
+            .register_offset_circuit(SquareCircuit { times: 2 })?;
+        assert!(
+            builder
+                .register_offset_circuit(SquareCircuit { times: 3 })
+                .is_err(),
+            "should fail when offset buffer is full"
+        );
+
+        Ok(())
     }
 }
