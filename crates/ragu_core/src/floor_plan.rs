@@ -12,7 +12,7 @@ use alloc::{collections::BTreeMap, vec::Vec};
 
 /// A position in the circuit mesh: multiplication gate index (X dimension) and
 /// constraint index (Y dimension).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MeshPosition {
     /// Multiplication gate index.
     pub x: usize,
@@ -29,13 +29,13 @@ impl MeshPosition {
 
 /// Canonical placement for a routine type.
 #[derive(Debug, Clone, Copy)]
-pub struct Placement {
+struct Placement {
     /// The routine type.
-    pub id: RoutineId,
+    id: RoutineId,
     /// The routine's shape (dimensions).
-    pub shape: RoutineShape,
+    shape: RoutineShape,
     /// Assigned position in the mesh.
-    pub position: MeshPosition,
+    position: MeshPosition,
 }
 
 /// Floor plan mapping routine types to canonical mesh positions.
@@ -122,14 +122,6 @@ impl FloorPlan {
         self.row_height = self.row_height.max(shape.num_constraints);
     }
 
-    /// Gets the canonical position for a routine type.
-    pub fn get(&self, id: &RoutineId) -> Option<MeshPosition> {
-        self.placements
-            .iter()
-            .find(|p| p.id == *id)
-            .map(|p| p.position)
-    }
-
     /// Gets the position for a specific invocation of a routine type.
     pub fn get_invocation(&self, id: &RoutineId, invocation_index: usize) -> Option<MeshPosition> {
         self.placements.iter().find(|p| p.id == *id).map(|p| {
@@ -138,11 +130,6 @@ impl FloorPlan {
                 p.position.y,
             )
         })
-    }
-
-    /// Gets the placement entry for a routine type.
-    pub fn get_placement(&self, id: &RoutineId) -> Option<&Placement> {
-        self.placements.iter().find(|p| p.id == *id)
     }
 }
 
@@ -161,8 +148,11 @@ mod tests {
 
         let plan = FloorPlan::from_registries(&[&registry], 100);
 
-        assert!(plan.get(&RoutineId::of::<Poseidon>()).is_some());
-        assert!(plan.get(&RoutineId::of::<Merkle>()).is_some());
+        assert!(
+            plan.get_invocation(&RoutineId::of::<Poseidon>(), 0)
+                .is_some()
+        );
+        assert!(plan.get_invocation(&RoutineId::of::<Merkle>(), 0).is_some());
     }
 
     #[test]
@@ -179,7 +169,9 @@ mod tests {
 
         let plan = FloorPlan::from_registries(&[&reg_a, &reg_b, &reg_c], 100);
 
-        let poseidon_pos = plan.get(&RoutineId::of::<Poseidon>()).unwrap();
+        let poseidon_pos = plan
+            .get_invocation(&RoutineId::of::<Poseidon>(), 0)
+            .unwrap();
         assert_eq!(poseidon_pos, MeshPosition::new(0, 0));
     }
 
@@ -191,8 +183,10 @@ mod tests {
 
         let plan = FloorPlan::from_registries(&[&registry], 100);
 
-        let poseidon_pos = plan.get(&RoutineId::of::<Poseidon>()).unwrap();
-        let merkle_pos = plan.get(&RoutineId::of::<Merkle>()).unwrap();
+        let poseidon_pos = plan
+            .get_invocation(&RoutineId::of::<Poseidon>(), 0)
+            .unwrap();
+        let merkle_pos = plan.get_invocation(&RoutineId::of::<Merkle>(), 0).unwrap();
 
         assert_eq!(poseidon_pos.x, 0);
         assert_eq!(merkle_pos.y, 20);
@@ -210,8 +204,10 @@ mod tests {
 
         let plan = FloorPlan::from_registries(&[&registry], 100);
 
-        let poseidon_pos = plan.get(&RoutineId::of::<Poseidon>()).unwrap();
-        let merkle_pos = plan.get(&RoutineId::of::<Merkle>()).unwrap();
+        let poseidon_pos = plan
+            .get_invocation(&RoutineId::of::<Poseidon>(), 0)
+            .unwrap();
+        let merkle_pos = plan.get_invocation(&RoutineId::of::<Merkle>(), 0).unwrap();
 
         // Poseidon at (0,0), reserves 3×10=30 width
         assert_eq!(poseidon_pos, MeshPosition::new(0, 0));
@@ -242,20 +238,5 @@ mod tests {
             plan.get_invocation(&poseidon_id, 2),
             Some(MeshPosition::new(20, 0))
         );
-    }
-
-    #[test]
-    fn floor_plan_get_placement() {
-        let mut registry = RoutineRegistry::new();
-        let poseidon_shape = RoutineShape::new(10, 20);
-        registry.register::<Poseidon>(poseidon_shape);
-
-        let plan = FloorPlan::from_registries(&[&registry], 100);
-
-        let placement = plan.get_placement(&RoutineId::of::<Poseidon>()).unwrap();
-        assert_eq!(placement.shape, poseidon_shape);
-        assert_eq!(placement.position, MeshPosition::new(0, 0));
-
-        assert!(plan.get_placement(&RoutineId::of::<Merkle>()).is_none());
     }
 }
