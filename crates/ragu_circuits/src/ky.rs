@@ -1,3 +1,10 @@
+//! Assembly of the $k(Y)$ public input polynomial.
+//!
+//! The [`eval`] function in this module processes some instance data for a
+//! particular [`Circuit`] and computes its public inputs, arranging them into
+//! the low degree coefficient vector for the circuit's $k(Y)$ instance
+//! polynomial.
+
 use ff::Field;
 use ragu_core::{
     Result,

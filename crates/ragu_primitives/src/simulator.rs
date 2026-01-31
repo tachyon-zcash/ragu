@@ -1,3 +1,8 @@
+//! Simulation driver for testing and constraint verification.
+//!
+//! Provides a [`Simulator`] driver that fully executes circuit synthesis,
+//! tracking constraint counts and enforcing constraint satisfaction.
+
 use arithmetic::Coeff;
 use ff::Field;
 use ragu_core::{

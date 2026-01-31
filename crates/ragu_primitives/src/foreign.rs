@@ -1,3 +1,8 @@
+//! [`Write`] implementations for foreign standard library types.
+//!
+//! Enables types like `()`, arrays, tuples, and `Box<T>` to participate in
+//! the circuit IO system by implementing the [`Write`] trait.
+
 use ff::Field;
 use ragu_core::{Result, drivers::Driver};
 

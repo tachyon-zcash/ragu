@@ -1,3 +1,8 @@
+//! Field element gadget for arithmetic circuit wires.
+//!
+//! Provides the [`Element`] type representing a wire and its field element
+//! assignment, the fundamental building block for circuit construction.
+
 use arithmetic::Coeff;
 use arithmetic::PrimeFieldExt;
 use ff::{Field, PrimeField};
