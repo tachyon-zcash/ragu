@@ -71,13 +71,14 @@ use ff::Field;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverTypes, LinearExpression, emulator::Emulator},
+    floor_plan::{FloorPlan, MeshPosition},
     gadgets::GadgetKind,
     maybe::Empty,
-    routines::Routine,
+    routines::{Routine, RoutineId},
 };
 use ragu_primitives::GadgetExt;
 
-use alloc::{vec, vec::Vec};
+use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::cell::RefCell;
 
 use super::DriverExt;
@@ -352,7 +353,7 @@ impl<F: Field, R: Rank> VirtualTable<'_, F, R> {
 /// [`Driver`]: ragu_core::drivers::Driver
 /// [`sx`]: super::sx
 /// [`sxy`]: super::sxy
-struct Evaluator<'table, 'sy, F: Field, R: Rank> {
+struct Evaluator<'fp, 'table, 'sy, F: Field, R: Rank> {
     /// Number of multiplication gates consumed so far.
     ///
     /// Incremented by [`mul()`](Driver::mul). Must not exceed [`Rank::n()`].
@@ -387,6 +388,12 @@ struct Evaluator<'table, 'sy, F: Field, R: Rank> {
     ///
     /// [`Driver::alloc`]: ragu_core::drivers::Driver::alloc
     available_b: Option<Wire<'table, 'sy, F, R>>,
+
+    /// Floor plan for canonical routine placement.
+    floor_plan: &'fp FloorPlan,
+
+    /// Invocation counts per routine type for memoization.
+    invocation_counts: BTreeMap<RoutineId, usize>,
 
     /// Marker for the rank type parameter.
     _marker: core::marker::PhantomData<R>,
@@ -481,7 +488,7 @@ impl<'table, 'sy, F: Field, R: Rank> LinearExpression<Wire<'table, 'sy, F, R>, F
 /// - `LCenforce`: Uses [`TermEnforcer`] to immediately distribute $y^j$
 ///   contributions.
 /// - `ImplWire`: [`Wire`] handles with reference counting for virtual wires.
-impl<'table, 'sy, F: Field, R: Rank> DriverTypes for Evaluator<'table, 'sy, F, R> {
+impl<'table, 'sy, F: Field, R: Rank> DriverTypes for Evaluator<'_, 'table, 'sy, F, R> {
     type MaybeKind = Empty;
     type LCadd = TermCollector<F>;
     type LCenforce = TermEnforcer<'table, 'sy, F, R>;
@@ -489,7 +496,7 @@ impl<'table, 'sy, F: Field, R: Rank> DriverTypes for Evaluator<'table, 'sy, F, R
     type ImplWire = Wire<'table, 'sy, F, R>;
 }
 
-impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, F, R> {
+impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'_, 'table, 'sy, F, R> {
     type F = F;
     type Wire = Wire<'table, 'sy, F, R>;
 
@@ -590,11 +597,32 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, F
     }
 
     /// Executes a routine with isolated allocation state.
+    ///
+    /// Tracks the routine's mesh position and invocation count for memoization.
+    /// The canonical position from the floor plan can be used to cache and reuse
+    /// polynomial evaluations across circuits.
     fn routine<Ro: Routine<Self::F> + 'table>(
         &mut self,
         routine: Ro,
         input: <Ro::Input as GadgetKind<Self::F>>::Rebind<'table, Self>,
     ) -> Result<<Ro::Output as GadgetKind<Self::F>>::Rebind<'table, Self>> {
+        let routine_id = RoutineId::of::<Ro>();
+
+        // Track invocation count and get current mesh position
+        let invocation_index = *self.invocation_counts.get(&routine_id).unwrap_or(&0);
+        self.invocation_counts
+            .entry(routine_id)
+            .and_modify(|c| *c += 1)
+            .or_insert(1);
+
+        let _current_position =
+            MeshPosition::new(self.multiplication_constraints, self.linear_constraints);
+
+        // Look up canonical position from floor plan (for future memoization)
+        let _canonical_position = self
+            .floor_plan
+            .get_invocation(&routine_id, invocation_index);
+
         // Temporarily store currently `available_b` to reset the allocation
         // logic within the routine.
         let tmp = self.available_b.take();
@@ -634,6 +662,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     y: F,
     key: &registry::Key<F>,
     num_linear_constraints: usize,
+    floor_plan: &FloorPlan,
 ) -> Result<structured::Polynomial<F, R>> {
     let mut sy = structured::Polynomial::<F, R>::new();
 
@@ -651,13 +680,15 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
             sy: sy.backward(),
         });
         {
-            let mut evaluator = Evaluator::<'_, '_, F, R> {
+            let mut evaluator = Evaluator::<'_, '_, '_, F, R> {
                 multiplication_constraints: 0,
                 linear_constraints: 0,
                 y_inv: y.invert().expect("y is not zero"),
                 current_y: y.pow_vartime([(num_linear_constraints - 1) as u64]),
                 virtual_table: &virtual_table,
                 available_b: None,
+                floor_plan,
+                invocation_counts: BTreeMap::new(),
                 _marker: core::marker::PhantomData,
             };
 

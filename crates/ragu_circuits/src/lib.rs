@@ -34,6 +34,7 @@ use ff::Field;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue},
+    floor_plan::FloorPlan,
     gadgets::GadgetKind,
 };
 use ragu_primitives::io::Write;
@@ -115,16 +116,33 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
         }
 
         impl<F: Field, C: Circuit<F>, R: Rank> CircuitObject<F, R> for ProcessedCircuit<C> {
-            fn sxy(&self, x: F, y: F, key: &registry::Key<F>) -> F {
-                s::sxy::eval::<_, _, R>(&self.circuit, x, y, key)
+            fn sxy(&self, x: F, y: F, key: &registry::Key<F>, floor_plan: &FloorPlan) -> F {
+                s::sxy::eval::<_, _, R>(&self.circuit, x, y, key, floor_plan)
                     .expect("should succeed if metrics succeeded")
             }
-            fn sx(&self, x: F, key: &registry::Key<F>) -> unstructured::Polynomial<F, R> {
-                s::sx::eval(&self.circuit, x, key).expect("should succeed if metrics succeeded")
-            }
-            fn sy(&self, y: F, key: &registry::Key<F>) -> structured::Polynomial<F, R> {
-                s::sy::eval(&self.circuit, y, key, self.metrics.num_linear_constraints)
+            fn sx(
+                &self,
+                x: F,
+                key: &registry::Key<F>,
+                floor_plan: &FloorPlan,
+            ) -> unstructured::Polynomial<F, R> {
+                s::sx::eval(&self.circuit, x, key, floor_plan)
                     .expect("should succeed if metrics succeeded")
+            }
+            fn sy(
+                &self,
+                y: F,
+                key: &registry::Key<F>,
+                floor_plan: &FloorPlan,
+            ) -> structured::Polynomial<F, R> {
+                s::sy::eval(
+                    &self.circuit,
+                    y,
+                    key,
+                    self.metrics.num_linear_constraints,
+                    floor_plan,
+                )
+                .expect("should succeed if metrics succeeded")
             }
             fn constraint_counts(&self) -> (usize, usize) {
                 (
@@ -163,13 +181,23 @@ impl<F: Field, C: Circuit<F>> CircuitExt<F> for C {}
 /// See [`CircuitExt::into_object`].
 pub trait CircuitObject<F: Field, R: Rank>: Send + Sync {
     /// Evaluates the polynomial $s(x, y)$ for some $x, y \in \mathbb{F}$.
-    fn sxy(&self, x: F, y: F, key: &registry::Key<F>) -> F;
+    fn sxy(&self, x: F, y: F, key: &registry::Key<F>, floor_plan: &FloorPlan) -> F;
 
     /// Computes the polynomial restriction $s(x, Y)$ for some $x \in \mathbb{F}$.
-    fn sx(&self, x: F, key: &registry::Key<F>) -> unstructured::Polynomial<F, R>;
+    fn sx(
+        &self,
+        x: F,
+        key: &registry::Key<F>,
+        floor_plan: &FloorPlan,
+    ) -> unstructured::Polynomial<F, R>;
 
     /// Computes the polynomial restriction $s(X, y)$ for some $y \in \mathbb{F}$.
-    fn sy(&self, y: F, key: &registry::Key<F>) -> structured::Polynomial<F, R>;
+    fn sy(
+        &self,
+        y: F,
+        key: &registry::Key<F>,
+        floor_plan: &FloorPlan,
+    ) -> structured::Polynomial<F, R>;
 
     /// Returns the number of constraints: `(multiplication, linear)`.
     fn constraint_counts(&self) -> (usize, usize);

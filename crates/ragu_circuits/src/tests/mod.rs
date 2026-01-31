@@ -4,6 +4,7 @@ use ff::Field;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue, LinearExpression},
+    floor_plan::FloorPlan,
     gadgets::{GadgetKind, Kind},
     maybe::Maybe,
 };
@@ -60,16 +61,17 @@ fn consistency_checks<R: Rank>(circuit: &dyn CircuitObject<Fp, R>) {
     let x = Fp::random(&mut rand::rng());
     let y = Fp::random(&mut rand::rng());
     let k = registry::Key::new(Fp::random(&mut rand::rng()));
+    let floor_plan = FloorPlan::default();
 
-    let sxy_eval = circuit.sxy(x, y, &k);
-    let s0y_eval = circuit.sxy(Fp::ZERO, y, &k);
-    let sx0_eval = circuit.sxy(x, Fp::ZERO, &k);
-    let s00_eval = circuit.sxy(Fp::ZERO, Fp::ZERO, &k);
+    let sxy_eval = circuit.sxy(x, y, &k, &floor_plan);
+    let s0y_eval = circuit.sxy(Fp::ZERO, y, &k, &floor_plan);
+    let sx0_eval = circuit.sxy(x, Fp::ZERO, &k, &floor_plan);
+    let s00_eval = circuit.sxy(Fp::ZERO, Fp::ZERO, &k, &floor_plan);
 
-    let sxY_poly = circuit.sx(x, &k);
-    let sXy_poly = circuit.sy(y, &k).unstructured();
-    let s0Y_poly = circuit.sx(Fp::ZERO, &k);
-    let sX0_poly = circuit.sy(Fp::ZERO, &k).unstructured();
+    let sxY_poly = circuit.sx(x, &k, &floor_plan);
+    let sXy_poly = circuit.sy(y, &k, &floor_plan).unstructured();
+    let s0Y_poly = circuit.sx(Fp::ZERO, &k, &floor_plan);
+    let sX0_poly = circuit.sy(Fp::ZERO, &k, &floor_plan).unstructured();
 
     assert_eq!(sxy_eval, arithmetic::eval(&sXy_poly[..], x));
     assert_eq!(sxy_eval, arithmetic::eval(&sxY_poly[..], y));
@@ -159,11 +161,12 @@ fn test_simple_circuit() {
     let y = Fp::random(&mut rand::rng());
     let z = Fp::random(&mut rand::rng());
     let k = registry::Key::default();
+    let floor_plan = FloorPlan::default();
 
     let a = assignment.clone();
     let mut b = assignment.clone();
     b.dilate(z);
-    b.add_assign(&circuit.sy(y, &k));
+    b.add_assign(&circuit.sy(y, &k, &floor_plan));
     b.add_assign(&MyRank::tz(z));
 
     let expected = arithmetic::eval(

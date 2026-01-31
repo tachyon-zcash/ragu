@@ -395,7 +395,7 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
         let mut coeffs = unstructured::Polynomial::default();
         for (i, circuit) in self.circuits.iter().enumerate() {
             let j = bitreverse(i as u32, self.domain.log2_n()) as usize;
-            coeffs[j] = circuit.sxy(x, y, &self.key);
+            coeffs[j] = circuit.sxy(x, y, &self.key, &self.floor_plan);
         }
         // Convert from the Lagrange basis.
         let domain = &self.domain;
@@ -427,7 +427,7 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
             w,
             structured::Polynomial::default,
             |circuit, circuit_coeff, poly| {
-                let mut tmp = circuit.sy(y, &self.key);
+                let mut tmp = circuit.sy(y, &self.key, &self.floor_plan);
                 tmp.scale(circuit_coeff);
                 poly.add_assign(&tmp);
             },
@@ -440,7 +440,7 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
             w,
             unstructured::Polynomial::default,
             |circuit, circuit_coeff, poly| {
-                let mut tmp = circuit.sx(x, &self.key);
+                let mut tmp = circuit.sx(x, &self.key, &self.floor_plan);
                 tmp.scale(circuit_coeff);
                 poly.add_unstructured(&tmp);
             },
@@ -453,7 +453,7 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
             w,
             || F::ZERO,
             |circuit, circuit_coeff, poly| {
-                *poly += circuit.sxy(x, y, &self.key) * circuit_coeff;
+                *poly += circuit.sxy(x, y, &self.key, &self.floor_plan) * circuit_coeff;
             },
         )
     }
