@@ -27,6 +27,30 @@ use crate::{
     polynomials::{Rank, structured, unstructured},
 };
 
+/// Circuit that defers synthesis until [`RegistryBuilder::finalize`].
+trait DeferredCircuit<'a, F: Field, R: Rank>: Send + Sync {
+    /// Convert to a [`CircuitObject`], synthesizing if needed.
+    fn materialize(self: Box<Self>) -> Result<Box<dyn CircuitObject<F, R> + 'a>>;
+}
+
+/// Deferred circuit wrapper; calls [`CircuitExt::into_object`] on materialize.
+struct Deferred<C>(C);
+
+impl<'a, F: Field, R: Rank, C: Circuit<F> + 'a> DeferredCircuit<'a, F, R> for Deferred<C> {
+    fn materialize(self: Box<Self>) -> Result<Box<dyn CircuitObject<F, R> + 'a>> {
+        self.0.into_object()
+    }
+}
+
+/// Pre-built [`CircuitObject`] wrapper; returns itself on materialize.
+struct Materialized<'a, F: Field, R: Rank>(Box<dyn CircuitObject<F, R> + 'a>);
+
+impl<'a, F: Field, R: Rank> DeferredCircuit<'a, F, R> for Materialized<'a, F, R> {
+    fn materialize(self: Box<Self>) -> Result<Box<dyn CircuitObject<F, R> + 'a>> {
+        Ok(self.0)
+    }
+}
+
 /// Represents a simple numeric index of a circuit in the registry.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(transparent)]
@@ -60,15 +84,13 @@ impl CircuitIndex {
     }
 }
 
-/// Builder for constructing a new [`Registry`].
+/// Builder for constructing a [`Registry`].
 ///
-/// The `OFFSET` parameter specifies how many slots at the beginning of the
-/// registry are reserved for internal circuits. These slots are pre-filled
-/// with trivial circuits on creation and can be replaced using internal
-/// registration methods.
+/// Circuits are stored in deferred form until [`finalize`](Self::finalize),
+/// avoiding synthesis overhead during registration. The `OFFSET` parameter
+/// reserves slots at the beginning for internal circuits.
 pub struct RegistryBuilder<'params, F: PrimeField, R: Rank, const OFFSET: usize> {
-    circuits: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
-    /// Number of offset circuits that have been registered (0..OFFSET)
+    circuits: Vec<Box<dyn DeferredCircuit<'params, F, R> + 'params>>,
     num_offset_registered: usize,
 }
 
@@ -81,14 +103,11 @@ impl<F: PrimeField, R: Rank, const OFFSET: usize> Default for RegistryBuilder<'_
 impl<'params, F: PrimeField, R: Rank, const OFFSET: usize> RegistryBuilder<'params, F, R, OFFSET> {
     /// Creates a new [`Registry`] builder.
     pub fn new() -> Self {
-        let mut circuits = Vec::new();
+        let mut circuits: Vec<Box<dyn DeferredCircuit<'params, F, R> + 'params>> = Vec::new();
 
-        // Pre-fill offset slots with trivial circuits
+        // Pre-fill offset slots with deferred trivial circuits
         for _ in 0..OFFSET {
-            circuits.push(
-                ().into_object()
-                    .expect("trivial circuit creation should never fail"),
-            );
+            circuits.push(Box::new(Deferred(())));
         }
 
         Self {
@@ -112,15 +131,22 @@ impl<'params, F: PrimeField, R: Rank, const OFFSET: usize> RegistryBuilder<'para
         self.num_offset_registered
     }
 
-    /// Registers a new circuit.
-    pub fn register_circuit<C>(self, circuit: C) -> Result<Self>
+    /// Registers a circuit (synthesis deferred until finalize).
+    pub fn register_circuit<C>(mut self, circuit: C) -> Result<Self>
     where
         C: Circuit<F> + 'params,
     {
-        self.register_circuit_object(circuit.into_object()?)
+        let id = self.circuits.len();
+        if id >= R::num_coeffs() {
+            return Err(Error::CircuitBoundExceeded(id));
+        }
+
+        self.circuits.push(Box::new(Deferred(circuit)));
+
+        Ok(self)
     }
 
-    /// Registers a new circuit using a bare circuit object.
+    /// Registers a pre-built circuit object.
     pub fn register_circuit_object(
         mut self,
         circuit: Box<dyn CircuitObject<F, R> + 'params>,
@@ -130,34 +156,36 @@ impl<'params, F: PrimeField, R: Rank, const OFFSET: usize> RegistryBuilder<'para
             return Err(Error::CircuitBoundExceeded(id));
         }
 
-        self.circuits.push(circuit);
+        self.circuits.push(Box::new(Materialized(circuit)));
 
         Ok(self)
     }
 
-    /// Registers a new circuit in the offset/prefix buffer.
-    ///
-    /// This replaces a trivial circuit in the pre-allocated offset slots.
-    ///
-    /// # Internal API
-    ///
-    /// This is an internal method used by Ragu for registering internal circuits
-    /// in the offset buffer. It should not be used by application code.
-    pub fn register_offset_circuit<C>(self, circuit: C) -> Result<Self>
+    /// Registers an internal circuit in the reserved offset slots, and
+    /// synthesis is deferred until finalize.
+    pub fn register_offset_circuit<C>(mut self, circuit: C) -> Result<Self>
     where
         C: Circuit<F> + 'params,
     {
-        self.register_offset_circuit_object(circuit.into_object()?)
+        if self.num_offset_registered >= OFFSET {
+            return Err(Error::Initialization(
+                alloc::format!(
+                    "offset circuit buffer full: {} circuits already registered in {} offset slots",
+                    self.num_offset_registered,
+                    OFFSET
+                )
+                .into(),
+            ));
+        }
+
+        // Replace the trivial circuit at the current offset position
+        self.circuits[self.num_offset_registered] = Box::new(Deferred(circuit));
+        self.num_offset_registered += 1;
+
+        Ok(self)
     }
 
-    /// Registers a new circuit object in the offset/prefix buffer.
-    ///
-    /// This replaces a trivial circuit in the pre-allocated offset slots.
-    ///
-    /// # Internal API
-    ///
-    /// This is an internal method used by Ragu for registering internal circuits
-    /// in the offset buffer. It should not be used by application code.
+    /// Registers a pre-built circuit object in the reserved offset slots.
     #[doc(hidden)]
     pub fn register_offset_circuit_object(
         mut self,
@@ -175,13 +203,13 @@ impl<'params, F: PrimeField, R: Rank, const OFFSET: usize> RegistryBuilder<'para
         }
 
         // Replace the trivial circuit at the current offset position
-        self.circuits[self.num_offset_registered] = circuit;
+        self.circuits[self.num_offset_registered] = Box::new(Materialized(circuit));
         self.num_offset_registered += 1;
 
         Ok(self)
     }
 
-    /// Builds the final [`Registry`].
+    /// Materializes all deferred circuits and builds the [`Registry`].
     pub fn finalize<P: PoseidonPermutation<F>>(
         self,
         poseidon: &P,
@@ -200,10 +228,17 @@ impl<'params, F: PrimeField, R: Rank, const OFFSET: usize> RegistryBuilder<'para
         let log2_circuits = self.log2_circuits();
         let domain = Domain::<F>::new(log2_circuits);
 
+        // Materialize all deferred circuits into circuit objects.
+        let circuits: Vec<Box<dyn CircuitObject<F, R> + 'params>> = self
+            .circuits
+            .into_iter()
+            .map(|deferred| deferred.materialize())
+            .collect::<Result<_>>()?;
+
         // Build omega^j -> i lookup table.
         let mut omega_lookup = BTreeMap::new();
 
-        for i in 0..self.circuits.len() {
+        for i in 0..circuits.len() {
             // Rather than assigning the `i`th circuit to `omega^i` in the final
             // domain, we will assign it to `omega^j` where `j` is the
             // `log2_circuits` bit-reversal of `i`. This has the property that
@@ -220,7 +255,7 @@ impl<'params, F: PrimeField, R: Rank, const OFFSET: usize> RegistryBuilder<'para
         // Create provisional registry (circuits still have placeholder K).
         let mut registry = Registry {
             domain,
-            circuits: self.circuits,
+            circuits,
             omega_lookup,
             key: Key::default(),
         };
