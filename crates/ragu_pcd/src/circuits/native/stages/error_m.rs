@@ -7,7 +7,7 @@ use ragu_circuits::{polynomials::Rank, staging};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Gadget, GadgetKind, Kind},
+    gadgets::{Consistent, Gadget, GadgetKind, Kind},
     maybe::Maybe,
 };
 use ragu_primitives::{
@@ -31,7 +31,7 @@ pub struct Witness<C: Cycle, FP: fold_revdot::Parameters> {
 }
 
 /// Output gadget for the error_m stage.
-#[derive(Gadget)]
+#[derive(Gadget, Consistent)]
 pub struct Output<'dr, D: Driver<'dr>, FP: fold_revdot::Parameters> {
     /// Error term elements for layer 1.
     /// Outer: N claims, Inner: M²-M error terms per claim.

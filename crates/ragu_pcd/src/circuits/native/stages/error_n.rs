@@ -7,7 +7,7 @@ use ragu_circuits::{polynomials::Rank, staging};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Gadget, GadgetKind, Kind},
+    gadgets::{Consistent, Gadget, GadgetKind, Kind},
     maybe::Maybe,
 };
 use ragu_primitives::{
@@ -63,7 +63,7 @@ pub struct Witness<C: Cycle, FP: fold_revdot::Parameters> {
 }
 
 /// k(y) output gadgets for a single child proof.
-#[derive(Gadget)]
+#[derive(Gadget, Consistent)]
 pub struct ChildKyOutputs<'dr, D: Driver<'dr>> {
     /// k(y) for the application circuit.
     #[ragu(gadget)]
@@ -77,7 +77,7 @@ pub struct ChildKyOutputs<'dr, D: Driver<'dr>> {
 }
 
 /// Output gadget for the error_n stage.
-#[derive(Gadget)]
+#[derive(Gadget, Consistent)]
 pub struct Output<
     'dr,
     D: Driver<'dr>,

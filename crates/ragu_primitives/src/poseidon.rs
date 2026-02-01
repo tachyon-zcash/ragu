@@ -9,7 +9,7 @@ use ff::Field;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Gadget, GadgetKind},
+    gadgets::{Consistent, Gadget, GadgetKind},
     routines::{Prediction, Routine},
 };
 
@@ -245,7 +245,7 @@ impl<'dr, D: Driver<'dr>, P: arithmetic::PoseidonPermutation<D::F>> Sponge<'dr, 
 /// This type holds `P::T` field elements representing the internal state
 /// of the sponge. It can be used to save and resume sponge progress via
 /// [`Sponge::save_state`] and [`Sponge::resume_and_squeeze`].
-#[derive(Gadget, Write)]
+#[derive(Gadget, Write, Consistent)]
 pub struct SpongeState<'dr, D: Driver<'dr>, P: arithmetic::PoseidonPermutation<D::F>> {
     #[ragu(gadget)]
     values: FixedVec<Element<'dr, D>, PoseidonStateLen<D::F, P>>,

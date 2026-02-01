@@ -33,8 +33,8 @@
 //! This circuit uses [`error_m`] as its final stage, which inherits in the
 //! following chain:
 //! - [`preamble`] (unenforced)
-//! - [`error_n`] (unenforced)
-//! - [`error_m`] (unenforced)
+//! - [`error_n`] (enforced)
+//! - [`error_m`] (enforced)
 //!
 //! ## Public Inputs
 //!
@@ -152,8 +152,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             builder.add_stage::<native_error_m::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();
         let preamble = preamble.unenforced(dr, witness.view().map(|w| w.preamble_witness))?;
-        let error_n = error_n.unenforced(dr, witness.view().map(|w| w.error_n_witness))?;
-        let error_m = error_m.unenforced(dr, witness.view().map(|w| w.error_m_witness))?;
+        let error_n = error_n.enforced(dr, witness.view().map(|w| w.error_n_witness))?;
+        let error_m = error_m.enforced(dr, witness.view().map(|w| w.error_m_witness))?;
 
         let unified_instance = &witness.view().map(|w| w.unified_instance);
         let mut unified_output = OutputBuilder::new();
