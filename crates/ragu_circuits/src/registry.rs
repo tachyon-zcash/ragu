@@ -131,16 +131,11 @@ impl<'params, F: PrimeField, R: Rank, const OFFSET: usize> RegistryBuilder<'para
         self.num_offset_registered
     }
 
-    /// Registers a circuit (synthesis deferred until finalize).
+    /// Registers a new circuit.
     pub fn register_circuit<C>(mut self, circuit: C) -> Result<Self>
     where
         C: Circuit<F> + 'params,
     {
-        let id = self.circuits.len();
-        if id >= R::num_coeffs() {
-            return Err(Error::CircuitBoundExceeded(id));
-        }
-
         self.circuits.push(Box::new(Deferred(circuit)));
 
         Ok(self)
@@ -151,22 +146,16 @@ impl<'params, F: PrimeField, R: Rank, const OFFSET: usize> RegistryBuilder<'para
         mut self,
         circuit: Box<dyn CircuitObject<F, R> + 'params>,
     ) -> Result<Self> {
-        let id = self.circuits.len();
-        if id >= R::num_coeffs() {
-            return Err(Error::CircuitBoundExceeded(id));
-        }
-
         self.circuits.push(Box::new(Materialized(circuit)));
 
         Ok(self)
     }
 
-    /// Registers an internal circuit in the reserved offset slots, and
-    /// synthesis is deferred until finalize.
-    pub fn register_offset_circuit<C>(mut self, circuit: C) -> Result<Self>
-    where
-        C: Circuit<F> + 'params,
-    {
+    /// Inserts a deferred circuit into the next offset slot.
+    fn push_offset(
+        &mut self,
+        deferred: Box<dyn DeferredCircuit<'params, F, R> + 'params>,
+    ) -> Result<()> {
         if self.num_offset_registered >= OFFSET {
             return Err(Error::Initialization(
                 alloc::format!(
@@ -178,10 +167,18 @@ impl<'params, F: PrimeField, R: Rank, const OFFSET: usize> RegistryBuilder<'para
             ));
         }
 
-        // Replace the trivial circuit at the current offset position
-        self.circuits[self.num_offset_registered] = Box::new(Deferred(circuit));
+        self.circuits[self.num_offset_registered] = deferred;
         self.num_offset_registered += 1;
 
+        Ok(())
+    }
+
+    /// Registers an internal circuit in the reserved offset slots (synthesis deferred).
+    pub fn register_offset_circuit<C>(mut self, circuit: C) -> Result<Self>
+    where
+        C: Circuit<F> + 'params,
+    {
+        self.push_offset(Box::new(Deferred(circuit)))?;
         Ok(self)
     }
 
@@ -191,21 +188,7 @@ impl<'params, F: PrimeField, R: Rank, const OFFSET: usize> RegistryBuilder<'para
         mut self,
         circuit: Box<dyn CircuitObject<F, R> + 'params>,
     ) -> Result<Self> {
-        if self.num_offset_registered >= OFFSET {
-            return Err(Error::Initialization(
-                alloc::format!(
-                    "offset circuit buffer full: {} circuits already registered in {} offset slots",
-                    self.num_offset_registered,
-                    OFFSET
-                )
-                .into(),
-            ));
-        }
-
-        // Replace the trivial circuit at the current offset position
-        self.circuits[self.num_offset_registered] = Box::new(Materialized(circuit));
-        self.num_offset_registered += 1;
-
+        self.push_offset(Box::new(Materialized(circuit)))?;
         Ok(self)
     }
 
