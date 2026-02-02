@@ -4,39 +4,32 @@ inputs:
   components:
     description: Optional Rust components to install (comma-separated)
     required: false
-    default: ''
+    default: ""
   targets:
     description: Additional targets to install
     required: false
-    default: ''
-  install-multilib:
-    description: Install gcc-multilib for 32-bit compilation
+    default: ""
+  apt-packages:
+    description: Additional apt packages to install
     required: false
-    default: 'false'
-  tools:
+    default: ""
+  cargo-tools:
     description: Cargo tools to install
     required: false
-    default: ''
+    default: ""
   cache-suffix:
     description: Optional suffix to differentiate cache keys between jobs
     required: false
-    default: ''
+    default: ""
 runs:
   using: composite
   steps:
-    - name: Cache apt packages
-      if: runner.os == 'Linux' && inputs.install-multilib == 'true'
-      uses: actions/cache@v4
-      with:
-        path: /var/cache/apt
-        key: ${{ runner.os }}-apt-gcc-multilib
-
-    - name: Install 32-bit support
-      if: runner.os == 'Linux' && inputs.install-multilib == 'true'
+    - name: Install additional packages
+      if: runner.os == 'Linux' && inputs.apt-packages
       shell: bash
       run: |
         sudo apt-get update
-        sudo apt-get install -y gcc-multilib
+        sudo apt-get install -y ${{ inputs.apt-packages }}
 
     - name: Install Rust toolchain (from rust-toolchain.toml)
       uses: dtolnay/rust-toolchain@1.90.0
@@ -85,10 +78,10 @@ runs:
         done
 
     - name: Install cargo tools
-      if: inputs.tools != ''
+      if: inputs.cargo-tools != ''
       uses: taiki-e/install-action@v2
       with:
-        tool: ${{ inputs.tools }}
+        tool: ${{ inputs.cargo-tools }}
 
     - name: Show toolchain
       shell: bash

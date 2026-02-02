@@ -15,9 +15,6 @@ use std::hint::black_box;
 )]
 fn msm_mul((coeffs, bases): (Vec<Fq>, Vec<EpAffine>)) {
     black_box(mul(coeffs.iter(), bases.iter()));
-    black_box(mul(coeffs.iter(), bases.iter()));
-    black_box(mul(coeffs.iter(), bases.iter()));
-    black_box(mul(coeffs.iter(), bases.iter()));
 }
 
 library_benchmark_group!(

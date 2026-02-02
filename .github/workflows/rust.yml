@@ -99,7 +99,7 @@ jobs:
         uses: ./.github/actions/rust-setup
         with:
           targets: i686-unknown-linux-gnu
-          install-multilib: "true"
+          apt-packages: gcc-multilib
           cache-suffix: release
       - name: Run 32-bit tests
         run: cargo test --release --all --locked --all-features --target i686-unknown-linux-gnu
@@ -115,7 +115,7 @@ jobs:
         uses: ./.github/actions/rust-setup
         with:
           components: llvm-tools-preview
-          tools: cargo-llvm-cov
+          cargo-tools: cargo-llvm-cov
           cache-suffix: coverage
       - name: Generate coverage report
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info

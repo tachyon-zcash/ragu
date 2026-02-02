@@ -1,0 +1,81 @@
+name: Benchmarks Alert
+
+on:
+  workflow_run:
+    workflows: ["Benchmarks"]
+    types: [completed]
+
+permissions:
+  pull-requests: write
+  actions: read
+
+jobs:
+  bench-alert:
+    name: Alert any benchmark regressions
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    env:
+      ALERT_THRESHOLD: 1.5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+
+      - name: Determine PR number
+        id: find_pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_NUMBER=$(gh pr list \
+              --repo ${{ github.repository }} \
+              --state open \
+              --json number,headRefName,headRefOid,headRepositoryOwner \
+            | jq --raw-output --from-file .github/scripts/find-pr.jq \
+              --arg pr_owner '${{ github.event.workflow_run.head_repository.owner.login }}' \
+              --arg pr_branch '${{ github.event.workflow_run.head_branch }}' \
+              --arg pr_sha '${{ github.event.workflow_run.head_sha }}')
+          echo "pr_number=${PR_NUMBER}" | tee $GITHUB_OUTPUT
+
+      - name: Download benchmark results artifact
+        if: steps.find_pr.outputs.pr_number
+        uses: actions/download-artifact@v5
+        with:
+          name: gungraun-results
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: ./target/gungraun
+
+      - name: Identify regressions
+        if: steps.find_pr.outputs.pr_number
+        id: regressions
+        run: |
+          echo "regressions_json<<EOF" >> $GITHUB_OUTPUT
+          find ./target/gungraun -name 'summary.json' -exec cat {} + \
+            | jq --slurp --from-file .github/scripts/extract-regressions.jq \
+              --argjson threshold ${{ env.ALERT_THRESHOLD }} \
+            | tee -a $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Format regressions table
+        if: fromJSON(steps.regressions.outputs.regressions_json)[0]
+        id: table
+        run: |
+          echo "table_md<<EOF" >> $GITHUB_OUTPUT
+          echo '${{ steps.regressions.outputs.regressions_json }}' \
+            | jq --raw-output --from-file .github/scripts/format-regressions.jq \
+            | tee -a $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Post regression alert
+        if: steps.table.outputs.table_md
+        uses: thollander/actions-comment-pull-request@v3
+        with:
+          pr-number: ${{ steps.find_pr.outputs.pr_number }}
+          comment-tag: benchmark-alert
+          mode: recreate
+          message: |
+            ## ⚠️ Performance Regression Detected
+
+            Benchmarks exceeding **${{ env.ALERT_THRESHOLD }}x** baseline:
+
+            ${{ steps.table.outputs.table_md }}
