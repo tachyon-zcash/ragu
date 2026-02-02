@@ -62,7 +62,7 @@ impl CircuitIndex {
 }
 
 /// Result of evaluating the registry polynomial at fixed $(x, y)$.
-/// Contains both the polynomial $m(W, x, y)$ in coefficient form 
+/// Contains both the polynomial $m(W, x, y)$ in coefficient form
 /// and circuit evaluations $s_i(x, y)$
 pub struct RegistryAtXY<F: PrimeField, R: Rank> {
     /// The polynomial $m(W, x, y)$ in coefficient form.
@@ -415,7 +415,10 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
         poly[..lagrange_vals.len()].copy_from_slice(&lagrange_vals);
         self.domain.ifft(&mut poly[..self.domain.n()]);
 
-        RegistryAtXY { poly, circuit_evals }
+        RegistryAtXY {
+            poly,
+            circuit_evals,
+        }
     }
 
     /// Index the $i$th circuit to field element $\omega^j$ as $w$, and evaluate
