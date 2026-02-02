@@ -142,6 +142,9 @@ struct Evaluator<'fp, F, R> {
     /// When true, `enforce_zero` skips accumulation (used during memoized replay).
     skip_accumulation: bool,
 
+    /// Current routine nesting depth. Memoization only applies at depth 0.
+    routine_depth: usize,
+
     /// Marker for the rank type parameter.
     _marker: core::marker::PhantomData<R>,
 }
@@ -249,16 +252,33 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         Ok(())
     }
 
-    /// Executes a routine with memoization.
+    /// Executes a routine with memoization (outer routines only).
     ///
     /// Cache miss: execute and cache the contribution.
     /// Cache hit: run `execute()` with `skip_accumulation=true`, then add
     /// cached contribution directly.
+    ///
+    /// Nested routines (routine_depth > 0) skip memoization to avoid incorrect
+    /// contribution extraction when the outer routine is replaying from cache.
     fn routine<Ro: Routine<Self::F> + 'dr>(
         &mut self,
         routine: Ro,
         input: <Ro::Input as GadgetKind<Self::F>>::Rebind<'dr, Self>,
     ) -> Result<<Ro::Output as GadgetKind<Self::F>>::Rebind<'dr, Self>> {
+        self.routine_depth += 1;
+
+        // Nested routines skip memoization
+        if self.routine_depth > 1 {
+            let tmp = self.available_b.take();
+            let mut dummy = Emulator::wireless();
+            let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
+            let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
+            let output = routine.execute(self, input, aux)?;
+            self.available_b = tmp;
+            self.routine_depth -= 1;
+            return Ok(output);
+        }
+
         let routine_id = RoutineId::of::<Ro>();
 
         // Track invocation for floor plan lookup
@@ -287,20 +307,36 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         {
             // Cache hit: skip constraint accumulation
             let result_before = self.result;
+            let muls_before = self.multiplication_constraints;
+            let constraints_before = self.linear_constraints;
 
             // Execute to produce outputs, skip enforce_zero
             self.skip_accumulation = true;
             let mut dummy = Emulator::wireless();
             let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
             let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
-            let output = routine.execute(self, input, aux)?;
-            self.skip_accumulation = false;
+            let output = routine.execute(self, input, aux);
+            self.skip_accumulation = false; // Reset before error propagation
+            let output = output?;
+
+            // Verify routine consumed expected constraints
+            debug_assert_eq!(
+                self.multiplication_constraints - muls_before,
+                cached.num_multiplications,
+                "routine multiplication count mismatch"
+            );
+            debug_assert_eq!(
+                self.linear_constraints - constraints_before,
+                cached.num_constraints,
+                "routine constraint count mismatch"
+            );
 
             // Add cached contribution: result = result_before * y^k + contribution
             let y_power = self.y.pow_vartime([cached.num_constraints as u64]);
             self.result = result_before * y_power + cached.contribution;
 
             self.available_b = tmp;
+            self.routine_depth -= 1;
             return Ok(output);
         }
 
@@ -332,6 +368,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         );
 
         self.available_b = tmp;
+        self.routine_depth -= 1;
         Ok(output)
     }
 }
@@ -370,7 +407,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
 /// let r1 = eval_with_cache(&circuit1, x, y, &key, &floor_plan, &mut cache)?;
 /// let r2 = eval_with_cache(&circuit2, x, y, &key, &floor_plan, &mut cache)?;
 /// ```
-pub fn eval_with_cache<F: Field, C: Circuit<F>, R: Rank>(
+pub(crate) fn eval_with_cache<F: Field, C: Circuit<F>, R: Rank>(
     circuit: &C,
     x: F,
     y: F,
@@ -415,6 +452,7 @@ pub fn eval_with_cache<F: Field, C: Circuit<F>, R: Rank>(
         invocation_counts: BTreeMap::new(),
         memo_cache: owned_cache,
         skip_accumulation: false,
+        routine_depth: 0,
         _marker: core::marker::PhantomData,
     };
 
@@ -442,88 +480,12 @@ pub fn eval_with_cache<F: Field, C: Circuit<F>, R: Rank>(
 mod tests {
     use super::*;
     use ff::Field;
-    use ragu_core::{
-        drivers::{Driver, DriverValue},
-        gadgets::{GadgetKind, Kind},
-        routines::{Prediction, Routine, RoutineRegistry, RoutineShape},
-    };
+    use ragu_core::routines::{Routine, RoutineRegistry};
     use ragu_pasta::Fp;
-    use ragu_primitives::Element;
     use rand::thread_rng;
 
-    use crate::{Circuit, polynomials::R};
-
-    #[derive(Clone)]
-    struct SquareRoutine;
-
-    impl Routine<Fp> for SquareRoutine {
-        type Input = Kind![Fp; Element<'_, _>];
-        type Output = Kind![Fp; Element<'_, _>];
-        type Aux<'dr> = ();
-
-        fn shape(&self) -> RoutineShape {
-            RoutineShape::new(1, 0) // One multiplication, no extra constraints
-        }
-
-        fn execute<'dr, D: Driver<'dr, F = Fp>>(
-            &self,
-            dr: &mut D,
-            input: <Self::Input as GadgetKind<Fp>>::Rebind<'dr, D>,
-            _aux: DriverValue<D, Self::Aux<'dr>>,
-        ) -> Result<<Self::Output as GadgetKind<Fp>>::Rebind<'dr, D>> {
-            input.square(dr)
-        }
-
-        fn predict<'dr, D: Driver<'dr, F = Fp>>(
-            &self,
-            _dr: &mut D,
-            _input: &<Self::Input as GadgetKind<Fp>>::Rebind<'dr, D>,
-        ) -> Result<
-            Prediction<
-                <Self::Output as GadgetKind<Fp>>::Rebind<'dr, D>,
-                DriverValue<D, Self::Aux<'dr>>,
-            >,
-        > {
-            Ok(Prediction::Unknown(D::just(|| ())))
-        }
-    }
-
-    /// A circuit that uses routines multiple times.
-    struct RoutineCircuit {
-        num_calls: usize,
-    }
-
-    impl Circuit<Fp> for RoutineCircuit {
-        type Instance<'instance> = Fp;
-        type Output = Kind![Fp; Element<'_, _>];
-        type Witness<'witness> = Fp;
-        type Aux<'witness> = ();
-
-        fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = Fp>>(
-            &self,
-            dr: &mut D,
-            instance: DriverValue<D, Self::Instance<'instance>>,
-        ) -> Result<<Self::Output as GadgetKind<Fp>>::Rebind<'dr, D>> {
-            Element::alloc(dr, instance)
-        }
-
-        fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = Fp>>(
-            &self,
-            dr: &mut D,
-            witness: DriverValue<D, Self::Witness<'witness>>,
-        ) -> Result<(
-            <Self::Output as GadgetKind<Fp>>::Rebind<'dr, D>,
-            DriverValue<D, Self::Aux<'witness>>,
-        )> {
-            let mut value = Element::alloc(dr, witness)?;
-
-            for _ in 0..self.num_calls {
-                value = dr.routine(SquareRoutine, value)?;
-            }
-
-            Ok((value, D::just(|| ())))
-        }
-    }
+    use crate::polynomials::R;
+    use crate::test_fixtures::{RoutineCircuit, SquareRoutine};
 
     /// Multiple evaluations of the same circuit produce identical results.
     #[test]
@@ -536,9 +498,10 @@ mod tests {
         let key = registry::Key::new(Fp::random(thread_rng()));
 
         let mut registry = RoutineRegistry::new();
-        registry.register::<SquareRoutine>(SquareRoutine.shape());
-        registry.register::<SquareRoutine>(SquareRoutine.shape());
-        registry.register::<SquareRoutine>(SquareRoutine.shape());
+        let shape = <SquareRoutine as Routine<Fp>>::shape(&SquareRoutine);
+        registry.register::<SquareRoutine>(shape);
+        registry.register::<SquareRoutine>(shape);
+        registry.register::<SquareRoutine>(shape);
         let floor_plan = FloorPlan::from_registries(&[&registry], TestRank::n());
 
         let result1 = eval::<Fp, _, TestRank>(&circuit, x, y, &key, &floor_plan).unwrap();
@@ -578,9 +541,10 @@ mod tests {
         let key = registry::Key::new(Fp::random(thread_rng()));
 
         let mut registry = RoutineRegistry::new();
-        registry.register::<SquareRoutine>(SquareRoutine.shape());
-        registry.register::<SquareRoutine>(SquareRoutine.shape());
-        registry.register::<SquareRoutine>(SquareRoutine.shape());
+        let shape = <SquareRoutine as Routine<Fp>>::shape(&SquareRoutine);
+        registry.register::<SquareRoutine>(shape);
+        registry.register::<SquareRoutine>(shape);
+        registry.register::<SquareRoutine>(shape);
         let floor_plan = FloorPlan::from_registries(&[&registry, &registry], TestRank::n());
 
         let mut cache = MemoCache::new();
