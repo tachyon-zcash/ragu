@@ -23,6 +23,11 @@
 //! determined by the `enforce_zero` (and indirectly,
 //! [`add`](ragu_core::drivers::Driver::add)) calls.
 //!
+//! The exponent layout matches the structured polynomial representation. This
+//! is what allows revdot-style checks to line up with circuit constraints and
+//! with the `t(X, z)` identity polynomial defined in the polynomials module.
+//! The full derivation belongs in the book.
+//!
 //! ### Circuit Synthesis
 //!
 //! Naively, one could pre-compute $s(X, Y)$ as a bivariate polynomial for each
