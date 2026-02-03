@@ -31,7 +31,10 @@ use core::{
     ops::{Deref, DerefMut},
 };
 
-use crate::io::{Buffer, Write};
+use crate::{
+    Element,
+    io::{Buffer, FromElements, Write},
+};
 
 /// A type that statically determines the length of a [`FixedVec`].
 pub trait Len: Send + Sync + 'static {
@@ -178,6 +181,14 @@ impl<F: Field, G: Write<F>, L: Len> Write<F> for FixedVec<PhantomData<G>, L> {
             G::write_gadget(item, dr, buf)?;
         }
         Ok(())
+    }
+}
+
+impl<'dr, D: Driver<'dr>, const N: usize> FromElements<'dr, D, N>
+    for FixedVec<Element<'dr, D>, ConstLen<N>>
+{
+    fn from_elements(_dr: &mut D, elements: [Element<'dr, D>; N]) -> Result<Self> {
+        FixedVec::try_from(elements.into_iter().collect::<Vec<_>>())
     }
 }
 

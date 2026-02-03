@@ -1,9 +1,13 @@
-//! Traits for serializing gadgets into buffers.
+//! Traits for serializing gadgets into buffers and deserializing from elements.
 //!
 //! The [`Write`] trait allows compatible [`Gadget`](crate::Gadget)s
 //! to write [`Element`]s to a [`Buffer`] for serialization purposes. Because
 //! gadgets are just containers for wires and witness data, they can usually
 //! reconstitute their encapsulated [`Element`]s via promotion.
+//!
+//! The [`FromElements`] trait is the reverse operation: it constructs gadgets
+//! from a fixed number of [`Element`]s. This is used for generating Fiat-Shamir
+//! challenges in the [`Transcript`](crate::Transcript) API.
 //!
 //! The [`Buffer`] trait allows destination buffers to receive a [`Driver`] for
 //! processing the elements they receive. This is handy for streaming hash
@@ -48,6 +52,41 @@ pub trait Write<F: Field>: GadgetKind<F> {
 pub trait Buffer<'dr, D: Driver<'dr>> {
     /// Push an `Element` into this buffer using the provided driver `D`.
     fn write(&mut self, dr: &mut D, value: &Element<'dr, D>) -> Result<()>;
+}
+
+/// Trait for types that can be constructed from a fixed number of field elements.
+///
+/// This trait is the reverse of [`Write`]: while `Write` serializes gadgets to
+/// elements, `FromElements` constructs gadgets from elements. It is primarily
+/// used for generating Fiat-Shamir challenges via [`challenge`].
+///
+/// The number of elements required is specified as a const generic parameter `N`.
+///
+/// # Wire Consistency
+///
+/// It's the responsibility of the implementor to ensure that the reconstructed
+/// gadget is wire-consistent with the provided elements. Namely,
+/// [`enforce_consistency`] should be called on the resulting gadget before it
+/// is used in any further constraints.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// // Element needs 1 field element
+/// impl FromElements<'dr, D, 1> for Element<'dr, D> { ... }
+///
+/// // Point needs 2 field elements (x and y coordinates)
+/// impl FromElements<'dr, D, 2> for Point<'dr, D, C> { ... }
+///
+/// // Array of N elements
+/// impl FromElements<'dr, D, N> for [Element<'dr, D>; N] { ... }
+/// ```
+///
+/// [`challenge`]: (crate::transcript::TranscriptProtocol::challenge)
+/// [`enforce_consistency`]: (ragu_core::gadgets::Consistent::enforce_consistency)
+pub trait FromElements<'dr, D: Driver<'dr>, const N: usize>: Sized {
+    /// Construct this type from exactly `N` field elements.
+    fn from_elements(dr: &mut D, elements: [Element<'dr, D>; N]) -> Result<Self>;
 }
 
 /// Automatically derives the [`Write`] trait for gadgets that merely

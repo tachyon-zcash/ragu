@@ -23,6 +23,7 @@ mod point;
 pub mod poseidon;
 pub mod promotion;
 mod simulator;
+pub mod transcript;
 mod util;
 pub mod vec;
 
@@ -34,8 +35,10 @@ use promotion::Demoted;
 pub use boolean::{Boolean, multipack};
 pub use element::{Element, multiadd};
 pub use endoscalar::{Endoscalar, compute_endoscalar, extract_endoscalar};
+pub use io::FromElements;
 pub use point::Point;
 pub use simulator::Simulator;
+pub use transcript::{Transcript, TranscriptExt, TranscriptProtocol, TranscriptState};
 
 /// Primitive extension trait for all gadgets.
 pub trait GadgetExt<'dr, D: Driver<'dr>>: Gadget<'dr, D> {
