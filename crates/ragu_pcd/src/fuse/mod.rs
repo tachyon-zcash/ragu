@@ -62,10 +62,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             self.compute_application_proof(rng, step, witness, left, right)?;
 
         let mut dr = Emulator::execute();
-        // Note: Domain separation is omitted to match internal circuits (which omit it
-        // to stay within multiplication bounds). Future work can add domain separation
-        // when constraint budgets allow.
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params));
+        transcript.domain_sep(&mut dr, b"ragu-pcd-v1")?;
 
         let (preamble, preamble_witness) =
             self.compute_preamble(rng, &left, &right, &application)?;
