@@ -226,8 +226,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let mut unified_output = OutputBuilder::new();
 
         // Create a transcript for all challenge derivations
-        // Note: Domain separation is omitted here to stay within multiplication bounds
         let mut transcript = Transcript::new(dr, C::circuit_poseidon(self.params));
+        transcript.domain_sep(dr, b"ragu-pcd-v1")?;
 
         // Derive w by absorbing nested_preamble_commitment and squeezing
         let w: Element<'_, _> = {
