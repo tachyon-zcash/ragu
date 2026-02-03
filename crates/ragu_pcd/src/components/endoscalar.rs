@@ -30,7 +30,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element, Endoscalar, Point, compute_endoscalar,
+    Element, Endoscalar, Point,
     vec::{FixedVec, Len},
 };
 
@@ -118,7 +118,7 @@ where
         let points = &points[1..];
         let inputs = FixedVec::from_fn(|i| points[i]);
 
-        let endoscalar: C::Scalar = compute_endoscalar(endoscalar);
+        let endoscalar: C::Scalar = ragu_primitives::lift_endoscalar(endoscalar);
 
         // Compute interstitials using chunked Horner iteration
         let mut interstitials = vec::Vec::with_capacity(NumStepsLen::<NUM_POINTS>::len());
@@ -344,11 +344,11 @@ mod tests {
 
     type R = polynomials::R<13>;
 
-    /// Computes the effective scalar for an endoscalar via emulated `field_scale`.
+    /// Computes the effective scalar for an endoscalar via emulated `lift`.
     fn compute_effective_scalar(endo: Uendo) -> Fq {
         Emulator::<Wired<Fq>>::emulate_wired(endo, |dr, witness| {
             let e = Endoscalar::alloc(dr, witness)?;
-            let scalar = e.field_scale(dr)?;
+            let scalar = e.lift(dr)?;
             Ok(*scalar.value().take())
         })
         .unwrap()
