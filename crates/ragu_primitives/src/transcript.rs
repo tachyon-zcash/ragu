@@ -43,12 +43,12 @@
 
 use arithmetic::PoseidonPermutation;
 use ff::PrimeField;
-use ragu_core::{drivers::Driver, Result};
+use ragu_core::{Result, drivers::Driver};
 
 use crate::{
+    Element,
     io::{Buffer, FromElements},
     poseidon::{SaveError, Sponge, SpongeState},
-    Element,
 };
 
 /// Protocol-level transcript operations extending writeable [`Buffer`].

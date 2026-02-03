@@ -6,7 +6,7 @@
 //!
 //! This circuit completes the Fiat-Shamir transcript started in
 //! [`hashes_1`][super::hashes_1], invoking $5$ Poseidon permutations:
-//! - Resume sponge from saved state via [`Sponge::resume_and_squeeze`] using
+//! - Resume transcript from saved state via [`Transcript::resume_from`] using
 //!   the state witnessed in [`error_n`]. (This state was computed by `hashes_1`
 //!   after absorbing [`nested_error_m_commitment`] and applying the permutation
 //!   to move into squeeze mode.)
@@ -56,7 +56,7 @@
 //! [$\beta$]: unified::Output::pre_beta
 //! [`error_n`]: super::stages::error_n
 //! [`WithSuffix`]: crate::components::suffix::WithSuffix
-//! [`Sponge::resume_and_squeeze`]: ragu_primitives::poseidon::Sponge::resume_and_squeeze
+//! [`Transcript::resume_from`]: ragu_primitives::transcript::TranscriptExt::resume_from
 
 use arithmetic::Cycle;
 use ragu_circuits::{
@@ -69,7 +69,7 @@ use ragu_core::{
     gadgets::GadgetKind,
     maybe::Maybe,
 };
-use ragu_primitives::{GadgetExt, poseidon::Sponge};
+use ragu_primitives::{Element, GadgetExt, Transcript, TranscriptExt, TranscriptProtocol};
 
 use core::marker::PhantomData;
 
@@ -166,14 +166,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let unified_instance = &witness.view().map(|w| w.unified_instance);
         let mut unified_output = OutputBuilder::new();
 
-        // Resume sponge from saved state (error_m already absorbed in hashes_1)
+        // Resume transcript from saved state (error_m already absorbed in hashes_1)
         // and squeeze mu (first challenge from error_m absorption)
-        let (mu, mut sponge) =
-            Sponge::resume_and_squeeze(dr, error_n.sponge_state, C::circuit_poseidon(self.params))?;
+        let mut transcript =
+            Transcript::resume_from(dr, error_n.sponge_state, C::circuit_poseidon(self.params))?;
+        let mu = transcript.challenge(dr)?;
         unified_output.mu.set(mu);
 
         // Squeeze nu (second challenge from error_m absorption)
-        let nu = sponge.squeeze(dr)?;
+        let nu = transcript.challenge(dr)?;
         unified_output.nu.set(nu);
 
         // Derive (mu_prime, nu_prime) by absorbing nested_error_n_commitment
@@ -181,9 +182,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             let nested_error_n_commitment = unified_output
                 .nested_error_n_commitment
                 .get(dr, unified_instance)?;
-            nested_error_n_commitment.write(dr, &mut sponge)?;
-            let mu_prime = sponge.squeeze(dr)?;
-            let nu_prime = sponge.squeeze(dr)?;
+            nested_error_n_commitment.write(dr, &mut transcript)?;
+            let mu_prime = transcript.challenge(dr)?;
+            let nu_prime = transcript.challenge(dr)?;
             (mu_prime, nu_prime)
         };
         unified_output.mu_prime.set(mu_prime);
@@ -194,18 +195,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             let nested_ab_commitment = unified_output
                 .nested_ab_commitment
                 .get(dr, unified_instance)?;
-            nested_ab_commitment.write(dr, &mut sponge)?;
-            sponge.squeeze(dr)?
+            nested_ab_commitment.write(dr, &mut transcript)?;
+            transcript.challenge(dr)?
         };
         unified_output.x.set(x);
 
         // Derive alpha by absorbing nested_query_commitment and squeezing
-        let alpha = {
+        let alpha: Element<'_, _> = {
             let nested_query_commitment = unified_output
                 .nested_query_commitment
                 .get(dr, unified_instance)?;
-            nested_query_commitment.write(dr, &mut sponge)?;
-            sponge.squeeze(dr)?
+            nested_query_commitment.write(dr, &mut transcript)?;
+            transcript.challenge(dr)?
         };
         unified_output.alpha.set(alpha.clone());
 
@@ -214,8 +215,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             let nested_f_commitment = unified_output
                 .nested_f_commitment
                 .get(dr, unified_instance)?;
-            nested_f_commitment.write(dr, &mut sponge)?;
-            sponge.squeeze(dr)?
+            nested_f_commitment.write(dr, &mut transcript)?;
+            transcript.challenge(dr)?
         };
         unified_output.u.set(u);
 
@@ -224,8 +225,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             let nested_eval_commitment = unified_output
                 .nested_eval_commitment
                 .get(dr, unified_instance)?;
-            nested_eval_commitment.write(dr, &mut sponge)?;
-            sponge.squeeze(dr)?
+            nested_eval_commitment.write(dr, &mut transcript)?;
+            transcript.challenge(dr)?
         };
         unified_output.pre_beta.set(pre_beta);
 
