@@ -1,4 +1,30 @@
 //! Common abstraction for orchestrating revdot claims.
+//!
+//! # Revdot claims
+//!
+//! A **revdot claim** asserts that two structured polynomials `a(X)` and `b(X)`
+//! satisfy a reversed inner product:
+//!
+//! ```text
+//! revdot(a, b) := ⟨a, reverse(b)⟩
+//! ```
+//!
+//! Concretely, `revdot(a, b)` is computed by pairing coefficients of `a` with
+//! coefficients of `b` in reverse order (see
+//! [`structured::Polynomial::revdot`]). In the proof system, each circuit stage
+//! produces a claim of the form:
+//!
+//! ```text
+//! revdot(a(X), b(X)) = k(Y)
+//! ```
+//!
+//! where `k(Y)` is the public-input polynomial restricted at a verifier
+//! challenge. Verifiers check these claims, and the folding machinery reduces
+//! many such claims into a single claim plus a small set of error terms.
+//!
+//! This module provides helpers to build the `(a, b)` pairs for each claim and
+//! to aggregate them consistently across proof components. The full conceptual
+//! derivation is intended for the Ragu book.
 
 use alloc::{borrow::Cow, vec::Vec};
 use ff::PrimeField;
