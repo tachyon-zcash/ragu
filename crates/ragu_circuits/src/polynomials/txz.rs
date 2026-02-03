@@ -3,8 +3,7 @@
 //! The `t(X, Z)` polynomial is a fixed “identity” term used in the revdot
 //! relation that binds a circuit witness polynomial `r(X)` to the public input
 //! polynomial. It shares the same exponent pattern as the structured layout so
-//! it can be evaluated efficiently inside the circuit. The full explanation
-//! should live in the book.
+//! it can be evaluated efficiently inside the circuit.
 
 use ff::Field;
 use ragu_core::{

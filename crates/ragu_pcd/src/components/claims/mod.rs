@@ -23,8 +23,7 @@
 //! many such claims into a single claim plus a small set of error terms.
 //!
 //! This module provides helpers to build the `(a, b)` pairs for each claim and
-//! to aggregate them consistently across proof components. The full conceptual
-//! derivation is intended for the Ragu book.
+//! to aggregate them consistently across proof components.
 
 use alloc::{borrow::Cow, vec::Vec};
 use ff::PrimeField;

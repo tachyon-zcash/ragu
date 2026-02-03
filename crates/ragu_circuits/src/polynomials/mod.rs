@@ -46,8 +46,7 @@ pub trait Rank:
     /// This polynomial is designed to align with the structured coefficient
     /// layout, so it can be added directly to structured `b(X)` values. It is
     /// the fixed term needed for the revdot identity that ties the witness
-    /// polynomial to the public input polynomial. The full derivation belongs
-    /// in the book.
+    /// polynomial to the public input polynomial.
     fn tz<F: Field>(z: F) -> structured::Polynomial<F, Self> {
         let mut tmp = structured::Polynomial::new();
         if z != F::ZERO {
@@ -72,7 +71,6 @@ pub trait Rank:
     ///
     /// This is the symmetric counterpart to [`Rank::tz`] and is used to
     /// evaluate the same polynomial when the roles of `x` and `z` are flipped.
-    /// The full derivation belongs in the book.
     fn tx<F: Field>(x: F) -> structured::Polynomial<F, Self> {
         let mut tmp = structured::Polynomial::new();
         if x != F::ZERO {
@@ -96,7 +94,7 @@ pub trait Rank:
     ///
     /// The exponent pattern mirrors the structured polynomial layout, which
     /// is why this function delegates to the circuit-friendly evaluator in
-    /// [`txz::Evaluate`]. The full derivation belongs in the book.
+    /// [`txz::Evaluate`].
     fn txz<F: Field>(x: F, z: F) -> F {
         if x == F::ZERO || z == F::ZERO {
             return F::ZERO;

@@ -10,8 +10,7 @@
 //! This module defines the top-level proof container used throughout the PCD
 //! pipeline. Each field corresponds to a phase of the protocol (application
 //! proof, folding, query/evaluation, and commitment opening), and is kept
-//! separately to make verification and proof transformation explicit. A full
-//! protocol narrative belongs in the book.
+//! separately to make verification and proof transformation explicit.
 >>>>>>> Stashed changes
 
 #![allow(dead_code)]

@@ -7,8 +7,7 @@
 //!
 //! This representation is also aligned with the wiring polynomial layout used
 //! by the circuit synthesis code, so structured polynomials can be combined
-//! with `s(X, Y)` and `t(X, z)` without reshaping. The book is the right place
-//! for the full derivation.
+//! with `s(X, Y)` and `t(X, z)` without reshaping.
 
 use ff::Field;
 use ragu_arithmetic::CurveAffine;
