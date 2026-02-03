@@ -21,7 +21,9 @@ use ragu_circuits::{
     registry::CircuitIndex,
 };
 use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
-use ragu_primitives::{GadgetExt, Point, poseidon::Sponge, vec::CollectFixed};
+use ragu_primitives::{
+    GadgetExt, Point, Transcript, TranscriptExt, TranscriptProtocol, vec::CollectFixed,
+};
 use rand::CryptoRng;
 
 use crate::{
@@ -60,25 +62,30 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             self.compute_application_proof(rng, step, witness, left, right)?;
 
         let mut dr = Emulator::execute();
-        let mut transcript = Sponge::new(&mut dr, C::circuit_poseidon(self.params));
+        // Note: Domain separation is omitted to match internal circuits (which omit it
+        // to stay within multiplication bounds). Future work can add domain separation
+        // when constraint budgets allow.
+        let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params));
 
         let (preamble, preamble_witness) =
             self.compute_preamble(rng, &left, &right, &application)?;
-        Point::constant(&mut dr, preamble.nested_commitment)?.write(&mut dr, &mut transcript)?;
-        let w = transcript.squeeze(&mut dr)?;
+        let preamble_commitment = Point::constant(&mut dr, preamble.nested_commitment)?;
+        preamble_commitment.write(&mut dr, &mut transcript)?;
+        let w = transcript.challenge(&mut dr)?;
 
         let s_prime = self.compute_s_prime(rng, &w, &left, &right)?;
-        Point::constant(&mut dr, s_prime.nested_s_prime_commitment)?
-            .write(&mut dr, &mut transcript)?;
-        let y = transcript.squeeze(&mut dr)?;
-        let z = transcript.squeeze(&mut dr)?;
+        let s_prime_commitment = Point::constant(&mut dr, s_prime.nested_s_prime_commitment)?;
+        s_prime_commitment.write(&mut dr, &mut transcript)?;
+        let y = transcript.challenge(&mut dr)?;
+        let z = transcript.challenge(&mut dr)?;
 
         let (error_m, error_m_witness, claims) =
             self.compute_errors_m(rng, &w, &y, &z, &left, &right)?;
-        Point::constant(&mut dr, error_m.nested_commitment)?.write(&mut dr, &mut transcript)?;
+        let error_m_commitment = Point::constant(&mut dr, error_m.nested_commitment)?;
+        error_m_commitment.write(&mut dr, &mut transcript)?;
 
         let saved_transcript_state = transcript
-            .clone()
+            .clone_for_save()
             .save_state(&mut dr)
             .expect("save_state should succeed after absorbing")
             .into_elements()
@@ -86,8 +93,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             .map(|e| *e.value().take())
             .collect_fixed()?;
 
-        let mu = transcript.squeeze(&mut dr)?;
-        let nu = transcript.squeeze(&mut dr)?;
+        let mu = transcript.challenge(&mut dr)?;
+        let nu = transcript.challenge(&mut dr)?;
 
         let (error_n, error_n_witness, a, b) = self.compute_errors_n(
             rng,
@@ -99,29 +106,34 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             &nu,
             saved_transcript_state,
         )?;
-        Point::constant(&mut dr, error_n.nested_commitment)?.write(&mut dr, &mut transcript)?;
-        let mu_prime = transcript.squeeze(&mut dr)?;
-        let nu_prime = transcript.squeeze(&mut dr)?;
+        let error_n_commitment = Point::constant(&mut dr, error_n.nested_commitment)?;
+        error_n_commitment.write(&mut dr, &mut transcript)?;
+        let mu_prime = transcript.challenge(&mut dr)?;
+        let nu_prime = transcript.challenge(&mut dr)?;
 
         let ab = self.compute_ab(rng, a, b, &mu_prime, &nu_prime)?;
-        Point::constant(&mut dr, ab.nested_commitment)?.write(&mut dr, &mut transcript)?;
-        let x = transcript.squeeze(&mut dr)?;
+        let ab_commitment = Point::constant(&mut dr, ab.nested_commitment)?;
+        ab_commitment.write(&mut dr, &mut transcript)?;
+        let x = transcript.challenge(&mut dr)?;
 
         let (query, query_witness) =
             self.compute_query(rng, &w, &x, &y, &z, &error_m, &left, &right)?;
-        Point::constant(&mut dr, query.nested_commitment)?.write(&mut dr, &mut transcript)?;
-        let alpha = transcript.squeeze(&mut dr)?;
+        let query_commitment = Point::constant(&mut dr, query.nested_commitment)?;
+        query_commitment.write(&mut dr, &mut transcript)?;
+        let alpha = transcript.challenge(&mut dr)?;
 
         let f = self.compute_f(
             rng, &w, &y, &z, &x, &alpha, &s_prime, &error_m, &ab, &query, &left, &right,
         )?;
-        Point::constant(&mut dr, f.nested_commitment)?.write(&mut dr, &mut transcript)?;
-        let u = transcript.squeeze(&mut dr)?;
+        let f_commitment = Point::constant(&mut dr, f.nested_commitment)?;
+        f_commitment.write(&mut dr, &mut transcript)?;
+        let u = transcript.challenge(&mut dr)?;
 
         let (eval, eval_witness) =
             self.compute_eval(rng, &u, &left, &right, &s_prime, &error_m, &ab, &query)?;
-        Point::constant(&mut dr, eval.nested_commitment)?.write(&mut dr, &mut transcript)?;
-        let pre_beta = transcript.squeeze(&mut dr)?;
+        let eval_commitment = Point::constant(&mut dr, eval.nested_commitment)?;
+        eval_commitment.write(&mut dr, &mut transcript)?;
+        let pre_beta = transcript.challenge(&mut dr)?;
 
         let p = self.compute_p(
             &pre_beta, &u, &left, &right, &s_prime, &error_m, &ab, &query, &f,
