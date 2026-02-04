@@ -95,6 +95,7 @@ use super::{
     stages::{error_n as native_error_n, preamble as native_preamble},
     unified::{self, OutputBuilder},
 };
+use crate::RAGU_TAG;
 use crate::components::{fold_revdot, root_of_unity, suffix::WithSuffix};
 
 pub(crate) use super::InternalCircuitIndex::Hashes1Circuit as CIRCUIT_ID;
@@ -227,7 +228,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 
         // Create a transcript for all challenge derivations
         let mut transcript = Transcript::new(dr, C::circuit_poseidon(self.params));
-        transcript.domain_sep(dr, b"ragu-pcd-v1")?;
+        transcript.domain_sep(dr, RAGU_TAG)?;
 
         // Derive w by absorbing nested_preamble_commitment and squeezing
         let w: Element<'_, _> = {
