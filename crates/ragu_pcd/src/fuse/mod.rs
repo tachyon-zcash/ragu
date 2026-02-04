@@ -27,7 +27,7 @@ use ragu_primitives::{
 use rand::CryptoRng;
 
 use crate::{
-    Application, Pcd, Proof,
+    Application, Pcd, Proof, RAGU_TAG,
     components::claims::{Source, native::RxComponent},
     proof,
     step::Step,
@@ -63,7 +63,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         let mut dr = Emulator::execute();
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params));
-        transcript.domain_sep(&mut dr, b"ragu-pcd-v1")?;
+        transcript.domain_sep(&mut dr, RAGU_TAG)?;
 
         let (preamble, preamble_witness) =
             self.compute_preamble(rng, &left, &right, &application)?;

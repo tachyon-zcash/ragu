@@ -100,14 +100,17 @@ where
     D::F: PrimeField,
 {
     fn domain_sep(&mut self, dr: &mut D, tag: &[u8]) -> Result<()> {
-        // Absorb protocol tag as field elements
-        // Pack bytes into u64 chunks (8 bytes each)
-        for chunk in tag.chunks(8) {
-            let bytes: [u8; 8] = core::array::from_fn(|i| chunk.get(i).copied().unwrap_or(0));
-            let elem = Element::constant(dr, D::F::from(u64::from_le_bytes(bytes)));
+        // prefix with the tag length
+        let len_elem = Element::constant(dr, D::F::from(tag.len() as u64));
+        self.sponge.absorb(dr, &len_elem)?;
 
+        // Then absorb the tag content in 16-byte chunks as u128
+        for chunk in tag.chunks(16) {
+            let bytes: [u8; 16] = core::array::from_fn(|i| chunk.get(i).copied().unwrap_or(0));
+            let elem = Element::constant(dr, D::F::from_u128(u128::from_le_bytes(bytes)));
             self.sponge.absorb(dr, &elem)?;
         }
+
         Ok(())
     }
 
