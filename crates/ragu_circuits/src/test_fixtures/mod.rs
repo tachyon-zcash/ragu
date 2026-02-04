@@ -176,3 +176,90 @@ impl<F: Field> Circuit<F> for RoutineCircuit {
         Ok((value, D::just(|| ())))
     }
 }
+
+/// A routine that squares an element multiple times.
+///
+/// This is a heavier routine than [`SquareRoutine`] for benchmarking memoization.
+#[derive(Clone)]
+pub struct HeavySquareRoutine {
+    /// Number of squares to perform.
+    pub iterations: usize,
+}
+
+impl<F: Field> Routine<F> for HeavySquareRoutine {
+    type Input = Kind![F; Element<'_, _>];
+    type Output = Kind![F; Element<'_, _>];
+    type Aux<'dr> = ();
+
+    fn shape(&self) -> RoutineShape {
+        RoutineShape::new(self.iterations, 0)
+    }
+
+    fn execute<'dr, D: Driver<'dr, F = F>>(
+        &self,
+        dr: &mut D,
+        mut input: <Self::Input as GadgetKind<F>>::Rebind<'dr, D>,
+        _aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<<Self::Output as GadgetKind<F>>::Rebind<'dr, D>> {
+        for _ in 0..self.iterations {
+            input = input.square(dr)?;
+        }
+        Ok(input)
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = F>>(
+        &self,
+        _dr: &mut D,
+        _input: &<Self::Input as GadgetKind<F>>::Rebind<'dr, D>,
+    ) -> Result<
+        Prediction<<Self::Output as GadgetKind<F>>::Rebind<'dr, D>, DriverValue<D, Self::Aux<'dr>>>,
+    > {
+        Ok(Prediction::Unknown(D::just(|| ())))
+    }
+}
+
+/// A circuit that calls a heavy routine multiple times.
+///
+/// This circuit is for benchmarking memoization with heavier routines.
+pub struct HeavyRoutineCircuit {
+    /// Number of routine calls.
+    pub num_calls: usize,
+    /// Number of iterations per routine call.
+    pub iterations_per_call: usize,
+}
+
+impl<F: Field> Circuit<F> for HeavyRoutineCircuit {
+    type Instance<'instance> = F;
+    type Output = Kind![F; Element<'_, _>];
+    type Witness<'witness> = F;
+    type Aux<'witness> = ();
+
+    fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = F>>(
+        &self,
+        dr: &mut D,
+        instance: DriverValue<D, Self::Instance<'instance>>,
+    ) -> Result<<Self::Output as GadgetKind<F>>::Rebind<'dr, D>> {
+        Element::alloc(dr, instance)
+    }
+
+    fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = F>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'witness>>,
+    ) -> Result<(
+        <Self::Output as GadgetKind<F>>::Rebind<'dr, D>,
+        DriverValue<D, Self::Aux<'witness>>,
+    )> {
+        let routine = HeavySquareRoutine {
+            iterations: self.iterations_per_call,
+        };
+
+        let mut value = Element::alloc(dr, witness)?;
+
+        for _ in 0..self.num_calls {
+            value = dr.routine(routine.clone(), value)?;
+        }
+
+        Ok((value, D::just(|| ())))
+    }
+}
