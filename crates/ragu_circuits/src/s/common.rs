@@ -38,7 +38,7 @@ use ff::Field;
 use ragu_core::{
     Result,
     drivers::{Driver, FromDriver, LinearExpression},
-    floor_plan::MeshPosition,
+    floor_plan::RegistryPosition,
     routines::RoutineId,
 };
 
@@ -66,7 +66,7 @@ pub struct CachedRoutine<F> {
 /// Cache for routine contributions, keyed by `(RoutineId, canonical_position)`.
 #[derive(Default, Clone)]
 pub struct MemoCache<F> {
-    entries: BTreeMap<(RoutineId, MeshPosition), CachedRoutine<F>>,
+    entries: BTreeMap<(RoutineId, RegistryPosition), CachedRoutine<F>>,
 }
 
 impl<F: Clone> MemoCache<F> {
@@ -81,7 +81,7 @@ impl<F: Clone> MemoCache<F> {
     pub fn get(
         &self,
         routine_id: &RoutineId,
-        canonical_position: MeshPosition,
+        canonical_position: RegistryPosition,
     ) -> Option<&CachedRoutine<F>> {
         self.entries.get(&(*routine_id, canonical_position))
     }
@@ -90,7 +90,7 @@ impl<F: Clone> MemoCache<F> {
     pub fn insert(
         &mut self,
         routine_id: RoutineId,
-        canonical_position: MeshPosition,
+        canonical_position: RegistryPosition,
         entry: CachedRoutine<F>,
     ) {
         self.entries.insert((routine_id, canonical_position), entry);

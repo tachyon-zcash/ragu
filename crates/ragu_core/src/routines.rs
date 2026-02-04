@@ -98,7 +98,7 @@ impl RoutineInfo {
 /// during a discovery pass over circuits. This information is used for:
 ///
 /// - **Structural analysis**: Identifying which circuits use the same routines
-/// - **Floor planning**: Determining optimal routine placement within the mesh
+/// - **Floor planning**: Determining optimal routine placement within the registry
 /// - **Memoization**: Enabling reuse of polynomial evaluations for identical routines
 #[derive(Debug, Clone, Default)]
 pub struct RoutineRegistry {

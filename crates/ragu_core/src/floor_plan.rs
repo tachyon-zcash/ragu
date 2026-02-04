@@ -1,4 +1,4 @@
-//! Floor planning for optimal routine placement in the circuit mesh.
+//! Floor planning for optimal routine placement in the circuit registry.
 //!
 //! The floor planner assigns canonical positions to routine types so that:
 //! - **Inter-circuit memoization**: Same routine type at same position across circuits
@@ -10,18 +10,18 @@
 use crate::routines::{RoutineId, RoutineRegistry, RoutineShape};
 use alloc::{collections::BTreeMap, vec::Vec};
 
-/// A position in the circuit mesh: multiplication gate index (X dimension) and
+/// A position in the circuit registry: multiplication gate index (X dimension) and
 /// constraint index (Y dimension).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct MeshPosition {
+pub struct RegistryPosition {
     /// Multiplication gate index.
     pub x: usize,
     /// Constraint index.
     pub y: usize,
 }
 
-impl MeshPosition {
-    /// Creates a new mesh position.
+impl RegistryPosition {
+    /// Creates a new registry position.
     pub const fn new(x: usize, y: usize) -> Self {
         Self { x, y }
     }
@@ -34,11 +34,11 @@ struct Placement {
     id: RoutineId,
     /// The routine's shape (dimensions).
     shape: RoutineShape,
-    /// Assigned position in the mesh.
-    position: MeshPosition,
+    /// Assigned position in the registry.
+    position: RegistryPosition,
 }
 
-/// Floor plan mapping routine types to canonical mesh positions.
+/// Floor plan mapping routine types to canonical registry positions.
 ///
 /// All circuits using a routine type should place it at the canonical position
 /// to maximize inter-circuit memoization.
@@ -52,7 +52,7 @@ pub struct FloorPlan {
 }
 
 impl FloorPlan {
-    /// Creates a new floor plan with the given mesh width constraint.
+    /// Creates a new floor plan with the given registry width constraint.
     pub fn new(max_width: usize) -> Self {
         Self {
             max_width,
@@ -111,7 +111,7 @@ impl FloorPlan {
             self.row_height = 0;
         }
 
-        let position = MeshPosition::new(self.next_x, self.next_y);
+        let position = RegistryPosition::new(self.next_x, self.next_y);
         self.placements.push(Placement {
             id,
             shape,
@@ -123,9 +123,13 @@ impl FloorPlan {
     }
 
     /// Gets the position for a specific invocation of a routine type.
-    pub fn get_invocation(&self, id: &RoutineId, invocation_index: usize) -> Option<MeshPosition> {
+    pub fn get_invocation(
+        &self,
+        id: &RoutineId,
+        invocation_index: usize,
+    ) -> Option<RegistryPosition> {
         self.placements.iter().find(|p| p.id == *id).map(|p| {
-            MeshPosition::new(
+            RegistryPosition::new(
                 p.position.x + invocation_index * p.shape.num_multiplications,
                 p.position.y,
             )
@@ -172,7 +176,7 @@ mod tests {
         let poseidon_pos = plan
             .get_invocation(&RoutineId::of::<Poseidon>(), 0)
             .unwrap();
-        assert_eq!(poseidon_pos, MeshPosition::new(0, 0));
+        assert_eq!(poseidon_pos, RegistryPosition::new(0, 0));
     }
 
     #[test]
@@ -210,9 +214,9 @@ mod tests {
         let merkle_pos = plan.get_invocation(&RoutineId::of::<Merkle>(), 0).unwrap();
 
         // Poseidon at (0,0), reserves 3×10=30 width
-        assert_eq!(poseidon_pos, MeshPosition::new(0, 0));
+        assert_eq!(poseidon_pos, RegistryPosition::new(0, 0));
         // Merkle starts after reserved space
-        assert_eq!(merkle_pos, MeshPosition::new(30, 0));
+        assert_eq!(merkle_pos, RegistryPosition::new(30, 0));
     }
 
     #[test]
@@ -228,15 +232,15 @@ mod tests {
 
         assert_eq!(
             plan.get_invocation(&poseidon_id, 0),
-            Some(MeshPosition::new(0, 0))
+            Some(RegistryPosition::new(0, 0))
         );
         assert_eq!(
             plan.get_invocation(&poseidon_id, 1),
-            Some(MeshPosition::new(10, 0))
+            Some(RegistryPosition::new(10, 0))
         );
         assert_eq!(
             plan.get_invocation(&poseidon_id, 2),
-            Some(MeshPosition::new(20, 0))
+            Some(RegistryPosition::new(20, 0))
         );
     }
 }
