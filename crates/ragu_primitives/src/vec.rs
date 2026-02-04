@@ -249,4 +249,10 @@ unsafe impl<F: Field, G: GadgetKind<F>, L: Len> GadgetKind<F> for FixedVec<Phant
         }
         Ok(())
     }
+
+    fn from_cached_wires<'dr, D: Driver<'dr, F = F>>(
+        wires: &mut impl Iterator<Item = D::Wire>,
+    ) -> Result<Self::Rebind<'dr, D>> {
+        FixedVec::try_from_fn(|_| G::from_cached_wires(wires))
+    }
 }

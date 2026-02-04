@@ -66,7 +66,7 @@ use crate::{Circuit, polynomials::Rank, registry};
 
 use super::{
     DriverExt,
-    common::{CachedRoutine, MemoCache, WireEval, WireEvalSum},
+    common::{CachedRoutine, MemoCache, WireEval, WireEvalSum, WireExtractor},
 };
 
 /// A [`Driver`] that computes the full evaluation $s(x, y)$.
@@ -138,9 +138,6 @@ struct Evaluator<'fp, F, R> {
 
     /// Cache for memoized routine evaluations.
     memo_cache: MemoCache<F>,
-
-    /// When true, `enforce_zero` skips accumulation (used during memoized replay).
-    skip_accumulation: bool,
 
     /// Current routine nesting depth. Memoization only applies at depth 0.
     routine_depth: usize,
@@ -229,9 +226,6 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
     /// performs the Horner accumulation step. This processes constraints in
     /// reverse order so that the final result equals $s(x, y)$.
     ///
-    /// With `skip_accumulation`, only counts constraints; cached contribution
-    /// is added separately.
-    ///
     /// # Errors
     ///
     /// Returns [`Error::LinearBoundExceeded`] if the constraint count reaches
@@ -243,20 +237,17 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         }
         self.linear_constraints += 1;
 
-        // Skip accumulation when replaying a memoized routine
-        if !self.skip_accumulation {
-            self.result *= self.y;
-            self.result += lc(WireEvalSum::new(self.one)).value;
-        }
+        self.result *= self.y;
+        self.result += lc(WireEvalSum::new(self.one)).value;
 
         Ok(())
     }
 
     /// Executes a routine with memoization (outer routines only).
     ///
-    /// Cache miss: execute and cache the contribution.
-    /// Cache hit: run `execute()` with `skip_accumulation=true`, then add
-    /// cached contribution directly.
+    /// Cache miss: execute routine and cache the contribution with output wires.
+    /// Cache hit: reconstruct output gadget from cached wires and add cached
+    /// contribution directly, skipping routine execution entirely.
     ///
     /// Nested routines (routine_depth > 0) skip memoization to avoid incorrect
     /// contribution extraction when the outer routine is replaying from cache.
@@ -305,31 +296,16 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
             .get(&routine_id, canonical_position)
             .cloned()
         {
-            // Cache hit: skip constraint accumulation
+            // Cache hit: reconstruct output directly from cached wires (no routine execution)
             let result_before = self.result;
-            let muls_before = self.multiplication_constraints;
-            let constraints_before = self.linear_constraints;
 
-            // Execute to produce outputs, skip enforce_zero
-            self.skip_accumulation = true;
-            let mut dummy = Emulator::wireless();
-            let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
-            let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
-            let output = routine.execute(self, input, aux);
-            self.skip_accumulation = false; // Reset before error propagation
-            let output = output?;
+            // Reconstruct output gadget directly from cached wires
+            let mut wires_iter = cached.output_wires.into_iter();
+            let output = Ro::Output::from_cached_wires(&mut wires_iter)?;
 
-            // Verify routine consumed expected constraints
-            debug_assert_eq!(
-                self.multiplication_constraints - muls_before,
-                cached.num_multiplications,
-                "routine multiplication count mismatch"
-            );
-            debug_assert_eq!(
-                self.linear_constraints - constraints_before,
-                cached.num_constraints,
-                "routine constraint count mismatch"
-            );
+            // Manually advance constraint counters (we didn't call mul/enforce_zero)
+            self.multiplication_constraints += cached.num_multiplications;
+            self.linear_constraints += cached.num_constraints;
 
             // Add cached contribution: result = result_before * y^k + contribution
             let y_power = self.y.pow_vartime([cached.num_constraints as u64]);
@@ -350,6 +326,11 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
         let output = routine.execute(self, input, aux)?;
 
+        // Extract output wires for caching
+        let mut wire_extractor = WireExtractor::new();
+        let _ = Ro::Output::map_gadget(&output, &mut wire_extractor)?;
+        let output_wires = wire_extractor.into_wires();
+
         // Extract contribution: C = result_after - result_before * y^k
         let num_multiplications = self.multiplication_constraints - muls_before;
         let num_constraints = self.linear_constraints - constraints_before;
@@ -364,6 +345,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
                 contribution,
                 num_multiplications,
                 num_constraints,
+                output_wires,
             },
         );
 
@@ -451,7 +433,6 @@ pub(crate) fn eval_with_cache<F: Field, C: Circuit<F>, R: Rank>(
         floor_plan,
         invocation_counts: BTreeMap::new(),
         memo_cache: owned_cache,
-        skip_accumulation: false,
         routine_depth: 0,
         _marker: core::marker::PhantomData,
     };

@@ -98,7 +98,7 @@ pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenS
         Phantom,
     }
 
-    let fields: Vec<(Ident, FieldType)> = match data {
+    let fields: Vec<(Ident, FieldType, syn::Type)> = match data {
         Data::Struct(s) => {
             let fields = match &s.fields {
                 Fields::Named(named) => &named.named,
@@ -114,6 +114,7 @@ pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenS
 
             for f in fields {
                 let fid = f.ident.clone().expect("fields contains only named fields");
+                let fty = f.ty.clone();
                 let is_value = f.attrs.iter().any(|a| attr_is(a, "value"));
                 let is_wire = f.attrs.iter().any(|a| attr_is(a, "wire"));
                 let is_gadget = f.attrs.iter().any(|a| attr_is(a, "gadget"));
@@ -121,20 +122,20 @@ pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenS
 
                 match (is_value, is_wire, is_gadget, is_phantom) {
                     (true, false, false, false) => {
-                        res.push((fid, FieldType::Value));
+                        res.push((fid, FieldType::Value, fty));
                     }
                     (false, true, false, false) => {
-                        res.push((fid, FieldType::Wire));
+                        res.push((fid, FieldType::Wire, fty));
                     }
                     (false, false, true, false) => {
-                        res.push((fid, FieldType::Gadget));
+                        res.push((fid, FieldType::Gadget, fty));
                     }
                     (false, false, false, true) => {
-                        res.push((fid, FieldType::Phantom));
+                        res.push((fid, FieldType::Phantom, fty));
                     }
                     (false, false, false, false) => {
                         // Default to gadget when no annotation is present
-                        res.push((fid, FieldType::Gadget));
+                        res.push((fid, FieldType::Gadget, fty));
                     }
                     _ => {
                         return Err(Error::new(
@@ -155,7 +156,7 @@ pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenS
         }
     };
 
-    let clone_impl_inits = fields.iter().map(|(id, ty)| {
+    let clone_impl_inits = fields.iter().map(|(id, ty, _field_ty)| {
         let init = match ty {
             FieldType::Value => {
                 let driver_id = &driver.ident;
@@ -180,7 +181,7 @@ pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenS
         }
     };
 
-    let equality_calls = fields.iter().filter_map(|(id, ty)| match ty {
+    let equality_calls = fields.iter().filter_map(|(id, ty, _field_ty)| match ty {
         FieldType::Wire => {
             Some(quote! { #ragu_core_path::drivers::Driver::enforce_equal(dr, &a.#id, &b.#id)? })
         }
@@ -225,7 +226,7 @@ pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenS
     let kind_subst_arguments = driver.kind_subst_arguments(&ty_generics);
     let rebind_arguments = driver.rebind_arguments(&ty_generics);
 
-    let gadget_impl_inits = fields.iter().map(|(id, ty)| {
+    let gadget_impl_inits = fields.iter().map(|(id, ty, _field_ty)| {
         let init = match ty {
             FieldType::Value => quote! {
                 {
@@ -241,6 +242,34 @@ pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenS
             }
             FieldType::Gadget => {
                 quote! { #ragu_core_path::gadgets::Gadget::map(&this.#id, ndr)? }
+            }
+            FieldType::Phantom => quote! { ::core::marker::PhantomData },
+        };
+        quote! { #id: #init }
+    });
+
+    let from_cached_wires_inits = fields.iter().map(|(id, ty, field_ty)| {
+        let driver_id = &driver.ident;
+        let driver_lifetime = &driver.lifetime;
+        let init = match ty {
+            FieldType::Value => quote! {
+                {
+                    use #ragu_core_path::maybe::Maybe;
+                    #driver_id::just(|| unreachable!("value not available from cache"))
+                }
+            },
+            FieldType::Wire => {
+                quote! {
+                    wires.next().ok_or_else(|| #ragu_core_path::Error::InvalidWitness(
+                        "cached wire count mismatch".into()
+                    ))?
+                }
+            }
+            FieldType::Gadget => {
+                // Use the field's concrete type to get its Kind and call from_cached_wires
+                quote! {
+                    <<#field_ty as #ragu_core_path::gadgets::Gadget<#driver_lifetime, #driver_id>>::Kind as #ragu_core_path::gadgets::GadgetKind<#driverfield_ident>>::from_cached_wires(wires)?
+                }
             }
             FieldType::Phantom => quote! { ::core::marker::PhantomData },
         };
@@ -273,6 +302,14 @@ pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenS
                 ) -> #ragu_core_path::Result<()> {
                     #( #equality_calls; )*
                     Ok(())
+                }
+
+                fn from_cached_wires<#driver_lifetime, #driver_ident: #ragu_core_path::drivers::Driver<#driver_lifetime, F = #driverfield_ident>>(
+                    wires: &mut impl ::core::iter::Iterator<Item = #driver_ident::Wire>,
+                ) -> #ragu_core_path::Result<Self::Rebind<#driver_lifetime, #driver_ident>> {
+                    Ok(#struct_ident {
+                        #( #from_cached_wires_inits, )*
+                    })
                 }
             }
         }
@@ -438,6 +475,18 @@ fn test_gadget_derive_boolean_customdriver() {
                     ::ragu_core::drivers::Driver::enforce_equal(dr, &a.wire, &b.wire)?;
                     Ok(())
                 }
+
+                fn from_cached_wires<'my_dr, MyD: ::ragu_core::drivers::Driver<'my_dr, F = DriverField>>(
+                    wires: &mut impl ::core::iter::Iterator<Item = MyD::Wire>,
+                ) -> ::ragu_core::Result<Self::Rebind<'my_dr, MyD>> {
+                    Ok(Boolean {
+                        wire: wires.next().ok_or_else(|| ::ragu_core::Error::InvalidWitness("cached wire count mismatch".into()))?,
+                        value: {
+                            use ::ragu_core::maybe::Maybe;
+                            MyD::just(|| unreachable!("value not available from cache"))
+                        },
+                    })
+                }
             }
         ).to_string()
     );
@@ -528,6 +577,20 @@ fn test_gadget_derive() {
                     ::ragu_core::drivers::Driver::enforce_equal(dr, &a.wire_field, &b.wire_field)?;
                     ::ragu_core::gadgets::Gadget::enforce_equal(&a.map_field, dr, &b.map_field)?;
                     Ok(())
+                }
+
+                fn from_cached_wires<'mydr, MyD: ::ragu_core::drivers::Driver<'mydr, F = DriverField>>(
+                    wires: &mut impl ::core::iter::Iterator<Item = MyD::Wire>,
+                ) -> ::ragu_core::Result<Self::Rebind<'mydr, MyD>> {
+                    Ok(MyGadget {
+                        witness_field: {
+                            use ::ragu_core::maybe::Maybe;
+                            MyD::just(|| unreachable!("value not available from cache"))
+                        },
+                        wire_field: wires.next().ok_or_else(|| ::ragu_core::Error::InvalidWitness("cached wire count mismatch".into()))?,
+                        map_field: <<Lol<'mydr, MyD> as ::ragu_core::gadgets::Gadget<'mydr, MyD>>::Kind as ::ragu_core::gadgets::GadgetKind<DriverField>>::from_cached_wires(wires)?,
+                        phantom_field: ::core::marker::PhantomData,
+                    })
                 }
             }
 
