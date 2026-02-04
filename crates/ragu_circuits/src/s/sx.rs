@@ -67,7 +67,7 @@ use ragu_arithmetic::Coeff;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverTypes, emulator::Emulator},
-    floor_plan::{FloorPlan, MeshPosition},
+    floor_plan::{FloorPlan, RegistryPosition},
     gadgets::GadgetKind,
     maybe::Empty,
     routines::{Routine, RoutineId},
@@ -263,7 +263,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
 
     /// Executes a routine with isolated allocation state.
     ///
-    /// Tracks the routine's mesh position and invocation count for memoization.
+    /// Tracks the routine's registry position and invocation count for memoization.
     /// The canonical position from the floor plan can be used to cache and reuse
     /// polynomial evaluations across circuits.
     fn routine<Ro: Routine<Self::F> + 'dr>(
@@ -273,7 +273,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
     ) -> Result<<Ro::Output as GadgetKind<Self::F>>::Rebind<'dr, Self>> {
         let routine_id = RoutineId::of::<Ro>();
 
-        // Track invocation count and get current mesh position
+        // Track invocation count and get current registry position
         let invocation_index = *self.invocation_counts.get(&routine_id).unwrap_or(&0);
         self.invocation_counts
             .entry(routine_id)
@@ -281,7 +281,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
             .or_insert(1);
 
         let _current_position =
-            MeshPosition::new(self.multiplication_constraints, self.linear_constraints);
+            RegistryPosition::new(self.multiplication_constraints, self.linear_constraints);
 
         // Look up canonical position from floor plan (for future memoization)
         let _canonical_position = self

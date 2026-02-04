@@ -53,7 +53,7 @@ use ragu_arithmetic::Coeff;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverTypes, emulator::Emulator},
-    floor_plan::{FloorPlan, MeshPosition},
+    floor_plan::{FloorPlan, RegistryPosition},
     gadgets::GadgetKind,
     maybe::Empty,
     routines::{Routine, RoutineId},
@@ -291,7 +291,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
             .get_invocation(&routine_id, invocation_index)
             .unwrap_or_else(|| {
                 // Fallback if not in floor plan
-                MeshPosition::new(self.multiplication_constraints, self.linear_constraints)
+                RegistryPosition::new(self.multiplication_constraints, self.linear_constraints)
             });
 
         let tmp = self.available_b.take();
