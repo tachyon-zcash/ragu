@@ -153,11 +153,11 @@ fn print_internal_stage_parameters() {
     print_stage!(Eval);
 }
 
-/// Test that the native registry digest hasn't changed unexpectedly.
+/// Verifies the native registry digest matches the expected value.
 ///
-/// This test verifies that gadget refactorings don't accidentally change the
-/// underlying wiring polynomial. If a refactoring produces the same digest,
-/// then it's mathematically equivalent.
+/// This test ensures the wiring polynomial structure is mathematically
+/// equivalent to the reference implementation by comparing cryptographic
+/// digests.
 #[test]
 fn test_native_registry_digest() {
     let pasta = Pasta::baked();
@@ -177,10 +177,10 @@ fn test_native_registry_digest() {
     );
 }
 
-/// Test that the nested registry digest hasn't changed unexpectedly.
+/// Verifies the nested registry digest matches the expected value.
 ///
-/// This test verifies that gadget refactorings don't accidentally change the
-/// underlying wiring polynomial. If a refactoring produces the same digest,
+/// This test ensures the wiring polynomial structure is mathematically
+/// equivalent to the reference implementation by comparing cryptographic
 /// then it's mathematically equivalent.
 #[test]
 fn test_nested_registry_digest() {

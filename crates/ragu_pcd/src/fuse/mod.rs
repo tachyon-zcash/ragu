@@ -83,7 +83,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         error_m_commitment.write(&mut dr, &mut transcript)?;
 
         let saved_transcript_state = transcript
-            .clone_for_save()
+            .clone()
             .save_state(&mut dr)
             .expect("save_state should succeed after absorbing")
             .into_elements()

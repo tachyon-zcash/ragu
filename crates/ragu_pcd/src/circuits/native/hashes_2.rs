@@ -6,7 +6,7 @@
 //!
 //! This circuit completes the Fiat-Shamir transcript started in
 //! [`hashes_1`][super::hashes_1], invoking $5$ Poseidon permutations:
-//! - Resume transcript from saved state via [`Transcript::resume_from`] using
+//! - Resume transcript from saved state via [`Transcript::resume_from_state`] using
 //!   the state witnessed in [`error_n`]. (This state was computed by `hashes_1`
 //!   after absorbing [`nested_error_m_commitment`] and applying the permutation
 //!   to move into squeeze mode.)
@@ -56,7 +56,7 @@
 //! [$\beta$]: unified::Output::pre_beta
 //! [`error_n`]: super::stages::error_n
 //! [`WithSuffix`]: crate::components::suffix::WithSuffix
-//! [`Transcript::resume_from`]: ragu_primitives::transcript::TranscriptExt::resume_from
+//! [`Transcript::resume_from_state`]: ragu_primitives::transcript::TranscriptExt::resume_from_state
 
 use arithmetic::Cycle;
 use ragu_circuits::{
@@ -83,8 +83,8 @@ pub(crate) use super::InternalCircuitIndex::Hashes2Circuit as CIRCUIT_ID;
 
 /// Second hash circuit for Fiat-Shamir challenge derivation.
 ///
-/// See the [module-level documentation] for details on the operations performed
-/// by this circuit.
+/// The [module-level documentation] describes the operations performed by this
+/// circuit.
 ///
 /// [module-level documentation]: self
 pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
@@ -168,8 +168,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 
         // Resume transcript from saved state (error_m already absorbed in hashes_1)
         // and squeeze mu (first challenge from error_m absorption)
-        let mut transcript =
-            Transcript::resume_from(dr, error_n.sponge_state, C::circuit_poseidon(self.params))?;
+        let mut transcript = Transcript::resume_from_state(
+            dr,
+            error_n.sponge_state,
+            C::circuit_poseidon(self.params),
+        );
         let mu = transcript.challenge(dr)?;
         unified_output.mu.set(mu);
 
