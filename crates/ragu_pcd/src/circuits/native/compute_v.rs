@@ -654,9 +654,9 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HE
         (&eval.a_poly,             computed_ax,                                      &d.challenges.x),
         (&eval.b_poly,             computed_bx,                                      &d.challenges.x),
     ])
-    // Stage and circuit evaluations for each child proof at both x and xz
-    // Note: both points are needed to perform circuit checks, which take
-    // the form << r, r \circ z + s_y + t_z >> = k_y.
+    // Stage and circuit evaluations for each child proof at xz only.
+    // The x evaluations are implicitly verified via the a(x) == fold(rx(x)) check.
+    // The xz evaluations are needed for the circuit constraint: b(x) = rx(xz) + s_y + t(xz).
     .chain([(&eval.left, &query.left), (&eval.right, &query.right)]
         .into_iter()
         .flat_map(|(eval, query)| [
@@ -671,7 +671,7 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HE
             (&eval.partial_collapse, &query.partial_collapse),
             (&eval.full_collapse,    &query.full_collapse),
             (&eval.compute_v,        &query.compute_v),
-        ].into_iter().flat_map(|(e, q)| [(e, &q.at_x, &d.challenges.x), (e, &q.at_xz, &d.challenges.xz)])))
+        ].into_iter().map(|(e, q)| (e, &q.at_xz, &d.challenges.xz))))
 }
 
 /// Batch inverter for computing denominators.
