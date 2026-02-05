@@ -84,9 +84,8 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element, GadgetExt,
+    Element, GadgetExt, Transcript, TranscriptExt, TranscriptProtocol,
     io::Write,
-    poseidon::Sponge,
     vec::{ConstLen, FixedVec},
 };
 
@@ -96,6 +95,7 @@ use super::{
     stages::{error_n as native_error_n, preamble as native_preamble},
     unified::{self, OutputBuilder},
 };
+use crate::RAGU_TAG;
 use crate::components::{fold_revdot, root_of_unity, suffix::WithSuffix};
 
 pub(crate) use super::InternalCircuitIndex::Hashes1Circuit as CIRCUIT_ID;
@@ -124,8 +124,8 @@ pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEAD
 
 /// First hash circuit for Fiat-Shamir challenge derivation.
 ///
-/// See the [module-level documentation] for details on the operations
-/// performed by this circuit.
+/// The [module-level documentation] describes the operations performed by this
+/// circuit.
 ///
 /// [module-level documentation]: self
 pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
@@ -226,16 +226,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let unified_instance = &witness.view().map(|w| w.unified_instance);
         let mut unified_output = OutputBuilder::new();
 
-        // Create a single long-lived sponge for all challenge derivations
-        let mut sponge = Sponge::new(dr, C::circuit_poseidon(self.params));
+        // Create a transcript for all challenge derivations
+        let mut transcript = Transcript::new(dr, C::circuit_poseidon(self.params));
+        transcript.domain_sep(dr, RAGU_TAG)?;
 
         // Derive w by absorbing nested_preamble_commitment and squeezing
-        let w = {
+        let w: Element<'_, _> = {
             let nested_preamble_commitment = unified_output
                 .nested_preamble_commitment
                 .get(dr, unified_instance)?;
-            nested_preamble_commitment.write(dr, &mut sponge)?;
-            sponge.squeeze(dr)?
+            nested_preamble_commitment.write(dr, &mut transcript)?;
+            transcript.challenge(dr)?
         };
         unified_output.w.set(w.clone());
 
@@ -244,9 +245,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             let nested_s_prime_commitment = unified_output
                 .nested_s_prime_commitment
                 .get(dr, unified_instance)?;
-            nested_s_prime_commitment.write(dr, &mut sponge)?;
-            let y = sponge.squeeze(dr)?;
-            let z = sponge.squeeze(dr)?;
+            nested_s_prime_commitment.write(dr, &mut transcript)?;
+            let y: Element<'_, _> = transcript.challenge(dr)?;
+            let z: Element<'_, _> = transcript.challenge(dr)?;
             (y, z)
         };
         unified_output.y.set(y.clone());
@@ -272,16 +273,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             right_unified_bridge_ky.enforce_equal(dr, &error_n.right.unified_bridge)?;
         }
 
-        // Absorb nested_error_m_commitment and verify saved sponge state
+        // Absorb nested_error_m_commitment and verify saved transcript state
         {
             let nested_error_m_commitment = unified_output
                 .nested_error_m_commitment
                 .get(dr, unified_instance)?;
-            nested_error_m_commitment.write(dr, &mut sponge)?;
+            nested_error_m_commitment.write(dr, &mut transcript)?;
 
             // save_state() applies a permutation (since there's pending absorbed data)
             // and returns the raw state, ready for squeeze-mode resumption in hashes_2.
-            sponge
+            transcript
                 .save_state(dr)
                 .expect("save_state should succeed after absorbing")
                 .enforce_equal(dr, &error_n.sponge_state)?;

@@ -93,25 +93,24 @@ library_benchmark_group!(
 #[library_benchmark(setup = setup_verify_leaf)]
 #[bench::verify_leaf()]
 fn verify_leaf(
-    (app, leaf, mut rng): (
+    (app, leaf): (
         Application<'static, Pasta, R<13>, 4>,
         Pcd<'static, Pasta, R<13>, nontrivial::LeafNode>,
-        StdRng,
     ),
 ) {
-    black_box(app.verify(&leaf, &mut rng)).unwrap();
+    black_box(app.verify(&leaf)).unwrap();
 }
 
 #[library_benchmark(setup = setup_verify_node)]
 #[bench::verify_node()]
 fn verify_node(
-    (app, node, mut rng): (
+    (app, node, _rng): (
         Application<'static, Pasta, R<13>, 4>,
         Pcd<'static, Pasta, R<13>, nontrivial::InternalNode>,
         StdRng,
     ),
 ) {
-    black_box(app.verify(&node, &mut rng)).unwrap();
+    black_box(app.verify(&node)).unwrap();
 }
 
 #[library_benchmark(setup = setup_verify_node)]
