@@ -82,7 +82,6 @@ pub fn setup_fuse() -> (
 pub fn setup_verify_leaf() -> (
     Application<'static, Pasta, R<13>, 4>,
     Pcd<'static, Pasta, R<13>, nontrivial::LeafNode>,
-    StdRng,
 ) {
     let (app, poseidon_params, mut rng) = setup_seed();
 
@@ -95,7 +94,7 @@ pub fn setup_verify_leaf() -> (
         .unwrap();
     let leaf = proof.carry::<nontrivial::LeafNode>(aux);
 
-    (app, leaf, rng)
+    (app, leaf)
 }
 
 pub fn setup_verify_node() -> (

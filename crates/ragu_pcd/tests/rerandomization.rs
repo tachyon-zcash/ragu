@@ -104,19 +104,19 @@ fn rerandomization_flow() {
 
     let seeded = app.seed(&mut rng, Step0, ()).unwrap().0;
     let seeded = seeded.carry::<HeaderA>(());
-    assert!(app.verify(&seeded, &mut rng).unwrap());
+    assert!(app.verify(&seeded).unwrap());
 
     // Rerandomize
     let seeded = app.rerandomize(seeded, &mut rng).unwrap();
-    assert!(app.verify(&seeded, &mut rng).unwrap());
+    assert!(app.verify(&seeded).unwrap());
 
     let fused = app
         .fuse(&mut rng, Step1, (), seeded.clone(), seeded)
         .unwrap()
         .0;
     let fused = fused.carry::<HeaderA>(());
-    assert!(app.verify(&fused, &mut rng).unwrap());
+    assert!(app.verify(&fused).unwrap());
 
     let fused = app.rerandomize(fused, &mut rng).unwrap();
-    assert!(app.verify(&fused, &mut rng).unwrap());
+    assert!(app.verify(&fused).unwrap());
 }

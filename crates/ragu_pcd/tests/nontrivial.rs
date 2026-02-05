@@ -29,7 +29,7 @@ fn various_merging_operations() -> Result<()> {
         Fp::from(42u64),
     )?;
     let leaf1 = leaf1.0.carry(leaf1.1);
-    assert!(app.verify(&leaf1, &mut rng)?);
+    assert!(app.verify(&leaf1)?);
 
     let leaf2 = app.seed(
         &mut rng,
@@ -39,7 +39,7 @@ fn various_merging_operations() -> Result<()> {
         Fp::from(42u64),
     )?;
     let leaf2 = leaf2.0.carry(leaf2.1);
-    assert!(app.verify(&leaf2, &mut rng)?);
+    assert!(app.verify(&leaf2)?);
 
     let node1 = app.fuse(
         &mut rng,
@@ -52,7 +52,7 @@ fn various_merging_operations() -> Result<()> {
     )?;
     let node1 = node1.0.carry::<InternalNode>(node1.1);
 
-    assert!(app.verify(&node1, &mut rng)?);
+    assert!(app.verify(&node1)?);
 
     Ok(())
 }

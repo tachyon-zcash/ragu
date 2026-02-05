@@ -7,27 +7,40 @@ use ragu_circuits::{
     registry::CircuitIndex,
 };
 use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
-use ragu_primitives::Element;
-use rand::Rng;
+use ragu_primitives::{Element, GadgetExt, Point, Transcript, TranscriptProtocol};
 
 use core::iter::once;
 
 use crate::{
-    Application, Pcd, Proof, circuits::native::stages::preamble::ProofInputs, components::claims,
-    header::Header,
+    Application, Pcd, Proof, RAGU_TAG, circuits::native::stages::preamble::ProofInputs,
+    components::claims, header::Header,
 };
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     /// Verifies some [`Pcd`] for the provided [`Header`].
-    pub fn verify<RNG: Rng, H: Header<C::CircuitField>>(
-        &self,
-        pcd: &Pcd<'_, C, R, H>,
-        mut rng: RNG,
-    ) -> Result<bool> {
-        // Sample verification challenges w, y, and z.
-        let w = C::CircuitField::random(&mut rng);
-        let y = C::CircuitField::random(&mut rng);
-        let z = C::CircuitField::random(&mut rng);
+    ///
+    /// Verification is deterministic and derives all challenges from the
+    /// Fiat-Shamir transcript, reconstructing the same transcript flow used
+    /// during proof generation.
+    pub fn verify<H: Header<C::CircuitField>>(&self, pcd: &Pcd<'_, C, R, H>) -> Result<bool> {
+        // Derive w, y, z from native transcript by replaying the same
+        // commitment sequence as in fuse.
+        let (w, y, z) = Emulator::emulate_wireless(&pcd.proof, |dr, witness| {
+            let proof = witness.take();
+            let mut transcript = Transcript::new(dr, C::circuit_poseidon(self.params));
+            transcript.domain_sep(dr, RAGU_TAG)?;
+
+            let preamble_commitment = Point::constant(dr, proof.preamble.nested_commitment)?;
+            preamble_commitment.write(dr, &mut transcript)?;
+            let w: Element<'_, _> = transcript.challenge(dr)?;
+
+            let s_prime_commitment = Point::constant(dr, proof.s_prime.nested_s_prime_commitment)?;
+            s_prime_commitment.write(dr, &mut transcript)?;
+            let y: Element<'_, _> = transcript.challenge(dr)?;
+            let z: Element<'_, _> = transcript.challenge(dr)?;
+
+            Ok((*w.value().take(), *y.value().take(), *z.value().take()))
+        })?;
 
         // Validate that the application circuit_id is within the registry domain.
         // (Internal circuit IDs are constants and don't need this check.)
@@ -85,8 +98,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // Check all nested revdot claims.
         let nested_revdot_claims = {
             let nested_source = nested::SingleProofSource { proof: &pcd.proof };
-            let y_nested = C::ScalarField::random(&mut rng);
-            let z_nested = C::ScalarField::random(&mut rng);
+
+            // Derive y_nested, z_nested from nested transcript by absorbing
+            // all nested curve commitments.
+            let (y_nested, z_nested) =
+                nested::derive_challenges(&pcd.proof, C::scalar_poseidon(self.params))?;
+
             let mut nested_builder =
                 claims::Builder::new(&self.nested_registry, y_nested, z_nested);
             claims::nested::build(&nested_source, &mut nested_builder)?;
@@ -215,6 +232,49 @@ mod nested {
 
     pub use crate::components::claims::nested::ky_values;
 
+    // TODO: (alex) double-check when nested circuit is available
+    /// Derives nested field challenges $y$ and $z$ from a deterministic
+    /// transcript.
+    ///
+    /// This function absorbs all host curve commitments from the proof in
+    /// the same order as they appear during proof generation, then derives
+    /// two challenges for nested field verification.
+    pub fn derive_challenges<C: Cycle, R: Rank, P>(
+        proof: &Proof<C, R>,
+        poseidon: &P,
+    ) -> Result<(C::ScalarField, C::ScalarField)>
+    where
+        P: arithmetic::PoseidonPermutation<C::ScalarField>,
+    {
+        Emulator::emulate_wireless(proof, |dr, witness| {
+            let proof = witness.take();
+            let mut transcript = Transcript::new(dr, poseidon);
+            transcript.domain_sep(dr, RAGU_TAG)?;
+
+            // Absorb all host curve (native) commitments in order.
+            let preamble_commitment = Point::constant(dr, proof.preamble.native_commitment)?;
+            preamble_commitment.write(dr, &mut transcript)?;
+
+            let error_m_commitment = Point::constant(dr, proof.error_m.native_commitment)?;
+            error_m_commitment.write(dr, &mut transcript)?;
+
+            let error_n_commitment = Point::constant(dr, proof.error_n.native_commitment)?;
+            error_n_commitment.write(dr, &mut transcript)?;
+
+            let query_commitment = Point::constant(dr, proof.query.native_commitment)?;
+            query_commitment.write(dr, &mut transcript)?;
+
+            let eval_commitment = Point::constant(dr, proof.eval.native_commitment)?;
+            eval_commitment.write(dr, &mut transcript)?;
+
+            // Derive challenges.
+            let y: Element<'_, _> = transcript.challenge(dr)?;
+            let z: Element<'_, _> = transcript.challenge(dr)?;
+
+            Ok((*y.value().take(), *z.value().take()))
+        })
+    }
+
     /// Source for nested field rx polynomials for single-proof verification.
     pub struct SingleProofSource<'rx, C: Cycle, R: Rank> {
         pub proof: &'rx Proof<C, R>,
@@ -269,7 +329,6 @@ mod tests {
     use ff::Field;
     use ragu_circuits::{polynomials::R, registry::CircuitIndex};
     use ragu_pasta::Pasta;
-    use rand::{SeedableRng, rngs::StdRng};
 
     type TestR = R<13>;
     const HEADER_SIZE: usize = 4;
@@ -284,7 +343,6 @@ mod tests {
     #[test]
     fn verify_rejects_invalid_circuit_id() {
         let app = create_test_app();
-        let mut rng = StdRng::seed_from_u64(1234);
 
         // Create a valid trivial proof
         let mut proof = app.trivial_proof();
@@ -293,14 +351,13 @@ mod tests {
         proof.application.circuit_id = CircuitIndex::new(u32::MAX as usize);
 
         let pcd = proof.carry::<()>(());
-        let result = app.verify(&pcd, &mut rng).expect("verify should not error");
+        let result = app.verify(&pcd).expect("verify should not error");
         assert!(!result, "verify should reject invalid circuit_id");
     }
 
     #[test]
     fn verify_rejects_wrong_left_header_size() {
         let app = create_test_app();
-        let mut rng = StdRng::seed_from_u64(1234);
 
         // Create a valid trivial proof
         let mut proof = app.trivial_proof();
@@ -310,14 +367,13 @@ mod tests {
             alloc::vec![<Pasta as Cycle>::CircuitField::ZERO; HEADER_SIZE + 1];
 
         let pcd = proof.carry::<()>(());
-        let result = app.verify(&pcd, &mut rng).expect("verify should not error");
+        let result = app.verify(&pcd).expect("verify should not error");
         assert!(!result, "verify should reject wrong left_header size");
     }
 
     #[test]
     fn verify_rejects_wrong_right_header_size() {
         let app = create_test_app();
-        let mut rng = StdRng::seed_from_u64(1234);
 
         // Create a valid trivial proof
         let mut proof = app.trivial_proof();
@@ -327,14 +383,13 @@ mod tests {
             alloc::vec![<Pasta as Cycle>::CircuitField::ZERO; HEADER_SIZE - 1];
 
         let pcd = proof.carry::<()>(());
-        let result = app.verify(&pcd, &mut rng).expect("verify should not error");
+        let result = app.verify(&pcd).expect("verify should not error");
         assert!(!result, "verify should reject wrong right_header size");
     }
 
     #[test]
     fn verify_rejects_corrupted_p_commitment() {
         let app = create_test_app();
-        let mut rng = StdRng::seed_from_u64(1234);
 
         // Create a valid trivial proof
         let mut proof = app.trivial_proof();
@@ -343,14 +398,13 @@ mod tests {
         proof.p.blind = <Pasta as Cycle>::CircuitField::from(999u64);
 
         let pcd = proof.carry::<()>(());
-        let result = app.verify(&pcd, &mut rng).expect("verify should not error");
+        let result = app.verify(&pcd).expect("verify should not error");
         assert!(!result, "verify should reject corrupted P commitment");
     }
 
     #[test]
     fn verify_rejects_corrupted_p_evaluation() {
         let app = create_test_app();
-        let mut rng = StdRng::seed_from_u64(1234);
 
         // Create a valid trivial proof
         let mut proof = app.trivial_proof();
@@ -359,14 +413,13 @@ mod tests {
         proof.p.v = <Pasta as Cycle>::CircuitField::from(12345u64);
 
         let pcd = proof.carry::<()>(());
-        let result = app.verify(&pcd, &mut rng).expect("verify should not error");
+        let result = app.verify(&pcd).expect("verify should not error");
         assert!(!result, "verify should reject corrupted P evaluation");
     }
 
     #[test]
     fn verify_rejects_corrupted_ab_c() {
         let app = create_test_app();
-        let mut rng = StdRng::seed_from_u64(1234);
 
         // Create a valid trivial proof
         let mut proof = app.trivial_proof();
@@ -375,7 +428,7 @@ mod tests {
         proof.ab.c = <Pasta as Cycle>::CircuitField::from(99999u64);
 
         let pcd = proof.carry::<()>(());
-        let result = app.verify(&pcd, &mut rng).expect("verify should not error");
+        let result = app.verify(&pcd).expect("verify should not error");
         assert!(!result, "verify should reject corrupted ab.c value");
     }
 }
