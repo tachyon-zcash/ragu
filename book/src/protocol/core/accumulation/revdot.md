@@ -69,8 +69,8 @@ $$
 where $e_{i,j}=\revdot{\v{a}_i}{\v{b}_j}$ and particularly $e_{i,i} = c_i$.
 Notice the verifier can only compute $\bar{A}^\ast, \bar{B}^\ast$ unassisted.
 To compute $c^\ast$, he needs _cross terms_ $\set{e_{i,j}}_{i\neq j}$ in addition
-to the $\set{c_i}$ terms he already has. For soundness, we require the prover
-to send (thus commit to) these cross terms before the verifier samples $\mu,\nu$.
+to the $\set{c_i}$ terms he already has. For soundness, we require **the prover
+to send (thus commit to) these cross terms before the verifier samples $\mu,\nu$**.
 
 ```admonish tip title="Off-diagonal Error Terms"
 We can also view the expanded expression of $c^\ast$ as the summation of all
@@ -101,7 +101,7 @@ The split-accumulation proceeds as follows:
    $\set{\pi_i}$ to be accumulated into the instance-witness pair
    [as above](#intuition).
    The verifier holds $\set{\bar{A}_i,\bar{B}_i, c_i}_{i\in[n]}$.
-2. Prover sends all $(n-1)^2$ (off-diagonal) error terms $\set{e_{i,j}}_{i\neq j}$.
+2. Prover sends all $n^2-n$ (off-diagonal) error terms $\set{e_{i,j}}_{i\neq j}$.
 3. Verifier samples $\mu,\nu \sample\F$
 4. Prover updates the folded witness:
    $$
