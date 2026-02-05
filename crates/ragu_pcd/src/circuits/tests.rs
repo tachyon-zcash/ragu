@@ -40,7 +40,7 @@ fn test_internal_circuit_constraint_counts() {
 
     macro_rules! check_constraints {
         ($variant:ident, mul = $mul:expr, lin = $lin:expr) => {{
-            let idx = InternalCircuitIndex::$variant.circuit_index().as_usize();
+            let idx: usize = InternalCircuitIndex::$variant.circuit_index().into();
             let circuit = &circuits[idx];
             let (actual_mul, actual_lin) = circuit.constraint_counts();
             assert_eq!(
@@ -116,7 +116,7 @@ fn print_internal_circuit_constraint_counts() {
 
     println!("\n// Copy-paste the following into test_internal_circuit_constraint_counts:");
     for (name, variant) in variants {
-        let idx = variant.circuit_index().as_usize();
+        let idx: usize = variant.circuit_index().into();
         let circuit = &circuits[idx];
         let (mul, lin) = circuit.constraint_counts();
         println!(

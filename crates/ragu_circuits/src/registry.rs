@@ -44,11 +44,6 @@ impl CircuitIndex {
         Self(index)
     }
 
-    /// Returns the index as a `usize` value.
-    pub const fn as_usize(self) -> usize {
-        self.0 as usize
-    }
-
     /// Returns $\omega^j$ field element that corresponds to this $i$th circuit index.
     ///
     /// The $i$th circuit added to any [`Registry`] (for a given [`PrimeField`] `F`) is
@@ -63,6 +58,12 @@ impl CircuitIndex {
     pub fn omega_j<F: PrimeField>(self) -> F {
         let bit_reversal_id = bitreverse(self.0, F::S);
         F::ROOT_OF_UNITY.pow([bit_reversal_id.into()])
+    }
+}
+
+impl From<CircuitIndex> for usize {
+    fn from(idx: CircuitIndex) -> usize {
+        idx.0 as usize
     }
 }
 
