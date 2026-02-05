@@ -168,7 +168,7 @@ fn test_native_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fp!(0x37bb48348c8d38b30ddab959d1197782c8ab2123e1a529623b66ebcf7fa394b5);
+    let expected = fp!(0x336fe151bbfe923a4d5723a2f7a8697adb55a64f86fde7a398d63132cc7ed367);
 
     assert_eq!(
         app.native_registry.key().value(),
