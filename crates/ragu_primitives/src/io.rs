@@ -82,8 +82,8 @@ pub trait Buffer<'dr, D: Driver<'dr>> {
 /// impl FromElements<'dr, D, N> for [Element<'dr, D>; N] { ... }
 /// ```
 ///
-/// [`challenge`]: (crate::transcript::TranscriptProtocol::challenge)
-/// [`enforce_consistency`]: (ragu_core::gadgets::Consistent::enforce_consistency)
+/// [`challenge`]: crate::transcript::TranscriptProtocol::challenge
+/// [`enforce_consistency`]: ragu_core::gadgets::Consistent::enforce_consistent
 pub trait FromElements<'dr, D: Driver<'dr>, const N: usize>: Sized {
     /// Construct this type from exactly `N` field elements.
     fn from_elements(dr: &mut D, elements: [Element<'dr, D>; N]) -> Result<Self>;

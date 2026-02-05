@@ -4,7 +4,7 @@
 //! operations, along with a concrete [`Transcript`] implementation that wraps
 //! around the Poseidon [`Sponge`].
 //!
-//! ## Usage
+//! ### Usage
 //!
 //! ```rust
 //! use ragu_primitives::{Transcript, TranscriptProtocol, GadgetExt, Element, vec::{FixedVec, ConstLen}};
@@ -35,10 +35,10 @@
 //! let challenges: [Element<'_, _>; 4] = transcript.challenge(&mut dr).unwrap();
 //! ```
 //!
-//! ## Save/Resume for Multi-Circuit Transcripts
+//! ### Save/Resume for Multi-Circuit Transcripts
 //!
 //! The transcript supports multi-circuit protocols via [`save_state`](TranscriptExt::save_state)
-//! and [`resume_from`](TranscriptExt::resume_from), allowing state to be passed
+//! and [`resume_from_state`](TranscriptExt::resume_from_state), allowing state to be passed
 //! between circuits with constraint-checked continuity.
 
 use arithmetic::PoseidonPermutation;
@@ -61,8 +61,8 @@ pub trait TranscriptProtocol<'dr, D: Driver<'dr>>: Buffer<'dr, D> {
     /// Apply domain separation.
     ///
     /// This should be called once at initialization to bind the transcript to a
-    /// protocol context. The tag is absorbed as field elements (8 bytes per
-    /// element via u64 conversion).
+    /// protocol context. The tag is absorbed as field elements (16 bytes per
+    /// element via u128 conversion).
     ///
     /// # Example
     ///
@@ -140,14 +140,14 @@ pub trait TranscriptExt<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>>:
     ///
     /// This consumes the transcript and applies a permutation to transition
     /// into squeeze mode. The returned state can be passed to another circuit
-    /// for resumption via [`Self::resume_from`].
+    /// for resumption via [`Self::resume_from_state`].
     ///
     /// # Usage
     ///
     /// ```rust,ignore
     /// let state = transcript.save_state(dr)?;
     /// // Pass `state` to another circuit...
-    /// let mut transcript = Transcript::resume_from(dr, state, params)?;
+    /// let mut transcript = Transcript::resume_from_state(dr, state, params);
     /// let c: Element<'dr, D> = transcript.challenge(dr)?;
     /// ```
     fn save_state(self, dr: &mut D) -> core::result::Result<TranscriptState<'dr, D, P>, SaveError>;
@@ -156,14 +156,10 @@ pub trait TranscriptExt<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>>:
     ///
     /// After resuming, call [`TranscriptProtocol::challenge`] to squeeze
     /// challenges.
-    fn resume_from(dr: &mut D, state: TranscriptState<'dr, D, P>, params: &'dr P) -> Result<Self>;
+    fn resume_from_state(dr: &mut D, state: TranscriptState<'dr, D, P>, params: &'dr P) -> Self;
 }
 
 /// Transcript wrapper around Poseidon [`Sponge`] for Fiat-Shamir transforms.
-///
-/// See the [module-level documentation] for design details.
-///
-/// [module-level documentation]: self
 pub struct Transcript<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> {
     sponge: Sponge<'dr, D, P>,
     params: &'dr P,
@@ -195,11 +191,6 @@ impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> Transcript<'dr, D, P> {
             params,
         }
     }
-
-    /// Explicitly clone the transcript for save_state pattern.
-    pub fn clone_for_save(&self) -> Self {
-        self.clone()
-    }
 }
 
 impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> Buffer<'dr, D> for Transcript<'dr, D, P> {
@@ -218,9 +209,9 @@ where
         self.sponge.save_state(dr)
     }
 
-    fn resume_from(dr: &mut D, state: TranscriptState<'dr, D, P>, params: &'dr P) -> Result<Self> {
+    fn resume_from_state(dr: &mut D, state: TranscriptState<'dr, D, P>, params: &'dr P) -> Self {
         let sponge = Sponge::resume(dr, state, params);
-        Ok(Transcript { sponge, params })
+        Transcript { sponge, params }
     }
 }
 
@@ -284,7 +275,7 @@ mod tests {
             .expect("save_state should succeed");
 
         let mut transcript2 =
-            Transcript::resume_from(&mut dr, state, Pasta::circuit_poseidon(params))?;
+            Transcript::resume_from_state(&mut dr, state, Pasta::circuit_poseidon(params));
         let challenge2: Element<'_, _> = transcript2.challenge(&mut dr)?;
 
         // Both flows should produce the same challenge

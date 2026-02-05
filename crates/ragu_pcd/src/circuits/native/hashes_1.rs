@@ -124,8 +124,8 @@ pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEAD
 
 /// First hash circuit for Fiat-Shamir challenge derivation.
 ///
-/// See the [module-level documentation] for details on the operations
-/// performed by this circuit.
+/// The [module-level documentation] describes the operations performed by this
+/// circuit.
 ///
 /// [module-level documentation]: self
 pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
