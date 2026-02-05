@@ -24,6 +24,18 @@ cargo test --all-features <test_name>
 - `just bench` - Auto-detects platform (Linux native, macOS uses Docker)
 - macOS benchmarks run in Docker with valgrind for profiling
 
+### Worktree Setup
+
+When creating a new worktree, if `CLAUDE.md` and `.claude/` are not version controlled, create symlinks to them from the main worktree:
+
+```bash
+# From the new worktree directory
+ln -s ../path/to/main/CLAUDE.md CLAUDE.md
+ln -s ../path/to/main/.claude .claude
+```
+
+This ensures consistent configuration and guidance across all worktrees.
+
 ### Tool Preferences
 
 When running terminal commands, respect the following preference, fallback to default option if unavailable:
