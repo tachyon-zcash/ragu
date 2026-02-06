@@ -42,7 +42,7 @@ Traditionally, most zkSNARK toolkits bundle witness generation and constraint sy
 
 Ragu supports non-uniform circuits without a traditional pre-processing step, so circuit synthesis is frequently invoked and becomes a performance-critical hot path. We need to optimize polynomial reductions, but without storing gigantic polynomials with all coefficients and indeterminates in memory.
 
-When writing gadgets with the `GadgetKind` trait, you'll work with `Maybe<T>` values - see the [GadgetKind](./gadgets/gadgetkind.md) section for practical examples of how this abstraction is used.
+When writing gadgets with the `GadgetKind` trait, you'll work with `Maybe<T>` values - see [Gadget Implementation](../implementation/gadgets.md) for details on how gadgets interact with drivers.
 
 ## Available Drivers
 
