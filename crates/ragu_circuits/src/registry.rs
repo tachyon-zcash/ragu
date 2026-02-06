@@ -386,16 +386,7 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
 
     /// Evaluate the registry polynomial unrestricted at $W$.
     pub fn xy(&self, x: F, y: F) -> unstructured::Polynomial<F, R> {
-        let mut coeffs = unstructured::Polynomial::default();
-        for (i, circuit) in self.circuits.iter().enumerate() {
-            let j = bitreverse(i as u32, self.domain.log2_n()) as usize;
-            coeffs[j] = circuit.sxy(x, y, &self.key);
-        }
-        // Convert from the Lagrange basis.
-        let domain = &self.domain;
-        domain.ifft(&mut coeffs[..domain.n()]);
-
-        coeffs
+        self.xy_with_evals(x, y).into_poly()
     }
 
     /// Evaluate the registry polynomial at $(x, y)$, returning both the polynomial
