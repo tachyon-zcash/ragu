@@ -1,22 +1,26 @@
 # Drivers
 
-The **driver** abstraction provides a unified interface that enables the same circuit code to work across different execution contexts. A driver is a compile-time specialized backend interpreter that determines how circuit operations are executed at runtime.
+The **driver** abstraction provides a unified interface that enables the same circuit code to work across different execution contexts. A driver is a compile-time specialized backend that determines how a circuit is handled at runtime.
 
 Circuits are written generically over the `Driver` trait. They invoke generic driver operations like `driver.mul()` and `driver.enforce_zero()` that each driver interprets differently. Each synthesis invocation is a deterministic pass over the circuit definition with a different backend "interpreter" that computes and extracts different information. For example, the `SXY` driver builds wiring polynomials *S(X, Y)* during registry construction (canonically referred to as circuit synthesis), and the `RX` driver generates witness polynomials *R(X)*.
 
-The driver exposes operations (for instance `driver.mul()` for encoding multiplication gates and `driver.enforce_zero()` for enforcing linear constraints) while hiding implementation details. Since R1CS supports *virtual wires* (unlimited fan-in addition gates are free via `driver.add()`), the driver can handle both "in-circuit" operations that contribute to the constraint counts and "out-of-circuit" computations like witness generation.
+The driver exposes operations (for instance `driver.mul()` for encoding multiplication gates and `driver.enforce_zero()` for enforcing linear constraints) while hiding implementation details. Since [R1CS][r1cs-concept] supports *virtual wires* (unlimited fan-in addition gates are free via `driver.add()`), the driver can handle both "in-circuit" operations that contribute to the constraint counts and "out-of-circuit" computations like witness generation.
 
 ## Execution Contexts
 
 There are different kinds of execution we're particularly interested in distinguishing between:
 
-### 1. In-circuit versus out-of-circuit
+### In-circuit versus out-of-circuit
 
 Recursive proofs require algorithms to execute both as circuit constraints (in-circuit) and as direct computations (out-of-circuit). Writing these algorithms generically over the `Driver` trait ensures the same implementation works in both contexts, maintaining consistency for completeness with little runtime overhead.
 
-### 2. Witness generation versus constraint synthesis
+### Witness generation versus constraint synthesis
 
-Drivers specify a `MaybeKind` associated type in the `DriverTypes` trait, which determines how witness information is represented. The `DriverValue<D, T>` is a type alias for the concrete `Maybe<T>` type for driver `D`, where `T` is the type of the witness data being wrapped. The alias resolves to different concrete types based on the driver's `MaybeKind`:
+**Constraint synthesis** builds the circuit's structure—determining what wires exist, what multiplication gates connect them, and what linear constraints they must satisfy. It answers: "What truths must hold?"
+
+**Witness generation** computes the actual field element values that satisfy those constraints. It answers: "Do these truths hold?"
+
+These are logically separate operations. Drivers specify a `MaybeKind` associated type in the `DriverTypes` trait, which determines how witness information is represented. The `DriverValue<D, T>` is a type alias for the concrete `Maybe<T>` type for driver `D`, where `T` is the type of the witness data being wrapped. The alias resolves to different concrete types based on the driver's `MaybeKind`:
 
 **SXY Driver**: Builds the circuit structure without computing witness values. Sets `MaybeKind = Empty` (witness closures passed to `driver.alloc()` and `driver.mul()` are never called, compiler optimizes them away) and `Wire = Wire<F>` (tracks wire assignments as powers of X and constraints on those wires as powers of Y). Together these construct the polynomial *S(X,Y)* encoding.
 
@@ -24,7 +28,7 @@ Drivers specify a `MaybeKind` associated type in the `DriverTypes` trait, which 
 
 This type-level parameterization ensures that witness computation is only executed when the driver's `MaybeKind` requires it.
 
-### 3. Different synthesis contexts
+### Different synthesis contexts
 
 Beyond `SXY` and `RX` drivers, the `Emulator` driver executes circuit code directly without enforcing constraints, and the `Simulator` driver fully simulates synthesis and validates constraints for testing purposes.
 
@@ -52,3 +56,5 @@ When writing gadgets with the `GadgetKind` trait, you'll work with `Maybe<T>` va
 - **Simulator** - Full synthesis simulation with validation
 
 For implementation details, see [Driver Architecture](../implementation/drivers/index.md).
+
+[r1cs-concept]: ../concepts/r1cs.md
