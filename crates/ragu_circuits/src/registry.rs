@@ -84,8 +84,10 @@ pub struct RegistryBuilder<'params, F: PrimeField, R: Rank> {
     internal_masks: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
     internal_circuits: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
     application_steps: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
-    /// Routine registries for floor planning, one per circuit in concatenation order.
-    routine_registries: Vec<RoutineRegistry>,
+    /// Routine registries for each category, chained in finalize() to match circuit order.
+    internal_mask_registries: Vec<RoutineRegistry>,
+    internal_circuit_registries: Vec<RoutineRegistry>,
+    application_registries: Vec<RoutineRegistry>,
 }
 
 impl<F: PrimeField, R: Rank> Default for RegistryBuilder<'_, F, R> {
@@ -101,7 +103,9 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
             internal_masks: Vec::new(),
             internal_circuits: Vec::new(),
             application_steps: Vec::new(),
-            routine_registries: Vec::new(),
+            internal_mask_registries: Vec::new(),
+            internal_circuit_registries: Vec::new(),
+            application_registries: Vec::new(),
         }
     }
 
@@ -138,7 +142,7 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
         C: Circuit<F> + 'params,
     {
         self.application_steps.push(circuit.into_object()?);
-        self.routine_registries.push(routine_registry);
+        self.application_registries.push(routine_registry);
         Ok(self)
     }
 
@@ -160,7 +164,7 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
         C: Circuit<F> + 'params,
     {
         self.internal_circuits.push(circuit.into_object()?);
-        self.routine_registries.push(routine_registry);
+        self.internal_circuit_registries.push(routine_registry);
         Ok(self)
     }
 
@@ -170,7 +174,7 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
         S: Stage<F, R>,
     {
         self.internal_masks.push(S::mask()?);
-        self.routine_registries.push(RoutineRegistry::new());
+        self.internal_mask_registries.push(RoutineRegistry::new());
         Ok(self)
     }
 
@@ -180,7 +184,7 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
         S: Stage<F, R>,
     {
         self.internal_masks.push(S::final_mask()?);
-        self.routine_registries.push(RoutineRegistry::new());
+        self.internal_mask_registries.push(RoutineRegistry::new());
         Ok(self)
     }
 
@@ -230,8 +234,14 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
             omega_lookup.insert(omega_j, i);
         }
 
-        // Compute floor plan from routine registries.
-        let registry_refs: Vec<&RoutineRegistry> = self.routine_registries.iter().collect();
+        // Compute floor plan from routine registries, chained in the same order as circuits.
+        let routine_registries: Vec<RoutineRegistry> = self
+            .internal_mask_registries
+            .into_iter()
+            .chain(self.internal_circuit_registries)
+            .chain(self.application_registries)
+            .collect();
+        let registry_refs: Vec<&RoutineRegistry> = routine_registries.iter().collect();
         let floor_plan = FloorPlan::from_registries(&registry_refs, R::n());
 
         // Create provisional registry (circuits still have placeholder K).
