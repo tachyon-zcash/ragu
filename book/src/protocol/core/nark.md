@@ -2,9 +2,9 @@
 
 ## Revdot Products to Polynomial Predicates
 
-Let's start with where we ended up in our arithmetization. The satisfiability
-of our [Bootle16 constraint system](./arithmetization.md) culminates in a
-single [consolidated constraint](./arithmetization.md#consolidated-constraints):
+We begin with the final form from our arithmetization. The satisfiability of
+our [Bootle16 constraint system](./arithmetization.md) culminates in a single
+[consolidated constraint](./arithmetization.md#consolidated-constraints):
 
 $$\revdot{\v{r}}{\v{r} \circ{\v{z^{4n}}} - \v{t} + \v{s}} = \dot{\v{k}}{\v{y^{4n}}}$$
 
@@ -16,10 +16,10 @@ $\v{s}=(\v{0^n}\| \sum_{j=0}^{4n-1}y^j\cdot\rv{u}_j \| \sum_j y^j\cdot\v{v}_j \|
 $\v{t} = (\v{0^{3n}}\|\, (\rv{z}^{\bf n:2n} + \v{z}^{\bf 2n:3n})\cdot \rv{1})$
 - the public input vector $\v{k}\in\F^{4n}$
 
-Now we need to express this in terms of polynomials. The connection comes from
-a fundamental property of polynomial multiplication: the coefficients of a
-product polynomial are discrete convolutions. For polynomials $p, q\in\F[X]$
-with coefficient vectors $\v{p}, \v{q}\in\F^{4n}$:
+We now express this in terms of polynomials. The connection comes from a
+fundamental property of polynomial multiplication: the coefficients of a product
+polynomial are discrete convolutions. For polynomials $p, q\in\F[X]$ with
+coefficient vectors $\v{p}, \v{q}\in\F^{4n}$:
 
 $$
 p(X)\cdot q(X) =c(X)= \sum_{k=0}^{8n-2}c_k\cdot X^k
@@ -27,16 +27,16 @@ p(X)\cdot q(X) =c(X)= \sum_{k=0}^{8n-2}c_k\cdot X^k
 \text{ and } c_{4n-1}=\revdot{\v{p}}{\v{q}}
 $$
 
-This is exactly what we need! If we multiply $\hat{r}(X)\cdot r(zX)$, the
+This is exactly what we need. If we multiply $\hat{r}(X)\cdot r(zX)$, the
 coefficient of its $X^{4n-1}$ term equals
-$\revdot{\v{r}}{\v{r} \circ{\v{z^{4n}}}}$—the left side of our constraint.
+$\revdot{\v{r}}{\v{r} \circ{\v{z^{4n}}}}$, which is the left side of our
+constraint.
 
-But there's a problem. Our witness polynomials have degree less than $4n$, so
-their product $c(X)$ has degree up to $8n-2$. We could commit to this
-product directly, but that's expensive—committing to degree-$8n$ polynomials
-costs roughly twice as much as degree-$4n$ polynomials. And we only care about
-one coefficient (the $c_{4n-1}$ term), so paying double for the whole thing
-seems wasteful.
+However, a direct approach faces an efficiency problem. Our witness polynomials
+have degree less than $4n$, so their product $c(X)$ has degree up to $8n-2$.
+Committing to this product directly is expensive: degree-$8n$ polynomials cost
+roughly twice as much as degree-$4n$ polynomials. Since we only need one
+coefficient (the $c_{4n-1}$ term), this cost is wasteful.
 
 ### The Decomposition Trick
 
@@ -47,29 +47,29 @@ $$c(X) = c_{lo}(X) + X^{4n}\cdot c_{hi}(X)$$
 where $\v{c}_{lo}=\v{c}_{[:4n]}\in\F^{4n}$ and $\v{c}_{hi}=\v{c}_{[4n:]}\in\F^{4n-1}$.
 Both pieces now have degree less than $4n$, which is exactly what we want.
 
-But we still need to extract that $c_{4n-1}$ coefficient—it's buried as the
-last coefficient of $c_{lo}$. This is where the reversal trick comes in. Define:
+We still need to extract the $c_{4n-1}$ coefficient, which appears as the last
+coefficient of $c_{lo}$. The reversal trick accomplishes this. Define:
 
 $$c_1(X)=\hat{c}_{lo}(X), \quad c_2(X)=c_{hi}(X)$$
 
 By reversing the coefficient vector of $c_{lo}$, we get
-$\v{c}_1=\rv{c}_{lo}=(c_{4n-1},\ldots,c_0)$. Notice what happened: **the
-coefficient we care about, $c_{4n-1}$, is now the constant term of $c_1(X)$**.
-And we can check the constant term by evaluating at zero.
+$\v{c}_1=\rv{c}_{lo}=(c_{4n-1},\ldots,c_0)$. **The coefficient we care about,
+$c_{4n-1}$, is now the constant term of $c_1(X)$**. We can check the constant
+term by evaluating at zero.
 The prover commits to $c_1(X)$ and $c_2(X)$, and the verifier can:
 1. Check the decomposition is correct by querying at a random point $x$
 2. Extract the coefficient value by querying $c_1(0)$
 
-That's the transformation: we've turned a coefficient check into evaluation
-queries that our PCS can handle efficiently.
+This transformation converts a coefficient check into evaluation queries that
+our PCS can handle efficiently.
 
 ## Polynomial IOP
 
-Now that we understand how to turn our coefficient check into polynomial
-evaluations, let's build out the complete Polynomial IOP protocol.
+Having established how to convert coefficient checks into polynomial
+evaluations, we now construct the complete Polynomial IOP protocol.
 
-We'll start by taking all those coefficient vectors from our arithmetization
-and interpreting them as polynomials.
+We begin by interpreting the coefficient vectors from our arithmetization as
+polynomials.
 
 - **witness polynomial**:
   $r(X)=\sum_{i=0}^{n-1} (c_iX^i+b_iX^{2n-1-i}+a_iX^{2n+i})$
@@ -87,10 +87,10 @@ and interpreting them as polynomials.
   $t(X, Z)=\sum_{i=0}^{n-1} (Z^{2n-1-i}+Z^{2n+i})\cdot X^{4n-1-i}$
 - **public input polynomial**: $k(Y) = \sum_{j=0}^{4n-1} \v{k}_j\cdot Y^j$
 
-We'll use the notation $\mathcal{O}^p$ for a polynomial oracle provided by the
-prover. Think of an oracle as a black box that the verifier can query—they can
-ask "what does $p$ evaluate to at point $z$?" and get back both the answer and
-a proof it's correct. When we compile this with a PCS later, these oracles
+We use the notation $\mathcal{O}^p$ for a polynomial oracle provided by the
+prover. An oracle is a black box that the verifier can query: the verifier
+requests an evaluation of $p$ at point $z$ and receives both the answer and a
+proof of correctness. When we compile this with a PCS later, these oracles
 become polynomial commitments with evaluation proofs.
 
 ```mermaid
@@ -111,7 +111,7 @@ sequenceDiagram
     Note over V: query oracles and verify predicates
 ```
 
-Here's how the protocol flows:
+The protocol proceeds as follows:
 
 1. **Setup**: The circuit polynomials $s(X, Y)$ and $t(X, Z)$ are shared
    between prover and verifier. These encode the structure of the circuit and
@@ -135,7 +135,7 @@ Here's how the protocol flows:
 ### The Verification Checks
 
 The verifier samples a random point $x\sample\F$ and queries the oracles at
-specific points. Let's walk through what gets checked and why:
+specific points to verify the following checks:
 
 The verifier queries:
 - $\mathcal{O}^r$ at $0, x, xz$
@@ -155,16 +155,15 @@ $$
 \end{cases}
 $$
 
-The first equation checks that $c_1(X)$ and $c_2(X)$ are actually the
-decomposition of the product polynomial. The second equation is the main
-constraint check—remember, $c_1(0)$ extracts the coefficient we care about. The
-third equation enforces that the first element of the witness is the public
-constant `ONE`, which is a convention in our constraint system.
+The first equation checks that $c_1(X)$ and $c_2(X)$ are the decomposition of
+the product polynomial. The second equation is the main constraint check, where
+$c_1(0)$ extracts the coefficient $c_{4n-1}$ that we need to verify. The third
+equation enforces that the first element of the witness is the public constant
+`ONE`, which is a convention in our constraint system.
 
 ### Performance Characteristics
 
-This PIOP works, but it's not as efficient as we'd like. Here are the main
-bottlenecks:
+This PIOP is correct but has several efficiency bottlenecks:
 
 **Prover overhead**: Computing the product polynomial $\hat{r}(X) \cdot r(zX)$
 and then decomposing it into $c_1(X)$ and $c_2(X)$ is expensive. We need at
@@ -188,10 +187,10 @@ of the product polynomial before decomposing.
 
 ## NARK
 
-We now compile our Polynomial IOP into a concrete proof system. This requires
+We now compile our Polynomial IOP into a concrete proof system, which requires
 two components: a Polynomial Commitment Scheme (PCS) to instantiate the
-oracles, and the Fiat-Shamir transformation to make everything non-interactive.
-The result is a Non-interactive Argument of Knowledge (NARK).
+oracles, and the Fiat-Shamir transformation to make the protocol
+non-interactive. The result is a Non-interactive Argument of Knowledge (NARK).
 
 We present the interactive version for clarity. The non-interactive version
 follows directly by replacing verifier challenges with hash-derived values.
@@ -236,10 +235,10 @@ the correct commitment to partially evaluated univariate polynomial $s(X,y)$
      aggregated blinding factors to the verifier who can recompute $P\in\G$,
      and checks $p(u)\iseq v$
 
-[^resend-A]: In this standalone NARK,
-$a(X)=r(X), \bar{A}=\bar{R}$, since $\bar{R}$ is already sent in Step 1,
-technically we don't need to resend the $\bar{A}$ here. We present as such to be
-structurally similar to the NARK for $\Rel_{merge}$ relation later.
+[^resend-A]: In this standalone NARK, $a(X)=r(X), \bar{A}=\bar{R}$. Since
+$\bar{R}$ is already sent in Step 1, we do not technically need to resend
+$\bar{A}$ here. We present it this way to maintain structural similarity to the
+NARK for the $\Rel_{merge}$ relation later.
 
 ### Proof Structure
 
@@ -256,16 +255,15 @@ $$\pi.\wit=(\v{s},\v{a},\v{b},\gamma_a,\gamma_b,F, evals', \v{p})$$
 where $F\in\G$ and $evals'\in\F^4$ are prover messages from the PCS
 aggregation subroutine.
 
-The verifier runs in sublinear time _except for the three subprotocols_: wiring
-consistency, revdot product, and PCS evaluations. Our goal is to use
-[split-accumulation](./accumulation/index.md) to accumulate the claims and defer
-the actual expensive checks, achieving an overall sublinear partial verifier
-suitable for recursion.
+The verifier runs in sublinear time except for three subprotocols: wiring
+consistency, revdot product, and PCS evaluations. [Split-accumulation](./accumulation/index.md)
+allows us to accumulate these claims and defer the expensive checks, achieving
+an overall sublinear partial verifier suitable for recursion.
 
 ### Design Rationale
 
-This protocol makes several choices that seem strange for a standalone NARK but
-exist for a reason: they prepare us for recursion.
+This protocol makes several choices that appear unusual for a standalone NARK
+but serve to prepare for recursion.
 
 **Why separate $\bar{A}$ from $\bar{R}$?**<br>
 During [recursion](../recursion/index.md), the witness polynomial commitment
@@ -273,30 +271,32 @@ $\bar{R}$ binds the current step's witness, while $\bar{A}$ is an aggregated
 commitment for a batch of accumulated revdot product statements. By separating
 them now, our NARK is structurally similar to the eventual recursion logic.
 
-**Why run PCS evaluation protocol at all?**<br> In step 5, the
-verifier receives the full $\v{a}$, so why run an evaluation protocol for
-$a(x)$ and $a(xz)$? During actual recursion, the prover never sends polynomial
-coefficients directly. Instead, commitments in evaluation claims are accumulated
-forward. Our NARK is consistent with future recursion in its modular presentation.
+**Why run PCS evaluation protocol at all?**<br> In step 5, the verifier
+receives the full $\v{a}$, which would seem to make an evaluation protocol for
+$a(x)$ and $a(xz)$ unnecessary. During actual recursion, however, the prover
+never sends polynomial coefficients directly. Instead, commitments in evaluation
+claims are accumulated forward. Our NARK maintains consistency with future
+recursion through its modular presentation.
 
 **Why no zero-knowledge?**<br> The prover sends unmasked witness vectors
-$\v{a},\v{b}$, making this NARK not zero-knowledge. This is intentional. Ragu
-avoids leakage through **rerandomization** rather than requiring zero-knowledge
-NARK. Each PCD step can merge with a random trivial proof to rerandomize the
-original proof. This differs from [[BCLMS21]](https://eprint.iacr.org/2020/1618),
-which builds zk-PCD from a split-accumulation scheme for zk-NARK.
+$\v{a},\v{b}$, which means this NARK is not zero-knowledge. This is
+intentional. Ragu avoids leakage through **rerandomization** rather than
+requiring a zero-knowledge NARK. Each PCD step can merge with a random trivial
+proof to rerandomize the original proof. This differs from
+[[BCLMS21]](https://eprint.iacr.org/2020/1618), which builds zk-PCD from a
+split-accumulation scheme for zk-NARK.
 
-**Why verify the revdot product directly?**<br> The prover cannot simply check
-revdot relation by evaluating $a(x)\cdot b(x)$ at a random point $x$ because the
-product polynomial has degree $8n-2$, exceeding our $4n-1$ degree bound. This
-breaks the knowledge extractor for the PCS, which in turn breaks knowledge
-soundness of the NARK. We could avoid the revdot product subprotocol by using
-polynomial decomposition as in the PIOP section. That approach maintains low
-polynomial degrees but requires expensive FFTs. Instead, we verify the revdot
-product directly, accepting slightly larger proof size in exchange for better
-prover performance. At PCD tree locations where succinctness is critical, we
-can switch to the decomposition variant.
+**Why verify the revdot product directly?**<br> The prover cannot check the
+revdot relation by evaluating $a(x)\cdot b(x)$ at a random point $x$ because
+the product polynomial has degree $8n-2$, which exceeds our $4n-1$ degree
+bound. This breaks the knowledge extractor for the PCS, which in turn breaks
+knowledge soundness of the NARK. We could avoid the revdot product subprotocol
+by using polynomial decomposition as in the PIOP section. That approach
+maintains low polynomial degrees but requires expensive FFTs. Instead, we verify
+the revdot product directly, accepting slightly larger proof size in exchange
+for better prover performance. At PCD tree locations where succinctness is
+critical, we can switch to the decomposition variant.
 
-These design choices will make sense once we elaborate the
-[recursion logic](../recursion/index.md). For now, convincing yourself that
-our NARK is complete and sound is sufficient.
+These design choices become clear when we elaborate the
+[recursion logic](../recursion/index.md). For now, verifying that our NARK is
+complete and sound is sufficient.
