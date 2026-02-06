@@ -18,7 +18,7 @@ use ragu_core::{
     maybe::{Always, Maybe},
 };
 use ragu_primitives::{Element, vec::FixedVec};
-use rand::Rng;
+use rand::CryptoRng;
 
 use crate::{
     Application,
@@ -37,7 +37,7 @@ use crate::{
 type NativeN = <NativeParameters as fold_revdot::Parameters>::N;
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
-    pub(super) fn compute_errors_n<'dr, D, RNG: Rng>(
+    pub(super) fn compute_errors_n<'dr, D, RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         preamble_witness: &native::stages::preamble::Witness<'_, C, R, HEADER_SIZE>,

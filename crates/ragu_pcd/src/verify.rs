@@ -8,7 +8,7 @@ use ragu_circuits::{
 };
 use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::Element;
-use rand::Rng;
+use rand::CryptoRng;
 
 use core::iter::once;
 
@@ -19,7 +19,7 @@ use crate::{
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     /// Verifies some [`Pcd`] for the provided [`Header`].
-    pub fn verify<RNG: Rng, H: Header<C::CircuitField>>(
+    pub fn verify<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         pcd: &Pcd<'_, C, R, H>,
         mut rng: RNG,

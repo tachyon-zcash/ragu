@@ -21,7 +21,7 @@ use ragu_core::{
     maybe::{Always, Maybe},
 };
 use ragu_primitives::Element;
-use rand::Rng;
+use rand::CryptoRng;
 
 use alloc::vec::Vec;
 
@@ -30,7 +30,7 @@ use crate::{
 };
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
-    pub(super) fn compute_f<'dr, D, RNG: Rng>(
+    pub(super) fn compute_f<'dr, D, RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         w: &Element<'dr, D>,

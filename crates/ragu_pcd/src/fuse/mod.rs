@@ -22,7 +22,7 @@ use ragu_circuits::{
 };
 use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{GadgetExt, Point, poseidon::Sponge, vec::CollectFixed};
-use rand::Rng;
+use rand::CryptoRng;
 
 use crate::{
     Application, Pcd, Proof,
@@ -48,7 +48,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     ///   [`Step::Left`] header.
     /// * `right`: the right [`Pcd`] to fuse in this step; must correspond to
     ///   the [`Step::Right`] header.
-    pub fn fuse<'source, RNG: Rng, S: Step<C>>(
+    pub fn fuse<'source, RNG: CryptoRng, S: Step<C>>(
         &self,
         rng: &mut RNG,
         step: S,
