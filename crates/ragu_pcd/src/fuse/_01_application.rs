@@ -10,7 +10,7 @@ use arithmetic::Cycle;
 use ff::Field;
 use ragu_circuits::{CircuitExt, polynomials::Rank};
 use ragu_core::Result;
-use rand::{CryptoRng, Rng};
+use rand::CryptoRng;
 
 use crate::{
     Application, Pcd, Proof, proof,
@@ -18,7 +18,7 @@ use crate::{
 };
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
-    pub(super) fn compute_application_proof<'source, RNG: Rng + CryptoRng, S: Step<C>>(
+    pub(super) fn compute_application_proof<'source, RNG: CryptoRng, S: Step<C>>(
         &self,
         rng: &mut RNG,
         step: S,

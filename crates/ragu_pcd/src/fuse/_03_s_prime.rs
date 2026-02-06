@@ -12,12 +12,12 @@ use ragu_core::{
     maybe::{Always, Maybe},
 };
 use ragu_primitives::Element;
-use rand::{CryptoRng, Rng};
+use rand::CryptoRng;
 
 use crate::{Application, Proof, circuits::nested, proof};
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
-    pub(super) fn compute_s_prime<'dr, D, RNG: Rng + CryptoRng>(
+    pub(super) fn compute_s_prime<'dr, D, RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         w: &Element<'dr, D>,

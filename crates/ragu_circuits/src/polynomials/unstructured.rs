@@ -3,7 +3,7 @@
 
 use arithmetic::CurveAffine;
 use ff::Field;
-use rand::{CryptoRng, Rng};
+use rand::CryptoRng;
 
 use alloc::{vec, vec::Vec};
 use core::ops::{AddAssign, Deref, DerefMut};
@@ -48,7 +48,7 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
     }
 
     /// Creates a new polynomial with random coefficients.
-    pub fn random<RNG: Rng + CryptoRng>(rng: &mut RNG) -> Self {
+    pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
         let mut coeffs = Vec::with_capacity(R::num_coeffs());
         for _ in 0..R::num_coeffs() {
             coeffs.push(F::random(&mut *rng));

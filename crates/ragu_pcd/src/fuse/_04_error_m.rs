@@ -16,7 +16,7 @@ use ragu_core::{
     maybe::{Always, Maybe},
 };
 use ragu_primitives::Element;
-use rand::{CryptoRng, Rng};
+use rand::CryptoRng;
 
 use crate::{
     Application, Proof,
@@ -31,7 +31,7 @@ use crate::{
 use super::FuseProofSource;
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
-    pub(super) fn compute_errors_m<'dr, 'rx, D, RNG: Rng + CryptoRng>(
+    pub(super) fn compute_errors_m<'dr, 'rx, D, RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         w: &Element<'dr, D>,

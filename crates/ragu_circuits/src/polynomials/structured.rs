@@ -2,7 +2,7 @@
 
 use arithmetic::CurveAffine;
 use ff::Field;
-use rand::{CryptoRng, Rng};
+use rand::CryptoRng;
 
 use alloc::vec::Vec;
 use core::borrow::Borrow;
@@ -78,7 +78,7 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
     }
 
     /// Creates a new polynomial with random coefficients.
-    pub fn random<RNG: Rng + CryptoRng>(rng: &mut RNG) -> Self {
+    pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
         let mut random_vec = || (0..R::n()).map(|_| F::random(&mut *rng)).collect();
         Self {
             u: random_vec(),
