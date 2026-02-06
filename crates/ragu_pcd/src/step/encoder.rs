@@ -138,3 +138,161 @@ impl<'dr, D: Driver<'dr, F: PrimeField>, H: Header<D::F>, const HEADER_SIZE: usi
         Ok(Encoded(EncodedInner::Uniform(FixedVec::try_from(raw)?)))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::header::{Header, Suffix};
+    use ragu_core::{
+        drivers::emulator::Emulator,
+        gadgets::Kind,
+        maybe::{Always, Maybe, MaybeKind},
+    };
+    use ragu_pasta::Fp;
+
+    const HEADER_SIZE: usize = 4;
+
+    struct SingleHeader;
+
+    impl Header<Fp> for SingleHeader {
+        const SUFFIX: Suffix = Suffix::new(100);
+        type Data<'source> = Fp;
+        type Output = Kind![Fp; Element<'_, _>];
+
+        fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            dr: &mut D,
+            witness: DriverValue<D, Self::Data<'source>>,
+        ) -> Result<<Self::Output as GadgetKind<Fp>>::Rebind<'dr, D>> {
+            Element::alloc(dr, witness)
+        }
+    }
+
+    struct PairHeader;
+
+    impl Header<Fp> for PairHeader {
+        const SUFFIX: Suffix = Suffix::new(101);
+        type Data<'source> = (Fp, Fp);
+        type Output = Kind![Fp; (Element<'_, _>, Element<'_, _>)];
+
+        fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            dr: &mut D,
+            witness: DriverValue<D, Self::Data<'source>>,
+        ) -> Result<<Self::Output as GadgetKind<Fp>>::Rebind<'dr, D>> {
+            let (a, b) = witness.cast();
+            Ok((Element::alloc(dr, a)?, Element::alloc(dr, b)?))
+        }
+    }
+
+    #[test]
+    fn encoded_new_produces_header_size_output() {
+        let mut dr = Emulator::execute();
+        let dr = &mut dr;
+
+        let witness = Always::maybe_just(|| Fp::from(42u64));
+        let encoded = Encoded::<_, SingleHeader, HEADER_SIZE>::new(dr, witness)
+            .expect("encoding should succeed");
+
+        let mut buf = vec![];
+        encoded.write(dr, &mut buf).expect("write should succeed");
+
+        assert_eq!(buf.len(), HEADER_SIZE);
+    }
+
+    #[test]
+    fn encoded_new_uniform_produces_header_size_output() {
+        let mut dr = Emulator::execute();
+        let dr = &mut dr;
+
+        let witness = Always::maybe_just(|| Fp::from(42u64));
+        let encoded = Encoded::<_, SingleHeader, HEADER_SIZE>::new_uniform(dr, witness)
+            .expect("encoding should succeed");
+
+        let mut buf = vec![];
+        encoded.write(dr, &mut buf).expect("write should succeed");
+
+        assert_eq!(buf.len(), HEADER_SIZE);
+    }
+
+    #[test]
+    fn encoded_as_gadget_returns_inner_value() {
+        let mut dr = Emulator::execute();
+        let dr = &mut dr;
+
+        let witness = Always::maybe_just(|| Fp::from(99u64));
+        let encoded = Encoded::<_, SingleHeader, HEADER_SIZE>::new(dr, witness)
+            .expect("encoding should succeed");
+
+        let gadget = encoded.as_gadget();
+        assert_eq!(*gadget.value().take(), Fp::from(99u64));
+    }
+
+    #[test]
+    fn encoded_write_includes_suffix() {
+        let mut dr = Emulator::execute();
+        let dr = &mut dr;
+
+        let witness = Always::maybe_just(|| Fp::from(1u64));
+        let encoded = Encoded::<_, SingleHeader, HEADER_SIZE>::new(dr, witness)
+            .expect("encoding should succeed");
+
+        let mut buf = vec![];
+        encoded.write(dr, &mut buf).expect("write should succeed");
+
+        // Suffix is at the last position: 100 (app suffix) + 2 (internal offset) = 102
+        assert_eq!(*buf[HEADER_SIZE - 1].value().take(), Fp::from(102u64));
+    }
+
+    #[test]
+    fn encoded_uniform_different_headers_same_size() {
+        let mut dr = Emulator::execute();
+        let dr = &mut dr;
+
+        let single = Encoded::<_, SingleHeader, HEADER_SIZE>::new_uniform(
+            dr,
+            Always::maybe_just(|| Fp::from(1u64)),
+        )
+        .expect("single encoding should succeed");
+
+        let pair = Encoded::<_, PairHeader, HEADER_SIZE>::new_uniform(
+            dr,
+            Always::maybe_just(|| (Fp::from(2u64), Fp::from(3u64))),
+        )
+        .expect("pair encoding should succeed");
+
+        let trivial = Encoded::<_, (), HEADER_SIZE>::new_uniform(dr, Always::maybe_just(|| ()))
+            .expect("trivial encoding should succeed");
+
+        let mut buf_single = vec![];
+        let mut buf_pair = vec![];
+        let mut buf_trivial = vec![];
+
+        single.write(dr, &mut buf_single).unwrap();
+        pair.write(dr, &mut buf_pair).unwrap();
+        trivial.write(dr, &mut buf_trivial).unwrap();
+
+        // All produce same size regardless of header type
+        assert_eq!(buf_single.len(), HEADER_SIZE);
+        assert_eq!(buf_pair.len(), HEADER_SIZE);
+        assert_eq!(buf_trivial.len(), HEADER_SIZE);
+    }
+
+    #[test]
+    fn encoded_clone_preserves_values() {
+        let mut dr = Emulator::execute();
+        let dr = &mut dr;
+
+        let witness = Always::maybe_just(|| Fp::from(77u64));
+        let original = Encoded::<_, SingleHeader, HEADER_SIZE>::new(dr, witness)
+            .expect("encoding should succeed");
+        let cloned = original.clone();
+
+        let mut buf_orig = vec![];
+        let mut buf_clone = vec![];
+        original.write(dr, &mut buf_orig).unwrap();
+        cloned.write(dr, &mut buf_clone).unwrap();
+
+        for (a, b) in buf_orig.iter().zip(buf_clone.iter()) {
+            assert_eq!(*a.value().take(), *b.value().take());
+        }
+    }
+}
