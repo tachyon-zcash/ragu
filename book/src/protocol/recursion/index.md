@@ -79,35 +79,6 @@ staged" mask applies (see [Staging](../extensions/staging.md)).
 
 ## Related topics
 
-NARK arithmetization and revdot explains how circuit satisfiability reduces to revdot claims: [NARK](../core/nark.md)
-
-Accumulation and revdot folding covers how those claims are folded across recursion steps: [Accumulation](../core/accumulation/revdot.md)
-
-Staging and registry wiring describes how deferred checks are tracked across the curve cycle: [Staging](../extensions/staging.md)
-
-Public inputs and stage outputs defines the shared output wires and stage-visible values: [Public inputs](./public_inputs.md)
-
-## Cross-Curve Structure
-
-Ragu operates over a two-cycle of elliptic curves (concretely, Pallas and
-Vesta from the [Pasta](https://electriccoin.co/blog/the-pasta-curves-for-halo-2-and-beyond/)
-family). The *host curve* is the curve whose scalar field matches the circuit
-field; the *nested curve* is the other curve in the cycle.
-
-Each proof component that carries a polynomial commitment produces two
-commitments:
-
-1. A **native commitment** on the host curve, computed as
-   $\text{commit}(r(X)) = \sum r_i \cdot G_i + b \cdot H$ where $G_i, H$ are
-   host curve generators. This can be verified directly in the circuit field.
-
-2. A **nested commitment** on the nested curve, computed analogously with
-   nested curve generators. This commitment *cannot* be verified natively
-   (the nested curve's arithmetic lives in the other field), so its
-   verification is deferred to the next recursion step via staging.
-
-This deferred verification is the mechanism that makes recursion efficient:
-each step only verifies the native-curve claims directly, while the
-nested-curve claims are accumulated and checked one step later. The
-[staging](../extensions/staging.md) mechanism ensures these deferred checks
-are not lost.
+- [NARK](../core/nark.md) — how circuit satisfiability reduces to revdot claims
+- [Accumulation](../core/accumulation/revdot.md) — how claims are folded across recursion steps
+- [Staging](../extensions/staging.md) — how deferred checks are tracked across the curve cycle
