@@ -324,7 +324,7 @@ mod tests {
             DriverValue<D, Fp>,
         )> {
             let left_enc = Encoded::new(dr, left.clone())?;
-            let right_enc = Encoded::new(dr, left.clone())?;
+            let right_enc = Encoded::new(dr, right.clone())?;
             let output_enc = Encoded::new(dr, left.clone())?;
             Ok(((left_enc, right_enc, output_enc), left))
         }
