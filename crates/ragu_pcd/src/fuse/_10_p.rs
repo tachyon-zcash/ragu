@@ -22,7 +22,7 @@ use ragu_core::{
     drivers::Driver,
     maybe::{Always, Maybe},
 };
-use ragu_primitives::{Element, compute_endoscalar, extract_endoscalar, vec::Len};
+use ragu_primitives::{Element, extract_endoscalar, lift_endoscalar, vec::Len};
 
 use crate::circuits::nested::NUM_ENDOSCALING_POINTS;
 use crate::components::endoscalar::{
@@ -82,7 +82,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // Extract endoscalar from pre_beta and compute effective beta
         let pre_beta_value = *pre_beta.value().take();
         let beta_endo = extract_endoscalar(pre_beta_value);
-        let effective_beta = compute_endoscalar(beta_endo);
+        let effective_beta = lift_endoscalar(beta_endo);
 
         {
             let mut acc: Accumulator<'_, C, R> = Accumulator {

@@ -17,7 +17,7 @@ use arithmetic::{Coeff, CurveAffine, Uendo};
 use ff::{Field, PrimeField, WithSmallOrderMulGroup};
 use ragu_core::{
     Result,
-    drivers::{Driver, DriverValue, LinearExpression},
+    drivers::{Driver, DriverValue, LinearExpression, emulator::Emulator},
     gadgets::Gadget,
     maybe::Maybe,
 };
@@ -168,8 +168,8 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
         Ok(acc)
     }
 
-    /// Scale $1$ by the endoscalar.
-    pub fn field_scale(&self, dr: &mut D) -> Result<Element<'dr, D>>
+    /// Lifts this endoscalar to a field element (scales $1$ by the endoscalar).
+    pub fn lift(&self, dr: &mut D) -> Result<Element<'dr, D>>
     where
         D::F: WithSmallOrderMulGroup<3>,
     {
@@ -208,11 +208,11 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
     }
 }
 
-/// Computes the effective scalar for an endoscalar.
+/// Lifts an endoscalar to a field element (computes the effective scalar).
 ///
 /// This implements [Algorithm 2, \[BGH19\]](https://eprint.iacr.org/2019/1021)
-/// and is the native counterpart to [`Endoscalar::field_scale`].
-pub fn compute_endoscalar<F: WithSmallOrderMulGroup<3>>(endo: Uendo) -> F {
+/// and is the native counterpart to [`Endoscalar::lift`].
+pub fn lift_endoscalar<F: WithSmallOrderMulGroup<3>>(endo: Uendo) -> F {
     let mut acc = (F::ZETA + F::ONE).double();
     for i in 0..(Uendo::BITS as usize / 2) {
         let bits = endo >> (i << 1);
@@ -233,20 +233,13 @@ pub fn compute_endoscalar<F: WithSmallOrderMulGroup<3>>(endo: Uendo) -> F {
 /// Given a random output of a secure algebraic hash function, this extracts
 /// `k` bits of "randomness" from the value by checking whether `value + i`
 /// is a quadratic residue for each bit position `i`.
-///
-/// This is the native counterpart to [`Endoscalar::extract`].
-pub fn extract_endoscalar<F: PrimeField>(value: F) -> Uendo {
-    // TODO: Consider iterating forward like the circuit implementation.
-    let mut endoscalar = Uendo::from(0u64);
-
-    for i in (0..Uendo::BITS).rev() {
-        endoscalar <<= 1;
-        if (value + F::from(i as u64)).sqrt().into_option().is_some() {
-            endoscalar |= Uendo::from(1u64);
-        }
-    }
-
-    endoscalar
+pub fn extract_endoscalar<F: PrimeField + WithSmallOrderMulGroup<3>>(value: F) -> Uendo {
+    Emulator::emulate_wireless(value, |dr, witness| {
+        let elem = Element::alloc(dr, witness)?;
+        let endo = Endoscalar::extract(dr, elem)?;
+        Ok(*endo.value.snag())
+    })
+    .expect("wireless emulation should not fail")
 }
 
 #[cfg(test)]
@@ -285,12 +278,12 @@ mod tests {
         }
 
         /// Implements [Algorithm 2, \[BGH19\]](https://eprint.iacr.org/2019/1021).
-        pub fn compute_scalar<F: WithSmallOrderMulGroup<3>>(&self) -> F {
-            super::compute_endoscalar(self.value)
+        pub fn lift<F: WithSmallOrderMulGroup<3>>(&self) -> F {
+            super::lift_endoscalar(self.value)
         }
     }
 
-    pub fn extract_endoscalar<F: PrimeField>(value: F) -> EndoscalarTest {
+    pub fn extract<F: PrimeField + WithSmallOrderMulGroup<3>>(value: F) -> EndoscalarTest {
         EndoscalarTest {
             value: super::extract_endoscalar(value),
         }
@@ -307,7 +300,7 @@ mod tests {
             value: Uendo::from(206786806484900909362154774549736492353u128),
         };
         let scaled = e.scale(&p);
-        let expected: EpAffine = (p * e.compute_scalar::<Fq>()).into();
+        let expected: EpAffine = (p * e.lift::<Fq>()).into();
 
         assert_eq!(scaled, expected);
     }
@@ -316,7 +309,7 @@ mod tests {
     fn test_extract() -> Result<()> {
         let p = EpAffine::generator();
         let r = Fp::random(thread_rng());
-        let extracted = extract_endoscalar(r).value;
+        let extracted = extract(r).value;
 
         Simulator::<Fp>::simulate((r, extracted, p), |dr, witness| {
             let (r, extracted, p) = witness.cast();
@@ -362,13 +355,13 @@ mod tests {
     }
 
     #[test]
-    fn test_endopacking() -> Result<()> {
+    fn test_endoscalar_lift() -> Result<()> {
         let r: Uendo = thread_rng().r#gen();
-        let expected: Fp = EndoscalarTest { value: r }.compute_scalar();
+        let expected: Fp = EndoscalarTest { value: r }.lift();
 
         Simulator::<Fp>::simulate(r, |dr, witness| {
             let r = Endoscalar::alloc(dr, witness)?;
-            let s = r.field_scale(dr)?;
+            let s = r.lift(dr)?;
 
             assert_eq!(*s.value().take(), expected);
 

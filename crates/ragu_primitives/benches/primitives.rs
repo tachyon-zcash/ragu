@@ -156,14 +156,14 @@ fn endoscalar_extract((mut emu, (elem,)): (BenchEmu, (Element<'static, BenchEmu>
 }
 
 #[library_benchmark(setup = setup_emu)]
-#[bench::endoscalar_field_scale((alloc_endo,))]
-fn endoscalar_field_scale((mut emu, (endo,)): (BenchEmu, (Endoscalar<'static, BenchEmu>,))) {
-    black_box(endo.field_scale(&mut emu)).unwrap();
+#[bench::endoscalar_lift((alloc_endo,))]
+fn endoscalar_lift((mut emu, (endo,)): (BenchEmu, (Endoscalar<'static, BenchEmu>,))) {
+    black_box(endo.lift(&mut emu)).unwrap();
 }
 
 library_benchmark_group!(
     name = endoscalar_ops;
-    benchmarks = endoscalar_group_scale, endoscalar_extract, endoscalar_field_scale
+    benchmarks = endoscalar_group_scale, endoscalar_extract, endoscalar_lift
 );
 
 main!(

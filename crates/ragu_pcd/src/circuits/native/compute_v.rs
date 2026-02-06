@@ -16,7 +16,7 @@
 //!   (first query receives highest $\alpha$ power)
 //!
 //! ### $v$ computation
-//! - Extract endoscalar from [$\beta$] and compute effective beta via field_scale
+//! - Extract endoscalar from [$\beta$] and compute effective beta via lift
 //! - Compute $v = f(u) + \text{effective\_beta} \cdot \text{eval}$
 //! - Set computed [$v$] in unified output, enforcing correctness
 //!
@@ -229,7 +229,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
             let computed_v = {
                 let pre_beta = unified_output.pre_beta.get(dr, unified_instance)?;
                 let beta_endo = Endoscalar::extract(dr, pre_beta)?;
-                let effective_beta = beta_endo.field_scale(dr)?;
+                let effective_beta = beta_endo.lift(dr)?;
                 let mut horner = Horner::new(&effective_beta);
                 fu.write(dr, &mut horner)?;
                 eval.write(dr, &mut horner)?;
