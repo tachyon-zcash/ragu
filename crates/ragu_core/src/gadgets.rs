@@ -203,6 +203,16 @@ pub unsafe trait GadgetKind<F: Field>: core::any::Any {
         a: &Self::Rebind<'dr, D2>,
         b: &Self::Rebind<'dr, D2>,
     ) -> Result<()>;
+
+    /// Reconstructs a gadget from cached wire values.
+    ///
+    /// This method enables routine memoization by reconstructing output gadgets
+    /// directly from cached wires, bypassing routine execution entirely on cache
+    /// hits. Wires are consumed from the iterator in the same order that
+    /// [`map_gadget`](GadgetKind::map_gadget) visits them.
+    fn from_cached_wires<'dr, D: Driver<'dr, F = F>>(
+        wires: &mut impl Iterator<Item = D::Wire>,
+    ) -> Result<Self::Rebind<'dr, D>>;
 }
 
 /// Automatically derives the [`Gadget`], [`GadgetKind`] and [`Clone`] traits

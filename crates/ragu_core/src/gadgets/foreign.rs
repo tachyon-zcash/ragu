@@ -41,6 +41,12 @@ mod unit_impl {
         ) -> Result<()> {
             Ok(())
         }
+
+        fn from_cached_wires<'dr, D: Driver<'dr, F = F>>(
+            _wires: &mut impl Iterator<Item = D::Wire>,
+        ) -> Result<Self::Rebind<'dr, D>> {
+            Ok(())
+        }
     }
 
     impl<'dr, D: Driver<'dr>> Consistent<'dr, D> for () {
@@ -94,6 +100,19 @@ mod array_impl {
             }
             Ok(())
         }
+
+        fn from_cached_wires<'dr, D: Driver<'dr, F = F>>(
+            wires: &mut impl Iterator<Item = D::Wire>,
+        ) -> Result<Self::Rebind<'dr, D>> {
+            let mut result = Vec::with_capacity(N);
+            for _ in 0..N {
+                result.push(G::from_cached_wires(wires)?);
+            }
+            match result.try_into() {
+                Ok(arr) => Ok(arr),
+                Err(_) => unreachable!(),
+            }
+        }
     }
 
     impl<'dr, D: Driver<'dr>, G: Consistent<'dr, D>, const N: usize> Consistent<'dr, D> for [G; N] {
@@ -142,6 +161,12 @@ mod pair_impl {
             G2::enforce_equal_gadget(dr, &a.1, &b.1)?;
             Ok(())
         }
+
+        fn from_cached_wires<'dr, D: Driver<'dr, F = F>>(
+            wires: &mut impl Iterator<Item = D::Wire>,
+        ) -> Result<Self::Rebind<'dr, D>> {
+            Ok((G1::from_cached_wires(wires)?, G2::from_cached_wires(wires)?))
+        }
     }
 
     impl<'dr, D: Driver<'dr>, G1: Consistent<'dr, D>, G2: Consistent<'dr, D>> Consistent<'dr, D>
@@ -186,6 +211,12 @@ mod box_impl {
             b: &Self::Rebind<'dr, D2>,
         ) -> Result<()> {
             G::enforce_equal_gadget(dr, a, b)
+        }
+
+        fn from_cached_wires<'dr, D: Driver<'dr, F = F>>(
+            wires: &mut impl Iterator<Item = D::Wire>,
+        ) -> Result<Self::Rebind<'dr, D>> {
+            Ok(Box::new(G::from_cached_wires(wires)?))
         }
     }
 

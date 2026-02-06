@@ -53,19 +53,20 @@ use ff::Field;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverTypes, emulator::Emulator},
+    floor_plan::{FloorPlan, RegistryPosition},
     gadgets::GadgetKind,
     maybe::Empty,
-    routines::Routine,
+    routines::{Routine, RoutineId},
 };
 use ragu_primitives::GadgetExt;
 
-use alloc::vec;
+use alloc::{collections::BTreeMap, vec};
 
 use crate::{Circuit, polynomials::Rank, registry};
 
 use super::{
     DriverExt,
-    common::{WireEval, WireEvalSum},
+    common::{CachedRoutine, MemoCache, WireEval, WireEvalSum, WireExtractor},
 };
 
 /// A [`Driver`] that computes the full evaluation $s(x, y)$.
@@ -81,7 +82,7 @@ use super::{
 /// [`common`]: super::common
 /// [`Driver`]: ragu_core::drivers::Driver
 /// [`Driver::enforce_zero`]: ragu_core::drivers::Driver::enforce_zero
-struct Evaluator<F, R> {
+struct Evaluator<'fp, F, R> {
     /// Horner accumulator for the evaluation result.
     ///
     /// Updated by each [`enforce_zero`](Driver::enforce_zero) call via
@@ -129,6 +130,18 @@ struct Evaluator<F, R> {
     /// [`Driver::alloc`]: ragu_core::drivers::Driver::alloc
     available_b: Option<WireEval<F>>,
 
+    /// Floor plan for canonical routine placement.
+    floor_plan: &'fp FloorPlan,
+
+    /// Invocation counts per routine type for memoization.
+    invocation_counts: BTreeMap<RoutineId, usize>,
+
+    /// Cache for memoized routine evaluations.
+    memo_cache: MemoCache<F>,
+
+    /// Current routine nesting depth. Memoization only applies at depth 0.
+    routine_depth: usize,
+
     /// Marker for the rank type parameter.
     _marker: core::marker::PhantomData<R>,
 }
@@ -140,7 +153,7 @@ struct Evaluator<F, R> {
 /// - `LCadd` / `LCenforce`: Use [`WireEvalSum`] to accumulate linear
 ///   combinations as immediate field element sums.
 /// - `ImplWire`: [`WireEval`] represents wires as evaluated monomials.
-impl<F: Field, R: Rank> DriverTypes for Evaluator<F, R> {
+impl<F: Field, R: Rank> DriverTypes for Evaluator<'_, F, R> {
     type MaybeKind = Empty;
     type LCadd = WireEvalSum<F>;
     type LCenforce = WireEvalSum<F>;
@@ -148,7 +161,7 @@ impl<F: Field, R: Rank> DriverTypes for Evaluator<F, R> {
     type ImplWire = WireEval<F>;
 }
 
-impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<F, R> {
+impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
     type F = F;
     type Wire = WireEval<F>;
 
@@ -230,20 +243,115 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<F, R> {
         Ok(())
     }
 
-    /// Executes a routine with isolated allocation state.
+    /// Executes a routine with memoization (outer routines only).
+    ///
+    /// Cache miss: execute routine and cache the contribution with output wires.
+    /// Cache hit: reconstruct output gadget from cached wires and add cached
+    /// contribution directly, skipping routine execution entirely.
+    ///
+    /// Nested routines (routine_depth > 0) skip memoization to avoid incorrect
+    /// contribution extraction when the outer routine is replaying from cache.
     fn routine<Ro: Routine<Self::F> + 'dr>(
         &mut self,
         routine: Ro,
         input: <Ro::Input as GadgetKind<Self::F>>::Rebind<'dr, Self>,
     ) -> Result<<Ro::Output as GadgetKind<Self::F>>::Rebind<'dr, Self>> {
+        self.routine_depth += 1;
+
+        // Nested routines skip memoization
+        if self.routine_depth > 1 {
+            let tmp = self.available_b.take();
+            let mut dummy = Emulator::wireless();
+            let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
+            let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
+            let output = routine.execute(self, input, aux)?;
+            self.available_b = tmp;
+            self.routine_depth -= 1;
+            return Ok(output);
+        }
+
+        let routine_id = RoutineId::of::<Ro>();
+
+        // Track invocation for floor plan lookup
+        let invocation_index = *self.invocation_counts.get(&routine_id).unwrap_or(&0);
+        self.invocation_counts
+            .entry(routine_id)
+            .and_modify(|c| *c += 1)
+            .or_insert(1);
+
+        // Canonical position is the cache key
+        let canonical_position = self
+            .floor_plan
+            .get_invocation(&routine_id, invocation_index)
+            .unwrap_or_else(|| {
+                // Fallback if not in floor plan
+                RegistryPosition::new(self.multiplication_constraints, self.linear_constraints)
+            });
+
         let tmp = self.available_b.take();
+
+        // Check cache before execution
+        if let Some(cached) = self
+            .memo_cache
+            .get(&routine_id, canonical_position)
+            .cloned()
+        {
+            // Cache hit: reconstruct output directly from cached wires (no routine execution)
+            let result_before = self.result;
+
+            // Reconstruct output gadget directly from cached wires
+            let mut wires_iter = cached.output_wires.into_iter();
+            let output = Ro::Output::from_cached_wires(&mut wires_iter)?;
+
+            // Manually advance constraint counters (we didn't call mul/enforce_zero)
+            self.multiplication_constraints += cached.num_multiplications;
+            self.linear_constraints += cached.num_constraints;
+
+            // Add cached contribution: result = result_before * y^k + contribution
+            let y_power = self.y.pow_vartime([cached.num_constraints as u64]);
+            self.result = result_before * y_power + cached.contribution;
+
+            self.available_b = tmp;
+            self.routine_depth -= 1;
+            return Ok(output);
+        }
+
+        // Cache miss: execute and cache
+        let result_before = self.result;
+        let muls_before = self.multiplication_constraints;
+        let constraints_before = self.linear_constraints;
+
         let mut dummy = Emulator::wireless();
         let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
         let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
-        let result = routine.execute(self, input, aux)?;
+        let output = routine.execute(self, input, aux)?;
+
+        // Extract output wires for caching
+        let mut wire_extractor = WireExtractor::new();
+        let _ = Ro::Output::map_gadget(&output, &mut wire_extractor)?;
+        let output_wires = wire_extractor.into_wires();
+
+        // Extract contribution: C = result_after - result_before * y^k
+        let num_multiplications = self.multiplication_constraints - muls_before;
+        let num_constraints = self.linear_constraints - constraints_before;
+        let y_power = self.y.pow_vartime([num_constraints as u64]);
+        let contribution = self.result - result_before * y_power;
+
+        // Cache for reuse
+        self.memo_cache.insert(
+            routine_id,
+            canonical_position,
+            CachedRoutine {
+                contribution,
+                num_multiplications,
+                num_constraints,
+                output_wires,
+            },
+        );
 
         self.available_b = tmp;
-        Ok(result)
+        self.routine_depth -= 1;
+        Ok(output)
     }
 }
 
@@ -267,6 +375,27 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     x: F,
     y: F,
     key: &registry::Key<F>,
+    floor_plan: &FloorPlan,
+) -> Result<F> {
+    eval_with_cache::<F, C, R>(circuit, x, y, key, floor_plan, &mut MemoCache::new())
+}
+
+/// Evaluates $s(x, y)$ with a shared memoization cache.
+///
+/// Routines at the same canonical position reuse cached contributions.
+///
+/// ```ignore
+/// let mut cache = MemoCache::new();
+/// let r1 = eval_with_cache(&circuit1, x, y, &key, &floor_plan, &mut cache)?;
+/// let r2 = eval_with_cache(&circuit2, x, y, &key, &floor_plan, &mut cache)?;
+/// ```
+pub(crate) fn eval_with_cache<F: Field, C: Circuit<F>, R: Rank>(
+    circuit: &C,
+    x: F,
+    y: F,
+    key: &registry::Key<F>,
+    floor_plan: &FloorPlan,
+    cache: &mut MemoCache<F>,
 ) -> Result<F> {
     if x == F::ZERO {
         // The polynomial is zero if x is zero.
@@ -287,6 +416,8 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
         return Ok(current_w_x);
     }
 
+    let owned_cache = core::mem::take(cache);
+
     let mut evaluator = Evaluator::<F, R> {
         result: F::ZERO,
         multiplication_constraints: 0,
@@ -299,6 +430,10 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
         current_w_x,
         one: current_w_x,
         available_b: None,
+        floor_plan,
+        invocation_counts: BTreeMap::new(),
+        memo_cache: owned_cache,
+        routine_depth: 0,
         _marker: core::marker::PhantomData,
     };
 
@@ -317,5 +452,89 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     evaluator.enforce_public_outputs(outputs.iter().map(|output| output.wire()))?;
     evaluator.enforce_one()?;
 
+    *cache = evaluator.memo_cache;
+
     Ok(evaluator.result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ff::Field;
+    use ragu_core::routines::{Routine, RoutineRegistry};
+    use ragu_pasta::Fp;
+
+    use crate::polynomials::R;
+    use crate::test_fixtures::{RoutineCircuit, SquareRoutine};
+
+    /// Multiple evaluations of the same circuit produce identical results.
+    #[test]
+    fn sxy_eval_with_routines_is_consistent() {
+        type TestRank = R<16>;
+        let circuit = RoutineCircuit { num_calls: 3 };
+
+        let x = Fp::random(&mut rand::rng());
+        let y = Fp::random(&mut rand::rng());
+        let key = registry::Key::new(Fp::random(&mut rand::rng()));
+
+        let mut registry = RoutineRegistry::new();
+        let shape = <SquareRoutine as Routine<Fp>>::shape(&SquareRoutine);
+        registry.register::<SquareRoutine>(shape);
+        registry.register::<SquareRoutine>(shape);
+        registry.register::<SquareRoutine>(shape);
+        let floor_plan = FloorPlan::from_registries(&[&registry], TestRank::n());
+
+        let result1 = eval::<Fp, _, TestRank>(&circuit, x, y, &key, &floor_plan).unwrap();
+        let result2 = eval::<Fp, _, TestRank>(&circuit, x, y, &key, &floor_plan).unwrap();
+
+        assert_eq!(result1, result2);
+    }
+
+    /// Evaluation at x=0 returns zero (polynomial property).
+    #[test]
+    fn sxy_eval_zero_x_returns_zero() {
+        type TestRank = R<16>;
+        let circuit = RoutineCircuit { num_calls: 2 };
+        let key = registry::Key::new(Fp::random(&mut rand::rng()));
+
+        let result = eval::<Fp, _, TestRank>(
+            &circuit,
+            Fp::ZERO,
+            Fp::random(&mut rand::rng()),
+            &key,
+            &FloorPlan::default(),
+        )
+        .unwrap();
+        assert_eq!(result, Fp::ZERO);
+    }
+
+    /// Shared cache across circuits produces identical results.
+    #[test]
+    fn sxy_inter_circuit_memoization_shares_cache() {
+        type TestRank = R<16>;
+
+        let circuit1 = RoutineCircuit { num_calls: 3 };
+        let circuit2 = RoutineCircuit { num_calls: 3 };
+
+        let x = Fp::random(&mut rand::rng());
+        let y = Fp::random(&mut rand::rng());
+        let key = registry::Key::new(Fp::random(&mut rand::rng()));
+
+        let mut registry = RoutineRegistry::new();
+        let shape = <SquareRoutine as Routine<Fp>>::shape(&SquareRoutine);
+        registry.register::<SquareRoutine>(shape);
+        registry.register::<SquareRoutine>(shape);
+        registry.register::<SquareRoutine>(shape);
+        let floor_plan = FloorPlan::from_registries(&[&registry, &registry], TestRank::n());
+
+        let mut cache = MemoCache::new();
+        let result1 =
+            eval_with_cache::<Fp, _, TestRank>(&circuit1, x, y, &key, &floor_plan, &mut cache)
+                .unwrap();
+        let result2 =
+            eval_with_cache::<Fp, _, TestRank>(&circuit2, x, y, &key, &floor_plan, &mut cache)
+                .unwrap();
+
+        assert_eq!(result1, result2);
+    }
 }

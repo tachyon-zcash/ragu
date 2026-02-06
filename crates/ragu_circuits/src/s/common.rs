@@ -33,8 +33,69 @@
 //! [`Driver::ONE`]: ragu_core::drivers::Driver::ONE
 
 use arithmetic::Coeff;
+use core::marker::PhantomData;
 use ff::Field;
-use ragu_core::drivers::LinearExpression;
+use ragu_core::{
+    Result,
+    drivers::{Driver, FromDriver, LinearExpression},
+    floor_plan::RegistryPosition,
+    routines::RoutineId,
+};
+
+use alloc::{collections::BTreeMap, vec::Vec};
+
+/// Cached polynomial contribution from a routine at a canonical floor plan position.
+///
+/// On cache hit, the `output_wires` can be used to reconstruct the output gadget
+/// without re-executing the routine, enabling full memoization.
+#[derive(Clone, Debug)]
+pub struct CachedRoutine<F> {
+    /// The routine's contribution to the polynomial evaluation.
+    pub contribution: F,
+
+    /// Number of multiplication gates consumed by this routine.
+    pub num_multiplications: usize,
+
+    /// Number of linear constraints consumed by this routine.
+    pub num_constraints: usize,
+
+    /// Output wire values for reconstructing the output gadget on cache hit.
+    pub output_wires: Vec<WireEval<F>>,
+}
+
+/// Cache for routine contributions, keyed by `(RoutineId, canonical_position)`.
+#[derive(Default, Clone)]
+pub struct MemoCache<F> {
+    entries: BTreeMap<(RoutineId, RegistryPosition), CachedRoutine<F>>,
+}
+
+impl<F: Clone> MemoCache<F> {
+    /// Creates an empty cache.
+    pub fn new() -> Self {
+        Self {
+            entries: BTreeMap::new(),
+        }
+    }
+
+    /// Retrieves a cached routine contribution by canonical position.
+    pub fn get(
+        &self,
+        routine_id: &RoutineId,
+        canonical_position: RegistryPosition,
+    ) -> Option<&CachedRoutine<F>> {
+        self.entries.get(&(*routine_id, canonical_position))
+    }
+
+    /// Stores a routine contribution in the cache.
+    pub fn insert(
+        &mut self,
+        routine_id: RoutineId,
+        canonical_position: RegistryPosition,
+        entry: CachedRoutine<F>,
+    ) {
+        self.entries.insert((routine_id, canonical_position), entry);
+    }
+}
 
 /// Represents a wire's evaluated monomial during polynomial synthesis.
 ///
@@ -56,8 +117,8 @@ use ragu_core::drivers::LinearExpression;
 /// [`Driver::mul`]: ragu_core::drivers::Driver::mul
 /// [`Driver::add`]: ragu_core::drivers::Driver::add
 /// [`WireEvalSum::add_term`]: WireEvalSum::add_term
-#[derive(Clone)]
-pub(super) enum WireEval<F> {
+#[derive(Clone, Debug)]
+pub enum WireEval<F> {
     Value(F),
     One,
 }
@@ -103,5 +164,44 @@ impl<F: Field> LinearExpression<WireEval<F>, F> for WireEvalSum<F> {
     fn gain(mut self, coeff: Coeff<F>) -> Self {
         self.gain = self.gain * coeff;
         self
+    }
+}
+
+/// Extracts wire values from a gadget for caching.
+///
+/// Used on cache miss to capture output wires from the executed routine.
+/// The extracted wires can later be replayed via [`GadgetKind::from_cached_wires`].
+///
+/// [`GadgetKind::from_cached_wires`]: ragu_core::gadgets::GadgetKind::from_cached_wires
+pub struct WireExtractor<F> {
+    wires: Vec<WireEval<F>>,
+}
+
+impl<F> WireExtractor<F> {
+    /// Creates a new wire extractor.
+    pub fn new() -> Self {
+        Self { wires: Vec::new() }
+    }
+
+    /// Consumes the extractor and returns the collected wires.
+    pub fn into_wires(self) -> Vec<WireEval<F>> {
+        self.wires
+    }
+}
+
+impl<F> Default for WireExtractor<F> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<'dr, F: Field, D: Driver<'dr, F = F, Wire = WireEval<F>>> FromDriver<'dr, 'dr, D>
+    for WireExtractor<F>
+{
+    type NewDriver = PhantomData<F>;
+
+    fn convert_wire(&mut self, wire: &WireEval<F>) -> Result<()> {
+        self.wires.push(wire.clone());
+        Ok(())
     }
 }

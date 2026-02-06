@@ -2,7 +2,9 @@ use arithmetic::Cycle;
 use ff::Field;
 use ragu_circuits::polynomials::{R, structured, unstructured};
 use ragu_circuits::registry::{Key, Registry, RegistryBuilder};
-use ragu_circuits::test_fixtures::{MySimpleCircuit, SquareCircuit};
+use ragu_circuits::test_fixtures::{
+    HeavyRoutineCircuit, MySimpleCircuit, RoutineCircuit, SquareCircuit,
+};
 use ragu_pasta::{Fp, Pasta};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -111,4 +113,80 @@ pub fn builder_simple<'a>() -> RegistryBuilder<'a, Fp, R<5>> {
 
 pub fn registry_simple<'a>() -> Registry<'a, Fp, R<5>> {
     builder_simple().finalize(setup_poseidon()).unwrap()
+}
+
+/// Registry with circuits that use routines (for memoization benchmarks).
+pub fn builder_routines<'a>() -> RegistryBuilder<'a, Fp, R<25>> {
+    RegistryBuilder::<'a, Fp, R<25>>::new()
+        .register_circuit(RoutineCircuit { num_calls: 5 })
+        .unwrap()
+        .register_circuit(RoutineCircuit { num_calls: 5 })
+        .unwrap()
+        .register_circuit(RoutineCircuit { num_calls: 5 })
+        .unwrap()
+        .register_circuit(RoutineCircuit { num_calls: 5 })
+        .unwrap()
+        .register_circuit(RoutineCircuit { num_calls: 5 })
+        .unwrap()
+        .register_circuit(RoutineCircuit { num_calls: 5 })
+        .unwrap()
+        .register_circuit(RoutineCircuit { num_calls: 5 })
+        .unwrap()
+        .register_circuit(RoutineCircuit { num_calls: 5 })
+        .unwrap()
+}
+
+pub fn registry_routines<'a>() -> Registry<'a, Fp, R<25>> {
+    builder_routines().finalize(setup_poseidon()).unwrap()
+}
+
+/// Registry with circuits that use heavy routines (for memoization benchmarks).
+///
+/// Uses 100 iterations per routine call to make the memoization savings visible.
+pub fn builder_heavy_routines<'a>() -> RegistryBuilder<'a, Fp, R<25>> {
+    RegistryBuilder::<'a, Fp, R<25>>::new()
+        .register_circuit(HeavyRoutineCircuit {
+            num_calls: 5,
+            iterations_per_call: 100,
+        })
+        .unwrap()
+        .register_circuit(HeavyRoutineCircuit {
+            num_calls: 5,
+            iterations_per_call: 100,
+        })
+        .unwrap()
+        .register_circuit(HeavyRoutineCircuit {
+            num_calls: 5,
+            iterations_per_call: 100,
+        })
+        .unwrap()
+        .register_circuit(HeavyRoutineCircuit {
+            num_calls: 5,
+            iterations_per_call: 100,
+        })
+        .unwrap()
+        .register_circuit(HeavyRoutineCircuit {
+            num_calls: 5,
+            iterations_per_call: 100,
+        })
+        .unwrap()
+        .register_circuit(HeavyRoutineCircuit {
+            num_calls: 5,
+            iterations_per_call: 100,
+        })
+        .unwrap()
+        .register_circuit(HeavyRoutineCircuit {
+            num_calls: 5,
+            iterations_per_call: 100,
+        })
+        .unwrap()
+        .register_circuit(HeavyRoutineCircuit {
+            num_calls: 5,
+            iterations_per_call: 100,
+        })
+        .unwrap()
+}
+
+pub fn registry_heavy_routines<'a>() -> Registry<'a, Fp, R<25>> {
+    builder_heavy_routines().finalize(setup_poseidon()).unwrap()
 }
