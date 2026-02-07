@@ -280,6 +280,8 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
     /// This is a convenience method that extracts all fields from the current
     /// proof's components and challenges. Useful for testing or when the full
     /// proof structure is available.
+    ///
+    /// Note: Field order must match `define_unified_instance!`.
     pub fn alloc_from_proof<R: Rank>(
         dr: &mut D,
         proof: DriverValue<D, &Proof<C, R>>,
