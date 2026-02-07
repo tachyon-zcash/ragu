@@ -32,7 +32,7 @@ pub(crate) enum InternalCircuitIndex {
     ErrorMFinalStaged = 5,
     ErrorNFinalStaged = 6,
     EvalFinalStaged = 7,
-    // Actual circuits
+    // Native circuits
     Hashes1Circuit = 8,
     Hashes2Circuit = 9,
     PartialCollapseCircuit = 10,

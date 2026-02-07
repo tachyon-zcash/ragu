@@ -25,13 +25,11 @@ use ragu_primitives::Element;
 use super::{Builder, Source};
 use crate::circuits::{self, native::InternalCircuitIndex};
 
-/// Number of circuits that use the unified k(y) value per proof.
-///
-/// This is the count of internal circuits (hashes_1, hashes_2, partial_collapse,
-/// full_collapse) that share the same unified k(y) value. The unified_ky iterator
-/// from [`KySource`] is repeated this many times in [`ky_values`].
-// TODO: this constant seems brittle because it may vary between the two fields.
-pub const NUM_UNIFIED_CIRCUITS: usize = 4;
+/// Number of circuits processed with unified k(y) in [`build`].
+/// These are: hashes_1, hashes_2, partial_collapse, full_collapse.
+pub const NUM_UNIFIED_CIRCUITS: usize = InternalCircuitIndex::FullCollapseCircuit as usize
+    - InternalCircuitIndex::Hashes1Circuit as usize
+    + 1;
 
 /// Enum identifying which native field rx polynomial to retrieve from a proof.
 #[derive(Clone, Copy, Debug)]
