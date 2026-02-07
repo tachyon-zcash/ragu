@@ -11,7 +11,7 @@ Ragu implements the ECDLP-based recursive SNARK construction from [Halo [BGH19]]
 * Support for [split accumulation [BCLMS20]](https://eprint.iacr.org/2020/1618) techniques to improve performance and simplify the construction.
 * [CycleFold](https://eprint.iacr.org/2023/1192)-inspired recursion design for eliminating unnecessary non-native field arithmetic.
 * Pre-processing is avoided using the _post_-processing technique from Halo, adapted to the non-uniform PCD model (as in [Hypernova](https://eprint.iacr.org/2023/573)). Many circuits can be supported in the computational graph with diminishing overhead, verification keys are unnecessary, and pre-computations done by the prover are negligible in time and memory usage.
-* Prolific use of [Poseidon](https://eprint.iacr.org/2019/458) as a random oracle, though ideally not as a collision-resistant hash function.
+* Prolific use of [Poseidon](https://eprint.iacr.org/2019/458) modeled as a random oracle, a stronger assumption than collision resistance alone.
 
 Ragu's design is informed by practical requirements for its deployment in Zcash as part of [Project Tachyon](https://tachyon.z.cash/). We seek a performance profile that is comparable to the existing proofs deployed in the [Orchard protocol](https://zcash.github.io/orchard/) (based on the [`halo2`](https://github.com/zcash/halo2) crate). We would also prefer compatibility with the [Pasta](https://electriccoin.co/blog/the-pasta-curves-for-halo-2-and-beyond/) elliptic curves (used for signing in hardware wallets, for example) as deployed in Orchard.
 
