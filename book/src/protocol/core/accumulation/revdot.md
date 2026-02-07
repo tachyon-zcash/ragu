@@ -122,18 +122,58 @@ The split-accumulation proceeds as follows:
    )
    $$
    
-Notice the majority of verifier's work is $2\cdot \mathsf{MSM}(n)$ to compute
+The verifier's work is dominated by $2\cdot \mathsf{MSM}(n)$ to compute
 $\bar{A}^\ast, \bar{B}^\ast$; and $O(n^2)$ amount of field multiplications to
-compute $c^\ast$. While the $c^\ast$ computation will be constrained in circuit
-natively (in $\F_p$), the actual group operations will be 
-[deferred](../../prelim/nested_commitment.md#deferred-operations)
-to $\F_q$ circuit to avoid expensive non-native arithmetic in the circuit.
-In the $\F_p$ circuit, we only witness the nested commitments of
-$\bar{A}^\ast, \bar{B}^\ast$ whose coordinates are native in $\F_p$.
+compute $c^\ast$. 
+We introduce the next two techniques to reduce the verifier cost of enforcing
+them in circuit naively. We use both techniques in conjunction, but present them
+separately for clarity.
+
+## Reducing Commitment Aggregation to Batched Evaluation
+
+Enforcing the computation of $\bar{A}^\ast$ and $\bar{B}^\ast$ requires linear
+combination of commitments in circuit. Naive implementation involves non-native
+arithmetic to constrain scalar multiplications. Instead, Ragu transforms the
+commitment aggregation statement into a PCS multi-opening claim, then piggybacks
+on the existing [batched evaluation](./pcs.md) for accumulation.
+
+Aggregation of homomorphic commitments $\bar{A}_i$ corresponds to aggregation of
+their underlying polynomials $a_i(X)$. We can _spot check_ the constituent
+polynomials and the aggregated polynomial at an arbitrary point $\beta\in\F$.
+If their evaluations follow the expected linear combination relation, _and_ the
+PCS evaluation claims are valid, then $\bar{A}^\ast$ is correct
+with overwhelming probability.
+
+$$
+\begin{align*}
+\bar{A}^\ast \in\G = \sum_i \mu^{-i}\cdot \bar{A}_i 
+&\equiv a^\ast(X) = \sum_i \mu^{-i}\cdot a_i(X) \\
+&\implies 
+    \begin{cases}
+        \set{(\bar{A}_i, \beta, a_i(\beta))}_i \quad\text{are valid PCS evals}\\
+        (\bar{A}^\ast, \beta, a^\ast(\beta)) \quad\text{is a valid PCS eval}\\
+        a^\ast(\beta) = \sum_i \mu^{-i}\cdot a_i(\beta)
+    \end{cases}
+    \quad\text{for } \beta\sample\F
+\end{align*}
+$$
+
+After the reduction, the linear combination of evaluations can be natively
+enforced and the $(n+1)$ PCS claims are shoveled into a grand batched evaluation
+accumulation together with other PCS claims in the Ragu protocol.
+
+This reduction benefits from lower amortized cost. In the [step 7 of PCS
+aggregation](./pcs.md#pcs-aggregation), there is only _one scalar multiplication
+per queried polynomial_ regardless of the number of queried points on it.
+If some $a_i(X)$ is already queried elsewhere in the protocol, then our
+reduction leads to fewer scalar multiplications in total.
+Furthermore, all group operations are
+[deferred](../../prelim/nested_commitment.md#deferred-operations) to avoid
+non-native arithmetic.
 
 ## Multi-layer Revdot Reduction
 
-Another challenge comes from the $O(n^2)$ field operations for deriving $c^\ast$.
+Another challenge comes from the $O(n^2)$ field operations to derive $c^\ast$.
 When folding many revdot claims (e.g., $n=133$ in Ragu's fuse operation), the
 single-reduction approach above requires $n^2 = 17689$ field multiplications,
 exceeding the targeted circuit size limit.
