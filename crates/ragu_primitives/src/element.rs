@@ -17,7 +17,7 @@ use core::borrow::Borrow;
 
 use crate::{
     Boolean,
-    io::{Buffer, Write},
+    io::{Buffer, FromElements, Write},
 };
 
 /// Represents a wire and its corresponding field element value, but generally
@@ -382,6 +382,20 @@ impl<'dr, D: Driver<'dr>> Buffer<'dr, D> for usize {
 impl<'dr, D: Driver<'dr>, B: Buffer<'dr, D>> Buffer<'dr, D> for &mut B {
     fn write(&mut self, dr: &mut D, value: &Element<'dr, D>) -> Result<()> {
         B::write(self, dr, value)
+    }
+}
+
+/// Element is constructed from 1 field element (identity operation).
+impl<'dr, D: Driver<'dr>> FromElements<'dr, D, 1> for Element<'dr, D> {
+    fn from_elements(_dr: &mut D, [element]: [Element<'dr, D>; 1]) -> Result<Self> {
+        Ok(element)
+    }
+}
+
+/// Array of N elements is constructed from N field elements (identity operation).
+impl<'dr, D: Driver<'dr>, const N: usize> FromElements<'dr, D, N> for [Element<'dr, D>; N] {
+    fn from_elements(_dr: &mut D, elements: [Element<'dr, D>; N]) -> Result<Self> {
+        Ok(elements)
     }
 }
 
