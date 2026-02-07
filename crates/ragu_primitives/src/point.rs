@@ -2,6 +2,9 @@
 //!
 //! Provides the [`Point`] type representing an affine curve point with
 //! constrained coordinates for in-circuit elliptic curve arithmetic.
+//!
+//! This module only supports curves with `a = 0` in the short Weierstrass form,
+//! specifically curves of the form `y^2 = x^3 + b`.
 
 use arithmetic::{Coeff, CurveAffine};
 use ff::{Field, WithSmallOrderMulGroup};
