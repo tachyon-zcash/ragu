@@ -31,6 +31,7 @@
       - [Wiring Consistency](protocol/core/accumulation/wiring.md)
       - [Revdot Product](protocol/core/accumulation/revdot.md)
   - [Extensions](protocol/extensions/index.md)
+    - [Nullifier Derivation](protocol/extensions/nullifier_derivation.md)
     - [Registry Polynomial](protocol/extensions/registry.md)
     - [Endoscalars](protocol/extensions/endoscalar.md)
     - [Staging](protocol/extensions/staging.md)
