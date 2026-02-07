@@ -87,7 +87,7 @@ Ragu's power comes from its ability to prove statements about proofs themselves.
 
 - **Incremental verification**: Each step verifies previous steps without re-executing them
 - **Proof aggregation**: Multiple computations can be combined into a single proof
-- **Unbounded computation**: Chain together arbitrarily many steps while keeping verification time logarithmic
+- **Unbounded computation**: Chain together arbitrarily many steps; verification requires only one final linear-time check, regardless of how many steps are composed.
 
 The technical details of how this works involve specialized cryptographic primitives and accumulation schemes, but as a library user, you primarily interact with this through Ragu's API for creating, folding, and compressing proofs.
 
