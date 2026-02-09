@@ -16,12 +16,12 @@ $$
 \bigg\}
 $$
 
-where the prover is trying to convince the verifier that the revdot product
-of two secret vectors $\v{a}, \v{b}$ is value $c$ given only their hiding
-commitments $\bar{A}, \bar{B}$.
-We call them **revdot product relations**.
+The prover convinces the verifier that the revdot product of two secret
+vectors $\v{a}, \v{b}$ equals value $c$ given only their hiding commitments
+$\bar{A}, \bar{B}$.
+We call these **revdot product relations**.
 
-Revdot products show up in different contexts in Ragu protocol:
+Revdot products appear in several contexts in the Ragu protocol:
 
 - individual circuits'
   [consolidated constraint](../arithmetization.md#consolidated-constraints)
@@ -32,10 +32,10 @@ Revdot products show up in different contexts in Ragu protocol:
 
 ## Intuition
 
-Since revdot product is a special case of inner product relations, and the
+Revdot product is a special case of inner product relations. Since the
 concrete commitment scheme we use, Pedersen Vector commitment, is _linearly
-homomorphic_, we can borrow the aggregation technique from Bulletproofs:
-aggregating multiple claims into one via **random linear combination**.
+homomorphic_, we can borrow the aggregation technique from Bulletproofs,
+which aggregates multiple claims into one via **random linear combination**.
 
 Specifically, given:
 
@@ -51,8 +51,8 @@ $$
 \end{align*}
 $$
 
-The verifier can provide two random challenges $\mu,\nu\in\F$, with the goal
-of aggregating $n$ revdot claims into one:
+The verifier provides two random challenges $\mu,\nu\in\F$ to aggregate
+$n$ revdot claims into one:
 
 $$
 \begin{align*}
@@ -66,44 +66,45 @@ $$
 \end{align*}
 $$
 
-where $e_{i,j}=\revdot{\v{a}_i}{\v{b}_j}$ and particularly $e_{i,i} = c_i$.
-Notice the verifier can only compute $\bar{A}^\ast, \bar{B}^\ast$ unassisted.
-To compute $c^\ast$, he needs _cross terms_ $\set{e_{i,j}}_{i\neq j}$ in addition
-to the $\set{c_i}$ terms he already has. For soundness, we require **the prover
-to send (thus commit to) these cross terms before the verifier samples $\mu,\nu$**.
+where $e_{i,j}=\revdot{\v{a}_i}{\v{b}_j}$, with diagonal elements $e_{i,i} = c_i$.
+The verifier can compute $\bar{A}^\ast, \bar{B}^\ast$ unassisted.
+To compute $c^\ast$, the verifier needs _cross terms_ $\set{e_{i,j}}_{i\neq j}$
+in addition to the $\set{c_i}$ terms already available. For soundness, **the
+prover must send (thus commit to) these cross terms before the verifier samples
+$\mu,\nu$**.
 
 ```admonish tip title="Off-diagonal Error Terms"
-We can also view the expanded expression of $c^\ast$ as the summation of all
-cells in a $n\times n$ matrix where the $(i,j)$-th cell holds the value
+The expanded expression of $c^\ast$ can be viewed as the summation of all cells
+in an $n\times n$ matrix where the $(i,j)$-th cell holds the value
 
 $$
 \revdot{\mu^{-i}\cdot \v{a}_i}{(\mu\nu)^j \cdot \v{b}_j} = \mu^{j-i} \nu^j \cdot e_{i,j}
 $$
 
 for $\forall i,j \in[n]$.
-In this matrix view, all the diagonal entries are $\nu^i\cdot c_i$, computable
-by the verifier unassisted. Meanwhile, all off-diagonal entries (i.e. $i\neq j$)
-contains **error terms** that made up the remaining summands.
-We use _cross terms_ and _error terms_ interchangeably.
+In this matrix view, all diagonal entries are $\nu^i\cdot c_i$, computable by
+the verifier unassisted. All off-diagonal entries (i.e., $i\neq j$) contain
+**error terms** that constitute the remaining summands.
+The terms _cross terms_ and _error terms_ are used interchangeably.
 ```
 
 ## Revdot Product Reduction
 
 The accumulator instance and witness defined in the split-accumulation scheme
-are identical to that of the revdot product relation $\Rel_{rdp}$.
+are identical to those of the revdot product relation $\Rel_{rdp}$.
 We fold new revdot claims from various sources into $\acc_i$ to derive $\acc_{i+1}$.
-This procedure is effectively aggregating all new revdot claims, including the
-folded claim in $\acc_i$, into a single claim captured by the updated accumulator.
+This procedure aggregates all new revdot claims, including the folded claim
+in $\acc_i$, into a single claim captured by the updated accumulator.
 
 The split-accumulation proceeds as follows:
 
-1. Prover and verifier parse $\acc_i$ and new revdot claims from proofs
+1. The prover and verifier parse $\acc_i$ and new revdot claims from proofs
    $\set{\pi_i}$ to be accumulated into the instance-witness pair
    [as above](#intuition).
    The verifier holds $\set{\bar{A}_i,\bar{B}_i, c_i}_{i\in[n]}$.
-2. Prover sends all $n^2-n$ (off-diagonal) error terms $\set{e_{i,j}}_{i\neq j}$.
-3. Verifier samples $\mu,\nu \sample\F$
-4. Prover updates the folded witness:
+2. The prover sends all $n^2-n$ (off-diagonal) error terms $\set{e_{i,j}}_{i\neq j}$.
+3. The verifier samples $\mu,\nu \sample\F$.
+4. The prover updates the folded witness:
    $$
    \acc_{i+1}.\wit = (
        \underbrace{\sum_i \mu^{-i}\cdot \v{a}_i}_{\v{a}^\ast},\,
@@ -113,7 +114,7 @@ The split-accumulation proceeds as follows:
    )
    $$
 
-   Verifier updates the folded instance:
+   The verifier updates the folded instance:
    $$
    \acc_{i+1}.\inst = (
        \underbrace{\sum_i \mu^{-i}\cdot \bar{A}_i}_{\bar{A}^\ast},\,
@@ -122,23 +123,23 @@ The split-accumulation proceeds as follows:
    )
    $$
    
-The verifier's work is dominated by $2\cdot \mathsf{MSM}(n)$ to compute
-$\bar{A}^\ast, \bar{B}^\ast$; and $O(n^2)$ amount of field multiplications to
-compute $c^\ast$. 
+The verifier's work consists primarily of $2\cdot \mathsf{MSM}(n)$ to compute
+$\bar{A}^\ast, \bar{B}^\ast$, and $O(n^2)$ field multiplications to compute
+$c^\ast$.
 We introduce the next two techniques to reduce the verifier cost of enforcing
-them in circuit naively. We use both techniques in conjunction, but present them
-separately for clarity.
+these computations in circuit. We use both techniques in conjunction, but present
+them separately for clarity.
 
 ## Reducing Commitment Aggregation to Batched Evaluation
 
 Enforcing the computation of $\bar{A}^\ast$ and $\bar{B}^\ast$ requires linear
-combination of commitments in circuit. Naive implementation involves non-native
+combination of commitments in circuit. A direct implementation involves non-native
 arithmetic to constrain scalar multiplications. Instead, Ragu transforms the
 commitment aggregation statement into a PCS multi-opening claim, then piggybacks
 on the existing [batched evaluation](./pcs.md) for accumulation.
 
-Aggregation of homomorphic commitments $\bar{A}_i$ corresponds to aggregation of
-their underlying polynomials $a_i(X)$. We can _spot check_ the constituent
+The aggregation of homomorphic commitments $\bar{A}_i$ corresponds to aggregation
+of their underlying polynomials $a_i(X)$. We can _spot check_ the constituent
 polynomials and the aggregated polynomial at an arbitrary point $\beta\in\F$.
 If their evaluations follow the expected linear combination relation, _and_ the
 PCS evaluation claims are valid, then $\bar{A}^\ast$ is correct
@@ -159,27 +160,27 @@ $$
 $$
 
 After the reduction, the linear combination of evaluations can be natively
-enforced and the $(n+1)$ PCS claims are shoveled into a grand batched evaluation
+enforced, and the $(n+1)$ PCS claims are incorporated into a batched evaluation
 accumulation together with other PCS claims in the Ragu protocol.
 
-This reduction benefits from lower amortized cost. In the [step 7 of PCS
+This reduction has lower amortized cost. In [step 7 of PCS
 aggregation](./pcs.md#pcs-aggregation), there is only _one scalar multiplication
 per queried polynomial_ regardless of the number of queried points on it.
-If some $a_i(X)$ is already queried elsewhere in the protocol, then our
-reduction leads to fewer scalar multiplications in total.
+If some $a_i(X)$ is already queried elsewhere in the protocol, our reduction
+leads to fewer scalar multiplications in total.
 Furthermore, all group operations are
 [deferred](../../prelim/nested_commitment.md#deferred-operations) to avoid
 non-native arithmetic.
 
 ## Multi-layer Revdot Reduction
 
-Another challenge comes from the $O(n^2)$ field operations to derive $c^\ast$.
+Another challenge arises from the $O(n^2)$ field operations to derive $c^\ast$.
 When folding many revdot claims (e.g., $n=133$ in Ragu's fuse operation), the
 single-reduction approach above requires $n^2 = 17689$ field multiplications,
 exceeding the targeted circuit size limit.
-Ragu prefers smaller circuits (even if requiring more circuits per step) because
-smaller circuits lead to smaller witness commitments, which lead to smaller IPA
-proofs, ultimately yielding faster verifier times.
+Smaller circuits are preferable (even if requiring more circuits per step) because
+they lead to smaller witness commitments, which lead to smaller IPA proofs,
+ultimately yielding faster verifier times.
 
 To address this, we employ a **two-layer reduction** scheme parameterized by
 $(M, N)$ that folds up to $M \cdot N$ claims using roughly $NM^2 + N^2 - N + 3$
@@ -203,22 +204,22 @@ smaller batches first, then combining the results.
 Given initial revdot claims indexed as $\set{(\bar{A}_i, \bar{B}_i, c_i)}_{i \in [M\cdot N]}$,
 the accumulation proceeds:
 
-1. Prover and verifier partition claims into $N$ groups of $M$ claims each.
+1. The prover and verifier partition claims into $N$ groups of $M$ claims each.
 2. Layer 1:
-   - Prover sends all error terms $\set{e^{(g)}_{i,j}}_{g\in[N], i\neq j, i,j\in[M]}$
-     (i.e., $N$ groups of $M(M-1)$ error terms each)
-   - Verifier samples $\mu, \nu \sample \F$
-   - Both compute $N$ intermediate claims. For each group $g \in [N]$:
+   - The prover sends all error terms $\set{e^{(g)}_{i,j}}_{g\in[N], i\neq j, i,j\in[M]}$
+     (i.e., $N$ groups of $M(M-1)$ error terms each).
+   - The verifier samples $\mu, \nu \sample \F$.
+   - Both parties compute $N$ intermediate claims. For each group $g \in [N]$:
      $$
      \bar{A}^{(g)} = \sum_{i=0}^{M-1} \mu^{-i} \bar{A}_{gM+i},\quad
      \bar{B}^{(g)} = \sum_{i=0}^{M-1} (\mu\nu)^i \bar{B}_{gM+i},\quad
      c^{(g)} = \sum_{i,j\in[M]} \mu^{j-i} \nu^j e^{(g)}_{i,j}
      $$
 3. Layer 2:
-   - Prover sends error terms $\set{e_{g,h}}_{g\neq h, g,h\in[N]}$
-     (i.e., $N(N-1)$ cross-terms between intermediate claims)
-   - Verifier samples fresh $\mu', \nu' \sample \F$
-   - Both compute final folded claim:
+   - The prover sends error terms $\set{e_{g,h}}_{g\neq h, g,h\in[N]}$
+     (i.e., $N(N-1)$ cross-terms between intermediate claims).
+   - The verifier samples fresh $\mu', \nu' \sample \F$.
+   - Both parties compute the final folded claim:
      $$
      \bar{A}^\ast = \sum_{g=0}^{N-1} (\mu')^{-g} \bar{A}^{(g)},\quad
      \bar{B}^\ast = \sum_{g=0}^{N-1} (\mu'\nu')^g \bar{B}^{(g)},\quad
@@ -240,9 +241,8 @@ For folding $M \cdot N$ claims via two layers with parameters $(M, N)$:
   totaling $N^2 + 1$ constraints
 - Total: $(NM^2 - N + 2) + (N^2 + 1) = NM^2 + N^2 - N + 3$ constraints
 
-Compare this to a single-layer reduction of the same $M \cdot N$ claims:
-
-- $(M \cdot N)^2 + 1$ constraints
+Compared to a single-layer reduction of the same $M \cdot N$ claims, which
+requires $(M \cdot N)^2 + 1$ constraints, this is a significant improvement.
 
 For Ragu's parameters $M=7, N=19$ (supporting up to $133$ claims):
 
