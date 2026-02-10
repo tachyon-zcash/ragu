@@ -449,7 +449,11 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
 impl<F: PrimeField + FromUniformBytes<64>, R: Rank> Registry<'_, F, R> {
     /// Compute a digest of this registry using BLAKE2b.
     fn compute_registry_digest(&self) -> F {
-        let mut state = Params::new().personal(b"ragu_registry___").to_state();
+        let mut hasher = Params::new().personal(b"ragu_registry___").to_state();
+
+        let field_from_hash = |hasher: &blake2b_simd::State, index: u8| {
+            F::from_uniform_bytes(hasher.clone().update(&[index]).finalize().as_array())
+        };
 
         // Placeholder "nothing-up-my-sleeve challenges" (small primes).
         let mut w = F::from(2u64);
@@ -462,31 +466,14 @@ impl<F: PrimeField + FromUniformBytes<64>, R: Rank> Registry<'_, F, R> {
         // Currently limited by registry evaluation performance; See #78 and #316.
         for _ in 0..6 {
             let eval = self.wxy(w, x, y);
-            state.update(eval.to_repr().as_ref());
+            hasher.update(eval.to_repr().as_ref());
 
-            let hash = state.finalize();
-            w = Self::field_from_hash(&hash, 0);
-            x = Self::field_from_hash(&hash, 1);
-            y = Self::field_from_hash(&hash, 2);
-
-            state = Params::new().personal(b"ragu_registry___").to_state();
-            state.update(hash.as_bytes());
+            w = field_from_hash(&hasher, 0);
+            x = field_from_hash(&hasher, 1);
+            y = field_from_hash(&hasher, 2);
         }
 
-        let final_hash = state.finalize();
-        Self::field_from_hash(&final_hash, 0)
-    }
-
-    fn field_from_hash(hash: &blake2b_simd::Hash, index: u8) -> F {
-        let derived = Params::new()
-            .hash_length(64)
-            .personal(b"ragu_derive_____")
-            .to_state()
-            .update(hash.as_bytes())
-            .update(&[index])
-            .finalize();
-
-        F::from_uniform_bytes(derived.as_bytes().try_into().expect("64 bytes"))
+        field_from_hash(&hasher, 0)
     }
 }
 
