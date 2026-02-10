@@ -94,9 +94,9 @@ pub fn eval<F: Field, R: Rank>(trace: &SynthesisTrace<F>, x: F, y: F, key: &regi
     // Evaluate mul wires
     for (a_id, b_id, c_id) in &trace.mul_wire_ids {
         let (a, b, c) = monomials.next_gate();
-        wire_evals[a_id.0] = a;
-        wire_evals[b_id.0] = b;
-        wire_evals[c_id.0] = c;
+        wire_evals[*a_id] = a;
+        wire_evals[*b_id] = b;
+        wire_evals[*c_id] = c;
     }
 
     // Evaluate add wires that were lazily deferred during trace capture
@@ -104,9 +104,9 @@ pub fn eval<F: Field, R: Rank>(trace: &SynthesisTrace<F>, x: F, y: F, key: &regi
         let sum: F = lc
             .terms
             .iter()
-            .map(|term| term.coeff * wire_evals[term.wire.0])
+            .map(|term| term.coeff * wire_evals[term.wire])
             .sum();
-        wire_evals[id.0] = sum;
+        wire_evals[*id] = sum;
     }
 
     // Horner accumulation: result = result * y + coefficient
@@ -119,7 +119,7 @@ pub fn eval<F: Field, R: Rank>(trace: &SynthesisTrace<F>, x: F, y: F, key: &regi
         result += lc
             .terms
             .iter()
-            .map(|term| term.coeff * wire_evals[term.wire.0])
+            .map(|term| term.coeff * wire_evals[term.wire])
             .sum::<F>();
     }
 

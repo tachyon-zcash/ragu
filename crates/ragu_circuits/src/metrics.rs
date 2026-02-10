@@ -30,40 +30,34 @@ pub struct CircuitMetrics {
     pub num_multiplication_constraints: usize,
 }
 
-/// Sequential index identifying a wire in a synthesis trace.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct TraceWireId(pub(crate) usize);
-
-impl TraceWireId {
-    /// The ONE wire.
-    pub(crate) const ONE: Self = Self(2);
-}
+/// The ONE wire index in the trace.
+const ONE_WIRE: usize = 2;
 
 /// A `coefficient * wire` term.
 #[derive(Clone, Debug)]
 pub(crate) struct TraceTerm<F> {
-    pub(crate) coeff: F,
-    pub(crate) wire: TraceWireId,
+    pub coeff: F,
+    pub wire: usize,
 }
 
 /// Sum of [`TraceTerm`]s.
 #[derive(Clone, Debug)]
-pub(crate) struct TraceLinearCombination<F> {
-    pub(crate) terms: Vec<TraceTerm<F>>,
+pub(crate) struct TraceLC<F> {
+    pub terms: Vec<TraceTerm<F>>,
 }
 
 /// Recorded circuit structure for polynomial evaluation replay.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SynthesisTrace<F: Field> {
     /// (a, b, c) wire IDs for each multiplication gate.
-    pub(crate) mul_wire_ids: Vec<(TraceWireId, TraceWireId, TraceWireId)>,
+    pub mul_wire_ids: Vec<(usize, usize, usize)>,
     /// Add wire definitions: (wire_id, linear_combination).
-    pub(crate) add_wires: Vec<(TraceWireId, TraceLinearCombination<F>)>,
+    pub add_wires: Vec<(usize, TraceLC<F>)>,
     /// Linear constraints.
-    pub(crate) constraints: Vec<TraceLinearCombination<F>>,
+    pub constraints: Vec<TraceLC<F>>,
 }
 
-/// Builder for [`TraceLinearCombination`].
+/// Builder for [`TraceLC`].
 struct TraceLCBuilder<F: Field> {
     terms: Vec<TraceTerm<F>>,
     current_gain: Coeff<F>,
@@ -79,15 +73,15 @@ impl<F: Field> Default for TraceLCBuilder<F> {
 }
 
 impl<F: Field> TraceLCBuilder<F> {
-    fn build(f: impl Fn(Self) -> Self) -> TraceLinearCombination<F> {
-        TraceLinearCombination {
+    fn build(f: impl Fn(Self) -> Self) -> TraceLC<F> {
+        TraceLC {
             terms: f(Self::default()).terms,
         }
     }
 }
 
-impl<F: Field> LinearExpression<TraceWireId, F> for TraceLCBuilder<F> {
-    fn add_term(mut self, wire: &TraceWireId, coeff: Coeff<F>) -> Self {
+impl<F: Field> LinearExpression<usize, F> for TraceLCBuilder<F> {
+    fn add_term(mut self, wire: &usize, coeff: Coeff<F>) -> Self {
         let effective_coeff = (coeff * self.current_gain).value();
         self.terms.push(TraceTerm {
             coeff: effective_coeff,
@@ -104,10 +98,10 @@ impl<F: Field> LinearExpression<TraceWireId, F> for TraceLCBuilder<F> {
 
 struct Counter<F: Field> {
     next_wire_id: usize,
-    mul_wire_ids: Vec<(TraceWireId, TraceWireId, TraceWireId)>,
-    add_wires: Vec<(TraceWireId, TraceLinearCombination<F>)>,
-    constraints: Vec<TraceLinearCombination<F>>,
-    available_b: Option<TraceWireId>,
+    mul_wire_ids: Vec<(usize, usize, usize)>,
+    add_wires: Vec<(usize, TraceLC<F>)>,
+    constraints: Vec<TraceLC<F>>,
+    available_b: Option<usize>,
 }
 
 impl<F: Field> Default for Counter<F> {
@@ -123,8 +117,8 @@ impl<F: Field> Default for Counter<F> {
 }
 
 impl<F: Field> Counter<F> {
-    fn alloc_wire(&mut self) -> TraceWireId {
-        let id = TraceWireId(self.next_wire_id);
+    fn alloc_wire(&mut self) -> usize {
+        let id = self.next_wire_id;
         self.next_wire_id += 1;
         id
     }
@@ -133,15 +127,15 @@ impl<F: Field> Counter<F> {
 impl<F: Field> DriverTypes for Counter<F> {
     type MaybeKind = Empty;
     type ImplField = F;
-    type ImplWire = TraceWireId;
+    type ImplWire = usize;
     type LCadd = TraceLCBuilder<F>;
     type LCenforce = TraceLCBuilder<F>;
 }
 
 impl<'dr, F: Field> Driver<'dr> for Counter<F> {
     type F = F;
-    type Wire = TraceWireId;
-    const ONE: Self::Wire = TraceWireId::ONE;
+    type Wire = usize;
+    const ONE: Self::Wire = ONE_WIRE;
 
     fn alloc(&mut self, _: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
         if let Some(wire) = self.available_b.take() {
