@@ -38,6 +38,7 @@ ff = { workspace = true }
 pasta_curves = { workspace = true }
 ragu_circuits = { path = "../ragu_circuits", version = "0.0.0" }
 ragu_core = { path = "../ragu_core", version = "0.0.0" }
+ragu_macros = { path = "../ragu_macros", version = "0.0.0" }
 ragu_primitives = { path = "../ragu_primitives", version = "0.0.0" }
 rand = { workspace = true }
 

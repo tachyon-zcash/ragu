@@ -109,3 +109,34 @@ pub fn impl_maybe_cast_tuple(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as LitInt);
     macro_body(|| proc::maybe_cast::evaluate(input))
 }
+
+/// Generates unified instance types (Output, Instance, OutputBuilder).
+///
+/// Takes a field specification list and generates three types for use in
+/// internal verification circuits.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// ragu_macros::unified_instance! {
+///     #[point]
+///     pub nested_preamble_commitment: C::NestedCurve,
+///     #[element]
+///     pub w: C::CircuitField,
+/// }
+/// ```
+#[proc_macro]
+pub fn unified_instance(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as proc::unified_instance::Input);
+    macro_body(|| {
+        let ragu_core_path = path_resolution::RaguCorePath::resolve()?;
+        let ragu_primitives_path = path_resolution::RaguPrimitivesPath::resolve()?;
+        let arithmetic_path = syn::parse_quote!(::arithmetic);
+        proc::unified_instance::evaluate(
+            input,
+            ragu_core_path,
+            ragu_primitives_path,
+            arithmetic_path,
+        )
+    })
+}

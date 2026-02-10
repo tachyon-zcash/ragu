@@ -23,7 +23,7 @@ use ragu_circuits::polynomials::Rank;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Consistent, Gadget, GadgetKind, Kind},
+    gadgets::{Consistent, Gadget, Kind},
     maybe::Maybe,
 };
 use ragu_primitives::{Element, Point, io::Write};
@@ -42,142 +42,107 @@ pub type InternalOutputKind<C: Cycle> = Kind![C::CircuitField; WithSuffix<'_, _,
 /// Used for allocation sizing and verified by tests.
 pub const NUM_WIRES: usize = 29;
 
-/// Shared public inputs for internal verification circuits.
-///
-/// This gadget contains the commitments, Fiat-Shamir challenges, and final
-/// values that internal circuits consume as public inputs. The nested curve
-/// (`C::NestedCurve`) is the other curve in the cycle, whose base field equals
-/// the circuit's scalar field.
-///
-/// # Field Organization
-///
-/// Fields are ordered to match the current proof's transcript:
-///
-/// - **Commitments**: Points on the nested curve from current proof components
-/// - **Challenges**: Fiat-Shamir challenges computed by [`hashes_1`] and [`hashes_2`]
-/// - **Final values**: The revdot claim $c$ and expected evaluation $v$
-///
-/// [`hashes_1`]: super::hashes_1
-/// [`hashes_2`]: super::hashes_2
-#[derive(Gadget, Write, Consistent)]
-pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
-    // Commitments from current proof components (on the nested curve)
+// Generate three related types from the unified instance specification:
+//
+// - `Output<'dr, D, C>`: Circuit gadget implementing `Gadget`, `Write`, and
+//   `Consistent`. Contains Point and Element gadgets for each field. Used as
+//   the public input representation in internal verification circuits.
+//
+// - `Instance<C>`: Native value representation containing raw curve points and
+//   field elements. Used for witness data and native computation.
+//
+// - `OutputBuilder<'a, 'dr, D, C>`: Lazy builder with slot-based allocation.
+//   Each field is a `Slot` that can either pre-compute values (via `set`) or
+//   allocate on-demand (via `get`). This avoids redundant wire allocations when
+//   the same value is computed by multiple code paths. The builder provides
+//   `new()`, `finish_no_suffix()`, and `finish()` methods.
+//
+// Fields are annotated with `#[point]` for curve points or `#[element]` for
+// field elements. Documentation and field order are preserved in all generated
+// types.
+ragu_macros::unified_instance! {
     /// Commitment from the preamble proof component.
-    #[ragu(gadget)]
-    pub nested_preamble_commitment: Point<'dr, D, C::NestedCurve>,
+    #[point]
+    pub nested_preamble_commitment: C::NestedCurve,
 
-    // Challenge from hashes_1
     /// Fiat-Shamir challenge $w$.
-    #[ragu(gadget)]
-    pub w: Element<'dr, D>,
+    #[element]
+    pub w: C::CircuitField,
 
     /// Commitment from the s_prime proof component.
-    #[ragu(gadget)]
-    pub nested_s_prime_commitment: Point<'dr, D, C::NestedCurve>,
+    #[point]
+    pub nested_s_prime_commitment: C::NestedCurve,
 
-    // Challenges from hashes_1
     /// Fiat-Shamir challenge $y$.
-    #[ragu(gadget)]
-    pub y: Element<'dr, D>,
+    #[element]
+    pub y: C::CircuitField,
+
     /// Fiat-Shamir challenge $z$.
-    #[ragu(gadget)]
-    pub z: Element<'dr, D>,
+    #[element]
+    pub z: C::CircuitField,
 
     /// Commitment from the error_m proof component.
-    #[ragu(gadget)]
-    pub nested_error_m_commitment: Point<'dr, D, C::NestedCurve>,
+    #[point]
+    pub nested_error_m_commitment: C::NestedCurve,
 
-    // First folding layer challenges from hashes_2
     /// First folding layer challenge $\mu$.
-    #[ragu(gadget)]
-    pub mu: Element<'dr, D>,
+    #[element]
+    pub mu: C::CircuitField,
+
     /// First folding layer challenge $\nu$.
-    #[ragu(gadget)]
-    pub nu: Element<'dr, D>,
+    #[element]
+    pub nu: C::CircuitField,
 
     /// Commitment from the error_n proof component.
-    #[ragu(gadget)]
-    pub nested_error_n_commitment: Point<'dr, D, C::NestedCurve>,
+    #[point]
+    pub nested_error_n_commitment: C::NestedCurve,
 
-    // Second folding layer challenges from hashes_2
     /// Second folding layer challenge $\mu'$.
-    #[ragu(gadget)]
-    pub mu_prime: Element<'dr, D>,
-    /// Second folding layer challenge $\nu'$.
-    #[ragu(gadget)]
-    pub nu_prime: Element<'dr, D>,
+    #[element]
+    pub mu_prime: C::CircuitField,
 
-    // Final values
+    /// Second folding layer challenge $\nu'$.
+    #[element]
+    pub nu_prime: C::CircuitField,
+
     /// Final revdot claim value from the ab proof component.
-    #[ragu(gadget)]
-    pub c: Element<'dr, D>,
+    #[element]
+    pub c: C::CircuitField,
 
     /// Commitment from the ab proof component.
-    #[ragu(gadget)]
-    pub nested_ab_commitment: Point<'dr, D, C::NestedCurve>,
+    #[point]
+    pub nested_ab_commitment: C::NestedCurve,
 
-    // Polynomial commitment challenge from hashes_2
     /// Polynomial commitment challenge $x$.
-    #[ragu(gadget)]
-    pub x: Element<'dr, D>,
+    #[element]
+    pub x: C::CircuitField,
 
     /// Commitment from the query proof component.
-    #[ragu(gadget)]
-    pub nested_query_commitment: Point<'dr, D, C::NestedCurve>,
+    #[point]
+    pub nested_query_commitment: C::NestedCurve,
 
     /// Query polynomial challenge $\alpha$.
-    #[ragu(gadget)]
-    pub alpha: Element<'dr, D>,
+    #[element]
+    pub alpha: C::CircuitField,
 
     /// Commitment from the f proof component.
-    #[ragu(gadget)]
-    pub nested_f_commitment: Point<'dr, D, C::NestedCurve>,
+    #[point]
+    pub nested_f_commitment: C::NestedCurve,
 
     /// Final polynomial challenge $u$.
-    #[ragu(gadget)]
-    pub u: Element<'dr, D>,
+    #[element]
+    pub u: C::CircuitField,
 
     /// Commitment from the eval proof component.
-    #[ragu(gadget)]
-    pub nested_eval_commitment: Point<'dr, D, C::NestedCurve>,
+    #[point]
+    pub nested_eval_commitment: C::NestedCurve,
 
     /// Pre-endoscalar beta challenge. Effective beta is derived in compute_v.
-    #[ragu(gadget)]
-    pub pre_beta: Element<'dr, D>,
+    #[element]
+    pub pre_beta: C::CircuitField,
 
     /// Expected evaluation at the challenge point for consistency verification.
-    #[ragu(gadget)]
-    pub v: Element<'dr, D>,
-}
-
-/// Native (non-gadget) representation of unified public inputs.
-///
-/// This struct holds the concrete field values corresponding to [`Output`]
-/// fields. It is constructed during proof generation in the fuse pipeline
-/// and passed to circuits as witness data for gadget allocation.
-///
-/// See [`Output`] for field descriptions.
-pub struct Instance<C: Cycle> {
-    pub nested_preamble_commitment: C::NestedCurve,
-    pub w: C::CircuitField,
-    pub nested_s_prime_commitment: C::NestedCurve,
-    pub y: C::CircuitField,
-    pub z: C::CircuitField,
-    pub nested_error_m_commitment: C::NestedCurve,
-    pub mu: C::CircuitField,
-    pub nu: C::CircuitField,
-    pub nested_error_n_commitment: C::NestedCurve,
-    pub mu_prime: C::CircuitField,
-    pub nu_prime: C::CircuitField,
-    pub c: C::CircuitField,
-    pub nested_ab_commitment: C::NestedCurve,
-    pub x: C::CircuitField,
-    pub nested_query_commitment: C::NestedCurve,
-    pub alpha: C::CircuitField,
-    pub nested_f_commitment: C::NestedCurve,
-    pub u: C::CircuitField,
-    pub nested_eval_commitment: C::NestedCurve,
-    pub pre_beta: C::CircuitField,
+    #[element]
     pub v: C::CircuitField,
 }
 
@@ -238,44 +203,6 @@ impl<'a, 'dr, D: Driver<'dr>, T: Clone, C: Cycle> Slot<'a, 'dr, D, T, C> {
             .map(Result::Ok)
             .unwrap_or_else(|| (self.alloc)(dr, instance))
     }
-}
-
-/// Builder for constructing an [`Output`] gadget with flexible allocation.
-///
-/// Each field is a [`Slot`] that can be filled either eagerly (via `set`) or
-/// lazily (via `get` or at finalization). This allows circuits to pre-compute
-/// some values during earlier stages while deferring others.
-///
-/// # Usage
-///
-/// 1. Create a builder with [`new`](Self::new)
-/// 2. Optionally pre-fill slots using `builder.field.set(value)`
-/// 3. Optionally allocate slots using `builder.field.get(dr, instance)`
-/// 4. Call [`finish`](Self::finish) to build the final output with suffix
-///
-/// Any slots not explicitly filled will be allocated during finalization.
-pub struct OutputBuilder<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
-    pub nested_preamble_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
-    pub w: Slot<'a, 'dr, D, Element<'dr, D>, C>,
-    pub nested_s_prime_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
-    pub y: Slot<'a, 'dr, D, Element<'dr, D>, C>,
-    pub z: Slot<'a, 'dr, D, Element<'dr, D>, C>,
-    pub nested_error_m_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
-    pub mu: Slot<'a, 'dr, D, Element<'dr, D>, C>,
-    pub nu: Slot<'a, 'dr, D, Element<'dr, D>, C>,
-    pub nested_error_n_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
-    pub mu_prime: Slot<'a, 'dr, D, Element<'dr, D>, C>,
-    pub nu_prime: Slot<'a, 'dr, D, Element<'dr, D>, C>,
-    pub c: Slot<'a, 'dr, D, Element<'dr, D>, C>,
-    pub nested_ab_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
-    pub x: Slot<'a, 'dr, D, Element<'dr, D>, C>,
-    pub nested_query_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
-    pub alpha: Slot<'a, 'dr, D, Element<'dr, D>, C>,
-    pub nested_f_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
-    pub u: Slot<'a, 'dr, D, Element<'dr, D>, C>,
-    pub nested_eval_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
-    pub pre_beta: Slot<'a, 'dr, D, Element<'dr, D>, C>,
-    pub v: Slot<'a, 'dr, D, Element<'dr, D>, C>,
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
@@ -340,103 +267,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
             nested_eval_commitment,
             pre_beta,
             v,
-        })
-    }
-}
-
-impl<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> OutputBuilder<'a, 'dr, D, C> {
-    /// Creates a new builder with allocation functions for each field.
-    ///
-    /// All slots start empty and will allocate from the [`Instance`] when
-    /// finalized, unless explicitly filled beforehand.
-    pub fn new() -> Self {
-        macro_rules! point_slot {
-            ($field:ident) => {
-                Slot::new(|dr, i: &DriverValue<D, &'a Instance<C>>| {
-                    Point::alloc(dr, i.view().map(|i| i.$field))
-                })
-            };
-        }
-        macro_rules! element_slot {
-            ($field:ident) => {
-                Slot::new(|dr, i: &DriverValue<D, &'a Instance<C>>| {
-                    Element::alloc(dr, i.view().map(|i| i.$field))
-                })
-            };
-        }
-        OutputBuilder {
-            nested_preamble_commitment: point_slot!(nested_preamble_commitment),
-            w: element_slot!(w),
-            nested_s_prime_commitment: point_slot!(nested_s_prime_commitment),
-            y: element_slot!(y),
-            z: element_slot!(z),
-            nested_error_m_commitment: point_slot!(nested_error_m_commitment),
-            mu: element_slot!(mu),
-            nu: element_slot!(nu),
-            nested_error_n_commitment: point_slot!(nested_error_n_commitment),
-            mu_prime: element_slot!(mu_prime),
-            nu_prime: element_slot!(nu_prime),
-            c: element_slot!(c),
-            nested_ab_commitment: point_slot!(nested_ab_commitment),
-            x: element_slot!(x),
-            nested_query_commitment: point_slot!(nested_query_commitment),
-            alpha: element_slot!(alpha),
-            nested_f_commitment: point_slot!(nested_f_commitment),
-            u: element_slot!(u),
-            nested_eval_commitment: point_slot!(nested_eval_commitment),
-            pre_beta: element_slot!(pre_beta),
-            v: element_slot!(v),
-        }
-    }
-
-    /// Finishes building and wraps the output in [`WithSuffix`].
-    ///
-    /// Appends a zero element as the suffix, ensuring the linear term of
-    /// $k(Y)$ is zero. This distinguishes internal circuits (fixed by the
-    /// protocol) from application circuits (which vary), preventing an
-    /// application from substituting an internal circuit proof for an
-    /// application circuit proof.
-    pub fn finish(
-        self,
-        dr: &mut D,
-        instance: &DriverValue<D, &'a Instance<C>>,
-    ) -> Result<<InternalOutputKind<C> as GadgetKind<D::F>>::Rebind<'dr, D>> {
-        let zero = Element::zero(dr);
-        Ok(WithSuffix::new(self.finish_no_suffix(dr, instance)?, zero))
-    }
-
-    /// Finishes building the output without wrapping in [`WithSuffix`].
-    ///
-    /// Use this when the circuit needs to include additional data in its
-    /// output alongside the unified instance, and will handle the suffix
-    /// wrapping separately.
-    pub fn finish_no_suffix(
-        self,
-        dr: &mut D,
-        instance: &DriverValue<D, &'a Instance<C>>,
-    ) -> Result<Output<'dr, D, C>> {
-        Ok(Output {
-            nested_preamble_commitment: self.nested_preamble_commitment.take(dr, instance)?,
-            w: self.w.take(dr, instance)?,
-            nested_s_prime_commitment: self.nested_s_prime_commitment.take(dr, instance)?,
-            y: self.y.take(dr, instance)?,
-            z: self.z.take(dr, instance)?,
-            nested_error_m_commitment: self.nested_error_m_commitment.take(dr, instance)?,
-            mu: self.mu.take(dr, instance)?,
-            nu: self.nu.take(dr, instance)?,
-            nested_error_n_commitment: self.nested_error_n_commitment.take(dr, instance)?,
-            mu_prime: self.mu_prime.take(dr, instance)?,
-            nu_prime: self.nu_prime.take(dr, instance)?,
-            c: self.c.take(dr, instance)?,
-            nested_ab_commitment: self.nested_ab_commitment.take(dr, instance)?,
-            x: self.x.take(dr, instance)?,
-            nested_query_commitment: self.nested_query_commitment.take(dr, instance)?,
-            alpha: self.alpha.take(dr, instance)?,
-            nested_f_commitment: self.nested_f_commitment.take(dr, instance)?,
-            u: self.u.take(dr, instance)?,
-            nested_eval_commitment: self.nested_eval_commitment.take(dr, instance)?,
-            pre_beta: self.pre_beta.take(dr, instance)?,
-            v: self.v.take(dr, instance)?,
         })
     }
 }
