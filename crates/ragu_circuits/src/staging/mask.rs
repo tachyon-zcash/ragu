@@ -425,7 +425,7 @@ mod tests {
         let y = Fp::random(&mut rand::rng());
         let k = registry::Key::new(Fp::random(&mut rand::rng()));
 
-        let metrics = metrics::eval(&circuit).expect("metrics should succeed");
+        let (metrics, _) = metrics::eval(&circuit).expect("metrics should succeed");
         let mut sy = sy::eval::<_, _, R>(&circuit, y, &k, metrics.num_linear_constraints)
             .expect("sy() evaluation should succeed");
 
@@ -612,7 +612,7 @@ mod tests {
                 let (mul_from_method, linear_from_method) =
                     <StageMask<R> as CircuitObject<Fp, R>>::constraint_counts(&stage_mask);
 
-                let metrics = metrics::eval::<Fp, _>(&stage_mask).unwrap();
+                let (metrics, _) = metrics::eval::<Fp, _>(&stage_mask).unwrap();
 
                 assert_eq!(
                     mul_from_method, metrics.num_multiplication_constraints,

@@ -97,7 +97,7 @@ pub mod sy;
 /// [`enforce_zero`]: ragu_core::drivers::Driver::enforce_zero
 /// [`enforce_public_outputs`]: DriverExt::enforce_public_outputs
 /// [`enforce_one`]: DriverExt::enforce_one
-trait DriverExt<'dr>: Driver<'dr> {
+pub(crate) trait DriverExt<'dr>: Driver<'dr> {
     /// Enforces public output constraints by binding output wires to
     /// coefficients of $k(Y)$.
     fn enforce_public_outputs<'w>(

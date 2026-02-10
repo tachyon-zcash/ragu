@@ -38,6 +38,8 @@ use ragu_core::{
 };
 use ragu_primitives::io::Write;
 
+use metrics::SynthesisTrace;
+
 use alloc::{boxed::Box, vec::Vec};
 
 use polynomials::{Rank, structured, unstructured};
@@ -99,7 +101,8 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
     where
         Self: 'a,
     {
-        let metrics = metrics::eval(&self)?;
+        // Capture metrics and synthesis trace in one pass.
+        let (metrics, synthesis_trace) = metrics::eval(&self)?;
 
         if metrics.num_linear_constraints > R::num_coeffs() {
             return Err(Error::LinearBoundExceeded(R::num_coeffs()));
@@ -109,15 +112,15 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
             return Err(Error::MultiplicationBoundExceeded(R::n()));
         }
 
-        struct ProcessedCircuit<C> {
+        struct ProcessedCircuit<F: Field, C> {
             circuit: C,
             metrics: metrics::CircuitMetrics,
+            synthesis_trace: SynthesisTrace<F>,
         }
 
-        impl<F: Field, C: Circuit<F>, R: Rank> CircuitObject<F, R> for ProcessedCircuit<C> {
+        impl<F: Field, C: Circuit<F>, R: Rank> CircuitObject<F, R> for ProcessedCircuit<F, C> {
             fn sxy(&self, x: F, y: F, key: &registry::Key<F>) -> F {
-                s::sxy::eval::<_, _, R>(&self.circuit, x, y, key)
-                    .expect("should succeed if metrics succeeded")
+                s::sxy::eval::<F, R>(&self.synthesis_trace, x, y, key)
             }
             fn sx(&self, x: F, key: &registry::Key<F>) -> unstructured::Polynomial<F, R> {
                 s::sx::eval(&self.circuit, x, key).expect("should succeed if metrics succeeded")
@@ -137,6 +140,7 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
         let circuit = ProcessedCircuit {
             circuit: self,
             metrics,
+            synthesis_trace,
         };
         Ok(Box::new(circuit))
     }

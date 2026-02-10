@@ -2,82 +2,175 @@
 //!
 //! This module provides constraint system analysis by simulating circuit
 //! execution without computing actual values, counting the number of
-//! multiplication and linear constraints a circuit requires.
+//! multiplication and linear constraints a circuit requires. It also captures
+//! a synthesis trace for efficient polynomial evaluation.
 
+use alloc::vec::Vec;
 use arithmetic::Coeff;
 use ff::Field;
 use ragu_core::{
     Result,
-    drivers::{Driver, DriverTypes, emulator::Emulator},
+    drivers::{Driver, DriverTypes, LinearExpression, emulator::Emulator},
     gadgets::GadgetKind,
     maybe::Empty,
     routines::Routine,
 };
 use ragu_primitives::GadgetExt;
 
-use core::marker::PhantomData;
+use crate::s::DriverExt;
 
 use super::Circuit;
 
-/// Performs full constraint system analysis, capturing basic details about a circuit's topology through simulation.
+/// Constraint counts and synthesis trace for a circuit.
 pub struct CircuitMetrics {
     /// The number of linear constraints, including those for public inputs.
     pub num_linear_constraints: usize,
 
     /// The number of multiplication constraints, including those used for allocations.
     pub num_multiplication_constraints: usize,
-
-    /// The degree of the public input polynomial.
-    // TODO(ebfull): not sure if we'll need this later
-    #[allow(dead_code)]
-    pub degree_ky: usize,
 }
 
-struct Counter<F> {
-    available_b: bool,
-    num_linear_constraints: usize,
-    num_multiplication_constraints: usize,
-    _marker: PhantomData<F>,
+/// Sequential index identifying a wire in a synthesis trace.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TraceWireId(pub usize);
+
+impl TraceWireId {
+    /// The ONE wire (c wire from gate 0).
+    pub const ONE: Self = Self(2);
+}
+
+/// A `coefficient * wire` term.
+#[derive(Clone, Debug)]
+pub struct TraceTerm<F: Field> {
+    pub coeff: Coeff<F>,
+    pub wire: TraceWireId,
+}
+
+/// Sum of [`TraceTerm`]s.
+#[derive(Clone, Debug, Default)]
+pub struct TraceLinearCombination<F: Field> {
+    pub terms: Vec<TraceTerm<F>>,
+}
+
+/// Recorded circuit structure for polynomial evaluation replay.
+#[derive(Clone, Debug, Default)]
+pub struct SynthesisTrace<F: Field> {
+    /// (a, b, c) wire IDs for each multiplication gate.
+    pub mul_wire_ids: Vec<(TraceWireId, TraceWireId, TraceWireId)>,
+    /// Add wire definitions: (wire_id, linear_combination).
+    pub add_wires: Vec<(TraceWireId, TraceLinearCombination<F>)>,
+    /// Linear constraints.
+    pub constraints: Vec<TraceLinearCombination<F>>,
+}
+
+/// Builder for [`TraceLinearCombination`].
+struct TraceLCBuilder<F: Field> {
+    terms: Vec<TraceTerm<F>>,
+    current_gain: Coeff<F>,
+}
+
+impl<F: Field> Default for TraceLCBuilder<F> {
+    fn default() -> Self {
+        Self {
+            terms: Vec::new(),
+            current_gain: Coeff::One,
+        }
+    }
+}
+
+impl<F: Field> TraceLCBuilder<F> {
+    fn build(f: impl Fn(Self) -> Self) -> TraceLinearCombination<F> {
+        TraceLinearCombination {
+            terms: f(Self::default()).terms,
+        }
+    }
+}
+
+impl<F: Field> LinearExpression<TraceWireId, F> for TraceLCBuilder<F> {
+    fn add_term(mut self, wire: &TraceWireId, coeff: Coeff<F>) -> Self {
+        let effective_coeff = coeff * self.current_gain;
+        self.terms.push(TraceTerm {
+            coeff: effective_coeff,
+            wire: *wire,
+        });
+        self
+    }
+
+    fn gain(mut self, coeff: Coeff<F>) -> Self {
+        self.current_gain = self.current_gain * coeff;
+        self
+    }
+}
+
+struct Counter<F: Field> {
+    next_wire_id: usize,
+    mul_wire_ids: Vec<(TraceWireId, TraceWireId, TraceWireId)>,
+    add_wires: Vec<(TraceWireId, TraceLinearCombination<F>)>,
+    constraints: Vec<TraceLinearCombination<F>>,
+    available_b: Option<TraceWireId>,
+}
+
+impl<F: Field> Default for Counter<F> {
+    fn default() -> Self {
+        Self {
+            next_wire_id: 0,
+            mul_wire_ids: Vec::new(),
+            add_wires: Vec::new(),
+            constraints: Vec::new(),
+            available_b: None,
+        }
+    }
+}
+
+impl<F: Field> Counter<F> {
+    fn alloc_wire(&mut self) -> TraceWireId {
+        let id = TraceWireId(self.next_wire_id);
+        self.next_wire_id += 1;
+        id
+    }
 }
 
 impl<F: Field> DriverTypes for Counter<F> {
     type MaybeKind = Empty;
     type ImplField = F;
-    type ImplWire = ();
-    type LCadd = ();
-    type LCenforce = ();
+    type ImplWire = TraceWireId;
+    type LCadd = TraceLCBuilder<F>;
+    type LCenforce = TraceLCBuilder<F>;
 }
 
 impl<'dr, F: Field> Driver<'dr> for Counter<F> {
     type F = F;
-    type Wire = ();
-    const ONE: Self::Wire = ();
+    type Wire = TraceWireId;
+    const ONE: Self::Wire = TraceWireId::ONE;
 
     fn alloc(&mut self, _: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
-        if self.available_b {
-            self.available_b = false;
-            Ok(())
-        } else {
-            self.available_b = true;
-            self.mul(|| unreachable!())?;
-
-            Ok(())
+        if let Some(wire) = self.available_b.take() {
+            return Ok(wire);
         }
+        let (a, b, _) = self.mul(|| unreachable!())?;
+        self.available_b = Some(b);
+        Ok(a)
     }
 
     fn mul(
         &mut self,
         _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>,
     ) -> Result<(Self::Wire, Self::Wire, Self::Wire)> {
-        self.num_multiplication_constraints += 1;
-
-        Ok(((), (), ()))
+        let a_id = self.alloc_wire();
+        let b_id = self.alloc_wire();
+        let c_id = self.alloc_wire();
+        self.mul_wire_ids.push((a_id, b_id, c_id));
+        Ok((a_id, b_id, c_id))
     }
 
-    fn add(&mut self, _: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {}
+    fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {
+        let id = self.alloc_wire();
+        self.add_wires.push((id, TraceLCBuilder::build(lc)));
+        id
+    }
 
-    fn enforce_zero(&mut self, _: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
-        self.num_linear_constraints += 1;
+    fn enforce_zero(&mut self, lc: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
+        self.constraints.push(TraceLCBuilder::build(lc));
         Ok(())
     }
 
@@ -86,37 +179,43 @@ impl<'dr, F: Field> Driver<'dr> for Counter<F> {
         routine: Ro,
         input: <Ro::Input as GadgetKind<Self::F>>::Rebind<'dr, Self>,
     ) -> Result<<Ro::Output as GadgetKind<Self::F>>::Rebind<'dr, Self>> {
-        // Temporarily store currently `available_b` to reset the allocation
-        // logic within the routine.
-        let tmp = self.available_b;
-        self.available_b = false;
+        let tmp = self.available_b.take();
         let mut dummy = Emulator::wireless();
         let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
         let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
         let result = routine.execute(self, input, aux)?;
-
-        // Restore the allocation logic state, discarding the state from within
-        // the routine.
         self.available_b = tmp;
         Ok(result)
     }
 }
 
-pub fn eval<F: Field, C: Circuit<F>>(circuit: &C) -> Result<CircuitMetrics> {
-    let mut collector = Counter {
-        available_b: false,
-        num_linear_constraints: 0,
-        num_multiplication_constraints: 0,
-        _marker: PhantomData,
-    };
-    let mut degree_ky = 0usize;
-    collector.mul(|| Ok((Coeff::One, Coeff::One, Coeff::One)))?;
-    let (io, _) = circuit.witness(&mut collector, Empty)?;
-    io.write(&mut collector, &mut degree_ky)?;
+/// Evaluates circuit metrics and captures synthesis trace in one pass.
+pub fn eval<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(CircuitMetrics, SynthesisTrace<F>)> {
+    let mut counter = Counter::default();
 
-    Ok(CircuitMetrics {
-        num_linear_constraints: collector.num_linear_constraints + degree_ky + 2,
-        num_multiplication_constraints: collector.num_multiplication_constraints,
-        degree_ky,
-    })
+    // Allocate the key_wire (wire 0) and ONE wire (wire 2).
+    // The key constraint is NOT recorded - it's handled at eval time.
+    let (_key_wire, _, _one) = counter.mul(|| unreachable!())?;
+
+    let mut outputs = Vec::new();
+    let (io, _) = circuit.witness(&mut counter, Empty)?;
+    io.write(&mut counter, &mut outputs)?;
+
+    // Enforcing public inputs
+    counter.enforce_public_outputs(outputs.iter().map(|output| output.wire()))?;
+    counter.enforce_one()?;
+
+    let trace = SynthesisTrace {
+        mul_wire_ids: counter.mul_wire_ids,
+        add_wires: counter.add_wires,
+        constraints: counter.constraints,
+    };
+
+    let metrics = CircuitMetrics {
+        num_multiplication_constraints: trace.mul_wire_ids.len(),
+        // +1 for the key constraint (handled separately at eval time)
+        num_linear_constraints: trace.constraints.len() + 1,
+    };
+
+    Ok((metrics, trace))
 }
