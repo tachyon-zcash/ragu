@@ -102,7 +102,6 @@ pub fn eval<F: Field, R: Rank>(trace: &SynthesisTrace<F>, x: F, y: F, key: &regi
     // Evaluate add wires that were lazily deferred during trace capture
     for (id, lc) in &trace.add_wires {
         let sum: F = lc
-            .terms
             .iter()
             .map(|term| term.coeff * wire_evals[term.wire])
             .sum();
@@ -117,7 +116,6 @@ pub fn eval<F: Field, R: Rank>(trace: &SynthesisTrace<F>, x: F, y: F, key: &regi
     for lc in &trace.constraints {
         result *= y;
         result += lc
-            .terms
             .iter()
             .map(|term| term.coeff * wire_evals[term.wire])
             .sum::<F>();

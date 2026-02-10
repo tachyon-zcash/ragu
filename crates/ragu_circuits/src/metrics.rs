@@ -40,11 +40,8 @@ pub(crate) struct TraceTerm<F> {
     pub wire: usize,
 }
 
-/// Sum of [`TraceTerm`]s.
-#[derive(Clone, Debug)]
-pub(crate) struct TraceLC<F> {
-    pub terms: Vec<TraceTerm<F>>,
-}
+/// A linear combination of [`TraceTerm`]s.
+pub(crate) type TraceLC<F> = Vec<TraceTerm<F>>;
 
 /// Recorded circuit structure for polynomial evaluation replay.
 #[derive(Clone, Debug, Default)]
@@ -74,9 +71,7 @@ impl<F: Field> Default for TraceLCBuilder<F> {
 
 impl<F: Field> TraceLCBuilder<F> {
     fn build(f: impl Fn(Self) -> Self) -> TraceLC<F> {
-        TraceLC {
-            terms: f(Self::default()).terms,
-        }
+        f(Self::default()).terms
     }
 }
 
@@ -96,24 +91,13 @@ impl<F: Field> LinearExpression<usize, F> for TraceLCBuilder<F> {
     }
 }
 
+#[derive(Default)]
 struct Counter<F: Field> {
     next_wire_id: usize,
     mul_wire_ids: Vec<(usize, usize, usize)>,
     add_wires: Vec<(usize, TraceLC<F>)>,
     constraints: Vec<TraceLC<F>>,
     available_b: Option<usize>,
-}
-
-impl<F: Field> Default for Counter<F> {
-    fn default() -> Self {
-        Self {
-            next_wire_id: 0,
-            mul_wire_ids: Vec::new(),
-            add_wires: Vec::new(),
-            constraints: Vec::new(),
-            available_b: None,
-        }
-    }
 }
 
 impl<F: Field> Counter<F> {
