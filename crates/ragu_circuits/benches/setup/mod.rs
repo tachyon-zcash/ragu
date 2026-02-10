@@ -107,3 +107,9 @@ pub fn builder_simple<'a>() -> RegistryBuilder<'a, Fp, R<5>> {
 pub fn registry_simple<'a>() -> Registry<'a, Fp, R<5>> {
     builder_simple().finalize().unwrap()
 }
+
+// Circuit object for sxy benchmarking.
+pub fn circuit_object_large() -> Box<dyn ragu_circuits::CircuitObject<Fp, R<13>> + 'static> {
+    use ragu_circuits::CircuitExt;
+    SquareCircuit { times: 100 }.into_object().unwrap()
+}

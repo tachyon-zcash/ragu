@@ -246,4 +246,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         Ok(rerandomized_proof.0.carry(data))
     }
+
+    /// Returns a reference to the native registry for benchmarking.
+    #[cfg(any(test, feature = "unstable-test-fixtures"))]
+    #[doc(hidden)]
+    pub fn native_registry(&self) -> &Registry<'_, C::CircuitField, R> {
+        &self.native_registry
+    }
 }

@@ -10,7 +10,8 @@ use ragu_pcd::test_fixtures::nontrivial;
 use ragu_pcd::{Application, ApplicationBuilder, Pcd};
 use rand::rngs::StdRng;
 use setup::{
-    setup_finalize, setup_fuse, setup_register, setup_seed, setup_verify_leaf, setup_verify_node,
+    setup_finalize, setup_fuse, setup_register, setup_seed, setup_sxy_poseidon, setup_verify_leaf,
+    setup_verify_node,
 };
 use std::hint::black_box;
 
@@ -131,4 +132,28 @@ library_benchmark_group!(
     benchmarks = verify_leaf, verify_node, rerandomize
 );
 
-main!(library_benchmark_groups = app_setup, app_proof, app_verify);
+// Benchmark repeated sxy calls on Poseidon-based circuits.
+#[library_benchmark]
+#[bench::sxy_poseidon_repeated(setup_sxy_poseidon())]
+fn sxy_poseidon_repeated((app, x, y): (Application<'static, Pasta, R<13>, 4>, Fp, Fp)) {
+    let registry = app.native_registry();
+    let key = registry.key();
+    // Call sxy on all circuits 10 times each (simulates registry digest computation).
+    for _ in 0..10 {
+        for circuit in registry.circuits() {
+            black_box(circuit.sxy(x, y, key));
+        }
+    }
+}
+
+library_benchmark_group!(
+    name = circuit_sxy;
+    benchmarks = sxy_poseidon_repeated
+);
+
+main!(
+    library_benchmark_groups = app_setup,
+    app_proof,
+    app_verify,
+    circuit_sxy
+);

@@ -12,7 +12,7 @@ use ragu_circuits::test_fixtures::{MySimpleCircuit, SquareCircuit};
 use ragu_circuits::{Circuit, CircuitExt};
 use ragu_pasta::{Fp, Pasta};
 use setup::{
-    builder_squares, f, key, rand_structured_poly, rand_structured_poly_vec,
+    builder_squares, circuit_object_large, f, key, rand_structured_poly, rand_structured_poly_vec,
     rand_unstructured_poly, registry_simple, setup_rng, setup_with_rng,
 };
 
@@ -114,9 +114,23 @@ fn rx_r13((circuit, (witness, key)): (SquareCircuit, (Fp, Key<Fp>))) {
     black_box(circuit.rx::<R<13>>(witness, &key)).unwrap();
 }
 
+// Benchmark repeated sxy calls on large circuit.
+#[library_benchmark(setup = setup_with_rng)]
+#[bench::sxy_repeated(circuit_object_large(), (f, f, key))]
+fn sxy_repeated(
+    (circuit, (x, y, key)): (
+        Box<dyn ragu_circuits::CircuitObject<Fp, R<13>>>,
+        (Fp, Fp, Key<Fp>),
+    ),
+) {
+    for _ in 0..100 {
+        black_box(circuit.sxy(x, y, &key));
+    }
+}
+
 library_benchmark_group!(
     name = circuit_synthesis;
-    benchmarks = into_object_r5, into_object_r13, ky, rx_r5, rx_r13,
+    benchmarks = into_object_r5, into_object_r13, ky, rx_r5, rx_r13, sxy_repeated,
 );
 
 #[library_benchmark]

@@ -1,4 +1,5 @@
 use arithmetic::Cycle;
+use ff::Field;
 use ragu_circuits::polynomials::R;
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::test_fixtures::nontrivial;
@@ -135,4 +136,13 @@ pub fn setup_verify_node() -> (
     let node = proof.carry::<nontrivial::InternalNode>(aux);
 
     (app, node, rng)
+}
+
+// Setup for sxy benchmarks on Poseidon circuits.
+pub fn setup_sxy_poseidon() -> (Application<'static, Pasta, R<13>, 4>, Fp, Fp) {
+    let (app, _, _) = setup_seed();
+    let mut rng = StdRng::seed_from_u64(5678);
+    let x = Fp::random(&mut rng);
+    let y = Fp::random(&mut rng);
+    (app, x, y)
 }
