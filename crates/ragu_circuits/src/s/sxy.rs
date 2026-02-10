@@ -37,7 +37,7 @@
 //! [`common`]: super::common
 //! [`sx`]: super::sx
 
-use alloc::vec::Vec;
+use alloc::vec;
 use ff::Field;
 
 use crate::{metrics::SynthesisTrace, polynomials::Rank, registry};
@@ -89,8 +89,7 @@ pub fn eval<F: Field, R: Rank>(trace: &SynthesisTrace<F>, x: F, y: F, key: &regi
 
     // Compute total wire count for Vec allocation
     let num_wires = trace.mul_wire_ids.len() * 3 + trace.add_wires.len();
-    let mut wire_evals: Vec<F> = Vec::with_capacity(num_wires);
-    wire_evals.resize(num_wires, F::ZERO);
+    let mut wire_evals = vec![F::ZERO; num_wires];
 
     // Evaluate mul wires
     for (a_id, b_id, c_id) in &trace.mul_wire_ids {
@@ -100,22 +99,19 @@ pub fn eval<F: Field, R: Rank>(trace: &SynthesisTrace<F>, x: F, y: F, key: &regi
         wire_evals[c_id.0] = c;
     }
 
-    // Evaluate add wires (each references only earlier wires)
+    // Evaluate add wires that were lazily deferred during trace capture
     for (id, lc) in &trace.add_wires {
         let sum: F = lc
             .terms
             .iter()
-            .map(|term| term.coeff.value() * wire_evals[term.wire.0])
+            .map(|term| term.coeff * wire_evals[term.wire.0])
             .sum();
         wire_evals[id.0] = sum;
     }
 
     // Horner accumulation: result = result * y + coefficient
-    let mut result = F::ZERO;
-
     // Key constraint: key_wire - key * ONE
-    result *= y;
-    result += wire_evals[0] - key.value() * one_eval;
+    let mut result = wire_evals[0] - key.value() * one_eval;
 
     // Replay trace constraints
     for lc in &trace.constraints {
@@ -123,7 +119,7 @@ pub fn eval<F: Field, R: Rank>(trace: &SynthesisTrace<F>, x: F, y: F, key: &regi
         result += lc
             .terms
             .iter()
-            .map(|term| term.coeff.value() * wire_evals[term.wire.0])
+            .map(|term| term.coeff * wire_evals[term.wire.0])
             .sum::<F>();
     }
 

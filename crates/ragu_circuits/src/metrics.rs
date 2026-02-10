@@ -32,35 +32,35 @@ pub struct CircuitMetrics {
 
 /// Sequential index identifying a wire in a synthesis trace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct TraceWireId(pub usize);
+pub(crate) struct TraceWireId(pub(crate) usize);
 
 impl TraceWireId {
     /// The ONE wire.
-    pub const ONE: Self = Self(2);
+    pub(crate) const ONE: Self = Self(2);
 }
 
 /// A `coefficient * wire` term.
 #[derive(Clone, Debug)]
-pub struct TraceTerm<F: Field> {
-    pub coeff: Coeff<F>,
-    pub wire: TraceWireId,
+pub(crate) struct TraceTerm<F> {
+    pub(crate) coeff: F,
+    pub(crate) wire: TraceWireId,
 }
 
 /// Sum of [`TraceTerm`]s.
-#[derive(Clone, Debug, Default)]
-pub struct TraceLinearCombination<F: Field> {
-    pub terms: Vec<TraceTerm<F>>,
+#[derive(Clone, Debug)]
+pub(crate) struct TraceLinearCombination<F> {
+    pub(crate) terms: Vec<TraceTerm<F>>,
 }
 
 /// Recorded circuit structure for polynomial evaluation replay.
 #[derive(Clone, Debug, Default)]
-pub struct SynthesisTrace<F: Field> {
+pub(crate) struct SynthesisTrace<F: Field> {
     /// (a, b, c) wire IDs for each multiplication gate.
-    pub mul_wire_ids: Vec<(TraceWireId, TraceWireId, TraceWireId)>,
+    pub(crate) mul_wire_ids: Vec<(TraceWireId, TraceWireId, TraceWireId)>,
     /// Add wire definitions: (wire_id, linear_combination).
-    pub add_wires: Vec<(TraceWireId, TraceLinearCombination<F>)>,
+    pub(crate) add_wires: Vec<(TraceWireId, TraceLinearCombination<F>)>,
     /// Linear constraints.
-    pub constraints: Vec<TraceLinearCombination<F>>,
+    pub(crate) constraints: Vec<TraceLinearCombination<F>>,
 }
 
 /// Builder for [`TraceLinearCombination`].
@@ -88,7 +88,7 @@ impl<F: Field> TraceLCBuilder<F> {
 
 impl<F: Field> LinearExpression<TraceWireId, F> for TraceLCBuilder<F> {
     fn add_term(mut self, wire: &TraceWireId, coeff: Coeff<F>) -> Self {
-        let effective_coeff = coeff * self.current_gain;
+        let effective_coeff = (coeff * self.current_gain).value();
         self.terms.push(TraceTerm {
             coeff: effective_coeff,
             wire: *wire,
