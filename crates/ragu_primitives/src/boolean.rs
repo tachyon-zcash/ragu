@@ -298,7 +298,10 @@ impl<'dr, D: Driver<'dr>, L: Len> Clone for BooleanVec<'dr, D, L> {
     }
 }
 
-impl<'dr, D: Driver<'dr>, L: Len> Gadget<'dr, D> for BooleanVec<'dr, D, L> {
+impl<'dr, D: Driver<'dr>, L: Len> Gadget<'dr, D> for BooleanVec<'dr, D, L>
+where
+    D::F: PrimeField,
+{
     type Kind = BooleanVecKind<L>;
 }
 
@@ -309,7 +312,7 @@ pub struct BooleanVecKind<L: Len> {
 
 // Safety: `BooleanVec` contains only `Boolean` gadgets which satisfy the `Send`
 // requirement when `D::Wire` is `Send`.
-unsafe impl<F: Field, L: Len> GadgetKind<F> for BooleanVecKind<L> {
+unsafe impl<F: PrimeField, L: Len> GadgetKind<F> for BooleanVecKind<L> {
     type Rebind<'dr, D: Driver<'dr, F = F>> = BooleanVec<'dr, D, L>;
 
     fn map_gadget<'dr, 'new_dr, D: Driver<'dr, F = F>, ND: FromDriver<'dr, 'new_dr, D>>(
@@ -330,18 +333,25 @@ unsafe impl<F: Field, L: Len> GadgetKind<F> for BooleanVecKind<L> {
         a: &Self::Rebind<'dr, D2>,
         b: &Self::Rebind<'dr, D2>,
     ) -> Result<()> {
-        // Uses fixed linear combination with powers of two instead of N constraints.
-        dr.enforce_zero(|mut lc| {
-            for (a_bit, b_bit) in a.iter().zip(b.iter()) {
-                lc = lc.add(a_bit.wire()).sub(b_bit.wire());
-                lc = lc.gain(Coeff::Two);
-            }
-            lc
-        })
+        // Chunk by F::CAPACITY to avoid field overflow, one constraint per chunk.
+        let pairs: Vec<_> = a.iter().zip(b.iter()).collect();
+        for chunk in pairs.chunks(F::CAPACITY as usize) {
+            dr.enforce_zero(|mut lc| {
+                for (a_bit, b_bit) in chunk {
+                    lc = lc.add(a_bit.wire()).sub(b_bit.wire());
+                    lc = lc.gain(Coeff::Two);
+                }
+                lc
+            })?;
+        }
+        Ok(())
     }
 }
 
-impl<'dr, D: Driver<'dr>, L: Len> Consistent<'dr, D> for BooleanVec<'dr, D, L> {
+impl<'dr, D: Driver<'dr>, L: Len> Consistent<'dr, D> for BooleanVec<'dr, D, L>
+where
+    D::F: PrimeField,
+{
     fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
         for b in self.iter() {
             b.enforce_consistent(dr)?;
