@@ -2,8 +2,8 @@
 //!
 //! # Revdot claims
 //!
-//! A **revdot claim** asserts that two structured polynomials `a(X)` and `b(X)`
-//! satisfy a reversed inner product:
+//! A **revdot claim** asserts that the coefficient vectors of two structured
+//! polynomials $a(X)$ and $b(X)$ satisfy a reversed inner product:
 //!
 //! ```text
 //! revdot(a, b) := ⟨a, reverse(b)⟩
