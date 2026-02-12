@@ -405,3 +405,292 @@ impl<'dr, D: Driver<'dr>> FromDriver<'dr, '_, D> for Emulator<Wireless<D::MaybeK
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Result;
+    use crate::drivers::{Coeff, Driver, LinearExpression};
+    use crate::maybe::Always;
+    use ff::Field;
+    use ragu_pasta::Fp;
+
+    type F = Fp;
+
+    // A minimal gadget for wire extraction tests, manually implemented
+    // because the derive macro cannot resolve `ragu_core` from within the
+    // crate itself.
+    struct TwoWires<'dr, D: Driver<'dr>> {
+        a: D::Wire,
+        b: D::Wire,
+        _marker: core::marker::PhantomData<&'dr ()>,
+    }
+
+    impl<'dr, D: Driver<'dr>> Clone for TwoWires<'dr, D> {
+        fn clone(&self) -> Self {
+            TwoWires {
+                a: self.a.clone(),
+                b: self.b.clone(),
+                _marker: core::marker::PhantomData,
+            }
+        }
+    }
+
+    struct TwoWiresKind;
+
+    /// # Safety
+    /// `D::Wire: Send` implies `TwoWires<'dr, D>: Send` since the struct
+    /// only contains wires and `PhantomData`.
+    unsafe impl<FieldType: Field> crate::gadgets::GadgetKind<FieldType> for TwoWiresKind {
+        type Rebind<'dr, D: Driver<'dr, F = FieldType>> = TwoWires<'dr, D>;
+
+        fn map_gadget<
+            'dr,
+            'new_dr,
+            D: Driver<'dr, F = FieldType>,
+            ND: crate::drivers::FromDriver<'dr, 'new_dr, D>,
+        >(
+            this: &Self::Rebind<'dr, D>,
+            ndr: &mut ND,
+        ) -> Result<Self::Rebind<'new_dr, ND::NewDriver>> {
+            Ok(TwoWires {
+                a: ndr.convert_wire(&this.a)?,
+                b: ndr.convert_wire(&this.b)?,
+                _marker: core::marker::PhantomData,
+            })
+        }
+
+        fn enforce_equal_gadget<
+            'dr,
+            D1: Driver<'dr, F = FieldType>,
+            D2: Driver<'dr, F = FieldType, Wire = <D1 as Driver<'dr>>::Wire>,
+        >(
+            dr: &mut D1,
+            a: &Self::Rebind<'dr, D2>,
+            b: &Self::Rebind<'dr, D2>,
+        ) -> Result<()> {
+            dr.enforce_equal(&a.a, &b.a)?;
+            dr.enforce_equal(&a.b, &b.b)?;
+            Ok(())
+        }
+    }
+
+    impl<'dr, D: Driver<'dr>> crate::gadgets::Gadget<'dr, D> for TwoWires<'dr, D> {
+        type Kind = TwoWiresKind;
+    }
+
+    // ── Wired mode ──────────────────────────────────────────────────
+
+    #[test]
+    fn wired_alloc_assigns_values() -> Result<()> {
+        let mut dr = Emulator::<Wired<F>>::extractor();
+
+        let w_one = dr.alloc(|| Ok(Coeff::One))?;
+        let w_zero = dr.alloc(|| Ok(Coeff::Zero))?;
+        let w_arb = dr.alloc(|| Ok(Coeff::Arbitrary(F::from(42))))?;
+
+        assert_eq!(w_one.value(), F::ONE);
+        assert_eq!(w_zero.value(), F::ZERO);
+        assert_eq!(w_arb.value(), F::from(42));
+        Ok(())
+    }
+
+    #[test]
+    fn wired_constant_returns_correct_wire() -> Result<()> {
+        let mut dr = Emulator::<Wired<F>>::extractor();
+
+        let c_one = dr.constant(Coeff::One);
+        let c_zero = dr.constant(Coeff::Zero);
+        let c_neg = dr.constant(Coeff::NegativeOne);
+        let c_arb = dr.constant(Coeff::Arbitrary(F::from(7)));
+
+        assert_eq!(c_one.value(), F::ONE);
+        assert_eq!(c_zero.value(), F::ZERO);
+        assert_eq!(c_neg.value(), -F::ONE);
+        assert_eq!(c_arb.value(), F::from(7));
+        Ok(())
+    }
+
+    #[test]
+    fn wired_mul_does_not_enforce_constraints() -> Result<()> {
+        let mut dr = Emulator::<Wired<F>>::extractor();
+
+        // Deliberately assign a * b != c: 3 * 5 != 99
+        let (a, b, c) = dr.mul(|| {
+            Ok((
+                Coeff::Arbitrary(F::from(3)),
+                Coeff::Arbitrary(F::from(5)),
+                Coeff::Arbitrary(F::from(99)),
+            ))
+        })?;
+
+        assert_eq!(a.value(), F::from(3));
+        assert_eq!(b.value(), F::from(5));
+        assert_eq!(c.value(), F::from(99)); // emulator does not enforce a*b==c
+        Ok(())
+    }
+
+    #[test]
+    fn wired_add_computes_linear_combination() -> Result<()> {
+        let mut dr = Emulator::<Wired<F>>::extractor();
+
+        let w1 = dr.alloc(|| Ok(Coeff::Arbitrary(F::from(10))))?;
+        let w2 = dr.alloc(|| Ok(Coeff::Arbitrary(F::from(20))))?;
+
+        // sum = 1 * w1 + 3 * w2 = 10 + 60 = 70
+        let sum = dr.add(|lc| lc.add(&w1).add_term(&w2, Coeff::Arbitrary(F::from(3))));
+
+        assert_eq!(sum.value(), F::from(70));
+        Ok(())
+    }
+
+    #[test]
+    fn wired_enforce_zero_is_noop() -> Result<()> {
+        let mut dr = Emulator::<Wired<F>>::extractor();
+
+        let w = dr.alloc(|| Ok(Coeff::Arbitrary(F::from(42))))?;
+
+        // This linear combination is non-zero, but the emulator doesn't enforce.
+        let result = dr.enforce_zero(|lc| lc.add(&w));
+        assert!(result.is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn wired_enforce_equal_is_noop() -> Result<()> {
+        let mut dr = Emulator::<Wired<F>>::extractor();
+
+        let w1 = dr.alloc(|| Ok(Coeff::Arbitrary(F::from(1))))?;
+        let w2 = dr.alloc(|| Ok(Coeff::Arbitrary(F::from(999))))?;
+
+        // Different values, but emulator doesn't enforce.
+        let result = dr.enforce_equal(&w1, &w2);
+        assert!(result.is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn wired_emulate_wired_extracts_wires() -> Result<()> {
+        let wires = Emulator::<Wired<F>>::emulate_wired((), |dr, _witness| {
+            let a = dr.alloc(|| Ok(Coeff::Arbitrary(F::from(5))))?;
+            let b = dr.alloc(|| Ok(Coeff::Arbitrary(F::from(10))))?;
+            let sum = dr.add(|lc| lc.add(&a).add(&b));
+
+            let gadget = TwoWires {
+                a,
+                b: sum,
+                _marker: core::marker::PhantomData,
+            };
+            let extracted = dr.wires(&gadget)?;
+            Ok(extracted)
+        })?;
+
+        assert_eq!(wires.len(), 2);
+        assert_eq!(wires[0], F::from(5));
+        assert_eq!(wires[1], F::from(15));
+        Ok(())
+    }
+
+    // ── Wireless mode (with witness) ────────────────────────────────
+
+    #[test]
+    fn wireless_execute_all_ops_return_unit() -> Result<()> {
+        use core::cell::Cell;
+
+        let mut dr = Emulator::<Wireless<Always<()>, F>>::execute();
+        let called = Cell::new(0);
+
+        let () = dr.alloc(|| {
+            called.set(called.get() + 1);
+            Ok(Coeff::Arbitrary(F::from(42)))
+        })?;
+
+        let () = dr.constant(Coeff::One);
+
+        let ((), (), ()) = dr.mul(|| {
+            called.set(called.get() + 1);
+            Ok((
+                Coeff::Arbitrary(F::from(3)),
+                Coeff::Arbitrary(F::from(5)),
+                Coeff::Arbitrary(F::from(15)),
+            ))
+        })?;
+
+        let () = dr.add(|lc| {
+            called.set(called.get() + 1);
+            lc
+        });
+
+        let r = dr.enforce_zero(|lc| {
+            called.set(called.get() + 1);
+            lc
+        });
+        assert!(r.is_ok());
+        assert_eq!(called.get(), 0);
+        Ok(())
+    }
+
+    // ── Wireless mode (counter, no witness) ─────────────────────────
+
+    #[test]
+    fn wireless_counter_static_analysis() -> Result<()> {
+        let mut dr = Emulator::<Wireless<crate::maybe::Empty, F>>::counter();
+
+        let () = dr.alloc(|| Ok(Coeff::One))?;
+
+        let ((), (), ()) = dr.mul(|| Ok((Coeff::One, Coeff::One, Coeff::One)))?;
+
+        let () = dr.add(|lc| lc);
+        Ok(())
+    }
+
+    // ── WiredValue ──────────────────────────────────────────────────
+
+    #[test]
+    fn wired_value_one_holds_f_one() {
+        assert_eq!(WiredValue::<F>::One.value(), F::ONE);
+    }
+
+    #[test]
+    fn wired_value_assigned_holds_value() {
+        let v = F::from(123);
+        assert_eq!(WiredValue::Assigned(v).value(), v);
+    }
+
+    // ── WiredDirectSum ──────────────────────────────────────────────
+
+    #[test]
+    fn wired_direct_sum_linear_combination() {
+        let one = WiredValue::<F>::One;
+        let x = WiredValue::Assigned(F::from(7));
+
+        // sum = 1 * ONE + 3 * x = 1 + 21 = 22
+        let lc = WiredDirectSum(DirectSum::default())
+            .add(&one)
+            .add_term(&x, Coeff::Arbitrary(F::from(3)));
+
+        assert_eq!(lc.0.value, F::from(22));
+    }
+
+    // ── DirectSum gain factor ───────────────────────────────────────
+
+    #[test]
+    fn direct_sum_gain_factor() {
+        // gain multiplies cumulatively: gain(a).gain(b) => effective gain = a*b
+        //
+        // Start: value=0, gain=1
+        // add(5): coeff=1*1=1 => value = 0 + 5 = 5
+        // gain(2): gain = 1*2 = 2
+        // add(3): coeff=1*2=2 => value = 5 + 3*2 = 11
+        // gain(-1): gain = 2*(-1) = -2
+        // add(4): coeff=1*(-2)=-2 => value = 11 - 4*2 = 3
+        let acc = DirectSum::<F>::default()
+            .add(&F::from(5))
+            .gain(Coeff::Arbitrary(F::from(2)))
+            .add(&F::from(3))
+            .gain(Coeff::NegativeOne)
+            .add(&F::from(4));
+
+        assert_eq!(acc.value, F::from(3));
+    }
+}
