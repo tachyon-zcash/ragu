@@ -56,7 +56,7 @@
 //! [$\beta$]: unified::Output::pre_beta
 //! [`error_n`]: super::stages::error_n
 //! [`WithSuffix`]: crate::components::suffix::WithSuffix
-//! [`Transcript::resume_from_state`]: ragu_primitives::transcript::TranscriptExt::resume_from_state
+//! [`Transcript::resume_from_state`]: crate::components::transcript::Transcript::resume_from_state
 
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
@@ -69,7 +69,7 @@ use ragu_core::{
     gadgets::Bound,
     maybe::Maybe,
 };
-use ragu_primitives::{Element, GadgetExt, Transcript, TranscriptExt, TranscriptProtocol};
+use ragu_primitives::GadgetExt;
 
 use core::marker::PhantomData;
 
@@ -77,7 +77,7 @@ use super::{
     stages::{error_n as native_error_n, preamble as native_preamble},
     unified::{self, OutputBuilder},
 };
-use crate::components::fold_revdot;
+use crate::components::{fold_revdot, transcript::Transcript};
 
 pub(crate) use super::InternalCircuitIndex::Hashes2Circuit as CIRCUIT_ID;
 
@@ -200,7 +200,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         unified_output.x.set(x);
 
         // Derive alpha by absorbing nested_query_commitment and squeezing
-        let alpha: Element<'_, _> = {
+        let alpha = {
             let nested_query_commitment = unified_output.nested_query_commitment.verify(dr)?;
             nested_query_commitment.write(dr, &mut transcript)?;
             transcript.challenge(dr)?

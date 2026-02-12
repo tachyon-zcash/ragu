@@ -84,7 +84,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element, GadgetExt, Transcript, TranscriptExt, TranscriptProtocol,
+    Element, GadgetExt,
     io::Write,
     vec::{ConstLen, FixedVec},
 };
@@ -96,7 +96,7 @@ use super::{
     unified::{self, OutputBuilder},
 };
 use crate::RAGU_TAG;
-use crate::components::{fold_revdot, root_of_unity, suffix::WithSuffix};
+use crate::components::{fold_revdot, root_of_unity, suffix::WithSuffix, transcript::Transcript};
 
 pub(crate) use super::InternalCircuitIndex::Hashes1Circuit as CIRCUIT_ID;
 
@@ -227,11 +227,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
         // Create a transcript for all challenge derivations
-        let mut transcript = Transcript::new(dr, C::circuit_poseidon(self.params));
-        transcript.domain_sep(dr, RAGU_TAG)?;
+        let mut transcript = Transcript::new(dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
 
         // Derive w by absorbing nested_preamble_commitment and squeezing
-        let w: Element<'_, _> = {
+        let w = {
             let nested_preamble_commitment =
                 unified_output.nested_preamble_commitment.verify(dr)?;
             nested_preamble_commitment.write(dr, &mut transcript)?;
@@ -243,8 +242,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let (y, z) = {
             let nested_s_prime_commitment = unified_output.nested_s_prime_commitment.verify(dr)?;
             nested_s_prime_commitment.write(dr, &mut transcript)?;
-            let y: Element<'_, _> = transcript.challenge(dr)?;
-            let z: Element<'_, _> = transcript.challenge(dr)?;
+            let y = transcript.challenge(dr)?;
+            let z = transcript.challenge(dr)?;
             (y, z)
         };
         unified_output.y.set(y.clone());

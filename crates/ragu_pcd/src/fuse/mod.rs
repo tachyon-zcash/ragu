@@ -21,14 +21,13 @@ use ragu_circuits::{
     registry::CircuitIndex,
 };
 use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
-use ragu_primitives::{
-    GadgetExt, Point, Transcript, TranscriptExt, TranscriptProtocol, vec::CollectFixed,
-};
+use ragu_primitives::{GadgetExt, Point, vec::CollectFixed};
 use rand::CryptoRng;
 
 use crate::{
     Application, Pcd, Proof, RAGU_TAG,
     components::claims::{Source, native::RxComponent},
+    components::transcript::Transcript,
     proof,
     step::Step,
 };
@@ -62,8 +61,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             self.compute_application_proof(rng, step, witness, left, right)?;
 
         let mut dr = Emulator::execute();
-        let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params));
-        transcript.domain_sep(&mut dr, RAGU_TAG)?;
+        let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
 
         let (preamble, preamble_witness) =
             self.compute_preamble(rng, &left, &right, &application)?;
