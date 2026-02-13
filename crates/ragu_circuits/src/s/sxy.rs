@@ -67,7 +67,7 @@ use crate::{Circuit, FreshB, polynomials::Rank, registry};
 
 use super::{
     DriverExt,
-    common::{CachedRoutine, MemoCache, WireEval, WireEvalSum, WireExtractor},
+    common::{CachedRoutine, MemoCache, WireEval, WireEvalSum, WireExtractor, WireInjector},
 };
 
 /// A [`Driver`] that computes the full evaluation $s(x, y)$.
@@ -302,12 +302,18 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
             .get(&routine_id, canonical_position)
             .cloned()
         {
-            // Cache hit: reconstruct output directly from cached wires (no routine execution)
+            // Cache hit: reconstruct output via template + wire injection (no routine execution)
             let result_before = self.result;
 
-            // Reconstruct output gadget directly from cached wires
-            let mut wires_iter = cached.output_wires.into_iter();
-            let output = Ro::Output::from_cached_wires(&mut wires_iter)?;
+            // Run routine through wireless emulator to get a template gadget with Wire = ()
+            let mut wireless = Emulator::wireless();
+            let wireless_input = Ro::Input::map_gadget(&input, &mut wireless)?;
+            let aux = routine.predict(&mut wireless, &wireless_input)?.into_aux();
+            let template = routine.execute(&mut wireless, wireless_input, aux)?;
+
+            // Inject cached wires into the template via map_gadget + WireInjector
+            let mut injector: WireInjector<'_, F, Self> = WireInjector::new(&cached.output_wires);
+            let output = Ro::Output::map_gadget(&template, &mut injector)?;
 
             // Manually advance constraint counters (we didn't call mul/enforce_zero)
             self.multiplication_constraints += cached.num_multiplications;

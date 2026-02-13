@@ -36,7 +36,7 @@ use core::marker::PhantomData;
 use ff::Field;
 use ragu_arithmetic::Coeff;
 use ragu_core::{
-    Result,
+    Error, Result,
     drivers::{Driver, FromDriver, LinearExpression},
     routines::RoutineId,
 };
@@ -171,9 +171,9 @@ impl<F: Field> LinearExpression<WireEval<F>, F> for WireEvalSum<F> {
 /// Extracts wire values from a gadget for caching.
 ///
 /// Used on cache miss to capture output wires from the executed routine.
-/// The extracted wires can later be replayed via [`GadgetKind::from_cached_wires`].
+/// The extracted wires can later be replayed via [`WireInjector`] and [`map_gadget`].
 ///
-/// [`GadgetKind::from_cached_wires`]: ragu_core::gadgets::GadgetKind::from_cached_wires
+/// [`map_gadget`]: ragu_core::gadgets::GadgetKind::map_gadget
 pub struct WireExtractor<F> {
     wires: Vec<WireEval<F>>,
 }
@@ -204,5 +204,49 @@ impl<'dr, F: Field, D: Driver<'dr, F = F, Wire = WireEval<F>>> FromDriver<'dr, '
     fn convert_wire(&mut self, wire: &WireEval<F>) -> Result<()> {
         self.wires.push(wire.clone());
         Ok(())
+    }
+}
+
+/// Injects cached wire values into a gadget template.
+///
+/// This is the reverse of [`WireExtractor`]: where the extractor captures wires
+/// from a gadget into a cache, the injector reconstructs a gadget from cached
+/// wires. Used on cache hit to avoid re-executing routines.
+///
+/// The injector implements [`FromDriver`] to convert from a wire-erased driver
+/// (with `Wire = ()`) to a target driver with `Wire = WireEval<F>`, popping
+/// cached wires in the same order that [`map_gadget`] visits them.
+///
+/// [`map_gadget`]: ragu_core::gadgets::GadgetKind::map_gadget
+pub struct WireInjector<'a, F, TD> {
+    wires: core::slice::Iter<'a, WireEval<F>>,
+    _marker: PhantomData<TD>,
+}
+
+impl<'a, F, TD> WireInjector<'a, F, TD> {
+    /// Creates a new wire injector from a slice of cached wires.
+    pub fn new(wires: &'a [WireEval<F>]) -> Self {
+        Self {
+            wires: wires.iter(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<
+    'dr,
+    'new_dr,
+    F: Field,
+    D: Driver<'dr, F = F, Wire = ()>,
+    TD: Driver<'new_dr, F = F, Wire = WireEval<F>>,
+> FromDriver<'dr, 'new_dr, D> for WireInjector<'_, F, TD>
+{
+    type NewDriver = TD;
+
+    fn convert_wire(&mut self, _wire: &()) -> Result<WireEval<F>> {
+        self.wires
+            .next()
+            .cloned()
+            .ok_or_else(|| Error::InvalidWitness("wire cache underflow".into()))
     }
 }

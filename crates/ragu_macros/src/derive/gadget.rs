@@ -248,34 +248,6 @@ pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenS
         quote! { #id: #init }
     });
 
-    let from_cached_wires_inits = fields.iter().map(|(id, ty, field_ty)| {
-        let driver_id = &driver.ident;
-        let driver_lifetime = &driver.lifetime;
-        let init = match ty {
-            FieldType::Value => quote! {
-                {
-                    use #ragu_core_path::maybe::Maybe;
-                    #driver_id::just(|| unreachable!("value not available from cache"))
-                }
-            },
-            FieldType::Wire => {
-                quote! {
-                    wires.next().ok_or_else(|| #ragu_core_path::Error::InvalidWitness(
-                        "cached wire count mismatch".into()
-                    ))?
-                }
-            }
-            FieldType::Gadget => {
-                // Use the field's concrete type to get its Kind and call from_cached_wires
-                quote! {
-                    <<#field_ty as #ragu_core_path::gadgets::Gadget<#driver_lifetime, #driver_id>>::Kind as #ragu_core_path::gadgets::GadgetKind<#driverfield_ident>>::from_cached_wires(wires)?
-                }
-            }
-            FieldType::Phantom => quote! { ::core::marker::PhantomData },
-        };
-        quote! { #id: #init }
-    });
-
     let gadgetkind_impl = {
         let driver_ident = &driver.ident;
         let driver_lifetime = &driver.lifetime;
@@ -302,14 +274,6 @@ pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenS
                 ) -> #ragu_core_path::Result<()> {
                     #( #equality_calls; )*
                     Ok(())
-                }
-
-                fn from_cached_wires<#driver_lifetime, #driver_ident: #ragu_core_path::drivers::Driver<#driver_lifetime, F = #driverfield_ident>>(
-                    wires: &mut impl ::core::iter::Iterator<Item = #driver_ident::Wire>,
-                ) -> #ragu_core_path::Result<Self::Rebind<#driver_lifetime, #driver_ident>> {
-                    Ok(#struct_ident {
-                        #( #from_cached_wires_inits, )*
-                    })
                 }
             }
         }
@@ -475,18 +439,6 @@ fn test_gadget_derive_boolean_customdriver() {
                     ::ragu_core::drivers::Driver::enforce_equal(dr, &a.wire, &b.wire)?;
                     Ok(())
                 }
-
-                fn from_cached_wires<'my_dr, MyD: ::ragu_core::drivers::Driver<'my_dr, F = DriverField>>(
-                    wires: &mut impl ::core::iter::Iterator<Item = MyD::Wire>,
-                ) -> ::ragu_core::Result<Self::Rebind<'my_dr, MyD>> {
-                    Ok(Boolean {
-                        wire: wires.next().ok_or_else(|| ::ragu_core::Error::InvalidWitness("cached wire count mismatch".into()))?,
-                        value: {
-                            use ::ragu_core::maybe::Maybe;
-                            MyD::just(|| unreachable!("value not available from cache"))
-                        },
-                    })
-                }
             }
         ).to_string()
     );
@@ -577,20 +529,6 @@ fn test_gadget_derive() {
                     ::ragu_core::drivers::Driver::enforce_equal(dr, &a.wire_field, &b.wire_field)?;
                     ::ragu_core::gadgets::Gadget::enforce_equal(&a.map_field, dr, &b.map_field)?;
                     Ok(())
-                }
-
-                fn from_cached_wires<'mydr, MyD: ::ragu_core::drivers::Driver<'mydr, F = DriverField>>(
-                    wires: &mut impl ::core::iter::Iterator<Item = MyD::Wire>,
-                ) -> ::ragu_core::Result<Self::Rebind<'mydr, MyD>> {
-                    Ok(MyGadget {
-                        witness_field: {
-                            use ::ragu_core::maybe::Maybe;
-                            MyD::just(|| unreachable!("value not available from cache"))
-                        },
-                        wire_field: wires.next().ok_or_else(|| ::ragu_core::Error::InvalidWitness("cached wire count mismatch".into()))?,
-                        map_field: <<Lol<'mydr, MyD> as ::ragu_core::gadgets::Gadget<'mydr, MyD>>::Kind as ::ragu_core::gadgets::GadgetKind<DriverField>>::from_cached_wires(wires)?,
-                        phantom_field: ::core::marker::PhantomData,
-                    })
                 }
             }
 

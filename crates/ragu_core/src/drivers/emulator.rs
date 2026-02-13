@@ -474,20 +474,6 @@ mod tests {
             dr.enforce_equal(&a.b, &b.b)?;
             Ok(())
         }
-
-        fn from_cached_wires<'dr, D: Driver<'dr, F = FieldType>>(
-            wires: &mut impl Iterator<Item = D::Wire>,
-        ) -> Result<Self::Rebind<'dr, D>> {
-            Ok(TwoWires {
-                a: wires.next().ok_or_else(|| {
-                    crate::Error::InvalidWitness("cached wire count mismatch".into())
-                })?,
-                b: wires.next().ok_or_else(|| {
-                    crate::Error::InvalidWitness("cached wire count mismatch".into())
-                })?,
-                _marker: core::marker::PhantomData,
-            })
-        }
     }
 
     impl<'dr, D: Driver<'dr>> crate::gadgets::Gadget<'dr, D> for TwoWires<'dr, D> {
