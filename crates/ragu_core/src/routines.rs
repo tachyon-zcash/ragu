@@ -160,9 +160,6 @@ pub trait Routine<F: Field>: Clone + Send {
     /// to avoid redundant computations.
     type Aux<'dr>: Send + Clone;
 
-    /// Returns the shape of this routine in terms of circuit resources.
-    fn shape(&self) -> RoutineShape;
-
     /// Execute the routine with a driver given the designated input, returning
     /// the designated output.
     fn execute<'dr, D: Driver<'dr, F = F>>(

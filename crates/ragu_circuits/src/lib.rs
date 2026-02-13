@@ -16,7 +16,7 @@
 extern crate alloc;
 
 mod ky;
-mod metrics;
+pub mod metrics;
 pub mod polynomials;
 pub mod registry;
 mod rx;

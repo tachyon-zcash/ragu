@@ -3,15 +3,14 @@
 use ff::Field;
 use ragu_core::{
     Error, Result,
-    drivers::{
-        Driver, DriverValue,
-        emulator::{Emulator, Wireless},
-    },
+    drivers::{Driver, DriverValue},
     gadgets::{GadgetKind, Kind},
-    maybe::{Empty, Maybe},
+    maybe::Maybe,
     routines::{Prediction, Routine, RoutineShape},
 };
 use ragu_primitives::Element;
+
+use crate::metrics::{ShapeCounter, derive_shape};
 
 use core::marker::PhantomData;
 
@@ -38,19 +37,24 @@ impl<R: Rank> Evaluate<R> {
     }
 }
 
-impl<F: Field, R: Rank> Routine<F> for Evaluate<R> {
-    type Input = Kind![F; (Element<'_, _>, Element<'_, _>)];
-    type Output = Kind![F; Element<'_, _>];
-    type Aux<'dr> = (F, F);
+use ragu_core::maybe::Empty;
 
-    fn shape(&self) -> RoutineShape {
-        Emulator::derive_shape(|dr: &mut Emulator<Wireless<Empty, F>>| {
+impl<R: Rank> Evaluate<R> {
+    /// Returns the shape of this routine.
+    pub fn shape<F: Field>(&self) -> RoutineShape {
+        derive_shape(|dr: &mut ShapeCounter<F>| {
             let x = Element::zero(dr);
             let z = Element::zero(dr);
             let aux = Empty;
             let _ = self.execute(dr, (x, z), aux);
         })
     }
+}
+
+impl<F: Field, R: Rank> Routine<F> for Evaluate<R> {
+    type Input = Kind![F; (Element<'_, _>, Element<'_, _>)];
+    type Output = Kind![F; Element<'_, _>];
+    type Aux<'dr> = (F, F);
 
     fn execute<'dr, D: Driver<'dr, F = F>>(
         &self,
@@ -155,7 +159,6 @@ impl<F: Field, R: Rank> Routine<F> for Evaluate<R> {
 mod tests {
     use super::*;
     use crate::polynomials::R;
-    use ragu_core::routines::Routine;
     use ragu_pasta::Fp;
     use ragu_primitives::Simulator;
 
@@ -169,7 +172,7 @@ mod tests {
         let evaluator = Evaluate::<TestRank>::new();
 
         // Verify shape() matches actual execution
-        let shape = <Evaluate<TestRank> as Routine<Fp>>::shape(&evaluator);
+        let shape = evaluator.shape::<Fp>();
         assert_eq!(shape.num_multiplications, 76);
         assert_eq!(shape.num_constraints, 152);
 

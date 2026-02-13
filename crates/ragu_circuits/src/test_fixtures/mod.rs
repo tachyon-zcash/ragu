@@ -110,14 +110,17 @@ impl<F: Field> Circuit<F> for SquareCircuit {
 #[derive(Clone)]
 pub struct SquareRoutine;
 
+impl SquareRoutine {
+    /// Returns the shape of this routine.
+    pub fn shape() -> RoutineShape {
+        RoutineShape::new(1, 0)
+    }
+}
+
 impl<F: Field> Routine<F> for SquareRoutine {
     type Input = Kind![F; Element<'_, _>];
     type Output = Kind![F; Element<'_, _>];
     type Aux<'dr> = ();
-
-    fn shape(&self) -> RoutineShape {
-        RoutineShape::new(1, 0)
-    }
 
     fn execute<'dr, D: Driver<'dr, F = F>>(
         &self,
@@ -189,14 +192,17 @@ pub struct HeavySquareRoutine {
     pub iterations: usize,
 }
 
+impl HeavySquareRoutine {
+    /// Returns the shape of this routine.
+    pub fn shape(&self) -> RoutineShape {
+        RoutineShape::new(self.iterations, 0)
+    }
+}
+
 impl<F: Field> Routine<F> for HeavySquareRoutine {
     type Input = Kind![F; Element<'_, _>];
     type Output = Kind![F; Element<'_, _>];
     type Aux<'dr> = ();
-
-    fn shape(&self) -> RoutineShape {
-        RoutineShape::new(self.iterations, 0)
-    }
 
     fn execute<'dr, D: Driver<'dr, F = F>>(
         &self,

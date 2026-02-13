@@ -472,7 +472,7 @@ pub(crate) fn eval_with_cache<F: Field, C: Circuit<F>, R: Rank>(
 mod tests {
     use super::*;
     use ff::Field;
-    use ragu_core::routines::{Routine, RoutineRegistry};
+    use ragu_core::routines::RoutineRegistry;
     use ragu_pasta::Fp;
 
     use crate::polynomials::R;
@@ -489,7 +489,7 @@ mod tests {
         let key = registry::Key::new(Fp::random(&mut rand::rng()));
 
         let mut registry = RoutineRegistry::new();
-        let shape = <SquareRoutine as Routine<Fp>>::shape(&SquareRoutine);
+        let shape = SquareRoutine::shape();
         registry.register::<SquareRoutine>(shape);
         registry.register::<SquareRoutine>(shape);
         registry.register::<SquareRoutine>(shape);
@@ -532,7 +532,7 @@ mod tests {
         let key = registry::Key::new(Fp::random(&mut rand::rng()));
 
         let mut registry = RoutineRegistry::new();
-        let shape = <SquareRoutine as Routine<Fp>>::shape(&SquareRoutine);
+        let shape = SquareRoutine::shape();
         registry.register::<SquareRoutine>(shape);
         registry.register::<SquareRoutine>(shape);
         registry.register::<SquareRoutine>(shape);

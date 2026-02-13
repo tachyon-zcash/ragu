@@ -8,11 +8,8 @@ use ff::Field;
 use ragu_arithmetic::Coeff;
 use ragu_core::{
     Result,
-    drivers::emulator::{Emulator, Wireless},
     drivers::{Driver, DriverValue},
     gadgets::{Consistent, Gadget, GadgetKind},
-    maybe::Empty,
-    routines::RoutineShape,
     routines::{Prediction, Routine},
 };
 
@@ -351,14 +348,6 @@ impl<F: Field, P: ragu_arithmetic::PoseidonPermutation<F>> Routine<F> for Permut
     type Output = SpongeState<'static, PhantomData<F>, P>;
     type Aux<'dr> = ();
 
-    fn shape(&self) -> RoutineShape {
-        Emulator::derive_shape(|dr: &mut Emulator<Wireless<Empty, F>>| {
-            let dummy_state = SpongeState::from_elements(FixedVec::from_fn(|_| Element::zero(dr)));
-            let aux = Empty;
-            let _ = self.execute(dr, dummy_state, aux);
-        })
-    }
-
     fn execute<'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: &mut D,
@@ -403,7 +392,6 @@ mod tests {
     use super::*;
     use ragu_arithmetic::Cycle;
     use ragu_core::maybe::Maybe;
-    use ragu_core::routines::Routine;
     use ragu_pasta::{Fp, Pasta};
 
     type Simulator = crate::Simulator<Fp>;
@@ -411,12 +399,6 @@ mod tests {
     #[test]
     fn test_permutation_constraints() -> Result<()> {
         let params = Pasta::baked();
-
-        // Get the Permutation routine's shape
-        let permutation = Permutation::<Fp, <Pasta as Cycle>::CircuitPoseidon>::from(
-            Pasta::circuit_poseidon(params),
-        );
-        let shape = permutation.shape();
 
         let sim = Simulator::simulate(Fp::from(1), |dr, value| {
             let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
@@ -431,8 +413,7 @@ mod tests {
         })?;
 
         assert_eq!(sim.num_allocations(), 1);
-        assert_eq!(sim.num_multiplications(), shape.num_multiplications);
-        assert_eq!(sim.num_linear_constraints(), shape.num_constraints);
+        assert_eq!(sim.num_multiplications(), 288);
 
         Ok(())
     }

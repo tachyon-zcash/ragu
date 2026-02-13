@@ -11,7 +11,7 @@ use ragu_core::{
     drivers::{Driver, DriverTypes, emulator::Emulator},
     gadgets::GadgetKind,
     maybe::Empty,
-    routines::Routine,
+    routines::{Routine, RoutineShape},
 };
 use ragu_primitives::GadgetExt;
 
@@ -33,20 +33,23 @@ pub struct CircuitMetrics {
     pub degree_ky: usize,
 }
 
-struct Counter<F> {
+/// A driver that counts multiplication and linear constraints without computing values.
+///
+/// Used internally for shape analysis of routines and circuits.
+pub struct ShapeCounter<F> {
     available_b: bool,
     num_linear_constraints: usize,
     num_multiplication_constraints: usize,
     _marker: PhantomData<F>,
 }
 
-impl<F: Field> FreshB<bool> for Counter<F> {
+impl<F: Field> FreshB<bool> for ShapeCounter<F> {
     fn available_b(&mut self) -> &mut bool {
         &mut self.available_b
     }
 }
 
-impl<F: Field> DriverTypes for Counter<F> {
+impl<F: Field> DriverTypes for ShapeCounter<F> {
     type MaybeKind = Empty;
     type ImplField = F;
     type ImplWire = ();
@@ -54,7 +57,7 @@ impl<F: Field> DriverTypes for Counter<F> {
     type LCenforce = ();
 }
 
-impl<'dr, F: Field> Driver<'dr> for Counter<F> {
+impl<'dr, F: Field> Driver<'dr> for ShapeCounter<F> {
     type F = F;
     type Wire = ();
     const ONE: Self::Wire = ();
@@ -101,8 +104,31 @@ impl<'dr, F: Field> Driver<'dr> for Counter<F> {
     }
 }
 
+/// Derives the shape of a routine by running it through a constraint counter.
+///
+/// The closure should execute the routine logic. This is used internally
+/// to determine routine shapes without exposing shape computation on the
+/// `Routine` trait.
+pub fn derive_shape<F: Field>(f: impl FnOnce(&mut ShapeCounter<F>)) -> RoutineShape {
+    let mut counter = ShapeCounter {
+        available_b: false,
+        num_linear_constraints: 0,
+        num_multiplication_constraints: 0,
+        _marker: PhantomData,
+    };
+    f(&mut counter);
+    RoutineShape::new(
+        counter.num_multiplication_constraints,
+        counter.num_linear_constraints,
+    )
+}
+
+/// Evaluates a circuit to collect constraint metrics.
+///
+/// Runs the circuit through a counter driver to count multiplications
+/// and linear constraints without computing actual values.
 pub fn eval<F: Field, C: Circuit<F>>(circuit: &C) -> Result<CircuitMetrics> {
-    let mut collector = Counter {
+    let mut collector = ShapeCounter {
         available_b: false,
         num_linear_constraints: 0,
         num_multiplication_constraints: 0,
