@@ -181,7 +181,7 @@ fn test_native_registry_digest() {
 ///
 /// This test ensures the wiring polynomial structure is mathematically
 /// equivalent to the reference implementation by comparing cryptographic
-/// then it's mathematically equivalent.
+/// digests.
 #[test]
 fn test_nested_registry_digest() {
     let pasta = Pasta::baked();

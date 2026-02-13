@@ -220,10 +220,10 @@ impl<'dr, D: Driver<'dr>, P: arithmetic::PoseidonPermutation<D::F>> Sponge<'dr, 
         }
     }
 
-    /// Resume a [`Sponge`] from a saved [`SpongeState`].
+    /// Resumes a [`Sponge`] from a saved [`SpongeState`].
     ///
-    /// This allows resuming a sponge and then performing custom operations before
-    /// squeezing. Used by the `Transcript` API.
+    /// This method allows resuming a sponge and then performing custom operations
+    /// before squeezing. Used by the `Transcript` API.
     pub fn resume(_dr: &mut D, state: SpongeState<'dr, D, P>, params: &'dr P) -> Self {
         Sponge {
             mode: Mode::Squeeze {

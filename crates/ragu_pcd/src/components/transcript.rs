@@ -52,7 +52,7 @@ impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> Clone for Transcript<'dr
 pub(crate) type TranscriptState<'dr, D, P> = SpongeState<'dr, D, P>;
 
 impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> Transcript<'dr, D, P> {
-    /// Create a new transcript with mandatory domain separation.
+    /// Creates a new transcript with mandatory domain separation.
     ///
     /// The `tag` is absorbed as field elements (length-prefixed, 16 bytes per
     /// element via u128 conversion) to bind the transcript to a protocol context.
@@ -76,12 +76,12 @@ impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> Transcript<'dr, D, P> {
         Ok(Transcript { sponge, params })
     }
 
-    /// Squeeze a single field element challenge from the transcript.
+    /// Squeezes a single field element challenge from the transcript.
     pub(crate) fn challenge(&mut self, dr: &mut D) -> Result<Element<'dr, D>> {
         self.sponge.squeeze(dr)
     }
 
-    /// Save the transcript state (analogous to flush).
+    /// Saves the transcript state (analogous to flush).
     ///
     /// This consumes the transcript and applies a permutation to transition
     /// into squeeze mode. The returned state can be passed to another circuit
@@ -93,9 +93,15 @@ impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> Transcript<'dr, D, P> {
         self.sponge.save_state(dr)
     }
 
-    /// Resume transcript from saved state.
+    /// Resumes transcript from saved state.
     ///
-    /// After resuming, call [`Self::challenge`] to squeeze challenges.
+    /// The resumed transcript is in **squeeze mode**, ready to output challenges
+    /// via [`Self::challenge`]. You can either:
+    /// - Squeeze challenges from previously-absorbed data first, then absorb new messages
+    /// - Absorb additional messages immediately (transitions back to absorb mode)
+    ///
+    /// Note: Calling `write()` before `challenge()` transitions back to absorb mode.
+    /// Any remaining squeeze capacity from the saved state becomes inaccessible.
     pub(crate) fn resume_from_state(
         dr: &mut D,
         state: TranscriptState<'dr, D, P>,
