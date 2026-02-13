@@ -173,6 +173,9 @@ impl<F: Field> Circuit<F> for RoutineCircuit {
             value = dr.routine(SquareRoutine, value)?;
         }
 
+        // Square after routines to exercise x-power tracking on cache hits
+        value = value.square(dr)?;
+
         Ok((value, D::just(|| ())))
     }
 }

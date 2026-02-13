@@ -313,6 +313,12 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
             self.multiplication_constraints += cached.num_multiplications;
             self.linear_constraints += cached.num_constraints;
 
+            let x_inv_pow = self.x_inv.pow_vartime([cached.num_multiplications as u64]); // TODO (cache x power?)
+            let x_pow = self.x.pow_vartime([cached.num_multiplications as u64]); // TODO (cache x power?)
+            self.current_u_x *= x_inv_pow;
+            self.current_v_x *= x_pow;
+            self.current_w_x *= x_inv_pow;
+
             // Add cached contribution: result = result_before * y^k + contribution
             let y_power = self.y.pow_vartime([cached.num_constraints as u64]);
             self.result = result_before * y_power + cached.contribution;
