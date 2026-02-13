@@ -38,9 +38,10 @@ use ragu_arithmetic::Coeff;
 use ragu_core::{
     Result,
     drivers::{Driver, FromDriver, LinearExpression},
-    floor_plan::RegistryPosition,
     routines::RoutineId,
 };
+
+use crate::floor_plan::RegistryPosition;
 
 use alloc::{collections::BTreeMap, vec::Vec};
 

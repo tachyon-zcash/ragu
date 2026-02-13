@@ -75,11 +75,10 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
 #[test]
 fn test_rerandomize_consistency() {
     use crate::header::{Header, Suffix};
-    use ragu_circuits::{CircuitExt, polynomials, registry};
+    use ragu_circuits::{CircuitExt, floor_plan::FloorPlan, polynomials, registry};
     use ragu_core::{
         Result,
         drivers::{Driver, DriverValue},
-        floor_plan::FloorPlan,
         gadgets::{GadgetKind, Kind},
         maybe::Maybe,
     };

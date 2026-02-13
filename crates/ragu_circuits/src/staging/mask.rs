@@ -1,7 +1,9 @@
 use ff::Field;
-use ragu_core::{Result, floor_plan::FloorPlan};
+use ragu_core::Result;
 
 use alloc::vec::Vec;
+
+use crate::floor_plan::FloorPlan;
 
 use crate::{
     CircuitObject,
@@ -247,10 +249,11 @@ mod tests {
     use ragu_core::{
         Result,
         drivers::{Driver, DriverValue, LinearExpression, emulator::Emulator},
-        floor_plan::FloorPlan,
         gadgets::{Consistent, Gadget, GadgetKind},
         maybe::Maybe,
     };
+
+    use crate::floor_plan::FloorPlan;
     use ragu_pasta::{EpAffine, Fp, Fq};
     use ragu_primitives::{Element, Endoscalar, Point, io::Write};
     use rand::Rng;

@@ -15,6 +15,7 @@
 
 extern crate alloc;
 
+pub mod floor_plan;
 mod ky;
 pub mod metrics;
 pub mod polynomials;
@@ -35,9 +36,10 @@ use ff::Field;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue},
-    floor_plan::FloorPlan,
     gadgets::GadgetKind,
 };
+
+use floor_plan::FloorPlan;
 use ragu_primitives::io::Write;
 
 use alloc::{boxed::Box, vec::Vec};

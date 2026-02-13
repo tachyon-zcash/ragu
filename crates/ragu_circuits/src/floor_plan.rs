@@ -7,8 +7,8 @@
 //!
 //! See issues #58 and #59 for the memoization design.
 
-use crate::routines::{RoutineId, RoutineRegistry, RoutineShape};
 use alloc::{collections::BTreeMap, vec::Vec};
+use ragu_core::routines::{RoutineId, RoutineRegistry, RoutineShape};
 
 /// A position in the circuit registry: multiplication gate index (X dimension) and
 /// constraint index (Y dimension).

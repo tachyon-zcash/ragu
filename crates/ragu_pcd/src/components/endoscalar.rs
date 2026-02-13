@@ -327,6 +327,7 @@ mod tests {
     use ff::Field;
     use pasta_curves::group::{Curve, Group, prime::PrimeCurveAffine};
     use ragu_arithmetic::{Uendo, eval as arithmetic_eval};
+    use ragu_circuits::floor_plan::FloorPlan;
     use ragu_circuits::{
         CircuitExt,
         polynomials::{self},
@@ -336,7 +337,6 @@ mod tests {
     use ragu_core::{
         Result,
         drivers::emulator::{Emulator, Wired},
-        floor_plan::FloorPlan,
         maybe::Maybe,
     };
     use ragu_pasta::{Ep, EpAffine, Fp, Fq};

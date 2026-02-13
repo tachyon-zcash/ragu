@@ -15,11 +15,11 @@
 //! to compile the added circuits into a registry polynomial representation that can
 //! be efficiently evaluated at different restrictions.
 
+use crate::floor_plan::FloorPlan;
 use blake2b_simd::Params;
 use ff::{Field, FromUniformBytes, PrimeField};
 use ragu_arithmetic::{Domain, bitreverse};
-use ragu_core::{Error, Result};
-use ragu_core::{floor_plan::FloorPlan, routines::RoutineRegistry};
+use ragu_core::{Error, Result, routines::RoutineRegistry};
 
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec::Vec};
 

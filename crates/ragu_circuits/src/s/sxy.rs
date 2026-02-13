@@ -53,11 +53,12 @@ use ragu_arithmetic::Coeff;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverTypes, emulator::Emulator},
-    floor_plan::{FloorPlan, RegistryPosition},
     gadgets::GadgetKind,
     maybe::Empty,
     routines::{Routine, RoutineId},
 };
+
+use crate::floor_plan::{FloorPlan, RegistryPosition};
 use ragu_primitives::GadgetExt;
 
 use alloc::{collections::BTreeMap, vec};

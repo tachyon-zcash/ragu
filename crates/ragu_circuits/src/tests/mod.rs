@@ -4,10 +4,11 @@ use ff::Field;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue, LinearExpression},
-    floor_plan::FloorPlan,
     gadgets::{GadgetKind, Kind},
     maybe::Maybe,
 };
+
+use crate::floor_plan::FloorPlan;
 use ragu_pasta::Fp;
 use ragu_primitives::Element;
 
