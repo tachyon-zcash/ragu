@@ -664,6 +664,7 @@ mod tests {
             registry.wy_cached(&cache, y).eval(eval_point),
             registry.wy(w, y).eval(eval_point)
         );
+        assert_eq!(registry.wxy_cached(&cache, x, y), registry.wxy(w, x, y));
 
         // Test with w in domain (omega^j)
         let w_in_domain = registry.domain.omega();
@@ -676,6 +677,10 @@ mod tests {
         assert_eq!(
             registry.wy_cached(&cache_in_domain, y).eval(eval_point),
             registry.wy(w_in_domain, y).eval(eval_point)
+        );
+        assert_eq!(
+            registry.wxy_cached(&cache_in_domain, x, y),
+            registry.wxy(w_in_domain, x, y)
         );
 
         Ok(())
