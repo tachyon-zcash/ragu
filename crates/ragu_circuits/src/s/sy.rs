@@ -73,10 +73,11 @@ use ragu_core::{
     drivers::{Driver, DriverTypes, LinearExpression, emulator::Emulator},
     gadgets::GadgetKind,
     maybe::Empty,
-    routines::{Routine, RoutineId},
+    routines::Routine,
 };
 
 use crate::floor_plan::{FloorPlan, RegistryPosition};
+use crate::routines::RoutineId;
 use ragu_primitives::GadgetExt;
 
 use alloc::{collections::BTreeMap, vec, vec::Vec};

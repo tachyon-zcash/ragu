@@ -55,10 +55,11 @@ use ragu_core::{
     drivers::{Driver, DriverTypes, emulator::Emulator},
     gadgets::GadgetKind,
     maybe::Empty,
-    routines::{Routine, RoutineId},
+    routines::Routine,
 };
 
 use crate::floor_plan::{FloorPlan, RegistryPosition};
+use crate::routines::RoutineId;
 use ragu_primitives::GadgetExt;
 
 use alloc::{collections::BTreeMap, vec};
@@ -478,8 +479,8 @@ pub(crate) fn eval_with_cache<F: Field, C: Circuit<F>, R: Rank>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::routines::RoutineRegistry;
     use ff::Field;
-    use ragu_core::routines::RoutineRegistry;
     use ragu_pasta::Fp;
 
     use crate::polynomials::R;

@@ -38,10 +38,10 @@ use ragu_arithmetic::Coeff;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, FromDriver, LinearExpression},
-    routines::RoutineId,
 };
 
 use crate::floor_plan::RegistryPosition;
+use crate::routines::RoutineId;
 
 use alloc::{collections::BTreeMap, vec::Vec};
 

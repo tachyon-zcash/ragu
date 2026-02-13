@@ -16,20 +16,19 @@
 //! be efficiently evaluated at different restrictions.
 
 use crate::floor_plan::FloorPlan;
-use blake2b_simd::Params;
-use ff::{Field, FromUniformBytes, PrimeField};
-use ragu_arithmetic::{Domain, bitreverse};
-use ragu_core::{Error, Result, routines::RoutineRegistry};
-
-use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec::Vec};
-
+use crate::routines::RoutineRegistry;
 use crate::s::MemoCache;
-
 use crate::{
     Circuit, CircuitExt, CircuitObject,
     polynomials::{Rank, structured, unstructured},
     staging::{Stage, StageExt},
 };
+
+use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec::Vec};
+use blake2b_simd::Params;
+use ff::{Field, FromUniformBytes, PrimeField};
+use ragu_arithmetic::{Domain, bitreverse};
+use ragu_core::{Error, Result};
 
 /// Represents a simple numeric index of a circuit in the registry.
 #[derive(Clone, Copy, Debug, PartialEq)]

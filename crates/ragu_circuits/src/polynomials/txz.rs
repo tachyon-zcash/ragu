@@ -6,8 +6,10 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
     gadgets::{GadgetKind, Kind},
     maybe::Maybe,
-    routines::{Prediction, Routine, RoutineShape},
+    routines::{Prediction, Routine},
 };
+
+use crate::routines::RoutineShape;
 use ragu_primitives::Element;
 
 use crate::metrics::{ShapeCounter, derive_shape};

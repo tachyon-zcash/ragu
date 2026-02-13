@@ -12,8 +12,10 @@ use ragu_core::{
     drivers::{Driver, DriverValue, LinearExpression},
     gadgets::{GadgetKind, Kind},
     maybe::Maybe,
-    routines::{Prediction, Routine, RoutineShape},
+    routines::{Prediction, Routine},
 };
+
+use crate::routines::RoutineShape;
 use ragu_primitives::Element;
 
 use crate::Circuit;

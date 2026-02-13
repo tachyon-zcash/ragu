@@ -11,8 +11,10 @@ use ragu_core::{
     drivers::{Driver, DriverTypes, emulator::Emulator},
     gadgets::GadgetKind,
     maybe::Empty,
-    routines::{Routine, RoutineShape},
+    routines::Routine,
 };
+
+use crate::routines::RoutineShape;
 use ragu_primitives::GadgetExt;
 
 use core::marker::PhantomData;
