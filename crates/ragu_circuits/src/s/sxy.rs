@@ -268,12 +268,12 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
 
         // Nested routines skip memoization
         if self.routine_depth > 1 {
-            let tmp = self.available_b.take();
-            let mut dummy = Emulator::wireless();
-            let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
-            let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
-            let output = routine.execute(self, input, aux)?;
-            self.available_b = tmp;
+            let output = self.with_fresh_b(|this| {
+                let mut dummy = Emulator::wireless();
+                let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
+                let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
+                routine.execute(this, input, aux)
+            })?;
             self.routine_depth -= 1;
             return Ok(output);
         }
@@ -296,79 +296,79 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
                 RegistryPosition::new(self.multiplication_constraints, self.linear_constraints)
             });
 
-        let tmp = self.available_b.take();
+        let output = self.with_fresh_b(|this| {
+            if let Some(cached) = this
+                .memo_cache
+                .get(&routine_id, canonical_position)
+                .cloned()
+            {
+                // Cache hit: reconstruct output via template + wire injection (no routine execution)
+                let result_before = this.result;
 
-        let output = if let Some(cached) = self
-            .memo_cache
-            .get(&routine_id, canonical_position)
-            .cloned()
-        {
-            // Cache hit: reconstruct output via template + wire injection (no routine execution)
-            let result_before = self.result;
+                // Run routine through wireless emulator to get a template gadget with Wire = ()
+                let mut wireless = Emulator::wireless();
+                let wireless_input = Ro::Input::map_gadget(&input, &mut wireless)?;
+                let aux = routine.predict(&mut wireless, &wireless_input)?.into_aux();
+                let template = routine.execute(&mut wireless, wireless_input, aux)?;
 
-            // Run routine through wireless emulator to get a template gadget with Wire = ()
-            let mut wireless = Emulator::wireless();
-            let wireless_input = Ro::Input::map_gadget(&input, &mut wireless)?;
-            let aux = routine.predict(&mut wireless, &wireless_input)?.into_aux();
-            let template = routine.execute(&mut wireless, wireless_input, aux)?;
+                // Inject cached wires into the template via map_gadget + WireInjector
+                let mut injector: WireInjector<'_, F, Self> =
+                    WireInjector::new(&cached.output_wires);
+                let output = Ro::Output::map_gadget(&template, &mut injector)?;
 
-            // Inject cached wires into the template via map_gadget + WireInjector
-            let mut injector: WireInjector<'_, F, Self> = WireInjector::new(&cached.output_wires);
-            let output = Ro::Output::map_gadget(&template, &mut injector)?;
+                // Manually advance constraint counters (we didn't call mul/enforce_zero)
+                this.multiplication_constraints += cached.num_multiplications;
+                this.linear_constraints += cached.num_constraints;
 
-            // Manually advance constraint counters (we didn't call mul/enforce_zero)
-            self.multiplication_constraints += cached.num_multiplications;
-            self.linear_constraints += cached.num_constraints;
+                let x_inv_pow = this.x_inv.pow_vartime([cached.num_multiplications as u64]); // TODO (cache x power?)
+                let x_pow = this.x.pow_vartime([cached.num_multiplications as u64]); // TODO (cache x power?)
+                this.current_u_x *= x_inv_pow;
+                this.current_v_x *= x_pow;
+                this.current_w_x *= x_inv_pow;
 
-            let x_inv_pow = self.x_inv.pow_vartime([cached.num_multiplications as u64]); // TODO (cache x power?)
-            let x_pow = self.x.pow_vartime([cached.num_multiplications as u64]); // TODO (cache x power?)
-            self.current_u_x *= x_inv_pow;
-            self.current_v_x *= x_pow;
-            self.current_w_x *= x_inv_pow;
+                // Add cached contribution: result = result_before * y^k + contribution
+                let y_power = this.y.pow_vartime([cached.num_constraints as u64]);
+                this.result = result_before * y_power + cached.contribution;
 
-            // Add cached contribution: result = result_before * y^k + contribution
-            let y_power = self.y.pow_vartime([cached.num_constraints as u64]);
-            self.result = result_before * y_power + cached.contribution;
+                Ok(output)
+            } else {
+                // Cache miss: execute and cache
+                let result_before = this.result;
+                let muls_before = this.multiplication_constraints;
+                let constraints_before = this.linear_constraints;
 
-            output
-        } else {
-            // Cache miss: execute and cache
-            let result_before = self.result;
-            let muls_before = self.multiplication_constraints;
-            let constraints_before = self.linear_constraints;
+                let mut dummy = Emulator::wireless();
+                let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
+                let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
+                let output = routine.execute(this, input, aux)?;
 
-            let mut dummy = Emulator::wireless();
-            let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
-            let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
-            let output = routine.execute(self, input, aux)?;
+                // Extract output wires for caching
+                let mut wire_extractor = WireExtractor::new();
+                let _ = Ro::Output::map_gadget(&output, &mut wire_extractor)?;
+                let output_wires = wire_extractor.into_wires();
 
-            // Extract output wires for caching
-            let mut wire_extractor = WireExtractor::new();
-            let _ = Ro::Output::map_gadget(&output, &mut wire_extractor)?;
-            let output_wires = wire_extractor.into_wires();
+                // Extract contribution: C = result_after - result_before * y^k
+                let num_multiplications = this.multiplication_constraints - muls_before;
+                let num_constraints = this.linear_constraints - constraints_before;
+                let y_power = this.y.pow_vartime([num_constraints as u64]);
+                let contribution = this.result - result_before * y_power;
 
-            // Extract contribution: C = result_after - result_before * y^k
-            let num_multiplications = self.multiplication_constraints - muls_before;
-            let num_constraints = self.linear_constraints - constraints_before;
-            let y_power = self.y.pow_vartime([num_constraints as u64]);
-            let contribution = self.result - result_before * y_power;
+                // Cache for reuse
+                this.memo_cache.insert(
+                    routine_id,
+                    canonical_position,
+                    CachedRoutine {
+                        contribution,
+                        num_multiplications,
+                        num_constraints,
+                        output_wires,
+                    },
+                );
 
-            // Cache for reuse
-            self.memo_cache.insert(
-                routine_id,
-                canonical_position,
-                CachedRoutine {
-                    contribution,
-                    num_multiplications,
-                    num_constraints,
-                    output_wires,
-                },
-            );
+                Ok(output)
+            }
+        })?;
 
-            output
-        };
-
-        self.available_b = tmp;
         self.routine_depth -= 1;
         Ok(output)
     }
