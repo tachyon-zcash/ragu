@@ -1,8 +1,8 @@
 //! Compressed proof structures and operations.
 
 use alloc::vec::Vec;
-use arithmetic::{CurveAffine, Cycle};
-use ff::PrimeField;
+use arithmetic::{CurveAffine, Cycle, FixedGenerators, revdot_poly};
+use ff::{Field, PrimeField};
 use ragu_circuits::polynomials::Rank;
 use ragu_core::Result;
 use rand::CryptoRng;
@@ -33,7 +33,7 @@ pub struct CompressedProof<C: Cycle> {
     pub u: C::CircuitField,
     /// Claimed evaluation P(u).
     pub v: C::CircuitField,
-    /// IPA opening proof.
+    /// IPA opening proof for P(u) = v.
     pub ipa: IpaProof<C::HostCurve>,
     /// Challenge x.
     pub x: C::CircuitField,
@@ -43,8 +43,12 @@ pub struct CompressedProof<C: Cycle> {
     pub a_commitment: C::HostCurve,
     /// B polynomial commitment.
     pub b_commitment: C::HostCurve,
-    /// Inner product A·B.
+    /// Inner product A·B (claimed value).
     pub c: C::CircuitField,
+    /// Commitment to revdot reduction polynomial p where p(0) = c.
+    pub p_ab_commitment: C::HostCurve,
+    /// IPA opening proof for p(0) = c.
+    pub ipa_ab: IpaProof<C::HostCurve>,
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, HEADER_SIZE> {
@@ -57,29 +61,59 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
     where
         C::CircuitField: PrimeField,
     {
+        let generators = C::host_generators(self.params);
         let mut transcript = Transcript::<C>::new(C::circuit_poseidon(self.params));
+
+        // Compute the revdot reduction polynomial p where p(0) = revdot(a, b) = c
+        let a_coeffs: Vec<_> = proof.ab.a_poly.iter_coeffs().collect();
+        let b_coeffs: Vec<_> = proof.ab.b_poly.iter_coeffs().collect();
+        let p_ab_coeffs = revdot_poly(&a_coeffs, &b_coeffs);
+
+        // Commit to p_ab with fresh blinding factor
+        let p_ab_blind = C::CircuitField::random(&mut *rng);
+        let p_ab_commitment = arithmetic::mul(
+            p_ab_coeffs.iter().chain(Some(&p_ab_blind)),
+            generators
+                .g()
+                .iter()
+                .take(p_ab_coeffs.len())
+                .chain(Some(generators.h())),
+        )
+        .into();
 
         // Absorb P polynomial claim
         transcript.absorb_point(&proof.p.commitment);
         transcript.absorb_scalar(&proof.challenges.u);
         transcript.absorb_scalar(&proof.p.v);
 
-        // Absorb A·B inner product claim
+        // Absorb A·B inner product claim and revdot reduction commitment
         transcript.absorb_point(&proof.ab.a_commitment);
         transcript.absorb_point(&proof.ab.b_commitment);
         transcript.absorb_scalar(&proof.ab.c);
+        transcript.absorb_point(&p_ab_commitment);
 
         // Absorb challenges
         transcript.absorb_scalar(&proof.challenges.x);
         transcript.absorb_scalar(&proof.challenges.y);
 
+        // IPA proof for P(u) = v
         let ipa = prover::create_proof::<C, _, _>(
-            C::host_generators(self.params),
+            generators,
             rng,
             &mut transcript,
             &proof.p.poly,
             proof.p.blind,
             proof.challenges.u,
+        );
+
+        // IPA proof for p_ab(0) = c
+        let ipa_ab = prover::create_proof::<C, _, _>(
+            generators,
+            rng,
+            &mut transcript,
+            &p_ab_coeffs,
+            p_ab_blind,
+            C::CircuitField::ZERO, // evaluating at 0
         );
 
         Ok(CompressedProof {
@@ -92,6 +126,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
             a_commitment: proof.ab.a_commitment,
             b_commitment: proof.ab.b_commitment,
             c: proof.ab.c,
+            p_ab_commitment,
+            ipa_ab,
         })
     }
 
@@ -100,6 +136,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
     where
         C::CircuitField: PrimeField,
     {
+        let generators = C::host_generators(self.params);
         let mut transcript = Transcript::<C>::new(C::circuit_poseidon(self.params));
 
         // Absorb P polynomial claim
@@ -107,29 +144,44 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
         transcript.absorb_scalar(&compressed.u);
         transcript.absorb_scalar(&compressed.v);
 
-        // Absorb A·B inner product claim
+        // Absorb A·B inner product claim and revdot reduction commitment
         transcript.absorb_point(&compressed.a_commitment);
         transcript.absorb_point(&compressed.b_commitment);
         transcript.absorb_scalar(&compressed.c);
+        transcript.absorb_point(&compressed.p_ab_commitment);
 
         // Absorb challenges
         transcript.absorb_scalar(&compressed.x);
         transcript.absorb_scalar(&compressed.y);
 
-        Ok(verifier::verify_proof::<C, _>(
-            C::host_generators(self.params),
+        // Verify IPA proof for P(u) = v
+        let p_ok = verifier::verify_proof::<C, _>(
+            generators,
             &mut transcript,
             compressed.p_commitment,
             compressed.u,
             compressed.v,
             &compressed.ipa,
-        ))
+        );
+
+        // Verify IPA proof for p_ab(0) = c
+        let ab_ok = verifier::verify_proof::<C, _>(
+            generators,
+            &mut transcript,
+            compressed.p_ab_commitment,
+            C::CircuitField::ZERO, // evaluating at 0
+            compressed.c,
+            &compressed.ipa_ab,
+        );
+
+        Ok(p_ok && ab_ok)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::ApplicationBuilder;
+    use arithmetic::{Cycle, revdot_poly};
     use ragu_circuits::polynomials::R;
     use ragu_pasta::Pasta;
     use rand::{SeedableRng, rngs::StdRng};
@@ -150,6 +202,32 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(54321);
 
         let proof = app.trivial_proof();
+        let compressed = app.compress(&proof, &mut rng).unwrap();
+        assert!(app.verify_compressed(&compressed).unwrap());
+    }
+
+    #[test]
+    fn test_revdot_reduction_correctness() {
+        let app = create_test_app();
+        let mut rng = StdRng::seed_from_u64(12345);
+
+        let proof = app.trivial_proof();
+
+        // Verify that revdot(a, b) = c
+        let a_coeffs: Vec<_> = proof.ab.a_poly.iter_coeffs().collect();
+        let b_coeffs: Vec<_> = proof.ab.b_poly.iter_coeffs().collect();
+        let revdot: <Pasta as Cycle>::CircuitField = a_coeffs
+            .iter()
+            .zip(b_coeffs.iter().rev())
+            .map(|(&x, &y)| x * y)
+            .sum();
+        assert_eq!(revdot, proof.ab.c, "revdot(a, b) should equal c");
+
+        // Verify p(0) = revdot(a, b)
+        let p = revdot_poly(&a_coeffs, &b_coeffs);
+        assert_eq!(p[0], revdot, "p(0) should equal revdot(a, b)");
+
+        // Compress and verify
         let compressed = app.compress(&proof, &mut rng).unwrap();
         assert!(app.verify_compressed(&compressed).unwrap());
     }
