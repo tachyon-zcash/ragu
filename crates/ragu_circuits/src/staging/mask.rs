@@ -1,5 +1,5 @@
-use arithmetic::{CurveAffine, FixedGenerators};
 use ff::Field;
+use ragu_arithmetic::{CurveAffine, FixedGenerators};
 use ragu_core::Result;
 
 use alloc::vec::Vec;
@@ -264,12 +264,13 @@ mod tests {
     };
     use ragu_pasta::{EpAffine, EqAffine, Fp, Fq, Pasta};
     use ragu_primitives::{Element, Endoscalar, Point, io::Write};
-    use rand::{Rng, thread_rng};
+    use rand::Rng;
 
     use crate::{
         CircuitExt, CircuitObject, metrics,
         polynomials::{Rank, structured},
-        registry, s::sy,
+        registry,
+        s::sy,
         staging::StageBuilder,
         tests::SquareCircuit,
     };
@@ -670,7 +671,7 @@ mod tests {
         let pasta = Pasta::baked();
         let generators = Pasta::host_generators(pasta);
 
-        let stage = StageObject::<R>::new(2, 4).unwrap();
+        let stage = StageMask::<R>::new(2, 4).unwrap();
 
         for i in 0..4 {
             let gen_idx = stage.generator_index_for_a(i);
@@ -685,7 +686,7 @@ mod tests {
         let pasta = Pasta::baked();
         let generators = Pasta::host_generators(pasta);
 
-        let stage = StageObject::<R>::new(1, 3).unwrap();
+        let stage = StageMask::<R>::new(1, 3).unwrap();
         let blind = Fp::ZERO;
 
         let challenges = [Fp::from(42u64), Fp::from(123u64), Fp::from(456u64)];
@@ -798,10 +799,10 @@ mod tests {
         let rx: structured::Polynomial<Fp, R> = AOnlyStage::rx(challenges).unwrap();
         let poly_commitment: EqAffine = rx.commit(generators, blind);
 
-        // Build `StageObject` with matching parameters.
+        // Build `StageMask` with matching parameters.
         let skip = AOnlyStage::skip_multiplications(); // 0 for root stage
         let num = <AOnlyStage as StageExt<Fp, R>>::num_multiplications(); // ceil(6/2) = 3
-        let stage_obj = StageObject::<R>::new(skip, num).unwrap();
+        let stage_obj = StageMask::<R>::new(skip, num).unwrap();
 
         // Manually compute expected commitment using generator_for_a_coefficient.
         let mut manual_commitment = EqAffine::identity();

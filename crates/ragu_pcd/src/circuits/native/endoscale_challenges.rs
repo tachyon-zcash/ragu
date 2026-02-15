@@ -1,9 +1,9 @@
 //! Circuit for extracting and verifying challenge endoscalars.
 
-use arithmetic::Cycle;
+use ragu_arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::Rank,
-    staging::{StageBuilder, Staged, StagedCircuit},
+    staging::{MultiStage, MultiStageCircuit, StageBuilder},
 };
 use ragu_core::{
     Result,
@@ -47,7 +47,7 @@ pub struct SmuggledChallenges<'dr, D: Driver<'dr>> {
 ///
 /// Combines the unified instance with smuggled challenge coefficients.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, C: Cycle> {
+pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     /// The unified instance shared across internal circuits.
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
@@ -64,8 +64,8 @@ pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize, FP> {
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     Circuit<C, R, HEADER_SIZE, FP>
 {
-    pub fn new() -> Staged<C::CircuitField, R, Self> {
-        Staged::new(Circuit {
+    pub fn new() -> MultiStage<C::CircuitField, R, Self> {
+        MultiStage::new(Circuit {
             _marker: PhantomData,
         })
     }
@@ -79,9 +79,9 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    StagedCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, FP>
+    MultiStageCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, FP>
 {
-    type Final = native_error_n::Stage<C, R, HEADER_SIZE, FP>;
+    type Last = native_error_n::Stage<C, R, HEADER_SIZE, FP>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
@@ -101,7 +101,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 
     fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
-        builder: StageBuilder<'a, 'dr, D, R, (), Self::Final>,
+        builder: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<(
         <Self::Output as GadgetKind<C::CircuitField>>::Rebind<'dr, D>,

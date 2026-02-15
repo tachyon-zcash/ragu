@@ -66,7 +66,7 @@ fn test_internal_circuit_constraint_counts() {
     check_constraints!(Hashes2Circuit,              mul = 1880, lin = 2952);
     check_constraints!(PartialCollapseCircuit,      mul = 1757, lin = 1919);
     check_constraints!(FullCollapseCircuit,         mul = 812 , lin = 809);
-    check_constraints!(ComputeVCircuit,             mul = 1423, lin = 2310);
+    check_constraints!(ComputeVCircuit,             mul = 1154, lin = 1796);
     check_constraints!(EndoscaleChallengesCircuit,  mul = 1340, lin = 1868);
 }
 
@@ -83,8 +83,8 @@ fn test_internal_stage_parameters() {
     check_stage!(Preamble, skip =   0, num = 225);
     check_stage!(ErrorN,  skip = 225, num = 187);
     check_stage!(ErrorM,  skip = 412, num = 399);
-    check_stage!(Query,   skip = 225, num =  37);
-    check_stage!(Eval,    skip = 262, num =  19);
+    check_stage!(Query,   skip = 225, num =  25);
+    check_stage!(Eval,    skip = 250, num =  19);
 }
 
 /// Helper test to print current constraint counts in copy-pasteable format.
@@ -173,7 +173,7 @@ fn test_native_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fp!(0x0552d54111d86d2eac11a6b457c48b38e8c77a5156934226e94c7fd6508341e2);
+    let expected = fp!(0x21e899b6f6f365a52fa394d63476aaa8e914592e7178c0c034f49b62198a1068);
 
     assert_eq!(
         app.native_registry.key().value(),
@@ -197,7 +197,7 @@ fn test_nested_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fq!(0x23a59efeef759f7c0882ee8542c5d642b8c5900941cf397299956deb35aa846a);
+    let expected = fq!(0x0a29d73eaab9c29f79695418230a5c6f01350d7cd199ccf705180f994f6214e8);
 
     assert_eq!(
         app.nested_registry.key().value(),

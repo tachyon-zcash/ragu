@@ -134,7 +134,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                         preamble_witness,
                         error_n_witness,
                     },
-                    self.native_mesh.get_key(),
+                    self.native_registry.key(),
                 )?;
         let endoscale_challenges_rx_blind = C::CircuitField::random(&mut *rng);
         let endoscale_challenges_rx_commitment = endoscale_challenges_rx.commit(
