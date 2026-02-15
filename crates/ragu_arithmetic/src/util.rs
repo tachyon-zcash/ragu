@@ -474,7 +474,7 @@ fn test_dot() {
     let coeffs = [F::from(1), F::from(2), F::from(3), F::from(4), F::from(5)];
 
     assert_eq!(
-        dot(powers.iter(), coeffs.iter().rev().rev()),
+        dot(powers.iter(), coeffs.iter()),
         eval(coeffs.iter(), F::DELTA)
     );
 }

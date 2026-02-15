@@ -6,7 +6,8 @@ use alloc::vec::Vec;
 pub struct Domain<F> {
     /// $n$, the size of the domain
     n: usize,
-    /// $\log_2(n)$
+    /// $\log_2(n)$, exponent such that $n = 2^{log2_n},
+    /// where the domain size $n$ must always a power of two
     log2_n: u32,
     /// The primitive $n$-th root of unity in the field
     omega: F,
