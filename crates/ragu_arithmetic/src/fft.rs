@@ -48,8 +48,9 @@ pub fn bitreverse(mut n: u32, l: u32) -> u32 {
 }
 
 pub(crate) fn fft<R: Ring>(log2_n: u32, input: &mut [R::R], omega: R::F) {
-    assert_eq!(input.len(), 1 << log2_n);
+    // Enforce that the input and domain sizes match.
     let n = input.len() as u32;
+    assert_eq!(n, 1 << log2_n);
 
     for i in 0..n {
         let ri = bitreverse(i, log2_n);
