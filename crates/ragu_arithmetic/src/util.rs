@@ -173,12 +173,13 @@ pub fn mul<
             return 0;
         }
 
-        let mut v = [0; 8];
+        // 4 bytes suffices since bucket_lookup returns at most 16.
+        let mut v = [0; 4];
         for (v, o) in v.iter_mut().zip(bytes.as_ref()[skip_bytes..].iter()) {
             *v = *o;
         }
 
-        let mut tmp = u64::from_le_bytes(v);
+        let mut tmp = u32::from_le_bytes(v);
         tmp >>= skip_bits - (skip_bytes * 8);
         tmp %= 1 << c;
 
