@@ -136,6 +136,14 @@ impl FloorPlan {
             )
         })
     }
+
+    /// Gets the shape for a routine type, if it exists in the floor plan.
+    pub fn get_shape(&self, id: &RoutineId) -> Option<RoutineShape> {
+        self.placements
+            .iter()
+            .find(|p| p.id == *id)
+            .map(|p| p.shape)
+    }
 }
 
 #[cfg(test)]

@@ -64,6 +64,8 @@ pub struct CachedRoutine<F> {
 }
 
 /// Cache for routine contributions, keyed by `(RoutineId, canonical_position)`.
+///
+/// Currently used for inter-circuit memoization of polynomial structure.
 #[derive(Default, Clone)]
 pub struct MemoCache<F> {
     entries: BTreeMap<(RoutineId, RegistryPosition), CachedRoutine<F>>,
@@ -229,6 +231,11 @@ impl<'a, F, TD> WireInjector<'a, F, TD> {
             wires: wires.iter(),
             _marker: PhantomData,
         }
+    }
+
+    /// Returns true if all cached wires have been consumed.
+    pub fn is_exhausted(&self) -> bool {
+        self.wires.len() == 0
     }
 }
 

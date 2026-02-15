@@ -16,7 +16,7 @@ use ragu_core::{
 };
 use ragu_primitives::Element;
 
-use crate::{Circuit, routines::RoutineShape};
+use crate::{Circuit, metrics::derive_shape, routines::RoutineShape};
 
 /// A simple circuit that proves knowledge of a and b such that a^5 = b^2
 /// and a + b = c and a - b = d where c and d are public inputs.
@@ -112,8 +112,11 @@ pub struct SquareRoutine;
 
 impl SquareRoutine {
     /// Returns the shape of this routine.
-    pub fn shape() -> RoutineShape {
-        RoutineShape::new(1, 0)
+    pub fn shape<F: Field>() -> RoutineShape {
+        derive_shape(|dr: &mut crate::metrics::ShapeCounter<F>| {
+            let input = Element::zero(dr);
+            let _ = Self.execute(dr, input, ragu_core::maybe::Empty);
+        })
     }
 }
 

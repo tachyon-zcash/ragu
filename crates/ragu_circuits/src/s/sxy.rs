@@ -289,12 +289,13 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
             .and_modify(|c| *c += 1)
             .or_insert(1);
 
-        // Canonical position is the cache key
+        // Canonical position is the cache key. Fallback to current position if
+        // not in floor plan (correct for intra-circuit, but inter-circuit
+        // memoization requires proper floor plan setup).
         let canonical_position = self
             .floor_plan
             .get_invocation(&routine_id, invocation_index)
             .unwrap_or_else(|| {
-                // Fallback if not in floor plan
                 RegistryPosition::new(self.multiplication_constraints, self.linear_constraints)
             });
 
@@ -304,6 +305,18 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
                 .get(&routine_id, canonical_position)
                 .cloned()
             {
+                // Validate cached shape matches floor plan expectation
+                if let Some(expected) = this.floor_plan.get_shape(&routine_id) {
+                    debug_assert_eq!(
+                        cached.num_multiplications, expected.num_multiplications,
+                        "cached multiplication count mismatch"
+                    );
+                    debug_assert_eq!(
+                        cached.num_constraints, expected.num_constraints,
+                        "cached constraint count mismatch"
+                    );
+                }
+
                 // Cache hit: reconstruct output via template + wire injection (no routine execution)
                 let result_before = this.result;
 
@@ -317,6 +330,10 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
                 let mut injector: WireInjector<'_, F, Self> =
                     WireInjector::new(&cached.output_wires);
                 let output = Ro::Output::map_gadget(&template, &mut injector)?;
+                debug_assert!(
+                    injector.is_exhausted(),
+                    "wire cache overflow: unconsumed wires"
+                );
 
                 // Manually advance constraint counters (we didn't call mul/enforce_zero)
                 this.multiplication_constraints += cached.num_multiplications;
@@ -499,7 +516,7 @@ mod tests {
         let key = registry::Key::new(Fp::random(&mut rand::rng()));
 
         let mut registry = RoutineRegistry::new();
-        let shape = SquareRoutine::shape();
+        let shape = SquareRoutine::shape::<Fp>();
         registry.register::<SquareRoutine>(shape);
         registry.register::<SquareRoutine>(shape);
         registry.register::<SquareRoutine>(shape);
@@ -542,7 +559,7 @@ mod tests {
         let key = registry::Key::new(Fp::random(&mut rand::rng()));
 
         let mut registry = RoutineRegistry::new();
-        let shape = SquareRoutine::shape();
+        let shape = SquareRoutine::shape::<Fp>();
         registry.register::<SquareRoutine>(shape);
         registry.register::<SquareRoutine>(shape);
         registry.register::<SquareRoutine>(shape);

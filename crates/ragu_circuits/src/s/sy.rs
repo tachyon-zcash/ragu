@@ -624,10 +624,9 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'_, 'table, 's
             .and_modify(|c| *c += 1)
             .or_insert(1);
 
+        // TODO: Use these positions for memoization (currently only sxy memoizes)
         let _current_position =
             RegistryPosition::new(self.multiplication_constraints, self.linear_constraints);
-
-        // Look up canonical position from floor plan (for future memoization)
         let _canonical_position = self
             .floor_plan
             .get_invocation(&routine_id, invocation_index);
