@@ -2,7 +2,7 @@
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct PoseidonFq;
 
-// Generated using https://github.com/daira/pasta-hadeshash
+// Generated using https://extgit.isec.tugraz.at/krypto/hadeshash (via the daira/pasta-hadeshash fork)
 // sage generate_parameters_grain.sage 1 0 255 5 8 56 0x40000000000000000000000000000000224698fc0994a8dd8c46eb2100000001
 // which has the correct round constants (8 and 56) given the output of calc_round_numbers.py for the state size 5 and the
 // use of x^5 for the sbox, for the prime q
