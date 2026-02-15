@@ -9,10 +9,10 @@ use ff::Field;
 use ragu_arithmetic::Coeff;
 use ragu_core::{
     Error, Result,
-    drivers::{Driver, DriverTypes, emulator::Emulator},
+    drivers::{Driver, DriverTypes, FromDriver, emulator::Emulator},
     gadgets::{Bound, GadgetKind},
     maybe::{Always, Maybe, MaybeKind},
-    routines::Routine,
+    routines::{Prediction, Routine},
 };
 use ragu_primitives::GadgetExt;
 
@@ -189,6 +189,18 @@ impl<F: Field> DriverTypes for Evaluator<'_, F> {
     type LCenforce = ();
 }
 
+/// Maps predicted outputs from the wireless emulator back to the Evaluator.
+impl<'dr, 'a, F: Field>
+    FromDriver<'dr, 'a, Emulator<ragu_core::drivers::emulator::Wireless<Always<()>, F>>>
+    for Evaluator<'a, F>
+{
+    type NewDriver = Self;
+
+    fn convert_wire(&mut self, _wire: &()) -> Result<()> {
+        Ok(())
+    }
+}
+
 impl<'a, F: Field> Driver<'a> for Evaluator<'a, F> {
     type F = F;
     type Wire = ();
@@ -246,8 +258,15 @@ impl<'a, F: Field> Driver<'a> for Evaluator<'a, F> {
             |this| {
                 let mut dummy = Emulator::wireless();
                 let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
-                let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
-                routine.execute(this, input, aux)
+                match routine.predict(&mut dummy, &dummy_input)? {
+                    Prediction::Known(predicted_output, aux) => {
+                        let output = Ro::Output::map_gadget(&predicted_output, this)?;
+                        // TODO: execute could be deferred for async witness generation
+                        routine.execute(this, input, aux)?;
+                        Ok(output)
+                    }
+                    Prediction::Unknown(aux) => routine.execute(this, input, aux),
+                }
             },
         )
     }
