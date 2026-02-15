@@ -413,8 +413,8 @@ mod tests {
 
         let comparison_mask = stage.clone().into_object::<R>().unwrap();
 
-        let xn_minus_1 = x.pow_vartime([(4 * R::n() - 1) as u64]);
-        let comparison_sxy = comparison_mask.sxy(x, y, &k) - xn_minus_1;
+        let x_4n_minus_1 = x.pow_vartime([(4 * R::n() - 1) as u64]);
+        let comparison_sxy = comparison_mask.sxy(x, y, &k) - x_4n_minus_1;
 
         assert_eq!(stage.sxy(x, y, &k), comparison_sxy);
     }
@@ -495,14 +495,14 @@ mod tests {
             let k = registry::Key::new(Fp::random(&mut rand::rng()));
 
             let check = |x: Fp, y: Fp| {
-                let xn_minus_1 = x.pow_vartime([(4 * R::n() - 1) as u64]);
+                let x_4n_minus_1 = x.pow_vartime([(4 * R::n() - 1) as u64]);
 
                 // This adjusts for the single "ONE" constraint which is always skipped
                 // in staging witnesses.
-                let sxy = comparison_mask.sxy(x, y, &k) - xn_minus_1;
+                let sxy = comparison_mask.sxy(x, y, &k) - x_4n_minus_1;
                 let mut sx = comparison_mask.sx(x, &k);
                 {
-                    sx[0] -= xn_minus_1;
+                    sx[0] -= x_4n_minus_1;
                 }
                 let mut sy = comparison_mask.sy(y, &k);
                 {
