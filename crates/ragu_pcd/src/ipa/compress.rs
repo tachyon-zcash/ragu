@@ -58,9 +58,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
         C::CircuitField: PrimeField,
     {
         let mut transcript = Transcript::<C>::new(C::circuit_poseidon(self.params));
+
+        // Absorb P polynomial claim
         transcript.absorb_point(&proof.p.commitment);
         transcript.absorb_scalar(&proof.challenges.u);
         transcript.absorb_scalar(&proof.p.v);
+
+        // Absorb A·B inner product claim
+        transcript.absorb_point(&proof.ab.a_commitment);
+        transcript.absorb_point(&proof.ab.b_commitment);
+        transcript.absorb_scalar(&proof.ab.c);
+
+        // Absorb challenges
+        transcript.absorb_scalar(&proof.challenges.x);
+        transcript.absorb_scalar(&proof.challenges.y);
 
         let ipa = prover::create_proof::<C, _, _>(
             C::host_generators(self.params),
@@ -90,9 +101,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
         C::CircuitField: PrimeField,
     {
         let mut transcript = Transcript::<C>::new(C::circuit_poseidon(self.params));
+
+        // Absorb P polynomial claim
         transcript.absorb_point(&compressed.p_commitment);
         transcript.absorb_scalar(&compressed.u);
         transcript.absorb_scalar(&compressed.v);
+
+        // Absorb A·B inner product claim
+        transcript.absorb_point(&compressed.a_commitment);
+        transcript.absorb_point(&compressed.b_commitment);
+        transcript.absorb_scalar(&compressed.c);
+
+        // Absorb challenges
+        transcript.absorb_scalar(&compressed.x);
+        transcript.absorb_scalar(&compressed.y);
 
         Ok(verifier::verify_proof::<C, _>(
             C::host_generators(self.params),
