@@ -47,7 +47,3 @@ is written — may need a substantive index.md or flattening.
 Page opens with technical driver definition without first explaining why
 drivers matter to the reader. Add a brief motivational paragraph.
 
-### Missing closing transition in `guide/routines.md`
-
-Chapter ends abruptly with "Future optimizations" section. Add a closing
-paragraph that transitions the reader to the next topic (Drivers).
