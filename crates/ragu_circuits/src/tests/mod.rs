@@ -398,11 +398,11 @@ fn test_error_swallowing_breaks_revdot() {
     b_poly.add_assign(&good_circuit.sy(y, &key));
     b_poly.add_assign(&TestRank::tz(z));
 
-    let ky_eval = arithmetic::eval(&WellBehavedCircuit.ky(instance).unwrap(), y);
+    let ky_eval = ragu_arithmetic::eval(&WellBehavedCircuit.ky(instance).unwrap(), y);
 
     let rx_u = rx_poly.unstructured();
     let b_u = b_poly.unstructured();
-    let revdot = arithmetic::dot(rx_u.iter(), b_u.iter().rev());
+    let revdot = ragu_arithmetic::dot(rx_u.iter(), b_u.iter().rev());
 
     assert_ne!(
         ky_eval, revdot,
@@ -607,8 +607,8 @@ fn test_square_circuit_revdot() {
         .into_object::<TestRank>()
         .unwrap();
 
-    let y = Fp::random(thread_rng());
-    let z = Fp::random(thread_rng());
+    let y = Fp::random(&mut rand::rng());
+    let z = Fp::random(&mut rand::rng());
 
     let rx_poly = assignment.clone();
     let mut b_poly = assignment.clone();
@@ -616,11 +616,12 @@ fn test_square_circuit_revdot() {
     b_poly.add_assign(&circuit.sy(y, &key));
     b_poly.add_assign(&TestRank::tz(z));
 
-    let ky_eval = arithmetic::eval(&SquareCircuit { times: 1 }.ky(instance_val).unwrap(), y);
+    let ky_eval =
+        ragu_arithmetic::eval(&SquareCircuit { times: 1 }.ky(instance_val).unwrap(), y);
 
     let rx_u = rx_poly.unstructured();
     let b_u = b_poly.unstructured();
-    let revdot = arithmetic::dot(rx_u.iter(), b_u.iter().rev());
+    let revdot = ragu_arithmetic::dot(rx_u.iter(), b_u.iter().rev());
 
     assert_eq!(
         ky_eval, revdot,
