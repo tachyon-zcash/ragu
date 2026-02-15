@@ -132,7 +132,7 @@ use crate::{
 };
 
 pub use builder::{StageBuilder, StageGuard};
-pub use object::StageObject;
+pub use mask::StageMask as StageObject;
 
 /// Represents a partial trace component for a multi-stage circuit.
 pub trait Stage<F: Field, R: Rank> {

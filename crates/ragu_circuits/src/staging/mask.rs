@@ -1,4 +1,5 @@
 use ff::Field;
+use ragu_arithmetic::{CurveAffine, FixedGenerators};
 use ragu_core::Result;
 
 use alloc::vec::Vec;
@@ -245,7 +246,7 @@ mod tests {
     use ragu_core::{
         Result,
         drivers::{Driver, DriverValue, LinearExpression, emulator::Emulator},
-        gadgets::{Bound, Consistent, Gadget},
+        gadgets::{Bound, Consistent, Gadget, GadgetKind},
         maybe::Maybe,
         routines::{Prediction, Routine},
     };
@@ -1072,10 +1073,10 @@ mod tests {
         let rx: structured::Polynomial<Fp, R> = AOnlyStage::rx(challenges).unwrap();
         let poly_commitment: EqAffine = rx.commit(generators, blind);
 
-        // Build `StageObject` with matching parameters.
+        // Build `StageMask` with matching parameters.
         let skip = AOnlyStage::skip_multiplications(); // 0 for root stage
         let num = <AOnlyStage as StageExt<Fp, R>>::num_multiplications(); // ceil(6/2) = 3
-        let stage_obj = StageObject::<R>::new(skip, num).unwrap();
+        let stage_obj = StageMask::<R>::new(skip, num).unwrap();
 
         // Manually compute expected commitment using generator_for_a_coefficient.
         let mut manual_commitment = EqAffine::identity();

@@ -151,15 +151,15 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     where
         D::F: ff::WithSmallOrderMulGroup<3>,
     {
-        use ragu_primitives::{compute_endoscalar, extract_endoscalar};
+        use ragu_primitives::{extract_endoscalar, lift_endoscalar};
 
         // Get the y and z challenges from the unified instance
         let challenge_y = *self.unified.y.value().take();
         let challenge_z = *self.unified.z.value().take();
 
         // Compute field-scaled endoscalars (same as what the circuit does)
-        let y_coeff: D::F = compute_endoscalar(extract_endoscalar(challenge_y));
-        let z_coeff: D::F = compute_endoscalar(extract_endoscalar(challenge_z));
+        let y_coeff: D::F = lift_endoscalar(extract_endoscalar(challenge_y));
+        let z_coeff: D::F = lift_endoscalar(extract_endoscalar(challenge_z));
 
         // Build k(y) for (unified, y_coeff, 0, z_coeff, 0, suffix=0)
         let mut ky = Ky::new(y);
