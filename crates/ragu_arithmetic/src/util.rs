@@ -264,6 +264,71 @@ pub fn geosum<F: Field>(mut r: F, mut m: usize) -> F {
     sum
 }
 
+/// Multiplies two polynomials $a(X)$ and $b(X)$ using FFT.
+///
+/// Given coefficient vectors for $a$ and $b$ in ascending order of degree,
+/// returns the coefficient vector for $c(X) = a(X) \cdot b(X)$.
+///
+/// If $a$ has degree $m$ and $b$ has degree $n$, then $c$ has degree $m + n$.
+pub fn poly_mul<F: PrimeField>(a: &[F], b: &[F]) -> Vec<F> {
+    if a.is_empty() || b.is_empty() {
+        return vec![];
+    }
+
+    let result_len = a.len() + b.len() - 1;
+    let domain_size = result_len.next_power_of_two();
+    let domain = Domain::new(domain_size.ilog2());
+    let n = domain.n();
+
+    let mut a_evals = vec![F::ZERO; n];
+    a_evals[..a.len()].copy_from_slice(a);
+    domain.fft(&mut a_evals);
+
+    let mut b_evals = vec![F::ZERO; n];
+    b_evals[..b.len()].copy_from_slice(b);
+    domain.fft(&mut b_evals);
+
+    for (a, b) in a_evals.iter_mut().zip(b_evals.iter()) {
+        *a *= b;
+    }
+
+    domain.ifft(&mut a_evals);
+    a_evals.truncate(result_len);
+    a_evals
+}
+
+/// Computes the polynomial $p(X)$ for the revdot reduction.
+///
+/// Given coefficient vectors $\mathbf{a}$ and $\mathbf{b}$ of equal length $n$,
+/// this computes $p(X)$ such that $p(0) = \text{revdot}(\mathbf{a}, \mathbf{b})$.
+///
+/// The construction works as follows:
+/// 1. Compute $c(X) = a(X) \cdot b(X)$, which has degree $2n - 2$
+/// 2. The coefficient $c_{n-1} = \sum_{i+j=n-1} a_i b_j = \text{revdot}(\mathbf{a}, \mathbf{b})$
+/// 3. Take the lower half $[c_0, \ldots, c_{n-1}]$ and reverse to get $p$
+/// 4. Then $p(0) = c_{n-1} = \text{revdot}(\mathbf{a}, \mathbf{b})$
+///
+/// # Panics
+///
+/// Panics if `a` and `b` have different lengths.
+pub fn revdot_poly<F: PrimeField>(a: &[F], b: &[F]) -> Vec<F> {
+    assert_eq!(
+        a.len(),
+        b.len(),
+        "revdot_poly requires equal-length vectors"
+    );
+
+    if a.is_empty() {
+        return vec![];
+    }
+
+    let n = a.len();
+    let c = poly_mul(a, b);
+
+    // Take lower half [c_0, ..., c_{n-1}] and reverse to get p
+    c[..n].iter().copied().rev().collect()
+}
+
 /// Computes the lowest degree monic polynomial
 ///
 /// $$
@@ -580,4 +645,74 @@ fn test_batched_quotient_streaming() {
         })
         .sum();
     assert_eq!(f_at_y, expected_at_y);
+}
+
+#[test]
+fn test_poly_mul() {
+    use ff::Field;
+    use pasta_curves::Fp as F;
+
+    // (1 + 2X) * (3 + 4X) = 3 + 10X + 8X^2
+    let a = vec![F::from(1), F::from(2)];
+    let b = vec![F::from(3), F::from(4)];
+    let c = poly_mul(&a, &b);
+    assert_eq!(c, vec![F::from(3), F::from(10), F::from(8)]);
+
+    // Test that c_k = Σ_{i+j=k} a_i * b_j
+    let a = vec![F::from(1), F::from(2), F::from(3), F::from(4)];
+    let b = vec![F::from(5), F::from(6), F::from(7), F::from(8)];
+    let c = poly_mul(&a, &b);
+
+    // Verify using naive convolution
+    let mut expected = vec![F::ZERO; a.len() + b.len() - 1];
+    for (i, &ai) in a.iter().enumerate() {
+        for (j, &bj) in b.iter().enumerate() {
+            expected[i + j] += ai * bj;
+        }
+    }
+    assert_eq!(c, expected);
+
+    // Verify c_{n-1} = revdot(a, b)
+    let n = a.len();
+    let revdot: F = a.iter().zip(b.iter().rev()).map(|(&x, &y)| x * y).sum();
+    assert_eq!(c[n - 1], revdot);
+
+    // Empty cases
+    assert!(poly_mul::<F>(&[], &[F::ONE]).is_empty());
+    assert!(poly_mul::<F>(&[F::ONE], &[]).is_empty());
+}
+
+#[test]
+fn test_revdot_poly() {
+    use ff::Field;
+    use pasta_curves::Fp as F;
+
+    // Test that p(0) = revdot(a, b)
+    let a = vec![F::from(1), F::from(2), F::from(3), F::from(4)];
+    let b = vec![F::from(5), F::from(6), F::from(7), F::from(8)];
+
+    // revdot(a, b) = a_0*b_3 + a_1*b_2 + a_2*b_1 + a_3*b_0
+    //              = 1*8 + 2*7 + 3*6 + 4*5
+    //              = 8 + 14 + 18 + 20 = 60
+    let expected_revdot: F = a.iter().zip(b.iter().rev()).map(|(&x, &y)| x * y).sum();
+    assert_eq!(expected_revdot, F::from(60));
+
+    let p = revdot_poly(&a, &b);
+
+    // p(0) should equal revdot(a, b)
+    assert_eq!(p[0], expected_revdot);
+    assert_eq!(eval(&p, F::ZERO), expected_revdot);
+
+    // Verify p has the correct length
+    assert_eq!(p.len(), a.len());
+
+    // Test with random values
+    let a: Vec<F> = (0..16).map(|i| F::from(i * 7 + 3)).collect();
+    let b: Vec<F> = (0..16).map(|i| F::from(i * 11 + 5)).collect();
+
+    let revdot: F = a.iter().zip(b.iter().rev()).map(|(&x, &y)| x * y).sum();
+    let p = revdot_poly(&a, &b);
+
+    assert_eq!(p[0], revdot);
+    assert_eq!(eval(&p, F::ZERO), revdot);
 }
