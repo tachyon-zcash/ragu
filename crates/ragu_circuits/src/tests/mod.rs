@@ -619,8 +619,7 @@ fn test_square_circuit_revdot() {
     b_poly.add_assign(&circuit.sy(y, &key));
     b_poly.add_assign(&TestRank::tz(z));
 
-    let ky_eval =
-        ragu_arithmetic::eval(&SquareCircuit { times: 1 }.ky(instance_val).unwrap(), y);
+    let ky_eval = ragu_arithmetic::eval(&SquareCircuit { times: 1 }.ky(instance_val).unwrap(), y);
 
     let rx_u = rx_poly.unstructured();
     let b_u = b_poly.unstructured();
