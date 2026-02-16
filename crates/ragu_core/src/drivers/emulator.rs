@@ -206,7 +206,7 @@ impl<F: Field> Emulator<Wired<F>> {
     pub fn wires<'dr, G: Gadget<'dr, Self>>(&self, gadget: &G) -> Result<Vec<F>> {
         /// A conversion utility for extracting wire values.
         struct WireExtractor<F: Field> {
-            wires: Vec<WiredValue<F>>,
+            wires: Vec<F>,
         }
 
         impl<F: Field> FromDriver<'_, '_, Emulator<Wired<F>>> for WireExtractor<F> {
@@ -216,14 +216,14 @@ impl<F: Field> Emulator<Wired<F>> {
                 &mut self,
                 wire: &WiredValue<F>,
             ) -> Result<<Self::NewDriver as Driver<'_>>::Wire> {
-                self.wires.push(wire.clone());
+                self.wires.push(wire.clone().value());
                 Ok(())
             }
         }
 
         let mut collector = WireExtractor { wires: Vec::new() };
         <G::Kind as GadgetKind<F>>::map_gadget(gadget, &mut collector)?;
-        Ok(collector.wires.into_iter().map(|w| w.value()).collect())
+        Ok(collector.wires)
     }
 
     /// Creates a new [`Emulator`] driver in [`Wired`] mode for executing with
