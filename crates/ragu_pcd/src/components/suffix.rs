@@ -2,7 +2,7 @@ use ff::Field;
 use ragu_core::{
     Result,
     drivers::Driver,
-    gadgets::{Consistent, Gadget, GadgetKind, Kind},
+    gadgets::{Bound, Consistent, Gadget, GadgetKind, Kind},
 };
 use ragu_primitives::{
     Element,
@@ -14,20 +14,20 @@ use ragu_primitives::{
 #[derive(Gadget)]
 pub struct WithSuffix<'dr, D: Driver<'dr>, G: GadgetKind<D::F>> {
     #[ragu(gadget)]
-    inner: G::Rebind<'dr, D>,
+    inner: Bound<'dr, D, G>,
     #[ragu(gadget)]
     suffix: Element<'dr, D>,
 }
 
 impl<'dr, D: Driver<'dr>, G: GadgetKind<D::F>> WithSuffix<'dr, D, G> {
-    pub fn new(inner: G::Rebind<'dr, D>, suffix: Element<'dr, D>) -> Self {
+    pub fn new(inner: Bound<'dr, D, G>, suffix: Element<'dr, D>) -> Self {
         WithSuffix { inner, suffix }
     }
 }
 
 impl<F: Field, K: GadgetKind<F> + Write<F>> Write<F> for Kind![F; @WithSuffix<'_, _, K>] {
     fn write_gadget<'dr, D: Driver<'dr, F = F>, B: Buffer<'dr, D>>(
-        this: &Self::Rebind<'dr, D>,
+        this: &Bound<'dr, D, Self>,
         dr: &mut D,
         buf: &mut B,
     ) -> Result<()> {
@@ -38,7 +38,7 @@ impl<F: Field, K: GadgetKind<F> + Write<F>> Write<F> for Kind![F; @WithSuffix<'_
 
 impl<'dr, D: Driver<'dr>, G: GadgetKind<D::F>> Consistent<'dr, D> for WithSuffix<'dr, D, G>
 where
-    G::Rebind<'dr, D>: Consistent<'dr, D>,
+    Bound<'dr, D, G>: Consistent<'dr, D>,
 {
     fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
         self.inner.enforce_consistent(dr)

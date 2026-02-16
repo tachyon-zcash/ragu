@@ -22,9 +22,9 @@ pub trait Promotion<F: Field>: GadgetKind<F> {
 
     /// Promote a demoted gadget with new witness data.
     fn promote<'dr, D: Driver<'dr, F = F>>(
-        demoted: &Demoted<'dr, D, Self::Rebind<'dr, D>>,
+        demoted: &Demoted<'dr, D, Bound<'dr, D, Self>>,
         witness: DriverValue<D, Self::Value>,
-    ) -> Self::Rebind<'dr, D>;
+    ) -> Bound<'dr, D, Self>;
 }
 
 /// A driver that mimics another driver but strips away witness data.
@@ -160,12 +160,12 @@ impl<'dr, D: Driver<'dr>, G: Gadget<'dr, D>> Gadget<'dr, D> for Demoted<'dr, D, 
 }
 
 unsafe impl<F: Field, G: GadgetKind<F>> GadgetKind<F> for DemotedKind<F, G> {
-    type Rebind<'dr, D: Driver<'dr, F = F>> = Demoted<'dr, D, G::Rebind<'dr, D>>;
+    type Rebind<'dr, D: Driver<'dr, F = F>> = Demoted<'dr, D, Bound<'dr, D, G>>;
 
     fn map_gadget<'dr, 'new_dr, D: Driver<'dr, F = F>, ND: FromDriver<'dr, 'new_dr, D>>(
-        this: &Self::Rebind<'dr, D>,
+        this: &Bound<'dr, D, Self>,
         ndr: &mut ND,
-    ) -> Result<Self::Rebind<'new_dr, ND::NewDriver>> {
+    ) -> Result<Bound<'new_dr, ND::NewDriver, Self>> {
         Ok(Demoted {
             gadget: G::map_gadget(&this.gadget, &mut Demoter { driver: ndr })?,
         })
@@ -177,8 +177,8 @@ unsafe impl<F: Field, G: GadgetKind<F>> GadgetKind<F> for DemotedKind<F, G> {
         D2: Driver<'dr, F = F, Wire = <D1 as Driver<'dr>>::Wire>,
     >(
         dr: &mut D1,
-        a: &Self::Rebind<'dr, D2>,
-        b: &Self::Rebind<'dr, D2>,
+        a: &Bound<'dr, D2, Self>,
+        b: &Bound<'dr, D2, Self>,
     ) -> Result<()> {
         G::enforce_equal_gadget(dr, &a.gadget, &b.gadget)
     }

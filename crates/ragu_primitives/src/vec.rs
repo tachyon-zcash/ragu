@@ -22,7 +22,7 @@ use ff::Field;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, FromDriver},
-    gadgets::{Consistent, Gadget, GadgetKind},
+    gadgets::{Bound, Consistent, Gadget, GadgetKind},
 };
 
 use alloc::vec::Vec;
@@ -170,7 +170,7 @@ impl<T: Clone, L: Len> Clone for FixedVec<T, L> {
 
 impl<F: Field, G: Write<F>, L: Len> Write<F> for FixedVec<PhantomData<G>, L> {
     fn write_gadget<'dr, D: Driver<'dr, F = F>, B: Buffer<'dr, D>>(
-        this: &FixedVec<G::Rebind<'dr, D>, L>,
+        this: &FixedVec<Bound<'dr, D, G>, L>,
         dr: &mut D,
         buf: &mut B,
     ) -> Result<()> {
@@ -217,17 +217,17 @@ impl<'dr, D: Driver<'dr>, G: Consistent<'dr, D>, L: Len> Consistent<'dr, D> for 
     }
 }
 
-/// Safety: `G: GadgetKind<D::F>` implies that `G::Rebind<'dr, D>` is `Send`
+/// Safety: `G: GadgetKind<D::F>` implies that `Bound<'dr, D, G>` is `Send`
 /// when `D::Wire` is `Send`, by the safety contract of `GadgetKind`. Because
-/// `FixedVec<G::Rebind<'dr, D>, L>` only contains `G::Rebind<'dr, D>`, it is
+/// `FixedVec<Bound<'dr, D, G>, L>` only contains `Bound<'dr, D, G>`, it is
 /// also `Send` when `D::Wire` is `Send`.
 unsafe impl<F: Field, G: GadgetKind<F>, L: Len> GadgetKind<F> for FixedVec<PhantomData<G>, L> {
-    type Rebind<'dr, D: Driver<'dr, F = F>> = FixedVec<G::Rebind<'dr, D>, L>;
+    type Rebind<'dr, D: Driver<'dr, F = F>> = FixedVec<Bound<'dr, D, G>, L>;
 
     fn map_gadget<'dr, 'new_dr, D: Driver<'dr, F = F>, ND: FromDriver<'dr, 'new_dr, D>>(
-        this: &Self::Rebind<'dr, D>,
+        this: &Bound<'dr, D, Self>,
         ndr: &mut ND,
-    ) -> Result<Self::Rebind<'new_dr, ND::NewDriver>> {
+    ) -> Result<Bound<'new_dr, ND::NewDriver, Self>> {
         assert_eq!(this.len(), L::len());
 
         this.iter()
@@ -241,8 +241,8 @@ unsafe impl<F: Field, G: GadgetKind<F>, L: Len> GadgetKind<F> for FixedVec<Phant
         D2: Driver<'dr, F = F, Wire = <D1 as Driver<'dr>>::Wire>,
     >(
         dr: &mut D1,
-        a: &Self::Rebind<'dr, D2>,
-        b: &Self::Rebind<'dr, D2>,
+        a: &Bound<'dr, D2, Self>,
+        b: &Bound<'dr, D2, Self>,
     ) -> Result<()> {
         for (a, b) in a.iter().zip(b.iter()) {
             G::enforce_equal_gadget(dr, a, b)?;

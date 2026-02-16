@@ -59,14 +59,14 @@ pub(crate) struct PaddedContent<
     const HEADER_SIZE: usize,
 > {
     #[ragu(gadget)]
-    gadget: G::Rebind<'dr, D>,
+    gadget: Bound<'dr, D, G>,
 }
 
 impl<F: Field, G: GadgetKind<F> + Write<F>, const HEADER_SIZE: usize> Write<F>
     for PaddedContent<'static, PhantomData<F>, G, HEADER_SIZE>
 {
     fn write_gadget<'dr, D: Driver<'dr, F = F>, B: Buffer<'dr, D>>(
-        this: &Self::Rebind<'dr, D>,
+        this: &Bound<'dr, D, Self>,
         dr: &mut D,
         buf: &mut B,
     ) -> Result<()> {

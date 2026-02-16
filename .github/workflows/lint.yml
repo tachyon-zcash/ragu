@@ -1,0 +1,29 @@
+name: Lint
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/*.rs'
+  pull_request:
+    paths:
+      - '**/*.rs'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  # Enforce use of Bound<'dr, D, K> alias instead of verbose GadgetKind::Rebind patterns
+  bound-alias:
+    name: bound alias check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for verbose GadgetKind::Rebind patterns
+        run: |
+          # Check for UFCS patterns like <K as GadgetKind<...>>::Rebind
+          # Allowed: gadgets.rs (defines Bound alias and trait)
+          if grep -rn --include='*.rs' 'as GadgetKind.*>::Rebind' . | grep -v 'crates/ragu_core/src/gadgets.rs'; then
+            echo "::error::Found verbose GadgetKind::Rebind UFCS pattern. Use Bound<'dr, D, K> alias instead."
+            exit 1
+          fi

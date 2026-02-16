@@ -183,14 +183,15 @@ pub trait Gadget<'dr, D: Driver<'dr>>: Clone {
 /// holds. The [`Gadget`](derive@Gadget) derive macro ensures that this is the
 /// case.
 pub unsafe trait GadgetKind<F: Field>: core::any::Any {
-    /// The rebinding type for this gadget.
+    /// The rebinding type for this gadget. Use [`Bound`] type alias instead of
+    /// accessing this directly.
     type Rebind<'dr, D: Driver<'dr, F = F>>: Gadget<'dr, D, Kind = Self>;
 
     /// Maps a gadget of this kind to a new driver type.
     fn map_gadget<'dr, 'new_dr, D: Driver<'dr, F = F>, ND: FromDriver<'dr, 'new_dr, D>>(
-        this: &Self::Rebind<'dr, D>,
+        this: &Bound<'dr, D, Self>,
         ndr: &mut ND,
-    ) -> Result<Self::Rebind<'new_dr, ND::NewDriver>>;
+    ) -> Result<Bound<'new_dr, ND::NewDriver, Self>>;
 
     /// Enforces that two gadgets' wires are equal.
     ///
@@ -204,8 +205,8 @@ pub unsafe trait GadgetKind<F: Field>: core::any::Any {
         D2: Driver<'dr, F = F, Wire = <D1 as Driver<'dr>>::Wire>,
     >(
         dr: &mut D1,
-        a: &Self::Rebind<'dr, D2>,
-        b: &Self::Rebind<'dr, D2>,
+        a: &Bound<'dr, D2, Self>,
+        b: &Bound<'dr, D2, Self>,
     ) -> Result<()>;
 }
 

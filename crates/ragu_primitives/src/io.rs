@@ -15,7 +15,11 @@
 mod pipe;
 
 use ff::Field;
-use ragu_core::{Result, drivers::Driver, gadgets::GadgetKind};
+use ragu_core::{
+    Result,
+    drivers::Driver,
+    gadgets::{Bound, GadgetKind},
+};
 
 use crate::Element;
 
@@ -37,7 +41,7 @@ pub trait Write<F: Field>: GadgetKind<F> {
     /// Write this gadget into wires that are written the provided buffer,
     /// using the driver to synthesize the elements if needed.
     fn write_gadget<'dr, D: Driver<'dr, F = F>, B: Buffer<'dr, D>>(
-        this: &Self::Rebind<'dr, D>,
+        this: &Bound<'dr, D, Self>,
         dr: &mut D,
         buf: &mut B,
     ) -> Result<()>;

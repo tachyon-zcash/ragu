@@ -450,9 +450,9 @@ mod tests {
             D: Driver<'dr, F = FieldType>,
             ND: crate::drivers::FromDriver<'dr, 'new_dr, D>,
         >(
-            this: &Self::Rebind<'dr, D>,
+            this: &Bound<'dr, D, Self>,
             ndr: &mut ND,
-        ) -> Result<Self::Rebind<'new_dr, ND::NewDriver>> {
+        ) -> Result<Bound<'new_dr, ND::NewDriver, Self>> {
             Ok(TwoWires {
                 a: ndr.convert_wire(&this.a)?,
                 b: ndr.convert_wire(&this.b)?,
@@ -466,8 +466,8 @@ mod tests {
             D2: Driver<'dr, F = FieldType, Wire = <D1 as Driver<'dr>>::Wire>,
         >(
             dr: &mut D1,
-            a: &Self::Rebind<'dr, D2>,
-            b: &Self::Rebind<'dr, D2>,
+            a: &Bound<'dr, D2, Self>,
+            b: &Bound<'dr, D2, Self>,
         ) -> Result<()> {
             dr.enforce_equal(&a.a, &b.a)?;
             dr.enforce_equal(&a.b, &b.b)?;
