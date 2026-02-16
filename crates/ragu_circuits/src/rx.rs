@@ -5,6 +5,7 @@
 //! The [`Trace`] is later assembled into a [`structured::Polynomial`]
 //! by the registry.
 
+use alloc::{boxed::Box, vec, vec::Vec};
 use ff::Field;
 use ragu_arithmetic::Coeff;
 use ragu_core::{
@@ -15,8 +16,6 @@ use ragu_core::{
     routines::{Prediction, Routine},
 };
 use ragu_primitives::GadgetExt;
-
-use alloc::{vec, vec::Vec};
 
 use super::{
     Circuit, DriverScope, Rank, floor_planner::RoutineSlot, metrics::RoutineRecord, registry,
@@ -33,6 +32,10 @@ pub(crate) struct Segment<F> {
     pub(crate) b: Vec<F>,
     pub(crate) c: Vec<F>,
 }
+
+/// A deferred execute() call that will be processed after circuit traversal.
+/// The closure takes the evaluator mutably and fills in the segment at the captured index.
+type PendingExecute<'a, F> = Box<dyn FnOnce(&mut Evaluator<'a, F>) -> Result<()> + 'a>;
 
 /// Trace data produced by evaluating a circuit.
 ///
@@ -173,6 +176,8 @@ struct EvalState {
 struct Evaluator<'a, F: Field> {
     trace: &'a mut Trace<F>,
     state: EvalState,
+    /// Deferred execute() calls to be processed after circuit traversal.
+    pending: Vec<PendingExecute<'a, F>>,
 }
 
 impl<F: Field> DriverScope<EvalState> for Evaluator<'_, F> {
@@ -248,6 +253,7 @@ impl<'a, F: Field> Driver<'a> for Evaluator<'a, F> {
         routine: Ro,
         input: Bound<'a, Self, Ro::Input>,
     ) -> Result<Bound<'a, Self, Ro::Output>> {
+        // Create segment upfront - this reserves its position in the floor plan
         self.trace.push_segment();
         let seg = self.trace.segments.len() - 1;
         self.with_scope(
@@ -261,8 +267,18 @@ impl<'a, F: Field> Driver<'a> for Evaluator<'a, F> {
                 match routine.predict(&mut dummy, &dummy_input)? {
                     Prediction::Known(predicted_output, aux) => {
                         let output = Ro::Output::map_gadget(&predicted_output, this)?;
-                        // TODO: execute could be deferred for async witness generation
-                        routine.execute(this, input, aux)?;
+                        // Defer execute() to after circuit traversal.
+                        // The segment already exists, so execute will fill it at the correct position.
+                        this.pending
+                            .push(Box::new(move |dr: &mut Evaluator<'a, F>| {
+                                dr.with_scope(
+                                    EvalState {
+                                        available_b: None,
+                                        current_segment: seg,
+                                    },
+                                    |dr| routine.execute(dr, input, aux).map(|_| ()),
+                                )
+                            }));
                         Ok(output)
                     }
                     Prediction::Unknown(aux) => routine.execute(this, input, aux),
@@ -286,9 +302,16 @@ pub fn eval<'witness, F: Field, C: Circuit<F>>(
         let mut dr = Evaluator {
             trace: &mut trace,
             state: EvalState::default(),
+            pending: Vec::new(),
         };
         let (io, aux) = circuit.witness(&mut dr, Always::maybe_just(|| witness))?;
         io.write(&mut dr, &mut ())?;
+
+        // Flush deferred execute() calls
+        let pending: Vec<_> = core::mem::take(&mut dr.pending);
+        for pending_execute in pending {
+            pending_execute(&mut dr)?;
+        }
 
         aux.take()
     };
