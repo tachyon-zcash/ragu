@@ -3,7 +3,7 @@
 
 use ff::Field;
 use ragu_arithmetic::Coeff;
-use ragu_core::maybe::{Maybe, MaybeKind};
+use ragu_core::maybe::{Maybe, Perhaps};
 
 use core::borrow::Borrow;
 
@@ -11,7 +11,7 @@ use core::borrow::Borrow;
 /// this crate.
 pub(crate) trait InternalMaybe<T: Send>: Maybe<T> {
     /// Convert a `bool` into a `Field` element.
-    fn fe<U, F: Field>(&self) -> <<Self as Maybe<U>>::Kind as MaybeKind>::Rebind<F>
+    fn fe<U, F: Field>(&self) -> Perhaps<<Self as Maybe<U>>::Kind, F>
     where
         Self: Maybe<U>,
         U: Borrow<bool> + Send + Sync,
@@ -20,7 +20,7 @@ pub(crate) trait InternalMaybe<T: Send>: Maybe<T> {
     }
 
     /// Convert a `bool` into a `Coeff`.
-    fn coeff<U, F: Field>(&self) -> <<Self as Maybe<U>>::Kind as MaybeKind>::Rebind<Coeff<F>>
+    fn coeff<U, F: Field>(&self) -> Perhaps<<Self as Maybe<U>>::Kind, Coeff<F>>
     where
         Self: Maybe<U>,
         U: Borrow<bool> + Send + Sync,
@@ -29,7 +29,7 @@ pub(crate) trait InternalMaybe<T: Send>: Maybe<T> {
     }
 
     /// Convert an arbitrary `Field` element into a `Coeff`.
-    fn arbitrary<U, F: Field>(&self) -> <<Self as Maybe<U>>::Kind as MaybeKind>::Rebind<Coeff<F>>
+    fn arbitrary<U, F: Field>(&self) -> Perhaps<<Self as Maybe<U>>::Kind, Coeff<F>>
     where
         Self: Maybe<U>,
         U: Borrow<F> + Send + Sync,
@@ -38,7 +38,7 @@ pub(crate) trait InternalMaybe<T: Send>: Maybe<T> {
     }
 
     /// Negate a `bool`.
-    fn not<U>(&self) -> <<Self as Maybe<U>>::Kind as MaybeKind>::Rebind<bool>
+    fn not<U>(&self) -> Perhaps<<Self as Maybe<U>>::Kind, bool>
     where
         Self: Maybe<U>,
         U: Borrow<bool> + Send + Sync,

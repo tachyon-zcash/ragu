@@ -26,7 +26,7 @@ fn generate_impl_for_size(size: usize) -> TokenStream {
 
     quote! {
         impl<#(#types: Send,)* K: MaybeKind> MaybeCast<(#(#types,)*), K> for (#(#types,)*) {
-            type Output = (#(K::Rebind<#types>,)*);
+            type Output = (#(Perhaps<K, #types>,)*);
 
             fn empty() -> Self::Output {
                 (#(#empties,)*)
@@ -44,7 +44,7 @@ fn test_generate_2tuple() {
     let output = generate_impl_for_size(2);
     let expected = quote! {
         impl<T0: Send, T1: Send, K: MaybeKind> MaybeCast<(T0, T1,), K> for (T0, T1,) {
-            type Output = (K::Rebind<T0>, K::Rebind<T1>,);
+            type Output = (Perhaps<K, T0>, Perhaps<K, T1>,);
 
             fn empty() -> Self::Output {
                 (K::empty(), K::empty(),)

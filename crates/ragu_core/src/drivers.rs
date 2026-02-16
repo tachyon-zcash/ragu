@@ -54,7 +54,7 @@ use ragu_arithmetic::Coeff;
 use crate::{
     Result,
     gadgets::{Bound, GadgetKind},
-    maybe::{Maybe, MaybeKind},
+    maybe::{Maybe, MaybeKind, Perhaps},
     routines::Routine,
 };
 
@@ -63,7 +63,7 @@ pub use linexp::{DirectSum, LinearExpression};
 /// Alias for the concrete [`Maybe<T>`] type for a driver `D`, used to represent input data
 /// that may or may not be available. This provides a uniform interface for both public
 /// and private data.
-pub type DriverValue<D, T> = <<D as DriverTypes>::MaybeKind as MaybeKind>::Rebind<T>;
+pub type DriverValue<D, T> = Perhaps<<D as DriverTypes>::MaybeKind, T>;
 
 /// Defines implementation types for a concrete driver. Users of drivers do not
 /// need to directly interact with this trait.

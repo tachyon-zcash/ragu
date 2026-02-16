@@ -75,7 +75,7 @@ use crate::{
     Result,
     drivers::{Coeff, DirectSum, Driver, DriverTypes, FromDriver, LinearExpression},
     gadgets::{Bound, Gadget, GadgetKind},
-    maybe::{Always, Empty, MaybeKind},
+    maybe::{Always, Empty, MaybeKind, Perhaps},
     routines::{Prediction, Routine},
 };
 
@@ -285,7 +285,7 @@ impl<M: Mode<F = F>, F: Field> Emulator<M> {
     fn with<R, W: Send>(
         &mut self,
         witness: W,
-        f: impl FnOnce(&mut Self, <M::MaybeKind as MaybeKind>::Rebind<W>) -> Result<R>,
+        f: impl FnOnce(&mut Self, Perhaps<M::MaybeKind, W>) -> Result<R>,
     ) -> Result<R> {
         f(self, M::MaybeKind::maybe_just(|| witness))
     }

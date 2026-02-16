@@ -1,7 +1,7 @@
-use super::{MaybeCast, MaybeKind};
+use super::{MaybeCast, MaybeKind, Perhaps};
 
 impl<const N: usize, U: Send, K: MaybeKind> MaybeCast<[U; N], K> for [U; N] {
-    type Output = [K::Rebind<U>; N];
+    type Output = [Perhaps<K, U>; N];
 
     fn empty() -> Self::Output {
         core::array::from_fn(|_| K::empty())

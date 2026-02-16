@@ -1,4 +1,4 @@
-use super::{Maybe, MaybeCast, MaybeKind};
+use super::{Maybe, MaybeCast, MaybeKind, Perhaps};
 
 /// The kind of `Maybe<T>` that represents a value that does not exist. This is
 /// a zero-sized type.
@@ -7,7 +7,7 @@ pub struct Empty;
 impl MaybeKind for Empty {
     type Rebind<T: Send> = Empty;
 
-    fn empty<T: Send>() -> Self::Rebind<T> {
+    fn empty<T: Send>() -> Perhaps<Self, T> {
         Empty
     }
 }
@@ -15,12 +15,10 @@ impl MaybeKind for Empty {
 impl<T: Send> Maybe<T> for Empty {
     type Kind = Empty;
 
-    fn just<R: Send>(_: impl FnOnce() -> R) -> <Self::Kind as MaybeKind>::Rebind<R> {
+    fn just<R: Send>(_: impl FnOnce() -> R) -> Perhaps<Self::Kind, R> {
         Empty
     }
-    fn with<R: Send, E>(
-        _: impl FnOnce() -> Result<R, E>,
-    ) -> Result<<Self::Kind as MaybeKind>::Rebind<R>, E> {
+    fn with<R: Send, E>(_: impl FnOnce() -> Result<R, E>) -> Result<Perhaps<Self::Kind, R>, E> {
         Ok(Empty)
     }
     fn take(self) -> T {
@@ -43,13 +41,13 @@ impl<T: Send> Maybe<T> for Empty {
             );
         }
     }
-    fn map<U: Send, F>(self, _: F) -> <Self::Kind as MaybeKind>::Rebind<U>
+    fn map<U: Send, F>(self, _: F) -> Perhaps<Self::Kind, U>
     where
         F: FnOnce(T) -> U,
     {
         Empty
     }
-    fn into<U: Send>(self) -> <Self::Kind as MaybeKind>::Rebind<U>
+    fn into<U: Send>(self) -> Perhaps<Self::Kind, U>
     where
         T: Into<U>,
     {
@@ -61,19 +59,19 @@ impl<T: Send> Maybe<T> for Empty {
     {
         Empty
     }
-    fn and_then<U: Send, F>(self, _: F) -> <Self::Kind as MaybeKind>::Rebind<U>
+    fn and_then<U: Send, F>(self, _: F) -> Perhaps<Self::Kind, U>
     where
-        F: FnOnce(T) -> <Self::Kind as MaybeKind>::Rebind<U>,
+        F: FnOnce(T) -> Perhaps<Self::Kind, U>,
     {
         Empty
     }
-    fn view(&self) -> <Self::Kind as MaybeKind>::Rebind<&T>
+    fn view(&self) -> Perhaps<Self::Kind, &T>
     where
         T: Sync,
     {
         Empty
     }
-    fn view_mut(&mut self) -> <Self::Kind as MaybeKind>::Rebind<&mut T> {
+    fn view_mut(&mut self) -> Perhaps<Self::Kind, &mut T> {
         Empty
     }
 

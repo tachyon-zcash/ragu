@@ -84,14 +84,12 @@ pub trait Maybe<T: Send>: Send {
     /// Creates a new value of this `Maybe<T>` given a closure that returns `T`.
     /// The closure may not be called if the concrete type of this `Maybe<T>`
     /// does not represent existing values.
-    fn just<R: Send>(f: impl FnOnce() -> R) -> <Self::Kind as MaybeKind>::Rebind<R>;
+    fn just<R: Send>(f: impl FnOnce() -> R) -> Perhaps<Self::Kind, R>;
 
     /// Creates a new value of this `Maybe<T>` given a fallible closure. Similar
     /// to `just` the provided closure is not called if the concrete type does
     /// not represent an existing value.
-    fn with<R: Send, E>(
-        f: impl FnOnce() -> Result<R, E>,
-    ) -> Result<<Self::Kind as MaybeKind>::Rebind<R>, E>;
+    fn with<R: Send, E>(f: impl FnOnce() -> Result<R, E>) -> Result<Perhaps<Self::Kind, R>, E>;
 
     /// In contexts where the `Maybe<T>` is known or guaranteed to be an
     /// existing value, this returns the enclosed value. In other contexts, this
@@ -99,12 +97,12 @@ pub trait Maybe<T: Send>: Send {
     fn take(self) -> T;
 
     /// As in `Option<T>::as_ref`.
-    fn view(&self) -> <Self::Kind as MaybeKind>::Rebind<&T>
+    fn view(&self) -> Perhaps<Self::Kind, &T>
     where
         T: Sync;
 
     /// As in `Option<T>::as_mut`.
-    fn view_mut(&mut self) -> <Self::Kind as MaybeKind>::Rebind<&mut T>;
+    fn view_mut(&mut self) -> Perhaps<Self::Kind, &mut T>;
 
     /// Helper for `.view().take()` to obtain a reference to the enclosed value
     /// in contexts where the `Maybe<T>` is guaranteed to be an existing value.
@@ -123,19 +121,19 @@ pub trait Maybe<T: Send>: Send {
         T: Clone;
 
     /// Maps the enclosed value given the provided closure, as in `Option<T>::map`.
-    fn map<U: Send, F>(self, f: F) -> <Self::Kind as MaybeKind>::Rebind<U>
+    fn map<U: Send, F>(self, f: F) -> Perhaps<Self::Kind, U>
     where
         F: FnOnce(T) -> U;
 
     /// Given a closure that returns a `Maybe<U>`, this maps the enclosed
     /// value to a new `Maybe<U>`, as in `Option<T>::and_then`.
-    fn and_then<U: Send, F>(self, f: F) -> <Self::Kind as MaybeKind>::Rebind<U>
+    fn and_then<U: Send, F>(self, f: F) -> Perhaps<Self::Kind, U>
     where
-        F: FnOnce(T) -> <Self::Kind as MaybeKind>::Rebind<U>;
+        F: FnOnce(T) -> Perhaps<Self::Kind, U>;
 
     /// Converts the `Maybe<T>` into a `Maybe<U>` where `T: Into<U>`. Equivalent
     /// to `.map(|t| t.into())`.
-    fn into<U: Send>(self) -> <Self::Kind as MaybeKind>::Rebind<U>
+    fn into<U: Send>(self) -> Perhaps<Self::Kind, U>
     where
         T: Into<U>;
 
@@ -153,6 +151,7 @@ pub trait Maybe<T: Send>: Send {
 /// higher-kinded type abstraction.
 pub trait MaybeKind {
     /// How a `Maybe<T>` is rebound into a `Maybe<U>` for this kind.
+    /// Use [`Perhaps`] type alias instead of accessing this directly.
     type Rebind<T: Send>: Maybe<T, Kind = Self>;
 
     /// Proxy for the associated [`Maybe<T>::just`] method.
@@ -169,6 +168,9 @@ pub trait MaybeKind {
     /// compile time for kinds that do not represent existing values.
     fn empty<T: Send>() -> Self::Rebind<T>;
 }
+
+/// Alias for `<K as MaybeKind>::Rebind<T>`.
+pub type Perhaps<K, T> = <K as MaybeKind>::Rebind<T>;
 
 /// This trait provides a generic method to describe how enclosed [`Maybe<T>`]
 /// values can be deconstructed into multiple (and/or different) `Maybe` values
@@ -193,25 +195,27 @@ pub trait MaybeCast<R, K: MaybeKind> {
 mod tests {
     use alloc::vec;
 
-    use super::{Always, Empty, Maybe, MaybeKind};
-
-    type Perhaps<I, T> = <<I as Interface>::MaybeKind as MaybeKind>::Rebind<T>;
+    use super::{Always, Empty, Maybe, MaybeKind, Perhaps};
 
     trait Interface {
         type MaybeKind: MaybeKind;
 
         fn op(f: impl FnOnce() -> usize);
 
-        fn just<R: Send>(f: impl FnOnce() -> R) -> Perhaps<Self, R> {
+        fn just<R: Send>(f: impl FnOnce() -> R) -> Perhaps<Self::MaybeKind, R> {
             <Self::MaybeKind as MaybeKind>::maybe_just(f)
         }
 
-        fn with<R: Send, E>(f: impl FnOnce() -> Result<R, E>) -> Result<Perhaps<Self, R>, E> {
+        fn with<R: Send, E>(
+            f: impl FnOnce() -> Result<R, E>,
+        ) -> Result<Perhaps<Self::MaybeKind, R>, E> {
             <Self::MaybeKind as MaybeKind>::maybe_with(f)
         }
     }
 
-    fn my_operation<I: Interface, E>(value: Perhaps<I, usize>) -> Result<Perhaps<I, usize>, E> {
+    fn my_operation<I: Interface, E>(
+        value: Perhaps<I::MaybeKind, usize>,
+    ) -> Result<Perhaps<I::MaybeKind, usize>, E> {
         let my_value = 100usize;
         let just_value = I::just(|| my_value + 10).map(|v| v * 2);
         let err_value = I::with(|| Ok(10))?;
