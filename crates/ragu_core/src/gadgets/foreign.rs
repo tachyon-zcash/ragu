@@ -57,12 +57,12 @@ mod array_impl {
         type Kind = [PhantomData<G::Kind>; N];
     }
 
-    /// Safety: `G: GadgetKind<F>` implies that `G::Rebind<'dr, D>` is `Send`
+    /// Safety: `G: GadgetKind<F>` implies that `Bound<'dr, D, G>` is `Send`
     /// when `D::Wire` is `Send`, by the safety contract of `GadgetKind`. Because
-    /// `[G::Rebind<'dr, D>; N]` only contains `G::Rebind<'dr, D>`, it is also
+    /// `[Bound<'dr, D, G>; N]` only contains `Bound<'dr, D, G>`, it is also
     /// `Send` when `D::Wire` is `Send`.
     unsafe impl<F: Field, G: GadgetKind<F>, const N: usize> GadgetKind<F> for [PhantomData<G>; N] {
-        type Rebind<'dr, D: Driver<'dr, F = F>> = [G::Rebind<'dr, D>; N];
+        type Rebind<'dr, D: Driver<'dr, F = F>> = [Bound<'dr, D, G>; N];
 
         fn map_gadget<'dr, 'new_dr, D: Driver<'dr, F = F>, ND: FromDriver<'dr, 'new_dr, D>>(
             this: &Bound<'dr, D, Self>,
@@ -114,13 +114,13 @@ mod pair_impl {
     }
 
     /// Safety: `G1: GadgetKind<F>` and `G2: GadgetKind<F>` imply that both
-    /// `G1::Rebind<'dr, D>` and `G2::Rebind<'dr, D>` are `Send` when `D::Wire`
+    /// `Bound<'dr, D, G1>` and `Bound<'dr, D, G2>` are `Send` when `D::Wire`
     /// is `Send`, by the safety contract of `GadgetKind`. Because the tuple
     /// only contains these two types, it is also `Send` when `D::Wire` is `Send`.
     unsafe impl<F: Field, G1: GadgetKind<F>, G2: GadgetKind<F>> GadgetKind<F>
         for (PhantomData<G1>, PhantomData<G2>)
     {
-        type Rebind<'dr, D: Driver<'dr, F = F>> = (G1::Rebind<'dr, D>, G2::Rebind<'dr, D>);
+        type Rebind<'dr, D: Driver<'dr, F = F>> = (Bound<'dr, D, G1>, Bound<'dr, D, G2>);
 
         fn map_gadget<'dr, 'new_dr, D: Driver<'dr, F = F>, ND: FromDriver<'dr, 'new_dr, D>>(
             this: &Bound<'dr, D, Self>,
@@ -162,12 +162,12 @@ mod box_impl {
         type Kind = PhantomData<Box<G::Kind>>;
     }
 
-    /// Safety: `G: GadgetKind<F>` implies that `G::Rebind<'dr, D>` is `Send`
+    /// Safety: `G: GadgetKind<F>` implies that `Bound<'dr, D, G>` is `Send`
     /// when `D::Wire` is `Send`, by the safety contract of `GadgetKind`. Because
-    /// `Box<G::Rebind<'dr, D>>` is `Send` when its contents are `Send`, it is
+    /// `Box<Bound<'dr, D, G>>` is `Send` when its contents are `Send`, it is
     /// also `Send` when `D::Wire` is `Send`.
     unsafe impl<F: Field, G: GadgetKind<F>> GadgetKind<F> for PhantomData<Box<G>> {
-        type Rebind<'dr, D: Driver<'dr, F = F>> = Box<G::Rebind<'dr, D>>;
+        type Rebind<'dr, D: Driver<'dr, F = F>> = Box<Bound<'dr, D, G>>;
 
         fn map_gadget<'dr, 'new_dr, D: Driver<'dr, F = F>, ND: FromDriver<'dr, 'new_dr, D>>(
             this: &Bound<'dr, D, Self>,
