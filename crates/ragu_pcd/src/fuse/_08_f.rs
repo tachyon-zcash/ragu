@@ -24,7 +24,6 @@ use ragu_core::{
 use ragu_primitives::Element;
 use rand::CryptoRng;
 
-use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::{
@@ -118,7 +117,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             |idx: InternalCircuitIndex| -> C::CircuitField { idx.circuit_index().omega_j() };
 
         const TERM_COUNT: usize = 55;
-        let mut weights = vec![C::CircuitField::ZERO; TERM_COUNT];
+        let mut weights = [C::CircuitField::ZERO; TERM_COUNT];
         let mut power = C::CircuitField::ONE;
         for i in (0..TERM_COUNT).rev() {
             weights[i] = power;
