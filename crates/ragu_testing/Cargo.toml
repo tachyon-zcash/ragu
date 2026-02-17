@@ -1,0 +1,21 @@
+[package]
+name = "ragu_testing"
+version.workspace = true
+authors.workspace = true
+description = """
+WIP
+"""
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+readme = "README.md"
+repository.workspace = true
+documentation = "https://docs.rs/ragu_testing"
+categories = []
+keywords = []
+
+[features]
+default = []
+
+[dependencies]
