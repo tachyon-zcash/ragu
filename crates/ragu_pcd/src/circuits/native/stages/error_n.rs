@@ -30,6 +30,8 @@ pub struct ChildKyValues<F> {
     pub unified: F,
     /// k(y) for the header-unified binding.
     pub unified_bridge: F,
+    /// k(y) for the endoscale_challenges circuit.
+    pub endoscale: F,
 }
 
 /// $k(Y)$ evaluation values computed during fuse operation.
@@ -74,6 +76,9 @@ pub struct ChildKyOutputs<'dr, D: Driver<'dr>> {
     /// k(y) for the header-unified binding.
     #[ragu(gadget)]
     pub unified_bridge: Element<'dr, D>,
+    /// k(y) for the endoscale_challenges circuit.
+    #[ragu(gadget)]
+    pub endoscale: Element<'dr, D>,
 }
 
 /// Output gadget for the error_n stage.
@@ -116,10 +121,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     type OutputKind = Kind![C::CircuitField; Output<'_, _, FP, C::CircuitPoseidon>];
 
     fn values() -> usize {
-        // N² - N error terms + N collapsed values + 6 ky values + sponge state elements
+        // N² - N error terms + N collapsed values + 8 ky values + sponge state elements
         ErrorTermsLen::<FP::N>::len()
             + FP::N::len()
-            + 6
+            + 8
             + PoseidonStateLen::<C::CircuitField, C::CircuitPoseidon>::len()
     }
 
@@ -141,11 +146,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             application: Element::alloc(dr, witness.view().map(|w| w.ky.left.application))?,
             unified: Element::alloc(dr, witness.view().map(|w| w.ky.left.unified))?,
             unified_bridge: Element::alloc(dr, witness.view().map(|w| w.ky.left.unified_bridge))?,
+            endoscale: Element::alloc(dr, witness.view().map(|w| w.ky.left.endoscale))?,
         };
         let right = ChildKyOutputs {
             application: Element::alloc(dr, witness.view().map(|w| w.ky.right.application))?,
             unified: Element::alloc(dr, witness.view().map(|w| w.ky.right.unified))?,
             unified_bridge: Element::alloc(dr, witness.view().map(|w| w.ky.right.unified_bridge))?,
+            endoscale: Element::alloc(dr, witness.view().map(|w| w.ky.right.endoscale))?,
         };
         let sponge_state = SpongeState::from_elements(FixedVec::try_from_fn(|i| {
             Element::alloc(dr, witness.view().map(|w| w.sponge_state_elements[i]))

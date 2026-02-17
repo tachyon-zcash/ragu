@@ -62,11 +62,12 @@ fn test_internal_circuit_constraint_counts() {
         }};
     }
 
-    check_constraints!(Hashes1Circuit,         mul = 2045, lin = 3423);
-    check_constraints!(Hashes2Circuit,         mul = 1879, lin = 2952);
-    check_constraints!(PartialCollapseCircuit, mul = 1756, lin = 1919);
-    check_constraints!(FullCollapseCircuit,    mul = 811 , lin = 809);
-    check_constraints!(ComputeVCircuit,        mul = 1140, lin = 1774);
+    check_constraints!(Hashes1Circuit,              mul = 2046, lin = 3423);
+    check_constraints!(Hashes2Circuit,              mul = 1880, lin = 2952);
+    check_constraints!(PartialCollapseCircuit,      mul = 1757, lin = 1919);
+    check_constraints!(FullCollapseCircuit,         mul = 812 , lin = 809);
+    check_constraints!(ComputeVCircuit,             mul = 1154, lin = 1796);
+    check_constraints!(EndoscaleChallengesCircuit,  mul = 1340, lin = 1868);
 }
 
 #[rustfmt::skip]
@@ -80,10 +81,10 @@ fn test_internal_stage_parameters() {
     }
 
     check_stage!(Preamble, skip =   0, num = 225);
-    check_stage!(ErrorN,  skip = 225, num = 186);
-    check_stage!(ErrorM,  skip = 411, num = 399);
-    check_stage!(Query,   skip = 225, num =  23);
-    check_stage!(Eval,    skip = 248, num =  18);
+    check_stage!(ErrorN,  skip = 225, num = 187);
+    check_stage!(ErrorM,  skip = 412, num = 399);
+    check_stage!(Query,   skip = 225, num =  25);
+    check_stage!(Eval,    skip = 250, num =  19);
 }
 
 /// Helper test to print current constraint counts in copy-pasteable format.
@@ -112,6 +113,10 @@ fn print_internal_circuit_constraint_counts() {
             InternalCircuitIndex::FullCollapseCircuit,
         ),
         ("ComputeVCircuit", InternalCircuitIndex::ComputeVCircuit),
+        (
+            "EndoscaleChallengesCircuit",
+            InternalCircuitIndex::EndoscaleChallengesCircuit,
+        ),
     ];
 
     println!("\n// Copy-paste the following into test_internal_circuit_constraint_counts:");
@@ -168,7 +173,7 @@ fn test_native_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fp!(0x000c5762bc28cd8fc9d33c2e131f2b3cc9d3d5a88b236fc4ae9dd7cda157ec09);
+    let expected = fp!(0x21e899b6f6f365a52fa394d63476aaa8e914592e7178c0c034f49b62198a1068);
 
     assert_eq!(
         app.native_registry.key().value(),
@@ -192,7 +197,7 @@ fn test_nested_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fq!(0x181619952c660871c9da859f63dfb88c3dc783f339ce481122cffd10ba1a719f);
+    let expected = fq!(0x0a29d73eaab9c29f79695418230a5c6f01350d7cd199ccf705180f994f6214e8);
 
     assert_eq!(
         app.nested_registry.key().value(),

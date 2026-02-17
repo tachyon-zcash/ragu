@@ -28,8 +28,11 @@ use crate::circuits::{self, native::InternalCircuitIndex};
 /// Number of circuits that use the unified k(y) value per proof.
 ///
 /// This is the count of internal circuits (hashes_1, hashes_2, partial_collapse,
-/// full_collapse) that share the same unified k(y) value. The unified_ky iterator
-/// from [`KySource`] is repeated this many times in [`ky_values`].
+/// full_collapse) that share the same unified k(y) value.
+/// The unified_ky iterator from [`KySource`] is repeated this many times in [`ky_values`].
+///
+/// Note: endoscale_challenges uses a custom k(y) via [`KySource::endoscale_ky`] because
+/// its output includes smuggled challenge coefficients beyond the standard unified fields.
 // TODO: this constant seems brittle because it may vary between the two fields.
 pub const NUM_UNIFIED_CIRCUITS: usize = 4;
 
@@ -62,6 +65,8 @@ pub enum RxComponent {
     Query,
     /// The eval native rx polynomial.
     Eval,
+    /// The endoscale_challenges internal circuit rx polynomial.
+    EndoscaleChallenges,
 }
 
 /// Trait that processes claim values into accumulated outputs.
@@ -208,6 +213,14 @@ where
         );
     }
 
+    // endoscale_challenges: staged on error_n for consistency
+    for (ec, en) in source.rx(EndoscaleChallenges).zip(source.rx(ErrorN)) {
+        processor.internal_circuit(
+            circuits::native::endoscale_challenges::CIRCUIT_ID,
+            [ec, en].into_iter(),
+        );
+    }
+
     // Stages (aggregated: collect all proofs' rxs together)
 
     // ErrorMFinalStaged: only partial_collapse uses error_m as final stage
@@ -216,13 +229,14 @@ where
         source.rx(PartialCollapse),
     )?;
 
-    // ErrorNFinalStaged: hashes_1, hashes_2, full_collapse use error_n as final stage
+    // ErrorNFinalStaged: hashes_1, hashes_2, full_collapse, endoscale_challenges use error_n as final stage
     processor.stage(
         InternalCircuitIndex::ErrorNFinalStaged,
         source
             .rx(Hashes1)
             .chain(source.rx(Hashes2))
-            .chain(source.rx(FullCollapse)),
+            .chain(source.rx(FullCollapse))
+            .chain(source.rx(EndoscaleChallenges)),
     )?;
 
     // EvalFinalStaged: all compute_v rxs
@@ -272,6 +286,13 @@ pub trait KySource {
     /// The `+ Clone` bound is required for `repeat_n` in [`ky_values`].
     fn unified_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
 
+    /// Iterator over endoscale_challenges k(y) values.
+    ///
+    /// The endoscale_challenges circuit outputs `(unified, y_coeff, 0, z_coeff, 0, suffix)`
+    /// where y_coeff and z_coeff are field-scaled endoscalars derived from the y and z
+    /// challenges. This k(y) accounts for those smuggled coefficients.
+    fn endoscale_ky(&self) -> impl Iterator<Item = Self::Ky>;
+
     /// The zero value for stage claims.
     fn zero(&self) -> Self::Ky;
 }
@@ -280,6 +301,7 @@ pub trait KySource {
 ///
 /// Chains the k(y) sources in the order required by [`build`],
 /// with `unified_ky` repeated [`NUM_UNIFIED_CIRCUITS`] times,
+/// then `endoscale_ky` for the endoscale_challenges circuit,
 /// followed by infinite zeros for stage claims.
 pub fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
     source
@@ -287,6 +309,7 @@ pub fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
         .chain(source.application_ky())
         .chain(source.unified_bridge_ky())
         .chain(repeat_n(source.unified_ky(), NUM_UNIFIED_CIRCUITS).flatten())
+        .chain(source.endoscale_ky())
         .chain(core::iter::repeat(source.zero()))
 }
 
@@ -299,6 +322,8 @@ pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
     pub right_bridge: Element<'dr, D>,
     pub left_unified: Element<'dr, D>,
     pub right_unified: Element<'dr, D>,
+    pub left_endoscale: Element<'dr, D>,
+    pub right_endoscale: Element<'dr, D>,
     pub zero: Element<'dr, D>,
 }
 
@@ -319,6 +344,10 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
 
     fn unified_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
         once(self.left_unified.clone()).chain(once(self.right_unified.clone()))
+    }
+
+    fn endoscale_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
+        once(self.left_endoscale.clone()).chain(once(self.right_endoscale.clone()))
     }
 
     fn zero(&self) -> Element<'dr, D> {

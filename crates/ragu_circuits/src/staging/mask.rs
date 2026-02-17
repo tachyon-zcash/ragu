@@ -1,4 +1,5 @@
 use ff::Field;
+use ragu_arithmetic::{CurveAffine, FixedGenerators};
 use ragu_core::Result;
 
 use alloc::vec::Vec;
@@ -9,6 +10,7 @@ use crate::{
     registry,
 };
 
+/// Represents a stage's polynomial structure.
 #[derive(Clone)]
 pub struct StageMask<R: Rank> {
     skip_multiplications: usize,
@@ -53,6 +55,38 @@ impl<R: Rank> StageMask<R> {
             num_multiplications,
             _marker: core::marker::PhantomData,
         })
+    }
+
+    /// Returns the number of skipped multiplications for this stage.
+    pub fn skip_multiplications(&self) -> usize {
+        self.skip_multiplications
+    }
+
+    /// Returns the number of active multiplications for this stage.
+    pub fn num_multiplications(&self) -> usize {
+        self.num_multiplications
+    }
+
+    /// Returns the generator index for the i-th A coefficient of this stage.
+    pub fn generator_index_for_a(&self, coefficient_index: usize) -> usize {
+        assert!(
+            coefficient_index < self.num_multiplications,
+            "coefficient_index {} exceeds num_multiplications {}",
+            coefficient_index,
+            self.num_multiplications
+        );
+
+        2 * R::n() + 1 + self.skip_multiplications + coefficient_index
+    }
+
+    /// Returns the generator point for the i-th A coefficient of this stage.
+    pub fn generator_for_a_coefficient<C: CurveAffine>(
+        &self,
+        generators: &impl FixedGenerators<C>,
+        coefficient_index: usize,
+    ) -> C {
+        let idx = self.generator_index_for_a(coefficient_index);
+        generators.g()[idx]
     }
 }
 
@@ -219,22 +253,26 @@ mod tests {
     use core::marker::PhantomData;
 
     use ff::Field;
-    use group::prime::PrimeCurveAffine;
+    use group::{Curve, prime::PrimeCurveAffine};
     use proptest::prelude::*;
-    use ragu_arithmetic::{Coeff, Uendo};
+    use ragu_arithmetic::{Coeff, Cycle, FixedGenerators, Uendo};
     use ragu_core::{
         Result,
         drivers::{Driver, DriverValue, LinearExpression, emulator::Emulator},
         gadgets::{Bound, Consistent, Gadget},
         maybe::Maybe,
     };
-    use ragu_pasta::{EpAffine, Fp, Fq};
+    use ragu_pasta::{EpAffine, EqAffine, Fp, Fq, Pasta};
     use ragu_primitives::{Element, Endoscalar, Point, io::Write};
     use rand::Rng;
 
     use crate::{
-        CircuitExt, CircuitObject, metrics, polynomials::Rank, registry, s::sy,
-        staging::StageBuilder, tests::SquareCircuit,
+        CircuitExt, CircuitObject, metrics,
+        polynomials::{Rank, structured},
+        registry,
+        s::sy,
+        staging::StageBuilder,
+        tests::SquareCircuit,
     };
 
     use super::{
@@ -626,5 +664,156 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_generator_for_a_coefficient() {
+        let pasta = Pasta::baked();
+        let generators = Pasta::host_generators(pasta);
+
+        let stage = StageMask::<R>::new(2, 4).unwrap();
+
+        for i in 0..4 {
+            let gen_idx = stage.generator_index_for_a(i);
+            let expected_gen = generators.g()[gen_idx];
+            let actual_gen = stage.generator_for_a_coefficient(generators, i);
+            assert_eq!(actual_gen, expected_gen);
+        }
+    }
+
+    #[test]
+    fn test_a_only_commitment_for_challenge_smuggling() {
+        let pasta = Pasta::baked();
+        let generators = Pasta::host_generators(pasta);
+
+        let stage = StageMask::<R>::new(1, 3).unwrap();
+        let blind = Fp::ZERO;
+
+        let challenges = [Fp::from(42u64), Fp::from(123u64), Fp::from(456u64)];
+        let mut rx: structured::Polynomial<Fp, R> = structured::Polynomial::new();
+        {
+            let rx = rx.forward();
+
+            rx.a.push(Fp::ZERO);
+            rx.b.push(Fp::ZERO);
+            rx.c.push(Fp::ZERO);
+
+            rx.a.push(Fp::ZERO);
+            rx.b.push(Fp::ZERO);
+            rx.c.push(Fp::ZERO);
+
+            for &challenge in &challenges {
+                rx.a.push(challenge);
+                rx.b.push(Fp::ZERO);
+                rx.c.push(Fp::ZERO);
+            }
+        }
+
+        let poly_commitment: EqAffine = rx.commit(generators, blind);
+
+        let mut manual_commitment = EqAffine::identity();
+        for (i, &challenge) in challenges.iter().enumerate() {
+            let a_gen = stage.generator_for_a_coefficient(generators, i);
+            let contrib = a_gen * challenge;
+            manual_commitment = (manual_commitment.to_curve() + contrib).to_affine();
+        }
+
+        assert_eq!(
+            poly_commitment, manual_commitment,
+            "A-only commitment should match for challenge smuggling"
+        );
+    }
+
+    /// A stage that allocates values only in a-positions (b = 0) for challenge smuggling.
+    ///
+    /// Each value is paired with a zero to ensure it lands in an a-coefficient position
+    /// when the polynomial is built. This mimics the pattern used for smuggling challenges.
+    #[derive(Default)]
+    struct AOnlyStage;
+
+    #[derive(ragu_core::gadgets::Gadget, ragu_primitives::io::Write)]
+    struct ThreeAOnlyElements<'dr, #[ragu(driver)] D: Driver<'dr>> {
+        #[ragu(gadget)]
+        a0: Element<'dr, D>,
+        #[ragu(gadget)]
+        b0: Element<'dr, D>,
+        #[ragu(gadget)]
+        a1: Element<'dr, D>,
+        #[ragu(gadget)]
+        b1: Element<'dr, D>,
+        #[ragu(gadget)]
+        a2: Element<'dr, D>,
+        #[ragu(gadget)]
+        b2: Element<'dr, D>,
+    }
+
+    impl Stage<Fp, R> for AOnlyStage {
+        type Parent = ();
+        type Witness<'source> = [Fp; 3];
+        type OutputKind = <ThreeAOnlyElements<'static, PhantomData<Fp>> as Gadget<
+            'static,
+            PhantomData<Fp>,
+        >>::Kind;
+
+        fn values() -> usize {
+            6 // 3 values + 3 zeros = 6 values = 3 multiplication gates
+        }
+
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            witness: DriverValue<D, Self::Witness<'source>>,
+        ) -> Result<<Self::OutputKind as GadgetKind<Fp>>::Rebind<'dr, D>>
+        where
+            Self: 'dr,
+        {
+            // Allocate each challenge value followed by zero, which
+            // ensures challenges land in a-positions, zeros in b-positions.
+            let a0 = Element::alloc(dr, witness.view().map(|w| w[0]))?;
+            let b0 = Element::zero(dr);
+            let a1 = Element::alloc(dr, witness.view().map(|w| w[1]))?;
+            let b1 = Element::zero(dr);
+            let a2 = Element::alloc(dr, witness.view().map(|w| w[2]))?;
+            let b2 = Element::zero(dr);
+
+            Ok(ThreeAOnlyElements {
+                a0,
+                b0,
+                a1,
+                b1,
+                a2,
+                b2,
+            })
+        }
+    }
+
+    #[test]
+    fn test_a_only_commitment_via_staging_mechanism() {
+        let pasta = Pasta::baked();
+        let generators = Pasta::host_generators(pasta);
+
+        let challenges = [Fp::from(42u64), Fp::from(123u64), Fp::from(456u64)];
+        let blind = Fp::ZERO;
+
+        // Use the actual staging mechanism to build rx.
+        let rx: structured::Polynomial<Fp, R> = AOnlyStage::rx(challenges).unwrap();
+        let poly_commitment: EqAffine = rx.commit(generators, blind);
+
+        // Build `StageMask` with matching parameters.
+        let skip = AOnlyStage::skip_multiplications(); // 0 for root stage
+        let num = <AOnlyStage as StageExt<Fp, R>>::num_multiplications(); // ceil(6/2) = 3
+        let stage_obj = StageMask::<R>::new(skip, num).unwrap();
+
+        // Manually compute expected commitment using generator_for_a_coefficient.
+        let mut manual_commitment = EqAffine::identity();
+        for (i, &challenge) in challenges.iter().enumerate() {
+            let a_gen = stage_obj.generator_for_a_coefficient(generators, i);
+            manual_commitment = (manual_commitment.to_curve() + a_gen * challenge).to_affine();
+        }
+
+        assert_eq!(
+            poly_commitment, manual_commitment,
+            "Commitment via staging mechanism should match manual computation"
+        );
     }
 }

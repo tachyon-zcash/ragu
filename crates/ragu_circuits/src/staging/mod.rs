@@ -132,6 +132,7 @@ use crate::{
 };
 
 pub use builder::{StageBuilder, StageGuard};
+pub use mask::StageMask as StageObject;
 
 /// Represents a partial witness component for a multi-stage circuit.
 pub trait Stage<F: Field, R: Rank> {
