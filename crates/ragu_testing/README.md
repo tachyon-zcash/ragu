@@ -4,7 +4,7 @@
 
 # `ragu_testing`
 
-Test fixtures for the Ragu project. Provides shared circuit and PCD step implementations for use in tests and benchmarks across Ragu crates.
+This crate contains internal implementation code for the [`ragu`](https://crates.io/crates/ragu) crate.
 
 ## License
 
