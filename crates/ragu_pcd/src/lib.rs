@@ -13,9 +13,12 @@ mod circuits;
 mod components;
 mod fuse;
 pub mod header;
+pub mod ipa;
 mod proof;
 pub mod step;
 mod verify;
+
+pub use compress::{CompressedProof, IpaProof};
 
 #[cfg(any(test, feature = "unstable-test-fixtures"))]
 #[doc(hidden)]
@@ -35,6 +38,8 @@ use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 use header::Header;
 pub use proof::{Pcd, Proof};
 use step::{Step, internal::adapter::Adapter};
+
+use crate::ipa::compress;
 
 /// Builder for an [`Application`] for proof-carrying data.
 pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
