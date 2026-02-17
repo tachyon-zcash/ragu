@@ -463,6 +463,7 @@ dependencies = [
  "ragu_core",
  "ragu_pasta",
  "ragu_primitives",
+ "ragu_testing",
  "rand",
 ]
 
@@ -522,6 +523,7 @@ dependencies = [
  "ragu_core",
  "ragu_pasta",
  "ragu_primitives",
+ "ragu_testing",
  "rand",
 ]
 
@@ -543,6 +545,15 @@ dependencies = [
 [[package]]
 name = "ragu_testing"
 version = "0.0.0"
+dependencies = [
+ "ff",
+ "ragu_arithmetic",
+ "ragu_circuits",
+ "ragu_core",
+ "ragu_pcd",
+ "ragu_primitives",
+ "rand",
+]
 
 [[package]]
 name = "rand"

@@ -1,8 +1,8 @@
 use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::R;
 use ragu_pasta::{Fp, Pasta};
-use ragu_pcd::test_fixtures::nontrivial;
 use ragu_pcd::{Application, ApplicationBuilder, Pcd};
+use ragu_testing::pcd::nontrivial;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 

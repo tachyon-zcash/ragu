@@ -6,6 +6,7 @@
 //! - [`SquareCircuit`]: Parameterized circuit that squares an input `times` times.
 
 use ff::Field;
+use ragu_circuits::Circuit;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue, LinearExpression},
@@ -13,8 +14,6 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::Element;
-
-use crate::Circuit;
 
 /// A simple circuit that proves knowledge of a and b such that a^5 = b^2
 /// and a + b = c and a - b = d where c and d are public inputs.

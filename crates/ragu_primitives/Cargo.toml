@@ -27,7 +27,6 @@ all-features = true
 
 [features]
 default = []
-unstable-test-fixtures = ["ragu_arithmetic/unstable-test-fixtures"]
 
 [lib]
 bench = false

@@ -8,12 +8,11 @@ use ragu_core::{
     gadgets::{Bound, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, poseidon::Sponge};
-
-use crate::{
+use ragu_pcd::{
     header::{Header, Suffix},
     step::{Encoded, Index, Step},
 };
+use ragu_primitives::{Element, poseidon::Sponge};
 
 pub struct LeafNode;
 

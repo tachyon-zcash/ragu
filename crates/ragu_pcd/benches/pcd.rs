@@ -6,8 +6,8 @@ use gungraun::{library_benchmark, library_benchmark_group, main};
 use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::R;
 use ragu_pasta::{Fp, Pasta};
-use ragu_pcd::test_fixtures::nontrivial;
 use ragu_pcd::{Application, ApplicationBuilder, Pcd};
+use ragu_testing::pcd::nontrivial;
 use rand::rngs::StdRng;
 use setup::{
     setup_finalize, setup_fuse, setup_register, setup_seed, setup_verify_leaf, setup_verify_node,

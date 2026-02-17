@@ -27,7 +27,6 @@ all-features = true
 
 [features]
 default = []
-unstable-test-fixtures = ["ragu_arithmetic/unstable-test-fixtures"]
 
 [lib]
 bench = false
@@ -44,6 +43,7 @@ rand = { workspace = true }
 [dev-dependencies]
 ragu_pasta = { path = "../ragu_pasta", version = "0.0.0", features = ["baked"] }
 gungraun = { workspace = true }
+ragu_testing = { path = "../ragu_testing", version = "0.0.0" }
 
 [[bench]]
 name = "pcd"

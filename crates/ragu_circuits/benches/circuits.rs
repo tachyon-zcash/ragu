@@ -8,9 +8,9 @@ use gungraun::{library_benchmark, library_benchmark_group, main};
 use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::{R, structured, unstructured};
 use ragu_circuits::registry::{Key, Registry, RegistryBuilder};
-use ragu_circuits::test_fixtures::{MySimpleCircuit, SquareCircuit};
 use ragu_circuits::{Circuit, CircuitExt};
 use ragu_pasta::{Fp, Pasta};
+use ragu_testing::circuits::{MySimpleCircuit, SquareCircuit};
 use setup::{
     builder_squares, f, key, rand_structured_poly, rand_structured_poly_vec,
     rand_unstructured_poly, registry_simple, setup_rng, setup_with_rng,

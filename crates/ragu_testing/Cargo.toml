@@ -3,7 +3,7 @@ name = "ragu_testing"
 version.workspace = true
 authors.workspace = true
 description = """
-WIP
+Intended for internal use in the Ragu project
 """
 license.workspace = true
 edition.workspace = true
@@ -12,10 +12,29 @@ rust-version.workspace = true
 readme = "README.md"
 repository.workspace = true
 documentation = "https://docs.rs/ragu_testing"
-categories = []
+categories = [
+  "cryptography",
+  "mathematics",
+  "algorithms",
+  "development-tools",
+]
 keywords = []
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "katex-header.html"]
+all-features = true
 
 [features]
 default = []
 
+[lib]
+bench = false
+
 [dependencies]
+ragu_arithmetic = { path = "../ragu_arithmetic", version = "0.0.0" }
+ragu_circuits = { path = "../ragu_circuits", version = "0.0.0" }
+ragu_core = { path = "../ragu_core", version = "0.0.0" }
+ragu_pcd = { path = "../ragu_pcd", version = "0.0.0" }
+ragu_primitives = { path = "../ragu_primitives", version = "0.0.0" }
+ff = { workspace = true }
+rand = { workspace = true }
