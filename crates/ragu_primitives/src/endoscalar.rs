@@ -252,7 +252,7 @@ mod tests {
     use ragu_arithmetic::{CurveAffine, CurveExt, Uendo};
     use ragu_core::Result;
     use ragu_pasta::{EpAffine, Fp};
-    use rand::Rng;
+    use rand::RngExt;
 
     use crate::Simulator;
 

@@ -230,7 +230,7 @@ mod tests {
     };
     use ragu_pasta::{EpAffine, Fp, Fq};
     use ragu_primitives::{Element, Endoscalar, Point, io::Write};
-    use rand::Rng;
+    use rand::RngExt;
 
     use crate::{
         CircuitExt, CircuitObject, metrics, polynomials::Rank, registry, s::sy,

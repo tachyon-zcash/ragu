@@ -340,7 +340,7 @@ mod tests {
     };
     use ragu_pasta::{Ep, EpAffine, Fp, Fq};
     use ragu_primitives::{Endoscalar, vec::Len};
-    use rand::Rng;
+    use rand::RngExt;
 
     type R = polynomials::ProductionRank;
 

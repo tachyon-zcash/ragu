@@ -9,6 +9,7 @@ use core::{
     fmt::{self, Debug},
     ops::{BitAnd, BitOr, BitOrAssign, Shl, ShlAssign, Shr},
 };
+use rand::RngExt;
 
 const BITS: usize = 136;
 const LIMBS: usize = BITS.div_ceil(64);

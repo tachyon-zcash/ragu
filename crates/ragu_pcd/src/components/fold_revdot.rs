@@ -702,7 +702,7 @@ mod tests {
     #[test]
     fn test_cost_formulas() -> Result<()> {
         fn verify<const M: usize, const N: usize>() -> Result<()> {
-            let rng = rand::rngs::StdRng::from_os_rng();
+            let rng = rand::rngs::StdRng::from_rng(&mut rand::rng());
             let sim = Simulator::simulate(rng, |dr, mut rng| {
                 let mu = Element::alloc(dr, rng.view_mut().map(Fp::random))?;
                 let nu = Element::alloc(dr, rng.view_mut().map(Fp::random))?;

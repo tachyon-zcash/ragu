@@ -8,7 +8,7 @@ use ragu_pasta::{EpAffine, Fp, Fq, Pasta, PoseidonFp};
 use ragu_primitives::poseidon::Sponge;
 use ragu_primitives::{Boolean, Element, Endoscalar, Point};
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 pub type BenchEmu = Emulator<Wireless<Always<()>, Fp>>;
 
