@@ -36,6 +36,28 @@ use ff::Field;
 use ragu_arithmetic::Coeff;
 use ragu_core::drivers::LinearExpression;
 
+/// An index identifying a wire in evaluators that track symbolic wire identity.
+///
+/// Used by the [`sy`] and [`hash`] evaluators to represent wires as indices
+/// rather than evaluated monomials.
+///
+/// # Variants
+///
+/// - `A(i)`, `B(i)`, `C(i)` — Allocated wires from gate $i$, corresponding to
+///   the $a$, $b$, $c$ wires respectively.
+///
+/// - `Virtual(i)` — A virtual wire (linear combination).
+///
+/// [`sy`]: super::sy
+/// [`hash`]: super::hash
+#[derive(Copy, Clone)]
+pub(crate) enum WireIndex {
+    A(usize),
+    B(usize),
+    C(usize),
+    Virtual(usize),
+}
+
 /// Represents a wire's evaluated monomial during polynomial synthesis.
 ///
 /// In the wiring polynomial $s(X, Y)$, each wire corresponds to a monomial

@@ -1,4 +1,5 @@
 use ff::Field;
+use ragu_arithmetic::Coeff;
 use ragu_core::Result;
 
 use alloc::vec::Vec;
@@ -7,6 +8,7 @@ use crate::{
     CircuitObject,
     polynomials::{Rank, structured, unstructured},
     registry,
+    s::hash::{SENTINEL_ENFORCE, WireIndex, hash_coeff, hash_wire_index},
 };
 
 #[derive(Clone)]
@@ -205,6 +207,48 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
         }
 
         poly
+    }
+
+    /// Hashes the structural identity of this stage mask's wiring polynomial.
+    ///
+    /// Reproduces what the [`hash::Hasher`](crate::s::hash) driver would
+    /// produce for an equivalent circuit synthesis, but without running the
+    /// full driver machinery. Each non-multiplied gate contributes 3
+    /// single-term enforce_zero constraints (one each for the a, b, c wires).
+    fn hash(&self, state: &mut blake2b_simd::State)
+    where
+        F: ff::PrimeField,
+    {
+        let reserved = R::n() - self.skip_multiplications - self.num_multiplications - 1;
+        let mut gate = 0usize;
+
+        // Skip multiplications: each gate has 3 enforce_zero constraints
+        for _ in 0..self.skip_multiplications {
+            for wire in [WireIndex::A(gate), WireIndex::B(gate), WireIndex::C(gate)] {
+                state.update(&SENTINEL_ENFORCE);
+                hash_wire_index(state, &wire);
+                hash_coeff::<F>(state, &Coeff::One);
+            }
+            gate += 1;
+        }
+
+        // Skip over the num_multiplications gates (no constraints)
+        gate += self.num_multiplications;
+
+        // Reserved gates: each gate has 3 enforce_zero constraints
+        for _ in 0..reserved {
+            for wire in [WireIndex::A(gate), WireIndex::B(gate), WireIndex::C(gate)] {
+                state.update(&SENTINEL_ENFORCE);
+                hash_wire_index(state, &wire);
+                hash_coeff::<F>(state, &Coeff::One);
+            }
+            gate += 1;
+        }
+
+        // enforce_one: single-term constraint with ONE = C(0)
+        state.update(&SENTINEL_ENFORCE);
+        hash_wire_index(state, &WireIndex::C(0));
+        hash_coeff::<F>(state, &Coeff::One);
     }
 
     fn constraint_counts(&self) -> (usize, usize) {

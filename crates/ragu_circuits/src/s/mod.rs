@@ -73,6 +73,7 @@ use ragu_core::{
 };
 
 mod common;
+pub(crate) mod hash;
 pub mod sx;
 pub mod sxy;
 pub mod sy;
