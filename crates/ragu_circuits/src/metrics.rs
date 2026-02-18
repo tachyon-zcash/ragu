@@ -8,8 +8,8 @@ use ff::Field;
 use ragu_arithmetic::Coeff;
 use ragu_core::{
     Result,
-    drivers::{Driver, DriverTypes, emulator::Emulator},
-    gadgets::{Bound, GadgetKind},
+    drivers::{Driver, DriverTypes},
+    gadgets::Bound,
     maybe::Empty,
     routines::Routine,
 };
@@ -17,7 +17,7 @@ use ragu_primitives::GadgetExt;
 
 use core::marker::PhantomData;
 
-use super::{Circuit, FreshB};
+use super::{Circuit, PairAllocatedDriver};
 
 /// Performs full constraint system analysis, capturing basic details about a circuit's topology through simulation.
 pub struct CircuitMetrics {
@@ -34,14 +34,14 @@ pub struct CircuitMetrics {
 }
 
 struct Counter<F> {
-    available_b: bool,
+    available_b: Option<()>,
     num_linear_constraints: usize,
     num_multiplication_constraints: usize,
     _marker: PhantomData<F>,
 }
 
-impl<F: Field> FreshB<bool> for Counter<F> {
-    fn available_b(&mut self) -> &mut bool {
+impl<'dr, F: Field> PairAllocatedDriver<'dr> for Counter<F> {
+    fn available_b(&mut self) -> &mut Option<()> {
         &mut self.available_b
     }
 }
@@ -92,18 +92,13 @@ impl<'dr, F: Field> Driver<'dr> for Counter<F> {
         routine: Ro,
         input: Bound<'dr, Self, Ro::Input>,
     ) -> Result<Bound<'dr, Self, Ro::Output>> {
-        self.with_fresh_b(|this| {
-            let mut dummy = Emulator::wireless();
-            let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
-            let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
-            routine.execute(this, input, aux)
-        })
+        PairAllocatedDriver::routine(self, routine, input)
     }
 }
 
 pub fn eval<F: Field, C: Circuit<F>>(circuit: &C) -> Result<CircuitMetrics> {
     let mut collector = Counter {
-        available_b: false,
+        available_b: None,
         num_linear_constraints: 0,
         num_multiplication_constraints: 0,
         _marker: PhantomData,

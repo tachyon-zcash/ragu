@@ -30,8 +30,9 @@ mod tests;
 use ff::Field;
 use ragu_core::{
     Error, Result,
-    drivers::{Driver, DriverValue},
-    gadgets::Bound,
+    drivers::{Driver, DriverValue, emulator},
+    gadgets::{Bound, GadgetKind},
+    routines::Routine,
 };
 use ragu_primitives::io::Write;
 
@@ -42,20 +43,32 @@ use polynomials::{Rank, structured, unstructured};
 /// A trait for drivers that stash a spare wire from paired allocation (see
 /// [`Driver::alloc`]).
 ///
-/// Provides [`with_fresh_b`](Self::with_fresh_b), which saves [`available_b`](Self::available_b), resets it to its
-/// [`Default`], runs a closure with `&mut self`, then restores the original
-/// value. This isolates allocation state within routines.
-pub(crate) trait FreshB<B: Default> {
-    /// Returns a mutable reference to the `available_b` field.
-    fn available_b(&mut self) -> &mut B;
+/// Provides default implementations of [`Driver::alloc`] and
+/// [`Driver::routine`] for the common paired allocation pattern.
+pub(crate) trait PairAllocatedDriver<'dr>: Driver<'dr> {
+    /// Returns a mutable reference to the stashed wire from paired allocation
+    /// (see [`Driver::alloc`]).
+    fn available_b(&mut self) -> &mut Option<Self::Wire>;
 
-    /// Runs `f` with [`available_b`](Self::available_b) temporarily reset to its default, then
-    /// restores the original value.
-    fn with_fresh_b<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+
+    /// Executes `routine` with [`available_b`](Self::available_b) temporarily reset to its
+    /// default, then restores the original value on success.
+    ///
+    /// Call this from [`Driver::routine`] to isolate paired allocation state
+    /// across routine boundaries. On error, `available_b` is not restored —
+    /// errors abort synthesis entirely.
+    fn routine<R: Routine<Self::F> + 'dr>(
+        &mut self,
+        routine: R,
+        input: Bound<'dr, Self, R::Input>,
+    ) -> Result<Bound<'dr, Self, R::Output>> {
         let saved = core::mem::take(self.available_b());
-        let result = f(self);
+        let mut dummy = emulator::Emulator::wireless();
+        let dummy_input = R::Input::map_gadget(&input, &mut dummy)?;
+        let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
+        let result = routine.execute(self, input, aux)?;
         *self.available_b() = saved;
-        result
+        Ok(result)
     }
 }
 
