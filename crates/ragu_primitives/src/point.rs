@@ -6,7 +6,7 @@
 //! This module only supports curves with `a = 0` in the short Weierstrass form,
 //! specifically curves of the form `y^2 = x^3 + b`.
 
-use ff::{Field, WithSmallOrderMulGroup};
+use ff::WithSmallOrderMulGroup;
 use ragu_arithmetic::{Coeff, CurveAffine};
 use ragu_core::{
     Error, Result,
@@ -109,22 +109,16 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
 
     /// Apply the endomorphism iff the provided condition is true.
     pub fn conditional_endo(&self, dr: &mut D, condition: &Boolean<'dr, D>) -> Result<Self> {
-        // x' = x + (x(ZETA - 1)) * condition
-        let tmp = self
-            .x
-            .scale(dr, Coeff::Arbitrary(D::F::ZETA - D::F::ONE))
-            .mul(dr, &condition.element())?;
-        Ok(Point::new_unchecked(self.x.add(dr, &tmp), self.y.clone()))
+        let endo_x = self.x.scale(dr, Coeff::Arbitrary(D::F::ZETA));
+        let x = condition.conditional_select(dr, &self.x, &endo_x)?;
+        Ok(Point::new_unchecked(x, self.y.clone()))
     }
 
     /// Apply the negation map iff the provided condition is true.
     pub fn conditional_negate(&self, dr: &mut D, condition: &Boolean<'dr, D>) -> Result<Self> {
-        // y' = y + (y(-2)) * condition
-        let tmp = self
-            .y
-            .scale(dr, Coeff::Arbitrary(-D::F::from(2)))
-            .mul(dr, &condition.element())?;
-        Ok(Point::new_unchecked(self.x.clone(), self.y.add(dr, &tmp)))
+        let neg_y = self.y.negate(dr);
+        let y = condition.conditional_select(dr, &self.y, &neg_y)?;
+        Ok(Point::new_unchecked(self.x.clone(), y))
     }
 
     /// Doubles this point. Ragu does not support curves with points of order
