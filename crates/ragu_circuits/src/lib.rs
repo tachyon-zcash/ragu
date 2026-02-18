@@ -28,6 +28,7 @@ mod trivial;
 mod tests;
 
 use ff::Field;
+use ragu_arithmetic::Coeff;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue, emulator},
@@ -50,6 +51,23 @@ pub(crate) trait PairAllocatedDriver<'dr>: Driver<'dr> {
     /// (see [`Driver::alloc`]).
     fn available_b(&mut self) -> &mut Option<Self::Wire>;
 
+    /// Allocates a wire using paired allocation.
+    ///
+    /// Returns either a stashed $b$ wire from a previous gate, or allocates a
+    /// new gate via [`Driver::mul`] and stashes its $b$ wire for the next call.
+    ///
+    /// **Precondition:** this default calls [`Driver::mul`] with `|| unreachable!()`.
+    /// It is only correct for drivers whose [`mul`](Driver::mul) never invokes its
+    /// closure. Drivers that do invoke it must override this method.
+    fn alloc(&mut self, _: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
+        if let Some(wire) = self.available_b().take() {
+            Ok(wire)
+        } else {
+            let (a, b, _) = self.mul(|| unreachable!())?;
+            *self.available_b() = Some(b);
+            Ok(a)
+        }
+    }
 
     /// Executes `routine` with [`available_b`](Self::available_b) temporarily reset to its
     /// default, then restores the original value on success.

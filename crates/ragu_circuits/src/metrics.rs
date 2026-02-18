@@ -59,16 +59,8 @@ impl<'dr, F: Field> Driver<'dr> for Counter<F> {
     type Wire = ();
     const ONE: Self::Wire = ();
 
-    fn alloc(&mut self, _: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
-        if self.available_b {
-            self.available_b = false;
-            Ok(())
-        } else {
-            self.available_b = true;
-            self.mul(|| unreachable!())?;
-
-            Ok(())
-        }
+    fn alloc(&mut self, value: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
+        PairAllocatedDriver::alloc(self, value)
     }
 
     fn mul(

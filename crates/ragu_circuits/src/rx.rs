@@ -25,6 +25,13 @@ impl<'a, F: Field, R: Rank> PairAllocatedDriver<'a> for Evaluator<'a, F, R> {
     fn available_b(&mut self) -> &mut Option<usize> {
         &mut self.available_b
     }
+
+    // rx::Evaluator's mul *does* call its value closure to write witness data,
+    // so the trait default (which passes `|| unreachable!()`) would panic.
+    // Forward to Driver::alloc instead.
+    fn alloc(&mut self, value: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
+        Driver::alloc(self, value)
+    }
 }
 
 impl<F: Field, R: Rank> DriverTypes for Evaluator<'_, F, R> {

@@ -161,15 +161,8 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<F, R> {
     const ONE: Self::Wire = WireEval::One;
 
     /// Allocates a wire using paired allocation.
-    fn alloc(&mut self, _: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
-        if let Some(wire) = self.available_b.take() {
-            Ok(wire)
-        } else {
-            let (a, b, _) = self.mul(|| unreachable!())?;
-            self.available_b = Some(b);
-
-            Ok(a)
-        }
+    fn alloc(&mut self, value: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
+        PairAllocatedDriver::alloc(self, value)
     }
 
     /// Consumes a multiplication gate, returning evaluated monomials for $(a, b, c)$.

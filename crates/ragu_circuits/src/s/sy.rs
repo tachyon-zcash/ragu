@@ -505,18 +505,8 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, F
     };
 
     /// Allocates a wire using paired allocation.
-    ///
-    /// Returns either a stashed $b$ wire from a previous gate, or allocates a
-    /// new gate and stashes its $b$ wire for the next call.
-    fn alloc(&mut self, _: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
-        if let Some(wire) = self.available_b.take() {
-            Ok(wire)
-        } else {
-            let (a, b, _) = self.mul(|| unreachable!())?;
-            self.available_b = Some(b);
-
-            Ok(a)
-        }
+    fn alloc(&mut self, value: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
+        PairAllocatedDriver::alloc(self, value)
     }
 
     /// Consumes a multiplication gate, returning wire handles for $(a, b, c)$.
