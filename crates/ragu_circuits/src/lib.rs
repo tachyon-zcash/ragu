@@ -44,19 +44,20 @@ use polynomials::{Rank, structured, unstructured};
 /// A trait for drivers that stash a spare wire from paired allocation (see
 /// [`Driver::alloc`]).
 ///
-/// Provides [`with_fresh_b`](Self::with_fresh_b), which saves [`available_b`](Self::available_b), resets it to its
-/// [`Default`], runs a closure with `&mut self`, then restores the original
-/// value. This isolates allocation state within routines.
-pub(crate) trait FreshB<B: Default> {
-    /// Returns a mutable reference to the `available_b` field.
-    fn available_b(&mut self) -> &mut B;
+/// Provides [`with_scope`](Self::with_scope), which saves
+/// [`scope`](Self::scope), replaces it with a caller-supplied `init` value,
+/// runs a closure with `&mut self`, then restores the original value. This
+/// isolates allocation state within routines.
+pub(crate) trait DriverScope<S> {
+    /// Returns a mutable reference to the scope field.
+    fn scope(&mut self) -> &mut S;
 
-    /// Runs `f` with [`available_b`](Self::available_b) temporarily reset to its default, then
+    /// Runs `f` with [`scope`](Self::scope) temporarily replaced by `init`, then
     /// restores the original value.
-    fn with_fresh_b<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        let saved = core::mem::take(self.available_b());
+    fn with_scope<R>(&mut self, init: S, f: impl FnOnce(&mut Self) -> R) -> R {
+        let saved = core::mem::replace(self.scope(), init);
         let result = f(self);
-        *self.available_b() = saved;
+        *self.scope() = saved;
         result
     }
 }

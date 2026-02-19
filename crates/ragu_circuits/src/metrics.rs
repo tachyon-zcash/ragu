@@ -17,7 +17,7 @@ use ragu_primitives::GadgetExt;
 
 use core::marker::PhantomData;
 
-use super::{Circuit, FreshB};
+use super::{Circuit, DriverScope};
 
 /// Performs full constraint system analysis, capturing basic details about a circuit's topology through simulation.
 pub struct CircuitMetrics {
@@ -40,8 +40,8 @@ struct Counter<F> {
     _marker: PhantomData<F>,
 }
 
-impl<F: Field> FreshB<bool> for Counter<F> {
-    fn available_b(&mut self) -> &mut bool {
+impl<F: Field> DriverScope<bool> for Counter<F> {
+    fn scope(&mut self) -> &mut bool {
         &mut self.available_b
     }
 }
@@ -92,7 +92,7 @@ impl<'dr, F: Field> Driver<'dr> for Counter<F> {
         routine: Ro,
         input: Bound<'dr, Self, Ro::Input>,
     ) -> Result<Bound<'dr, Self, Ro::Output>> {
-        self.with_fresh_b(|this| {
+        self.with_scope(false, |this| {
             let mut dummy = Emulator::wireless();
             let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
             let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();

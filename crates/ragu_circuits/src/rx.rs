@@ -14,7 +14,7 @@ use ragu_core::{
 };
 use ragu_primitives::GadgetExt;
 
-use super::{Circuit, FreshB, Rank, registry, structured};
+use super::{Circuit, DriverScope, Rank, registry, structured};
 
 /// Opaque trace produced by [`CircuitExt::rx`](crate::CircuitExt::rx).
 ///
@@ -45,8 +45,8 @@ struct Evaluator<'a, F: Field, R: Rank> {
     available_b: Option<usize>,
 }
 
-impl<F: Field, R: Rank> FreshB<Option<usize>> for Evaluator<'_, F, R> {
-    fn available_b(&mut self) -> &mut Option<usize> {
+impl<F: Field, R: Rank> DriverScope<Option<usize>> for Evaluator<'_, F, R> {
+    fn scope(&mut self) -> &mut Option<usize> {
         &mut self.available_b
     }
 }
@@ -104,7 +104,7 @@ impl<'a, F: Field, R: Rank> Driver<'a> for Evaluator<'a, F, R> {
         routine: Ro,
         input: Bound<'a, Self, Ro::Input>,
     ) -> Result<Bound<'a, Self, Ro::Output>> {
-        self.with_fresh_b(|this| {
+        self.with_scope(None, |this| {
             let mut dummy = Emulator::wireless();
             let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
             let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();

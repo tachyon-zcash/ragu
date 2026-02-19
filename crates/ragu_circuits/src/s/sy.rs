@@ -82,7 +82,7 @@ use core::cell::RefCell;
 
 use super::DriverExt;
 use crate::{
-    Circuit, FreshB,
+    Circuit, DriverScope,
     polynomials::{Rank, structured},
     registry,
 };
@@ -472,10 +472,10 @@ impl<'table, 'sy, F: Field, R: Rank> LinearExpression<Wire<'table, 'sy, F, R>, F
     }
 }
 
-impl<'table, 'sy, F: Field, R: Rank> FreshB<Option<Wire<'table, 'sy, F, R>>>
+impl<'table, 'sy, F: Field, R: Rank> DriverScope<Option<Wire<'table, 'sy, F, R>>>
     for Evaluator<'table, 'sy, F, R>
 {
-    fn available_b(&mut self) -> &mut Option<Wire<'table, 'sy, F, R>> {
+    fn scope(&mut self) -> &mut Option<Wire<'table, 'sy, F, R>> {
         &mut self.available_b
     }
 }
@@ -603,7 +603,7 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, F
         routine: Ro,
         input: Bound<'table, Self, Ro::Input>,
     ) -> Result<Bound<'table, Self, Ro::Output>> {
-        self.with_fresh_b(|this| {
+        self.with_scope(None, |this| {
             let mut dummy = Emulator::wireless();
             let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
             let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
