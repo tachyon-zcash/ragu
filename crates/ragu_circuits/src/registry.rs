@@ -17,10 +17,10 @@
 
 use blake2b_simd::Params;
 use ff::{Field, FromUniformBytes, PrimeField};
-use ragu_arithmetic::{Domain, bitreverse};
+use ragu_arithmetic::{CurveAffine, Domain, FixedGenerators, bitreverse};
 use ragu_core::{Error, Result};
 
-use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec::Vec};
+use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec, vec::Vec};
 
 use crate::{
     Circuit, CircuitExt, CircuitObject,
@@ -58,6 +58,47 @@ impl CircuitIndex {
     pub fn omega_j<F: PrimeField>(self) -> F {
         let bit_reversal_id = bitreverse(self.0, F::S);
         F::ROOT_OF_UNITY.pow([bit_reversal_id.into()])
+    }
+}
+
+/// Result of evaluating the registry polynomial at fixed $(x, y)$.
+/// Contains both the polynomial $m(W, x, y)$ in coefficient form
+/// and circuit evaluations $s_i(x, y)$
+pub struct RegistryAtXY<F: PrimeField, R: Rank> {
+    /// The polynomial $m(W, x, y)$ in coefficient form.
+    poly: unstructured::Polynomial<F, R>,
+    /// Circuit evaluations $s_i(x, y)$ indexed by circuit number.
+    circuit_evals: Vec<F>,
+}
+
+impl<F: PrimeField, R: Rank> RegistryAtXY<F, R> {
+    /// Get the evaluation for a specific circuit: $s_i(x, y)$.
+    pub fn circuit_eval(&self, idx: CircuitIndex) -> F {
+        self.circuit_evals[idx.0 as usize]
+    }
+
+    /// Evaluate the polynomial $m(W, x, y)$ at a specific point $w$.
+    pub fn eval(&self, w: F) -> F {
+        self.poly.eval(w)
+    }
+
+    /// Commit to the polynomial $m(W, x, y)$.
+    pub fn commit<C: CurveAffine<ScalarExt = F>>(
+        &self,
+        generators: &impl FixedGenerators<C>,
+        blind: F,
+    ) -> C {
+        self.poly.commit(generators, blind)
+    }
+
+    /// Borrow the underlying polynomial.
+    pub fn poly(&self) -> &unstructured::Polynomial<F, R> {
+        &self.poly
+    }
+
+    /// Consume and return the underlying polynomial.
+    pub fn into_poly(self) -> unstructured::Polynomial<F, R> {
+        self.poly
     }
 }
 
@@ -345,16 +386,30 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
 
     /// Evaluate the registry polynomial unrestricted at $W$.
     pub fn xy(&self, x: F, y: F) -> unstructured::Polynomial<F, R> {
-        let mut coeffs = unstructured::Polynomial::default();
-        for (i, circuit) in self.circuits.iter().enumerate() {
-            let j = bitreverse(i as u32, self.domain.log2_n()) as usize;
-            coeffs[j] = circuit.sxy(x, y, &self.key);
-        }
-        // Convert from the Lagrange basis.
-        let domain = &self.domain;
-        domain.ifft(&mut coeffs[..domain.n()]);
+        self.xy_with_evals(x, y).into_poly()
+    }
 
-        coeffs
+    /// Evaluate the registry polynomial at $(x, y)$, returning both the polynomial
+    /// and cached circuit evaluations for efficient lookup.
+    pub fn xy_with_evals(&self, x: F, y: F) -> RegistryAtXY<F, R> {
+        let mut circuit_evals = Vec::with_capacity(self.circuits.len());
+        let mut lagrange_vals = vec![F::ZERO; self.domain.n()];
+
+        for (i, circuit) in self.circuits.iter().enumerate() {
+            let eval = circuit.sxy(x, y, &self.key);
+            circuit_evals.push(eval);
+            let j = bitreverse(i as u32, self.domain.log2_n()) as usize;
+            lagrange_vals[j] = eval;
+        }
+
+        let mut poly = unstructured::Polynomial::default();
+        poly[..lagrange_vals.len()].copy_from_slice(&lagrange_vals);
+        self.domain.ifft(&mut poly[..self.domain.n()]);
+
+        RegistryAtXY {
+            poly,
+            circuit_evals,
+        }
     }
 
     /// Index the $i$th circuit to field element $\omega^j$ as $w$, and evaluate
