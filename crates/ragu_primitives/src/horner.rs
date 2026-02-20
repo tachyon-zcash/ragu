@@ -1,7 +1,8 @@
 //! Streaming Horner's method evaluation via the Buffer trait.
 
 use ragu_core::{Result, drivers::Driver};
-use ragu_primitives::{Element, io::Buffer};
+
+use crate::{Element, GadgetExt, io::Buffer};
 
 /// A buffer that evaluates a polynomial at a point using Horner's method.
 ///
@@ -11,11 +12,9 @@ use ragu_primitives::{Element, io::Buffer};
 /// natural ordering for Horner's method: for $p(x) = a_n x^n + \cdots + a_0$,
 /// write $a_n$ first and $a_0$ last.
 ///
-/// This is consistent with
-/// [`Polynomial::fold`](ragu_circuits::polynomials::structured::Polynomial::fold)
-/// and [`Element::fold`](Element::fold), which also expect descending order.
+/// This is consistent with [`Element::fold`], which also expects descending
+/// order.
 ///
-/// Unlike [`Ky`](super::ky::Ky), this does not add a trailing constant term.
 pub struct Horner<'a, 'dr, D: Driver<'dr>> {
     point: &'a Element<'dr, D>,
     result: Option<Element<'dr, D>>,
@@ -44,6 +43,13 @@ impl<'a, 'dr, D: Driver<'dr>> Horner<'a, 'dr, D> {
     /// Returns zero if no elements were written.
     pub fn finish(self, dr: &mut D) -> Element<'dr, D> {
         self.result.unwrap_or_else(|| Element::zero(dr))
+    }
+
+    /// Finishes the evaluation with a trailing constant $1$ term appended,
+    /// following the $k(Y)$ polynomial convention.
+    pub fn finish_ky(mut self, dr: &mut D) -> Result<Element<'dr, D>> {
+        Element::one().write(dr, &mut self)?;
+        Ok(self.finish(dr))
     }
 }
 

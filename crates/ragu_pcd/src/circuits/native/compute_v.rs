@@ -73,7 +73,7 @@ use super::{
     },
     unified::{self, OutputBuilder},
 };
-use crate::components::horner::Horner;
+use ragu_primitives::horner::Horner;
 
 pub(crate) use super::InternalCircuitIndex::ComputeVCircuit as CIRCUIT_ID;
 

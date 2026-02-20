@@ -9,7 +9,7 @@ use ragu_primitives::{
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
-use super::horner::Horner;
+use ragu_primitives::horner::Horner;
 
 use core::{borrow::Borrow, iter, marker::PhantomData};
 
