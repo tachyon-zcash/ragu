@@ -17,7 +17,7 @@
 //! curve type and number of points.
 
 use ff::{Field, WithSmallOrderMulGroup};
-use pasta_curves::group::{Curve, prime::PrimeCurveAffine};
+use pasta_curves::group::{Curve, WnafBase, WnafScalar, prime::PrimeCurveAffine};
 use ragu_arithmetic::{CurveAffine, Uendo};
 use ragu_circuits::{
     polynomials::Rank,
@@ -127,10 +127,10 @@ where
         if points.is_empty() {
             interstitials.push(acc);
         } else {
-            // TODO: we can use multiexps in batches here
+            let wnaf_scalar = WnafScalar::<C::Scalar, ENDOSCALINGS_PER_STEP>::new(&endoscalar);
             for chunk in points.chunks(ENDOSCALINGS_PER_STEP) {
                 for input in chunk {
-                    acc = acc * endoscalar + input.to_curve();
+                    acc = &WnafBase::new(acc) * &wnaf_scalar + input.to_curve();
                 }
                 interstitials.push(acc);
             }
