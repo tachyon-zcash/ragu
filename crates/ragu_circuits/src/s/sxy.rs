@@ -272,6 +272,18 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
             let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
             routine.execute(self, input, aux)
         };
+        // Verify this routine consumed exactly the expected constraints.
+        debug_assert_eq!(
+            self.scope.multiplication_constraints,
+            slot.multiplication_start + slot.num_multiplication_constraints,
+            "routine multiplication constraint count must match floor plan"
+        );
+        debug_assert_eq!(
+            self.scope.linear_constraints,
+            slot.linear_start + slot.num_linear_constraints,
+            "routine linear constraint count must match floor plan"
+        );
+
         // Position the routine's local Horner result at its absolute Y offset,
         // then combine with any nested child contributions.
         let y_pow_linear_start = self.y.pow_vartime([linear_start as u64]);

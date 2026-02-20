@@ -135,7 +135,17 @@ impl<F: Field> Trace<F> {
 
             // Scatter each segment to its floor-plan position.
             for (seg_idx, seg) in self.segments.iter().enumerate() {
-                let offset = floor_plan[seg_idx].multiplication_start;
+                let slot = &floor_plan[seg_idx];
+
+                // Verify segment size matches floor plan expectation.
+                debug_assert_eq!(
+                    seg.a.len(),
+                    slot.num_multiplication_constraints,
+                    "segment {} size must match floor plan",
+                    seg_idx
+                );
+
+                let offset = slot.multiplication_start;
                 view.a[offset..offset + seg.a.len()].copy_from_slice(&seg.a);
                 view.b[offset..offset + seg.b.len()].copy_from_slice(&seg.b);
                 view.c[offset..offset + seg.c.len()].copy_from_slice(&seg.c);

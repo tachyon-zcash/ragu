@@ -26,6 +26,7 @@ use super::{Circuit, DriverScope};
 /// contributed by a single routine (in DFS order). These sizes are the raw
 /// input to floor planning, which decides where each routine's constraints are
 /// placed in the polynomial layout.
+#[derive(Default)]
 pub struct RoutineRecord {
     /// The number of multiplication constraints in this routine.
     pub num_multiplication_constraints: usize,
@@ -119,10 +120,7 @@ impl<'dr, F: Field> Driver<'dr> for Counter<F> {
         routine: Ro,
         input: Bound<'dr, Self, Ro::Input>,
     ) -> Result<Bound<'dr, Self, Ro::Output>> {
-        self.records.push(RoutineRecord {
-            num_multiplication_constraints: 0,
-            num_linear_constraints: 0,
-        });
+        self.records.push(RoutineRecord::default());
         let record = self.records.len() - 1;
         self.with_scope(
             CounterScope {
@@ -133,7 +131,20 @@ impl<'dr, F: Field> Driver<'dr> for Counter<F> {
                 let mut dummy = Emulator::wireless();
                 let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
                 let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
-                routine.execute(this, input, aux)
+                let result = routine.execute(this, input, aux)?;
+
+                // Verify internal consistency: current_record unchanged and
+                // all paired allocations consumed.
+                debug_assert_eq!(
+                    this.scope.current_record, record,
+                    "current_record must remain stable during routine execution"
+                );
+                debug_assert!(
+                    !this.scope.available_b,
+                    "all paired allocations must be consumed"
+                );
+
+                Ok(result)
             },
         )
     }
@@ -147,10 +158,7 @@ pub fn eval<F: Field, C: Circuit<F>>(circuit: &C) -> Result<CircuitMetrics> {
         },
         num_linear_constraints: 0,
         num_multiplication_constraints: 0,
-        records: alloc::vec![RoutineRecord {
-            num_multiplication_constraints: 0,
-            num_linear_constraints: 0,
-        }],
+        records: alloc::vec![RoutineRecord::default()],
         _marker: PhantomData,
     };
     let mut degree_ky = 0usize;

@@ -286,7 +286,21 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
             let mut dummy = Emulator::wireless();
             let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
             let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
-            routine.execute(this, input, aux)
+            let result = routine.execute(this, input, aux)?;
+
+            // Verify this routine consumed exactly the expected constraints.
+            debug_assert_eq!(
+                this.scope.multiplication_constraints,
+                slot.multiplication_start + slot.num_multiplication_constraints,
+                "routine multiplication constraint count must match floor plan"
+            );
+            debug_assert_eq!(
+                this.scope.linear_constraints,
+                slot.linear_start + slot.num_linear_constraints,
+                "routine linear constraint count must match floor plan"
+            );
+
+            Ok(result)
         })
     }
 }
