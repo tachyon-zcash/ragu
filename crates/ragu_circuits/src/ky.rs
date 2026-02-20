@@ -1,6 +1,6 @@
 //! Assembly of the $k(Y)$ instance polynomial.
 //!
-//! The [`emulate`] function in this module processes instance data for a
+//! The [`eval`] function in this module processes instance data for a
 //! particular [`Circuit`], arranging it into the low-degree coefficient vector
 //! for the circuit's $k(Y)$ instance polynomial.
 
@@ -16,7 +16,7 @@ use super::Circuit;
 
 /// Evaluates $k(y)$ for the given circuit and instance at a point $y$, without
 /// collecting intermediate coefficients.
-pub fn emulate<F: Field, C: Circuit<F>>(circuit: &C, instance: C::Instance<'_>, y: F) -> Result<F> {
+pub fn eval<F: Field, C: Circuit<F>>(circuit: &C, instance: C::Instance<'_>, y: F) -> Result<F> {
     let mut dr = Emulator::extractor();
     let y_elem = Element::alloc(&mut dr, Always::<F>::just(|| y))?;
     let mut ky = crate::horner::Horner::new(&y_elem);
@@ -41,6 +41,6 @@ mod tests {
 
         // k(Y) = 1 + 3Y for this circuit, so k(y) = 1 + 3y.
         let expected = Fp::ONE + Fp::from(3) * y;
-        assert_eq!(emulate::<Fp, _>(&circuit, instance, y).unwrap(), expected);
+        assert_eq!(eval::<Fp, _>(&circuit, instance, y).unwrap(), expected);
     }
 }

@@ -198,7 +198,7 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
     /// Evaluates the instance polynomial $k(y)$ for the given instance at
     /// a point $y \in \mathbb{F}$.
     fn ky(&self, instance: Self::Instance<'_>, y: F) -> Result<F> {
-        ky::emulate(self, instance, y)
+        ky::eval(self, instance, y)
     }
 }
 

@@ -1,7 +1,6 @@
 //! Streaming Horner's method evaluation via the Buffer trait.
 
 use ragu_core::{Result, drivers::Driver};
-
 use ragu_primitives::{Element, GadgetExt, io::Buffer};
 
 /// A buffer that evaluates a polynomial at a point using Horner's method.

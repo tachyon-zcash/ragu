@@ -82,26 +82,26 @@ library_benchmark_group!(
 );
 
 #[library_benchmark(setup = setup_rng)]
-#[bench::ky((f, f, f))]
-fn ky((a, b, y): (Fp, Fp, Fp)) {
+#[bench::eval_ky((f, f, f))]
+fn eval_ky((a, b, y): (Fp, Fp, Fp)) {
     black_box(MySimpleCircuit.ky((a, b), y)).unwrap();
 }
 
 #[library_benchmark]
-#[bench::into_object_r5(MySimpleCircuit)]
-fn into_object_r5(circuit: impl Circuit<Fp>) {
+#[bench::into_object_test_rank(MySimpleCircuit)]
+fn into_object_test_rank(circuit: impl Circuit<Fp>) {
     black_box(CircuitExt::<Fp>::into_object::<TestRank>(circuit)).unwrap();
 }
 
 #[library_benchmark]
 #[benches::multiple( SquareCircuit { times: 2 }, SquareCircuit { times: 10 },)]
-fn into_object_r13(circuit: impl Circuit<Fp>) {
+fn into_object_production_rank(circuit: impl Circuit<Fp>) {
     black_box(CircuitExt::<Fp>::into_object::<ProductionRank>(circuit)).unwrap();
 }
 
 #[library_benchmark(setup = setup_rng)]
-#[bench::rx_r5((f, f))]
-fn rx_r5((witness0, witness1): (Fp, Fp)) {
+#[bench::rx_test_rank((f, f))]
+fn rx_test_rank((witness0, witness1): (Fp, Fp)) {
     black_box(MySimpleCircuit.rx((witness0, witness1))).unwrap();
 }
 
@@ -110,13 +110,13 @@ fn rx_r5((witness0, witness1): (Fp, Fp)) {
         (SquareCircuit { times: 2 }, (f,)),
         (SquareCircuit { times: 10 }, (f,)),
     )]
-fn rx_r13((circuit, (witness,)): (SquareCircuit, (Fp,))) {
+fn rx_production_rank((circuit, (witness,)): (SquareCircuit, (Fp,))) {
     black_box(circuit.rx(witness)).unwrap();
 }
 
 library_benchmark_group!(
     name = circuit_synthesis;
-    benchmarks = into_object_r5, into_object_r13, ky, rx_r5, rx_r13,
+    benchmarks = into_object_test_rank, into_object_production_rank, eval_ky, rx_test_rank, rx_production_rank,
 );
 
 #[library_benchmark]
