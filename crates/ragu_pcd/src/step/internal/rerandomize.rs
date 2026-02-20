@@ -134,8 +134,8 @@ fn test_rerandomize_consistency() {
     let y = Fp::from(17u64);
     let key = registry::Key::default();
 
-    let eval_single = circuit_single.sxy(x, y, &key);
-    let eval_pair = circuit_pair.sxy(x, y, &key);
+    let eval_single = circuit_single.sxy(x, y, &key, &[]);
+    let eval_pair = circuit_pair.sxy(x, y, &key, &[]);
 
     assert_eq!(eval_single, eval_pair,);
 }

@@ -24,6 +24,7 @@ use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec::Vec};
 
 use crate::{
     Circuit, CircuitExt, CircuitObject,
+    floor_planner::RoutineSlot,
     polynomials::{Rank, structured, unstructured},
     staging::{Stage, StageExt},
 };
@@ -179,6 +180,9 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
             .chain(self.application_steps)
             .collect();
 
+        // Per-circuit floor plans (populated later by floor_planner).
+        let floor_plans: Vec<Vec<RoutineSlot>> = alloc::vec![Vec::new(); circuits.len()];
+
         // Build omega^j -> i lookup table.
         let mut omega_lookup = BTreeMap::new();
 
@@ -200,6 +204,7 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
         let mut registry = Registry {
             domain,
             circuits,
+            floor_plans,
             omega_lookup,
             key: Key::default(),
         };
@@ -300,6 +305,9 @@ pub struct Registry<'params, F: PrimeField, R: Rank> {
     domain: Domain<F>,
     circuits: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
 
+    /// Per-circuit floor plans computed during finalization.
+    floor_plans: Vec<Vec<RoutineSlot>>,
+
     /// Maps from the OmegaKey (which represents some `omega^j`) to the index `i`
     /// of the circuits vector.
     omega_lookup: BTreeMap<OmegaKey, usize>,
@@ -359,7 +367,7 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
         let mut coeffs = unstructured::Polynomial::default();
         for (i, circuit) in self.circuits.iter().enumerate() {
             let j = bitreverse(i as u32, self.domain.log2_n()) as usize;
-            coeffs[j] = circuit.sxy(x, y, &self.key);
+            coeffs[j] = circuit.sxy(x, y, &self.key, &self.floor_plans[i]);
         }
         // Convert from the Lagrange basis.
         let domain = &self.domain;
@@ -390,8 +398,8 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
         self.w(
             w,
             structured::Polynomial::default,
-            |circuit, circuit_coeff, poly| {
-                let mut tmp = circuit.sy(y, &self.key);
+            |circuit, floor_plan, circuit_coeff, poly| {
+                let mut tmp = circuit.sy(y, &self.key, floor_plan);
                 tmp.scale(circuit_coeff);
                 poly.add_assign(&tmp);
             },
@@ -403,8 +411,8 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
         self.w(
             w,
             unstructured::Polynomial::default,
-            |circuit, circuit_coeff, poly| {
-                let mut tmp = circuit.sx(x, &self.key);
+            |circuit, floor_plan, circuit_coeff, poly| {
+                let mut tmp = circuit.sx(x, &self.key, floor_plan);
                 tmp.scale(circuit_coeff);
                 poly.add_unstructured(&tmp);
             },
@@ -416,8 +424,8 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
         self.w(
             w,
             || F::ZERO,
-            |circuit, circuit_coeff, poly| {
-                *poly += circuit.sxy(x, y, &self.key) * circuit_coeff;
+            |circuit, floor_plan, circuit_coeff, poly| {
+                *poly += circuit.sxy(x, y, &self.key, floor_plan) * circuit_coeff;
             },
         )
     }
@@ -428,7 +436,7 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
         &self,
         w: F,
         init: impl FnOnce() -> T,
-        add_poly: impl Fn(&dyn CircuitObject<F, R>, F, &mut T),
+        add_poly: impl Fn(&dyn CircuitObject<F, R>, &[RoutineSlot], F, &mut T),
     ) -> T {
         // Compute the Lagrange coefficients for the provided `w`.
         let ell = self.domain.ell(w, self.domain.n());
@@ -442,12 +450,12 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
             for (j, coeff) in ell.iter().enumerate() {
                 let i = bitreverse(j as u32, self.domain.log2_n()) as usize;
                 if let Some(circuit) = self.circuits.get(i) {
-                    add_poly(&**circuit, *coeff, &mut result);
+                    add_poly(&**circuit, &self.floor_plans[i], *coeff, &mut result);
                 }
             }
         } else if let Some(i) = self.omega_lookup.get(&OmegaKey::from(w)) {
             if let Some(circuit) = self.circuits.get(*i) {
-                add_poly(&**circuit, F::ONE, &mut result);
+                add_poly(&**circuit, &self.floor_plans[*i], F::ONE, &mut result);
             }
         } else {
             // In this case, the circuit is not defined and defaults to the zero polynomial.

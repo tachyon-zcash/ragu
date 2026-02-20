@@ -454,16 +454,19 @@ mod tests {
             let y = Fp::random(&mut rand::rng());
 
             // Verify revdot identities for each stage.
-            assert_eq!(endoscalar_rx.revdot(&endoscalar_mask.sy(y, &key)), Fp::ZERO);
-            assert_eq!(points_rx.revdot(&points_mask.sy(y, &key)), Fp::ZERO);
-            assert_eq!(final_rx.revdot(&final_mask.sy(y, &key)), Fp::ZERO);
+            assert_eq!(
+                endoscalar_rx.revdot(&endoscalar_mask.sy(y, &key, &[])),
+                Fp::ZERO
+            );
+            assert_eq!(points_rx.revdot(&points_mask.sy(y, &key, &[])), Fp::ZERO);
+            assert_eq!(final_rx.revdot(&final_mask.sy(y, &key, &[])), Fp::ZERO);
 
             // Verify combined circuit identity.
             let mut lhs = final_rx.clone();
             lhs.add_assign(&endoscalar_rx);
             lhs.add_assign(&points_rx);
             assert_eq!(
-                lhs.revdot(&staged_s.sy(y, &key)),
+                lhs.revdot(&staged_s.sy(y, &key, &[])),
                 ragu_arithmetic::eval(&ky, y)
             );
         }
@@ -526,7 +529,7 @@ mod tests {
             lhs.add_assign(&endoscalar_rx);
             lhs.add_assign(&points_rx);
             assert_eq!(
-                lhs.revdot(&staged_s.sy(y, &key)),
+                lhs.revdot(&staged_s.sy(y, &key, &[])),
                 ragu_arithmetic::eval(&ky, y)
             );
         }

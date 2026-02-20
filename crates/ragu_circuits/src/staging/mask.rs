@@ -57,7 +57,13 @@ impl<R: Rank> StageMask<R> {
 }
 
 impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
-    fn sxy(&self, x: F, y: F, key: &registry::Key<F>) -> F {
+    fn sxy(
+        &self,
+        x: F,
+        y: F,
+        key: &registry::Key<F>,
+        _floor_plan: &[crate::floor_planner::RoutineSlot],
+    ) -> F {
         // Bound is enforced in `StageMask::new`.
         assert!(self.skip_multiplications + self.num_multiplications < R::n());
         let reserved: usize = R::n() - self.skip_multiplications - self.num_multiplications - 1;
@@ -104,7 +110,12 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
         placeholder + y.pow_vartime([(3 * reserved) as u64]) * c1 + c2
     }
 
-    fn sx(&self, x: F, key: &registry::Key<F>) -> unstructured::Polynomial<F, R> {
+    fn sx(
+        &self,
+        x: F,
+        key: &registry::Key<F>,
+        _floor_plan: &[crate::floor_planner::RoutineSlot],
+    ) -> unstructured::Polynomial<F, R> {
         // Bound is enforced in `StageMask::new`.
         assert!(self.skip_multiplications + self.num_multiplications < R::n());
         let reserved: usize = R::n() - self.skip_multiplications - self.num_multiplications - 1;
@@ -158,7 +169,12 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
         unstructured::Polynomial::from_coeffs(coeffs)
     }
 
-    fn sy(&self, y: F, key: &registry::Key<F>) -> structured::Polynomial<F, R> {
+    fn sy(
+        &self,
+        y: F,
+        key: &registry::Key<F>,
+        _floor_plan: &[crate::floor_planner::RoutineSlot],
+    ) -> structured::Polynomial<F, R> {
         // Bound is enforced in `StageMask::new`.
         assert!(self.skip_multiplications + self.num_multiplications < R::n());
         let reserved: usize = R::n() - self.skip_multiplications - self.num_multiplications - 1;
@@ -369,7 +385,7 @@ mod tests {
         let k = registry::Key::new(Fp::random(&mut rand::rng()));
 
         {
-            let rhs = circ1.sy(y, &k);
+            let rhs = circ1.sy(y, &k, &[]);
             assert_eq!(rx1_a.revdot(&rhs), Fp::ZERO);
             assert_eq!(rx1_b.revdot(&rhs), Fp::ZERO);
 
@@ -383,10 +399,10 @@ mod tests {
             assert_eq!(combined.revdot(&rhs), Fp::ZERO);
         }
 
-        assert_eq!(rx1_a.revdot(&circ1.sy(y, &k)), Fp::ZERO);
-        assert_eq!(rx2.revdot(&circ2.sy(y, &k)), Fp::ZERO);
-        assert!(rx1_a.revdot(&circ2.sy(y, &k)) != Fp::ZERO);
-        assert!(rx2.revdot(&circ1.sy(y, &k)) != Fp::ZERO);
+        assert_eq!(rx1_a.revdot(&circ1.sy(y, &k, &[])), Fp::ZERO);
+        assert_eq!(rx2.revdot(&circ2.sy(y, &k, &[])), Fp::ZERO);
+        assert!(rx1_a.revdot(&circ2.sy(y, &k, &[])) != Fp::ZERO);
+        assert!(rx2.revdot(&circ1.sy(y, &k, &[])) != Fp::ZERO);
 
         Ok(())
     }
@@ -399,9 +415,9 @@ mod tests {
         let y = Fp::random(&mut rand::rng());
         let k = registry::Key::new(Fp::random(&mut rand::rng()));
 
-        let sxy = stage_mask.sxy(x, y, &k);
-        let sx = stage_mask.sx(x, &k);
-        let sy = stage_mask.sy(y, &k);
+        let sxy = stage_mask.sxy(x, y, &k, &[]);
+        let sx = stage_mask.sx(x, &k, &[]);
+        let sy = stage_mask.sy(y, &k, &[]);
 
         assert_eq!(sxy, sx.eval(y));
         assert_eq!(sxy, sy.eval(x));
@@ -418,9 +434,9 @@ mod tests {
         let comparison_mask = stage.clone().into_object::<R>().unwrap();
 
         let x_4n_minus_1 = x.pow_vartime([(4 * R::n() - 1) as u64]);
-        let comparison_sxy = comparison_mask.sxy(x, y, &k) - x_4n_minus_1;
+        let comparison_sxy = comparison_mask.sxy(x, y, &k, &[]) - x_4n_minus_1;
 
-        assert_eq!(stage.sxy(x, y, &k), comparison_sxy);
+        assert_eq!(stage.sxy(x, y, &k, &[]), comparison_sxy);
     }
 
     #[test]
@@ -463,9 +479,9 @@ mod tests {
         let y = Fp::random(&mut rand::rng());
         let k = registry::Key::new(Fp::random(&mut rand::rng()));
 
-        let sxy = stage.sxy(x, y, &k);
-        let sx = stage.sx(x, &k);
-        let sy = stage.sy(y, &k);
+        let sxy = stage.sxy(x, y, &k, &[]);
+        let sx = stage.sx(x, &k, &[]);
+        let sy = stage.sy(y, &k, &[]);
 
         assert_eq!(sxy, sx.eval(y));
         assert_eq!(sxy, sy.eval(x));
@@ -503,12 +519,12 @@ mod tests {
 
                 // This adjusts for the single "ONE" constraint which is always skipped
                 // in staging witnesses.
-                let sxy = comparison_mask.sxy(x, y, &k) - x_4n_minus_1;
-                let mut sx = comparison_mask.sx(x, &k);
+                let sxy = comparison_mask.sxy(x, y, &k, &[]) - x_4n_minus_1;
+                let mut sx = comparison_mask.sx(x, &k, &[]);
                 {
                     sx[0] -= x_4n_minus_1;
                 }
-                let mut sy = comparison_mask.sy(y, &k);
+                let mut sy = comparison_mask.sy(y, &k, &[]);
                 {
                     let sy = sy.backward();
                     sy.c[0] -= Fp::ONE;
@@ -516,9 +532,9 @@ mod tests {
 
                 prop_assert_eq!(sy.eval(x), sxy);
                 prop_assert_eq!(sx.eval(y), sxy);
-                prop_assert_eq!(stage_mask.sxy(x, y, &k), sxy);
-                prop_assert_eq!(stage_mask.sx(x, &k).eval(y), sxy);
-                prop_assert_eq!(stage_mask.sy(y, &k).eval(x), sxy);
+                prop_assert_eq!(stage_mask.sxy(x, y, &k, &[]), sxy);
+                prop_assert_eq!(stage_mask.sx(x, &k, &[]).eval(y), sxy);
+                prop_assert_eq!(stage_mask.sy(y, &k, &[]).eval(x), sxy);
 
                 Ok(())
             };
@@ -598,7 +614,7 @@ mod tests {
         // rx.revdot(&stage_mask) == 0 for well-formed stages
         let y = Fp::random(&mut rand::rng());
         let k = registry::Key::new(Fp::ONE);
-        let sy = stage_mask.sy(y, &k);
+        let sy = stage_mask.sy(y, &k, &[]);
 
         let check = rx.revdot(&sy);
         assert_eq!(
