@@ -166,9 +166,9 @@ fn test_simple_circuit() {
     b.add_assign(&circuit.sy(y, &k, &floor_plan));
     b.add_assign(&MyRank::tz(z));
 
-    let expected = ragu_arithmetic::eval(
-        &MySimpleCircuit
-            .ky((
+    let expected = MySimpleCircuit
+        .ky(
+            (
                 Fp::from_raw([
                     2947731990920411638,
                     2194633309585215303,
@@ -181,10 +181,10 @@ fn test_simple_circuit() {
                     8416953053256280859,
                     2438073643388336437,
                 ]),
-            ))
-            .unwrap(),
-        y,
-    );
+            ),
+            y,
+        )
+        .unwrap();
 
     let a = a.unstructured();
     let b = b.unstructured();
