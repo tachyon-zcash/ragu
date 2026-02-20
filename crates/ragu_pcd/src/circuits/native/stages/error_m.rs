@@ -30,7 +30,9 @@ pub struct Witness<C: Cycle, FP: fold_revdot::Parameters> {
     pub error_terms: FixedVec<FixedVec<C::CircuitField, ErrorTermsLen<FP::M>>, FP::N>,
 }
 
-/// Output gadget for the error_m stage.
+/// Prover-internal output gadget for the error_m stage.
+///
+/// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget, Consistent)]
 pub struct Output<'dr, D: Driver<'dr>, FP: fold_revdot::Parameters> {
     /// Error term elements for layer 1.

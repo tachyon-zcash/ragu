@@ -338,7 +338,9 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
     }
 }
 
-/// Output gadget for the query stage.
+/// Prover-internal output gadget for the query stage.
+///
+/// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget)]
 pub struct Output<'dr, D: Driver<'dr>> {
     /// Fixed registry evaluations at each internal circuit's omega^j.

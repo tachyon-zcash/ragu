@@ -48,7 +48,10 @@ macro_rules! define_nested_stage {
                 $( pub $field_name: C, )+
             }
 
-            /// Output gadget for this nested stage.
+            /// Prover-internal output gadget for this nested stage.
+            ///
+            /// This is stage communication data, not part of the circuit's
+            /// public instance.
             #[derive(Gadget, Write)]
             pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
                 $(

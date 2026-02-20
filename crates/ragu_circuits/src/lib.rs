@@ -72,8 +72,8 @@ pub trait Circuit<F: Field>: Sized + Send + Sync {
     /// circuit.
     type Witness<'source>: Send;
 
-    /// Represents a gadget that can be serialized and represents the output of
-    /// a circuit computation.
+    /// The circuit's public instance, serialized into the $k(Y)$ instance
+    /// polynomial that the verifier checks.
     type Output: Write<F>;
 
     /// Auxiliary data produced during the computation of the

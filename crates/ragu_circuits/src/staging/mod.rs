@@ -142,6 +142,11 @@ pub trait Stage<F: Field, R: Rank> {
     type Witness<'source>: Send;
 
     /// The kind of gadget that this stage produces as output.
+    ///
+    /// Stage outputs are prover-internal: they carry data between stages but are
+    /// not part of the circuit's public instance. The verifier never sees them.
+    /// Contrast with [`MultiStageCircuit::Output`], which is the verifier-visible
+    /// instance encoded into $k(Y)$.
     type OutputKind: GadgetKind<F>;
 
     /// Returns the number of values that are allocated in this stage.
@@ -212,7 +217,11 @@ pub trait MultiStageCircuit<F: Field, R: Rank>: Sized + Send + Sync {
     /// circuit.
     type Witness<'source>: Send;
 
-    /// Represents the output of a circuit computation which can be serialized.
+    /// The circuit's public instance, serialized into the $k(Y)$ instance
+    /// polynomial that the verifier checks.
+    ///
+    /// Contrast with [`Stage::OutputKind`], which carries prover-internal data
+    /// between stages.
     type Output: Write<F>;
 
     /// Auxiliary data produced during the computation of the

@@ -76,7 +76,9 @@ pub struct ChildKyOutputs<'dr, D: Driver<'dr>> {
     pub unified_bridge: Element<'dr, D>,
 }
 
-/// Output gadget for the error_n stage.
+/// Prover-internal output gadget for the error_n stage.
+///
+/// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget, Consistent)]
 pub struct Output<
     'dr,

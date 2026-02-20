@@ -81,10 +81,15 @@ macro_rules! define_unified_instance {
             $field:ident : $field_type:ident
         ),+ $(,)?
     ) => {
-        /// Shared instance for internal verification circuits.
+        /// Shared public instance for internal verification circuits.
         ///
-        /// This gadget contains the commitments, Fiat-Shamir challenges, and final
-        /// values that internal circuits expose as instance data. The nested curve
+        /// Unlike stage [`Output`](super::stages) types (which are prover-internal
+        /// communication), this gadget is the verifier-visible instance: its fields
+        /// are serialized into the $k(Y)$ instance polynomial that the verifier
+        /// checks.
+        ///
+        /// Contains the commitments, Fiat-Shamir challenges, and final values that
+        /// internal circuits expose as instance data. The nested curve
         /// (`C::NestedCurve`) is the other curve in the cycle, whose base field equals
         /// the circuit's scalar field.
         ///
