@@ -39,7 +39,7 @@ use ragu_core::{
 };
 use ragu_primitives::io::Write;
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::boxed::Box;
 
 use polynomials::{Rank, structured, unstructured};
 
@@ -194,9 +194,10 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
         rx::eval(self, witness)
     }
 
-    /// Computes the instance polynomial $k(Y)$ for the given instance.
-    fn ky(&self, instance: Self::Instance<'_>) -> Result<Vec<F>> {
-        ky::eval(self, instance)
+    /// Evaluates the instance polynomial $k(y)$ for the given instance at
+    /// a point $y \in \mathbb{F}$.
+    fn ky(&self, instance: Self::Instance<'_>, y: F) -> Result<F> {
+        ky::emulate(self, instance, y)
     }
 }
 

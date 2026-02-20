@@ -452,7 +452,6 @@ mod tests {
             let staged_s = staged.clone().into_object()?;
             let staged_floor_plan =
                 ragu_circuits::floor_planner::floor_plan(staged_s.routine_records());
-            let ky = staged.ky(())?;
             let y = Fp::random(&mut rand::rng());
 
             // Verify revdot identities for each stage.
@@ -469,7 +468,7 @@ mod tests {
             lhs.add_assign(&points_rx);
             assert_eq!(
                 lhs.revdot(&staged_s.sy(y, &key, &staged_floor_plan)),
-                ragu_arithmetic::eval(&ky, y)
+                staged.ky((), y)?
             );
         }
 
@@ -522,7 +521,6 @@ mod tests {
             let staged_s = staged.clone().into_object()?;
             let staged_floor_plan =
                 ragu_circuits::floor_planner::floor_plan(staged_s.routine_records());
-            let ky = staged.ky(())?;
             let y = Fp::random(&mut rand::rng());
 
             let endoscalar_rx = <EndoscalarStage as StageExt<Fp, R>>::rx(endoscalar)?;
@@ -534,7 +532,7 @@ mod tests {
             lhs.add_assign(&points_rx);
             assert_eq!(
                 lhs.revdot(&staged_s.sy(y, &key, &staged_floor_plan)),
-                ragu_arithmetic::eval(&ky, y)
+                staged.ky((), y)?
             );
         }
 

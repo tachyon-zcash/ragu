@@ -8,27 +8,23 @@ use ff::Field;
 use ragu_core::{
     Result,
     drivers::emulator::Emulator,
-    maybe::{Always, MaybeKind},
+    maybe::{Always, Maybe, MaybeKind},
 };
-use ragu_primitives::GadgetExt;
-
-use alloc::{vec, vec::Vec};
+use ragu_primitives::{Element, GadgetExt};
 
 use super::Circuit;
 
-pub fn eval<F: Field, C: Circuit<F>>(circuit: &C, instance: C::Instance<'_>) -> Result<Vec<F>> {
+/// Evaluates $k(y)$ for the given circuit and instance at a point $y$, without
+/// collecting intermediate coefficients.
+pub fn emulate<F: Field, C: Circuit<F>>(circuit: &C, instance: C::Instance<'_>, y: F) -> Result<F> {
     let mut dr = Emulator::extractor();
-    let mut pubinputs = vec![];
+    let y_elem = Element::alloc(&mut dr, Always::<F>::just(|| y))?;
+    let mut ky = ragu_primitives::horner::Horner::new(&y_elem);
     circuit
         .instance(&mut dr, Always::maybe_just(|| instance))?
-        .write(&mut dr, &mut pubinputs)?;
+        .write(&mut dr, &mut ky)?;
 
-    Ok(pubinputs
-        .into_iter()
-        .map(|x| x.wire().clone().value())
-        .chain(Some(F::ONE))
-        .rev()
-        .collect())
+    Ok(ky.finish_ky(&mut dr)?.wire().clone().value())
 }
 
 #[cfg(test)]
@@ -41,9 +37,10 @@ mod tests {
     fn test_ky() {
         let circuit = SquareCircuit { times: 10 };
         let instance: Fp = Fp::from(3);
-        let ky = eval::<Fp, _>(&circuit, instance).unwrap();
-        assert_eq!(ky.len(), 2);
-        assert_eq!(ky[0], Fp::ONE);
-        assert_eq!(ky[1], Fp::from(3));
+        let y = Fp::random(&mut rand::rng());
+
+        // k(Y) = 1 + 3Y for this circuit, so k(y) = 1 + 3y.
+        let expected = Fp::ONE + Fp::from(3) * y;
+        assert_eq!(emulate::<Fp, _>(&circuit, instance, y).unwrap(), expected);
     }
 }

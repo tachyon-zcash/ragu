@@ -82,9 +82,9 @@ library_benchmark_group!(
 );
 
 #[library_benchmark(setup = setup_rng)]
-#[bench::ky((f, f))]
-fn ky((a, b): (Fp, Fp)) {
-    black_box(MySimpleCircuit.ky((a, b))).unwrap();
+#[bench::ky((f, f, f))]
+fn ky((a, b, y): (Fp, Fp, Fp)) {
+    black_box(MySimpleCircuit.ky((a, b), y)).unwrap();
 }
 
 #[library_benchmark]

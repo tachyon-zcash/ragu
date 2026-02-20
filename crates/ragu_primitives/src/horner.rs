@@ -14,7 +14,6 @@ use crate::{Element, GadgetExt, io::Buffer};
 ///
 /// This is consistent with [`Element::fold`], which also expects descending
 /// order.
-///
 pub struct Horner<'a, 'dr, D: Driver<'dr>> {
     point: &'a Element<'dr, D>,
     result: Option<Element<'dr, D>>,
