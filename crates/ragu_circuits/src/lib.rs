@@ -15,6 +15,7 @@
 
 extern crate alloc;
 
+pub mod floor_planner;
 mod ky;
 mod metrics;
 pub mod polynomials;
@@ -24,6 +25,7 @@ mod s;
 pub mod staging;
 mod trivial;
 
+pub use metrics::RoutineRecord;
 pub use rx::Trace;
 
 #[cfg(test)]
@@ -41,15 +43,15 @@ use alloc::{boxed::Box, vec::Vec};
 
 use polynomials::{Rank, structured, unstructured};
 
-/// A trait for drivers that stash a spare wire from paired allocation (see
-/// [`Driver::alloc`]).
+/// A trait for drivers that carry per-routine state which must be saved and
+/// restored across routine boundaries.
 ///
 /// Provides [`with_scope`](Self::with_scope), which saves
-/// [`scope`](Self::scope), replaces it with a caller-supplied `init` value,
-/// runs a closure with `&mut self`, then restores the original value. This
-/// isolates allocation state within routines.
+/// [`scope`](Self::scope), replaces it with a caller-supplied value, runs a
+/// closure with `&mut self`, then restores the original value. This isolates
+/// driver state within routines.
 pub(crate) trait DriverScope<S> {
-    /// Returns a mutable reference to the scope field.
+    /// Returns a mutable reference to the scoped state.
     fn scope(&mut self) -> &mut S;
 
     /// Runs `f` with [`scope`](Self::scope) temporarily replaced by `init`, then
@@ -135,15 +137,32 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
         }
 
         impl<F: Field, C: Circuit<F>, R: Rank> CircuitObject<F, R> for ProcessedCircuit<C> {
-            fn sxy(&self, x: F, y: F, key: &registry::Key<F>) -> F {
-                s::sxy::eval::<_, _, R>(&self.circuit, x, y, key)
+            fn sxy(
+                &self,
+                x: F,
+                y: F,
+                key: &registry::Key<F>,
+                floor_plan: &[floor_planner::RoutineSlot],
+            ) -> F {
+                s::sxy::eval::<_, _, R>(&self.circuit, x, y, key, floor_plan)
                     .expect("should succeed if metrics succeeded")
             }
-            fn sx(&self, x: F, key: &registry::Key<F>) -> unstructured::Polynomial<F, R> {
-                s::sx::eval(&self.circuit, x, key).expect("should succeed if metrics succeeded")
+            fn sx(
+                &self,
+                x: F,
+                key: &registry::Key<F>,
+                floor_plan: &[floor_planner::RoutineSlot],
+            ) -> unstructured::Polynomial<F, R> {
+                s::sx::eval(&self.circuit, x, key, floor_plan)
+                    .expect("should succeed if metrics succeeded")
             }
-            fn sy(&self, y: F, key: &registry::Key<F>) -> structured::Polynomial<F, R> {
-                s::sy::eval(&self.circuit, y, key, self.metrics.num_linear_constraints)
+            fn sy(
+                &self,
+                y: F,
+                key: &registry::Key<F>,
+                floor_plan: &[floor_planner::RoutineSlot],
+            ) -> structured::Polynomial<F, R> {
+                s::sy::eval(&self.circuit, y, key, floor_plan)
                     .expect("should succeed if metrics succeeded")
             }
             fn constraint_counts(&self) -> (usize, usize) {
@@ -151,6 +170,9 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
                     self.metrics.num_multiplication_constraints,
                     self.metrics.num_linear_constraints,
                 )
+            }
+            fn routine_records(&self) -> &[RoutineRecord] {
+                &self.metrics.routines
             }
         }
 
@@ -161,7 +183,10 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
         Ok(Box::new(circuit))
     }
 
-    /// Computes the trace polynomial $r(X)$ given a witness for the circuit.
+    /// Computes the trace for this circuit from a witness.
+    ///
+    /// The returned [`Trace`] can be assembled into a polynomial
+    /// via [`Registry::assemble`](registry::Registry::assemble).
     fn rx<'witness>(
         &self,
         witness: Self::Witness<'witness>,
@@ -182,14 +207,36 @@ impl<F: Field, C: Circuit<F>> CircuitExt<F> for C {}
 /// See [`CircuitExt::into_object`].
 pub trait CircuitObject<F: Field, R: Rank>: Send + Sync {
     /// Evaluates the polynomial $s(x, y)$ for some $x, y \in \mathbb{F}$.
-    fn sxy(&self, x: F, y: F, key: &registry::Key<F>) -> F;
+    fn sxy(
+        &self,
+        x: F,
+        y: F,
+        key: &registry::Key<F>,
+        floor_plan: &[floor_planner::RoutineSlot],
+    ) -> F;
 
     /// Computes the polynomial restriction $s(x, Y)$ for some $x \in \mathbb{F}$.
-    fn sx(&self, x: F, key: &registry::Key<F>) -> unstructured::Polynomial<F, R>;
+    fn sx(
+        &self,
+        x: F,
+        key: &registry::Key<F>,
+        floor_plan: &[floor_planner::RoutineSlot],
+    ) -> unstructured::Polynomial<F, R>;
 
     /// Computes the polynomial restriction $s(X, y)$ for some $y \in \mathbb{F}$.
-    fn sy(&self, y: F, key: &registry::Key<F>) -> structured::Polynomial<F, R>;
+    fn sy(
+        &self,
+        y: F,
+        key: &registry::Key<F>,
+        floor_plan: &[floor_planner::RoutineSlot],
+    ) -> structured::Polynomial<F, R>;
 
     /// Returns the number of constraints: `(multiplication, linear)`.
     fn constraint_counts(&self) -> (usize, usize);
+
+    /// Returns per-routine constraint records in DFS order.
+    ///
+    /// These records serve as input to
+    /// [`floor_planner::floor_plan`] for computing absolute offsets.
+    fn routine_records(&self) -> &[RoutineRecord];
 }

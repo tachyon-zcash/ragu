@@ -100,16 +100,9 @@ fn into_object_r13(circuit: impl Circuit<Fp>) {
 }
 
 #[library_benchmark(setup = setup_rng)]
-#[bench::rx_r7((f, f))]
+#[bench::rx_r5((f, f))]
 fn rx_r5((witness0, witness1): (Fp, Fp)) {
-    black_box(
-        MySimpleCircuit
-            .rx((witness0, witness1))
-            .unwrap()
-            .0
-            .assemble_trivial::<TestRank>()
-            .unwrap(),
-    );
+    black_box(MySimpleCircuit.rx((witness0, witness1))).unwrap();
 }
 
 #[library_benchmark(setup = setup_with_rng)]
@@ -118,14 +111,7 @@ fn rx_r5((witness0, witness1): (Fp, Fp)) {
         (SquareCircuit { times: 10 }, (f,)),
     )]
 fn rx_r13((circuit, (witness,)): (SquareCircuit, (Fp,))) {
-    black_box(
-        circuit
-            .rx(witness)
-            .unwrap()
-            .0
-            .assemble_trivial::<ProductionRank>()
-            .unwrap(),
-    );
+    black_box(circuit.rx(witness)).unwrap();
 }
 
 library_benchmark_group!(

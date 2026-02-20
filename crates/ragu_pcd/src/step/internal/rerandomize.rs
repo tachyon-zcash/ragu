@@ -134,8 +134,12 @@ fn test_rerandomize_consistency() {
     let y = Fp::from(17u64);
     let key = registry::Key::default();
 
-    let eval_single = circuit_single.sxy(x, y, &key);
-    let eval_pair = circuit_pair.sxy(x, y, &key);
+    let floor_plan_single =
+        ragu_circuits::floor_planner::floor_plan(circuit_single.routine_records());
+    let floor_plan_pair = ragu_circuits::floor_planner::floor_plan(circuit_pair.routine_records());
+
+    let eval_single = circuit_single.sxy(x, y, &key, &floor_plan_single);
+    let eval_pair = circuit_pair.sxy(x, y, &key, &floor_plan_pair);
 
     assert_eq!(eval_single, eval_pair,);
 }

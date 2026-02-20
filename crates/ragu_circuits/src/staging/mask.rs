@@ -57,7 +57,13 @@ impl<R: Rank> StageMask<R> {
 }
 
 impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
-    fn sxy(&self, x: F, y: F, key: &registry::Key<F>) -> F {
+    fn sxy(
+        &self,
+        x: F,
+        y: F,
+        key: &registry::Key<F>,
+        _floor_plan: &[crate::floor_planner::RoutineSlot],
+    ) -> F {
         // Bound is enforced in `StageMask::new`.
         assert!(self.skip_multiplications + self.num_multiplications < R::n());
         let reserved: usize = R::n() - self.skip_multiplications - self.num_multiplications - 1;
@@ -104,7 +110,12 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
         placeholder + y.pow_vartime([(3 * reserved) as u64]) * c1 + c2
     }
 
-    fn sx(&self, x: F, key: &registry::Key<F>) -> unstructured::Polynomial<F, R> {
+    fn sx(
+        &self,
+        x: F,
+        key: &registry::Key<F>,
+        _floor_plan: &[crate::floor_planner::RoutineSlot],
+    ) -> unstructured::Polynomial<F, R> {
         // Bound is enforced in `StageMask::new`.
         assert!(self.skip_multiplications + self.num_multiplications < R::n());
         let reserved: usize = R::n() - self.skip_multiplications - self.num_multiplications - 1;
@@ -158,7 +169,12 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
         unstructured::Polynomial::from_coeffs(coeffs)
     }
 
-    fn sy(&self, y: F, key: &registry::Key<F>) -> structured::Polynomial<F, R> {
+    fn sy(
+        &self,
+        y: F,
+        key: &registry::Key<F>,
+        _floor_plan: &[crate::floor_planner::RoutineSlot],
+    ) -> structured::Polynomial<F, R> {
         // Bound is enforced in `StageMask::new`.
         assert!(self.skip_multiplications + self.num_multiplications < R::n());
         let reserved: usize = R::n() - self.skip_multiplications - self.num_multiplications - 1;
@@ -212,6 +228,10 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
         let num_linear_constraints = 3 * (R::n() - self.num_multiplications - 1) + 2;
         (num_multiplication_constraints, num_linear_constraints)
     }
+
+    fn routine_records(&self) -> &[crate::RoutineRecord] {
+        &[]
+    }
 }
 
 #[cfg(test)]
@@ -227,14 +247,15 @@ mod tests {
         drivers::{Driver, DriverValue, LinearExpression, emulator::Emulator},
         gadgets::{Bound, Consistent, Gadget},
         maybe::Maybe,
+        routines::{Prediction, Routine},
     };
     use ragu_pasta::{EpAffine, Fp, Fq};
     use ragu_primitives::{Element, Endoscalar, Point, io::Write};
     use rand::Rng;
 
     use crate::{
-        CircuitExt, CircuitObject, metrics, polynomials::Rank, registry, s::sy,
-        staging::StageBuilder, tests::SquareCircuit,
+        CircuitExt, CircuitObject, metrics, polynomials::Rank, registry, staging::StageBuilder,
+        tests::SquareCircuit,
     };
 
     use super::{
@@ -365,7 +386,7 @@ mod tests {
         let k = registry::Key::new(Fp::random(&mut rand::rng()));
 
         {
-            let rhs = circ1.sy(y, &k);
+            let rhs = circ1.sy(y, &k, &[]);
             assert_eq!(rx1_a.revdot(&rhs), Fp::ZERO);
             assert_eq!(rx1_b.revdot(&rhs), Fp::ZERO);
 
@@ -379,10 +400,10 @@ mod tests {
             assert_eq!(combined.revdot(&rhs), Fp::ZERO);
         }
 
-        assert_eq!(rx1_a.revdot(&circ1.sy(y, &k)), Fp::ZERO);
-        assert_eq!(rx2.revdot(&circ2.sy(y, &k)), Fp::ZERO);
-        assert!(rx1_a.revdot(&circ2.sy(y, &k)) != Fp::ZERO);
-        assert!(rx2.revdot(&circ1.sy(y, &k)) != Fp::ZERO);
+        assert_eq!(rx1_a.revdot(&circ1.sy(y, &k, &[])), Fp::ZERO);
+        assert_eq!(rx2.revdot(&circ2.sy(y, &k, &[])), Fp::ZERO);
+        assert!(rx1_a.revdot(&circ2.sy(y, &k, &[])) != Fp::ZERO);
+        assert!(rx2.revdot(&circ1.sy(y, &k, &[])) != Fp::ZERO);
 
         Ok(())
     }
@@ -395,9 +416,9 @@ mod tests {
         let y = Fp::random(&mut rand::rng());
         let k = registry::Key::new(Fp::random(&mut rand::rng()));
 
-        let sxy = stage_mask.sxy(x, y, &k);
-        let sx = stage_mask.sx(x, &k);
-        let sy = stage_mask.sy(y, &k);
+        let sxy = stage_mask.sxy(x, y, &k, &[]);
+        let sx = stage_mask.sx(x, &k, &[]);
+        let sy = stage_mask.sy(y, &k, &[]);
 
         assert_eq!(sxy, sx.eval(y));
         assert_eq!(sxy, sy.eval(x));
@@ -412,11 +433,12 @@ mod tests {
         let k = registry::Key::new(Fp::random(&mut rand::rng()));
 
         let comparison_mask = stage.clone().into_object::<R>().unwrap();
+        let floor_plan = crate::floor_planner::floor_plan(comparison_mask.routine_records());
 
         let x_4n_minus_1 = x.pow_vartime([(4 * R::n() - 1) as u64]);
-        let comparison_sxy = comparison_mask.sxy(x, y, &k) - x_4n_minus_1;
+        let comparison_sxy = comparison_mask.sxy(x, y, &k, &floor_plan) - x_4n_minus_1;
 
-        assert_eq!(stage.sxy(x, y, &k), comparison_sxy);
+        assert_eq!(stage.sxy(x, y, &k, &[]), comparison_sxy);
     }
 
     #[test]
@@ -425,12 +447,15 @@ mod tests {
         let y = Fp::random(&mut rand::rng());
         let k = registry::Key::new(Fp::random(&mut rand::rng()));
 
-        let metrics = metrics::eval(&circuit).expect("metrics should succeed");
-        let mut sy = sy::eval::<_, _, R>(&circuit, y, &k, metrics.num_linear_constraints)
-            .expect("sy() evaluation should succeed");
+        let obj = circuit
+            .into_object::<R>()
+            .expect("into_object should succeed");
+        let floor_plan = crate::floor_planner::floor_plan(obj.routine_records());
+        let (_, num_linear_constraints) = obj.constraint_counts();
+        let mut sy = obj.sy(y, &k, &floor_plan);
 
         // The first gate (ONE gate) should have the highest y-power.
-        let expected_y_power = metrics.num_linear_constraints - 1;
+        let expected_y_power = num_linear_constraints - 1;
         let actual_first_coeff = sy.backward().a[0];
         let expected_first_coeff = y.pow_vartime([expected_y_power as u64]);
 
@@ -438,6 +463,24 @@ mod tests {
         assert_eq!(
             actual_first_coeff, expected_first_coeff,
             "First coefficient should have correct y-power"
+        );
+    }
+
+    #[test]
+    fn test_root_routine_has_at_least_two_linear_constraints() {
+        // The root routine always gets the registry key constraint and the ONE
+        // constraint from metrics::eval(), so its num_linear_constraints must be
+        // at least 2.  This invariant prevents the `- 1` underflow in sy::eval's
+        // initial y-power computation.
+        let circuit = SquareCircuit { times: 0 };
+        let obj = circuit
+            .into_object::<R>()
+            .expect("into_object should succeed");
+        let floor_plan = crate::floor_planner::floor_plan(obj.routine_records());
+        assert!(
+            floor_plan[0].num_linear_constraints >= 2,
+            "root routine must have at least 2 linear constraints (registry key + ONE), got {}",
+            floor_plan[0].num_linear_constraints,
         );
     }
 
@@ -459,9 +502,9 @@ mod tests {
         let y = Fp::random(&mut rand::rng());
         let k = registry::Key::new(Fp::random(&mut rand::rng()));
 
-        let sxy = stage.sxy(x, y, &k);
-        let sx = stage.sx(x, &k);
-        let sy = stage.sy(y, &k);
+        let sxy = stage.sxy(x, y, &k, &[]);
+        let sx = stage.sx(x, &k, &[]);
+        let sy = stage.sy(y, &k, &[]);
 
         assert_eq!(sxy, sx.eval(y));
         assert_eq!(sxy, sy.eval(x));
@@ -491,6 +534,7 @@ mod tests {
 
             let stage_mask = StageMask::<R>::new(skip, num).unwrap();
             let comparison_mask = stage_mask.clone().into_object::<R>().unwrap();
+            let floor_plan = crate::floor_planner::floor_plan(comparison_mask.routine_records());
 
             let k = registry::Key::new(Fp::random(&mut rand::rng()));
 
@@ -499,12 +543,12 @@ mod tests {
 
                 // This adjusts for the single "ONE" constraint which is always skipped
                 // in staging witnesses.
-                let sxy = comparison_mask.sxy(x, y, &k) - x_4n_minus_1;
-                let mut sx = comparison_mask.sx(x, &k);
+                let sxy = comparison_mask.sxy(x, y, &k, &floor_plan) - x_4n_minus_1;
+                let mut sx = comparison_mask.sx(x, &k, &floor_plan);
                 {
                     sx[0] -= x_4n_minus_1;
                 }
-                let mut sy = comparison_mask.sy(y, &k);
+                let mut sy = comparison_mask.sy(y, &k, &floor_plan);
                 {
                     let sy = sy.backward();
                     sy.c[0] -= Fp::ONE;
@@ -512,9 +556,9 @@ mod tests {
 
                 prop_assert_eq!(sy.eval(x), sxy);
                 prop_assert_eq!(sx.eval(y), sxy);
-                prop_assert_eq!(stage_mask.sxy(x, y, &k), sxy);
-                prop_assert_eq!(stage_mask.sx(x, &k).eval(y), sxy);
-                prop_assert_eq!(stage_mask.sy(y, &k).eval(x), sxy);
+                prop_assert_eq!(stage_mask.sxy(x, y, &k, &[]), sxy);
+                prop_assert_eq!(stage_mask.sx(x, &k, &[]).eval(y), sxy);
+                prop_assert_eq!(stage_mask.sy(y, &k, &[]).eval(x), sxy);
 
                 Ok(())
             };
@@ -594,7 +638,7 @@ mod tests {
         // rx.revdot(&stage_mask) == 0 for well-formed stages
         let y = Fp::random(&mut rand::rng());
         let k = registry::Key::new(Fp::ONE);
-        let sy = stage_mask.sy(y, &k);
+        let sy = stage_mask.sy(y, &k, &[]);
 
         let check = rx.revdot(&sy);
         assert_eq!(
@@ -626,5 +670,91 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_child_routine_zero_linear_constraints() {
+        // A routine that only uses a multiplication gate and no linear
+        // constraints.  This exercises the `.saturating_sub(1)` path in
+        // sy::eval's sub-routine y-power initialisation.
+        #[derive(Clone)]
+        struct MulOnlyRoutine;
+
+        impl Routine<Fp> for MulOnlyRoutine {
+            type Input = ();
+            type Output = ();
+            type Aux<'dr> = ();
+
+            fn execute<'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                dr: &mut D,
+                _input: Bound<'dr, D, Self::Input>,
+                _aux: DriverValue<D, Self::Aux<'dr>>,
+            ) -> Result<Bound<'dr, D, Self::Output>> {
+                dr.mul(|| unreachable!())?;
+                Ok(())
+            }
+
+            fn predict<'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                _dr: &mut D,
+                _input: &Bound<'dr, D, Self::Input>,
+            ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>>
+            {
+                Ok(Prediction::Unknown(D::just(|| ())))
+            }
+        }
+
+        struct TestCircuit;
+
+        impl crate::Circuit<Fp> for TestCircuit {
+            type Instance<'source> = ();
+            type Witness<'source> = ();
+            type Output = ();
+            type Aux<'source> = ();
+
+            fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                _dr: &mut D,
+                _instance: DriverValue<D, Self::Instance<'source>>,
+            ) -> Result<Bound<'dr, D, Self::Output>> {
+                Ok(())
+            }
+
+            fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                dr: &mut D,
+                _witness: DriverValue<D, Self::Witness<'source>>,
+            ) -> Result<(
+                Bound<'dr, D, Self::Output>,
+                DriverValue<D, Self::Aux<'source>>,
+            )> {
+                dr.routine(MulOnlyRoutine, ())?;
+                Ok(((), D::just(|| ())))
+            }
+        }
+
+        let obj = TestCircuit
+            .into_object::<R>()
+            .expect("into_object should succeed");
+        let floor_plan = crate::floor_planner::floor_plan(obj.routine_records());
+
+        // The child routine (index 1) should have zero linear constraints.
+        assert_eq!(
+            floor_plan[1].num_linear_constraints, 0,
+            "MulOnlyRoutine should have 0 linear constraints"
+        );
+
+        let x = Fp::random(&mut rand::rng());
+        let y = Fp::random(&mut rand::rng());
+        let k = registry::Key::new(Fp::random(&mut rand::rng()));
+
+        // None of these must panic — previously sy would underflow on `- 1`.
+        let sxy = obj.sxy(x, y, &k, &floor_plan);
+        let sx = obj.sx(x, &k, &floor_plan);
+        let sy = obj.sy(y, &k, &floor_plan);
+
+        assert_eq!(sxy, sx.eval(y));
+        assert_eq!(sxy, sy.eval(x));
     }
 }

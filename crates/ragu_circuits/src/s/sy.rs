@@ -83,6 +83,7 @@ use core::cell::RefCell;
 use super::DriverExt;
 use crate::{
     Circuit, DriverScope,
+    floor_planner::RoutineSlot,
     polynomials::{Rank, structured},
     registry,
 };
@@ -342,6 +343,18 @@ impl<F: Field, R: Rank> VirtualTable<'_, F, R> {
     }
 }
 
+/// Per-routine state saved and restored across routine boundaries.
+struct SyScope<'table, 'sy, F: Field, R: Rank> {
+    /// Stashed $b$ wire from paired allocation.
+    available_b: Option<Wire<'table, 'sy, F, R>>,
+    /// Current $y$ power being applied to constraints in this routine.
+    current_y: F,
+    /// Number of multiplication gates consumed so far in this routine.
+    multiplication_constraints: usize,
+    /// Number of linear constraints processed so far in this routine.
+    linear_constraints: usize,
+}
+
 /// A [`Driver`] that computes $s(X, y)$ at a fixed $y$.
 ///
 /// Given a fixed evaluation point $y \in \mathbb{F}$, this driver interprets
@@ -352,30 +365,15 @@ impl<F: Field, R: Rank> VirtualTable<'_, F, R> {
 /// [`Driver`]: ragu_core::drivers::Driver
 /// [`sx`]: super::sx
 /// [`sxy`]: super::sxy
-struct Evaluator<'table, 'sy, F: Field, R: Rank> {
-    /// Number of multiplication gates consumed so far.
-    ///
-    /// Incremented by [`mul()`](Driver::mul). Must not exceed [`Rank::n()`].
-    multiplication_constraints: usize,
+struct Evaluator<'table, 'sy, 'fp, F: Field, R: Rank> {
+    /// Per-routine scoped state.
+    scope: SyScope<'table, 'sy, F, R>,
 
-    /// Number of linear constraints processed so far.
-    ///
-    /// Incremented by [`enforce_zero`](Driver::enforce_zero). Must not exceed
-    /// [`Rank::num_coeffs()`].
-    linear_constraints: usize,
+    /// The evaluation point $y$.
+    y: F,
 
     /// Cached inverse $y^{-1}$, used to step through decreasing powers of $y$.
-    ///
-    /// Each [`enforce_zero`](Driver::enforce_zero) call multiplies `current_y`
-    /// by this value to step through $y^{q-1}, y^{q-2}, \ldots, y^0$.
     y_inv: F,
-
-    /// Current $y$ power being applied to constraints.
-    ///
-    /// Initialized to $y^{q-1}$ (where $q$ is the total linear constraint count)
-    /// and multiplied by `y_inv` after each constraint, so that constraints are
-    /// weighted by $y^{q-1}, y^{q-2}, \ldots, y^0$ in synthesis order.
-    current_y: F,
 
     /// Reference to the virtual table for wire management.
     ///
@@ -383,10 +381,11 @@ struct Evaluator<'table, 'sy, F: Field, R: Rank> {
     /// maintaining multiple [`Wire`] handles.
     virtual_table: &'table RefCell<VirtualTable<'sy, F, R>>,
 
-    /// Stashed $b$ wire from paired allocation (see [`Driver::alloc`]).
-    ///
-    /// [`Driver::alloc`]: ragu_core::drivers::Driver::alloc
-    available_b: Option<Wire<'table, 'sy, F, R>>,
+    /// Floor plan mapping DFS routine index to absolute offsets.
+    floor_plan: &'fp [RoutineSlot],
+
+    /// Global monotonic DFS counter for routine entries.
+    current_routine: usize,
 
     /// Marker for the rank type parameter.
     _marker: core::marker::PhantomData<R>,
@@ -472,11 +471,11 @@ impl<'table, 'sy, F: Field, R: Rank> LinearExpression<Wire<'table, 'sy, F, R>, F
     }
 }
 
-impl<'table, 'sy, F: Field, R: Rank> DriverScope<Option<Wire<'table, 'sy, F, R>>>
-    for Evaluator<'table, 'sy, F, R>
+impl<'table, 'sy, F: Field, R: Rank> DriverScope<SyScope<'table, 'sy, F, R>>
+    for Evaluator<'table, 'sy, '_, F, R>
 {
-    fn scope(&mut self) -> &mut Option<Wire<'table, 'sy, F, R>> {
-        &mut self.available_b
+    fn scope(&mut self) -> &mut SyScope<'table, 'sy, F, R> {
+        &mut self.scope
     }
 }
 
@@ -489,7 +488,7 @@ impl<'table, 'sy, F: Field, R: Rank> DriverScope<Option<Wire<'table, 'sy, F, R>>
 /// - `LCenforce`: Uses [`TermEnforcer`] to immediately distribute $y^j$
 ///   contributions.
 /// - `ImplWire`: [`Wire`] handles with reference counting for virtual wires.
-impl<'table, 'sy, F: Field, R: Rank> DriverTypes for Evaluator<'table, 'sy, F, R> {
+impl<'table, 'sy, F: Field, R: Rank> DriverTypes for Evaluator<'table, 'sy, '_, F, R> {
     type MaybeKind = Empty;
     type LCadd = TermCollector<F>;
     type LCenforce = TermEnforcer<'table, 'sy, F, R>;
@@ -497,7 +496,7 @@ impl<'table, 'sy, F: Field, R: Rank> DriverTypes for Evaluator<'table, 'sy, F, R
     type ImplWire = Wire<'table, 'sy, F, R>;
 }
 
-impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, F, R> {
+impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, '_, F, R> {
     type F = F;
     type Wire = Wire<'table, 'sy, F, R>;
 
@@ -511,11 +510,11 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, F
     /// Returns either a stashed $b$ wire from a previous gate, or allocates a
     /// new gate and stashes its $b$ wire for the next call.
     fn alloc(&mut self, _: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
-        if let Some(wire) = self.available_b.take() {
+        if let Some(wire) = self.scope.available_b.take() {
             Ok(wire)
         } else {
             let (a, b, _) = self.mul(|| unreachable!())?;
-            self.available_b = Some(b);
+            self.scope.available_b = Some(b);
 
             Ok(a)
         }
@@ -523,8 +522,9 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, F
 
     /// Consumes a multiplication gate, returning wire handles for $(a, b, c)$.
     ///
-    /// Pushes zero-initialized coefficient slots to the backward view for each
-    /// wire type, then returns [`Wire`] handles pointing to the new slots.
+    /// The gate index comes from the absolute floor-plan position tracked in
+    /// `scope.multiplication_constraints`. Backward view slots are
+    /// pre-allocated, so no push is needed.
     ///
     /// # Errors
     ///
@@ -534,18 +534,11 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, F
         &mut self,
         _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>,
     ) -> Result<(Self::Wire, Self::Wire, Self::Wire)> {
-        let index = self.multiplication_constraints;
+        let index = self.scope.multiplication_constraints;
         if index == R::n() {
             return Err(Error::MultiplicationBoundExceeded(R::n()));
         }
-        self.multiplication_constraints += 1;
-
-        {
-            let mut table = self.virtual_table.borrow_mut();
-            table.sy.a.push(F::ZERO);
-            table.sy.b.push(F::ZERO);
-            table.sy.c.push(F::ZERO);
-        }
+        self.scope.multiplication_constraints += 1;
 
         let a = Wire::new(WireIndex::A(index), self.virtual_table);
         let b = Wire::new(WireIndex::B(index), self.virtual_table);
@@ -581,33 +574,65 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, F
     /// Returns [`Error::LinearBoundExceeded`] if the constraint count reaches
     /// [`Rank::num_coeffs()`].
     fn enforce_zero(&mut self, lc: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
-        let q = self.linear_constraints;
+        let q = self.scope.linear_constraints;
         if q == R::num_coeffs() {
             return Err(Error::LinearBoundExceeded(R::num_coeffs()));
         }
-        self.linear_constraints += 1;
+        self.scope.linear_constraints += 1;
 
         lc(TermEnforcer(
             self.virtual_table,
-            Coeff::Arbitrary(self.current_y),
+            Coeff::Arbitrary(self.scope.current_y),
         ));
 
-        self.current_y *= self.y_inv;
+        self.scope.current_y *= self.y_inv;
 
         Ok(())
     }
 
-    /// Executes a routine with isolated allocation state.
     fn routine<Ro: Routine<Self::F> + 'table>(
         &mut self,
         routine: Ro,
         input: Bound<'table, Self, Ro::Input>,
     ) -> Result<Bound<'table, Self, Ro::Output>> {
-        self.with_scope(None, |this| {
+        self.current_routine += 1;
+        let slot = &self.floor_plan[self.current_routine];
+        // Routine's y-power starts at y^{linear_start + num_linear_constraints - 1}
+        // and decrements through the routine's linear constraint range.
+        let init_scope = SyScope {
+            available_b: None,
+            // When num_linear_constraints == 0 the routine emits no
+            // enforce_zero calls, so current_y is never read; use
+            // F::ZERO as an inert sentinel.
+            current_y: if slot.num_linear_constraints == 0 {
+                F::ZERO
+            } else {
+                self.y
+                    .pow_vartime([(slot.linear_start + slot.num_linear_constraints - 1) as u64])
+            },
+            multiplication_constraints: slot.multiplication_start,
+            linear_constraints: slot.linear_start,
+        };
+
+        self.with_scope(init_scope, |this| {
             let mut dummy = Emulator::wireless();
             let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
             let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
-            routine.execute(this, input, aux)
+            let result = routine.execute(this, input, aux)?;
+
+            // Verify this routine consumed exactly the expected constraints.
+            assert_eq!(
+                this.scope.multiplication_constraints,
+                slot.multiplication_start + slot.num_multiplication_constraints,
+                "routine multiplication constraint count must match floor plan"
+            );
+            assert_eq!(
+                this.scope.linear_constraints,
+                slot.linear_start + slot.num_linear_constraints,
+                "routine linear constraint count must match floor plan"
+            );
+
+            Ok(result)
         })
     }
 }
@@ -626,16 +651,17 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, F
 ///   enforcing `key_wire - key = 0` as a constraint. This randomizes
 ///   evaluations of $s(X, y)$, preventing trivial forgeries across registry
 ///   contexts.
-/// - `num_linear_constraints`: The total number of linear constraints expected
-///   from synthesis. Used to initialize `current_y = y^{q-1}` for reverse
-///   Horner iteration.
+/// - `floor_plan`: Per-routine absolute offsets, computed by
+///   [`floor_plan()`](crate::floor_planner::floor_plan). The root routine's
+///   `num_linear_constraints` determines the initial `current_y = y^{q-1}` for
+///   reverse Horner iteration.
 ///
 /// [`Registry`]: crate::registry::Registry
 pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     circuit: &C,
     y: F,
     key: &registry::Key<F>,
-    num_linear_constraints: usize,
+    floor_plan: &[RoutineSlot],
 ) -> Result<structured::Polynomial<F, R>> {
     let mut sy = structured::Polynomial::<F, R>::new();
 
@@ -646,20 +672,48 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
         return Ok(sy);
     }
 
+    let total_multiplications: usize = floor_plan
+        .iter()
+        .map(|s| s.num_multiplication_constraints)
+        .sum();
+
+    // Root routine's linear constraint count (for initial current_y).
+    // The root always has at least the registry key and ONE constraints.
+    let root_linear_constraints = floor_plan[0].num_linear_constraints;
+    assert!(
+        root_linear_constraints > 0,
+        "root routine must have at least one linear constraint"
+    );
+
     {
         let virtual_table = RefCell::new(VirtualTable::<F, R> {
             wires: vec![],
             free: vec![],
             sy: sy.backward(),
         });
+
+        // Pre-allocate backward view slots for all multiplication gates.
         {
-            let mut evaluator = Evaluator::<'_, '_, F, R> {
-                multiplication_constraints: 0,
-                linear_constraints: 0,
+            let mut table = virtual_table.borrow_mut();
+            table.sy.a.resize(total_multiplications, F::ZERO);
+            table.sy.b.resize(total_multiplications, F::ZERO);
+            table.sy.c.resize(total_multiplications, F::ZERO);
+        }
+
+        {
+            let mut evaluator = Evaluator::<'_, '_, '_, F, R> {
+                scope: SyScope {
+                    available_b: None,
+                    // Assertion above prevents this from underflowing.
+                    current_y: y.pow_vartime([(root_linear_constraints - 1) as u64]),
+                    multiplication_constraints: 0,
+                    linear_constraints: 0,
+                },
+                y,
                 y_inv: y.invert().expect("y is not zero"),
-                current_y: y.pow_vartime([(num_linear_constraints - 1) as u64]),
                 virtual_table: &virtual_table,
-                available_b: None,
+                floor_plan,
+                current_routine: 0,
                 _marker: core::marker::PhantomData,
             };
 
@@ -677,9 +731,21 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
             evaluator.enforce_public_outputs(outputs.iter().map(|output| output.wire()))?;
             evaluator.enforce_one()?;
 
-            // Invariant: synthesis must produce exactly the expected number of
-            // linear constraints.
-            assert_eq!(evaluator.linear_constraints, num_linear_constraints);
+            // Verify all floor plan slots were consumed and counts match.
+            assert_eq!(
+                evaluator.current_routine + 1,
+                evaluator.floor_plan.len(),
+                "floor plan routine count must match synthesis"
+            );
+            assert_eq!(
+                evaluator.scope.multiplication_constraints,
+                evaluator.floor_plan[0].num_multiplication_constraints,
+                "root multiplication constraint count must match floor plan"
+            );
+            assert_eq!(
+                evaluator.scope.linear_constraints, evaluator.floor_plan[0].num_linear_constraints,
+                "root linear constraint count must match floor plan"
+            );
         }
 
         // Invariant: all virtual wires must have been freed during synthesis,
