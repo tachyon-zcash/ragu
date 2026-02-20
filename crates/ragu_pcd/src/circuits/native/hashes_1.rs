@@ -26,7 +26,7 @@
 //! ### $k(y)$ evaluations
 //!
 //! This circuit also is responsible for using the derived $y$ value to compute
-//! the $k(y)$ (public input polynomial evaluations) for the child proofs. These
+//! the $k(y)$ (instance polynomial evaluations) for the child proofs. These
 //! are witnessed in the [`error_n`][super::stages::error_n] stage and
 //! enforced to be consistent by this circuit.
 //!
@@ -45,9 +45,9 @@
 //! - [`preamble`][super::stages::preamble] (unenforced)
 //! - [`error_n`][super::stages::error_n] (unenforced)
 //!
-//! ## Public Inputs
+//! ## Instance
 //!
-//! The public inputs are special for this internal circuit: they contain a
+//! The instance is special for this internal circuit: it contains a
 //! concatenation of the unified instance and the `left` and `right` child
 //! proofs' output headers from the [`preamble`][super::stages::preamble]
 //! stage (i.e., the headers that the
@@ -58,10 +58,10 @@
 //! headers in circuits that do not use the preamble stage.
 //!
 //! The output is wrapped in a [`WithSuffix`] with a zero element appended. This
-//! ensures the public input serialization matches the $k(y)$ computation for
+//! ensures the instance serialization matches the $k(y)$ computation for
 //! `unified_ky`, which is defined as $k(y)$ over `(unified, 0)`. The trailing
-//! zero aligns the internal circuit's public inputs with the expected format
-//! for $k(y)$ verification.
+//! zero aligns the internal circuit's instance with the expected format for
+//! $k(y)$ verification.
 //!
 //! [`nested_preamble_commitment`]: unified::Output::nested_preamble_commitment
 //! [`nested_s_prime_commitment`]: unified::Output::nested_s_prime_commitment
@@ -104,7 +104,7 @@ pub(crate) use super::InternalCircuitIndex::Hashes1Circuit as CIRCUIT_ID;
 ///
 /// This circuit uniquely includes the `left` and `right` output headers from
 /// the child proofs alongside the unified instance. The headers are needed as
-/// public inputs so the verifier can check consistency with the application
+/// instance data so the verifier can check consistency with the application
 /// (step) circuit's headers.
 ///
 /// Other internal circuits use only the [`unified::Output`] to avoid the

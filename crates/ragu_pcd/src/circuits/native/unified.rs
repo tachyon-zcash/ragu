@@ -1,9 +1,8 @@
 //! Unified instance/output interface for internal verification circuits.
 //!
-//! Internal circuits share a common set of public inputs defined by [`Output`].
-//! This avoids redundant evaluations of the public input polynomial $k(Y)$,
-//! which encodes the circuit's public inputs, and simplifies circuit
-//! reconfiguration.
+//! Internal circuits share a common instance defined by [`Output`]. This avoids
+//! redundant evaluations of the instance polynomial $k(Y)$ and simplifies
+//! circuit reconfiguration.
 //!
 //! ## Substitution Attack Prevention
 //!
@@ -82,10 +81,15 @@ macro_rules! define_unified_instance {
             $field:ident : $field_type:ident
         ),+ $(,)?
     ) => {
-        /// Shared public inputs for internal verification circuits.
+        /// Shared public instance for internal verification circuits.
         ///
-        /// This gadget contains the commitments, Fiat-Shamir challenges, and final
-        /// values that internal circuits consume as public inputs. The nested curve
+        /// Unlike stage [`Output`](super::stages) types (which are prover-internal
+        /// communication), this gadget is the verifier-visible instance: its fields
+        /// are serialized into the $k(Y)$ instance polynomial that the verifier
+        /// checks.
+        ///
+        /// Contains the commitments, Fiat-Shamir challenges, and final values that
+        /// internal circuits expose as instance data. The nested curve
         /// (`C::NestedCurve`) is the other curve in the cycle, whose base field equals
         /// the circuit's scalar field.
         ///
@@ -108,7 +112,7 @@ macro_rules! define_unified_instance {
             )+
         }
 
-        /// Native (non-gadget) representation of unified public inputs.
+        /// Native (non-gadget) representation of the unified instance.
         ///
         /// This struct holds the concrete field values corresponding to [`Output`]
         /// fields. It is constructed during proof generation in the fuse pipeline

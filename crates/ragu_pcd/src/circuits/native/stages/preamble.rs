@@ -221,7 +221,10 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     }
 }
 
-/// Output of the native preamble stage.
+/// Prover-internal output of the native preamble stage.
+///
+/// This is stage communication data, not part of the circuit's public instance.
+/// The verifier never sees these values directly.
 #[derive(Gadget, Consistent)]
 pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize> {
     #[ragu(gadget)]

@@ -144,7 +144,9 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
     }
 }
 
-/// Output gadget for the eval stage.
+/// Prover-internal output gadget for the eval stage.
+///
+/// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]

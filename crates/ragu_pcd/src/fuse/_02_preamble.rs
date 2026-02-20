@@ -1,7 +1,7 @@
 //! Commit to the preamble.
 //!
 //! This creates the [`proof::Preamble`] component of the proof, which commits
-//! to the public inputs and trace polynomials used in the fuse step.
+//! to the instance and trace polynomials used in the fuse step.
 
 use ff::Field;
 use ragu_arithmetic::Cycle;

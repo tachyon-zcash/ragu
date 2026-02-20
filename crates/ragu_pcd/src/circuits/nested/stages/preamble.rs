@@ -97,7 +97,9 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChildOutput<'dr, D, C> {
     }
 }
 
-/// Output gadget for the nested preamble stage.
+/// Prover-internal output gadget for the nested preamble stage.
+///
+/// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// Point commitment from the native preamble stage.

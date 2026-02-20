@@ -33,12 +33,12 @@
 //! - [`preamble`][super::stages::preamble] (skipped)
 //! - [`error_n`][super::stages::error_n] (unenforced)
 //!
-//! ## Public Inputs
+//! ## Instance
 //!
-//! This circuit uses the [`unified::Output`] as its public inputs, wrapped in a
+//! This circuit uses [`unified::Output`] as its instance, wrapped in a
 //! [`WithSuffix`] with a zero element appended. This matches the format used by
-//! [`hashes_1`][super::hashes_1] and ensures the public input serialization
-//! aligns with the $k(y)$ computation for `unified_ky`.
+//! [`hashes_1`][super::hashes_1] and ensures the instance serialization aligns
+//! with the $k(y)$ computation for `unified_ky`.
 //!
 //! [`nested_error_m_commitment`]: unified::Output::nested_error_m_commitment
 //! [$\mu$]: unified::Output::mu

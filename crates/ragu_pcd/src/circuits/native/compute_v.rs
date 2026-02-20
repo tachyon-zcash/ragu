@@ -28,9 +28,9 @@
 //! - [`query`] (unenforced) - provides registry and polynomial evaluations
 //! - [`eval`] (unenforced) - provides evaluation component polynomials
 //!
-//! ## Public Inputs
+//! ## Instance
 //!
-//! Uses [`unified::Output`] as public inputs via [`unified::InternalOutputKind`].
+//! Uses [`unified::Output`] as its instance via [`unified::InternalOutputKind`].
 //!
 //! [`preamble`]: super::stages::preamble
 //! [`query`]: super::stages::query
@@ -99,7 +99,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Circuit<C, R, HEADER_SIZE> {
 /// Witness for the compute_v circuit.
 ///
 /// Provides all staged data needed to compute [$v$]:
-/// - Child proof public inputs from preamble
+/// - Child proof instance data from preamble
 /// - Polynomial evaluations from query stage
 /// - Evaluation component polynomials from eval stage
 ///

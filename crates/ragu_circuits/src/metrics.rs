@@ -21,13 +21,13 @@ use super::{Circuit, DriverScope};
 
 /// Performs full constraint system analysis, capturing basic details about a circuit's topology through simulation.
 pub struct CircuitMetrics {
-    /// The number of linear constraints, including those for public inputs.
+    /// The number of linear constraints, including those for instance enforcement.
     pub num_linear_constraints: usize,
 
     /// The number of multiplication constraints, including those used for allocations.
     pub num_multiplication_constraints: usize,
 
-    /// The degree of the public input polynomial.
+    /// The degree of the instance polynomial $k(Y)$.
     // TODO(ebfull): not sure if we'll need this later
     #[allow(dead_code)]
     pub degree_ky: usize,

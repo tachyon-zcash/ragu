@@ -72,8 +72,8 @@ pub trait Circuit<F: Field>: Sized + Send + Sync {
     /// circuit.
     type Witness<'source>: Send;
 
-    /// Represents a gadget that can be serialized and represents the output of
-    /// a circuit computation.
+    /// The circuit's public instance, serialized into the $k(Y)$ instance
+    /// polynomial that the verifier checks.
     type Output: Write<F>;
 
     /// Auxiliary data produced during the computation of the
@@ -169,7 +169,7 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
         rx::eval(self, witness)
     }
 
-    /// Computes the public input polynomial $k(Y)$ for the given instance.
+    /// Computes the instance polynomial $k(Y)$ for the given instance.
     fn ky(&self, instance: Self::Instance<'_>) -> Result<Vec<F>> {
         ky::eval(self, instance)
     }
