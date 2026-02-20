@@ -231,30 +231,28 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
 /// recursive verifier. Ragu avoids preprocessing by design, and does not use
 /// verification keys, which suggests an alternative solution.
 ///
-/// # Binding a polynomial through its evaluation
+/// # Binding through structural hashing
 ///
-/// Polynomials of bounded degree are overdetermined by their evaluation at a
-/// sufficient number of distinct points. Starting from public constants, we
-/// iteratively evaluate $e_i = m(w_i, x_i, y_i)$ where each evaluation point
-/// $(w_{i+1}, x_{i+1}, y_{i+1})$ is seeded by hashing the prior evaluation $e_i$.
-/// The final evaluation serves as the binding key.
+/// The registry key is derived by hashing the symbolic structure of each
+/// circuit's wiring polynomial — the wire identities and scalar coefficients
+/// that define the constraint system — directly into BLAKE2b. Each wire
+/// identity (`WireIndex`) uniquely maps to a monomial in the polynomial, so
+/// two circuits with distinct coefficient matrices produce distinct hash
+/// inputs with certainty.
 ///
-/// The number of iterations must exceed the degrees of freedom an adversary
-/// could exploit to adaptively modify circuits.
-/// See [#78] for the security argument.
+/// This is unconditionally binding: no evaluation at random points is needed,
+/// and no Schwartz-Zippel argument is required. The binding holds against
+/// adaptive adversaries, limited only by BLAKE2b's 128-bit collision
+/// resistance.
 ///
-/// # Break self-reference without preprocessing
+/// # Breaking self-reference without preprocessing
 ///
-/// Now with a binding evaluation `e_d`, which is the registry [`Key`], we can
-/// break the self-reference more elegantly without preprocessing or reliance on
-/// public inputs.
-///
-/// Concretely, we retroactively inject the registry key into each member circuit
-/// of `m` as a special wire `key_wire`, enforced by a simple linear constraint
-/// `key_wire = k`. This binds each circuit's wiring polynomial to the registry
-/// polynomial, and thus the entire registry polynomial to the Fiat-Shamir
-/// transcript without self-reference. The key randomizes the wiring polynomial
-/// directly.
+/// The key is excluded from the hash since it doesn't exist during derivation.
+/// After computing the key, it is retroactively injected into each member
+/// circuit of $m$ as a special wire `key_wire`, enforced by a simple linear
+/// constraint `key_wire = k`. This binds each circuit's wiring polynomial to
+/// the registry polynomial, and thus the entire registry polynomial to the
+/// Fiat-Shamir transcript without self-reference.
 ///
 /// The key is computed during [`RegistryBuilder::finalize`] and used during
 /// polynomial evaluations of [`CircuitObject`].
@@ -458,45 +456,41 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
 }
 
 impl<F: PrimeField + FromUniformBytes<64>, R: Rank> Registry<'_, F, R> {
-    /// Compute a digest of this registry using BLAKE2b.
+    /// Compute a digest of this registry by hashing the structural identity of
+    /// each circuit's wiring polynomial.
+    ///
+    /// Rather than evaluating the registry polynomial at random points (which
+    /// requires a Schwartz-Zippel argument), this method directly hashes the
+    /// symbolic wire identities and scalar coefficients that define each
+    /// circuit. Two registries with distinct coefficient matrices produce
+    /// distinct hash inputs with certainty. Combined with BLAKE2b collision
+    /// resistance, the key is unconditionally binding.
+    ///
+    /// This resolves the security concerns tracked in [#78] and [#316]: the
+    /// structural approach is unconditionally binding and does not depend on
+    /// the number of evaluation iterations.
+    ///
+    /// [#316]: https://github.com/tachyon-zcash/ragu/issues/316
     fn compute_registry_digest(&self) -> F {
         let mut hasher = Params::new().personal(b"ragu_registry___").to_state();
 
-        let field_from_hash = |digest_state: &blake2b_simd::Hash, index: u8| {
-            F::from_uniform_bytes(
-                Params::new()
-                    .personal(b"ragu_registry___")
-                    .to_state()
-                    .update(digest_state.as_bytes())
-                    .update(&[index])
-                    .finalize()
-                    .as_array(),
-            )
-        };
+        // Hash circuit count for domain separation.
+        hasher.update(&(self.circuits.len() as u64).to_le_bytes());
 
-        // Placeholder "nothing-up-my-sleeve challenges" (small primes).
-        let mut w = F::from(2u64);
-        let mut x = F::from(3u64);
-        let mut y = F::from(5u64);
+        for (i, circuit) in self.circuits.iter().enumerate() {
+            // Fold on W: hash the circuit's domain element.
+            let j = bitreverse(
+                u32::try_from(i).expect("circuit count fits u32"),
+                self.domain.log2_n(),
+            ) as usize;
+            let omega_j = self.domain.omega().pow([j as u64]);
+            hasher.update(omega_j.to_repr().as_ref());
 
-        // FIXME(security): 6 iterations is insufficient to fully bind the registry
-        // polynomial. This should be increased to a value that overdetermines the
-        // polynomial (exceeds the degrees of freedom an adversary could exploit).
-        // Currently limited by registry evaluation performance; See #78 and #316.
-        for _ in 0..6 {
-            let eval = self.wxy(w, x, y);
-            hasher.update(eval.to_repr().as_ref());
-
-            let digest_state = hasher.finalize();
-            w = field_from_hash(&digest_state, 0);
-            x = field_from_hash(&digest_state, 1);
-            y = field_from_hash(&digest_state, 2);
-
-            hasher = Params::new().personal(b"ragu_registry___").to_state();
-            hasher.update(digest_state.as_bytes());
+            // Hash intrinsic circuit structure.
+            circuit.hash(&mut hasher);
         }
 
-        field_from_hash(&hasher.finalize(), 0)
+        F::from_uniform_bytes(hasher.finalize().as_array())
     }
 }
 

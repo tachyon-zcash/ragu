@@ -146,6 +146,13 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
                 s::sy::eval(&self.circuit, y, key, self.metrics.num_linear_constraints)
                     .expect("should succeed if metrics succeeded")
             }
+            fn hash(&self, state: &mut blake2b_simd::State)
+            where
+                F: ff::PrimeField,
+            {
+                s::hash::eval::<_, _, R>(&self.circuit, state)
+                    .expect("should succeed if metrics succeeded")
+            }
             fn constraint_counts(&self) -> (usize, usize) {
                 (
                     self.metrics.num_multiplication_constraints,
@@ -189,6 +196,21 @@ pub trait CircuitObject<F: Field, R: Rank>: Send + Sync {
 
     /// Computes the polynomial restriction $s(X, y)$ for some $y \in \mathbb{F}$.
     fn sy(&self, y: F, key: &registry::Key<F>) -> structured::Polynomial<F, R>;
+
+    /// Hashes the structural identity of this circuit's wiring polynomial into
+    /// the provided BLAKE2b state.
+    ///
+    /// This captures wire identities and scalar coefficients without evaluating
+    /// the polynomial.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the underlying synthesis exceeds the multiplication or linear
+    /// constraint bounds — which cannot happen for circuits that successfully
+    /// passed through [`CircuitExt::into_object`].
+    fn hash(&self, state: &mut blake2b_simd::State)
+    where
+        F: ff::PrimeField;
 
     /// Returns the number of constraints: `(multiplication, linear)`.
     fn constraint_counts(&self) -> (usize, usize);

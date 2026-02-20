@@ -7,10 +7,11 @@
 //! immediate field element results, they can share the same wire representation
 //! types defined here.
 //!
-//! In contrast, [`sy`] requires deferred computation through a virtual wire
-//! system with reference counting, because $s(X, y)$ coefficients cannot be
-//! computed in streaming order during synthesis (see [`sy`] module
-//! documentation).
+//! In contrast, [`sy`] and [`hash`] represent wires as symbolic indices rather
+//! than evaluated field elements, and both use [`WireIndex`] from this module.
+//! [`sy`] requires deferred computation through a virtual wire system with
+//! reference counting, because $s(X, y)$ coefficients cannot be computed in
+//! streaming order during synthesis (see [`sy`] module documentation).
 //!
 //! ### Immediate Evaluation
 //!
@@ -30,11 +31,67 @@
 //! [`sx`]: super::sx
 //! [`sxy`]: super::sxy
 //! [`sy`]: super::sy
+//! [`hash`]: super::hash
 //! [`Driver::ONE`]: ragu_core::drivers::Driver::ONE
 
-use ff::Field;
+use ff::{Field, PrimeField};
 use ragu_arithmetic::Coeff;
 use ragu_core::drivers::LinearExpression;
+
+/// An index identifying a wire in evaluators that track symbolic wire identity.
+///
+/// Used by the [`sy`] and [`hash`] evaluators to represent wires as indices
+/// rather than evaluated monomials.
+///
+/// # Variants
+///
+/// - `A(i)`, `B(i)`, `C(i)` — Allocated wires from gate $i$, corresponding to
+///   the $a$, $b$, $c$ wires respectively.
+///
+/// - `Virtual(i)` — A virtual wire (linear combination).
+///
+/// [`sy`]: super::sy
+/// [`hash`]: super::hash
+#[derive(Copy, Clone)]
+pub(crate) enum WireIndex {
+    A(usize),
+    B(usize),
+    C(usize),
+    Virtual(usize),
+}
+
+/// Hashes a [`WireIndex`] into the BLAKE2b state.
+///
+/// Encodes the wire type as a single discriminant byte followed by the gate
+/// or virtual wire index as a little-endian `u64`.
+pub(crate) fn hash_wire_index(state: &mut blake2b_simd::State, wire: &WireIndex) {
+    match wire {
+        WireIndex::A(g) => {
+            state.update(&[0]);
+            state.update(&(*g as u64).to_le_bytes());
+        }
+        WireIndex::B(g) => {
+            state.update(&[1]);
+            state.update(&(*g as u64).to_le_bytes());
+        }
+        WireIndex::C(g) => {
+            state.update(&[2]);
+            state.update(&(*g as u64).to_le_bytes());
+        }
+        WireIndex::Virtual(id) => {
+            state.update(&[3]);
+            state.update(&(*id as u64).to_le_bytes());
+        }
+    }
+}
+
+/// Hashes a [`Coeff`] value into the BLAKE2b state.
+///
+/// Converts the coefficient to its canonical field element representation
+/// and hashes the raw bytes.
+pub(crate) fn hash_coeff<F: PrimeField>(state: &mut blake2b_simd::State, coeff: &Coeff<F>) {
+    state.update(coeff.value().to_repr().as_ref());
+}
 
 /// Represents a wire's evaluated monomial during polynomial synthesis.
 ///

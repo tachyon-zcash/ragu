@@ -80,36 +80,12 @@ use ragu_primitives::GadgetExt;
 use alloc::{vec, vec::Vec};
 use core::cell::RefCell;
 
-use super::DriverExt;
+use super::{DriverExt, common::WireIndex};
 use crate::{
     Circuit, DriverScope,
     polynomials::{Rank, structured},
     registry,
 };
-
-/// An index identifying a wire in the evaluator.
-///
-/// During $s(X, y)$ evaluation, wires are either *allocated* (from
-/// multiplication gates) or *virtual* (from linear combinations via
-/// [`Driver::add`]).
-///
-/// # Variants
-///
-/// - `A(i)`, `B(i)`, `C(i)` — Allocated wires from gate $i$, corresponding to
-///   the $a$, $b$, $c$ wires respectively. Values are written directly to the
-///   backward view when resolved.
-///
-/// - `Virtual(i)` — A virtual wire (linear combination) at index $i$ in the
-///   [`VirtualTable`]. Uses reference counting for deferred resolution.
-///
-/// [`Driver::add`]: ragu_core::drivers::Driver::add
-#[derive(Copy, Clone)]
-enum WireIndex {
-    A(usize),
-    B(usize),
-    C(usize),
-    Virtual(usize),
-}
 
 /// A handle to a wire in the $s(X, y)$ evaluator.
 ///

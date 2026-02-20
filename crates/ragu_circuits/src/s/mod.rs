@@ -60,6 +60,8 @@
 //! * [`sx`]: Evaluates $s(X, Y)$ at $X = x$ for some $x \in \mathbb{F}$.
 //! * [`sy`]: Evaluates $s(X, Y)$ at $Y = y$ for some $y \in \mathbb{F}$.
 //! * [`sxy`]: Evaluates $s(X, Y)$ at $(x, y)$ for some $x, y \in \mathbb{F}$.
+//! * [`hash`]: Hashes the symbolic structure of $s(X, Y)$ — wire indices and
+//!   scalar coefficients — into a BLAKE2b state for registry key derivation.
 //!
 //! [`Driver`]: ragu_core::drivers::Driver
 //! [`Routine`]: ragu_core::routines::Routine
@@ -73,6 +75,7 @@ use ragu_core::{
 };
 
 mod common;
+pub(crate) mod hash;
 pub mod sx;
 pub mod sxy;
 pub mod sy;
