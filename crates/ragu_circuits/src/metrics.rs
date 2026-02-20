@@ -109,12 +109,27 @@ pub fn eval<F: Field, C: Circuit<F>>(circuit: &C) -> Result<CircuitMetrics> {
         _marker: PhantomData,
     };
     let mut degree_ky = 0usize;
+
+    // ONE gate
     collector.mul(|| Ok((Coeff::One, Coeff::One, Coeff::One)))?;
+
+    // Registry key constraint
+    collector.enforce_zero(|lc| lc)?;
+
+    // Circuit synthesis
     let (io, _) = circuit.witness(&mut collector, Empty)?;
     io.write(&mut collector, &mut degree_ky)?;
 
+    // Public output constraints
+    for _ in 0..degree_ky {
+        collector.enforce_zero(|lc| lc)?;
+    }
+
+    // ONE constraint
+    collector.enforce_zero(|lc| lc)?;
+
     Ok(CircuitMetrics {
-        num_linear_constraints: collector.num_linear_constraints + degree_ky + 2,
+        num_linear_constraints: collector.num_linear_constraints,
         num_multiplication_constraints: collector.num_multiplication_constraints,
         degree_ky,
     })
