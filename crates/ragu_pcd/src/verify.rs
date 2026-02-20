@@ -282,6 +282,7 @@ mod tests {
     use pasta_curves::group::prime::PrimeCurveAffine;
     use ragu_circuits::{polynomials::ProductionRank, registry::CircuitIndex};
     use ragu_pasta::Pasta;
+    use ragu_primitives::{GadgetExt, Point, poseidon::Sponge};
     use rand::{SeedableRng, rngs::StdRng};
 
     type TestR = ProductionRank;
@@ -306,6 +307,59 @@ mod tests {
             .seed(&mut rng, Trivial::new(), ())
             .expect("seed should not fail");
         proof
+    }
+
+    fn replay_fiat_shamir_challenges(
+        app: &crate::Application<'_, Pasta, TestR, HEADER_SIZE>,
+        proof: &crate::Proof<Pasta, TestR>,
+    ) -> Result<crate::proof::Challenges<Pasta>> {
+        let mut dr = Emulator::execute();
+        let mut transcript = Sponge::new(&mut dr, Pasta::circuit_poseidon(app.params));
+
+        Point::constant(&mut dr, proof.preamble.nested_commitment)?
+            .write(&mut dr, &mut transcript)?;
+        let w = transcript.squeeze(&mut dr)?;
+
+        Point::constant(&mut dr, proof.s_prime.nested_s_prime_commitment)?
+            .write(&mut dr, &mut transcript)?;
+        let y = transcript.squeeze(&mut dr)?;
+        let z = transcript.squeeze(&mut dr)?;
+
+        Point::constant(&mut dr, proof.error_m.nested_commitment)?
+            .write(&mut dr, &mut transcript)?;
+        let mu = transcript.squeeze(&mut dr)?;
+        let nu = transcript.squeeze(&mut dr)?;
+
+        Point::constant(&mut dr, proof.error_n.nested_commitment)?
+            .write(&mut dr, &mut transcript)?;
+        let mu_prime = transcript.squeeze(&mut dr)?;
+        let nu_prime = transcript.squeeze(&mut dr)?;
+
+        Point::constant(&mut dr, proof.ab.nested_commitment)?.write(&mut dr, &mut transcript)?;
+        let x = transcript.squeeze(&mut dr)?;
+
+        Point::constant(&mut dr, proof.query.nested_commitment)?.write(&mut dr, &mut transcript)?;
+        let alpha = transcript.squeeze(&mut dr)?;
+
+        Point::constant(&mut dr, proof.f.nested_commitment)?.write(&mut dr, &mut transcript)?;
+        let u = transcript.squeeze(&mut dr)?;
+
+        Point::constant(&mut dr, proof.eval.nested_commitment)?.write(&mut dr, &mut transcript)?;
+        let pre_beta = transcript.squeeze(&mut dr)?;
+
+        Ok(crate::proof::Challenges {
+            w: *w.value().take(),
+            y: *y.value().take(),
+            z: *z.value().take(),
+            mu: *mu.value().take(),
+            nu: *nu.value().take(),
+            mu_prime: *mu_prime.value().take(),
+            nu_prime: *nu_prime.value().take(),
+            x: *x.value().take(),
+            alpha: *alpha.value().take(),
+            u: *u.value().take(),
+            pre_beta: *pre_beta.value().take(),
+        })
     }
 
     fn assert_seeded_rejects(corrupt: impl FnOnce(&mut crate::Proof<Pasta, TestR>)) {
@@ -337,6 +391,41 @@ mod tests {
         let pcd = proof.carry::<()>(());
         let result = app.verify(&pcd, &mut rng).expect("verify should not error");
         assert!(result, "seeded proof should verify without corruption");
+    }
+
+    #[test]
+    fn seeded_transcript_replay_matches_stored_challenges() {
+        let app = create_test_app();
+        let proof = create_seeded_proof(&app);
+        let replayed =
+            replay_fiat_shamir_challenges(&app, &proof).expect("challenge replay should succeed");
+
+        assert_eq!(proof.challenges.w, replayed.w);
+        assert_eq!(proof.challenges.y, replayed.y);
+        assert_eq!(proof.challenges.z, replayed.z);
+        assert_eq!(proof.challenges.mu, replayed.mu);
+        assert_eq!(proof.challenges.nu, replayed.nu);
+        assert_eq!(proof.challenges.mu_prime, replayed.mu_prime);
+        assert_eq!(proof.challenges.nu_prime, replayed.nu_prime);
+        assert_eq!(proof.challenges.x, replayed.x);
+        assert_eq!(proof.challenges.alpha, replayed.alpha);
+        assert_eq!(proof.challenges.u, replayed.u);
+        assert_eq!(proof.challenges.pre_beta, replayed.pre_beta);
+    }
+
+    #[test]
+    fn seeded_transcript_replay_detects_corrupted_absorbed_commitment() {
+        let app = create_test_app();
+        let mut proof = create_seeded_proof(&app);
+        proof.query.nested_commitment = NestedCurve::generator();
+
+        let replayed =
+            replay_fiat_shamir_challenges(&app, &proof).expect("challenge replay should succeed");
+        assert!(
+            proof.challenges.alpha != replayed.alpha
+                || proof.challenges.u != replayed.u
+                || proof.challenges.pre_beta != replayed.pre_beta
+        );
     }
 
     seeded_rejects!(seeded_rejects_invalid_circuit_id, |proof| {
