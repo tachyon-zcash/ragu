@@ -266,13 +266,18 @@ mod nested {
 mod tests {
     use super::*;
     use crate::ApplicationBuilder;
+    use crate::step::internal::trivial::Trivial;
     use ff::Field;
+    use pasta_curves::group::prime::PrimeCurveAffine;
     use ragu_circuits::{polynomials::ProductionRank, registry::CircuitIndex};
     use ragu_pasta::Pasta;
     use rand::{SeedableRng, rngs::StdRng};
 
     type TestR = ProductionRank;
     const HEADER_SIZE: usize = 4;
+
+    type CF = <Pasta as Cycle>::CircuitField;
+    type NestedCurve = <Pasta as Cycle>::NestedCurve;
 
     fn create_test_app() -> crate::Application<'static, Pasta, TestR, HEADER_SIZE> {
         let pasta = Pasta::baked();
@@ -281,15 +286,48 @@ mod tests {
             .expect("failed to create test application")
     }
 
+    fn create_seeded_proof(
+        app: &crate::Application<'_, Pasta, TestR, HEADER_SIZE>,
+    ) -> crate::Proof<Pasta, TestR> {
+        let mut rng = StdRng::seed_from_u64(42);
+        let (proof, _) = app
+            .seed(&mut rng, Trivial::new(), ())
+            .expect("seed should not fail");
+        proof
+    }
+
+    /// Macro to reduce boilerplate for trivial-proof corruption tests.
+    ///
+    /// Creates a trivial proof, applies a corruption, then asserts that
+    /// verification rejects the corrupted proof.
+    macro_rules! assert_trivial_rejects {
+        ($name:ident, |$proof:ident| $corruption:expr) => {
+            #[test]
+            fn $name() {
+                let app = create_test_app();
+                let mut rng = StdRng::seed_from_u64(1234);
+                let mut $proof = app.trivial_proof();
+                $corruption;
+                let pcd = $proof.carry::<()>(());
+                let result = app.verify(&pcd, &mut rng).expect("verify should not error");
+                assert!(
+                    !result,
+                    concat!("verify should reject: ", stringify!($name))
+                );
+            }
+        };
+    }
+
+    // -----------------------------------------------------------------------
+    // Existing tests
+    // -----------------------------------------------------------------------
+
     #[test]
     fn verify_rejects_invalid_circuit_id() {
         let app = create_test_app();
         let mut rng = StdRng::seed_from_u64(1234);
 
-        // Create a valid trivial proof
         let mut proof = app.trivial_proof();
-
-        // Corrupt the circuit_id to be outside the registry domain
         proof.application.circuit_id = CircuitIndex::new(u32::MAX as usize);
 
         let pcd = proof.carry::<()>(());
@@ -302,10 +340,7 @@ mod tests {
         let app = create_test_app();
         let mut rng = StdRng::seed_from_u64(1234);
 
-        // Create a valid trivial proof
         let mut proof = app.trivial_proof();
-
-        // Corrupt left_header to have wrong size
         proof.application.left_header =
             alloc::vec![<Pasta as Cycle>::CircuitField::ZERO; HEADER_SIZE + 1];
 
@@ -319,10 +354,7 @@ mod tests {
         let app = create_test_app();
         let mut rng = StdRng::seed_from_u64(1234);
 
-        // Create a valid trivial proof
         let mut proof = app.trivial_proof();
-
-        // Corrupt right_header to have wrong size
         proof.application.right_header =
             alloc::vec![<Pasta as Cycle>::CircuitField::ZERO; HEADER_SIZE - 1];
 
@@ -336,11 +368,8 @@ mod tests {
         let app = create_test_app();
         let mut rng = StdRng::seed_from_u64(1234);
 
-        // Create a valid trivial proof
         let mut proof = app.trivial_proof();
-
-        // Corrupt the P commitment by changing the blind
-        proof.p.blind = <Pasta as Cycle>::CircuitField::from(999u64);
+        proof.p.blind = CF::from(999u64);
 
         let pcd = proof.carry::<()>(());
         let result = app.verify(&pcd, &mut rng).expect("verify should not error");
@@ -352,11 +381,8 @@ mod tests {
         let app = create_test_app();
         let mut rng = StdRng::seed_from_u64(1234);
 
-        // Create a valid trivial proof
         let mut proof = app.trivial_proof();
-
-        // Corrupt the P evaluation value
-        proof.p.v = <Pasta as Cycle>::CircuitField::from(12345u64);
+        proof.p.v = CF::from(12345u64);
 
         let pcd = proof.carry::<()>(());
         let result = app.verify(&pcd, &mut rng).expect("verify should not error");
@@ -368,14 +394,246 @@ mod tests {
         let app = create_test_app();
         let mut rng = StdRng::seed_from_u64(1234);
 
-        // Create a valid trivial proof
         let mut proof = app.trivial_proof();
-
-        // Corrupt the ab.c value (raw_c used in revdot claims)
-        proof.ab.c = <Pasta as Cycle>::CircuitField::from(99999u64);
+        proof.ab.c = CF::from(99999u64);
 
         let pcd = proof.carry::<()>(());
         let result = app.verify(&pcd, &mut rng).expect("verify should not error");
         assert!(!result, "verify should reject corrupted ab.c value");
+    }
+
+    // -----------------------------------------------------------------------
+    // Fiat-Shamir challenge corruptions (11 tests)
+    //
+    // Every challenge field is fed into the emulator during k(y) computation.
+    // Corrupting any one should invalidate the native revdot claims.
+    // -----------------------------------------------------------------------
+
+    assert_trivial_rejects!(trivial_rejects_corrupted_challenge_w, |proof| {
+        proof.challenges.w = CF::from(777u64)
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_challenge_y, |proof| {
+        proof.challenges.y = CF::from(777u64)
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_challenge_z, |proof| {
+        proof.challenges.z = CF::from(777u64)
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_challenge_mu, |proof| {
+        proof.challenges.mu = CF::from(777u64)
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_challenge_nu, |proof| {
+        proof.challenges.nu = CF::from(777u64)
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_challenge_mu_prime, |proof| {
+        proof.challenges.mu_prime = CF::from(777u64)
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_challenge_nu_prime, |proof| {
+        proof.challenges.nu_prime = CF::from(777u64)
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_challenge_x, |proof| {
+        proof.challenges.x = CF::from(777u64)
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_challenge_alpha, |proof| {
+        proof.challenges.alpha = CF::from(777u64)
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_challenge_u, |proof| {
+        proof.challenges.u = CF::from(777u64)
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_challenge_pre_beta, |proof| {
+        proof.challenges.pre_beta = CF::from(777u64)
+    });
+
+    // -----------------------------------------------------------------------
+    // Nested commitment corruptions (8 tests)
+    //
+    // Nested commitments are public inputs to the unified circuit. Replacing
+    // any one with the curve generator (a valid but incorrect point) should
+    // invalidate k(y). Note: identity() cannot be used because the emulator
+    // rejects the point at infinity during witness allocation.
+    // -----------------------------------------------------------------------
+
+    assert_trivial_rejects!(
+        trivial_rejects_corrupted_preamble_nested_commitment,
+        |proof| { proof.preamble.nested_commitment = NestedCurve::generator() }
+    );
+    assert_trivial_rejects!(
+        trivial_rejects_corrupted_s_prime_nested_commitment,
+        |proof| { proof.s_prime.nested_s_prime_commitment = NestedCurve::generator() }
+    );
+    assert_trivial_rejects!(
+        trivial_rejects_corrupted_error_n_nested_commitment,
+        |proof| { proof.error_n.nested_commitment = NestedCurve::generator() }
+    );
+    assert_trivial_rejects!(
+        trivial_rejects_corrupted_error_m_nested_commitment,
+        |proof| { proof.error_m.nested_commitment = NestedCurve::generator() }
+    );
+    assert_trivial_rejects!(trivial_rejects_corrupted_ab_nested_commitment, |proof| {
+        proof.ab.nested_commitment = NestedCurve::generator()
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_query_nested_commitment, |proof| {
+        proof.query.nested_commitment = NestedCurve::generator()
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_f_nested_commitment, |proof| {
+        proof.f.nested_commitment = NestedCurve::generator()
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_eval_nested_commitment, |proof| {
+        proof.eval.nested_commitment = NestedCurve::generator()
+    });
+
+    // -----------------------------------------------------------------------
+    // Native blind corruptions (13 tests)
+    //
+    // Corrupting host-field blind values breaks the commitment binding for
+    // each component. The verifier recomputes commitments from polynomials
+    // and blinds, so any mismatch should be caught.
+    // -----------------------------------------------------------------------
+
+    assert_trivial_rejects!(trivial_rejects_corrupted_application_blind, |proof| {
+        proof.application.blind = CF::from(999u64)
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_preamble_native_blind, |proof| {
+        proof.preamble.native_blind = CF::from(999u64)
+    });
+    assert_trivial_rejects!(
+        trivial_rejects_corrupted_s_prime_registry_wx0_blind,
+        |proof| { proof.s_prime.registry_wx0_blind = CF::from(999u64) }
+    );
+    assert_trivial_rejects!(
+        trivial_rejects_corrupted_s_prime_registry_wx1_blind,
+        |proof| { proof.s_prime.registry_wx1_blind = CF::from(999u64) }
+    );
+    assert_trivial_rejects!(trivial_rejects_corrupted_error_n_native_blind, |proof| {
+        proof.error_n.native_blind = CF::from(999u64)
+    });
+    assert_trivial_rejects!(
+        trivial_rejects_corrupted_error_m_registry_wy_blind,
+        |proof| { proof.error_m.registry_wy_blind = CF::from(999u64) }
+    );
+    assert_trivial_rejects!(trivial_rejects_corrupted_error_m_native_blind, |proof| {
+        proof.error_m.native_blind = CF::from(999u64)
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_ab_a_blind, |proof| {
+        proof.ab.a_blind = CF::from(999u64)
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_ab_b_blind, |proof| {
+        proof.ab.b_blind = CF::from(999u64)
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_query_registry_xy_blind, |proof| {
+        proof.query.registry_xy_blind = CF::from(999u64)
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_query_native_blind, |proof| {
+        proof.query.native_blind = CF::from(999u64)
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_f_blind, |proof| {
+        proof.f.blind = CF::from(999u64)
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_eval_native_blind, |proof| {
+        proof.eval.native_blind = CF::from(999u64)
+    });
+
+    // -----------------------------------------------------------------------
+    // Internal circuit blind corruptions (5 tests)
+    //
+    // Each internal circuit has its own blind used for commitment binding.
+    // -----------------------------------------------------------------------
+
+    assert_trivial_rejects!(trivial_rejects_corrupted_hashes_1_blind, |proof| {
+        proof.circuits.hashes_1_blind = CF::from(999u64)
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_hashes_2_blind, |proof| {
+        proof.circuits.hashes_2_blind = CF::from(999u64)
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_partial_collapse_blind, |proof| {
+        proof.circuits.partial_collapse_blind = CF::from(999u64)
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_full_collapse_blind, |proof| {
+        proof.circuits.full_collapse_blind = CF::from(999u64)
+    });
+    assert_trivial_rejects!(trivial_rejects_corrupted_compute_v_blind, |proof| {
+        proof.circuits.compute_v_blind = CF::from(999u64)
+    });
+
+    // -----------------------------------------------------------------------
+    // Seeded proof tests (7 tests)
+    //
+    // These use a real proof produced by seed() that actually passes
+    // verification, providing meaningful coverage of every verification path.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn seeded_proof_verifies_without_corruption() {
+        let app = create_test_app();
+        let mut rng = StdRng::seed_from_u64(1234);
+        let proof = create_seeded_proof(&app);
+        let pcd = proof.carry::<()>(());
+        let result = app.verify(&pcd, &mut rng).expect("verify should not error");
+        assert!(result, "seeded proof should verify without corruption");
+    }
+
+    #[test]
+    fn seeded_verify_rejects_corrupted_challenge_x() {
+        let app = create_test_app();
+        let mut rng = StdRng::seed_from_u64(1234);
+        let mut proof = create_seeded_proof(&app);
+        proof.challenges.x = CF::from(777u64);
+        let pcd = proof.carry::<()>(());
+        let result = app.verify(&pcd, &mut rng).expect("verify should not error");
+        assert!(!result, "seeded proof should reject corrupted challenge x");
+    }
+
+    #[test]
+    fn seeded_verify_rejects_corrupted_challenge_y() {
+        let app = create_test_app();
+        let mut rng = StdRng::seed_from_u64(1234);
+        let mut proof = create_seeded_proof(&app);
+        proof.challenges.y = CF::from(777u64);
+        let pcd = proof.carry::<()>(());
+        let result = app.verify(&pcd, &mut rng).expect("verify should not error");
+        assert!(!result, "seeded proof should reject corrupted challenge y");
+    }
+
+    #[test]
+    fn seeded_verify_rejects_corrupted_challenge_u() {
+        let app = create_test_app();
+        let mut rng = StdRng::seed_from_u64(1234);
+        let mut proof = create_seeded_proof(&app);
+        proof.challenges.u = CF::from(777u64);
+        let pcd = proof.carry::<()>(());
+        let result = app.verify(&pcd, &mut rng).expect("verify should not error");
+        assert!(!result, "seeded proof should reject corrupted challenge u");
+    }
+
+    #[test]
+    fn seeded_verify_rejects_corrupted_p_blind() {
+        let app = create_test_app();
+        let mut rng = StdRng::seed_from_u64(1234);
+        let mut proof = create_seeded_proof(&app);
+        proof.p.blind = CF::from(999u64);
+        let pcd = proof.carry::<()>(());
+        let result = app.verify(&pcd, &mut rng).expect("verify should not error");
+        assert!(!result, "seeded proof should reject corrupted p.blind");
+    }
+
+    #[test]
+    fn seeded_verify_rejects_corrupted_p_v() {
+        let app = create_test_app();
+        let mut rng = StdRng::seed_from_u64(1234);
+        let mut proof = create_seeded_proof(&app);
+        proof.p.v = CF::from(12345u64);
+        let pcd = proof.carry::<()>(());
+        let result = app.verify(&pcd, &mut rng).expect("verify should not error");
+        assert!(!result, "seeded proof should reject corrupted p.v");
+    }
+
+    #[test]
+    fn seeded_verify_rejects_corrupted_ab_c() {
+        let app = create_test_app();
+        let mut rng = StdRng::seed_from_u64(1234);
+        let mut proof = create_seeded_proof(&app);
+        proof.ab.c = CF::from(99999u64);
+        let pcd = proof.carry::<()>(());
+        let result = app.verify(&pcd, &mut rng).expect("verify should not error");
+        assert!(!result, "seeded proof should reject corrupted ab.c");
     }
 }
