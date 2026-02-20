@@ -212,6 +212,10 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
         let num_linear_constraints = 3 * (R::n() - self.num_multiplications - 1) + 2;
         (num_multiplication_constraints, num_linear_constraints)
     }
+
+    fn routine_records(&self) -> &[crate::RoutineRecord] {
+        &[]
+    }
 }
 
 #[cfg(test)]

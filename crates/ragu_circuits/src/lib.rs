@@ -24,6 +24,7 @@ mod s;
 pub mod staging;
 mod trivial;
 
+pub use metrics::RoutineRecord;
 pub use rx::Trace;
 
 #[cfg(test)]
@@ -152,6 +153,9 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
                     self.metrics.num_linear_constraints,
                 )
             }
+            fn routine_records(&self) -> &[RoutineRecord] {
+                &self.metrics.routines
+            }
         }
 
         let circuit = ProcessedCircuit {
@@ -192,4 +196,10 @@ pub trait CircuitObject<F: Field, R: Rank>: Send + Sync {
 
     /// Returns the number of constraints: `(multiplication, linear)`.
     fn constraint_counts(&self) -> (usize, usize);
+
+    /// Returns per-routine constraint records in DFS order.
+    ///
+    /// These records serve as input to floor planning for computing absolute
+    /// offsets.
+    fn routine_records(&self) -> &[RoutineRecord];
 }
