@@ -3,6 +3,7 @@
 //! Verifies child proof headers and computes the Ky term.
 
 use ragu_arithmetic::Cycle;
+use ragu_circuits::horner::Horner;
 use ragu_circuits::{polynomials::Rank, staging};
 use ragu_core::{
     Error, Result,
@@ -12,7 +13,6 @@ use ragu_core::{
 };
 use ragu_primitives::{
     Boolean, Element, GadgetExt,
-    horner::Horner,
     vec::{CollectFixed, ConstLen, FixedVec},
 };
 

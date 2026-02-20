@@ -18,7 +18,6 @@ mod boolean;
 mod element;
 mod endoscalar;
 mod foreign;
-pub mod horner;
 pub mod io;
 mod point;
 pub mod poseidon;

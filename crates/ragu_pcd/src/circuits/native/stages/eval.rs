@@ -83,7 +83,7 @@ pub struct Witness<F> {
 /// Note: The order of elements in this struct affects the expected evaluation
 /// of $v = p(u)$, via the [`Write`] implementation, since it defines the order
 /// of the coefficients for the weighted sum with $\beta$ via
-/// [`Horner`](ragu_primitives::horner::Horner) evaluation.
+/// [`Horner`](ragu_circuits::horner::Horner) evaluation.
 #[derive(Gadget, Write)]
 pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
