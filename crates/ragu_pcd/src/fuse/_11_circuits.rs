@@ -139,8 +139,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let compute_v_rx_commitment =
             compute_v_rx.commit(C::host_generators(self.params), compute_v_rx_blind);
 
-        // Cross-circuit coverage validation: the three challenge-deriving circuits
-        // must cover all 12 required challenges exactly once.
+        // Cross-circuit coverage validation: the two challenge-deriving circuits and
+        // the `compute_v` circuit must cover 11 challenges + 1 `v` value exactly once.
         Coverage::validate(&[hashes_1_cov, hashes_2_cov, compute_v_cov]);
 
         Ok(proof::InternalCircuits {

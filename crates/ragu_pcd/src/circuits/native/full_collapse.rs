@@ -182,6 +182,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
                 .conditional_enforce_equal(dr, &witnessed_c, &computed_c)?;
         }
 
+        // full_collapse only reads challenge slots (never calls Slot::set), so
+        // its coverage is always empty and intentionally excluded from validate.
         let (output, _coverage) = unified_output.finish(dr, unified_instance)?;
         Ok((output, D::just(|| ())))
     }
