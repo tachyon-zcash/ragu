@@ -4,6 +4,7 @@
 //!
 //! - [`MySimpleCircuit`]: Proves knowledge of a and b such that a^5 = b^2 and outputs c = a+b, d = a-b.
 //! - [`SquareCircuit`]: Parameterized circuit that squares an input `times` times.
+//! - [`HeavyRoutineCircuit`]: Circuit using routines for memoization benchmarks.
 
 use ff::Field;
 use ragu_circuits::Circuit;
@@ -12,6 +13,7 @@ use ragu_core::{
     drivers::{Driver, DriverValue, LinearExpression},
     gadgets::{Bound, Kind},
     maybe::Maybe,
+    routines::{Prediction, Routine},
 };
 use ragu_primitives::Element;
 
@@ -97,6 +99,88 @@ impl<F: Field> Circuit<F> for SquareCircuit {
 
         for _ in 0..self.times {
             a = a.square(dr)?;
+        }
+
+        Ok((a, D::just(|| ())))
+    }
+}
+
+/// A routine that performs repeated squaring for memoization benchmarks.
+///
+/// This routine is intentionally "heavy" to make memoization savings visible.
+#[derive(Clone)]
+pub struct HeavyRoutine {
+    /// Number of squaring iterations per routine call.
+    pub iterations: usize,
+}
+
+impl<F: Field> Routine<F> for HeavyRoutine {
+    type Input = Kind![F; Element<'_, _>];
+    type Output = Kind![F; Element<'_, _>];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = F>>(
+        &self,
+        dr: &mut D,
+        input: Bound<'dr, D, Self::Input>,
+        _aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        let mut a = input;
+        for _ in 0..self.iterations {
+            a = a.square(dr)?;
+        }
+        Ok(a)
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = F>>(
+        &self,
+        _dr: &mut D,
+        _input: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::just(|| ())))
+    }
+}
+
+/// A circuit that invokes heavy routines for memoization benchmarks.
+///
+/// Uses 8 calls to [`HeavyRoutine`] to exercise inter-circuit memoization.
+pub struct HeavyRoutineCircuit {
+    /// Number of routine calls.
+    pub num_calls: usize,
+    /// Number of squaring iterations per routine call.
+    pub iterations_per_call: usize,
+}
+
+impl<F: Field> Circuit<F> for HeavyRoutineCircuit {
+    type Instance<'instance> = F;
+    type Output = Kind![F; Element<'_, _>];
+    type Witness<'witness> = F;
+    type Aux<'witness> = ();
+
+    fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = F>>(
+        &self,
+        dr: &mut D,
+        instance: DriverValue<D, Self::Instance<'instance>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Element::alloc(dr, instance)
+    }
+
+    fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = F>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'witness>>,
+    ) -> Result<(
+        Bound<'dr, D, Self::Output>,
+        DriverValue<D, Self::Aux<'witness>>,
+    )> {
+        let routine = HeavyRoutine {
+            iterations: self.iterations_per_call,
+        };
+
+        let mut a = Element::alloc(dr, witness)?;
+
+        for _ in 0..self.num_calls {
+            a = dr.routine(routine.clone(), a)?;
         }
 
         Ok((a, D::just(|| ())))

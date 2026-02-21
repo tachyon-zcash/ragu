@@ -13,7 +13,7 @@ use ragu_pasta::{Fp, Pasta};
 use ragu_testing::circuits::{MySimpleCircuit, SquareCircuit};
 use setup::{
     builder_squares, f, rand_structured_poly, rand_structured_poly_vec, rand_unstructured_poly,
-    registry_simple, setup_rng, setup_with_rng,
+    registry_heavy_routines, registry_simple, setup_rng, setup_with_rng,
 };
 
 #[library_benchmark(setup = setup_with_rng)]
@@ -155,9 +155,23 @@ fn wxy((registry, (w, x, y)): (Registry<'_, Fp, TestRank>, (Fp, Fp, Fp))) {
     black_box(registry.wxy(w, x, y));
 }
 
+#[library_benchmark(setup = setup_with_rng)]
+#[bench::wxy_heavy_routines(registry_heavy_routines(), (f, f, f))]
+fn wxy_heavy_routines((registry, (w, x, y)): (Registry<'_, Fp, ProductionRank>, (Fp, Fp, Fp))) {
+    black_box(registry.wxy(w, x, y));
+}
+
+#[library_benchmark(setup = setup_with_rng)]
+#[bench::wxy_combined_heavy_routines(registry_heavy_routines(), (f, f, f))]
+fn wxy_combined_heavy_routines(
+    (registry, (w, x, y)): (Registry<'_, Fp, ProductionRank>, (Fp, Fp, Fp)),
+) {
+    black_box(registry.wxy_combined(w, x, y));
+}
+
 library_benchmark_group!(
     name = registry_ops;
-    benchmarks = register, finalize, xy, wy, wx, wxy
+    benchmarks = register, finalize, xy, wy, wx, wxy, wxy_heavy_routines, wxy_combined_heavy_routines
 );
 
 main!(
