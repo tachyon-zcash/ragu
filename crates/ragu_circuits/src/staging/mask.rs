@@ -259,6 +259,7 @@ impl<F: Field, R: Rank> WiringObject<F, R> for StageMask<R> {
         x: F,
         y: F,
         floor_plan: &[crate::floor_planner::ConstraintSegment],
+        _type_floor_plan: &crate::floor_plan::FloorPlan,
         _cache: &mut crate::wiring::MemoCache<F>,
     ) -> F {
         // StageMask doesn't use routines, so no memoization benefit.

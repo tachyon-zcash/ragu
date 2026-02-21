@@ -48,16 +48,26 @@
 //! [`sx`]: super::sx
 //! [`Driver::enforce_zero`]: ragu_core::drivers::Driver::enforce_zero
 
+use alloc::collections::BTreeMap;
+
 use ragu_core::{
     Coeff, Error, Result,
-    drivers::{DirectSum, Driver, DriverTypes, emulator::Emulator},
-    gadgets::Bound,
+    convert::{StripWires, WireMap as _, extract_wires},
+    drivers::{
+        DirectSum, Driver, DriverTypes,
+        emulator::{Emulator, Wireless},
+    },
+    gadgets::{Bound, GadgetKind as _},
     maybe::Empty,
     routines::Routine,
 };
 use udon::field::Field;
 
-use crate::{DriverScope, floor_planner::ConstraintSegment, polynomials::Rank, raw::RawCircuit};
+use super::memo::{CachedRoutine, MemoCache, WireInjector};
+use crate::{
+    DriverScope, floor_plan::FloorPlan, floor_planner::ConstraintSegment, polynomials::Rank,
+    raw::RawCircuit, routines::RoutineId,
+};
 
 /// Per-routine state saved and restored across routine boundaries.
 struct SxyScope<F> {
@@ -127,6 +137,18 @@ struct Evaluator<'fp, F, R> {
 
     /// Global monotonic DFS counter for routine entries.
     current_routine: usize,
+
+    /// Canonical floor plan for inter-circuit memoization (optional).
+    type_floor_plan: Option<&'fp FloorPlan>,
+
+    /// Cache for memoized routine contributions (optional).
+    memo_cache: Option<&'fp mut MemoCache<F>>,
+
+    /// Per-routine-type invocation counters for cache key computation.
+    invocation_counts: BTreeMap<RoutineId, usize>,
+
+    /// Routine nesting depth; memoization only applies at depth 0.
+    routine_depth: usize,
 
     /// Marker for the rank type parameter.
     _marker: core::marker::PhantomData<R>,
@@ -252,7 +274,54 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         let gate_start = seg.gate_start;
         let constraint_start = seg.constraint_start;
 
-        // Jump to this routine's absolute position in the polynomial;
+        // Compute cache key: (routine_id, canonical_position)
+        let routine_id = RoutineId::of::<Ro>();
+        let invocation_index = *self.invocation_counts.get(&routine_id).unwrap_or(&0);
+        self.invocation_counts
+            .entry(routine_id)
+            .and_modify(|c| *c += 1)
+            .or_insert(1);
+
+        // Check for cache hit (only at top-level routines, depth == 0)
+        let can_memoize =
+            self.routine_depth == 0 && self.type_floor_plan.is_some() && self.memo_cache.is_some();
+
+        if can_memoize {
+            let type_floor_plan = self.type_floor_plan.unwrap();
+            if let Some(canonical_pos) =
+                type_floor_plan.get_invocation(&routine_id, invocation_index)
+            {
+                // SAFETY: We just checked memo_cache.is_some()
+                let cache = self.memo_cache.as_ref().unwrap();
+                if let Some(cached) = cache.get(&routine_id, canonical_pos) {
+                    // Cache hit: reconstruct output without re-executing routine
+                    let y_pow_constraint_start = self.y.pow_u64(constraint_start as u64);
+                    self.scope.sum += y_pow_constraint_start * cached.contribution;
+
+                    // Reconstruct output gadget from cached wires:
+                    // 1. Execute with wireless emulator to get a template with unit wires
+                    // 2. Use WireInjector to convert unit wires to cached wire values
+                    type W<F> = Emulator<Wireless<Empty, F>>;
+
+                    let aux = Emulator::predict(&routine, &input)?.into_aux();
+
+                    let wireless_input = StripWires::<Self>::remap(&input)?;
+                    let template =
+                        routine.execute(&mut W::<F>::wireless(), wireless_input, aux)?;
+
+                    let mut injector = WireInjector::<_, W<F>, Self>::new(&cached.output_wires);
+                    let output = Ro::Output::map_gadget(&template, &mut injector)?;
+                    debug_assert!(
+                        injector.is_exhausted(),
+                        "wire cache should be fully consumed"
+                    );
+
+                    return Ok(output);
+                }
+            }
+        }
+
+        // Cache miss: jump to this routine's absolute position in the polynomial;
         // see "Polynomial Encoding and Scope Jumps" in the `s` module doc.
         let x_pow = self.x.pow_u64(gate_start as u64);
         let x_inv_pow = self.x_inv.pow_u64(gate_start as u64);
@@ -269,10 +338,13 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         // Manual save/restore: we need to capture the routine's result
         // before restoring parent state.
         let saved = core::mem::replace(&mut self.scope, init_scope);
+        self.routine_depth += 1;
         let exec_result = {
             let aux = Emulator::predict(&routine, &input)?.into_aux();
             routine.execute(self, input, aux)
         };
+        self.routine_depth -= 1;
+
         // Verify this routine consumed exactly the expected constraints.
         assert_eq!(
             self.scope.gates,
@@ -288,10 +360,36 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         // Position the routine's local Horner result at its absolute Y offset,
         // then combine with any nested child contributions.
         let y_pow_constraint_start = self.y.pow_u64(constraint_start as u64);
-        let routine_contribution =
-            y_pow_constraint_start.mul_add(&self.scope.result, &self.scope.sum);
+        let routine_contribution = self.scope.result + self.scope.sum;
+
+        // Store in cache if memoization is enabled
+        if can_memoize {
+            let type_floor_plan = self.type_floor_plan.unwrap();
+            if let Some(canonical_pos) =
+                type_floor_plan.get_invocation(&routine_id, invocation_index)
+            {
+                // Extract output wires for caching
+                if let Ok(ref output) = exec_result {
+                    let output_wires = extract_wires(output, |w: &F| *w)?;
+
+                    let entry = CachedRoutine {
+                        contribution: routine_contribution,
+                        num_gates: seg.num_gates,
+                        num_constraints: seg.num_constraints,
+                        output_wires,
+                    };
+
+                    // SAFETY: We checked memo_cache.is_some() above
+                    self.memo_cache
+                        .as_mut()
+                        .unwrap()
+                        .insert(routine_id, canonical_pos, entry);
+                }
+            }
+        }
+
         self.scope = saved;
-        self.scope.sum += routine_contribution;
+        self.scope.sum += y_pow_constraint_start * routine_contribution;
 
         exec_result
     }
@@ -313,6 +411,49 @@ pub fn eval<F: Field, RC: RawCircuit<F>, R: Rank>(
     x: F,
     y: F,
     floor_plan: &[ConstraintSegment],
+) -> Result<F> {
+    eval_inner::<F, RC, R>(circuit, x, y, floor_plan, None, None)
+}
+
+/// Evaluates $s(x, y)$ with inter-circuit memoization.
+///
+/// Like [`eval`], but caches routine contributions for reuse across circuits.
+/// Routines at the same canonical position (via `type_floor_plan`) share
+/// cached results when the same `cache` is passed to multiple calls.
+///
+/// # Arguments
+///
+/// - `circuit`: The circuit whose wiring polynomial to evaluate.
+/// - `x`: The evaluation point for the $X$ variable.
+/// - `y`: The evaluation point for the $Y$ variable.
+/// - `floor_plan`: Per-routine absolute offsets (per-circuit).
+/// - `type_floor_plan`: Canonical routine positions for cache keys.
+/// - `cache`: Shared cache for inter-circuit memoization.
+pub(crate) fn eval_with_cache<F: Field, RC: RawCircuit<F>, R: Rank>(
+    circuit: &RC,
+    x: F,
+    y: F,
+    floor_plan: &[ConstraintSegment],
+    type_floor_plan: &FloorPlan,
+    cache: &mut MemoCache<F>,
+) -> Result<F> {
+    eval_inner::<F, RC, R>(
+        circuit,
+        x,
+        y,
+        floor_plan,
+        Some(type_floor_plan),
+        Some(cache),
+    )
+}
+
+fn eval_inner<F: Field, RC: RawCircuit<F>, R: Rank>(
+    circuit: &RC,
+    x: F,
+    y: F,
+    floor_plan: &[ConstraintSegment],
+    type_floor_plan: Option<&FloorPlan>,
+    memo_cache: Option<&mut MemoCache<F>>,
 ) -> Result<F> {
     // At x = 0 every monomial other than x^0 vanishes; the d[0] ONE wire
     // (at x^0) still contributes. Set x_inv = 0 so the running monomials
@@ -351,6 +492,10 @@ pub fn eval<F: Field, RC: RawCircuit<F>, R: Rank>(
         a_to_d: base_a_x_inv,
         floor_plan,
         current_routine: 0,
+        type_floor_plan,
+        memo_cache,
+        invocation_counts: BTreeMap::new(),
+        routine_depth: 0,
         _marker: core::marker::PhantomData,
     };
 

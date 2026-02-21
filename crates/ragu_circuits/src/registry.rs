@@ -1143,8 +1143,13 @@ impl<F: Field, R: Rank> RegistryAt<'_, F, R> {
                 for (j, coeff) in coeffs.iter().enumerate() {
                     let i = registry.bitreversed_index(j);
                     if let Some(circuit) = registry.circuits.get(i) {
-                        let sxy =
-                            circuit.sxy_with_cache(x, y, &registry.floor_plans[i], &mut cache);
+                        let sxy = circuit.sxy_with_cache(
+                            x,
+                            y,
+                            &registry.floor_plans[i],
+                            &registry.type_floor_plan,
+                            &mut cache,
+                        );
                         F::mul_accumulate(&mut result, &sxy, coeff);
                     }
                 }
