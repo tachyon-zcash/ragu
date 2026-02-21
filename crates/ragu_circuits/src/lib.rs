@@ -21,6 +21,7 @@ extern crate alloc;
 extern crate std;
 
 mod blind;
+pub mod floor_plan;
 pub mod floor_planner;
 pub mod horner;
 mod ky;
