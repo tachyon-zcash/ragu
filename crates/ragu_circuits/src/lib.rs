@@ -216,6 +216,18 @@ pub(crate) trait WiringObject<F: Field, R: Rank>: Send + Sync {
     /// Evaluates the polynomial $s(x, y)$ for some $x, y \in \mathbb{F}$.
     fn sxy(&self, x: F, y: F, floor_plan: &[floor_planner::ConstraintSegment]) -> F;
 
+    /// Evaluates $s(x, y)$ with memoization cache for inter-circuit sharing.
+    ///
+    /// Routines at the same canonical position across circuits can share
+    /// cached contributions, avoiding redundant computation.
+    fn sxy_with_cache(
+        &self,
+        x: F,
+        y: F,
+        floor_plan: &[floor_planner::ConstraintSegment],
+        cache: &mut wiring::MemoCache<F>,
+    ) -> F;
+
     /// Computes the polynomial restriction $s(x, Y)$ for some $x \in \mathbb{F}$.
     fn sx(&self, x: F, floor_plan: &[floor_planner::ConstraintSegment])
     -> sparse::Polynomial<F, R>;
@@ -303,6 +315,18 @@ where
     // contribution across its invocations instead.
     impl<F: Field, RC: raw::RawCircuit<F>, R: Rank> WiringObject<F, R> for Processed<RC> {
         fn sxy(&self, x: F, y: F, floor_plan: &[floor_planner::ConstraintSegment]) -> F {
+            wiring::sxy::eval::<_, _, R>(&self.circuit, x, y, floor_plan)
+                .expect("should succeed if metrics succeeded")
+        }
+        fn sxy_with_cache(
+            &self,
+            x: F,
+            y: F,
+            floor_plan: &[floor_planner::ConstraintSegment],
+            _cache: &mut wiring::MemoCache<F>,
+        ) -> F {
+            // TODO: Implement memoization in sxy evaluator.
+            // For now, delegate to sxy without caching.
             wiring::sxy::eval::<_, _, R>(&self.circuit, x, y, floor_plan)
                 .expect("should succeed if metrics succeeded")
         }

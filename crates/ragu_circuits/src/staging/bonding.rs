@@ -244,6 +244,17 @@ impl<F: Field, R: Rank> WiringObject<F, R> for Stripped<'_, F, R> {
         self.0.sxy(x, y, floor_plan) - F::ONE
     }
 
+    fn sxy_with_cache(
+        &self,
+        x: F,
+        y: F,
+        floor_plan: &[ConstraintSegment],
+        _cache: &mut crate::wiring::MemoCache<F>,
+    ) -> F {
+        // Bonding polynomials don't share the memoization cache.
+        self.sxy(x, y, floor_plan)
+    }
+
     fn sx(&self, x: F, floor_plan: &[ConstraintSegment]) -> sparse::Polynomial<F, R> {
         let mut poly = self.0.sx(x, floor_plan);
         // Horner places the last constraint (enforce_one) at y^0 = coeffs[0].

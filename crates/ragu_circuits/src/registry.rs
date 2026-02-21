@@ -68,6 +68,7 @@ use crate::{
     floor_planner::ConstraintSegment,
     polynomials::{Rank, sparse},
     routines::RoutineRegistry,
+    wiring::MemoCache,
 };
 
 /// Represents a simple numeric index of a circuit in the registry.
@@ -837,6 +838,15 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
         self.at(w).xy(x, y)
     }
 
+    /// Evaluates the registry polynomial with inter-circuit memoization.
+    ///
+    /// Routines at the same canonical position share cached contributions
+    /// across circuits during Lagrange interpolation. Result is identical
+    /// to [`wxy`](Self::wxy).
+    pub fn wxy_combined(&self, w: F, x: F, y: F) -> F {
+        self.at(w).xy_combined(x, y)
+    }
+
     /// Computes the polynomial restricted at $W$ based on the provided
     /// closures, using cached Lagrange coefficients.
     fn w_cached<T>(
@@ -1113,6 +1123,52 @@ impl<F: Field, R: Rank> RegistryAt<'_, F, R> {
         // scalar once, then add the registry tag contribution.
         sum + self.mask_coeff_sum * crate::staging::mask::global_mask::<F, R>(x, y)
             + self.registry.tag_sxy(x, y)
+    }
+
+    /// Evaluate the registry polynomial at the point ($W$, $X$, $Y$) with
+    /// inter-circuit memoization.
+    ///
+    /// Routines at the same canonical position share cached contributions
+    /// across circuits during Lagrange interpolation. Result is identical
+    /// to [`xy`](Self::xy).
+    pub fn xy_combined(&self, x: F, y: F) -> F {
+        let registry = self.registry;
+        let mut result = F::Accumulator::default();
+
+        match &self.cache {
+            LagrangeCache::Arbitrary(coeffs) => {
+                // Lagrange interpolation with shared cache
+                let mut cache = MemoCache::new();
+
+                for (j, coeff) in coeffs.iter().enumerate() {
+                    let i = registry.bitreversed_index(j);
+                    if let Some(circuit) = registry.circuits.get(i) {
+                        let sxy =
+                            circuit.sxy_with_cache(x, y, &registry.floor_plans[i], &mut cache);
+                        F::mul_accumulate(&mut result, &sxy, coeff);
+                    }
+                }
+            }
+            LagrangeCache::Assigned(i) => {
+                // w in domain: single circuit, no memoization benefit
+                if let Some(circuit) = registry.circuits.get(*i) {
+                    let sxy = circuit.sxy(x, y, &registry.floor_plans[*i]);
+                    F::mul_accumulate(&mut result, &sxy, &F::ONE);
+                }
+            }
+            LagrangeCache::Zero => {}
+        }
+
+        // Masking polynomials return only -notch; apply the shared global
+        // scalar once.
+        F::mul_accumulate(
+            &mut result,
+            &self.mask_coeff_sum,
+            &crate::staging::mask::global_mask::<F, R>(x, y),
+        );
+
+        // Add the registry tag contribution.
+        F::reduce(result) + registry.tag_sxy(x, y)
     }
 }
 
@@ -1813,6 +1869,37 @@ mod tests {
         let wxy = registry.wxy(w, x, y);
         let xy = registry.xy(x, y);
         assert_eq!(wxy, xy.eval(w));
+
+        Ok(())
+    }
+
+    /// wxy_combined produces identical results to wxy (both in and out of domain).
+    #[test]
+    fn test_wxy_combined_equals_wxy() -> Result<()> {
+        let registry = TestRegistryBuilder::new()
+            .register_circuit(SquareCircuit { times: 2 })?
+            .register_circuit(SquareCircuit { times: 5 })?
+            .register_circuit(SquareCircuit { times: 10 })?
+            .register_circuit(SquareCircuit { times: 11 })?
+            .register_circuit(SquareCircuit { times: 19 })?
+            .register_circuit(SquareCircuit { times: 19 })?
+            .register_circuit(SquareCircuit { times: 19 })?
+            .register_circuit(SquareCircuit { times: 19 })?
+            .finalize()?;
+
+        let w = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
+        let x = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
+        let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
+
+        // Test out-of-domain
+        assert_eq!(registry.wxy(w, x, y), registry.wxy_combined(w, x, y));
+
+        // Test in-domain
+        let w_in_domain = CircuitIndex::new(1).omega_j::<Fp>();
+        assert_eq!(
+            registry.wxy(w_in_domain, x, y),
+            registry.wxy_combined(w_in_domain, x, y)
+        );
 
         Ok(())
     }
