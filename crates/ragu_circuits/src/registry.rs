@@ -603,8 +603,14 @@ impl<F: PrimeField, R: Rank> RegistryAt<'_, F, R> {
             for (j, coeff) in ell.iter().enumerate() {
                 let i = bitreverse(j as u32, self.domain.log2_n()) as usize;
                 if let Some(circuit) = self.circuits.get(i) {
-                    let sxy =
-                        circuit.sxy_with_cache(x, y, &self.key, &self.floor_plans[i], &mut cache);
+                    let sxy = circuit.sxy_with_cache(
+                        x,
+                        y,
+                        &self.key,
+                        &self.floor_plans[i],
+                        &self.type_floor_plan,
+                        &mut cache,
+                    );
                     result += sxy * coeff;
                 }
             }

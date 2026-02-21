@@ -154,13 +154,20 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
                 x: F,
                 y: F,
                 key: &registry::Key<F>,
-                floor_plan: &[floor_planner::ConstraintSegment],
-                _cache: &mut s::MemoCache<F>,
+floor_plan: &[floor_planner::ConstraintSegment],
+                type_floor_plan: &floor_plan::FloorPlan,
+                cache: &mut s::MemoCache<F>,
             ) -> F {
-                // TODO: Implement memoization in sxy evaluator.
-                // For now, delegate to sxy without caching.
-                s::sxy::eval::<_, _, R>(&self.circuit, x, y, key, floor_plan)
-                    .expect("should succeed if metrics succeeded")
+                s::sxy::eval_with_cache::<_, _, R>(
+                    &self.circuit,
+                    x,
+                    y,
+                    key,
+                    floor_plan,
+                    type_floor_plan,
+                    cache,
+                )
+                .expect("should succeed if metrics succeeded")
             }
             fn sx(
                 &self,
@@ -234,12 +241,19 @@ pub trait CircuitObject<F: Field, R: Rank>: Send + Sync {
     ///
     /// Routines at the same canonical position across circuits can share
     /// cached contributions, avoiding redundant computation.
+    ///
+    /// # Arguments
+    ///
+    /// - `floor_plan`: Per-circuit absolute offsets for monomial computation.
+    /// - `type_floor_plan`: Canonical positions for cache keys (inter-circuit sharing).
+    /// - `cache`: Shared cache populated/consulted during evaluation.
     fn sxy_with_cache(
         &self,
         x: F,
         y: F,
         key: &registry::Key<F>,
-        floor_plan: &[floor_planner::ConstraintSegment],
+floor_plan: &[floor_planner::ConstraintSegment],
+        type_floor_plan: &floor_plan::FloorPlan,
         cache: &mut s::MemoCache<F>,
     ) -> F;
 
