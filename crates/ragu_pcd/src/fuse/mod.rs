@@ -66,15 +66,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             self.compute_preamble(rng, &left, &right, &application)?;
         Point::constant(&mut dr, preamble.nested_commitment)?.write(&mut dr, &mut transcript)?;
         let w = transcript.squeeze(&mut dr)?;
+        let registry_at_w = self.native_registry.at(*w.value().take());
 
-        let s_prime = self.compute_s_prime(rng, &w, &left, &right)?;
+        let s_prime = self.compute_s_prime(rng, &registry_at_w, &left, &right)?;
         Point::constant(&mut dr, s_prime.nested_s_prime_commitment)?
             .write(&mut dr, &mut transcript)?;
         let y = transcript.squeeze(&mut dr)?;
         let z = transcript.squeeze(&mut dr)?;
 
         let (error_m, error_m_witness, claims) =
-            self.compute_errors_m(rng, &w, &y, &z, &left, &right)?;
+            self.compute_errors_m(rng, &registry_at_w, &y, &z, &left, &right)?;
         Point::constant(&mut dr, error_m.nested_commitment)?.write(&mut dr, &mut transcript)?;
 
         let saved_transcript_state = transcript
