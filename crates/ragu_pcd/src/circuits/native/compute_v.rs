@@ -71,7 +71,7 @@ use super::{
         eval as native_eval, preamble as native_preamble,
         query::{self as native_query, ChildEvaluations, FixedRegistryEvaluations},
     },
-    unified::{self, OutputBuilder},
+    unified::{self, Coverage, OutputBuilder},
 };
 use crate::components::horner::Horner;
 
@@ -123,7 +123,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE>;
     type Output = unified::InternalOutputKind<C>;
-    type Aux<'source> = ();
+    type Aux<'source> = Coverage;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
@@ -241,7 +241,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
             unified_output.v.set(computed_v);
         }
 
-        Ok((unified_output.finish(dr, unified_instance)?, D::just(|| ())))
+        let (output, coverage) = unified_output.finish(dr, unified_instance)?;
+        Ok((output, D::just(move || coverage)))
     }
 }
 

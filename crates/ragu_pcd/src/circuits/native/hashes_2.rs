@@ -75,7 +75,7 @@ use core::marker::PhantomData;
 
 use super::{
     stages::{error_n as native_error_n, preamble as native_preamble},
-    unified::{self, OutputBuilder},
+    unified::{self, Coverage, OutputBuilder},
 };
 use crate::components::fold_revdot;
 
@@ -132,7 +132,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, FP>;
     type Output = unified::InternalOutputKind<C>;
-    type Aux<'source> = ();
+    type Aux<'source> = Coverage;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
@@ -229,6 +229,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         };
         unified_output.pre_beta.set(pre_beta);
 
-        Ok((unified_output.finish(dr, unified_instance)?, D::just(|| ())))
+        let (output, coverage) = unified_output.finish(dr, unified_instance)?;
+        Ok((output, D::just(move || coverage)))
     }
 }
