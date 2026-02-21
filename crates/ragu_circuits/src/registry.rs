@@ -720,6 +720,10 @@ mod tests {
         Ok(())
     }
 
+    /// `OmegaKey::from` only looks at the low 64 bits (after 5 times), so
+    /// different field elements can map to the same key. `Registry::at`
+    /// handles this by checking `domain.ell` before `omega_lookup`. Here
+    /// we forge a collision and verify evaluations are still correct.
     #[test]
     fn test_omega_key_collision() -> Result<()> {
         let registry = TestRegistryBuilder::new()
@@ -729,7 +733,6 @@ mod tests {
 
         let omega = registry.domain.omega();
 
-        // Forge an `OmegaKey` collision.
         let mut repr = (omega.double().double() + omega).to_repr();
         repr.as_mut()[8] ^= 1;
         let w = Fp::from_repr(repr).unwrap() * Fp::from(5u64).invert().unwrap();
