@@ -36,7 +36,7 @@
     - [Registry Polynomial](protocol/extensions/registry.md)
     - [Endoscalars](protocol/extensions/endoscalar.md)
     - [Staging](protocol/extensions/staging.md)
-  - [Recursion]()
+  - [Recursion](protocol/recursion/index.md)
     - [Public Inputs](protocol/recursion/public_inputs.md)
   - [Analysis](protocol/analysis.md)
 - [Part III: Implementation]()
