@@ -64,8 +64,10 @@ use udon::{
 
 use crate::{
     BondingObject, Circuit, WiringObject,
+    floor_plan::FloorPlan,
     floor_planner::ConstraintSegment,
     polynomials::{Rank, sparse},
+    routines::RoutineRegistry,
 };
 
 /// Represents a simple numeric index of a circuit in the registry.
@@ -130,6 +132,11 @@ pub struct RegistryBuilder<'params, F: Field, R: Rank> {
     /// A tag to install instead of the derived one; a test seam only.
     #[cfg(any(test, feature = "test-utils"))]
     tag: Option<F>,
+    /// Routine registries for each category, chained in finalize() to match circuit order.
+    internal_circuit_registries: Vec<RoutineRegistry>,
+    bonding_registries: Vec<RoutineRegistry>,
+    internal_step_registries: Vec<RoutineRegistry>,
+    application_registries: Vec<RoutineRegistry>,
 }
 
 impl<F: Field, R: Rank> Default for RegistryBuilder<'_, F, R> {
@@ -146,6 +153,10 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
             bonding: Vec::new(),
             internal_steps: Vec::new(),
             application_steps: Vec::new(),
+            internal_circuit_registries: Vec::new(),
+            bonding_registries: Vec::new(),
+            internal_step_registries: Vec::new(),
+            application_registries: Vec::new(),
             #[cfg(any(test, feature = "test-utils"))]
             tag: None,
         }
@@ -186,12 +197,30 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
     ///
     /// Propagates any error from converting `circuit` into the registry's
     /// internal wiring representation.
-    pub fn register_circuit<C>(mut self, circuit: C) -> Result<Self>
+    pub fn register_circuit<C>(self, circuit: C) -> Result<Self>
+    where
+        C: Circuit<F> + 'params,
+    {
+        self.register_circuit_with_registry(circuit, RoutineRegistry::new())
+    }
+
+    /// Registers an application step circuit with its routine registry for floor planning.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any error from converting `circuit` into the registry's
+    /// internal wiring representation.
+    pub fn register_circuit_with_registry<C>(
+        mut self,
+        circuit: C,
+        routine_registry: RoutineRegistry,
+    ) -> Result<Self>
     where
         C: Circuit<F> + 'params,
     {
         self.application_steps
             .push(crate::into_wiring_object(circuit)?);
+        self.application_registries.push(routine_registry);
         Ok(self)
     }
 
@@ -201,12 +230,30 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
     ///
     /// Propagates any error from converting `circuit` into the registry's
     /// internal wiring representation.
-    pub fn register_internal_circuit<C>(mut self, circuit: C) -> Result<Self>
+    pub fn register_internal_circuit<C>(self, circuit: C) -> Result<Self>
+    where
+        C: Circuit<F> + 'params,
+    {
+        self.register_internal_circuit_with_registry(circuit, RoutineRegistry::new())
+    }
+
+    /// Registers an internal circuit with its routine registry for floor planning.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any error from converting `circuit` into the registry's
+    /// internal wiring representation.
+    pub fn register_internal_circuit_with_registry<C>(
+        mut self,
+        circuit: C,
+        routine_registry: RoutineRegistry,
+    ) -> Result<Self>
     where
         C: Circuit<F> + 'params,
     {
         self.internal_circuits
             .push(crate::into_wiring_object(circuit)?);
+        self.internal_circuit_registries.push(routine_registry);
         Ok(self)
     }
 
@@ -222,12 +269,14 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
     {
         self.internal_steps
             .push(crate::into_wiring_object(circuit)?);
+        self.internal_step_registries.push(RoutineRegistry::new());
         Ok(self)
     }
 
     /// Registers a bonding polynomial.
     pub fn register_bonding(mut self, bonding: BondingObject<'params, F, R>) -> Self {
         self.bonding.push(bonding.into_inner());
+        self.bonding_registries.push(RoutineRegistry::new());
         self
     }
 
@@ -272,6 +321,17 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
             .map(|circuit| crate::floor_planner::floor_plan(circuit.segment_records()))
             .collect();
 
+        // Compute type-based floor plan from routine registries for inter-circuit memoization.
+        let routine_registries: Vec<RoutineRegistry> = self
+            .internal_circuit_registries
+            .into_iter()
+            .chain(self.bonding_registries)
+            .chain(self.internal_step_registries)
+            .chain(self.application_registries)
+            .collect();
+        let registry_refs: Vec<&RoutineRegistry> = routine_registries.iter().collect();
+        let type_floor_plan = FloorPlan::from_registries(&registry_refs, R::n());
+
         let tag = Tag::derive(&circuits, &floor_plans);
         #[cfg(any(test, feature = "test-utils"))]
         let tag = self.tag.map_or(tag, Tag);
@@ -280,6 +340,7 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
             domain,
             circuits,
             floor_plans,
+            type_floor_plan,
             tag,
         })
     }
@@ -428,6 +489,9 @@ pub struct Registry<'params, F: Field, R: Rank> {
     /// Per-circuit floor plans computed during finalization.
     floor_plans: Vec<Vec<ConstraintSegment>>,
 
+    /// Type-based floor plan for inter-circuit memoization.
+    type_floor_plan: FloorPlan,
+
     /// Registry tag used to bind circuits to this registry.
     tag: Tag<F>,
 }
@@ -520,6 +584,11 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
     /// Returns the number of circuits in this registry.
     pub fn num_circuits(&self) -> usize {
         self.circuits.len()
+    }
+
+    /// Returns the type-based floor plan for inter-circuit memoization.
+    pub fn type_floor_plan(&self) -> &FloorPlan {
+        &self.type_floor_plan
     }
 
     /// Converts between a domain position and its circuit index: circuit `i`
