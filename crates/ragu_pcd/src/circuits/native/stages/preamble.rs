@@ -3,6 +3,7 @@
 //! Verifies child proof headers and computes the Ky term.
 
 use ragu_arithmetic::Cycle;
+use ragu_circuits::horner::Horner;
 use ragu_circuits::{polynomials::Rank, staging};
 use ragu_core::{
     Error, Result,
@@ -18,9 +19,7 @@ use ragu_primitives::{
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use crate::{
-    Proof, circuits::native::unified, components::ky::Ky, header::Header, step::internal::padded,
-};
+use crate::{Proof, circuits::native::unified, header::Header, step::internal::padded};
 
 pub(crate) use crate::circuits::native::InternalCircuitIndex::PreambleStage as STAGING_ID;
 
@@ -107,20 +106,20 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         dr: &mut D,
         y: &Element<'dr, D>,
     ) -> Result<(Element<'dr, D>, Element<'dr, D>)> {
-        let mut ky = Ky::new(y);
+        let mut ky = Horner::new(y);
         self.unified.write(dr, &mut ky)?;
 
         Ok((
             ({
                 let mut ky = ky.clone();
                 Element::zero(dr).write(dr, &mut ky)?;
-                ky.finish(dr)?
+                ky.finish_ky(dr)?
             }),
             ({
                 self.children.left.write(dr, &mut ky)?;
                 self.children.right.write(dr, &mut ky)?;
                 Element::zero(dr).write(dr, &mut ky)?;
-                ky.finish(dr)?
+                ky.finish_ky(dr)?
             }),
         ))
     }
@@ -129,11 +128,11 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     ///
     /// Returns `application_ky` = k(y) for `(children.left, children.right, output_header)`.
     pub fn application_ky(&self, dr: &mut D, y: &Element<'dr, D>) -> Result<Element<'dr, D>> {
-        let mut ky = Ky::new(y);
+        let mut ky = Horner::new(y);
         self.children.left.write(dr, &mut ky)?;
         self.children.right.write(dr, &mut ky)?;
         self.output_header.write(dr, &mut ky)?;
-        ky.finish(dr)
+        ky.finish_ky(dr)
     }
 
     /// Returns true if this child proof is a trivial proof (output header suffix == 1).
