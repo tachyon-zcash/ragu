@@ -246,7 +246,7 @@ mod tests {
     use ragu_core::{
         Result,
         drivers::{Driver, DriverValue, LinearExpression, emulator::Emulator},
-        gadgets::{Bound, Consistent, Gadget, GadgetKind},
+        gadgets::{Bound, Consistent, Gadget},
         maybe::Maybe,
         routines::{Prediction, Routine},
     };
@@ -1037,7 +1037,7 @@ mod tests {
             &self,
             dr: &mut D,
             witness: DriverValue<D, Self::Witness<'source>>,
-        ) -> Result<<Self::OutputKind as GadgetKind<Fp>>::Rebind<'dr, D>>
+        ) -> Result<Bound<'dr, D, Self::OutputKind>>
         where
             Self: 'dr,
         {
