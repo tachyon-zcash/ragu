@@ -15,6 +15,7 @@
 
 extern crate alloc;
 
+pub mod floor_plan;
 pub mod floor_planner;
 mod ky;
 mod metrics;
