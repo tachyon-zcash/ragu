@@ -149,6 +149,19 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
                 s::sxy::eval::<_, _, R>(&self.circuit, x, y, key, floor_plan)
                     .expect("should succeed if metrics succeeded")
             }
+            fn sxy_with_cache(
+                &self,
+                x: F,
+                y: F,
+                key: &registry::Key<F>,
+                floor_plan: &[floor_planner::ConstraintSegment],
+                _cache: &mut s::MemoCache<F>,
+            ) -> F {
+                // TODO: Implement memoization in sxy evaluator.
+                // For now, delegate to sxy without caching.
+                s::sxy::eval::<_, _, R>(&self.circuit, x, y, key, floor_plan)
+                    .expect("should succeed if metrics succeeded")
+            }
             fn sx(
                 &self,
                 x: F,
@@ -215,6 +228,19 @@ pub trait CircuitObject<F: Field, R: Rank>: Send + Sync {
         y: F,
         key: &registry::Key<F>,
         floor_plan: &[floor_planner::ConstraintSegment],
+    ) -> F;
+
+    /// Evaluates $s(x, y)$ with memoization cache for inter-circuit sharing.
+    ///
+    /// Routines at the same canonical position across circuits can share
+    /// cached contributions, avoiding redundant computation.
+    fn sxy_with_cache(
+        &self,
+        x: F,
+        y: F,
+        key: &registry::Key<F>,
+        floor_plan: &[floor_planner::ConstraintSegment],
+        cache: &mut s::MemoCache<F>,
     ) -> F;
 
     /// Computes the polynomial restriction $s(x, Y)$ for some $x \in \mathbb{F}$.
