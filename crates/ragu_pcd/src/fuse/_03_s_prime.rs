@@ -5,37 +5,28 @@
 
 use ff::Field;
 use ragu_arithmetic::Cycle;
-use ragu_circuits::{polynomials::Rank, staging::StageExt};
-use ragu_core::{
-    Result,
-    drivers::Driver,
-    maybe::{Always, Maybe},
-};
-use ragu_primitives::Element;
+use ragu_circuits::{polynomials::Rank, registry::RegistryAt, staging::StageExt};
+use ragu_core::Result;
 use rand::CryptoRng;
 
 use crate::{Application, Proof, circuits::nested, proof};
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
-    pub(super) fn compute_s_prime<'dr, D, RNG: CryptoRng>(
+    pub(super) fn compute_s_prime<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        w: &Element<'dr, D>,
+        registry_at_w: &RegistryAt<'_, C::CircuitField, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-    ) -> Result<proof::SPrime<C, R>>
-    where
-        D: Driver<'dr, F = C::CircuitField, MaybeKind = Always<()>>,
-    {
-        let w = *w.value().take();
+    ) -> Result<proof::SPrime<C, R>> {
         let x0 = left.challenges.x;
         let x1 = right.challenges.x;
 
-        let native_registry_wx0_poly = self.native_registry.wx(w, x0);
+        let native_registry_wx0_poly = registry_at_w.wx(x0);
         let native_registry_wx0_blind = C::CircuitField::random(&mut *rng);
         let native_registry_wx0_commitment = native_registry_wx0_poly
             .commit(C::host_generators(self.params), native_registry_wx0_blind);
-        let native_registry_wx1_poly = self.native_registry.wx(w, x1);
+        let native_registry_wx1_poly = registry_at_w.wx(x1);
         let native_registry_wx1_blind = C::CircuitField::random(&mut *rng);
         let native_registry_wx1_commitment = native_registry_wx1_poly
             .commit(C::host_generators(self.params), native_registry_wx1_blind);

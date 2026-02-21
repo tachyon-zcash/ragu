@@ -9,7 +9,7 @@
 
 use ff::Field;
 use ragu_arithmetic::Cycle;
-use ragu_circuits::{polynomials::Rank, staging::StageExt};
+use ragu_circuits::{polynomials::Rank, registry::RegistryAt, staging::StageExt};
 use ragu_core::{
     Result,
     drivers::Driver,
@@ -34,7 +34,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     pub(super) fn compute_errors_m<'dr, 'rx, D, RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        w: &Element<'dr, D>,
+        registry_at_w: &RegistryAt<'_, C::CircuitField, R>,
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
         left: &'rx Proof<C, R>,
@@ -47,11 +47,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     where
         D: Driver<'dr, F = C::CircuitField, MaybeKind = Always<()>>,
     {
-        let w = *w.value().take();
         let y = *y.value().take();
         let z = *z.value().take();
 
-        let registry_wy_poly = self.native_registry.wy(w, y);
+        let registry_wy_poly = registry_at_w.wy(y);
         let registry_wy_blind = C::CircuitField::random(&mut *rng);
         let registry_wy_commitment =
             registry_wy_poly.commit(C::host_generators(self.params), registry_wy_blind);

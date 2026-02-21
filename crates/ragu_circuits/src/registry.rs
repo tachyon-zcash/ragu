@@ -319,9 +319,29 @@ pub struct Registry<'params, F: PrimeField, R: Rank> {
     key: Key<F>,
 }
 
+/// Cached Lagrange state for a fixed W point.
+enum LagrangeCache<F> {
+    /// Must interpolate across circuits (w not in domain).
+    Interpolate(Vec<F>),
+    /// Direct circuit lookup (w in domain).
+    Direct(usize),
+    /// No circuit at this point.
+    Empty,
+}
+
+/// A registry bound to a specific W point, with cached Lagrange coefficients.
+///
+/// Created via [`Registry::at`]. All evaluation methods (`wx`, `wy`, `wxy`)
+/// reuse the cached Lagrange coefficients, avoiding recomputation when
+/// evaluating at multiple X/Y points.
+pub struct RegistryAt<'a, F: PrimeField, R: Rank> {
+    registry: &'a Registry<'a, F, R>,
+    cache: LagrangeCache<F>,
+}
+
 /// Represents a key for identifying a unique $\omega^j$ value where $\omega$ is
 /// a $2^k$-th root of unity.
-#[derive(Ord, PartialOrd, PartialEq, Eq)]
+#[derive(Debug, Ord, PartialOrd, PartialEq, Eq)]
 struct OmegaKey(u64);
 
 impl<F: PrimeField> From<F> for OmegaKey {
@@ -384,10 +404,11 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
     /// Index the $i$th circuit to field element $\omega^j$ as $w$, and evaluate
     /// the registry polynomial unrestricted at $X$.
     ///
-    /// Wraps [`Registry::wy`]. See [`CircuitIndex::omega_j`] for more details.
+    /// Wraps [`Registry::at`] and [`RegistryAt::wy`].
+    /// See [`CircuitIndex::omega_j`] for more details.
     pub fn circuit_y(&self, i: CircuitIndex, y: F) -> structured::Polynomial<F, R> {
         let w: F = i.omega_j();
-        self.wy(w, y)
+        self.at(w).wy(y)
     }
 
     /// Returns true if the circuit's $\omega^j$ value is in the registry domain.
@@ -400,73 +421,112 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
 
     /// Evaluate the registry polynomial unrestricted at $X$.
     pub fn wy(&self, w: F, y: F) -> structured::Polynomial<F, R> {
-        self.w(
-            w,
+        self.at(w).wy(y)
+    }
+
+    /// Evaluate the registry polynomial unrestricted at $Y$.
+    pub fn wx(&self, w: F, x: F) -> unstructured::Polynomial<F, R> {
+        self.at(w).wx(x)
+    }
+
+    /// Evaluate the registry polynomial at the provided point.
+    pub fn wxy(&self, w: F, x: F, y: F) -> F {
+        self.at(w).wxy(x, y)
+    }
+
+    /// Computes the polynomial restricted at $W$ based on the provided
+    /// closures, using cached Lagrange coefficients.
+    fn w_cached<T>(
+        &self,
+        cache: &LagrangeCache<F>,
+        init: impl FnOnce() -> T,
+        add_poly: impl Fn(&dyn CircuitObject<F, R>, &[RoutineSlot], F, &mut T),
+    ) -> T {
+        let mut result = init();
+
+        match cache {
+            LagrangeCache::Interpolate(coeffs) => {
+                // The provided `w` was not in the domain, and `coeffs` are the
+                // coefficients we need to use to separate each (partial) circuit
+                // evaluation.
+                for (j, coeff) in coeffs.iter().enumerate() {
+                    let i = bitreverse(j as u32, self.domain.log2_n()) as usize;
+                    if let Some(circuit) = self.circuits.get(i) {
+                        add_poly(&**circuit, &self.floor_plans[i], *coeff, &mut result);
+                    }
+                }
+            }
+            LagrangeCache::Direct(i) => {
+                if let Some(circuit) = self.circuits.get(*i) {
+                    add_poly(&**circuit, &self.floor_plans[*i], F::ONE, &mut result);
+                }
+            }
+            LagrangeCache::Empty => {
+                // The circuit is not defined and defaults to the zero polynomial.
+            }
+        }
+
+        result
+    }
+
+    /// Bind the registry to a specific $W$ point, caching Lagrange coefficients.
+    ///
+    /// Returns a [`RegistryAt`] that can be used to evaluate the registry
+    /// polynomial at multiple $X$/$Y$ points without recomputing the W-restriction.
+    pub fn at(&self, w: F) -> RegistryAt<'_, F, R> {
+        let cache = if let Some(coeffs) = self.domain.ell(w, self.domain.n()) {
+            // w is not in the domain; use Lagrange coefficients to interpolate.
+            LagrangeCache::Interpolate(coeffs)
+        } else if let Some(&i) = self.omega_lookup.get(&OmegaKey::from(w)) {
+            // w is in the domain (omega^j) and a circuit is registered at index i.
+            LagrangeCache::Direct(i)
+        } else {
+            // w is in the domain but no circuit registered at that index.
+            LagrangeCache::Empty
+        };
+        RegistryAt {
+            registry: self,
+            cache,
+        }
+    }
+}
+
+impl<F: PrimeField, R: Rank> RegistryAt<'_, F, R> {
+    /// Evaluate the registry polynomial restricted at $W$, unrestricted at $Y$.
+    pub fn wy(&self, y: F) -> structured::Polynomial<F, R> {
+        self.registry.w_cached(
+            &self.cache,
             structured::Polynomial::default,
-            |circuit, floor_plan, circuit_coeff, poly| {
-                let mut tmp = circuit.sy(y, &self.key, floor_plan);
-                tmp.scale(circuit_coeff);
+            |circuit, floor_plan, coeff, poly| {
+                let mut tmp = circuit.sy(y, &self.registry.key, floor_plan);
+                tmp.scale(coeff);
                 poly.add_assign(&tmp);
             },
         )
     }
 
-    /// Evaluate the registry polynomial unrestricted at $Y$.
-    pub fn wx(&self, w: F, x: F) -> unstructured::Polynomial<F, R> {
-        self.w(
-            w,
+    /// Evaluate the registry polynomial restricted at $W$, unrestricted at $X$.
+    pub fn wx(&self, x: F) -> unstructured::Polynomial<F, R> {
+        self.registry.w_cached(
+            &self.cache,
             unstructured::Polynomial::default,
-            |circuit, floor_plan, circuit_coeff, poly| {
-                let mut tmp = circuit.sx(x, &self.key, floor_plan);
-                tmp.scale(circuit_coeff);
+            |circuit, floor_plan, coeff, poly| {
+                let mut tmp = circuit.sx(x, &self.registry.key, floor_plan);
+                tmp.scale(coeff);
                 poly.add_unstructured(&tmp);
             },
         )
     }
 
-    /// Evaluate the registry polynomial at the provided point.
-    pub fn wxy(&self, w: F, x: F, y: F) -> F {
-        self.w(
-            w,
+    /// Evaluate the registry polynomial at the point ($W$, $X$, $Y$).
+    pub fn wxy(&self, x: F, y: F) -> F {
+        self.registry.w_cached(
+            &self.cache,
             || F::ZERO,
-            |circuit, floor_plan, circuit_coeff, poly| {
-                *poly += circuit.sxy(x, y, &self.key, floor_plan) * circuit_coeff;
+            |circuit, floor_plan, coeff, result| {
+                *result += circuit.sxy(x, y, &self.registry.key, floor_plan) * coeff;
             },
         )
-    }
-
-    /// Computes the polynomial restricted at $W$ based on the provided
-    /// closures.
-    fn w<T>(
-        &self,
-        w: F,
-        init: impl FnOnce() -> T,
-        add_poly: impl Fn(&dyn CircuitObject<F, R>, &[RoutineSlot], F, &mut T),
-    ) -> T {
-        // Compute the Lagrange coefficients for the provided `w`.
-        let ell = self.domain.ell(w, self.domain.n());
-
-        let mut result = init();
-
-        if let Some(ell) = ell {
-            // The provided `w` was not in the domain, and `ell` are the
-            // coefficients we need to use to separate each (partial) circuit
-            // evaluation.
-            for (j, coeff) in ell.iter().enumerate() {
-                let i = bitreverse(j as u32, self.domain.log2_n()) as usize;
-                if let Some(circuit) = self.circuits.get(i) {
-                    add_poly(&**circuit, &self.floor_plans[i], *coeff, &mut result);
-                }
-            }
-        } else if let Some(i) = self.omega_lookup.get(&OmegaKey::from(w)) {
-            if let Some(circuit) = self.circuits.get(*i) {
-                add_poly(&**circuit, &self.floor_plans[*i], F::ONE, &mut result);
-            }
-        } else {
-            // In this case, the circuit is not defined and defaults to the zero polynomial.
-        }
-
-        result
     }
 }
 
@@ -591,6 +651,98 @@ mod tests {
 
             w *= registry.domain.omega();
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_registry_at_consistency() -> Result<()> {
+        let registry = TestRegistryBuilder::new()
+            .register_circuit(SquareCircuit { times: 2 })?
+            .register_circuit(SquareCircuit { times: 5 })?
+            .register_circuit(SquareCircuit { times: 10 })?
+            .register_circuit(SquareCircuit { times: 11 })?
+            .finalize()?;
+
+        let w = Fp::random(&mut rand::rng());
+        let x = Fp::random(&mut rand::rng());
+        let y = Fp::random(&mut rand::rng());
+        let eval_point = Fp::random(&mut rand::rng());
+
+        let registry_at_w = registry.at(w);
+
+        assert_eq!(
+            registry_at_w.wx(x).eval(eval_point),
+            registry.wx(w, x).eval(eval_point)
+        );
+        assert_eq!(
+            registry_at_w.wy(y).eval(eval_point),
+            registry.wy(w, y).eval(eval_point)
+        );
+        assert_eq!(registry_at_w.wxy(x, y), registry.wxy(w, x, y));
+
+        // Test with w in domain (omega^j)
+        let w_in_domain = registry.domain.omega();
+        let registry_at_w_in_domain = registry.at(w_in_domain);
+
+        assert_eq!(
+            registry_at_w_in_domain.wx(x).eval(eval_point),
+            registry.wx(w_in_domain, x).eval(eval_point)
+        );
+        assert_eq!(
+            registry_at_w_in_domain.wy(y).eval(eval_point),
+            registry.wy(w_in_domain, y).eval(eval_point)
+        );
+        assert_eq!(
+            registry_at_w_in_domain.wxy(x, y),
+            registry.wxy(w_in_domain, x, y)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_out_of_domain_w_uses_interpolation() -> Result<()> {
+        let registry = TestRegistryBuilder::new()
+            .register_circuit(SquareCircuit { times: 2 })?
+            .register_circuit(SquareCircuit { times: 5 })?
+            .finalize()?;
+
+        let omega = registry.domain.omega();
+
+        // This isn't in the domain.
+        let w = omega + Fp::ONE;
+
+        let x = Fp::from(42u64);
+        let y = Fp::from(43u64);
+        assert_ne!(registry.at(w).wxy(x, y), registry.at(omega).wxy(x, y));
+
+        Ok(())
+    }
+
+    /// `OmegaKey::from` only looks at the low 64 bits (after 5 times), so
+    /// different field elements can map to the same key. `Registry::at`
+    /// handles this by checking `domain.ell` before `omega_lookup`. Here
+    /// we forge a collision and verify evaluations are still correct.
+    #[test]
+    fn test_omega_key_collision() -> Result<()> {
+        let registry = TestRegistryBuilder::new()
+            .register_circuit(SquareCircuit { times: 2 })?
+            .register_circuit(SquareCircuit { times: 5 })?
+            .finalize()?;
+
+        let omega = registry.domain.omega();
+
+        let mut repr = (omega.double().double() + omega).to_repr();
+        repr.as_mut()[8] ^= 1;
+        let w = Fp::from_repr(repr).unwrap() * Fp::from(5u64).invert().unwrap();
+
+        assert_eq!(OmegaKey::from(w), OmegaKey::from(omega));
+        assert!(!registry.domain.contains(w));
+
+        let x = Fp::from(42u64);
+        let y = Fp::from(43u64);
+        assert_ne!(registry.at(w).wxy(x, y), registry.at(omega).wxy(x, y));
 
         Ok(())
     }
