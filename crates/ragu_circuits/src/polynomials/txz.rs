@@ -1,4 +1,6 @@
-//! Evaluation of the $t(X, Z)$ polynomial.
+//! The $t(X, Z)$ polynomial helps enforce multiplication constraints in the
+//! witness. It shares the same exponent pattern as the structured layout so it
+//! can be evaluated efficiently inside the circuit.
 
 use ff::Field;
 use ragu_core::{
