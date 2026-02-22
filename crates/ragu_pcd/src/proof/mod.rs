@@ -177,6 +177,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 v: C::CircuitField::ZERO,
                 endoscalar_rx: zero_structured_nested.clone(),
                 points_rx: zero_structured_nested.clone(),
+                smuggled_challenges_rx: zero_structured_nested.clone(),
                 step_rxs: vec![
                     zero_structured_nested.clone();
                     NumStepsLen::<NUM_ENDOSCALING_POINTS>::len()

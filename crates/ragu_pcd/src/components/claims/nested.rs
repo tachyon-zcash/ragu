@@ -21,6 +21,8 @@ pub enum RxComponent {
     EndoscalarStage,
     /// PointsStage rx polynomial.
     PointsStage,
+    /// SmuggledChallengesStage rx polynomial.
+    SmuggledChallengesStage,
     /// EndoscalingStep circuit rx polynomial (indexed by step number).
     EndoscalingStep(u32),
 }
@@ -104,6 +106,12 @@ where
 
     // PointsStage (index 1)
     processor.stage(InternalCircuitIndex::PointsStage, source.rx(PointsStage))?;
+
+    // SmuggledChallengesStage (index 3)
+    processor.stage(
+        InternalCircuitIndex::SmuggledChallengesStage,
+        source.rx(SmuggledChallengesStage),
+    )?;
 
     // PointsFinalStaged (index 2) - final stage check
     // Aggregates all EndoscalingStep rxs from all proofs

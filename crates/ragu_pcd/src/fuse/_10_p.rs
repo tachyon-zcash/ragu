@@ -27,7 +27,7 @@ use ragu_primitives::{Element, extract_endoscalar, lift_endoscalar, vec::Len};
 use crate::circuits::nested::NUM_ENDOSCALING_POINTS;
 use crate::components::endoscalar::{
     EndoscalarStage, EndoscalingStep, EndoscalingStepWitness, NumStepsLen, PointsStage,
-    PointsWitness,
+    PointsWitness, SmuggledChallengesStage, SmuggledChallengesWitness,
 };
 use crate::{Application, Proof, proof};
 
@@ -54,6 +54,8 @@ impl<C: Cycle, R: Rank> Accumulator<'_, C, R> {
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     pub(super) fn compute_p<'dr, D>(
         &self,
+        y: &Element<'dr, D>,
+        z: &Element<'dr, D>,
         pre_beta: &Element<'dr, D>,
         u: &Element<'dr, D>,
         left: &Proof<C, R>,
@@ -187,9 +189,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             );
         }
 
+        // Extract endoscalars from y and z challenges for smuggled coefficients.
+        let y_endo = extract_endoscalar(*y.value().take());
+        let z_endo = extract_endoscalar(*z.value().take());
+
         // Construct commitment via PointsWitness Horner evaluation.
         // Points order: [f.commitment, commitments...] computes β^n·f + β^{n-1}·C₀ + ...
-        let (commitment, endoscalar_rx, points_rx, step_rxs) = {
+        let (commitment, endoscalar_rx, points_rx, smuggled_challenges_rx, step_rxs) = {
             let mut points = Vec::with_capacity(NUM_ENDOSCALING_POINTS);
             points.push(f.commitment);
             points.extend_from_slice(&commitments);
@@ -202,6 +208,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 C::ScalarField,
                 R,
             >>::rx(&witness)?;
+
+            // Generate smuggled challenges rx polynomial.
+            //
+            // The SmuggledChallengesStage places challenges in a-coefficient
+            // positions. The stage mask verification (rx.revdot(sy) == 0) constrains
+            // where the smuggled coefficients are placed.
+            let smuggled_witness = SmuggledChallengesWitness::<C::ScalarField>::new(y_endo, z_endo);
+            let smuggled_challenges_rx =
+                <SmuggledChallengesStage<C::HostCurve, NUM_ENDOSCALING_POINTS> as StageExt<
+                    C::ScalarField,
+                    R,
+                >>::rx(smuggled_witness)?;
 
             // Create rx polynomials for each endoscaling step circuit
             let num_steps = NumStepsLen::<NUM_ENDOSCALING_POINTS>::len();
@@ -229,6 +247,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     .expect("NumStepsLen guarantees at least one interstitial"),
                 endoscalar_rx,
                 points_rx,
+                smuggled_challenges_rx,
                 step_rxs,
             )
         };
@@ -242,6 +261,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             v,
             endoscalar_rx,
             points_rx,
+            smuggled_challenges_rx,
             step_rxs,
         })
     }

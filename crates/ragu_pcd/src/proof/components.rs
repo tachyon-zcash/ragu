@@ -125,6 +125,7 @@ pub(crate) struct P<C: Cycle, R: Rank> {
     pub(crate) v: C::CircuitField,
     pub(crate) endoscalar_rx: structured::Polynomial<C::ScalarField, R>,
     pub(crate) points_rx: structured::Polynomial<C::ScalarField, R>,
+    pub(crate) smuggled_challenges_rx: structured::Polynomial<C::ScalarField, R>,
     pub(crate) step_rxs: Vec<structured::Polynomial<C::ScalarField, R>>,
 }
 

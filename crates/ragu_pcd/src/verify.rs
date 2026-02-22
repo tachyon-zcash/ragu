@@ -238,6 +238,7 @@ mod nested {
             let poly = match component {
                 EndoscalarStage => &self.proof.p.endoscalar_rx,
                 PointsStage => &self.proof.p.points_rx,
+                SmuggledChallengesStage => &self.proof.p.smuggled_challenges_rx,
                 EndoscalingStep(step) => &self.proof.p.step_rxs[step as usize], // TODO: bounds
             };
             core::iter::once(poly)

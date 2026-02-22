@@ -201,6 +201,100 @@ impl<C: CurveAffine, R: Rank, const NUM_POINTS: usize> Stage<C::Base, R>
     }
 }
 
+/// Witness for smuggled challenge coefficients on the nested side.
+///
+/// Mirrors the structure of native `SmuggledChallenges`, containing the lifted
+/// endoscalar values for y and z challenges in the scalar field.
+#[derive(Clone, Copy)]
+pub struct SmuggledChallengesWitness<F> {
+    /// Lifted endoscalar derived from the y challenge.
+    pub y_coeff: F,
+    /// Zero element ensuring y_coeff lands in an a-position.
+    pub y_zero: F,
+    /// Lifted endoscalar derived from the z challenge.
+    pub z_coeff: F,
+    /// Zero element ensuring z_coeff lands in an a-position.
+    pub z_zero: F,
+}
+
+impl<F: ff::WithSmallOrderMulGroup<3>> SmuggledChallengesWitness<F> {
+    /// Creates a new witness from the y and z endoscalars.
+    pub fn new(y_endo: Uendo, z_endo: Uendo) -> Self {
+        Self {
+            y_coeff: ragu_primitives::lift_endoscalar(y_endo),
+            y_zero: F::ZERO,
+            z_coeff: ragu_primitives::lift_endoscalar(z_endo),
+            z_zero: F::ZERO,
+        }
+    }
+}
+
+/// Output gadget for smuggled challenge coefficients.
+#[derive(Gadget)]
+pub struct SmuggledChallenges<'dr, D: Driver<'dr>> {
+    /// Lifted endoscalar derived from the y challenge.
+    #[ragu(gadget)]
+    pub y_coeff: Element<'dr, D>,
+    /// Zero element ensuring y_coeff lands in an a-position.
+    #[ragu(gadget)]
+    pub y_zero: Element<'dr, D>,
+    /// Lifted endoscalar derived from the z challenge.
+    #[ragu(gadget)]
+    pub z_coeff: Element<'dr, D>,
+    /// Zero element ensuring z_coeff lands in an a-position.
+    #[ragu(gadget)]
+    pub z_zero: Element<'dr, D>,
+}
+
+/// Stage for allocating smuggled challenge coefficients on the nested side.
+///
+/// This stage witnesses the lifted endoscalar values for y and z challenges,
+/// placing them in a-coefficient positions. The stage mask verifies that these
+/// coefficients are placed exactly where expected via `rx.revdot(sy) == 0`.
+pub struct SmuggledChallengesStage<C: CurveAffine, const NUM_POINTS: usize>(
+    core::marker::PhantomData<C>,
+);
+
+impl<C: CurveAffine, const NUM_POINTS: usize> Default for SmuggledChallengesStage<C, NUM_POINTS> {
+    fn default() -> Self {
+        Self(core::marker::PhantomData)
+    }
+}
+
+impl<C: CurveAffine, R: Rank, const NUM_POINTS: usize> Stage<C::Base, R>
+    for SmuggledChallengesStage<C, NUM_POINTS>
+{
+    type Parent = PointsStage<C, NUM_POINTS>;
+
+    fn values() -> usize {
+        // 4 values: y_coeff, y_zero, z_coeff, z_zero = 2 multiplication gates
+        4
+    }
+
+    type Witness<'source> = SmuggledChallengesWitness<C::Base>;
+    type OutputKind = Kind![C::Base; SmuggledChallenges<'_, _>];
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<Bound<'dr, D, Self::OutputKind>>
+    where
+        Self: 'dr,
+    {
+        let y_coeff = Element::alloc(dr, witness.view().map(|w| w.y_coeff))?;
+        let y_zero = Element::alloc(dr, witness.view().map(|w| w.y_zero))?;
+        let z_coeff = Element::alloc(dr, witness.view().map(|w| w.z_coeff))?;
+        let z_zero = Element::alloc(dr, witness.view().map(|w| w.z_zero))?;
+        Ok(SmuggledChallenges {
+            y_coeff,
+            y_zero,
+            z_coeff,
+            z_zero,
+        })
+    }
+}
+
 /// Step-based endoscaling component.
 ///
 /// Each step performs up to [`ENDOSCALINGS_PER_STEP`] endoscalings via Horner's rule:
