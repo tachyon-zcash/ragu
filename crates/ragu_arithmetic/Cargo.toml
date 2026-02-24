@@ -37,7 +37,13 @@ rayon = { workspace = true, optional = true }
 [dev-dependencies]
 proptest = { workspace = true }
 gungraun = { workspace = true }
+criterion = { workspace = true }
 
 [[bench]]
 name = "arithmetic"
+harness = false
+
+[[bench]]
+name = "msm_criterion"
+path = "benches/criterion/msm.rs"
 harness = false

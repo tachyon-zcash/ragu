@@ -72,6 +72,7 @@ proptest = "1.7.0"
 gungraun = "0.17.0"
 blake2b_simd = "1.0"
 rayon = "1.11.0"
+criterion = { version = "0.5", default-features = false }
 
 [patch.crates-io]
 # `ebfull/addchain` branch `bump-num-bigint` is a replica of
