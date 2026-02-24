@@ -56,10 +56,17 @@ jobs:
         run: cargo fmt --all -- --check
 
   clippy:
-    name: clippy
+    name: clippy (${{ matrix.name }})
     needs: changes
     if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: sequential
+            cargo_features: ""
+          - name: multicore
+            cargo_features: "--all-features"
     steps:
       - uses: actions/checkout@v4
       - name: Setup Rust
@@ -67,17 +74,29 @@ jobs:
         with:
           components: clippy
       - name: Run clippy
-        run: cargo clippy --workspace --lib --tests --benches --locked --all-features -- -D warnings
+        run: cargo clippy --workspace --lib --tests --benches --locked ${{ matrix.cargo_features }} -- -D warnings
 
   test:
-    name: test (${{ matrix.os }})
+    name: test (${{ matrix.name }})
     needs: changes
     if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - name: sequential
+            os: ubuntu-latest
+            cargo_features: ""
+          - name: multicore
+            os: ubuntu-latest
+            cargo_features: "--all-features"
+          - name: windows
+            os: windows-latest
+            cargo_features: "--all-features"
+          - name: macos
+            os: macos-latest
+            cargo_features: "--all-features"
     steps:
       - uses: actions/checkout@v4
       - name: Setup Rust
@@ -85,7 +104,7 @@ jobs:
         with:
           cache-suffix: release
       - name: Run tests
-        run: cargo test --release --all --locked --all-features
+        run: cargo test --release --all --locked ${{ matrix.cargo_features }}
 
   test-32-bit:
     name: test (i686-unknown-linux-gnu)
