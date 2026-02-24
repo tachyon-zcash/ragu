@@ -263,11 +263,11 @@ pub fn mul<
 
         // Combine window sums sequentially, from most significant to least.
         let mut acc = C::Curve::identity();
-        for current_segment in (0..segments).rev() {
+        for sum in window_sums.into_iter().rev() {
             for _ in 0..c {
                 acc = acc.double();
             }
-            acc += &window_sums[current_segment];
+            acc += &sum;
         }
 
         acc
@@ -291,6 +291,7 @@ pub fn mul<
                 }
             }
 
+            // Summation by parts
             let mut running_sum = C::Curve::identity();
             for exp in buckets.into_iter().rev() {
                 running_sum = exp.add(running_sum);
