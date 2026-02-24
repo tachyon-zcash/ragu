@@ -2,6 +2,8 @@
 default:
     @just --list
 
+_nixery_meta := if arch() == "aarch64" { "arm64/shell" } else { "shell" }
+
 build *ARGS:
   cargo build {{ARGS}}
 
@@ -45,10 +47,9 @@ test *ARGS:
 
 # run benchmarks (auto-detects platform)
 bench *ARGS:
-    @just bench-{{os()}} {{ARGS}}
+    @just _bench_{{os()}} {{ARGS}}
 
-_nixery_meta := if arch() == "aarch64" { "arm64/shell" } else { "shell" }
-bench-macos *ARGS:
+_bench_macos *ARGS:
     #!/bin/sh
     [ -t 1 ] && tty_opt="--tty" # use tty if stdout is a tty
     container=$(docker run $tty_opt --detach --interactive --init --rm \
@@ -61,47 +62,22 @@ bench-macos *ARGS:
         -w /workspace \
         --security-opt seccomp=unconfined \
         nixery.dev/{{_nixery_meta}}/cargo-binstall/gcc/just/rustup/valgrind \
-        just bench-linux {{ARGS}})
+        just _bench_linux {{ARGS}})
     trap "docker kill $container > /dev/null 2>&1" EXIT HUP
     docker attach --no-stdin $container
 
-bench-linux *ARGS: _gungraun_setup
+_bench_linux *ARGS: _gungraun_setup
     cargo bench --workspace --all-features {{ARGS}}
 
-# generate flamegraph (auto-detects platform)
-# usage: just flamegraph ragu_pcd fuse
-flamegraph PACKAGE TARGET *ARGS:
-    @just flamegraph-{{os()}} {{PACKAGE}} {{TARGET}} {{ARGS}}
+# generate flamegraph in target/*.svg
+flamegraph PACKAGE GROUP TARGET *ARGS:
+    @just _flamegraph_{{os()}} {{PACKAGE}} {{GROUP}} {{TARGET}} {{ARGS}}
 
-# resolve a benchmark target name to --gungraun-run arguments by parsing the bench source
-_resolve_bench PACKAGE TARGET:
-    #!/bin/sh
-    set -e
-    bench_name=$(echo {{PACKAGE}} | sed 's/^ragu_//')
-    bench_file="crates/{{PACKAGE}}/benches/${bench_name}.rs"
-    if [ ! -f "$bench_file" ]; then
-        echo "error: bench file not found: $bench_file" >&2; exit 1
-    fi
+# generate flamegraph for ragu_pcd::fuse()
+flamegraph_fuse:
+    @just flamegraph ragu_pcd app_proof fuse
 
-    # find which group contains this benchmark and its index within the group
-    group=$(grep -B5 "benchmarks.*\b{{TARGET}}\b" "$bench_file" | grep 'name = ' | tail -1 | sed 's/.*name = //;s/[; ].*//')
-    if [ -z "$group" ]; then
-        echo "error: target '{{TARGET}}' not found in $bench_file" >&2
-        echo "available targets:" >&2
-        grep 'benchmarks\s*=' "$bench_file" | sed 's/.*=//;s/[; ]//g' | tr ',' '\n' | sed 's/^/  /' >&2
-        exit 1
-    fi
-
-    # extract the benchmarks list for this group and find the function index
-    bench_list=$(grep -A1 "name = ${group}" "$bench_file" | grep 'benchmarks' | sed 's/.*=//;s/[; ]//g')
-    func_idx=0
-    for fn in $(echo "$bench_list" | tr ',' ' '); do
-        if [ "$fn" = "{{TARGET}}" ]; then break; fi
-        func_idx=$((func_idx + 1))
-    done
-    echo "${bench_name} ${group} ${func_idx} 0"
-
-flamegraph-macos PACKAGE TARGET *ARGS:
+_flamegraph_macos PACKAGE GROUP TARGET *ARGS:
     #!/bin/sh
     [ -t 1 ] && tty_opt="--tty"
     container=$(docker run $tty_opt --detach --interactive --init --rm \
@@ -114,22 +90,31 @@ flamegraph-macos PACKAGE TARGET *ARGS:
         -w /workspace \
         --privileged \
         nixery.dev/{{_nixery_meta}}/cargo-binstall/busybox/gcc/just/rustup/perf \
-        just flamegraph-linux {{PACKAGE}} {{TARGET}} {{ARGS}})
+        just _flamegraph_linux {{PACKAGE}} {{GROUP}} {{TARGET}} {{ARGS}})
     trap "docker kill $container > /dev/null 2>&1" EXIT HUP
     docker attach --no-stdin $container
 
-flamegraph-linux PACKAGE TARGET *ARGS: _flamegraph_setup
+_flamegraph_linux PACKAGE GROUP TARGET *ARGS: _flamegraph_setup
     #!/bin/sh
     set -e
-    resolved=$(just _resolve_bench {{PACKAGE}} {{TARGET}})
-    bench_name=$(echo "$resolved" | cut -d' ' -f1)
-    group=$(echo "$resolved" | cut -d' ' -f2)
-    func_idx=$(echo "$resolved" | cut -d' ' -f3)
-    bench_idx=$(echo "$resolved" | cut -d' ' -f4)
+    bench_name=$(echo {{PACKAGE}} | sed 's/^ragu_//')
+    bench_file="crates/{{PACKAGE}}/benches/${bench_name}.rs"
+    if [ ! -f "$bench_file" ]; then
+        echo "error: bench file not found: $bench_file" >&2; exit 1
+    fi
+    bench_list=$(grep -A2 "name = {{GROUP}}" "$bench_file" | grep 'benchmarks' | sed 's/.*=\s*//;s/[^a-zA-Z0-9_,]//g')
+    if [ -z "$bench_list" ]; then
+        echo "error: group '{{GROUP}}' not found in $bench_file" >&2; exit 1
+    fi
+    func_idx=0
+    for fn in $(echo "$bench_list" | tr ',' ' '); do
+        [ "$fn" = "{{TARGET}}" ] && break
+        func_idx=$((func_idx + 1))
+    done
     CARGO_TARGET_DIR=/tmp/ragu-target CARGO_PROFILE_RELEASE_DEBUG=true \
         cargo flamegraph --release -p {{PACKAGE}} --bench "$bench_name" \
-        -o "target/flamegraph-{{PACKAGE}}-{{TARGET}}.svg" {{ARGS}} \
-        -- --gungraun-run "$group" "$func_idx" "$bench_idx"
+        -o "target/flamegraph-{{PACKAGE}}-{{GROUP}}-{{TARGET}}.svg" {{ARGS}} \
+        -- --gungraun-run {{GROUP}} "$func_idx" 0
 
 # run CI checks locally (formatting, clippy, tests)
 ci_local: _book_setup
