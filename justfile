@@ -32,6 +32,9 @@ _typos_setup: _install_binstall
 _gungraun_setup: _install_binstall
   @cargo binstall --quiet --no-confirm gungraun-runner@0.17.0
 
+_flamegraph_setup: _install_binstall
+  @cargo binstall --quiet --no-confirm flamegraph
+
 # locally [build | serve | watch] Ragu book
 book COMMAND: _book_setup
   mdbook {{COMMAND}} ./book --open
@@ -46,7 +49,7 @@ bench *ARGS:
 
 _nixery_meta := if arch() == "aarch64" { "arm64/shell" } else { "shell" }
 bench-macos *ARGS:
-    #!/usr/bin/env sh
+    #!/bin/sh
     [ -t 1 ] && tty_opt="--tty" # use tty if stdout is a tty
     container=$(docker run $tty_opt --detach --interactive --init --rm \
         -v "{{justfile_dir()}}":/workspace:ro \
@@ -72,13 +75,14 @@ flamegraph PACKAGE TARGET *ARGS:
 
 # resolve a benchmark target name to --gungraun-run arguments by parsing the bench source
 _resolve_bench PACKAGE TARGET:
-    #!/usr/bin/env sh
+    #!/bin/sh
     set -e
     bench_name=$(echo {{PACKAGE}} | sed 's/^ragu_//')
     bench_file="crates/{{PACKAGE}}/benches/${bench_name}.rs"
     if [ ! -f "$bench_file" ]; then
         echo "error: bench file not found: $bench_file" >&2; exit 1
     fi
+
     # find which group contains this benchmark and its index within the group
     group=$(grep -B5 "benchmarks.*\b{{TARGET}}\b" "$bench_file" | grep 'name = ' | tail -1 | sed 's/.*name = //;s/[; ].*//')
     if [ -z "$group" ]; then
@@ -87,6 +91,7 @@ _resolve_bench PACKAGE TARGET:
         grep 'benchmarks\s*=' "$bench_file" | sed 's/.*=//;s/[; ]//g' | tr ',' '\n' | sed 's/^/  /' >&2
         exit 1
     fi
+
     # extract the benchmarks list for this group and find the function index
     bench_list=$(grep -A1 "name = ${group}" "$bench_file" | grep 'benchmarks' | sed 's/.*=//;s/[; ]//g')
     func_idx=0
@@ -97,40 +102,32 @@ _resolve_bench PACKAGE TARGET:
     echo "${bench_name} ${group} ${func_idx} 0"
 
 flamegraph-macos PACKAGE TARGET *ARGS:
-    #!/usr/bin/env sh
-    set -e
+    #!/bin/sh
     [ -t 1 ] && tty_opt="--tty"
-    resolved=$(just _resolve_bench {{PACKAGE}} {{TARGET}})
-    bench_name=$(echo "$resolved" | cut -d' ' -f1)
-    group=$(echo "$resolved" | cut -d' ' -f2)
-    func_idx=$(echo "$resolved" | cut -d' ' -f3)
-    bench_idx=$(echo "$resolved" | cut -d' ' -f4)
     container=$(docker run $tty_opt --detach --interactive --init --rm \
         -v "{{justfile_dir()}}":/workspace \
-        -e CARGO_PROFILE_RELEASE_DEBUG=true \
+        -v ragu-cargo:/.cargo \
+        -v ragu-rustup:/.rustup \
+        -v ragu-flamegraph-target:/tmp/ragu-target \
+        -e CARGO_HOME=/.cargo \
+        -e RUSTUP_HOME=/.rustup \
         -w /workspace \
         --privileged \
-        rust:1.90-bookworm \
-        sh -c "apt-get update -qq && apt-get install -y -qq linux-perf >/dev/null 2>&1 && \
-            cargo install --quiet flamegraph && \
-            cargo flamegraph --release -p {{PACKAGE}} --bench $bench_name \
-                -o target/flamegraph-{{PACKAGE}}-{{TARGET}}.svg {{ARGS}} \
-                -- --gungraun-run $group $func_idx $bench_idx")
+        nixery.dev/{{_nixery_meta}}/cargo-binstall/busybox/gcc/just/rustup/perf \
+        just flamegraph-linux {{PACKAGE}} {{TARGET}} {{ARGS}})
     trap "docker kill $container > /dev/null 2>&1" EXIT HUP
     docker attach --no-stdin $container
 
-_flamegraph_setup: _install_binstall
-    @cargo binstall --quiet --no-confirm flamegraph
-
 flamegraph-linux PACKAGE TARGET *ARGS: _flamegraph_setup
-    #!/usr/bin/env sh
+    #!/bin/sh
     set -e
     resolved=$(just _resolve_bench {{PACKAGE}} {{TARGET}})
     bench_name=$(echo "$resolved" | cut -d' ' -f1)
     group=$(echo "$resolved" | cut -d' ' -f2)
     func_idx=$(echo "$resolved" | cut -d' ' -f3)
     bench_idx=$(echo "$resolved" | cut -d' ' -f4)
-    CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --release -p {{PACKAGE}} --bench "$bench_name" \
+    CARGO_TARGET_DIR=/tmp/ragu-target CARGO_PROFILE_RELEASE_DEBUG=true \
+        cargo flamegraph --release -p {{PACKAGE}} --bench "$bench_name" \
         -o "target/flamegraph-{{PACKAGE}}-{{TARGET}}.svg" {{ARGS}} \
         -- --gungraun-run "$group" "$func_idx" "$bench_idx"
 
