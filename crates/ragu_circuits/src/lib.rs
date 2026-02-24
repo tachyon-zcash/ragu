@@ -142,7 +142,7 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
                 x: F,
                 y: F,
                 key: &registry::Key<F>,
-                floor_plan: &[floor_planner::RoutineSlot],
+                floor_plan: &[floor_planner::RoutineSegment],
             ) -> F {
                 s::sxy::eval::<_, _, R>(&self.circuit, x, y, key, floor_plan)
                     .expect("should succeed if metrics succeeded")
@@ -151,7 +151,7 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
                 &self,
                 x: F,
                 key: &registry::Key<F>,
-                floor_plan: &[floor_planner::RoutineSlot],
+                floor_plan: &[floor_planner::RoutineSegment],
             ) -> unstructured::Polynomial<F, R> {
                 s::sx::eval(&self.circuit, x, key, floor_plan)
                     .expect("should succeed if metrics succeeded")
@@ -160,7 +160,7 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
                 &self,
                 y: F,
                 key: &registry::Key<F>,
-                floor_plan: &[floor_planner::RoutineSlot],
+                floor_plan: &[floor_planner::RoutineSegment],
             ) -> structured::Polynomial<F, R> {
                 s::sy::eval(&self.circuit, y, key, floor_plan)
                     .expect("should succeed if metrics succeeded")
@@ -212,7 +212,7 @@ pub trait CircuitObject<F: Field, R: Rank>: Send + Sync {
         x: F,
         y: F,
         key: &registry::Key<F>,
-        floor_plan: &[floor_planner::RoutineSlot],
+        floor_plan: &[floor_planner::RoutineSegment],
     ) -> F;
 
     /// Computes the polynomial restriction $s(x, Y)$ for some $x \in \mathbb{F}$.
@@ -220,7 +220,7 @@ pub trait CircuitObject<F: Field, R: Rank>: Send + Sync {
         &self,
         x: F,
         key: &registry::Key<F>,
-        floor_plan: &[floor_planner::RoutineSlot],
+        floor_plan: &[floor_planner::RoutineSegment],
     ) -> unstructured::Polynomial<F, R>;
 
     /// Computes the polynomial restriction $s(X, y)$ for some $y \in \mathbb{F}$.
@@ -228,7 +228,7 @@ pub trait CircuitObject<F: Field, R: Rank>: Send + Sync {
         &self,
         y: F,
         key: &registry::Key<F>,
-        floor_plan: &[floor_planner::RoutineSlot],
+        floor_plan: &[floor_planner::RoutineSegment],
     ) -> structured::Polynomial<F, R>;
 
     /// Returns the number of constraints: `(multiplication, linear)`.

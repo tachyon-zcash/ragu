@@ -81,7 +81,7 @@ use alloc::vec;
 
 use crate::{
     Circuit, DriverScope,
-    floor_planner::RoutineSlot,
+    floor_planner::RoutineSegment,
     polynomials::{
         Rank,
         unstructured::{self, Polynomial},
@@ -118,10 +118,10 @@ struct SxScope<F> {
     /// Running monomial for $c$ wires: $x^{4n - 1 - i}$ at gate $i$.
     current_w_x: F,
     /// Absolute index of the next multiplication constraint to be written.
-    /// Initialized to `slot.multiplication_start` on routine entry.
+    /// Initialized to `segment.multiplication_start` on routine entry.
     multiplication_constraints: usize,
     /// Absolute index of the next linear constraint to be written.
-    /// Initialized to `slot.linear_start` on routine entry.
+    /// Initialized to `segment.linear_start` on routine entry.
     linear_constraints: usize,
 }
 
@@ -155,7 +155,7 @@ struct Evaluator<'fp, F: Field, R: Rank> {
     base_v_x: F,
 
     /// Floor plan mapping DFS routine index to absolute offsets.
-    floor_plan: &'fp [RoutineSlot],
+    floor_plan: &'fp [RoutineSegment],
 
     /// Global monotonic DFS counter for routine entries.
     current_routine: usize,
@@ -273,17 +273,17 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         input: Bound<'dr, Self, Ro::Input>,
     ) -> Result<Bound<'dr, Self, Ro::Output>> {
         self.current_routine += 1;
-        let slot = &self.floor_plan[self.current_routine];
+        let seg = &self.floor_plan[self.current_routine];
 
         // Jump to this routine's absolute position in the polynomial;
         // see the "Routine Scope Jumps" section in the `s` module doc.
         let init_scope = SxScope {
             available_b: None,
-            current_u_x: self.base_u_x * self.x_inv.pow_vartime([slot.multiplication_start as u64]),
-            current_v_x: self.base_v_x * self.x.pow_vartime([slot.multiplication_start as u64]),
-            current_w_x: self.one * self.x_inv.pow_vartime([slot.multiplication_start as u64]),
-            multiplication_constraints: slot.multiplication_start,
-            linear_constraints: slot.linear_start,
+            current_u_x: self.base_u_x * self.x_inv.pow_vartime([seg.multiplication_start as u64]),
+            current_v_x: self.base_v_x * self.x.pow_vartime([seg.multiplication_start as u64]),
+            current_w_x: self.one * self.x_inv.pow_vartime([seg.multiplication_start as u64]),
+            multiplication_constraints: seg.multiplication_start,
+            linear_constraints: seg.linear_start,
         };
 
         self.with_scope(init_scope, |this| {
@@ -295,12 +295,12 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
             // Verify this routine consumed exactly the expected constraints.
             assert_eq!(
                 this.scope.multiplication_constraints,
-                slot.multiplication_start + slot.num_multiplication_constraints,
+                seg.multiplication_start + seg.num_multiplication_constraints,
                 "routine multiplication constraint count must match floor plan"
             );
             assert_eq!(
                 this.scope.linear_constraints,
-                slot.linear_start + slot.num_linear_constraints,
+                seg.linear_start + seg.num_linear_constraints,
                 "routine linear constraint count must match floor plan"
             );
 
@@ -336,7 +336,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     circuit: &C,
     x: F,
     key: &registry::Key<F>,
-    floor_plan: &[RoutineSlot],
+    floor_plan: &[RoutineSegment],
 ) -> Result<unstructured::Polynomial<F, R>> {
     if x == F::ZERO {
         return Ok(Polynomial::new());
@@ -384,7 +384,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     evaluator.enforce_public_outputs(outputs.iter().map(|output| output.wire()))?;
     evaluator.enforce_one()?;
 
-    // Verify all floor plan slots were consumed and counts match.
+    // Verify all floor plan segments were consumed and counts match.
     assert_eq!(
         evaluator.current_routine + 1,
         evaluator.floor_plan.len(),
@@ -402,9 +402,8 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
 
     // Reverse to canonical coefficient order within each routine's linear
     // constraint range.
-    for slot in evaluator.floor_plan {
-        evaluator.result[slot.linear_start..slot.linear_start + slot.num_linear_constraints]
-            .reverse();
+    for seg in evaluator.floor_plan {
+        evaluator.result[seg.linear_start..seg.linear_start + seg.num_linear_constraints].reverse();
     }
     assert_eq!(evaluator.result[0], evaluator.one);
 

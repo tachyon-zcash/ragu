@@ -83,7 +83,7 @@ use core::cell::RefCell;
 use super::DriverExt;
 use crate::{
     Circuit, DriverScope,
-    floor_planner::RoutineSlot,
+    floor_planner::RoutineSegment,
     polynomials::{Rank, structured},
     registry,
 };
@@ -350,10 +350,10 @@ struct SyScope<'table, 'sy, F: Field, R: Rank> {
     /// Current $y$ power being applied to constraints in this routine.
     current_y: F,
     /// Absolute index of the next multiplication constraint to be written.
-    /// Initialized to `slot.multiplication_start` on routine entry.
+    /// Initialized to `segment.multiplication_start` on routine entry.
     multiplication_constraints: usize,
     /// Absolute index of the next linear constraint to be written.
-    /// Initialized to `slot.linear_start` on routine entry.
+    /// Initialized to `segment.linear_start` on routine entry.
     linear_constraints: usize,
 }
 
@@ -384,7 +384,7 @@ struct Evaluator<'table, 'sy, 'fp, F: Field, R: Rank> {
     virtual_table: &'table RefCell<VirtualTable<'sy, F, R>>,
 
     /// Floor plan mapping DFS routine index to absolute offsets.
-    floor_plan: &'fp [RoutineSlot],
+    floor_plan: &'fp [RoutineSegment],
 
     /// Global monotonic DFS counter for routine entries.
     current_routine: usize,
@@ -598,7 +598,7 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, '
         input: Bound<'table, Self, Ro::Input>,
     ) -> Result<Bound<'table, Self, Ro::Output>> {
         self.current_routine += 1;
-        let slot = &self.floor_plan[self.current_routine];
+        let seg = &self.floor_plan[self.current_routine];
 
         // Jump to this routine's absolute position in the polynomial;
         // see the "Routine Scope Jumps" section in the `s` module doc.
@@ -607,14 +607,14 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, '
             // When num_linear_constraints == 0 the routine emits no
             // enforce_zero calls, so current_y is never read; use
             // F::ZERO as an inert sentinel.
-            current_y: if slot.num_linear_constraints == 0 {
+            current_y: if seg.num_linear_constraints == 0 {
                 F::ZERO
             } else {
                 self.y
-                    .pow_vartime([(slot.linear_start + slot.num_linear_constraints - 1) as u64])
+                    .pow_vartime([(seg.linear_start + seg.num_linear_constraints - 1) as u64])
             },
-            multiplication_constraints: slot.multiplication_start,
-            linear_constraints: slot.linear_start,
+            multiplication_constraints: seg.multiplication_start,
+            linear_constraints: seg.linear_start,
         };
 
         self.with_scope(init_scope, |this| {
@@ -626,12 +626,12 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, '
             // Verify this routine consumed exactly the expected constraints.
             assert_eq!(
                 this.scope.multiplication_constraints,
-                slot.multiplication_start + slot.num_multiplication_constraints,
+                seg.multiplication_start + seg.num_multiplication_constraints,
                 "routine multiplication constraint count must match floor plan"
             );
             assert_eq!(
                 this.scope.linear_constraints,
-                slot.linear_start + slot.num_linear_constraints,
+                seg.linear_start + seg.num_linear_constraints,
                 "routine linear constraint count must match floor plan"
             );
 
@@ -664,7 +664,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     circuit: &C,
     y: F,
     key: &registry::Key<F>,
-    floor_plan: &[RoutineSlot],
+    floor_plan: &[RoutineSegment],
 ) -> Result<structured::Polynomial<F, R>> {
     let mut sy = structured::Polynomial::<F, R>::new();
 
@@ -734,7 +734,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
             evaluator.enforce_public_outputs(outputs.iter().map(|output| output.wire()))?;
             evaluator.enforce_one()?;
 
-            // Verify all floor plan slots were consumed and counts match.
+            // Verify all floor plan segments were consumed and counts match.
             assert_eq!(
                 evaluator.current_routine + 1,
                 evaluator.floor_plan.len(),

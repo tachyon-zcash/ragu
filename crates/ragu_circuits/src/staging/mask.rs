@@ -62,7 +62,7 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
         x: F,
         y: F,
         key: &registry::Key<F>,
-        _floor_plan: &[crate::floor_planner::RoutineSlot],
+        _floor_plan: &[crate::floor_planner::RoutineSegment],
     ) -> F {
         // Bound is enforced in `StageMask::new`.
         assert!(self.skip_multiplications + self.num_multiplications < R::n());
@@ -114,7 +114,7 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
         &self,
         x: F,
         key: &registry::Key<F>,
-        _floor_plan: &[crate::floor_planner::RoutineSlot],
+        _floor_plan: &[crate::floor_planner::RoutineSegment],
     ) -> unstructured::Polynomial<F, R> {
         // Bound is enforced in `StageMask::new`.
         assert!(self.skip_multiplications + self.num_multiplications < R::n());
@@ -173,7 +173,7 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
         &self,
         y: F,
         key: &registry::Key<F>,
-        _floor_plan: &[crate::floor_planner::RoutineSlot],
+        _floor_plan: &[crate::floor_planner::RoutineSegment],
     ) -> structured::Polynomial<F, R> {
         // Bound is enforced in `StageMask::new`.
         assert!(self.skip_multiplications + self.num_multiplications < R::n());

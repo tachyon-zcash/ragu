@@ -48,7 +48,7 @@ use super::metrics::RoutineRecord;
 /// computed by a trivial prefix sum over per-routine constraint counts. A
 /// future floor planner could reorder routines for alignment or packing, but
 /// the current implementation does not.
-pub struct RoutineSlot {
+pub struct RoutineSegment {
     /// Gate index where this routine's multiplication constraints begin.
     pub multiplication_start: usize,
     /// Y-power index where this routine's linear constraints begin.
@@ -63,12 +63,12 @@ pub struct RoutineSlot {
 ///
 /// Converts per-routine constraint counts into absolute offsets via prefix
 /// sum, preserving synthesis (DFS) order.
-pub fn floor_plan(routine_records: &[RoutineRecord]) -> Vec<RoutineSlot> {
+pub fn floor_plan(routine_records: &[RoutineRecord]) -> Vec<RoutineSegment> {
     let mut result = Vec::with_capacity(routine_records.len());
     let mut multiplication_start = 0usize;
     let mut linear_start = 0usize;
     for record in routine_records {
-        result.push(RoutineSlot {
+        result.push(RoutineSegment {
             multiplication_start,
             linear_start,
             num_multiplication_constraints: record.num_multiplication_constraints,
