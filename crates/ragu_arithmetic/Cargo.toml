@@ -21,6 +21,8 @@ all-features = true
 
 [features]
 default = []
+multicore = ["dep:rayon", "std"]
+std = []
 
 [lib]
 bench = false
@@ -30,6 +32,7 @@ ff = { workspace = true }
 pasta_curves = { workspace = true }
 ragu_macros = { path = "../ragu_macros", version = "0.0.0" }
 rand = { workspace = true }
+rayon = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
