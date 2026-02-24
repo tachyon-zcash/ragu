@@ -94,3 +94,8 @@ group = { git = "https://github.com/ebfull/group", branch = "release-0.14.0-with
 # that updates `pasta_curves` to use `ff`/`group` `0.14.0-pre.0`
 # then bumps to `rand 0.9`.
 pasta_curves = { git = "https://github.com/ebfull/pasta_curves", branch = "ff-0.14-with-rand-0.10" }
+
+# `turbocrime/gungraun` branch `fix/flamegraph` fixes flamegraph generation:
+# proper DFS call-graph traversal instead of broken BinaryHeap greedy approach,
+# correct recursion measurement, and restored sentinel behavior.
+gungraun = { git = "https://github.com/turbocrime/gungraun", branch = "fix/flamegraph" }

@@ -2,7 +2,18 @@
 
 mod setup;
 
-use gungraun::{library_benchmark, library_benchmark_group, main};
+use gungraun::{
+    Callgrind, FlamegraphConfig, LibraryBenchmarkConfig, library_benchmark,
+    library_benchmark_group, main,
+};
+
+fn bench_config() -> LibraryBenchmarkConfig {
+    let mut callgrind = Callgrind::default();
+    if std::env::var("RAGU_FLAMEGRAPH").is_ok() {
+        callgrind.flamegraph(FlamegraphConfig::default());
+    }
+    LibraryBenchmarkConfig::default().tool(callgrind).clone()
+}
 use ragu_pasta::{EpAffine, Fp, PoseidonFp};
 use ragu_primitives::poseidon::Sponge;
 use ragu_primitives::{Boolean, Element, Endoscalar, Point, multiadd, multipack};
@@ -167,6 +178,7 @@ library_benchmark_group!(
 );
 
 main!(
+    config = bench_config();
     library_benchmark_groups = element_ops,
     point_ops,
     boolean_ops,

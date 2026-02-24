@@ -246,8 +246,7 @@ dependencies = [
 [[package]]
 name = "gungraun"
 version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b247b47ec86130ed355045982783d4666f32045e397a4547bbb6793cd53e940f"
+source = "git+https://github.com/turbocrime/gungraun?branch=fix%2Fflamegraph#20a17226e6d9657a00c57446f8467bbe01536722"
 dependencies = [
  "bincode",
  "derive_more",
@@ -258,8 +257,7 @@ dependencies = [
 [[package]]
 name = "gungraun-macros"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12b605e561ccca36d68ebacd387751f2d58cf65202b781bb4a9029951dd3a66d"
+source = "git+https://github.com/turbocrime/gungraun?branch=fix%2Fflamegraph#20a17226e6d9657a00c57446f8467bbe01536722"
 dependencies = [
  "derive_more",
  "proc-macro-error2",
@@ -274,8 +272,7 @@ dependencies = [
 [[package]]
 name = "gungraun-runner"
 version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f0ae6c9fe670d3d77f5576be41568ebf1733e5873c6ca85ff3b85848a31ac76"
+source = "git+https://github.com/turbocrime/gungraun?branch=fix%2Fflamegraph#20a17226e6d9657a00c57446f8467bbe01536722"
 dependencies = [
  "serde",
 ]
