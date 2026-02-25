@@ -61,8 +61,6 @@ use ragu_core::{
 };
 use ragu_primitives::GadgetExt;
 
-use alloc::vec;
-
 use crate::{
     Circuit, DriverScope, floor_plan::FloorPlan, floor_planner::ConstraintSegment,
     polynomials::Rank, registry, routines::RoutineId,
@@ -271,7 +269,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         let multiplication_start = seg.multiplication_start;
         let linear_start = seg.linear_start;
 
-// Compute cache key: (routine_id, canonical_position)
+        // Compute cache key: (routine_id, canonical_position)
         let routine_id = RoutineId::of::<Ro>();
         let invocation_index = *self.invocation_counts.get(&routine_id).unwrap_or(&0);
         self.invocation_counts
@@ -375,8 +373,8 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
 
                     let entry = CachedRoutine {
                         contribution: routine_contribution,
-                        num_multiplications: slot.num_multiplication_constraints,
-                        num_constraints: slot.num_linear_constraints,
+                        num_multiplications: seg.num_multiplication_constraints,
+                        num_constraints: seg.num_linear_constraints,
                         output_wires,
                     };
 

@@ -546,6 +546,44 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
             cache,
         }
     }
+
+    /// Evaluates the registry polynomial with inter-circuit memoization.
+    ///
+    /// Routines at the same canonical position share cached contributions
+    /// across circuits during Lagrange interpolation. Result is identical
+    /// to [`wxy`](Self::wxy).
+    pub fn wxy_combined(&self, w: F, x: F, y: F) -> F {
+        let ell = self.domain.ell(w, self.domain.n());
+
+        let mut result = F::ZERO;
+
+        if let Some(ell) = ell {
+            // Lagrange interpolation with shared cache
+            let mut cache = MemoCache::new();
+
+            for (j, coeff) in ell.iter().enumerate() {
+                let i = bitreverse(j as u32, self.domain.log2_n()) as usize;
+                if let Some(circuit) = self.circuits.get(i) {
+                    let sxy = circuit.sxy_with_cache(
+                        x,
+                        y,
+                        &self.key,
+                        &self.floor_plans[i],
+                        &self.type_floor_plan,
+                        &mut cache,
+                    );
+                    result += sxy * coeff;
+                }
+            }
+        } else if let Some(i) = self.omega_lookup.get(&OmegaKey::from(w)) {
+            // w in domain: single circuit, no memoization benefit
+            if let Some(circuit) = self.circuits.get(*i) {
+                result = circuit.sxy(x, y, &self.key, &self.floor_plans[*i]);
+            }
+        }
+
+        result
+    }
 }
 
 impl<F: PrimeField, R: Rank> RegistryAt<'_, F, R> {
@@ -584,44 +622,6 @@ impl<F: PrimeField, R: Rank> RegistryAt<'_, F, R> {
                 *result += circuit.sxy(x, y, &self.registry.key, floor_plan) * coeff;
             },
         )
-    }
-
-    /// Evaluates the registry polynomial with inter-circuit memoization.
-    ///
-    /// Routines at the same canonical position share cached contributions
-    /// across circuits during Lagrange interpolation. Result is identical
-    /// to [`wxy`](Self::wxy).
-    pub fn wxy_combined(&self, w: F, x: F, y: F) -> F {
-        let ell = self.domain.ell(w, self.domain.n());
-
-        let mut result = F::ZERO;
-
-        if let Some(ell) = ell {
-            // Lagrange interpolation with shared cache
-            let mut cache = MemoCache::new();
-
-            for (j, coeff) in ell.iter().enumerate() {
-                let i = bitreverse(j as u32, self.domain.log2_n()) as usize;
-                if let Some(circuit) = self.circuits.get(i) {
-                    let sxy = circuit.sxy_with_cache(
-                        x,
-                        y,
-                        &self.key,
-                        &self.floor_plans[i],
-                        &self.type_floor_plan,
-                        &mut cache,
-                    );
-                    result += sxy * coeff;
-                }
-            }
-        } else if let Some(i) = self.omega_lookup.get(&OmegaKey::from(w)) {
-            // w in domain: single circuit, no memoization benefit
-            if let Some(circuit) = self.circuits.get(*i) {
-                result = circuit.sxy(x, y, &self.key, &self.floor_plans[*i]);
-            }
-        }
-
-        result
     }
 }
 
