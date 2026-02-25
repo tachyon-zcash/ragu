@@ -136,7 +136,8 @@ macro_rules! define_unified_instance {
         /// 1. Create a builder with [`new`](Self::new)
         /// 2. Optionally pre-fill slots using `builder.field.set(value)`
         /// 3. Optionally allocate slots using `builder.field.get(dr, instance)`
-        /// 4. Call [`finish`](Self::finish) to build the final output with suffix
+        /// 4. Call [`finish`](Self::finish) or [`finish_no_suffix`](Self::finish_no_suffix)
+        ///    to build the final output and obtain this circuit's [`Coverage`]
         ///
         /// Any slots not explicitly filled will be allocated during finalization.
         pub struct OutputBuilder<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
@@ -160,6 +161,7 @@ macro_rules! define_unified_instance {
 
             /// Finishes building the output without wrapping in [`WithSuffix`].
             ///
+            /// Returns the built [`Output`] and this circuit's [`Coverage`].
             /// Use this when the circuit needs to include additional data in its
             /// output alongside the unified instance, and will handle the suffix
             /// wrapping separately.
@@ -167,12 +169,13 @@ macro_rules! define_unified_instance {
                 self,
                 dr: &mut D,
                 instance: &DriverValue<D, &'a Instance<C>>,
-            ) -> Result<Output<'dr, D, C>> {
-                Ok(Output {
+            ) -> Result<(Output<'dr, D, C>, Coverage)> {
+                let coverage = self.coverage();
+                Ok((Output {
                     $(
                         $field: self.$field.take(dr, instance)?,
                     )+
-                })
+                }, coverage))
             }
         }
     };
@@ -236,6 +239,7 @@ define_unified_instance! {
 pub struct Slot<'a, 'dr, D: Driver<'dr>, T, C: Cycle> {
     value: Option<T>,
     alloc: fn(&mut D, &DriverValue<D, &'a Instance<C>>) -> Result<T>,
+    pub(super) was_set: bool,
     _marker: core::marker::PhantomData<&'dr ()>,
 }
 
@@ -245,6 +249,7 @@ impl<'a, 'dr, D: Driver<'dr>, T: Clone, C: Cycle> Slot<'a, 'dr, D, T, C> {
         Slot {
             value: None,
             alloc,
+            was_set: false,
             _marker: core::marker::PhantomData,
         }
     }
@@ -261,10 +266,13 @@ impl<'a, 'dr, D: Driver<'dr>, T: Clone, C: Cycle> Slot<'a, 'dr, D, T, C> {
         Ok(value)
     }
 
-    /// Directly provides a pre-computed value for this slot.
+    /// Directly provides a circuit-derived value for this slot.
     ///
-    /// Use this when the value has already been computed elsewhere and
-    /// should not be re-allocated.
+    /// Records the slot as covered so that [`finish`](OutputBuilder::finish)
+    /// includes the corresponding positional bit in the returned [`Coverage`].
+    /// Use [`set`](Self::set) whenever the circuit derives the value itself
+    /// (e.g. from a sponge squeeze) rather than reading it via
+    /// [`get`](Self::get).
     ///
     /// # Panics
     ///
@@ -272,6 +280,7 @@ impl<'a, 'dr, D: Driver<'dr>, T: Clone, C: Cycle> Slot<'a, 'dr, D, T, C> {
     pub fn set(&mut self, value: T) {
         assert!(self.value.is_none(), "Slot::set: slot already filled");
         self.value = Some(value);
+        self.was_set = true;
     }
 
     /// Consumes the slot and returns the stored value, allocating if needed.
@@ -353,7 +362,34 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
 }
 
 impl<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> OutputBuilder<'a, 'dr, D, C> {
-    /// Finishes building and wraps the output in [`WithSuffix`].
+    // Returns the Coverage of challenge slots filled via Slot::set.
+    // Each Element slot contributes its positional bit when marked via Slot::set;
+    // slots filled via Slot::get or left for lazy allocation do not contribute.
+    fn coverage(&self) -> Coverage {
+        let derived = [
+            self.w.was_set,
+            self.y.was_set,
+            self.z.was_set,
+            self.mu.was_set,
+            self.nu.was_set,
+            self.mu_prime.was_set,
+            self.nu_prime.was_set,
+            self.x.was_set,
+            self.alpha.was_set,
+            self.u.was_set,
+            self.pre_beta.was_set,
+            self.v.was_set,
+        ];
+        Coverage(
+            derived
+                .iter()
+                .enumerate()
+                .fold(0u32, |bits, (i, &set)| bits | ((set as u32) << i)),
+        )
+    }
+
+    /// Finishes building, wraps the output in [`WithSuffix`], and returns
+    /// this circuit's [`Coverage`].
     ///
     /// Appends a zero element as the suffix, ensuring the linear term of
     /// $k(Y)$ is zero. This distinguishes internal circuits (fixed by the
@@ -364,15 +400,63 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> OutputBuilder<'a, '
         self,
         dr: &mut D,
         instance: &DriverValue<D, &'a Instance<C>>,
-    ) -> Result<Bound<'dr, D, InternalOutputKind<C>>> {
+    ) -> Result<(Bound<'dr, D, InternalOutputKind<C>>, Coverage)> {
         let zero = Element::zero(dr);
-        Ok(WithSuffix::new(self.finish_no_suffix(dr, instance)?, zero))
+        let (output, coverage) = self.finish_no_suffix(dr, instance)?;
+        Ok((WithSuffix::new(output, zero), coverage))
+    }
+}
+
+/// Tracks which unified instance slots have been actively filled (via
+/// [`Slot::set`]) by a circuit, rather than read from the witnessed instance.
+///
+/// Each [`Slot`] in [`OutputBuilder`] sets a positional bit here when filled
+/// via [`Slot::set`]. Circuits receive their coverage as the second element of
+/// the tuple returned by [`OutputBuilder::finish`] or
+/// [`OutputBuilder::finish_no_suffix`] and return it as `Aux`. The fuse layer
+/// collects coverage from [`hashes_1`], [`hashes_2`], and [`compute_v`] and
+/// calls [`validate`](Self::validate), asserting pairwise disjointness and
+/// complete coverage of all 12 required slots (11 Fiat-Shamir challenges plus
+/// the computed `v` slot).
+///
+/// [`hashes_1`]: super::hashes_1
+/// [`hashes_2`]: super::hashes_2
+/// [`compute_v`]: super::compute_v
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Coverage(u32);
+
+impl Coverage {
+    /// The number of derived slots (11 Fiat-Shamir challenges + `v`).
+    const NUM_DERIVED: u32 = 12;
+
+    /// Full coverage: all `NUM_DERIVED` slots set.
+    const ALL: Self = Self((1 << Self::NUM_DERIVED) - 1);
+
+    /// Validates that the given coverages together cover all required slots
+    /// exactly once.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any slot is covered by multiple circuits or if any required
+    /// slot is unclaimed.
+    pub fn validate(coverages: &[Coverage]) {
+        let union = coverages.iter().fold(0u32, |acc, c| acc | c.0);
+        let total: u32 = coverages.iter().map(|c| c.0.count_ones()).sum();
+
+        assert_eq!(union, Self::ALL.0, "not all required slots were covered");
+        assert_eq!(
+            total,
+            Self::NUM_DERIVED,
+            "slot covered by multiple circuits"
+        );
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::marker::PhantomData;
+    use ragu_arithmetic::Cycle;
     use ragu_circuits::polynomials::ProductionRank;
     use ragu_core::{drivers::emulator::Emulator, maybe::Empty};
     use ragu_pasta::Pasta;
@@ -389,6 +473,32 @@ mod tests {
             output.num_wires(),
             NUM_WIRES,
             "NUM_WIRES constant does not match actual wire count"
+        );
+    }
+
+    #[test]
+    fn coverage_all() {
+        // Verify that marking every tracked slot as set produces Coverage::ALL.
+        // If a slot is added to define_unified_instance! but omitted from
+        // coverage() (or Coverage::ALL is wrong), this test fails.
+        type D = PhantomData<<Pasta as Cycle>::CircuitField>;
+        let mut builder: OutputBuilder<'_, '_, D, Pasta> = OutputBuilder::new();
+        builder.w.was_set = true;
+        builder.y.was_set = true;
+        builder.z.was_set = true;
+        builder.mu.was_set = true;
+        builder.nu.was_set = true;
+        builder.mu_prime.was_set = true;
+        builder.nu_prime.was_set = true;
+        builder.x.was_set = true;
+        builder.alpha.was_set = true;
+        builder.u.was_set = true;
+        builder.pre_beta.was_set = true;
+        builder.v.was_set = true;
+        assert_eq!(
+            builder.coverage(),
+            Coverage::ALL,
+            "coverage() does not match Coverage::ALL; update both when slots change"
         );
     }
 }

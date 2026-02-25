@@ -120,7 +120,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
     type Output = unified::InternalOutputKind<C>;
-    type Aux<'source> = ();
+    type Aux<'source> = unified::Coverage;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
@@ -192,6 +192,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
                 .enforce_equal(dr, &error_n.collapsed[i])?;
         }
 
-        Ok((unified_output.finish(dr, unified_instance)?, D::just(|| ())))
+        let (output, coverage) = unified_output.finish(dr, unified_instance)?;
+        Ok((output, D::just(move || coverage)))
     }
 }

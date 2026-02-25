@@ -94,7 +94,7 @@ use core::marker::PhantomData;
 
 use super::{
     stages::{error_n as native_error_n, preamble as native_preamble},
-    unified::{self, OutputBuilder},
+    unified::{self, Coverage, OutputBuilder},
 };
 use crate::components::{fold_revdot, root_of_unity, suffix::WithSuffix};
 
@@ -186,7 +186,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
     type Output = Kind![C::CircuitField; WithSuffix<'_, _, Output<'_, _, C, HEADER_SIZE>>];
-    type Aux<'source> = ();
+    type Aux<'source> = Coverage;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
@@ -290,13 +290,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         // Output headers from preamble + unified instance. Verification with
         // `unified_bridge_ky` ensures preamble headers match ApplicationProof
         // headers.
+        let (unified, coverage) = unified_output.finish_no_suffix(dr, unified_instance)?;
         let output = Output {
             left_header: preamble.left.output_header,
             right_header: preamble.right.output_header,
-            unified: unified_output.finish_no_suffix(dr, unified_instance)?,
+            unified,
         };
 
         let zero = Element::zero(dr);
-        Ok((WithSuffix::new(output, zero), D::just(|| ())))
+        Ok((WithSuffix::new(output, zero), D::just(move || coverage)))
     }
 }
