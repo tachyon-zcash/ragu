@@ -1,9 +1,16 @@
-//! Floor planning for optimal routine placement in the circuit registry.
+//! Floor planning for optimal routine placement in the constraint polynomial.
 //!
-//! The floor planner assigns canonical positions to routine types so that:
+//! Routines occupy rectangular regions in the 2D constraint space where:
+//! - **X dimension**: multiplication gate indices (grows with each `mul` constraint)
+//! - **Y dimension**: linear constraint indices (grows with each `enforce_zero`)
+//!
+//! The floor planner assigns deterministic positions to routine types so that:
 //! - **Inter-circuit memoization**: Same routine type at same position across circuits
 //!   allows combining Lagrange coefficients instead of separate evaluation.
 //! - **Intra-circuit memoization**: Subsequent calls scale by `X^N * Y^M` offsets.
+//!
+//! Placement uses row-major packing: routines fill left-to-right (increasing X)
+//! until `max_width` is reached, then wrap to a new row (increasing Y).
 //!
 //! See issues #58 and #59 for the memoization design.
 
@@ -13,8 +20,8 @@ use crate::SegmentRecord;
 use crate::floor_planner::ConstraintSegment;
 use crate::routines::{RoutineId, RoutineRegistry};
 
-/// A position in the circuit registry: multiplication gate index (X dimension) and
-/// linear constraint index (Y dimension).
+/// A position in the constraint polynomial: multiplication gate index (X dimension)
+/// and linear constraint index (Y dimension).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RegistryPosition {
     /// Multiplication gate index.
@@ -30,7 +37,7 @@ impl RegistryPosition {
     }
 }
 
-/// Canonical placement for a routine type.
+/// Placement for a routine type in the constraint polynomial.
 #[derive(Debug, Clone, Copy)]
 struct Placement {
     /// The routine type.
@@ -39,21 +46,25 @@ struct Placement {
     segment: ConstraintSegment,
 }
 
-/// Floor plan mapping routine types to canonical registry positions.
+/// Floor plan mapping routine types to deterministic positions in the constraint polynomial.
 ///
-/// All circuits using a routine type should place it at the canonical position
+/// All circuits using a routine type should place it at the same position
 /// to maximize inter-circuit memoization.
 #[derive(Debug, Default)]
 pub struct FloorPlan {
     placements: Vec<Placement>,
+    /// Next available X position (multiplication gate index).
     next_x: usize,
+    /// Current row's Y position (linear constraint index).
     next_y: usize,
+    /// Maximum Y extent of routines in the current row.
     row_height: usize,
+    /// Maximum X extent before wrapping to a new row.
     max_width: usize,
 }
 
 impl FloorPlan {
-    /// Creates a new floor plan with the given registry width constraint.
+    /// Creates a new floor plan with the given maximum X extent.
     pub fn new(max_width: usize) -> Self {
         Self {
             max_width,
