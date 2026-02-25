@@ -2,7 +2,7 @@ mod setup;
 
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use pasta_curves::{EpAffine, Fp, Fq};
-use ragu_arithmetic::{Domain, dot, eval, factor, geosum, mul, poly_with_roots};
+use ragu_arithmetic::{Domain, dot, eval, factor, factor_batch, geosum, mul, poly_with_roots};
 use setup::{f, setup_domain_ell, setup_domain_fft, setup_rng, setup_with_rng, vec_affine, vec_f};
 use std::hint::black_box;
 
@@ -70,9 +70,19 @@ fn poly_factor((coeffs, x): (Vec<Fp>, Fp)) {
     black_box(factor(coeffs, x));
 }
 
+#[library_benchmark(setup = setup_rng)]
+#[benches::with_setup(
+    ((vec_f::<4096, Fp>, vec_f::<1, Fp>)),
+    ((vec_f::<4096, Fp>, vec_f::<4, Fp>)),
+    ((vec_f::<4096, Fp>, vec_f::<16, Fp>)),
+)]
+fn poly_factor_batch((coeffs, points): (Vec<Fp>, Vec<Fp>)) {
+    black_box(factor_batch(coeffs, &points));
+}
+
 library_benchmark_group!(
     name = poly_ops;
-    benchmarks = with_roots, poly_eval, poly_factor
+    benchmarks = with_roots, poly_eval, poly_factor, poly_factor_batch
 );
 
 #[library_benchmark(setup = setup_rng)]

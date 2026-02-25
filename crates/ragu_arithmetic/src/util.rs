@@ -100,6 +100,89 @@ where
     result
 }
 
+/// Computes $a / (X - b_i)$ with no remainder for the given univariate polynomial
+/// $a \in \mathbb{F}\[X]$ and each evaluation point $b_i$ in `points`, returning one
+/// quotient polynomial per point in ascending degree order.
+///
+/// This is equivalent to calling [`factor`] once per point, but walks the
+/// coefficient array only once, which is significantly faster when the same
+/// polynomial is factored at many points.
+///
+/// # Panics
+///
+/// Panics if the polynomial $a$ is of degree $0$, as it cannot be factored by a linear term.
+pub fn factor_batch_for_each<F: Field, I: IntoIterator<Item = F>>(
+    a: I,
+    points: &[F],
+    mut for_each: impl FnMut(&[F]),
+) where
+    I::IntoIter: DoubleEndedIterator,
+{
+    let n = points.len();
+    if n == 0 {
+        // Match factor/factor_iter behavior: empty input is invalid.
+        let mut it = a.into_iter();
+        if it.next().is_none() {
+            panic!("cannot factor a polynomial of degree 0");
+        }
+        return;
+    }
+
+    let neg_points: Vec<F> = points.iter().map(|b| -*b).collect();
+    let mut tmps = vec![F::ZERO; n];
+    let mut row = vec![F::ZERO; n];
+
+    let mut iter = a.into_iter().rev().peekable();
+
+    if iter.peek().is_none() {
+        panic!("cannot factor a polynomial of degree 0");
+    }
+
+    while let Some(current) = iter.next() {
+        if iter.peek().is_none() {
+            break; // discard constant term (remainder)
+        }
+        for i in 0..n {
+            let mut lead_coeff = current;
+            lead_coeff -= tmps[i];
+            tmps[i] = lead_coeff;
+            tmps[i] *= neg_points[i];
+            row[i] = lead_coeff;
+        }
+        for_each(&row);
+    }
+}
+
+/// Computes $a / (X - b_i)$ with no remainder for the given univariate polynomial
+/// $a \in \mathbb{F}\[X]$ and each evaluation point $b_i$ in `points`, returning one
+/// quotient polynomial per point in ascending degree order.
+///
+/// This is equivalent to calling [`factor`] once per point, but walks the
+/// coefficient array only once, which is significantly faster when the same
+/// polynomial is factored at many points.
+///
+/// # Panics
+///
+/// Panics if the polynomial $a$ is of degree $0$, as it cannot be factored by a linear term.
+pub fn factor_batch<F: Field, I: IntoIterator<Item = F>>(a: I, points: &[F]) -> Vec<Vec<F>>
+where
+    I::IntoIter: DoubleEndedIterator,
+{
+    let n = points.len();
+    let mut results: Vec<Vec<F>> = (0..n).map(|_| Vec::new()).collect();
+
+    factor_batch_for_each(a, points, |row| {
+        for i in 0..n {
+            results[i].push(row[i]);
+        }
+    });
+
+    for r in &mut results {
+        r.reverse();
+    }
+    results
+}
+
 /// Given a number of scalars, returns the ideal bucket size (in bits) for
 /// multiexp, obtained through experimentation. This could probably be optimized
 /// further and for particular compilation targets.
@@ -582,4 +665,96 @@ fn test_batched_quotient_streaming() {
         })
         .sum();
     assert_eq!(f_at_y, expected_at_y);
+}
+
+#[test]
+fn test_factor_batch() {
+    use pasta_curves::Fp as F;
+
+    let poly = [
+        F::DELTA,
+        F::DELTA.square(),
+        F::from(348) * F::DELTA,
+        F::from(438) * F::MULTIPLICATIVE_GENERATOR,
+    ];
+
+    let points = [F::TWO_INV, F::DELTA, F::from(100)];
+    let batch = factor_batch(poly.iter().copied(), &points);
+
+    // Each batch result must match the corresponding single-point factor call.
+    for (i, b) in points.iter().enumerate() {
+        assert_eq!(batch[i], factor(poly.iter().copied(), *b));
+    }
+
+    // Single-point batch must match factor.
+    let single = factor_batch(poly.iter().copied(), &[F::TWO_INV]);
+    assert_eq!(single, vec![factor(poly.iter().copied(), F::TWO_INV)]);
+
+    // Empty points returns empty vec.
+    let empty: Vec<Vec<F>> = factor_batch(poly.iter().copied(), &[]);
+    assert!(empty.is_empty());
+
+    // Math check: eval(q_i, y) * (y - b_i) == eval(p, y) - eval(p, b_i)
+    let y = F::from(9999);
+    for (i, b) in points.iter().enumerate() {
+        let lhs = eval(batch[i].iter(), y) * (y - *b);
+        let rhs = eval(poly.iter(), y) - eval(poly.iter(), *b);
+        assert_eq!(lhs, rhs);
+    }
+}
+
+#[test]
+fn test_factor_batch_streaming_equivalence() {
+    use ff::Field;
+    use pasta_curves::Fp as F;
+
+    let polys: Vec<Vec<F>> = vec![
+        vec![F::from(1), F::from(2), F::from(3), F::from(4)],
+        vec![F::from(5), F::from(6), F::from(7), F::from(8)],
+        vec![F::from(9), F::from(10), F::from(11), F::from(12)],
+    ];
+    let x = F::from(42);
+    let alpha = F::from(7);
+
+    // Build the alpha-folded result using factor_batch.
+    let f_batch: Vec<F> = {
+        let quotients: Vec<Vec<F>> = polys
+            .iter()
+            .map(|p| {
+                let mut q = factor_batch(p.iter().copied(), &[x]);
+                q.remove(0)
+            })
+            .collect();
+
+        let n = quotients.len();
+        let max_len = quotients.iter().map(|q| q.len()).max().unwrap();
+        let mut f = vec![F::ZERO; max_len];
+        for (i, q) in quotients.iter().enumerate() {
+            let alpha_i = alpha.pow([(n - 1 - i) as u64]);
+            for (j, &c) in q.iter().enumerate() {
+                f[j] += alpha_i * c;
+            }
+        }
+        f
+    };
+
+    // Build the alpha-folded result using factor_iter (streaming).
+    let f_streaming: Vec<F> = {
+        let mut iters: Vec<_> = polys
+            .iter()
+            .map(|p| factor_iter(p.iter().copied(), x))
+            .collect();
+
+        let mut coeffs_rev = Vec::new();
+        while let Some(first) = iters[0].next() {
+            let c = iters[1..]
+                .iter_mut()
+                .fold(first, |acc, iter| alpha * acc + iter.next().unwrap());
+            coeffs_rev.push(c);
+        }
+        coeffs_rev.reverse();
+        coeffs_rev
+    };
+
+    assert_eq!(f_batch, f_streaming);
 }
