@@ -57,7 +57,7 @@ use super::{Circuit, DriverScope};
 /// | 1     | `RoutineA`     |  2  |  3 | A's own constraints        |
 /// | 2     | `RoutineB`     |  1  |  3 | b0+b1; `RoutineC` excluded |
 /// | 3     | `RoutineC`     |  1  |  2 | C's own constraints        |
-#[derive(Default)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SegmentRecord {
     /// The number of multiplication constraints in this segment.
     pub num_multiplication_constraints: usize,

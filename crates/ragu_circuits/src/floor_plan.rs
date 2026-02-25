@@ -9,15 +9,16 @@
 
 use alloc::{collections::BTreeMap, vec::Vec};
 
-use crate::routines::{RoutineId, RoutineRegistry, RoutineShape};
+use crate::SegmentRecord;
+use crate::routines::{RoutineId, RoutineRegistry};
 
 /// A position in the circuit registry: multiplication gate index (X dimension) and
-/// constraint index (Y dimension).
+/// linear constraint index (Y dimension).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RegistryPosition {
     /// Multiplication gate index.
     pub x: usize,
-    /// Constraint index.
+    /// Linear constraint index.
     pub y: usize,
 }
 
@@ -34,7 +35,7 @@ struct Placement {
     /// The routine type.
     id: RoutineId,
     /// The routine's shape (dimensions).
-    shape: RoutineShape,
+    shape: SegmentRecord,
     /// Assigned position in the registry.
     position: RegistryPosition,
 }
@@ -70,7 +71,7 @@ impl FloorPlan {
 
         // Collect routine types with circuit count and max invocations.
         // (shape, circuit_count, max_invocations)
-        let mut routine_stats: BTreeMap<RoutineId, (RoutineShape, usize, usize)> = BTreeMap::new();
+        let mut routine_stats: BTreeMap<RoutineId, (SegmentRecord, usize, usize)> = BTreeMap::new();
         for registry in registries {
             for (id, infos) in registry.iter() {
                 if let Some(first) = infos.first() {
@@ -90,7 +91,10 @@ impl FloorPlan {
         let mut routines: Vec<_> = routine_stats.into_iter().collect();
         routines.sort_by_key(|(_, (shape, circuit_count, max_inv))| {
             core::cmp::Reverse(
-                circuit_count * max_inv * shape.num_multiplications * shape.num_constraints,
+                circuit_count
+                    * max_inv
+                    * shape.num_multiplication_constraints
+                    * shape.num_linear_constraints,
             )
         });
 
@@ -103,8 +107,8 @@ impl FloorPlan {
     }
 
     /// Place a routine type at the next available position, reserving space for `count` invocations.
-    fn place(&mut self, id: RoutineId, shape: RoutineShape, count: usize) {
-        let reserved_width = shape.num_multiplications * count;
+    fn place(&mut self, id: RoutineId, shape: SegmentRecord, count: usize) {
+        let reserved_width = shape.num_multiplication_constraints * count;
 
         if self.next_x + reserved_width > self.max_width && self.next_x > 0 {
             self.next_y += self.row_height;
@@ -120,7 +124,7 @@ impl FloorPlan {
         });
 
         self.next_x += reserved_width;
-        self.row_height = self.row_height.max(shape.num_constraints);
+        self.row_height = self.row_height.max(shape.num_linear_constraints);
     }
 
     /// Gets the position for a specific invocation of a routine type.
@@ -131,14 +135,14 @@ impl FloorPlan {
     ) -> Option<RegistryPosition> {
         self.placements.iter().find(|p| p.id == *id).map(|p| {
             RegistryPosition::new(
-                p.position.x + invocation_index * p.shape.num_multiplications,
+                p.position.x + invocation_index * p.shape.num_multiplication_constraints,
                 p.position.y,
             )
         })
     }
 
     /// Gets the shape for a routine type, if it exists in the floor plan.
-    pub fn get_shape(&self, id: &RoutineId) -> Option<RoutineShape> {
+    pub fn get_shape(&self, id: &RoutineId) -> Option<SegmentRecord> {
         self.placements
             .iter()
             .find(|p| p.id == *id)
@@ -153,11 +157,18 @@ mod tests {
     struct Poseidon;
     struct Merkle;
 
+    fn shape(muls: usize, lcs: usize) -> SegmentRecord {
+        SegmentRecord {
+            num_multiplication_constraints: muls,
+            num_linear_constraints: lcs,
+        }
+    }
+
     #[test]
     fn floor_plan_single_registry() {
         let mut registry = RoutineRegistry::new();
-        registry.register::<Poseidon>(RoutineShape::new(10, 20));
-        registry.register::<Merkle>(RoutineShape::new(5, 10));
+        registry.register::<Poseidon>(shape(10, 20));
+        registry.register::<Merkle>(shape(5, 10));
 
         let plan = FloorPlan::from_registries(&[&registry], 100);
 
@@ -171,14 +182,14 @@ mod tests {
     #[test]
     fn floor_plan_frequent_routines() {
         let mut reg_a = RoutineRegistry::new();
-        reg_a.register::<Poseidon>(RoutineShape::new(10, 20));
+        reg_a.register::<Poseidon>(shape(10, 20));
 
         let mut reg_b: RoutineRegistry = RoutineRegistry::new();
-        reg_b.register::<Poseidon>(RoutineShape::new(10, 20));
-        reg_b.register::<Merkle>(RoutineShape::new(5, 10));
+        reg_b.register::<Poseidon>(shape(10, 20));
+        reg_b.register::<Merkle>(shape(5, 10));
 
         let mut reg_c = RoutineRegistry::new();
-        reg_c.register::<Poseidon>(RoutineShape::new(10, 20));
+        reg_c.register::<Poseidon>(shape(10, 20));
 
         let plan = FloorPlan::from_registries(&[&reg_a, &reg_b, &reg_c], 100);
 
@@ -191,8 +202,8 @@ mod tests {
     #[test]
     fn floor_plan_wraps_to_new_row() {
         let mut registry = RoutineRegistry::new();
-        registry.register::<Poseidon>(RoutineShape::new(60, 20));
-        registry.register::<Merkle>(RoutineShape::new(60, 10));
+        registry.register::<Poseidon>(shape(60, 20));
+        registry.register::<Merkle>(shape(60, 10));
 
         let plan = FloorPlan::from_registries(&[&registry], 100);
 
@@ -209,11 +220,11 @@ mod tests {
     fn floor_plan_reserves_space_for_multiple_invocations() {
         // Circuit calls Poseidon 3 times, then Merkle once
         let mut registry = RoutineRegistry::new();
-        let poseidon_shape = RoutineShape::new(10, 20);
+        let poseidon_shape = shape(10, 20);
         registry.register::<Poseidon>(poseidon_shape);
         registry.register::<Poseidon>(poseidon_shape);
         registry.register::<Poseidon>(poseidon_shape);
-        registry.register::<Merkle>(RoutineShape::new(5, 10));
+        registry.register::<Merkle>(shape(5, 10));
 
         let plan = FloorPlan::from_registries(&[&registry], 100);
 
@@ -231,7 +242,7 @@ mod tests {
     #[test]
     fn floor_plan_get_invocation_positions() {
         let mut registry = RoutineRegistry::new();
-        let poseidon_shape = RoutineShape::new(10, 20);
+        let poseidon_shape = shape(10, 20);
         registry.register::<Poseidon>(poseidon_shape);
         registry.register::<Poseidon>(poseidon_shape);
         registry.register::<Poseidon>(poseidon_shape);
