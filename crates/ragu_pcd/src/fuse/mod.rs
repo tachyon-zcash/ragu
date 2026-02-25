@@ -227,3 +227,324 @@ impl<'rx, C: Cycle, R: Rank> Source for FuseProofSource<'rx, C, R> {
         .into_iter()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ApplicationBuilder;
+    use crate::header::{Header, Suffix};
+    use crate::step::{Encoded, Index, Step};
+    use ragu_arithmetic::Cycle;
+    use ragu_circuits::polynomials::R;
+    use ragu_core::{
+        drivers::{Driver, DriverValue},
+        gadgets::Kind,
+    };
+    use ragu_pasta::{Fp, Pasta};
+    use ragu_primitives::Element;
+    use rand::{SeedableRng, rngs::StdRng};
+
+    type TestR = R<13>;
+    const HEADER_SIZE: usize = 4;
+
+    struct TestHeader;
+
+    impl Header<Fp> for TestHeader {
+        const SUFFIX: Suffix = Suffix::new(200);
+        type Data<'source> = Fp;
+        type Output = Kind![Fp; Element<'_, _>];
+
+        fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            dr: &mut D,
+            witness: DriverValue<D, Self::Data<'source>>,
+        ) -> Result<Element<'dr, D>> {
+            Element::alloc(dr, witness)
+        }
+    }
+
+    // Seed step: creates initial proofs from trivial inputs
+    struct SeedStep;
+
+    impl Step<Pasta> for SeedStep {
+        const INDEX: Index = Index::new(0);
+        type Witness<'source> = Fp;
+        type Aux<'source> = Fp;
+        type Left = ();
+        type Right = ();
+        type Output = TestHeader;
+
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
+            &self,
+            dr: &mut D,
+            witness: DriverValue<D, Fp>,
+            _left: DriverValue<D, ()>,
+            _right: DriverValue<D, ()>,
+        ) -> Result<(
+            (
+                Encoded<'dr, D, Self::Left, HS>,
+                Encoded<'dr, D, Self::Right, HS>,
+                Encoded<'dr, D, Self::Output, HS>,
+            ),
+            DriverValue<D, Fp>,
+        )> {
+            let output_enc = Encoded::new(dr, witness.clone())?;
+            Ok((
+                (
+                    Encoded::from_gadget(()),
+                    Encoded::from_gadget(()),
+                    output_enc,
+                ),
+                witness,
+            ))
+        }
+    }
+
+    // Fuse step: merges two TestHeader proofs
+    struct FuseStep;
+
+    impl Step<Pasta> for FuseStep {
+        const INDEX: Index = Index::new(1);
+        type Witness<'source> = ();
+        type Aux<'source> = Fp;
+        type Left = TestHeader;
+        type Right = TestHeader;
+        type Output = TestHeader;
+
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
+            &self,
+            dr: &mut D,
+            _: DriverValue<D, ()>,
+            left: DriverValue<D, Fp>,
+            right: DriverValue<D, Fp>,
+        ) -> Result<(
+            (
+                Encoded<'dr, D, Self::Left, HS>,
+                Encoded<'dr, D, Self::Right, HS>,
+                Encoded<'dr, D, Self::Output, HS>,
+            ),
+            DriverValue<D, Fp>,
+        )> {
+            let left_enc = Encoded::new(dr, left.clone())?;
+            let right_enc = Encoded::new(dr, right.clone())?;
+            let output_enc = Encoded::new(dr, left.clone())?;
+            Ok(((left_enc, right_enc, output_enc), left))
+        }
+    }
+
+    fn create_test_app() -> crate::Application<'static, Pasta, TestR, HEADER_SIZE> {
+        let pasta = Pasta::baked();
+        ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
+            .register(SeedStep)
+            .expect("seed step registration should succeed")
+            .register(FuseStep)
+            .expect("fuse step registration should succeed")
+            .finalize(pasta)
+            .expect("finalization should succeed")
+    }
+
+    fn seed_and_fuse(
+        seed: u64,
+        left: u64,
+        right: u64,
+    ) -> (
+        Application<'static, Pasta, TestR, HEADER_SIZE>,
+        Proof<Pasta, TestR>,
+    ) {
+        let app = create_test_app();
+        let mut rng = StdRng::seed_from_u64(seed);
+
+        let left = app
+            .seed(&mut rng, SeedStep, Fp::from(left))
+            .expect("seed should succeed");
+        let left = left.0.carry(left.1);
+
+        let right = app
+            .seed(&mut rng, SeedStep, Fp::from(right))
+            .expect("seed should succeed");
+        let right = right.0.carry(right.1);
+
+        let (proof, _) = app
+            .fuse(&mut rng, FuseStep, (), left, right)
+            .expect("fuse should succeed");
+
+        (app, proof)
+    }
+
+    #[test]
+    fn fuse_commitment_bindings_match_polynomials() {
+        let (app, proof) = seed_and_fuse(1234, 10, 20);
+        let host = Pasta::host_generators(app.params);
+        let nested = Pasta::nested_generators(app.params);
+
+        assert_eq!(
+            proof.application.commitment,
+            proof.application.rx.commit(host, proof.application.blind)
+        );
+
+        assert_eq!(
+            proof.preamble.native_commitment,
+            proof
+                .preamble
+                .native_rx
+                .commit(host, proof.preamble.native_blind)
+        );
+        assert_eq!(
+            proof.preamble.nested_commitment,
+            proof
+                .preamble
+                .nested_rx
+                .commit(nested, proof.preamble.nested_blind)
+        );
+
+        assert_eq!(
+            proof.s_prime.registry_wx0_commitment,
+            proof
+                .s_prime
+                .registry_wx0_poly
+                .commit(host, proof.s_prime.registry_wx0_blind)
+        );
+        assert_eq!(
+            proof.s_prime.registry_wx1_commitment,
+            proof
+                .s_prime
+                .registry_wx1_poly
+                .commit(host, proof.s_prime.registry_wx1_blind)
+        );
+        assert_eq!(
+            proof.s_prime.nested_s_prime_commitment,
+            proof
+                .s_prime
+                .nested_s_prime_rx
+                .commit(nested, proof.s_prime.nested_s_prime_blind)
+        );
+
+        assert_eq!(
+            proof.error_m.registry_wy_commitment,
+            proof
+                .error_m
+                .registry_wy_poly
+                .commit(host, proof.error_m.registry_wy_blind)
+        );
+        assert_eq!(
+            proof.error_m.native_commitment,
+            proof
+                .error_m
+                .native_rx
+                .commit(host, proof.error_m.native_blind)
+        );
+        assert_eq!(
+            proof.error_m.nested_commitment,
+            proof
+                .error_m
+                .nested_rx
+                .commit(nested, proof.error_m.nested_blind)
+        );
+
+        assert_eq!(
+            proof.error_n.native_commitment,
+            proof
+                .error_n
+                .native_rx
+                .commit(host, proof.error_n.native_blind)
+        );
+        assert_eq!(
+            proof.error_n.nested_commitment,
+            proof
+                .error_n
+                .nested_rx
+                .commit(nested, proof.error_n.nested_blind)
+        );
+
+        assert_eq!(
+            proof.ab.a_commitment,
+            proof.ab.a_poly.commit(host, proof.ab.a_blind)
+        );
+        assert_eq!(
+            proof.ab.b_commitment,
+            proof.ab.b_poly.commit(host, proof.ab.b_blind)
+        );
+        assert_eq!(
+            proof.ab.nested_commitment,
+            proof.ab.nested_rx.commit(nested, proof.ab.nested_blind)
+        );
+
+        assert_eq!(
+            proof.query.registry_xy_commitment,
+            proof
+                .query
+                .registry_xy_poly
+                .commit(host, proof.query.registry_xy_blind)
+        );
+        assert_eq!(
+            proof.query.native_commitment,
+            proof.query.native_rx.commit(host, proof.query.native_blind)
+        );
+        assert_eq!(
+            proof.query.nested_commitment,
+            proof
+                .query
+                .nested_rx
+                .commit(nested, proof.query.nested_blind)
+        );
+
+        assert_eq!(proof.f.commitment, proof.f.poly.commit(host, proof.f.blind));
+        assert_eq!(
+            proof.f.nested_commitment,
+            proof.f.nested_rx.commit(nested, proof.f.nested_blind)
+        );
+
+        assert_eq!(
+            proof.eval.native_commitment,
+            proof.eval.native_rx.commit(host, proof.eval.native_blind)
+        );
+        assert_eq!(
+            proof.eval.nested_commitment,
+            proof.eval.nested_rx.commit(nested, proof.eval.nested_blind)
+        );
+
+        assert_eq!(
+            proof.circuits.hashes_1_commitment,
+            proof
+                .circuits
+                .hashes_1_rx
+                .commit(host, proof.circuits.hashes_1_blind)
+        );
+        assert_eq!(
+            proof.circuits.hashes_2_commitment,
+            proof
+                .circuits
+                .hashes_2_rx
+                .commit(host, proof.circuits.hashes_2_blind)
+        );
+        assert_eq!(
+            proof.circuits.partial_collapse_commitment,
+            proof
+                .circuits
+                .partial_collapse_rx
+                .commit(host, proof.circuits.partial_collapse_blind)
+        );
+        assert_eq!(
+            proof.circuits.full_collapse_commitment,
+            proof
+                .circuits
+                .full_collapse_rx
+                .commit(host, proof.circuits.full_collapse_blind)
+        );
+        assert_eq!(
+            proof.circuits.compute_v_commitment,
+            proof
+                .circuits
+                .compute_v_rx
+                .commit(host, proof.circuits.compute_v_blind)
+        );
+
+        assert_eq!(proof.p.commitment, proof.p.poly.commit(host, proof.p.blind));
+    }
+
+    #[test]
+    fn fuse_p_evaluation_matches_polynomial() {
+        let (_app, proof) = seed_and_fuse(5678, 1, 2);
+        let u = proof.challenges.u;
+        assert_eq!(proof.p.v, proof.p.poly.eval(u));
+    }
+}
