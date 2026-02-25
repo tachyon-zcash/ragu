@@ -10,6 +10,7 @@
 use alloc::{collections::BTreeMap, vec::Vec};
 
 use crate::SegmentRecord;
+use crate::floor_planner::ConstraintSegment;
 use crate::routines::{RoutineId, RoutineRegistry};
 
 /// A position in the circuit registry: multiplication gate index (X dimension) and
@@ -34,10 +35,8 @@ impl RegistryPosition {
 struct Placement {
     /// The routine type.
     id: RoutineId,
-    /// The routine's shape (dimensions).
-    shape: SegmentRecord,
-    /// Assigned position in the registry.
-    position: RegistryPosition,
+    /// The segment's position and dimensions.
+    segment: ConstraintSegment,
 }
 
 /// Floor plan mapping routine types to canonical registry positions.
@@ -113,12 +112,13 @@ impl FloorPlan {
             self.row_height = 0;
         }
 
-        let position = RegistryPosition::new(self.next_x, self.next_y);
-        self.placements.push(Placement {
-            id,
-            shape,
-            position,
-        });
+        let segment = ConstraintSegment {
+            gate_start: self.next_x,
+            constraint_start: self.next_y,
+            num_gates: shape.num_gates(),
+            num_constraints: shape.num_constraints(),
+        };
+        self.placements.push(Placement { id, segment });
 
         self.next_x += reserved_width;
         self.row_height = self.row_height.max(shape.num_constraints());
@@ -132,18 +132,18 @@ impl FloorPlan {
     ) -> Option<RegistryPosition> {
         self.placements.iter().find(|p| p.id == *id).map(|p| {
             RegistryPosition::new(
-                p.position.x + invocation_index * p.shape.num_gates(),
-                p.position.y,
+                p.segment.gate_start + invocation_index * p.segment.num_gates,
+                p.segment.constraint_start,
             )
         })
     }
 
     /// Gets the shape for a routine type, if it exists in the floor plan.
-    pub fn get_shape(&self, id: &RoutineId) -> Option<SegmentRecord> {
+    pub fn get_shape(&self, id: &RoutineId) -> Option<ConstraintSegment> {
         self.placements
             .iter()
             .find(|p| p.id == *id)
-            .map(|p| p.shape)
+            .map(|p| p.segment)
     }
 }
 

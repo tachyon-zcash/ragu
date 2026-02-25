@@ -62,6 +62,7 @@ use super::metrics::SegmentRecord;
 /// the current implementation does not.
 ///
 /// [`Routine`]: ragu_core::routines::Routine
+#[derive(Debug, Clone, Copy)]
 pub struct ConstraintSegment {
     /// Gate index where this segment's gates begin.
     pub(crate) gate_start: usize,
