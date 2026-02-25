@@ -110,6 +110,19 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
         placeholder + y.pow_vartime([(3 * reserved) as u64]) * c1 + c2
     }
 
+    fn sxy_with_cache(
+        &self,
+        x: F,
+        y: F,
+        key: &registry::Key<F>,
+        floor_plan: &[crate::floor_planner::ConstraintSegment],
+        _type_floor_plan: &crate::floor_plan::FloorPlan,
+        _cache: &mut crate::s::MemoCache<F>,
+    ) -> F {
+        // StageMask doesn't use routines, so no memoization benefit.
+        self.sxy(x, y, key, floor_plan)
+    }
+
     fn sx(
         &self,
         x: F,
