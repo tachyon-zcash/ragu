@@ -253,6 +253,7 @@ impl DeepFingerprint {
 /// | 1     | `RoutineA`     |  2  |  3 | A's own constraints        |
 /// | 2     | `RoutineB`     |  1  |  3 | b0+b1; `RoutineC` excluded |
 /// | 3     | `RoutineC`     |  1  |  2 | C's own constraints        |
+#[derive(Debug, Clone, Copy)]
 pub struct SegmentRecord {
     num_gates: usize,
     num_constraints: usize,
@@ -276,6 +277,16 @@ impl SegmentRecord {
     #[allow(dead_code)]
     pub(crate) fn identity(&self) -> &RoutineIdentity {
         &self.identity
+    }
+
+    /// Creates a segment record with synthetic values for testing.
+    #[cfg(test)]
+    pub(crate) fn test(num_gates: usize, num_constraints: usize, identity: RoutineIdentity) -> Self {
+        Self {
+            num_gates,
+            num_constraints,
+            identity,
+        }
     }
 }
 
