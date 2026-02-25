@@ -4,11 +4,12 @@
 //! circuit discovery, enabling memoization and floor planning optimizations.
 //!
 //! - [`RoutineId`]: Uniquely identifies a routine type using [`core::any::type_name`]
-//! - [`RoutineShape`]: Describes resource consumption (multiplication gates, constraints)
 //! - [`RoutineInfo`]: Captures invocation details including nesting level
 //! - [`RoutineRegistry`]: Collects routine invocations during discovery passes
 
 use alloc::{collections::BTreeMap, vec::Vec};
+
+use crate::SegmentRecord;
 
 /// Uniquely identifies a routine type for memoization and floor planning.
 ///
@@ -17,6 +18,8 @@ use alloc::{collections::BTreeMap, vec::Vec};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RoutineId(&'static str);
 
+/// TODO(FIXME): Type-based identity can produce false positives for non-fungible routines.
+/// See PR #413 and #503 discussion.
 impl RoutineId {
     /// Creates a `RoutineId` for the given routine type.
     pub fn of<R>() -> Self {
@@ -24,37 +27,18 @@ impl RoutineId {
     }
 }
 
-/// Describes the circuit resources consumed by a routine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct RoutineShape {
-    /// Number of multiplication gates consumed by this routine.
-    pub num_multiplications: usize,
-    /// Number of linear constraints enforced by this routine.
-    pub num_constraints: usize,
-}
-
-impl RoutineShape {
-    /// Creates a new routine shape.
-    pub const fn new(num_multiplications: usize, num_constraints: usize) -> Self {
-        Self {
-            num_multiplications,
-            num_constraints,
-        }
-    }
-}
-
 /// Information about a single routine invocation, captured during discovery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RoutineInfo {
     /// The shape (dimensions) of this routine invocation.
-    pub shape: RoutineShape,
+    pub shape: SegmentRecord,
     /// The nesting level at which this routine was invoked (0 = top-level).
     pub nesting_level: usize,
 }
 
 impl RoutineInfo {
     /// Creates a new routine info with the given shape and nesting level.
-    pub const fn new(shape: RoutineShape, nesting_level: usize) -> Self {
+    pub const fn new(shape: SegmentRecord, nesting_level: usize) -> Self {
         Self {
             shape,
             nesting_level,
@@ -83,11 +67,15 @@ impl RoutineRegistry {
     }
 
     /// Registers a routine invocation with the given shape.
-    pub fn register<R: 'static>(&mut self, shape: RoutineShape) {
+    pub fn register<R: 'static>(&mut self, shape: SegmentRecord) {
         let id = RoutineId::of::<R>();
         let info = RoutineInfo::new(shape, self.current_nesting_level);
         self.entries.entry(id).or_default().push(info);
     }
+
+    // TODO: enter_routine/exit_routine are scaffolding for a future discovery driver
+    // that will automatically populate RoutineRegistry during register_circuit().
+    // See PR #413 discussion.
 
     /// Increments the nesting level when entering a routine.
     pub fn enter_routine(&mut self) {
@@ -136,16 +124,22 @@ mod tests {
     }
 
     #[test]
-    fn routine_shape_new() {
-        let shape = RoutineShape::new(10, 20);
-        assert_eq!(shape.num_multiplications, 10);
-        assert_eq!(shape.num_constraints, 20);
+    fn segment_record_fields() {
+        let shape = SegmentRecord {
+            num_multiplication_constraints: 10,
+            num_linear_constraints: 20,
+        };
+        assert_eq!(shape.num_multiplication_constraints, 10);
+        assert_eq!(shape.num_linear_constraints, 20);
     }
 
     #[test]
     fn routine_registry_tracks_nesting() {
         let mut registry = RoutineRegistry::new();
-        let shape = RoutineShape::new(5, 10);
+        let shape = SegmentRecord {
+            num_multiplication_constraints: 5,
+            num_linear_constraints: 10,
+        };
 
         registry.register::<RoutineA>(shape);
         registry.enter_routine();
