@@ -2,7 +2,10 @@
 //!
 //! Defines the [`Proof`] structure containing trace polynomials, commitments,
 //! and accumulated claims, along with [`Pcd`] which bundles a [`Proof`] with the
-//! data that a [`Header`] succinctly encodes.
+//! data that a [`Header`] succinctly encodes. Each field corresponds to a phase
+//! of the protocol (application proof, folding, query/evaluation, and commitment
+//! opening), and is kept separately to make verification and proof
+//! transformation explicit.
 
 #![allow(dead_code)]
 
@@ -45,17 +48,29 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<'_, C, R, H> {
 /// Represents a recursive proof for the correctness of some computation.
 #[derive(Clone)]
 pub struct Proof<C: Cycle, R: Rank> {
+    /// Application circuit proof data (step circuit outputs and commitment).
     pub(crate) application: Application<C, R>,
+    /// Child-proof preamble data (native + nested commitments and blinds).
     pub(crate) preamble: Preamble<C, R>,
+    /// Registry restriction proof data (s' / registry wiring constraints).
     pub(crate) s_prime: SPrime<C, R>,
+    /// Second-layer folding error terms (N-sized reduction).
     pub(crate) error_n: ErrorN<C, R>,
+    /// First-layer folding error terms (M-sized reduction).
     pub(crate) error_m: ErrorM<C, R>,
+    /// Folded (a, b) polynomials and derived scalar claim values.
     pub(crate) ab: AB<C, R>,
+    /// Registry query polynomial and related commitments.
     pub(crate) query: Query<C, R>,
+    /// Aggregated polynomial used to bind evaluations across components.
     pub(crate) f: F<C, R>,
+    /// Evaluation openings for folded claims and auxiliary polynomials.
     pub(crate) eval: Eval<C, R>,
+    /// Final commitment opening proof.
     pub(crate) p: P<C, R>,
+    /// Fiat-Shamir challenges used across all protocol phases.
     pub(crate) challenges: Challenges<C>,
+    /// Internal circuit proof data (hashing, collapse, compute-v).
     pub(crate) circuits: InternalCircuits<C, R>,
 }
 
