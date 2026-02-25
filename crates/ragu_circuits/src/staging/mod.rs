@@ -400,6 +400,22 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
             Self::skip_multiplications() + Self::num_multiplications(),
         )?))
     }
+
+    /// Returns the generator index for the i-th A coefficient of this stage.
+    ///
+    /// The A coefficients are placed at positions `2n + 1 + skip + i` in the
+    /// generator array, where `n` is the rank parameter and `skip` is the
+    /// number of skipped multiplications.
+    fn generator_index_for_a(coefficient_index: usize) -> usize {
+        assert!(
+            coefficient_index < Self::num_multiplications(),
+            "coefficient_index {} exceeds num_multiplications {}",
+            coefficient_index,
+            Self::num_multiplications()
+        );
+
+        2 * R::n() + 1 + Self::skip_multiplications() + coefficient_index
+    }
 }
 
 impl<F: Field, R: Rank, S: Stage<F, R>> StageExt<F, R> for S {}

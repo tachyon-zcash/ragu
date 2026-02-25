@@ -239,9 +239,9 @@ mod tests {
     use core::marker::PhantomData;
 
     use ff::Field;
-    use group::prime::PrimeCurveAffine;
+    use group::{Curve, prime::PrimeCurveAffine};
     use proptest::prelude::*;
-    use ragu_arithmetic::{Coeff, Uendo};
+    use ragu_arithmetic::{Coeff, CurveAffine, Cycle, FixedGenerators, Uendo};
     use ragu_core::{
         Result,
         drivers::{Driver, DriverValue, LinearExpression, emulator::Emulator},
@@ -249,12 +249,15 @@ mod tests {
         maybe::Maybe,
         routines::{Prediction, Routine},
     };
-    use ragu_pasta::{EpAffine, Fp, Fq};
+    use ragu_pasta::{EpAffine, EqAffine, Fp, Fq, Pasta};
     use ragu_primitives::{Element, Endoscalar, Point, io::Write};
     use rand::RngExt;
 
     use crate::{
-        CircuitExt, CircuitObject, metrics, polynomials::Rank, registry, staging::StageBuilder,
+        CircuitExt, CircuitObject, metrics,
+        polynomials::{Rank, structured},
+        registry,
+        staging::StageBuilder,
         tests::SquareCircuit,
     };
 
@@ -307,6 +310,28 @@ mod tests {
             }
 
             Ok(((), D::just(|| ())))
+        }
+    }
+
+    impl<R: Rank> StageMask<R> {
+        /// Returns the generator point for the i-th A coefficient of this stage.
+        ///
+        /// This is useful for computing commitments to values placed in A positions
+        /// of the witness polynomial, such as challenge coefficients for smuggling.
+        fn generator_for_a_coefficient<C: CurveAffine>(
+            &self,
+            generators: &impl FixedGenerators<C>,
+            coefficient_index: usize,
+        ) -> C {
+            assert!(
+                coefficient_index < self.num_multiplications,
+                "coefficient_index {} exceeds num_multiplications {}",
+                coefficient_index,
+                self.num_multiplications
+            );
+
+            let idx = 2 * R::n() + 1 + self.skip_multiplications + coefficient_index;
+            generators.g()[idx]
         }
     }
 
@@ -756,5 +781,219 @@ mod tests {
 
         assert_eq!(sxy, sx.eval(y));
         assert_eq!(sxy, sy.eval(x));
+    }
+
+    /// A stage that allocates values only in a-positions (b = 0) for challenge smuggling.
+    ///
+    /// Each value is paired with a zero to ensure it lands in an a-coefficient position
+    /// when the polynomial is built. This mimics the pattern used for smuggling challenges.
+    #[derive(Default)]
+    struct ParentAOnlyStage;
+
+    #[derive(ragu_core::gadgets::Gadget, ragu_primitives::io::Write)]
+    struct ThreeAOnlyElements<'dr, #[ragu(driver)] D: Driver<'dr>> {
+        #[ragu(gadget)]
+        a0: Element<'dr, D>,
+        #[ragu(gadget)]
+        b0: Element<'dr, D>,
+        #[ragu(gadget)]
+        a1: Element<'dr, D>,
+        #[ragu(gadget)]
+        b1: Element<'dr, D>,
+        #[ragu(gadget)]
+        a2: Element<'dr, D>,
+        #[ragu(gadget)]
+        b2: Element<'dr, D>,
+    }
+
+    impl Stage<Fp, R> for ParentAOnlyStage {
+        type Parent = ();
+        type Witness<'source> = [Fp; 3];
+        type OutputKind = <ThreeAOnlyElements<'static, PhantomData<Fp>> as Gadget<
+            'static,
+            PhantomData<Fp>,
+        >>::Kind;
+
+        fn values() -> usize {
+            6 // 3 multiplication gates
+        }
+
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            witness: DriverValue<D, Self::Witness<'source>>,
+        ) -> Result<Bound<'dr, D, Self::OutputKind>>
+        where
+            Self: 'dr,
+        {
+            // Allocate each challenge value followed by zero, which
+            // ensures challenges land in a-positions, zeros in b-positions.
+            let a0 = Element::alloc(dr, witness.view().map(|w| w[0]))?;
+            let b0 = Element::zero(dr);
+            let a1 = Element::alloc(dr, witness.view().map(|w| w[1]))?;
+            let b1 = Element::zero(dr);
+            let a2 = Element::alloc(dr, witness.view().map(|w| w[2]))?;
+            let b2 = Element::zero(dr);
+
+            Ok(ThreeAOnlyElements {
+                a0,
+                b0,
+                a1,
+                b1,
+                a2,
+                b2,
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct ChildOfParentAOnlyStage;
+
+    impl Stage<Fp, R> for ChildOfParentAOnlyStage {
+        type Parent = ParentAOnlyStage;
+        type Witness<'source> = [Fp; 3];
+        type OutputKind = <ThreeAOnlyElements<'static, PhantomData<Fp>> as Gadget<
+            'static,
+            PhantomData<Fp>,
+        >>::Kind;
+
+        fn values() -> usize {
+            6 // 3 multiplication gates
+        }
+
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            witness: DriverValue<D, Self::Witness<'source>>,
+        ) -> Result<Bound<'dr, D, Self::OutputKind>>
+        where
+            Self: 'dr,
+        {
+            let a0 = Element::alloc(dr, witness.view().map(|w| w[0]))?;
+            let b0 = Element::zero(dr);
+            let a1 = Element::alloc(dr, witness.view().map(|w| w[1]))?;
+            let b1 = Element::zero(dr);
+            let a2 = Element::alloc(dr, witness.view().map(|w| w[2]))?;
+            let b2 = Element::zero(dr);
+
+            Ok(ThreeAOnlyElements {
+                a0,
+                b0,
+                a1,
+                b1,
+                a2,
+                b2,
+            })
+        }
+    }
+
+    /// Tests that `StageMask::generator_for_a_coefficient` returns the generator
+    /// at the index computed by `StageExt::generator_index_for_a`.
+    #[test]
+    fn test_generator_for_a_coefficient() {
+        let pasta = Pasta::baked();
+        let generators = Pasta::host_generators(pasta);
+
+        // Test via StageMask directly
+        let parent_mask = StageMask::<R>::new(
+            ParentAOnlyStage::skip_multiplications(),
+            ParentAOnlyStage::num_multiplications(),
+        )
+        .unwrap();
+
+        for i in 0..3 {
+            let gen_idx = <ParentAOnlyStage as StageExt<Fp, R>>::generator_index_for_a(i);
+            let expected_gen = generators.g()[gen_idx];
+            let actual_gen = parent_mask.generator_for_a_coefficient(generators, i);
+            assert_eq!(actual_gen, expected_gen);
+        }
+
+        let child_mask = StageMask::<R>::new(
+            ChildOfParentAOnlyStage::skip_multiplications(),
+            ChildOfParentAOnlyStage::num_multiplications(),
+        )
+        .unwrap();
+
+        for i in 0..3 {
+            let gen_idx = <ChildOfParentAOnlyStage as StageExt<Fp, R>>::generator_index_for_a(i);
+            let expected_gen = generators.g()[gen_idx];
+            let actual_gen = child_mask.generator_for_a_coefficient(generators, i);
+            assert_eq!(actual_gen, expected_gen);
+        }
+    }
+
+    /// Tests the generator index formula `2n + 1 + skip + i` for both a root
+    /// stage and a child stage with non-zero skip.
+    #[test]
+    fn test_generator_index_edge_cases() {
+        assert_eq!(
+            <ParentAOnlyStage as StageExt<Fp, R>>::generator_index_for_a(0),
+            2 * R::n() + 1
+        );
+        assert_eq!(
+            <ParentAOnlyStage as StageExt<Fp, R>>::generator_index_for_a(2),
+            2 * R::n() + 3
+        );
+        assert_eq!(
+            <ChildOfParentAOnlyStage as StageExt<Fp, R>>::generator_index_for_a(0),
+            2 * R::n() + 4
+        );
+        assert_eq!(
+            <ChildOfParentAOnlyStage as StageExt<Fp, R>>::generator_index_for_a(2),
+            2 * R::n() + 6
+        );
+    }
+
+    /// Tests that committing to an rx polynomial with values only in a-positions
+    /// matches a manual MSM using generators from `generator_index_for_a`.
+    #[test]
+    fn test_a_only_commitment_for_challenge_smuggling() {
+        let pasta = Pasta::baked();
+        let generators = Pasta::host_generators(pasta);
+
+        let challenges = [Fp::from(42u64), Fp::from(123u64), Fp::from(456u64)];
+        let blind = Fp::ZERO;
+
+        let rx: structured::Polynomial<Fp, R> = ChildOfParentAOnlyStage::rx(challenges).unwrap();
+        let poly_commitment: EqAffine = rx.commit(generators, blind);
+
+        let mut manual_commitment = EqAffine::identity();
+        for (i, &challenge) in challenges.iter().enumerate() {
+            let idx = <ChildOfParentAOnlyStage as StageExt<Fp, R>>::generator_index_for_a(i);
+            let a_gen = generators.g()[idx];
+            let contrib = a_gen * challenge;
+            manual_commitment = (manual_commitment.to_curve() + contrib).to_affine();
+        }
+
+        assert_eq!(
+            poly_commitment, manual_commitment,
+            "A-only commitment should match manual computation"
+        );
+    }
+
+    /// Same as above but for a root stage (no parent, zero skip).
+    #[test]
+    fn test_a_only_commitment_via_staging_mechanism() {
+        let pasta = Pasta::baked();
+        let generators = Pasta::host_generators(pasta);
+
+        let challenges = [Fp::from(42u64), Fp::from(123u64), Fp::from(456u64)];
+        let blind = Fp::ZERO;
+
+        let rx: structured::Polynomial<Fp, R> = ParentAOnlyStage::rx(challenges).unwrap();
+        let poly_commitment: EqAffine = rx.commit(generators, blind);
+
+        // Manually compute expected commitment using StageExt::generator_index_for_a.
+        let mut manual_commitment = EqAffine::identity();
+        for (i, &challenge) in challenges.iter().enumerate() {
+            let idx = <ParentAOnlyStage as StageExt<Fp, R>>::generator_index_for_a(i);
+            let a_gen = generators.g()[idx];
+            manual_commitment = (manual_commitment.to_curve() + a_gen * challenge).to_affine();
+        }
+
+        assert_eq!(
+            poly_commitment, manual_commitment,
+            "Commitment via staging mechanism should match manual computation"
+        );
     }
 }
