@@ -160,7 +160,7 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
                 x: F,
                 y: F,
                 key: &registry::Key<F>,
-floor_plan: &[floor_planner::ConstraintSegment],
+                floor_plan: &[floor_planner::ConstraintSegment],
                 type_floor_plan: &floor_plan::FloorPlan,
                 cache: &mut s::MemoCache<F>,
             ) -> F {
@@ -259,7 +259,7 @@ pub trait CircuitObject<F: Field, R: Rank>: Send + Sync {
         x: F,
         y: F,
         key: &registry::Key<F>,
-floor_plan: &[floor_planner::ConstraintSegment],
+        floor_plan: &[floor_planner::ConstraintSegment],
         type_floor_plan: &floor_plan::FloorPlan,
         cache: &mut s::MemoCache<F>,
     ) -> F;
