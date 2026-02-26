@@ -57,7 +57,7 @@ use ragu_core::drivers::LinearExpression;
 /// [`Driver::add`]: ragu_core::drivers::Driver::add
 /// [`WireEvalSum::add_term`]: WireEvalSum::add_term
 #[derive(Clone)]
-pub(super) enum WireEval<F> {
+pub(crate) enum WireEval<F> {
     Value(F),
     One,
 }
@@ -70,9 +70,9 @@ pub(super) enum WireEval<F> {
 /// and the context needed to resolve [`WireEval::One`] variants.
 ///
 /// [`Driver::add`]: ragu_core::drivers::Driver::add
-pub(super) struct WireEvalSum<F: Field> {
+pub(crate) struct WireEvalSum<F: Field> {
     /// Running sum of accumulated wire evaluations.
-    pub(super) value: F,
+    pub(crate) value: F,
 
     /// Cached evaluation of the `ONE` wire, used to resolve [`WireEval::One`].
     one: F,
@@ -82,7 +82,7 @@ pub(super) struct WireEvalSum<F: Field> {
 }
 
 impl<F: Field> WireEvalSum<F> {
-    pub(super) fn new(one: F) -> Self {
+    pub(crate) fn new(one: F) -> Self {
         Self {
             value: F::ZERO,
             one,

@@ -5,6 +5,18 @@ use alloc::{boxed::Box, vec, vec::Vec};
 
 use crate::domain::Domain;
 
+/// Returns the low 64 bits of a [`PrimeField`] element's canonical
+/// little-endian representation.
+pub fn low_u64<F: PrimeField>(f: F) -> u64 {
+    let repr = f.to_repr();
+    let bytes = repr.as_ref();
+    u64::from_le_bytes(
+        bytes[..8]
+            .try_into()
+            .expect("field repr is at least 8 bytes"),
+    )
+}
+
 /// Evaluates a polynomial $p \in \mathbb{F}\[X]$ at a point $x \in \mathbb{F}$,
 /// where $p$ is defined by `coeffs` in ascending order of degree.
 pub fn eval<'a, F: Field, I: IntoIterator<Item = &'a F>>(coeffs: I, x: F) -> F

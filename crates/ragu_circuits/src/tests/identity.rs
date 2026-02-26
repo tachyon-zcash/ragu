@@ -1,0 +1,498 @@
+use ff::Field;
+use ragu_core::maybe::Always;
+use ragu_core::{
+    Result,
+    drivers::{Driver, DriverValue},
+    gadgets::{Bound, Kind},
+    maybe::Maybe,
+    routines::{Prediction, Routine},
+};
+use ragu_pasta::Fp;
+use ragu_primitives::{Element, Simulator};
+
+use crate::{
+    Circuit,
+    metrics::{self, RoutineFingerprint, RoutineIdentity},
+};
+
+// ---------------------------------------------------------------------------
+// Test routines
+// ---------------------------------------------------------------------------
+
+/// Canonical single-square routine.
+#[derive(Clone)]
+struct SquareOnce;
+
+impl Routine<Fp> for SquareOnce {
+    type Input = Kind![Fp; Element<'_, _>];
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        input: Bound<'dr, D, Self::Input>,
+        _aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        input.square(dr)
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        _input: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::just(|| ())))
+    }
+}
+
+/// N sequential squares — parameterized constraint count.
+#[derive(Clone)]
+struct SquareN<const N: usize>;
+
+impl<const N: usize> Routine<Fp> for SquareN<N> {
+    type Input = Kind![Fp; Element<'_, _>];
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        input: Bound<'dr, D, Self::Input>,
+        _aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        let mut acc = input;
+        for _ in 0..N {
+            acc = acc.square(dr)?;
+        }
+        Ok(acc)
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        _input: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::just(|| ())))
+    }
+}
+
+/// Identical body to `SquareOnce` but a distinct Rust type.
+#[derive(Clone)]
+struct SquareOnceAlias;
+
+impl Routine<Fp> for SquareOnceAlias {
+    type Input = Kind![Fp; Element<'_, _>];
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        input: Bound<'dr, D, Self::Input>,
+        _aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        input.square(dr)
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        _input: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::just(|| ())))
+    }
+}
+
+/// Zero input wires — produces an Element from nothing.
+#[derive(Clone)]
+struct Produce;
+
+impl Routine<Fp> for Produce {
+    type Input = Kind![Fp; ()];
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        _input: Bound<'dr, D, Self::Input>,
+        _aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Element::alloc(dr, D::just(|| Fp::ZERO))
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        _input: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::just(|| ())))
+    }
+}
+
+/// Two input wires — adds two elements.
+#[derive(Clone)]
+struct AddTwo;
+
+impl Routine<Fp> for AddTwo {
+    type Input = Kind![Fp; (Element<'_, _>, Element<'_, _>)];
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        input: Bound<'dr, D, Self::Input>,
+        _aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        let (a, b) = input;
+        Ok(a.add(dr, &b))
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        _input: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::just(|| ())))
+    }
+}
+
+/// Duplicates input — output type differs from SquareOnce.
+#[derive(Clone)]
+struct Duplicate;
+
+impl Routine<Fp> for Duplicate {
+    type Input = Kind![Fp; Element<'_, _>];
+    type Output = Kind![Fp; (Element<'_, _>, Element<'_, _>)];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        input: Bound<'dr, D, Self::Input>,
+        _aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Ok((input.clone(), input))
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        _input: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::just(|| ())))
+    }
+}
+
+/// Zero wires, zero constraints.
+#[derive(Clone)]
+struct EmptyRoutine;
+
+impl Routine<Fp> for EmptyRoutine {
+    type Input = Kind![Fp; ()];
+    type Output = Kind![Fp; ()];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        _input: Bound<'dr, D, Self::Input>,
+        _aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Ok(())
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        _input: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::just(|| ())))
+    }
+}
+
+/// Pure delegation — calls SquareOnce as a nested routine.
+#[derive(Clone)]
+struct PureNesting;
+
+impl Routine<Fp> for PureNesting {
+    type Input = Kind![Fp; Element<'_, _>];
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        input: Bound<'dr, D, Self::Input>,
+        _aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        dr.routine(SquareOnce, input)
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        _input: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::just(|| ())))
+    }
+}
+
+/// Nested call plus an extra constraint — fingerprint must differ from SquareOnce.
+#[derive(Clone)]
+struct NestingWithExtra;
+
+impl Routine<Fp> for NestingWithExtra {
+    type Input = Kind![Fp; Element<'_, _>];
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        input: Bound<'dr, D, Self::Input>,
+        _aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        let result = dr.routine(SquareOnce, input)?;
+        result.enforce_zero(dr)?;
+        Ok(result)
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        _input: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::just(|| ())))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn fingerprint_elem(
+    routine: &impl Routine<Fp, Input = Kind![Fp; Element<'_, _>]>,
+) -> RoutineFingerprint {
+    let mut sim = Simulator::<Fp>::new();
+    let input = Element::alloc(&mut sim, Always::<Fp>::just(|| Fp::ONE)).unwrap();
+    match metrics::fingerprint_routine::<Fp, Simulator<Fp>, _>(routine, &input).unwrap() {
+        RoutineIdentity::Routine(fp) => fp,
+        RoutineIdentity::Root => panic!("expected Routine variant"),
+    }
+}
+
+fn fingerprint_unit(routine: &impl Routine<Fp, Input = Kind![Fp; ()]>) -> RoutineFingerprint {
+    match metrics::fingerprint_routine::<Fp, Simulator<Fp>, _>(routine, &()).unwrap() {
+        RoutineIdentity::Routine(fp) => fp,
+        RoutineIdentity::Root => panic!("expected Routine variant"),
+    }
+}
+
+fn fingerprint_pair(
+    routine: &impl Routine<Fp, Input = Kind![Fp; (Element<'_, _>, Element<'_, _>)]>,
+) -> RoutineFingerprint {
+    let sim = &mut Simulator::<Fp>::new();
+    let a = Element::alloc(sim, Always::<Fp>::just(|| Fp::ONE)).unwrap();
+    let b = Element::alloc(sim, Always::<Fp>::just(|| Fp::ONE)).unwrap();
+    match metrics::fingerprint_routine::<Fp, Simulator<Fp>, _>(routine, &(a, b)).unwrap() {
+        RoutineIdentity::Routine(fp) => fp,
+        RoutineIdentity::Root => panic!("expected Routine variant"),
+    }
+}
+
+/// Wraps an `Element → Element` routine as a minimal Circuit for metrics tests.
+#[derive(Clone)]
+struct SingleRoutineCircuit<Ro: Clone>(Ro);
+
+impl<Ro> Circuit<Fp> for SingleRoutineCircuit<Ro>
+where
+    Ro: Routine<Fp, Input = Kind![Fp; Element<'_, _>], Output = Kind![Fp; Element<'_, _>]>
+        + Clone
+        + Send
+        + Sync,
+    for<'dr> Ro::Aux<'dr>: Send + Clone,
+{
+    type Instance<'source> = Fp;
+    type Output = Kind![Fp; Element<'_, _>];
+    type Witness<'source> = Fp;
+    type Aux<'source> = ();
+
+    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        instance: DriverValue<D, Self::Instance<'source>>,
+    ) -> Result<Bound<'dr, D, Self::Output>>
+    where
+        Self: 'dr,
+    {
+        Element::alloc(dr, instance)
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<(
+        Bound<'dr, D, Self::Output>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let input = Element::alloc(dr, witness)?;
+        let output = dr.routine(self.0.clone(), input)?;
+        Ok((output, D::just(|| ())))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_determinism() {
+    let a = fingerprint_elem(&SquareOnce);
+    let b = fingerprint_elem(&SquareOnce);
+    assert_eq!(a, b, "same routine fingerprinted twice must be identical");
+
+    let c = fingerprint_unit(&EmptyRoutine);
+    let d = fingerprint_unit(&EmptyRoutine);
+    assert_eq!(
+        c, d,
+        "same unit routine fingerprinted twice must be identical"
+    );
+}
+
+#[test]
+fn test_structural_equivalence() {
+    let sq = fingerprint_elem(&SquareOnce);
+    let alias = fingerprint_elem(&SquareOnceAlias);
+    let n1 = fingerprint_elem(&SquareN::<1>);
+
+    assert_eq!(sq, alias, "SquareOnce == SquareOnceAlias");
+    assert_eq!(sq, n1, "SquareOnce == SquareN<1>");
+    assert_eq!(alias, n1, "SquareOnceAlias == SquareN<1> (transitive)");
+}
+
+#[test]
+fn test_structural_sensitivity() {
+    let n1 = fingerprint_elem(&SquareN::<1>);
+    let n2 = fingerprint_elem(&SquareN::<2>);
+    let n3 = fingerprint_elem(&SquareN::<3>);
+
+    assert_ne!(n1, n2, "SquareN<1> != SquareN<2>");
+    assert_ne!(n2, n3, "SquareN<2> != SquareN<3>");
+    assert_ne!(n1, n3, "SquareN<1> != SquareN<3>");
+}
+
+#[test]
+fn test_type_discrimination() {
+    let square = fingerprint_elem(&SquareOnce);
+    let produce = fingerprint_unit(&Produce);
+    let duplicate = fingerprint_elem(&Duplicate);
+    let empty = fingerprint_unit(&EmptyRoutine);
+
+    let all = [square, produce, duplicate, empty];
+    for i in 0..all.len() {
+        for j in (i + 1)..all.len() {
+            assert_ne!(all[i], all[j], "routines {i} and {j} must be distinct");
+        }
+    }
+}
+
+#[test]
+fn test_input_wire_count() {
+    let sq = fingerprint_elem(&SquareOnce);
+    let add = fingerprint_pair(&AddTwo);
+    assert_ne!(
+        sq, add,
+        "different input wire counts → different fingerprints"
+    );
+}
+
+#[test]
+fn test_nesting() {
+    let square = fingerprint_elem(&SquareOnce);
+    let pure = fingerprint_elem(&PureNesting);
+    let extra = fingerprint_elem(&NestingWithExtra);
+
+    assert_eq!(
+        square, pure,
+        "pure delegation is transparent (SquareOnce has no body allocs)"
+    );
+    assert_ne!(
+        square, extra,
+        "extra enforce_zero after nested call changes fingerprint"
+    );
+}
+
+#[test]
+fn test_degenerate_cases() {
+    let empty = fingerprint_unit(&EmptyRoutine);
+    let produce = fingerprint_unit(&Produce);
+    assert_ne!(
+        empty, produce,
+        "EmptyRoutine vs Produce: different TypeIds despite both having scalar 0"
+    );
+
+    let duplicate = fingerprint_elem(&Duplicate);
+    let square = fingerprint_elem(&SquareOnce);
+    assert_ne!(
+        duplicate, square,
+        "Duplicate (no constraints, scalar 0) vs SquareOnce (has constraints)"
+    );
+}
+
+#[test]
+fn test_root_identity() {
+    let circuit = SingleRoutineCircuit(SquareOnce);
+    let metrics = metrics::eval(&circuit).unwrap();
+
+    assert_eq!(metrics.segments.len(), 2, "root + one routine = 2 records");
+
+    assert!(
+        matches!(metrics.segments[0].identity, RoutineIdentity::Root),
+        "record 0 must be Root"
+    );
+    assert!(
+        matches!(metrics.segments[1].identity, RoutineIdentity::Routine(_)),
+        "record 1 must be Routine"
+    );
+}
+
+#[test]
+fn test_known_value_regression() {
+    let fp = fingerprint_elem(&SquareOnce);
+    assert_eq!(
+        fp.scalar(),
+        21,
+        "hand-traced IdentityEvaluator result for SquareOnce"
+    );
+}
+
+#[test]
+fn test_metrics_integration() {
+    let circuit = SingleRoutineCircuit(SquareOnce);
+    let metrics = metrics::eval(&circuit).unwrap();
+
+    let direct = fingerprint_elem(&SquareOnce);
+
+    let record = &metrics.segments[1];
+    match record.identity {
+        RoutineIdentity::Routine(fp) => {
+            assert_eq!(
+                fp, direct,
+                "metrics fingerprint matches direct eval_routine"
+            );
+        }
+        RoutineIdentity::Root => panic!("record 1 should be Routine, not Root"),
+    }
+
+    assert!(
+        record.num_multiplication_constraints > 0,
+        "SquareOnce should have multiplication constraints"
+    );
+}
