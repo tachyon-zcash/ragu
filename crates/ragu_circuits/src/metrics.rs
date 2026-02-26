@@ -203,8 +203,12 @@ struct CounterScope<F> {
 /// Assigns three independent geometric sequences (bases $x_0, x_1, x_2$) to
 /// the $a$, $b$, $c$ wires and accumulates constraint values via Horner's rule
 /// over $y$. When entering a routine, the identity state is saved and reset so
-/// that each routine is fingerprinted independently of its calling context; the
-/// child fingerprint is then folded into the parent's Horner accumulation.
+/// that each routine is fingerprinted independently of its calling context.
+///
+/// Nested routine outputs are treated as auxiliary inputs to the caller: on
+/// return, output wires are remapped to fresh allocations in the parent scope
+/// rather than folding the child's fingerprint scalar. This makes each
+/// routine's fingerprint capture only its *internal* constraint structure.
 struct Counter<F> {
     scope: CounterScope<F>,
     num_linear_constraints: usize,
@@ -213,7 +217,7 @@ struct Counter<F> {
 
     /// When false, `mul` and `enforce_zero` advance geometric sequences and
     /// accumulate Horner results but do not increment constraint counts. Used
-    /// during input wire remapping in [`routine`](Driver::routine).
+    /// during input and output wire remapping in [`routine`](Driver::routine).
     counting: bool,
 
     /// Base for the $a$-wire geometric sequence.
@@ -383,18 +387,26 @@ impl<'dr, F: PrimeField> Driver<'dr> for Counter<F> {
         let output = routine.execute(self, new_input, aux)?;
 
         // Extract fingerprint from the child's Horner accumulator.
-        let child_result = self.scope.result;
         self.segments[segment_idx].identity =
-            RoutineIdentity::Routine(RoutineFingerprint::of::<F, Ro>(child_result));
+            RoutineIdentity::Routine(RoutineFingerprint::of::<F, Ro>(self.scope.result));
 
         // Restore parent scope.
         self.scope = saved;
 
-        // Fold child fingerprint into parent's Horner accumulation.
-        self.scope.result *= self.y;
-        self.scope.result += child_result;
+        // Map child output wires to fresh allocations in parent scope.
+        // Parent sees only the output wire topology, not the child's internals.
+        //
+        // Save and restore `available_b` around the remapping so that the
+        // allocations consumed by `map_gadget` don't pollute the parent's
+        // paired-allocation state (which must stay in sync with the sxy
+        // evaluator, where no output remapping occurs).
+        let saved_b = self.scope.available_b.take();
+        self.counting = false;
+        let parent_output = Ro::Output::map_gadget(&output, self)?;
+        self.counting = true;
+        self.scope.available_b = saved_b;
 
-        Ok(output)
+        Ok(parent_output)
     }
 }
 
@@ -413,9 +425,9 @@ impl<'dr, F: PrimeField, D: Driver<'dr, F = F>> FromDriver<'dr, '_, D> for Count
 ///
 /// Creates a fresh [`Counter`], maps the caller's `input` gadget into the
 /// counter (allocating fresh wires for each input wire), then predicts and
-/// executes the routine. The full subtree of nested routine calls is captured
-/// because the counter's [`routine`](Driver::routine) implementation
-/// recursively fingerprints children and folds their results.
+/// executes the routine. Nested routine calls within the routine are
+/// fingerprinted independently; their output wires are treated as auxiliary
+/// inputs to the caller rather than folded into the caller's fingerprint.
 ///
 /// # Arguments
 ///

@@ -419,13 +419,17 @@ fn test_nesting() {
     let pure = fingerprint_elem(&PureNesting);
     let extra = fingerprint_elem(&NestingWithExtra);
 
-    assert_eq!(
+    assert_ne!(
         square, pure,
-        "pure delegation is transparent (SquareOnce has no body allocs)"
+        "PureNesting (no local constraints) != SquareOnce (has local constraints)"
     );
     assert_ne!(
         square, extra,
         "extra enforce_zero after nested call changes fingerprint"
+    );
+    assert_ne!(
+        pure, extra,
+        "NestingWithExtra has a local enforce_zero that PureNesting lacks"
     );
 }
 
