@@ -43,8 +43,8 @@ use ragu_primitives::GadgetExt;
 use alloc::vec::Vec;
 use core::any::TypeId;
 
+use super::Circuit;
 use super::s::common::{WireEval, WireEvalSum};
-use super::{Circuit, DriverScope};
 
 /// The structural identity of a routine record.
 ///
@@ -275,12 +275,6 @@ impl<F: PrimeField> Counter<F> {
     }
 }
 
-impl<F: Field> DriverScope<CounterScope<F>> for Counter<F> {
-    fn scope(&mut self) -> &mut CounterScope<F> {
-        &mut self.scope
-    }
-}
-
 impl<F: Field> DriverTypes for Counter<F> {
     type MaybeKind = Empty;
     type ImplField = F;
@@ -379,6 +373,9 @@ impl<'dr, F: PrimeField> Driver<'dr> for Counter<F> {
         self.counting = false;
         let new_input = Ro::Input::map_gadget(&input, self)?;
         self.counting = true;
+        // Clear residual pairing state from input remapping so that
+        // execute starts with available_b = None, matching sxy/rx.
+        self.scope.available_b = None;
 
         // Predict and execute.
         let mut dummy = Emulator::wireless();
@@ -393,18 +390,22 @@ impl<'dr, F: PrimeField> Driver<'dr> for Counter<F> {
         // Restore parent scope.
         self.scope = saved;
 
-        // Map child output wires to fresh allocations in parent scope.
-        // Parent sees only the output wire topology, not the child's internals.
-        //
-        // Save and restore `available_b` around the remapping so that the
-        // allocations consumed by `map_gadget` don't pollute the parent's
-        // paired-allocation state (which must stay in sync with the sxy
-        // evaluator, where no output remapping occurs).
+        // Remap child output wires as fresh parent allocations.
+        // Save and restore pairing state and geometric sequences so
+        // that the uncounted gates don't drift from the sxy evaluator.
         let saved_b = self.scope.available_b.take();
+        let saved_a = self.scope.current_a;
+        let saved_b_geo = self.scope.current_b;
+        let saved_c = self.scope.current_c;
+
         self.counting = false;
         let parent_output = Ro::Output::map_gadget(&output, self)?;
         self.counting = true;
+
         self.scope.available_b = saved_b;
+        self.scope.current_a = saved_a;
+        self.scope.current_b = saved_b_geo;
+        self.scope.current_c = saved_c;
 
         Ok(parent_output)
     }
