@@ -351,14 +351,7 @@ impl<F: PrimeField> From<F> for OmegaKey {
         // TODO: This only holds for the Pasta curves. See issue #51
         let product = f.double().double() + f;
 
-        let bytes = product.to_repr();
-        let byte_slice = bytes.as_ref();
-
-        OmegaKey(u64::from_le_bytes(
-            byte_slice[..8]
-                .try_into()
-                .expect("field representation is at least 8 bytes"),
-        ))
+        OmegaKey(ragu_arithmetic::low_u64(product))
     }
 }
 

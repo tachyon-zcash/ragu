@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 
+mod identity;
+
 use ff::Field;
 use ragu_core::{
     Result,
