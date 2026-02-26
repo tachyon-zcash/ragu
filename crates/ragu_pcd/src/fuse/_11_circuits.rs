@@ -137,6 +137,23 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let compute_v_rx_commitment =
             compute_v_rx.commit(C::host_generators(self.params), compute_v_rx_blind);
 
+        let (endoscale_challenges_trace, _) =
+            native::endoscale_challenges::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new()
+                .rx(native::endoscale_challenges::Witness {
+                    unified_instance,
+                    preamble_witness,
+                    error_n_witness,
+                })?;
+        let endoscale_challenges_rx = self.native_registry.assemble(
+            &endoscale_challenges_trace,
+            native::endoscale_challenges::CIRCUIT_ID.circuit_index(),
+        )?;
+        let endoscale_challenges_rx_blind = C::CircuitField::random(&mut *rng);
+        let endoscale_challenges_rx_commitment = endoscale_challenges_rx.commit(
+            C::host_generators(self.params),
+            endoscale_challenges_rx_blind,
+        );
+
         Ok(proof::InternalCircuits {
             hashes_1_rx,
             hashes_1_blind: hashes_1_rx_blind,
@@ -153,6 +170,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             compute_v_rx,
             compute_v_blind: compute_v_rx_blind,
             compute_v_commitment: compute_v_rx_commitment,
+            endoscale_challenges_rx,
+            endoscale_challenges_blind: endoscale_challenges_rx_blind,
+            endoscale_challenges_commitment: endoscale_challenges_rx_commitment,
         })
     }
 }

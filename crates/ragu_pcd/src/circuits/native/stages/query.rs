@@ -51,6 +51,7 @@ pub struct FixedRegistryWitness<F> {
     pub partial_collapse_circuit: F,
     pub full_collapse_circuit: F,
     pub compute_v_circuit: F,
+    pub endoscale_challenges_circuit: F,
 }
 
 /// Witness for a child proof's polynomial evaluations.
@@ -87,6 +88,9 @@ pub struct ChildEvaluationsWitness<F> {
 
     /// Compute V circuit `rx` polynomial evaluation at $xz$.
     pub compute_v: F,
+
+    /// Endoscale challenges circuit `rx` polynomial evaluation at $xz$.
+    pub endoscale_challenges: F,
 
     /// $A$ polynomial evaluation at $xz$.
     pub a_poly_at_xz: F,
@@ -126,6 +130,7 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
             partial_collapse: proof.circuits.partial_collapse_rx.eval(xz),
             full_collapse: proof.circuits.full_collapse_rx.eval(xz),
             compute_v: proof.circuits.compute_v_rx.eval(xz),
+            endoscale_challenges: proof.circuits.endoscale_challenges_rx.eval(xz),
             a_poly_at_xz: proof.ab.a_poly.eval(xz),
             b_poly_at_x: proof.ab.b_poly.eval(x),
             child_registry_xy_at_current_w: proof.query.registry_xy_poly.eval(w),
@@ -177,6 +182,8 @@ pub struct FixedRegistryEvaluations<'dr, D: Driver<'dr>> {
     pub full_collapse_circuit: Element<'dr, D>,
     #[ragu(gadget)]
     pub compute_v_circuit: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub endoscale_challenges_circuit: Element<'dr, D>,
 }
 
 impl<'dr, D: Driver<'dr>> FixedRegistryEvaluations<'dr, D> {
@@ -208,6 +215,10 @@ impl<'dr, D: Driver<'dr>> FixedRegistryEvaluations<'dr, D> {
                 witness.view().map(|w| w.full_collapse_circuit),
             )?,
             compute_v_circuit: Element::alloc(dr, witness.view().map(|w| w.compute_v_circuit))?,
+            endoscale_challenges_circuit: Element::alloc(
+                dr,
+                witness.view().map(|w| w.endoscale_challenges_circuit),
+            )?,
         })
     }
 
@@ -228,6 +239,7 @@ impl<'dr, D: Driver<'dr>> FixedRegistryEvaluations<'dr, D> {
             ErrorMFinalStaged => &self.error_m_final_staged,
             ErrorNFinalStaged => &self.error_n_final_staged,
             EvalFinalStaged => &self.eval_final_staged,
+            EndoscaleChallengesCircuit => &self.endoscale_challenges_circuit,
         }
     }
 }
@@ -279,6 +291,10 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
     pub compute_v: Element<'dr, D>,
 
+    /// Endoscale challenges circuit `rx` polynomial evaluation at $xz$.
+    #[ragu(gadget)]
+    pub endoscale_challenges: Element<'dr, D>,
+
     /// $A$ polynomial evaluation at $xz$.
     #[ragu(gadget)]
     pub a_poly_at_xz: Element<'dr, D>,
@@ -318,6 +334,10 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
             partial_collapse: Element::alloc(dr, witness.view().map(|w| w.partial_collapse))?,
             full_collapse: Element::alloc(dr, witness.view().map(|w| w.full_collapse))?,
             compute_v: Element::alloc(dr, witness.view().map(|w| w.compute_v))?,
+            endoscale_challenges: Element::alloc(
+                dr,
+                witness.view().map(|w| w.endoscale_challenges),
+            )?,
             a_poly_at_xz: Element::alloc(dr, witness.view().map(|w| w.a_poly_at_xz))?,
             b_poly_at_x: Element::alloc(dr, witness.view().map(|w| w.b_poly_at_x))?,
             child_registry_xy_at_current_w: Element::alloc(
@@ -371,8 +391,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
     fn values() -> usize {
-        // FixedRegistryEvaluations (13) + registry_wxy (1) + 2 * ChildEvaluations (16 each)
-        NUM_INTERNAL_CIRCUITS + 1 + 2 * 16
+        // FixedRegistryEvaluations (14) + registry_wxy (1) + 2 * ChildEvaluations (17 each)
+        NUM_INTERNAL_CIRCUITS + 1 + 2 * 17
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

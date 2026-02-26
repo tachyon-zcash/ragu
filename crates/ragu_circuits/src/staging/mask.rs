@@ -9,6 +9,11 @@ use crate::{
     registry,
 };
 
+/// A stage mask circuit that enforces well-formedness of stage polynomials.
+///
+/// Stage masks constrain that wire assignments in a stage polynomial only
+/// occupy designated positions. They ensure `rx.revdot(sy) == 0` for
+/// well-formed stage witnesses.
 #[derive(Clone)]
 pub struct StageMask<R: Rank> {
     skip_multiplications: usize,

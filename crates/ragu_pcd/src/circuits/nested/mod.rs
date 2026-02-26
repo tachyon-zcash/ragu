@@ -12,19 +12,21 @@ use ragu_circuits::{
 use ragu_core::Result;
 use ragu_primitives::vec::Len;
 
-use crate::components::endoscalar::{EndoscalarStage, EndoscalingStep, NumStepsLen, PointsStage};
+use crate::components::endoscalar::{
+    EndoscalarStage, EndoscalingStep, NumStepsLen, PointsStage, SmuggledChallengesStage,
+};
 
 /// Number of curve points accumulated during `compute_p` for nested field
 /// endoscaling verification.
 ///
 /// This is the sum of:
-/// - 2 proofs × 15 commitment components = 30
+/// - 2 proofs × 16 commitment components = 32
 /// - 6 stage proof components (registry_wx0, registry_wx1, registry_wy, ab.a, ab.b, registry_xy)
 /// - 1 f.commitment (base polynomial)
 ///
-/// The endoscaling circuits process these 37 points across
+/// The endoscaling circuits process these 39 points across
 /// `NumStepsLen::<NUM_ENDOSCALING_POINTS>::len()` = 9 steps.
-pub(crate) const NUM_ENDOSCALING_POINTS: usize = 37;
+pub(crate) const NUM_ENDOSCALING_POINTS: usize = 39;
 
 /// Index of internal nested circuits registered into the registry.
 ///
@@ -37,6 +39,8 @@ pub(crate) enum InternalCircuitIndex {
     PointsStage,
     /// `PointsStage` final staged mask.
     PointsFinalStaged,
+    /// `SmuggledChallengesStage` stage mask for challenge coefficients.
+    SmuggledChallengesStage,
     /// `EndoscalingStep` circuit at given step.
     EndoscalingStep(u32),
 }
@@ -48,7 +52,8 @@ impl InternalCircuitIndex {
             Self::EndoscalarStage => CircuitIndex::from_u32(0),
             Self::PointsStage => CircuitIndex::from_u32(1),
             Self::PointsFinalStaged => CircuitIndex::from_u32(2),
-            Self::EndoscalingStep(step) => CircuitIndex::from_u32(3 + step),
+            Self::SmuggledChallengesStage => CircuitIndex::from_u32(3),
+            Self::EndoscalingStep(step) => CircuitIndex::from_u32(4 + step),
         }
     }
 }
@@ -69,6 +74,10 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank>(
 
     registry = registry
         .register_internal_final_mask::<PointsStage<C::HostCurve, NUM_ENDOSCALING_POINTS>>()?;
+
+    registry = registry
+        .register_internal_mask::<SmuggledChallengesStage<C::HostCurve, NUM_ENDOSCALING_POINTS>>(
+        )?;
 
     let num_steps = NumStepsLen::<NUM_ENDOSCALING_POINTS>::len();
     for step in 0..num_steps {

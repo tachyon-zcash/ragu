@@ -83,6 +83,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     preamble.left.unified_ky_values(dr, &y)?;
                 let (right_unified_ky, right_unified_bridge_ky) =
                     preamble.right.unified_ky_values(dr, &y)?;
+                let left_endoscale_ky = preamble.left.endoscale_ky(dr, &y)?;
+                let right_endoscale_ky = preamble.right.endoscale_ky(dr, &y)?;
 
                 let mu = Element::alloc(dr, mu)?;
                 let nu = Element::alloc(dr, nu)?;
@@ -97,6 +99,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     right_bridge: right_unified_bridge_ky.clone(),
                     left_unified: left_unified_ky.clone(),
                     right_unified: right_unified_ky.clone(),
+                    left_endoscale: left_endoscale_ky.clone(),
+                    right_endoscale: right_endoscale_ky.clone(),
                     zero: Element::zero(dr),
                 };
                 let mut ky = claims::native::ky_values(&ky);
@@ -118,11 +122,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                         application: *left_application_ky.value().take(),
                         unified: *left_unified_ky.value().take(),
                         unified_bridge: *left_unified_bridge_ky.value().take(),
+                        endoscale: *left_endoscale_ky.value().take(),
                     },
                     right: ChildKyValues {
                         application: *right_application_ky.value().take(),
                         unified: *right_unified_ky.value().take(),
                         unified_bridge: *right_unified_bridge_ky.value().take(),
+                        endoscale: *right_endoscale_ky.value().take(),
                     },
                 };
 
