@@ -15,10 +15,6 @@ use crate::{
     metrics::{self, RoutineFingerprint, RoutineIdentity},
 };
 
-// ---------------------------------------------------------------------------
-// Test routines
-// ---------------------------------------------------------------------------
-
 /// Canonical single-square routine.
 #[derive(Clone)]
 struct SquareOnce;
@@ -269,9 +265,147 @@ impl Routine<Fp> for NestingWithExtra {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+/// Linear constraints only — no multiplications.
+#[derive(Clone)]
+struct LinearOnly;
+
+impl Routine<Fp> for LinearOnly {
+    type Input = Kind![Fp; Element<'_, _>];
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        input: Bound<'dr, D, Self::Input>,
+        _aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        input.enforce_zero(dr)?;
+        input.enforce_zero(dr)?;
+        Ok(input)
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        _input: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::just(|| ())))
+    }
+}
+
+/// Mixed alloc + mul + enforce_zero.
+#[derive(Clone)]
+struct MixedConstraints;
+
+impl Routine<Fp> for MixedConstraints {
+    type Input = Kind![Fp; Element<'_, _>];
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        input: Bound<'dr, D, Self::Input>,
+        _aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        let aux = Element::alloc(dr, D::just(|| Fp::ONE))?;
+        let sq = input.square(dr)?;
+        sq.enforce_zero(dr)?;
+        Ok(aux)
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        _input: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::just(|| ())))
+    }
+}
+
+/// Three-level nesting: wraps PureNesting which wraps SquareOnce.
+#[derive(Clone)]
+struct TripleNesting;
+
+impl Routine<Fp> for TripleNesting {
+    type Input = Kind![Fp; Element<'_, _>];
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        input: Bound<'dr, D, Self::Input>,
+        _aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        dr.routine(PureNesting, input)
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        _input: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::just(|| ())))
+    }
+}
+
+/// Calls SquareOnce then squares the result locally.
+#[derive(Clone)]
+struct NestThenSquare;
+
+impl Routine<Fp> for NestThenSquare {
+    type Input = Kind![Fp; Element<'_, _>];
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        input: Bound<'dr, D, Self::Input>,
+        _aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        let nested = dr.routine(SquareOnce, input)?;
+        nested.square(dr)
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        _input: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::just(|| ())))
+    }
+}
+
+/// Calls SquareOnce then adds the result to itself locally.
+#[derive(Clone)]
+struct NestThenAdd;
+
+impl Routine<Fp> for NestThenAdd {
+    type Input = Kind![Fp; Element<'_, _>];
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        input: Bound<'dr, D, Self::Input>,
+        _aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        let nested = dr.routine(SquareOnce, input)?;
+        Ok(nested.add(dr, &nested))
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        _input: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::just(|| ())))
+    }
+}
 
 fn fingerprint_elem(
     routine: &impl Routine<Fp, Input = Kind![Fp; Element<'_, _>]>,
@@ -348,54 +482,49 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
+/// Same routine fingerprinted twice produces identical results.
 #[test]
 fn test_determinism() {
-    let a = fingerprint_elem(&SquareOnce);
-    let b = fingerprint_elem(&SquareOnce);
-    assert_eq!(a, b, "same routine fingerprinted twice must be identical");
-
-    let c = fingerprint_unit(&EmptyRoutine);
-    let d = fingerprint_unit(&EmptyRoutine);
+    assert_eq!(fingerprint_elem(&SquareOnce), fingerprint_elem(&SquareOnce));
     assert_eq!(
-        c, d,
-        "same unit routine fingerprinted twice must be identical"
+        fingerprint_unit(&EmptyRoutine),
+        fingerprint_unit(&EmptyRoutine)
     );
 }
 
+/// Distinct Rust types with identical constraint structure share a fingerprint.
 #[test]
 fn test_structural_equivalence() {
     let sq = fingerprint_elem(&SquareOnce);
     let alias = fingerprint_elem(&SquareOnceAlias);
     let n1 = fingerprint_elem(&SquareN::<1>);
 
-    assert_eq!(sq, alias, "SquareOnce == SquareOnceAlias");
-    assert_eq!(sq, n1, "SquareOnce == SquareN<1>");
-    assert_eq!(alias, n1, "SquareOnceAlias == SquareN<1> (transitive)");
+    assert_eq!(sq, alias);
+    assert_eq!(sq, n1);
+    assert_eq!(alias, n1);
 }
 
+/// Different constraint counts produce different fingerprints.
 #[test]
 fn test_structural_sensitivity() {
     let n1 = fingerprint_elem(&SquareN::<1>);
     let n2 = fingerprint_elem(&SquareN::<2>);
     let n3 = fingerprint_elem(&SquareN::<3>);
 
-    assert_ne!(n1, n2, "SquareN<1> != SquareN<2>");
-    assert_ne!(n2, n3, "SquareN<2> != SquareN<3>");
-    assert_ne!(n1, n3, "SquareN<1> != SquareN<3>");
+    assert_ne!(n1, n2);
+    assert_ne!(n2, n3);
+    assert_ne!(n1, n3);
 }
 
+/// Routines with different Input/Output TypeIds are always distinct.
 #[test]
 fn test_type_discrimination() {
-    let square = fingerprint_elem(&SquareOnce);
-    let produce = fingerprint_unit(&Produce);
-    let duplicate = fingerprint_elem(&Duplicate);
-    let empty = fingerprint_unit(&EmptyRoutine);
-
-    let all = [square, produce, duplicate, empty];
+    let all = [
+        fingerprint_elem(&SquareOnce),
+        fingerprint_unit(&Produce),
+        fingerprint_elem(&Duplicate),
+        fingerprint_unit(&EmptyRoutine),
+    ];
     for i in 0..all.len() {
         for j in (i + 1)..all.len() {
             assert_ne!(all[i], all[j], "routines {i} and {j} must be distinct");
@@ -403,100 +532,99 @@ fn test_type_discrimination() {
     }
 }
 
+/// Different input wire counts produce different fingerprints.
 #[test]
 fn test_input_wire_count() {
-    let sq = fingerprint_elem(&SquareOnce);
-    let add = fingerprint_pair(&AddTwo);
-    assert_ne!(
-        sq, add,
-        "different input wire counts → different fingerprints"
-    );
+    assert_ne!(fingerprint_elem(&SquareOnce), fingerprint_pair(&AddTwo));
 }
 
+/// Nested routine calls produce fingerprints based on local constraints only.
 #[test]
 fn test_nesting() {
     let square = fingerprint_elem(&SquareOnce);
     let pure = fingerprint_elem(&PureNesting);
     let extra = fingerprint_elem(&NestingWithExtra);
 
-    assert_ne!(
-        square, pure,
-        "PureNesting (no local constraints) != SquareOnce (has local constraints)"
-    );
-    assert_ne!(
-        square, extra,
-        "extra enforce_zero after nested call changes fingerprint"
-    );
-    assert_ne!(
-        pure, extra,
-        "NestingWithExtra has a local enforce_zero that PureNesting lacks"
-    );
+    assert_ne!(square, pure);
+    assert_ne!(square, extra);
+    assert_ne!(pure, extra);
 }
 
+/// Zero-constraint routines are distinguished by TypeId pairs alone.
 #[test]
 fn test_degenerate_cases() {
-    let empty = fingerprint_unit(&EmptyRoutine);
-    let produce = fingerprint_unit(&Produce);
-    assert_ne!(
-        empty, produce,
-        "EmptyRoutine vs Produce: different TypeIds despite both having scalar 0"
-    );
-
-    let duplicate = fingerprint_elem(&Duplicate);
-    let square = fingerprint_elem(&SquareOnce);
-    assert_ne!(
-        duplicate, square,
-        "Duplicate (no constraints, scalar 0) vs SquareOnce (has constraints)"
-    );
+    assert_ne!(fingerprint_unit(&EmptyRoutine), fingerprint_unit(&Produce));
+    assert_ne!(fingerprint_elem(&Duplicate), fingerprint_elem(&SquareOnce));
 }
 
+/// Segment 0 is Root; segments 1+ are Routine.
 #[test]
 fn test_root_identity() {
-    let circuit = SingleRoutineCircuit(SquareOnce);
-    let metrics = metrics::eval(&circuit).unwrap();
+    let metrics = metrics::eval(&SingleRoutineCircuit(SquareOnce)).unwrap();
 
-    assert_eq!(metrics.segments.len(), 2, "root + one routine = 2 records");
-
-    assert!(
-        matches!(metrics.segments[0].identity, RoutineIdentity::Root),
-        "record 0 must be Root"
-    );
-    assert!(
-        matches!(metrics.segments[1].identity, RoutineIdentity::Routine(_)),
-        "record 1 must be Routine"
-    );
+    assert_eq!(metrics.segments.len(), 2);
+    assert!(matches!(
+        metrics.segments[0].identity,
+        RoutineIdentity::Root
+    ));
+    assert!(matches!(
+        metrics.segments[1].identity,
+        RoutineIdentity::Routine(_)
+    ));
 }
 
+/// Guard against accidental changes to the fingerprint computation.
 #[test]
 fn test_known_value_regression() {
-    let fp = fingerprint_elem(&SquareOnce);
-    assert_eq!(
-        fp.scalar(),
-        21,
-        "hand-traced IdentityEvaluator result for SquareOnce"
-    );
+    assert_eq!(fingerprint_elem(&SquareOnce).scalar(), 21);
 }
 
+/// Fingerprint from metrics::eval matches standalone fingerprint_routine.
 #[test]
 fn test_metrics_integration() {
-    let circuit = SingleRoutineCircuit(SquareOnce);
-    let metrics = metrics::eval(&circuit).unwrap();
-
+    let metrics = metrics::eval(&SingleRoutineCircuit(SquareOnce)).unwrap();
     let direct = fingerprint_elem(&SquareOnce);
 
-    let record = &metrics.segments[1];
-    match record.identity {
-        RoutineIdentity::Routine(fp) => {
-            assert_eq!(
-                fp, direct,
-                "metrics fingerprint matches direct eval_routine"
-            );
-        }
-        RoutineIdentity::Root => panic!("record 1 should be Routine, not Root"),
+    match metrics.segments[1].identity {
+        RoutineIdentity::Routine(fp) => assert_eq!(fp, direct),
+        RoutineIdentity::Root => panic!("record 1 should be Routine"),
     }
+    assert!(metrics.segments[1].num_multiplication_constraints > 0);
+}
 
-    assert!(
-        record.num_multiplication_constraints > 0,
-        "SquareOnce should have multiplication constraints"
+/// Routines with only linear constraints (no multiplications) get nonzero fingerprints.
+#[test]
+fn test_linear_only() {
+    let linear = fingerprint_elem(&LinearOnly);
+    assert_ne!(linear, fingerprint_elem(&SquareOnce));
+    assert_ne!(linear.scalar(), 0);
+    assert_ne!(linear, fingerprint_unit(&EmptyRoutine));
+}
+
+/// Mixed alloc + mul + enforce_zero produces a fingerprint distinct from pure mul or pure linear.
+#[test]
+fn test_mixed_constraints() {
+    let mixed = fingerprint_elem(&MixedConstraints);
+    assert_ne!(mixed, fingerprint_elem(&SquareOnce));
+    assert_ne!(mixed, fingerprint_elem(&LinearOnly));
+}
+
+/// Pure delegation wrappers are nesting-depth-invariant; metrics produces correct segment count.
+#[test]
+fn test_triple_nesting() {
+    let triple = fingerprint_elem(&TripleNesting);
+    assert_eq!(triple, fingerprint_elem(&PureNesting));
+    assert_ne!(triple, fingerprint_elem(&SquareOnce));
+
+    let metrics = metrics::eval(&SingleRoutineCircuit(TripleNesting)).unwrap();
+    assert_eq!(metrics.segments.len(), 4);
+}
+
+/// Parents that call the same child but differ in post-processing get different fingerprints.
+#[test]
+fn test_output_remapping_preserves_parent() {
+    assert_ne!(
+        fingerprint_elem(&NestThenSquare),
+        fingerprint_elem(&NestThenAdd)
     );
 }
