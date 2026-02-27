@@ -134,7 +134,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             )?;
         self.native_registry =
             self.native_registry.register_internal_circuit(
-                Adapter::<C, _, R, HEADER_SIZE>::new(step::internal::trivial::Trivial::new()),
+                Adapter::<C, _, R, HEADER_SIZE>::new(step::internal::trivial::Trivial),
             )?;
 
         assert_eq!(
@@ -224,12 +224,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// is not random.
     fn seeded_trivial_pcd<'source, RNG: CryptoRng>(&self, rng: &mut RNG) -> Pcd<'source, C, R, ()> {
         let proof = self.seeded_trivial.get_or_init(|| {
-            let circuit_index =
-                step::Index::internal(step::InternalStepIndex::Trivial).circuit_index();
+            let circuit_index = step::InternalStepIndex::Trivial.circuit_index();
             self.fuse_inner(
                 rng,
                 circuit_index,
-                step::internal::trivial::Trivial::new(),
+                step::internal::trivial::Trivial,
                 (),
                 self.trivial_pcd(),
                 self.trivial_pcd(),
@@ -257,8 +256,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // Seed a trivial proof for rerandomization.
         // TODO: this is a temporary hack that allows the base case logic to be simple
         let seeded_trivial = self.seeded_trivial_pcd(rng);
-        let circuit_index =
-            step::Index::internal(step::InternalStepIndex::Rerandomize).circuit_index();
+        let circuit_index = step::InternalStepIndex::Rerandomize.circuit_index();
         let rerandomized_proof = self.fuse_inner(
             rng,
             circuit_index,

@@ -13,12 +13,6 @@ use super::super::{Encoded, Step};
 
 pub(crate) struct Trivial;
 
-impl Trivial {
-    pub fn new() -> Self {
-        Trivial
-    }
-}
-
 impl<C: Cycle> Step<C> for Trivial {
     type Witness<'source> = ();
     type Aux<'source> = ();

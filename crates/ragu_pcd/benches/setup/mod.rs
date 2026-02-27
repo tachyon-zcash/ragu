@@ -38,6 +38,7 @@ fn build_app() -> (
     Application<'static, Pasta, ProductionRank, 4>,
     StepHandle<nontrivial::WitnessLeaf<'static, Pasta>>,
     StepHandle<nontrivial::Hash2<'static, Pasta>>,
+    &'static <Pasta as Cycle>::CircuitPoseidon,
 ) {
     let pasta = Pasta::baked();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
@@ -49,7 +50,7 @@ fn build_app() -> (
         .register(nontrivial::Hash2 { poseidon_params })
         .unwrap();
     let app = builder.finalize(pasta).unwrap();
-    (app, leaf_handle, hash_handle)
+    (app, leaf_handle, hash_handle, poseidon_params)
 }
 
 pub fn setup_seed() -> (
@@ -59,9 +60,7 @@ pub fn setup_seed() -> (
     &'static <Pasta as Cycle>::CircuitPoseidon,
     StdRng,
 ) {
-    let (app, leaf_handle, hash_handle) = build_app();
-    let pasta = Pasta::baked();
-    let poseidon_params = Pasta::circuit_poseidon(pasta);
+    let (app, leaf_handle, hash_handle, poseidon_params) = build_app();
     (
         app,
         leaf_handle,

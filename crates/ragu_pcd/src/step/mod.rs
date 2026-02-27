@@ -24,14 +24,10 @@ pub(crate) enum InternalStepIndex {
     Trivial = 1,
 }
 
-/// Internal representation of a [`Step`] index for internal steps.
-enum StepIndex {
-    Internal(InternalStepIndex),
-}
-
 /// The number of internal steps used by Ragu for things like rerandomization or
-/// proof decompression.
-pub(crate) const NUM_INTERNAL_STEPS: usize = 2;
+/// proof decompression.  Derived from the last variant so that adding a new
+/// variant forces an update here.
+pub(crate) const NUM_INTERNAL_STEPS: usize = InternalStepIndex::Trivial as usize + 1;
 
 /// A handle to a registered [`Step`] that carries the auto-assigned circuit
 /// index.
@@ -40,6 +36,7 @@ pub(crate) const NUM_INTERNAL_STEPS: usize = 2;
 /// and required by [`Application::seed`](crate::Application::seed) and
 /// [`Application::fuse`](crate::Application::fuse) to identify which circuit to
 /// use during proving.
+#[derive(Copy, Clone)]
 pub struct StepHandle<S> {
     circuit_index: CircuitIndex,
     _marker: core::marker::PhantomData<fn() -> S>,
@@ -58,39 +55,12 @@ impl<S> StepHandle<S> {
     }
 }
 
-impl<S> Clone for StepHandle<S> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<S> Copy for StepHandle<S> {}
-
-/// The index of a [`Step`] in an application.
-///
-/// Used internally to map internal steps to their circuit positions. Application
-/// steps are auto-assigned via [`StepHandle`] during registration.
-pub(crate) struct Index {
-    index: StepIndex,
-}
-
-impl Index {
-    /// Returns the circuit index for an internal step.
-    pub(crate) fn circuit_index(&self) -> CircuitIndex {
-        match self.index {
-            StepIndex::Internal(i) => {
-                // Internal steps come after internal circuits
-                CircuitIndex::from_u32(NUM_INTERNAL_CIRCUITS as u32 + i as u32)
-            }
-        }
-    }
-
-    /// Creates a new internal-defined [`Step`] index. Only called internally by
-    /// Ragu.
-    pub(crate) const fn internal(value: InternalStepIndex) -> Self {
-        Index {
-            index: StepIndex::Internal(value),
-        }
+impl InternalStepIndex {
+    /// Returns the circuit index for this internal step.
+    ///
+    /// Internal steps come after internal circuits in the registry.
+    pub(crate) fn circuit_index(self) -> CircuitIndex {
+        CircuitIndex::from_u32(NUM_INTERNAL_CIRCUITS as u32 + self as u32)
     }
 }
 
@@ -98,13 +68,12 @@ impl Index {
 fn test_index_map() {
     use crate::circuits::native::NUM_INTERNAL_CIRCUITS;
 
-    // Internal steps come after internal circuits
     assert_eq!(
-        Index::internal(InternalStepIndex::Rerandomize).circuit_index(),
+        InternalStepIndex::Rerandomize.circuit_index(),
         CircuitIndex::new(NUM_INTERNAL_CIRCUITS)
     );
     assert_eq!(
-        Index::internal(InternalStepIndex::Trivial).circuit_index(),
+        InternalStepIndex::Trivial.circuit_index(),
         CircuitIndex::new(NUM_INTERNAL_CIRCUITS + 1)
     );
 }
