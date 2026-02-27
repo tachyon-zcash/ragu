@@ -85,6 +85,7 @@ impl<F: Field> Trace<F> {
             .map(|seg| SegmentRecord {
                 num_multiplication_constraints: seg.a.len(),
                 num_linear_constraints: 0,
+                identity: super::metrics::RoutineIdentity::Root,
             })
             .collect();
         let plan = super::floor_planner::floor_plan(&segment_records);

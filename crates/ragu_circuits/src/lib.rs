@@ -25,7 +25,7 @@ mod s;
 pub mod staging;
 mod trivial;
 
-pub use metrics::SegmentRecord;
+pub use metrics::{RoutineFingerprint, RoutineIdentity, SegmentRecord};
 pub use rx::Trace;
 
 #[cfg(test)]
@@ -112,7 +112,7 @@ pub trait Circuit<F: Field>: Sized + Send + Sync {
         Self: 'dr;
 }
 
-/// Extension trait for all circuits.
+/// An extension trait for all circuits.
 pub trait CircuitExt<F: Field>: Circuit<F> {
     /// Given a polynomial [`Rank`], convert this circuit into a boxed
     /// [`CircuitObject`] that provides methods for evaluating the $s(X, Y)$

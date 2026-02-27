@@ -1,14 +1,35 @@
-//! Circuit constraint analysis and metrics collection.
+//! Circuit constraint analysis, metrics collection, and routine identity
+//! fingerprinting.
 //!
 //! This module provides constraint system analysis by simulating circuit
 //! execution without computing actual values, counting the number of
-//! multiplication and linear constraints a circuit requires.
+//! multiplication and linear constraints a circuit requires. It simultaneously
+//! computes hash-based fingerprints for each routine invocation via the merged
+//! [`Counter`] driver, which combines constraint counting with identity
+//! hashing in a single DFS traversal.
+//!
+//! # Fingerprinting
+//!
+//! A routine's fingerprint is the tuple `(TypeId(Input), TypeId(Output),
+//! hash)`. The [`TypeId`] pairs cheaply narrow equivalence candidates by type;
+//! the hash confirms structural equivalence by hashing the operation sequence
+//! (wire IDs, coefficient tags, constraint boundaries).
+//!
+//! The fingerprint is wrapped in [`RoutineIdentity`], an enum that
+//! distinguishes the root circuit body ([`Root`](RoutineIdentity::Root)) from
+//! actual routine invocations ([`Routine`](RoutineIdentity::Routine)).
+//! `RoutineIdentity` deliberately does **not** implement comparison or hashing
+//! traits, forcing callers to explicitly handle the root variant rather than
+//! accidentally including it in equivalence maps.
+//!
+//! [`TypeId`]: core::any::TypeId
 
+use blake2b_simd::State as Blake2bState;
 use ff::Field;
 use ragu_arithmetic::Coeff;
 use ragu_core::{
     Result,
-    drivers::{Driver, DriverTypes, emulator::Emulator},
+    drivers::{Driver, DriverTypes, FromDriver, LinearExpression, emulator::Emulator},
     gadgets::{Bound, GadgetKind},
     maybe::Empty,
     routines::Routine,
@@ -16,9 +37,58 @@ use ragu_core::{
 use ragu_primitives::GadgetExt;
 
 use alloc::vec::Vec;
-use core::marker::PhantomData;
+use core::{any::TypeId, marker::PhantomData};
 
-use super::{Circuit, DriverScope};
+use super::Circuit;
+
+/// The structural identity of a routine record.
+///
+/// Distinguishes the root circuit body from actual routine invocations. The
+/// root cannot be floated or memoized, so it has no fingerprint — callers must
+/// handle it explicitly.
+///
+/// This type deliberately does **not** implement [`PartialEq`], [`Eq`],
+/// [`Hash`], or ordering traits. Code that builds equivalence maps over
+/// fingerprints must match on the [`Routine`](RoutineIdentity::Routine) variant
+/// and handle [`Root`](RoutineIdentity::Root) separately.
+#[derive(Clone, Copy, Debug)]
+pub enum RoutineIdentity {
+    /// The root circuit body (record 0). Cannot be floated or memoized.
+    Root,
+    /// An actual routine invocation with a structural fingerprint.
+    Routine(RoutineFingerprint),
+}
+
+/// A hash-based fingerprint for a routine invocation's constraint structure.
+///
+/// Two routines share a fingerprint when they have matching [`TypeId`] pairs
+/// and matching hash digests. The digest is a `u64` produced by hashing the
+/// sequence of wire IDs, coefficient tags, and constraint boundaries observed
+/// during synthesis.
+///
+/// [`TypeId`]: core::any::TypeId
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RoutineFingerprint {
+    input_kind: TypeId,
+    output_kind: TypeId,
+    fingerprint: u64,
+}
+
+impl RoutineFingerprint {
+    fn of<F: Field, Ro: Routine<F>>(hash: u64) -> Self {
+        Self {
+            input_kind: TypeId::of::<Ro::Input>(),
+            output_kind: TypeId::of::<Ro::Output>(),
+            fingerprint: hash,
+        }
+    }
+
+    /// Returns the raw scalar component of the fingerprint.
+    #[cfg(test)]
+    pub(crate) fn scalar(&self) -> u64 {
+        self.fingerprint
+    }
+}
 
 /// Constraint counts for one segment of the circuit, collected during synthesis.
 ///
@@ -57,7 +127,6 @@ use super::{Circuit, DriverScope};
 /// | 1     | `RoutineA`     |  2  |  3 | A's own constraints        |
 /// | 2     | `RoutineB`     |  1  |  3 | b0+b1; `RoutineC` excluded |
 /// | 3     | `RoutineC`     |  1  |  2 | C's own constraints        |
-#[derive(Default)]
 pub struct SegmentRecord {
     /// The number of multiplication constraints in this segment.
     pub num_multiplication_constraints: usize,
@@ -65,9 +134,17 @@ pub struct SegmentRecord {
     /// The number of linear constraints in this segment, including constraints
     /// on wires of the input gadget and on wires allocated within the segment.
     pub num_linear_constraints: usize,
+
+    /// The structural identity of this routine invocation.
+    // TODO: consumed by the floor planner (not yet implemented)
+    #[allow(dead_code)]
+    pub identity: RoutineIdentity,
 }
 
-/// Performs full constraint system analysis, capturing basic details about a circuit's topology through simulation.
+/// A summary of a circuit's constraint topology.
+///
+/// Captures constraint counts and per-routine records by simulating circuit
+/// execution without computing actual values.
 pub struct CircuitMetrics {
     /// The number of linear constraints, including those for instance enforcement.
     pub num_linear_constraints: usize,
@@ -88,48 +165,158 @@ pub struct CircuitMetrics {
     pub segments: Vec<SegmentRecord>,
 }
 
-/// Per-segment state that is saved and restored by [`DriverScope`].
-struct CounterScope {
-    available_b: bool,
-    current_segment: usize,
+fn coeff_tag<F: Field>(coeff: &Coeff<F>) -> u8 {
+    match coeff {
+        Coeff::Zero => 0,
+        Coeff::One => 1,
+        Coeff::Two => 2,
+        Coeff::NegativeOne => 3,
+        Coeff::Arbitrary(_) => 4,
+        Coeff::NegativeArbitrary(_) => 5,
+    }
 }
 
+/// Returns the low 64 bits of a BLAKE2b finalization.
+fn finalize_u64(state: &Blake2bState) -> u64 {
+    let hash = state.finalize();
+    let bytes: [u8; 8] = hash.as_bytes()[..8].try_into().unwrap();
+    u64::from_le_bytes(bytes)
+}
+
+/// Creates a new BLAKE2b state with the fingerprinting personalization.
+fn new_hash() -> Blake2bState {
+    blake2b_simd::Params::new()
+        .personal(b"ragu_fingerprint")
+        .to_state()
+}
+
+/// A byte-buffer accumulator for linear combinations during fingerprinting.
+///
+/// Implements [`LinearExpression`] by recording wire IDs and coefficient tags
+/// into a byte buffer. The caller feeds the buffer contents into the scope's
+/// BLAKE2b state after the LC closure returns. No field arithmetic and no
+/// per-LC hash state initialization.
+struct LCHash {
+    buf: Vec<u8>,
+    gain_tag: u8,
+}
+
+impl LCHash {
+    fn new() -> Self {
+        Self {
+            buf: Vec::new(),
+            gain_tag: 1, // Coeff::One
+        }
+    }
+}
+
+impl<F: Field> LinearExpression<u32, F> for LCHash {
+    fn add_term(mut self, wire: &u32, coeff: Coeff<F>) -> Self {
+        self.buf.extend_from_slice(&wire.to_le_bytes());
+        self.buf.push(coeff_tag(&coeff));
+        self.buf.push(self.gain_tag);
+        self
+    }
+
+    fn gain(mut self, coeff: Coeff<F>) -> Self {
+        self.buf.push(0xFF); // gain marker
+        self.buf.push(coeff_tag(&coeff));
+        self.gain_tag = coeff_tag(&coeff);
+        self
+    }
+}
+
+/// Per-routine state that is saved and restored across routine boundaries.
+struct CounterScope {
+    /// Stashed wire from paired allocation (see [`Driver::alloc`]).
+    available_b: Option<u32>,
+
+    /// Index into [`Counter::segments`] for the current routine.
+    current_segment: usize,
+
+    /// Next wire ID to assign. Resets to 1 on routine entry (0 is ONE).
+    next_wire: u32,
+
+    /// Running BLAKE2b state for the fingerprint.
+    hash: Blake2bState,
+}
+
+/// A [`Driver`] that simultaneously counts constraints and computes routine
+/// identity fingerprints via hash-based structural hashing.
+///
+/// Assigns sequential `u32` wire IDs and hashes the operation sequence
+/// (mul gates, linear combinations, coefficient tags) into a running `u64`.
+/// When entering a routine, the identity state is saved and reset so that
+/// each routine is fingerprinted independently of its calling context.
+///
+/// Nested routine outputs are treated as auxiliary inputs to the caller: on
+/// return, output wires are remapped to fresh allocations in the parent scope
+/// rather than folding the child's hash. This makes each routine's fingerprint
+/// capture only its *internal* constraint structure.
 struct Counter<F> {
     scope: CounterScope,
     num_linear_constraints: usize,
     num_multiplication_constraints: usize,
     segments: Vec<SegmentRecord>,
+
+    /// When false, `mul` and `enforce_zero` still advance wire IDs and update
+    /// the hash but do not increment constraint counts. Used during input and
+    /// output wire remapping in [`routine`](Driver::routine).
+    counting: bool,
+
     _marker: PhantomData<F>,
 }
 
-impl<F: Field> DriverScope<CounterScope> for Counter<F> {
-    fn scope(&mut self) -> &mut CounterScope {
-        &mut self.scope
+impl<F: Field> Counter<F> {
+    fn new() -> Self {
+        Self {
+            scope: CounterScope {
+                available_b: None,
+                current_segment: 0,
+                // Wire 0 is ONE; first alloc/mul starts at 1.
+                next_wire: 1,
+                hash: new_hash(),
+            },
+            num_linear_constraints: 0,
+            num_multiplication_constraints: 0,
+            segments: alloc::vec![SegmentRecord {
+                num_multiplication_constraints: 0,
+                num_linear_constraints: 0,
+                identity: RoutineIdentity::Root,
+            }],
+            counting: true,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Allocates the next sequential wire ID.
+    fn next_wire(&mut self) -> u32 {
+        let id = self.scope.next_wire;
+        self.scope.next_wire += 1;
+        id
     }
 }
 
 impl<F: Field> DriverTypes for Counter<F> {
     type MaybeKind = Empty;
     type ImplField = F;
-    type ImplWire = ();
-    type LCadd = ();
-    type LCenforce = ();
+    type ImplWire = u32;
+    type LCadd = LCHash;
+    type LCenforce = LCHash;
 }
 
 impl<'dr, F: Field> Driver<'dr> for Counter<F> {
     type F = F;
-    type Wire = ();
-    const ONE: Self::Wire = ();
+    type Wire = u32;
+    const ONE: Self::Wire = 0;
 
     fn alloc(&mut self, _: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
-        if self.scope.available_b {
-            self.scope.available_b = false;
-            Ok(())
+        if let Some(wire) = self.scope.available_b.take() {
+            Ok(wire)
         } else {
-            self.scope.available_b = true;
-            self.mul(|| unreachable!())?;
-
-            Ok(())
+            let (a, b, _) = self.mul(|| unreachable!())?;
+            self.scope.available_b = Some(b);
+            Ok(a)
         }
     }
 
@@ -137,17 +324,48 @@ impl<'dr, F: Field> Driver<'dr> for Counter<F> {
         &mut self,
         _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>,
     ) -> Result<(Self::Wire, Self::Wire, Self::Wire)> {
-        self.num_multiplication_constraints += 1;
-        self.segments[self.scope.current_segment].num_multiplication_constraints += 1;
+        if self.counting {
+            self.num_multiplication_constraints += 1;
+            self.segments[self.scope.current_segment].num_multiplication_constraints += 1;
+        }
 
-        Ok(((), (), ()))
+        let a = self.next_wire();
+        let b = self.next_wire();
+        let c = self.next_wire();
+
+        self.scope.hash.update(&[0x01]); // mul marker
+        self.scope.hash.update(&a.to_le_bytes());
+        self.scope.hash.update(&b.to_le_bytes());
+        self.scope.hash.update(&c.to_le_bytes());
+
+        Ok((a, b, c))
     }
 
-    fn add(&mut self, _: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {}
+    fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {
+        let result = lc(LCHash::new());
+        let wire = self.next_wire();
+        self.scope.hash.update(&[0x02]); // add marker
+        self.scope
+            .hash
+            .update(&(result.buf.len() as u32).to_le_bytes());
+        self.scope.hash.update(&result.buf);
+        self.scope.hash.update(&wire.to_le_bytes());
+        wire
+    }
 
-    fn enforce_zero(&mut self, _: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
-        self.num_linear_constraints += 1;
-        self.segments[self.scope.current_segment].num_linear_constraints += 1;
+    fn enforce_zero(&mut self, lc: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
+        if self.counting {
+            self.num_linear_constraints += 1;
+            self.segments[self.scope.current_segment].num_linear_constraints += 1;
+        }
+
+        let result = lc(LCHash::new());
+        self.scope.hash.update(&[0x03]); // enforce_zero marker
+        self.scope
+            .hash
+            .update(&(result.buf.len() as u32).to_le_bytes());
+        self.scope.hash.update(&result.buf);
+
         Ok(())
     }
 
@@ -156,42 +374,112 @@ impl<'dr, F: Field> Driver<'dr> for Counter<F> {
         routine: Ro,
         input: Bound<'dr, Self, Ro::Input>,
     ) -> Result<Bound<'dr, Self, Ro::Output>> {
-        self.segments.push(SegmentRecord::default());
+        // Push new segment with placeholder identity.
+        self.segments.push(SegmentRecord {
+            num_multiplication_constraints: 0,
+            num_linear_constraints: 0,
+            identity: RoutineIdentity::Root,
+        });
         let segment_idx = self.segments.len() - 1;
-        self.with_scope(
+
+        // Save parent scope and reset to fresh identity state.
+        let saved = core::mem::replace(
+            &mut self.scope,
             CounterScope {
-                available_b: false,
+                available_b: None,
                 current_segment: segment_idx,
+                next_wire: 1, // 0 is ONE
+                hash: new_hash(),
             },
-            |this| {
-                let mut dummy = Emulator::wireless();
-                let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
-                let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
-                let result = routine.execute(this, input, aux)?;
+        );
 
-                // Verify internal consistency: current_segment unchanged.
-                assert_eq!(
-                    this.scope.current_segment, segment_idx,
-                    "current_segment must remain stable during routine execution"
-                );
+        // Map input wires from parent's binding to fresh wires in the
+        // child scope. Counting is disabled because these gates exist
+        // solely to seed the wire IDs for fingerprinting.
+        self.counting = false;
+        let new_input = Ro::Input::map_gadget(&input, self)?;
+        self.counting = true;
+        self.scope.available_b = None;
 
-                Ok(result)
-            },
-        )
+        // Predict and execute.
+        let mut dummy = Emulator::wireless();
+        let dummy_input = Ro::Input::map_gadget(&new_input, &mut dummy)?;
+        let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
+        let output = routine.execute(self, new_input, aux)?;
+
+        // Extract fingerprint from the child's hash.
+        self.segments[segment_idx].identity =
+            RoutineIdentity::Routine(RoutineFingerprint::of::<F, Ro>(finalize_u64(
+                &self.scope.hash,
+            )));
+
+        // Restore parent scope.
+        self.scope = saved;
+
+        // Remap child output wires as fresh parent allocations.
+        // Save and restore identity state so the uncounted gates
+        // don't drift the parent's hash or wire counter.
+        let saved_b = self.scope.available_b.take();
+        let saved_hash = self.scope.hash.clone();
+        let saved_wire = self.scope.next_wire;
+
+        self.counting = false;
+        let parent_output = Ro::Output::map_gadget(&output, self)?;
+        self.counting = true;
+
+        self.scope.available_b = saved_b;
+        self.scope.hash = saved_hash;
+        self.scope.next_wire = saved_wire;
+
+        Ok(parent_output)
     }
 }
 
+/// Allows [`Counter`] to receive input wires from any driver with the same
+/// field type. Each source wire is mapped to a fresh allocation on the counter,
+/// producing linearly independent wire values for the input gadget.
+impl<'dr, F: Field, D: Driver<'dr, F = F>> FromDriver<'dr, '_, D> for Counter<F> {
+    type NewDriver = Self;
+
+    fn convert_wire(&mut self, _: &D::Wire) -> Result<u32> {
+        self.alloc(|| unreachable!())
+    }
+}
+
+/// Computes the [`RoutineIdentity`] for a single routine invocation.
+///
+/// Creates a fresh [`Counter`], maps the caller's `input` gadget into the
+/// counter (allocating fresh wires for each input wire), then predicts and
+/// executes the routine.
+#[cfg(test)]
+pub(crate) fn fingerprint_routine<'dr, F, D, Ro>(
+    routine: &Ro,
+    input: &Bound<'dr, D, Ro::Input>,
+) -> Result<RoutineIdentity>
+where
+    F: Field,
+    D: Driver<'dr, F = F>,
+    Ro: Routine<F>,
+{
+    let mut counter = Counter::new();
+
+    // Map input from the caller's driver to Counter wires.
+    let new_input = Ro::Input::map_gadget(input, &mut counter)?;
+
+    // Predict (on a wireless emulator) then execute on the counter.
+    let mut dummy = Emulator::wireless();
+    let dummy_input = Ro::Input::map_gadget(&new_input, &mut dummy)?;
+    let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
+    routine.execute(&mut counter, new_input, aux)?;
+
+    Ok(RoutineIdentity::Routine(RoutineFingerprint::of::<F, Ro>(
+        finalize_u64(&counter.scope.hash),
+    )))
+}
+
+/// Evaluates the constraint topology of a circuit.
 pub fn eval<F: Field, C: Circuit<F>>(circuit: &C) -> Result<CircuitMetrics> {
-    let mut collector = Counter {
-        scope: CounterScope {
-            available_b: false,
-            current_segment: 0,
-        },
-        num_linear_constraints: 0,
-        num_multiplication_constraints: 0,
-        segments: alloc::vec![SegmentRecord::default()],
-        _marker: PhantomData,
-    };
+    let mut collector = Counter::new();
     let mut degree_ky = 0usize;
 
     // ONE gate

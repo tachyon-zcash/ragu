@@ -82,7 +82,7 @@ pub use coeff::Coeff;
 pub use domain::Domain;
 pub use fft::{Ring, bitreverse};
 pub use pasta_curves::arithmetic::{Coordinates, CurveAffine, CurveExt};
-pub use util::{dot, eval, factor, factor_iter, geosum, mul, poly_with_roots};
+pub use util::{dot, eval, factor, factor_iter, geosum, low_u64, mul, poly_with_roots};
 
 /// Converts a 256-bit integer literal into the little endian `[u64; 4]`
 /// representation that e.g. [`Fp::from_raw`](pasta_curves::Fp::from_raw) or
