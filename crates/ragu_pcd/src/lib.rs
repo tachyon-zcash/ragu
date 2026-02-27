@@ -30,6 +30,7 @@ use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 use header::Header;
 pub use proof::{Pcd, Proof};
+pub use step::StepHandle;
 use step::{Step, internal::adapter::Adapter};
 
 /// Builder for an [`Application`] for proof-carrying data.
@@ -63,22 +64,29 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         }
     }
 
-    /// Register a new application-defined [`Step`] in this context. The
-    /// provided [`Step`]'s [`INDEX`](Step::INDEX) should be the next sequential
-    /// index that has not been inserted yet.
-    pub fn register<S: Step<C> + 'params>(mut self, step: S) -> Result<Self> {
-        S::INDEX.assert_index(self.num_application_steps)?;
-
+    /// Register a new application-defined [`Step`] in this context.
+    ///
+    /// Returns a [`StepHandle`] that must be passed to
+    /// [`Application::seed`] or [`Application::fuse`] to identify which
+    /// circuit to use during proving. The circuit index is automatically
+    /// assigned based on registration order.
+    pub fn register<S: Step<C> + 'params>(&mut self, step: S) -> Result<StepHandle<S>> {
         self.prevent_duplicate_suffixes::<S::Output>()?;
         self.prevent_duplicate_suffixes::<S::Left>()?;
         self.prevent_duplicate_suffixes::<S::Right>()?;
 
+        let step_index = self.num_application_steps;
+
+        let registry = core::mem::replace(&mut self.native_registry, RegistryBuilder::new());
         self.native_registry =
-            self.native_registry
-                .register_circuit(Adapter::<C, S, R, HEADER_SIZE>::new(step))?;
+            registry.register_circuit(Adapter::<C, S, R, HEADER_SIZE>::new(step))?;
         self.num_application_steps += 1;
 
-        Ok(self)
+        let circuit_index = ragu_circuits::registry::CircuitIndex::new(
+            step::NUM_INTERNAL_STEPS + circuits::native::NUM_INTERNAL_CIRCUITS + step_index,
+        );
+
+        Ok(StepHandle::new(circuit_index))
     }
 
     /// Register `count` trivial circuits to simulate application steps
@@ -191,26 +199,43 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     pub fn seed<'source, RNG: CryptoRng, S: Step<C, Left = (), Right = ()>>(
         &self,
         rng: &mut RNG,
+        handle: &StepHandle<S>,
         step: S,
         witness: S::Witness<'source>,
     ) -> Result<(Proof<C, R>, S::Aux<'source>)> {
-        self.fuse(rng, step, witness, self.trivial_pcd(), self.trivial_pcd())
+        self.fuse(
+            rng,
+            handle,
+            step,
+            witness,
+            self.trivial_pcd(),
+            self.trivial_pcd(),
+        )
     }
 
     /// Returns a seeded trivial proof for use in rerandomization.
     ///
-    /// A seeded trivial is a trivial proof that has been through `seed()`
-    /// (folded with itself). This gives it valid proof structure, avoiding
-    /// base case detection issues.
+    /// A seeded trivial is a trivial proof that has been through a seed
+    /// operation (folded with itself). This gives it valid proof structure,
+    /// avoiding base case detection issues.
     ///
     /// The proof is lazily created on first use and cached. *Importantly*,
     /// note that this may return the same proof on subsequent calls, and
     /// is not random.
     fn seeded_trivial_pcd<'source, RNG: CryptoRng>(&self, rng: &mut RNG) -> Pcd<'source, C, R, ()> {
         let proof = self.seeded_trivial.get_or_init(|| {
-            self.seed(rng, step::internal::trivial::Trivial::new(), ())
-                .expect("seeded trivial seed should not fail")
-                .0
+            let circuit_index =
+                step::Index::internal(step::InternalStepIndex::Trivial).circuit_index();
+            self.fuse_inner(
+                rng,
+                circuit_index,
+                step::internal::trivial::Trivial::new(),
+                (),
+                self.trivial_pcd(),
+                self.trivial_pcd(),
+            )
+            .expect("seeded trivial seed should not fail")
+            .0
         });
         proof.clone().carry(())
     }
@@ -232,8 +257,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // Seed a trivial proof for rerandomization.
         // TODO: this is a temporary hack that allows the base case logic to be simple
         let seeded_trivial = self.seeded_trivial_pcd(rng);
-        let rerandomized_proof = self.fuse(
+        let circuit_index =
+            step::Index::internal(step::InternalStepIndex::Rerandomize).circuit_index();
+        let rerandomized_proof = self.fuse_inner(
             rng,
+            circuit_index,
             step::internal::rerandomize::Rerandomize::new(),
             (),
             pcd,
