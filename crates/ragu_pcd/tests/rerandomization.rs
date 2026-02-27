@@ -11,7 +11,7 @@ use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::{
     ApplicationBuilder,
     header::{Header, Suffix},
-    step::{Encoded, Index, Step},
+    step::{Encoded, Step},
 };
 use ragu_primitives::Element;
 use rand::SeedableRng;
@@ -50,7 +50,6 @@ impl Header<Fp> for HeaderWithData {
 // Step that produces HeaderWithData from trivial inputs
 struct StepWithData;
 impl Step<Pasta> for StepWithData {
-    const INDEX: Index = Index::new(0);
     type Witness<'source> = Fp;
     type Aux<'source> = Fp;
     type Left = ();
@@ -80,7 +79,6 @@ impl Step<Pasta> for StepWithData {
 // Step0: () , ()  -> HeaderA
 struct Step0;
 impl<C: Cycle> Step<C> for Step0 {
-    const INDEX: Index = Index::new(0);
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = ();
@@ -109,7 +107,6 @@ impl<C: Cycle> Step<C> for Step0 {
 
 struct Step1;
 impl<C: Cycle> Step<C> for Step1 {
-    const INDEX: Index = Index::new(1);
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = HeaderA;
@@ -139,17 +136,14 @@ impl<C: Cycle> Step<C> for Step1 {
 #[test]
 fn rerandomization_flow() {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
-        .register(Step0)
-        .unwrap()
-        .register(Step1)
-        .unwrap()
-        .finalize(pasta)
-        .unwrap();
+    let mut builder = ApplicationBuilder::<Pasta, ProductionRank, 4>::new();
+    let step0_handle = builder.register(Step0).unwrap();
+    let step1_handle = builder.register(Step1).unwrap();
+    let app = builder.finalize(pasta).unwrap();
 
     let mut rng = StdRng::seed_from_u64(1234);
 
-    let seeded = app.seed(&mut rng, Step0, ()).unwrap().0;
+    let seeded = app.seed(&mut rng, &step0_handle, Step0, ()).unwrap().0;
     let seeded = seeded.carry::<HeaderA>(());
     assert!(app.verify(&seeded, &mut rng).unwrap());
 
@@ -158,7 +152,7 @@ fn rerandomization_flow() {
     assert!(app.verify(&seeded, &mut rng).unwrap());
 
     let fused = app
-        .fuse(&mut rng, Step1, (), seeded.clone(), seeded)
+        .fuse(&mut rng, &step1_handle, Step1, (), seeded.clone(), seeded)
         .unwrap()
         .0;
     let fused = fused.carry::<HeaderA>(());
@@ -171,15 +165,13 @@ fn rerandomization_flow() {
 #[test]
 fn multiple_rerandomizations_all_verify() {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
-        .register(Step0)
-        .unwrap()
-        .finalize(pasta)
-        .unwrap();
+    let mut builder = ApplicationBuilder::<Pasta, ProductionRank, 4>::new();
+    let step0_handle = builder.register(Step0).unwrap();
+    let app = builder.finalize(pasta).unwrap();
 
     let mut rng = StdRng::seed_from_u64(9999);
 
-    let original = app.seed(&mut rng, Step0, ()).unwrap().0;
+    let original = app.seed(&mut rng, &step0_handle, Step0, ()).unwrap().0;
     let original = original.carry::<HeaderA>(());
     assert!(app.verify(&original, &mut rng).unwrap());
 
@@ -198,18 +190,19 @@ fn multiple_rerandomizations_all_verify() {
 #[test]
 fn rerandomization_preserves_header_data() {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
-        .register(StepWithData)
-        .unwrap()
-        .finalize(pasta)
-        .unwrap();
+    let mut builder = ApplicationBuilder::<Pasta, ProductionRank, 4>::new();
+    let step_handle = builder.register(StepWithData).unwrap();
+    let app = builder.finalize(pasta).unwrap();
 
     let mut rng = StdRng::seed_from_u64(4321);
 
     // Use a non-trivial data value
     let test_data = Fp::from(123456789u64);
 
-    let original = app.seed(&mut rng, StepWithData, test_data).unwrap().0;
+    let original = app
+        .seed(&mut rng, &step_handle, StepWithData, test_data)
+        .unwrap()
+        .0;
     let original = original.carry::<HeaderWithData>(test_data);
     assert!(app.verify(&original, &mut rng).unwrap());
 
@@ -231,30 +224,30 @@ fn rerandomization_preserves_header_data() {
 #[test]
 fn rerandomized_fused_proof_verifies() {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
-        .register(Step0)
-        .unwrap()
-        .register(Step1)
-        .unwrap()
-        .finalize(pasta)
-        .unwrap();
+    let mut builder = ApplicationBuilder::<Pasta, ProductionRank, 4>::new();
+    let step0_handle = builder.register(Step0).unwrap();
+    let step1_handle = builder.register(Step1).unwrap();
+    let app = builder.finalize(pasta).unwrap();
 
     let mut rng = StdRng::seed_from_u64(7777);
 
     // Create two seeded proofs
     let left = app
-        .seed(&mut rng, Step0, ())
+        .seed(&mut rng, &step0_handle, Step0, ())
         .unwrap()
         .0
         .carry::<HeaderA>(());
     let right = app
-        .seed(&mut rng, Step0, ())
+        .seed(&mut rng, &step0_handle, Step0, ())
         .unwrap()
         .0
         .carry::<HeaderA>(());
 
     // Fuse them
-    let fused = app.fuse(&mut rng, Step1, (), left, right).unwrap().0;
+    let fused = app
+        .fuse(&mut rng, &step1_handle, Step1, (), left, right)
+        .unwrap()
+        .0;
     let fused = fused.carry::<HeaderA>(());
     assert!(app.verify(&fused, &mut rng).unwrap());
 

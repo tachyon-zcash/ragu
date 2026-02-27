@@ -10,7 +10,7 @@ use ragu_core::{
 };
 use ragu_pcd::{
     header::{Header, Suffix},
-    step::{Encoded, Index, Step},
+    step::{Encoded, Step},
 };
 use ragu_primitives::{Element, poseidon::Sponge};
 
@@ -49,7 +49,6 @@ pub struct Hash2<'params, C: Cycle> {
 }
 
 impl<C: Cycle> Step<C> for Hash2<'_, C> {
-    const INDEX: Index = Index::new(1);
     type Witness<'source> = ();
     type Aux<'source> = C::CircuitField;
     type Left = LeafNode;
@@ -92,7 +91,6 @@ pub struct WitnessLeaf<'params, C: Cycle> {
 }
 
 impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
-    const INDEX: Index = Index::new(0);
     type Witness<'source> = C::CircuitField;
     type Aux<'source> = C::CircuitField;
     type Left = ();
