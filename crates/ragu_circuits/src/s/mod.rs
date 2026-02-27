@@ -92,7 +92,7 @@ use ragu_core::{
     drivers::{Driver, LinearExpression},
 };
 
-pub(crate) mod common;
+mod common;
 pub mod sx;
 pub mod sxy;
 pub mod sy;

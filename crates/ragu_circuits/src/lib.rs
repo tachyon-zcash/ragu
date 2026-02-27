@@ -31,7 +31,7 @@ pub use rx::Trace;
 #[cfg(test)]
 mod tests;
 
-use ff::{Field, PrimeField};
+use ff::Field;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue},
@@ -120,7 +120,6 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
     fn into_object<'a, R: Rank>(self) -> Result<Box<dyn CircuitObject<F, R> + 'a>>
     where
         Self: 'a,
-        F: PrimeField,
     {
         let metrics = metrics::eval(&self)?;
 

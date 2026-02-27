@@ -576,7 +576,7 @@ fn test_root_identity() {
 /// Guard against accidental changes to the fingerprint computation.
 #[test]
 fn test_known_value_regression() {
-    assert_eq!(fingerprint_elem(&SquareOnce).scalar(), 21);
+    assert_eq!(fingerprint_elem(&SquareOnce).scalar(), 12737696307900500113);
 }
 
 /// Fingerprint from metrics::eval matches standalone fingerprint_routine.
