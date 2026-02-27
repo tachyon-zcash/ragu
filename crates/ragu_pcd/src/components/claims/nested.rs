@@ -144,3 +144,156 @@ pub fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
         // Stage checks: k(y) = 0 (infinite, matches how native does it)
         .chain(core::iter::repeat(source.zero()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::circuits::nested::{InternalCircuitIndex, NUM_ENDOSCALING_POINTS};
+    use crate::components::endoscalar::NumStepsLen;
+    use alloc::vec::Vec;
+    use ragu_primitives::vec::Len;
+
+    /// Mock KySource that returns u32 values (1 and 0).
+    struct MockKySource;
+
+    impl KySource for MockKySource {
+        type Ky = u32;
+        fn one(&self) -> u32 {
+            1
+        }
+        fn zero(&self) -> u32 {
+            0
+        }
+    }
+
+    /// Mock Source providing a single proof with unique rx tags.
+    struct SingleProofSource;
+
+    impl super::super::Source for SingleProofSource {
+        type RxComponent = RxComponent;
+        type Rx = (RxComponent, usize);
+        type AppCircuitId = ();
+
+        fn rx(&self, component: RxComponent) -> impl Iterator<Item = Self::Rx> {
+            core::iter::once((component, 0))
+        }
+
+        fn app_circuits(&self) -> impl Iterator<Item = ()> {
+            core::iter::empty()
+        }
+    }
+
+    /// Recording processor that logs calls in order.
+    #[derive(Default)]
+    struct RecordingProcessor {
+        /// (call_type, circuit_id_variant, rx_count)
+        calls: Vec<(&'static str, &'static str, usize)>,
+    }
+
+    impl Processor<(RxComponent, usize)> for RecordingProcessor {
+        fn internal_circuit(
+            &mut self,
+            id: InternalCircuitIndex,
+            rxs: impl Iterator<Item = (RxComponent, usize)>,
+        ) {
+            let rx_count = rxs.count();
+            let name = match id {
+                InternalCircuitIndex::EndoscalarStage => "EndoscalarStage",
+                InternalCircuitIndex::PointsStage => "PointsStage",
+                InternalCircuitIndex::PointsFinalStaged => "PointsFinalStaged",
+                InternalCircuitIndex::EndoscalingStep(_) => "EndoscalingStep",
+            };
+            self.calls.push(("circuit", name, rx_count));
+        }
+
+        fn stage(
+            &mut self,
+            id: InternalCircuitIndex,
+            rxs: impl Iterator<Item = (RxComponent, usize)>,
+        ) -> Result<()> {
+            let rx_count = rxs.count();
+            let name = match id {
+                InternalCircuitIndex::EndoscalarStage => "EndoscalarStage",
+                InternalCircuitIndex::PointsStage => "PointsStage",
+                InternalCircuitIndex::PointsFinalStaged => "PointsFinalStaged",
+                InternalCircuitIndex::EndoscalingStep(_) => "EndoscalingStep",
+            };
+            self.calls.push(("stage", name, rx_count));
+            Ok(())
+        }
+    }
+
+    /// Issue #347: ky_values produces num_steps ones then zeros.
+    #[test]
+    fn ky_values_ones_then_zeros() {
+        let num_steps = NumStepsLen::<NUM_ENDOSCALING_POINTS>::len();
+        let values: Vec<u32> = ky_values(&MockKySource).take(num_steps + 10).collect();
+
+        // First num_steps values should be 1
+        for (i, &v) in values[..num_steps].iter().enumerate() {
+            assert_eq!(v, 1, "ky_values[{i}] should be 1 (circuit check)");
+        }
+        // Remaining should be 0
+        for (i, &v) in values[num_steps..].iter().enumerate() {
+            assert_eq!(
+                v,
+                0,
+                "ky_values[{}] should be 0 (stage check)",
+                num_steps + i
+            );
+        }
+    }
+
+    /// Issue #347: build processes num_steps circuit calls then 3 stage calls.
+    #[test]
+    fn build_ordering() -> Result<()> {
+        let source = SingleProofSource;
+        let mut processor = RecordingProcessor::default();
+        build(&source, &mut processor)?;
+
+        let num_steps = NumStepsLen::<NUM_ENDOSCALING_POINTS>::len();
+
+        // First num_steps calls should be circuit calls (EndoscalingStep)
+        for call in &processor.calls[..num_steps] {
+            assert_eq!(call.0, "circuit");
+            assert_eq!(call.1, "EndoscalingStep");
+        }
+
+        // Next 3 calls should be stage calls
+        assert_eq!(processor.calls[num_steps], ("stage", "EndoscalarStage", 1));
+        assert_eq!(processor.calls[num_steps + 1], ("stage", "PointsStage", 1));
+        assert_eq!(
+            processor.calls[num_steps + 2].0,
+            "stage",
+            "third stage call"
+        );
+        assert_eq!(
+            processor.calls[num_steps + 2].1,
+            "PointsFinalStaged",
+            "third stage is PointsFinalStaged"
+        );
+
+        // Total calls: num_steps circuits + 3 stages
+        assert_eq!(processor.calls.len(), num_steps + 3);
+        Ok(())
+    }
+
+    /// Issue #347: each EndoscalingStep circuit call receives 3 rx values.
+    #[test]
+    fn build_circuit_rx_components() -> Result<()> {
+        let source = SingleProofSource;
+        let mut processor = RecordingProcessor::default();
+        build(&source, &mut processor)?;
+
+        let num_steps = NumStepsLen::<NUM_ENDOSCALING_POINTS>::len();
+
+        // Each circuit call should have 3 rx values (step + endo + points)
+        for (i, call) in processor.calls[..num_steps].iter().enumerate() {
+            assert_eq!(
+                call.2, 3,
+                "EndoscalingStep circuit call {i} should have 3 rx values"
+            );
+        }
+        Ok(())
+    }
+}

@@ -56,3 +56,82 @@ impl<'a, 'dr, D: Driver<'dr>> Buffer<'dr, D> for Horner<'a, 'dr, D> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ff::Field;
+    use ragu_core::{drivers::emulator::Emulator, maybe::Maybe};
+    use ragu_pasta::Fp;
+
+    /// Issue #347: Horner with no writes returns zero.
+    #[test]
+    fn empty_returns_zero() -> Result<()> {
+        let dr = &mut Emulator::execute();
+        let point = Element::constant(dr, Fp::from(5));
+        let horner = Horner::new(&point);
+        let result = *horner.finish(dr).value().take();
+        assert_eq!(result, Fp::ZERO);
+        Ok(())
+    }
+
+    /// Issue #347: Horner with a single write returns that value.
+    #[test]
+    fn single_element() -> Result<()> {
+        let dr = &mut Emulator::execute();
+        let point = Element::constant(dr, Fp::from(5));
+        let mut horner = Horner::new(&point);
+        let val = Element::constant(dr, Fp::from(42));
+        horner.write(dr, &val)?;
+        let result = *horner.finish(dr).value().take();
+        assert_eq!(result, Fp::from(42));
+        Ok(())
+    }
+
+    /// Issue #347: Horner evaluates p(x) = 3x^2 + 2x + 1 at x=5 → 86.
+    #[test]
+    fn evaluates_polynomial() -> Result<()> {
+        let dr = &mut Emulator::execute();
+        let point = Element::constant(dr, Fp::from(5));
+        let mut horner = Horner::new(&point);
+
+        // Write coefficients in descending order: 3, 2, 1
+        for &c in &[3u64, 2, 1] {
+            let elem = Element::constant(dr, Fp::from(c));
+            horner.write(dr, &elem)?;
+        }
+
+        let result = *horner.finish(dr).value().take();
+        // 3*25 + 2*5 + 1 = 75 + 10 + 1 = 86
+        assert_eq!(result, Fp::from(86));
+        Ok(())
+    }
+
+    /// Issue #347: Horner matches manual evaluation on random coefficients.
+    #[test]
+    fn random_polynomial() -> Result<()> {
+        let mut rng = rand::rng();
+        let dr = &mut Emulator::execute();
+
+        let x = Fp::random(&mut rng);
+        let point = Element::constant(dr, x);
+
+        let coeffs: Vec<Fp> = (0..10).map(|_| Fp::random(&mut rng)).collect();
+
+        let mut horner = Horner::new(&point);
+        for &c in &coeffs {
+            let elem = Element::constant(dr, c);
+            horner.write(dr, &elem)?;
+        }
+        let result = *horner.finish(dr).value().take();
+
+        // Manual Horner evaluation
+        let mut expected = Fp::ZERO;
+        for &c in &coeffs {
+            expected = expected * x + c;
+        }
+
+        assert_eq!(result, expected);
+        Ok(())
+    }
+}

@@ -334,3 +334,242 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
         self.zero.clone()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::circuits::native::InternalCircuitIndex;
+    use alloc::vec::Vec;
+
+    /// Mock KySource using string labels to trace ordering.
+    struct MockKySource;
+
+    impl KySource for MockKySource {
+        type Ky = &'static str;
+
+        fn raw_c(&self) -> impl Iterator<Item = &'static str> {
+            ["raw_c_L", "raw_c_R"].into_iter()
+        }
+
+        fn application_ky(&self) -> impl Iterator<Item = &'static str> {
+            ["app_L", "app_R"].into_iter()
+        }
+
+        fn unified_bridge_ky(&self) -> impl Iterator<Item = &'static str> {
+            ["bridge_L", "bridge_R"].into_iter()
+        }
+
+        fn unified_ky(&self) -> impl Iterator<Item = &'static str> + Clone {
+            ["unified_L", "unified_R"].into_iter()
+        }
+
+        fn zero(&self) -> &'static str {
+            "zero"
+        }
+    }
+
+    /// Mock Source providing two proofs with tagged rx values.
+    struct TwoProofSource;
+
+    impl super::super::Source for TwoProofSource {
+        type RxComponent = RxComponent;
+        type Rx = (&'static str, usize);
+        type AppCircuitId = usize;
+
+        fn rx(&self, component: RxComponent) -> impl Iterator<Item = Self::Rx> {
+            let label = match component {
+                RxComponent::AbA => "AbA",
+                RxComponent::AbB => "AbB",
+                RxComponent::Application => "Application",
+                RxComponent::Hashes1 => "Hashes1",
+                RxComponent::Hashes2 => "Hashes2",
+                RxComponent::PartialCollapse => "PartialCollapse",
+                RxComponent::FullCollapse => "FullCollapse",
+                RxComponent::ComputeV => "ComputeV",
+                RxComponent::Preamble => "Preamble",
+                RxComponent::ErrorM => "ErrorM",
+                RxComponent::ErrorN => "ErrorN",
+                RxComponent::Query => "Query",
+                RxComponent::Eval => "Eval",
+            };
+            [(label, 0), (label, 1)].into_iter()
+        }
+
+        fn app_circuits(&self) -> impl Iterator<Item = usize> {
+            [0, 1].into_iter()
+        }
+    }
+
+    /// Recording processor that logs calls in order.
+    #[derive(Default)]
+    struct RecordingProcessor {
+        calls: Vec<Call>,
+    }
+
+    /// A single recorded processor call for test assertions.
+    struct Call {
+        kind: &'static str,
+        id: &'static str,
+        rx_count: usize,
+    }
+
+    fn ici_name(id: InternalCircuitIndex) -> &'static str {
+        match id {
+            InternalCircuitIndex::PreambleStage => "PreambleStage",
+            InternalCircuitIndex::ErrorMStage => "ErrorMStage",
+            InternalCircuitIndex::ErrorNStage => "ErrorNStage",
+            InternalCircuitIndex::QueryStage => "QueryStage",
+            InternalCircuitIndex::EvalStage => "EvalStage",
+            InternalCircuitIndex::ErrorMFinalStaged => "ErrorMFinalStaged",
+            InternalCircuitIndex::ErrorNFinalStaged => "ErrorNFinalStaged",
+            InternalCircuitIndex::EvalFinalStaged => "EvalFinalStaged",
+            InternalCircuitIndex::Hashes1Circuit => "Hashes1Circuit",
+            InternalCircuitIndex::Hashes2Circuit => "Hashes2Circuit",
+            InternalCircuitIndex::PartialCollapseCircuit => "PartialCollapseCircuit",
+            InternalCircuitIndex::FullCollapseCircuit => "FullCollapseCircuit",
+            InternalCircuitIndex::ComputeVCircuit => "ComputeVCircuit",
+        }
+    }
+
+    impl Processor<(&'static str, usize), usize> for RecordingProcessor {
+        fn raw_claim(&mut self, _a: (&'static str, usize), _b: (&'static str, usize)) {
+            self.calls.push(Call {
+                kind: "raw",
+                id: "raw",
+                rx_count: 2,
+            });
+        }
+
+        fn circuit(&mut self, _app_id: usize, _rx: (&'static str, usize)) {
+            self.calls.push(Call {
+                kind: "circuit",
+                id: "app",
+                rx_count: 1,
+            });
+        }
+
+        fn internal_circuit(
+            &mut self,
+            id: InternalCircuitIndex,
+            rxs: impl Iterator<Item = (&'static str, usize)>,
+        ) {
+            let rx_count = rxs.count();
+            self.calls.push(Call {
+                kind: "internal_circuit",
+                id: ici_name(id),
+                rx_count,
+            });
+        }
+
+        fn stage(
+            &mut self,
+            id: InternalCircuitIndex,
+            rxs: impl Iterator<Item = (&'static str, usize)>,
+        ) -> Result<()> {
+            let rx_count = rxs.count();
+            self.calls.push(Call {
+                kind: "stage",
+                id: ici_name(id),
+                rx_count,
+            });
+            Ok(())
+        }
+    }
+
+    /// Issue #347: ky_values ordering matches build ordering.
+    #[test]
+    fn ky_values_ordering() {
+        let values: Vec<&str> = ky_values(&MockKySource).take(22).collect();
+
+        // 2 raw_c
+        assert_eq!(&values[0..2], &["raw_c_L", "raw_c_R"]);
+        // 2 app
+        assert_eq!(&values[2..4], &["app_L", "app_R"]);
+        // 2 bridge
+        assert_eq!(&values[4..6], &["bridge_L", "bridge_R"]);
+        // 8 unified (4 circuits * 2 proofs)
+        for i in 0..NUM_UNIFIED_CIRCUITS {
+            let base = 6 + i * 2;
+            assert_eq!(values[base], "unified_L", "unified block {i} left");
+            assert_eq!(values[base + 1], "unified_R", "unified block {i} right");
+        }
+        // Then zeros
+        assert_eq!(values[14], "zero");
+        assert_eq!(values[15], "zero");
+    }
+
+    /// Issue #347: build processes calls in the correct order.
+    #[test]
+    fn build_ordering() -> Result<()> {
+        let source = TwoProofSource;
+        let mut processor = RecordingProcessor::default();
+        build(&source, &mut processor)?;
+
+        let names: Vec<(&str, &str)> = processor.calls.iter().map(|c| (c.kind, c.id)).collect();
+
+        // Expected order (2 proofs each):
+        // 2 raw claims, 2 app circuits,
+        // 2 hashes_1, 2 hashes_2, 2 partial_collapse, 2 full_collapse, 2 compute_v,
+        // 8 stages
+        let expected: Vec<(&str, &str)> = vec![
+            ("raw", "raw"),
+            ("raw", "raw"),
+            ("circuit", "app"),
+            ("circuit", "app"),
+            ("internal_circuit", "Hashes1Circuit"),
+            ("internal_circuit", "Hashes1Circuit"),
+            ("internal_circuit", "Hashes2Circuit"),
+            ("internal_circuit", "Hashes2Circuit"),
+            ("internal_circuit", "PartialCollapseCircuit"),
+            ("internal_circuit", "PartialCollapseCircuit"),
+            ("internal_circuit", "FullCollapseCircuit"),
+            ("internal_circuit", "FullCollapseCircuit"),
+            ("internal_circuit", "ComputeVCircuit"),
+            ("internal_circuit", "ComputeVCircuit"),
+            ("stage", "ErrorMFinalStaged"),
+            ("stage", "ErrorNFinalStaged"),
+            ("stage", "EvalFinalStaged"),
+            ("stage", "PreambleStage"),
+            ("stage", "ErrorMStage"),
+            ("stage", "ErrorNStage"),
+            ("stage", "QueryStage"),
+            ("stage", "EvalStage"),
+        ];
+
+        assert_eq!(names, expected);
+        Ok(())
+    }
+
+    /// Issue #347: internal circuit calls receive the correct rx count.
+    #[test]
+    fn internal_circuit_rx_counts() -> Result<()> {
+        let source = TwoProofSource;
+        let mut processor = RecordingProcessor::default();
+        build(&source, &mut processor)?;
+
+        // Filter to internal_circuit calls only
+        let internal: Vec<(&str, usize)> = processor
+            .calls
+            .iter()
+            .filter(|c| c.kind == "internal_circuit")
+            .map(|c| (c.id, c.rx_count))
+            .collect();
+
+        // hashes_1: 3 rx each (Hashes1 + Preamble + ErrorN)
+        assert_eq!(internal[0], ("Hashes1Circuit", 3));
+        assert_eq!(internal[1], ("Hashes1Circuit", 3));
+        // hashes_2: 2 rx each (Hashes2 + ErrorN)
+        assert_eq!(internal[2], ("Hashes2Circuit", 2));
+        assert_eq!(internal[3], ("Hashes2Circuit", 2));
+        // partial_collapse: 4 rx each (PC + Preamble + ErrorM + ErrorN)
+        assert_eq!(internal[4], ("PartialCollapseCircuit", 4));
+        assert_eq!(internal[5], ("PartialCollapseCircuit", 4));
+        // full_collapse: 3 rx each (FC + Preamble + ErrorN)
+        assert_eq!(internal[6], ("FullCollapseCircuit", 3));
+        assert_eq!(internal[7], ("FullCollapseCircuit", 3));
+        // compute_v: 4 rx each (CV + Preamble + Query + Eval)
+        assert_eq!(internal[8], ("ComputeVCircuit", 4));
+        assert_eq!(internal[9], ("ComputeVCircuit", 4));
+        Ok(())
+    }
+}

@@ -44,3 +44,41 @@ where
         self.inner.enforce_consistent(dr)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ragu_core::{drivers::emulator::Emulator, gadgets::Kind, maybe::Maybe};
+    use ragu_pasta::Fp;
+    use ragu_primitives::GadgetExt;
+
+    /// Issue #347: Write serializes inner first, then suffix.
+    #[test]
+    fn write_appends_suffix_after_inner() -> Result<()> {
+        let dr = &mut Emulator::execute();
+        let inner = Element::constant(dr, Fp::from(10));
+        let suffix = Element::constant(dr, Fp::from(20));
+        let ws: WithSuffix<'_, _, Kind![Fp; Element<'_, _>]> = WithSuffix::new(inner, suffix);
+
+        let mut buffer = vec![];
+        ws.write(dr, &mut buffer)?;
+
+        assert_eq!(buffer.len(), 2);
+        assert_eq!(*buffer[0].value().take(), Fp::from(10));
+        assert_eq!(*buffer[1].value().take(), Fp::from(20));
+        Ok(())
+    }
+
+    /// Issue #347: enforce_consistent delegates to inner gadget.
+    #[test]
+    fn consistent_delegates_to_inner() -> Result<()> {
+        let dr = &mut Emulator::execute();
+        let inner = Element::constant(dr, Fp::from(10));
+        let suffix = Element::constant(dr, Fp::from(20));
+        let ws: WithSuffix<'_, _, Kind![Fp; Element<'_, _>]> = WithSuffix::new(inner, suffix);
+
+        // Element's Consistent is a no-op; verify delegation succeeds
+        ws.enforce_consistent(dr)?;
+        Ok(())
+    }
+}
