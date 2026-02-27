@@ -35,7 +35,7 @@ pub(crate) const NUM_INTERNAL_STEPS: usize = 2;
 
 /// A handle to a registered [`Step`] that carries the auto-assigned circuit
 /// index.
-/// 
+///
 /// Returned by [`ApplicationBuilder::register`](crate::ApplicationBuilder::register)
 /// and required by [`Application::seed`](crate::Application::seed) and
 /// [`Application::fuse`](crate::Application::fuse) to identify which circuit to
