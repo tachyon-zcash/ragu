@@ -69,7 +69,8 @@ pub fn rand_unstructured_poly(rng: &mut StdRng) -> unstructured::Polynomial<Fp, 
 }
 
 pub fn builder_squares<'a>() -> RegistryBuilder<'a, Fp, ProductionRank> {
-    RegistryBuilder::<'a, Fp, ProductionRank>::new()
+    let mut builder = RegistryBuilder::<'a, Fp, ProductionRank>::new();
+    builder
         .register_circuit(SquareCircuit { times: 2 })
         .unwrap()
         .register_circuit(SquareCircuit { times: 10 })
@@ -85,11 +86,13 @@ pub fn builder_squares<'a>() -> RegistryBuilder<'a, Fp, ProductionRank> {
         .register_circuit(SquareCircuit { times: 19 })
         .unwrap()
         .register_circuit(SquareCircuit { times: 19 })
-        .unwrap()
+        .unwrap();
+    builder
 }
 
 pub fn builder_simple<'a>() -> RegistryBuilder<'a, Fp, TestRank> {
-    RegistryBuilder::<'a, Fp, TestRank>::new()
+    let mut builder = RegistryBuilder::<'a, Fp, TestRank>::new();
+    builder
         .register_circuit(MySimpleCircuit)
         .unwrap()
         .register_circuit(MySimpleCircuit)
@@ -97,7 +100,8 @@ pub fn builder_simple<'a>() -> RegistryBuilder<'a, Fp, TestRank> {
         .register_circuit(MySimpleCircuit)
         .unwrap()
         .register_circuit(MySimpleCircuit)
-        .unwrap()
+        .unwrap();
+    builder
 }
 
 pub fn registry_simple<'a>() -> Registry<'a, Fp, TestRank> {

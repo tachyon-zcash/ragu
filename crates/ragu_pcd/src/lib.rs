@@ -77,9 +77,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
 
         let step_index = self.num_application_steps;
 
-        let registry = core::mem::replace(&mut self.native_registry, RegistryBuilder::new());
-        self.native_registry =
-            registry.register_circuit(Adapter::<C, S, R, HEADER_SIZE>::new(step))?;
+        self.native_registry
+            .register_circuit(Adapter::<C, S, R, HEADER_SIZE>::new(step))?;
         self.num_application_steps += 1;
 
         let circuit_index = ragu_circuits::registry::CircuitIndex::new(
@@ -98,8 +97,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     #[cfg(test)]
     pub(crate) fn register_dummy_circuits(&mut self, count: usize) -> Result<()> {
         for _ in 0..count {
-            let registry = core::mem::replace(&mut self.native_registry, RegistryBuilder::new());
-            self.native_registry = registry.register_circuit(())?;
+            self.native_registry.register_circuit(())?;
             self.num_application_steps += 1;
         }
         Ok(())
@@ -120,23 +118,21 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             circuits::native::total_circuit_counts(self.num_application_steps);
 
         // First, register internal masks and circuits
-        self.native_registry = circuits::native::register_all::<C, R, HEADER_SIZE>(
-            self.native_registry,
+        circuits::native::register_all::<C, R, HEADER_SIZE>(
+            &mut self.native_registry,
             params,
             log2_circuits,
         )?;
 
         // Then, register internal steps
-        self.native_registry =
-            self.native_registry.register_internal_circuit(
-                Adapter::<C, _, R, HEADER_SIZE>::new(
-                    step::internal::rerandomize::Rerandomize::<()>::new(),
-                ),
-            )?;
-        self.native_registry =
-            self.native_registry.register_internal_circuit(
-                Adapter::<C, _, R, HEADER_SIZE>::new(step::internal::trivial::Trivial),
-            )?;
+        self.native_registry
+            .register_internal_circuit(Adapter::<C, _, R, HEADER_SIZE>::new(
+                step::internal::rerandomize::Rerandomize::<()>::new(),
+            ))?;
+        self.native_registry
+            .register_internal_circuit(Adapter::<C, _, R, HEADER_SIZE>::new(
+                step::internal::trivial::Trivial,
+            ))?;
 
         assert_eq!(
             self.native_registry.log2_circuits(),
@@ -150,7 +146,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         );
 
         // Register nested internal circuits (no application steps, no headers).
-        self.nested_registry = circuits::nested::register_all::<C, R>(self.nested_registry)?;
+        circuits::nested::register_all::<C, R>(&mut self.nested_registry)?;
 
         Ok(Application {
             native_registry: self.native_registry.finalize()?,

@@ -116,7 +116,7 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
     }
 
     /// Registers an application step circuit.
-    pub fn register_circuit<C>(mut self, circuit: C) -> Result<Self>
+    pub fn register_circuit<C>(&mut self, circuit: C) -> Result<&mut Self>
     where
         C: Circuit<F> + 'params,
     {
@@ -125,7 +125,7 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
     }
 
     /// Registers an internal circuit.
-    pub fn register_internal_circuit<C>(mut self, circuit: C) -> Result<Self>
+    pub fn register_internal_circuit<C>(&mut self, circuit: C) -> Result<&mut Self>
     where
         C: Circuit<F> + 'params,
     {
@@ -134,7 +134,7 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
     }
 
     /// Registers an internal stage mask.
-    pub fn register_internal_mask<S>(mut self) -> Result<Self>
+    pub fn register_internal_mask<S>(&mut self) -> Result<&mut Self>
     where
         S: Stage<F, R>,
     {
@@ -143,7 +143,7 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
     }
 
     /// Registers an internal final stage mask.
-    pub fn register_internal_final_mask<S>(mut self) -> Result<Self>
+    pub fn register_internal_final_mask<S>(&mut self) -> Result<&mut Self>
     where
         S: Stage<F, R>,
     {
@@ -612,7 +612,8 @@ mod tests {
 
     #[test]
     fn test_registry_circuit_consistency() -> Result<()> {
-        let registry = TestRegistryBuilder::new()
+        let mut builder = TestRegistryBuilder::new();
+        builder
             .register_circuit(SquareCircuit { times: 2 })?
             .register_circuit(SquareCircuit { times: 5 })?
             .register_circuit(SquareCircuit { times: 10 })?
@@ -620,8 +621,8 @@ mod tests {
             .register_circuit(SquareCircuit { times: 19 })?
             .register_circuit(SquareCircuit { times: 19 })?
             .register_circuit(SquareCircuit { times: 19 })?
-            .register_circuit(SquareCircuit { times: 19 })?
-            .finalize()?;
+            .register_circuit(SquareCircuit { times: 19 })?;
+        let registry = builder.finalize()?;
 
         let w = Fp::random(&mut rand::rng());
         let x = Fp::random(&mut rand::rng());
@@ -657,12 +658,13 @@ mod tests {
 
     #[test]
     fn test_registry_at_consistency() -> Result<()> {
-        let registry = TestRegistryBuilder::new()
+        let mut builder = TestRegistryBuilder::new();
+        builder
             .register_circuit(SquareCircuit { times: 2 })?
             .register_circuit(SquareCircuit { times: 5 })?
             .register_circuit(SquareCircuit { times: 10 })?
-            .register_circuit(SquareCircuit { times: 11 })?
-            .finalize()?;
+            .register_circuit(SquareCircuit { times: 11 })?;
+        let registry = builder.finalize()?;
 
         let w = Fp::random(&mut rand::rng());
         let x = Fp::random(&mut rand::rng());
@@ -703,10 +705,11 @@ mod tests {
 
     #[test]
     fn test_out_of_domain_w_uses_interpolation() -> Result<()> {
-        let registry = TestRegistryBuilder::new()
+        let mut builder = TestRegistryBuilder::new();
+        builder
             .register_circuit(SquareCircuit { times: 2 })?
-            .register_circuit(SquareCircuit { times: 5 })?
-            .finalize()?;
+            .register_circuit(SquareCircuit { times: 5 })?;
+        let registry = builder.finalize()?;
 
         let omega = registry.domain.omega();
 
@@ -726,10 +729,11 @@ mod tests {
     /// we forge a collision and verify evaluations are still correct.
     #[test]
     fn test_omega_key_collision() -> Result<()> {
-        let registry = TestRegistryBuilder::new()
+        let mut builder = TestRegistryBuilder::new();
+        builder
             .register_circuit(SquareCircuit { times: 2 })?
-            .register_circuit(SquareCircuit { times: 5 })?
-            .finalize()?;
+            .register_circuit(SquareCircuit { times: 5 })?;
+        let registry = builder.finalize()?;
 
         let omega = registry.domain.omega();
 
@@ -781,9 +785,9 @@ mod tests {
     #[test]
     fn test_single_circuit_registry() -> Result<()> {
         // Checks that a single circuit can be finalized without bit-shift overflows.
-        let _registry = TestRegistryBuilder::new()
-            .register_circuit(SquareCircuit { times: 1 })?
-            .finalize()?;
+        let mut builder = TestRegistryBuilder::new();
+        builder.register_circuit(SquareCircuit { times: 1 })?;
+        let _registry = builder.finalize()?;
 
         Ok(())
     }
@@ -836,7 +840,7 @@ mod tests {
             let mut builder = TestRegistryBuilder::new();
 
             for i in 0..num_circuits {
-                builder = builder.register_circuit(SquareCircuit { times: i })?;
+                builder.register_circuit(SquareCircuit { times: i })?;
             }
 
             let registry = builder.finalize()?;
@@ -859,12 +863,13 @@ mod tests {
 
     #[test]
     fn test_circuit_in_domain() -> Result<()> {
-        let registry = TestRegistryBuilder::new()
+        let mut builder = TestRegistryBuilder::new();
+        builder
             .register_circuit(SquareCircuit { times: 2 })?
             .register_circuit(SquareCircuit { times: 5 })?
             .register_circuit(SquareCircuit { times: 10 })?
-            .register_circuit(SquareCircuit { times: 11 })?
-            .finalize()?;
+            .register_circuit(SquareCircuit { times: 11 })?;
+        let registry = builder.finalize()?;
 
         // All registered circuit indices should be in the domain
         for i in 0..4 {
@@ -900,7 +905,7 @@ mod tests {
     #[test]
     fn test_registry_with_internal_circuits() -> Result<()> {
         // Create a builder
-        let builder = TestRegistryBuilder::new();
+        let mut builder = TestRegistryBuilder::new();
 
         // Verify initial state - no circuits registered yet
         assert_eq!(
@@ -915,7 +920,7 @@ mod tests {
         );
 
         // Register 2 internal circuits
-        let builder = builder
+        builder
             .register_internal_circuit(SquareCircuit { times: 2 })?
             .register_internal_circuit(SquareCircuit { times: 3 })?;
 
@@ -927,7 +932,7 @@ mod tests {
         assert_eq!(builder.num_circuits(), 2, "2 total registered circuits");
 
         // Register 2 application steps
-        let builder = builder
+        builder
             .register_circuit(SquareCircuit { times: 4 })?
             .register_circuit(SquareCircuit { times: 5 })?;
 
@@ -952,22 +957,24 @@ mod tests {
     #[test]
     fn test_internal_mixed_registration() -> Result<()> {
         // Test circuit count with sequential registration
-        let registry = TestRegistryBuilder::new()
+        let mut builder = TestRegistryBuilder::new();
+        builder
             .register_internal_circuit(SquareCircuit { times: 1 })?
             .register_internal_circuit(SquareCircuit { times: 2 })?
             .register_circuit(SquareCircuit { times: 3 })?
-            .register_circuit(SquareCircuit { times: 4 })?
-            .finalize()?;
+            .register_circuit(SquareCircuit { times: 4 })?;
+        let registry = builder.finalize()?;
 
         assert_eq!(registry.circuits().len(), 4);
 
         // Test circuit count with interleaved registration
-        let registry2 = TestRegistryBuilder::new()
+        let mut builder2 = TestRegistryBuilder::new();
+        builder2
             .register_circuit(SquareCircuit { times: 3 })?
             .register_internal_circuit(SquareCircuit { times: 1 })?
             .register_circuit(SquareCircuit { times: 4 })?
-            .register_internal_circuit(SquareCircuit { times: 2 })?
-            .finalize()?;
+            .register_internal_circuit(SquareCircuit { times: 2 })?;
+        let registry2 = builder2.finalize()?;
 
         assert_eq!(registry2.circuits().len(), 4);
 
