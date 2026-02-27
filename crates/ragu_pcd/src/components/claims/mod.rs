@@ -100,7 +100,7 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Builder<'m, 'rx, F, R> {
         self.b.push(Cow::Owned(b));
     }
 
-    /// Shared stage accumulation logic for both native and nested Processor impls.
+    /// Shared stage accumulation logic for both native and nested `Processor` impls.
     pub(crate) fn stage_impl(
         &mut self,
         circuit_id: CircuitIndex,
@@ -122,5 +122,61 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Builder<'m, 'rx, F, R> {
         self.a.push(a);
         self.b.push(Cow::Owned(sy));
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::borrow::Cow;
+    use ff::Field;
+    use ragu_circuits::polynomials::{TestRank, structured};
+    use ragu_pasta::Fp;
+
+    /// Issue #347: sum_polynomials with a single poly returns Cow::Borrowed.
+    #[test]
+    fn sum_single_borrows() {
+        let poly = structured::Polynomial::<Fp, TestRank>::random(&mut rand::rng());
+        let result = sum_polynomials([&poly].into_iter());
+        assert!(matches!(result, Cow::Borrowed(_)));
+        // Verify coefficients match
+        let x = Fp::random(&mut rand::rng());
+        assert_eq!(result.eval(x), poly.eval(x));
+    }
+
+    /// Issue #347: sum_polynomials with two polys returns Cow::Owned equal to p1+p2.
+    #[test]
+    fn sum_two_owns() {
+        let mut rng = rand::rng();
+        let p1 = structured::Polynomial::<Fp, TestRank>::random(&mut rng);
+        let p2 = structured::Polynomial::<Fp, TestRank>::random(&mut rng);
+
+        let result = sum_polynomials([&p1, &p2].into_iter());
+        assert!(matches!(result, Cow::Owned(_)));
+
+        let mut expected = p1.clone();
+        expected.add_assign(&p2);
+        // Verify result matches expected at a random evaluation point
+        let x = Fp::random(&mut rand::rng());
+        assert_eq!(result.eval(x), expected.eval(x));
+    }
+
+    /// Issue #347: sum_polynomials with many polys matches manual addition.
+    #[test]
+    fn sum_many() {
+        let mut rng = rand::rng();
+        let polys: Vec<structured::Polynomial<Fp, TestRank>> = (0..5)
+            .map(|_| structured::Polynomial::random(&mut rng))
+            .collect();
+
+        let result = sum_polynomials(polys.iter());
+
+        let mut expected = polys[0].clone();
+        for p in &polys[1..] {
+            expected.add_assign(p);
+        }
+        // Verify result matches expected at a random evaluation point
+        let x = Fp::random(&mut rand::rng());
+        assert_eq!(result.eval(x), expected.eval(x));
     }
 }
