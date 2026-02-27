@@ -63,7 +63,7 @@ bench-macos *ARGS:
     docker attach --no-stdin $container
 
 bench-linux *ARGS: _gungraun_setup
-    cargo bench --workspace --all-features {{ARGS}}
+    cargo bench --workspace --all-features --bench arithmetic --bench circuits --bench pcd --bench primitives {{ARGS}}
 
 # run CI checks locally (formatting, clippy, tests)
 ci_local: _book_setup

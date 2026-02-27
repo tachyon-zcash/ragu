@@ -21,6 +21,9 @@ all-features = true
 
 [features]
 default = []
+multicore = [
+  "ragu_arithmetic/multicore",
+]
 
 [lib]
 bench = false
@@ -68,6 +71,8 @@ lazy_static = "1.5.0"
 proptest = "1.7.0"
 gungraun = "0.17.0"
 blake2b_simd = "1.0"
+rayon = "1.11.0"
+criterion = { version = "0.5", default-features = false }
 
 [patch.crates-io]
 # `ebfull/addchain` branch `bump-num-bigint` is a replica of
