@@ -96,12 +96,13 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     /// number of application steps, without needing real [`Step`]
     /// implementations.
     #[cfg(test)]
-    pub(crate) fn register_dummy_circuits(mut self, count: usize) -> Result<Self> {
+    pub(crate) fn register_dummy_circuits(&mut self, count: usize) -> Result<()> {
         for _ in 0..count {
-            self.native_registry = self.native_registry.register_circuit(())?;
+            let registry = core::mem::replace(&mut self.native_registry, RegistryBuilder::new());
+            self.native_registry = registry.register_circuit(())?;
             self.num_application_steps += 1;
         }
-        Ok(self)
+        Ok(())
     }
 
     /// Perform finalization and optimization steps to produce the
@@ -199,7 +200,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     pub fn seed<'source, RNG: CryptoRng, S: Step<C, Left = (), Right = ()>>(
         &self,
         rng: &mut RNG,
-        handle: &StepHandle<S>,
+        handle: StepHandle<S>,
         step: S,
         witness: S::Witness<'source>,
     ) -> Result<(Proof<C, R>, S::Aux<'source>)> {

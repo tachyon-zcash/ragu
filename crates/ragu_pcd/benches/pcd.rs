@@ -57,7 +57,7 @@ fn seed(
 ) {
     black_box(app.seed(
         &mut rng,
-        &leaf_handle,
+        leaf_handle,
         nontrivial::WitnessLeaf { poseidon_params },
         Fp::from(42u64),
     ))
@@ -78,7 +78,7 @@ fn fuse(
 ) {
     black_box(app.fuse(
         &mut rng,
-        &hash_handle,
+        hash_handle,
         nontrivial::Hash2 { poseidon_params },
         (),
         leaf1,

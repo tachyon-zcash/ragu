@@ -21,7 +21,7 @@ pub(crate) struct Rerandomize<H> {
 }
 
 impl<H> Rerandomize<H> {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Rerandomize {
             _marker: PhantomData,
         }

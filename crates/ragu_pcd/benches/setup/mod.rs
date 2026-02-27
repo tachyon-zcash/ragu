@@ -83,7 +83,7 @@ pub fn setup_fuse() -> (
     let (proof1, aux1) = app
         .seed(
             &mut rng,
-            &leaf_handle,
+            leaf_handle,
             nontrivial::WitnessLeaf { poseidon_params },
             Fp::from(1u64),
         )
@@ -93,7 +93,7 @@ pub fn setup_fuse() -> (
     let (proof2, aux2) = app
         .seed(
             &mut rng,
-            &leaf_handle,
+            leaf_handle,
             nontrivial::WitnessLeaf { poseidon_params },
             Fp::from(2u64),
         )
@@ -113,7 +113,7 @@ pub fn setup_verify_leaf() -> (
     let (proof, aux) = app
         .seed(
             &mut rng,
-            &leaf_handle,
+            leaf_handle,
             nontrivial::WitnessLeaf { poseidon_params },
             Fp::from(1u64),
         )
@@ -133,7 +133,7 @@ pub fn setup_verify_node() -> (
     let (proof1, aux1) = app
         .seed(
             &mut rng,
-            &leaf_handle,
+            leaf_handle,
             nontrivial::WitnessLeaf { poseidon_params },
             Fp::from(1u64),
         )
@@ -143,7 +143,7 @@ pub fn setup_verify_node() -> (
     let (proof2, aux2) = app
         .seed(
             &mut rng,
-            &leaf_handle,
+            leaf_handle,
             nontrivial::WitnessLeaf { poseidon_params },
             Fp::from(2u64),
         )
@@ -153,7 +153,7 @@ pub fn setup_verify_node() -> (
     let (proof, aux) = app
         .fuse(
             &mut rng,
-            &hash_handle,
+            hash_handle,
             nontrivial::Hash2 { poseidon_params },
             (),
             leaf1,

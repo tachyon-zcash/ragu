@@ -274,7 +274,7 @@ The application can now be used to create and verify proofs:
 // Create first leaf using seed
 let leaf1 = app.seed(
     &mut rng,
-    &create_leaf,
+    create_leaf,
     CreateLeaf { poseidon_params: Pasta::circuit_poseidon(pasta) },
     Fp::from(100u64),  // Hash the value 100
 )?;
@@ -285,7 +285,7 @@ println!("Leaf 1 verified (value: 100)");
 // Create second leaf
 let leaf2 = app.seed(
     &mut rng,
-    &create_leaf,
+    create_leaf,
     CreateLeaf { poseidon_params: Pasta::circuit_poseidon(pasta) },
     Fp::from(200u64),  // Hash the value 200
 )?;
@@ -296,7 +296,7 @@ println!("Leaf 2 verified (value: 200)");
 // Combine leaves into internal node using fuse
 let node1 = app.fuse(
     &mut rng,
-    &combine_nodes,
+    combine_nodes,
     CombineNodes { poseidon_params: Pasta::circuit_poseidon(pasta) },
     (),  // No extra witness
     leaf1,

@@ -30,11 +30,9 @@ type Eval = eval::Stage<Pasta, R, HEADER_SIZE>;
 fn test_internal_circuit_constraint_counts() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
-        .register_dummy_circuits(NUM_APP_STEPS)
-        .unwrap()
-        .finalize(pasta)
-        .unwrap();
+    let mut builder = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new();
+    builder.register_dummy_circuits(NUM_APP_STEPS).unwrap();
+    let app = builder.finalize(pasta).unwrap();
 
     let circuits = app.native_registry.circuits();
 
@@ -92,11 +90,9 @@ fn test_internal_stage_parameters() {
 fn print_internal_circuit_constraint_counts() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
-        .register_dummy_circuits(NUM_APP_STEPS)
-        .unwrap()
-        .finalize(pasta)
-        .unwrap();
+    let mut builder = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new();
+    builder.register_dummy_circuits(NUM_APP_STEPS).unwrap();
+    let app = builder.finalize(pasta).unwrap();
 
     let circuits = app.native_registry.circuits();
 
@@ -162,11 +158,9 @@ fn print_internal_stage_parameters() {
 fn test_native_registry_digest() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
-        .register_dummy_circuits(NUM_APP_STEPS)
-        .unwrap()
-        .finalize(pasta)
-        .unwrap();
+    let mut builder = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new();
+    builder.register_dummy_circuits(NUM_APP_STEPS).unwrap();
+    let app = builder.finalize(pasta).unwrap();
 
     let expected = fp!(0x3fa421a73ff73957cc8c40c4184c576f0e28e2cf88a4281b9f28fad818ad9726);
 
@@ -186,11 +180,9 @@ fn test_native_registry_digest() {
 fn test_nested_registry_digest() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
-        .register_dummy_circuits(NUM_APP_STEPS)
-        .unwrap()
-        .finalize(pasta)
-        .unwrap();
+    let mut builder = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new();
+    builder.register_dummy_circuits(NUM_APP_STEPS).unwrap();
+    let app = builder.finalize(pasta).unwrap();
 
     let expected = fq!(0x245758c98f3c46ca03bfafe1bb50c38d0dcaed48231fd7547f40e3b208e67729);
 
@@ -209,11 +201,9 @@ fn print_registry_digests() {
 
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
-        .register_dummy_circuits(NUM_APP_STEPS)
-        .unwrap()
-        .finalize(pasta)
-        .unwrap();
+    let mut builder = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new();
+    builder.register_dummy_circuits(NUM_APP_STEPS).unwrap();
+    let app = builder.finalize(pasta).unwrap();
 
     let native_digest = app.native_registry.digest();
     let nested_digest = app.nested_registry.digest();

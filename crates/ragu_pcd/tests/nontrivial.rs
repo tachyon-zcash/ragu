@@ -23,7 +23,7 @@ fn various_merging_operations() -> Result<()> {
 
     let leaf1 = app.seed(
         &mut rng,
-        &witness_leaf_handle,
+        witness_leaf_handle,
         WitnessLeaf {
             poseidon_params: Pasta::circuit_poseidon(pasta),
         },
@@ -34,7 +34,7 @@ fn various_merging_operations() -> Result<()> {
 
     let leaf2 = app.seed(
         &mut rng,
-        &witness_leaf_handle,
+        witness_leaf_handle,
         WitnessLeaf {
             poseidon_params: Pasta::circuit_poseidon(pasta),
         },
@@ -45,7 +45,7 @@ fn various_merging_operations() -> Result<()> {
 
     let node1 = app.fuse(
         &mut rng,
-        &hash2_handle,
+        hash2_handle,
         Hash2 {
             poseidon_params: Pasta::circuit_poseidon(pasta),
         },

@@ -36,10 +36,25 @@ pub(crate) const NUM_INTERNAL_STEPS: usize = InternalStepIndex::Trivial as usize
 /// and required by [`Application::seed`](crate::Application::seed) and
 /// [`Application::fuse`](crate::Application::fuse) to identify which circuit to
 /// use during proving.
-#[derive(Copy, Clone)]
 pub struct StepHandle<S> {
     circuit_index: CircuitIndex,
     _marker: core::marker::PhantomData<fn() -> S>,
+}
+
+impl<S> Copy for StepHandle<S> {}
+
+impl<S> Clone for StepHandle<S> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<S> core::fmt::Debug for StepHandle<S> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("StepHandle")
+            .field("circuit_index", &self.circuit_index)
+            .finish()
+    }
 }
 
 impl<S> StepHandle<S> {
@@ -66,8 +81,6 @@ impl InternalStepIndex {
 
 #[test]
 fn test_index_map() {
-    use crate::circuits::native::NUM_INTERNAL_CIRCUITS;
-
     assert_eq!(
         InternalStepIndex::Rerandomize.circuit_index(),
         CircuitIndex::new(NUM_INTERNAL_CIRCUITS)

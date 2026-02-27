@@ -25,7 +25,7 @@ use ragu_primitives::{GadgetExt, Point, poseidon::Sponge, vec::CollectFixed};
 use rand::CryptoRng;
 
 use crate::{
-    Application, Pcd, Proof,
+    Application, Pcd, Proof, StepHandle,
     components::claims::{Source, native::RxComponent},
     proof,
     step::Step,
@@ -54,7 +54,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     pub fn fuse<'source, RNG: CryptoRng, S: Step<C>>(
         &self,
         rng: &mut RNG,
-        handle: &crate::StepHandle<S>,
+        handle: StepHandle<S>,
         step: S,
         witness: S::Witness<'source>,
         left: Pcd<'source, C, R, S::Left>,

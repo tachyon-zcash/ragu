@@ -143,7 +143,7 @@ fn rerandomization_flow() {
 
     let mut rng = StdRng::seed_from_u64(1234);
 
-    let seeded = app.seed(&mut rng, &step0_handle, Step0, ()).unwrap().0;
+    let seeded = app.seed(&mut rng, step0_handle, Step0, ()).unwrap().0;
     let seeded = seeded.carry::<HeaderA>(());
     assert!(app.verify(&seeded, &mut rng).unwrap());
 
@@ -152,7 +152,7 @@ fn rerandomization_flow() {
     assert!(app.verify(&seeded, &mut rng).unwrap());
 
     let fused = app
-        .fuse(&mut rng, &step1_handle, Step1, (), seeded.clone(), seeded)
+        .fuse(&mut rng, step1_handle, Step1, (), seeded.clone(), seeded)
         .unwrap()
         .0;
     let fused = fused.carry::<HeaderA>(());
@@ -171,7 +171,7 @@ fn multiple_rerandomizations_all_verify() {
 
     let mut rng = StdRng::seed_from_u64(9999);
 
-    let original = app.seed(&mut rng, &step0_handle, Step0, ()).unwrap().0;
+    let original = app.seed(&mut rng, step0_handle, Step0, ()).unwrap().0;
     let original = original.carry::<HeaderA>(());
     assert!(app.verify(&original, &mut rng).unwrap());
 
@@ -200,7 +200,7 @@ fn rerandomization_preserves_header_data() {
     let test_data = Fp::from(123456789u64);
 
     let original = app
-        .seed(&mut rng, &step_handle, StepWithData, test_data)
+        .seed(&mut rng, step_handle, StepWithData, test_data)
         .unwrap()
         .0;
     let original = original.carry::<HeaderWithData>(test_data);
@@ -233,19 +233,19 @@ fn rerandomized_fused_proof_verifies() {
 
     // Create two seeded proofs
     let left = app
-        .seed(&mut rng, &step0_handle, Step0, ())
+        .seed(&mut rng, step0_handle, Step0, ())
         .unwrap()
         .0
         .carry::<HeaderA>(());
     let right = app
-        .seed(&mut rng, &step0_handle, Step0, ())
+        .seed(&mut rng, step0_handle, Step0, ())
         .unwrap()
         .0
         .carry::<HeaderA>(());
 
     // Fuse them
     let fused = app
-        .fuse(&mut rng, &step1_handle, Step1, (), left, right)
+        .fuse(&mut rng, step1_handle, Step1, (), left, right)
         .unwrap()
         .0;
     let fused = fused.carry::<HeaderA>(());
