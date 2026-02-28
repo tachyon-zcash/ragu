@@ -1,6 +1,17 @@
 mod setup;
 
-use gungraun::{library_benchmark, library_benchmark_group, main};
+use gungraun::{
+    Callgrind, FlamegraphConfig, LibraryBenchmarkConfig, library_benchmark,
+    library_benchmark_group, main,
+};
+
+fn bench_config() -> LibraryBenchmarkConfig {
+    let mut callgrind = Callgrind::default();
+    if std::env::var("RAGU_FLAMEGRAPH").is_ok() {
+        callgrind.flamegraph(FlamegraphConfig::default());
+    }
+    LibraryBenchmarkConfig::default().tool(callgrind).clone()
+}
 use pasta_curves::{EpAffine, Fp, Fq};
 use ragu_arithmetic::{Domain, dot, eval, factor, geosum, mul, poly_with_roots};
 use setup::{f, setup_domain_ell, setup_domain_fft, setup_rng, setup_with_rng, vec_affine, vec_f};
@@ -97,6 +108,7 @@ library_benchmark_group!(
 );
 
 main!(
+    config = bench_config();
     library_benchmark_groups = msm_ops,
     domain_ops,
     poly_ops,

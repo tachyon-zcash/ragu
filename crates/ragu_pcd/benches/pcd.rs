@@ -2,7 +2,18 @@
 
 mod setup;
 
-use gungraun::{library_benchmark, library_benchmark_group, main};
+use gungraun::{
+    Callgrind, FlamegraphConfig, LibraryBenchmarkConfig, library_benchmark,
+    library_benchmark_group, main,
+};
+
+fn bench_config() -> LibraryBenchmarkConfig {
+    let mut callgrind = Callgrind::default();
+    if std::env::var("RAGU_FLAMEGRAPH").is_ok() {
+        callgrind.flamegraph(FlamegraphConfig::default());
+    }
+    LibraryBenchmarkConfig::default().tool(callgrind).clone()
+}
 use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_pasta::{Fp, Pasta};
@@ -131,4 +142,7 @@ library_benchmark_group!(
     benchmarks = verify_leaf, verify_node, rerandomize
 );
 
-main!(library_benchmark_groups = app_setup, app_proof, app_verify);
+main!(
+    config = bench_config();
+    library_benchmark_groups = app_setup, app_proof, app_verify
+);

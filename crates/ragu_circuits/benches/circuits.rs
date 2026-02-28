@@ -4,7 +4,18 @@ mod setup;
 
 use std::hint::black_box;
 
-use gungraun::{library_benchmark, library_benchmark_group, main};
+use gungraun::{
+    Callgrind, FlamegraphConfig, LibraryBenchmarkConfig, library_benchmark,
+    library_benchmark_group, main,
+};
+
+fn bench_config() -> LibraryBenchmarkConfig {
+    let mut callgrind = Callgrind::default();
+    if std::env::var("RAGU_FLAMEGRAPH").is_ok() {
+        callgrind.flamegraph(FlamegraphConfig::default());
+    }
+    LibraryBenchmarkConfig::default().tool(callgrind).clone()
+}
 use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::{ProductionRank, TestRank, structured, unstructured};
 use ragu_circuits::registry::{Registry, RegistryBuilder};
@@ -161,6 +172,7 @@ library_benchmark_group!(
 );
 
 main!(
+    config = bench_config();
     library_benchmark_groups = poly_commits,
     poly_ops,
     circuit_synthesis,
