@@ -134,80 +134,80 @@ impl<C: Cycle> Step<C> for Step1 {
 }
 
 #[test]
-fn rerandomization_flow() {
+fn rerandomization_flow() -> Result<()> {
     let pasta = Pasta::baked();
     let mut builder = ApplicationBuilder::<Pasta, ProductionRank, 4>::new();
-    let step0_handle = builder.register(Step0).unwrap();
-    let step1_handle = builder.register(Step1).unwrap();
-    let app = builder.finalize(pasta).unwrap();
+    let step0_handle = builder.register(Step0)?;
+    let step1_handle = builder.register(Step1)?;
+    let app = builder.finalize(pasta)?;
 
     let mut rng = StdRng::seed_from_u64(1234);
 
-    let seeded = app.seed(&mut rng, step0_handle, Step0, ()).unwrap().0;
+    let seeded = app.seed(&mut rng, step0_handle, Step0, ())?.0;
     let seeded = seeded.carry::<HeaderA>(());
-    assert!(app.verify(&seeded, &mut rng).unwrap());
+    assert!(app.verify(&seeded, &mut rng)?);
 
     // Rerandomize
-    let seeded = app.rerandomize(seeded, &mut rng).unwrap();
-    assert!(app.verify(&seeded, &mut rng).unwrap());
+    let seeded = app.rerandomize(seeded, &mut rng)?;
+    assert!(app.verify(&seeded, &mut rng)?);
 
     let fused = app
-        .fuse(&mut rng, step1_handle, Step1, (), seeded.clone(), seeded)
-        .unwrap()
+        .fuse(&mut rng, step1_handle, Step1, (), seeded.clone(), seeded)?
         .0;
     let fused = fused.carry::<HeaderA>(());
-    assert!(app.verify(&fused, &mut rng).unwrap());
+    assert!(app.verify(&fused, &mut rng)?);
 
-    let fused = app.rerandomize(fused, &mut rng).unwrap();
-    assert!(app.verify(&fused, &mut rng).unwrap());
+    let fused = app.rerandomize(fused, &mut rng)?;
+    assert!(app.verify(&fused, &mut rng)?);
+
+    Ok(())
 }
 
 #[test]
-fn multiple_rerandomizations_all_verify() {
+fn multiple_rerandomizations_all_verify() -> Result<()> {
     let pasta = Pasta::baked();
     let mut builder = ApplicationBuilder::<Pasta, ProductionRank, 4>::new();
-    let step0_handle = builder.register(Step0).unwrap();
-    let app = builder.finalize(pasta).unwrap();
+    let step0_handle = builder.register(Step0)?;
+    let app = builder.finalize(pasta)?;
 
     let mut rng = StdRng::seed_from_u64(9999);
 
-    let original = app.seed(&mut rng, step0_handle, Step0, ()).unwrap().0;
+    let original = app.seed(&mut rng, step0_handle, Step0, ())?.0;
     let original = original.carry::<HeaderA>(());
-    assert!(app.verify(&original, &mut rng).unwrap());
+    assert!(app.verify(&original, &mut rng)?);
 
     // Rerandomize multiple times - each should verify
-    let rerand1 = app.rerandomize(original.clone(), &mut rng).unwrap();
-    assert!(app.verify(&rerand1, &mut rng).unwrap());
+    let rerand1 = app.rerandomize(original.clone(), &mut rng)?;
+    assert!(app.verify(&rerand1, &mut rng)?);
 
-    let rerand2 = app.rerandomize(original.clone(), &mut rng).unwrap();
-    assert!(app.verify(&rerand2, &mut rng).unwrap());
+    let rerand2 = app.rerandomize(original.clone(), &mut rng)?;
+    assert!(app.verify(&rerand2, &mut rng)?);
 
     // Rerandomize an already rerandomized proof
-    let rerand3 = app.rerandomize(rerand1, &mut rng).unwrap();
-    assert!(app.verify(&rerand3, &mut rng).unwrap());
+    let rerand3 = app.rerandomize(rerand1, &mut rng)?;
+    assert!(app.verify(&rerand3, &mut rng)?);
+
+    Ok(())
 }
 
 #[test]
-fn rerandomization_preserves_header_data() {
+fn rerandomization_preserves_header_data() -> Result<()> {
     let pasta = Pasta::baked();
     let mut builder = ApplicationBuilder::<Pasta, ProductionRank, 4>::new();
-    let step_handle = builder.register(StepWithData).unwrap();
-    let app = builder.finalize(pasta).unwrap();
+    let step_handle = builder.register(StepWithData)?;
+    let app = builder.finalize(pasta)?;
 
     let mut rng = StdRng::seed_from_u64(4321);
 
     // Use a non-trivial data value
     let test_data = Fp::from(123456789u64);
 
-    let original = app
-        .seed(&mut rng, step_handle, StepWithData, test_data)
-        .unwrap()
-        .0;
+    let original = app.seed(&mut rng, step_handle, StepWithData, test_data)?.0;
     let original = original.carry::<HeaderWithData>(test_data);
-    assert!(app.verify(&original, &mut rng).unwrap());
+    assert!(app.verify(&original, &mut rng)?);
 
-    let rerandomized = app.rerandomize(original.clone(), &mut rng).unwrap();
-    assert!(app.verify(&rerandomized, &mut rng).unwrap());
+    let rerandomized = app.rerandomize(original.clone(), &mut rng)?;
+    assert!(app.verify(&rerandomized, &mut rng)?);
 
     // Header data should be preserved (non-unit comparison)
     assert_eq!(
@@ -219,42 +219,41 @@ fn rerandomization_preserves_header_data() {
         Fp::from(123456789u64),
         "header data should match original value"
     );
+
+    Ok(())
 }
 
 #[test]
-fn rerandomized_fused_proof_verifies() {
+fn rerandomized_fused_proof_verifies() -> Result<()> {
     let pasta = Pasta::baked();
     let mut builder = ApplicationBuilder::<Pasta, ProductionRank, 4>::new();
-    let step0_handle = builder.register(Step0).unwrap();
-    let step1_handle = builder.register(Step1).unwrap();
-    let app = builder.finalize(pasta).unwrap();
+    let step0_handle = builder.register(Step0)?;
+    let step1_handle = builder.register(Step1)?;
+    let app = builder.finalize(pasta)?;
 
     let mut rng = StdRng::seed_from_u64(7777);
 
     // Create two seeded proofs
     let left = app
-        .seed(&mut rng, step0_handle, Step0, ())
-        .unwrap()
+        .seed(&mut rng, step0_handle, Step0, ())?
         .0
         .carry::<HeaderA>(());
     let right = app
-        .seed(&mut rng, step0_handle, Step0, ())
-        .unwrap()
+        .seed(&mut rng, step0_handle, Step0, ())?
         .0
         .carry::<HeaderA>(());
 
     // Fuse them
-    let fused = app
-        .fuse(&mut rng, step1_handle, Step1, (), left, right)
-        .unwrap()
-        .0;
+    let fused = app.fuse(&mut rng, step1_handle, Step1, (), left, right)?.0;
     let fused = fused.carry::<HeaderA>(());
-    assert!(app.verify(&fused, &mut rng).unwrap());
+    assert!(app.verify(&fused, &mut rng)?);
 
     // Rerandomize the fused proof
-    let rerandomized = app.rerandomize(fused, &mut rng).unwrap();
+    let rerandomized = app.rerandomize(fused, &mut rng)?;
     assert!(
-        app.verify(&rerandomized, &mut rng).unwrap(),
+        app.verify(&rerandomized, &mut rng)?,
         "rerandomized fused proof should verify"
     );
+
+    Ok(())
 }

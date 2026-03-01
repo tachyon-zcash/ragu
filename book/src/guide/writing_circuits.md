@@ -56,7 +56,7 @@ Steps are registered with `ApplicationBuilder::register()`, which returns a
 `StepHandle` that carries the auto-assigned circuit index:
 
 ```rust
-let mut builder = ApplicationBuilder::<Pasta, R<13>, 4>::new();
+let mut builder = ApplicationBuilder::<Pasta, R<ProductionRank>, 4>::new();
 let create_leaf = builder.register(CreateLeaf { /* ... */ })?;
 ```
 

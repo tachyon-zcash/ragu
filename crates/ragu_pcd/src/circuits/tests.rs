@@ -5,6 +5,7 @@ use native::{
     stages::{error_m, error_n, eval, preamble, query},
 };
 use ragu_circuits::staging::{Stage, StageExt};
+use ragu_core::Result;
 use ragu_pasta::{Pasta, fp, fq};
 
 pub(crate) type R = ragu_circuits::polynomials::ProductionRank;
@@ -27,12 +28,12 @@ type Eval = eval::Stage<Pasta, R, HEADER_SIZE>;
 
 #[rustfmt::skip]
 #[test]
-fn test_internal_circuit_constraint_counts() {
+fn test_internal_circuit_constraint_counts() -> Result<()> {
     let pasta = Pasta::baked();
 
     let mut builder = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new();
-    builder.register_dummy_circuits(NUM_APP_STEPS).unwrap();
-    let app = builder.finalize(pasta).unwrap();
+    builder.register_dummy_circuits(NUM_APP_STEPS)?;
+    let app = builder.finalize(pasta)?;
 
     let circuits = app.native_registry.circuits();
 
@@ -65,6 +66,8 @@ fn test_internal_circuit_constraint_counts() {
     check_constraints!(PartialCollapseCircuit, mul = 1756, lin = 1919);
     check_constraints!(FullCollapseCircuit,    mul = 811 , lin = 809);
     check_constraints!(ComputeVCircuit,        mul = 1140, lin = 1774);
+
+    Ok(())
 }
 
 #[rustfmt::skip]
@@ -87,12 +90,12 @@ fn test_internal_stage_parameters() {
 /// Helper test to print current constraint counts in copy-pasteable format.
 /// Run with: `cargo test -p ragu_pcd --release print_internal_circuit -- --nocapture`
 #[test]
-fn print_internal_circuit_constraint_counts() {
+fn print_internal_circuit_constraint_counts() -> Result<()> {
     let pasta = Pasta::baked();
 
     let mut builder = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new();
-    builder.register_dummy_circuits(NUM_APP_STEPS).unwrap();
-    let app = builder.finalize(pasta).unwrap();
+    builder.register_dummy_circuits(NUM_APP_STEPS)?;
+    let app = builder.finalize(pasta)?;
 
     let circuits = app.native_registry.circuits();
 
@@ -122,6 +125,8 @@ fn print_internal_circuit_constraint_counts() {
             lin
         );
     }
+
+    Ok(())
 }
 
 /// Helper test to print current stage parameters in copy-pasteable format.
@@ -155,12 +160,12 @@ fn print_internal_stage_parameters() {
 /// underlying wiring polynomial. If a refactoring produces the same digest,
 /// then it's mathematically equivalent.
 #[test]
-fn test_native_registry_digest() {
+fn test_native_registry_digest() -> Result<()> {
     let pasta = Pasta::baked();
 
     let mut builder = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new();
-    builder.register_dummy_circuits(NUM_APP_STEPS).unwrap();
-    let app = builder.finalize(pasta).unwrap();
+    builder.register_dummy_circuits(NUM_APP_STEPS)?;
+    let app = builder.finalize(pasta)?;
 
     let expected = fp!(0x3fa421a73ff73957cc8c40c4184c576f0e28e2cf88a4281b9f28fad818ad9726);
 
@@ -169,6 +174,8 @@ fn test_native_registry_digest() {
         expected,
         "Native registry digest changed unexpectedly!"
     );
+
+    Ok(())
 }
 
 /// Test that the nested registry digest hasn't changed unexpectedly.
@@ -177,12 +184,12 @@ fn test_native_registry_digest() {
 /// underlying wiring polynomial. If a refactoring produces the same digest,
 /// then it's mathematically equivalent.
 #[test]
-fn test_nested_registry_digest() {
+fn test_nested_registry_digest() -> Result<()> {
     let pasta = Pasta::baked();
 
     let mut builder = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new();
-    builder.register_dummy_circuits(NUM_APP_STEPS).unwrap();
-    let app = builder.finalize(pasta).unwrap();
+    builder.register_dummy_circuits(NUM_APP_STEPS)?;
+    let app = builder.finalize(pasta)?;
 
     let expected = fq!(0x245758c98f3c46ca03bfafe1bb50c38d0dcaed48231fd7547f40e3b208e67729);
 
@@ -191,19 +198,21 @@ fn test_nested_registry_digest() {
         expected,
         "Nested registry digest changed unexpectedly!"
     );
+
+    Ok(())
 }
 
 /// Helper test to print current registry digests in copy-pasteable format.
 /// Run with: `cargo test -p ragu_pcd --release print_registry_digests -- --nocapture`
 #[test]
-fn print_registry_digests() {
+fn print_registry_digests() -> Result<()> {
     use ff::PrimeField;
 
     let pasta = Pasta::baked();
 
     let mut builder = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new();
-    builder.register_dummy_circuits(NUM_APP_STEPS).unwrap();
-    let app = builder.finalize(pasta).unwrap();
+    builder.register_dummy_circuits(NUM_APP_STEPS)?;
+    let app = builder.finalize(pasta)?;
 
     let native_digest = app.native_registry.digest();
     let nested_digest = app.nested_registry.digest();
@@ -239,4 +248,6 @@ fn print_registry_digests() {
             .map(|b| format!("{:02x}", b))
             .collect::<String>()
     );
+
+    Ok(())
 }

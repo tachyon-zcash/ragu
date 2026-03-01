@@ -146,12 +146,14 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step1Dup {
 }
 
 #[test]
-fn register_steps_success_and_finalize() {
+fn register_steps_success_and_finalize() -> Result<()> {
     let pasta = Pasta::baked();
     let mut builder = ApplicationBuilder::<Pasta, ProductionRank, 4>::new();
-    builder.register(Step0).unwrap();
-    builder.register(Step1).unwrap();
-    builder.finalize(pasta).unwrap();
+    builder.register(Step0)?;
+    builder.register(Step1)?;
+    builder.finalize(pasta)?;
+
+    Ok(())
 }
 
 #[test]

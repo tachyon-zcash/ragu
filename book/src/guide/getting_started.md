@@ -250,7 +250,7 @@ fn main() -> Result<()> {
     let mut rng = StdRng::seed_from_u64(12345);
 
     // 2. Build application with our steps
-    let mut builder = ApplicationBuilder::<Pasta, R<13>, 4>::new();
+    let mut builder = ApplicationBuilder::<Pasta, R<ProductionRank>, 4>::new();
     let create_leaf = builder.register(CreateLeaf {
         poseidon_params: Pasta::circuit_poseidon(pasta),
     })?;
