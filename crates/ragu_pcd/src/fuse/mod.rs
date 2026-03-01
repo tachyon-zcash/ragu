@@ -25,7 +25,7 @@ use ragu_primitives::{GadgetExt, Point, poseidon::Sponge, vec::CollectFixed};
 use rand::CryptoRng;
 
 use crate::{
-    Application, Pcd, Proof,
+    Application, Pcd, Proof, StepHandle,
     components::claims::{Source, native::RxComponent},
     proof,
     step::Step,
@@ -41,6 +41,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     ///   generator is not an indication that the resulting proof-carrying data
     ///   is zero-knowledge; that must be ensured by performing
     ///   [`Application::rerandomize`] at a later point.
+    /// * `handle`: the [`StepHandle`] returned by
+    ///   [`ApplicationBuilder::register`](crate::ApplicationBuilder::register)
+    ///   for this step type.
     /// * `step`: the [`Step`] instance that has been registered in this
     ///   [`Application`].
     /// * `witness`: the witness data for the [`Step`]
@@ -51,13 +54,31 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     pub fn fuse<'source, RNG: CryptoRng, S: Step<C>>(
         &self,
         rng: &mut RNG,
+        handle: StepHandle<S>,
+        step: S,
+        witness: S::Witness<'source>,
+        left: Pcd<'source, C, R, S::Left>,
+        right: Pcd<'source, C, R, S::Right>,
+    ) -> Result<(Proof<C, R>, S::Aux<'source>)> {
+        self.fuse_inner(rng, handle.circuit_index(), step, witness, left, right)
+    }
+
+    /// Internal fuse implementation that accepts a raw [`CircuitIndex`].
+    ///
+    /// Used by [`Application::fuse`] (via [`StepHandle`]) for application steps,
+    /// and directly by internal operations like rerandomization and trivial
+    /// seeding that bypass the public handle API.
+    pub(crate) fn fuse_inner<'source, RNG: CryptoRng, S: Step<C>>(
+        &self,
+        rng: &mut RNG,
+        circuit_index: CircuitIndex,
         step: S,
         witness: S::Witness<'source>,
         left: Pcd<'source, C, R, S::Left>,
         right: Pcd<'source, C, R, S::Right>,
     ) -> Result<(Proof<C, R>, S::Aux<'source>)> {
         let (left, right, application, application_aux) =
-            self.compute_application_proof(rng, step, witness, left, right)?;
+            self.compute_application_proof(rng, circuit_index, step, witness, left, right)?;
 
         let mut dr = Emulator::execute();
         let mut transcript = Sponge::new(&mut dr, C::circuit_poseidon(self.params));

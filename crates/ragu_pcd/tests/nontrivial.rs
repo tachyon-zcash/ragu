@@ -10,19 +10,20 @@ use rand::rngs::StdRng;
 #[test]
 fn various_merging_operations() -> Result<()> {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
-        .register(WitnessLeaf {
-            poseidon_params: Pasta::circuit_poseidon(pasta),
-        })?
-        .register(Hash2 {
-            poseidon_params: Pasta::circuit_poseidon(pasta),
-        })?
-        .finalize(pasta)?;
+    let mut builder = ApplicationBuilder::<Pasta, ProductionRank, 4>::new();
+    let witness_leaf_handle = builder.register(WitnessLeaf {
+        poseidon_params: Pasta::circuit_poseidon(pasta),
+    })?;
+    let hash2_handle = builder.register(Hash2 {
+        poseidon_params: Pasta::circuit_poseidon(pasta),
+    })?;
+    let app = builder.finalize(pasta)?;
 
     let mut rng = StdRng::seed_from_u64(1234);
 
     let leaf1 = app.seed(
         &mut rng,
+        witness_leaf_handle,
         WitnessLeaf {
             poseidon_params: Pasta::circuit_poseidon(pasta),
         },
@@ -33,6 +34,7 @@ fn various_merging_operations() -> Result<()> {
 
     let leaf2 = app.seed(
         &mut rng,
+        witness_leaf_handle,
         WitnessLeaf {
             poseidon_params: Pasta::circuit_poseidon(pasta),
         },
@@ -43,6 +45,7 @@ fn various_merging_operations() -> Result<()> {
 
     let node1 = app.fuse(
         &mut rng,
+        hash2_handle,
         Hash2 {
             poseidon_params: Pasta::circuit_poseidon(pasta),
         },

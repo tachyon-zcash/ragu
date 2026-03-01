@@ -24,133 +24,82 @@ pub(crate) enum InternalStepIndex {
     Trivial = 1,
 }
 
-/// Internal representation of a [`Step`] index distinguishing internal vs.
-/// application steps.
-enum StepIndex {
-    Internal(InternalStepIndex),
-    Application(usize),
-}
-
 /// The number of internal steps used by Ragu for things like rerandomization or
-/// proof decompression.
-pub(crate) const NUM_INTERNAL_STEPS: usize = 2;
+/// proof decompression.  Derived from the last variant so that adding a new
+/// variant forces an update here.
+pub(crate) const NUM_INTERNAL_STEPS: usize = InternalStepIndex::Trivial as usize + 1;
 
-/// The index of a [`Step`] in an application.
+/// A handle to a registered [`Step`] that carries the auto-assigned circuit
+/// index.
 ///
-/// All steps added to an application have a unique index and must be inserted
-/// sequentially so that their location (and other metadata) can be identified
-/// during proof generation and at other times.
-pub struct Index {
-    index: StepIndex,
+/// Returned by [`ApplicationBuilder::register`](crate::ApplicationBuilder::register)
+/// and required by [`Application::seed`](crate::Application::seed) and
+/// [`Application::fuse`](crate::Application::fuse) to identify which circuit to
+/// use during proving.
+pub struct StepHandle<S> {
+    circuit_index: CircuitIndex,
+    _marker: core::marker::PhantomData<fn() -> S>,
 }
 
-impl Index {
-    /// Creates a new application-defined [`Step`] index.
-    pub const fn new(value: usize) -> Self {
-        Index {
-            index: StepIndex::Application(value),
+impl<S> Copy for StepHandle<S> {}
+
+impl<S> Clone for StepHandle<S> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<S> core::fmt::Debug for StepHandle<S> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("StepHandle")
+            .field("circuit_index", &self.circuit_index)
+            .finish()
+    }
+}
+
+impl<S> StepHandle<S> {
+    pub(crate) fn new(circuit_index: CircuitIndex) -> Self {
+        StepHandle {
+            circuit_index,
+            _marker: core::marker::PhantomData,
         }
     }
 
-    /// Returns the circuit index for this step.
-    ///
-    /// Circuits are registered in the following order: internal masks,
-    /// internal circuits, internal steps, then application steps.
-    ///
-    /// Pass the known number of application steps to validate and compute the
-    /// final index of this step. Returns an error if an application step index
-    /// exceeds the number of registered steps.
-    pub(crate) fn circuit_index(&self, num_application_steps: usize) -> Result<CircuitIndex> {
-        match self.index {
-            StepIndex::Internal(i) => {
-                // Internal steps come after internal circuits
-                Ok(CircuitIndex::from_u32(
-                    NUM_INTERNAL_CIRCUITS as u32 + i as u32,
-                ))
-            }
-            StepIndex::Application(i) => {
-                if i >= num_application_steps {
-                    return Err(ragu_core::Error::Initialization(
-                            "attempted to use application Step index that exceeds Application registered steps".into(),
-                        ));
-                }
-
-                Ok(CircuitIndex::new(
-                    NUM_INTERNAL_STEPS + NUM_INTERNAL_CIRCUITS + i,
-                ))
-            }
-        }
+    pub(crate) fn circuit_index(&self) -> CircuitIndex {
+        self.circuit_index
     }
+}
 
-    /// Creates a new internal-defined [`Step`] index. Only called internally by
-    /// Ragu.
-    pub(crate) const fn internal(value: InternalStepIndex) -> Self {
-        Index {
-            index: StepIndex::Internal(value),
-        }
-    }
-
-    /// Called during application step registration to assert the appropriate
-    /// next sequential index.
+impl InternalStepIndex {
+    /// Returns the circuit index for this internal step.
     ///
-    /// ## Panics
-    ///
-    /// Panics if called on an internal step.
-    pub(crate) fn assert_index(&self, expect_id: usize) -> Result<()> {
-        match self.index {
-            StepIndex::Application(i) => {
-                if i != expect_id {
-                    return Err(ragu_core::Error::Initialization(
-                        "steps must be registered in sequential order".into(),
-                    ));
-                }
-
-                Ok(())
-            }
-            StepIndex::Internal(_) => panic!("step should be application-defined"),
-        }
+    /// Internal steps come after internal circuits in the registry.
+    pub(crate) fn circuit_index(self) -> CircuitIndex {
+        CircuitIndex::from_u32(NUM_INTERNAL_CIRCUITS as u32 + self as u32)
     }
 }
 
 #[test]
-fn test_index_map() -> Result<()> {
-    use crate::circuits::native::NUM_INTERNAL_CIRCUITS;
-
-    let num_application_steps = 10;
-    let app_offset = NUM_INTERNAL_STEPS + NUM_INTERNAL_CIRCUITS;
-
-    // Internal steps come after internal circuits
+fn test_index_map() {
     assert_eq!(
-        Index::internal(InternalStepIndex::Rerandomize).circuit_index(num_application_steps)?,
+        InternalStepIndex::Rerandomize.circuit_index(),
         CircuitIndex::new(NUM_INTERNAL_CIRCUITS)
     );
     assert_eq!(
-        Index::internal(InternalStepIndex::Trivial).circuit_index(num_application_steps)?,
+        InternalStepIndex::Trivial.circuit_index(),
         CircuitIndex::new(NUM_INTERNAL_CIRCUITS + 1)
     );
-
-    // Application steps occupy indices (NUM_INTERNAL_CIRCUITS + NUM_INTERNAL_STEPS)..
-    assert_eq!(
-        Index::new(0).circuit_index(num_application_steps)?,
-        CircuitIndex::new(app_offset)
-    );
-    assert_eq!(
-        Index::new(1).circuit_index(num_application_steps)?,
-        CircuitIndex::new(app_offset + 1)
-    );
-    Index::new(999).assert_index(999)?;
-    assert!(Index::new(10).circuit_index(num_application_steps).is_err());
-
-    Ok(())
 }
 
 /// Represents a node in the computational graph (or the proof-carrying data
 /// tree) that represents the merging of two pieces of proof-carrying data.
+///
+/// Steps are registered with an [`ApplicationBuilder`](crate::ApplicationBuilder)
+/// via [`register`](crate::ApplicationBuilder::register), which returns a
+/// [`StepHandle`] that carries the auto-assigned circuit index. The handle is
+/// then passed to [`Application::seed`](crate::Application::seed) or
+/// [`Application::fuse`](crate::Application::fuse) alongside the step instance.
 pub trait Step<C: Cycle>: Sized + Send + Sync {
-    /// Each unique [`Step`] implementation within a provided context must have
-    /// a unique index.
-    const INDEX: Index;
-
     /// The witness data needed to construct a proof for this step.
     type Witness<'source>: Send;
 

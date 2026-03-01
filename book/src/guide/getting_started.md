@@ -111,7 +111,7 @@ This step creates leaf proofs from raw values:
 
 ```rust
 use arithmetic::Cycle;
-use ragu_pcd::step::{Encoded, Encoder, Index, Step};
+use ragu_pcd::step::{Encoded, Encoder, Step};
 use ragu_primitives::poseidon::Sponge;
 
 struct CreateLeaf<'params, C: Cycle> {
@@ -119,8 +119,6 @@ struct CreateLeaf<'params, C: Cycle> {
 }
 
 impl<'params, C: Cycle> Step<C> for CreateLeaf<'params, C> {
-    const INDEX: Index = Index::new(0);  // Step ID
-
     type Witness<'source> = C::CircuitField;  // Input: field element
     type Aux<'source> = C::CircuitField;      // Output: hash result
     type Left = ();                            // No left input
@@ -188,8 +186,6 @@ struct CombineNodes<'params, C: Cycle> {
 }
 
 impl<'params, C: Cycle> Step<C> for CombineNodes<'params, C> {
-    const INDEX: Index = Index::new(1);  // Different step ID
-
     type Witness<'source> = ();           // No extra witness
     type Aux<'source> = C::CircuitField;  // Return combined hash
     type Left = LeafNode;                 // Takes LeafNode
@@ -254,14 +250,14 @@ fn main() -> Result<()> {
     let mut rng = StdRng::seed_from_u64(12345);
 
     // 2. Build application with our steps
-    let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
-        .register(CreateLeaf {
-            poseidon_params: Pasta::circuit_poseidon(pasta),
-        })?
-        .register(CombineNodes {
-            poseidon_params: Pasta::circuit_poseidon(pasta),
-        })?
-        .finalize(pasta)?;
+    let mut builder = ApplicationBuilder::<Pasta, R<ProductionRank>, 4>::new();
+    let create_leaf = builder.register(CreateLeaf {
+        poseidon_params: Pasta::circuit_poseidon(pasta),
+    })?;
+    let combine_nodes = builder.register(CombineNodes {
+        poseidon_params: Pasta::circuit_poseidon(pasta),
+    })?;
+    let app = builder.finalize(pasta)?;
 
     println!("Application built successfully!");
 
@@ -278,6 +274,7 @@ The application can now be used to create and verify proofs:
 // Create first leaf using seed
 let leaf1 = app.seed(
     &mut rng,
+    create_leaf,
     CreateLeaf { poseidon_params: Pasta::circuit_poseidon(pasta) },
     Fp::from(100u64),  // Hash the value 100
 )?;
@@ -288,6 +285,7 @@ println!("Leaf 1 verified (value: 100)");
 // Create second leaf
 let leaf2 = app.seed(
     &mut rng,
+    create_leaf,
     CreateLeaf { poseidon_params: Pasta::circuit_poseidon(pasta) },
     Fp::from(200u64),  // Hash the value 200
 )?;
@@ -298,6 +296,7 @@ println!("Leaf 2 verified (value: 200)");
 // Combine leaves into internal node using fuse
 let node1 = app.fuse(
     &mut rng,
+    combine_nodes,
     CombineNodes { poseidon_params: Pasta::circuit_poseidon(pasta) },
     (),  // No extra witness
     leaf1,

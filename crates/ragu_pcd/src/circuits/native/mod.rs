@@ -65,33 +65,32 @@ impl InternalCircuitIndex {
 /// All circuits registered here are internal and will be placed
 /// before any application steps.
 pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
-    mut registry: RegistryBuilder<'params, C::CircuitField, R>,
+    registry: &mut RegistryBuilder<'params, C::CircuitField, R>,
     params: &'params C::Params,
     log2_circuits: u32,
-) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
+) -> Result<()> {
     let initial_internal_circuits = registry.num_internal_circuits();
 
     // Insert the stages.
     {
         // preamble stage
-        registry =
-            registry.register_internal_mask::<stages::preamble::Stage<C, R, HEADER_SIZE>>()?;
+        registry.register_internal_mask::<stages::preamble::Stage<C, R, HEADER_SIZE>>()?;
 
         // error_m stage
-        registry = registry
+        registry
             .register_internal_mask::<stages::error_m::Stage<C, R, HEADER_SIZE, NativeParameters>>(
             )?;
 
         // error_n stage
-        registry = registry
+        registry
             .register_internal_mask::<stages::error_n::Stage<C, R, HEADER_SIZE, NativeParameters>>(
             )?;
 
         // query stage
-        registry = registry.register_internal_mask::<stages::query::Stage<C, R, HEADER_SIZE>>()?;
+        registry.register_internal_mask::<stages::query::Stage<C, R, HEADER_SIZE>>()?;
 
         // eval stage
-        registry = registry.register_internal_mask::<stages::eval::Stage<C, R, HEADER_SIZE>>()?;
+        registry.register_internal_mask::<stages::eval::Stage<C, R, HEADER_SIZE>>()?;
     }
 
     // Insert the "final stage polynomials" for each stage.
@@ -100,7 +99,7 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     // stage is only registered once here.
     {
         // preamble -> error_n -> error_m -> [CIRCUIT] (partial_collapse)
-        registry = registry.register_internal_final_mask::<stages::error_m::Stage<
+        registry.register_internal_final_mask::<stages::error_m::Stage<
             C,
             R,
             HEADER_SIZE,
@@ -108,7 +107,7 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         >>()?;
 
         // preamble -> error_n -> [CIRCUIT] (hashes_1, hashes_2, full_collapse)
-        registry = registry.register_internal_final_mask::<stages::error_n::Stage<
+        registry.register_internal_final_mask::<stages::error_n::Stage<
             C,
             R,
             HEADER_SIZE,
@@ -116,14 +115,13 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         >>()?;
 
         // preamble -> query -> eval -> [CIRCUIT] (compute_v)
-        registry =
-            registry.register_internal_final_mask::<stages::eval::Stage<C, R, HEADER_SIZE>>()?;
+        registry.register_internal_final_mask::<stages::eval::Stage<C, R, HEADER_SIZE>>()?;
     }
 
     // Insert the internal circuits.
     {
         // hashes_1
-        registry = registry.register_internal_circuit(hashes_1::Circuit::<
+        registry.register_internal_circuit(hashes_1::Circuit::<
             C,
             R,
             HEADER_SIZE,
@@ -131,7 +129,7 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         >::new(params, log2_circuits))?;
 
         // hashes_2
-        registry = registry.register_internal_circuit(hashes_2::Circuit::<
+        registry.register_internal_circuit(hashes_2::Circuit::<
             C,
             R,
             HEADER_SIZE,
@@ -139,7 +137,7 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         >::new(params))?;
 
         // partial_collapse
-        registry = registry.register_internal_circuit(partial_collapse::Circuit::<
+        registry.register_internal_circuit(partial_collapse::Circuit::<
             C,
             R,
             HEADER_SIZE,
@@ -147,7 +145,7 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         >::new())?;
 
         // full_collapse
-        registry = registry.register_internal_circuit(full_collapse::Circuit::<
+        registry.register_internal_circuit(full_collapse::Circuit::<
             C,
             R,
             HEADER_SIZE,
@@ -155,8 +153,7 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         >::new())?;
 
         // compute_v
-        registry =
-            registry.register_internal_circuit(compute_v::Circuit::<C, R, HEADER_SIZE>::new())?;
+        registry.register_internal_circuit(compute_v::Circuit::<C, R, HEADER_SIZE>::new())?;
     }
 
     // Verify we registered the expected number of internal circuits.
@@ -166,5 +163,5 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         "internal circuit count mismatch"
     );
 
-    Ok(registry)
+    Ok(())
 }

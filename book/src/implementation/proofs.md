@@ -54,8 +54,6 @@ a new proof:
 
 ```rust
 pub trait Step<C: Cycle> {
-    const INDEX: Index;
-
     type Witness<'source>;
     type Aux<'source>;
     type Left: Header;

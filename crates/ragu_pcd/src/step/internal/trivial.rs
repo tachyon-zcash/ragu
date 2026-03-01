@@ -9,21 +9,11 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
 };
 
-use super::super::{Encoded, Index, Step};
-
-pub(crate) use crate::step::InternalStepIndex::Trivial as INTERNAL_ID;
+use super::super::{Encoded, Step};
 
 pub(crate) struct Trivial;
 
-impl Trivial {
-    pub fn new() -> Self {
-        Trivial
-    }
-}
-
 impl<C: Cycle> Step<C> for Trivial {
-    const INDEX: Index = Index::internal(INTERNAL_ID);
-
     type Witness<'source> = ();
     type Aux<'source> = ();
 

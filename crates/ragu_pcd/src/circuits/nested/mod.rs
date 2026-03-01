@@ -60,21 +60,19 @@ pub mod stages;
 /// Circuits are registered as internal to ensure they occupy prefix indices
 /// before application steps.
 pub(crate) fn register_all<'params, C: Cycle, R: Rank>(
-    mut registry: RegistryBuilder<'params, C::ScalarField, R>,
-) -> Result<RegistryBuilder<'params, C::ScalarField, R>> {
-    registry = registry.register_internal_mask::<EndoscalarStage>()?;
+    registry: &mut RegistryBuilder<'params, C::ScalarField, R>,
+) -> Result<()> {
+    registry.register_internal_mask::<EndoscalarStage>()?;
 
-    registry =
-        registry.register_internal_mask::<PointsStage<C::HostCurve, NUM_ENDOSCALING_POINTS>>()?;
+    registry.register_internal_mask::<PointsStage<C::HostCurve, NUM_ENDOSCALING_POINTS>>()?;
 
-    registry = registry
-        .register_internal_final_mask::<PointsStage<C::HostCurve, NUM_ENDOSCALING_POINTS>>()?;
+    registry.register_internal_final_mask::<PointsStage<C::HostCurve, NUM_ENDOSCALING_POINTS>>()?;
 
     let num_steps = NumStepsLen::<NUM_ENDOSCALING_POINTS>::len();
     for step in 0..num_steps {
         let step_circuit = EndoscalingStep::<C::HostCurve, R, NUM_ENDOSCALING_POINTS>::new(step);
         let staged = MultiStage::new(step_circuit);
-        registry = registry.register_internal_circuit(staged)?;
+        registry.register_internal_circuit(staged)?;
     }
-    Ok(registry)
+    Ok(())
 }

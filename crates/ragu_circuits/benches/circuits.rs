@@ -122,35 +122,35 @@ library_benchmark_group!(
 #[library_benchmark]
 #[bench::register()]
 fn register() {
-    black_box(builder_squares());
+    black_box(builder_squares()).unwrap();
 }
 
 #[library_benchmark]
-#[bench::finalize(builder_squares())]
+#[bench::finalize(builder_squares().unwrap())]
 fn finalize(builder: RegistryBuilder<Fp, ProductionRank>) {
     black_box(builder.finalize()).unwrap();
 }
 
 #[library_benchmark(setup = setup_with_rng)]
-#[bench::xy(registry_simple(), (f, f))]
+#[bench::xy(registry_simple().unwrap(), (f, f))]
 fn xy((registry, (x, y)): (Registry<'_, Fp, TestRank>, (Fp, Fp))) {
     black_box(registry.xy(x, y));
 }
 
 #[library_benchmark(setup = setup_with_rng)]
-#[bench::wy(registry_simple(), (f, f))]
+#[bench::wy(registry_simple().unwrap(), (f, f))]
 fn wy((registry, (w, y)): (Registry<'_, Fp, TestRank>, (Fp, Fp))) {
     black_box(registry.wy(w, y));
 }
 
 #[library_benchmark(setup = setup_with_rng)]
-#[bench::wx(registry_simple(), (f, f))]
+#[bench::wx(registry_simple().unwrap(), (f, f))]
 fn wx((registry, (w, x)): (Registry<'_, Fp, TestRank>, (Fp, Fp))) {
     black_box(registry.wx(w, x));
 }
 
 #[library_benchmark(setup = setup_with_rng)]
-#[bench::wxy(registry_simple(), (f, f, f))]
+#[bench::wxy(registry_simple().unwrap(), (f, f, f))]
 fn wxy((registry, (w, x, y)): (Registry<'_, Fp, TestRank>, (Fp, Fp, Fp))) {
     black_box(registry.wxy(w, x, y));
 }

@@ -6,7 +6,7 @@ use ragu_core::{
     gadgets::Bound,
 };
 use ragu_pasta::Pasta;
-use ragu_pcd::step::{Encoded, Index, Step};
+use ragu_pcd::step::{Encoded, Step};
 use ragu_pcd::{
     ApplicationBuilder,
     header::{Header, Suffix},
@@ -58,7 +58,6 @@ impl<F: Field> Header<F> for HSuffixAOther {
 // Step 0 -> produces HSuffixA
 struct Step0;
 impl<C: ragu_arithmetic::Cycle> Step<C> for Step0 {
-    const INDEX: Index = Index::new(0);
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = ();
@@ -89,7 +88,6 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step0 {
 // Step 1 -> consumes A and produces B
 struct Step1;
 impl<C: ragu_arithmetic::Cycle> Step<C> for Step1 {
-    const INDEX: Index = Index::new(1);
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = HSuffixA;
@@ -117,10 +115,9 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step1 {
     }
 }
 
-// Duplicate suffix step (index 1) producing different header with same suffix
+// Duplicate suffix step producing different header with same suffix
 struct Step1Dup;
 impl<C: ragu_arithmetic::Cycle> Step<C> for Step1Dup {
-    const INDEX: Index = Index::new(1);
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = HSuffixA;
@@ -149,30 +146,20 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step1Dup {
 }
 
 #[test]
-fn register_steps_success_and_finalize() {
+fn register_steps_success_and_finalize() -> Result<()> {
     let pasta = Pasta::baked();
-    let builder = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
-        .register(Step0)
-        .unwrap()
-        .register(Step1)
-        .unwrap();
-    builder.finalize(pasta).unwrap();
-}
+    let mut builder = ApplicationBuilder::<Pasta, ProductionRank, 4>::new();
+    builder.register(Step0)?;
+    builder.register(Step1)?;
+    builder.finalize(pasta)?;
 
-#[test]
-#[should_panic]
-fn register_steps_out_of_order_should_fail() {
-    ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
-        .register(Step1)
-        .unwrap();
+    Ok(())
 }
 
 #[test]
 #[should_panic]
 fn register_steps_duplicate_suffix_should_fail() {
-    ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
-        .register(Step0)
-        .unwrap()
-        .register(Step1Dup)
-        .unwrap();
+    let mut builder = ApplicationBuilder::<Pasta, ProductionRank, 4>::new();
+    builder.register(Step0).unwrap();
+    builder.register(Step1Dup).unwrap();
 }

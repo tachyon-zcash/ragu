@@ -23,7 +23,6 @@ Every Step must implement this core structure:
 
 ```rust
 pub trait Step<C: Cycle> {
-    const INDEX: Index;
     type Witness<'source>;
     type Aux<'source>;
     type Left: Header<C::CircuitField>;
@@ -51,14 +50,18 @@ Let's break down what each part means.
 
 ## Anatomy of a Step
 
-### 1. Step Index
+### 1. Step Registration
+
+Steps are registered with `ApplicationBuilder::register()`, which returns a
+`StepHandle` that carries the auto-assigned circuit index:
 
 ```rust
-const INDEX: Index = Index::new(0);
+let mut builder = ApplicationBuilder::<Pasta, R<ProductionRank>, 4>::new();
+let create_leaf = builder.register(CreateLeaf { /* ... */ })?;
 ```
 
-A unique identifier for this step in your application. Each step must have a
-distinct index starting from 0.
+The handle is then passed to `seed()` or `fuse()` to identify which circuit
+to use during proving.
 
 ### 2. Type Parameters
 

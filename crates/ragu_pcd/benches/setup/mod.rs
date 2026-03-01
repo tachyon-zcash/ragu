@@ -1,7 +1,7 @@
 use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_pasta::{Fp, Pasta};
-use ragu_pcd::{Application, ApplicationBuilder, Pcd};
+use ragu_pcd::{Application, ApplicationBuilder, Pcd, StepHandle};
 use ragu_testing::pcd::nontrivial;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -24,43 +24,66 @@ pub fn setup_finalize() -> (
 ) {
     let pasta = Pasta::baked();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let mut builder = ApplicationBuilder::<Pasta, ProductionRank, 4>::new();
+    builder
         .register(nontrivial::WitnessLeaf { poseidon_params })
-        .unwrap()
+        .unwrap();
+    builder
         .register(nontrivial::Hash2 { poseidon_params })
         .unwrap();
-    (app, pasta)
+    (builder, pasta)
+}
+
+fn build_app() -> (
+    Application<'static, Pasta, ProductionRank, 4>,
+    StepHandle<nontrivial::WitnessLeaf<'static, Pasta>>,
+    StepHandle<nontrivial::Hash2<'static, Pasta>>,
+    &'static <Pasta as Cycle>::CircuitPoseidon,
+) {
+    let pasta = Pasta::baked();
+    let poseidon_params = Pasta::circuit_poseidon(pasta);
+    let mut builder = ApplicationBuilder::<Pasta, ProductionRank, 4>::new();
+    let leaf_handle = builder
+        .register(nontrivial::WitnessLeaf { poseidon_params })
+        .unwrap();
+    let hash_handle = builder
+        .register(nontrivial::Hash2 { poseidon_params })
+        .unwrap();
+    let app = builder.finalize(pasta).unwrap();
+    (app, leaf_handle, hash_handle, poseidon_params)
 }
 
 pub fn setup_seed() -> (
     Application<'static, Pasta, ProductionRank, 4>,
+    StepHandle<nontrivial::WitnessLeaf<'static, Pasta>>,
+    StepHandle<nontrivial::Hash2<'static, Pasta>>,
     &'static <Pasta as Cycle>::CircuitPoseidon,
     StdRng,
 ) {
-    let pasta = Pasta::baked();
-    let poseidon_params = Pasta::circuit_poseidon(pasta);
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
-        .register(nontrivial::WitnessLeaf { poseidon_params })
-        .unwrap()
-        .register(nontrivial::Hash2 { poseidon_params })
-        .unwrap()
-        .finalize(pasta)
-        .unwrap();
-    (app, poseidon_params, StdRng::seed_from_u64(1234))
+    let (app, leaf_handle, hash_handle, poseidon_params) = build_app();
+    (
+        app,
+        leaf_handle,
+        hash_handle,
+        poseidon_params,
+        StdRng::seed_from_u64(1234),
+    )
 }
 
 pub fn setup_fuse() -> (
     Application<'static, Pasta, ProductionRank, 4>,
     Pcd<'static, Pasta, ProductionRank, nontrivial::LeafNode>,
     Pcd<'static, Pasta, ProductionRank, nontrivial::LeafNode>,
+    StepHandle<nontrivial::Hash2<'static, Pasta>>,
     &'static <Pasta as Cycle>::CircuitPoseidon,
     StdRng,
 ) {
-    let (app, poseidon_params, mut rng) = setup_seed();
+    let (app, leaf_handle, hash_handle, poseidon_params, mut rng) = setup_seed();
 
     let (proof1, aux1) = app
         .seed(
             &mut rng,
+            leaf_handle,
             nontrivial::WitnessLeaf { poseidon_params },
             Fp::from(1u64),
         )
@@ -70,13 +93,14 @@ pub fn setup_fuse() -> (
     let (proof2, aux2) = app
         .seed(
             &mut rng,
+            leaf_handle,
             nontrivial::WitnessLeaf { poseidon_params },
             Fp::from(2u64),
         )
         .unwrap();
     let leaf2 = proof2.carry::<nontrivial::LeafNode>(aux2);
 
-    (app, leaf1, leaf2, poseidon_params, rng)
+    (app, leaf1, leaf2, hash_handle, poseidon_params, rng)
 }
 
 pub fn setup_verify_leaf() -> (
@@ -84,11 +108,12 @@ pub fn setup_verify_leaf() -> (
     Pcd<'static, Pasta, ProductionRank, nontrivial::LeafNode>,
     StdRng,
 ) {
-    let (app, poseidon_params, mut rng) = setup_seed();
+    let (app, leaf_handle, _, poseidon_params, mut rng) = setup_seed();
 
     let (proof, aux) = app
         .seed(
             &mut rng,
+            leaf_handle,
             nontrivial::WitnessLeaf { poseidon_params },
             Fp::from(1u64),
         )
@@ -103,11 +128,12 @@ pub fn setup_verify_node() -> (
     Pcd<'static, Pasta, ProductionRank, nontrivial::InternalNode>,
     StdRng,
 ) {
-    let (app, poseidon_params, mut rng) = setup_seed();
+    let (app, leaf_handle, hash_handle, poseidon_params, mut rng) = setup_seed();
 
     let (proof1, aux1) = app
         .seed(
             &mut rng,
+            leaf_handle,
             nontrivial::WitnessLeaf { poseidon_params },
             Fp::from(1u64),
         )
@@ -117,6 +143,7 @@ pub fn setup_verify_node() -> (
     let (proof2, aux2) = app
         .seed(
             &mut rng,
+            leaf_handle,
             nontrivial::WitnessLeaf { poseidon_params },
             Fp::from(2u64),
         )
@@ -126,6 +153,7 @@ pub fn setup_verify_node() -> (
     let (proof, aux) = app
         .fuse(
             &mut rng,
+            hash_handle,
             nontrivial::Hash2 { poseidon_params },
             (),
             leaf1,

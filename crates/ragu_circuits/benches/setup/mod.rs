@@ -1,6 +1,7 @@
 use ff::Field;
 use ragu_circuits::polynomials::{ProductionRank, TestRank, structured, unstructured};
 use ragu_circuits::registry::{Registry, RegistryBuilder};
+use ragu_core::Result;
 use ragu_pasta::Fp;
 use ragu_testing::circuits::{MySimpleCircuit, SquareCircuit};
 use rand::SeedableRng;
@@ -68,38 +69,30 @@ pub fn rand_unstructured_poly(rng: &mut StdRng) -> unstructured::Polynomial<Fp, 
     unstructured::Polynomial::random(rng)
 }
 
-pub fn builder_squares<'a>() -> RegistryBuilder<'a, Fp, ProductionRank> {
-    RegistryBuilder::<'a, Fp, ProductionRank>::new()
-        .register_circuit(SquareCircuit { times: 2 })
-        .unwrap()
-        .register_circuit(SquareCircuit { times: 10 })
-        .unwrap()
-        .register_circuit(SquareCircuit { times: 11 })
-        .unwrap()
-        .register_circuit(SquareCircuit { times: 19 })
-        .unwrap()
-        .register_circuit(SquareCircuit { times: 19 })
-        .unwrap()
-        .register_circuit(SquareCircuit { times: 19 })
-        .unwrap()
-        .register_circuit(SquareCircuit { times: 19 })
-        .unwrap()
-        .register_circuit(SquareCircuit { times: 19 })
-        .unwrap()
+pub fn builder_squares<'a>() -> Result<RegistryBuilder<'a, Fp, ProductionRank>> {
+    let mut builder = RegistryBuilder::<'a, Fp, ProductionRank>::new();
+    builder
+        .register_circuit(SquareCircuit { times: 2 })?
+        .register_circuit(SquareCircuit { times: 10 })?
+        .register_circuit(SquareCircuit { times: 11 })?
+        .register_circuit(SquareCircuit { times: 19 })?
+        .register_circuit(SquareCircuit { times: 19 })?
+        .register_circuit(SquareCircuit { times: 19 })?
+        .register_circuit(SquareCircuit { times: 19 })?
+        .register_circuit(SquareCircuit { times: 19 })?;
+    Ok(builder)
 }
 
-pub fn builder_simple<'a>() -> RegistryBuilder<'a, Fp, TestRank> {
-    RegistryBuilder::<'a, Fp, TestRank>::new()
-        .register_circuit(MySimpleCircuit)
-        .unwrap()
-        .register_circuit(MySimpleCircuit)
-        .unwrap()
-        .register_circuit(MySimpleCircuit)
-        .unwrap()
-        .register_circuit(MySimpleCircuit)
-        .unwrap()
+pub fn builder_simple<'a>() -> Result<RegistryBuilder<'a, Fp, TestRank>> {
+    let mut builder = RegistryBuilder::<'a, Fp, TestRank>::new();
+    builder
+        .register_circuit(MySimpleCircuit)?
+        .register_circuit(MySimpleCircuit)?
+        .register_circuit(MySimpleCircuit)?
+        .register_circuit(MySimpleCircuit)?;
+    Ok(builder)
 }
 
-pub fn registry_simple<'a>() -> Registry<'a, Fp, TestRank> {
-    builder_simple().finalize().unwrap()
+pub fn registry_simple<'a>() -> Result<Registry<'a, Fp, TestRank>> {
+    builder_simple()?.finalize()
 }

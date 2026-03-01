@@ -114,7 +114,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
 mod tests {
     use super::*;
     use crate::header::{Header, Suffix};
-    use crate::step::{Encoded, Index, Step};
+    use crate::step::{Encoded, Step};
     use ragu_circuits::polynomials::TestRank;
     use ragu_core::{
         drivers::emulator::Emulator,
@@ -144,7 +144,6 @@ mod tests {
     struct TestStep;
 
     impl Step<Pasta> for TestStep {
-        const INDEX: Index = Index::new(0);
         type Witness<'source> = ();
         type Aux<'source> = Fp;
         type Left = TestHeader;
