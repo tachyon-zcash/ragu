@@ -12,7 +12,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 
-use alloc::{vec, vec::Vec};
+use alloc::vec::Vec;
 
 use crate::{
     Element, GadgetExt,
@@ -217,8 +217,9 @@ pub fn multipack<'dr, D: Driver<'dr, F: ff::PrimeField>>(
     dr: &mut D,
     bits: &[Boolean<'dr, D>],
 ) -> Result<Vec<Element<'dr, D>>> {
-    let mut v = vec![];
-    for chunk in bits.chunks(D::F::CAPACITY as usize) {
+    let capacity = D::F::CAPACITY as usize;
+    let mut v = Vec::with_capacity(bits.len().div_ceil(capacity));
+    for chunk in bits.chunks(capacity) {
         let value = D::just(|| {
             let mut value = D::F::ZERO;
             let mut gain = D::F::ONE;
@@ -421,7 +422,7 @@ mod tests {
 
 #[test]
 fn test_multipack_vector() -> Result<()> {
-    use alloc::vec::Vec;
+    use alloc::{vec, vec::Vec};
 
     type F = ragu_pasta::Fp;
     type Simulator = crate::Simulator<F>;
