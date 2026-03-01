@@ -30,7 +30,7 @@
 use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
-    polynomials::{Rank, structured},
+    polynomials::{Committable, Rank, structured},
     staging::StageExt,
 };
 use ragu_core::{
@@ -68,34 +68,19 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mu_prime_nu_prime = mu_prime * nu_prime;
 
         let a_poly = fold_revdot::fold_polys_n::<_, R, NativeParameters>(a, mu_prime_inv);
-        let a_blind = C::CircuitField::random(&mut *rng);
-        let a_commitment = a_poly.commit(C::host_generators(self.params), a_blind);
-
         let b_poly = fold_revdot::fold_polys_n::<_, R, NativeParameters>(b, mu_prime_nu_prime);
-        let b_blind = C::CircuitField::random(&mut *rng);
-        let b_commitment = b_poly.commit(C::host_generators(self.params), b_blind);
-
         let c = a_poly.revdot(&b_poly);
 
-        let nested_ab_witness = nested::stages::ab::Witness {
-            a: a_commitment,
-            b: b_commitment,
-        };
-        let nested_rx = nested::stages::ab::Stage::<C::HostCurve, R>::rx(&nested_ab_witness)?;
-        let nested_blind = C::ScalarField::random(&mut *rng);
-        let nested_commitment = nested_rx.commit(C::nested_generators(self.params), nested_blind);
+        let a = a_poly.commit(C::host_generators(self.params), rng);
+        let b = b_poly.commit(C::host_generators(self.params), rng);
 
-        Ok(proof::AB {
-            a_poly,
-            a_blind,
-            a_commitment,
-            b_poly,
-            b_blind,
-            b_commitment,
-            c,
-            nested_rx,
-            nested_blind,
-            nested_commitment,
-        })
+        let nested_ab_witness = nested::stages::ab::Witness {
+            a: a.commitment(),
+            b: b.commitment(),
+        };
+        let nested_rx = nested::stages::ab::Stage::<C::HostCurve, R>::rx(&nested_ab_witness)?
+            .commit(C::nested_generators(self.params), rng);
+
+        Ok(proof::AB { a, b, c, nested_rx })
     }
 }

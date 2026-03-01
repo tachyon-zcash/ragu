@@ -4,9 +4,11 @@
 //! evaluations of every committed or accumulated polynomial (thus far) at the
 //! point $u$, except $f(u)$ which is _derived_ from said evaluations.
 
-use ff::Field;
 use ragu_arithmetic::Cycle;
-use ragu_circuits::{polynomials::Rank, staging::StageExt};
+use ragu_circuits::{
+    polynomials::{Committable, Rank},
+    staging::StageExt,
+};
 use ragu_core::{
     Result,
     drivers::Driver,
@@ -46,33 +48,27 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 // efficient if they're computed simultaneously with assistance
                 // from the registry itself, rather than individually evaluated for
                 // each of these restrictions.
-                registry_wx0: s_prime.registry_wx0_poly.eval(u),
-                registry_wx1: s_prime.registry_wx1_poly.eval(u),
-                registry_wy: error_m.registry_wy_poly.eval(u),
-                a_poly: ab.a_poly.eval(u),
-                b_poly: ab.b_poly.eval(u),
-                registry_xy: query.registry_xy_poly.eval(u),
+                registry_wx0: s_prime.registry_wx0.poly().eval(u),
+                registry_wx1: s_prime.registry_wx1.poly().eval(u),
+                registry_wy: error_m.registry_wy.poly().eval(u),
+                a_poly: ab.a.poly().eval(u),
+                b_poly: ab.b.poly().eval(u),
+                registry_xy: query.registry_xy.poly().eval(u),
             },
         };
-        let native_rx = eval::Stage::<C, R, HEADER_SIZE>::rx(&eval_witness)?;
-        let native_blind = C::CircuitField::random(&mut *rng);
-        let native_commitment = native_rx.commit(C::host_generators(self.params), native_blind);
+        let native_rx = eval::Stage::<C, R, HEADER_SIZE>::rx(&eval_witness)?
+            .commit(C::host_generators(self.params), rng);
 
         let nested_eval_witness = nested::stages::eval::Witness {
-            native_eval: native_commitment,
+            native_eval: native_rx.commitment(),
         };
-        let nested_rx = nested::stages::eval::Stage::<C::HostCurve, R>::rx(&nested_eval_witness)?;
-        let nested_blind = C::ScalarField::random(&mut *rng);
-        let nested_commitment = nested_rx.commit(C::nested_generators(self.params), nested_blind);
+        let nested_rx = nested::stages::eval::Stage::<C::HostCurve, R>::rx(&nested_eval_witness)?
+            .commit(C::nested_generators(self.params), rng);
 
         Ok((
             proof::Eval {
                 native_rx,
-                native_blind,
-                native_commitment,
                 nested_rx,
-                nested_blind,
-                nested_commitment,
             },
             eval_witness,
         ))

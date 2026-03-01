@@ -3,7 +3,7 @@
 use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
-    polynomials::{Rank, structured, unstructured},
+    polynomials::{CommittedPolynomial, Rank, structured, unstructured},
     registry::CircuitIndex,
 };
 use ragu_core::{
@@ -19,109 +19,84 @@ pub(crate) struct Application<C: Cycle, R: Rank> {
     pub(crate) circuit_id: CircuitIndex,
     pub(crate) left_header: Vec<C::CircuitField>,
     pub(crate) right_header: Vec<C::CircuitField>,
-    pub(crate) rx: structured::Polynomial<C::CircuitField, R>,
-    pub(crate) blind: C::CircuitField,
-    pub(crate) commitment: C::HostCurve,
+    pub(crate) rx: CommittedPolynomial<structured::Polynomial<C::CircuitField, R>, C::HostCurve>,
 }
 
 #[derive(Clone)]
 pub(crate) struct Preamble<C: Cycle, R: Rank> {
-    pub(crate) native_rx: structured::Polynomial<C::CircuitField, R>,
-    pub(crate) native_blind: C::CircuitField,
-    pub(crate) native_commitment: C::HostCurve,
-    pub(crate) nested_rx: structured::Polynomial<C::ScalarField, R>,
-    pub(crate) nested_blind: C::ScalarField,
-    pub(crate) nested_commitment: C::NestedCurve,
+    pub(crate) native_rx:
+        CommittedPolynomial<structured::Polynomial<C::CircuitField, R>, C::HostCurve>,
+    pub(crate) nested_rx:
+        CommittedPolynomial<structured::Polynomial<C::ScalarField, R>, C::NestedCurve>,
 }
 
 #[derive(Clone)]
 pub(crate) struct SPrime<C: Cycle, R: Rank> {
-    pub(crate) registry_wx0_poly: unstructured::Polynomial<C::CircuitField, R>,
-    pub(crate) registry_wx0_blind: C::CircuitField,
-    pub(crate) registry_wx0_commitment: C::HostCurve,
-    pub(crate) registry_wx1_poly: unstructured::Polynomial<C::CircuitField, R>,
-    pub(crate) registry_wx1_blind: C::CircuitField,
-    pub(crate) registry_wx1_commitment: C::HostCurve,
-    pub(crate) nested_s_prime_rx: structured::Polynomial<C::ScalarField, R>,
-    pub(crate) nested_s_prime_blind: C::ScalarField,
-    pub(crate) nested_s_prime_commitment: C::NestedCurve,
+    pub(crate) registry_wx0:
+        CommittedPolynomial<unstructured::Polynomial<C::CircuitField, R>, C::HostCurve>,
+    pub(crate) registry_wx1:
+        CommittedPolynomial<unstructured::Polynomial<C::CircuitField, R>, C::HostCurve>,
+    pub(crate) nested_s_prime_rx:
+        CommittedPolynomial<structured::Polynomial<C::ScalarField, R>, C::NestedCurve>,
 }
 
 #[derive(Clone)]
 pub(crate) struct ErrorM<C: Cycle, R: Rank> {
-    pub(crate) registry_wy_poly: structured::Polynomial<C::CircuitField, R>,
-    pub(crate) registry_wy_blind: C::CircuitField,
-    pub(crate) registry_wy_commitment: C::HostCurve,
-    pub(crate) native_rx: structured::Polynomial<C::CircuitField, R>,
-    pub(crate) native_blind: C::CircuitField,
-    pub(crate) native_commitment: C::HostCurve,
-    pub(crate) nested_rx: structured::Polynomial<C::ScalarField, R>,
-    pub(crate) nested_blind: C::ScalarField,
-    pub(crate) nested_commitment: C::NestedCurve,
+    pub(crate) registry_wy:
+        CommittedPolynomial<structured::Polynomial<C::CircuitField, R>, C::HostCurve>,
+    pub(crate) native_rx:
+        CommittedPolynomial<structured::Polynomial<C::CircuitField, R>, C::HostCurve>,
+    pub(crate) nested_rx:
+        CommittedPolynomial<structured::Polynomial<C::ScalarField, R>, C::NestedCurve>,
 }
 
 #[derive(Clone)]
 pub(crate) struct ErrorN<C: Cycle, R: Rank> {
-    pub(crate) native_rx: structured::Polynomial<C::CircuitField, R>,
-    pub(crate) native_blind: C::CircuitField,
-    pub(crate) native_commitment: C::HostCurve,
-    pub(crate) nested_rx: structured::Polynomial<C::ScalarField, R>,
-    pub(crate) nested_blind: C::ScalarField,
-    pub(crate) nested_commitment: C::NestedCurve,
+    pub(crate) native_rx:
+        CommittedPolynomial<structured::Polynomial<C::CircuitField, R>, C::HostCurve>,
+    pub(crate) nested_rx:
+        CommittedPolynomial<structured::Polynomial<C::ScalarField, R>, C::NestedCurve>,
 }
 
 #[derive(Clone)]
 pub(crate) struct AB<C: Cycle, R: Rank> {
-    pub(crate) a_poly: structured::Polynomial<C::CircuitField, R>,
-    pub(crate) a_blind: C::CircuitField,
-    pub(crate) a_commitment: C::HostCurve,
-    pub(crate) b_poly: structured::Polynomial<C::CircuitField, R>,
-    pub(crate) b_blind: C::CircuitField,
-    pub(crate) b_commitment: C::HostCurve,
+    pub(crate) a: CommittedPolynomial<structured::Polynomial<C::CircuitField, R>, C::HostCurve>,
+    pub(crate) b: CommittedPolynomial<structured::Polynomial<C::CircuitField, R>, C::HostCurve>,
     pub(crate) c: C::CircuitField,
-    pub(crate) nested_rx: structured::Polynomial<C::ScalarField, R>,
-    pub(crate) nested_blind: C::ScalarField,
-    pub(crate) nested_commitment: C::NestedCurve,
+    pub(crate) nested_rx:
+        CommittedPolynomial<structured::Polynomial<C::ScalarField, R>, C::NestedCurve>,
 }
 
 #[derive(Clone)]
 pub(crate) struct Query<C: Cycle, R: Rank> {
-    pub(crate) registry_xy_poly: unstructured::Polynomial<C::CircuitField, R>,
-    pub(crate) registry_xy_blind: C::CircuitField,
-    pub(crate) registry_xy_commitment: C::HostCurve,
-    pub(crate) native_rx: structured::Polynomial<C::CircuitField, R>,
-    pub(crate) native_blind: C::CircuitField,
-    pub(crate) native_commitment: C::HostCurve,
-    pub(crate) nested_rx: structured::Polynomial<C::ScalarField, R>,
-    pub(crate) nested_blind: C::ScalarField,
-    pub(crate) nested_commitment: C::NestedCurve,
+    pub(crate) registry_xy:
+        CommittedPolynomial<unstructured::Polynomial<C::CircuitField, R>, C::HostCurve>,
+    pub(crate) native_rx:
+        CommittedPolynomial<structured::Polynomial<C::CircuitField, R>, C::HostCurve>,
+    pub(crate) nested_rx:
+        CommittedPolynomial<structured::Polynomial<C::ScalarField, R>, C::NestedCurve>,
 }
 
 #[derive(Clone)]
 pub(crate) struct F<C: Cycle, R: Rank> {
-    pub(crate) poly: unstructured::Polynomial<C::CircuitField, R>,
-    pub(crate) blind: C::CircuitField,
-    pub(crate) commitment: C::HostCurve,
-    pub(crate) nested_rx: structured::Polynomial<C::ScalarField, R>,
-    pub(crate) nested_blind: C::ScalarField,
-    pub(crate) nested_commitment: C::NestedCurve,
+    pub(crate) poly:
+        CommittedPolynomial<unstructured::Polynomial<C::CircuitField, R>, C::HostCurve>,
+    pub(crate) nested_rx:
+        CommittedPolynomial<structured::Polynomial<C::ScalarField, R>, C::NestedCurve>,
 }
 
 #[derive(Clone)]
 pub(crate) struct Eval<C: Cycle, R: Rank> {
-    pub(crate) native_rx: structured::Polynomial<C::CircuitField, R>,
-    pub(crate) native_blind: C::CircuitField,
-    pub(crate) native_commitment: C::HostCurve,
-    pub(crate) nested_rx: structured::Polynomial<C::ScalarField, R>,
-    pub(crate) nested_blind: C::ScalarField,
-    pub(crate) nested_commitment: C::NestedCurve,
+    pub(crate) native_rx:
+        CommittedPolynomial<structured::Polynomial<C::CircuitField, R>, C::HostCurve>,
+    pub(crate) nested_rx:
+        CommittedPolynomial<structured::Polynomial<C::ScalarField, R>, C::NestedCurve>,
 }
 
 #[derive(Clone)]
 pub(crate) struct P<C: Cycle, R: Rank> {
-    pub(crate) poly: unstructured::Polynomial<C::CircuitField, R>,
-    pub(crate) blind: C::CircuitField,
-    pub(crate) commitment: C::HostCurve,
+    pub(crate) poly:
+        CommittedPolynomial<unstructured::Polynomial<C::CircuitField, R>, C::HostCurve>,
     pub(crate) v: C::CircuitField,
     pub(crate) endoscalar_rx: structured::Polynomial<C::ScalarField, R>,
     pub(crate) points_rx: structured::Polynomial<C::ScalarField, R>,
@@ -195,19 +170,14 @@ impl<C: Cycle> Challenges<C> {
 
 #[derive(Clone)]
 pub(crate) struct InternalCircuits<C: Cycle, R: Rank> {
-    pub(crate) hashes_1_rx: structured::Polynomial<C::CircuitField, R>,
-    pub(crate) hashes_1_blind: C::CircuitField,
-    pub(crate) hashes_1_commitment: C::HostCurve,
-    pub(crate) hashes_2_rx: structured::Polynomial<C::CircuitField, R>,
-    pub(crate) hashes_2_blind: C::CircuitField,
-    pub(crate) hashes_2_commitment: C::HostCurve,
-    pub(crate) partial_collapse_rx: structured::Polynomial<C::CircuitField, R>,
-    pub(crate) partial_collapse_blind: C::CircuitField,
-    pub(crate) partial_collapse_commitment: C::HostCurve,
-    pub(crate) full_collapse_rx: structured::Polynomial<C::CircuitField, R>,
-    pub(crate) full_collapse_blind: C::CircuitField,
-    pub(crate) full_collapse_commitment: C::HostCurve,
-    pub(crate) compute_v_rx: structured::Polynomial<C::CircuitField, R>,
-    pub(crate) compute_v_blind: C::CircuitField,
-    pub(crate) compute_v_commitment: C::HostCurve,
+    pub(crate) hashes_1:
+        CommittedPolynomial<structured::Polynomial<C::CircuitField, R>, C::HostCurve>,
+    pub(crate) hashes_2:
+        CommittedPolynomial<structured::Polynomial<C::CircuitField, R>, C::HostCurve>,
+    pub(crate) partial_collapse:
+        CommittedPolynomial<structured::Polynomial<C::CircuitField, R>, C::HostCurve>,
+    pub(crate) full_collapse:
+        CommittedPolynomial<structured::Polynomial<C::CircuitField, R>, C::HostCurve>,
+    pub(crate) compute_v:
+        CommittedPolynomial<structured::Polynomial<C::CircuitField, R>, C::HostCurve>,
 }

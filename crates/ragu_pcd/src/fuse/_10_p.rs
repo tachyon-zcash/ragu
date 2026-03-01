@@ -14,7 +14,7 @@ use core::ops::AddAssign;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
     CircuitExt,
-    polynomials::{Rank, unstructured},
+    polynomials::{Committable, CommittedPolynomial, Rank, unstructured},
     staging::{MultiStage, StageExt},
 };
 use ragu_core::{
@@ -40,14 +40,14 @@ struct Accumulator<'a, C: Cycle, R: Rank> {
 }
 
 impl<C: Cycle, R: Rank> Accumulator<'_, C, R> {
-    fn acc<P>(&mut self, poly: &P, blind: C::CircuitField, commitment: C::HostCurve)
+    fn acc<P>(&mut self, cp: &CommittedPolynomial<P, C::HostCurve>)
     where
         for<'p> unstructured::Polynomial<C::CircuitField, R>: AddAssign<&'p P>,
     {
         self.poly.scale(self.beta);
-        *self.poly += poly;
-        *self.blind = self.beta * *self.blind + blind;
-        self.commitments.push(commitment);
+        *self.poly += cp.poly();
+        *self.blind = self.beta * *self.blind + cp.blind();
+        self.commitments.push(cp.commitment());
     }
 }
 
@@ -67,8 +67,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     where
         D: Driver<'dr, F = C::CircuitField, MaybeKind = Always<()>>,
     {
-        let mut poly = f.poly.clone();
-        let mut blind = f.blind;
+        let mut poly = f.poly.poly().clone();
+        let mut blind = f.poly.blind();
 
         // Collect commitments for PointsWitness construction.
         let mut commitments: Vec<C::HostCurve> = Vec::new();
@@ -93,100 +93,36 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             };
 
             for proof in [left, right] {
-                acc.acc(
-                    &proof.application.rx,
-                    proof.application.blind,
-                    proof.application.commitment,
-                );
-                acc.acc(
-                    &proof.preamble.native_rx,
-                    proof.preamble.native_blind,
-                    proof.preamble.native_commitment,
-                );
-                acc.acc(
-                    &proof.error_n.native_rx,
-                    proof.error_n.native_blind,
-                    proof.error_n.native_commitment,
-                );
-                acc.acc(
-                    &proof.error_m.native_rx,
-                    proof.error_m.native_blind,
-                    proof.error_m.native_commitment,
-                );
-                acc.acc(&proof.ab.a_poly, proof.ab.a_blind, proof.ab.a_commitment);
-                acc.acc(&proof.ab.b_poly, proof.ab.b_blind, proof.ab.b_commitment);
-                acc.acc(
-                    &proof.query.native_rx,
-                    proof.query.native_blind,
-                    proof.query.native_commitment,
-                );
-                acc.acc(
-                    &proof.query.registry_xy_poly,
-                    proof.query.registry_xy_blind,
-                    proof.query.registry_xy_commitment,
-                );
-                acc.acc(
-                    &proof.eval.native_rx,
-                    proof.eval.native_blind,
-                    proof.eval.native_commitment,
-                );
-                acc.acc(&proof.p.poly, proof.p.blind, proof.p.commitment);
-                acc.acc(
-                    &proof.circuits.hashes_1_rx,
-                    proof.circuits.hashes_1_blind,
-                    proof.circuits.hashes_1_commitment,
-                );
-                acc.acc(
-                    &proof.circuits.hashes_2_rx,
-                    proof.circuits.hashes_2_blind,
-                    proof.circuits.hashes_2_commitment,
-                );
-                acc.acc(
-                    &proof.circuits.partial_collapse_rx,
-                    proof.circuits.partial_collapse_blind,
-                    proof.circuits.partial_collapse_commitment,
-                );
-                acc.acc(
-                    &proof.circuits.full_collapse_rx,
-                    proof.circuits.full_collapse_blind,
-                    proof.circuits.full_collapse_commitment,
-                );
-                acc.acc(
-                    &proof.circuits.compute_v_rx,
-                    proof.circuits.compute_v_blind,
-                    proof.circuits.compute_v_commitment,
-                );
+                acc.acc(&proof.application.rx);
+                acc.acc(&proof.preamble.native_rx);
+                acc.acc(&proof.error_n.native_rx);
+                acc.acc(&proof.error_m.native_rx);
+                acc.acc(&proof.ab.a);
+                acc.acc(&proof.ab.b);
+                acc.acc(&proof.query.native_rx);
+                acc.acc(&proof.query.registry_xy);
+                acc.acc(&proof.eval.native_rx);
+                acc.acc(&proof.p.poly);
+                acc.acc(&proof.circuits.hashes_1);
+                acc.acc(&proof.circuits.hashes_2);
+                acc.acc(&proof.circuits.partial_collapse);
+                acc.acc(&proof.circuits.full_collapse);
+                acc.acc(&proof.circuits.compute_v);
             }
 
-            acc.acc(
-                &s_prime.registry_wx0_poly,
-                s_prime.registry_wx0_blind,
-                s_prime.registry_wx0_commitment,
-            );
-            acc.acc(
-                &s_prime.registry_wx1_poly,
-                s_prime.registry_wx1_blind,
-                s_prime.registry_wx1_commitment,
-            );
-            acc.acc(
-                &error_m.registry_wy_poly,
-                error_m.registry_wy_blind,
-                error_m.registry_wy_commitment,
-            );
-            acc.acc(&ab.a_poly, ab.a_blind, ab.a_commitment);
-            acc.acc(&ab.b_poly, ab.b_blind, ab.b_commitment);
-            acc.acc(
-                &query.registry_xy_poly,
-                query.registry_xy_blind,
-                query.registry_xy_commitment,
-            );
+            acc.acc(&s_prime.registry_wx0);
+            acc.acc(&s_prime.registry_wx1);
+            acc.acc(&error_m.registry_wy);
+            acc.acc(&ab.a);
+            acc.acc(&ab.b);
+            acc.acc(&query.registry_xy);
         }
 
         // Construct commitment via PointsWitness Horner evaluation.
-        // Points order: [f.commitment, commitments...] computes β^n·f + β^{n-1}·C₀ + ...
-        let (commitment, endoscalar_rx, points_rx, step_rxs) = {
+        // Points order: [f.poly.commitment(), commitments...] computes β^n·f + β^{n-1}·C₀ + ...
+        let (endoscalar_rx, points_rx, step_rxs) = {
             let mut points = Vec::with_capacity(NUM_ENDOSCALING_POINTS);
-            points.push(f.commitment);
+            points.push(f.poly.commitment());
             points.extend_from_slice(&commitments);
 
             let witness =
@@ -217,23 +153,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 step_rxs.push(step_rx);
             }
 
-            (
-                *witness
-                    .interstitials
-                    .last()
-                    .expect("NumStepsLen guarantees at least one interstitial"),
-                endoscalar_rx,
-                points_rx,
-                step_rxs,
-            )
+            (endoscalar_rx, points_rx, step_rxs)
         };
 
         let v = poly.eval(*u.value().take());
+        let poly = poly.commit_with_blind(C::host_generators(self.params), blind);
 
         Ok(proof::P {
             poly,
-            blind,
-            commitment,
             v,
             endoscalar_rx,
             points_rx,

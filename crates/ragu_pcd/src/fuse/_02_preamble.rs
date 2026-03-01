@@ -3,9 +3,11 @@
 //! This creates the [`proof::Preamble`] component of the proof, which commits
 //! to the instance and trace polynomials used in the fuse step.
 
-use ff::Field;
 use ragu_arithmetic::Cycle;
-use ragu_circuits::{polynomials::Rank, staging::StageExt};
+use ragu_circuits::{
+    polynomials::{Committable, Rank},
+    staging::StageExt,
+};
 use ragu_core::Result;
 use rand::CryptoRng;
 
@@ -33,29 +35,23 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             &application.right_header,
         )?;
 
-        let native_rx = native_preamble::Stage::<C, R, HEADER_SIZE>::rx(&preamble_witness)?;
-        let native_blind = C::CircuitField::random(&mut *rng);
-        let native_commitment = native_rx.commit(C::host_generators(self.params), native_blind);
+        let native_rx = native_preamble::Stage::<C, R, HEADER_SIZE>::rx(&preamble_witness)?
+            .commit(C::host_generators(self.params), rng);
 
         let nested_preamble_witness = nested::stages::preamble::Witness {
-            native_preamble: native_commitment,
+            native_preamble: native_rx.commitment(),
             left: nested::stages::preamble::ChildWitness::from_proof(left),
             right: nested::stages::preamble::ChildWitness::from_proof(right),
         };
 
         let nested_rx =
-            nested::stages::preamble::Stage::<C::HostCurve, R>::rx(&nested_preamble_witness)?;
-        let nested_blind = C::ScalarField::random(&mut *rng);
-        let nested_commitment = nested_rx.commit(C::nested_generators(self.params), nested_blind);
+            nested::stages::preamble::Stage::<C::HostCurve, R>::rx(&nested_preamble_witness)?
+                .commit(C::nested_generators(self.params), rng);
 
         Ok((
             proof::Preamble {
                 native_rx,
-                native_blind,
-                native_commitment,
                 nested_rx,
-                nested_blind,
-                nested_commitment,
             },
             preamble_witness,
         ))

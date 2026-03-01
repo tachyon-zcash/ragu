@@ -98,35 +98,23 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         };
 
         // Check polynomial evaluation claim.
-        let p_eval_claim = pcd.proof.p.poly.eval(pcd.proof.challenges.u) == pcd.proof.p.v;
-
-        // Check P commitment corresponds to polynomial and blind.
-        let p_commitment_claim = pcd
-            .proof
-            .p
-            .poly
-            .commit(C::host_generators(self.params), pcd.proof.p.blind)
-            == pcd.proof.p.commitment;
+        let p_eval_claim = pcd.proof.p.poly.poly().eval(pcd.proof.challenges.u) == pcd.proof.p.v;
 
         // Check registry_xy polynomial evaluation at the sampled w.
         // registry_xy_poly is m(W, x, y) - the registry evaluated at current x, y, free in W.
         let registry_xy_claim = {
             let x = pcd.proof.challenges.x;
             let y = pcd.proof.challenges.y;
-            let poly_eval = pcd.proof.query.registry_xy_poly.eval(w);
+            let poly_eval = pcd.proof.query.registry_xy.poly().eval(w);
             let expected = self.native_registry.wxy(w, x, y);
             poly_eval == expected
         };
 
-        // TODO: Add checks for registry_wx0_poly, registry_wx1_poly, and registry_wy_poly.
+        // TODO: Add checks for registry_wx0, registry_wx1, and registry_wy.
         // - registry_wx0/wx1: need child proof x challenges (x₀, x₁) which "disappear" in preamble
         // - registry_wy: interstitial value that will be elided later
 
-        Ok(native_revdot_claims
-            && nested_revdot_claims
-            && p_eval_claim
-            && p_commitment_claim
-            && registry_xy_claim)
+        Ok(native_revdot_claims && nested_revdot_claims && p_eval_claim && registry_xy_claim)
     }
 }
 
@@ -313,22 +301,6 @@ mod tests {
         let pcd = proof.carry::<()>(());
         let result = app.verify(&pcd, &mut rng).expect("verify should not error");
         assert!(!result, "verify should reject wrong right_header size");
-    }
-
-    #[test]
-    fn verify_rejects_corrupted_p_commitment() {
-        let app = create_test_app();
-        let mut rng = StdRng::seed_from_u64(1234);
-
-        // Create a valid trivial proof
-        let mut proof = app.trivial_proof();
-
-        // Corrupt the P commitment by changing the blind
-        proof.p.blind = <Pasta as Cycle>::CircuitField::from(999u64);
-
-        let pcd = proof.carry::<()>(());
-        let result = app.verify(&pcd, &mut rng).expect("verify should not error");
-        assert!(!result, "verify should reject corrupted P commitment");
     }
 
     #[test]

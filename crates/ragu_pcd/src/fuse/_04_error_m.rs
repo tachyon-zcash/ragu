@@ -7,9 +7,12 @@
 //! This phase of the fuse operation is also used to commit to the $m(w, X, y)$
 //! restriction.
 
-use ff::Field;
 use ragu_arithmetic::Cycle;
-use ragu_circuits::{polynomials::Rank, registry::RegistryAt, staging::StageExt};
+use ragu_circuits::{
+    polynomials::{Committable, Rank},
+    registry::RegistryAt,
+    staging::StageExt,
+};
 use ragu_core::{
     Result,
     drivers::Driver,
@@ -50,10 +53,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let y = *y.value().take();
         let z = *z.value().take();
 
-        let registry_wy_poly = registry_at_w.wy(y);
-        let registry_wy_blind = C::CircuitField::random(&mut *rng);
-        let registry_wy_commitment =
-            registry_wy_poly.commit(C::host_generators(self.params), registry_wy_blind);
+        let registry_wy = registry_at_w
+            .wy(y)
+            .commit(C::host_generators(self.params), rng);
 
         let source = FuseProofSource { left, right };
         let mut builder = claims::Builder::new(&self.native_registry, y, z);
@@ -66,30 +68,22 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             native::stages::error_m::Witness::<C, NativeParameters> { error_terms };
         let native_rx = native::stages::error_m::Stage::<C, R, HEADER_SIZE, NativeParameters>::rx(
             &error_m_witness,
-        )?;
-        let native_blind = C::CircuitField::random(&mut *rng);
-        let native_commitment = native_rx.commit(C::host_generators(self.params), native_blind);
+        )?
+        .commit(C::host_generators(self.params), rng);
 
         let nested_error_m_witness = nested::stages::error_m::Witness {
-            native_error_m: native_commitment,
-            registry_wy: registry_wy_commitment,
+            native_error_m: native_rx.commitment(),
+            registry_wy: registry_wy.commitment(),
         };
         let nested_rx =
-            nested::stages::error_m::Stage::<C::HostCurve, R>::rx(&nested_error_m_witness)?;
-        let nested_blind = C::ScalarField::random(&mut *rng);
-        let nested_commitment = nested_rx.commit(C::nested_generators(self.params), nested_blind);
+            nested::stages::error_m::Stage::<C::HostCurve, R>::rx(&nested_error_m_witness)?
+                .commit(C::nested_generators(self.params), rng);
 
         Ok((
             proof::ErrorM {
-                registry_wy_poly,
-                registry_wy_blind,
-                registry_wy_commitment,
+                registry_wy,
                 native_rx,
-                native_blind,
-                native_commitment,
                 nested_rx,
-                nested_blind,
-                nested_commitment,
             },
             error_m_witness,
             builder,

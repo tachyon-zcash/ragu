@@ -9,7 +9,7 @@
 use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
-    polynomials::{Rank, structured},
+    polynomials::{Committable, Rank, structured},
     staging::{Stage as StageTrait, StageExt},
 };
 use ragu_core::{
@@ -140,26 +140,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         };
         let native_rx = native::stages::error_n::Stage::<C, R, HEADER_SIZE, NativeParameters>::rx(
             &error_n_witness,
-        )?;
-        let native_blind = C::CircuitField::random(&mut *rng);
-        let native_commitment = native_rx.commit(C::host_generators(self.params), native_blind);
+        )?
+        .commit(C::host_generators(self.params), rng);
 
         let nested_error_n_witness = nested::stages::error_n::Witness {
-            native_error_n: native_commitment,
+            native_error_n: native_rx.commitment(),
         };
         let nested_rx =
-            nested::stages::error_n::Stage::<C::HostCurve, R>::rx(&nested_error_n_witness)?;
-        let nested_blind = C::ScalarField::random(&mut *rng);
-        let nested_commitment = nested_rx.commit(C::nested_generators(self.params), nested_blind);
+            nested::stages::error_n::Stage::<C::HostCurve, R>::rx(&nested_error_n_witness)?
+                .commit(C::nested_generators(self.params), rng);
 
         Ok((
             proof::ErrorN {
                 native_rx,
-                native_blind,
-                native_commitment,
                 nested_rx,
-                nested_blind,
-                nested_commitment,
             },
             error_n_witness,
             a,

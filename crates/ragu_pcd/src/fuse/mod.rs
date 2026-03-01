@@ -64,19 +64,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         let (preamble, preamble_witness) =
             self.compute_preamble(rng, &left, &right, &application)?;
-        Point::constant(&mut dr, preamble.nested_commitment)?.write(&mut dr, &mut transcript)?;
+        Point::constant(&mut dr, preamble.nested_rx.commitment())?
+            .write(&mut dr, &mut transcript)?;
         let w = transcript.squeeze(&mut dr)?;
         let registry_at_w = self.native_registry.at(*w.value().take());
 
         let s_prime = self.compute_s_prime(rng, &registry_at_w, &left, &right)?;
-        Point::constant(&mut dr, s_prime.nested_s_prime_commitment)?
+        Point::constant(&mut dr, s_prime.nested_s_prime_rx.commitment())?
             .write(&mut dr, &mut transcript)?;
         let y = transcript.squeeze(&mut dr)?;
         let z = transcript.squeeze(&mut dr)?;
 
         let (error_m, error_m_witness, claims) =
             self.compute_errors_m(rng, &registry_at_w, &y, &z, &left, &right)?;
-        Point::constant(&mut dr, error_m.nested_commitment)?.write(&mut dr, &mut transcript)?;
+        Point::constant(&mut dr, error_m.nested_rx.commitment())?
+            .write(&mut dr, &mut transcript)?;
 
         let saved_transcript_state = transcript
             .clone()
@@ -100,28 +102,29 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             &nu,
             saved_transcript_state,
         )?;
-        Point::constant(&mut dr, error_n.nested_commitment)?.write(&mut dr, &mut transcript)?;
+        Point::constant(&mut dr, error_n.nested_rx.commitment())?
+            .write(&mut dr, &mut transcript)?;
         let mu_prime = transcript.squeeze(&mut dr)?;
         let nu_prime = transcript.squeeze(&mut dr)?;
 
         let ab = self.compute_ab(rng, a, b, &mu_prime, &nu_prime)?;
-        Point::constant(&mut dr, ab.nested_commitment)?.write(&mut dr, &mut transcript)?;
+        Point::constant(&mut dr, ab.nested_rx.commitment())?.write(&mut dr, &mut transcript)?;
         let x = transcript.squeeze(&mut dr)?;
 
         let (query, query_witness) =
             self.compute_query(rng, &w, &x, &y, &z, &error_m, &left, &right)?;
-        Point::constant(&mut dr, query.nested_commitment)?.write(&mut dr, &mut transcript)?;
+        Point::constant(&mut dr, query.nested_rx.commitment())?.write(&mut dr, &mut transcript)?;
         let alpha = transcript.squeeze(&mut dr)?;
 
         let f = self.compute_f(
             rng, &w, &y, &z, &x, &alpha, &s_prime, &error_m, &ab, &query, &left, &right,
         )?;
-        Point::constant(&mut dr, f.nested_commitment)?.write(&mut dr, &mut transcript)?;
+        Point::constant(&mut dr, f.nested_rx.commitment())?.write(&mut dr, &mut transcript)?;
         let u = transcript.squeeze(&mut dr)?;
 
         let (eval, eval_witness) =
             self.compute_eval(rng, &u, &left, &right, &s_prime, &error_m, &ab, &query)?;
-        Point::constant(&mut dr, eval.nested_commitment)?.write(&mut dr, &mut transcript)?;
+        Point::constant(&mut dr, eval.nested_rx.commitment())?.write(&mut dr, &mut transcript)?;
         let pre_beta = transcript.squeeze(&mut dr)?;
 
         let p = self.compute_p(
