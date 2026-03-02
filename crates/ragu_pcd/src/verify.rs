@@ -570,6 +570,10 @@ mod tests {
     seeded_rejects!(seeded_rejects_corrupted_p_step_rx_0, |proof| {
         *proof.p.step_rxs[0].constant_term() = SF::from(999u64)
     });
+    seeded_rejects!(seeded_rejects_corrupted_p_step_rx_nonzero, |proof| {
+        let idx = if proof.p.step_rxs.len() > 1 { 1 } else { 0 };
+        *proof.p.step_rxs[idx].constant_term() = SF::from(999u64)
+    });
 
     // Unstructured polynomial corruptions
 
