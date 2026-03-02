@@ -322,7 +322,9 @@ pub fn eval<'witness, F: Field, C: Circuit<F>>(
 mod tests {
     use super::*;
     use crate::tests::SquareCircuit;
+    use ragu_core::{drivers::DriverValue, gadgets::Kind};
     use ragu_pasta::Fp;
+    use ragu_primitives::Element;
 
     #[test]
     fn test_rx() {
@@ -334,5 +336,158 @@ mod tests {
                 assert_eq!(seg.a[i] * seg.b[i], seg.c[i]);
             }
         }
+    }
+
+    /// Squares its input. Returns Unknown. 1 mul gate.
+    #[derive(Clone)]
+    struct InnerRoutine;
+
+    impl Routine<Fp> for InnerRoutine {
+        type Input = Kind![Fp; Element<'_, _>];
+        type Output = Kind![Fp; Element<'_, _>];
+        type Aux<'dr> = ();
+
+        fn execute<'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            input: Bound<'dr, D, Self::Input>,
+            _aux: DriverValue<D, Self::Aux<'dr>>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            input.square(dr)
+        }
+
+        fn predict<'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            _dr: &mut D,
+            _input: &Bound<'dr, D, Self::Input>,
+        ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>>
+        {
+            Ok(Prediction::Unknown(D::just(|| ())))
+        }
+    }
+
+    /// Returns Known. Nests InnerRoutine in execute, then squares the result.
+    #[derive(Clone)]
+    struct OuterRoutine;
+
+    impl Routine<Fp> for OuterRoutine {
+        type Input = Kind![Fp; Element<'_, _>];
+        type Output = Kind![Fp; Element<'_, _>];
+        type Aux<'dr> = ();
+
+        fn execute<'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            input: Bound<'dr, D, Self::Input>,
+            _aux: DriverValue<D, Self::Aux<'dr>>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            let inner_result = dr.routine(InnerRoutine, input)?;
+            inner_result.square(dr)
+        }
+
+        fn predict<'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            input: &Bound<'dr, D, Self::Input>,
+        ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>>
+        {
+            let output = Element::alloc(
+                dr,
+                D::with(|| {
+                    let v = *input.value().snag();
+                    Ok(v.square().square())
+                })?,
+            )?;
+            Ok(Prediction::Known(output, D::just(|| ())))
+        }
+    }
+
+    /// Squares its input twice. Returns Unknown. 2 mul gates.
+    #[derive(Clone)]
+    struct SiblingRoutine;
+
+    impl Routine<Fp> for SiblingRoutine {
+        type Input = Kind![Fp; Element<'_, _>];
+        type Output = Kind![Fp; Element<'_, _>];
+        type Aux<'dr> = ();
+
+        fn execute<'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            input: Bound<'dr, D, Self::Input>,
+            _aux: DriverValue<D, Self::Aux<'dr>>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            let a = input.square(dr)?;
+            a.square(dr)
+        }
+
+        fn predict<'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            _dr: &mut D,
+            _input: &Bound<'dr, D, Self::Input>,
+        ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>>
+        {
+            Ok(Prediction::Unknown(D::just(|| ())))
+        }
+    }
+
+    /// Calls OuterRoutine (Known, deferred) then SiblingRoutine (Unknown, inline).
+    struct NestedRoutineCircuit;
+
+    impl Circuit<Fp> for NestedRoutineCircuit {
+        type Instance<'instance> = Fp;
+        type Output = Kind![Fp; Element<'_, _>];
+        type Witness<'witness> = Fp;
+        type Aux<'witness> = ();
+
+        fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            instance: DriverValue<D, Self::Instance<'instance>>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            Element::alloc(dr, instance)
+        }
+
+        fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            witness: DriverValue<D, Self::Witness<'witness>>,
+        ) -> Result<(
+            Bound<'dr, D, Self::Output>,
+            DriverValue<D, Self::Aux<'witness>>,
+        )> {
+            let a = Element::alloc(dr, witness)?;
+            let _b = dr.routine(OuterRoutine, a.clone())?;
+            let c = dr.routine(SiblingRoutine, a)?;
+            Ok((c, D::just(|| ())))
+        }
+    }
+
+    /// Nested routine calls from a deferred Known routine should produce
+    /// segments in canonical DFS order, not at the end of the trace.
+    ///
+    /// Correct: [root(0), outer(1), inner(2), sibling(3)]
+    /// Bug:     [root(0), outer(1), sibling(2), inner(3)]
+    #[test]
+    fn test_nested_known_routine_dfs_order() {
+        let circuit = NestedRoutineCircuit;
+        let witness = Fp::from(3);
+        let (trace, _) = eval::<Fp, _>(&circuit, witness).unwrap();
+
+        assert_eq!(trace.segments.len(), 4);
+
+        for (seg_idx, seg) in trace.segments.iter().enumerate() {
+            for i in 0..seg.a.len() {
+                assert_eq!(
+                    seg.a[i] * seg.b[i],
+                    seg.c[i],
+                    "gate constraint violated in segment {seg_idx} at position {i}"
+                );
+            }
+        }
+
+        // inner = 1 gate, sibling = 2 gates; gate counts distinguish them
+        assert_eq!(trace.segments[2].a.len(), 1, "segment 2 should be inner");
+        assert_eq!(trace.segments[3].a.len(), 2, "segment 3 should be sibling");
     }
 }
