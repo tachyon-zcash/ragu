@@ -486,8 +486,138 @@ mod tests {
             }
         }
 
-        // inner = 1 gate, sibling = 2 gates; gate counts distinguish them
         assert_eq!(trace.segments[2].a.len(), 1, "segment 2 should be inner");
         assert_eq!(trace.segments[3].a.len(), 2, "segment 3 should be sibling");
+    }
+
+    /// Returns Known. Squares its input in execute. 1 mul gate.
+    #[derive(Clone)]
+    struct KnownInner;
+
+    impl Routine<Fp> for KnownInner {
+        type Input = Kind![Fp; Element<'_, _>];
+        type Output = Kind![Fp; Element<'_, _>];
+        type Aux<'dr> = ();
+
+        fn execute<'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            input: Bound<'dr, D, Self::Input>,
+            _aux: DriverValue<D, Self::Aux<'dr>>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            input.square(dr)
+        }
+
+        fn predict<'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            input: &Bound<'dr, D, Self::Input>,
+        ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>>
+        {
+            let output = Element::alloc(
+                dr,
+                D::with(|| {
+                    let v = *input.value().snag();
+                    Ok(v.square())
+                })?,
+            )?;
+            Ok(Prediction::Known(output, D::just(|| ())))
+        }
+    }
+
+    /// Returns Known. Nests KnownInner in execute, then squares the result.
+    #[derive(Clone)]
+    struct KnownOuter;
+
+    impl Routine<Fp> for KnownOuter {
+        type Input = Kind![Fp; Element<'_, _>];
+        type Output = Kind![Fp; Element<'_, _>];
+        type Aux<'dr> = ();
+
+        fn execute<'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            input: Bound<'dr, D, Self::Input>,
+            _aux: DriverValue<D, Self::Aux<'dr>>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            let inner_result = dr.routine(KnownInner, input)?;
+            inner_result.square(dr)
+        }
+
+        fn predict<'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            input: &Bound<'dr, D, Self::Input>,
+        ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>>
+        {
+            let output = Element::alloc(
+                dr,
+                D::with(|| {
+                    let v = *input.value().snag();
+                    Ok(v.square().square())
+                })?,
+            )?;
+            Ok(Prediction::Known(output, D::just(|| ())))
+        }
+    }
+
+    /// Calls KnownOuter which nests KnownInner — both return Known.
+    struct KnownNestingCircuit;
+
+    impl Circuit<Fp> for KnownNestingCircuit {
+        type Instance<'instance> = Fp;
+        type Output = Kind![Fp; Element<'_, _>];
+        type Witness<'witness> = Fp;
+        type Aux<'witness> = ();
+
+        fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            instance: DriverValue<D, Self::Instance<'instance>>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            Element::alloc(dr, instance)
+        }
+
+        fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            witness: DriverValue<D, Self::Witness<'witness>>,
+        ) -> Result<(
+            Bound<'dr, D, Self::Output>,
+            DriverValue<D, Self::Aux<'witness>>,
+        )> {
+            let a = Element::alloc(dr, witness)?;
+            let b = dr.routine(KnownOuter, a)?;
+            Ok((b, D::just(|| ())))
+        }
+    }
+
+    /// A Known routine nesting another Known routine must flush both.
+    /// The inner Known thunk is pushed to `pending` during the outer's
+    /// deferred execute, but `core::mem::take` already drained the vec
+    /// so the inner's execute is silently dropped.
+    #[test]
+    fn test_nested_known_known_flush() {
+        let circuit = KnownNestingCircuit;
+        let witness = Fp::from(3);
+        let (trace, _) = eval::<Fp, _>(&circuit, witness).unwrap();
+
+        assert_eq!(trace.segments.len(), 3);
+
+        for (seg_idx, seg) in trace.segments.iter().enumerate() {
+            for i in 0..seg.a.len() {
+                assert_eq!(
+                    seg.a[i] * seg.b[i],
+                    seg.c[i],
+                    "gate constraint violated in segment {seg_idx} at position {i}"
+                );
+            }
+        }
+
+        assert_eq!(
+            trace.segments[2].a.len(),
+            1,
+            "inner Known execute was dropped"
+        );
     }
 }
