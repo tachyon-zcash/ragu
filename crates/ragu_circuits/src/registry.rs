@@ -382,6 +382,14 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
         self.key.value()
     }
 
+    /// Returns the cached subtree sizes for a registered circuit.
+    ///
+    /// These can be passed to [`rx::eval`](crate::rx::eval) to avoid
+    /// recomputing metrics.
+    pub fn subtree_sizes(&self, circuit: CircuitIndex) -> &[usize] {
+        self.circuits[usize::from(circuit)].subtree_sizes()
+    }
+
     /// Returns a slice of the circuit objects in this registry.
     pub fn circuits(&self) -> &[Box<dyn CircuitObject<F, R> + '_>] {
         &self.circuits

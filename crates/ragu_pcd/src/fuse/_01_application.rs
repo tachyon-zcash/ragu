@@ -31,11 +31,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         proof::Application<C, R>,
         S::Aux<'source>,
     )> {
-        let (trace, aux) =
-            Adapter::<C, S, R, HEADER_SIZE>::new(step).rx((left.data, right.data, witness))?;
-        let rx = self
-            .native_registry
-            .assemble(&trace, S::INDEX.circuit_index(self.num_application_steps)?)?;
+        let circuit_id = S::INDEX.circuit_index(self.num_application_steps)?;
+        let (trace, aux) = Adapter::<C, S, R, HEADER_SIZE>::new(step).rx_with(
+            (left.data, right.data, witness),
+            self.native_registry.subtree_sizes(circuit_id),
+        )?;
+        let rx = self.native_registry.assemble(&trace, circuit_id)?;
         let blind = C::CircuitField::random(&mut *rng);
         let commitment = rx.commit(C::host_generators(self.params), blind);
 
@@ -45,7 +46,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             left.proof,
             right.proof,
             proof::Application {
-                circuit_id: S::INDEX.circuit_index(self.num_application_steps)?,
+                circuit_id,
                 left_header: left_header.into_inner(),
                 right_header: right_header.into_inner(),
                 rx,

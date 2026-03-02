@@ -55,84 +55,93 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             v: p.v,
         };
 
+        let hashes_1_id = native::hashes_1::CIRCUIT_ID.circuit_index();
         let (hashes_1_trace, _) =
             native::hashes_1::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(
                 self.params,
                 total_circuit_counts(self.num_application_steps).1,
             )
-            .rx(native::hashes_1::Witness {
-                unified_instance,
-                preamble_witness,
-                error_n_witness,
-            })?;
-        let hashes_1_rx = self.native_registry.assemble(
-            &hashes_1_trace,
-            native::hashes_1::CIRCUIT_ID.circuit_index(),
-        )?;
+            .rx_with(
+                native::hashes_1::Witness {
+                    unified_instance,
+                    preamble_witness,
+                    error_n_witness,
+                },
+                self.native_registry.subtree_sizes(hashes_1_id),
+            )?;
+        let hashes_1_rx = self
+            .native_registry
+            .assemble(&hashes_1_trace, hashes_1_id)?;
         let hashes_1_rx_blind = C::CircuitField::random(&mut *rng);
         let hashes_1_rx_commitment =
             hashes_1_rx.commit(C::host_generators(self.params), hashes_1_rx_blind);
 
+        let hashes_2_id = native::hashes_2::CIRCUIT_ID.circuit_index();
         let (hashes_2_trace, _) =
-            native::hashes_2::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(self.params).rx(
-                native::hashes_2::Witness {
-                    unified_instance,
-                    error_n_witness,
-                },
-            )?;
-        let hashes_2_rx = self.native_registry.assemble(
-            &hashes_2_trace,
-            native::hashes_2::CIRCUIT_ID.circuit_index(),
-        )?;
+            native::hashes_2::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(self.params)
+                .rx_with(
+                    native::hashes_2::Witness {
+                        unified_instance,
+                        error_n_witness,
+                    },
+                    self.native_registry.subtree_sizes(hashes_2_id),
+                )?;
+        let hashes_2_rx = self
+            .native_registry
+            .assemble(&hashes_2_trace, hashes_2_id)?;
         let hashes_2_rx_blind = C::CircuitField::random(&mut *rng);
         let hashes_2_rx_commitment =
             hashes_2_rx.commit(C::host_generators(self.params), hashes_2_rx_blind);
 
+        let partial_collapse_id = native::partial_collapse::CIRCUIT_ID.circuit_index();
         let (partial_collapse_trace, _) =
-            native::partial_collapse::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new().rx(
-                native::partial_collapse::Witness {
-                    preamble_witness,
-                    unified_instance,
-                    error_m_witness,
-                    error_n_witness,
-                },
-            )?;
-        let partial_collapse_rx = self.native_registry.assemble(
-            &partial_collapse_trace,
-            native::partial_collapse::CIRCUIT_ID.circuit_index(),
-        )?;
+            native::partial_collapse::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new()
+                .rx_with(
+                    native::partial_collapse::Witness {
+                        preamble_witness,
+                        unified_instance,
+                        error_m_witness,
+                        error_n_witness,
+                    },
+                    self.native_registry.subtree_sizes(partial_collapse_id),
+                )?;
+        let partial_collapse_rx = self
+            .native_registry
+            .assemble(&partial_collapse_trace, partial_collapse_id)?;
         let partial_collapse_rx_blind = C::CircuitField::random(&mut *rng);
         let partial_collapse_rx_commitment =
             partial_collapse_rx.commit(C::host_generators(self.params), partial_collapse_rx_blind);
 
+        let full_collapse_id = native::full_collapse::CIRCUIT_ID.circuit_index();
         let (full_collapse_trace, _) =
-            native::full_collapse::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new().rx(
+            native::full_collapse::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new().rx_with(
                 native::full_collapse::Witness {
                     unified_instance,
                     preamble_witness,
                     error_n_witness,
                 },
+                self.native_registry.subtree_sizes(full_collapse_id),
             )?;
-        let full_collapse_rx = self.native_registry.assemble(
-            &full_collapse_trace,
-            native::full_collapse::CIRCUIT_ID.circuit_index(),
-        )?;
+        let full_collapse_rx = self
+            .native_registry
+            .assemble(&full_collapse_trace, full_collapse_id)?;
         let full_collapse_rx_blind = C::CircuitField::random(&mut *rng);
         let full_collapse_rx_commitment =
             full_collapse_rx.commit(C::host_generators(self.params), full_collapse_rx_blind);
 
-        let (compute_v_trace, _) = native::compute_v::Circuit::<C, R, HEADER_SIZE>::new().rx(
+        let compute_v_id = native::compute_v::CIRCUIT_ID.circuit_index();
+        let (compute_v_trace, _) = native::compute_v::Circuit::<C, R, HEADER_SIZE>::new().rx_with(
             native::compute_v::Witness {
                 unified_instance,
                 preamble_witness,
                 query_witness,
                 eval_witness,
             },
+            self.native_registry.subtree_sizes(compute_v_id),
         )?;
-        let compute_v_rx = self.native_registry.assemble(
-            &compute_v_trace,
-            native::compute_v::CIRCUIT_ID.circuit_index(),
-        )?;
+        let compute_v_rx = self
+            .native_registry
+            .assemble(&compute_v_trace, compute_v_id)?;
         let compute_v_rx_blind = C::CircuitField::random(&mut *rng);
         let compute_v_rx_commitment =
             compute_v_rx.commit(C::host_generators(self.params), compute_v_rx_blind);

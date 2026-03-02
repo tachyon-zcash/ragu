@@ -192,16 +192,28 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
     /// via [`Registry::assemble`](registry::Registry::assemble).
     ///
     /// This standalone entry point computes metrics internally. Callers
-    /// that already have a [`CircuitObject`] (e.g. from registration)
-    /// can avoid the redundant metrics pass by calling
-    /// [`rx::eval`] directly with the cached
-    /// [`subtree_sizes`](CircuitObject::subtree_sizes).
+    /// that already have cached [`subtree_sizes`](CircuitObject::subtree_sizes)
+    /// (e.g. from a [`Registry`](registry::Registry)) should use
+    /// [`rx_with`] instead to avoid the redundant metrics pass.
+    ///
+    /// [`rx_with`]: CircuitExt::rx_with
     fn rx<'witness>(
         &self,
         witness: Self::Witness<'witness>,
     ) -> Result<(rx::Trace<F>, Self::Aux<'witness>)> {
         let metrics = metrics::eval(self)?;
         rx::eval(self, witness, &metrics.subtree_sizes)
+    }
+
+    /// Computes the trace for this circuit from a witness, using
+    /// pre-computed [`subtree_sizes`](CircuitObject::subtree_sizes)
+    /// as advice to avoid a redundant metrics pass.
+    fn rx_with<'witness>(
+        &self,
+        witness: Self::Witness<'witness>,
+        subtree_sizes: &[usize],
+    ) -> Result<(rx::Trace<F>, Self::Aux<'witness>)> {
+        rx::eval(self, witness, subtree_sizes)
     }
 
     /// Computes the instance polynomial $k(Y)$ for the given instance.
