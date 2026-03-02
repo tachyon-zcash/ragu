@@ -86,6 +86,12 @@ pub struct CircuitMetrics {
     /// root segment (not backed by a [`Routine`]); indices 1+ each correspond
     /// to a [`Routine`] invocation.
     pub segments: Vec<SegmentRecord>,
+
+    /// Per-segment subtree sizes in DFS order. `subtree_sizes[i]` is the
+    /// number of segments in segment `i`'s subtree, including itself.
+    /// Leaf routines have subtree_size 1; the root has subtree_size equal
+    /// to the total number of segments.
+    pub subtree_sizes: Vec<usize>,
 }
 
 /// Per-segment state that is saved and restored by [`DriverScope`].
@@ -99,6 +105,7 @@ struct Counter<F> {
     num_linear_constraints: usize,
     num_multiplication_constraints: usize,
     segments: Vec<SegmentRecord>,
+    subtree_sizes: Vec<usize>,
     _marker: PhantomData<F>,
 }
 
@@ -157,6 +164,7 @@ impl<'dr, F: Field> Driver<'dr> for Counter<F> {
         input: Bound<'dr, Self, Ro::Input>,
     ) -> Result<Bound<'dr, Self, Ro::Output>> {
         self.segments.push(SegmentRecord::default());
+        self.subtree_sizes.push(0);
         let segment_idx = self.segments.len() - 1;
         self.with_scope(
             CounterScope {
@@ -175,6 +183,8 @@ impl<'dr, F: Field> Driver<'dr> for Counter<F> {
                     "current_segment must remain stable during routine execution"
                 );
 
+                this.subtree_sizes[segment_idx] = this.segments.len() - segment_idx;
+
                 Ok(result)
             },
         )
@@ -190,6 +200,7 @@ pub fn eval<F: Field, C: Circuit<F>>(circuit: &C) -> Result<CircuitMetrics> {
         num_linear_constraints: 0,
         num_multiplication_constraints: 0,
         segments: alloc::vec![SegmentRecord::default()],
+        subtree_sizes: alloc::vec![0],
         _marker: PhantomData,
     };
     let mut degree_ky = 0usize;
@@ -231,11 +242,14 @@ pub fn eval<F: Field, C: Circuit<F>>(circuit: &C) -> Result<CircuitMetrics> {
         collector.num_linear_constraints
     );
 
+    collector.subtree_sizes[0] = collector.segments.len();
+
     Ok(CircuitMetrics {
         num_linear_constraints: collector.num_linear_constraints,
         num_multiplication_constraints: collector.num_multiplication_constraints,
         degree_ky,
         segments: collector.segments,
+        subtree_sizes: collector.subtree_sizes,
     })
 }
 

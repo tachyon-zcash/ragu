@@ -191,7 +191,8 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
         &self,
         witness: Self::Witness<'witness>,
     ) -> Result<(rx::Trace<F>, Self::Aux<'witness>)> {
-        rx::eval(self, witness)
+        let metrics = metrics::eval(self)?;
+        rx::eval(self, witness, &metrics)
     }
 
     /// Computes the instance polynomial $k(Y)$ for the given instance.

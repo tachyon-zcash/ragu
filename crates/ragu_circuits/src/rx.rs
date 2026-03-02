@@ -48,24 +48,24 @@ pub struct Trace<F> {
 }
 
 impl<F: Field> Trace<F> {
-    pub(crate) fn new() -> Self {
-        // Segment 0 starts with a zeroed placeholder for the ONE gate.
-        // assemble_with_key overwrites position 0 with the actual key values.
-        Self {
-            segments: vec![Segment {
-                a: vec![F::ZERO],
-                b: vec![F::ZERO],
-                c: vec![F::ZERO],
-            }],
-        }
-    }
-
-    fn push_segment(&mut self) {
-        self.segments.push(Segment {
-            a: Vec::new(),
-            b: Vec::new(),
-            c: Vec::new(),
+    /// Pre-allocates all `num_segments` segments. Segment 0 starts with a
+    /// zeroed placeholder for the ONE gate; segments 1+ are empty.
+    pub(crate) fn new(num_segments: usize) -> Self {
+        let mut segments = Vec::with_capacity(num_segments);
+        // Segment 0: zeroed placeholder for the ONE gate.
+        segments.push(Segment {
+            a: vec![F::ZERO],
+            b: vec![F::ZERO],
+            c: vec![F::ZERO],
         });
+        for _ in 1..num_segments {
+            segments.push(Segment {
+                a: Vec::new(),
+                b: Vec::new(),
+                c: Vec::new(),
+            });
+        }
+        Self { segments }
     }
 }
 
@@ -178,6 +178,10 @@ struct Evaluator<'a, F: Field> {
     state: TraceScope,
     /// Deferred execute() calls to be processed after circuit traversal.
     pending: Vec<PendingExecute<'a, F>>,
+    /// Per-segment subtree sizes from metrics, used to skip past Known subtrees.
+    subtree_sizes: &'a [usize],
+    /// DFS counter for the next routine segment (0 is root, routines start at 1).
+    next_routine: usize,
 }
 
 impl<F: Field> DriverScope<TraceScope> for Evaluator<'_, F> {
@@ -253,9 +257,8 @@ impl<'a, F: Field> Driver<'a> for Evaluator<'a, F> {
         routine: Ro,
         input: Bound<'a, Self, Ro::Input>,
     ) -> Result<Bound<'a, Self, Ro::Output>> {
-        // Create segment upfront - this reserves its position in the floor plan
-        self.trace.push_segment();
-        let seg = self.trace.segments.len() - 1;
+        let seg = self.next_routine;
+        self.next_routine += 1;
         self.with_scope(
             TraceScope {
                 available_b: None,
@@ -267,17 +270,26 @@ impl<'a, F: Field> Driver<'a> for Evaluator<'a, F> {
                 match routine.predict(&mut dummy, &dummy_input)? {
                     Prediction::Known(predicted_output, aux) => {
                         let output = Ro::Output::map_gadget(&predicted_output, this)?;
-                        // Defer execute() to after circuit traversal.
-                        // The segment already exists, so execute will fill it at the correct position.
+                        // Skip past the entire subtree — children will be filled during flush.
+                        let child_start = this.next_routine;
+                        this.next_routine += this.subtree_sizes[seg] - 1;
+                        let subtree_sizes = this.subtree_sizes;
                         this.pending
                             .push(Box::new(move |dr: &mut Evaluator<'a, F>| {
+                                let saved = dr.next_routine;
+                                dr.next_routine = child_start;
                                 dr.with_scope(
                                     TraceScope {
                                         available_b: None,
                                         current_segment: seg,
                                     },
-                                    |dr| routine.execute(dr, input, aux).map(|_| ()),
-                                )
+                                    |dr| {
+                                        dr.subtree_sizes = subtree_sizes;
+                                        routine.execute(dr, input, aux).map(|_| ())
+                                    },
+                                )?;
+                                dr.next_routine = saved;
+                                Ok(())
                             }));
                         Ok(output)
                     }
@@ -296,21 +308,30 @@ impl<'a, F: Field> Driver<'a> for Evaluator<'a, F> {
 pub fn eval<'witness, F: Field, C: Circuit<F>>(
     circuit: &C,
     witness: C::Witness<'witness>,
+    metrics: &super::metrics::CircuitMetrics,
 ) -> Result<(Trace<F>, C::Aux<'witness>)> {
-    let mut trace = Trace::new();
+    let mut trace = Trace::new(metrics.segments.len());
     let aux = {
         let mut dr = Evaluator {
             trace: &mut trace,
             state: TraceScope::default(),
             pending: Vec::new(),
+            subtree_sizes: &metrics.subtree_sizes,
+            next_routine: 1,
         };
         let (io, aux) = circuit.witness(&mut dr, Always::maybe_just(|| witness))?;
         io.write(&mut dr, &mut ())?;
 
-        // Flush deferred execute() calls
-        let pending: Vec<_> = core::mem::take(&mut dr.pending);
-        for pending_execute in pending {
-            pending_execute(&mut dr)?;
+        // Flush deferred execute() calls, looping until all nested
+        // Known thunks are drained.
+        loop {
+            let pending = core::mem::take(&mut dr.pending);
+            if pending.is_empty() {
+                break;
+            }
+            for thunk in pending {
+                thunk(&mut dr)?;
+            }
         }
 
         aux.take()
@@ -321,16 +342,25 @@ pub fn eval<'witness, F: Field, C: Circuit<F>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests::SquareCircuit;
+    use crate::{metrics, tests::SquareCircuit};
     use ragu_core::{drivers::DriverValue, gadgets::Kind};
     use ragu_pasta::Fp;
     use ragu_primitives::Element;
+
+    /// Computes metrics then evaluates the circuit.
+    fn eval_with_metrics<'w, C: Circuit<Fp>>(
+        circuit: &C,
+        witness: C::Witness<'w>,
+    ) -> Result<(Trace<Fp>, C::Aux<'w>)> {
+        let m = metrics::eval(circuit)?;
+        eval(circuit, witness, &m)
+    }
 
     #[test]
     fn test_rx() {
         let circuit = SquareCircuit { times: 10 };
         let witness: Fp = Fp::from(3);
-        let (trace, _aux) = eval::<Fp, _>(&circuit, witness).unwrap();
+        let (trace, _aux) = eval_with_metrics(&circuit, witness).unwrap();
         for seg in &trace.segments {
             for i in 0..seg.a.len() {
                 assert_eq!(seg.a[i] * seg.b[i], seg.c[i]);
@@ -472,7 +502,7 @@ mod tests {
     fn test_nested_known_routine_dfs_order() {
         let circuit = NestedRoutineCircuit;
         let witness = Fp::from(3);
-        let (trace, _) = eval::<Fp, _>(&circuit, witness).unwrap();
+        let (trace, _) = eval_with_metrics(&circuit, witness).unwrap();
 
         assert_eq!(trace.segments.len(), 4);
 
@@ -600,7 +630,7 @@ mod tests {
     fn test_nested_known_known_flush() {
         let circuit = KnownNestingCircuit;
         let witness = Fp::from(3);
-        let (trace, _) = eval::<Fp, _>(&circuit, witness).unwrap();
+        let (trace, _) = eval_with_metrics(&circuit, witness).unwrap();
 
         assert_eq!(trace.segments.len(), 3);
 
@@ -692,7 +722,7 @@ mod tests {
             }
         }
 
-        let (trace, _) = eval::<Fp, _>(&ThreeLevelCircuit, Fp::from(3)).unwrap();
+        let (trace, _) = eval_with_metrics(&ThreeLevelCircuit, Fp::from(3)).unwrap();
 
         // 4 segments: root, outermost, outer, inner
         assert_eq!(trace.segments.len(), 4);
@@ -742,7 +772,7 @@ mod tests {
             }
         }
 
-        let (trace, _) = eval::<Fp, _>(&MultiKnownSiblingCircuit, Fp::from(3)).unwrap();
+        let (trace, _) = eval_with_metrics(&MultiKnownSiblingCircuit, Fp::from(3)).unwrap();
 
         // 5 segments: root, outer1, inner1, outer2, inner2
         assert_eq!(trace.segments.len(), 5);
@@ -828,7 +858,7 @@ mod tests {
             }
         }
 
-        let (trace, _) = eval::<Fp, _>(&MixedNestingCircuit, Fp::from(3)).unwrap();
+        let (trace, _) = eval_with_metrics(&MixedNestingCircuit, Fp::from(3)).unwrap();
 
         // 4 segments: root, mixed parent, unknown child, known child
         assert_eq!(trace.segments.len(), 4);
@@ -880,7 +910,7 @@ mod tests {
             }
         }
 
-        let (trace, _) = eval::<Fp, _>(&FlatInterleavingCircuit, Fp::from(3)).unwrap();
+        let (trace, _) = eval_with_metrics(&FlatInterleavingCircuit, Fp::from(3)).unwrap();
 
         // 5 segments: root + 4 flat routines
         assert_eq!(trace.segments.len(), 5);
@@ -962,7 +992,7 @@ mod tests {
             }
         }
 
-        let (trace, _) = eval::<Fp, _>(&EmptyKnownCircuit, Fp::from(3)).unwrap();
+        let (trace, _) = eval_with_metrics(&EmptyKnownCircuit, Fp::from(3)).unwrap();
 
         assert_eq!(trace.segments.len(), 2);
         assert_eq!(trace.segments[1].a.len(), 0, "empty execute = 0 gates");
@@ -1035,7 +1065,7 @@ mod tests {
             }
         }
 
-        let result = eval::<Fp, _>(&FailingKnownCircuit, Fp::from(3));
+        let result = eval_with_metrics(&FailingKnownCircuit, Fp::from(3));
         assert!(result.is_err());
     }
 }
