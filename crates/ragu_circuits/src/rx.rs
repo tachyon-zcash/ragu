@@ -620,4 +620,422 @@ mod tests {
             "inner Known execute was dropped"
         );
     }
+
+    /// Returns Known. Nests KnownOuter (which nests KnownInner) then squares.
+    #[derive(Clone)]
+    struct KnownOutermost;
+
+    impl Routine<Fp> for KnownOutermost {
+        type Input = Kind![Fp; Element<'_, _>];
+        type Output = Kind![Fp; Element<'_, _>];
+        type Aux<'dr> = ();
+
+        fn execute<'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            input: Bound<'dr, D, Self::Input>,
+            _aux: DriverValue<D, Self::Aux<'dr>>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            let result = dr.routine(KnownOuter, input)?;
+            result.square(dr)
+        }
+
+        fn predict<'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            input: &Bound<'dr, D, Self::Input>,
+        ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>>
+        {
+            let output = Element::alloc(
+                dr,
+                D::with(|| {
+                    let v = *input.value().snag();
+                    // KnownInner: v^2, KnownOuter: v^4, KnownOutermost: v^8
+                    Ok(v.square().square().square())
+                })?,
+            )?;
+            Ok(Prediction::Known(output, D::just(|| ())))
+        }
+    }
+
+    /// Three levels of Known nesting: outermost → outer → inner.
+    /// A fix that only does one extra flush pass will miss depth-3.
+    #[test]
+    fn test_three_level_known_nesting() {
+        struct ThreeLevelCircuit;
+
+        impl Circuit<Fp> for ThreeLevelCircuit {
+            type Instance<'instance> = Fp;
+            type Output = Kind![Fp; Element<'_, _>];
+            type Witness<'witness> = Fp;
+            type Aux<'witness> = ();
+
+            fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                dr: &mut D,
+                instance: DriverValue<D, Self::Instance<'instance>>,
+            ) -> Result<Bound<'dr, D, Self::Output>> {
+                Element::alloc(dr, instance)
+            }
+
+            fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                dr: &mut D,
+                witness: DriverValue<D, Self::Witness<'witness>>,
+            ) -> Result<(
+                Bound<'dr, D, Self::Output>,
+                DriverValue<D, Self::Aux<'witness>>,
+            )> {
+                let a = Element::alloc(dr, witness)?;
+                let b = dr.routine(KnownOutermost, a)?;
+                Ok((b, D::just(|| ())))
+            }
+        }
+
+        let (trace, _) = eval::<Fp, _>(&ThreeLevelCircuit, Fp::from(3)).unwrap();
+
+        // 4 segments: root, outermost, outer, inner
+        assert_eq!(trace.segments.len(), 4);
+
+        // Every non-root segment should have 1 gate (each routine squares once).
+        for i in 1..4 {
+            assert_eq!(
+                trace.segments[i].a.len(),
+                1,
+                "segment {i} should have 1 gate"
+            );
+        }
+    }
+
+    /// Two Known siblings that each nest a Known child.
+    /// Tests flush across multiple parents' deferred children.
+    #[test]
+    fn test_multiple_known_siblings_with_known_children() {
+        struct MultiKnownSiblingCircuit;
+
+        impl Circuit<Fp> for MultiKnownSiblingCircuit {
+            type Instance<'instance> = Fp;
+            type Output = Kind![Fp; Element<'_, _>];
+            type Witness<'witness> = Fp;
+            type Aux<'witness> = ();
+
+            fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                dr: &mut D,
+                instance: DriverValue<D, Self::Instance<'instance>>,
+            ) -> Result<Bound<'dr, D, Self::Output>> {
+                Element::alloc(dr, instance)
+            }
+
+            fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                dr: &mut D,
+                witness: DriverValue<D, Self::Witness<'witness>>,
+            ) -> Result<(
+                Bound<'dr, D, Self::Output>,
+                DriverValue<D, Self::Aux<'witness>>,
+            )> {
+                let a = Element::alloc(dr, witness)?;
+                let _b = dr.routine(KnownOuter, a.clone())?;
+                let c = dr.routine(KnownOuter, a)?;
+                Ok((c, D::just(|| ())))
+            }
+        }
+
+        let (trace, _) = eval::<Fp, _>(&MultiKnownSiblingCircuit, Fp::from(3)).unwrap();
+
+        // 5 segments: root, outer1, inner1, outer2, inner2
+        assert_eq!(trace.segments.len(), 5);
+
+        // Every non-root segment should have 1 gate.
+        for i in 1..5 {
+            assert_eq!(
+                trace.segments[i].a.len(),
+                1,
+                "segment {i} should have 1 gate"
+            );
+        }
+    }
+
+    /// Returns Known. Nests an Unknown child and a Known child in execute.
+    #[derive(Clone)]
+    struct MixedParent;
+
+    impl Routine<Fp> for MixedParent {
+        type Input = Kind![Fp; Element<'_, _>];
+        type Output = Kind![Fp; Element<'_, _>];
+        type Aux<'dr> = ();
+
+        fn execute<'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            input: Bound<'dr, D, Self::Input>,
+            _aux: DriverValue<D, Self::Aux<'dr>>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            let a = dr.routine(InnerRoutine, input.clone())?;
+            let b = dr.routine(KnownInner, input)?;
+            a.mul(dr, &b)
+        }
+
+        fn predict<'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            input: &Bound<'dr, D, Self::Input>,
+        ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>>
+        {
+            let output = Element::alloc(
+                dr,
+                D::with(|| {
+                    let v = *input.value().snag();
+                    Ok(v.square() * v.square())
+                })?,
+            )?;
+            Ok(Prediction::Known(output, D::just(|| ())))
+        }
+    }
+
+    /// Known routine nesting both an Unknown and a Known child.
+    /// Combines DFS ordering bug (Unknown child) with flush bug (Known child).
+    #[test]
+    fn test_known_with_mixed_children() {
+        struct MixedNestingCircuit;
+
+        impl Circuit<Fp> for MixedNestingCircuit {
+            type Instance<'instance> = Fp;
+            type Output = Kind![Fp; Element<'_, _>];
+            type Witness<'witness> = Fp;
+            type Aux<'witness> = ();
+
+            fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                dr: &mut D,
+                instance: DriverValue<D, Self::Instance<'instance>>,
+            ) -> Result<Bound<'dr, D, Self::Output>> {
+                Element::alloc(dr, instance)
+            }
+
+            fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                dr: &mut D,
+                witness: DriverValue<D, Self::Witness<'witness>>,
+            ) -> Result<(
+                Bound<'dr, D, Self::Output>,
+                DriverValue<D, Self::Aux<'witness>>,
+            )> {
+                let a = Element::alloc(dr, witness)?;
+                let b = dr.routine(MixedParent, a)?;
+                Ok((b, D::just(|| ())))
+            }
+        }
+
+        let (trace, _) = eval::<Fp, _>(&MixedNestingCircuit, Fp::from(3)).unwrap();
+
+        // 4 segments: root, mixed parent, unknown child, known child
+        assert_eq!(trace.segments.len(), 4);
+
+        // Parent has 1 gate (mul), each child has 1 gate (square).
+        for i in 1..4 {
+            assert_eq!(
+                trace.segments[i].a.len(),
+                1,
+                "segment {i} should have 1 gate"
+            );
+        }
+    }
+
+    /// Flat interleaving of Unknown and Known siblings (no nesting).
+    /// Should pass on current code — baseline that flat deferral works.
+    #[test]
+    fn test_flat_interleaving() {
+        struct FlatInterleavingCircuit;
+
+        impl Circuit<Fp> for FlatInterleavingCircuit {
+            type Instance<'instance> = Fp;
+            type Output = Kind![Fp; Element<'_, _>];
+            type Witness<'witness> = Fp;
+            type Aux<'witness> = ();
+
+            fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                dr: &mut D,
+                instance: DriverValue<D, Self::Instance<'instance>>,
+            ) -> Result<Bound<'dr, D, Self::Output>> {
+                Element::alloc(dr, instance)
+            }
+
+            fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                dr: &mut D,
+                witness: DriverValue<D, Self::Witness<'witness>>,
+            ) -> Result<(
+                Bound<'dr, D, Self::Output>,
+                DriverValue<D, Self::Aux<'witness>>,
+            )> {
+                let a = Element::alloc(dr, witness)?;
+                let _ = dr.routine(InnerRoutine, a.clone())?;
+                let _ = dr.routine(KnownInner, a.clone())?;
+                let _ = dr.routine(InnerRoutine, a.clone())?;
+                let d = dr.routine(KnownInner, a)?;
+                Ok((d, D::just(|| ())))
+            }
+        }
+
+        let (trace, _) = eval::<Fp, _>(&FlatInterleavingCircuit, Fp::from(3)).unwrap();
+
+        // 5 segments: root + 4 flat routines
+        assert_eq!(trace.segments.len(), 5);
+
+        // Each routine squares once = 1 gate per segment.
+        for i in 1..5 {
+            assert_eq!(
+                trace.segments[i].a.len(),
+                1,
+                "segment {i} should have 1 gate"
+            );
+        }
+    }
+
+    /// Known routine whose execute produces zero gates.
+    #[test]
+    fn test_known_empty_execute() {
+        #[derive(Clone)]
+        struct KnownEmpty;
+
+        impl Routine<Fp> for KnownEmpty {
+            type Input = Kind![Fp; Element<'_, _>];
+            type Output = Kind![Fp; Element<'_, _>];
+            type Aux<'dr> = ();
+
+            fn execute<'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                _dr: &mut D,
+                input: Bound<'dr, D, Self::Input>,
+                _aux: DriverValue<D, Self::Aux<'dr>>,
+            ) -> Result<Bound<'dr, D, Self::Output>> {
+                Ok(input)
+            }
+
+            fn predict<'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                dr: &mut D,
+                input: &Bound<'dr, D, Self::Input>,
+            ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>>
+            {
+                let output = Element::alloc(
+                    dr,
+                    D::with(|| {
+                        let v = *input.value().snag();
+                        Ok(v * Fp::ONE)
+                    })?,
+                )?;
+                Ok(Prediction::Known(output, D::just(|| ())))
+            }
+        }
+
+        struct EmptyKnownCircuit;
+
+        impl Circuit<Fp> for EmptyKnownCircuit {
+            type Instance<'instance> = Fp;
+            type Output = Kind![Fp; Element<'_, _>];
+            type Witness<'witness> = Fp;
+            type Aux<'witness> = ();
+
+            fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                dr: &mut D,
+                instance: DriverValue<D, Self::Instance<'instance>>,
+            ) -> Result<Bound<'dr, D, Self::Output>> {
+                Element::alloc(dr, instance)
+            }
+
+            fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                dr: &mut D,
+                witness: DriverValue<D, Self::Witness<'witness>>,
+            ) -> Result<(
+                Bound<'dr, D, Self::Output>,
+                DriverValue<D, Self::Aux<'witness>>,
+            )> {
+                let a = Element::alloc(dr, witness)?;
+                let b = dr.routine(KnownEmpty, a)?;
+                Ok((b, D::just(|| ())))
+            }
+        }
+
+        let (trace, _) = eval::<Fp, _>(&EmptyKnownCircuit, Fp::from(3)).unwrap();
+
+        assert_eq!(trace.segments.len(), 2);
+        assert_eq!(trace.segments[1].a.len(), 0, "empty execute = 0 gates");
+    }
+
+    /// Error from a deferred Known execute must propagate out of eval.
+    #[test]
+    fn test_deferred_execute_error_propagation() {
+        #[derive(Clone)]
+        struct KnownFailing;
+
+        impl Routine<Fp> for KnownFailing {
+            type Input = Kind![Fp; Element<'_, _>];
+            type Output = Kind![Fp; Element<'_, _>];
+            type Aux<'dr> = ();
+
+            fn execute<'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                _dr: &mut D,
+                _input: Bound<'dr, D, Self::Input>,
+                _aux: DriverValue<D, Self::Aux<'dr>>,
+            ) -> Result<Bound<'dr, D, Self::Output>> {
+                Err(Error::InvalidWitness("intentional test failure".into()))
+            }
+
+            fn predict<'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                dr: &mut D,
+                input: &Bound<'dr, D, Self::Input>,
+            ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>>
+            {
+                let output = Element::alloc(
+                    dr,
+                    D::with(|| {
+                        let v = *input.value().snag();
+                        Ok(v * Fp::ONE)
+                    })?,
+                )?;
+                Ok(Prediction::Known(output, D::just(|| ())))
+            }
+        }
+
+        struct FailingKnownCircuit;
+
+        impl Circuit<Fp> for FailingKnownCircuit {
+            type Instance<'instance> = Fp;
+            type Output = Kind![Fp; Element<'_, _>];
+            type Witness<'witness> = Fp;
+            type Aux<'witness> = ();
+
+            fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                dr: &mut D,
+                instance: DriverValue<D, Self::Instance<'instance>>,
+            ) -> Result<Bound<'dr, D, Self::Output>> {
+                Element::alloc(dr, instance)
+            }
+
+            fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                dr: &mut D,
+                witness: DriverValue<D, Self::Witness<'witness>>,
+            ) -> Result<(
+                Bound<'dr, D, Self::Output>,
+                DriverValue<D, Self::Aux<'witness>>,
+            )> {
+                let a = Element::alloc(dr, witness)?;
+                let b = dr.routine(KnownFailing, a)?;
+                Ok((b, D::just(|| ())))
+            }
+        }
+
+        let result = eval::<Fp, _>(&FailingKnownCircuit, Fp::from(3));
+        assert!(result.is_err());
+    }
 }
