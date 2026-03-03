@@ -365,7 +365,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     };
 
     // Allocate the key_wire and ONE wires
-    let (key_wire, _, _one) = evaluator.mul(|| unreachable!())?;
+    let (key_wire, _, _one_wire) = evaluator.mul(|| unreachable!())?;
 
     // Registry key constraint
     evaluator.enforce_registry_key(&key_wire, key)?;
