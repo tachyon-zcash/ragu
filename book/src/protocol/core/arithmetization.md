@@ -101,7 +101,7 @@ and notice that for all $z \in \F$ and for any choice of $\v{r}$ there exists a
 unique vector $\v{t} \in \F^{4n}$ such that
 
 $$
-\revdot{\v{r}}{\v{t}} = \sum_{i = 0}^{n - 1} \v{c}_i
+\revdot{\v{r}}{\v{t}} = -\sum_{i = 0}^{n - 1} \v{c}_i
 \Big( \textcolor{green}{ z^{2n - 1 - i} + z^{2n + i} } \Big)
 $$
 
@@ -111,7 +111,7 @@ $$
 Let
 
 $$
-\v{t'} =(\rv{z}^{\bf n:2n} + \v{z}^{\bf 2n:3n}) = [z^{2n-1-i}+z^{2n+i}]_{i=0}^{n-1}.
+\v{t'} =-(\rv{z}^{\bf n:2n} + \v{z}^{\bf 2n:3n}) = -[z^{2n-1-i}+z^{2n+i}]_{i=0}^{n-1}.
 $$
 
 The first $3n$ entries are all zeros, the last $n$ entries is the
@@ -119,14 +119,14 @@ reversal of $\v{t'}$
  
 $$
 \v{t}=(\v{0}\|\v{0}\|\v{0}\|\rv{t'})
-=(\v{0^{3n}}\| [z^{n+i} + z^{3n-1-i}]_{i=0}^{n-1})
+=(\v{0^{3n}}\| -[z^{n+i} + z^{3n-1-i}]_{i=0}^{n-1})
 $$
 </details>
 
 and so by adding the two equalities, we get
 
 $$
-\revdot{\v{r}}{\v{r} \circ{\v{z^{4n}}} - \v{t}} = 
+\revdot{\v{r}}{\v{r} \circ{\v{z^{4n}}} + \v{t}} =
 \sum\limits_{i = 0}^{n - 1} \Big(
   (\textcolor{blue}{\v{a}_i \v{b}_i - \v{c}_i})
   \big( \textcolor{green}{z^{2n - 1 - i} + z^{2n + i} } \big)
@@ -137,7 +137,7 @@ $$
 Therefore, if the expression
 
 $$
-\revdot{\v{r}}{\v{r} \circ{\v{z^{4n}}} - \v{t}} = 0
+\revdot{\v{r}}{\v{r} \circ{\v{z^{4n}}} + \v{t}} = 0
 $$
 
 holds for a random $z$, then $\textcolor{blue}{\v{a} \circ \v{b} = \v{c}}$ and
@@ -190,8 +190,8 @@ $z$) and _linear constraints_ (using random challenge $y$) can be combined into
 a single equation
 
 $$
-\revdot{\v{r}}{\v{s} + \v{r} \circ{\v{z^{4n}}} - \v{t}} = \dot{\v{k}}{\v{y^{4n}}}
+\revdot{\v{r}}{\v{s} + \v{r} \circ{\v{z^{4n}}} + \v{t}} = \dot{\v{k}}{\v{y^{4n}}}
 $$
 
-because $\v{r} \circ \v{z^{4n}} - \v{t}$ is made independent of $\v{s}$ by
+because $\v{r} \circ \v{z^{4n}} + \v{t}$ is made independent of $\v{s}$ by
 random $z$ except at $\v{r}_0$, where $\v{s}_0 = 0$.
