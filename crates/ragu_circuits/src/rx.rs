@@ -190,8 +190,11 @@ struct TraceScope {
 struct Evaluator<'scope, 'env, F: Field> {
     /// Trace segments produced by this evaluator's routine scope.
     segments: Vec<AnnotatedSegment<F>>,
+    /// Rayon scope for spawning Known-predicted routine evaluations.
     scope: &'scope maybe_rayon::Scope<'env>,
+    /// Channel for sending completed segments back to the root collector.
     tx: mpsc::Sender<Result<Vec<AnnotatedSegment<F>>>>,
+    /// Per-routine state saved and restored by [`DriverScope`].
     state: TraceScope,
 }
 
@@ -286,10 +289,17 @@ impl<'scope, 'env, F: Field> Driver<'env> for Evaluator<'scope, 'env, F> {
 
         match prediction {
             Prediction::Known(predicted_output, aux) => {
+                // Deferred `execute()` for a Known-predicted routine.
+                //
+                // Created when `predict()` returns [`Known`](Prediction::Known),
+                // allowing the main traversal to continue with the predicted
+                // output while deferring the actual witness computation. When
+                // spawned, runs `execute()` in a fresh [`Evaluator`] and sends
+                // the resulting trace segments back through the channel.
                 let output = CloneWires::remap(&predicted_output)?;
                 // Remap the input gadget to a driver-independent representation,
                 // then wrap in `Sendable` to satisfy the `Send` bound on the
-                // thunk closure.
+                // spawn closure.
                 let input = StripWires::remap(&input)?.sendable();
 
                 let tx = self.tx.clone();
@@ -298,7 +308,14 @@ impl<'scope, 'env, F: Field> Driver<'env> for Evaluator<'scope, 'env, F> {
                     tx.send(
                         CloneWires::remap(&input.into_inner())
                             .and_then(|input| routine.execute(&mut eval, input, aux))
-                            .map(|_| eval.segments),
+                            // Discard the output gadget; we already have the predicted output.
+                            .map(|_| {
+                                assert!(
+                                    !eval.segments.is_empty(),
+                                    "deferred routine must produce at least one segment"
+                                );
+                                eval.segments
+                            }),
                     )
                     .expect("receiver alive");
                 });
@@ -368,6 +385,8 @@ pub fn eval<'witness, F: Field, C: Circuit<F>>(
         Ok((evaluator.segments, aux))
     })?;
 
+    // Collect segments from spawned Known-predicted routines, draining
+    // all deferred execute() calls that completed during the scope.
     for batch in rx {
         segments.extend(batch?);
     }
