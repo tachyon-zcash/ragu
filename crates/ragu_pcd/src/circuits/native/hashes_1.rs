@@ -234,7 +234,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             let nested_preamble_commitment = unified_output
                 .nested_preamble_commitment
                 .get(dr, unified_instance)?;
-            nested_preamble_commitment.write(dr, &mut sponge)?;
+            nested_preamble_commitment.sink(dr, &mut sponge)?;
             sponge.squeeze(dr)?
         };
         unified_output.w.set(w.clone());
@@ -244,7 +244,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             let nested_s_prime_commitment = unified_output
                 .nested_s_prime_commitment
                 .get(dr, unified_instance)?;
-            nested_s_prime_commitment.write(dr, &mut sponge)?;
+            nested_s_prime_commitment.sink(dr, &mut sponge)?;
             let y = sponge.squeeze(dr)?;
             let z = sponge.squeeze(dr)?;
             (y, z)
@@ -277,7 +277,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             let nested_error_m_commitment = unified_output
                 .nested_error_m_commitment
                 .get(dr, unified_instance)?;
-            nested_error_m_commitment.write(dr, &mut sponge)?;
+            nested_error_m_commitment.sink(dr, &mut sponge)?;
 
             // save_state() applies a permutation (since there's pending absorbed data)
             // and returns the raw state, ready for squeeze-mode resumption in hashes_2.

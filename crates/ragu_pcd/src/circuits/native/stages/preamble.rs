@@ -108,18 +108,18 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         y: &Element<'dr, D>,
     ) -> Result<(Element<'dr, D>, Element<'dr, D>)> {
         let mut ky = Ky::new(y);
-        self.unified.write(dr, &mut ky)?;
+        self.unified.sink(dr, &mut ky)?;
 
         Ok((
             ({
                 let mut ky = ky.clone();
-                Element::zero(dr).write(dr, &mut ky)?;
+                Element::zero(dr).sink(dr, &mut ky)?;
                 ky.finish(dr)?
             }),
             ({
-                self.children.left.write(dr, &mut ky)?;
-                self.children.right.write(dr, &mut ky)?;
-                Element::zero(dr).write(dr, &mut ky)?;
+                self.children.left.sink(dr, &mut ky)?;
+                self.children.right.sink(dr, &mut ky)?;
+                Element::zero(dr).sink(dr, &mut ky)?;
                 ky.finish(dr)?
             }),
         ))
@@ -130,9 +130,9 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     /// Returns `application_ky` = k(y) for `(children.left, children.right, output_header)`.
     pub fn application_ky(&self, dr: &mut D, y: &Element<'dr, D>) -> Result<Element<'dr, D>> {
         let mut ky = Ky::new(y);
-        self.children.left.write(dr, &mut ky)?;
-        self.children.right.write(dr, &mut ky)?;
-        self.output_header.write(dr, &mut ky)?;
+        self.children.left.sink(dr, &mut ky)?;
+        self.children.right.sink(dr, &mut ky)?;
+        self.output_header.sink(dr, &mut ky)?;
         ky.finish(dr)
     }
 
@@ -211,7 +211,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
             let output = padded::for_header::<H, HEADER_SIZE, _>(emulator, output)?;
 
             let mut header_data = Vec::with_capacity(HEADER_SIZE);
-            output.write(emulator, &mut header_data)?;
+            output.write(&mut header_data)?;
 
             header_data
                 .into_iter()

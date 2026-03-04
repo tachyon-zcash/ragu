@@ -1,9 +1,9 @@
-//! Streaming Horner's method evaluation via the Buffer trait.
+//! Streaming Horner's method evaluation via the Sink trait.
 
 use ragu_core::{Result, drivers::Driver};
-use ragu_primitives::{Element, io::Buffer};
+use ragu_primitives::{Element, io::Sink};
 
-/// A buffer that evaluates a polynomial at a point using Horner's method.
+/// A sink that evaluates a polynomial at a point using Horner's method.
 ///
 /// # Coefficient Ordering
 ///
@@ -47,7 +47,7 @@ impl<'a, 'dr, D: Driver<'dr>> Horner<'a, 'dr, D> {
     }
 }
 
-impl<'a, 'dr, D: Driver<'dr>> Buffer<'dr, D> for Horner<'a, 'dr, D> {
+impl<'a, 'dr, D: Driver<'dr>> Sink<'dr, D> for Horner<'a, 'dr, D> {
     fn write(&mut self, dr: &mut D, value: &Element<'dr, D>) -> Result<()> {
         self.result = Some(match self.result.take() {
             Some(acc) => acc.mul(dr, self.point)?.add(dr, value),

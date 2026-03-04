@@ -181,7 +181,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             let nested_error_n_commitment = unified_output
                 .nested_error_n_commitment
                 .get(dr, unified_instance)?;
-            nested_error_n_commitment.write(dr, &mut sponge)?;
+            nested_error_n_commitment.sink(dr, &mut sponge)?;
             let mu_prime = sponge.squeeze(dr)?;
             let nu_prime = sponge.squeeze(dr)?;
             (mu_prime, nu_prime)
@@ -194,7 +194,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             let nested_ab_commitment = unified_output
                 .nested_ab_commitment
                 .get(dr, unified_instance)?;
-            nested_ab_commitment.write(dr, &mut sponge)?;
+            nested_ab_commitment.sink(dr, &mut sponge)?;
             sponge.squeeze(dr)?
         };
         unified_output.x.set(x);
@@ -204,7 +204,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             let nested_query_commitment = unified_output
                 .nested_query_commitment
                 .get(dr, unified_instance)?;
-            nested_query_commitment.write(dr, &mut sponge)?;
+            nested_query_commitment.sink(dr, &mut sponge)?;
             sponge.squeeze(dr)?
         };
         unified_output.alpha.set(alpha.clone());
@@ -214,7 +214,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             let nested_f_commitment = unified_output
                 .nested_f_commitment
                 .get(dr, unified_instance)?;
-            nested_f_commitment.write(dr, &mut sponge)?;
+            nested_f_commitment.sink(dr, &mut sponge)?;
             sponge.squeeze(dr)?
         };
         unified_output.u.set(u);
@@ -224,7 +224,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             let nested_eval_commitment = unified_output
                 .nested_eval_commitment
                 .get(dr, unified_instance)?;
-            nested_eval_commitment.write(dr, &mut sponge)?;
+            nested_eval_commitment.sink(dr, &mut sponge)?;
             sponge.squeeze(dr)?
         };
         unified_output.pre_beta.set(pre_beta);

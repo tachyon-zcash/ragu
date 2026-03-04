@@ -26,13 +26,12 @@ impl<'dr, D: Driver<'dr>, G: GadgetKind<D::F>> WithSuffix<'dr, D, G> {
 }
 
 impl<F: Field, K: GadgetKind<F> + Write<F>> Write<F> for Kind![F; @WithSuffix<'_, _, K>] {
-    fn write_gadget<'dr, D: Driver<'dr, F = F>, B: Buffer<'dr, D>>(
+    fn write_gadget<'dr, D: Driver<'dr, F = F>>(
         this: &Bound<'dr, D, Self>,
-        dr: &mut D,
-        buf: &mut B,
+        buf: &mut impl Buffer<'dr, D>,
     ) -> Result<()> {
-        K::write_gadget(&this.inner, dr, buf)?;
-        buf.write(dr, &this.suffix)
+        K::write_gadget(&this.inner, buf)?;
+        buf.write(&this.suffix)
     }
 }
 

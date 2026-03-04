@@ -5,7 +5,7 @@ use ragu_circuits::polynomials::{Rank, structured};
 use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::{
     Element,
-    io::Buffer,
+    io::Sink,
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 

@@ -1,11 +1,12 @@
+use alloc::vec::Vec;
 use ff::{Field, PrimeField};
 use ragu_core::{
     Result,
-    drivers::Driver,
+    drivers::{Driver, FromDriver},
     gadgets::{Bound, Gadget, GadgetKind, Kind},
 };
 use ragu_primitives::{
-    Element, GadgetExt,
+    Element,
     io::{Buffer, Write},
 };
 
@@ -42,77 +43,116 @@ pub(crate) fn for_header<
     dr: &mut D,
     gadget: Bound<'dr, D, H::Output>,
 ) -> Result<Padded<'dr, D, H::Output, HEADER_SIZE>> {
-    let padded_content = PaddedContent { gadget };
+    // Count the elements the gadget writes, and validate against HEADER_SIZE.
+    let mut count = 0usize;
+    H::Output::write_gadget(&gadget, &mut CountingBuffer(&mut count))?;
+
+    let pad_count = (HEADER_SIZE - 1).checked_sub(count).ok_or_else(|| {
+        ragu_core::Error::MalformedEncoding(
+            alloc::format!(
+                "Header encoding size exceeded HEADER_SIZE - 1 ({})",
+                HEADER_SIZE - 1,
+            )
+            .into(),
+        )
+    })?;
+
+    let padding = (0..pad_count).map(|_| Element::zero(dr)).collect();
     let suffix = Element::constant(dr, D::F::from(H::SUFFIX.get()));
+
     Ok(Padded {
-        inner: WithSuffix::new(padded_content, suffix),
+        inner: WithSuffix::new(PaddedContent { gadget, padding }, suffix),
     })
 }
 
-/// Inner gadget that writes the header gadget followed by zero padding up to
-/// `HEADER_SIZE - 1` elements (reserving space for the suffix).
-#[derive(Gadget)]
+/// Inner gadget that writes the header gadget followed by pre-allocated zero
+/// padding up to `HEADER_SIZE - 1` elements (reserving space for the suffix).
 pub(crate) struct PaddedContent<
     'dr,
     D: Driver<'dr>,
     G: GadgetKind<D::F> + Write<D::F>,
     const HEADER_SIZE: usize,
 > {
-    #[ragu(gadget)]
     gadget: Bound<'dr, D, G>,
+    padding: Vec<Element<'dr, D>>,
+}
+
+impl<'dr, D: Driver<'dr>, G: GadgetKind<D::F> + Write<D::F>, const HEADER_SIZE: usize> Clone
+    for PaddedContent<'dr, D, G, HEADER_SIZE>
+where
+    Bound<'dr, D, G>: Clone,
+{
+    fn clone(&self) -> Self {
+        PaddedContent {
+            gadget: self.gadget.clone(),
+            padding: self.padding.clone(),
+        }
+    }
+}
+
+impl<'dr, D: Driver<'dr>, G: GadgetKind<D::F> + Write<D::F>, const HEADER_SIZE: usize>
+    Gadget<'dr, D> for PaddedContent<'dr, D, G, HEADER_SIZE>
+{
+    type Kind = PaddedContent<'static, PhantomData<D::F>, G, HEADER_SIZE>;
+}
+
+// Safety: `D::Wire: Send` implies `Bound<'dr, D, G>: Send` (by `G: GadgetKind`)
+// and `Element<'dr, D>: Send` (since `Element` contains `D::Wire`). Therefore
+// `PaddedContent<'dr, D, G, HEADER_SIZE>: Send` when `D::Wire: Send`.
+unsafe impl<F: Field, G: GadgetKind<F> + Write<F>, const HEADER_SIZE: usize> GadgetKind<F>
+    for PaddedContent<'static, PhantomData<F>, G, HEADER_SIZE>
+{
+    type Rebind<'dr, D: Driver<'dr, F = F>> = PaddedContent<'dr, D, G, HEADER_SIZE>;
+
+    fn map_gadget<'dr, 'new_dr, D: Driver<'dr, F = F>, ND: FromDriver<'dr, 'new_dr, D>>(
+        this: &Bound<'dr, D, Self>,
+        ndr: &mut ND,
+    ) -> Result<Bound<'new_dr, ND::NewDriver, Self>> {
+        Ok(PaddedContent {
+            gadget: G::map_gadget(&this.gadget, ndr)?,
+            padding: this
+                .padding
+                .iter()
+                .map(|e| e.map(ndr))
+                .collect::<Result<_>>()?,
+        })
+    }
+
+    fn enforce_equal_gadget<
+        'dr,
+        D1: Driver<'dr, F = F>,
+        D2: Driver<'dr, F = F, Wire = <D1 as Driver<'dr>>::Wire>,
+    >(
+        dr: &mut D1,
+        a: &Bound<'dr, D2, Self>,
+        b: &Bound<'dr, D2, Self>,
+    ) -> Result<()> {
+        G::enforce_equal_gadget(dr, &a.gadget, &b.gadget)
+        // padding elements are always zero constants — equality is trivially satisfied
+    }
 }
 
 impl<F: Field, G: GadgetKind<F> + Write<F>, const HEADER_SIZE: usize> Write<F>
     for PaddedContent<'static, PhantomData<F>, G, HEADER_SIZE>
 {
-    fn write_gadget<'dr, D: Driver<'dr, F = F>, B: Buffer<'dr, D>>(
+    fn write_gadget<'dr, D: Driver<'dr, F = F>>(
         this: &Bound<'dr, D, Self>,
-        dr: &mut D,
-        buf: &mut B,
+        buf: &mut impl Buffer<'dr, D>,
     ) -> Result<()> {
-        // Create a buffer that intercepts the data being written and counts it,
-        // prohibiting more than HEADER_SIZE - 1 writes (reserving space for
-        // suffix).
-        let mut counting = CountingBuffer::<B, HEADER_SIZE> {
-            written: 0,
-            inner: buf,
-        };
-
-        this.gadget.write(dr, &mut counting)?;
-
-        // Add padding to reach HEADER_SIZE - 1 elements (suffix will be added
-        // after).
-        while counting.written < HEADER_SIZE - 1 {
-            Element::zero(dr).write(dr, &mut counting)?;
+        G::write_gadget(&this.gadget, buf)?;
+        for zero in &this.padding {
+            buf.write(zero)?;
         }
-
         Ok(())
     }
 }
 
-struct CountingBuffer<'a, B, const HEADER_SIZE: usize> {
-    written: usize,
-    inner: &'a mut B,
-}
+/// A [`Buffer`] that counts written elements without storing them.
+struct CountingBuffer<'a>(&'a mut usize);
 
-impl<'dr, D, B, const HEADER_SIZE: usize> Buffer<'dr, D> for CountingBuffer<'_, B, HEADER_SIZE>
-where
-    D: Driver<'dr>,
-    B: Buffer<'dr, D>,
-{
-    fn write(&mut self, dr: &mut D, value: &Element<'dr, D>) -> Result<()> {
-        // Limit is N - 1 to reserve space for the suffix element
-        if self.written >= HEADER_SIZE - 1 {
-            return Err(ragu_core::Error::MalformedEncoding(
-                alloc::format!(
-                    "Header encoding size exceeded HEADER_SIZE - 1 ({})",
-                    HEADER_SIZE - 1,
-                )
-                .into(),
-            ));
-        }
-        self.inner.write(dr, value)?;
-        self.written += 1;
+impl<'dr, D: Driver<'dr>> Buffer<'dr, D> for CountingBuffer<'_> {
+    fn write(&mut self, _: &Element<'dr, D>) -> Result<()> {
+        *self.0 += 1;
         Ok(())
     }
 }
@@ -121,8 +161,8 @@ where
 mod tests {
     use ragu_core::{
         Result,
-        drivers::{Driver, emulator::Emulator},
-        gadgets::{Gadget, Kind},
+        drivers::{Driver, DriverValue, emulator::Emulator},
+        gadgets::{Bound, Gadget, Kind},
         maybe::{Always, Maybe, MaybeKind},
     };
     use ragu_pasta::Fp as F;
@@ -133,12 +173,30 @@ mod tests {
     };
 
     use super::Padded;
-    use crate::components::suffix::WithSuffix;
+    use crate::{Header, components::suffix::WithSuffix, header::Suffix};
 
     #[derive(Gadget, Write)]
     struct MySillyGadget<'dr, D: Driver<'dr>> {
         #[ragu(gadget)]
         blah: FixedVec<Element<'dr, D>, ConstLen<4>>,
+    }
+
+    // A header whose Output is MySillyGadget (4 elements).
+    struct MySillyHeader;
+    impl Header<F> for MySillyHeader {
+        const SUFFIX: Suffix = Suffix::new(0);
+        type Data<'source> = ();
+        type Output = Kind![F; MySillyGadget<'_, _>];
+
+        fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+            dr: &mut D,
+            _: DriverValue<D, ()>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            let blah = (1u64..=4)
+                .map(|n| Element::alloc(dr, D::just(|| F::from(n))))
+                .try_collect_fixed()?;
+            Ok(MySillyGadget { blah })
+        }
     }
 
     #[test]
@@ -152,15 +210,18 @@ mod tests {
         };
 
         {
-            // Create Padded gadget with suffix value 42
+            // Create Padded gadget with suffix value 42 and 1 zero padding
+            // HEADER_SIZE=6: 4 gadget elements + 1 zero + 1 suffix
+            let padding = vec![Element::zero(dr)];
             let padded_content = super::PaddedContent::<'_, _, Kind![F; MySillyGadget<'_, _>], 6> {
                 gadget: gadget.clone(),
+                padding,
             };
             let padded_gadget = Padded::<'_, _, Kind![F; MySillyGadget<'_, _>], 6> {
                 inner: WithSuffix::new(padded_content, Element::constant(dr, F::from(42u64))),
             };
             let mut buffer = vec![];
-            padded_gadget.write(dr, &mut buffer)?;
+            padded_gadget.write(&mut buffer)?;
 
             // Expected: [1, 2, 3, 4, 0, 42] - gadget data, zero padding, suffix
             assert_eq!(buffer.len(), 6);
@@ -185,18 +246,12 @@ mod tests {
                 .try_collect_fixed()?,
         };
 
-        {
-            // HEADER_SIZE=4 means only 3 elements for content (4 - 1 for suffix)
-            // But gadget has 4 elements, so it should fail
-            let padded_content = super::PaddedContent::<'_, _, Kind![F; MySillyGadget<'_, _>], 4> {
-                gadget: gadget.clone(),
-            };
-            let padded_gadget = Padded::<'_, _, Kind![F; MySillyGadget<'_, _>], 4> {
-                inner: WithSuffix::new(padded_content, Element::constant(dr, F::from(42u64))),
-            };
-            let mut buffer = vec![];
-            assert!(padded_gadget.write(dr, &mut buffer).is_err());
-        }
+        // HEADER_SIZE=4 means only 3 elements for content (4 - 1 for suffix).
+        // MySillyHeader has 4 elements, so for_header should fail.
+        assert!(
+            super::for_header::<MySillyHeader, 4, _>(dr, gadget).is_err(),
+            "for_header should fail when gadget exceeds HEADER_SIZE - 1"
+        );
 
         Ok(())
     }

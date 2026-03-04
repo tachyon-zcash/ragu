@@ -219,7 +219,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
                     &computed_ax,
                     &computed_bx,
                 ) {
-                    pu.sub(dr, v).mul(dr, denominator)?.write(dr, &mut horner)?;
+                    pu.sub(dr, v).mul(dr, denominator)?.sink(dr, &mut horner)?;
                 }
                 horner.finish(dr)
             };
@@ -232,8 +232,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
                 let beta_endo = Endoscalar::extract(dr, pre_beta)?;
                 let effective_beta = beta_endo.lift(dr)?;
                 let mut horner = Horner::new(&effective_beta);
-                fu.write(dr, &mut horner)?;
-                eval.write(dr, &mut horner)?;
+                fu.sink(dr, &mut horner)?;
+                eval.sink(dr, &mut horner)?;
                 horner.finish(dr)
             };
 

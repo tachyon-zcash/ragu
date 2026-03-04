@@ -95,7 +95,7 @@ impl<'dr, D: Driver<'dr, F: PrimeField>, H: Header<D::F>, const HEADER_SIZE: usi
     pub(crate) fn write(self, dr: &mut D, buf: &mut Vec<Element<'dr, D>>) -> Result<()> {
         match self.0 {
             EncodedInner::Gadget(gadget) => {
-                padded::for_header::<H, HEADER_SIZE, _>(dr, gadget)?.write(dr, buf)?
+                padded::for_header::<H, HEADER_SIZE, _>(dr, gadget)?.write(buf)?
             }
             EncodedInner::Uniform(elements) => {
                 buf.extend(elements.into_inner());
@@ -133,7 +133,7 @@ impl<'dr, D: Driver<'dr, F: PrimeField>, H: Header<D::F>, const HEADER_SIZE: usi
         let gadget = padded::for_header::<H, HEADER_SIZE, _>(&mut emulator, gadget)?;
 
         let mut raw = Vec::with_capacity(HEADER_SIZE);
-        gadget.write(&mut emulator, &mut Pipe::new(dr, &mut raw))?;
+        gadget.sink(&mut emulator, &mut Pipe::new(dr, &mut raw))?;
 
         Ok(Encoded(EncodedInner::Uniform(FixedVec::try_from(raw)?)))
     }
