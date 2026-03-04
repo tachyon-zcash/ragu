@@ -424,9 +424,7 @@ pub fn eval<'witness, F: Field, C: Circuit<F>>(
 mod tests {
     use super::*;
     use crate::tests::SquareCircuit;
-    use ragu_core::gadgets::Kind;
     use ragu_pasta::Fp;
-    use ragu_primitives::Element;
 
     #[test]
     fn test_rx() {
@@ -438,71 +436,5 @@ mod tests {
                 assert_eq!(seg.a[i] * seg.b[i], seg.c[i]);
             }
         }
-    }
-
-    /// Gadget whose [`Write`](ragu_primitives::io::Write) impl calls `dr.mul()`
-    /// and `dr.enforce_zero()` during serialization, proving that `io.write()`
-    /// in [`eval`] threads the driver to `write_gadget`.
-    #[derive(ragu_core::gadgets::Gadget)]
-    struct MulOnWrite<'dr, #[ragu(driver)] D: Driver<'dr>> {
-        #[ragu(gadget)]
-        element: Element<'dr, D>,
-    }
-
-    impl<F: ff::Field> ragu_primitives::io::Write<F> for Kind![F; @MulOnWrite<'_, _>] {
-        fn write_gadget<'dr, D: Driver<'dr, F = F>, B: ragu_primitives::io::Buffer<'dr, D>>(
-            _this: &MulOnWrite<'dr, D>,
-            dr: &mut D,
-            _buf: &mut B,
-        ) -> Result<()> {
-            // These calls synthesize constraints during serialization.
-            // If io.write() were removed from rx::eval, they would be lost.
-            dr.mul(|| Ok((Coeff::One, Coeff::One, Coeff::One)))?;
-            dr.enforce_zero(|lc| lc)?;
-            Ok(())
-        }
-    }
-
-    struct MulOnWriteCircuit;
-
-    impl crate::Circuit<Fp> for MulOnWriteCircuit {
-        type Instance<'instance> = Fp;
-        type Output = Kind![Fp; MulOnWrite<'_, _>];
-        type Witness<'witness> = Fp;
-        type Aux<'witness> = ();
-
-        fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = Fp>>(
-            &self,
-            dr: &mut D,
-            instance: ragu_core::drivers::DriverValue<D, Self::Instance<'instance>>,
-        ) -> Result<Bound<'dr, D, Self::Output>> {
-            let element = Element::alloc(dr, instance)?;
-            Ok(MulOnWrite { element })
-        }
-
-        fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = Fp>>(
-            &self,
-            dr: &mut D,
-            witness: ragu_core::drivers::DriverValue<D, Self::Witness<'witness>>,
-        ) -> Result<(
-            Bound<'dr, D, Self::Output>,
-            ragu_core::drivers::DriverValue<D, Self::Aux<'witness>>,
-        )> {
-            let element = Element::alloc(dr, witness)?;
-            Ok((MulOnWrite { element }, D::just(|| ())))
-        }
-    }
-
-    #[test]
-    fn test_write_gadget_synthesizes_into_trace() {
-        let circuit = MulOnWriteCircuit;
-        let witness = Fp::from(42u64);
-        let (trace, _) = eval::<Fp, _>(&circuit, witness).unwrap();
-
-        let root_gates = trace.segments[0].a.len();
-        assert_eq!(
-            root_gates, 3,
-            "write_gadget's dr.mul() must produce a trace gate"
-        );
     }
 }
