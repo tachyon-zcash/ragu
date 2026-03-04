@@ -78,7 +78,7 @@ use ragu_core::{
 use ragu_primitives::GadgetExt;
 
 use alloc::{vec, vec::Vec};
-use core::cell::RefCell;
+use core::cell::{RefCell, RefMut};
 
 use super::DriverExt;
 use crate::{
@@ -451,19 +451,21 @@ impl<'table, 'sy, F: Field, R: Rank> LinearExpression<Wire<'table, 'sy, F, R>, F
 ///
 /// # Tuple Fields
 ///
-/// - `.0` — Reference to the [`VirtualTable`] for value distribution.
+/// - `.0` — Mutable borrow of the [`VirtualTable`] for value distribution,
+///   held for the duration of the linear combination to avoid repeated
+///   [`RefCell::borrow_mut`] calls.
 /// - `.1` — The $y^j$ coefficient for this constraint (from `current_y`).
 ///
 /// [`Driver::enforce_zero`]: ragu_core::drivers::Driver::enforce_zero
 struct TermEnforcer<'table, 'sy, F: Field, R: Rank>(
-    &'table RefCell<VirtualTable<'sy, F, R>>,
+    RefMut<'table, VirtualTable<'sy, F, R>>,
     Coeff<F>,
 );
 impl<'table, 'sy, F: Field, R: Rank> LinearExpression<Wire<'table, 'sy, F, R>, F>
     for TermEnforcer<'table, 'sy, F, R>
 {
-    fn add_term(self, wire: &Wire<'table, 'sy, F, R>, coeff: Coeff<F>) -> Self {
-        self.0.borrow_mut().add(wire.index, coeff * self.1);
+    fn add_term(mut self, wire: &Wire<'table, 'sy, F, R>, coeff: Coeff<F>) -> Self {
+        self.0.add(wire.index, coeff * self.1);
         self
     }
 
@@ -583,7 +585,7 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, '
         self.scope.linear_constraints += 1;
 
         lc(TermEnforcer(
-            self.virtual_table,
+            self.virtual_table.borrow_mut(),
             Coeff::Arbitrary(self.scope.current_y),
         ));
 
@@ -721,7 +723,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
             };
 
             // Allocate the key_wire and ONE wires
-            let (key_wire, _, _one) = evaluator.mul(|| unreachable!())?;
+            let (key_wire, _, _one_wire) = evaluator.mul(|| unreachable!())?;
 
             // Registry key constraint
             evaluator.enforce_registry_key(&key_wire, key)?;

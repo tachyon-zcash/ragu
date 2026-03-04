@@ -347,6 +347,11 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
         {
             let rx = rx.forward();
 
+            let len = 1 + Self::skip_multiplications() + Self::num_multiplications();
+            rx.a.reserve_exact(len);
+            rx.b.reserve_exact(len);
+            rx.c.reserve_exact(len);
+
             // ONE is not set.
             rx.a.push(F::ZERO);
             rx.b.push(F::ZERO);

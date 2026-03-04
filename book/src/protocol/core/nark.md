@@ -6,14 +6,14 @@ Let's start with where we ended up in our arithmetization. The satisfiability
 of our [Bootle16 constraint system](./arithmetization.md) culminates in a
 single [consolidated constraint](./arithmetization.md#consolidated-constraints):
 
-$$\revdot{\v{r}}{\v{r} \circ{\v{z^{4n}}} - \v{t} + \v{s}} = \dot{\v{k}}{\v{y^{4n}}}$$
+$$\revdot{\v{r}}{\v{r} \circ{\v{z^{4n}}} + \v{t} + \v{s}} = \dot{\v{k}}{\v{y^{4n}}}$$
 
 where:
 - the witness vector $\v{r}=(\v{c}\|\rv{b}\|\v{a}\|\v{0})\in\F^{4n}$
 - the circuit wiring vector
 $\v{s}=(\v{0^n}\| \sum_{j=0}^{4n-1}y^j\cdot\rv{u}_j \| \sum_j y^j\cdot\v{v}_j \| \sum_j y^j\cdot \rv{w}_j)$
 - the `mul` constraint vector
-$\v{t} = (\v{0^{3n}}\|\, (\rv{z}^{\bf n:2n} + \v{z}^{\bf 2n:3n})\cdot \rv{1})$
+$\v{t} = -(\v{0^{3n}}\|\, (\rv{z}^{\bf n:2n} + \v{z}^{\bf 2n:3n})\cdot \rv{1})$
 - the public input vector $\v{k}\in\F^{4n}$
 
 Now we need to express this in terms of polynomials. The connection comes from
@@ -88,7 +88,7 @@ and interpreting them as polynomials.
     )\right)
     $$
 - **gate polynomial**:
-  $t(X, Z)=\sum_{i=0}^{n-1} (Z^{2n-1-i}+Z^{2n+i})\cdot X^{4n-1-i}$
+  $t(X, Z)=-\sum_{i=0}^{n-1} (Z^{2n-1-i}+Z^{2n+i})\cdot X^{4n-1-i}$
 - **public input polynomial**: $k(Y) = \sum_{j=0}^{4n-1} \v{k}_j\cdot Y^j$
 
 ### Protocol Flow
@@ -154,7 +154,7 @@ Then computes locally:
 And verifies three equations:
 $$
 \begin{cases}
-  r(x) \cdot (r(xz) + s(x,y)- t(x,z))\iseq x^{4n-1}c_1(x^{-1}) + x^{4n} c_2(x)
+  r(x) \cdot (r(xz) + s(x,y)+ t(x,z))\iseq x^{4n-1}c_1(x^{-1}) + x^{4n} c_2(x)
       &\text{correct decomposition}\\
   c_1(0)\iseq k(y) &\text{consolidated CS check}\\
   r(0)\iseq 1 \land k(0)\iseq 1 &\text{public "one"}
@@ -216,8 +216,8 @@ Ragu NARK works as follows:
      $S\leftarrow\com(s(X,y))$
    - defines local witness for the "left multiplicand":
      $\v{a}:=\v{r},\bar{A}:=\bar{R}$ <br>(i.e. $a(X):=r(X)$)
-   - derives the "right multiplicand": $\v{b}=\v{r}\circ\v{z^{4n}}+\v{s}-\v{t}$
-     <br>(i.e. $b(X):=r(zX) + s(X,y) - t(X,z)$) and commits to it:
+   - derives the "right multiplicand": $\v{b}=\v{r}\circ\v{z^{4n}}+\v{s}+\v{t}$
+     <br>(i.e. $b(X):=r(zX) + s(X,y) + t(X,z)$) and commits to it:
      $\bar{B}\leftarrow\com(b(X);\gamma_b)$
    - evaluates $c=k(y)\in\F$
    - sends $(S, \bar{A}, \bar{B}, c)\in\G^3\times\F$ to the verifier[^resend-A]
@@ -232,7 +232,7 @@ the correct commitment to partially evaluated univariate polynomial $s(X,y)$
    - Verifier checks by recomputing the revdot product and re-commit $\bar{A},\bar{B}$
 6. Verifier sends back challenge $x\sample\F$
 7. Prover sends evaluations $evals=(a(xz), s(x, y), b(x))\in\F^3$ over
-8. Verifier locally computes $t(x,z)$ and checks $b(x)\iseq a(xz) + s(x,y) -t(x,z)$
+8. Verifier locally computes $t(x,z)$ and checks $b(x)\iseq a(xz) + s(x,y) +t(x,z)$
 9. Prover and Verifier engage in a **batched evaluation protocol**, ensuring that
   the following (commitment, point, eval) evaluation claims are correct:
   $(\bar{A}, 0, 1),(\bar{A}, xz, a(xz)),
