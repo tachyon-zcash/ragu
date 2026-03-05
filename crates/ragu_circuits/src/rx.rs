@@ -9,11 +9,8 @@ use ff::Field;
 use ragu_arithmetic::Coeff;
 use ragu_core::{
     Error, Result,
-    convert::CloneWires,
-    drivers::{
-        Driver, DriverTypes,
-        emulator::{Emulator, WirelessFrom},
-    },
+    convert::{CloneWires, EraseWires},
+    drivers::{Driver, DriverTypes, emulator::Emulator},
     gadgets::{Bound, Gadget},
     maybe::{Always, Maybe, MaybeKind},
     routines::{Prediction, Routine},
@@ -303,7 +300,7 @@ impl<'scope, 'env, F: Field> Driver<'env> for Evaluator<'scope, 'env, F> {
                 // Remap the input gadget to a driver-independent representation,
                 // then wrap in `Sendable` to satisfy the `Send` bound on the
                 // thunk closure.
-                let input = input.map(&mut WirelessFrom::default())?.sendable();
+                let input = input.map(&mut EraseWires::default())?.sendable();
 
                 self.thunks.push(Thunk(Box::new(move |thunks| {
                     let mut eval = Evaluator::new(child_prefix, thunks);

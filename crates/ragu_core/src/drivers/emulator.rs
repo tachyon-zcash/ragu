@@ -73,7 +73,7 @@ use core::marker::PhantomData;
 
 use crate::{
     Result,
-    convert::WireMap,
+    convert::{EraseWires, WireMap},
     drivers::{Coeff, DirectSum, Driver, DriverTypes, DriverValue, LinearExpression},
     gadgets::{Bound, Gadget, GadgetKind},
     maybe::{Always, Empty, MaybeKind, Perhaps},
@@ -253,7 +253,8 @@ impl<M: MaybeKind, F: Field> Emulator<Wireless<M, F>> {
     }
 
     /// Runs [`Routine::predict`] on a fresh wireless emulator, converting the
-    /// input gadget from the source driver automatically via [`WirelessFrom`].
+    /// input gadget from the source driver automatically via
+    /// [`EraseWires`].
     ///
     /// The source driver `D` must share the same
     /// [`MaybeKind`] as this emulator, so witness
@@ -269,7 +270,7 @@ impl<M: MaybeKind, F: Field> Emulator<Wireless<M, F>> {
         D: Driver<'src, F = F, MaybeKind = M>,
         Ro: Routine<F>,
     {
-        let input = input.map(&mut WirelessFrom::default())?;
+        let input = input.map(&mut EraseWires::default())?;
         routine.predict(&mut Self::wireless(), &input)
     }
 }
@@ -405,32 +406,6 @@ fn short_circuit_routine<'dr, D: Driver<'dr>, R: Routine<D::F> + 'dr>(
     match routine.predict(dr, &input)? {
         Prediction::Known(output, _) => Ok(output),
         Prediction::Unknown(aux) => routine.execute(dr, input, aux),
-    }
-}
-
-/// Maps any driver's wires to `()` for use with
-/// `Emulator<Wireless<D::MaybeKind, D::ImplField>>`, discarding wire
-/// values.
-///
-/// Useful for passing a gadget from a concrete driver into
-/// [`Routine::predict`], which operates
-/// on a [`Wireless`] emulator. A wrapper struct is required because
-/// [`WireMap`] uses associated types for source and destination; different
-/// source drivers therefore need distinct implementors.
-pub struct WirelessFrom<D: DriverTypes>(PhantomData<D>);
-
-impl<D: DriverTypes> Default for WirelessFrom<D> {
-    fn default() -> Self {
-        WirelessFrom(PhantomData)
-    }
-}
-
-impl<F: Field, D: DriverTypes<ImplField = F>> WireMap<F> for WirelessFrom<D> {
-    type Src = D;
-    type Dst = Emulator<Wireless<D::MaybeKind, F>>;
-
-    fn convert_wire(&mut self, _: &D::ImplWire) -> Result<()> {
-        Ok(())
     }
 }
 
