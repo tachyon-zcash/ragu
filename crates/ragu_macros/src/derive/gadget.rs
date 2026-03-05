@@ -237,10 +237,10 @@ pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenS
                 }
             },
             FieldType::Wire => {
-                quote! { #ragu_core_path::convert::WireMap::convert_wire(ndr, &this.#id)? }
+                quote! { #ragu_core_path::convert::WireMap::convert_wire(wm, &this.#id)? }
             }
             FieldType::Gadget => {
-                quote! { #ragu_core_path::gadgets::Gadget::map(&this.#id, ndr)? }
+                quote! { #ragu_core_path::gadgets::Gadget::map(&this.#id, wm)? }
             }
             FieldType::Phantom => quote! { ::core::marker::PhantomData },
         };
@@ -257,7 +257,7 @@ pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenS
 
                 fn map_gadget<#driver_lifetime, 'dst, WM: #ragu_core_path::convert::WireMap<#driverfield_ident, Src: #ragu_core_path::drivers::Driver<#driver_lifetime, F = #driverfield_ident>, Dst: #ragu_core_path::drivers::Driver<'dst, F = #driverfield_ident>>>(
                     this: &#ragu_core_path::gadgets::Bound<#driver_lifetime, WM::Src, Self>,
-                    ndr: &mut WM,
+                    wm: &mut WM,
                 ) -> #ragu_core_path::Result<#ragu_core_path::gadgets::Bound<'dst, WM::Dst, Self>> {
                     fn is_send<T: Send>(_: &T) { }
                     fn just<D: #ragu_core_path::drivers::DriverTypes, R: Send>(f: impl FnOnce() -> R) -> #ragu_core_path::drivers::DriverValue<D, R> {
@@ -410,7 +410,7 @@ fn test_gadget_derive_boolean_customdriver() {
 
                 fn map_gadget<'my_dr, 'dst, WM: ::ragu_core::convert::WireMap<DriverField, Src: ::ragu_core::drivers::Driver<'my_dr, F = DriverField>, Dst: ::ragu_core::drivers::Driver<'dst, F = DriverField>>>(
                     this: &::ragu_core::gadgets::Bound<'my_dr, WM::Src, Self>,
-                    ndr: &mut WM,
+                    wm: &mut WM,
                 ) -> ::ragu_core::Result<::ragu_core::gadgets::Bound<'dst, WM::Dst, Self>> {
                     fn is_send<T: Send>(_: &T) { }
                     fn just<D: ::ragu_core::drivers::DriverTypes, R: Send>(f: impl FnOnce() -> R) -> ::ragu_core::drivers::DriverValue<D, R> {
@@ -418,7 +418,7 @@ fn test_gadget_derive_boolean_customdriver() {
                     }
 
                     Ok(Boolean {
-                        wire: ::ragu_core::convert::WireMap::convert_wire(ndr, &this.wire)?,
+                        wire: ::ragu_core::convert::WireMap::convert_wire(wm, &this.wire)?,
                         value: {
                             use ::ragu_core::maybe::Maybe;
 
@@ -501,7 +501,7 @@ fn test_gadget_derive() {
 
                 fn map_gadget<'mydr, 'dst, WM: ::ragu_core::convert::WireMap<DriverField, Src: ::ragu_core::drivers::Driver<'mydr, F = DriverField>, Dst: ::ragu_core::drivers::Driver<'dst, F = DriverField>>>(
                     this: &::ragu_core::gadgets::Bound<'mydr, WM::Src, Self>,
-                    ndr: &mut WM,
+                    wm: &mut WM,
                 ) -> ::ragu_core::Result<::ragu_core::gadgets::Bound<'dst, WM::Dst, Self>> {
                     fn is_send<T: Send>(_: &T) { }
                     fn just<D: ::ragu_core::drivers::DriverTypes, R: Send>(f: impl FnOnce() -> R) -> ::ragu_core::drivers::DriverValue<D, R> {
@@ -516,8 +516,8 @@ fn test_gadget_derive() {
                             is_send(&tmp);
                             tmp
                         },
-                        wire_field: ::ragu_core::convert::WireMap::convert_wire(ndr, &this.wire_field)?,
-                        map_field: ::ragu_core::gadgets::Gadget::map(&this.map_field, ndr)?,
+                        wire_field: ::ragu_core::convert::WireMap::convert_wire(wm, &this.wire_field)?,
+                        map_field: ::ragu_core::gadgets::Gadget::map(&this.map_field, wm)?,
                         phantom_field: ::core::marker::PhantomData,
                     })
                 }
@@ -583,5 +583,5 @@ fn test_gadget_derive_default_gadget() {
     assert!(result_str.contains("Driver :: enforce_equal (dr , & a . wire_field"), "missing Driver::enforce_equal for wire_field");
 
     // Wire should use WireMap::convert_wire
-    assert!(result_str.contains("WireMap :: convert_wire (ndr , & this . wire_field"), "missing WireMap::convert_wire");
+    assert!(result_str.contains("WireMap :: convert_wire (wm , & this . wire_field"), "missing WireMap::convert_wire");
 }

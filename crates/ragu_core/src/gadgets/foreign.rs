@@ -75,13 +75,13 @@ mod array_impl {
             WM: WireMap<F, Src: Driver<'src, F = F>, Dst: Driver<'dst, F = F>>,
         >(
             this: &Bound<'src, WM::Src, Self>,
-            ndr: &mut WM,
+            wm: &mut WM,
         ) -> Result<Bound<'dst, WM::Dst, Self>> {
             // TODO(ebfull): perhaps replace with core::array::try_from_fn when
             // stable (see https://github.com/rust-lang/rust/issues/89379)
             let mut result = Vec::with_capacity(N);
             for item in this.iter() {
-                result.push(G::map_gadget(item, ndr)?);
+                result.push(G::map_gadget(item, wm)?);
             }
             match result.try_into() {
                 Ok(arr) => Ok(arr),
@@ -137,9 +137,9 @@ mod pair_impl {
             WM: WireMap<F, Src: Driver<'src, F = F>, Dst: Driver<'dst, F = F>>,
         >(
             this: &Bound<'src, WM::Src, Self>,
-            ndr: &mut WM,
+            wm: &mut WM,
         ) -> Result<Bound<'dst, WM::Dst, Self>> {
-            Ok((G1::map_gadget(&this.0, ndr)?, G2::map_gadget(&this.1, ndr)?))
+            Ok((G1::map_gadget(&this.0, wm)?, G2::map_gadget(&this.1, wm)?))
         }
 
         fn enforce_equal_gadget<
@@ -188,9 +188,9 @@ mod box_impl {
             WM: WireMap<F, Src: Driver<'src, F = F>, Dst: Driver<'dst, F = F>>,
         >(
             this: &Bound<'src, WM::Src, Self>,
-            ndr: &mut WM,
+            wm: &mut WM,
         ) -> Result<Bound<'dst, WM::Dst, Self>> {
-            Ok(Box::new(G::map_gadget(this, ndr)?))
+            Ok(Box::new(G::map_gadget(this, wm)?))
         }
 
         fn enforce_equal_gadget<

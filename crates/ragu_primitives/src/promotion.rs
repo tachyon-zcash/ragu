@@ -151,14 +151,14 @@ unsafe impl<F: Field, G: GadgetKind<F>> GadgetKind<F> for DemotedKind<F, G> {
 
     fn map_gadget<'src, 'dst, WM: WireMap<F>>(
         this: &Bound<'src, WM::Src, Self>,
-        ndr: &mut WM,
+        wm: &mut WM,
     ) -> Result<Bound<'dst, WM::Dst, Self>>
     where
         WM::Src: Driver<'src, F = F>,
         WM::Dst: Driver<'dst, F = F>,
     {
         Ok(Demoted {
-            gadget: G::map_gadget(&this.gadget, &mut Demoter { inner: ndr })?,
+            gadget: G::map_gadget(&this.gadget, &mut Demoter { inner: wm })?,
         })
     }
 

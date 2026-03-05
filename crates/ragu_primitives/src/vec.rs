@@ -227,7 +227,7 @@ unsafe impl<F: Field, G: GadgetKind<F>, L: Len> GadgetKind<F> for FixedVec<Phant
 
     fn map_gadget<'src, 'dst, WM: WireMap<F>>(
         this: &Bound<'src, WM::Src, Self>,
-        ndr: &mut WM,
+        wm: &mut WM,
     ) -> Result<Bound<'dst, WM::Dst, Self>>
     where
         WM::Src: Driver<'src, F = F>,
@@ -236,7 +236,7 @@ unsafe impl<F: Field, G: GadgetKind<F>, L: Len> GadgetKind<F> for FixedVec<Phant
         assert_eq!(this.len(), L::len());
 
         this.iter()
-            .map(|g| G::map_gadget(g, ndr))
+            .map(|g| G::map_gadget(g, wm))
             .try_collect_fixed()
     }
 

@@ -454,11 +454,11 @@ mod tests {
             WM: WireMap<FieldType, Src: Driver<'src, F = FieldType>, Dst: Driver<'dst, F = FieldType>>,
         >(
             this: &Bound<'src, WM::Src, Self>,
-            ndr: &mut WM,
+            wm: &mut WM,
         ) -> Result<Bound<'dst, WM::Dst, Self>> {
             Ok(TwoWires {
-                a: ndr.convert_wire(&this.a)?,
-                b: ndr.convert_wire(&this.b)?,
+                a: wm.convert_wire(&this.a)?,
+                b: wm.convert_wire(&this.b)?,
                 _marker: core::marker::PhantomData,
             })
         }

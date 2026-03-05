@@ -117,9 +117,9 @@ pub trait Gadget<'dr, D: Driver<'dr>>: Clone {
     /// Proxy for [`GadgetKind::map_gadget`].
     fn map<'dst, WM: WireMap<D::F, Src = D, Dst: Driver<'dst, F = D::F>>>(
         &self,
-        ndr: &mut WM,
+        wm: &mut WM,
     ) -> Result<Bound<'dst, WM::Dst, Self::Kind>> {
-        Self::Kind::map_gadget(self, ndr)
+        Self::Kind::map_gadget(self, wm)
     }
 
     /// Proxy for [`GadgetKind::enforce_equal_gadget`].
@@ -152,12 +152,13 @@ pub trait Gadget<'dr, D: Driver<'dr>>: Clone {
             }
         }
 
-        let mut dr = WireCounter::<D> {
+        let mut counter = WireCounter::<D> {
             count: 0,
             _marker: core::marker::PhantomData,
         };
-        self.map(&mut dr).expect("wire counting should never fail");
-        dr.count
+        self.map(&mut counter)
+            .expect("wire counting should never fail");
+        counter.count
     }
 }
 
@@ -196,7 +197,7 @@ pub unsafe trait GadgetKind<F: Field>: core::any::Any {
     /// [`WireMap`].
     fn map_gadget<'src, 'dst, WM: WireMap<F, Src: Driver<'src, F = F>, Dst: Driver<'dst, F = F>>>(
         this: &Bound<'src, WM::Src, Self>,
-        ndr: &mut WM,
+        wm: &mut WM,
     ) -> Result<Bound<'dst, WM::Dst, Self>>;
 
     /// Enforces that two gadgets' wires are equal.
