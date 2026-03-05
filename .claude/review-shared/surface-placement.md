@@ -1,73 +1,59 @@
 # Surface Placement Policy
 
-Rules for what belongs in the book vs. rustdoc. Both surfaces may cover the
-same concepts in different registers (rustdoc: precise/terse; book:
-accessible/motivational); same-register duplication drifts and must be avoided.
+What belongs in the book vs. rustdoc.
 
-## Surface Ownership
+## Math lives in the book
 
-- **Rustdoc owns API truth**: signatures, bounds, `cfg`/feature behavior, error
-  semantics, safety contracts, and all pre/postconditions/invariants.
-- Rustdoc must be **self-sufficient**: a reader relying only on rustdoc can
-  correctly use every public item and implement required traits/constraints.
-- **The book owns conceptual context**: motivation, mathematical foundations,
-  design rationale, cross-cutting composition guidance, and high-level API
-  overviews.
-- The book may **informally restate** API requirements only to aid
-  understanding, not as the compliance source.
-- If the book states a rule **more precisely** than rustdoc, that precision
-  must move to rustdoc; the book must not be the only place a constraint is
-  fully specified.
+- The book is the primary home for math — it supports custom macros, display
+  environments, and cross-referencing that rustdoc cannot.
+- In rustdoc, math must survive three nested layers (Rust comment syntax,
+  markdown parsing, LaTeX delimiters) that fight over escaping, line width,
+  and special characters. Prefer the book for anything beyond a short inline
+  formula.
+- Exception: algorithms and constructions too narrow or internal for the user
+  guide must be documented mathematically in the code, including whatever
+  derivations are needed to maintain them.
+- Code should still use math notation (shared with the book) whenever
+  describing a concept or object that exists in the book. The notation home
+  is the book; code references it.
 
-## Math
+## Code owns API truth
 
-- Prefer the **book for math-heavy exposition** (richer LaTeX/macros).
-- Rustdoc treats math as a **black box**: state requirements and guarantees
-  without re-deriving foundations.
+- Rustdoc is the authority for API specifics: signatures, bounds, feature
+  behavior, error semantics, safety contracts, preconditions, postconditions,
+  and invariants.
+- A reader relying only on rustdoc should be able to correctly use every
+  public item and implement every required trait.
+- The book may cover the same topics at a higher level (motivation, design
+  rationale, composition guidance) but defers to code documentation for
+  specifics.
+- If the book states a constraint more precisely than rustdoc, that precision
+  must move to rustdoc.
 
-## Notation and Terminology
+## Don't write the same thing twice
 
-- Maintain a single **Notation & Terms** home in the book; use consistent
-  symbols and names across book and rustdoc.
+- For any given topic, decide which components belong on which surface. The
+  book typically owns the conceptual overview; the code owns the lower-level
+  details. This split can be ad-hoc per topic.
+- Each piece of information has one canonical home.
+- When both surfaces need to reference the same content, use summary + link
+  rather than parallel full descriptions.
+- Tiny, drift-resistant fragments (one-line definitions, single formulas,
+  short warnings) may be duplicated; anything larger should not.
 
-## Stability Boundary
+## Code changes; the book should not become redundant
 
-- **Stable, cross-cutting abstractions** (terminology, spanning invariants,
-  composition model, design rationale) belong in the book.
-- **Volatile, implementation-coupled facts** (optimizations, representation
-  choices, algorithm variants) belong in code docs; the book stays abstract.
-- **Single-purpose/internal algorithms** too narrow for the user guide belong
-  in code-local docs, including any math needed to maintain them.
+- Volatile, implementation-coupled facts (optimizations, representation
+  choices, algorithm variants) belong in code docs.
+- The book stays abstract enough that routine code changes don't invalidate
+  it.
+- Content that interacts with the book in limited or compartmentalized ways
+  is better documented only in the code.
 
-## Module Documentation
+## Code has better examples
 
-- Module-level `//!` docs: terse purpose + key types/traits + key invariants +
-  link to the relevant book chapter.
-- For every public item, rustdoc documents preconditions, postconditions, and
-  invariants, using shared book notation where applicable.
-- Rustdoc documents safety/soundness (`unsafe`, aliasing/lifetime/validity)
-  explicitly and authoritatively at the relevant items.
-- Document constraints where correctness is enforced: type-level guarantees,
-  `Result`/error semantics, asserts, feature gates, `unsafe` obligations.
-
-## Cross-Referencing
-
-- Use **bidirectional deep links**: book links to exact rustdoc items (API
-  authority); rustdoc links to exact book sections (math/notation/rationale).
-- Maintain **stable book anchors** for long-lived references; prefer explicit
-  anchors when available.
-
-## Duplication Management
-
-- For any non-trivial claim, enforce **canonical home + summary + link** (no
-  parallel full descriptions across surfaces).
-- Duplicate only **tiny, drift-resistant fragments** (one-line definition,
-  single formula, short warning); otherwise use summary + link.
-
-## Examples
-
-- Book examples prefer **reused tested snippets** (doctests/examples/tests);
-  use pseudocode when runnable code isn't practical; `rust,ignore` is a last
-  resort.
-- Rustdoc examples should compile and test (minimize `ignore`) and are the
-  canonical runnable samples.
+- Rustdoc examples compile and test — they are the canonical runnable samples
+  and the least likely to bitrot.
+- The book should reuse tested snippets (doctests, examples, tests) where
+  possible; use pseudocode when runnable code isn't practical.
+- `rust,ignore` in the book is a last resort.
