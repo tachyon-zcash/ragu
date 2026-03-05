@@ -122,3 +122,19 @@ is only needed for clarity.
 [gadget-thread-guarantees]: ragu_core::gadgets::GadgetKind#safety
 [maybe-trait]: ragu_core::maybe::Maybe
 [num-wires-method]: ragu_core::gadgets::Gadget::num_wires
+[map-gadget-method]: ragu_core::gadgets::GadgetKind::map_gadget
+[wiremap-trait]: ragu_core::convert::WireMap
+
+### Transformations {#transformations}
+
+Due to the above guarantees, types that implement [`Gadget`][gadget-trait] can
+be transformed between drivers. This is very useful for implementations of
+drivers themselves, which may need to perform deep analysis of a gadget's
+constituent wires for various kinds of optimizations. The primary boundary where
+these optimizations are applied involves the inputs and outputs of
+[routines](../routines.md).
+
+In order to transform a gadget from one driver to another, gadgets provide a
+[`map_gadget`][map-gadget-method] method implementation which uses the
+[`WireMap`][wiremap-trait] to map a gadget's constituent wires and witness
+data to a new [`Driver`][driver-trait].

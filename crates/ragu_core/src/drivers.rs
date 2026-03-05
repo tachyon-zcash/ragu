@@ -1,19 +1,18 @@
 //! Unified interface for writing cryptographic protocols and arithmetic
 //! circuits in Ragu.
 //!
-//! ## Design
-//!
 //! The fundamental interface of Ragu is [`Driver`], a trait that describes an
 //! interpreter or synthesis context for cryptographic protocols. Nearly all
-//! protocols in Ragu are implemented in terms of drivers—even those not
-//! ultimately evaluated inside circuits—enabling most of the codebase to share
-//! a common execution model.
+//! protocols in Ragu are implemented in terms of drivers, enabling most of the
+//! codebase to share a common execution model.
 //!
-//! Drivers allow users to create wires, assign values to them, constrain them
-//! in different ways and write code that manipulates their corresponding
-//! witness data. The unified design of drivers confers several benefits for
-//! implementations of cryptographic algorithms that are synthesized into
-//! circuits:
+//! Drivers create wires, assign values, and enforce constraints. They use a
+//! [`Maybe<T>`] type (via [`DriverValue`]) to statically gate witness
+//! computation, and define their own opaque [`Driver::Wire`] type so that
+//! monomorphized code inherits driver-specific optimizations. Drivers can
+//! execute circuit synthesis within [routines](crate::routines), which grant
+//! them flexibility for parallelization, memoization, and other optimizations
+//! via [`WireMap`](crate::convert::WireMap).
 //!
 //! * **Integration of witness evaluation**: Constraints can be written
 //!   alongside witness computation logic, even though drivers tend to reason
@@ -206,8 +205,8 @@ pub trait Driver<'dr>: DriverTypes<ImplWire = Self::Wire, ImplField = Self::F> +
         self.add(|lc| lc.add_term(&Self::ONE, value))
     }
 
-    /// Asks the driver to allocate the wires $(A, B, C)$ with the constraint $A
-    /// \cdot B = C$.
+    /// Asks the driver to allocate the wires $(a, b, c)$ with the constraint $a
+    /// \cdot b = c$.
     ///
     /// The provided closure may be called by the driver if an assignment is
     /// needed. If it is called, any errors are propagated from it, and the

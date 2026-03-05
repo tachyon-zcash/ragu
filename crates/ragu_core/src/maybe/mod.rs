@@ -2,40 +2,14 @@
 //! optionality into the type system so that the compiler can perform various
 //! optimizations and correctness checks via static analysis.
 //!
-//! ## Overview
+//! Drivers statically know whether witness data is present, so the runtime
+//! discriminant and branching of `Option<T>` are pure overhead. `Maybe<T>`
+//! eliminates this by resolving to either [`Always<T>`](Always) (witness
+//! present, transparent wrapper) or [`Empty`] (witness absent, zero-sized
+//! type) based on the driver's [`MaybeKind`].
 //!
-//! Optional values are common in Rust, and in `ragu` (like many SNARK
-//! frameworks) we wish to express the optional presence of witness data when
-//! writing composable and unified circuit abstractions and algorithms.
-//! Typically, the witness is present during proof generation and absent during
-//! key generation, yet the code paths are shared to ensure consistency,
-//! maintainability and readability.
-//!
-//! However, we almost always _statically_ know whether an `Option<T>`
-//! containing witness data is a `None` or a `Some(T)` since the synthesis is
-//! monomorphized for a specific backend context. In these cases, an `Option<T>`
-//! leads to unnecessary memory usage in contexts where the value is known to
-//! not exist. (This is both in terms of the empty, uninitialized value it
-//! contains and the discriminant that identifies the variant at runtime.)
-//!
-//! These overheads are normally negligible, but in `ragu` we very frequently
-//! need to perform circuit synthesis (polynomial reductions) without access to
-//! a witness. In fact, this process consumes the _vast_ majority of the proof
-//! generation time, even after the aggressive optimizations implemented in this
-//! library. One of the easiest and most impactful wins would be static analysis
-//! of monomorphized circuit synthesis code that proxies an `Option<T>` to a `T`
-//! when the value is required to exist and proxies it to a zero-sized type when
-//! it is guaranteed _not_ to exist.
-//!
-//! Rust cannot perform this static analysis with the native `Option<T>` type,
-//! and so the [`Maybe<T>`] trait is a higher-kinded abstraction for this
-//! purpose. There are further benefits. We now achieve compile-time guarantees
-//! about the presence or absence of witness data, and entire classes of bugs
-//! and error conditions are eliminated by design. (As an example, `ragu` does
-//! not have the concept of a "missing witness" error that can be seen in
-//! `halo2`, `bellman`, `arkworks`, etc.) The [`Maybe<T>`] trait also simplifies
-//! situations involving _nested_ optionality of witness data, which can be
-//! confusing in the context of recursive proofs.
+//! See the *Witness Data* chapter in the Ragu book for the full motivation
+//! and design rationale.
 //!
 //! ## Design
 //!
