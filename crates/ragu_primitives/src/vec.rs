@@ -225,13 +225,13 @@ impl<'dr, D: Driver<'dr>, G: Consistent<'dr, D>, L: Len> Consistent<'dr, D> for 
 unsafe impl<F: Field, G: GadgetKind<F>, L: Len> GadgetKind<F> for FixedVec<PhantomData<G>, L> {
     type Rebind<'dr, D: Driver<'dr, F = F>> = FixedVec<Bound<'dr, D, G>, L>;
 
-    fn map_gadget<'dr, 'dr2, WM: WireMap<F>>(
-        this: &Bound<'dr, WM::Src, Self>,
+    fn map_gadget<'src, 'dst, WM: WireMap<F>>(
+        this: &Bound<'src, WM::Src, Self>,
         ndr: &mut WM,
-    ) -> Result<Bound<'dr2, WM::Dst, Self>>
+    ) -> Result<Bound<'dst, WM::Dst, Self>>
     where
-        WM::Src: Driver<'dr, F = F>,
-        WM::Dst: Driver<'dr2, F = F>,
+        WM::Src: Driver<'src, F = F>,
+        WM::Dst: Driver<'dst, F = F>,
     {
         assert_eq!(this.len(), L::len());
 

@@ -254,6 +254,13 @@ impl<M: MaybeKind, F: Field> Emulator<Wireless<M, F>> {
 
     /// Runs [`Routine::predict`] on a fresh wireless emulator, converting the
     /// input gadget from the source driver automatically via [`WirelessFrom`].
+    ///
+    /// The source driver `D` must share the same
+    /// [`MaybeKind`] as this emulator, so witness
+    /// availability is preserved across the conversion. Distinct from the
+    /// [`Routine::predict`] method, which is called on the routine itself;
+    /// this associated function handles emulator construction and wire
+    /// remapping automatically.
     pub fn predict<'dst, 'src, D, Ro>(
         routine: &Ro,
         input: &Bound<'src, D, Ro::Input>,

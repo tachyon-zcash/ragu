@@ -149,13 +149,13 @@ impl<'dr, D: Driver<'dr>, G: Gadget<'dr, D>> Gadget<'dr, D> for Demoted<'dr, D, 
 unsafe impl<F: Field, G: GadgetKind<F>> GadgetKind<F> for DemotedKind<F, G> {
     type Rebind<'dr, D: Driver<'dr, F = F>> = Demoted<'dr, D, Bound<'dr, D, G>>;
 
-    fn map_gadget<'dr, 'dr2, WM: WireMap<F>>(
-        this: &Bound<'dr, WM::Src, Self>,
+    fn map_gadget<'src, 'dst, WM: WireMap<F>>(
+        this: &Bound<'src, WM::Src, Self>,
         ndr: &mut WM,
-    ) -> Result<Bound<'dr2, WM::Dst, Self>>
+    ) -> Result<Bound<'dst, WM::Dst, Self>>
     where
-        WM::Src: Driver<'dr, F = F>,
-        WM::Dst: Driver<'dr2, F = F>,
+        WM::Src: Driver<'src, F = F>,
+        WM::Dst: Driver<'dst, F = F>,
     {
         Ok(Demoted {
             gadget: G::map_gadget(&this.gadget, &mut Demoter { inner: ndr })?,
