@@ -52,9 +52,7 @@ that allocates and assigns one wire.
 By default, `alloc` calls `mul`, returns the $a$ wire, and sets the
 corresponding $b$ and $c$ wires to zero to satisfy the multiplication
 constraint—wasting $b$ and $c$. Drivers may override `alloc` to avoid this
-overhead. For example, synthesis drivers return the $a$ wire from a `mul`
-operation, stash the associated $b$ wire for the next `alloc` call, and fill in
-$c$ later to satisfy the constraint.
+overhead.
 
 ### The `'dr` Lifetime
 

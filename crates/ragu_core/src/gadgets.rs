@@ -1,23 +1,15 @@
 //! Stateful abstractions for algorithms and protocols that are synthesized into
 //! arithmetic circuits.
 //!
-//! ## Design
+//! Gadgets are abstract data types that contain wires and witness data,
+//! polymorphic over [drivers](crate::drivers). The [`Gadget`] trait (for
+//! driver-instantiated gadgets) and the [`GadgetKind`] trait (for relating
+//! gadgets across drivers) can be [automatically derived](derive@Gadget) in
+//! most cases. Gadgets only need these traits when used with
+//! [routines](crate::routines).
 //!
-//! Gadgets are abstract data types that contain wires and witness data. By
-//! definition, all gadgets are polymorphic over [drivers](crate::drivers).
-//! Gadgets use the type system to encode information about wire assignments and
-//! the constraints that have previously been placed on them. Gadgets that
-//! satisfy the requisite API contracts can implement the [`Gadget`] trait so
-//! that drivers can manipulate them and their wires for optimization purposes
-//! without affecting their semantics.
-//!
-//! There are two main traits that gadgets implement: the [`Gadget`] trait is
-//! implemented for gadgets instantiated over a driver, and the [`GadgetKind`]
-//! trait is implemented to help relate gadgets instantiated over different
-//! drivers. The requirements for implementing these traits are strict, but the
-//! traits can be [automatically derived](derive@Gadget) in most cases. Further,
-//! not all gadgets need to implement these traits if they are not intended to
-//! be used with [routines](crate::routines).
+//! See the *Gadgets* chapter in the Ragu book for design motivation,
+//! composition examples, and the derive macro walkthrough.
 //!
 //! #### Basic Properties
 //!
@@ -137,8 +129,8 @@ pub trait Gadget<'dr, D: Driver<'dr>>: Clone {
 
     /// Returns how many wires are in this gadget.
     ///
-    /// Gadgets do not vary in the number of wires they contain, so this should
-    /// return the same quantity regardless of the specific instance of this
+    /// Gadgets do not vary in the number of wires they contain, so this
+    /// returns the same quantity regardless of the specific instance of this
     /// [`Gadget`] implementation.
     ///
     /// # Errors
@@ -213,6 +205,9 @@ pub unsafe trait GadgetKind<F: Field>: core::any::Any {
 
     /// Maps a gadget of this kind from one driver to another using a
     /// [`WireMap`].
+    ///
+    /// The mapping must depend only on the gadget's type, not on any
+    /// particular instance's state (this follows from fungibility).
     fn map_gadget<'src, 'dst, WM: WireMap<F, Src: Driver<'src, F = F>, Dst: Driver<'dst, F = F>>>(
         this: &Bound<'src, WM::Src, Self>,
         wm: &mut WM,

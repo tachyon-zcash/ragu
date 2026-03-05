@@ -35,16 +35,31 @@ impl<F: Field> Routine<F> for Txz {
     // t(x, z)
     type Output = Kind![F; Element<'_, _>];
 
+    // No useful auxiliary data for this routine.
+    type Aux<'dr> = ();
+
     fn execute<'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: &mut D,
         input: <Self::Input as GadgetKind<F>>::Rebind<'dr, D>,
+        aux: DriverValue<D, ()>,
     ) -> Result<<Self::Output as GadgetKind<F>>::Rebind<'dr, D>> {
         let (x, z) = input;
 
         // ... perform the arithmetic for the evaluation ...
 
         Ok(txz)
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = F>>(
+        &self,
+        dr: &mut D,
+        input: &<Self::Input as GadgetKind<F>>::Rebind<'dr, D>,
+    ) -> Result<Prediction<
+        <Self::Output as GadgetKind<F>>::Rebind<'dr, D>,
+        DriverValue<D, ()>,
+    >> {
+        Ok(Prediction::Unknown(D::MaybeKind::just(())))
     }
 }
 ```

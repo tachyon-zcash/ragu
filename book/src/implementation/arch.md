@@ -36,6 +36,8 @@ Ragu is developed as a Cargo workspace.
       the future.
     * **`ragu_pcd`**: This contains WIP development code for recursive proof
       circuits and scaffolding.
+    * **`ragu_testing`**: Test scaffolding and nontrivial example Steps/Headers
+      used in integration tests.
 
 > Ragu is still under active development and the crates that have been
 > published so far on [`crates.io`](https://crates.io/) are just
