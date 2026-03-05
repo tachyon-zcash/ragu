@@ -41,7 +41,7 @@
 //! stricter API, users can give drivers flexibility in how circuit synthesis is
 //! performed---permitting aggressive parallelization, memoization and other
 //! optimizations. Routines use [`WireMap`](crate::convert::WireMap) to
-//! translate wires from one driver to another during these conversions.
+//! translate gadgets from one driver to another during these conversions.
 
 pub mod emulator;
 mod linexp;

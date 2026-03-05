@@ -1,20 +1,20 @@
-//! Conversions that remap gadget wires from one [`Driver`] context to another.
+//! Conversions that translate gadgets from one [`Driver`] context to another.
 //!
-//! [Routines](crate::routines) execute circuit synthesis within well-defined
-//! abstraction boundaries and may need to move gadgets (and their wires) from
-//! one [`Driver`] context to another. For example, [`Routine::predict`] is
-//! evaluated on a [`Wireless`] [`Emulator`] so that no constraints are
-//! synthesized, but the input gadget originates from a concrete source driver.
-//! Without a uniform conversion mechanism, every call site would need custom
-//! remapping logic.
+//! Gadgets are polymorphic over drivers, and translating a gadget from one
+//! driver context to another while preserving its structure and semantics is a
+//! fundamental operation. Any code that operates across multiple driver
+//! contexts will need this: [routines](crate::routines) translate their inputs
+//! onto [`Wireless`] [`Emulator`]s for prediction, wire-counting passes discard
+//! wire values entirely, and driver implementations may need to inject or
+//! rewrite wires during circuit analysis.
 //!
-//! [`WireMap`] provides that mechanism: an implementor fixes a source and
-//! destination driver via associated types, then converts wires one at a time.
-//! Because [`WireMap`] is a separate trait rather than an associated type on
-//! [`GadgetKind`](crate::gadgets::GadgetKind), the same gadget kind can be
-//! remapped by many different conversion strategies (discarding wires, cloning
-//! them, recording them) without adding type parameters to [`GadgetKind`](
-//! crate::gadgets::GadgetKind).
+//! [`WireMap`] provides a uniform mechanism for these conversions: an
+//! implementor fixes a source and destination driver via associated types, then
+//! converts wires one at a time. Because [`WireMap`] is a separate trait rather
+//! than an associated type on [`GadgetKind`](crate::gadgets::GadgetKind), the
+//! same gadget kind can be remapped by many different conversion strategies
+//! without adding type parameters to
+//! [`GadgetKind`](crate::gadgets::GadgetKind).
 //!
 //! ### Public API
 //!
