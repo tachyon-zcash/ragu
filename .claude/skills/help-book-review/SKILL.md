@@ -61,6 +61,7 @@ changes before executing. New policy files are auto-discovered by `/book-review`
 .claude/book-review/structure.md  organization, flow, progressive disclosure
 .claude/book-review/math.md       notation, correctness, accessibility
 .claude/book-review/formatting.md line width, headings, code blocks
+.claude/book-review/formatting-examples.md   concrete before/after examples
 ```
 
 Edit these directly or let `/book-refine` manage them.

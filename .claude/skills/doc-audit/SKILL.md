@@ -256,7 +256,7 @@ After synthesizing findings, but before presenting them to the user:
    > - `.claude/{code-review or book-review}/standards.md` (master standards)
    > - `.claude/{code-review or book-review}/{focus}.md` (your policy)
    > - `.claude/review-shared/surface-placement.md` (placement policy)
-   {if the policy is a code-review documentation policy or a book-review policy,
+   {if focus is "documentation" (code-review) or any book-review policy,
    also include:}
    > - `.claude/review-shared/writing.md` (shared writing rules)
    > - `.claude/review-shared/math.md` (shared math rules)
