@@ -115,10 +115,7 @@ impl<'dr, D: Driver<'dr>, G: Gadget<'dr, D>> Demoted<'dr, D, G> {
     /// Strips a gadget of its witness data and returns a demoted version of it.
     pub fn new(gadget: &G) -> Result<Self> {
         Ok(Demoted {
-            gadget: <G::Kind as GadgetKind<D::F>>::map_gadget(
-                gadget,
-                &mut CloneWires::<D, DemotedDriver<D>>::default(),
-            )?,
+            gadget: CloneWires::<_, DemotedDriver<D>>::convert(gadget)?,
         })
     }
 

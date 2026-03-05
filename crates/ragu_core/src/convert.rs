@@ -9,7 +9,11 @@
 use core::marker::PhantomData;
 use ff::Field;
 
-use crate::{Result, drivers::DriverTypes};
+use crate::{
+    Result,
+    drivers::{Driver, DriverTypes},
+    gadgets::{Bound, Gadget},
+};
 
 /// Conversion context that maps wires from one driver to another.
 ///
@@ -42,6 +46,30 @@ pub struct CloneWires<Src: DriverTypes, Dst: DriverTypes>(PhantomData<(Src, Dst)
 impl<Src: DriverTypes, Dst: DriverTypes> Default for CloneWires<Src, Dst> {
     fn default() -> Self {
         CloneWires(PhantomData)
+    }
+}
+
+impl<F: Field, Src, Dst> CloneWires<Src, Dst>
+where
+    Src: DriverTypes<ImplField = F>,
+    Dst: DriverTypes<ImplField = F, ImplWire = Src::ImplWire>,
+{
+    /// Maps a gadget to a destination driver by cloning its wires.
+    ///
+    /// `Src` is inferred from the gadget and `Dst` from the return context,
+    /// so no turbofish is needed:
+    ///
+    /// ```ignore
+    /// let output: Bound<'_, DstDriver, _> = CloneWires::convert(&gadget)?;
+    /// ```
+    pub fn convert<'src, 'dst, G: Gadget<'src, Src>>(
+        gadget: &G,
+    ) -> Result<Bound<'dst, Dst, G::Kind>>
+    where
+        Src: Driver<'src, F = F>,
+        Dst: Driver<'dst, F = F, Wire = Src::Wire>,
+    {
+        gadget.map(&mut Self::default())
     }
 }
 

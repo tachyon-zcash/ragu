@@ -9,7 +9,7 @@ use ff::Field;
 use ragu_arithmetic::Coeff;
 use ragu_core::{
     Error, Result,
-    convert::WireMap,
+    convert::CloneWires,
     drivers::{
         Driver, DriverTypes,
         emulator::{Emulator, WirelessFrom},
@@ -21,7 +21,6 @@ use ragu_core::{
 use ragu_primitives::GadgetExt;
 
 use alloc::{boxed::Box, vec, vec::Vec};
-use core::marker::PhantomData;
 
 use super::{
     Circuit, DriverScope, Rank, floor_planner::ConstraintSegment, metrics::SegmentRecord, registry,
@@ -304,7 +303,7 @@ impl<'scope, 'env, F: Field> Driver<'env> for Evaluator<'scope, 'env, F> {
 
         match prediction {
             Prediction::Known(predicted_output, aux) => {
-                let output = predicted_output.map(&mut Lifter::<_, Self>::lift())?;
+                let output = CloneWires::convert(&predicted_output)?;
                 // Remap the input gadget to a driver-independent representation,
                 // then wrap in `Sendable` to satisfy the `Send` bound on the
                 // thunk closure.
@@ -312,9 +311,7 @@ impl<'scope, 'env, F: Field> Driver<'env> for Evaluator<'scope, 'env, F> {
 
                 self.thunks.push(Thunk(Box::new(move |thunks| {
                     let mut eval = Evaluator::new(child_prefix, thunks);
-                    input
-                        .into_inner()
-                        .map(&mut Lifter::<_, Evaluator<'_, '_, F>>::lift())
+                    CloneWires::convert(&input.into_inner())
                         .and_then(|input| routine.execute(&mut eval, input, aux))
                         // Discard the output gadget; we already have the predicted output.
                         .map(|_| {
@@ -351,33 +348,6 @@ impl<'scope, 'env, F: Field> Driver<'env> for Evaluator<'scope, 'env, F> {
                 )
             }
         }
-    }
-}
-
-/// [`WireMap`] adapter that trivially converts `()` wires between any two
-/// drivers that both use unit wires.
-///
-/// Because both wire types are `()`, conversion is a no-op. The struct is
-/// parameterized by both source and destination types to satisfy `WireMap`'s
-/// associated-type design.
-struct Lifter<Src: DriverTypes, Dst: DriverTypes>(PhantomData<(Src, Dst)>);
-
-impl<Src: DriverTypes, Dst: DriverTypes> Lifter<Src, Dst> {
-    fn lift() -> Self {
-        Self(PhantomData)
-    }
-}
-
-impl<F: Field, Src, Dst> WireMap<F> for Lifter<Src, Dst>
-where
-    Src: DriverTypes<ImplField = F, ImplWire = ()>,
-    Dst: DriverTypes<ImplField = F, ImplWire = ()>,
-{
-    type Src = Src;
-    type Dst = Dst;
-
-    fn convert_wire(&mut self, _: &()) -> Result<()> {
-        Ok(())
     }
 }
 
