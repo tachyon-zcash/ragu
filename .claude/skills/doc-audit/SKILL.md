@@ -148,7 +148,71 @@ flagged overlapping concerns, merge them. Present:
 - **Suggestions** second
 - For each finding, note which agent identified it
 
-## Step 5: Triage
+## Step 5: Validate Proposed Changes
+
+After synthesizing findings, but before presenting them to the user:
+
+1. Collect all proposed changes (the "suggestion" field from each finding) into
+   a single numbered list — the **proposed plan**.
+2. Launch validation agents. Fixes may touch rustdoc or book content, so
+   validate against both review systems:
+
+   - For EACH `.claude/code-review/*.md` file **except `standards.md`**, launch
+     a `general-purpose` Task agent (model `sonnet`).
+   - For EACH `.claude/book-review/*.md` file **except `standards.md`**, launch
+     a `general-purpose` Task agent (model `sonnet`).
+
+   Give each agent this prompt:
+
+   > You are validating a set of proposed documentation changes against review
+   > policies.
+   >
+   > Read these files:
+   > - `.claude/{code-review or book-review}/standards.md` (master standards)
+   > - `.claude/{code-review or book-review}/{focus}.md` (your policy)
+   {if the policy is a code-review documentation policy or a book-review policy,
+   also include:}
+   > - `.claude/review-shared/writing.md` (shared writing rules)
+   > - `.claude/review-shared/math.md` (shared math rules)
+   >
+   > Here is the proposed plan of changes:
+   > {numbered list of proposed changes with locations and suggested rewrites}
+   >
+   > For each proposed change, check whether applying it would **introduce** a
+   > violation of any rule in your policy or the master standards. Only flag
+   > real conflicts — do not restate rules that are already satisfied.
+   >
+   > For each conflict found:
+   > - **Change #**: which proposed change
+   > - **Rule violated**: quote the relevant policy text
+   > - **Conflict**: explain specifically how the suggestion violates the rule
+   > - **Resolution**: suggest how to fix the suggestion to comply
+   >
+   > **Tool usage rules:**
+   > - Use the Grep tool for searching file contents — do NOT run `grep` or `rg`
+   >   as a Bash command.
+   > - Use the Read tool to read files — do NOT use `cat`, `head`, or `tail`.
+   > - Use the Glob tool to find files — do NOT use `find` or `ls`.
+   > - When you do use Bash, the command must be a clean shell command with NO
+   >   comment lines (`#`) prepended. Put your reasoning in the `description`
+   >   parameter, not in the command itself.
+   >
+   > If no proposed changes conflict with your policy, say so.
+
+   Launch ALL agents in parallel.
+
+3. Merge validation feedback into the findings. For each conflict:
+   - If the validator provides a compliant alternative, replace the original
+     suggestion with the corrected version.
+   - If the conflict has no clear resolution, annotate the finding with the
+     conflict so the user can decide during triage.
+
+4. If any suggestions were corrected, briefly note it in the synthesis output
+   (e.g., "Cross-reference validator's suggestion to add a rustdoc link was
+   adjusted — documentation policy requires intra-doc link syntax, not raw
+   URLs.").
+
+## Step 6: Triage
 
 Use AskUserQuestion to let the user decide the disposition of each finding
 (or group of related findings). For each, offer:
@@ -160,7 +224,7 @@ Use AskUserQuestion to let the user decide the disposition of each finding
 
 If there are many findings, batch them into logical groups.
 
-## Step 6: Apply Fixes
+## Step 7: Apply Fixes
 
 For each finding the user chose to **fix**:
 
@@ -175,7 +239,7 @@ For each finding the user chose to **fix**:
      (if rustdoc was modified)
    - `python3 qa/book/broken_links.py` (if book was modified)
 
-## Step 7: Refine Policy
+## Step 8: Refine Policy
 
 For each finding the user chose to **refine**:
 
@@ -192,7 +256,7 @@ The goal is to iteratively tighten the policy: each audit round either fixes
 violations or trims rules that don't hold up, converging toward a small,
 enforceable set.
 
-## Step 8: Report
+## Step 9: Report
 
 Tell the user:
 
