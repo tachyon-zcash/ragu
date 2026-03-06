@@ -24,6 +24,9 @@ pub trait Rank:
 
     /// Returns the $2^\text{RANK}$ number of coefficients in the polynomials
     /// for this rank. The corresponding degree is thus `Self::num_coeffs() - 1`.
+    ///
+    /// This also serves as the upper bound on the number of linear constraints
+    /// a circuit may contain.
     fn num_coeffs() -> usize {
         1 << Self::RANK
     }

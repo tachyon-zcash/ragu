@@ -76,8 +76,7 @@ constraint limits:
 - **Linear constraints**: up to 2^N
 
 Currently only `R<7>` (testing) and `R<13>` (production) are implemented.
-Other values of N can be added to the `impl_rank_for_R!` macro in
-`ragu_circuits` as needed.
+See the `Rank` trait documentation for how to add new values.
 
 | Rank | Multiplication Limit | Linear Limit | Use Case |
 |------|---------------------|-------------|----------|
@@ -101,7 +100,7 @@ Error: exceeded the maximum number of multiplication constraints (2048)
 ```
 
 **Solutions**:
-1. Add a larger rank to `impl_rank_for_R!` and switch to it
+1. Add a larger rank (see the `Rank` trait documentation) and switch to it
 2. Optimize circuit: Reduce unnecessary operations
 3. Split into multiple steps: Break large computation into smaller pieces
 
@@ -244,7 +243,8 @@ println!("Allocations: {}", sim.num_allocations());
 
 For `R<7>`, the multiplication limit is 32.
 For `R<13>`, the multiplication limit is 2,048.
-If your circuit exceeds these, add a larger rank to `impl_rank_for_R!`.
+If your circuit exceeds these, add a larger rank (see the `Rank` trait
+documentation).
 
 ## Advanced: Multiple Configurations
 

@@ -1,63 +1,31 @@
 //! # `ragu_arithmetic`
 //!
-//! This crate contains arithmetic traits and utilities that are common in the
-//! Ragu project.
+//! Common arithmetic traits and utilities for the Ragu project.
 //!
-//! ## Cycles of Elliptic Curves
+//! This crate provides:
 //!
-//! Ragu is parameterized by a cycle of elliptic curves defined over large prime
-//! fields. Curves like these, particularly cycles of Koblitz curves, are used
-//! in [Zcash](https://z.cash/) because they are useful for building recursive
-//! SNARKs. The concrete parameters are defined by an implementation of the
-//! [`Cycle`] trait. As long as such an implementation satisfies the requisite
-//! API contracts and passes any applicable (static) assertions, it is supported
-//! by Ragu.
+//! - [`Cycle`]: A trait describing a cycle of elliptic curves where the scalar
+//!   field of one curve is the base field of the other. Currently only the
+//!   [Pasta curves](https://electriccoin.co/blog/the-pasta-curves-for-halo-2-and-beyond/)
+//!   are supported (via [`ragu_pasta`](https://crates.io/crates/ragu_pasta)).
+//!   We [currently](https://github.com/tachyon-zcash/ragu/issues/1) rely on
+//!   traits from [`pasta_curves`] for compatibility.
 //!
-//! Currently, the only implementation of the [`Cycle`] trait is provided by the
-//! [`ragu_pasta`](https://crates.io/crates/ragu_pasta) crate, which provides
-//! support for the [Pasta
-//! curves](https://electriccoin.co/blog/the-pasta-curves-for-halo-2-and-beyond/).
-//! In fact, many of the common traits used throughout Ragu are actually defined
-//! in the [`pasta_curves`] crate, which provides the actual implementations of
-//! the Pasta curves and fields, and we
-//! [currently](https://github.com/tachyon-zcash/ragu/issues/1) rely on those
-//! traits in this crate for compatibility and interoperability reasons.
+//! - [`FixedGenerators`] and [`PoseidonPermutation`]: Companion traits that
+//!   [`Cycle`] implementations use to supply commitment generators and
+//!   [Poseidon](https://eprint.iacr.org/2019/458) hash parameters.
 //!
-//! ## FFTs
+//! - [`Domain`]: Radix-2 evaluation domains for FFTs. Requires fields with
+//!   high 2-adicity (i.e., the Pasta curves).
 //!
-//! Ragu targets the Pasta curves because they are designed to support efficient
-//! multi-point evaluation and interpolation of polynomials through the use of
-//! (radix-2) [Fast Fourier
-//! Transforms](https://en.wikipedia.org/wiki/Fast_Fourier_transform) (FFTs).
-//! Ragu itself attempts to minimize the usage of FFTs, but they are still
-//! convenient in some cases and necessary for some applications and SNARK
-//! protocols.
+//! - [`Coeff`]: An optimized field-element wrapper that tracks common special
+//!   values (zero, one, negation) to avoid unnecessary multiplications.
 //!
-//! We currently require curves to have the high 2-adicity property needed to
-//! support these evaluation domains, essentially limiting users to the Pasta
-//! curves. However, this is not an inherent requirement of the cryptography and
-//! future versions of Ragu may support cycles such as the one formed by
-//! [sec**p**256k1](https://en.bitcoin.it/wiki/Secp256k1)/sec**q**256k1, which
-//! do not have this high 2-adicity property but are used in many
-//! cryptocurrencies.
+//! - Polynomial utilities: [`eval`], [`dot`], [`factor`], [`mul`] (multiscalar
+//!   multiplication), [`geosum`], and [`poly_with_roots`].
 //!
-//! ## Endomorphisms
-//!
-//! Koblitz curves are of the form $y^2 = x^3 + b$ and their base and scalar
-//! fields have size $p \equiv 1 \pmod{3}$ and thus implement
-//! [`WithSmallOrderMulGroup<3>`]. This means they support an efficient
-//! endomorphism that can be used to accelerate scalar multiplication, and this
-//! is leveraged extensively in Ragu.
-//!
-//! The Pasta curves have this form, and so does the secp256k1/secq256k1 cycle.
-//!
-//! ## Algebraic Hashes
-//!
-//! Due to their superior performance in arithmetic circuits, so-called
-//! arithmetic hash functions are used in Ragu. In particular, Ragu leans
-//! heavily on [Poseidon](https://eprint.iacr.org/2019/458). Implementations of
-//! [`Cycle`] provide parameters for the Poseidon permutation over the requisite
-//! fields by implementing the [`PoseidonPermutation`] trait.
+//! Supported curves implement [`WithSmallOrderMulGroup<3>`], enabling an
+//! efficient endomorphism for accelerated scalar multiplication.
 
 #![no_std]
 #![allow(non_snake_case)]
@@ -190,12 +158,13 @@ pub trait PoseidonPermutation<F: Field>: Send + Sync + 'static {
     const T: usize;
 
     /// The rate, which caps the number of elements that can be squeezed or
-    /// absorbed before a permutation is applied. This must be smaller than `T`.
+    /// absorbed before a permutation is applied. Must be smaller than `T`;
+    /// violations may cause panics or incorrect behavior at runtime.
     const RATE: usize;
 
     /// Number of full rounds where the sbox is applied to every element of the
-    /// state. This must be even, since exactly half of these rounds are applied
-    /// at the start and then half at the end of the permutation.
+    /// state. Must be even (half at the start, half at the end); violations
+    /// may cause panics or incorrect behavior at runtime.
     const FULL_ROUNDS: usize;
 
     /// Number of partial rounds where the sbox is applied only to the first
