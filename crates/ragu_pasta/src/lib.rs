@@ -10,11 +10,15 @@
 //! Runtime initialization can be done through [`Pasta::generate`]. This can be
 //! time consuming, which is obnoxious for tests and other purposes.
 //!
-//! Alternatively, the crate feature `baked` can be enabled to generate the
-//! parameters at compile time and store them as a static in memory.
-//! [`Pasta::baked`] can then be used to obtain a `&'static PastaParams` with
-//! substantially lower computational cost for initialization, at the expense of
-//! a larger binary size.
+//! Alternatively, enabling the `baked` crate feature causes the build script
+//! to precompute the parameters and embed them in the binary.
+//! [`Pasta::baked`] then deserializes them on first access, which is
+//! substantially cheaper than regenerating via [`Pasta::generate`], at the
+//! expense of a larger binary size.
+//!
+//! For configuration guidance, see the
+//! [Configuration](https://tachyon.z.cash/guide/configuration.html) chapter
+//! in the Ragu book.
 
 #![no_std]
 #![allow(rustdoc::broken_intra_doc_links)]
@@ -47,7 +51,9 @@ pub use poseidon_fq::PoseidonFq;
 /// curve](https://electriccoin.co/blog/the-pasta-curves-for-halo-2-and-beyond/)
 /// cycle.
 ///
-/// Runtime parameters are stored in [`PastaParams`].
+/// Runtime parameters are stored in [`PastaParams`]. See the
+/// [Configuration](https://tachyon.z.cash/guide/configuration.html) guide for
+/// usage patterns.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Pasta;
 

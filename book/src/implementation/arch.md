@@ -17,9 +17,9 @@ Ragu is developed as a Cargo workspace.
       crate in this project.
     * **`ragu_macros`**: Internal crate that contains procedural macros both
       used within the project and exposed to users in other crates.
-    * **`ragu_pasta`**: Compatibility shim and parameter generation utilities
-      for the
-      [Pasta curve cycle].
+    * **`ragu_pasta`**: Implements the [`Cycle`] trait for the
+      [Pasta curve cycle], providing parameter generation and baked-in
+      constants.
     * **`ragu_core`**: The fundamental crate of the library. Presents the
       `Driver` abstraction and related traits and utilities. All circuit
       development and most algorithms are written using the API provided by

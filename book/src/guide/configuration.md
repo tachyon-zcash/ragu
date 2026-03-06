@@ -29,8 +29,8 @@ ApplicationBuilder::<Pasta, ...>::new()
 
 Pasta is a 2-cycle of elliptic curves (Pallas and Vesta) specifically
 designed for efficient recursion:
-- **Pallas**: Field elements for the circuit layer
-- **Vesta**: Field elements for the proof layer
+- **Pallas**: base field (`Fp`) used in the circuit layer
+- **Vesta**: base field (`Fq`) used in the proof layer
 
 These curves have matching field/group orders, enabling efficient proof
 recursion without expensive non-native field arithmetic.
@@ -42,13 +42,15 @@ Load the Pasta parameters:
 ```rust
 use ragu_pasta::Pasta;
 
-let pasta = Pasta::baked();  // Loads precomputed parameters
+let pasta = Pasta::baked();  // Requires the `baked` crate feature
 ```
 
-The `baked()` feature includes:
-- Generator points for commitments
-- Poseidon hash parameters
-- Precomputed constants for efficiency
+Without the `baked` feature, use [`Pasta::generate()`] to compute parameters
+at runtime instead.
+
+The `baked()` method returns precomputed generator points for Pallas and
+Vesta, loaded from data embedded in the binary. Poseidon parameters are
+compile-time constants and do not require initialization.
 
 ### Why Pasta?
 
@@ -295,16 +297,17 @@ ApplicationBuilder::<Pasta, R<7>, 4>::new()  // Only 32 multiplication constrain
 
 **Fix**: Switch to `R<13>` or add a larger rank.
 
-### ✗ Forgetting to Bake Pasta
+### ✗ Missing the `baked` Feature
 
-```rust
-let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
-    .finalize(pasta)?;  // But pasta was never initialized!
+```toml
+[dependencies]
+ragu_pasta = "0.1"  # Missing features = ["baked"]
 ```
 
-**Error**: Panic or undefined behavior.
+**Error**: Compile error — `Pasta::baked()` does not exist without the feature.
 
-**Fix**: Always `let pasta = Pasta::baked();` first.
+**Fix**: Add `features = ["baked"]` to the `ragu_pasta` dependency, or use
+`Pasta::generate()` instead.
 
 ## Next Steps
 
