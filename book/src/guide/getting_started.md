@@ -22,7 +22,7 @@ Add Ragu to your `Cargo.toml`:
 [dependencies]
 ragu_circuits = "0.1"
 ragu_core = "0.1"
-ragu_pasta = "0.1"
+ragu_pasta = { version = "0.1", features = ["baked"] }
 ragu_pcd = "0.1"
 ragu_primitives = "0.1"
 arithmetic = "0.1"
