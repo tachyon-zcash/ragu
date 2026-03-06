@@ -34,8 +34,9 @@ Ragu is developed as a Cargo workspace.
       Ragu protocol and utilities for building arithmetic circuits in Ragu.
     * **`ragu_gadgets`**: This is just a placeholder, and may be removed in
       the future.
-    * **`ragu_pcd`**: This contains WIP development code for recursive proof
-      circuits and scaffolding.
+    * **`ragu_pcd`**: Top-level API for proof-carrying data applications,
+      providing `ApplicationBuilder`, `Application`, `Step`, `Header`,
+      `Proof`, and `Pcd`.
     * **`ragu_testing`**: Test scaffolding and nontrivial example Steps/Headers
       used in integration tests.
 

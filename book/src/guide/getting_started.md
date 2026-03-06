@@ -111,7 +111,7 @@ This step creates leaf proofs from raw values:
 
 ```rust
 use arithmetic::Cycle;
-use ragu_pcd::step::{Encoded, Encoder, Index, Step};
+use ragu_pcd::step::{Encoded, Index, Step};
 use ragu_primitives::poseidon::Sponge;
 
 struct CreateLeaf<'params, C: Cycle> {
@@ -131,8 +131,8 @@ impl<'params, C: Cycle> Step<C> for CreateLeaf<'params, C> {
         &self,
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
-        _: Encoder<'dr, 'source, D, Self::Left, HEADER_SIZE>,
-        _: Encoder<'dr, 'source, D, Self::Right, HEADER_SIZE>,
+        _: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data<'source>>,
+        _: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data<'source>>,
     ) -> Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
@@ -200,8 +200,8 @@ impl<'params, C: Cycle> Step<C> for CombineNodes<'params, C> {
         &self,
         dr: &mut D,
         _: DriverValue<D, Self::Witness<'source>>,
-        left: Encoder<'dr, 'source, D, Self::Left, HEADER_SIZE>,
-        right: Encoder<'dr, 'source, D, Self::Right, HEADER_SIZE>,
+        left: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data<'source>>,
+        right: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data<'source>>,
     ) -> Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
@@ -213,9 +213,9 @@ impl<'params, C: Cycle> Step<C> for CombineNodes<'params, C> {
     where
         Self: 'dr,
     {
-        // 1. Encode input proofs (verifies them!)
-        let left = left.encode(dr)?;
-        let right = right.encode(dr)?;
+        // 1. Encode input proofs
+        let left = Encoded::new(dr, left)?;
+        let right = Encoded::new(dr, right)?;
 
         // 2. Hash both headers together
         let mut sponge = Sponge::new(dr, self.poseidon_params);
@@ -233,10 +233,10 @@ impl<'params, C: Cycle> Step<C> for CombineNodes<'params, C> {
 }
 ```
 
-**What `.encode(dr)?` does:** The `Header::encode` call converts the header
-data into a circuit gadget by allocating field elements. This makes the input
-proof's header data available for use in the circuit logic (e.g., hashing the
-two headers together).
+**What `Encoded::new(dr, left)?` does:** Converts the header data into a
+circuit gadget by allocating field elements. This makes the input proof's
+header data available for use in the circuit logic (e.g., hashing the two
+headers together).
 
 ## Step 4: Build the Application
 
