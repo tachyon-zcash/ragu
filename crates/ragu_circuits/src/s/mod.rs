@@ -19,7 +19,9 @@
 //! )\right)
 //! $$
 //!
-//! where $\mathbf{u}, \mathbf{v}, \mathbf{w}$ are fixed coefficient matrices
+//! where $q$ is the number of linear constraints (at most
+//! [`num_coeffs()`](crate::polynomials::Rank::num_coeffs)), and
+//! $\mathbf{u}, \mathbf{v}, \mathbf{w}$ are fixed coefficient matrices
 //! determined by the `enforce_zero` (and indirectly,
 //! [`add`](ragu_core::drivers::Driver::add)) calls.
 //!
@@ -84,7 +86,7 @@
 //! [`Routine`]: ragu_core::routines::Routine
 //! [`enforce_zero`]: ragu_core::drivers::Driver::enforce_zero
 //! [`floor_plan`]: crate::floor_planner::floor_plan
-//! [wiring polynomials]: http://TODO
+//! [wiring polynomials]: crate::polynomials
 
 use ragu_arithmetic::Coeff;
 use ragu_core::{
