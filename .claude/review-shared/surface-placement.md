@@ -38,8 +38,12 @@ What belongs in the book vs. rustdoc.
 - Each piece of information has one canonical home.
 - When both surfaces need to reference the same content, use summary + link
   rather than parallel full descriptions.
-- Tiny, drift-resistant fragments (one-line definitions, single formulas,
-  short warnings) may be duplicated; anything larger should not.
+- Rustdoc may fully state API requirements (preconditions, invariants,
+  safety contracts, behavioral descriptions of public items) even when
+  the book covers the same topic — each surface must serve its audience
+  independently. This is not duplication; it is each surface doing its job.
+- Pure design rationale or motivational exposition that adds no API
+  insight should not be duplicated — use summary + link instead.
 
 ## Code changes; the book should not become redundant
 
