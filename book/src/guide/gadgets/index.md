@@ -30,7 +30,7 @@ more complicated type:
 
 ```rust
 pub struct SpongeState<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> {
-    values: FixedVec<Element<'dr, D>, T<D::F, P>>,
+    values: FixedVec<Element<'dr, D>, PoseidonStateLen<D::F, P>>,
 }
 ```
 
@@ -86,7 +86,7 @@ type—it is the same for every instance.
 The requirements above constrain the space of valid implementations tightly
 enough that nearly all [`Gadget`][gadget-trait] implementations can be
 automatically derived using a
-[procedural macro](macro@ragu_core::gadgets::GadgetKind).
+[procedural macro](derive@ragu_core::gadgets::Gadget).
 
 The above example of `Boolean` can be rewritten as
 

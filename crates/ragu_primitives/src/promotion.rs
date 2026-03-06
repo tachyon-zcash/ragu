@@ -1,5 +1,5 @@
-//! Strips away the witness data from a gadget while still preserving access to
-//! it.
+//! Strips away the witness data from a gadget while preserving its wire
+//! structure.
 
 use ff::Field;
 use ragu_arithmetic::Coeff;

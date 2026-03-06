@@ -13,8 +13,9 @@ use ragu_core::{
     routines::{Prediction, Routine},
 };
 
-/// A driver that fully simulates everything that happens during synthesis,
-/// primarily for testing purposes.
+/// A driver that fully simulates circuit synthesis, enforcing constraint
+/// satisfaction and tracking allocation, multiplication, and linear-constraint
+/// counts. Primarily used for testing.
 #[derive(Clone)]
 pub struct Simulator<F: Field> {
     num_allocations: usize,
