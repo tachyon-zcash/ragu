@@ -1,3 +1,34 @@
+/* ==================== */
+/* TODO badges for incomplete pages (injected by preprocessor-todo.py) */
+/* ==================== */
+
+:root {
+    --todo-badge-color: #c0392b;
+    --todo-badge-bg: rgba(192, 57, 43, 0.10);
+}
+
+.rust {
+    --todo-badge-color: #b75555;
+    --todo-badge-bg: rgba(183, 85, 85, 0.12);
+}
+
+.todo-badge::after {
+    content: "TODO";
+    font-size: 0.6em;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    color: var(--todo-badge-color);
+    background: var(--todo-badge-bg);
+    padding: 0.1em 0.45em;
+    border-radius: 3px;
+    margin-left: 0.4em;
+    vertical-align: middle;
+    position: relative;
+    top: -0.05em;
+}
+
+/* ==================== */
+
 .chapter-item > div {
     font-weight: bold;
     color: var(--sidebar-fg);

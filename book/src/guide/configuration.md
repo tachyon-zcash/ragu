@@ -1,10 +1,5 @@
 # Configuration
 
-```admonish warning
-This section is under development and may not be consistent with the current
-API. It may contain errors and inaccuracies.
-```
-
 When building a PCD application with Ragu, you configure three key parameters
 that determine the system's capacity and behavior.
 

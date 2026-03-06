@@ -1,10 +1,5 @@
 # The [`Consistent`][consistent-trait] Trait
 
-```admonish warning
-This section is under development and may not be consistent with the current
-API. It may contain errors and inaccuracies.
-```
-
 Gadgets act as guard types: they encapsulate wires and guarantee that certain
 constraints hold over them. [`Boolean`] guarantees its wire is in $\{0, 1\}$;
 [`Point`] guarantees the curve equation over its coordinate wires. These
