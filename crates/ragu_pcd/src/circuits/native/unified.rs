@@ -159,11 +159,11 @@ macro_rules! define_unified_instance {
         }
 
         impl<C: Cycle> Instance<C> {
-            /// Asserts that every Element slot has been covered by some circuit.
+            /// Asserts that every slot has been covered by some circuit.
             ///
             /// # Panics
             ///
-            /// Panics if any Element slot has not been covered.
+            /// Panics if any slot has not been covered.
             pub fn assert_complete(self) {
                 self.coverage.assert_complete();
             }
@@ -545,11 +545,17 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "covered by multiple circuits")]
-    fn coverage_catches_overlap() {
+    fn coverage_catches_element_overlap() {
         let mut cov = Coverage::default();
-        // Simulate first circuit covering `w`.
         unified_coverage_cover!(Element, cov, true, w);
-        // Simulate second circuit also covering `w`.
         unified_coverage_cover!(Element, cov, true, w);
+    }
+
+    #[test]
+    #[should_panic(expected = "covered by multiple circuits")]
+    fn coverage_catches_point_overlap() {
+        let mut cov = Coverage::default();
+        unified_coverage_cover!(Point, cov, true, nested_preamble_commitment);
+        unified_coverage_cover!(Point, cov, true, nested_preamble_commitment);
     }
 }
