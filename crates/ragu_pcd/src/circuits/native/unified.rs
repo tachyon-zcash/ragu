@@ -61,16 +61,6 @@ macro_rules! unified_instance_type {
     };
 }
 
-/// Maps a field type to its witness type for `Slot`.
-macro_rules! unified_witness_type {
-    (Point, $C:ty) => {
-        <$C as Cycle>::NestedCurve
-    };
-    (Element, $C:ty) => {
-        <$C as Cycle>::CircuitField
-    };
-}
-
 /// Creates a `Slot` initializer for a field (works for both Point and Element).
 macro_rules! unified_slot_new {
     ($field_type:ident, $field:ident, $instance:expr) => {
@@ -201,7 +191,7 @@ macro_rules! define_unified_instance {
         /// Any slots not explicitly filled will be allocated during finalization.
         pub struct OutputBuilder<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
             $(
-                pub $field: Slot<'dr, D, unified_output_type!($field_type, 'dr, D, C), unified_witness_type!($field_type, C)>,
+                pub $field: Slot<'dr, D, unified_output_type!($field_type, 'dr, D, C), unified_instance_type!($field_type, C)>,
             )+
             instance: DriverValue<D, Instance<C>>,
         }
