@@ -227,9 +227,9 @@ struct Counter<F> {
     num_multiplication_constraints: usize,
     segments: Vec<SegmentRecord>,
 
-    /// When false, `mul` and `enforce_zero` advance geometric sequences and
-    /// accumulate Horner results but do not increment constraint counts. Used
-    /// during input and output wire remapping in [`routine`](Driver::routine).
+    /// When false, `mul` advances geometric sequences but does not increment
+    /// constraint counts, and `enforce_zero` is a no-op.  Used during input
+    /// and output wire remapping in [`routine`](Driver::routine).
     counting: bool,
 
     /// Base for the $a$-wire geometric sequence.
@@ -366,10 +366,10 @@ impl<'dr, F: PrimeField + FromUniformBytes<64>> Driver<'dr> for Counter<F> {
         if self.counting {
             self.num_linear_constraints += 1;
             self.segments[self.scope.current_segment].num_linear_constraints += 1;
-        }
 
-        self.scope.result *= self.y;
-        self.scope.result += lc(WireEvalSum::new(self.one)).value;
+            self.scope.result *= self.y;
+            self.scope.result += lc(WireEvalSum::new(self.one)).value;
+        }
 
         Ok(())
     }
