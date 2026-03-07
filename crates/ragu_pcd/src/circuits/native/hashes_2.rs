@@ -178,7 +178,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 
         // Derive (mu_prime, nu_prime) by absorbing nested_error_n_commitment
         let (mu_prime, nu_prime) = {
-            let nested_error_n_commitment = unified_output.nested_error_n_commitment.get(dr)?;
+            let nested_error_n_commitment = unified_output.nested_error_n_commitment.verify(dr)?;
             nested_error_n_commitment.write(dr, &mut sponge)?;
             let mu_prime = sponge.squeeze(dr)?;
             let nu_prime = sponge.squeeze(dr)?;
@@ -189,7 +189,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 
         // Derive x by absorbing nested_ab_commitment and squeezing
         let x = {
-            let nested_ab_commitment = unified_output.nested_ab_commitment.get(dr)?;
+            let nested_ab_commitment = unified_output.nested_ab_commitment.verify(dr)?;
             nested_ab_commitment.write(dr, &mut sponge)?;
             sponge.squeeze(dr)?
         };
@@ -197,7 +197,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 
         // Derive alpha by absorbing nested_query_commitment and squeezing
         let alpha = {
-            let nested_query_commitment = unified_output.nested_query_commitment.get(dr)?;
+            let nested_query_commitment = unified_output.nested_query_commitment.verify(dr)?;
             nested_query_commitment.write(dr, &mut sponge)?;
             sponge.squeeze(dr)?
         };
@@ -205,7 +205,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 
         // Derive u by absorbing nested_f_commitment and squeezing
         let u = {
-            let nested_f_commitment = unified_output.nested_f_commitment.get(dr)?;
+            let nested_f_commitment = unified_output.nested_f_commitment.verify(dr)?;
             nested_f_commitment.write(dr, &mut sponge)?;
             sponge.squeeze(dr)?
         };
@@ -213,7 +213,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 
         // Derive pre_beta by absorbing nested_eval_commitment and squeezing
         let pre_beta = {
-            let nested_eval_commitment = unified_output.nested_eval_commitment.get(dr)?;
+            let nested_eval_commitment = unified_output.nested_eval_commitment.verify(dr)?;
             nested_eval_commitment.write(dr, &mut sponge)?;
             sponge.squeeze(dr)?
         };

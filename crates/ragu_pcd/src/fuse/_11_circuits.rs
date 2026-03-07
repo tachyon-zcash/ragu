@@ -137,9 +137,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let compute_v_rx_commitment =
             compute_v_rx.commit(C::host_generators(self.params), compute_v_rx_blind);
 
-        // Cross-circuit coverage validation: all internal recursion circuits
-        // together must cover every Element slot exactly once. Overlap is caught
-        // eagerly by finish(); missing slots are caught here.
+        // Cross-circuit coverage validation (prover-time development assertion,
+        // not a verifier check): all internal recursion circuits together must
+        // cover every slot exactly once. Overlap is caught eagerly by finish();
+        // missing slots are caught here.
         unified.assert_complete();
 
         Ok(proof::InternalCircuits {

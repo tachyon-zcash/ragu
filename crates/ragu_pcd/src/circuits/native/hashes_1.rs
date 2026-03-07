@@ -231,7 +231,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 
         // Derive w by absorbing nested_preamble_commitment and squeezing
         let w = {
-            let nested_preamble_commitment = unified_output.nested_preamble_commitment.get(dr)?;
+            let nested_preamble_commitment =
+                unified_output.nested_preamble_commitment.verify(dr)?;
             nested_preamble_commitment.write(dr, &mut sponge)?;
             sponge.squeeze(dr)?
         };
@@ -239,7 +240,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 
         // Derive (y, z) by absorbing nested_s_prime_commitment and squeezing twice
         let (y, z) = {
-            let nested_s_prime_commitment = unified_output.nested_s_prime_commitment.get(dr)?;
+            let nested_s_prime_commitment = unified_output.nested_s_prime_commitment.verify(dr)?;
             nested_s_prime_commitment.write(dr, &mut sponge)?;
             let y = sponge.squeeze(dr)?;
             let z = sponge.squeeze(dr)?;
@@ -270,7 +271,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 
         // Absorb nested_error_m_commitment and verify saved sponge state
         {
-            let nested_error_m_commitment = unified_output.nested_error_m_commitment.get(dr)?;
+            let nested_error_m_commitment = unified_output.nested_error_m_commitment.verify(dr)?;
             nested_error_m_commitment.write(dr, &mut sponge)?;
 
             // save_state() applies a permutation (since there's pending absorbed data)
