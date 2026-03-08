@@ -190,6 +190,12 @@ pub trait Driver<'dr>: DriverTypes<ImplWire = Self::Wire, ImplField = Self::F> +
     /// constraint—wasting those two wires. Drivers may override this to avoid
     /// the overhead, e.g. by pairing consecutive allocations into a single
     /// multiplication gate.
+    ///
+    /// # Purity
+    ///
+    /// The `Fn` bound reflects the same purity intent as [`mul`](Driver::mul);
+    /// the default implementation wraps this closure in a call to `mul`, but
+    /// overriding implementations may not invoke it at all.
     fn alloc(&mut self, value: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
         let (a, _, _) = self.mul(|| Ok((value()?, Coeff::Zero, Coeff::Zero)))?;
         Ok(a)
@@ -207,6 +213,16 @@ pub trait Driver<'dr>: DriverTypes<ImplWire = Self::Wire, ImplField = Self::F> +
     /// needed. If it is called, any errors are propagated from it, and the
     /// closure can rely on [`Witness<Self, T>::take`](Maybe::take) succeeding
     /// unconditionally.
+    ///
+    /// # Purity
+    ///
+    /// The `Fn` bound signals that this closure should be side-effect-free:
+    /// synthesis must produce identical constraints regardless of whether the
+    /// driver invokes it. `Fn` prevents accidental `&mut` captures but does not
+    /// prevent interior mutability; for drivers with `MaybeKind = Empty`, the
+    /// [`Maybe`]/[`DriverValue`] system provides a stronger guarantee—those
+    /// drivers never call this closure, and its body is dead-code-eliminated
+    /// after monomorphization.
     fn mul(
         &mut self,
         values: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
@@ -220,12 +236,28 @@ pub trait Driver<'dr>: DriverTypes<ImplWire = Self::Wire, ImplField = Self::F> +
     /// `ragu`'s circuit model.
     ///
     /// The provided closure _may_ be called to obtain the linear combination.
+    ///
+    /// # Purity
+    ///
+    /// The `Fn` bound signals that this closure should be side-effect-free, as
+    /// with [`mul`](Driver::mul). Unlike witness-providing closures, however,
+    /// drivers with `MaybeKind = Empty` still call expression-building closures
+    /// when they need constraint structure, so `Fn` is the sole type-level
+    /// purity signal here.
     fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire;
 
     /// Asks the driver to create a constraint that a linear combination of
     /// wires equals zero.
     ///
     /// The provided closure _may_ be called to obtain the linear combination.
+    ///
+    /// # Purity
+    ///
+    /// The `Fn` bound signals purity for the same reasons as
+    /// [`add`](Driver::add); the driver-supplied
+    /// [`LCenforce`](DriverTypes::LCenforce) argument may itself carry
+    /// interior-mutable state (as a driver implementation detail), but circuit
+    /// code should not introduce its own observable side effects.
     fn enforce_zero(&mut self, lc: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()>;
 
     /// Enforces that two wires are equal.

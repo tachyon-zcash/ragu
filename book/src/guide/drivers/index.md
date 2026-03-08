@@ -91,6 +91,23 @@ a driver lifetime in scope. Circuit code should always use `Driver<'dr>` as its
 bound directly; `DriverTypes` only matters when writing lifetime-polymorphic
 abstractions over drivers.
 
+### Purity {#purity}
+
+All four closure-accepting `Driver` methods—[`mul()`], [`alloc()`], [`add()`],
+and [`enforce_zero()`]—require their closures to be [`Fn`], not `FnOnce` or
+`FnMut`. This is a deliberate signal that closures should be side-effect-free:
+synthesis must produce identical constraints regardless of whether a given
+driver invokes the closure. `Fn` prevents accidental `&mut` captures, although
+it does not prevent interior mutability.
+
+The two closure families differ in whether they have additional protection
+beyond `Fn`. For the witness-providing closures on [`mul()`] and [`alloc()`],
+the [`Maybe`]/[`DriverValue`] system provides a harder compile-time guarantee:
+drivers with `MaybeKind = Empty` never call those closures at all, and the
+closure bodies are dead-code-eliminated. The expression-building closures on
+[`add()`] and [`enforce_zero()`] have no such backstop; drivers with `MaybeKind
+= Empty` still call these closures when building constraint structure.
+
 ### Equality
 
 The [`enforce_equal()`] method is a convenience helper that constrains two wires
@@ -110,3 +127,5 @@ to have the same value by calling [`enforce_zero()`] on their difference.
 [driver-f]: ragu_core::drivers::Driver::F
 [convert-mod]: ragu_core::convert
 [`DriverValue`]: ragu_core::drivers::DriverValue
+[`Maybe`]: ragu_core::maybe::Maybe
+[`Fn`]: https://doc.rust-lang.org/std/ops/trait.Fn.html
