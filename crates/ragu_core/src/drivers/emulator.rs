@@ -307,7 +307,7 @@ impl<'dr, F: Field> Driver<'dr> for Emulator<Wired<F>> {
 
     fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {
         let lc = lc(DirectSum::default());
-        lc.value
+        lc.value()
     }
 
     fn enforce_zero(&mut self, _: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
