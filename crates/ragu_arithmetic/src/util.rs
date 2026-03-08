@@ -1,5 +1,8 @@
 use ff::{Field, PrimeField};
-use pasta_curves::{arithmetic::CurveAffine, group::Group};
+use pasta_curves::{
+    arithmetic::CurveAffine,
+    group::{Curve, Group},
+};
 
 use alloc::{boxed::Box, vec, vec::Vec};
 
@@ -141,6 +144,14 @@ fn test_bucket_lookup_thresholds() {
             panic!("n = {}: expected {}, got {}", n, expected, actual);
         }
     }
+}
+
+/// Batch-convert projective points to affine using a single field inversion
+/// (Montgomery's trick).
+pub fn batch_to_affine<C: CurveAffine, const N: usize>(projectives: [C::Curve; N]) -> [C; N] {
+    let mut affines = [C::identity(); N];
+    C::Curve::batch_normalize(&projectives, &mut affines);
+    affines
 }
 
 /// Compute the multiscalar multiplication $\langle \mathbf{a}, \mathbf{G} \rangle$ where
