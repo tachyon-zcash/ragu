@@ -84,9 +84,13 @@ use crate::{
     routines::{Prediction, Routine},
 };
 
+mod sealed {
+    pub trait Sealed {}
+}
+
 /// Mode that an [`Emulator`] may be running in; usually either [`Wired`] or
 /// [`Wireless`].
-pub trait Mode {
+pub trait Mode: sealed::Sealed {
     /// Equal to the resulting [`Emulator`]'s [`DriverTypes::MaybeKind`].
     type MaybeKind: MaybeKind;
 
@@ -108,6 +112,8 @@ pub trait Mode {
 /// Wired mode always has witness availability (i.e., `MaybeKind = Always<()>`).
 pub struct Wired<F: Field>(PhantomData<F>);
 
+impl<F: Field> sealed::Sealed for Wired<F> {}
+
 impl<F: Field> Mode for Wired<F> {
     type MaybeKind = Always<()>;
     type F = F;
@@ -118,6 +124,8 @@ impl<F: Field> Mode for Wired<F> {
 
 /// Mode for an [`Emulator`] that does not track wire assignments.
 pub struct Wireless<M: MaybeKind, F: Field>(PhantomData<(M, F)>);
+
+impl<M: MaybeKind, F: Field> sealed::Sealed for Wireless<M, F> {}
 
 impl<M: MaybeKind, F: Field> Mode for Wireless<M, F> {
     type MaybeKind = M;
