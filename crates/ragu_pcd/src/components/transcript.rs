@@ -184,6 +184,7 @@ impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> Buffer<'dr, D> for Trans
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
     use ff::Field;
     use proptest::prelude::*;
     use ragu_arithmetic::Cycle;

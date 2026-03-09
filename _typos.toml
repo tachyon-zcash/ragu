@@ -16,4 +16,5 @@ extend-exclude = [
 
 [default.extend-words]
 ND = "ND" # ND = NewDriver
-Bootle = "Bootle" # Bootle is a person's name
+Bootle = "Bootle" # person name
+Groth= "Groth" # person name, not Growth
