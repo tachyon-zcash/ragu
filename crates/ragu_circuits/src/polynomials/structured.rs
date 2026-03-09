@@ -1,11 +1,8 @@
 //! Polynomials with coefficients in a split structure arrangement.
 
 use ff::Field;
-use group::Curve as _;
 use ragu_arithmetic::{CurveAffine, FixedGenerators};
 use rand::CryptoRng;
-
-use super::committed::CommittedPolynomial;
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -376,66 +373,13 @@ impl<F: Field, R: Rank> ragu_arithmetic::Ring for Polynomial<F, R> {
     }
 }
 
-/// Commit to `N` polynomials in a single batch, sampling fresh blinding
-/// factors from `rng`.
-///
-/// Performs only one batch inversion for all affine normalizations. Returns an
-/// array of [`CommittedPolynomial`]s in the same order as the input array.
-pub fn batch_commit<F, R, C, RNG, const N: usize>(
-    rng: &mut RNG,
-    generators: &impl FixedGenerators<C>,
-    polys: [Polynomial<F, R>; N],
-) -> [CommittedPolynomial<Polynomial<F, R>, C>; N]
-where
-    F: Field,
-    R: Rank,
-    C: CurveAffine<ScalarExt = F>,
-    C::Curve: Copy,
-    RNG: CryptoRng,
-{
-    let blinds: [F; N] = core::array::from_fn(|_| F::random(&mut *rng));
-    batch_commit_with_blinds(generators, polys, blinds)
+impl<F: Field, R: Rank, C: CurveAffine<ScalarExt = F>> super::Committable<C> for Polynomial<F, R> {
+    fn commit<G: FixedGenerators<C>>(&self, generators: &G, blind: F) -> C::Curve {
+        RawPolynomial::commit(self, generators, blind)
+    }
 }
 
-/// Commit to `N` polynomials in a single batch using the provided blinding
-/// factors.
-///
-/// Performs only one batch inversion for all affine normalizations. Returns an
-/// array of [`CommittedPolynomial`]s in the same order as the input arrays.
-pub fn batch_commit_with_blinds<F, R, C, const N: usize>(
-    generators: &impl FixedGenerators<C>,
-    polys: [Polynomial<F, R>; N],
-    blinds: [F; N],
-) -> [CommittedPolynomial<Polynomial<F, R>, C>; N]
-where
-    F: Field,
-    R: Rank,
-    C: CurveAffine<ScalarExt = F>,
-    C::Curve: Copy,
-{
-    // Phase 1: compute projective commitments.
-    let mut polys_iter = polys.into_iter();
-    let mut blinds_iter = blinds.into_iter();
-    let pairs: [(Polynomial<F, R>, F, C::Curve); N] = core::array::from_fn(|_| {
-        let poly = polys_iter.next().unwrap();
-        let blind = blinds_iter.next().unwrap();
-        let proj = RawPolynomial::commit(&poly, generators, blind);
-        (poly, blind, proj)
-    });
-
-    // Phase 2: batch normalize projective → affine.
-    let projectiles: [C::Curve; N] = core::array::from_fn(|i| pairs[i].2);
-    let mut affines: [C; N] = core::array::from_fn(|_| C::identity());
-    C::Curve::batch_normalize(&projectiles, &mut affines);
-
-    // Phase 3: assemble CommittedPolynomial array.
-    let mut pairs_iter = pairs.into_iter();
-    let mut affines_iter = affines.into_iter();
-    core::array::from_fn(|_| {
-        let (poly, blind, _) = pairs_iter.next().unwrap();
-        CommittedPolynomial::from_parts(poly, blind, affines_iter.next().unwrap())
-    })
-}
+pub use super::{batch_commit, batch_commit_with_blinds};
 
 /// Marker trait for distinguishing between different polynomial views.
 pub trait Perspective {}
