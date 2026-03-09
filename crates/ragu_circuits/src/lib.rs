@@ -5,6 +5,7 @@
 //! necessary) in other crates and so this crate is only intended to be used
 //! internally by Ragu.
 
+#![no_std]
 #![deny(unsafe_code)]
 #![allow(clippy::type_complexity)]
 #![deny(rustdoc::broken_intra_doc_links)]
@@ -13,6 +14,8 @@
 #![doc(html_logo_url = "https://tachyon.z.cash/assets/ragu/v1/rustdoc-128x128.png")]
 
 extern crate alloc;
+#[cfg(feature = "multicore")]
+extern crate std;
 
 pub mod floor_planner;
 pub mod horner;

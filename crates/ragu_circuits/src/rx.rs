@@ -18,6 +18,7 @@ use ragu_core::{
 use ragu_primitives::GadgetExt;
 
 use alloc::{vec, vec::Vec};
+#[cfg(feature = "multicore")]
 use std::sync::mpsc;
 
 use super::{
@@ -192,12 +193,17 @@ struct Evaluator<'scope, 'env, F: Field> {
     /// Rayon scope for spawning Known-predicted routine evaluations.
     scope: &'scope maybe_rayon::Scope<'env>,
     /// Channel for sending completed segments back to the root collector.
+    #[cfg(feature = "multicore")]
     tx: mpsc::Sender<Result<Vec<AnnotatedSegment<F>>>>,
+    /// Deferred Known-predicted routine segments collected inline.
+    #[cfg(not(feature = "multicore"))]
+    deferred: Vec<AnnotatedSegment<F>>,
     /// Per-routine state saved and restored by [`DriverScope`].
     state: TraceScope,
 }
 
 impl<'scope, 'env, F: Field> Evaluator<'scope, 'env, F> {
+    #[cfg(feature = "multicore")]
     fn new(
         prefix: Vec<usize>,
         scope: &'scope maybe_rayon::Scope<'env>,
@@ -207,6 +213,21 @@ impl<'scope, 'env, F: Field> Evaluator<'scope, 'env, F> {
             segments: vec![AnnotatedSegment::new(&prefix)],
             scope,
             tx,
+            state: TraceScope {
+                available_b: None,
+                current_segment: 0,
+                routine_counter: 0,
+                dfs_prefix: prefix,
+            },
+        }
+    }
+
+    #[cfg(not(feature = "multicore"))]
+    fn new(prefix: Vec<usize>, scope: &'scope maybe_rayon::Scope<'env>) -> Self {
+        Self {
+            segments: vec![AnnotatedSegment::new(&prefix)],
+            scope,
+            deferred: Vec::new(),
             state: TraceScope {
                 available_b: None,
                 current_segment: 0,
@@ -292,32 +313,45 @@ impl<'scope, 'env, F: Field> Driver<'env> for Evaluator<'scope, 'env, F> {
                 //
                 // Created when `predict()` returns [`Known`](Prediction::Known),
                 // allowing the main traversal to continue with the predicted
-                // output while deferring the actual witness computation. When
-                // spawned, runs `execute()` in a fresh [`Evaluator`] and sends
-                // the resulting trace segments back through the channel.
+                // output while deferring the actual witness computation.
                 let output = CloneWires::remap(&predicted_output)?;
-                // Remap the input gadget to a driver-independent representation,
-                // then wrap in `Sendable` to satisfy the `Send` bound on the
-                // spawn closure.
                 let input = StripWires::remap(&input)?.sendable();
 
-                let tx = self.tx.clone();
-                self.scope.spawn(move |s| {
-                    let mut eval = Evaluator::new(child_prefix, s, tx.clone());
-                    tx.send(
-                        CloneWires::remap(&input.into_inner())
-                            .and_then(|input| routine.execute(&mut eval, input, aux))
-                            // Discard the output gadget; we already have the predicted output.
-                            .map(|_| {
-                                assert!(
-                                    !eval.segments.is_empty(),
-                                    "deferred routine must produce at least one segment"
-                                );
-                                eval.segments
-                            }),
-                    )
-                    .expect("receiver alive");
-                });
+                #[cfg(feature = "multicore")]
+                {
+                    // Spawn the deferred routine in a parallel task and send
+                    // the resulting trace segments back through the channel.
+                    let tx = self.tx.clone();
+                    self.scope.spawn(move |s| {
+                        let mut eval = Evaluator::new(child_prefix, s, tx.clone());
+                        tx.send(
+                            CloneWires::remap(&input.into_inner())
+                                .and_then(|input| routine.execute(&mut eval, input, aux))
+                                .map(|_| {
+                                    assert!(
+                                        !eval.segments.is_empty(),
+                                        "deferred routine must produce at least one segment"
+                                    );
+                                    eval.segments
+                                }),
+                        )
+                        .expect("receiver alive");
+                    });
+                }
+
+                #[cfg(not(feature = "multicore"))]
+                {
+                    // Without multicore, evaluate inline and collect segments.
+                    let mut eval = Evaluator::new(child_prefix, self.scope);
+                    CloneWires::remap(&input.into_inner())
+                        .and_then(|input| routine.execute(&mut eval, input, aux))?;
+                    assert!(
+                        !eval.segments.is_empty(),
+                        "deferred routine must produce at least one segment"
+                    );
+                    self.deferred.extend(eval.segments);
+                    self.deferred.extend(eval.deferred);
+                }
 
                 Ok(output)
             }
@@ -370,27 +404,48 @@ pub fn eval<'witness, F: Field, C: Circuit<F>>(
     circuit: &C,
     witness: C::Witness<'witness>,
 ) -> Result<(Trace<F>, C::Aux<'witness>)> {
-    let (tx, rx) = mpsc::channel();
+    #[cfg(feature = "multicore")]
+    {
+        let (tx, rx) = mpsc::channel();
 
-    let (mut segments, aux) = maybe_rayon::scope(|s| {
-        let mut evaluator = Evaluator::new(Vec::new(), s, tx);
+        let (mut segments, aux) = maybe_rayon::scope(|s| {
+            let mut evaluator = Evaluator::new(Vec::new(), s, tx);
 
-        let aux = {
-            let (io, aux) = circuit.witness(&mut evaluator, Always::maybe_just(|| witness))?;
-            io.write(&mut evaluator, &mut ())?;
-            aux.take()
-        };
+            let aux = {
+                let (io, aux) = circuit.witness(&mut evaluator, Always::maybe_just(|| witness))?;
+                io.write(&mut evaluator, &mut ())?;
+                aux.take()
+            };
 
-        Ok((evaluator.segments, aux))
-    })?;
+            Ok((evaluator.segments, aux))
+        })?;
 
-    // Collect segments from spawned Known-predicted routines, draining
-    // all deferred execute() calls that completed during the scope.
-    for batch in rx {
-        segments.extend(batch?);
+        // Collect segments from spawned Known-predicted routines.
+        for batch in rx {
+            segments.extend(batch?);
+        }
+
+        Ok((finish(segments), aux))
     }
 
-    Ok((finish(segments), aux))
+    #[cfg(not(feature = "multicore"))]
+    {
+        let (segments, aux) = maybe_rayon::scope(|s| {
+            let mut evaluator = Evaluator::new(Vec::new(), s);
+
+            let aux = {
+                let (io, aux) = circuit.witness(&mut evaluator, Always::maybe_just(|| witness))?;
+                io.write(&mut evaluator, &mut ())?;
+                aux.take()
+            };
+
+            let mut segments = evaluator.segments;
+            segments.extend(evaluator.deferred);
+            Ok((segments, aux))
+        })?;
+
+        Ok((finish(segments), aux))
+    }
 }
 
 #[cfg(test)]

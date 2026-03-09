@@ -12,7 +12,7 @@ rust-version.workspace = true
 readme = "README.md"
 repository.workspace = true
 documentation = "https://docs.rs/ragu_circuits"
-categories = ["cryptography", "mathematics", "algorithms", "science"]
+categories = ["cryptography", "mathematics", "algorithms", "science", "no-std"]
 keywords = []
 
 [package.metadata.docs.rs]
@@ -21,7 +21,8 @@ all-features = true
 
 [features]
 default = []
-multicore = ["maybe-rayon/threads", "ragu_arithmetic/multicore"]
+multicore = ["maybe-rayon/threads", "ragu_arithmetic/multicore", "std"]
+std = []
 
 [lib]
 bench = false

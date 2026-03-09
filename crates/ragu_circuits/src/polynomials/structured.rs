@@ -659,6 +659,7 @@ fn test_product_with_dot() {
 
 #[test]
 fn ring_poly_test() {
+    use alloc::vec;
     use ragu_pasta::Fp;
 
     type R = super::TestRank;
