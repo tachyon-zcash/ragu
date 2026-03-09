@@ -4,7 +4,11 @@
 //! the $m(w, x_i, Y)$ polynomials for the $i$th child proof's $x$ challenge.
 
 use ragu_arithmetic::Cycle;
-use ragu_circuits::{polynomials::Rank, registry::RegistryAt, staging::StageExt};
+use ragu_circuits::{
+    polynomials::{Rank, structured, unstructured},
+    registry::RegistryAt,
+    staging::StageExt,
+};
 use ragu_core::Result;
 use rand::CryptoRng;
 
@@ -21,20 +25,22 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let x0 = left.challenges.x;
         let x1 = right.challenges.x;
 
-        let registry_wx0 = registry_at_w
-            .wx(x0)
-            .commit(C::host_generators(self.params), rng);
-        let registry_wx1 = registry_at_w
-            .wx(x1)
-            .commit(C::host_generators(self.params), rng);
+        let wx0_poly = registry_at_w.wx(x0);
+        let wx1_poly = registry_at_w.wx(x1);
+        let [registry_wx0, registry_wx1] =
+            unstructured::batch_commit(rng, C::host_generators(self.params), [wx0_poly, wx1_poly]);
 
         let nested_s_prime_witness = nested::stages::s_prime::Witness {
             registry_wx0: registry_wx0.commitment(),
             registry_wx1: registry_wx1.commitment(),
         };
-        let nested_s_prime_rx =
-            nested::stages::s_prime::Stage::<C::HostCurve, R>::rx(&nested_s_prime_witness)?
-                .commit(C::nested_generators(self.params), rng);
+        let nested_s_prime_poly =
+            nested::stages::s_prime::Stage::<C::HostCurve, R>::rx(&nested_s_prime_witness)?;
+        let [nested_s_prime_rx] = structured::batch_commit(
+            rng,
+            C::nested_generators(self.params),
+            [nested_s_prime_poly],
+        );
 
         Ok(proof::SPrime {
             registry_wx0,

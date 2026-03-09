@@ -1,6 +1,7 @@
 //! Polynomials with coefficients in a split structure arrangement.
 
 use ff::Field;
+use group::Curve as _;
 use ragu_arithmetic::{CurveAffine, FixedGenerators};
 use rand::CryptoRng;
 
@@ -174,14 +175,17 @@ impl<F: Field, R: Rank> RawPolynomial<F, R> {
     }
 
     /// Compute a commitment to this polynomial using the provided generators.
+    ///
+    /// Returns a projective point. Use [`batch_commit`] to normalize multiple
+    /// commitments to affine in one batch inversion.
     pub fn commit<C: CurveAffine<ScalarExt = F>>(
         &self,
         generators: &impl FixedGenerators<C>,
         blind: F,
-    ) -> C {
+    ) -> C::Curve {
         self.assert_bounds();
 
-        assert!(generators.g().len() >= R::num_coeffs()); // TODO(ebfull)
+        assert!(generators.g().len() >= R::num_coeffs());
 
         let w_start = generators.g();
         let v_start = &w_start[self.w.len() + self.first_padding()..];
@@ -203,7 +207,6 @@ impl<F: Field, R: Rank> RawPolynomial<F, R> {
                 .chain(d_start.iter().take(self.d.len()))
                 .chain(Some(generators.h())),
         )
-        .into() // TODO(ebfull)
     }
 
     /// Reduce this polynomial into its unstructured representation.
@@ -345,25 +348,6 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
                 }),
         )
     }
-
-    /// Commit to this polynomial using the provided blinding factor.
-    pub fn commit_with_blind<C: CurveAffine<ScalarExt = F>>(
-        &self,
-        generators: &impl FixedGenerators<C>,
-        blind: C::Scalar,
-    ) -> CommittedPolynomial<Self, C> {
-        let commitment = RawPolynomial::commit(self, generators, blind);
-        CommittedPolynomial::from_parts(self.clone(), blind, commitment)
-    }
-
-    /// Commit to this polynomial, sampling a fresh blinding factor from `rng`.
-    pub fn commit<C: CurveAffine<ScalarExt = F>>(
-        &self,
-        generators: &impl FixedGenerators<C>,
-        rng: &mut impl CryptoRng,
-    ) -> CommittedPolynomial<Self, C> {
-        self.commit_with_blind(generators, C::Scalar::random(rng))
-    }
 }
 
 impl<F: Field, R: Rank> ragu_arithmetic::Ring for Polynomial<F, R> {
@@ -379,6 +363,67 @@ impl<F: Field, R: Rank> ragu_arithmetic::Ring for Polynomial<F, R> {
     fn sub_assign(r: &mut Self, other: &Self) {
         RawPolynomial::sub_assign(r, other);
     }
+}
+
+/// Commit to `N` polynomials in a single batch, sampling fresh blinding
+/// factors from `rng`.
+///
+/// Performs only one batch inversion for all affine normalizations. Returns an
+/// array of [`CommittedPolynomial`]s in the same order as the input array.
+pub fn batch_commit<F, R, C, RNG, const N: usize>(
+    rng: &mut RNG,
+    generators: &impl FixedGenerators<C>,
+    polys: [Polynomial<F, R>; N],
+) -> [CommittedPolynomial<Polynomial<F, R>, C>; N]
+where
+    F: Field,
+    R: Rank,
+    C: CurveAffine<ScalarExt = F>,
+    C::Curve: Copy,
+    RNG: CryptoRng,
+{
+    let blinds: [F; N] = core::array::from_fn(|_| F::random(&mut *rng));
+    batch_commit_with_blinds(generators, polys, blinds)
+}
+
+/// Commit to `N` polynomials in a single batch using the provided blinding
+/// factors.
+///
+/// Performs only one batch inversion for all affine normalizations. Returns an
+/// array of [`CommittedPolynomial`]s in the same order as the input arrays.
+pub fn batch_commit_with_blinds<F, R, C, const N: usize>(
+    generators: &impl FixedGenerators<C>,
+    polys: [Polynomial<F, R>; N],
+    blinds: [F; N],
+) -> [CommittedPolynomial<Polynomial<F, R>, C>; N]
+where
+    F: Field,
+    R: Rank,
+    C: CurveAffine<ScalarExt = F>,
+    C::Curve: Copy,
+{
+    // Phase 1: compute projective commitments.
+    let mut polys_iter = polys.into_iter();
+    let mut blinds_iter = blinds.into_iter();
+    let pairs: [(Polynomial<F, R>, F, C::Curve); N] = core::array::from_fn(|_| {
+        let poly = polys_iter.next().unwrap();
+        let blind = blinds_iter.next().unwrap();
+        let proj = RawPolynomial::commit(&poly, generators, blind);
+        (poly, blind, proj)
+    });
+
+    // Phase 2: batch normalize projective → affine.
+    let projectiles: [C::Curve; N] = core::array::from_fn(|i| pairs[i].2);
+    let mut affines: [C; N] = core::array::from_fn(|_| C::identity());
+    C::Curve::batch_normalize(&projectiles, &mut affines);
+
+    // Phase 3: assemble CommittedPolynomial array.
+    let mut pairs_iter = pairs.into_iter();
+    let mut affines_iter = affines.into_iter();
+    core::array::from_fn(|_| {
+        let (poly, blind, _) = pairs_iter.next().unwrap();
+        CommittedPolynomial::from_parts(poly, blind, affines_iter.next().unwrap())
+    })
 }
 
 /// Marker trait for distinguishing between different polynomial views.
@@ -657,11 +702,9 @@ fn test_commit_consistency() {
         poly.d.push(Fp::random(&mut rand::rng()));
     }
 
-    let structured_commitment = poly.commit_with_blind(generators, blind).commitment();
-    let unstructured_commitment = poly
-        .unstructured()
-        .commit_with_blind(generators, blind)
-        .commitment();
+    let structured_commitment: <Pasta as Cycle>::HostCurve = poly.commit(generators, blind).into();
+    let unstructured_commitment: <Pasta as Cycle>::HostCurve =
+        poly.unstructured().commit(generators, blind).into();
 
     assert_eq!(structured_commitment, unstructured_commitment);
 }

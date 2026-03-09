@@ -106,9 +106,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
         let host_gen = C::host_generators(self.params);
         let nested_gen = C::nested_generators(self.params);
 
-        let cp_host = zero_structured_host.commit_with_blind(host_gen, host_blind);
-        let cp_nested = zero_structured_nested.commit_with_blind(nested_gen, nested_blind);
-        let cp_unstructured = zero_unstructured.commit_with_blind(host_gen, host_blind);
+        let [cp_host] =
+            structured::batch_commit_with_blinds(host_gen, [zero_structured_host], [host_blind]);
+        let [cp_nested] = structured::batch_commit_with_blinds(
+            nested_gen,
+            [zero_structured_nested.clone()],
+            [nested_blind],
+        );
+        let [cp_unstructured] =
+            unstructured::batch_commit_with_blinds(host_gen, [zero_unstructured], [host_blind]);
 
         Proof {
             application: Application {

@@ -5,7 +5,10 @@
 //! point $u$, except $f(u)$ which is _derived_ from said evaluations.
 
 use ragu_arithmetic::Cycle;
-use ragu_circuits::{polynomials::Rank, staging::StageExt};
+use ragu_circuits::{
+    polynomials::{Rank, structured},
+    staging::StageExt,
+};
 use ragu_core::{
     Result,
     drivers::Driver,
@@ -53,14 +56,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 registry_xy: query.registry_xy.poly().eval(u),
             },
         };
-        let native_rx = eval::Stage::<C, R, HEADER_SIZE>::rx(&eval_witness)?
-            .commit(C::host_generators(self.params), rng);
+        let native_poly = eval::Stage::<C, R, HEADER_SIZE>::rx(&eval_witness)?;
+        let [native_rx] =
+            structured::batch_commit(rng, C::host_generators(self.params), [native_poly]);
 
         let nested_eval_witness = nested::stages::eval::Witness {
             native_eval: native_rx.commitment(),
         };
-        let nested_rx = nested::stages::eval::Stage::<C::HostCurve, R>::rx(&nested_eval_witness)?
-            .commit(C::nested_generators(self.params), rng);
+        let nested_poly = nested::stages::eval::Stage::<C::HostCurve, R>::rx(&nested_eval_witness)?;
+        let [nested_rx] =
+            structured::batch_commit(rng, C::nested_generators(self.params), [nested_poly]);
 
         Ok((
             proof::Eval {

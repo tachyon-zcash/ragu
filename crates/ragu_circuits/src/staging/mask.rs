@@ -955,7 +955,7 @@ mod tests {
         let blind = Fp::ZERO;
 
         let rx: structured::Polynomial<Fp, R> = ChildOfParentAOnlyStage::rx(challenges).unwrap();
-        let poly_commitment: EqAffine = rx.commit_with_blind(generators, blind).commitment();
+        let poly_commitment: EqAffine = rx.commit(generators, blind).into();
 
         let mut manual_commitment = EqAffine::identity();
         for (i, &challenge) in challenges.iter().enumerate() {
@@ -981,7 +981,7 @@ mod tests {
         let blind = Fp::ZERO;
 
         let rx: structured::Polynomial<Fp, R> = ParentAOnlyStage::rx(challenges).unwrap();
-        let poly_commitment: EqAffine = rx.commit_with_blind(generators, blind).commitment();
+        let poly_commitment: EqAffine = rx.commit(generators, blind).into();
 
         // Manually compute expected commitment using StageExt::generator_index_for_a.
         let mut manual_commitment = EqAffine::identity();

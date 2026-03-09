@@ -11,7 +11,7 @@
 
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
-    polynomials::{Rank, unstructured},
+    polynomials::{Rank, structured, unstructured},
     staging::StageExt,
 };
 use ragu_core::{
@@ -169,14 +169,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         }
         coeffs.reverse();
 
-        let poly = unstructured::Polynomial::from_coeffs(coeffs)
-            .commit(C::host_generators(self.params), rng);
+        let poly_data = unstructured::Polynomial::from_coeffs(coeffs);
+        let [poly] = unstructured::batch_commit(rng, C::host_generators(self.params), [poly_data]);
 
         let nested_f_witness = f::Witness {
             native_f: poly.commitment(),
         };
-        let nested_rx = f::Stage::<C::HostCurve, R>::rx(&nested_f_witness)?
-            .commit(C::nested_generators(self.params), rng);
+        let nested_poly = f::Stage::<C::HostCurve, R>::rx(&nested_f_witness)?;
+        let [nested_rx] =
+            structured::batch_commit(rng, C::nested_generators(self.params), [nested_poly]);
 
         Ok(proof::F {
             aggregated: poly,

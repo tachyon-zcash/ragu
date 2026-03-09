@@ -9,7 +9,10 @@
 //! restriction.
 
 use ragu_arithmetic::Cycle;
-use ragu_circuits::{polynomials::Rank, staging::StageExt};
+use ragu_circuits::{
+    polynomials::{Rank, structured, unstructured},
+    staging::StageExt,
+};
 use ragu_core::{
     Result,
     drivers::Driver,
@@ -50,10 +53,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let y = *y.value().take();
         let xz = x * *z.value().take();
 
-        let registry_xy = self
-            .native_registry
-            .xy(x, y)
-            .commit(C::host_generators(self.params), rng);
+        let registry_xy_poly = self.native_registry.xy(x, y);
+        let [registry_xy] =
+            unstructured::batch_commit(rng, C::host_generators(self.params), [registry_xy_poly]);
 
         let registry_at = |idx: InternalCircuitIndex| -> C::CircuitField {
             let circuit_id = idx.circuit_index();
@@ -97,15 +99,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             ),
         };
 
-        let native_rx = query::Stage::<C, R, HEADER_SIZE>::rx(&query_witness)?
-            .commit(C::host_generators(self.params), rng);
+        let native_poly = query::Stage::<C, R, HEADER_SIZE>::rx(&query_witness)?;
+        let [native_rx] =
+            structured::batch_commit(rng, C::host_generators(self.params), [native_poly]);
 
         let nested_query_witness = nested::stages::query::Witness {
             native_query: native_rx.commitment(),
             registry_xy: registry_xy.commitment(),
         };
-        let nested_rx = nested::stages::query::Stage::<C::HostCurve, R>::rx(&nested_query_witness)?
-            .commit(C::nested_generators(self.params), rng);
+        let nested_poly =
+            nested::stages::query::Stage::<C::HostCurve, R>::rx(&nested_query_witness)?;
+        let [nested_rx] =
+            structured::batch_commit(rng, C::nested_generators(self.params), [nested_poly]);
 
         Ok((
             proof::Query {

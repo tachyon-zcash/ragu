@@ -4,7 +4,10 @@
 //! to the instance and trace polynomials used in the fuse step.
 
 use ragu_arithmetic::Cycle;
-use ragu_circuits::{polynomials::Rank, staging::StageExt};
+use ragu_circuits::{
+    polynomials::{Rank, structured},
+    staging::StageExt,
+};
 use ragu_core::Result;
 use rand::CryptoRng;
 
@@ -32,8 +35,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             &application.right_header,
         )?;
 
-        let native_rx = native_preamble::Stage::<C, R, HEADER_SIZE>::rx(&preamble_witness)?
-            .commit(C::host_generators(self.params), rng);
+        let native_poly = native_preamble::Stage::<C, R, HEADER_SIZE>::rx(&preamble_witness)?;
+        let [native_rx] =
+            structured::batch_commit(rng, C::host_generators(self.params), [native_poly]);
 
         let nested_preamble_witness = nested::stages::preamble::Witness {
             native_preamble: native_rx.commitment(),
@@ -41,9 +45,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             right: nested::stages::preamble::ChildWitness::from_proof(right),
         };
 
-        let nested_rx =
-            nested::stages::preamble::Stage::<C::HostCurve, R>::rx(&nested_preamble_witness)?
-                .commit(C::nested_generators(self.params), rng);
+        let nested_poly =
+            nested::stages::preamble::Stage::<C::HostCurve, R>::rx(&nested_preamble_witness)?;
+        let [nested_rx] =
+            structured::batch_commit(rng, C::nested_generators(self.params), [nested_poly]);
 
         Ok((
             proof::Preamble {

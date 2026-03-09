@@ -27,7 +27,11 @@ fn commit_structured(
         (structured::Polynomial<Fp, ProductionRank>, Fp),
     ),
 ) {
-    black_box(poly.commit_with_blind(generators, blind).commitment());
+    black_box(structured::batch_commit_with_blinds(
+        generators,
+        [poly],
+        [blind],
+    ));
 }
 
 #[library_benchmark(setup = setup_with_rng)]
@@ -38,7 +42,11 @@ fn commit_unstructured(
         (unstructured::Polynomial<Fp, ProductionRank>, Fp),
     ),
 ) {
-    black_box(poly.commit_with_blind(generators, blind).commitment());
+    black_box(unstructured::batch_commit_with_blinds(
+        generators,
+        [poly],
+        [blind],
+    ));
 }
 
 library_benchmark_group!(

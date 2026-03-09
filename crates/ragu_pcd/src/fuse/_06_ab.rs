@@ -71,15 +71,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let b_poly = fold_revdot::fold_polys_n::<_, R, NativeParameters>(b, mu_prime_nu_prime);
         let c = a_poly.revdot(&b_poly);
 
-        let a = a_poly.commit(C::host_generators(self.params), rng);
-        let b = b_poly.commit(C::host_generators(self.params), rng);
+        let [a, b] =
+            structured::batch_commit(rng, C::host_generators(self.params), [a_poly, b_poly]);
 
         let nested_ab_witness = nested::stages::ab::Witness {
             a: a.commitment(),
             b: b.commitment(),
         };
-        let nested_rx = nested::stages::ab::Stage::<C::HostCurve, R>::rx(&nested_ab_witness)?
-            .commit(C::nested_generators(self.params), rng);
+        let nested_poly = nested::stages::ab::Stage::<C::HostCurve, R>::rx(&nested_ab_witness)?;
+        let [nested_rx] =
+            structured::batch_commit(rng, C::nested_generators(self.params), [nested_poly]);
 
         Ok(proof::AB { a, b, c, nested_rx })
     }

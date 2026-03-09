@@ -1,5 +1,8 @@
 use ragu_arithmetic::Cycle;
-use ragu_circuits::{CircuitExt, polynomials::Rank};
+use ragu_circuits::{
+    CircuitExt,
+    polynomials::{Rank, structured},
+};
 use ragu_core::Result;
 use rand::CryptoRng;
 
@@ -64,13 +67,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 preamble_witness,
                 error_n_witness,
             })?;
-        let hashes_1 = self
-            .native_registry
-            .assemble(
-                &hashes_1_trace,
-                native::hashes_1::CIRCUIT_ID.circuit_index(),
-            )?
-            .commit(C::host_generators(self.params), rng);
+        let hashes_1_poly = self.native_registry.assemble(
+            &hashes_1_trace,
+            native::hashes_1::CIRCUIT_ID.circuit_index(),
+        )?;
 
         let (hashes_2_trace, _) =
             native::hashes_2::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(self.params).rx(
@@ -79,13 +79,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     error_n_witness,
                 },
             )?;
-        let hashes_2 = self
-            .native_registry
-            .assemble(
-                &hashes_2_trace,
-                native::hashes_2::CIRCUIT_ID.circuit_index(),
-            )?
-            .commit(C::host_generators(self.params), rng);
+        let hashes_2_poly = self.native_registry.assemble(
+            &hashes_2_trace,
+            native::hashes_2::CIRCUIT_ID.circuit_index(),
+        )?;
 
         let (partial_collapse_trace, _) =
             native::partial_collapse::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new().rx(
@@ -96,13 +93,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     error_n_witness,
                 },
             )?;
-        let partial_collapse = self
-            .native_registry
-            .assemble(
-                &partial_collapse_trace,
-                native::partial_collapse::CIRCUIT_ID.circuit_index(),
-            )?
-            .commit(C::host_generators(self.params), rng);
+        let partial_collapse_poly = self.native_registry.assemble(
+            &partial_collapse_trace,
+            native::partial_collapse::CIRCUIT_ID.circuit_index(),
+        )?;
 
         let (full_collapse_trace, _) =
             native::full_collapse::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new().rx(
@@ -112,13 +106,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     error_n_witness,
                 },
             )?;
-        let full_collapse = self
-            .native_registry
-            .assemble(
-                &full_collapse_trace,
-                native::full_collapse::CIRCUIT_ID.circuit_index(),
-            )?
-            .commit(C::host_generators(self.params), rng);
+        let full_collapse_poly = self.native_registry.assemble(
+            &full_collapse_trace,
+            native::full_collapse::CIRCUIT_ID.circuit_index(),
+        )?;
 
         let (compute_v_trace, _) = native::compute_v::Circuit::<C, R, HEADER_SIZE>::new().rx(
             native::compute_v::Witness {
@@ -128,13 +119,28 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 eval_witness,
             },
         )?;
-        let compute_v = self
-            .native_registry
-            .assemble(
-                &compute_v_trace,
-                native::compute_v::CIRCUIT_ID.circuit_index(),
-            )?
-            .commit(C::host_generators(self.params), rng);
+        let compute_v_poly = self.native_registry.assemble(
+            &compute_v_trace,
+            native::compute_v::CIRCUIT_ID.circuit_index(),
+        )?;
+
+        let [
+            hashes_1,
+            hashes_2,
+            partial_collapse,
+            full_collapse,
+            compute_v,
+        ] = structured::batch_commit(
+            rng,
+            C::host_generators(self.params),
+            [
+                hashes_1_poly,
+                hashes_2_poly,
+                partial_collapse_poly,
+                full_collapse_poly,
+                compute_v_poly,
+            ],
+        );
 
         Ok(proof::InternalCircuits {
             hashes_1,

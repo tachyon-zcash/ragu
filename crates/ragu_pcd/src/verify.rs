@@ -101,14 +101,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let p_eval_claim = pcd.proof.p.agg_qx.poly().eval(pcd.proof.challenges.u) == pcd.proof.p.v;
 
         // Check P commitment corresponds to polynomial and blind.
-        let p_commitment_claim = pcd
-            .proof
-            .p
-            .agg_qx
-            .poly()
-            .commit_with_blind(C::host_generators(self.params), pcd.proof.p.agg_qx.blind())
-            .commitment()
-            == pcd.proof.p.agg_qx.commitment();
+        let p_commitment_claim = Into::<C::HostCurve>::into(
+            pcd.proof
+                .p
+                .agg_qx
+                .poly()
+                .commit(C::host_generators(self.params), pcd.proof.p.agg_qx.blind()),
+        ) == pcd.proof.p.agg_qx.commitment();
 
         // Check registry_xy polynomial evaluation at the sampled w.
         // registry_xy_poly is m(W, x, y) - the registry evaluated at current x, y, free in W.

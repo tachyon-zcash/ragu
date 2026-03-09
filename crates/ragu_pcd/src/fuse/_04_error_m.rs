@@ -8,7 +8,11 @@
 //! restriction.
 
 use ragu_arithmetic::Cycle;
-use ragu_circuits::{polynomials::Rank, registry::RegistryAt, staging::StageExt};
+use ragu_circuits::{
+    polynomials::{Rank, structured},
+    registry::RegistryAt,
+    staging::StageExt,
+};
 use ragu_core::{
     Result,
     drivers::Driver,
@@ -49,9 +53,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let y = *y.value().take();
         let z = *z.value().take();
 
-        let registry_wy = registry_at_w
-            .wy(y)
-            .commit(C::host_generators(self.params), rng);
+        let registry_wy_poly = registry_at_w.wy(y);
 
         let source = FuseProofSource { left, right };
         let mut builder = claims::Builder::new(&self.native_registry, y, z);
@@ -62,18 +64,25 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         let error_m_witness =
             native::stages::error_m::Witness::<C, NativeParameters> { error_terms };
-        let native_rx = native::stages::error_m::Stage::<C, R, HEADER_SIZE, NativeParameters>::rx(
-            &error_m_witness,
-        )?
-        .commit(C::host_generators(self.params), rng);
+        let native_error_m_poly =
+            native::stages::error_m::Stage::<C, R, HEADER_SIZE, NativeParameters>::rx(
+                &error_m_witness,
+            )?;
+
+        let [registry_wy, native_rx] = structured::batch_commit(
+            rng,
+            C::host_generators(self.params),
+            [registry_wy_poly, native_error_m_poly],
+        );
 
         let nested_error_m_witness = nested::stages::error_m::Witness {
             native_error_m: native_rx.commitment(),
             registry_wy: registry_wy.commitment(),
         };
-        let nested_rx =
-            nested::stages::error_m::Stage::<C::HostCurve, R>::rx(&nested_error_m_witness)?
-                .commit(C::nested_generators(self.params), rng);
+        let nested_poly =
+            nested::stages::error_m::Stage::<C::HostCurve, R>::rx(&nested_error_m_witness)?;
+        let [nested_rx] =
+            structured::batch_commit(rng, C::nested_generators(self.params), [nested_poly]);
 
         Ok((
             proof::ErrorM {

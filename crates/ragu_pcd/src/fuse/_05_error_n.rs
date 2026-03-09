@@ -138,17 +138,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             ky,
             sponge_state_elements,
         };
-        let native_rx = native::stages::error_n::Stage::<C, R, HEADER_SIZE, NativeParameters>::rx(
-            &error_n_witness,
-        )?
-        .commit(C::host_generators(self.params), rng);
+        let native_poly =
+            native::stages::error_n::Stage::<C, R, HEADER_SIZE, NativeParameters>::rx(
+                &error_n_witness,
+            )?;
+        let [native_rx] =
+            structured::batch_commit(rng, C::host_generators(self.params), [native_poly]);
 
         let nested_error_n_witness = nested::stages::error_n::Witness {
             native_error_n: native_rx.commitment(),
         };
-        let nested_rx =
-            nested::stages::error_n::Stage::<C::HostCurve, R>::rx(&nested_error_n_witness)?
-                .commit(C::nested_generators(self.params), rng);
+        let nested_poly =
+            nested::stages::error_n::Stage::<C::HostCurve, R>::rx(&nested_error_n_witness)?;
+        let [nested_rx] =
+            structured::batch_commit(rng, C::nested_generators(self.params), [nested_poly]);
 
         Ok((
             proof::ErrorN {
