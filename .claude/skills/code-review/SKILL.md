@@ -71,6 +71,15 @@ If you're unsure what the user means, ask before launching reviewers.
    > - Intentional behavior changes that are clearly deliberate
    > - Code covered by lint-ignore or allow attributes
    >
+   > **Tool usage rules:**
+   > - Use the Grep tool for searching file contents — do NOT run `grep` or `rg`
+   >   as a Bash command.
+   > - Use the Read tool to read files — do NOT use `cat`, `head`, or `tail`.
+   > - Use the Glob tool to find files — do NOT use `find` or `ls`.
+   > - When you do use Bash, the command must be a clean shell command with NO
+   >   comment lines (`#`) prepended. Put your reasoning in the `description`
+   >   parameter, not in the command itself.
+   >
    > Stay within your policy's scope. Be specific. If you find no real issues,
    > say so — don't manufacture problems.
 

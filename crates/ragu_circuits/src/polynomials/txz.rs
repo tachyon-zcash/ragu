@@ -96,7 +96,7 @@ impl<F: Field, R: Rank> Routine<F> for Evaluate<R> {
         let n = 1u64 << R::log2_n();
 
         // Compute inversions once and store as aux data to accelerate execution
-        let aux = D::with(|| {
+        let aux = D::try_just(|| {
             let x = *input.0.value().take();
             let z = *input.1.value().take();
 
@@ -115,7 +115,7 @@ impl<F: Field, R: Rank> Routine<F> for Evaluate<R> {
         // Compute output using the precomputed inversions
         let output = Element::alloc(
             dr,
-            D::with(|| {
+            D::try_just(|| {
                 let x = *input.0.value().take();
                 let z = *input.1.value().take();
                 let (x_inv, z_inv) = *aux.snag();

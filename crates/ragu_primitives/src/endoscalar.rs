@@ -89,7 +89,7 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
         let coeff_3 = D::F::ONE - D::F::MULTIPLICATIVE_GENERATOR;
 
         for i in 0..(Uendo::BITS as usize) {
-            let (sqrt, bit) = D::with(|| {
+            let (sqrt, bit) = D::try_just(|| {
                 let value = *elem.value().take() + constant;
 
                 if let Some(sqrt) = value.sqrt().into_option() {

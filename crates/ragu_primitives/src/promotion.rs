@@ -5,7 +5,8 @@ use ff::Field;
 use ragu_arithmetic::Coeff;
 use ragu_core::{
     Result,
-    drivers::{Driver, DriverTypes, DriverValue, FromDriver},
+    convert::{CloneWires, WireMap},
+    drivers::{Driver, DriverTypes, DriverValue},
     gadgets::{Bound, Gadget, GadgetKind},
     maybe::Empty,
 };
@@ -28,20 +29,24 @@ pub trait Promotion<F: Field>: GadgetKind<F> {
 }
 
 /// A driver that mimics another driver but strips away witness data.
+///
+/// Bounded by [`DriverTypes`] rather than [`Driver<'dr>`](Driver) so the
+/// struct itself carries no lifetime parameter. The full [`Driver<'dr>`](Driver)
+/// bound is introduced at the impl level where the lifetime is needed.
 #[doc(hidden)]
-pub struct DemotedDriver<'dr, D: Driver<'dr>> {
-    _marker: core::marker::PhantomData<(&'dr (), D)>,
+pub struct DemotedDriver<D: DriverTypes> {
+    _marker: core::marker::PhantomData<D>,
 }
 
-impl<'dr, D: Driver<'dr>> DriverTypes for DemotedDriver<'dr, D> {
+impl<D: DriverTypes> DriverTypes for DemotedDriver<D> {
     type MaybeKind = Empty;
     type LCadd = ();
     type LCenforce = ();
-    type ImplField = D::F;
-    type ImplWire = D::Wire;
+    type ImplField = D::ImplField;
+    type ImplWire = D::ImplWire;
 }
 
-impl<'dr, D: Driver<'dr>> Driver<'dr> for DemotedDriver<'dr, D> {
+impl<'dr, D: Driver<'dr>> Driver<'dr> for DemotedDriver<D> {
     const ONE: D::Wire = D::ONE;
     type F = D::F;
     type Wire = D::Wire;
@@ -66,29 +71,20 @@ impl<'dr, D: Driver<'dr>> Driver<'dr> for DemotedDriver<'dr, D> {
     }
 }
 
-impl<'dr, D: Driver<'dr>> FromDriver<'dr, 'dr, D> for DemotedDriver<'dr, D> {
-    type NewDriver = Self;
-
-    fn convert_wire(&mut self, wire: &D::Wire) -> Result<<Self::NewDriver as Driver<'dr>>::Wire> {
-        Ok(wire.clone())
-    }
+/// Simple redirect of wire conversion to the underlying wire map.
+struct Demoter<'a, WM> {
+    inner: &'a mut WM,
 }
 
-/// Simple redirect of wire conversion to the underlying driver.
-struct Demoter<'a, F> {
-    driver: &'a mut F,
-}
-
-impl<'dr, 'new_dr, D: Driver<'dr>, F: FromDriver<'dr, 'new_dr, D>>
-    FromDriver<'dr, 'new_dr, DemotedDriver<'dr, D>> for Demoter<'_, F>
-{
-    type NewDriver = DemotedDriver<'new_dr, F::NewDriver>;
+impl<F: Field, WM: WireMap<F>> WireMap<F> for Demoter<'_, WM> {
+    type Src = DemotedDriver<WM::Src>;
+    type Dst = DemotedDriver<WM::Dst>;
 
     fn convert_wire(
         &mut self,
-        wire: &D::Wire,
-    ) -> Result<<Self::NewDriver as Driver<'new_dr>>::Wire> {
-        self.driver.convert_wire(wire)
+        wire: &<WM::Src as DriverTypes>::ImplWire,
+    ) -> Result<<WM::Dst as DriverTypes>::ImplWire> {
+        self.inner.convert_wire(wire)
     }
 }
 
@@ -108,11 +104,11 @@ impl<'dr, 'new_dr, D: Driver<'dr>, F: FromDriver<'dr, 'new_dr, D>>
 /// has no witness data, so it cannot meaningfully enforce consistency. Promote
 /// the gadget first, then call `enforce_consistent` on the result.
 pub struct Demoted<'dr, D: Driver<'dr>, G: Gadget<'dr, D>> {
-    gadget: Bound<'dr, DemotedDriver<'dr, D>, G::Kind>,
+    gadget: Bound<'dr, DemotedDriver<D>, G::Kind>,
 }
 
 impl<'dr, D: Driver<'dr>, G: Gadget<'dr, D>> Deref for Demoted<'dr, D, G> {
-    type Target = Bound<'dr, DemotedDriver<'dr, D>, G::Kind>;
+    type Target = Bound<'dr, DemotedDriver<D>, G::Kind>;
 
     fn deref(&self) -> &Self::Target {
         &self.gadget
@@ -123,12 +119,7 @@ impl<'dr, D: Driver<'dr>, G: Gadget<'dr, D>> Demoted<'dr, D, G> {
     /// Strips a gadget of its witness data and returns a demoted version of it.
     pub fn new(gadget: &G) -> Result<Self> {
         Ok(Demoted {
-            gadget: <G::Kind as GadgetKind<D::F>>::map_gadget(
-                gadget,
-                &mut DemotedDriver {
-                    _marker: core::marker::PhantomData,
-                },
-            )?,
+            gadget: CloneWires::<_, DemotedDriver<D>>::remap(gadget)?,
         })
     }
 
@@ -162,12 +153,16 @@ impl<'dr, D: Driver<'dr>, G: Gadget<'dr, D>> Gadget<'dr, D> for Demoted<'dr, D, 
 unsafe impl<F: Field, G: GadgetKind<F>> GadgetKind<F> for DemotedKind<F, G> {
     type Rebind<'dr, D: Driver<'dr, F = F>> = Demoted<'dr, D, Bound<'dr, D, G>>;
 
-    fn map_gadget<'dr, 'new_dr, D: Driver<'dr, F = F>, ND: FromDriver<'dr, 'new_dr, D>>(
-        this: &Bound<'dr, D, Self>,
-        ndr: &mut ND,
-    ) -> Result<Bound<'new_dr, ND::NewDriver, Self>> {
+    fn map_gadget<'src, 'dst, WM: WireMap<F>>(
+        this: &Bound<'src, WM::Src, Self>,
+        wm: &mut WM,
+    ) -> Result<Bound<'dst, WM::Dst, Self>>
+    where
+        WM::Src: Driver<'src, F = F>,
+        WM::Dst: Driver<'dst, F = F>,
+    {
         Ok(Demoted {
-            gadget: G::map_gadget(&this.gadget, &mut Demoter { driver: ndr })?,
+            gadget: G::map_gadget(&this.gadget, &mut Demoter { inner: wm })?,
         })
     }
 

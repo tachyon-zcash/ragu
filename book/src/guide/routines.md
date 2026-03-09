@@ -76,10 +76,10 @@ contribution from another without re-executing the body.
 
 ### Parameterization
 
-Although gadgets must be fungible, routines are not parameterized by a driver
-and so they are free to carry non-trivial state. This allows them to hold
-configuration, references, or precomputed data that outlive any particular
-driver, provided their execution remains deterministic.
+Unlike gadgets, routines are not parameterized by a driver and are free to carry
+non-trivial state. This allows them to hold configuration, references, or
+precomputed data that outlive any particular driver, provided their execution
+remains deterministic.
 
 ```rust,ignore
 struct ScaledTxz {
@@ -99,6 +99,9 @@ efficiently predicted from their inputs. The [`Routine`] trait includes a
 
 * **[`Known`]**: predicted output plus auxiliary data.
 * **[`Unknown`]**: auxiliary data only.
+* **`Err`**: an unrecoverable failure (e.g. missing witness data); drivers must
+  propagate the error, not fall back to [`execute`]. "Cannot efficiently
+  predict" is represented by [`Unknown`], not `Err`.
 
 Prediction often performs intermediate computation that [`execute`] would
 otherwise redo, so both variants carry an [`Aux`] value—an associated type
@@ -132,11 +135,17 @@ impl<F: Field> Routine<F> for Txz {
 }
 ```
 
+Although the `predict` method takes a `&mut D` driver, it is witness-oriented by
+design: the driver passed in is always a lightweight stand-in (such as an
+[`Emulator`]) that does not collect or enforce constraints.
+
 Ultimately, the driver decides what to do with the prediction. Drivers that know
 the output ahead of time might skip execution entirely during [emulation], or
 synthesize on the predicted result while collecting the actual trace
 concurrently. Concurrency relies on the fact that `Routine`s implement `Send +
 Clone`.
+
+[`Emulator`]: ragu_core::drivers::emulator::Emulator
 
 ```admonish info
 **When to use a routine.** Wrap a section of circuit code in a `Routine` when
@@ -148,7 +157,7 @@ output; it would return [`Unknown`] from [`predict`] while optionally providing
 auxiliary data for [`execute`].
 ```
 
-[emulation]: ../implementation/drivers/emulator.md
+[emulation]: drivers/concrete.md#emulator
 [`Aux`]: ragu_core::routines::Routine::Aux
 [`Element`]: ragu_primitives::Element
 [`Prediction`]: ragu_core::routines::Prediction

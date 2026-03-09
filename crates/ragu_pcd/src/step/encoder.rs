@@ -143,6 +143,7 @@ impl<'dr, D: Driver<'dr, F: PrimeField>, H: Header<D::F>, const HEADER_SIZE: usi
 mod tests {
     use super::*;
     use crate::header::{Header, Suffix};
+    use alloc::vec;
     use ragu_core::{
         drivers::emulator::Emulator,
         gadgets::{Bound, Kind},

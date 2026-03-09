@@ -33,7 +33,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         eval_witness: &circuits::native::stages::eval::Witness<C::CircuitField>,
         challenges: &proof::Challenges<C>,
     ) -> Result<proof::InternalCircuits<C, R>> {
-        let unified_instance = &native::unified::Instance {
+        let unified = native::unified::Instance {
             nested_preamble_commitment: preamble.nested_rx.commitment(),
             w: challenges.w,
             nested_s_prime_commitment: s_prime.nested_s_prime_rx.commitment(),
@@ -55,15 +55,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_eval_commitment: eval.nested_rx.commitment(),
             pre_beta: challenges.pre_beta,
             v: p.v,
+            coverage: Default::default(),
         };
 
-        let (hashes_1_trace, _) =
+        let (hashes_1_trace, unified) =
             native::hashes_1::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(
                 self.params,
                 total_circuit_counts(self.num_application_steps).1,
             )
             .rx(native::hashes_1::Witness {
-                unified_instance,
+                unified,
                 preamble_witness,
                 error_n_witness,
             })?;
@@ -72,10 +73,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             native::hashes_1::CIRCUIT_ID.circuit_index(),
         )?;
 
-        let (hashes_2_trace, _) =
+        let (hashes_2_trace, unified) =
             native::hashes_2::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(self.params).rx(
                 native::hashes_2::Witness {
-                    unified_instance,
+                    unified,
                     error_n_witness,
                 },
             )?;
@@ -84,13 +85,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             native::hashes_2::CIRCUIT_ID.circuit_index(),
         )?;
 
-        let (partial_collapse_trace, _) =
+        let (partial_collapse_trace, unified) =
             native::partial_collapse::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new().rx(
                 native::partial_collapse::Witness {
                     preamble_witness,
-                    unified_instance,
-                    error_m_witness,
+                    unified,
                     error_n_witness,
+                    error_m_witness,
                 },
             )?;
         let partial_collapse_poly = self.native_registry.assemble(
@@ -98,10 +99,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             native::partial_collapse::CIRCUIT_ID.circuit_index(),
         )?;
 
-        let (full_collapse_trace, _) =
+        let (full_collapse_trace, unified) =
             native::full_collapse::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new().rx(
                 native::full_collapse::Witness {
-                    unified_instance,
+                    unified,
                     preamble_witness,
                     error_n_witness,
                 },
@@ -111,18 +112,19 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             native::full_collapse::CIRCUIT_ID.circuit_index(),
         )?;
 
-        let (compute_v_trace, _) = native::compute_v::Circuit::<C, R, HEADER_SIZE>::new().rx(
-            native::compute_v::Witness {
-                unified_instance,
+        let (compute_v_trace, unified) = native::compute_v::Circuit::<C, R, HEADER_SIZE>::new()
+            .rx(native::compute_v::Witness {
+                unified,
                 preamble_witness,
                 query_witness,
                 eval_witness,
-            },
-        )?;
+            })?;
         let compute_v_poly = self.native_registry.assemble(
             &compute_v_trace,
             native::compute_v::CIRCUIT_ID.circuit_index(),
         )?;
+
+        unified.assert_complete();
 
         let [
             hashes_1,

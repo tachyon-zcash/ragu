@@ -18,9 +18,9 @@
 //! * **Integration of witness evaluation**: Constraints can be written
 //!   alongside witness computation logic, even though drivers tend to reason
 //!   about one or the other. To reduce overhead, drivers specify a [`Maybe<T>`]
-//!   type (via the type alias [`DriverValue`]) which enables static analysis and
-//!   optimization of witness computation for a specific driver context. This
-//!   coupling with witness evaluation logic is a zero-cost abstraction.
+//!   type (via the type alias [`DriverValue`]) which enables static analysis
+//!   and optimization of witness computation for a specific driver context.
+//!   This coupling with witness evaluation logic is a zero-cost abstraction.
 //! * **Integration of in-circuit and out-of-circuit code**: Recursive proofs
 //!   require many algorithms to be executed both within and outside of
 //!   circuits, and these implementations must remain consistent for
@@ -40,9 +40,12 @@
 //! boundaries called [routines](crate::routines). In exchange for a slightly
 //! stricter API, users can give drivers flexibility in how circuit synthesis is
 //! performed---permitting aggressive parallelization, memoization and other
-//! optimizations. In order to achieve this, drivers implement the
-//! [`FromDriver`] trait to specify how wires can be translated from one driver
-//! to another.
+//! optimizations. Routines use [`WireMap`](crate::convert::WireMap) to
+//! translate gadgets from one driver to another during these conversions.
+//!
+//! See also the [book] for a user-oriented introduction to drivers.
+//!
+//! [book]: https://tachyon.z.cash/ragu/guide/drivers/
 
 pub mod emulator;
 mod linexp;
@@ -53,7 +56,7 @@ use ragu_arithmetic::Coeff;
 
 use crate::{
     Result,
-    gadgets::{Bound, GadgetKind},
+    gadgets::Bound,
     maybe::{Maybe, MaybeKind, Perhaps},
     routines::Routine,
 };
@@ -65,8 +68,25 @@ pub use linexp::{DirectSum, LinearExpression};
 /// and private data.
 pub type DriverValue<D, T> = Perhaps<<D as DriverTypes>::MaybeKind, T>;
 
-/// Defines implementation types for a concrete driver. Users of drivers do not
-/// need to directly interact with this trait.
+/// Associated types for a [`Driver`] that can be named without binding the
+/// `'dr` lifetime.
+///
+/// `Driver<'dr>` re-exports some of these types (as [`Driver::F`] and
+/// [`Driver::Wire`]) but deliberately omits others:
+/// [`MaybeKind`](Self::MaybeKind), [`LCadd`](Self::LCadd), and
+/// [`LCenforce`](Self::LCenforce) are implementation details that circuit code
+/// rarely needs to mention by name. Placing them here keeps `Driver<'dr>`
+/// focused on its core API while still making the types available to
+/// infrastructure that needs them.
+///
+/// The lifetime-free aspect is equally important: the [`DriverValue`] type
+/// alias and [wire-map conversions](crate::convert) both reference
+/// `DriverTypes` associated types without requiring `'dr`, so they can be
+/// defined and used in contexts where no driver lifetime is in scope.
+///
+/// Circuit code should bound on `Driver<'dr>`, not `DriverTypes`. This trait is
+/// relevant when writing conversion helpers or other abstractions that must be
+/// lifetime-polymorphic over drivers.
 pub trait DriverTypes {
     /// The field that this driver operates over.
     type ImplField: Field;
@@ -78,12 +98,20 @@ pub trait DriverTypes {
     /// expects.
     type MaybeKind: MaybeKind;
 
-    /// The concrete linear expression type that this driver uses for obtaining
-    /// sum for addition gates.
+    /// The concrete [`LinearExpression`] type used by [`Driver::add`].
+    ///
+    /// Because `add` accepts a closure `Fn(Self::LCadd) -> Self::LCadd`, Rust
+    /// requires the expression type to be named in the trait hierarchy even
+    /// though circuit code never refers to it directly. See the
+    /// [book](https://tachyon.z.cash/ragu/guide/drivers/linear.html#the-closure-pattern)
+    /// for detail on the closure pattern.
     type LCadd: LinearExpression<Self::ImplWire, Self::ImplField>;
 
-    /// The concrete linear expression type that this driver uses for obtaining
-    /// sums for linear constraints.
+    /// The concrete [`LinearExpression`] type used by [`Driver::enforce_zero`].
+    ///
+    /// Exposed for the same reason as [`LCadd`](Self::LCadd): Rust requires
+    /// the concrete type to appear in the trait hierarchy because
+    /// `enforce_zero` accepts a closure parameterized over it.
     type LCenforce: LinearExpression<Self::ImplWire, Self::ImplField>;
 }
 
@@ -122,7 +150,22 @@ pub trait DriverTypes {
 /// Drivers are parameterized by a lifetime `'dr`. Routines are constrained to
 /// outlive this lifetime so that references to non-`'static` parameters or
 /// witness data can be placed inside of them while still allowing drivers to
-/// use multithreaded execution.
+/// use multithreaded execution. See the [book section on `'dr`][dr-lifetime]
+/// for more detail.
+///
+/// [dr-lifetime]: https://tachyon.z.cash/ragu/guide/drivers/#the-dr-lifetime
+///
+/// # Supertrait: `DriverTypes`
+///
+/// `Driver<'dr>` requires [`DriverTypes`], which collects the associated types
+/// that can be named without binding `'dr`. Some of those types (`ImplField`,
+/// `ImplWire`) are re-exported here as [`F`](Self::F) and [`Wire`](Self::Wire);
+/// others ([`MaybeKind`](DriverTypes::MaybeKind),
+/// [`LCadd`](DriverTypes::LCadd), [`LCenforce`](DriverTypes::LCenforce))
+/// remain on `DriverTypes` only, since circuit code rarely needs to refer to
+/// them. Infrastructure that must name a driver's types without binding
+/// `'dr`—see the [`convert`](crate::convert) module—bounds on `DriverTypes`
+/// instead.
 pub trait Driver<'dr>: DriverTypes<ImplWire = Self::Wire, ImplField = Self::F> + Sized {
     /// The field that this driver operates over.
     type F: Field;
@@ -147,6 +190,12 @@ pub trait Driver<'dr>: DriverTypes<ImplWire = Self::Wire, ImplField = Self::F> +
     /// constraint—wasting those two wires. Drivers may override this to avoid
     /// the overhead, e.g. by pairing consecutive allocations into a single
     /// multiplication gate.
+    ///
+    /// # Purity
+    ///
+    /// The `Fn` bound reflects the same purity intent as [`mul`](Driver::mul);
+    /// the default implementation wraps this closure in a call to `mul`, but
+    /// overriding implementations may not invoke it at all.
     fn alloc(&mut self, value: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
         let (a, _, _) = self.mul(|| Ok((value()?, Coeff::Zero, Coeff::Zero)))?;
         Ok(a)
@@ -164,6 +213,16 @@ pub trait Driver<'dr>: DriverTypes<ImplWire = Self::Wire, ImplField = Self::F> +
     /// needed. If it is called, any errors are propagated from it, and the
     /// closure can rely on [`Witness<Self, T>::take`](Maybe::take) succeeding
     /// unconditionally.
+    ///
+    /// # Purity
+    ///
+    /// The `Fn` bound signals that this closure should be side-effect-free:
+    /// synthesis must produce identical constraints regardless of whether the
+    /// driver invokes it. `Fn` prevents accidental `&mut` captures but does not
+    /// prevent interior mutability; for drivers with `MaybeKind = Empty`, the
+    /// [`Maybe`]/[`DriverValue`] system provides a stronger guarantee—those
+    /// drivers never call this closure, and its body is dead-code-eliminated
+    /// after monomorphization.
     fn mul(
         &mut self,
         values: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
@@ -177,12 +236,28 @@ pub trait Driver<'dr>: DriverTypes<ImplWire = Self::Wire, ImplField = Self::F> +
     /// `ragu`'s circuit model.
     ///
     /// The provided closure _may_ be called to obtain the linear combination.
+    ///
+    /// # Purity
+    ///
+    /// The `Fn` bound signals that this closure should be side-effect-free, as
+    /// with [`mul`](Driver::mul). Unlike witness-providing closures, however,
+    /// drivers with `MaybeKind = Empty` still call expression-building closures
+    /// when they need constraint structure, so `Fn` is the sole type-level
+    /// purity signal here.
     fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire;
 
     /// Asks the driver to create a constraint that a linear combination of
     /// wires equals zero.
     ///
     /// The provided closure _may_ be called to obtain the linear combination.
+    ///
+    /// # Purity
+    ///
+    /// The `Fn` bound signals purity for the same reasons as
+    /// [`add`](Driver::add); the driver-supplied
+    /// [`LCenforce`](DriverTypes::LCenforce) argument may itself carry
+    /// interior-mutable state (as a driver implementation detail), but circuit
+    /// code should not introduce its own observable side effects.
     fn enforce_zero(&mut self, lc: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()>;
 
     /// Enforces that two wires are equal.
@@ -195,9 +270,9 @@ pub trait Driver<'dr>: DriverTypes<ImplWire = Self::Wire, ImplField = Self::F> +
         <DriverValue<Self, R> as Maybe<R>>::just(f)
     }
 
-    /// Proxy for the `Witness::with` method for this driver.
-    fn with<R: Send>(f: impl FnOnce() -> Result<R>) -> Result<DriverValue<Self, R>> {
-        <DriverValue<Self, R> as Maybe<R>>::with(f)
+    /// Proxy for the `Witness::try_just` method for this driver.
+    fn try_just<R: Send>(f: impl FnOnce() -> Result<R>) -> Result<DriverValue<Self, R>> {
+        <DriverValue<Self, R> as Maybe<R>>::try_just(f)
     }
 
     /// Executes a routine with this driver.
@@ -206,28 +281,7 @@ pub trait Driver<'dr>: DriverTypes<ImplWire = Self::Wire, ImplField = Self::F> +
         routine: R,
         input: Bound<'dr, Self, R::Input>,
     ) -> Result<Bound<'dr, Self, R::Output>> {
-        let mut dummy = emulator::Emulator::wireless();
-        let dummy_input = R::Input::map_gadget(&input, &mut dummy)?;
-        let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
+        let aux = emulator::Emulator::predict(&routine, &input)?.into_aux();
         routine.execute(self, input, aux)
     }
-}
-
-/// Conversion context that is capable of transforming wires from one driver to
-/// another.
-pub trait FromDriver<'dr, 'new_dr, D: Driver<'dr>> {
-    /// The new driver type that uses the same field.
-    type NewDriver: Driver<'new_dr, F = D::F>;
-
-    /// Proxy for the `Witness::just` method for the new driver.
-    fn just<R: Send>(f: impl FnOnce() -> R) -> DriverValue<Self::NewDriver, R> {
-        <DriverValue<Self::NewDriver, R> as Maybe<R>>::just(f)
-    }
-
-    /// Converts a wire from `D` to the new driver's wire type, based on
-    /// contextual information.
-    fn convert_wire(
-        &mut self,
-        wire: &D::Wire,
-    ) -> Result<<Self::NewDriver as Driver<'new_dr>>::Wire>;
 }

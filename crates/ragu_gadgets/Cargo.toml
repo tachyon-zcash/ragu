@@ -21,6 +21,7 @@ all-features = true
 
 [features]
 default = []
+std = []
 
 [lib]
 bench = false

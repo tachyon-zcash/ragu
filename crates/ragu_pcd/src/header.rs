@@ -56,9 +56,10 @@ impl Suffix {
     /// Creates a new internal-defined [`Header`] suffix. Only called internally
     /// by Ragu.
     pub(crate) const fn internal(value: usize) -> Self {
-        if value >= NUM_INTERNAL_SUFFIXES as usize {
-            panic!("invalid internal header suffix index");
-        }
+        assert!(
+            value < NUM_INTERNAL_SUFFIXES as usize,
+            "invalid internal header suffix index"
+        );
 
         Suffix {
             suffix: HeaderSuffix::Internal(value),

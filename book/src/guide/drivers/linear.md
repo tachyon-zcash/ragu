@@ -16,10 +16,10 @@ no intermediate collection required.
 
 ## The Closure Pattern {#the-closure-pattern}
 
-[`add()`] and [`enforce_zero()`] accept closures so drivers that don't need the
-result can avoid building the expression altogether. Drivers that do track
-constraints call the closure with an empty expression of their own concrete
-type, and circuit code builds on it using only the [`LinearExpression`] trait
+[`add()`] and [`enforce_zero()`] accept closures so that drivers which don't
+track constraints can skip the expression entirely. When a driver does invoke
+the closure, it supplies an empty expression of its own concrete type; circuit
+code builds on that expression using only the [`LinearExpression`] trait
 methods.[^hidden-types]
 
 The central implementation method is [`add_term`], which appends a wire with an
@@ -61,32 +61,32 @@ backed by the evaluated field element alone.
 
 ## Gain
 
-Every linear expression carries a **gain** factor, initialized to $1$. The
-[`gain`] method multiplies the current gain by a given [`Coeff<F>`]; all terms
-added after a gain change incorporate the updated gain, while earlier ones are
-left untouched.
+Many algorithms that build a linear expression need to scale terms by a running
+factor. The traditional approach stores terms in a sum and distributes the
+factor by scaling the accumulated result in each step. For some drivers, scaling
+the result means revisiting every previous term, so not all can do this
+efficiently.
 
-One typical use of gain is binary decomposition (packing Boolean bits into a
-field element). The [`multipack`] routine packs a slice of [`Boolean`] wires
-into a single field element by adding each bit and doubling the gain after every
-step. Starting from gain $1$, the first bit contributes $b_0$, the second $2
-b_1$, the third $4 b_2$, and so on — producing $b_0 + 2 b_1 + 4 b_2 + \cdots$
-naturally.
+The **gain** mechanism factors this scaling out, applying it to each *new* term
+rather than the accumulated sum. Every linear expression carries a gain scalar,
+initialized to $1$. Each [`add_term`] call scales the new term by the current
+gain, so a term worth $v$ contributes $g \cdot v$ instead. Earlier terms are
+unaffected. The [`gain`] method scales the current gain by a given [`Coeff<F>`].
 
-```admonish info
-This forward-only design is deliberate. A retroactive `scale`, while being more
-familiar, would require every driver to revisit earlier terms, which not all can
-do cheaply. Nor can circuit code approximate gain by pre-multiplying
-coefficients before [`add_term`]: some drivers multiply each coefficient by an
-internal factor inside [`add_term`], so pre-multiplying would duplicate that
-per-term arithmetic. [`gain`] avoids both problems by letting the driver fold
-the caller's scaling into its own bookkeeping once, so later terms inherit the
-factor automatically.
-```
+Gain reverses the usual processing direction: accumulator-style algorithms like
+Horner's method work from high to low, but gain-based algorithms work from low
+to high. Every algorithm of the first kind has an efficient counterpart of the
+second, though the gain direction can feel unfamiliar at first.
+
+One example is binary decomposition. The [`multipack`] routine packs a slice of
+[`Boolean`] wires into field elements by adding each bit and doubling the gain
+after every step. Starting from gain $1$, the first bit contributes $b_0$, the
+second $2 b_1$, the third $4 b_2$, and so on, producing
+$b_0 + 2 b_1 + 4 b_2 + \cdots$ naturally.
 
 [^hidden-types]: Because closures carry concrete parameter types, the driver
-    cannot hide its expression type: Rust requires it to appear somewhere in the
-    trait hierarchy as the [`LCadd`] and [`LCenforce`] associated types, even though
+    cannot hide its expression type: Rust requires it to appear in the trait
+    hierarchy (as the [`LCadd`] and [`LCenforce`] associated types), even though
     circuit code never refers to them by name.
 
 [`LinearExpression`]: ragu_core::drivers::linexp::LinearExpression

@@ -7,11 +7,12 @@ use ragu_circuits::{polynomials::Rank, staging};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Bound, Consistent, Gadget, Kind},
+    gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
 use ragu_primitives::{
     Element,
+    consistent::Consistent,
     vec::{FixedVec, Len},
 };
 

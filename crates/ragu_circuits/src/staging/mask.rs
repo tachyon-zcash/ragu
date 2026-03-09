@@ -25,7 +25,7 @@ impl<R: Rank> StageMask<R> {
     /// multiplication gates.
     pub fn new(skip_multiplications: usize, num_multiplications: usize) -> Result<Self> {
         if skip_multiplications + num_multiplications + 1 > R::n() {
-            return Err(ragu_core::Error::MultiplicationBoundExceeded(R::n()));
+            return Err(ragu_core::Error::MultiplicationBoundExceeded { limit: R::n() });
         }
         assert!(skip_multiplications + num_multiplications < R::n()); // Technically a redundant assertion.
 
@@ -42,7 +42,7 @@ impl<R: Rank> StageMask<R> {
     /// which is the maximum before bounds are reached.
     pub fn new_final(skip_multiplications: usize) -> Result<Self> {
         if skip_multiplications + 1 > R::n() {
-            return Err(ragu_core::Error::MultiplicationBoundExceeded(R::n()));
+            return Err(ragu_core::Error::MultiplicationBoundExceeded { limit: R::n() });
         }
 
         let num_multiplications = R::n() - skip_multiplications - 1;
@@ -245,12 +245,12 @@ mod tests {
     use ragu_core::{
         Result,
         drivers::{Driver, DriverValue, LinearExpression, emulator::Emulator},
-        gadgets::{Bound, Consistent, Gadget},
+        gadgets::{Bound, Gadget},
         maybe::Maybe,
         routines::{Prediction, Routine},
     };
     use ragu_pasta::{EpAffine, EqAffine, Fp, Fq, Pasta};
-    use ragu_primitives::{Element, Endoscalar, Point, io::Write};
+    use ragu_primitives::{Element, Endoscalar, Point, consistent::Consistent, io::Write};
     use rand::RngExt;
 
     use crate::{

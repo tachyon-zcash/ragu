@@ -5,6 +5,10 @@
 //! multiple times (and so drivers can memoize their synthesis) or have
 //! efficiently predictable outputs (and so drivers can parallelize their
 //! synthesis).
+//!
+//! See also the [book] for a user-oriented introduction to routines.
+//!
+//! [book]: https://tachyon.z.cash/ragu/guide/routines.html
 
 use ff::Field;
 
@@ -53,6 +57,13 @@ pub trait Routine<F: Field>: Clone + Send {
     /// background thread. In any event, the prediction process produces some
     /// routine-specific auxiliary data that can be leveraged during actual
     /// execution to avoid duplicated effort.
+    ///
+    /// # Errors
+    ///
+    /// An `Err` return signals an unrecoverable failure—for example, missing
+    /// witness data or malformed input—and must be propagated by drivers. Use
+    /// [`Prediction::Unknown`] instead when the routine simply cannot
+    /// efficiently predict its output.
     fn predict<'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: &mut D,
@@ -97,5 +108,22 @@ impl<T, A> Prediction<T, A> {
         match self {
             Prediction::Known(_, aux) | Prediction::Unknown(aux) => aux,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Prediction;
+
+    #[test]
+    fn prediction_into_aux_known() {
+        let p = Prediction::Known("output", 42u64);
+        assert_eq!(p.into_aux(), 42);
+    }
+
+    #[test]
+    fn prediction_into_aux_unknown() {
+        let p = Prediction::<&str, u64>::Unknown(99);
+        assert_eq!(p.into_aux(), 99);
     }
 }

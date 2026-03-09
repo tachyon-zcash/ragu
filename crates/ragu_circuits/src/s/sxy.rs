@@ -53,7 +53,7 @@ use ragu_arithmetic::Coeff;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverTypes, emulator::Emulator},
-    gadgets::{Bound, GadgetKind},
+    gadgets::Bound,
     maybe::Empty,
     routines::Routine,
 };
@@ -198,7 +198,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
     ) -> Result<(Self::Wire, Self::Wire, Self::Wire)> {
         let index = self.scope.multiplication_constraints;
         if index == R::n() {
-            return Err(Error::MultiplicationBoundExceeded(R::n()));
+            return Err(Error::MultiplicationBoundExceeded { limit: R::n() });
         }
         self.scope.multiplication_constraints += 1;
 
@@ -234,7 +234,9 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
     fn enforce_zero(&mut self, lc: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
         let q = self.scope.linear_constraints;
         if q == R::num_coeffs() {
-            return Err(Error::LinearBoundExceeded(R::num_coeffs()));
+            return Err(Error::LinearBoundExceeded {
+                limit: R::num_coeffs(),
+            });
         }
         self.scope.linear_constraints += 1;
 
@@ -271,9 +273,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         // before restoring parent state.
         let saved = core::mem::replace(&mut self.scope, init_scope);
         let exec_result = {
-            let mut dummy = Emulator::wireless();
-            let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
-            let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
+            let aux = Emulator::predict(&routine, &input)?.into_aux();
             routine.execute(self, input, aux)
         };
         // Verify this routine consumed exactly the expected constraints.
@@ -365,7 +365,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     };
 
     // Allocate the key_wire and ONE wires
-    let (key_wire, _, _one) = evaluator.mul(|| unreachable!())?;
+    let (key_wire, _, _one_wire) = evaluator.mul(|| unreachable!())?;
 
     // Registry key constraint
     evaluator.enforce_registry_key(&key_wire, key)?;

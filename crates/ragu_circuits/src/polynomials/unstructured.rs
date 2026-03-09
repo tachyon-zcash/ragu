@@ -150,6 +150,17 @@ impl<F: Field, R: Rank> RawPolynomial<F, R> {
                 .chain(Some(generators.h())),
         )
     }
+
+    /// Compute a commitment to this polynomial, normalized to affine. For
+    /// multiple commitments, prefer [`commit`](Self::commit) with
+    /// [`batch_commit`] to share a single field inversion.
+    pub fn commit_to_affine<C: CurveAffine<ScalarExt = F>>(
+        &self,
+        generators: &impl ragu_arithmetic::FixedGenerators<C>,
+        blind: F,
+    ) -> C {
+        self.commit(generators, blind).into()
+    }
 }
 
 impl<F: Field, R: Rank> AddAssign<&Self> for RawPolynomial<F, R> {

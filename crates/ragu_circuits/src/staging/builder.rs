@@ -41,13 +41,15 @@
 use ragu_arithmetic::Coeff;
 use ragu_core::{
     Result,
+    convert::WireMap,
     drivers::{
-        Driver, DriverValue, FromDriver,
+        Driver, DriverValue,
         emulator::{Emulator, Wireless},
     },
-    gadgets::{Bound, Consistent, Gadget},
+    gadgets::{Bound, Gadget},
     maybe::Empty,
 };
+use ragu_primitives::consistent::Consistent;
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -86,10 +88,9 @@ struct StageWireInjector<'a, 'dr, D: Driver<'dr>> {
     _marker: PhantomData<&'dr ()>,
 }
 
-impl<'dr, D: Driver<'dr>> FromDriver<'_, 'dr, Emulator<Wireless<D::MaybeKind, D::F>>>
-    for StageWireInjector<'_, 'dr, D>
-{
-    type NewDriver = D;
+impl<'dr, D: Driver<'dr>> WireMap<D::F> for StageWireInjector<'_, 'dr, D> {
+    type Src = Emulator<Wireless<D::MaybeKind, D::F>>;
+    type Dst = D;
 
     fn convert_wire(&mut self, _: &()) -> Result<D::Wire> {
         self.stage_wires
@@ -186,13 +187,13 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
         // Invoke wireless emulator with dummy witness to get gadget structure.
         // The emulator never actually reads the witness values.
         let mut emulator = Emulator::counter();
-        let mut num_wires = stage.witness(&mut emulator, Empty)?.num_wires();
+        let mut num_wires = stage.witness(&mut emulator, Empty)?.num_wires()?;
 
         // Check bounds
         if num_wires > Next::values() {
-            return Err(ragu_core::Error::MultiplicationBoundExceeded(
-                Next::num_multiplications(),
-            ));
+            return Err(ragu_core::Error::MultiplicationBoundExceeded {
+                limit: Next::num_multiplications(),
+            });
         }
 
         // Collect stage wires

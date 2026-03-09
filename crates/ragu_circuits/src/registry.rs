@@ -167,7 +167,9 @@ impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
     {
         let total_circuits = self.num_circuits();
         if total_circuits > R::num_coeffs() {
-            return Err(Error::CircuitBoundExceeded(total_circuits));
+            return Err(Error::CircuitBoundExceeded {
+                limit: R::num_coeffs(),
+            });
         }
 
         let log2_circuits = self.log2_circuits();

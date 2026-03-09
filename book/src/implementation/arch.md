@@ -24,9 +24,12 @@ Ragu is developed as a Cargo workspace.
       `Driver` abstraction and related traits and utilities. All circuit
       development and most algorithms are written using the API provided by
       this crate.
-    * **`ragu_primitives`**: This crate provides implementations of many
-      algorithms and abstractions that use the API in `ragu_core`, mainly
-      providing gadget implementations that are useful for building circuits.
+    * **`ragu_primitives`**: The standard library for circuit developers.
+      Builds on the `Driver` abstraction from `ragu_core` to provide the
+      concrete gadgets (`Element`, `Boolean`, `Point`), cryptographic
+      primitives (Poseidon hash, endoscalar arithmetic), serialization
+      traits, containers, and development tooling (such as the `Simulator`)
+      that most circuit code depends on.
     * **`ragu_circuits`**: This crate provides the implementation of the
       Ragu protocol and utilities for building arithmetic circuits in Ragu.
     * **`ragu_gadgets`**: This is just a placeholder, and may be removed in

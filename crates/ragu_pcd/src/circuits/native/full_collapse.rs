@@ -94,9 +94,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 /// Combines the unified instance with stage witnesses needed to perform the
 /// layer 2 revdot verification and base case check.
 pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
-    /// The unified instance containing expected challenge values and the
-    /// witnessed [$c$](unified::Output::c) claim.
-    pub unified_instance: &'a unified::Instance<C>,
+    /// The unified instance containing expected challenge values, the
+    /// witnessed [$c$](unified::Output::c) claim, and accumulated coverage.
+    pub unified: unified::Instance<C>,
 
     /// Witness for the [`preamble`] stage
     /// (unenforced).
@@ -120,7 +120,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
     type Output = unified::InternalOutputKind<C>;
-    type Aux<'source> = ();
+    type Aux<'source> = unified::Instance<C>;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
@@ -151,13 +151,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
         let error_n = error_n.unenforced(dr, witness.as_ref().map(|w| w.error_n_witness))?;
 
-        let unified_instance = &witness.as_ref().map(|w| w.unified_instance);
-        let mut unified_output = OutputBuilder::new();
+        let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
         // Get layer 2 folding challenges. These are distinct from the layer 1
         // challenges (mu, nu) used in partial_collapse.
-        let mu_prime = unified_output.mu_prime.get(dr, unified_instance)?;
-        let nu_prime = unified_output.nu_prime.get(dr, unified_instance)?;
+        let mu_prime = unified_output.mu_prime.get(dr)?;
+        let nu_prime = unified_output.nu_prime.get(dr)?;
 
         // Compute the final folded revdot claim c via layer 2 reduction.
         // The collapsed values from layer 1 (verified by partial_collapse) serve
@@ -170,8 +169,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
                 &error_n.collapsed,
             )?;
 
-            // Retrieve the witnessed c from the unified instance.
-            let witnessed_c = unified_output.c.get(dr, unified_instance)?;
+            // Retrieve the witnessed c from the unified instance and mark it
+            // as covered by this circuit.
+            let witnessed_c = unified_output.c.verify(dr)?;
 
             // Enforce witnessed_c == computed_c, but only when NOT in base case.
             // In base case (both children are trivial proofs), the prover may
@@ -182,6 +182,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
                 .conditional_enforce_equal(dr, &witnessed_c, &computed_c)?;
         }
 
-        Ok((unified_output.finish(dr, unified_instance)?, D::just(|| ())))
+        unified_output.finish(dr)
     }
 }

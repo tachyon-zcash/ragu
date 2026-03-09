@@ -92,7 +92,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         right.write(dr, &mut elements)?;
         output.write(dr, &mut elements)?;
 
-        let aux = D::with(|| {
+        let aux = D::try_just(|| {
             let left_header = elements[0..HEADER_SIZE]
                 .iter()
                 .map(|e| *e.value().take())

@@ -11,9 +11,11 @@ use ragu_arithmetic::{Coeff, CurveAffine};
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue, LinearExpression},
-    gadgets::{Consistent, Gadget},
+    gadgets::Gadget,
     maybe::Maybe,
 };
+
+use crate::consistent::Consistent;
 
 use core::marker::PhantomData;
 
@@ -47,7 +49,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
     /// This method uses [`Element::alloc_square`] to allocate coordinates and
     /// then enforces the curve equation.
     pub fn alloc(dr: &mut D, p: DriverValue<D, C>) -> Result<Self> {
-        let coordinates = D::with(|| {
+        let coordinates = D::try_just(|| {
             let coordinates = p.take().coordinates().into_option();
             coordinates.ok_or_else(|| {
                 Error::InvalidWitness("point at infinity cannot be witnessed".into())

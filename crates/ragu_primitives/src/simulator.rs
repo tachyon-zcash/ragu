@@ -120,13 +120,13 @@ impl<'dr, F: Field> Driver<'dr> for Simulator<F> {
 
     fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {
         let lc = lc(DirectSum::default());
-        lc.value
+        lc.value()
     }
 
     fn enforce_zero(&mut self, lc: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
         let lc = lc(DirectSum::default());
 
-        if lc.value != F::ZERO {
+        if lc.value() != F::ZERO {
             return Err(Error::InvalidWitness("linear constraint failed".into()));
         }
 

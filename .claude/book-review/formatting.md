@@ -107,3 +107,13 @@ sentence or clause boundaries. Sentences flow together continuously; a line brea
 may land mid-sentence. In math-heavy paragraphs, short inline math tokens wrap
 like ordinary words; only long expressions that would overflow need standalone
 line treatment.
+
+## Typography and Decoration
+
+- Do not begin every bullet in a list with a bolded phrase. If you need
+  bullets, let the content carry the list — not typographic decoration.
+  (Bold-prefixed definition lists like `**Term:** definition` are fine;
+  the anti-pattern is gratuitous bolding of the first word of each item.)
+- Do not use unicode arrows (→), curly quotes, or other characters that
+  require special input. Use plain text equivalents (->), straight
+  quotes, and standard punctuation.

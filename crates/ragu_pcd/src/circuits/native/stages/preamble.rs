@@ -3,24 +3,24 @@
 //! Verifies child proof headers and computes the Ky term.
 
 use ragu_arithmetic::Cycle;
+use ragu_circuits::horner::Horner;
 use ragu_circuits::{polynomials::Rank, staging};
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Bound, Consistent, Gadget, Kind},
+    gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
 use ragu_primitives::{
     Boolean, Element, GadgetExt,
+    consistent::Consistent,
     vec::{CollectFixed, ConstLen, FixedVec},
 };
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use crate::{
-    Proof, circuits::native::unified, components::ky::Ky, header::Header, step::internal::padded,
-};
+use crate::{Proof, circuits::native::unified, header::Header, step::internal::padded};
 
 pub(crate) use crate::circuits::native::InternalCircuitIndex::PreambleStage as STAGING_ID;
 
@@ -107,20 +107,20 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         dr: &mut D,
         y: &Element<'dr, D>,
     ) -> Result<(Element<'dr, D>, Element<'dr, D>)> {
-        let mut ky = Ky::new(y);
+        let mut ky = Horner::new(y);
         self.unified.write(dr, &mut ky)?;
 
         Ok((
             ({
                 let mut ky = ky.clone();
                 Element::zero(dr).write(dr, &mut ky)?;
-                ky.finish(dr)?
+                ky.finish_ky(dr)?
             }),
             ({
                 self.children.left.write(dr, &mut ky)?;
                 self.children.right.write(dr, &mut ky)?;
                 Element::zero(dr).write(dr, &mut ky)?;
-                ky.finish(dr)?
+                ky.finish_ky(dr)?
             }),
         ))
     }
@@ -129,11 +129,11 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     ///
     /// Returns `application_ky` = k(y) for `(children.left, children.right, output_header)`.
     pub fn application_ky(&self, dr: &mut D, y: &Element<'dr, D>) -> Result<Element<'dr, D>> {
-        let mut ky = Ky::new(y);
+        let mut ky = Horner::new(y);
         self.children.left.write(dr, &mut ky)?;
         self.children.right.write(dr, &mut ky)?;
         self.output_header.write(dr, &mut ky)?;
-        ky.finish(dr)
+        ky.finish_ky(dr)
     }
 
     /// Returns true if this child proof is a trivial proof (output header suffix == 1).
@@ -156,7 +156,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
             dr: &mut D,
             data: DriverValue<D, &[D::F]>,
         ) -> Result<FixedVec<Element<'dr, D>, ConstLen<N>>> {
-            D::with(|| {
+            D::try_just(|| {
                 if data.as_ref().take().len() != N {
                     return Err(Error::MalformedEncoding(
                         "Header data length does not match HEADER_SIZE".into(),
@@ -203,7 +203,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     where
         'source: 'dr,
     {
-        let header_data = D::with(|| {
+        let header_data = D::try_just(|| {
             use ragu_core::drivers::emulator::{Emulator, Wireless};
             let emulator = &mut Emulator::<Wireless<D::MaybeKind, D::F>>::wireless();
 

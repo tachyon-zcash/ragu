@@ -36,36 +36,35 @@ The [`Bound<'dr, D, K>`][bound-alias] type alias is shorthand for
 
 ## `map_gadget`
 
-Thanks to the strict requirements on implementations of
-[`Gadget`][gadget-trait], it is possible to
-[transform gadgets](index.md#transformations) between drivers. This is
-handled by the
 [`GadgetKind::map_gadget`](ragu_core::gadgets::GadgetKind::map_gadget)
-method implementation for every gadget, which simply translates the gadget's
-wires and witness information from one driver to another using the
-[`FromDriver`][fromdriver-trait] trait.
-
-The [`Gadget::map`](ragu_core::gadgets::Gadget::map) is a proxy for its
-corresponding
-[`GadgetKind::map_gadget`](ragu_core::gadgets::GadgetKind::map_gadget)
-method.
+translates a gadget from one driver to another, walking its fields and
+converting wires and witness data to the destination driver. See
+[Conversion](conversion.md) for details.
 
 ## `enforce_equal_gadget`
 
-Gadgets offer the [`GadgetKind::enforce_equal_gadget`][enforce-equal] method
-to specify how two instances can be enforced to be equivalent. In
-theory, a gadget can provide a more efficient implementation of this
-comparison than a generic method that simply creates linear constraints
-between two gadgets' wires.
+Gadgets offer the [`GadgetKind::enforce_equal_gadget`][enforce-equal] method to
+specify how two instances are enforced to be equivalent. A gadget may provide a
+specialized implementation that is more efficient than constraining
+corresponding wires individually.
 
 ## Safety
 
 Notice that the [`Gadget`][gadget-trait] trait is safe to implement, but the
-[`GadgetKind`][gadgetkind-trait] trait is not. All gadgets must implement
-both traits, but it is the [`GadgetKind`][gadgetkind-trait] trait that
-imposes a memory-safety requirement on the types that implement it: gadgets
-should implement `Send` if their wires are `Send` as well. This is impossible
-to express in today's Rust type system, justifying the type.
+[`GadgetKind`][gadgetkind-trait] trait is not. All gadgets must implement both
+traits, but it is the [`GadgetKind`][gadgetkind-trait] trait that imposes a
+memory-safety requirement on the types that implement it: gadgets must implement
+`Send` if their wires are `Send` as well. This is impossible to express in
+today's Rust type system, which is why the trait is `unsafe`.
+
+```admonish warning
+The `Send` requirement is the **only** safety invariant that
+[`GadgetKind`][gadgetkind-trait] imposes.
+[Fungibility](index.md#fungibility) — the requirement that gadget behavior
+be fully determined by its type — is a separate correctness contract
+documented on the [`Gadget`][gadget-trait] trait. Violating fungibility may
+produce incorrect circuits but does not cause undefined behavior.
+```
 
 However, due to the complexity of the API contract we generally need to
 [automatically derive](index.md#automatic-derivation) the
@@ -79,4 +78,4 @@ see it.
 [bound-alias]: ragu_core::gadgets::Bound
 [driver-trait]: ragu_core::drivers::Driver
 [enforce-equal]: ragu_core::gadgets::GadgetKind::enforce_equal_gadget
-[fromdriver-trait]: ragu_core::drivers::FromDriver
+

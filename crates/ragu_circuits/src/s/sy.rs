@@ -71,14 +71,14 @@ use ragu_arithmetic::Coeff;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverTypes, LinearExpression, emulator::Emulator},
-    gadgets::{Bound, GadgetKind},
+    gadgets::Bound,
     maybe::Empty,
     routines::Routine,
 };
 use ragu_primitives::GadgetExt;
 
 use alloc::{vec, vec::Vec};
-use core::cell::RefCell;
+use core::cell::{RefCell, RefMut};
 
 use super::DriverExt;
 use crate::{
@@ -451,19 +451,21 @@ impl<'table, 'sy, F: Field, R: Rank> LinearExpression<Wire<'table, 'sy, F, R>, F
 ///
 /// # Tuple Fields
 ///
-/// - `.0` — Reference to the [`VirtualTable`] for value distribution.
+/// - `.0` — Mutable borrow of the [`VirtualTable`] for value distribution,
+///   held for the duration of the linear combination to avoid repeated
+///   [`RefCell::borrow_mut`] calls.
 /// - `.1` — The $y^j$ coefficient for this constraint (from `current_y`).
 ///
 /// [`Driver::enforce_zero`]: ragu_core::drivers::Driver::enforce_zero
 struct TermEnforcer<'table, 'sy, F: Field, R: Rank>(
-    &'table RefCell<VirtualTable<'sy, F, R>>,
+    RefMut<'table, VirtualTable<'sy, F, R>>,
     Coeff<F>,
 );
 impl<'table, 'sy, F: Field, R: Rank> LinearExpression<Wire<'table, 'sy, F, R>, F>
     for TermEnforcer<'table, 'sy, F, R>
 {
-    fn add_term(self, wire: &Wire<'table, 'sy, F, R>, coeff: Coeff<F>) -> Self {
-        self.0.borrow_mut().add(wire.index, coeff * self.1);
+    fn add_term(mut self, wire: &Wire<'table, 'sy, F, R>, coeff: Coeff<F>) -> Self {
+        self.0.add(wire.index, coeff * self.1);
         self
     }
 
@@ -538,7 +540,7 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, '
     ) -> Result<(Self::Wire, Self::Wire, Self::Wire)> {
         let index = self.scope.multiplication_constraints;
         if index == R::n() {
-            return Err(Error::MultiplicationBoundExceeded(R::n()));
+            return Err(Error::MultiplicationBoundExceeded { limit: R::n() });
         }
         self.scope.multiplication_constraints += 1;
 
@@ -578,12 +580,14 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, '
     fn enforce_zero(&mut self, lc: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
         let q = self.scope.linear_constraints;
         if q == R::num_coeffs() {
-            return Err(Error::LinearBoundExceeded(R::num_coeffs()));
+            return Err(Error::LinearBoundExceeded {
+                limit: R::num_coeffs(),
+            });
         }
         self.scope.linear_constraints += 1;
 
         lc(TermEnforcer(
-            self.virtual_table,
+            self.virtual_table.borrow_mut(),
             Coeff::Arbitrary(self.scope.current_y),
         ));
 
@@ -618,9 +622,7 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, '
         };
 
         self.with_scope(init_scope, |this| {
-            let mut dummy = Emulator::wireless();
-            let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
-            let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
+            let aux = Emulator::predict(&routine, &input)?.into_aux();
             let result = routine.execute(this, input, aux)?;
 
             // Verify this routine consumed exactly the expected constraints.
@@ -721,7 +723,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
             };
 
             // Allocate the key_wire and ONE wires
-            let (key_wire, _, _one) = evaluator.mul(|| unreachable!())?;
+            let (key_wire, _, _one_wire) = evaluator.mul(|| unreachable!())?;
 
             // Registry key constraint
             evaluator.enforce_registry_key(&key_wire, key)?;

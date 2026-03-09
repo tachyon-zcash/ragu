@@ -22,10 +22,10 @@ use ragu_circuits::polynomials::Rank;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Bound, Consistent, Gadget, Kind},
+    gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, Point, io::Write};
+use ragu_primitives::{Element, Point, consistent::Consistent, io::Write};
 
 use crate::{components::suffix::WithSuffix, proof::Proof};
 
@@ -63,10 +63,38 @@ macro_rules! unified_instance_type {
 
 /// Creates a `Slot` initializer for a field (works for both Point and Element).
 macro_rules! unified_slot_new {
-    ($field_type:ident, $field:ident, $D:ty, $C:ty) => {
-        Slot::new(|dr, i: &DriverValue<$D, &'a Instance<$C>>| {
-            $field_type::alloc(dr, i.as_ref().map(|i| i.$field))
+    ($field_type:ident, $field:ident, $instance:expr) => {
+        Slot::new($instance.as_ref().map(|i| i.$field), |dr, w| {
+            $field_type::alloc(dr, w)
         })
+    };
+}
+
+/// If a slot was set/verified, marks it on the instance's coverage
+/// (panicking if already covered).
+macro_rules! unified_coverage_cover {
+    ($field_type:ident, $coverage:expr, $was_set:expr, $field:ident) => {
+        if $was_set {
+            assert!(
+                !$coverage.$field,
+                concat!(
+                    "slot `",
+                    stringify!($field),
+                    "` covered by multiple circuits"
+                ),
+            );
+            $coverage.$field = true;
+        }
+    };
+}
+
+/// Asserts that a slot is covered.
+macro_rules! unified_coverage_assert_complete {
+    ($field_type:ident, $self:expr, $field:ident) => {
+        assert!(
+            $self.$field,
+            concat!("slot `", stringify!($field), "` not covered by any circuit"),
+        );
     };
 }
 
@@ -118,61 +146,106 @@ macro_rules! define_unified_instance {
         /// fields. It is constructed during proof generation in the fuse pipeline
         /// and passed to circuits as witness data for gadget allocation.
         ///
+        /// Also carries [`Coverage`] so that a single value threads through
+        /// all internal circuits, accumulating coverage as it goes.
+        ///
         /// See [`Output`] for field descriptions.
         pub struct Instance<C: Cycle> {
             $(
                 pub $field: unified_instance_type!($field_type, C),
             )+
+            /// Accumulated coverage from prior circuits.
+            pub coverage: Coverage,
+        }
+
+        impl<C: Cycle> Instance<C> {
+            /// Asserts that every slot has been covered by some circuit.
+            ///
+            /// # Panics
+            ///
+            /// Panics if any slot has not been covered.
+            pub fn assert_complete(self) {
+                self.coverage.assert_complete();
+            }
         }
 
         /// Builder for constructing an [`Output`] gadget with flexible allocation.
         ///
-        /// Each field is a [`Slot`] that can be filled either eagerly (via `set`) or
-        /// lazily (via `get` or at finalization). This allows circuits to pre-compute
-        /// some values during earlier stages while deferring others.
+        /// Each field is a [`Slot`] that can be filled eagerly (via `set`),
+        /// allocated on demand (via `get` or `verify`), or deferred to
+        /// finalization. This allows circuits to pre-compute some values
+        /// during earlier stages while deferring others.
         ///
         /// # Usage
         ///
-        /// 1. Create a builder with [`new`](Self::new)
+        /// 1. Create a builder with [`new`](Self::new), passing in the
+        ///    [`Instance`] (which carries accumulated [`Coverage`])
         /// 2. Optionally pre-fill slots using `builder.field.set(value)`
-        /// 3. Optionally allocate slots using `builder.field.get(dr, instance)`
-        /// 4. Call [`finish`](Self::finish) to build the final output with suffix
+        /// 3. Optionally allocate slots using `builder.field.get(dr)` or
+        ///    `builder.field.verify(dr)` (which also marks coverage)
+        /// 4. Call [`finish`](Self::finish) or [`finish_no_suffix`](Self::finish_no_suffix)
+        ///    to build the final output and obtain the updated [`Instance`]
         ///
         /// Any slots not explicitly filled will be allocated during finalization.
-        pub struct OutputBuilder<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
+        pub struct OutputBuilder<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
             $(
-                pub $field: Slot<'a, 'dr, D, unified_output_type!($field_type, 'dr, D, C), C>,
+                pub $field: Slot<'dr, D, unified_output_type!($field_type, 'dr, D, C), unified_instance_type!($field_type, C)>,
             )+
+            instance: DriverValue<D, Instance<C>>,
         }
 
-        impl<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> OutputBuilder<'a, 'dr, D, C> {
+        impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> OutputBuilder<'dr, D, C> {
             /// Creates a new builder with allocation functions for each field.
             ///
-            /// All slots start empty and will allocate from the [`Instance`] when
-            /// finalized, unless explicitly filled beforehand.
-            pub fn new() -> Self {
+            /// The `instance` carries both the protocol values (challenges,
+            /// commitments) and the accumulated [`Coverage`] from prior
+            /// circuits. Coverage is merged with this circuit's contributions
+            /// when [`finish`](Self::finish) or
+            /// [`finish_no_suffix`](Self::finish_no_suffix) is called.
+            pub fn new(instance: DriverValue<D, Instance<C>>) -> Self {
                 OutputBuilder {
                     $(
-                        $field: unified_slot_new!($field_type, $field, D, C),
+                        $field: unified_slot_new!($field_type, $field, instance),
                     )+
+                    instance,
                 }
             }
 
             /// Finishes building the output without wrapping in [`WithSuffix`].
             ///
-            /// Use this when the circuit needs to include additional data in its
-            /// output alongside the unified instance, and will handle the suffix
-            /// wrapping separately.
+            /// Returns the built [`Output`] and the updated [`Instance`]
+            /// (with this circuit's coverage contributions accumulated).
+            /// Use this when the circuit needs to include additional data in
+            /// its output alongside the unified instance, and will handle the
+            /// suffix wrapping separately.
             pub fn finish_no_suffix(
                 self,
                 dr: &mut D,
-                instance: &DriverValue<D, &'a Instance<C>>,
-            ) -> Result<Output<'dr, D, C>> {
-                Ok(Output {
-                    $(
-                        $field: self.$field.take(dr, instance)?,
-                    )+
-                })
+            ) -> Result<(Output<'dr, D, C>, DriverValue<D, Instance<C>>)> {
+                $( let $field = self.$field.take(dr)?; )+
+                let output = Output {
+                    $( $field: $field.0, )+
+                };
+                let instance = self.instance.map(move |mut inst| {
+                    $( unified_coverage_cover!($field_type, inst.coverage, $field.1, $field); )+
+                    inst
+                });
+                Ok((output, instance))
+            }
+        }
+
+        /// Tracks which unified instance slots have been actively filled
+        /// (via [`Slot::set`] or [`Slot::verify`]) across circuits.
+        ///
+        /// Generated by `define_unified_instance!` — one `bool` per field.
+        #[derive(Debug, Default, PartialEq, Eq)]
+        pub struct Coverage {
+            $( $field: bool, )+
+        }
+
+        impl Coverage {
+            fn assert_complete(self) {
+                $( unified_coverage_assert_complete!($field_type, self, $field); )+
             }
         }
     };
@@ -231,20 +304,27 @@ define_unified_instance! {
 /// or allocate on-demand (via [`get`](Self::get)). This avoids redundant wire
 /// allocations when the same value is computed by multiple code paths.
 ///
-/// Each slot stores an allocation function that knows how to extract and
-/// allocate its field from an [`Instance`].
-pub struct Slot<'a, 'dr, D: Driver<'dr>, T, C: Cycle> {
+/// Each slot stores a pre-extracted instance value and an allocation
+/// function that converts it into a circuit gadget.
+pub struct Slot<'dr, D: Driver<'dr>, T, W: Send> {
     value: Option<T>,
-    alloc: fn(&mut D, &DriverValue<D, &'a Instance<C>>) -> Result<T>,
+    instance: DriverValue<D, W>,
+    alloc: fn(&mut D, DriverValue<D, W>) -> Result<T>,
+    was_set: bool,
     _marker: core::marker::PhantomData<&'dr ()>,
 }
 
-impl<'a, 'dr, D: Driver<'dr>, T: Clone, C: Cycle> Slot<'a, 'dr, D, T, C> {
-    /// Creates a new slot with the given allocation function.
-    pub(super) fn new(alloc: fn(&mut D, &DriverValue<D, &'a Instance<C>>) -> Result<T>) -> Self {
+impl<'dr, D: Driver<'dr>, T: Clone, W: Copy + Send + Sync> Slot<'dr, D, T, W> {
+    /// Creates a new slot with a pre-extracted instance value and allocation function.
+    pub(super) fn new(
+        instance: DriverValue<D, W>,
+        alloc: fn(&mut D, DriverValue<D, W>) -> Result<T>,
+    ) -> Self {
         Slot {
             value: None,
+            instance,
             alloc,
+            was_set: false,
             _marker: core::marker::PhantomData,
         }
     }
@@ -253,34 +333,62 @@ impl<'a, 'dr, D: Driver<'dr>, T: Clone, C: Cycle> Slot<'a, 'dr, D, T, C> {
     ///
     /// # Panics
     ///
-    /// Panics if the slot has already been filled (via `get` or `set`).
-    pub fn get(&mut self, dr: &mut D, instance: &DriverValue<D, &'a Instance<C>>) -> Result<T> {
+    /// Panics if the slot has already been filled (via `get`, `set`, or
+    /// `verify`).
+    pub fn get(&mut self, dr: &mut D) -> Result<T> {
         assert!(self.value.is_none(), "Slot::get: slot already filled");
-        let value = (self.alloc)(dr, instance)?;
+        let value = (self.alloc)(dr, self.instance.as_ref().map(|w| *w))?;
         self.value = Some(value.clone());
         Ok(value)
     }
 
-    /// Directly provides a pre-computed value for this slot.
+    /// Directly provides a circuit-derived value for this slot.
     ///
-    /// Use this when the value has already been computed elsewhere and
-    /// should not be re-allocated.
+    /// Marks the slot as covered so that [`finish`](OutputBuilder::finish)
+    /// includes the corresponding bit in the returned [`Coverage`]. The
+    /// coverage bit distinguishes slots whose values are computed and
+    /// constrained by this circuit from slots merely allocated via
+    /// [`get`](Self::get).
     ///
     /// # Panics
     ///
-    /// Panics if the slot has already been filled (via `get` or `set`).
+    /// Panics if the slot has already been filled (via `get`, `set`, or
+    /// `verify`).
     pub fn set(&mut self, value: T) {
         assert!(self.value.is_none(), "Slot::set: slot already filled");
         self.value = Some(value);
+        self.was_set = true;
     }
 
-    /// Consumes the slot and returns the stored value, allocating if needed.
+    /// Allocates, marks covered, and returns the value.
+    ///
+    /// Like [`get`](Self::get), but additionally marks the slot as
+    /// covered (like [`set`](Self::set)). Use when the circuit allocates the
+    /// witnessed value AND takes responsibility for constraining its
+    /// correctness via a separate constraint.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the slot has already been filled (via `get`, `set`, or
+    /// `verify`).
+    pub fn verify(&mut self, dr: &mut D) -> Result<T> {
+        assert!(self.value.is_none(), "Slot::verify: slot already filled");
+        let value = (self.alloc)(dr, self.instance.as_ref().map(|w| *w))?;
+        self.value = Some(value.clone());
+        self.was_set = true;
+        Ok(value)
+    }
+
+    /// Consumes the slot and returns the stored value (allocating if
+    /// needed) along with the coverage flag.
     ///
     /// Used during finalization to build the [`Output`] gadget.
-    fn take(self, dr: &mut D, instance: &DriverValue<D, &'a Instance<C>>) -> Result<T> {
-        self.value
+    fn take(self, dr: &mut D) -> Result<(T, bool)> {
+        let value = self
+            .value
             .map(Result::Ok)
-            .unwrap_or_else(|| (self.alloc)(dr, instance))
+            .unwrap_or_else(|| (self.alloc)(dr, self.instance.as_ref().map(|w| *w)))?;
+        Ok((value, self.was_set))
     }
 }
 
@@ -358,8 +466,9 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
     }
 }
 
-impl<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> OutputBuilder<'a, 'dr, D, C> {
-    /// Finishes building and wraps the output in [`WithSuffix`].
+impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> OutputBuilder<'dr, D, C> {
+    /// Finishes building, wraps the output in [`WithSuffix`], and returns
+    /// the updated [`Instance`] (with this circuit's coverage accumulated).
     ///
     /// Appends a zero element as the suffix, ensuring the linear term of
     /// $k(Y)$ is zero. This distinguishes internal circuits (fixed by the
@@ -369,10 +478,13 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> OutputBuilder<'a, '
     pub fn finish(
         self,
         dr: &mut D,
-        instance: &DriverValue<D, &'a Instance<C>>,
-    ) -> Result<Bound<'dr, D, InternalOutputKind<C>>> {
+    ) -> Result<(
+        Bound<'dr, D, InternalOutputKind<C>>,
+        DriverValue<D, Instance<C>>,
+    )> {
         let zero = Element::zero(dr);
-        Ok(WithSuffix::new(self.finish_no_suffix(dr, instance)?, zero))
+        let (output, instance) = self.finish_no_suffix(dr)?;
+        Ok((WithSuffix::new(output, zero), instance))
     }
 }
 
@@ -392,9 +504,63 @@ mod tests {
                 .expect("allocation should succeed");
 
         assert_eq!(
-            output.num_wires(),
+            output.num_wires().expect("wire counting should succeed"),
             NUM_WIRES,
             "NUM_WIRES constant does not match actual wire count"
         );
+    }
+
+    #[test]
+    fn coverage_assert_complete_passes_when_all_set() {
+        let cov = Coverage {
+            nested_preamble_commitment: true,
+            w: true,
+            nested_s_prime_commitment: true,
+            y: true,
+            z: true,
+            nested_error_m_commitment: true,
+            mu: true,
+            nu: true,
+            nested_error_n_commitment: true,
+            mu_prime: true,
+            nu_prime: true,
+            c: true,
+            nested_ab_commitment: true,
+            x: true,
+            nested_query_commitment: true,
+            alpha: true,
+            nested_f_commitment: true,
+            u: true,
+            nested_eval_commitment: true,
+            pre_beta: true,
+            v: true,
+        };
+        cov.assert_complete();
+    }
+
+    #[test]
+    #[should_panic(expected = "not covered by any circuit")]
+    fn coverage_assert_complete_catches_missing() {
+        Coverage {
+            w: true,
+            ..Coverage::default()
+        }
+        .assert_complete();
+    }
+
+    #[test]
+    #[should_panic(expected = "covered by multiple circuits")]
+    fn coverage_catches_element_overlap() {
+        let mut cov = Coverage::default();
+        unified_coverage_cover!(Element, cov, true, w);
+        unified_coverage_cover!(Element, cov, true, w);
+    }
+
+    #[test]
+    #[should_panic(expected = "covered by multiple circuits")]
+    fn coverage_catches_point_overlap() {
+        let mut cov = Coverage::default();
+        unified_coverage_cover!(Point, cov, true, nested_preamble_commitment);
+        unified_coverage_cover!(Point, cov, true, nested_preamble_commitment);
     }
 }

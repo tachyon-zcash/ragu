@@ -73,6 +73,7 @@ extern crate alloc;
 mod coeff;
 mod domain;
 mod fft;
+mod multicore;
 mod uendo;
 mod util;
 
@@ -82,7 +83,7 @@ pub use coeff::Coeff;
 pub use domain::Domain;
 pub use fft::{Ring, bitreverse};
 pub use pasta_curves::arithmetic::{Coordinates, CurveAffine, CurveExt};
-pub use util::{dot, eval, factor, factor_iter, geosum, mul, poly_with_roots};
+pub use util::{batch_to_affine, dot, eval, factor, factor_iter, geosum, mul, poly_with_roots};
 
 /// Converts a 256-bit integer literal into the little endian `[u64; 4]`
 /// representation that e.g. [`Fp::from_raw`](pasta_curves::Fp::from_raw) or
@@ -175,9 +176,6 @@ pub trait FixedGenerators<C: CurveAffine>: Send + Sync + 'static {
 
     /// Compute a commitment to a single value.
     fn short_commit(&self, value: C::ScalarExt, blind: C::ScalarExt) -> C {
-        // TODO(ebfull): This returns a C, but the most efficient method would
-        // be to return a `C::Curve` and let the caller perform batch inversion
-        // if possible.
         (self.g()[0] * value + *self.h() * blind).into()
     }
 }

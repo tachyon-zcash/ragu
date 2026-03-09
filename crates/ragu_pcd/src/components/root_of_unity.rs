@@ -21,6 +21,7 @@ pub fn enforce<'dr, D: Driver<'dr>>(dr: &mut D, omega: Element<'dr, D>, k: u32) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{vec, vec::Vec};
     use ff::Field;
     use ragu_pasta::{Fp, fp};
     use ragu_primitives::Simulator;

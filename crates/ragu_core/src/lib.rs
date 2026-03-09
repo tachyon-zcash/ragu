@@ -17,6 +17,7 @@ compile_error!("`ragu_core` requires the `alloc` feature to be enabled.");
 
 extern crate alloc;
 
+pub mod convert;
 pub mod drivers;
 mod errors;
 pub mod gadgets;

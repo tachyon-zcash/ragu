@@ -22,7 +22,7 @@ The [`Kind!`][kind-macro] macro simplifies this, allowing you to write
 `Kind![F; Boolean<'_, _>]`. The first argument `F` is used to denote the
 field type and the second argument denotes the type for substitution of the
 above fully qualified expansion. The `'_` symbol denotes the driver's
-lifetime (substituted with `'static`) and the `'_` symbol denotes the driver
+lifetime (substituted with `'static`) and the `_` symbol denotes the driver
 (substituted with `PhantomData<F>`).
 
 ### Unqualified Expansion
@@ -39,5 +39,5 @@ the fully qualified syntax, while still referring to the exact same type.
 [gadget-trait]: ragu_core::gadgets::Gadget
 [gadgetkind-trait]: ragu_core::gadgets::GadgetKind
 [driver-trait]: ragu_core::drivers::Driver
-[fromdriver-trait]: ragu_core::drivers::FromDriver
+[wiremap-trait]: ragu_core::convert::WireMap
 [kind-macro]: ragu_core::gadgets::Kind

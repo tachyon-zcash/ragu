@@ -47,7 +47,7 @@
 //! allowed, a compile-time error _always_ occurs.)
 //!
 //! It is possible to _create_ a new [`Maybe<T>`] value using the
-//! [`just`](Maybe::just) or [`with`](Maybe::with) methods or another function
+//! [`just`](Maybe::just) or [`try_just`](Maybe::try_just) methods or another function
 //! that proxies to these methods. These methods are provided a closure that is
 //! only executed if the concrete type is expected to exist. The compiler
 //! dead-code eliminates the closure in all other cases.
@@ -64,6 +64,10 @@
 //! pieces of the enclosed value, or reinterpret the enclosed value somehow.
 //! This is done by value in a way that often does not lead to any runtime
 //! overhead due to existing memory layout optimizations in the Rust compiler.
+//!
+//! See also the [book] for a user-oriented introduction to witness handling.
+//!
+//! [book]: https://tachyon.z.cash/ragu/guide/drivers/witness.html
 
 mod always;
 mod cast;
@@ -89,7 +93,7 @@ pub trait Maybe<T: Send>: Send {
     /// Creates a new value of this `Maybe<T>` given a fallible closure. Similar
     /// to `just` the provided closure is not called if the concrete type does
     /// not represent an existing value.
-    fn with<R: Send, E>(f: impl FnOnce() -> Result<R, E>) -> Result<Perhaps<Self::Kind, R>, E>;
+    fn try_just<R: Send, E>(f: impl FnOnce() -> Result<R, E>) -> Result<Perhaps<Self::Kind, R>, E>;
 
     /// In contexts where the `Maybe<T>` is known or guaranteed to be an
     /// existing value, this returns the enclosed value. In other contexts, this
@@ -105,7 +109,7 @@ pub trait Maybe<T: Send>: Send {
     /// Mutable counterpart of [`as_ref`](Maybe::as_ref).
     fn as_mut(&mut self) -> Perhaps<Self::Kind, &mut T>;
 
-    /// Helper for `.as_ref().take()` to obtain a reference to the enclosed value
+    /// Shorthand for `.as_ref().take()` to obtain a reference to the enclosed value
     /// in contexts where the `Maybe<T>` is guaranteed to be an existing value.
     /// In other contexts, just as in [`Maybe<T>::take`], this will fail at
     /// compile time.
@@ -160,13 +164,13 @@ pub trait MaybeKind {
         Self::Rebind::<R>::just(f)
     }
 
-    /// Proxy for the associated [`Maybe<T>::with`] method.
-    fn maybe_with<R: Send, E>(f: impl FnOnce() -> Result<R, E>) -> Result<Self::Rebind<R>, E> {
-        Self::Rebind::<R>::with(f)
+    /// Proxy for the associated [`Maybe<T>::try_just`] method.
+    fn maybe_try_just<R: Send, E>(f: impl FnOnce() -> Result<R, E>) -> Result<Self::Rebind<R>, E> {
+        Self::Rebind::<R>::try_just(f)
     }
 
     /// Creates an empty `Maybe<T>` value for this kind. This will fail at
-    /// compile time for kinds that do not represent existing values.
+    /// compile time for kinds that represent existing values.
     fn empty<T: Send>() -> Self::Rebind<T>;
 }
 
@@ -207,10 +211,10 @@ mod tests {
             <Self::MaybeKind as MaybeKind>::maybe_just(f)
         }
 
-        fn with<R: Send, E>(
+        fn try_just<R: Send, E>(
             f: impl FnOnce() -> Result<R, E>,
         ) -> Result<Perhaps<Self::MaybeKind, R>, E> {
-            <Self::MaybeKind as MaybeKind>::maybe_with(f)
+            <Self::MaybeKind as MaybeKind>::maybe_try_just(f)
         }
     }
 
@@ -219,7 +223,7 @@ mod tests {
     ) -> Result<Perhaps<I::MaybeKind, usize>, E> {
         let my_value = 100usize;
         let just_value = I::just(|| my_value + 10).map(|v| v * 2);
-        let err_value = I::with(|| Ok(10))?;
+        let err_value = I::try_just(|| Ok(10))?;
 
         let x = value
             .and_then(|v| just_value.map(|j| v + j))
@@ -272,6 +276,7 @@ mod tests {
             }
         }
 
+        // 42 + ((100 + 10) * 2) + 10 = 272
         assert_eq!(
             my_operation::<AlwaysInterface, ()>(Always::<()>::just(|| 42))
                 .unwrap()
@@ -290,5 +295,217 @@ mod tests {
         }
 
         my_operation::<EmptyInterface, ()>(Empty).unwrap();
+    }
+
+    // Generic test helpers parameterized on MaybeKind. Each exercises the
+    // Maybe trait API in a generic context (the primary usage pattern), with
+    // assertions guarded by `K::maybe_just` so they compile away for Empty.
+
+    fn check_just_and_snag<K: MaybeKind>() {
+        let v = K::maybe_just(|| 42usize);
+        K::maybe_just(|| {
+            assert_eq!(v.snag(), &42);
+        });
+    }
+
+    fn check_map<K: MaybeKind>() {
+        let v = K::maybe_just(|| 21usize).map(|x| x * 2);
+        K::maybe_just(|| {
+            assert_eq!(v.snag(), &42);
+        });
+    }
+
+    fn check_and_then<K: MaybeKind>() {
+        let v = K::maybe_just(|| 10usize).and_then(|x| K::maybe_just(|| x + 32));
+        K::maybe_just(|| {
+            assert_eq!(v.snag(), &42);
+        });
+    }
+
+    fn check_as_ref<K: MaybeKind>() {
+        let v = K::maybe_just(|| 42usize);
+        let r = v.as_ref();
+        r.map(|r| assert_eq!(*r, 42));
+    }
+
+    fn check_as_mut<K: MaybeKind>() {
+        let mut v = K::maybe_just(|| 10usize);
+        v.as_mut().map(|r| *r = 42);
+        K::maybe_just(|| {
+            assert_eq!(v.snag(), &42);
+        });
+    }
+
+    fn check_clone<K: MaybeKind>() {
+        let a = K::maybe_just(|| 42usize);
+        let b = Maybe::clone(&a);
+        K::maybe_just(|| {
+            assert_eq!(a.snag(), &42);
+            assert_eq!(b.snag(), &42);
+        });
+    }
+
+    fn check_into<K: MaybeKind>() {
+        let v: Perhaps<K, u64> = Maybe::into(K::maybe_just(|| 42u32));
+        K::maybe_just(|| {
+            assert_eq!(v.snag(), &42u64);
+        });
+    }
+
+    fn check_try_just_ok<K: MaybeKind>() {
+        let v: Result<Perhaps<K, usize>, &str> = K::maybe_try_just(|| Ok(42));
+        let v = v.unwrap();
+        K::maybe_just(|| {
+            assert_eq!(v.snag(), &42);
+        });
+    }
+
+    #[test]
+    fn test_just_and_snag() {
+        check_just_and_snag::<Always<()>>();
+        check_just_and_snag::<Empty>();
+    }
+
+    #[test]
+    fn test_map() {
+        check_map::<Always<()>>();
+        check_map::<Empty>();
+    }
+
+    #[test]
+    fn test_and_then() {
+        check_and_then::<Always<()>>();
+        check_and_then::<Empty>();
+    }
+
+    #[test]
+    fn test_as_ref() {
+        check_as_ref::<Always<()>>();
+        check_as_ref::<Empty>();
+    }
+
+    #[test]
+    fn test_as_mut() {
+        check_as_mut::<Always<()>>();
+        check_as_mut::<Empty>();
+    }
+
+    #[test]
+    fn test_clone() {
+        check_clone::<Always<()>>();
+        check_clone::<Empty>();
+    }
+
+    #[test]
+    fn test_into() {
+        check_into::<Always<()>>();
+        check_into::<Empty>();
+    }
+
+    #[test]
+    fn test_try_just_ok() {
+        check_try_just_ok::<Always<()>>();
+        check_try_just_ok::<Empty>();
+    }
+
+    // Concrete tests for impl-specific guarantees that cannot be expressed
+    // generically: take() is only callable on Always, error propagation
+    // requires Always to actually invoke the closure, and Empty tests use
+    // Cell tracking to prove closures are never called.
+
+    #[test]
+    fn test_always_just_and_take() {
+        assert_eq!(Always::<()>::just(|| 42usize).take(), 42);
+    }
+
+    #[test]
+    fn test_always_try_just_err() {
+        let v: Result<Always<usize>, &str> = Always::<usize>::try_just(|| Err("fail"));
+        match v {
+            Err(e) => assert_eq!(e, "fail"),
+            Ok(_) => panic!("expected Err"),
+        }
+    }
+
+    #[test]
+    fn test_empty_just_ignores_closure() {
+        use core::cell::Cell;
+        let called = Cell::new(false);
+        let _: Empty = <Empty as Maybe<usize>>::just(|| {
+            called.set(true);
+            999
+        });
+        assert!(!called.get());
+    }
+
+    #[test]
+    fn test_empty_map_ignores_closure() {
+        use core::cell::Cell;
+        let called = Cell::new(false);
+        let _: Empty = <Empty as Maybe<usize>>::just(|| 0).map(|_: usize| {
+            called.set(true);
+            0usize
+        });
+        assert!(!called.get());
+    }
+
+    #[test]
+    fn test_empty_and_then_ignores_closure() {
+        use core::cell::Cell;
+        let called = Cell::new(false);
+        let _: Empty = <Empty as Maybe<usize>>::just(|| 0).and_then::<usize, _>(|_: usize| {
+            called.set(true);
+            Empty
+        });
+        assert!(!called.get());
+    }
+
+    #[test]
+    fn test_empty_try_just_never_calls_closure() {
+        use core::cell::Cell;
+        let called = Cell::new(false);
+        let v: Result<Empty, &str> = <Empty as Maybe<usize>>::try_just(|| {
+            called.set(true);
+            Err::<usize, _>("fail")
+        });
+        assert!(!called.get());
+        assert!(v.is_ok());
+    }
+
+    #[test]
+    fn test_always_is_transparent() {
+        assert_eq!(
+            core::mem::size_of::<Always<u64>>(),
+            core::mem::size_of::<u64>()
+        );
+        assert_eq!(core::mem::size_of::<Always<[u8; 32]>>(), 32);
+    }
+
+    #[test]
+    fn test_empty_is_zst() {
+        assert_eq!(core::mem::size_of::<Empty>(), 0);
+    }
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn always_map_identity(v in 0usize..10000) {
+                let original = Always::<()>::just(|| v);
+                let mapped = Always::<()>::just(|| v).map(|x| x);
+                prop_assert_eq!(original.take(), mapped.take());
+            }
+
+            #[test]
+            fn always_map_composition(v in 0usize..10000) {
+                let f = |x: usize| x.wrapping_mul(3);
+                let g = |x: usize| x.wrapping_add(7);
+                let chained = Always::<()>::just(|| v).map(f).map(g).take();
+                let composed = Always::<()>::just(|| v).map(|x| g(f(x))).take();
+                prop_assert_eq!(chained, composed);
+            }
+        }
     }
 }

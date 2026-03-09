@@ -22,6 +22,7 @@ all-features = true
 [features]
 default = []
 baked = ["lazy_static"]
+std = []
 
 [build-dependencies]
 ragu_arithmetic = { path = "../ragu_arithmetic", version = "0.0.0" }

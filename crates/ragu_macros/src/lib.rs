@@ -81,16 +81,17 @@ pub fn derive_write(input: TokenStream) -> TokenStream {
 
 #[cfg(test)]
 #[allow(unused_imports)]
-use ragu_core::gadgets::Consistent as _;
+use ragu_primitives::consistent::Consistent as _;
 
-// Documentation for the `Consistent` derive macro is in `derive@ragu_core::gadgets::Consistent`.
+// Documentation for the `Consistent` derive macro is in `derive@ragu_primitives::consistent::Consistent`.
 #[allow(missing_docs)]
 #[proc_macro_derive(Consistent, attributes(ragu))]
 pub fn derive_consistent(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     macro_body(|| {
         let ragu_core_path = path_resolution::RaguCorePath::resolve()?;
-        derive::consistent::derive(input, ragu_core_path)
+        let ragu_primitives_path = path_resolution::RaguPrimitivesPath::resolve()?;
+        derive::consistent::derive(input, ragu_core_path, ragu_primitives_path)
     })
 }
 

@@ -9,7 +9,7 @@ use ragu_arithmetic::Coeff;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverTypes, emulator::Emulator},
-    gadgets::{Bound, GadgetKind},
+    gadgets::Bound,
     maybe::Empty,
     routines::Routine,
 };
@@ -164,9 +164,7 @@ impl<'dr, F: Field> Driver<'dr> for Counter<F> {
                 current_segment: segment_idx,
             },
             |this| {
-                let mut dummy = Emulator::wireless();
-                let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
-                let aux = routine.predict(&mut dummy, &dummy_input)?.into_aux();
+                let aux = Emulator::predict(&routine, &input)?.into_aux();
                 let result = routine.execute(this, input, aux)?;
 
                 // Verify internal consistency: current_segment unchanged.

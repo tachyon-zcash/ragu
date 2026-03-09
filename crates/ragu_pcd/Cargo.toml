@@ -27,6 +27,8 @@ all-features = true
 
 [features]
 default = []
+multicore = ["maybe-rayon/threads", "ragu_arithmetic/multicore", "ragu_circuits/multicore", "std"]
+std = []
 
 [lib]
 bench = false
@@ -34,6 +36,7 @@ bench = false
 [dependencies]
 ragu_arithmetic = { path = "../ragu_arithmetic", version = "0.0.0" }
 ff = { workspace = true }
+maybe-rayon = { workspace = true }
 pasta_curves = { workspace = true }
 ragu_circuits = { path = "../ragu_circuits", version = "0.0.0" }
 ragu_core = { path = "../ragu_core", version = "0.0.0" }
@@ -41,10 +44,16 @@ ragu_primitives = { path = "../ragu_primitives", version = "0.0.0" }
 rand = { workspace = true }
 
 [dev-dependencies]
+criterion = { workspace = true }
 ragu_pasta = { path = "../ragu_pasta", version = "0.0.0", features = ["baked"] }
 gungraun = { workspace = true }
 ragu_testing = { path = "../ragu_testing", version = "0.0.0" }
 
 [[bench]]
 name = "pcd"
+harness = false
+
+[[bench]]
+name = "fuse_criterion"
+path = "benches/criterion/fuse.rs"
 harness = false

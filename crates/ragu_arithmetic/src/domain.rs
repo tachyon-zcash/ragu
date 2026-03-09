@@ -37,13 +37,12 @@ impl<F: PrimeField> Domain<F> {
     /// Panics if attempting to create a domain larger than supported by the
     /// field.
     pub fn new(k: u32) -> Self {
-        if k > F::S {
-            panic!(
-                "tried to create a domain of size 2^{} in a field with 2-adicity {}",
-                k,
-                F::S
-            );
-        }
+        assert!(
+            k <= F::S,
+            "tried to create a domain of size 2^{} in a field with 2-adicity {}",
+            k,
+            F::S
+        );
 
         let mut tmp = Self::default();
         for _ in k..F::S {
@@ -59,9 +58,7 @@ impl<F: PrimeField> Domain<F> {
     ///
     /// Panics if attempting to halve a domain of size 1.
     fn halve(&self) -> Self {
-        if self.log2_n == 0 {
-            panic!("cannot halve a domain of size 1");
-        }
+        assert!(self.log2_n != 0, "cannot halve a domain of size 1");
 
         let log2_n = self.log2_n - 1;
         Domain {
@@ -277,6 +274,32 @@ fn test_contains() {
     assert!(!domain.contains(F::from(2u64)));
     assert!(!domain.contains(F::from(3u64)));
     assert!(!domain.contains(F::DELTA));
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use pasta_curves::Fp as F;
+    use proptest::prelude::*;
+
+    fn arb_fe() -> impl Strategy<Value = F> {
+        (any::<u64>(), any::<u64>())
+            .prop_map(|(a, b)| F::from(a) + F::from(b) * F::MULTIPLICATIVE_GENERATOR)
+    }
+
+    proptest! {
+        #[test]
+        fn fft_ifft_roundtrip(log2_n in 1u32..=8, seed in arb_fe()) {
+            let domain = Domain::<F>::new(log2_n);
+            let coeffs: Vec<F> = (0..domain.n())
+                .map(|i| seed * F::from((i + 1) as u64))
+                .collect();
+            let mut buf = coeffs.clone();
+            domain.fft(&mut buf);
+            domain.ifft(&mut buf);
+            prop_assert_eq!(buf, coeffs);
+        }
+    }
 }
 
 #[test]

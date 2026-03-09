@@ -1,10 +1,5 @@
 # Writing Circuits
 
-```admonish warning
-This section is under development and may not be consistent with the current
-API. It may contain errors and inaccuracies.
-```
-
 This guide explains how PCD applications are structured through Steps - the
 fundamental building blocks that combine proofs in Ragu's architecture.
 

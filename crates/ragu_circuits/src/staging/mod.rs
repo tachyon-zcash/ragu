@@ -335,9 +335,9 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
         };
 
         if values.len() > Self::values() {
-            return Err(ragu_core::Error::MultiplicationBoundExceeded(
-                Self::num_multiplications(),
-            ));
+            return Err(ragu_core::Error::MultiplicationBoundExceeded {
+                limit: Self::num_multiplications(),
+            });
         }
 
         assert!(values.len() <= Self::values());
@@ -346,6 +346,11 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
         let mut rx = structured::Polynomial::new();
         {
             let rx = rx.forward();
+
+            let len = 1 + Self::skip_multiplications() + Self::num_multiplications();
+            rx.a.reserve_exact(len);
+            rx.b.reserve_exact(len);
+            rx.c.reserve_exact(len);
 
             // ONE is not set.
             rx.a.push(F::ZERO);

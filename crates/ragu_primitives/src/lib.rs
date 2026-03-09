@@ -15,6 +15,7 @@ extern crate alloc;
 extern crate self as ragu_primitives;
 
 mod boolean;
+pub mod consistent;
 mod element;
 mod endoscalar;
 mod foreign;
@@ -22,6 +23,7 @@ pub mod io;
 mod point;
 pub mod poseidon;
 pub mod promotion;
+mod sendable;
 mod simulator;
 mod util;
 pub mod vec;
@@ -35,6 +37,7 @@ pub use boolean::{Boolean, multipack};
 pub use element::{Element, multiadd};
 pub use endoscalar::{Endoscalar, extract_endoscalar, lift_endoscalar};
 pub use point::Point;
+pub use sendable::Sendable;
 pub use simulator::Simulator;
 
 /// Primitive extension trait for all gadgets.
@@ -51,6 +54,16 @@ pub trait GadgetExt<'dr, D: Driver<'dr>>: Gadget<'dr, D> {
     /// Demote this gadget by stripping its witness data.
     fn demote(&self) -> Result<Demoted<'dr, D, Self>> {
         Demoted::new(self)
+    }
+
+    /// Wrap this gadget in [`Sendable`], asserting it is [`Send`].
+    ///
+    /// This is only available when `D::Wire: Send`.
+    fn sendable(self) -> Sendable<Self>
+    where
+        D::Wire: Send,
+    {
+        Sendable::new::<D>(self)
     }
 }
 

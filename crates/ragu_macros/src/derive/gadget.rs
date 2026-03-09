@@ -231,16 +231,16 @@ pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenS
                 {
                     use #ragu_core_path::maybe::Maybe;
 
-                    let tmp = ND::just(|| this.#id.as_ref().take().clone());
+                    let tmp = just::<WM::Dst, _>(|| this.#id.as_ref().take().clone());
                     is_send(&tmp);
                     tmp
                 }
             },
             FieldType::Wire => {
-                quote! { #ragu_core_path::drivers::FromDriver::convert_wire(ndr, &this.#id)? }
+                quote! { #ragu_core_path::convert::WireMap::convert_wire(wm, &this.#id)? }
             }
             FieldType::Gadget => {
-                quote! { #ragu_core_path::gadgets::Gadget::map(&this.#id, ndr)? }
+                quote! { #ragu_core_path::gadgets::Gadget::map(&this.#id, wm)? }
             }
             FieldType::Phantom => quote! { ::core::marker::PhantomData },
         };
@@ -255,11 +255,14 @@ pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenS
             unsafe impl #gadget_kind_generic_params #ragu_core_path::gadgets::GadgetKind<#driverfield_ident> for #struct_ident #kind_subst_arguments  {
                 type Rebind<#driver_lifetime, #driver_ident: #ragu_core_path::drivers::Driver<#driver_lifetime, F = #driverfield_ident>> = #struct_ident #rebind_arguments;
 
-                fn map_gadget<#driver_lifetime, 'new_dr, #driver_ident: #ragu_core_path::drivers::Driver<#driver_lifetime, F = #driverfield_ident>, ND: #ragu_core_path::drivers::FromDriver<#driver_lifetime, 'new_dr, #driver_ident>>(
-                    this: &#ragu_core_path::gadgets::Bound<#driver_lifetime, #driver_ident, Self>,
-                    ndr: &mut ND,
-                ) -> #ragu_core_path::Result<#ragu_core_path::gadgets::Bound<'new_dr, ND::NewDriver, Self>> {
+                fn map_gadget<#driver_lifetime, 'dst, WM: #ragu_core_path::convert::WireMap<#driverfield_ident, Src: #ragu_core_path::drivers::Driver<#driver_lifetime, F = #driverfield_ident>, Dst: #ragu_core_path::drivers::Driver<'dst, F = #driverfield_ident>>>(
+                    this: &#ragu_core_path::gadgets::Bound<#driver_lifetime, WM::Src, Self>,
+                    wm: &mut WM,
+                ) -> #ragu_core_path::Result<#ragu_core_path::gadgets::Bound<'dst, WM::Dst, Self>> {
                     fn is_send<T: Send>(_: &T) { }
+                    fn just<D: #ragu_core_path::drivers::DriverTypes, R: Send>(f: impl FnOnce() -> R) -> #ragu_core_path::drivers::DriverValue<D, R> {
+                        <#ragu_core_path::drivers::DriverValue<D, R> as #ragu_core_path::maybe::Maybe<R>>::just(f)
+                    }
 
                     Ok(#struct_ident {
                         #( #gadget_impl_inits, )*
@@ -405,18 +408,21 @@ fn test_gadget_derive_boolean_customdriver() {
                 type Rebind<'my_dr, MyD: ::ragu_core::drivers::Driver<'my_dr, F = DriverField>> =
                     Boolean<'my_dr, MyD>;
 
-                fn map_gadget<'my_dr, 'new_dr, MyD: ::ragu_core::drivers::Driver<'my_dr, F = DriverField>, ND: ::ragu_core::drivers::FromDriver<'my_dr, 'new_dr, MyD>>(
-                    this: &::ragu_core::gadgets::Bound<'my_dr, MyD, Self>,
-                    ndr: &mut ND,
-                ) -> ::ragu_core::Result<::ragu_core::gadgets::Bound<'new_dr, ND::NewDriver, Self>> {
+                fn map_gadget<'my_dr, 'dst, WM: ::ragu_core::convert::WireMap<DriverField, Src: ::ragu_core::drivers::Driver<'my_dr, F = DriverField>, Dst: ::ragu_core::drivers::Driver<'dst, F = DriverField>>>(
+                    this: &::ragu_core::gadgets::Bound<'my_dr, WM::Src, Self>,
+                    wm: &mut WM,
+                ) -> ::ragu_core::Result<::ragu_core::gadgets::Bound<'dst, WM::Dst, Self>> {
                     fn is_send<T: Send>(_: &T) { }
+                    fn just<D: ::ragu_core::drivers::DriverTypes, R: Send>(f: impl FnOnce() -> R) -> ::ragu_core::drivers::DriverValue<D, R> {
+                        <::ragu_core::drivers::DriverValue<D, R> as ::ragu_core::maybe::Maybe<R>>::just(f)
+                    }
 
                     Ok(Boolean {
-                        wire: ::ragu_core::drivers::FromDriver::convert_wire(ndr, &this.wire)?,
+                        wire: ::ragu_core::convert::WireMap::convert_wire(wm, &this.wire)?,
                         value: {
                             use ::ragu_core::maybe::Maybe;
 
-                            let tmp = ND::just(|| this.value.as_ref().take().clone());
+                            let tmp = just::<WM::Dst, _>(|| this.value.as_ref().take().clone());
                             is_send(&tmp);
                             tmp
                         },
@@ -493,22 +499,25 @@ fn test_gadget_derive() {
             {
                 type Rebind<'mydr, MyD: ::ragu_core::drivers::Driver<'mydr, F = DriverField>> = MyGadget<'mydr, MyD, C, N>;
 
-                fn map_gadget<'mydr, 'new_dr, MyD: ::ragu_core::drivers::Driver<'mydr, F = DriverField>, ND: ::ragu_core::drivers::FromDriver<'mydr, 'new_dr, MyD>>(
-                    this: &::ragu_core::gadgets::Bound<'mydr, MyD, Self>,
-                    ndr: &mut ND,
-                ) -> ::ragu_core::Result<::ragu_core::gadgets::Bound<'new_dr, ND::NewDriver, Self>> {
+                fn map_gadget<'mydr, 'dst, WM: ::ragu_core::convert::WireMap<DriverField, Src: ::ragu_core::drivers::Driver<'mydr, F = DriverField>, Dst: ::ragu_core::drivers::Driver<'dst, F = DriverField>>>(
+                    this: &::ragu_core::gadgets::Bound<'mydr, WM::Src, Self>,
+                    wm: &mut WM,
+                ) -> ::ragu_core::Result<::ragu_core::gadgets::Bound<'dst, WM::Dst, Self>> {
                     fn is_send<T: Send>(_: &T) { }
+                    fn just<D: ::ragu_core::drivers::DriverTypes, R: Send>(f: impl FnOnce() -> R) -> ::ragu_core::drivers::DriverValue<D, R> {
+                        <::ragu_core::drivers::DriverValue<D, R> as ::ragu_core::maybe::Maybe<R>>::just(f)
+                    }
 
                     Ok(MyGadget {
                         witness_field: {
                             use ::ragu_core::maybe::Maybe;
 
-                            let tmp = ND::just(|| this.witness_field.as_ref().take().clone());
+                            let tmp = just::<WM::Dst, _>(|| this.witness_field.as_ref().take().clone());
                             is_send(&tmp);
                             tmp
                         },
-                        wire_field: ::ragu_core::drivers::FromDriver::convert_wire(ndr, &this.wire_field)?,
-                        map_field: ::ragu_core::gadgets::Gadget::map(&this.map_field, ndr)?,
+                        wire_field: ::ragu_core::convert::WireMap::convert_wire(wm, &this.wire_field)?,
+                        map_field: ::ragu_core::gadgets::Gadget::map(&this.map_field, wm)?,
                         phantom_field: ::core::marker::PhantomData,
                     })
                 }
@@ -563,13 +572,16 @@ fn test_gadget_derive_default_gadget() {
     let result_str = result.to_string();
 
     // Both should call Gadget::map
-    assert!(result_str.contains("Gadget :: map (& this . field_a"));
-    assert!(result_str.contains("Gadget :: map (& this . field_b"));
+    assert!(result_str.contains("Gadget :: map (& this . field_a"), "missing Gadget::map for field_a");
+    assert!(result_str.contains("Gadget :: map (& this . field_b"), "missing Gadget::map for field_b");
 
     // Both should call Gadget::enforce_equal
-    assert!(result_str.contains("Gadget :: enforce_equal (& a . field_a"));
-    assert!(result_str.contains("Gadget :: enforce_equal (& a . field_b"));
+    assert!(result_str.contains("Gadget :: enforce_equal (& a . field_a"), "missing enforce_equal for field_a");
+    assert!(result_str.contains("Gadget :: enforce_equal (& a . field_b"), "missing enforce_equal for field_b");
 
     // Wire should use Driver::enforce_equal
-    assert!(result_str.contains("Driver :: enforce_equal (dr , & a . wire_field"));
+    assert!(result_str.contains("Driver :: enforce_equal (dr , & a . wire_field"), "missing Driver::enforce_equal for wire_field");
+
+    // Wire should use WireMap::convert_wire
+    assert!(result_str.contains("WireMap :: convert_wire (wm , & this . wire_field"), "missing WireMap::convert_wire");
 }

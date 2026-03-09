@@ -64,6 +64,15 @@ If you're unsure what the user means, ask before launching reviewers.
    >
    > Stay within your policy's scope. Be specific. If you find no real issues,
    > say so — don't manufacture problems.
+   >
+   > **Tool usage rules:**
+   > - Use the Grep tool for searching file contents — do NOT run `grep` or `rg`
+   >   as a Bash command.
+   > - Use the Read tool to read files — do NOT use `cat`, `head`, or `tail`.
+   > - Use the Glob tool to find files — do NOT use `find` or `ls`.
+   > - When you do use Bash, the command must be a clean shell command with NO
+   >   comment lines (`#`) prepended. Put your reasoning in the `description`
+   >   parameter, not in the command itself.
 
    Additionally, read `book/FIXME.md` and extract the `###`-level headings
    under `## Deferred Issues`. Include them in each reviewer's prompt as a
@@ -148,6 +157,15 @@ After synthesizing findings, but before presenting them to the user:
    > - **Rule violated**: quote the relevant policy text
    > - **Conflict**: explain specifically how the suggestion violates the rule
    > - **Resolution**: suggest how to fix the suggestion to comply
+   >
+   > **Tool usage rules:**
+   > - Use the Grep tool for searching file contents — do NOT run `grep` or `rg`
+   >   as a Bash command.
+   > - Use the Read tool to read files — do NOT use `cat`, `head`, or `tail`.
+   > - Use the Glob tool to find files — do NOT use `find` or `ls`.
+   > - When you do use Bash, the command must be a clean shell command with NO
+   >   comment lines (`#`) prepended. Put your reasoning in the `description`
+   >   parameter, not in the command itself.
    >
    > If no proposed changes conflict with your policy, say so.
 

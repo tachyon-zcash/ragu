@@ -1,11 +1,9 @@
 # Gadgets
 
-A **gadget** is the structural unit of all algorithms expressed as arithmetic
-circuits. They usually consist of _wires_, the _witness_ information required to
-reason about their possible assignments, and represent the _constraints_ that
-impose invariants over these assignments. Gadgets consolidate these components
-into an opaque type that guards how the underlying wires are manipulated and
-optimizes how their witness information is represented.
+Circuit code operates on wires and witness data, but working directly with them
+leaves invariants implicit and spread across call sites. The structural units
+that bundle these primitives and their constraints into self-contained types are
+called **gadgets**.
 
 As an example, one of the simplest gadgets is the [`Boolean`][boolean-gadget]
 gadget which internally represents a wire that is constrained to be $0$ or $1$
@@ -26,7 +24,7 @@ so-constrained, perhaps by a constructor function or another operation between
 `Boolean`s.
 
 More sophisticated gadgets can exist which collect many wires together, preserve
-more complicated invariants between them and use a richer structure to encode
+more complicated invariants between them, or use a richer structure to encode
 their contents. One such gadget could be a `SpongeState`, which contains the far
 more complicated type:
 
@@ -42,18 +40,16 @@ This gadget is a _compositional_ gadget: it contains another gadget (a
 
 ## [`Gadget`][gadget-trait] trait {#fungibility}
 
-Gadgets usually can (and should) implement the [`Gadget`][gadget-trait] trait,
-which imposes a set of expectations and API requirements on the structure that
-is useful for efficient circuit synthesis. All implementations of this trait
-must satisfy a set of requirements:
+The [`Gadget`][gadget-trait] trait captures the structural guarantees that
+drivers rely on to [convert](conversion.md) gadgets between driver contexts
+and optimize circuit synthesis. All implementations must satisfy the following
+requirements:
 
 * **They must be fungible.** A gadget's behavior during circuit synthesis must
-  be fully determined by its type, not by any particular instance's state. This
-  ensures that generic code operating on gadgets has stable expectations about
-  how they can be manipulated and transformed between drivers.
-    * From this principle follow three consequences:
+  be fully determined by its type, not by any particular instance's state.
+    * Among the consequences of this principle:
         1. Gadgets cannot contain dynamic-length collections (use
-           [`FixedVec`][fixedvec-gadget] with a compile-time [`Len`][len-trait]
+           [`FixedVec`][fixedvec-gadget] with a static [`Len`][len-trait]
            bound instead).
         2. Gadgets generally cannot be `enum`s (discriminants are instance
            state).
@@ -72,19 +68,25 @@ must satisfy a set of requirements:
 * **They must be `'static`.** Specifically, when the driver's lifetime `'dr` is
   the static lifetime `'static` the gadget itself must be `'static`. This
   property is guaranteed by the Rust type system, and so gadget implementations
-  do not need to carefully reason about it. In general, this limitation also
-  means that gadgets cannot contain references to anything else.
+  do not need to carefully reason about it. In practice, any references a gadget
+  contains must be `'static`.
 * **They must be `Clone`.** All gadgets should be cloneable. This is commonly
   necessary anyway, but drivers may need to clone gadgets generically when
   performing various transformations.
 
-### Automatic Derivation
+### `num_wires`
 
-The above API contract is relatively complicated, but also very constraining
-over the possible types that can implement [`Gadget`][gadget-trait] safely and
-correctly. As a result, it is possible to automatically derive nearly all
-implementations of the [`Gadget`][gadget-trait] trait using a [procedural
-macro](macro@ragu_core::gadgets::GadgetKind).
+The [`Gadget`][gadget-trait] trait provides a [`num_wires`][num-wires-method]
+method that returns the number of wires contained in a gadget instance. Because
+gadgets are [fungible](#fungibility), this count is determined entirely by the
+type—it is the same for every instance.
+
+### Automatic Derivation {#automatic-derivation}
+
+The requirements above constrain the space of valid implementations tightly
+enough that nearly all [`Gadget`][gadget-trait] implementations can be
+automatically derived using a
+[procedural macro](macro@ragu_core::gadgets::GadgetKind).
 
 The above example of `Boolean` can be rewritten as
 
@@ -106,10 +108,8 @@ types:
 * **`#[ragu(phantom)]`** - for marker types like `PhantomData`
 * **`#[ragu(gadget)]`** - for fields that are themselves gadgets _(optional)_
 
-**Fields without any annotation default to gadget fields.** You only need
-explicit annotations when mixing gadgets with wires, values, or phantom types.
-If you mistakenly omit an annotation on a wire or value field, the compiler
-will produce a helpful error because those types don't implement `Gadget`.
+Fields without any annotation default to gadget fields, so `#[ragu(gadget)]`
+is only needed for clarity.
 
 [boolean-gadget]: ragu_primitives::Boolean
 [spongestate-gadget]: ragu_primitives::poseidon::SpongeState
@@ -121,19 +121,4 @@ will produce a helpful error because those types don't implement `Gadget`.
 [driver-trait]: ragu_core::drivers::Driver
 [gadget-thread-guarantees]: ragu_core::gadgets::GadgetKind#safety
 [maybe-trait]: ragu_core::maybe::Maybe
-[map-gadget-method]: ragu_core::gadgets::GadgetKind::map_gadget
-[fromdriver-trait]: ragu_core::drivers::FromDriver
-
-### Transformations
-
-Due to the above guarantees, types that implement [`Gadget`][gadget-trait] can
-be transformed between drivers. This is very useful for implementations of
-drivers themselves, which may need to perform deep analysis of a gadget's
-constituent wires for various kinds of optimizations. The primary boundary where
-these optimizations are applied involves the inputs and outputs of
-[routines](../routines.md).
-
-In order to transform a gadget from one driver to another, gadgets provide a
-[`map_gadget`][map-gadget-method] method implementation which uses the
-[`FromDriver`][fromdriver-trait] to map a gadget's constituent wires and witness
-data to a new [`Driver`][driver-trait].
+[num-wires-method]: ragu_core::gadgets::Gadget::num_wires

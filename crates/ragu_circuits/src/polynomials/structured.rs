@@ -209,6 +209,17 @@ impl<F: Field, R: Rank> RawPolynomial<F, R> {
         )
     }
 
+    /// Compute a commitment to this polynomial, normalized to affine. For
+    /// multiple commitments, prefer [`commit`](Self::commit) with
+    /// [`batch_commit`] to share a single field inversion.
+    pub fn commit_to_affine<C: CurveAffine<ScalarExt = F>>(
+        &self,
+        generators: &impl ragu_arithmetic::FixedGenerators<C>,
+        blind: F,
+    ) -> C {
+        self.commit(generators, blind).into()
+    }
+
     /// Reduce this polynomial into its unstructured representation.
     pub fn unstructured(&self) -> super::unstructured::Polynomial<F, R> {
         super::unstructured::Polynomial::from_coeffs(self.iter_coeffs().collect())
@@ -755,6 +766,7 @@ fn test_product_with_dot() {
 
 #[test]
 fn ring_poly_test() {
+    use alloc::vec;
     use ragu_pasta::Fp;
 
     type R = super::TestRank;

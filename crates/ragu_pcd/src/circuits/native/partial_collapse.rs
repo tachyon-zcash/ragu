@@ -104,8 +104,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
     /// Witness for the preamble stage (contains child unified instances with c values).
     pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
-    /// The unified instance containing challenges.
-    pub unified_instance: &'a unified::Instance<C>,
+    /// The unified instance containing challenges and accumulated coverage.
+    pub unified: unified::Instance<C>,
     /// Witness for the error_n stage (layer 2 error terms + collapsed values).
     pub error_n_witness: &'a native_error_n::Witness<C, FP>,
     /// Witness for the error_m stage (layer 1 error terms).
@@ -120,7 +120,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
     type Output = unified::InternalOutputKind<C>;
-    type Aux<'source> = ();
+    type Aux<'source> = unified::Instance<C>;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
@@ -155,12 +155,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let error_n = error_n.enforced(dr, witness.as_ref().map(|w| w.error_n_witness))?;
         let error_m = error_m.enforced(dr, witness.as_ref().map(|w| w.error_m_witness))?;
 
-        let unified_instance = &witness.as_ref().map(|w| w.unified_instance);
-        let mut unified_output = OutputBuilder::new();
+        let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
         // Get layer 1 folding challenges from the unified instance.
-        let mu = unified_output.mu.get(dr, unified_instance)?;
-        let nu = unified_output.nu.get(dr, unified_instance)?;
+        let mu = unified_output.mu.get(dr)?;
+        let nu = unified_output.nu.get(dr)?;
         let fold_products = fold_revdot::FoldProducts::new(dr, &mu, &nu)?;
 
         // Assemble k(y) values from multiple sources. The ordering must match
@@ -192,6 +191,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
                 .enforce_equal(dr, &error_n.collapsed[i])?;
         }
 
-        Ok((unified_output.finish(dr, unified_instance)?, D::just(|| ())))
+        unified_output.finish(dr)
     }
 }

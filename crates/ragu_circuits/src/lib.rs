@@ -5,7 +5,7 @@
 //! necessary) in other crates and so this crate is only intended to be used
 //! internally by Ragu.
 
-#![cfg_attr(not(test), no_std)]
+#![no_std]
 #![deny(unsafe_code)]
 #![allow(clippy::type_complexity)]
 #![deny(rustdoc::broken_intra_doc_links)]
@@ -14,8 +14,11 @@
 #![doc(html_logo_url = "https://tachyon.z.cash/assets/ragu/v1/rustdoc-128x128.png")]
 
 extern crate alloc;
+#[cfg(feature = "multicore")]
+extern crate std;
 
 pub mod floor_planner;
+pub mod horner;
 mod ky;
 mod metrics;
 pub mod polynomials;
@@ -39,7 +42,7 @@ use ragu_core::{
 };
 use ragu_primitives::io::Write;
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::boxed::Box;
 
 use polynomials::{Rank, structured, unstructured};
 
@@ -124,11 +127,13 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
         let metrics = metrics::eval(&self)?;
 
         if metrics.num_linear_constraints > R::num_coeffs() {
-            return Err(Error::LinearBoundExceeded(R::num_coeffs()));
+            return Err(Error::LinearBoundExceeded {
+                limit: R::num_coeffs(),
+            });
         }
 
         if metrics.num_multiplication_constraints > R::n() {
-            return Err(Error::MultiplicationBoundExceeded(R::n()));
+            return Err(Error::MultiplicationBoundExceeded { limit: R::n() });
         }
 
         struct ProcessedCircuit<C> {
@@ -194,9 +199,10 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
         rx::eval(self, witness)
     }
 
-    /// Computes the instance polynomial $k(Y)$ for the given instance.
-    fn ky(&self, instance: Self::Instance<'_>) -> Result<Vec<F>> {
-        ky::eval(self, instance)
+    /// Evaluates the instance polynomial $k(y)$ for the given instance at
+    /// a point $y \in \mathbb{F}$.
+    fn ky(&self, instance: Self::Instance<'_>, y: F) -> Result<F> {
+        ky::eval(self, instance, y)
     }
 }
 

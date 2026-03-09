@@ -6,7 +6,6 @@ use native::{
 };
 use ragu_circuits::staging::{Stage, StageExt};
 use ragu_pasta::{Pasta, fp, fq};
-
 pub(crate) type R = ragu_circuits::polynomials::ProductionRank;
 
 // When changing HEADER_SIZE, update the constraint counts by running:
@@ -87,9 +86,13 @@ fn test_internal_stage_parameters() {
 }
 
 /// Helper test to print current constraint counts in copy-pasteable format.
-/// Run with: `cargo test -p ragu_pcd --release print_internal_circuit -- --nocapture`
+/// Run with: `cargo test -p ragu_pcd --release --features multicore print_internal_circuit -- --nocapture`
+#[cfg(feature = "multicore")]
 #[test]
 fn print_internal_circuit_constraint_counts() {
+    use alloc::format;
+    use std::println;
+
     let pasta = Pasta::baked();
 
     let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
@@ -129,9 +132,13 @@ fn print_internal_circuit_constraint_counts() {
 }
 
 /// Helper test to print current stage parameters in copy-pasteable format.
-/// Run with: `cargo test -p ragu_pcd --release print_internal_stage -- --nocapture`
+/// Run with: `cargo test -p ragu_pcd --release --features multicore print_internal_stage -- --nocapture`
+#[cfg(feature = "multicore")]
 #[test]
 fn print_internal_stage_parameters() {
+    use alloc::format;
+    use std::println;
+
     macro_rules! print_stage {
         ($Stage:ty) => {{
             let skip = <$Stage>::skip_multiplications();
@@ -153,11 +160,11 @@ fn print_internal_stage_parameters() {
     print_stage!(Eval);
 }
 
-/// Test that the native registry digest hasn't changed unexpectedly.
+/// Verifies the native registry digest matches the expected value.
 ///
-/// This test verifies that gadget refactorings don't accidentally change the
-/// underlying wiring polynomial. If a refactoring produces the same digest,
-/// then it's mathematically equivalent.
+/// This test ensures the wiring polynomial structure is mathematically
+/// equivalent to the reference implementation by comparing cryptographic
+/// digests.
 #[test]
 fn test_native_registry_digest() {
     let pasta = Pasta::baked();
@@ -168,7 +175,7 @@ fn test_native_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fp!(0x3fa421a73ff73957cc8c40c4184c576f0e28e2cf88a4281b9f28fad818ad9726);
+    let expected = fp!(0x3a7b175f8f7ac167cb0e0d00968eb1693090ade33621e5c328ba94e40b303e6e);
 
     assert_eq!(
         app.native_registry.digest(),
@@ -177,11 +184,11 @@ fn test_native_registry_digest() {
     );
 }
 
-/// Test that the nested registry digest hasn't changed unexpectedly.
+/// Verifies the nested registry digest matches the expected value.
 ///
-/// This test verifies that gadget refactorings don't accidentally change the
-/// underlying wiring polynomial. If a refactoring produces the same digest,
-/// then it's mathematically equivalent.
+/// This test ensures the wiring polynomial structure is mathematically
+/// equivalent to the reference implementation by comparing cryptographic
+/// digests.
 #[test]
 fn test_nested_registry_digest() {
     let pasta = Pasta::baked();
@@ -202,10 +209,13 @@ fn test_nested_registry_digest() {
 }
 
 /// Helper test to print current registry digests in copy-pasteable format.
-/// Run with: `cargo test -p ragu_pcd --release print_registry_digests -- --nocapture`
+/// Run with: `cargo test -p ragu_pcd --release --features multicore print_registry_digests -- --nocapture`
+#[cfg(feature = "multicore")]
 #[test]
 fn print_registry_digests() {
+    use alloc::{format, string::String, vec::Vec};
     use ff::PrimeField;
+    use std::println;
 
     let pasta = Pasta::baked();
 

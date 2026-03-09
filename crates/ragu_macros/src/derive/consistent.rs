@@ -7,10 +7,14 @@ use syn::{
 
 use crate::{
     helpers::{GenericDriver, attr_is},
-    path_resolution::RaguCorePath,
+    path_resolution::{RaguCorePath, RaguPrimitivesPath},
 };
 
-pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenStream> {
+pub fn derive(
+    input: DeriveInput,
+    ragu_core_path: RaguCorePath,
+    ragu_primitives_path: RaguPrimitivesPath,
+) -> Result<TokenStream> {
     let DeriveInput {
         ident: struct_ident,
         generics,
@@ -82,7 +86,7 @@ pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenS
     // Generate enforce_consistent calls for gadget fields (explicit or defaulted)
     let enforce_calls = fields.iter().filter_map(|(id, should_enforce)| {
         if *should_enforce {
-            Some(quote! { #ragu_core_path::gadgets::Consistent::enforce_consistent(&self.#id, dr)?; })
+            Some(quote! { #ragu_primitives_path::consistent::Consistent::enforce_consistent(&self.#id, dr)?; })
         } else {
             None
         }
@@ -93,7 +97,7 @@ pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenS
 
     let consistent_impl = quote! {
         #[automatically_derived]
-        impl #impl_generics #ragu_core_path::gadgets::Consistent<#driver_lifetime, #driver_ident> for #struct_ident #ty_generics {
+        impl #impl_generics #ragu_primitives_path::consistent::Consistent<#driver_lifetime, #driver_ident> for #struct_ident #ty_generics {
             fn enforce_consistent(&self, dr: &mut #driver_ident) -> #ragu_core_path::Result<()> {
                 #( #enforce_calls )*
                 Ok(())
@@ -121,15 +125,15 @@ fn test_consistent_derive() {
         }
     };
 
-    let result = derive(input, RaguCorePath::default()).unwrap();
+    let result = derive(input, RaguCorePath::default(), RaguPrimitivesPath::default()).unwrap();
 
     assert_eq!(
         result.to_string(),
         quote!(
             #[automatically_derived]
-            impl<'mydr, MyD: Driver<'mydr> > ::ragu_core::gadgets::Consistent<'mydr, MyD> for MyGadget<'mydr, MyD> {
+            impl<'mydr, MyD: Driver<'mydr> > ::ragu_primitives::consistent::Consistent<'mydr, MyD> for MyGadget<'mydr, MyD> {
                 fn enforce_consistent(&self, dr: &mut MyD) -> ::ragu_core::Result<()> {
-                    ::ragu_core::gadgets::Consistent::enforce_consistent(&self.point, dr)?;
+                    ::ragu_primitives::consistent::Consistent::enforce_consistent(&self.point, dr)?;
                     Ok(())
                 }
             }
@@ -153,13 +157,13 @@ fn test_consistent_derive_no_gadgets() {
         }
     };
 
-    let result = derive(input, RaguCorePath::default()).unwrap();
+    let result = derive(input, RaguCorePath::default(), RaguPrimitivesPath::default()).unwrap();
 
     assert_eq!(
         result.to_string(),
         quote!(
             #[automatically_derived]
-            impl<'dr, D: Driver<'dr> > ::ragu_core::gadgets::Consistent<'dr, D> for SimpleGadget<'dr, D> {
+            impl<'dr, D: Driver<'dr> > ::ragu_primitives::consistent::Consistent<'dr, D> for SimpleGadget<'dr, D> {
                 fn enforce_consistent(&self, dr: &mut D) -> ::ragu_core::Result<()> {
                     Ok(())
                 }
@@ -185,16 +189,16 @@ fn test_consistent_derive_multiple_gadgets() {
         }
     };
 
-    let result = derive(input, RaguCorePath::default()).unwrap();
+    let result = derive(input, RaguCorePath::default(), RaguPrimitivesPath::default()).unwrap();
 
     assert_eq!(
         result.to_string(),
         quote!(
             #[automatically_derived]
-            impl<'dr, D: Driver<'dr> > ::ragu_core::gadgets::Consistent<'dr, D> for CompositeGadget<'dr, D> {
+            impl<'dr, D: Driver<'dr> > ::ragu_primitives::consistent::Consistent<'dr, D> for CompositeGadget<'dr, D> {
                 fn enforce_consistent(&self, dr: &mut D) -> ::ragu_core::Result<()> {
-                    ::ragu_core::gadgets::Consistent::enforce_consistent(&self.point_a, dr)?;
-                    ::ragu_core::gadgets::Consistent::enforce_consistent(&self.point_b, dr)?;
+                    ::ragu_primitives::consistent::Consistent::enforce_consistent(&self.point_a, dr)?;
+                    ::ragu_primitives::consistent::Consistent::enforce_consistent(&self.point_b, dr)?;
                     Ok(())
                 }
             }
@@ -217,15 +221,15 @@ fn test_consistent_derive_unannotated_defaults_to_gadget() {
         }
     };
 
-    let result = derive(input, RaguCorePath::default()).unwrap();
+    let result = derive(input, RaguCorePath::default(), RaguPrimitivesPath::default()).unwrap();
 
     assert_eq!(
         result.to_string(),
         quote!(
             #[automatically_derived]
-            impl<'dr, D: Driver<'dr> > ::ragu_core::gadgets::Consistent<'dr, D> for CompositeGadget<'dr, D> {
+            impl<'dr, D: Driver<'dr> > ::ragu_primitives::consistent::Consistent<'dr, D> for CompositeGadget<'dr, D> {
                 fn enforce_consistent(&self, dr: &mut D) -> ::ragu_core::Result<()> {
-                    ::ragu_core::gadgets::Consistent::enforce_consistent(&self.unannotated, dr)?;
+                    ::ragu_primitives::consistent::Consistent::enforce_consistent(&self.unannotated, dr)?;
                     Ok(())
                 }
             }

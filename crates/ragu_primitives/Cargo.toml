@@ -27,6 +27,7 @@ all-features = true
 
 [features]
 default = []
+std = []
 
 [lib]
 bench = false
@@ -45,6 +46,7 @@ rand = { workspace = true }
 group = { workspace = true }
 ragu_pasta = { path = "../ragu_pasta", version = "0.0.0", features = ["baked"] }
 gungraun = { workspace = true }
+proptest = { workspace = true }
 
 [[bench]]
 name = "primitives"

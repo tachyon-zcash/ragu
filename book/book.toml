@@ -15,10 +15,14 @@ command = "mdbook-mermaid"
 command = "mdbook-admonish"
 assets_version = "3.0.0"
 
+[preprocessor.todo]
+command = "python3 preprocessor-todo.py"
+after = ["links"]
+
 [output]
 
 [output.html]
-additional-js = ["mermaid.min.js", "mermaid-init.js"]
+additional-js = ["mermaid.min.js", "mermaid-init.js", "todo.js"]
 default-theme = "rust"
 preferred-dark-theme = "rust"
 additional-css = ["custom.css"]

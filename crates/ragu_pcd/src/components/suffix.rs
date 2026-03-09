@@ -2,10 +2,11 @@ use ff::Field;
 use ragu_core::{
     Result,
     drivers::Driver,
-    gadgets::{Bound, Consistent, Gadget, GadgetKind, Kind},
+    gadgets::{Bound, Gadget, GadgetKind, Kind},
 };
 use ragu_primitives::{
     Element,
+    consistent::Consistent,
     io::{Buffer, Write},
 };
 

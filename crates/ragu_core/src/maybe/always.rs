@@ -21,7 +21,7 @@ impl<T: Send> Maybe<T> for Always<T> {
     fn just<R: Send>(f: impl FnOnce() -> R) -> Perhaps<Self::Kind, R> {
         Always(f())
     }
-    fn with<R: Send, E>(f: impl FnOnce() -> Result<R, E>) -> Result<Perhaps<Self::Kind, R>, E> {
+    fn try_just<R: Send, E>(f: impl FnOnce() -> Result<R, E>) -> Result<Perhaps<Self::Kind, R>, E> {
         Ok(Always(f()?))
     }
     fn take(self) -> T {

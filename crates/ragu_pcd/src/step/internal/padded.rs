@@ -119,6 +119,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
     use ragu_core::{
         Result,
         drivers::{Driver, emulator::Emulator},

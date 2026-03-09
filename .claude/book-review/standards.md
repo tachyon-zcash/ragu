@@ -46,6 +46,54 @@ rules:
 - Nested brackets are acceptable when a citation tag appears inside link
   text (e.g., `[Halo [BGH19]](url)`). Do not flag this as a style issue.
 
+## Code Accuracy
+
+When book prose describes a specific API signature, trait method, default
+implementation, or observable code behavior, verify the description against
+the actual source. Common drift:
+
+- Describing a method as "overridable" or having a "default implementation"
+  when no override exists (or vice versa).
+- Describing what a closure returns or how a type parameter is used
+  incorrectly.
+- Using the wrong symbol for a placeholder (e.g., `'_` vs. `_` in macro
+  syntax) because the prose was written from memory rather than checked.
+
+Flag inaccurate API descriptions as `must-fix`. When uncertain, read the
+source file — the relevant crate paths are listed in the root `CLAUDE.md`.
+
+Code Accuracy covers factual claims — signatures, behaviors, type
+relationships. It does not require book prose to mirror rustdoc's exact
+vocabulary. The book may deliberately use different terminology when the
+source code's phrasing is imprecise or misleading in a pedagogical context
+(e.g., calling a type-determined property "static" rather than "compile-time"
+if the compiler doesn't actually reason about it at compile time). Do not
+flag word-choice divergences from rustdoc as Code Accuracy issues unless the
+book's phrasing makes a factually incorrect claim.
+
+## Reviewer Restraint
+
+Before raising a finding, consider whether the text is actually unclear to a
+competent reader encountering it in order, or whether the concern is purely
+hypothetical. Rules exist to catch genuine problems — not to override clear
+authorial choices with mechanically "safer" alternatives.
+
+Specific anti-patterns to avoid:
+
+- **Demanding explicit counts on lists.** Do not require list introductions
+  to state an exact count. The author may deliberately leave a list
+  open-ended to signal non-exhaustiveness, especially when an explicit count
+  would make a general principle appear to produce an arbitrary, fixed number
+  of consequences.
+- **Flagging anaphoric grouping terms as terminology violations.** A general
+  noun with a demonstrative that refers back to items named in the preceding
+  clause (e.g., "these primitives" after "wires and witness data") is
+  standard prose, not an inconsistency. Do not flag these.
+- **Trope rules are density-sensitive.** Many anti-trope rules (in
+  grammar.md and prose.md) flag patterns that are acceptable in
+  isolation. Flag them when they repeat within a section or when
+  several appear together — not on a single occurrence.
+
 ## Deferred Issues
 
 The file `book/FIXME.md` tracks known issues that were identified during

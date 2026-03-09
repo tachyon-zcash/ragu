@@ -21,9 +21,12 @@
 use ff::Field;
 use ragu_core::{
     Error, Result,
-    drivers::{Driver, FromDriver},
-    gadgets::{Bound, Consistent, Gadget, GadgetKind},
+    convert::WireMap,
+    drivers::Driver,
+    gadgets::{Bound, Gadget, GadgetKind},
 };
+
+use crate::consistent::Consistent;
 
 use alloc::vec::Vec;
 use core::{
@@ -208,6 +211,21 @@ impl<'dr, D: Driver<'dr>, G: Gadget<'dr, D>, L: Len> Gadget<'dr, D> for FixedVec
     type Kind = FixedVec<PhantomData<G::Kind>, L>;
 }
 
+#[test]
+fn test_vector_length_mismatch() {
+    use alloc::vec;
+    use ragu_core::Error;
+    let result = FixedVec::<i32, ConstLen<3>>::new(vec![1, 2]);
+    match result {
+        Err(Error::VectorLengthMismatch { expected, actual }) => {
+            assert_eq!(expected, 3);
+            assert_eq!(actual, 2);
+        }
+        Err(_) => panic!("expected VectorLengthMismatch"),
+        Ok(_) => panic!("expected error"),
+    }
+}
+
 impl<'dr, D: Driver<'dr>, G: Consistent<'dr, D>, L: Len> Consistent<'dr, D> for FixedVec<G, L> {
     fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
         for item in self.iter() {
@@ -224,14 +242,18 @@ impl<'dr, D: Driver<'dr>, G: Consistent<'dr, D>, L: Len> Consistent<'dr, D> for 
 unsafe impl<F: Field, G: GadgetKind<F>, L: Len> GadgetKind<F> for FixedVec<PhantomData<G>, L> {
     type Rebind<'dr, D: Driver<'dr, F = F>> = FixedVec<Bound<'dr, D, G>, L>;
 
-    fn map_gadget<'dr, 'new_dr, D: Driver<'dr, F = F>, ND: FromDriver<'dr, 'new_dr, D>>(
-        this: &Bound<'dr, D, Self>,
-        ndr: &mut ND,
-    ) -> Result<Bound<'new_dr, ND::NewDriver, Self>> {
+    fn map_gadget<'src, 'dst, WM: WireMap<F>>(
+        this: &Bound<'src, WM::Src, Self>,
+        wm: &mut WM,
+    ) -> Result<Bound<'dst, WM::Dst, Self>>
+    where
+        WM::Src: Driver<'src, F = F>,
+        WM::Dst: Driver<'dst, F = F>,
+    {
         assert_eq!(this.len(), L::len());
 
         this.iter()
-            .map(|g| G::map_gadget(g, ndr))
+            .map(|g| G::map_gadget(g, wm))
             .try_collect_fixed()
     }
 
