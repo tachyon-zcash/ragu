@@ -29,6 +29,11 @@ What belongs in the book vs. rustdoc.
   specifics.
 - If the book states a constraint more precisely than rustdoc, that precision
   must move to rustdoc.
+- Code snippets in the book may intentionally omit trait items, bounds, or
+  other details that the surrounding text is not ready to discuss. This is
+  not dishonest — the reader will encounter the full trait in rustdoc, and
+  the book is not meant to be a comprehensive API reference. Do not expand
+  book snippets to include items just for completeness.
 
 ## Don't write the same thing twice
 
@@ -44,15 +49,28 @@ What belongs in the book vs. rustdoc.
   independently. This is not duplication; it is each surface doing its job.
 - Pure design rationale or motivational exposition that adds no API
   insight should not be duplicated — use summary + link instead.
+- Do not condense rustdoc that already provides a brief, self-contained
+  orientation to a module's concepts. If the existing prose is already
+  concise, it is not "duplication" — it is the rustdoc doing its job for
+  readers who never open the book.
 
 ## Code changes; the book should not become redundant
 
 - Volatile, implementation-coupled facts (optimizations, representation
   choices, algorithm variants) belong in code docs.
+- Exception: a brief, concrete example of an implementation strategy is
+  welcome in the book when it illuminates *why* a design decision exists —
+  e.g., sketching how synthesis drivers stash wires to explain why `alloc`
+  cannot be implemented generically. These examples build intuition and are
+  harmless even if the implementation later changes.
 - The book stays abstract enough that routine code changes don't invalidate
   it.
 - Content that interacts with the book in limited or compartmentalized ways
   is better documented only in the code.
+- Never strip explanatory detail from rustdoc unless a book page already
+  exists to absorb it and a cross-link replaces the removed text. Condensing
+  rustdoc into a terse summary without a destination for the detail is a net
+  loss of documentation.
 
 ## The book can cross-cut; rustdoc is item-scoped
 
@@ -88,6 +106,10 @@ What belongs in the book vs. rustdoc.
 
 ## Linking is asymmetric
 
+- Every mention of "the book" in rustdoc must be a clickable link to the
+  relevant section. Bare prose references like "see the Foo chapter in the
+  book" without a hyperlink are not acceptable — the reader should be one
+  click away.
 - Book-to-rustdoc links are stable (item paths are crate-structural).
   Rustdoc-to-book links are fragile (anchors and structure can move).
 - The fragile direction (rustdoc → book) needs more resilient summaries so

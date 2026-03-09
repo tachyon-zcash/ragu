@@ -1,31 +1,63 @@
 //! # `ragu_arithmetic`
 //!
-//! Common arithmetic traits and utilities for the Ragu project.
+//! This crate contains arithmetic traits and utilities that are common in the
+//! Ragu project.
 //!
-//! This crate provides:
+//! ## Cycles of Elliptic Curves
 //!
-//! - [`Cycle`]: A trait describing a cycle of elliptic curves where the scalar
-//!   field of one curve is the base field of the other. Currently only the
-//!   [Pasta curves](https://electriccoin.co/blog/the-pasta-curves-for-halo-2-and-beyond/)
-//!   are supported (via [`ragu_pasta`](https://crates.io/crates/ragu_pasta)).
-//!   We [currently](https://github.com/tachyon-zcash/ragu/issues/1) rely on
-//!   traits from [`pasta_curves`] for compatibility.
+//! Ragu is parameterized by a cycle of elliptic curves defined over large prime
+//! fields. Curves like these, particularly cycles of Koblitz curves, are used
+//! in [Zcash](https://z.cash/) because they are useful for building recursive
+//! SNARKs. The concrete parameters are defined by an implementation of the
+//! [`Cycle`] trait. As long as such an implementation satisfies the requisite
+//! API contracts and passes any applicable (static) assertions, it is supported
+//! by Ragu.
 //!
-//! - [`FixedGenerators`] and [`PoseidonPermutation`]: Companion traits that
-//!   [`Cycle`] implementations use to supply commitment generators and
-//!   [Poseidon](https://eprint.iacr.org/2019/458) hash parameters.
+//! Currently, the only implementation of the [`Cycle`] trait is provided by the
+//! [`ragu_pasta`](https://crates.io/crates/ragu_pasta) crate, which provides
+//! support for the [Pasta
+//! curves](https://electriccoin.co/blog/the-pasta-curves-for-halo-2-and-beyond/).
+//! In fact, many of the common traits used throughout Ragu are actually defined
+//! in the [`pasta_curves`] crate, which provides the actual implementations of
+//! the Pasta curves and fields, and we
+//! [currently](https://github.com/tachyon-zcash/ragu/issues/1) rely on those
+//! traits in this crate for compatibility and interoperability reasons.
 //!
-//! - [`Domain`]: Radix-2 evaluation domains for FFTs. Requires fields with
-//!   high 2-adicity (i.e., the Pasta curves).
+//! ## FFTs
 //!
-//! - [`Coeff`]: An optimized field-element wrapper that tracks common special
-//!   values (zero, one, negation) to avoid unnecessary multiplications.
+//! Ragu targets the Pasta curves because they are designed to support efficient
+//! multi-point evaluation and interpolation of polynomials through the use of
+//! (radix-2) [Fast Fourier
+//! Transforms](https://en.wikipedia.org/wiki/Fast_Fourier_transform) (FFTs).
+//! Ragu itself attempts to minimize the usage of FFTs, but they are still
+//! convenient in some cases and necessary for some applications and SNARK
+//! protocols.
 //!
-//! - Polynomial utilities: [`eval`], [`dot`], [`factor`], [`mul`] (multiscalar
-//!   multiplication), [`geosum`], and [`poly_with_roots`].
+//! We currently require curves to have the high 2-adicity property needed to
+//! support these evaluation domains, essentially limiting users to the Pasta
+//! curves. However, this is not an inherent requirement of the cryptography and
+//! future versions of Ragu may support cycles such as the one formed by
+//! [sec**p**256k1](https://en.bitcoin.it/wiki/Secp256k1)/sec**q**256k1, which
+//! do not have this high 2-adicity property but are used in many
+//! cryptocurrencies.
 //!
-//! Supported curves implement [`WithSmallOrderMulGroup<3>`], enabling an
-//! efficient endomorphism for accelerated scalar multiplication.
+//! ## Endomorphisms
+//!
+//! Koblitz curves are of the form $y^2 = x^3 + b$ and their base and scalar
+//! fields have size $p \equiv 1 \pmod{3}$ and thus implement
+//! [`WithSmallOrderMulGroup<3>`]. This means they support an efficient
+//! endomorphism that can be used to accelerate scalar multiplication, and this
+//! is leveraged extensively in Ragu.
+//!
+//! The Pasta curves have this form, and so does the secp256k1/secq256k1 cycle.
+//!
+//! ## Algebraic Hashes
+//!
+//! Due to their superior performance in arithmetic circuits, so-called
+//! arithmetic hash functions are used in Ragu. In particular, Ragu leans
+//! heavily on [Poseidon](https://eprint.iacr.org/2019/458). Implementations of
+//! [`Cycle`] provide parameters for the Poseidon permutation over the requisite
+//! fields by implementing the [`PoseidonPermutation`] trait.
 
 #![no_std]
 #![allow(non_snake_case)]
