@@ -21,6 +21,20 @@
 //! let challenge = resumed.challenge(dr)?; // must squeeze first
 //! let mut transcript = resumed.into_transcript(); // then can absorb again
 //! ```
+//!
+//! ### Safety
+//!
+//! The underlying [`Sponge`] uses additive absorption: absorbing a zero field
+//! element is identical to not absorbing it, so `absorb([v])` and
+//! `absorb([v, 0])` produce the same sponge state. General-purpose transcript
+//! libraries (e.g. Merlin) defend against this by length-prefixing every
+//! absorbed message. This transcript does not for efficiency reasons.
+//!
+//! In our PCD protocol, the message sequence between prover and verifier is
+//! fixed by the circuit code, so a prover cannot inject extra zero elements
+//! into the transcript without being rejected by the verifier.
+//! Transcripts of protocols with different interaction sequences are
+//! domain-separated by protocol tags during construction [`Transcript::new`].
 
 use ff::PrimeField;
 use ragu_arithmetic::PoseidonPermutation;
@@ -171,6 +185,7 @@ impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> Buffer<'dr, D> for Trans
 mod tests {
     use super::*;
     use ff::Field;
+    use proptest::prelude::*;
     use ragu_arithmetic::Cycle;
     use ragu_core::maybe::Maybe;
     use ragu_pasta::{Fp, Pasta};
@@ -178,146 +193,159 @@ mod tests {
 
     type Sim = Simulator<Fp>;
 
-    #[test]
-    fn test_domain_separation() -> Result<()> {
-        let params = Pasta::baked();
-        let mut dr = Sim::new();
-
-        // Create two transcripts with different domain tags
-        let mut transcript1 =
-            Transcript::new(&mut dr, Pasta::circuit_poseidon(params), b"domain-1")?;
-        let mut transcript2 =
-            Transcript::new(&mut dr, Pasta::circuit_poseidon(params), b"domain-2")?;
-
-        // Absorb the same value into both
-        let value = Element::constant(&mut dr, Fp::from(42));
-        value.write(&mut dr, &mut transcript1)?;
-        value.write(&mut dr, &mut transcript2)?;
-
-        // Different domains should produce different challenges
-        let challenge1 = transcript1.challenge(&mut dr)?;
-        let challenge2 = transcript2.challenge(&mut dr)?;
-
-        assert_ne!(*challenge1.value().take(), *challenge2.value().take());
-
-        Ok(())
+    fn arb_field() -> impl Strategy<Value = Fp> {
+        any::<u64>().prop_map(Fp::from)
     }
 
-    #[test]
-    fn test_save_resume_consistency() -> Result<()> {
-        let params = Pasta::baked();
-        let mut dr = Sim::new();
-
-        // Normal flow: absorb then squeeze directly
-        let mut transcript1 =
-            Transcript::new(&mut dr, Pasta::circuit_poseidon(params), b"test-protocol")?;
-        let value1 = Element::constant(&mut dr, Fp::from(123));
-        value1.write(&mut dr, &mut transcript1)?;
-        let challenge1 = transcript1.challenge(&mut dr)?;
-
-        // Save/resume flow: absorb, save state, resume, then squeeze
-        let mut transcript2 =
-            Transcript::new(&mut dr, Pasta::circuit_poseidon(params), b"test-protocol")?;
-        value1.write(&mut dr, &mut transcript2)?;
-
-        let state = transcript2
-            .save_state(&mut dr)
-            .expect("save_state should succeed");
-
-        let mut resumed = Transcript::resume_from_state(state, Pasta::circuit_poseidon(params));
-        let challenge2 = resumed.challenge(&mut dr)?;
-
-        // Both flows should produce the same challenge
-        assert_eq!(*challenge1.value().take(), *challenge2.value().take());
-
-        Ok(())
+    fn arb_tag() -> impl Strategy<Value = Vec<u8>> {
+        prop::collection::vec(any::<u8>(), 1..=32)
     }
 
-    #[test]
-    fn test_challenge_determinism() -> Result<()> {
-        let params = Pasta::baked();
-        let mut dr = Sim::new();
-        let value1 = Element::constant(&mut dr, Fp::from(999));
-        let value2 = Element::constant(&mut dr, Fp::from(500));
-
-        // Run the same sequence twice with identical inputs
-        let mut transcript1 = Transcript::new(
-            &mut dr,
-            Pasta::circuit_poseidon(params),
-            b"determinism-test",
-        )?;
-        value1.write(&mut dr, &mut transcript1)?;
-        value2.write(&mut dr, &mut transcript1)?;
-
-        let mut transcript2 = Transcript::new(
-            &mut dr,
-            Pasta::circuit_poseidon(params),
-            b"determinism-test",
-        )?;
-        value1.write(&mut dr, &mut transcript2)?;
-        value2.write(&mut dr, &mut transcript2)?;
-
-        let challenge1 = transcript1.challenge(&mut dr)?;
-        let challenge2 = transcript2.challenge(&mut dr)?;
-        assert_eq!(*challenge1.value().take(), *challenge2.value().take());
-
-        Ok(())
+    fn arb_values(n: impl Into<prop::collection::SizeRange>) -> impl Strategy<Value = Vec<Fp>> {
+        prop::collection::vec(arb_field(), n)
     }
 
-    #[test]
-    fn test_challenge_multiple_squeezes() -> Result<()> {
-        let params = Pasta::baked();
-        let mut dr = Sim::new();
+    #[derive(Debug, Clone)]
+    enum Op {
+        Absorb(Fp),
+        Squeeze,
+    }
 
-        let mut transcript = Transcript::new(&mut dr, Pasta::circuit_poseidon(params), b"test")?;
-        let value = Element::constant(&mut dr, Fp::from(123));
-        value.write(&mut dr, &mut transcript)?;
+    fn arb_op() -> impl Strategy<Value = Op> {
+        prop_oneof![arb_field().prop_map(Op::Absorb), Just(Op::Squeeze),]
+    }
 
-        let c0 = *transcript.challenge(&mut dr)?.value().take();
-        let c1 = *transcript.challenge(&mut dr)?.value().take();
-        let c2 = *transcript.challenge(&mut dr)?.value().take();
-        let c3 = *transcript.challenge(&mut dr)?.value().take();
+    fn apply_ops<P: PoseidonPermutation<Fp>>(
+        dr: &mut Sim,
+        t: &mut Transcript<'_, Sim, P>,
+        ops: &[Op],
+    ) -> Vec<Fp> {
+        ops.iter()
+            .filter_map(|op| match op {
+                Op::Absorb(v) => {
+                    let e = Element::constant(dr, *v);
+                    e.write(dr, t).unwrap();
+                    None
+                }
+                Op::Squeeze => Some(*t.challenge(dr).unwrap().value().take()),
+            })
+            .collect()
+    }
 
-        // Each squeeze must produce a non-zero, distinct value.
-        for c in [c0, c1, c2, c3] {
-            assert_ne!(c, Fp::ZERO);
+    proptest! {
+        #[test]
+        fn proptest_domain_separation(v in arb_field(), t1 in arb_tag(), t2 in arb_tag()) {
+            prop_assume!(t1 != t2);
+            let params = Pasta::baked();
+            let mut dr = Sim::new();
+            let poseidon = Pasta::circuit_poseidon(params);
+
+            let mut tr1 = Transcript::new(&mut dr, poseidon, &t1).unwrap();
+            let mut tr2 = Transcript::new(&mut dr, poseidon, &t2).unwrap();
+
+            let elem = Element::constant(&mut dr, v);
+            elem.write(&mut dr, &mut tr1).unwrap();
+            elem.write(&mut dr, &mut tr2).unwrap();
+
+            let c1 = *tr1.challenge(&mut dr).unwrap().value().take();
+            let c2 = *tr2.challenge(&mut dr).unwrap().value().take();
+            prop_assert_ne!(c1, c2);
         }
-        assert_ne!(c0, c1);
-        assert_ne!(c1, c2);
-        assert_ne!(c2, c3);
 
-        Ok(())
-    }
+        #[test]
+        fn proptest_determinism(vs in arb_values(1..=8)) {
+            let params = Pasta::baked();
+            let poseidon = Pasta::circuit_poseidon(params);
 
-    /// Verifies that splitting a transcript across a save/resume boundary
-    /// produces the same challenges as a straight-through transcript.
-    #[test]
-    fn test_resume_squeeze_absorb_squeeze() -> Result<()> {
-        let params = Pasta::baked();
-        let poseidon = Pasta::circuit_poseidon(params);
-        let mut dr = Sim::new();
+            let squeeze = |vs: &[Fp]| {
+                let mut dr = Sim::new();
+                let mut t = Transcript::new(&mut dr, poseidon, b"determinism").unwrap();
+                for &v in vs {
+                    let e = Element::constant(&mut dr, v);
+                    e.write(&mut dr, &mut t).unwrap();
+                }
+                *t.challenge(&mut dr).unwrap().value().take()
+            };
 
-        let v1 = Element::constant(&mut dr, Fp::from(42));
-        let v2 = Element::constant(&mut dr, Fp::from(99));
+            prop_assert_eq!(squeeze(&vs), squeeze(&vs));
+        }
 
-        let mut t = Transcript::new(&mut dr, poseidon, b"resume-test")?;
-        v1.write(&mut dr, &mut t)?;
-        let expected_c1 = *t.challenge(&mut dr)?.value().take();
-        v2.write(&mut dr, &mut t)?;
-        let expected_c2 = *t.challenge(&mut dr)?.value().take();
+        #[test]
+        fn proptest_squeezes_distinct(v in arb_field()) {
+            let params = Pasta::baked();
+            let mut dr = Sim::new();
 
-        let mut t = Transcript::new(&mut dr, poseidon, b"resume-test")?;
-        v1.write(&mut dr, &mut t)?;
-        let state = t.save_state(&mut dr).expect("save_state should succeed");
-        let mut resumed = Transcript::resume_from_state(state, poseidon);
-        let c1 = *resumed.challenge(&mut dr)?.value().take();
-        let mut t = resumed.into_transcript();
-        v2.write(&mut dr, &mut t)?;
-        let c2 = *t.challenge(&mut dr)?.value().take();
+            let mut t = Transcript::new(&mut dr, Pasta::circuit_poseidon(params), b"distinct").unwrap();
+            let e = Element::constant(&mut dr, v);
+            e.write(&mut dr, &mut t).unwrap();
 
-        assert_eq!(c1, expected_c1);
-        assert_eq!(c2, expected_c2);
+            let c0 = *t.challenge(&mut dr).unwrap().value().take();
+            let c1 = *t.challenge(&mut dr).unwrap().value().take();
+            let c2 = *t.challenge(&mut dr).unwrap().value().take();
+            let c3 = *t.challenge(&mut dr).unwrap().value().take();
 
-        Ok(())
+            for c in [c0, c1, c2, c3] {
+                prop_assert_ne!(c, Fp::ZERO);
+            }
+            prop_assert_ne!(c0, c1);
+            prop_assert_ne!(c1, c2);
+            prop_assert_ne!(c2, c3);
+        }
+
+        /// Tests that save/resume is transparent: the full squeeze-output
+        /// sequence is identical whether or not a save/resume occurs at the
+        /// cutoff. The cutoff falls after an arbitrary mix of absorbs and
+        /// squeezes.
+        ///
+        /// Two invariants are enforced by construction:
+        /// - `before_ops` ends with a guaranteed `Absorb` so `save_state` is
+        ///   called while the sponge is in absorb mode.
+        /// - `after_ops` starts with a guaranteed `Squeeze` so
+        ///   `into_transcript` can be called legally after resuming.
+        #[test]
+        fn proptest_save_resume_continuity(
+            before_prefix in prop::collection::vec(arb_op(), 0..=5),
+            before_final  in arb_field(),
+            after_rest    in prop::collection::vec(arb_op(), 0..=4),
+        ) {
+            let params = Pasta::baked();
+            let poseidon = Pasta::circuit_poseidon(params);
+
+            let before_ops: Vec<Op> = before_prefix
+                .into_iter()
+                .chain(std::iter::once(Op::Absorb(before_final)))
+                .collect();
+            let after_ops: Vec<Op> = std::iter::once(Op::Squeeze)
+                .chain(after_rest)
+                .collect();
+
+            // Straight-through reference.
+            let expected: Vec<Fp> = {
+                let mut dr = Sim::new();
+                let mut t = Transcript::new(&mut dr, poseidon, b"continuity").unwrap();
+                let mut out = apply_ops(&mut dr, &mut t, &before_ops);
+                out.extend(apply_ops(&mut dr, &mut t, &after_ops));
+                out
+            };
+
+            // Save/resume path: identical ops, with a state save at the cutoff.
+            let actual: Vec<Fp> = {
+                let mut dr = Sim::new();
+                let mut t = Transcript::new(&mut dr, poseidon, b"continuity").unwrap();
+                let mut out = apply_ops(&mut dr, &mut t, &before_ops);
+
+                let state = t.save_state(&mut dr).expect("save_state should succeed");
+                let mut resumed = Transcript::resume_from_state(state, poseidon);
+
+                // after_ops[0] is guaranteed Squeeze; squeeze it on ResumedTranscript.
+                out.push(*resumed.challenge(&mut dr).unwrap().value().take());
+                let mut t = resumed.into_transcript();
+                out.extend(apply_ops(&mut dr, &mut t, &after_ops[1..]));
+                out
+            };
+
+            prop_assert_eq!(expected, actual);
+        }
+
     }
 }

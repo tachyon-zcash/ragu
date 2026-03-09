@@ -815,6 +815,7 @@ dependencies = [
  "ff",
  "gungraun",
  "pasta_curves",
+ "proptest",
  "ragu_arithmetic",
  "ragu_circuits",
  "ragu_core",
