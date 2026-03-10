@@ -29,7 +29,6 @@ mod metrics;
 pub mod polynomials;
 mod raw;
 pub mod registry;
-pub mod routines;
 pub mod staging;
 /// Test-only circuit analysis utilities.
 #[cfg(feature = "test-utils")]
