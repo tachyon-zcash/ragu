@@ -49,23 +49,6 @@ Ragu's approach to `std` and `no_std` follows four principles:
 [`alloc`]: https://doc.rust-lang.org/alloc/
 
 <!-- END SYNC -->
-
-## Testing
-
-`just test` runs the full Rust test suite. For property tests, use the targeted recipes:
-
-* `just proptests_fast` runs the faster arithmetic/core proptests with `PROPTEST_CASES=64` by default.
-* `just proptests_heavy` runs the slower circuit proptests with `PROPTEST_CASES=256` by default.
-* Override the case count per run when you need more coverage, for example `PROPTEST_CASES=1024 just proptests_heavy`.
-
-When a proptest fails, rerun the narrowest possible scope with the reported seed. For example:
-
-```sh
-PROPTEST_RNG_SEED=123 cargo test -p ragu_circuits proptest_segment_dfs_order -- --exact --nocapture
-```
-
-With the default `proptest` configuration, minimized failures are also persisted under a sibling `proptest-regressions/` tree (for example `proptest-regressions/foo/bar.txt`). Only commit those regressions when they capture a stable bug you want to keep fixed.
-
 ## License
 
 This library is distributed under the terms of both the MIT license and the Apache License (Version 2.0). See [LICENSE-APACHE](./LICENSE-APACHE), [LICENSE-MIT](./LICENSE-MIT) and [COPYRIGHT](./COPYRIGHT).

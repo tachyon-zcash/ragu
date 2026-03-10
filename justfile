@@ -47,11 +47,11 @@ test *ARGS:
 
 # run quicker proptests used for routine local/CI coverage
 proptests_fast *ARGS:
-  PROPTEST_CASES="${PROPTEST_CASES:-64}" cargo test -p ragu_arithmetic -p ragu_core --all-features proptest {{ARGS}}
+  PROPTEST_CASES="${PROPTEST_CASES:-64}" cargo test --release -p ragu_arithmetic -p ragu_core --all-features proptest {{ARGS}}
 
 # run slower proptests with higher default case counts
 proptests_heavy *ARGS:
-  PROPTEST_CASES="${PROPTEST_CASES:-256}" cargo test -p ragu_circuits --all-features proptest {{ARGS}}
+  PROPTEST_CASES="${PROPTEST_CASES:-256}" cargo test --release -p ragu_circuits --all-features proptest {{ARGS}}
 
 # run benchmarks (auto-detects platform)
 bench *ARGS:
