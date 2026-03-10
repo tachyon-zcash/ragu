@@ -30,7 +30,7 @@
 use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
-    polynomials::{Rank, structured},
+    polynomials::{CommittedPolynomial, Rank, structured},
     staging::StageExt,
 };
 use ragu_core::{
@@ -71,16 +71,24 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let b_poly = fold_revdot::fold_polys_n::<_, R, NativeParameters>(b, mu_prime_nu_prime);
         let c = a_poly.revdot(&b_poly);
 
-        let [a, b] =
-            structured::batch_commit(rng, C::host_generators(self.params), [a_poly, b_poly]);
+        let generators = C::host_generators(self.params);
+        let blind_a = C::CircuitField::random(rng);
+        let blind_b = C::CircuitField::random(rng);
+        let [commit_a, commit_b] = ragu_arithmetic::batch_to_affine([
+            a_poly.commit(generators, blind_a),
+            b_poly.commit(generators, blind_b),
+        ]);
+        let a = CommittedPolynomial::from_parts(a_poly, blind_a, commit_a);
+        let b = CommittedPolynomial::from_parts(b_poly, blind_b, commit_b);
 
         let nested_ab_witness = nested::stages::ab::Witness {
             a: a.commitment(),
             b: b.commitment(),
         };
         let nested_poly = nested::stages::ab::Stage::<C::HostCurve, R>::rx(&nested_ab_witness)?;
-        let [nested_rx] =
-            structured::batch_commit(rng, C::nested_generators(self.params), [nested_poly]);
+        let blind = C::ScalarField::random(rng);
+        let commitment = nested_poly.commit_to_affine(C::nested_generators(self.params), blind);
+        let nested_rx = CommittedPolynomial::from_parts(nested_poly, blind, commitment);
 
         Ok(proof::AB { a, b, c, nested_rx })
     }

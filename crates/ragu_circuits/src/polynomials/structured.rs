@@ -173,8 +173,8 @@ impl<F: Field, R: Rank> RawPolynomial<F, R> {
 
     /// Compute a commitment to this polynomial using the provided generators.
     ///
-    /// Returns a projective point. Use [`batch_commit`] to normalize multiple
-    /// commitments to affine in one batch inversion.
+    /// Returns a projective point. See also
+    /// [`commit_to_affine`](Self::commit_to_affine).
     pub fn commit<C: CurveAffine<ScalarExt = F>>(
         &self,
         generators: &impl FixedGenerators<C>,
@@ -206,9 +206,7 @@ impl<F: Field, R: Rank> RawPolynomial<F, R> {
         )
     }
 
-    /// Compute a commitment to this polynomial, normalized to affine. For
-    /// multiple commitments, prefer [`commit`](Self::commit) with
-    /// [`batch_commit`] to share a single field inversion.
+    /// Compute a commitment to this polynomial, normalized to affine.
     pub fn commit_to_affine<C: CurveAffine<ScalarExt = F>>(
         &self,
         generators: &impl ragu_arithmetic::FixedGenerators<C>,
@@ -372,14 +370,6 @@ impl<F: Field, R: Rank> ragu_arithmetic::Ring for Polynomial<F, R> {
         RawPolynomial::sub_assign(r, other);
     }
 }
-
-impl<F: Field, R: Rank, C: CurveAffine<ScalarExt = F>> super::Committable<C> for Polynomial<F, R> {
-    fn commit<G: FixedGenerators<C>>(&self, generators: &G, blind: F) -> C::Curve {
-        RawPolynomial::commit(self, generators, blind)
-    }
-}
-
-pub use super::{batch_commit, batch_commit_with_blinds};
 
 /// Marker trait for distinguishing between different polynomial views.
 pub trait Perspective {}

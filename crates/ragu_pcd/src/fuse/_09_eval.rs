@@ -4,9 +4,10 @@
 //! evaluations of every committed or accumulated polynomial (thus far) at the
 //! point $u$, except $f(u)$ which is _derived_ from said evaluations.
 
+use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
-    polynomials::{Rank, structured},
+    polynomials::{CommittedPolynomial, Rank},
     staging::StageExt,
 };
 use ragu_core::{
@@ -57,15 +58,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             },
         };
         let native_poly = eval::Stage::<C, R, HEADER_SIZE>::rx(&eval_witness)?;
-        let [native_rx] =
-            structured::batch_commit(rng, C::host_generators(self.params), [native_poly]);
+        let blind = C::CircuitField::random(rng);
+        let commitment = native_poly.commit_to_affine(C::host_generators(self.params), blind);
+        let native_rx = CommittedPolynomial::from_parts(native_poly, blind, commitment);
 
         let nested_eval_witness = nested::stages::eval::Witness {
             native_eval: native_rx.commitment(),
         };
         let nested_poly = nested::stages::eval::Stage::<C::HostCurve, R>::rx(&nested_eval_witness)?;
-        let [nested_rx] =
-            structured::batch_commit(rng, C::nested_generators(self.params), [nested_poly]);
+        let blind = C::ScalarField::random(rng);
+        let commitment = nested_poly.commit_to_affine(C::nested_generators(self.params), blind);
+        let nested_rx = CommittedPolynomial::from_parts(nested_poly, blind, commitment);
 
         Ok((
             proof::Eval {

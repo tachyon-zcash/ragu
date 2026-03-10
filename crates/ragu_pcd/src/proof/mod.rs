@@ -12,7 +12,7 @@ pub(crate) use components::*;
 use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
-    polynomials::{Rank, structured, unstructured},
+    polynomials::{CommittedPolynomial, Rank, structured, unstructured},
     registry::CircuitIndex,
 };
 use ragu_primitives::vec::Len;
@@ -106,15 +106,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
         let host_gen = C::host_generators(self.params);
         let nested_gen = C::nested_generators(self.params);
 
-        let [cp_host] =
-            structured::batch_commit_with_blinds(host_gen, [zero_structured_host], [host_blind]);
-        let [cp_nested] = structured::batch_commit_with_blinds(
-            nested_gen,
-            [zero_structured_nested.clone()],
-            [nested_blind],
+        let commitment = zero_structured_host.commit_to_affine(host_gen, host_blind);
+        let cp_host = CommittedPolynomial::from_parts(zero_structured_host, host_blind, commitment);
+        let commitment = zero_structured_nested.commit_to_affine(nested_gen, nested_blind);
+        let cp_nested = CommittedPolynomial::from_parts(
+            zero_structured_nested.clone(),
+            nested_blind,
+            commitment,
         );
-        let [cp_unstructured] =
-            unstructured::batch_commit_with_blinds(host_gen, [zero_unstructured], [host_blind]);
+        let commitment = zero_unstructured.commit_to_affine(host_gen, host_blind);
+        let cp_unstructured =
+            CommittedPolynomial::from_parts(zero_unstructured, host_blind, commitment);
 
         Proof {
             application: Application {

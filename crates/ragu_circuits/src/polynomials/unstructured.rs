@@ -129,8 +129,8 @@ impl<F: Field, R: Rank> RawPolynomial<F, R> {
 
     /// Compute the Pedersen commitment to this polynomial.
     ///
-    /// Returns a projective point. Use [`batch_commit`] to normalize multiple
-    /// commitments to affine in one batch inversion.
+    /// Returns a projective point. See also
+    /// [`commit_to_affine`](Self::commit_to_affine).
     pub fn commit<C: CurveAffine<ScalarExt = F>>(
         &self,
         generators: &impl FixedGenerators<C>,
@@ -148,9 +148,7 @@ impl<F: Field, R: Rank> RawPolynomial<F, R> {
         )
     }
 
-    /// Compute a commitment to this polynomial, normalized to affine. For
-    /// multiple commitments, prefer [`commit`](Self::commit) with
-    /// [`batch_commit`] to share a single field inversion.
+    /// Compute a commitment to this polynomial, normalized to affine.
     pub fn commit_to_affine<C: CurveAffine<ScalarExt = F>>(
         &self,
         generators: &impl ragu_arithmetic::FixedGenerators<C>,
@@ -227,14 +225,6 @@ impl<F: Field, R: Rank> AddAssign<&Self> for Polynomial<F, R> {
         self.add_unstructured(rhs);
     }
 }
-
-impl<F: Field, R: Rank, C: CurveAffine<ScalarExt = F>> super::Committable<C> for Polynomial<F, R> {
-    fn commit<G: FixedGenerators<C>>(&self, generators: &G, blind: F) -> C::Curve {
-        RawPolynomial::commit(self, generators, blind)
-    }
-}
-
-pub use super::{batch_commit, batch_commit_with_blinds};
 
 impl<F: Field, R: Rank> AddAssign<&super::structured::Polynomial<F, R>> for Polynomial<F, R> {
     fn add_assign(&mut self, rhs: &super::structured::Polynomial<F, R>) {

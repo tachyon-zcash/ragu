@@ -9,9 +9,10 @@
 //! $(p\_i(X) - v\_i) / (X - x\_i)$ for a single query. The total number of
 //! terms must match `poly_queries` in the `compute_v` circuit exactly.
 
+use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
-    polynomials::{Rank, structured, unstructured},
+    polynomials::{CommittedPolynomial, Rank, unstructured},
     staging::StageExt,
 };
 use ragu_core::{
@@ -170,14 +171,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         coeffs.reverse();
 
         let poly_data = unstructured::Polynomial::from_coeffs(coeffs);
-        let [poly] = unstructured::batch_commit(rng, C::host_generators(self.params), [poly_data]);
+        let blind = C::CircuitField::random(rng);
+        let commitment = poly_data.commit_to_affine(C::host_generators(self.params), blind);
+        let poly = CommittedPolynomial::from_parts(poly_data, blind, commitment);
 
         let nested_f_witness = f::Witness {
             native_f: poly.commitment(),
         };
         let nested_poly = f::Stage::<C::HostCurve, R>::rx(&nested_f_witness)?;
-        let [nested_rx] =
-            structured::batch_commit(rng, C::nested_generators(self.params), [nested_poly]);
+        let blind = C::ScalarField::random(rng);
+        let commitment = nested_poly.commit_to_affine(C::nested_generators(self.params), blind);
+        let nested_rx = CommittedPolynomial::from_parts(nested_poly, blind, commitment);
 
         Ok(proof::F {
             aggregated: poly,

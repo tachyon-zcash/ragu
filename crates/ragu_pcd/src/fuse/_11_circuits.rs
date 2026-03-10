@@ -1,7 +1,8 @@
+use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
     CircuitExt,
-    polynomials::{Rank, structured},
+    polynomials::{CommittedPolynomial, Rank},
 };
 use ragu_core::Result;
 use rand::CryptoRng;
@@ -126,23 +127,27 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         unified.assert_complete();
 
-        let [
-            hashes_1,
-            hashes_2,
-            partial_collapse,
-            full_collapse,
-            compute_v,
-        ] = structured::batch_commit(
-            rng,
-            C::host_generators(self.params),
-            [
-                hashes_1_poly,
-                hashes_2_poly,
-                partial_collapse_poly,
-                full_collapse_poly,
-                compute_v_poly,
-            ],
-        );
+        let generators = C::host_generators(self.params);
+        let blind_h1 = C::CircuitField::random(rng);
+        let blind_h2 = C::CircuitField::random(rng);
+        let blind_pc = C::CircuitField::random(rng);
+        let blind_fc = C::CircuitField::random(rng);
+        let blind_cv = C::CircuitField::random(rng);
+        let [commit_h1, commit_h2, commit_pc, commit_fc, commit_cv] =
+            ragu_arithmetic::batch_to_affine([
+                hashes_1_poly.commit(generators, blind_h1),
+                hashes_2_poly.commit(generators, blind_h2),
+                partial_collapse_poly.commit(generators, blind_pc),
+                full_collapse_poly.commit(generators, blind_fc),
+                compute_v_poly.commit(generators, blind_cv),
+            ]);
+        let hashes_1 = CommittedPolynomial::from_parts(hashes_1_poly, blind_h1, commit_h1);
+        let hashes_2 = CommittedPolynomial::from_parts(hashes_2_poly, blind_h2, commit_h2);
+        let partial_collapse =
+            CommittedPolynomial::from_parts(partial_collapse_poly, blind_pc, commit_pc);
+        let full_collapse =
+            CommittedPolynomial::from_parts(full_collapse_poly, blind_fc, commit_fc);
+        let compute_v = CommittedPolynomial::from_parts(compute_v_poly, blind_cv, commit_cv);
 
         Ok(proof::InternalCircuits {
             hashes_1,

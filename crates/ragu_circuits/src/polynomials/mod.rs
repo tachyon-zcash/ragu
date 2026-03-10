@@ -5,7 +5,7 @@ pub mod structured;
 pub mod txz;
 pub mod unstructured;
 
-pub use committed::{Committable, CommittedPolynomial, batch_commit, batch_commit_with_blinds};
+pub use committed::CommittedPolynomial;
 
 use ff::Field;
 

@@ -3,9 +3,10 @@
 //! This creates the [`proof::Preamble`] component of the proof, which commits
 //! to the instance and trace polynomials used in the fuse step.
 
+use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
-    polynomials::{Rank, structured},
+    polynomials::{CommittedPolynomial, Rank},
     staging::StageExt,
 };
 use ragu_core::Result;
@@ -36,8 +37,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         )?;
 
         let native_poly = native_preamble::Stage::<C, R, HEADER_SIZE>::rx(&preamble_witness)?;
-        let [native_rx] =
-            structured::batch_commit(rng, C::host_generators(self.params), [native_poly]);
+        let blind = C::CircuitField::random(rng);
+        let commitment = native_poly.commit_to_affine(C::host_generators(self.params), blind);
+        let native_rx = CommittedPolynomial::from_parts(native_poly, blind, commitment);
 
         let nested_preamble_witness = nested::stages::preamble::Witness {
             native_preamble: native_rx.commitment(),
@@ -47,8 +49,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         let nested_poly =
             nested::stages::preamble::Stage::<C::HostCurve, R>::rx(&nested_preamble_witness)?;
-        let [nested_rx] =
-            structured::batch_commit(rng, C::nested_generators(self.params), [nested_poly]);
+        let blind = C::ScalarField::random(rng);
+        let commitment = nested_poly.commit_to_affine(C::nested_generators(self.params), blind);
+        let nested_rx = CommittedPolynomial::from_parts(nested_poly, blind, commitment);
 
         Ok((
             proof::Preamble {

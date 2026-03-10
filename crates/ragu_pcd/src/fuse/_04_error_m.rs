@@ -7,9 +7,10 @@
 //! This phase of the fuse operation is also used to commit to the $m(w, X, y)$
 //! restriction.
 
+use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
-    polynomials::{Rank, structured},
+    polynomials::{CommittedPolynomial, Rank},
     registry::RegistryAt,
     staging::StageExt,
 };
@@ -69,11 +70,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 &error_m_witness,
             )?;
 
-        let [registry_wy, native_rx] = structured::batch_commit(
-            rng,
-            C::host_generators(self.params),
-            [registry_wy_poly, native_error_m_poly],
-        );
+        let generators = C::host_generators(self.params);
+        let blind_wy = C::CircuitField::random(rng);
+        let blind_m = C::CircuitField::random(rng);
+        let [commit_wy, commit_m] = ragu_arithmetic::batch_to_affine([
+            registry_wy_poly.commit(generators, blind_wy),
+            native_error_m_poly.commit(generators, blind_m),
+        ]);
+        let registry_wy = CommittedPolynomial::from_parts(registry_wy_poly, blind_wy, commit_wy);
+        let native_rx = CommittedPolynomial::from_parts(native_error_m_poly, blind_m, commit_m);
 
         let nested_error_m_witness = nested::stages::error_m::Witness {
             native_error_m: native_rx.commitment(),
@@ -81,8 +86,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         };
         let nested_poly =
             nested::stages::error_m::Stage::<C::HostCurve, R>::rx(&nested_error_m_witness)?;
-        let [nested_rx] =
-            structured::batch_commit(rng, C::nested_generators(self.params), [nested_poly]);
+        let blind = C::ScalarField::random(rng);
+        let commitment = nested_poly.commit_to_affine(C::nested_generators(self.params), blind);
+        let nested_rx = CommittedPolynomial::from_parts(nested_poly, blind, commitment);
 
         Ok((
             proof::ErrorM {
