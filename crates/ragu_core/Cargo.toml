@@ -44,3 +44,4 @@ rand = { workspace = true }
 group = { workspace = true }
 ragu_pasta = { path = "../ragu_pasta", version = "0.0.0", features = ["baked"] }
 proptest = { workspace = true }
+ragu_testing = { path = "../ragu_testing", version = "0.0.0" }

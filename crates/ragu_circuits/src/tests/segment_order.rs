@@ -178,7 +178,7 @@ proptest! {
     /// that both traverse the routine call tree in the same DFS order and
     /// apply consistent segment-boundary rules.
     #[test]
-    fn segment_dfs_order(tree in arb_tree()) {
+    fn proptest_segment_dfs_order(tree in arb_tree()) {
         let circuit = TreeCircuit(tree);
 
         let metrics = crate::metrics::eval::<Fp, _>(&circuit)

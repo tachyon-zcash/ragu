@@ -117,55 +117,32 @@ impl<F: Field> Add for Coeff<F> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::Coeff;
+mod proptests {
     use pasta_curves::Fp as F;
     use proptest::prelude::*;
-
-    fn arb_fe() -> impl proptest::strategy::Strategy<Value = F> {
-        use proptest::prelude::*;
-        (0u64..1000).prop_map(F::from)
-    }
-
-    impl proptest::arbitrary::Arbitrary for Coeff<F> {
-        type Parameters = ();
-        type Strategy = proptest::strategy::BoxedStrategy<Self>;
-
-        fn arbitrary_with(_args: Self::Parameters) -> Self::Strategy {
-            use proptest::prelude::*;
-            prop_oneof![
-                Just(Coeff::Zero),
-                Just(Coeff::One),
-                Just(Coeff::Two),
-                Just(Coeff::NegativeOne),
-                arb_fe().prop_map(Coeff::Arbitrary),
-                arb_fe().prop_map(Coeff::NegativeArbitrary)
-            ]
-            .boxed()
-        }
-    }
+    use ragu_testing::strategies;
 
     proptest! {
         #[test]
-        fn test_coeff_mul(coeff1 in any::<Coeff<F>>(), coeff2 in any::<Coeff<F>>()) {
+        fn proptest_coeff_mul(coeff1 in strategies::coeff::<F>(), coeff2 in strategies::coeff::<F>()) {
             let a = coeff1 * coeff2;
             let b = coeff2 * coeff1;
-            assert_eq!(a.value(), b.value());
-            assert_eq!(a.value(), (coeff1.value() * coeff2.value()));
+            prop_assert_eq!(a.value(), b.value());
+            prop_assert_eq!(a.value(), coeff1.value() * coeff2.value());
         }
 
         #[test]
-        fn test_coeff_add(coeff1 in any::<Coeff<F>>(), coeff2 in any::<Coeff<F>>()) {
+        fn proptest_coeff_add(coeff1 in strategies::coeff::<F>(), coeff2 in strategies::coeff::<F>()) {
             let a = coeff1 + coeff2;
             let b = coeff2 + coeff1;
-            assert_eq!(a.value(), b.value());
-            assert_eq!(a.value(), (coeff1.value() + coeff2.value()));
+            prop_assert_eq!(a.value(), b.value());
+            prop_assert_eq!(a.value(), coeff1.value() + coeff2.value());
         }
 
         #[test]
-        fn test_coeff_is_zero(coeff in any::<Coeff<F>>()) {
+        fn proptest_coeff_is_zero(coeff in strategies::coeff::<F>()) {
             use ff::Field;
-            assert_eq!(coeff.is_zero(), bool::from(coeff.value().is_zero()));
+            prop_assert_eq!(coeff.is_zero(), bool::from(coeff.value().is_zero()));
         }
     }
 }
