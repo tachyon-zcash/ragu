@@ -1,8 +1,8 @@
 //! Floor planning for optimal routine placement in the constraint polynomial.
 //!
 //! Routines occupy rectangular regions in the 2D constraint space where:
-//! - **X dimension**: multiplication gate indices (grows with each `mul` constraint)
-//! - **Y dimension**: linear constraint indices (grows with each `enforce_zero`)
+//! - **X dimension**: gate indices (grows with each gate)
+//! - **Y dimension**: constraint indices (grows with each `enforce_zero`)
 //!
 //! The floor planner assigns deterministic positions to routine types so that:
 //! - **Inter-circuit memoization**: Same routine type at same position across circuits
@@ -16,17 +16,15 @@
 
 use alloc::{collections::BTreeMap, vec::Vec};
 
-use crate::SegmentRecord;
-use crate::floor_planner::ConstraintSegment;
-use crate::routines::{RoutineId, RoutineRegistry};
+use crate::{DeepFingerprint, RoutineIdentity, SegmentRecord, floor_planner::ConstraintSegment};
 
-/// A position in the constraint polynomial: multiplication gate index (X dimension)
-/// and linear constraint index (Y dimension).
+/// A position in the constraint polynomial: gate index (X dimension) and
+/// constraint index (Y dimension).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RegistryPosition {
-    /// Multiplication gate index.
+    /// Gate index.
     pub x: usize,
-    /// Linear constraint index.
+    /// Constraint index.
     pub y: usize,
 }
 
@@ -40,8 +38,8 @@ impl RegistryPosition {
 /// Placement for a routine type in the constraint polynomial.
 #[derive(Debug, Clone, Copy)]
 struct Placement {
-    /// The routine type.
-    id: RoutineId,
+    /// The routine's structural fingerprint.
+    fingerprint: DeepFingerprint,
     /// The segment's position and dimensions.
     segment: ConstraintSegment,
 }
@@ -53,9 +51,9 @@ struct Placement {
 #[derive(Debug, Default)]
 pub struct FloorPlan {
     placements: Vec<Placement>,
-    /// Next available X position (multiplication gate index).
+    /// Next available X position (gate index).
     next_x: usize,
-    /// Current row's Y position (linear constraint index).
+    /// Current row's Y position (constraint index).
     next_y: usize,
     /// Maximum Y extent of routines in the current row.
     row_height: usize,
@@ -72,50 +70,66 @@ impl FloorPlan {
         }
     }
 
-    /// Builds a floor plan from multiple circuit registries.
+    /// Builds a floor plan from multiple circuits' segment records.
     ///
     /// Routines used by more circuits get priority placement (higher memoization benefit).
     /// Space is reserved for the maximum invocation count across all circuits.
-    pub fn from_registries(registries: &[&RoutineRegistry], max_width: usize) -> Self {
+    pub fn from_segment_records(all_segments: &[&[SegmentRecord]], max_width: usize) -> Self {
         let mut plan = Self::new(max_width);
 
-        // Collect routine types with circuit count and max invocations.
-        // (shape, circuit_count, max_invocations)
-        let mut routine_stats: BTreeMap<RoutineId, (SegmentRecord, usize, usize)> = BTreeMap::new();
-        for registry in registries {
-            for (id, infos) in registry.iter() {
-                if let Some(first) = infos.first() {
-                    let invocations = infos.len();
-                    routine_stats
-                        .entry(*id)
-                        .and_modify(|(_, circuit_count, max_inv)| {
-                            *circuit_count += 1;
-                            *max_inv = (*max_inv).max(invocations);
-                        })
-                        .or_insert((first.shape, 1, invocations));
+        // Collect routine fingerprints with circuit count and max invocations.
+        // (num_gates, num_constraints, circuit_count, max_invocations)
+        let mut routine_stats: BTreeMap<DeepFingerprint, (usize, usize, usize, usize)> =
+            BTreeMap::new();
+        for segments in all_segments {
+            // Count invocations per fingerprint within this circuit.
+            let mut per_circuit: BTreeMap<DeepFingerprint, usize> = BTreeMap::new();
+            for seg in segments.iter() {
+                if let RoutineIdentity::Routine(fp) = seg.identity() {
+                    *per_circuit.entry(*fp).or_default() += 1;
                 }
+            }
+            for (fp, invocations) in per_circuit {
+                routine_stats
+                    .entry(fp)
+                    .and_modify(|(_, _, circuit_count, max_inv)| {
+                        *circuit_count += 1;
+                        *max_inv = (*max_inv).max(invocations);
+                    })
+                    .or_insert((
+                        fp.base().num_gates(),
+                        fp.base().num_constraints(),
+                        1,
+                        invocations,
+                    ));
             }
         }
 
         // Sort by memoization benefit: circuit_count * max_invocations * area.
         let mut routines: Vec<_> = routine_stats.into_iter().collect();
-        routines.sort_by_key(|(_, (shape, circuit_count, max_inv))| {
-            core::cmp::Reverse(
-                circuit_count * max_inv * shape.num_gates() * shape.num_constraints(),
-            )
-        });
+        routines.sort_by_key(
+            |(_, (num_gates, num_constraints, circuit_count, max_inv))| {
+                core::cmp::Reverse(circuit_count * max_inv * num_gates * num_constraints)
+            },
+        );
 
         // Assign canonical positions, reserving space for max invocations.
-        for (id, (shape, _, max_inv)) in routines {
-            plan.place(id, shape, max_inv);
+        for (fp, (num_gates, num_constraints, _, max_inv)) in routines {
+            plan.place(fp, num_gates, num_constraints, max_inv);
         }
 
         plan
     }
 
     /// Place a routine type at the next available position, reserving space for `count` invocations.
-    fn place(&mut self, id: RoutineId, shape: SegmentRecord, count: usize) {
-        let reserved_width = shape.num_gates() * count;
+    fn place(
+        &mut self,
+        fingerprint: DeepFingerprint,
+        num_gates: usize,
+        num_constraints: usize,
+        count: usize,
+    ) {
+        let reserved_width = num_gates * count;
 
         if self.next_x + reserved_width > self.max_width && self.next_x > 0 {
             self.next_y += self.row_height;
@@ -126,34 +140,40 @@ impl FloorPlan {
         let segment = ConstraintSegment {
             gate_start: self.next_x,
             constraint_start: self.next_y,
-            num_gates: shape.num_gates(),
-            num_constraints: shape.num_constraints(),
+            num_gates,
+            num_constraints,
         };
-        self.placements.push(Placement { id, segment });
+        self.placements.push(Placement {
+            fingerprint,
+            segment,
+        });
 
         self.next_x += reserved_width;
-        self.row_height = self.row_height.max(shape.num_constraints());
+        self.row_height = self.row_height.max(num_constraints);
     }
 
     /// Gets the position for a specific invocation of a routine type.
     pub fn get_invocation(
         &self,
-        id: &RoutineId,
+        fingerprint: &DeepFingerprint,
         invocation_index: usize,
     ) -> Option<RegistryPosition> {
-        self.placements.iter().find(|p| p.id == *id).map(|p| {
-            RegistryPosition::new(
-                p.segment.gate_start + invocation_index * p.segment.num_gates,
-                p.segment.constraint_start,
-            )
-        })
+        self.placements
+            .iter()
+            .find(|p| p.fingerprint == *fingerprint)
+            .map(|p| {
+                RegistryPosition::new(
+                    p.segment.gate_start + invocation_index * p.segment.num_gates,
+                    p.segment.constraint_start,
+                )
+            })
     }
 
     /// Gets the shape for a routine type, if it exists in the floor plan.
-    pub fn get_shape(&self, id: &RoutineId) -> Option<ConstraintSegment> {
+    pub fn get_shape(&self, fingerprint: &DeepFingerprint) -> Option<ConstraintSegment> {
         self.placements
             .iter()
-            .find(|p| p.id == *id)
+            .find(|p| p.fingerprint == *fingerprint)
             .map(|p| p.segment)
     }
 }
@@ -162,60 +182,71 @@ impl FloorPlan {
 mod tests {
     use super::*;
 
-    struct Poseidon;
-    struct Merkle;
-
-    fn shape(muls: usize, lcs: usize) -> SegmentRecord {
-        SegmentRecord::test(muls, lcs, crate::RoutineIdentity::Root)
+    /// Creates a segment record with a unique routine fingerprint.
+    fn routine_seg(eval: u64, gates: usize, constraints: usize) -> SegmentRecord {
+        SegmentRecord::test(
+            gates,
+            constraints,
+            RoutineIdentity::Routine(DeepFingerprint::test(eval, gates, constraints)),
+        )
     }
 
+    /// Root segment (index 0) — ignored by the floor planner.
+    fn root_seg() -> SegmentRecord {
+        SegmentRecord::test(0, 0, RoutineIdentity::Root)
+    }
+
+    const POSEIDON: u64 = 1;
+    const MERKLE: u64 = 2;
+
     #[test]
-    fn floor_plan_single_registry() {
-        let mut registry = RoutineRegistry::new();
-        registry.register::<Poseidon>(shape(10, 20));
-        registry.register::<Merkle>(shape(5, 10));
+    fn floor_plan_single_circuit() {
+        let segments = [
+            root_seg(),
+            routine_seg(POSEIDON, 10, 20),
+            routine_seg(MERKLE, 5, 10),
+        ];
+        let plan = FloorPlan::from_segment_records(&[&segments], 100);
 
-        let plan = FloorPlan::from_registries(&[&registry], 100);
+        let poseidon_fp = DeepFingerprint::test(POSEIDON, 10, 20);
+        let merkle_fp = DeepFingerprint::test(MERKLE, 5, 10);
 
-        assert!(
-            plan.get_invocation(&RoutineId::of::<Poseidon>(), 0)
-                .is_some()
-        );
-        assert!(plan.get_invocation(&RoutineId::of::<Merkle>(), 0).is_some());
+        assert!(plan.get_invocation(&poseidon_fp, 0).is_some());
+        assert!(plan.get_invocation(&merkle_fp, 0).is_some());
     }
 
     #[test]
     fn floor_plan_frequent_routines() {
-        let mut reg_a = RoutineRegistry::new();
-        reg_a.register::<Poseidon>(shape(10, 20));
+        // Poseidon in 3 circuits, Merkle in 1
+        let seg_a = [root_seg(), routine_seg(POSEIDON, 10, 20)];
+        let seg_b = [
+            root_seg(),
+            routine_seg(POSEIDON, 10, 20),
+            routine_seg(MERKLE, 5, 10),
+        ];
+        let seg_c = [root_seg(), routine_seg(POSEIDON, 10, 20)];
 
-        let mut reg_b: RoutineRegistry = RoutineRegistry::new();
-        reg_b.register::<Poseidon>(shape(10, 20));
-        reg_b.register::<Merkle>(shape(5, 10));
+        let plan = FloorPlan::from_segment_records(&[&seg_a, &seg_b, &seg_c], 100);
 
-        let mut reg_c = RoutineRegistry::new();
-        reg_c.register::<Poseidon>(shape(10, 20));
-
-        let plan = FloorPlan::from_registries(&[&reg_a, &reg_b, &reg_c], 100);
-
-        let poseidon_pos = plan
-            .get_invocation(&RoutineId::of::<Poseidon>(), 0)
-            .unwrap();
+        let poseidon_fp = DeepFingerprint::test(POSEIDON, 10, 20);
+        let poseidon_pos = plan.get_invocation(&poseidon_fp, 0).unwrap();
         assert_eq!(poseidon_pos, RegistryPosition::new(0, 0));
     }
 
     #[test]
     fn floor_plan_wraps_to_new_row() {
-        let mut registry = RoutineRegistry::new();
-        registry.register::<Poseidon>(shape(60, 20));
-        registry.register::<Merkle>(shape(60, 10));
+        let segments = [
+            root_seg(),
+            routine_seg(POSEIDON, 60, 20),
+            routine_seg(MERKLE, 60, 10),
+        ];
+        let plan = FloorPlan::from_segment_records(&[&segments], 100);
 
-        let plan = FloorPlan::from_registries(&[&registry], 100);
+        let poseidon_fp = DeepFingerprint::test(POSEIDON, 60, 20);
+        let merkle_fp = DeepFingerprint::test(MERKLE, 60, 10);
 
-        let poseidon_pos = plan
-            .get_invocation(&RoutineId::of::<Poseidon>(), 0)
-            .unwrap();
-        let merkle_pos = plan.get_invocation(&RoutineId::of::<Merkle>(), 0).unwrap();
+        let poseidon_pos = plan.get_invocation(&poseidon_fp, 0).unwrap();
+        let merkle_pos = plan.get_invocation(&merkle_fp, 0).unwrap();
 
         assert_eq!(poseidon_pos.x, 0);
         assert_eq!(merkle_pos.y, 20);
@@ -224,47 +255,52 @@ mod tests {
     #[test]
     fn floor_plan_reserves_space_for_multiple_invocations() {
         // Circuit calls Poseidon 3 times, then Merkle once
-        let mut registry = RoutineRegistry::new();
-        let poseidon_shape = shape(10, 20);
-        registry.register::<Poseidon>(poseidon_shape);
-        registry.register::<Poseidon>(poseidon_shape);
-        registry.register::<Poseidon>(poseidon_shape);
-        registry.register::<Merkle>(shape(5, 10));
+        let segments = [
+            root_seg(),
+            routine_seg(POSEIDON, 10, 20),
+            routine_seg(POSEIDON, 10, 20),
+            routine_seg(POSEIDON, 10, 20),
+            routine_seg(MERKLE, 5, 10),
+        ];
+        let plan = FloorPlan::from_segment_records(&[&segments], 100);
 
-        let plan = FloorPlan::from_registries(&[&registry], 100);
-
-        let poseidon_pos = plan
-            .get_invocation(&RoutineId::of::<Poseidon>(), 0)
-            .unwrap();
-        let merkle_pos = plan.get_invocation(&RoutineId::of::<Merkle>(), 0).unwrap();
+        let poseidon_fp = DeepFingerprint::test(POSEIDON, 10, 20);
+        let merkle_fp = DeepFingerprint::test(MERKLE, 5, 10);
 
         // Poseidon at (0,0), reserves 3×10=30 width
-        assert_eq!(poseidon_pos, RegistryPosition::new(0, 0));
+        assert_eq!(
+            plan.get_invocation(&poseidon_fp, 0),
+            Some(RegistryPosition::new(0, 0))
+        );
         // Merkle starts after reserved space
-        assert_eq!(merkle_pos, RegistryPosition::new(30, 0));
+        assert_eq!(
+            plan.get_invocation(&merkle_fp, 0),
+            Some(RegistryPosition::new(30, 0))
+        );
     }
 
     #[test]
     fn floor_plan_get_invocation_positions() {
-        let mut registry = RoutineRegistry::new();
-        let poseidon_shape = shape(10, 20);
-        registry.register::<Poseidon>(poseidon_shape);
-        registry.register::<Poseidon>(poseidon_shape);
-        registry.register::<Poseidon>(poseidon_shape);
+        let segments = [
+            root_seg(),
+            routine_seg(POSEIDON, 10, 20),
+            routine_seg(POSEIDON, 10, 20),
+            routine_seg(POSEIDON, 10, 20),
+        ];
+        let plan = FloorPlan::from_segment_records(&[&segments], 100);
 
-        let plan = FloorPlan::from_registries(&[&registry], 100);
-        let poseidon_id = RoutineId::of::<Poseidon>();
+        let poseidon_fp = DeepFingerprint::test(POSEIDON, 10, 20);
 
         assert_eq!(
-            plan.get_invocation(&poseidon_id, 0),
+            plan.get_invocation(&poseidon_fp, 0),
             Some(RegistryPosition::new(0, 0))
         );
         assert_eq!(
-            plan.get_invocation(&poseidon_id, 1),
+            plan.get_invocation(&poseidon_fp, 1),
             Some(RegistryPosition::new(10, 0))
         );
         assert_eq!(
-            plan.get_invocation(&poseidon_id, 2),
+            plan.get_invocation(&poseidon_fp, 2),
             Some(RegistryPosition::new(20, 0))
         );
     }

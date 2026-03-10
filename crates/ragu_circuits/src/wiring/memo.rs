@@ -1,9 +1,9 @@
 //! Memoization scaffolding for routine contributions to $s(x, y)$.
 //!
 //! [`MemoCache`] stores a routine's evaluated contribution together with the
-//! values of its output-gadget wires, keyed by the routine's identity and its
-//! canonical position in the [`FloorPlan`](crate::floor_plan::FloorPlan). On
-//! a cache hit, [`WireInjector`] rebuilds the output gadget from the cached
+//! values of its output-gadget wires, keyed by the routine's fingerprint and
+//! its canonical position in the [`FloorPlan`](crate::floor_plan::FloorPlan).
+//! On a cache hit, [`WireInjector`] rebuilds the output gadget from the cached
 //! wire values without re-executing the routine.
 
 use alloc::{collections::BTreeMap, vec::Vec};
@@ -12,7 +12,7 @@ use core::marker::PhantomData;
 use ragu_core::{Error, Result, convert::WireMap, drivers::DriverTypes};
 use udon::field::Field;
 
-use crate::{floor_plan::RegistryPosition, routines::RoutineId};
+use crate::{DeepFingerprint, floor_plan::RegistryPosition};
 
 /// Cached polynomial contribution from a routine at a canonical floor plan position.
 ///
@@ -35,13 +35,13 @@ pub(crate) struct CachedRoutine<F> {
     pub(crate) output_wires: Vec<F>,
 }
 
-/// Cache for routine contributions, keyed by `(RoutineId, canonical_position)`.
+/// Cache for routine contributions, keyed by `(DeepFingerprint, canonical_position)`.
 ///
 /// Used for inter-circuit memoization: when evaluating multiple circuits,
 /// routines at the same canonical position can reuse cached contributions.
 #[derive(Clone)]
 pub(crate) struct MemoCache<F> {
-    entries: BTreeMap<(RoutineId, RegistryPosition), CachedRoutine<F>>,
+    entries: BTreeMap<(DeepFingerprint, RegistryPosition), CachedRoutine<F>>,
 }
 
 impl<F> Default for MemoCache<F> {
@@ -61,20 +61,21 @@ impl<F> MemoCache<F> {
     /// Retrieves a cached routine contribution by canonical position.
     pub(crate) fn get(
         &self,
-        routine_id: &RoutineId,
+        fingerprint: &DeepFingerprint,
         canonical_position: RegistryPosition,
     ) -> Option<&CachedRoutine<F>> {
-        self.entries.get(&(*routine_id, canonical_position))
+        self.entries.get(&(*fingerprint, canonical_position))
     }
 
     /// Stores a routine contribution in the cache.
     pub(crate) fn insert(
         &mut self,
-        routine_id: RoutineId,
+        fingerprint: DeepFingerprint,
         canonical_position: RegistryPosition,
         entry: CachedRoutine<F>,
     ) {
-        self.entries.insert((routine_id, canonical_position), entry);
+        self.entries
+            .insert((fingerprint, canonical_position), entry);
     }
 }
 
