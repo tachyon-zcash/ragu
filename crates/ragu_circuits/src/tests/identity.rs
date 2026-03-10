@@ -2033,4 +2033,12 @@ mod proptest_fingerprint {
         );
         assert_ne!(b, c, "swapping TypeId positions must differ");
     }
+
+    // 12. Zero children vs one child with deep hash 0
+    #[test]
+    fn deep_hash_zero_children_vs_one_zero_child() {
+        let a = dhw(tid_a(), tid_b(), 42, 1, 1, 99, &[]);
+        let b = dhw(tid_a(), tid_b(), 42, 1, 1, 99, &[0]);
+        assert_ne!(a, b, "zero children must differ from one child with hash 0");
+    }
 }

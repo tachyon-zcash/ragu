@@ -119,7 +119,9 @@ pub struct ShallowFingerprint {
 /// wire mapping, same recursive subtree structure.
 ///
 /// The 64-bit `deep` hash gives ~2^{-64} collision probability per pair,
-/// adequate for memoization equivalence classes.
+/// adequate for memoization equivalence classes. If fingerprints are ever
+/// used for security-critical decisions, store the full field
+/// representation (`[u8; 32]`) instead — the cost is negligible.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DeepFingerprint {
     shallow: ShallowFingerprint,
@@ -128,7 +130,8 @@ pub struct DeepFingerprint {
 }
 
 /// Extracts a deterministic `u64` from a [`TypeId`] by feeding its
-/// [`Hash`] output through a passthrough [`Hasher`].
+/// [`Hash`] output through a passthrough [`Hasher`] that captures the
+/// first `write_u64` call.
 ///
 /// [`TypeId`]: core::any::TypeId
 fn type_id_u64(id: TypeId) -> u64 {
@@ -137,8 +140,13 @@ fn type_id_u64(id: TypeId) -> u64 {
         fn finish(&self) -> u64 {
             self.0
         }
-        fn write(&mut self, b: &[u8]) {
-            self.0 = u64::from_ne_bytes(b.try_into().unwrap());
+        fn write(&mut self, _: &[u8]) {
+            // TypeId::Hash calls write_u64; if this fallback is ever
+            // reached the assumption no longer holds.
+            unreachable!("TypeId::Hash should call write_u64");
+        }
+        fn write_u64(&mut self, i: u64) {
+            self.0 = i;
         }
     }
     let mut h = PassU64(0);
