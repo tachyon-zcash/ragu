@@ -24,7 +24,6 @@ mod ky;
 mod metrics;
 pub mod polynomials;
 pub mod registry;
-pub mod routines;
 mod rx;
 mod s;
 pub mod staging;
