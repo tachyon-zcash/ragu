@@ -117,9 +117,8 @@ pub struct ShallowFingerprint {
 /// fingerprint are fully equivalent: same constraint structure, same output
 /// wire mapping, same recursive subtree structure.
 ///
-/// Memoization uses deep fingerprints.
-///
-/// [`TypeId`]: core::any::TypeId
+/// The 64-bit `deep` hash gives ~2^{-64} collision probability per pair,
+/// adequate for memoization equivalence classes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DeepFingerprint {
     shallow: ShallowFingerprint,
@@ -132,6 +131,10 @@ pub struct DeepFingerprint {
 ///
 /// Uses BLAKE2b to fold: `eval`, constraint counts, `output_eval`, child
 /// count, and each child's deep hash into a single 64-bit digest.
+/// [`TypeId`] fields are intentionally excluded — they are already captured
+/// in [`ShallowFingerprint`]'s `Eq`/`Hash` impl.
+///
+/// [`TypeId`]: core::any::TypeId
 fn deep_hash(shallow: &ShallowFingerprint, output_eval: u64, children: &[u64]) -> u64 {
     let mut state = blake2b_simd::Params::new().personal(b"FIXME").to_state();
     state.update(&shallow.eval.to_le_bytes());
@@ -648,8 +651,8 @@ struct OutputAccumulator<F> {
     one: F,
 }
 
-/// [`WireMap`] for `Counter`→`PhantomData`: extracts output wire evaluations
-/// without producing real wires in the destination.
+/// [`WireMap`] extracts output wire evaluations without
+/// producing real wires in the destination.
 impl<F: Field> WireMap<F> for OutputAccumulator<F> {
     type Src = Counter<F>;
     type Dst = core::marker::PhantomData<F>;
