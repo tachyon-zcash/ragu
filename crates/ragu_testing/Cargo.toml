@@ -37,4 +37,5 @@ ragu_core = { path = "../ragu_core", version = "0.0.0" }
 ragu_pcd = { path = "../ragu_pcd", version = "0.0.0" }
 ragu_primitives = { path = "../ragu_primitives", version = "0.0.0" }
 ff = { workspace = true }
+proptest = { workspace = true }
 rand = { workspace = true }

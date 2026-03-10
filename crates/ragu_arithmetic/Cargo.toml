@@ -39,6 +39,7 @@ maybe-rayon = { workspace = true }
 proptest = { workspace = true }
 gungraun = { workspace = true }
 criterion = { workspace = true }
+ragu_testing = { path = "../ragu_testing", version = "0.0.0" }
 
 [[bench]]
 name = "arithmetic"

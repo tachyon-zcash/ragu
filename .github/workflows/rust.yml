@@ -69,6 +69,22 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace --lib --tests --benches --locked --all-features -- -D warnings
 
+  proptests-fast:
+    name: proptests (fast)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust
+        uses: ./.github/actions/rust-setup
+        with:
+          cache-suffix: proptests-fast
+      - name: Run fast proptests
+        run: cargo test --release -p ragu_arithmetic -p ragu_core --locked --all-features proptest
+        env:
+          PROPTEST_CASES: "64"
+
   test:
     name: test (${{ matrix.os }})
     needs: changes
