@@ -347,6 +347,23 @@ mod tests {
 
             prop_assert_eq!(expected, actual);
         }
+    }
 
+    #[test]
+    #[should_panic]
+    fn test_skip_squeeze_after_resume() {
+        let params = Pasta::baked();
+        let mut dr = Sim::new();
+
+        let mut t =
+            Transcript::new(&mut dr, Pasta::circuit_poseidon(params), b"skip-squeeze").unwrap();
+        let e = Element::constant(&mut dr, Fp::from(42u64));
+        e.write(&mut dr, &mut t).unwrap();
+
+        let state = t.save_state(&mut dr).expect("save_state should succeed");
+        let resumed = Transcript::resume_from_state(state, Pasta::circuit_poseidon(params));
+
+        // should panic because no squeeze was called
+        let _ = resumed.into_transcript();
     }
 }

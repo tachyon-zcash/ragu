@@ -136,6 +136,7 @@ impl<'dr, D: Driver<'dr>, P: ragu_arithmetic::PoseidonPermutation<D::F>> Sponge<
     }
 
     /// Get the current pending values in the sponge.
+    #[inline(always)]
     fn values(&self) -> &[Element<'dr, D>] {
         match &self.mode {
             Mode::Squeeze { values, .. } => values,
@@ -144,6 +145,7 @@ impl<'dr, D: Driver<'dr>, P: ragu_arithmetic::PoseidonPermutation<D::F>> Sponge<
     }
 
     /// Get the current internal state of the sponge.
+    #[inline(always)]
     fn state(&self) -> &SpongeState<'dr, D, P> {
         match &self.mode {
             Mode::Squeeze { state, .. } => state,
@@ -173,10 +175,10 @@ impl<'dr, D: Driver<'dr>, P: ragu_arithmetic::PoseidonPermutation<D::F>> Sponge<
                     // to absorb the pending values into the state.
                     self.permute(dr)?;
 
-                    // NOTE: breakpoint for state saving would be here:
-                    // On save, we absorb pending values as the last permute;
-                    // On resume, we enter squeeze mode with squeezable values
-                    // copied from the state.
+                    // This is the same state boundary that save_state/resume
+                    // operates on: save_state permutes pending values, then
+                    // resume enters squeeze mode with rate values extracted
+                    // from the post-permutation state.
                     let state = self.state();
                     self.mode = Mode::Squeeze {
                         values: state.get_rate(),
