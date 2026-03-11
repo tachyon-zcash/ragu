@@ -1,7 +1,8 @@
 //! Fuzz the folding-revdot identity for structured polynomials.
 //!
-//! Invariant:
-//!   `fold(lhs, s).revdot(&fold(rhs, t)) == sum_{i,j} s^i * t^j * lhs[i].revdot(&rhs[j])`
+//! Invariants:
+//! - `fold(lhs, s).revdot(&fold(rhs, t)) == sum_{i,j} s^i * t^j * lhs[i].revdot(&rhs[j])`
+//! - `fold(polys, s).eval(z) == sum_i s^i * polys[i].eval(z)` (linearity of eval over fold)
 
 #![no_main]
 
@@ -18,6 +19,7 @@ struct Input {
     coeffs: Vec<u64>,
     s_seed: u64,
     t_seed: u64,
+    eval_point: u64,
 }
 
 fn build_poly(
@@ -54,6 +56,7 @@ fuzz_target!(|input: Input| {
 
     let s = Fp::from(input.s_seed);
     let t = Fp::from(input.t_seed);
+    let z = Fp::from(input.eval_point);
 
     let mut coeff_iter = input.coeffs.iter().map(|&v| Fp::from(v));
 
@@ -64,15 +67,12 @@ fuzz_target!(|input: Input| {
         .map(|i| build_poly(input.lens.get(i * 2 + 1).unwrap_or(&[0; 4]), &mut coeff_iter))
         .collect();
 
-    // Method 1: fold then revdot
+    // --- Invariant 1: fold-then-revdot identity ---
     let folded_lhs = Polynomial::fold(lhs.iter(), s);
     let folded_rhs = Polynomial::fold(rhs.iter(), t);
     let folded_revdot = folded_lhs.revdot(&folded_rhs);
 
-    // Method 2: sum of s^i * t^j * lhs[i].revdot(&rhs[j])
-    let mut expected = Fp::ZERO;
-    // fold uses Horner: acc = acc*s + poly, so the first element gets s^{n-1}
-    // and the last gets s^0. Compute powers accordingly.
+    // Horner fold: first element gets s^{n-1}, last gets s^0.
     let s_powers: Vec<Fp> = {
         let mut powers = vec![Fp::ZERO; count];
         let mut p = Fp::ONE;
@@ -92,14 +92,28 @@ fuzz_target!(|input: Input| {
         powers
     };
 
+    let mut expected_revdot = Fp::ZERO;
     for i in 0..count {
         for j in 0..count {
-            expected += s_powers[i] * t_powers[j] * lhs[i].revdot(&rhs[j]);
+            expected_revdot += s_powers[i] * t_powers[j] * lhs[i].revdot(&rhs[j]);
         }
     }
 
     assert_eq!(
-        folded_revdot, expected,
+        folded_revdot, expected_revdot,
         "fold-then-revdot != sum of pairwise revdots for count={count}"
+    );
+
+    // --- Invariant 2: fold-then-eval linearity ---
+    let folded_eval = folded_lhs.eval(z);
+
+    let mut expected_eval = Fp::ZERO;
+    for i in 0..count {
+        expected_eval += s_powers[i] * lhs[i].eval(z);
+    }
+
+    assert_eq!(
+        folded_eval, expected_eval,
+        "fold(lhs, s).eval(z) != sum of s^i * lhs[i].eval(z) for count={count}"
     );
 });

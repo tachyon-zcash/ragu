@@ -1,7 +1,9 @@
-//! Fuzz structured polynomial `revdot` against naive unstructured dot product.
+//! Fuzz structured polynomial operations against naive unstructured equivalents.
 //!
-//! Invariant: `p1.revdot(&p2) == dot(p1.unstructured(), rev(p2.unstructured()))`
-//! for all independent (u, v, w, d) vector lengths.
+//! Invariants:
+//! - `p1.revdot(&p2) == dot(p1.unstructured(), rev(p2.unstructured()))`
+//! - `p.eval(z) == p.unstructured().eval(z)` (structured eval == unstructured eval)
+//! - `fold([p1, p2], s).unstructured() == fold of unstructured equivalents`
 
 #![no_main]
 
@@ -16,6 +18,8 @@ struct Input {
     p1_lens: [u8; 4],
     p2_lens: [u8; 4],
     coeffs: Vec<u64>,
+    eval_point: u64,
+    fold_scale: u64,
 }
 
 fn build_poly(lens: &[u8; 4], coeffs: &mut impl Iterator<Item = Fp>) -> Polynomial<Fp, TestRank> {
@@ -24,7 +28,6 @@ fn build_poly(lens: &[u8; 4], coeffs: &mut impl Iterator<Item = Fp>) -> Polynomi
     let clamp = |l: u8| (l as usize) % (n + 1);
 
     let fwd = poly.forward();
-    // a = u, b = v, c = w in forward view
     for _ in 0..clamp(lens[0]) {
         fwd.a.push(coeffs.next().unwrap_or(Fp::ZERO));
     }
@@ -34,7 +37,6 @@ fn build_poly(lens: &[u8; 4], coeffs: &mut impl Iterator<Item = Fp>) -> Polynomi
     for _ in 0..clamp(lens[2]) {
         fwd.c.push(coeffs.next().unwrap_or(Fp::ZERO));
     }
-    // d is not exposed via forward view, access via backward where c = d
     drop(fwd);
     let bwd = poly.backward();
     for _ in 0..clamp(lens[3]) {
@@ -54,17 +56,44 @@ fuzz_target!(|input: Input| {
     let p1 = build_poly(&input.p1_lens, &mut coeffs);
     let p2 = build_poly(&input.p2_lens, &mut coeffs);
 
-    // Structured revdot
-    let structured_result = p1.revdot(&p2);
-
-    // Naive: dot(unstructured(p1), reverse(unstructured(p2)))
+    // 1. Revdot agreement
+    let structured_revdot = p1.revdot(&p2);
     let u1 = p1.unstructured();
     let u2 = p2.unstructured();
-    let naive_result = ragu_arithmetic::dot(u1.iter(), u2.iter().rev());
+    let naive_revdot = ragu_arithmetic::dot(u1.iter(), u2.iter().rev());
 
     assert_eq!(
-        structured_result, naive_result,
+        structured_revdot, naive_revdot,
         "revdot mismatch: p1 lens={:?}, p2 lens={:?}",
         input.p1_lens, input.p2_lens
+    );
+
+    // 2. Eval agreement: structured eval == unstructured eval
+    let z = Fp::from(input.eval_point);
+    let structured_eval = p1.eval(z);
+    let unstructured_eval = u1.eval(z);
+
+    assert_eq!(
+        structured_eval, unstructured_eval,
+        "eval mismatch for p1 at z={z:?}"
+    );
+
+    let structured_eval2 = p2.eval(z);
+    let unstructured_eval2 = u2.eval(z);
+
+    assert_eq!(
+        structured_eval2, unstructured_eval2,
+        "eval mismatch for p2 at z={z:?}"
+    );
+
+    // 3. Fold-then-eval agreement
+    let s = Fp::from(input.fold_scale);
+    let folded = Polynomial::fold([&p1, &p2].into_iter(), s);
+    let folded_eval = folded.eval(z);
+    let folded_u_eval = folded.unstructured().eval(z);
+
+    assert_eq!(
+        folded_eval, folded_u_eval,
+        "fold eval mismatch at z={z:?}"
     );
 });

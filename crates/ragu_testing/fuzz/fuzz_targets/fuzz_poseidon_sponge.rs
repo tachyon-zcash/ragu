@@ -1,11 +1,13 @@
 //! Fuzz Poseidon sponge absorb/squeeze mode transitions.
 //!
 //! Invariants:
-//! - No panics on any absorb/squeeze interleaving.
+//! - No panics on any absorb/squeeze/save/resume interleaving.
 //! - Determinism: identical input sequences produce identical squeeze output.
+//! - Save/resume equivalence: absorb → save → resume → squeeze == absorb → squeeze.
 
 #![no_main]
 
+use arbitrary::Arbitrary;
 use core::cell::Cell;
 use ff::Field;
 use libfuzzer_sys::fuzz_target;
@@ -16,112 +18,140 @@ use ragu_pasta::Pasta;
 use ragu_primitives::poseidon::Sponge;
 use ragu_primitives::{Element, Simulator};
 
-/// A sequence of sponge operations decoded from raw bytes.
-struct Ops<'a> {
-    data: &'a [u8],
+#[derive(Arbitrary, Debug, Clone, Copy)]
+enum Op {
+    Absorb(u64),
+    AbsorbLarge([u64; 4]),
+    Squeeze,
 }
 
-impl<'a> Ops<'a> {
-    fn absorb_values(&self) -> Vec<Fp> {
-        self.data
-            .iter()
-            .filter(|b| **b < 0xF0)
-            .map(|b| Fp::from(*b as u64))
-            .collect()
-    }
+#[derive(Arbitrary, Debug)]
+struct Input {
+    ops: Vec<Op>,
+    test_save_resume: bool,
 }
 
-fuzz_target!(|data: &[u8]| {
-    if data.is_empty() || data.len() > 64 {
-        return;
-    }
+fn absorb_values(ops: &[Op]) -> Vec<Fp> {
+    ops.iter()
+        .filter_map(|op| match op {
+            Op::Absorb(v) => Some(Fp::from(*v)),
+            Op::AbsorbLarge(limbs) => {
+                let val = Fp::from(limbs[0])
+                    + Fp::from(limbs[1]) * Fp::from(1u64 << 32)
+                    + Fp::from(limbs[2]) * Fp::from(1u64 << 48)
+                    + Fp::from(limbs[3]) * Fp::from(1u64 << 56);
+                Some(val)
+            }
+            Op::Squeeze => None,
+        })
+        .collect()
+}
 
-    // Need at least one absorb before any squeeze is meaningful
-    if !data.iter().any(|b| *b < 0xF0) {
-        return;
-    }
+fn run_sponge(ops: &[Op], values: &[Fp]) -> Fp {
+    let output = Cell::new(Fp::ZERO);
+    let got_output = Cell::new(false);
 
-    let ops = Ops { data };
-    let absorb_values = ops.absorb_values();
-    let params = Pasta::baked();
-
-    // --- Run 1: Execute the full operation sequence, capture first squeeze ---
-    let squeeze1 = Cell::new(Fp::ZERO);
-    let got_squeeze1 = Cell::new(false);
-
-    let result1 = Simulator::<Fp>::simulate(absorb_values.clone(), |dr, witness| {
+    let result = Simulator::<Fp>::simulate(values.to_vec(), |dr, witness| {
+        let params = Pasta::baked();
         let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
             dr,
             Pasta::circuit_poseidon(params),
         );
 
-        let elems: Vec<Element<'_, _>> = (0..absorb_values.len())
+        let elems: Vec<Element<'_, _>> = (0..values.len())
             .map(|i| Element::alloc(dr, witness.as_ref().map(|v| v[i])))
             .collect::<Result<_, _>>()?;
 
         let mut absorb_idx = 0;
-        for &byte in data {
-            if byte < 0xF0 {
-                sponge.absorb(dr, &elems[absorb_idx])?;
-                absorb_idx += 1;
-            } else {
-                let squeezed = sponge.squeeze(dr)?;
-                if !got_squeeze1.get() {
-                    squeeze1.set(*squeezed.value().take());
-                    got_squeeze1.set(true);
+        for op in ops {
+            match op {
+                Op::Absorb(_) | Op::AbsorbLarge(_) => {
+                    sponge.absorb(dr, &elems[absorb_idx])?;
+                    absorb_idx += 1;
+                }
+                Op::Squeeze => {
+                    let squeezed = sponge.squeeze(dr)?;
+                    if !got_output.get() {
+                        output.set(*squeezed.value().take());
+                        got_output.set(true);
+                    }
                 }
             }
         }
 
-        // If no squeeze was requested, do one now
-        if !got_squeeze1.get() {
+        if !got_output.get() {
             let squeezed = sponge.squeeze(dr)?;
-            squeeze1.set(*squeezed.value().take());
-            got_squeeze1.set(true);
+            output.set(*squeezed.value().take());
         }
 
         Ok(())
     });
 
-    assert!(result1.is_ok(), "Poseidon sponge panicked or failed constraints");
+    assert!(result.is_ok(), "sponge failed: {:?}", result.err());
+    output.get()
+}
 
-    // --- Run 2: Determinism check — same sequence must produce same output ---
-    let squeeze2 = Cell::new(Fp::ZERO);
-    let got_squeeze2 = Cell::new(false);
+fuzz_target!(|input: Input| {
+    if input.ops.is_empty() || input.ops.len() > 64 {
+        return;
+    }
 
-    let result2 = Simulator::<Fp>::simulate(absorb_values.clone(), |dr, witness| {
-        let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
-            dr,
-            Pasta::circuit_poseidon(params),
+    let has_absorb = input.ops.iter().any(|op| matches!(op, Op::Absorb(_) | Op::AbsorbLarge(_)));
+    if !has_absorb {
+        return;
+    }
+
+    let values = absorb_values(&input.ops);
+
+    // Run twice — determinism check
+    let out1 = run_sponge(&input.ops, &values);
+    let out2 = run_sponge(&input.ops, &values);
+    assert_eq!(out1, out2, "Poseidon is not deterministic");
+
+    // Save/resume equivalence: absorb all values, save, resume, squeeze
+    // must equal absorb all values then squeeze directly.
+    if input.test_save_resume && values.len() >= 1 {
+        let direct_output = Cell::new(Fp::ZERO);
+        let resume_output = Cell::new(Fp::ZERO);
+
+        let result = Simulator::<Fp>::simulate(values.clone(), |dr, witness| {
+            let params = Pasta::baked();
+            let elems: Vec<Element<'_, _>> = (0..values.len())
+                .map(|i| Element::alloc(dr, witness.as_ref().map(|v| v[i])))
+                .collect::<Result<_, _>>()?;
+
+            // Direct path: absorb all → squeeze
+            let mut sponge1 = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
+                dr,
+                Pasta::circuit_poseidon(params),
+            );
+            for elem in &elems {
+                sponge1.absorb(dr, elem)?;
+            }
+            let squeezed = sponge1.squeeze(dr)?;
+            direct_output.set(*squeezed.value().take());
+
+            // Save/resume path: absorb all → save → resume → squeeze
+            let mut sponge2 = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
+                dr,
+                Pasta::circuit_poseidon(params),
+            );
+            for elem in &elems {
+                sponge2.absorb(dr, elem)?;
+            }
+            let state = sponge2.save_state(dr).expect("save should succeed after absorb");
+            let mut resumed = Sponge::resume(state, Pasta::circuit_poseidon(params));
+            let squeezed = resumed.squeeze(dr)?;
+            resume_output.set(*squeezed.value().take());
+
+            Ok(())
+        });
+
+        assert!(result.is_ok(), "save/resume failed: {:?}", result.err());
+        assert_eq!(
+            direct_output.get(),
+            resume_output.get(),
+            "save/resume produced different output than direct squeeze"
         );
-
-        let elems: Vec<Element<'_, _>> = (0..absorb_values.len())
-            .map(|i| Element::alloc(dr, witness.as_ref().map(|v| v[i])))
-            .collect::<Result<_, _>>()?;
-
-        let mut absorb_idx = 0;
-        for &byte in data {
-            if byte < 0xF0 {
-                sponge.absorb(dr, &elems[absorb_idx])?;
-                absorb_idx += 1;
-            } else {
-                let squeezed = sponge.squeeze(dr)?;
-                if !got_squeeze2.get() {
-                    squeeze2.set(*squeezed.value().take());
-                    got_squeeze2.set(true);
-                }
-            }
-        }
-
-        if !got_squeeze2.get() {
-            let squeezed = sponge.squeeze(dr)?;
-            squeeze2.set(*squeezed.value().take());
-            got_squeeze2.set(true);
-        }
-
-        Ok(())
-    });
-
-    assert!(result2.is_ok());
-    assert_eq!(squeeze1.get(), squeeze2.get(), "Poseidon is not deterministic");
+    }
 });

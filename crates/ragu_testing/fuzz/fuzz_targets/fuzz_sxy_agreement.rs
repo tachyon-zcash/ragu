@@ -8,7 +8,6 @@
 #![no_main]
 
 use arbitrary::Arbitrary;
-use ff::Field;
 use libfuzzer_sys::fuzz_target;
 use pasta_curves::Fp;
 use ragu_circuits::{
