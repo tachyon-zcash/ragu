@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
