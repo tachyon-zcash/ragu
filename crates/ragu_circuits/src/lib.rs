@@ -28,7 +28,7 @@ mod s;
 pub mod staging;
 mod trivial;
 
-pub use metrics::{RoutineFingerprint, RoutineIdentity, SegmentRecord};
+pub use metrics::{DeepFingerprint, RoutineIdentity, SegmentRecord, ShallowFingerprint};
 pub use rx::Trace;
 
 #[cfg(test)]

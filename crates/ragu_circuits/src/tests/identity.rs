@@ -12,7 +12,7 @@ use ragu_primitives::{Element, Simulator};
 
 use crate::{
     Circuit,
-    metrics::{self, RoutineFingerprint, RoutineIdentity},
+    metrics::{self, DeepFingerprint, RoutineIdentity},
 };
 
 /// Canonical single-square routine.
@@ -1224,7 +1224,7 @@ impl Routine<Fp> for OneWireEnforcePair {
 
 fn fingerprint_triple(
     routine: &impl Routine<Fp, Input = Kind![Fp; (Element<'_, _>, (Element<'_, _>, Element<'_, _>))]>,
-) -> RoutineFingerprint {
+) -> DeepFingerprint {
     let sim = &mut Simulator::<Fp>::new();
     let a = Element::alloc(sim, Always::<Fp>::just(|| Fp::ONE)).unwrap();
     let b = Element::alloc(sim, Always::<Fp>::just(|| Fp::ONE)).unwrap();
@@ -1242,7 +1242,7 @@ fn fingerprint_quad(
         Fp,
         Input = Kind![Fp; ((Element<'_, _>, Element<'_, _>), (Element<'_, _>, Element<'_, _>))],
     >,
-) -> RoutineFingerprint {
+) -> DeepFingerprint {
     let sim = &mut Simulator::<Fp>::new();
     let a = Element::alloc(sim, Always::<Fp>::just(|| Fp::ONE)).unwrap();
     let b = Element::alloc(sim, Always::<Fp>::just(|| Fp::ONE)).unwrap();
@@ -1258,7 +1258,7 @@ fn fingerprint_quad(
 
 fn fingerprint_elem(
     routine: &impl Routine<Fp, Input = Kind![Fp; Element<'_, _>]>,
-) -> RoutineFingerprint {
+) -> DeepFingerprint {
     let mut sim = Simulator::<Fp>::new();
     let input = Element::alloc(&mut sim, Always::<Fp>::just(|| Fp::ONE)).unwrap();
     match metrics::tests::fingerprint_routine::<Fp, Simulator<Fp>, _>(routine, &input).unwrap() {
@@ -1267,7 +1267,7 @@ fn fingerprint_elem(
     }
 }
 
-fn fingerprint_unit(routine: &impl Routine<Fp, Input = Kind![Fp; ()]>) -> RoutineFingerprint {
+fn fingerprint_unit(routine: &impl Routine<Fp, Input = Kind![Fp; ()]>) -> DeepFingerprint {
     match metrics::tests::fingerprint_routine::<Fp, Simulator<Fp>, _>(routine, &()).unwrap() {
         RoutineIdentity::Routine(fp) => fp,
         RoutineIdentity::Root => panic!("expected Routine variant"),
@@ -1276,7 +1276,7 @@ fn fingerprint_unit(routine: &impl Routine<Fp, Input = Kind![Fp; ()]>) -> Routin
 
 fn fingerprint_pair(
     routine: &impl Routine<Fp, Input = Kind![Fp; (Element<'_, _>, Element<'_, _>)]>,
-) -> RoutineFingerprint {
+) -> DeepFingerprint {
     let sim = &mut Simulator::<Fp>::new();
     let a = Element::alloc(sim, Always::<Fp>::just(|| Fp::ONE)).unwrap();
     let b = Element::alloc(sim, Always::<Fp>::just(|| Fp::ONE)).unwrap();
@@ -1289,7 +1289,7 @@ fn fingerprint_pair(
 /// Extracts a routine's fingerprint via `metrics::eval`, which runs
 /// through `Counter::routine` (the production path that correctly clears
 /// `available_b` after input remapping).
-fn fingerprint_via_eval<Ro>(routine: &Ro) -> RoutineFingerprint
+fn fingerprint_via_eval<Ro>(routine: &Ro) -> DeepFingerprint
 where
     Ro: Routine<Fp, Input = Kind![Fp; Element<'_, _>], Output = Kind![Fp; Element<'_, _>]>
         + Clone
@@ -1485,12 +1485,15 @@ fn test_mixed_constraints() {
     assert_ne!(mixed, fingerprint_elem(&LinearOnly));
 }
 
-/// Pure delegation wrappers are nesting-depth-invariant; metrics produces correct segment count.
+/// Pure delegation wrappers share the same shallow fingerprint (same constraint
+/// shape) but differ in their deep fingerprint (different recursive subtree).
 #[test]
 fn test_triple_nesting() {
     let triple = fingerprint_elem(&TripleNesting);
-    assert_eq!(triple, fingerprint_elem(&PureNesting));
-    assert_ne!(triple, fingerprint_elem(&SquareOnce));
+    let single = fingerprint_elem(&PureNesting);
+    assert_eq!(triple.shallow(), single.shallow());
+    assert_ne!(triple.deep(), single.deep());
+    assert_ne!(triple.shallow(), fingerprint_elem(&SquareOnce).shallow());
 
     let metrics = metrics::eval(&SingleRoutineCircuit(TripleNesting)).unwrap();
     assert_eq!(metrics.segments.len(), 4);
@@ -1828,4 +1831,498 @@ fn test_typeid_one_wire_constraint() {
 
     assert_eq!(a.eval(), b.eval());
     assert_ne!(a, b);
+}
+
+mod proptest_fingerprint {
+    use super::*;
+    use crate::metrics::tests::deep_hash_wrapper;
+    use alloc::vec;
+    use alloc::vec::Vec;
+    use core::any::TypeId;
+    use proptest::prelude::*;
+
+    fn dhw(
+        input_kind: TypeId,
+        output_kind: TypeId,
+        eval: u64,
+        num_mul: usize,
+        num_lc: usize,
+        output_eval: u64,
+        children: &[u64],
+    ) -> u64 {
+        deep_hash_wrapper(
+            input_kind,
+            output_kind,
+            eval,
+            num_mul,
+            num_lc,
+            output_eval,
+            children,
+        )
+    }
+
+    fn tid_a() -> TypeId {
+        TypeId::of::<u8>()
+    }
+    fn tid_b() -> TypeId {
+        TypeId::of::<u16>()
+    }
+
+    fn fingerprint_square_n(n: usize) -> DeepFingerprint {
+        match n {
+            1 => fingerprint_elem(&SquareN::<1>),
+            2 => fingerprint_elem(&SquareN::<2>),
+            3 => fingerprint_elem(&SquareN::<3>),
+            4 => fingerprint_elem(&SquareN::<4>),
+            5 => fingerprint_elem(&SquareN::<5>),
+            6 => fingerprint_elem(&SquareN::<6>),
+            7 => fingerprint_elem(&SquareN::<7>),
+            8 => fingerprint_elem(&SquareN::<8>),
+            _ => unreachable!(),
+        }
+    }
+
+    proptest! {
+        // 1. deep_hash determinism
+        #[test]
+        fn deep_hash_determinism(
+            eval in any::<u64>(), num_mul in 0usize..100, num_lc in 0usize..100,
+            output_eval in any::<u64>(), children in prop::collection::vec(any::<u64>(), 0..8),
+        ) {
+            let a = dhw(tid_a(), tid_b(), eval, num_mul, num_lc, output_eval, &children);
+            let b = dhw(tid_a(), tid_b(), eval, num_mul, num_lc, output_eval, &children);
+            prop_assert_eq!(a, b);
+        }
+
+        // 2. deep_hash single-field sensitivity (6 fields)
+        #[test]
+        fn deep_hash_field_sensitivity(
+            eval in any::<u64>(), num_mul in 0usize..100, num_lc in 0usize..100,
+            output_eval in any::<u64>(), children in prop::collection::vec(any::<u64>(), 0..4),
+            alt_eval in any::<u64>(), alt_mul in 0usize..100, alt_lc in 0usize..100,
+            alt_oe in any::<u64>(),
+        ) {
+            let base = dhw(tid_a(), tid_b(), eval, num_mul, num_lc, output_eval, &children);
+            // input_kind
+            let v = dhw(tid_b(), tid_b(), eval, num_mul, num_lc, output_eval, &children);
+            prop_assert_ne!(base, v, "input_kind");
+            // output_kind
+            let v = dhw(tid_a(), tid_a(), eval, num_mul, num_lc, output_eval, &children);
+            prop_assert_ne!(base, v, "output_kind");
+            // eval
+            prop_assume!(eval != alt_eval);
+            let v = dhw(tid_a(), tid_b(), alt_eval, num_mul, num_lc, output_eval, &children);
+            prop_assert_ne!(base, v, "eval");
+            // num_mul
+            prop_assume!(num_mul != alt_mul);
+            let v = dhw(tid_a(), tid_b(), eval, alt_mul, num_lc, output_eval, &children);
+            prop_assert_ne!(base, v, "num_mul");
+            // num_lc
+            prop_assume!(num_lc != alt_lc);
+            let v = dhw(tid_a(), tid_b(), eval, num_mul, alt_lc, output_eval, &children);
+            prop_assert_ne!(base, v, "num_lc");
+            // output_eval
+            prop_assume!(output_eval != alt_oe);
+            let v = dhw(tid_a(), tid_b(), eval, num_mul, num_lc, alt_oe, &children);
+            prop_assert_ne!(base, v, "output_eval");
+        }
+
+        // 3. deep_hash child count discrimination
+        #[test]
+        fn deep_hash_child_count(
+            eval in any::<u64>(), output_eval in any::<u64>(),
+            base_children in prop::collection::vec(any::<u64>(), 1..8),
+        ) {
+            let full = dhw(tid_a(), tid_b(), eval, 0, 0, output_eval, &base_children);
+            let shorter = dhw(tid_a(), tid_b(), eval, 0, 0, output_eval, &base_children[..base_children.len() - 1]);
+            prop_assert_ne!(full, shorter, "different child counts must differ");
+        }
+
+        // 4. deep_hash child ordering (swap two)
+        #[test]
+        fn deep_hash_child_swap(
+            eval in any::<u64>(), output_eval in any::<u64>(),
+            children in prop::collection::vec(any::<u64>(), 2..8),
+            i in any::<prop::sample::Index>(), j in any::<prop::sample::Index>(),
+        ) {
+            let i = i.index(children.len());
+            let j = j.index(children.len());
+            prop_assume!(i != j && children[i] != children[j]);
+            let mut swapped = children.clone();
+            swapped.swap(i, j);
+            let a = dhw(tid_a(), tid_b(), eval, 0, 0, output_eval, &children);
+            let b = dhw(tid_a(), tid_b(), eval, 0, 0, output_eval, &swapped);
+            prop_assert_ne!(a, b, "swapping children must change hash");
+        }
+
+        // 5. deep_hash permutation sensitivity (shuffle)
+        #[test]
+        fn deep_hash_permutation(
+            eval in any::<u64>(), output_eval in any::<u64>(),
+            mut children in prop::collection::vec(any::<u64>(), 3..8),
+            seed in any::<u64>(),
+        ) {
+            let original = children.clone();
+            // Simple deterministic shuffle via seed
+            let n = children.len();
+            for k in 0..n {
+                let swap_idx = (seed.wrapping_mul(k as u64 + 1).wrapping_add(7)) as usize % n;
+                children.swap(k, swap_idx);
+            }
+            prop_assume!(children != original);
+            let a = dhw(tid_a(), tid_b(), eval, 0, 0, output_eval, &original);
+            let b = dhw(tid_a(), tid_b(), eval, 0, 0, output_eval, &children);
+            prop_assert_ne!(a, b, "permutation must change hash");
+        }
+
+        // 6. deep_hash framing: [0, x] vs [x]
+        #[test]
+        fn deep_hash_framing(
+            eval in any::<u64>(), output_eval in any::<u64>(),
+            x in any::<u64>(),
+        ) {
+            let a = dhw(tid_a(), tid_b(), eval, 0, 0, output_eval, &[0, x]);
+            let b = dhw(tid_a(), tid_b(), eval, 0, 0, output_eval, &[x]);
+            prop_assert_ne!(a, b, "length prefix prevents [0,x] vs [x] confusion");
+        }
+
+        // 7. SquareN sensitivity: N != M => different DeepFingerprint
+        #[test]
+        fn square_n_sensitivity(n in 1usize..=8, m in 1usize..=8) {
+            prop_assume!(n != m);
+            prop_assert_ne!(
+                fingerprint_square_n(n), fingerprint_square_n(m),
+                "SquareN<{}> vs SquareN<{}>", n, m
+            );
+        }
+
+        // 8. SquareN determinism
+        #[test]
+        fn square_n_determinism(n in 1usize..=8) {
+            prop_assert_eq!(fingerprint_square_n(n), fingerprint_square_n(n));
+        }
+    }
+
+    // 9. Shallow equality for pure delegation (no local constraints)
+    #[test]
+    fn shallow_eq_pure_delegation() {
+        let pure = fingerprint_elem(&PureNesting);
+        let triple = fingerprint_elem(&TripleNesting);
+        assert_eq!(pure.shallow(), triple.shallow());
+    }
+
+    // 10. Deep inequality for different nesting depths
+    #[test]
+    fn deep_ne_nesting_depths() {
+        let pure = fingerprint_elem(&PureNesting);
+        let triple = fingerprint_elem(&TripleNesting);
+        assert_ne!(pure.deep(), triple.deep());
+    }
+
+    // 11. TypeId discrimination in deep_hash
+    #[test]
+    fn typeid_discrimination_in_deep_hash() {
+        let a = dhw(tid_a(), tid_a(), 42, 1, 1, 99, &[]);
+        let b = dhw(tid_b(), tid_a(), 42, 1, 1, 99, &[]);
+        let c = dhw(tid_a(), tid_b(), 42, 1, 1, 99, &[]);
+        assert_ne!(
+            a, b,
+            "different input TypeId must produce different deep hash"
+        );
+        assert_ne!(
+            a, c,
+            "different output TypeId must produce different deep hash"
+        );
+        assert_ne!(b, c, "swapping TypeId positions must differ");
+    }
+
+    // 12. Zero children vs one child with deep hash 0
+    #[test]
+    fn deep_hash_zero_children_vs_one_zero_child() {
+        let a = dhw(tid_a(), tid_b(), 42, 1, 1, 99, &[]);
+        let b = dhw(tid_a(), tid_b(), 42, 1, 1, 99, &[0]);
+        assert_ne!(a, b, "zero children must differ from one child with hash 0");
+    }
+
+    // --- Interpreted routine for property-based topology testing ---
+    //
+    // An `Element → Element` routine parameterized by a `Vec<Op>`.
+    // Proptest generates random op sequences, exercising arbitrary
+    // constraint topologies that subsume many hand-written routines:
+    //
+    //   `[]`                                  ≡ Passthrough
+    //   `[Square]`                            ≡ SquareOnce / SquareOnceAlias / SquareN<1>
+    //   `[Square, Square]`                    ≡ SquareN<2>
+    //   `[EnforceAcc, EnforceAcc]`            ≡ LinearOnly
+    //   `[NestSquare]`                        ≡ PureNesting
+    //   `[NestDeep]`                          ≡ TripleNesting
+    //   `[NestSquare, Square]`                ≡ NestThenSquare
+    //   `[NestSquare, AddSelf]`               ≡ NestThenAdd
+    //   `[NestSquare, EnforceAcc]`            ≡ NestingWithExtra / DelegateThenEnforce
+    //   `[TrivialEnforce]`                    ≡ TrivialEnforce
+    //   `[EnforceAcc]`                        ≡ EnforceInput
+    //   `[OneWireEnforce]`                    ≡ OneWireEnforce
+    //   `[TrivialEnforce, TrivialEnforce, Square]` ≡ SquareOnceWithLeadingTrivial
+    //   `[EnforceAcc, EnforceAcc, EnforceAcc]`     ≡ TripleEnforceInput
+    //   `[AllocEnforce]`                      ≡ InternalEnforce
+    //   `[AllocReplace, AllocReplace]`         ≡ AllocOnly
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum Op {
+        /// `acc = acc.square(dr)` — 1 mul gate, 2 linear constraints.
+        Square,
+        /// `acc.enforce_zero(dr)` — 1 linear constraint referencing acc.
+        EnforceAcc,
+        /// `dr.enforce_zero(|lc| lc)` — 1 empty linear constraint.
+        TrivialEnforce,
+        /// `dr.enforce_zero(|lc| lc.add(&D::ONE))` — 1 LC referencing ONE.
+        OneWireEnforce,
+        /// `acc = Element::alloc(dr, ...)` — fresh wire, replaces acc.
+        AllocReplace,
+        /// Alloc a fresh wire and enforce it zero; acc unchanged.
+        AllocEnforce,
+        /// `acc = acc.add(dr, &acc)` — doubles acc, no constraint.
+        AddSelf,
+        /// `acc = dr.routine(SquareOnce, acc)` — one level of nesting.
+        NestSquare,
+        /// `acc = dr.routine(PureNesting, acc)` — two levels of nesting.
+        NestDeep,
+    }
+
+    #[derive(Clone)]
+    struct InterpretedRoutine(Vec<Op>);
+
+    impl Routine<Fp> for InterpretedRoutine {
+        type Input = Kind![Fp; Element<'_, _>];
+        type Output = Kind![Fp; Element<'_, _>];
+        type Aux<'dr> = ();
+
+        fn execute<'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            input: Bound<'dr, D, Self::Input>,
+            _aux: DriverValue<D, Self::Aux<'dr>>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            let mut acc = input;
+            for op in &self.0 {
+                match op {
+                    Op::Square => acc = acc.square(dr)?,
+                    Op::EnforceAcc => acc.enforce_zero(dr)?,
+                    Op::TrivialEnforce => dr.enforce_zero(|lc| lc)?,
+                    Op::OneWireEnforce => dr.enforce_zero(|lc| lc.add(&D::ONE))?,
+                    Op::AllocReplace => {
+                        acc = Element::alloc(dr, D::just(|| Fp::ZERO))?;
+                    }
+                    Op::AllocEnforce => {
+                        let fresh = Element::alloc(dr, D::just(|| Fp::ZERO))?;
+                        fresh.enforce_zero(dr)?;
+                    }
+                    Op::AddSelf => acc = acc.add(dr, &acc),
+                    Op::NestSquare => acc = dr.routine(SquareOnce, acc)?,
+                    Op::NestDeep => acc = dr.routine(PureNesting, acc)?,
+                }
+            }
+            Ok(acc)
+        }
+
+        fn predict<'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            _dr: &mut D,
+            _input: &Bound<'dr, D, Self::Input>,
+        ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>>
+        {
+            Ok(Prediction::Unknown(D::just(|| ())))
+        }
+    }
+
+    fn arb_op() -> impl Strategy<Value = Op> {
+        prop_oneof![
+            Just(Op::Square),
+            Just(Op::EnforceAcc),
+            Just(Op::TrivialEnforce),
+            Just(Op::OneWireEnforce),
+            Just(Op::AllocReplace),
+            Just(Op::AllocEnforce),
+            Just(Op::AddSelf),
+            Just(Op::NestSquare),
+            Just(Op::NestDeep),
+        ]
+    }
+
+    fn arb_ops() -> impl Strategy<Value = Vec<Op>> {
+        prop::collection::vec(arb_op(), 0..8)
+    }
+
+    proptest! {
+        /// Same ops always produce the same fingerprint.
+        #[test]
+        fn interpreted_determinism(ops in arb_ops()) {
+            let r = InterpretedRoutine(ops);
+            prop_assert_eq!(fingerprint_elem(&r), fingerprint_elem(&r));
+        }
+
+        /// `fingerprint_routine` (standalone) and `fingerprint_via_eval`
+        /// (production path through `Counter::routine`) agree.
+        #[test]
+        fn interpreted_cross_path(ops in arb_ops()) {
+            let r = InterpretedRoutine(ops);
+            prop_assert_eq!(
+                fingerprint_elem(&r),
+                fingerprint_via_eval(&r),
+                "cross-path mismatch"
+            );
+        }
+
+        /// Appending any op to a sequence changes the fingerprint.
+        #[test]
+        fn interpreted_append_sensitivity(
+            ops in arb_ops(),
+            extra in arb_op(),
+        ) {
+            let mut extended = ops.clone();
+            extended.push(extra);
+            let a = fingerprint_elem(&InterpretedRoutine(ops));
+            let b = fingerprint_elem(&InterpretedRoutine(extended));
+            prop_assert_ne!(a, b, "appending an op should change fingerprint");
+        }
+
+        /// Swapping two enforce_zero ops that produce different LC values
+        /// (EnforceAcc references a wire; TrivialEnforce contributes zero)
+        /// changes the eval scalar even though constraint counts are
+        /// identical.  Tests Horner order sensitivity (Schwartz–Zippel).
+        #[test]
+        fn interpreted_enforce_order_sensitivity(prefix in arb_ops()) {
+            let mut ab = prefix.clone();
+            ab.push(Op::EnforceAcc);
+            ab.push(Op::TrivialEnforce);
+
+            let mut ba = prefix;
+            ba.push(Op::TrivialEnforce);
+            ba.push(Op::EnforceAcc);
+
+            let fp_ab = fingerprint_elem(&InterpretedRoutine(ab));
+            let fp_ba = fingerprint_elem(&InterpretedRoutine(ba));
+
+            // Same ops reordered ⇒ identical constraint counts, but the
+            // Horner accumulation is order-sensitive: different LC values
+            // land at different powers of y, producing distinct evals.
+            prop_assert_ne!(fp_ab.eval(), fp_ba.eval(),
+                "swapped enforce ops should produce different eval scalars");
+        }
+
+        /// Appending NestSquare vs NestDeep to any prefix yields the same
+        /// shallow fingerprint (both add zero local constraints) but
+        /// different deep fingerprints (different child subtree hashes).
+        #[test]
+        fn interpreted_nesting_depth_discrimination(prefix in arb_ops()) {
+            let mut with_shallow = prefix.clone();
+            with_shallow.push(Op::NestSquare);
+
+            let mut with_deep = prefix;
+            with_deep.push(Op::NestDeep);
+
+            let fp_s = fingerprint_elem(&InterpretedRoutine(with_shallow));
+            let fp_d = fingerprint_elem(&InterpretedRoutine(with_deep));
+
+            prop_assert_eq!(fp_s.shallow(), fp_d.shallow(),
+                "NestSquare and NestDeep should have identical shallow fingerprints");
+            prop_assert_ne!(fp_s.deep(), fp_d.deep(),
+                "NestSquare and NestDeep should have different deep hashes");
+        }
+    }
+
+    /// NestSquare and NestDeep are both pure delegation wrappers: same
+    /// shallow fingerprint (zero local constraints) but different deep
+    /// fingerprints (different recursive subtree).
+    #[test]
+    fn interpreted_shallow_vs_deep() {
+        let one_level = fingerprint_elem(&InterpretedRoutine(vec![Op::NestSquare]));
+        let two_level = fingerprint_elem(&InterpretedRoutine(vec![Op::NestDeep]));
+        assert_eq!(one_level.shallow(), two_level.shallow());
+        assert_ne!(one_level.deep(), two_level.deep());
+    }
+
+    /// `[]` and `[AddSelf]` share the same eval, num_mul, and num_lc
+    /// (AddSelf adds no constraints) but differ in `output_eval`
+    /// (the output wire is doubled). Proves `output_eval` is
+    /// load-bearing in the fingerprint.
+    #[test]
+    fn output_eval_is_load_bearing() {
+        let passthrough = fingerprint_elem(&InterpretedRoutine(vec![]));
+        let doubled = fingerprint_elem(&InterpretedRoutine(vec![Op::AddSelf]));
+        assert_eq!(passthrough.shallow(), doubled.shallow());
+        assert_ne!(passthrough.output_eval(), doubled.output_eval());
+        assert_ne!(passthrough, doubled);
+    }
+
+    /// Interpreted op sequences reproduce the fingerprints of their
+    /// hand-written equivalents, confirming both encodings describe
+    /// the same constraint topology.
+    #[test]
+    fn interpreted_matches_handwritten() {
+        let cases: Vec<(Vec<Op>, DeepFingerprint)> = vec![
+            (vec![], fingerprint_elem(&Passthrough)),
+            (vec![Op::Square], fingerprint_elem(&SquareOnce)),
+            (vec![Op::Square], fingerprint_elem(&SquareOnceAlias)),
+            (vec![Op::Square], fingerprint_elem(&SquareN::<1>)),
+            (
+                vec![Op::Square, Op::Square],
+                fingerprint_elem(&SquareN::<2>),
+            ),
+            (
+                vec![Op::Square, Op::Square, Op::Square],
+                fingerprint_elem(&SquareN::<3>),
+            ),
+            (
+                vec![Op::EnforceAcc, Op::EnforceAcc],
+                fingerprint_elem(&LinearOnly),
+            ),
+            (vec![Op::NestSquare], fingerprint_elem(&PureNesting)),
+            (vec![Op::NestDeep], fingerprint_elem(&TripleNesting)),
+            (
+                vec![Op::NestSquare, Op::Square],
+                fingerprint_elem(&NestThenSquare),
+            ),
+            (
+                vec![Op::NestSquare, Op::AddSelf],
+                fingerprint_elem(&NestThenAdd),
+            ),
+            (
+                vec![Op::NestSquare, Op::EnforceAcc],
+                fingerprint_elem(&NestingWithExtra),
+            ),
+            (
+                vec![Op::NestSquare, Op::EnforceAcc],
+                fingerprint_elem(&DelegateThenEnforce),
+            ),
+            (vec![Op::TrivialEnforce], fingerprint_elem(&TrivialEnforce)),
+            (vec![Op::EnforceAcc], fingerprint_elem(&EnforceInput)),
+            (vec![Op::OneWireEnforce], fingerprint_elem(&OneWireEnforce)),
+            (
+                vec![Op::TrivialEnforce, Op::TrivialEnforce, Op::Square],
+                fingerprint_elem(&SquareOnceWithLeadingTrivial),
+            ),
+            (
+                vec![Op::EnforceAcc, Op::EnforceAcc, Op::EnforceAcc],
+                fingerprint_elem(&TripleEnforceInput),
+            ),
+            (vec![Op::AllocEnforce], fingerprint_elem(&InternalEnforce)),
+            (
+                vec![Op::AllocReplace, Op::AllocReplace],
+                fingerprint_elem(&AllocOnly),
+            ),
+            (
+                vec![Op::AllocReplace, Op::AllocReplace, Op::EnforceAcc],
+                fingerprint_elem(&AllocThenEnforce),
+            ),
+        ];
+        for (ops, expected) in cases {
+            assert_eq!(
+                fingerprint_elem(&InterpretedRoutine(ops.clone())),
+                expected,
+                "mismatch for ops {:?}",
+                ops,
+            );
+        }
+    }
 }
