@@ -11,9 +11,22 @@
 
 use arbitrary::Arbitrary;
 use core::cell::Cell;
-use ff::Field;
+use ff::{Field, PrimeField};
 use libfuzzer_sys::fuzz_target;
 use pasta_curves::Fp;
+
+fn special_value(idx: u8) -> Fp {
+    match idx % 8 {
+        0 => Fp::ZERO,
+        1 => Fp::ONE,
+        2 => -Fp::ONE,
+        3 => Fp::TWO_INV,
+        4 => Fp::ROOT_OF_UNITY,
+        5 => Fp::MULTIPLICATIVE_GENERATOR,
+        6 => Fp::ROOT_OF_UNITY.square(),
+        _ => Fp::from(u64::MAX),
+    }
+}
 use ragu_arithmetic::{Cycle, PoseidonPermutation};
 use ragu_core::maybe::Maybe;
 use ragu_pasta::Pasta;
@@ -127,6 +140,7 @@ impl<'a, P: PoseidonPermutation<Fp>> NativeSponge<'a, P> {
 enum Op {
     Absorb(u64),
     AbsorbLarge([u64; 4]),
+    AbsorbSpecial(u8),
     Squeeze,
 }
 
@@ -144,6 +158,7 @@ fn op_value(op: &Op) -> Option<Fp> {
                 + Fp::from(limbs[2]) * Fp::from(1u64 << 48)
                 + Fp::from(limbs[3]) * Fp::from(1u64 << 56),
         ),
+        Op::AbsorbSpecial(idx) => Some(special_value(*idx)),
         Op::Squeeze => None,
     }
 }
@@ -153,7 +168,7 @@ fuzz_target!(|input: Input| {
         return;
     }
 
-    let has_absorb = input.ops.iter().any(|op| matches!(op, Op::Absorb(_) | Op::AbsorbLarge(_)));
+    let has_absorb = input.ops.iter().any(|op| !matches!(op, Op::Squeeze));
     if !has_absorb {
         return;
     }
@@ -195,7 +210,7 @@ fuzz_target!(|input: Input| {
         let mut squeeze_idx = 0;
         for op in &input.ops {
             match op {
-                Op::Absorb(_) | Op::AbsorbLarge(_) => {
+                Op::Absorb(_) | Op::AbsorbLarge(_) | Op::AbsorbSpecial(_) => {
                     sponge.absorb(dr, &elems[absorb_idx])?;
                     absorb_idx += 1;
                 }
