@@ -14,10 +14,10 @@ extern crate std;
 mod circuits;
 mod components;
 mod fuse;
+pub mod fuzz_utils;
 pub mod header;
 mod proof;
 pub mod step;
-pub mod test_utils;
 mod verify;
 
 use ragu_arithmetic::Cycle;

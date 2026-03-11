@@ -1,19 +1,7 @@
-//! Fuzz the folding-revdot invariant using structured polynomials.
-//!
-//! The core accumulation identity: for polynomials folded by a scale factor,
-//!
-//!   fold(lhs, s).revdot(fold(rhs, s))
-//!     == sum_i sum_j (s^i * s^j * lhs[i].revdot(rhs[j]))
-//!     == sum_i (s^{2i} * ky[i]) + sum_{i≠j} (s^{i+j} * error[i,j])
-//!
-//! This fuzzer verifies the first part: that folding then revdotting
-//! equals the Horner-evaluated linear combination of all pairwise revdots.
-//! It exercises sparse polynomials with varying vector lengths and partial
-//! chunk sizes.
+//! Fuzz the folding-revdot identity for structured polynomials.
 //!
 //! Invariant:
-//!   Polynomial::fold(lhs, s).revdot(&Polynomial::fold(rhs, t))
-//!   == sum_{i,j} s^i * t^j * lhs[i].revdot(&rhs[j])
+//!   `fold(lhs, s).revdot(&fold(rhs, t)) == sum_{i,j} s^i * t^j * lhs[i].revdot(&rhs[j])`
 
 #![no_main]
 
@@ -25,13 +13,9 @@ use ragu_circuits::polynomials::{TestRank, Rank, structured::Polynomial};
 
 #[derive(Arbitrary, Debug)]
 struct Input {
-    /// Number of polynomial pairs (clamped to 1..=8)
     count: u8,
-    /// Per-polynomial vector lengths (u, v, w, d)
     lens: Vec<[u8; 4]>,
-    /// Coefficient seeds
     coeffs: Vec<u64>,
-    /// Folding challenge seeds
     s_seed: u64,
     t_seed: u64,
 }

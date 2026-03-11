@@ -1,7 +1,4 @@
-//! Test utilities for proof corruption, gated behind the `test-utils` feature.
-//!
-//! Provides controlled mutation of [`Proof`] internals for fuzz-testing the
-//! verifier. Each [`Corruption`] variant targets a specific verification check.
+//! Proof corruption utilities for fuzz-testing the verifier.
 
 use ff::Field;
 use ragu_arithmetic::Cycle;
@@ -9,10 +6,9 @@ use ragu_circuits::{polynomials::Rank, registry::CircuitIndex};
 
 use crate::{Application, Proof};
 
-/// A targeted corruption of a proof field.
+/// Targeted corruption of a single proof field.
 ///
-/// Each variant modifies a single field that a specific verification check
-/// depends on, allowing fuzz targets to exercise every rejection path.
+/// Each variant breaks a specific verification check.
 pub enum Corruption<F> {
     /// Overwrite `p.blind`, breaking the P commitment check.
     PBlind(F),

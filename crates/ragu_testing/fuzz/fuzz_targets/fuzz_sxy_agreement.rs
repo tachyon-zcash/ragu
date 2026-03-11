@@ -1,16 +1,9 @@
 //! Fuzz three-way s(X,Y) polynomial agreement.
 //!
-//! Three completely independent Driver implementations evaluate the same
-//! circuit's wiring polynomial:
-//!   - sxy::eval  → scalar s(x, y)
-//!   - sx::eval   → unstructured polynomial s(x, Y), then eval at y
-//!   - sy::eval   → structured polynomial s(X, y), then eval at x
+//! Three independent evaluators compute the same circuit's wiring polynomial:
+//! `sxy` (scalar), `sx` (unstructured), and `sy` (structured).
 //!
-//! Each uses a different wire representation and accumulation strategy.
-//! The sy evaluator uses RefCell-based virtual wires with a free list.
-//! All three must agree for any circuit shape and any evaluation point.
-//!
-//! Invariant: sxy(x, y) == sx(x).eval(y) == sy(y).eval(x)
+//! Invariant: `sxy(x, y) == sx(x).eval(y) == sy(y).eval(x)`
 
 #![no_main]
 
@@ -28,12 +21,9 @@ use ragu_testing::circuits::SquareCircuit;
 
 #[derive(Arbitrary, Debug)]
 struct Input {
-    /// Number of squarings (clamped to 1..=120 to stay within TestRank)
     times: u8,
-    /// Evaluation point seeds
     x_seed: u64,
     y_seed: u64,
-    /// Registry key seed
     key_seed: u64,
 }
 

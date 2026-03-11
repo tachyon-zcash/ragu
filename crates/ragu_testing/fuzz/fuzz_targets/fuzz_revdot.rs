@@ -1,12 +1,7 @@
-//! Fuzz structured polynomial revdot against unstructured dot product.
+//! Fuzz structured polynomial `revdot` against naive unstructured dot product.
 //!
-//! The structured `revdot` (structured.rs:124) pairs (u,v), (v,u), (w,d),
-//! (d,w) vectors via `zip` — which silently truncates when vectors have
-//! mismatched lengths. This fuzzer exercises the full combinatorial space
-//! of independent (u,v,w,d) lengths to verify the structured shortcut
-//! always agrees with the naive unstructured computation.
-//!
-//! Invariant: poly1.revdot(&poly2) == dot(poly1.unstructured(), reverse(poly2.unstructured()))
+//! Invariant: `p1.revdot(&p2) == dot(p1.unstructured(), rev(p2.unstructured()))`
+//! for all independent (u, v, w, d) vector lengths.
 
 #![no_main]
 
@@ -16,14 +11,10 @@ use libfuzzer_sys::fuzz_target;
 use pasta_curves::Fp;
 use ragu_circuits::polynomials::{TestRank, Rank, structured::Polynomial};
 
-/// Input: two polynomials with independently sized (u,v,w,d) vectors.
 #[derive(Arbitrary, Debug)]
 struct Input {
-    /// Length of each vector for poly1 (clamped to R::n())
     p1_lens: [u8; 4],
-    /// Length of each vector for poly2 (clamped to R::n())
     p2_lens: [u8; 4],
-    /// Seed values for coefficients
     coeffs: Vec<u64>,
 }
 

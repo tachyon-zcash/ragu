@@ -1,13 +1,7 @@
-//! Fuzz arbitrary Element operation sequences through the Simulator.
+//! Fuzz arbitrary `Element` operation sequences through the `Simulator`.
 //!
-//! The Simulator checks `a * b == c` for every multiplication constraint
-//! and `lc == 0` for every linear constraint. Feeding arbitrary witness
-//! values through random operation sequences stress-tests the constraint
-//! generation code in element.rs: mul, square, invert, div_nonzero,
-//! is_zero, fold.
-//!
-//! Invariant: for valid witness values, the Simulator must never return
-//! Err (except for expected cases like inverting zero). No panics.
+//! Invariant: for valid witness values, the `Simulator` never returns
+//! `Err` (except expected cases like inverting zero) and never panics.
 
 #![no_main]
 

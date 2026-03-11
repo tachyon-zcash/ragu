@@ -1,12 +1,9 @@
 //! Fuzz the verifier with corrupted proofs.
 //!
-//! Creates a valid trivial proof once at startup, then applies fuzzer-chosen
-//! corruptions and asserts `verify()` never panics. Each [`Corruption`] variant
-//! targets a different verification check (commitment, evaluation, revdot
-//! claims, registry lookup, header size).
+//! Applies fuzzer-chosen [`Corruption`] variants to a valid trivial proof.
 //!
-//! Invariant: `verify()` must never panic regardless of proof contents.
-//! Corrupted proofs must be rejected (`Ok(false)`) or produce `Err`.
+//! Invariant: `verify()` never panics. Corrupted proofs are rejected
+//! (`Ok(false)`) or produce `Err`.
 
 #![no_main]
 
@@ -15,7 +12,7 @@ use libfuzzer_sys::fuzz_target;
 use pasta_curves::Fp;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_pasta::Pasta;
-use ragu_pcd::{ApplicationBuilder, test_utils::Corruption};
+use ragu_pcd::{ApplicationBuilder, fuzz_utils::Corruption};
 use rand::{SeedableRng, rngs::StdRng};
 
 use std::sync::LazyLock;

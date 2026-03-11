@@ -1,14 +1,9 @@
 //! Fuzz endoscalar extract/lift roundtrip.
 //!
-//! The endoscalar extraction (ragu_primitives::endoscalar) checks quadratic
-//! residuosity of `value + i` for each bit position — the `expect("should
-//! produce a square if the other didn't")` at line 101 is a correctness
-//! assumption we want to stress-test.
-//!
-//! Invariants checked:
-//! - extract_endoscalar never panics for any valid field element
-//! - lift_endoscalar(extract_endoscalar(r)) is deterministic
-//! - In-circuit lift agrees with native lift_endoscalar
+//! Invariants:
+//! - `extract_endoscalar` never panics for any valid field element.
+//! - `lift_endoscalar(extract_endoscalar(r))` is deterministic.
+//! - In-circuit lift agrees with native `lift_endoscalar`.
 
 #![no_main]
 

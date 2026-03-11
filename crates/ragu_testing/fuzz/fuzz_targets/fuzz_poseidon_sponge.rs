@@ -1,15 +1,8 @@
-//! Fuzz the Poseidon sponge's absorb/squeeze mode transitions.
+//! Fuzz Poseidon sponge absorb/squeeze mode transitions.
 //!
-//! Exercises arbitrary interleaving of absorb and squeeze operations,
-//! including multi-rate absorption (triggering internal permutations)
-//! and save/resume consistency. The Poseidon permutation (Hades
-//! construction with full/partial rounds, sbox, MDS mixing) is Ragu's
-//! own code — this is the core of Fiat-Shamir soundness.
-//!
-//! Invariants checked:
-//! - No panics on any absorb/squeeze interleaving
-//! - Determinism: same input sequence always produces the same squeeze output
-//! - Save/resume produces the same squeeze as a straight-through sponge
+//! Invariants:
+//! - No panics on any absorb/squeeze interleaving.
+//! - Determinism: identical input sequences produce identical squeeze output.
 
 #![no_main]
 
@@ -23,11 +16,7 @@ use ragu_pasta::Pasta;
 use ragu_primitives::poseidon::Sponge;
 use ragu_primitives::{Element, Simulator};
 
-/// Decode a sequence of sponge operations from raw bytes.
-///
-/// Format: each byte is an operation.
-///   - 0x00..=0xEF: absorb Fp::from(byte as u64)
-///   - 0xF0..=0xFF: squeeze (value ignored)
+/// A sequence of sponge operations decoded from raw bytes.
 struct Ops<'a> {
     data: &'a [u8],
 }
