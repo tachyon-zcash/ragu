@@ -21,7 +21,7 @@ ragu_primitives = { path = "../../ragu_primitives" }
 ragu_pasta = { path = "../../ragu_pasta", features = ["baked"] }
 ragu_core = { path = "../../ragu_core" }
 ragu_circuits = { path = "../../ragu_circuits" }
-ragu_pcd = { path = "../../ragu_pcd", features = ["test-utils"] }
+ragu_pcd = { path = "../../ragu_pcd" }
 rand = "0.10"
 
 [patch.crates-io]

@@ -29,7 +29,6 @@ all-features = true
 default = []
 multicore = ["maybe-rayon/threads", "ragu_arithmetic/multicore", "ragu_circuits/multicore", "std"]
 std = []
-test-utils = []
 
 [lib]
 bench = false

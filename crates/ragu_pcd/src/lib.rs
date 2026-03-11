@@ -17,7 +17,6 @@ mod fuse;
 pub mod header;
 mod proof;
 pub mod step;
-#[cfg(feature = "test-utils")]
 pub mod test_utils;
 mod verify;
 
