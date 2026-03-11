@@ -180,10 +180,11 @@ pub fn batch_to_affine<C: CurveAffine, const N: usize>(projectives: [C::Curve; N
 /// When the `multicore` feature is enabled, window computation is parallelized
 /// using rayon.
 ///
-/// # Panics
+/// # Correctness
 ///
-/// Behavior is unspecified if `coeffs` and `bases` yield different numbers of
-/// elements. The function may silently produce an incorrect result or panic.
+/// The caller must ensure that `coeffs` and `bases` yield the same number of
+/// elements. If they differ, the shorter iterator silently wins (via `zip`)
+/// and the result will be incorrect.
 pub fn mul<
     'a,
     C: CurveAffine,
