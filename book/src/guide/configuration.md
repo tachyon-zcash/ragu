@@ -254,12 +254,12 @@ You can build different applications with different parameters:
 
 ```rust
 // Small, fast application for testing
-let test_app = ApplicationBuilder::<Pasta, R<7>, 1>::new()
+let test_app = ApplicationBuilder::<Pasta, TestRank, 1>::new()
     .register(small_step)?
     .finalize(pasta)?;
 
 // Production application
-let prod_app = ApplicationBuilder::<Pasta, R<13>, 8>::new()
+let prod_app = ApplicationBuilder::<Pasta, ProductionRank, 8>::new()
     .register(complex_step)?
     .finalize(pasta)?;
 ```
