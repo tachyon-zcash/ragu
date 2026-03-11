@@ -26,6 +26,7 @@ enum Op {
     DivNonzero(u8, u8),
     Scale(u8, u64),
     Fold(u8, u8, u64),
+    AllocConst(u64),
     AllocSquare(u64),
     BoolAlloc(bool),
     BoolNot(u8),
@@ -37,6 +38,8 @@ enum Op {
 struct Input {
     seeds: [u64; 4],
     large_seeds: [[u64; 4]; 2],
+    /// Bitmask: if bit i is set, seed i is allocated as a constant instead of witness.
+    constant_mask: u8,
     ops: Vec<Op>,
 }
 
@@ -56,7 +59,13 @@ fuzz_target!(|input: Input| {
 
     let _ = Simulator::<Fp>::simulate(fes.clone(), |dr, witness| {
         let mut elems: Vec<Element<'_, _>> = (0..fes.len())
-            .map(|i| Element::alloc(dr, witness.as_ref().map(|v| v[i])))
+            .map(|i| {
+                if input.constant_mask & (1 << (i % 8)) != 0 {
+                    Ok(Element::constant(dr, fes[i]))
+                } else {
+                    Element::alloc(dr, witness.as_ref().map(|v| v[i]))
+                }
+            })
             .collect::<Result<_, _>>()?;
         let mut bools: Vec<Boolean<'_, _>> = Vec::new();
 
@@ -127,6 +136,10 @@ fuzz_target!(|input: Input| {
                     if let Ok(r) = Element::fold(dr, [&elems[a], &elems[b]], &scale) {
                         elems.push(r);
                     }
+                }
+                Op::AllocConst(v) => {
+                    let r = Element::constant(dr, Fp::from(v));
+                    elems.push(r);
                 }
                 Op::AllocSquare(v) => {
                     if let Ok((root, sq)) = Element::alloc_square(
