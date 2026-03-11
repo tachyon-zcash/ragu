@@ -19,6 +19,7 @@ TARGETS=(
   fuzz_revdot
   fuzz_fold_revdot
   fuzz_sxy_agreement
+  fuzz_poseidon_differential
   fuzz_verify_reject
 )
 

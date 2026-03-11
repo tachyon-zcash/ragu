@@ -78,6 +78,14 @@ test = false
 doc = false
 bench = false
 
+# Poseidon differential: circuit sponge vs native reference implementation
+[[bin]]
+name = "fuzz_poseidon_differential"
+path = "fuzz_targets/fuzz_poseidon_differential.rs"
+test = false
+doc = false
+bench = false
+
 # Verifier rejection: corrupted proofs must never panic, must be rejected
 [[bin]]
 name = "fuzz_verify_reject"
