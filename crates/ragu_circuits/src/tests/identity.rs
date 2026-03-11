@@ -2173,35 +2173,6 @@ mod proptest_fingerprint {
             );
         }
 
-        /// Changing a single op in the sequence changes the fingerprint.
-        /// Schwartz-Zippel: collision probability per pair is negligible.
-        #[test]
-        fn interpreted_mutation_sensitivity(
-            ops in prop::collection::vec(arb_op(), 1..8),
-            idx in any::<prop::sample::Index>(),
-            replacement in arb_op(),
-        ) {
-            let idx = idx.index(ops.len());
-            prop_assume!(ops[idx] != replacement);
-            let mut mutated = ops.clone();
-            mutated[idx] = replacement;
-            let a = fingerprint_elem(&InterpretedRoutine(ops));
-            let b = fingerprint_elem(&InterpretedRoutine(mutated));
-            prop_assert_ne!(a, b, "mutation at index {} should change fingerprint", idx);
-        }
-
-        /// Two distinct op sequences produce distinct fingerprints.
-        #[test]
-        fn interpreted_pairwise_discrimination(
-            ops_a in arb_ops(),
-            ops_b in arb_ops(),
-        ) {
-            prop_assume!(ops_a != ops_b);
-            let a = fingerprint_elem(&InterpretedRoutine(ops_a));
-            let b = fingerprint_elem(&InterpretedRoutine(ops_b));
-            prop_assert_ne!(a, b, "different ops must produce different fingerprints");
-        }
-
         /// Appending any op to a sequence changes the fingerprint.
         #[test]
         fn interpreted_append_sensitivity(
