@@ -7,11 +7,26 @@
 #![no_main]
 
 use arbitrary::Arbitrary;
+use ff::Field;
+use ff::PrimeField;
 use libfuzzer_sys::fuzz_target;
 use pasta_curves::Fp;
 use ragu_arithmetic::Coeff;
 use ragu_core::maybe::Maybe;
 use ragu_primitives::{Boolean, Element, Simulator};
+
+fn special_value(idx: u8) -> Fp {
+    match idx % 8 {
+        0 => Fp::ZERO,
+        1 => Fp::ONE,
+        2 => -Fp::ONE,                          // p - 1
+        3 => Fp::TWO_INV,                        // (p + 1) / 2
+        4 => Fp::ROOT_OF_UNITY,                  // 2-adic root of unity
+        5 => Fp::MULTIPLICATIVE_GENERATOR,       // smallest generator
+        6 => Fp::ROOT_OF_UNITY.square(),          // another root of unity
+        _ => Fp::from(u64::MAX),                   // large value near 2^64
+    }
+}
 
 #[derive(Arbitrary, Debug)]
 enum Op {
@@ -27,6 +42,7 @@ enum Op {
     Scale(u8, u64),
     Fold(u8, u8, u64),
     AllocConst(u64),
+    AllocSpecial(u8),
     AllocSquare(u64),
     BoolAlloc(bool),
     BoolNot(u8),
@@ -38,6 +54,8 @@ enum Op {
 struct Input {
     seeds: [u64; 4],
     large_seeds: [[u64; 4]; 2],
+    /// Indices into `special_value()` for 2 extra initial elements.
+    special_seeds: [u8; 2],
     /// Bitmask: if bit i is set, seed i is allocated as a constant instead of witness.
     constant_mask: u8,
     ops: Vec<Op>,
@@ -55,6 +73,9 @@ fuzz_target!(|input: Input| {
             + Fp::from(ls[2]) * Fp::from(1u64 << 48)
             + Fp::from(ls[3]) * Fp::from(1u64 << 56);
         fes.push(val);
+    }
+    for ss in &input.special_seeds {
+        fes.push(special_value(*ss));
     }
 
     let _ = Simulator::<Fp>::simulate(fes.clone(), |dr, witness| {
@@ -139,6 +160,11 @@ fuzz_target!(|input: Input| {
                 }
                 Op::AllocConst(v) => {
                     let r = Element::constant(dr, Fp::from(v));
+                    elems.push(r);
+                }
+                Op::AllocSpecial(idx) => {
+                    let v = special_value(idx);
+                    let r = Element::alloc(dr, witness.as_ref().map(|_| v))?;
                     elems.push(r);
                 }
                 Op::AllocSquare(v) => {
