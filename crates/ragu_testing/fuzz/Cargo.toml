@@ -21,7 +21,8 @@ ragu_primitives = { path = "../../ragu_primitives" }
 ragu_pasta = { path = "../../ragu_pasta", features = ["baked"] }
 ragu_core = { path = "../../ragu_core" }
 ragu_circuits = { path = "../../ragu_circuits" }
-ragu_pcd = { path = "../../ragu_pcd" }
+ragu_pcd = { path = "../../ragu_pcd", features = ["test-utils"] }
+rand = "0.10"
 
 [patch.crates-io]
 addchain = { git = "https://github.com/ebfull/addchain", rev = "da4099a81bc29c895f3ca0ebcaae21c860494c12" }
@@ -73,6 +74,14 @@ bench = false
 [[bin]]
 name = "fuzz_sxy_agreement"
 path = "fuzz_targets/fuzz_sxy_agreement.rs"
+test = false
+doc = false
+bench = false
+
+# Verifier rejection: corrupted proofs must never panic, must be rejected
+[[bin]]
+name = "fuzz_verify_reject"
+path = "fuzz_targets/fuzz_verify_reject.rs"
 test = false
 doc = false
 bench = false

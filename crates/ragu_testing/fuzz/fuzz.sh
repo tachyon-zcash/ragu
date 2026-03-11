@@ -2,9 +2,9 @@
 # Run all fuzz targets. Defaults to 5 minutes each, sequential.
 #
 # Usage:
-#   ./run_all.sh              # 5 min each, sequential
-#   ./run_all.sh 60           # 1 min each, sequential
-#   ./run_all.sh 300 -j       # 5 min each, parallel
+#   ./fuzz.sh              # 5 min each, sequential
+#   ./fuzz.sh 60           # 1 min each, sequential
+#   ./fuzz.sh 300 -j       # 5 min each, parallel
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -19,6 +19,7 @@ TARGETS=(
   fuzz_revdot
   fuzz_fold_revdot
   fuzz_sxy_agreement
+  fuzz_verify_reject
 )
 
 run_target() {
