@@ -336,3 +336,193 @@ fn test_zero_product_simulator() {
     });
     assert!(result.is_err());
 }
+
+/// Routine that uses `alloc_zero_product` internally, exercising scope
+/// save/restore for `current_d` and `current_d_x`.
+#[derive(Clone)]
+struct ZeroProductRoutine;
+
+impl Routine<Fp> for ZeroProductRoutine {
+    type Input = Kind![Fp; Element<'_, _>];
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'dr> = Fp;
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        input: Bound<'dr, D, Self::Input>,
+        aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        let (a, _b, d) =
+            Element::alloc_zero_product(dr, input.value().map(|v| *v), D::just(|| Fp::ZERO), aux)?;
+        dr.enforce_equal(a.wire(), input.wire())?;
+        Ok(a.add(dr, &d))
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        _input: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::just(|| Fp::from(100u64))))
+    }
+}
+
+/// Circuit that calls `alloc_zero_product` inside a routine, testing scope
+/// save/restore across routine boundaries.
+struct ZeroProductRoutineCircuit;
+
+impl Circuit<Fp> for ZeroProductRoutineCircuit {
+    type Instance<'instance> = Fp;
+    type Output = Kind![Fp; Element<'_, _>];
+    type Witness<'witness> = (Fp, Fp);
+    type Aux<'witness> = ();
+
+    fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        instance: DriverValue<D, Self::Instance<'instance>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Element::alloc(dr, instance)
+    }
+
+    fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'witness>>,
+    ) -> Result<(
+        Bound<'dr, D, Self::Output>,
+        DriverValue<D, Self::Aux<'witness>>,
+    )> {
+        let input = Element::alloc(dr, witness.as_ref().map(|w| w.0))?;
+        let result = dr.routine(ZeroProductRoutine, input)?;
+        Ok((result, D::unit()))
+    }
+}
+
+#[test]
+fn test_zero_product_in_routine() {
+    type MyRank = TestRank;
+
+    let x_val = Fp::from(11u64);
+    let d_val = Fp::from(100u64);
+
+    let circuit1 = ZeroProductRoutineCircuit;
+    let (trace, _) = circuit1.rx((x_val, d_val)).unwrap();
+    let assignment = trace.assemble_trivial::<MyRank>().unwrap();
+
+    let circuit2 = ZeroProductRoutineCircuit;
+    let circuit = circuit2.into_object::<MyRank>().unwrap();
+
+    consistency_checks(&*circuit);
+
+    let y = Fp::random(&mut rand::rng());
+    let z = Fp::random(&mut rand::rng());
+    let k = registry::Key::default();
+    let floor_plan = crate::floor_planner::floor_plan(circuit.segment_records());
+
+    let a = assignment.clone();
+    let mut b = assignment.clone();
+    b.dilate(z);
+    b.add_assign(&circuit.sy(y, &k, &floor_plan));
+    b.add_assign(&MyRank::tz(z));
+
+    let expected = ZeroProductRoutineCircuit.ky(x_val + d_val, y).unwrap();
+
+    let a = a.unstructured();
+    let b = b.unstructured();
+
+    assert_eq!(expected, ragu_arithmetic::dot(a.iter(), b.iter().rev()));
+}
+
+/// Circuit that interleaves alloc and zero_product_mul to test that the
+/// available_b / alloc_phase state is correctly flushed across mixed
+/// operations.
+struct MixedAllocCircuit;
+
+impl Circuit<Fp> for MixedAllocCircuit {
+    type Instance<'instance> = Fp;
+    type Output = Kind![Fp; Element<'_, _>];
+    type Witness<'witness> = (Fp, Fp, Fp, Fp);
+    type Aux<'witness> = ();
+
+    fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        instance: DriverValue<D, Self::Instance<'instance>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Element::alloc(dr, instance)
+    }
+
+    fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'witness>>,
+    ) -> Result<(
+        Bound<'dr, D, Self::Output>,
+        DriverValue<D, Self::Aux<'witness>>,
+    )> {
+        // alloc x1 (uses a-wire of gate 0)
+        let x1 = Element::alloc(dr, witness.as_ref().map(|w| w.0))?;
+        // alloc x2 (uses b-wire of gate 0)
+        let x2 = Element::alloc(dr, witness.as_ref().map(|w| w.1))?;
+        // zero_product_mul should flush any pending alloc state and start a
+        // new gate
+        let (a, _b, d) = Element::alloc_zero_product(
+            dr,
+            witness.as_ref().map(|w| w.2),
+            D::just(|| Fp::ZERO),
+            witness.as_ref().map(|w| w.3),
+        )?;
+        // alloc after zero_product_mul — should start yet another gate
+        let x3 = Element::alloc(dr, D::just(|| Fp::from(1u64)))?;
+
+        // Output: x1 + x2 + a + d + x3
+        let sum = x1.add(dr, &x2);
+        let sum = sum.add(dr, &a);
+        let sum = sum.add(dr, &d);
+        let sum = sum.add(dr, &x3);
+
+        Ok((sum, D::unit()))
+    }
+}
+
+#[test]
+fn test_mixed_alloc_and_zero_product() {
+    type MyRank = TestRank;
+
+    let w = (
+        Fp::from(1u64),
+        Fp::from(2u64),
+        Fp::from(3u64),
+        Fp::from(4u64),
+    );
+
+    let circuit1 = MixedAllocCircuit;
+    let (trace, _) = circuit1.rx(w).unwrap();
+    let assignment = trace.assemble_trivial::<MyRank>().unwrap();
+
+    let circuit2 = MixedAllocCircuit;
+    let circuit = circuit2.into_object::<MyRank>().unwrap();
+
+    consistency_checks(&*circuit);
+
+    let y = Fp::random(&mut rand::rng());
+    let z = Fp::random(&mut rand::rng());
+    let k = registry::Key::default();
+    let floor_plan = crate::floor_planner::floor_plan(circuit.segment_records());
+
+    let a = assignment.clone();
+    let mut b = assignment.clone();
+    b.dilate(z);
+    b.add_assign(&circuit.sy(y, &k, &floor_plan));
+    b.add_assign(&MyRank::tz(z));
+
+    // instance = x1 + x2 + a + d + x3 = 1 + 2 + 3 + 4 + 1 = 11
+    let expected = MixedAllocCircuit.ky(Fp::from(11u64), y).unwrap();
+
+    let a = a.unstructured();
+    let b = b.unstructured();
+
+    assert_eq!(expected, ragu_arithmetic::dot(a.iter(), b.iter().rev()));
+}
