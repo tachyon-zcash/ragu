@@ -31,8 +31,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         <S::Output as Header<C::CircuitField>>::Data<'source>,
         S::Aux<'source>,
     )> {
+        let (left_proof, left_data) = left.into_parts();
+        let (right_proof, right_data) = right.into_parts();
         let (trace, aux) =
-            Adapter::<C, S, R, HEADER_SIZE>::new(step).rx((left.data, right.data, witness))?;
+            Adapter::<C, S, R, HEADER_SIZE>::new(step).rx((left_data, right_data, witness))?;
         let rx = self
             .native_registry
             .assemble(&trace, S::INDEX.circuit_index(self.num_application_steps)?)?;
@@ -42,8 +44,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let ((left_header, right_header), output_data, step_aux) = aux;
 
         Ok((
-            left.proof,
-            right.proof,
+            left_proof,
+            right_proof,
             proof::Application {
                 circuit_id: S::INDEX.circuit_index(self.num_application_steps)?,
                 left_header: left_header.into_inner(),

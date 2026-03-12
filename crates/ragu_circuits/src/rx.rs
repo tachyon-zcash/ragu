@@ -92,11 +92,7 @@ impl<F: Field> Trace<F> {
         let segment_records: Vec<SegmentRecord> = self
             .segments
             .iter()
-            .map(|seg| SegmentRecord {
-                num_multiplication_constraints: seg.a.len(),
-                num_linear_constraints: 0,
-                identity: super::metrics::RoutineIdentity::Root,
-            })
+            .map(|seg| SegmentRecord::new(seg.a.len(), 0, super::metrics::RoutineIdentity::Root))
             .collect();
         let plan = super::floor_planner::floor_plan(&segment_records);
         self.assemble_with_key(&registry::Key::default(), &plan)

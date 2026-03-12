@@ -64,13 +64,13 @@ use super::metrics::SegmentRecord;
 /// [`Routine`]: ragu_core::routines::Routine
 pub struct ConstraintSegment {
     /// Gate index where this segment's multiplication constraints begin.
-    pub multiplication_start: usize,
+    pub(crate) multiplication_start: usize,
     /// Y-power index where this segment's linear constraints begin.
-    pub linear_start: usize,
+    pub(crate) linear_start: usize,
     /// Number of multiplication constraints in this segment.
-    pub num_multiplication_constraints: usize,
+    pub(crate) num_multiplication_constraints: usize,
     /// Number of linear constraints in this segment.
-    pub num_linear_constraints: usize,
+    pub(crate) num_linear_constraints: usize,
 }
 
 /// Computes a floor plan from per-segment constraint records.
@@ -85,11 +85,11 @@ pub fn floor_plan(segment_records: &[SegmentRecord]) -> Vec<ConstraintSegment> {
         result.push(ConstraintSegment {
             multiplication_start,
             linear_start,
-            num_multiplication_constraints: record.num_multiplication_constraints,
-            num_linear_constraints: record.num_linear_constraints,
+            num_multiplication_constraints: record.num_multiplication_constraints(),
+            num_linear_constraints: record.num_linear_constraints(),
         });
-        multiplication_start += record.num_multiplication_constraints;
-        linear_start += record.num_linear_constraints;
+        multiplication_start += record.num_multiplication_constraints();
+        linear_start += record.num_linear_constraints();
     }
 
     assert!(

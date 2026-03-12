@@ -27,6 +27,7 @@ use crate::{
 
 /// Error type for sponge save operations.
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SaveError {
     /// Cannot save: sponge is already in squeeze mode.
     #[error("sponge is already in squeeze mode")]

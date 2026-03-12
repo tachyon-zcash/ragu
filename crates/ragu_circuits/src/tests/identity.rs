@@ -1304,7 +1304,7 @@ where
          got {}",
         m.segments.len(),
     );
-    match m.segments[1].identity {
+    match *m.segments[1].identity() {
         RoutineIdentity::Routine(fp) => fp,
         RoutineIdentity::Root => panic!("expected Routine variant"),
     }
@@ -1437,11 +1437,11 @@ fn test_root_identity() {
 
     assert_eq!(metrics.segments.len(), 2);
     assert!(matches!(
-        metrics.segments[0].identity,
+        metrics.segments[0].identity(),
         RoutineIdentity::Root
     ));
     assert!(matches!(
-        metrics.segments[1].identity,
+        metrics.segments[1].identity(),
         RoutineIdentity::Routine(_)
     ));
 }
@@ -1461,11 +1461,11 @@ fn test_metrics_integration() {
     let metrics = metrics::eval(&SingleRoutineCircuit(SquareOnce)).unwrap();
     let direct = fingerprint_elem(&SquareOnce);
 
-    match metrics.segments[1].identity {
+    match *metrics.segments[1].identity() {
         RoutineIdentity::Routine(fp) => assert_eq!(fp, direct),
         RoutineIdentity::Root => panic!("record 1 should be Routine"),
     }
-    assert!(metrics.segments[1].num_multiplication_constraints > 0);
+    assert!(metrics.segments[1].num_multiplication_constraints() > 0);
 }
 
 /// Routines with only linear constraints (no multiplications) get nonzero fingerprints.
@@ -1595,10 +1595,10 @@ fn test_wire_collision_metrics_identical() {
     assert_eq!(m1.segments.len(), 3);
     for (s1, s2) in m1.segments.iter().zip(m2.segments.iter()) {
         assert_eq!(
-            s1.num_multiplication_constraints,
-            s2.num_multiplication_constraints
+            s1.num_multiplication_constraints(),
+            s2.num_multiplication_constraints()
         );
-        assert_eq!(s1.num_linear_constraints, s2.num_linear_constraints);
+        assert_eq!(s1.num_linear_constraints(), s2.num_linear_constraints());
     }
 }
 
@@ -1684,10 +1684,10 @@ fn test_wire_collision_via_eval_metrics_identical() {
     assert_eq!(m1.segments.len(), 3);
     for (s1, s2) in m1.segments.iter().zip(m2.segments.iter()) {
         assert_eq!(
-            s1.num_multiplication_constraints,
-            s2.num_multiplication_constraints
+            s1.num_multiplication_constraints(),
+            s2.num_multiplication_constraints()
         );
-        assert_eq!(s1.num_linear_constraints, s2.num_linear_constraints);
+        assert_eq!(s1.num_linear_constraints(), s2.num_linear_constraints());
     }
 }
 

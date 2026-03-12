@@ -218,7 +218,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 self.seed(rng, step::internal::trivial::Trivial::new(), ())
                     .expect("seeded trivial seed should not fail")
                     .0
-                    .proof
+                    .into_parts()
+                    .0
             })
             .clone()
             .carry(())

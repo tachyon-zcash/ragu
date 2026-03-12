@@ -159,17 +159,41 @@ impl RoutineFingerprint {
 /// | 2     | `RoutineB`     |  1  |  3 | b0+b1; `RoutineC` excluded |
 /// | 3     | `RoutineC`     |  1  |  2 | C's own constraints        |
 pub struct SegmentRecord {
+    num_multiplication_constraints: usize,
+    num_linear_constraints: usize,
+    identity: RoutineIdentity,
+}
+
+impl SegmentRecord {
+    pub(crate) fn new(
+        num_multiplication_constraints: usize,
+        num_linear_constraints: usize,
+        identity: RoutineIdentity,
+    ) -> Self {
+        Self {
+            num_multiplication_constraints,
+            num_linear_constraints,
+            identity,
+        }
+    }
+
     /// The number of multiplication constraints in this segment.
-    pub num_multiplication_constraints: usize,
+    pub fn num_multiplication_constraints(&self) -> usize {
+        self.num_multiplication_constraints
+    }
 
     /// The number of linear constraints in this segment, including constraints
     /// on wires of the input gadget and on wires allocated within the segment.
-    pub num_linear_constraints: usize,
+    pub fn num_linear_constraints(&self) -> usize {
+        self.num_linear_constraints
+    }
 
     /// The structural identity of this routine invocation.
     // TODO: consumed by the floor planner (not yet implemented)
     #[allow(dead_code)]
-    pub identity: RoutineIdentity,
+    pub(crate) fn identity(&self) -> &RoutineIdentity {
+        &self.identity
+    }
 }
 
 /// A summary of a circuit's constraint topology.
@@ -178,22 +202,22 @@ pub struct SegmentRecord {
 /// execution without computing actual values.
 pub struct CircuitMetrics {
     /// The number of linear constraints, including those for instance enforcement.
-    pub num_linear_constraints: usize,
+    pub(crate) num_linear_constraints: usize,
 
     /// The number of multiplication constraints, including those used for allocations.
-    pub num_multiplication_constraints: usize,
+    pub(crate) num_multiplication_constraints: usize,
 
     /// The degree of the instance polynomial $k(Y)$.
     // TODO(ebfull): not sure if we'll need this later
     #[allow(dead_code)]
-    pub degree_ky: usize,
+    pub(crate) degree_ky: usize,
 
     /// Per-segment constraint records in DFS synthesis order.
     ///
     /// See [`SegmentRecord`] for the indexing convention: index 0 is the
     /// root segment (not backed by a [`Routine`]); indices 1+ each correspond
     /// to a [`Routine`] invocation.
-    pub segments: Vec<SegmentRecord>,
+    pub(crate) segments: Vec<SegmentRecord>,
 }
 
 /// Per-routine state that is saved and restored across routine boundaries.
