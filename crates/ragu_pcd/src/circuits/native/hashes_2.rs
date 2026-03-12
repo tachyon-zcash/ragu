@@ -71,6 +71,7 @@ use ragu_core::{
 };
 use ragu_primitives::GadgetExt;
 
+use alloc::sync::Arc;
 use core::marker::PhantomData;
 
 use super::{
@@ -113,7 +114,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Para
 /// Combines the unified instance with the
 /// [`error_n`](super::stages::error_n) stage witness needed to resume
 /// the Fiat-Shamir transcript from the saved sponge state.
-pub struct Witness<'a, C: Cycle, FP: fold_revdot::Parameters> {
+pub struct Witness<C: Cycle, FP: fold_revdot::Parameters> {
     /// The unified instance containing expected challenge values and
     /// accumulated coverage from prior circuits.
     pub unified: unified::Instance<C>,
@@ -122,7 +123,7 @@ pub struct Witness<'a, C: Cycle, FP: fold_revdot::Parameters> {
     /// (unenforced).
     ///
     /// Provides the saved sponge state for transcript resumption.
-    pub error_n_witness: &'a native_error_n::Witness<C, FP>,
+    pub error_n_witness: Arc<native_error_n::Witness<C, FP>>,
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
@@ -130,15 +131,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 {
     type Last = native_error_n::Stage<C, R, HEADER_SIZE, FP>;
 
-    type Instance<'source> = &'source unified::Instance<C>;
-    type Witness<'source> = Witness<'source, C, FP>;
+    type Instance = unified::Instance<C>;
+    type Witness = Witness<C, FP>;
     type Output = unified::InternalOutputKind<C>;
-    type Aux<'source> = unified::Instance<C>;
+    type Aux = unified::Instance<C>;
 
-    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
+    fn instance<'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
         _: &mut D,
-        _: DriverValue<D, Self::Instance<'source>>,
+        _: DriverValue<D, Self::Instance>,
     ) -> Result<Bound<'dr, D, Self::Output>>
     where
         Self: 'dr,
@@ -146,14 +147,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         unreachable!("instance for internal circuits is not invoked")
     }
 
-    fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
+    fn witness<'a, 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
         builder: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
-        witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<(
-        Bound<'dr, D, Self::Output>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
+        witness: DriverValue<D, Self::Witness>,
+    ) -> Result<(Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux>)>
     where
         Self: 'dr,
     {
@@ -162,7 +160,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             builder.add_stage::<native_error_n::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();
 
-        let error_n = error_n.unenforced(dr, witness.as_ref().map(|w| w.error_n_witness))?;
+        let error_n =
+            error_n.unenforced(dr, witness.as_ref().map(|w| w.error_n_witness.clone()))?;
 
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 

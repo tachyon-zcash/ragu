@@ -17,19 +17,19 @@ use crate::{
 };
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
-    pub(super) fn compute_application_proof<'source, RNG: CryptoRng, S: Step<C>>(
+    pub(super) fn compute_application_proof<RNG: CryptoRng, S: Step<C>>(
         &self,
         rng: &mut RNG,
         step: S,
-        witness: S::Witness<'source>,
-        left: Pcd<'source, C, R, S::Left>,
-        right: Pcd<'source, C, R, S::Right>,
+        witness: S::Witness,
+        left: Pcd<C, R, S::Left>,
+        right: Pcd<C, R, S::Right>,
     ) -> Result<(
         Proof<C, R>,
         Proof<C, R>,
         proof::Application<C, R>,
-        <S::Output as Header<C::CircuitField>>::Data<'source>,
-        S::Aux<'source>,
+        <S::Output as Header<C::CircuitField>>::Data,
+        S::Aux,
     )> {
         let (trace, aux) =
             Adapter::<C, S, R, HEADER_SIZE>::new(step).rx((left.data, right.data, witness))?;

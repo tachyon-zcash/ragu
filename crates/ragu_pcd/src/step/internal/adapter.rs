@@ -43,42 +43,39 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Adapter<C, S, R, H
 impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::CircuitField>
     for Adapter<C, S, R, HEADER_SIZE>
 {
-    type Instance<'source> = (
+    type Instance = (
         FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
         FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
-        <S::Output as Header<C::CircuitField>>::Data<'source>,
+        <S::Output as Header<C::CircuitField>>::Data,
     );
-    type Witness<'source> = (
-        <S::Left as Header<C::CircuitField>>::Data<'source>,
-        <S::Right as Header<C::CircuitField>>::Data<'source>,
-        S::Witness<'source>,
+    type Witness = (
+        <S::Left as Header<C::CircuitField>>::Data,
+        <S::Right as Header<C::CircuitField>>::Data,
+        S::Witness,
     );
     type Output = Kind![C::CircuitField; FixedVec<Element<'_, _>, TripleConstLen<HEADER_SIZE>>];
-    type Aux<'source> = (
+    type Aux = (
         (
             FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
             FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
         ),
-        <S::Output as Header<C::CircuitField>>::Data<'source>,
-        S::Aux<'source>,
+        <S::Output as Header<C::CircuitField>>::Data,
+        S::Aux,
     );
 
-    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
+    fn instance<'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
         _: &mut D,
-        _: DriverValue<D, Self::Instance<'source>>,
+        _: DriverValue<D, Self::Instance>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         unreachable!("k(Y) is computed manually for ragu_pcd circuit implementations")
     }
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
+    fn witness<'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
         dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<(
-        Bound<'dr, D, Self::Output>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
+        witness: DriverValue<D, Self::Witness>,
+    ) -> Result<(Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux>)>
     where
         Self: 'dr,
     {
@@ -135,12 +132,12 @@ mod tests {
 
     impl Header<Fp> for TestHeader {
         const SUFFIX: Suffix = Suffix::new(50);
-        type Data<'source> = Fp;
+        type Data = Fp;
         type Output = Kind![Fp; Element<'_, _>];
 
-        fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        fn encode<'dr, D: Driver<'dr, F = Fp>>(
             dr: &mut D,
-            witness: DriverValue<D, Self::Data<'source>>,
+            witness: DriverValue<D, Self::Data>,
         ) -> Result<Bound<'dr, D, Self::Output>> {
             Element::alloc(dr, witness)
         }
@@ -150,13 +147,13 @@ mod tests {
 
     impl Step<Pasta> for TestStep {
         const INDEX: Index = Index::new(0);
-        type Witness<'source> = ();
-        type Aux<'source> = ();
+        type Witness = ();
+        type Aux = ();
         type Left = TestHeader;
         type Right = TestHeader;
         type Output = TestHeader;
 
-        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
+        fn witness<'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
             &self,
             dr: &mut D,
             _: DriverValue<D, ()>,

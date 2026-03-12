@@ -138,15 +138,15 @@ impl Routine<Fp> for TreeRoutine {
 struct TreeCircuit(RoutineTree);
 
 impl Circuit<Fp> for TreeCircuit {
-    type Instance<'source> = ();
-    type Witness<'source> = ();
+    type Instance = ();
+    type Witness = ();
     type Output = ();
-    type Aux<'source> = ();
+    type Aux = ();
 
-    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+    fn instance<'dr, D: Driver<'dr, F = Fp>>(
         &self,
         _dr: &mut D,
-        _instance: DriverValue<D, Self::Instance<'source>>,
+        _instance: DriverValue<D, Self::Instance>,
     ) -> Result<Bound<'dr, D, Self::Output>>
     where
         Self: 'dr,
@@ -154,14 +154,11 @@ impl Circuit<Fp> for TreeCircuit {
         Ok(())
     }
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+    fn witness<'dr, D: Driver<'dr, F = Fp>>(
         &self,
         dr: &mut D,
-        _witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<(
-        Bound<'dr, D, Self::Output>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
+        _witness: DriverValue<D, Self::Witness>,
+    ) -> Result<(Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux>)>
     where
         Self: 'dr,
     {

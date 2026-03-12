@@ -89,6 +89,7 @@ use ragu_primitives::{
     vec::{ConstLen, FixedVec},
 };
 
+use alloc::sync::Arc;
 use core::marker::PhantomData;
 
 use super::{
@@ -160,7 +161,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Para
 ///
 /// Combines the unified instance with stage witnesses needed to perform the
 /// Fiat-Shamir derivations and $k(y)$ consistency checks.
-pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
+pub struct Witness<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
     /// The unified instance containing expected challenge values and
     /// accumulated coverage from prior circuits.
     pub unified: unified::Instance<C>,
@@ -169,14 +170,14 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     /// (unenforced).
     ///
     /// Provides output headers and data for computing $k(y)$ evaluations.
-    pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
+    pub preamble_witness: Arc<native_preamble::Witness<C, R, HEADER_SIZE>>,
 
     /// Witness for the [`error_n`](super::stages::error_n) stage
     /// (unenforced).
     ///
     /// Provides the saved sponge state and pre-computed $k(y)$ values for
     /// consistency verification.
-    pub error_n_witness: &'a native_error_n::Witness<C, FP>,
+    pub error_n_witness: Arc<native_error_n::Witness<C, FP>>,
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
@@ -184,15 +185,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 {
     type Last = native_error_n::Stage<C, R, HEADER_SIZE, FP>;
 
-    type Instance<'source> = &'source unified::Instance<C>;
-    type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
+    type Instance = unified::Instance<C>;
+    type Witness = Witness<C, R, HEADER_SIZE, FP>;
     type Output = Kind![C::CircuitField; WithSuffix<'_, _, Output<'_, _, C, HEADER_SIZE>>];
-    type Aux<'source> = unified::Instance<C>;
+    type Aux = unified::Instance<C>;
 
-    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
+    fn instance<'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
         _: &mut D,
-        _: DriverValue<D, Self::Instance<'source>>,
+        _: DriverValue<D, Self::Instance>,
     ) -> Result<Bound<'dr, D, Self::Output>>
     where
         Self: 'dr,
@@ -200,14 +201,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         unreachable!("instance for internal circuits is not invoked")
     }
 
-    fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
+    fn witness<'a, 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
         builder: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
-        witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<(
-        Bound<'dr, D, Self::Output>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
+        witness: DriverValue<D, Self::Witness>,
+    ) -> Result<(Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux>)>
     where
         Self: 'dr,
     {
@@ -217,8 +215,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             builder.add_stage::<native_error_n::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();
 
-        let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
-        let error_n = error_n.unenforced(dr, witness.as_ref().map(|w| w.error_n_witness))?;
+        let preamble =
+            preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness.clone()))?;
+        let error_n =
+            error_n.unenforced(dr, witness.as_ref().map(|w| w.error_n_witness.clone()))?;
 
         // Verify circuit IDs are valid roots of unity in the registry domain.
         root_of_unity::enforce(dr, preamble.left.circuit_id.clone(), self.log2_circuits)?;

@@ -12,15 +12,15 @@ use ragu_core::{
 };
 
 impl<F: Field> Circuit<F> for () {
-    type Instance<'source> = ();
-    type Witness<'source> = ();
+    type Instance = ();
+    type Witness = ();
     type Output = ();
-    type Aux<'source> = ();
+    type Aux = ();
 
-    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+    fn instance<'dr, D: Driver<'dr, F = F>>(
         &self,
         _: &mut D,
-        _: DriverValue<D, Self::Instance<'source>>,
+        _: DriverValue<D, Self::Instance>,
     ) -> Result<Bound<'dr, D, Self::Output>>
     where
         Self: 'dr,
@@ -28,14 +28,11 @@ impl<F: Field> Circuit<F> for () {
         Ok(())
     }
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+    fn witness<'dr, D: Driver<'dr, F = F>>(
         &self,
         _: &mut D,
-        _: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<(
-        Bound<'dr, D, Self::Output>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
+        _: DriverValue<D, Self::Witness>,
+    ) -> Result<(Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux>)>
     where
         Self: 'dr,
     {
@@ -53,19 +50,10 @@ mod tests {
     #[test]
     fn test_trivial() {
         let circuit = ();
-        let instance = ();
         let mut dr = Emulator::<Wired<Fp>>::extractor();
 
-        assert!(
-            circuit
-                .instance(&mut dr, Always::maybe_just(|| instance))
-                .is_ok()
-        );
+        assert!(circuit.instance(&mut dr, Always::maybe_just(|| ())).is_ok());
 
-        assert!(
-            circuit
-                .witness(&mut dr, Always::maybe_just(|| instance))
-                .is_ok()
-        );
+        assert!(circuit.witness(&mut dr, Always::maybe_just(|| ())).is_ok());
     }
 }

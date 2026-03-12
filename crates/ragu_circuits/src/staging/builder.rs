@@ -125,10 +125,10 @@ impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R> + 'dr> StageGuard<'dr, D, R
     /// the pre-allocated stage wires, then calls `enforce_consistent()` on
     /// the result to enforce internal constraints (e.g., curve equations
     /// for Points).
-    pub fn enforced<'source: 'dr>(
+    pub fn enforced(
         self,
         dr: &mut D,
-        witness: DriverValue<D, S::Witness<'source>>,
+        witness: DriverValue<D, S::Witness>,
     ) -> Result<Bound<'dr, D, S::OutputKind>>
     where
         Bound<'dr, D, S::OutputKind>: Consistent<'dr, D>,
@@ -139,9 +139,9 @@ impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R> + 'dr> StageGuard<'dr, D, R
     }
 
     /// Internal helper that injects stage wires without enforcing constraints.
-    fn unenforced_inner<'source: 'dr>(
+    fn unenforced_inner(
         self,
-        witness: DriverValue<D, S::Witness<'source>>,
+        witness: DriverValue<D, S::Witness>,
     ) -> Result<Bound<'dr, D, S::OutputKind>> {
         let mut emulator: Emulator<Wireless<D::MaybeKind, D::F>> = Emulator::wireless();
         let computed_gadget = self.stage.witness(&mut emulator, witness)?;
@@ -159,10 +159,10 @@ impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R> + 'dr> StageGuard<'dr, D, R
     /// Runs the stage's witness method on a wireless emulator (not on the
     /// underlying driver), then substitutes the pre-allocated stage wires
     /// into the resulting gadget.
-    pub fn unenforced<'source: 'dr>(
+    pub fn unenforced(
         self,
         _dr: &mut D,
-        witness: DriverValue<D, S::Witness<'source>>,
+        witness: DriverValue<D, S::Witness>,
     ) -> Result<Bound<'dr, D, S::OutputKind>> {
         self.unenforced_inner(witness)
     }

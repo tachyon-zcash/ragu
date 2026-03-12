@@ -17,7 +17,7 @@ use ragu_primitives::{
     vec::{CollectFixed, ConstLen, FixedVec},
 };
 
-use alloc::vec::Vec;
+use alloc::{sync::Arc, vec::Vec};
 use core::marker::PhantomData;
 
 use crate::{Proof, circuits::native::unified, header::Header, step::internal::padded};
@@ -27,29 +27,31 @@ pub(crate) use crate::circuits::native::InternalCircuitIndex::PreambleStage as S
 type HeaderVec<'dr, D, const HEADER_SIZE: usize> = FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>;
 
 /// Witness data for a single child proof in the preamble stage.
-pub struct ChildWitness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+#[derive(Clone)]
+pub struct ChildWitness<C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     /// Output header for this child proof.
     pub output_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
     /// Reference to the child proof.
-    pub proof: &'a Proof<C, R>,
+    pub proof: Arc<Proof<C, R>>,
 }
 
 /// Witness for the native preamble stage.
 ///
-/// Contains references to the left and right proofs, plus output headers
+/// Contains the left and right proofs (shared via Arc), plus output headers
 /// computed outside the circuit.
-pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+#[derive(Clone)]
+pub struct Witness<C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     /// Left child proof witness.
-    pub left: ChildWitness<'a, C, R, HEADER_SIZE>,
+    pub left: ChildWitness<C, R, HEADER_SIZE>,
     /// Right child proof witness.
-    pub right: ChildWitness<'a, C, R, HEADER_SIZE>,
+    pub right: ChildWitness<C, R, HEADER_SIZE>,
 }
 
-impl<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> Witness<'a, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Witness<C, R, HEADER_SIZE> {
     /// Create a witness from child proof references and pre-computed output headers.
     pub fn new(
-        left: &'a Proof<C, R>,
-        right: &'a Proof<C, R>,
+        left: Arc<Proof<C, R>>,
+        right: Arc<Proof<C, R>>,
         left_output_header: &[C::CircuitField],
         right_output_header: &[C::CircuitField],
     ) -> Result<Self> {
@@ -195,14 +197,11 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
 
     /// Allocate ProofInputs from a proof reference and some unprocessed header
     /// data.
-    pub fn alloc_for_verify<'source, R: Rank, H: Header<C::CircuitField>>(
+    pub fn alloc_for_verify<R: Rank, H: Header<C::CircuitField>>(
         dr: &mut D,
         proof: DriverValue<D, &Proof<C, R>>,
-        header_data: DriverValue<D, H::Data<'source>>,
-    ) -> Result<Self>
-    where
-        'source: 'dr,
-    {
+        header_data: DriverValue<D, H::Data>,
+    ) -> Result<Self> {
         let header_data = D::try_just(|| {
             use ragu_core::drivers::emulator::{Emulator, Wireless};
             let emulator = &mut Emulator::<Wireless<D::MaybeKind, D::F>>::wireless();
@@ -255,7 +254,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     for Stage<C, R, HEADER_SIZE>
 {
     type Parent = ();
-    type Witness<'source> = &'source Witness<'source, C, R, HEADER_SIZE>;
+    type Witness = Arc<Witness<C, R, HEADER_SIZE>>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _, C, HEADER_SIZE>];
 
     fn values() -> usize {
@@ -263,23 +262,23 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
         2 * (3 * HEADER_SIZE + 1 + unified::NUM_WIRES)
     }
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
+    fn witness<'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
         dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        witness: DriverValue<D, Self::Witness>,
     ) -> Result<Bound<'dr, D, Self::OutputKind>>
     where
         Self: 'dr,
     {
         let left = ProofInputs::alloc(
             dr,
-            witness.as_ref().map(|w| w.left.proof),
+            witness.as_ref().map(|w| w.left.proof.as_ref()),
             witness.as_ref().map(|w| &w.left.output_header),
         )?;
 
         let right = ProofInputs::alloc(
             dr,
-            witness.as_ref().map(|w| w.right.proof),
+            witness.as_ref().map(|w| w.right.proof.as_ref()),
             witness.as_ref().map(|w| &w.right.output_header),
         )?;
 

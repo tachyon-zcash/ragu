@@ -57,7 +57,7 @@ use ragu_core::{
 };
 use ragu_primitives::{Element, Endoscalar, GadgetExt};
 
-use alloc::{vec, vec::Vec};
+use alloc::{sync::Arc, vec, vec::Vec};
 use core::marker::PhantomData;
 
 use crate::components::claims::{
@@ -105,15 +105,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Circuit<C, R, HEADER_SIZE> {
 /// - Evaluation component polynomials from eval stage
 ///
 /// [$v$]: unified::Output::v
-pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+pub struct Witness<C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     /// The unified instance containing challenges and accumulated coverage.
     pub unified: unified::Instance<C>,
     /// Witness for the preamble stage (provides child proof data).
-    pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
+    pub preamble_witness: Arc<native_preamble::Witness<C, R, HEADER_SIZE>>,
     /// Witness for the query stage (provides registry and polynomial evaluations).
-    pub query_witness: &'a native_query::Witness<C>,
+    pub query_witness: Arc<native_query::Witness<C>>,
     /// Witness for the eval stage (provides evaluation component polynomials).
-    pub eval_witness: &'a native_eval::Witness<C::CircuitField>,
+    pub eval_witness: Arc<native_eval::Witness<C::CircuitField>>,
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitField, R>
@@ -121,15 +121,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
 {
     type Last = native_eval::Stage<C, R, HEADER_SIZE>;
 
-    type Instance<'source> = &'source unified::Instance<C>;
-    type Witness<'source> = Witness<'source, C, R, HEADER_SIZE>;
+    type Instance = unified::Instance<C>;
+    type Witness = Witness<C, R, HEADER_SIZE>;
     type Output = unified::InternalOutputKind<C>;
-    type Aux<'source> = unified::Instance<C>;
+    type Aux = unified::Instance<C>;
 
-    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
+    fn instance<'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
         _: &mut D,
-        _: DriverValue<D, Self::Instance<'source>>,
+        _: DriverValue<D, Self::Instance>,
     ) -> Result<Bound<'dr, D, Self::Output>>
     where
         Self: 'dr,
@@ -137,14 +137,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
         unreachable!("instance for internal circuits is not invoked")
     }
 
-    fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
+    fn witness<'a, 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
         builder: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
-        witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<(
-        Bound<'dr, D, Self::Output>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
+        witness: DriverValue<D, Self::Witness>,
+    ) -> Result<(Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux>)>
     where
         Self: 'dr,
     {
@@ -158,10 +155,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
 
         // Preamble is enforced because it contains child proof data that must
         // be validated (Points, Booleans, etc.).
-        let preamble = preamble.enforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
+        let preamble =
+            preamble.enforced(dr, witness.as_ref().map(|w| w.preamble_witness.clone()))?;
 
-        let query = query.unenforced(dr, witness.as_ref().map(|w| w.query_witness))?;
-        let eval = eval.unenforced(dr, witness.as_ref().map(|w| w.eval_witness))?;
+        let query = query.unenforced(dr, witness.as_ref().map(|w| w.query_witness.clone()))?;
+        let eval = eval.unenforced(dr, witness.as_ref().map(|w| w.eval_witness.clone()))?;
 
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 

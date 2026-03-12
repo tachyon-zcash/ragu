@@ -17,6 +17,7 @@ use ragu_primitives::{
     vec::{CollectFixed, FixedVec, Len},
 };
 
+use alloc::sync::Arc;
 use core::marker::PhantomData;
 
 pub(crate) use crate::circuits::native::InternalCircuitIndex::ErrorNStage as STAGING_ID;
@@ -24,6 +25,7 @@ pub(crate) use crate::circuits::native::InternalCircuitIndex::ErrorNStage as STA
 use crate::components::fold_revdot::{self, ErrorTermsLen};
 
 /// $k(Y)$ evaluation values for a single child proof.
+#[derive(Clone)]
 pub struct ChildKyValues<F> {
     /// k(y) for the application circuit.
     pub application: F,
@@ -34,6 +36,7 @@ pub struct ChildKyValues<F> {
 }
 
 /// $k(Y)$ evaluation values computed during fuse operation.
+#[derive(Clone)]
 pub struct KyValues<F> {
     /// k(y) values for the left child proof.
     pub left: ChildKyValues<F>,
@@ -61,6 +64,17 @@ pub struct Witness<C: Cycle, FP: fold_revdot::Parameters> {
     /// Used to bridge the Fiat-Shamir transcript between hashes_1 and hashes_2.
     pub sponge_state_elements:
         FixedVec<C::CircuitField, PoseidonStateLen<C::CircuitField, C::CircuitPoseidon>>,
+}
+
+impl<C: Cycle, FP: fold_revdot::Parameters> Clone for Witness<C, FP> {
+    fn clone(&self) -> Self {
+        Witness {
+            error_terms: self.error_terms.clone(),
+            collapsed: self.collapsed.clone(),
+            ky: self.ky.clone(),
+            sponge_state_elements: self.sponge_state_elements.clone(),
+        }
+    }
 }
 
 /// k(y) output gadgets for a single child proof.
@@ -115,7 +129,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, FP>
 {
     type Parent = super::preamble::Stage<C, R, HEADER_SIZE>;
-    type Witness<'source> = &'source Witness<C, FP>;
+    type Witness = Arc<Witness<C, FP>>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _, FP, C::CircuitPoseidon>];
 
     fn values() -> usize {
@@ -126,10 +140,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             + PoseidonStateLen::<C::CircuitField, C::CircuitPoseidon>::len()
     }
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
+    fn witness<'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
         dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        witness: DriverValue<D, Self::Witness>,
     ) -> Result<Bound<'dr, D, Self::OutputKind>>
     where
         Self: 'dr,

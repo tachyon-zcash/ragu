@@ -51,8 +51,8 @@ pub fn setup_seed() -> (
 
 pub fn setup_fuse() -> (
     Application<'static, Pasta, ProductionRank, 4>,
-    Pcd<'static, Pasta, ProductionRank, nontrivial::LeafNode>,
-    Pcd<'static, Pasta, ProductionRank, nontrivial::LeafNode>,
+    Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
+    Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
     &'static <Pasta as Cycle>::CircuitPoseidon,
     StdRng,
 ) {
@@ -79,7 +79,7 @@ pub fn setup_fuse() -> (
 
 pub fn setup_verify_leaf() -> (
     Application<'static, Pasta, ProductionRank, 4>,
-    Pcd<'static, Pasta, ProductionRank, nontrivial::LeafNode>,
+    Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
     StdRng,
 ) {
     let (app, poseidon_params, mut rng) = setup_seed();
@@ -97,7 +97,7 @@ pub fn setup_verify_leaf() -> (
 
 pub fn setup_verify_node() -> (
     Application<'static, Pasta, ProductionRank, 4>,
-    Pcd<'static, Pasta, ProductionRank, nontrivial::InternalNode>,
+    Pcd<Pasta, ProductionRank, nontrivial::InternalNode>,
     StdRng,
 ) {
     let (app, poseidon_params, mut rng) = setup_seed();

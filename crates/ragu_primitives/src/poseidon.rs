@@ -44,6 +44,14 @@ pub struct PoseidonStateLen<F: Field, P: ragu_arithmetic::PoseidonPermutation<F>
     PhantomData<(F, P)>,
 );
 
+impl<F: Field, P: ragu_arithmetic::PoseidonPermutation<F>> Clone for PoseidonStateLen<F, P> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<F: Field, P: ragu_arithmetic::PoseidonPermutation<F>> Copy for PoseidonStateLen<F, P> {}
+
 impl<F: Field, P: ragu_arithmetic::PoseidonPermutation<F>> Len for PoseidonStateLen<F, P> {
     fn len() -> usize {
         P::T

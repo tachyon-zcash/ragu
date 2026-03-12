@@ -54,6 +54,7 @@ pub trait Len: Send + Sync + 'static {
 ///
 /// Use this when the length is known at compile time. For lengths determined
 /// by type parameters or other computed values, implement [`Len`] directly.
+#[derive(Copy, Clone)]
 pub struct ConstLen<const N: usize>;
 
 impl<const N: usize> Len for ConstLen<N> {

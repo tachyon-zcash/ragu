@@ -267,27 +267,24 @@ mod tests {
     };
 
     impl<F: Field, R: Rank> crate::Circuit<F> for StageMask<R> {
-        type Instance<'source> = ();
-        type Witness<'source> = ();
+        type Instance = ();
+        type Witness = ();
         type Output = ();
-        type Aux<'source> = ();
+        type Aux = ();
 
-        fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+        fn instance<'dr, D: Driver<'dr, F = F>>(
             &self,
             _: &mut D,
-            _: DriverValue<D, Self::Instance<'source>>,
+            _: DriverValue<D, Self::Instance>,
         ) -> Result<Bound<'dr, D, Self::Output>> {
             Ok(())
         }
 
-        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+        fn witness<'dr, D: Driver<'dr, F = F>>(
             &self,
             dr: &mut D,
-            _: DriverValue<D, Self::Witness<'source>>,
-        ) -> Result<(
-            Bound<'dr, D, Self::Output>,
-            DriverValue<D, Self::Aux<'source>>,
-        )> {
+            _: DriverValue<D, Self::Witness>,
+        ) -> Result<(Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux>)> {
             let reserved = self.skip_multiplications + self.num_multiplications + 1;
             assert!(reserved <= R::n());
 
@@ -351,13 +348,13 @@ mod tests {
                 Uendo::BITS as usize
             }
 
-            type Witness<'source> = Uendo;
+            type Witness = Uendo;
             type OutputKind = Endoscalar<'static, core::marker::PhantomData<Fp>>;
 
-            fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            fn witness<'dr, D: Driver<'dr, F = Fp>>(
                 &self,
                 dr: &mut D,
-                witness: DriverValue<D, Self::Witness<'source>>,
+                witness: DriverValue<D, Self::Witness>,
             ) -> Result<Bound<'dr, D, Self::OutputKind>>
             where
                 Self: 'dr,
@@ -373,16 +370,16 @@ mod tests {
                 4
             }
 
-            type Witness<'source> = (EpAffine, EpAffine);
+            type Witness = (EpAffine, EpAffine);
             type OutputKind = (
                 core::marker::PhantomData<Point<'static, core::marker::PhantomData<Fp>, EpAffine>>,
                 core::marker::PhantomData<Point<'static, core::marker::PhantomData<Fp>, EpAffine>>,
             );
 
-            fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            fn witness<'dr, D: Driver<'dr, F = Fp>>(
                 &self,
                 dr: &mut D,
-                witness: DriverValue<D, Self::Witness<'source>>,
+                witness: DriverValue<D, Self::Witness>,
             ) -> Result<Bound<'dr, D, Self::OutputKind>>
             where
                 Self: 'dr,
@@ -611,7 +608,7 @@ mod tests {
 
     impl Stage<Fp, R> for ConstrainedStage {
         type Parent = ();
-        type Witness<'source> = (Fp, Fp);
+        type Witness = (Fp, Fp);
         type OutputKind =
             <TwoElements<'static, PhantomData<Fp>> as Gadget<'static, PhantomData<Fp>>>::Kind;
 
@@ -619,10 +616,10 @@ mod tests {
             2
         }
 
-        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        fn witness<'dr, D: Driver<'dr, F = Fp>>(
             &self,
             dr: &mut D,
-            witness: DriverValue<D, Self::Witness<'source>>,
+            witness: DriverValue<D, Self::Witness>,
         ) -> Result<Bound<'dr, D, Self::OutputKind>>
         where
             Self: 'dr,
@@ -733,27 +730,24 @@ mod tests {
         struct TestCircuit;
 
         impl crate::Circuit<Fp> for TestCircuit {
-            type Instance<'source> = ();
-            type Witness<'source> = ();
+            type Instance = ();
+            type Witness = ();
             type Output = ();
-            type Aux<'source> = ();
+            type Aux = ();
 
-            fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            fn instance<'dr, D: Driver<'dr, F = Fp>>(
                 &self,
                 _dr: &mut D,
-                _instance: DriverValue<D, Self::Instance<'source>>,
+                _instance: DriverValue<D, Self::Instance>,
             ) -> Result<Bound<'dr, D, Self::Output>> {
                 Ok(())
             }
 
-            fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            fn witness<'dr, D: Driver<'dr, F = Fp>>(
                 &self,
                 dr: &mut D,
-                _witness: DriverValue<D, Self::Witness<'source>>,
-            ) -> Result<(
-                Bound<'dr, D, Self::Output>,
-                DriverValue<D, Self::Aux<'source>>,
-            )> {
+                _witness: DriverValue<D, Self::Witness>,
+            ) -> Result<(Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux>)> {
                 dr.routine(MulOnlyRoutine, ())?;
                 Ok(((), D::unit()))
             }
@@ -808,7 +802,7 @@ mod tests {
 
     impl Stage<Fp, R> for ParentAOnlyStage {
         type Parent = ();
-        type Witness<'source> = [Fp; 3];
+        type Witness = [Fp; 3];
         type OutputKind = <ThreeAOnlyElements<'static, PhantomData<Fp>> as Gadget<
             'static,
             PhantomData<Fp>,
@@ -818,10 +812,10 @@ mod tests {
             6 // 3 multiplication gates
         }
 
-        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        fn witness<'dr, D: Driver<'dr, F = Fp>>(
             &self,
             dr: &mut D,
-            witness: DriverValue<D, Self::Witness<'source>>,
+            witness: DriverValue<D, Self::Witness>,
         ) -> Result<Bound<'dr, D, Self::OutputKind>>
         where
             Self: 'dr,
@@ -851,7 +845,7 @@ mod tests {
 
     impl Stage<Fp, R> for ChildOfParentAOnlyStage {
         type Parent = ParentAOnlyStage;
-        type Witness<'source> = [Fp; 3];
+        type Witness = [Fp; 3];
         type OutputKind = <ThreeAOnlyElements<'static, PhantomData<Fp>> as Gadget<
             'static,
             PhantomData<Fp>,
@@ -861,10 +855,10 @@ mod tests {
             6 // 3 multiplication gates
         }
 
-        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        fn witness<'dr, D: Driver<'dr, F = Fp>>(
             &self,
             dr: &mut D,
-            witness: DriverValue<D, Self::Witness<'source>>,
+            witness: DriverValue<D, Self::Witness>,
         ) -> Result<Bound<'dr, D, Self::OutputKind>>
         where
             Self: 'dr,

@@ -48,6 +48,14 @@ impl Parameters for NativeParameters {
 /// for more information.
 pub struct ErrorTermsLen<L: Len>(PhantomData<L>);
 
+impl<L: Len> Clone for ErrorTermsLen<L> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<L: Len> Copy for ErrorTermsLen<L> {}
+
 impl<L: Len> Len for ErrorTermsLen<L> {
     fn len() -> usize {
         let n = L::len();

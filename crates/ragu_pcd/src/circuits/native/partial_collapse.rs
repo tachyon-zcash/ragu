@@ -66,6 +66,7 @@ use ragu_core::{
 };
 use ragu_primitives::{Element, vec::FixedVec};
 
+use alloc::sync::Arc;
 use core::marker::PhantomData;
 
 use super::{
@@ -101,15 +102,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 }
 
 /// Witness for the partial collapse circuit.
-pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
+pub struct Witness<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
     /// Witness for the preamble stage (contains child unified instances with c values).
-    pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
+    pub preamble_witness: Arc<native_preamble::Witness<C, R, HEADER_SIZE>>,
     /// The unified instance containing challenges and accumulated coverage.
     pub unified: unified::Instance<C>,
     /// Witness for the error_n stage (layer 2 error terms + collapsed values).
-    pub error_n_witness: &'a native_error_n::Witness<C, FP>,
+    pub error_n_witness: Arc<native_error_n::Witness<C, FP>>,
     /// Witness for the error_m stage (layer 1 error terms).
-    pub error_m_witness: &'a native_error_m::Witness<C, FP>,
+    pub error_m_witness: Arc<native_error_m::Witness<C, FP>>,
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
@@ -117,15 +118,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 {
     type Last = native_error_m::Stage<C, R, HEADER_SIZE, FP>;
 
-    type Instance<'source> = &'source unified::Instance<C>;
-    type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
+    type Instance = unified::Instance<C>;
+    type Witness = Witness<C, R, HEADER_SIZE, FP>;
     type Output = unified::InternalOutputKind<C>;
-    type Aux<'source> = unified::Instance<C>;
+    type Aux = unified::Instance<C>;
 
-    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
+    fn instance<'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
         _: &mut D,
-        _: DriverValue<D, Self::Instance<'source>>,
+        _: DriverValue<D, Self::Instance>,
     ) -> Result<Bound<'dr, D, Self::Output>>
     where
         Self: 'dr,
@@ -133,14 +134,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         unreachable!("instance for internal circuits is not invoked")
     }
 
-    fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
+    fn witness<'a, 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
         builder: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
-        witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<(
-        Bound<'dr, D, Self::Output>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
+        witness: DriverValue<D, Self::Witness>,
+    ) -> Result<(Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux>)>
     where
         Self: 'dr,
     {
@@ -151,9 +149,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let (error_m, builder) =
             builder.add_stage::<native_error_m::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();
-        let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
-        let error_n = error_n.enforced(dr, witness.as_ref().map(|w| w.error_n_witness))?;
-        let error_m = error_m.enforced(dr, witness.as_ref().map(|w| w.error_m_witness))?;
+        let preamble =
+            preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness.clone()))?;
+        let error_n = error_n.enforced(dr, witness.as_ref().map(|w| w.error_n_witness.clone()))?;
+        let error_m = error_m.enforced(dr, witness.as_ref().map(|w| w.error_m_witness.clone()))?;
 
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 

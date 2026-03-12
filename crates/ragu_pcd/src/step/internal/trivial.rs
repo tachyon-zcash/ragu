@@ -25,17 +25,17 @@ impl Trivial {
 impl<C: Cycle> Step<C> for Trivial {
     const INDEX: Index = Index::internal(INTERNAL_ID);
 
-    type Witness<'source> = ();
-    type Aux<'source> = ();
+    type Witness = ();
+    type Aux = ();
 
     type Left = ();
     type Right = ();
     type Output = ();
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
+    fn witness<'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _: DriverValue<D, Self::Witness<'source>>,
+        _: DriverValue<D, Self::Witness>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
     ) -> Result<(
@@ -44,8 +44,8 @@ impl<C: Cycle> Step<C> for Trivial {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data<'source>>,
-        DriverValue<D, Self::Aux<'source>>,
+        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
+        DriverValue<D, Self::Aux>,
     )> {
         let left = Encoded::new(dr, left)?;
         let right = Encoded::new(dr, right)?;

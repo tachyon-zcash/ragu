@@ -11,6 +11,7 @@ use ragu_core::{
 };
 use ragu_primitives::{Element, io::Write};
 
+use alloc::sync::Arc;
 use core::marker::PhantomData;
 
 use crate::Proof;
@@ -19,6 +20,7 @@ pub(crate) use crate::circuits::native::InternalCircuitIndex::EvalStage as STAGI
 
 /// Pre-computed polynomial evaluations at $u$ (from the parent fuse operation)
 /// for a child proof.
+#[derive(Copy, Clone)]
 pub struct ChildEvaluationsWitness<F> {
     pub application: F,
     pub preamble: F,
@@ -61,6 +63,7 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
 }
 
 /// Pre-computed polynomial evaluations at u for the current step.
+#[derive(Copy, Clone)]
 pub struct CurrentStepWitness<F> {
     pub registry_wx0: F,
     pub registry_wx1: F,
@@ -71,6 +74,7 @@ pub struct CurrentStepWitness<F> {
 }
 
 /// Witness for the eval stage.
+#[derive(Clone)]
 pub struct Witness<F> {
     pub left: ChildEvaluationsWitness<F>,
     pub right: ChildEvaluationsWitness<F>,
@@ -177,7 +181,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     for Stage<C, R, HEADER_SIZE>
 {
     type Parent = super::query::Stage<C, R, HEADER_SIZE>;
-    type Witness<'source> = &'source Witness<C::CircuitField>;
+    type Witness = Arc<Witness<C::CircuitField>>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
     fn values() -> usize {
@@ -185,10 +189,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
         2 * 15 + 6
     }
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
+    fn witness<'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
         dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        witness: DriverValue<D, Self::Witness>,
     ) -> Result<Bound<'dr, D, Self::OutputKind>>
     where
         Self: 'dr,

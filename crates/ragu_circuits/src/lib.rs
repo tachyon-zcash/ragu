@@ -71,11 +71,11 @@ pub(crate) trait DriverScope<S> {
 pub trait Circuit<F: Field>: Sized + Send + Sync {
     /// The type of data that is needed to construct the expected output of this
     /// circuit.
-    type Instance<'source>: Send;
+    type Instance: Send;
 
     /// The type of data that is needed to compute a satisfying witness for this
     /// circuit.
-    type Witness<'source>: Send;
+    type Witness: Send;
 
     /// The circuit's public instance, serialized into the $k(Y)$ instance
     /// polynomial that the verifier checks.
@@ -84,17 +84,17 @@ pub trait Circuit<F: Field>: Sized + Send + Sync {
     /// Auxiliary data produced during the computation of the
     /// [`witness`](Circuit::witness) method that may be useful, such as
     /// interstitial witness material that is needed for future synthesis.
-    type Aux<'source>: Send;
+    type Aux: Send;
 
     /// Given an instance type for this circuit, use the provided [`Driver`] to
     /// return a `Self::Output` gadget that the _some_ corresponding witness
     /// should have produced as a result of the [`witness`](Circuit::witness)
     /// method. This can be seen as "short-circuiting" the computation involving
     /// the witness, which a verifier would not have in its possession.
-    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+    fn instance<'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: &mut D,
-        instance: DriverValue<D, Self::Instance<'source>>,
+        instance: DriverValue<D, Self::Instance>,
     ) -> Result<Bound<'dr, D, Self::Output>>
     where
         Self: 'dr;
@@ -103,14 +103,11 @@ pub trait Circuit<F: Field>: Sized + Send + Sync {
     /// provided [`Driver`] and return the `Self::Output` gadget that the verifier's
     /// instance should produce as a result of the
     /// [`instance`](Circuit::instance) method.
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+    fn witness<'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<(
-        Bound<'dr, D, Self::Output>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
+        witness: DriverValue<D, Self::Witness>,
+    ) -> Result<(Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux>)>
     where
         Self: 'dr;
 }
@@ -193,16 +190,13 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
     ///
     /// The returned [`Trace`] can be assembled into a polynomial
     /// via [`Registry::assemble`](registry::Registry::assemble).
-    fn rx<'witness>(
-        &self,
-        witness: Self::Witness<'witness>,
-    ) -> Result<(rx::Trace<F>, Self::Aux<'witness>)> {
+    fn rx(&self, witness: Self::Witness) -> Result<(rx::Trace<F>, Self::Aux)> {
         rx::eval(self, witness)
     }
 
     /// Evaluates the instance polynomial $k(y)$ for the given instance at
     /// a point $y \in \mathbb{F}$.
-    fn ky(&self, instance: Self::Instance<'_>, y: F) -> Result<F> {
+    fn ky(&self, instance: Self::Instance, y: F) -> Result<F> {
         ky::eval(self, instance, y)
     }
 }

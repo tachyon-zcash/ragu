@@ -34,7 +34,7 @@ use ragu_primitives::{
     vec::{FixedVec, Len},
 };
 
-use alloc::vec;
+use alloc::{sync::Arc, vec};
 
 /// Number of endoscaling operations per step. This is how many we can fit into
 /// a single circuit in our target circuit size.
@@ -73,13 +73,13 @@ impl<F: Field, R: Rank> Stage<F, R> for EndoscalarStage {
         Uendo::BITS as usize
     }
 
-    type Witness<'source> = Uendo;
+    type Witness = Uendo;
     type OutputKind = Kind![F; Endoscalar<'_, _>];
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+    fn witness<'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        witness: DriverValue<D, Self::Witness>,
     ) -> Result<Bound<'dr, D, Self::OutputKind>>
     where
         Self: 'dr,
@@ -176,13 +176,13 @@ impl<C: CurveAffine, R: Rank, const NUM_POINTS: usize> Stage<C::Base, R>
         2 * (1 + InputsLen::<NUM_POINTS>::len() + NumStepsLen::<NUM_POINTS>::len())
     }
 
-    type Witness<'source> = &'source PointsWitness<C, NUM_POINTS>;
+    type Witness = Arc<PointsWitness<C, NUM_POINTS>>;
     type OutputKind = Kind![C::Base; Points<'_, _, C, NUM_POINTS>];
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
+    fn witness<'dr, D: Driver<'dr, F = C::Base>>(
         &self,
         dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        witness: DriverValue<D, Self::Witness>,
     ) -> Result<Bound<'dr, D, Self::OutputKind>>
     where
         Self: 'dr,
@@ -242,38 +242,35 @@ impl<C: CurveAffine, R: Rank, const NUM_POINTS: usize> EndoscalingStep<C, R, NUM
 }
 
 /// Witness for an endoscaling step.
-pub struct EndoscalingStepWitness<'source, C: CurveAffine, const NUM_POINTS: usize> {
+pub struct EndoscalingStepWitness<C: CurveAffine, const NUM_POINTS: usize> {
     /// The endoscalar value.
     pub endoscalar: Uendo,
     /// Point witnesses (inputs and interstitials).
-    pub points: &'source PointsWitness<C, NUM_POINTS>,
+    pub points: Arc<PointsWitness<C, NUM_POINTS>>,
 }
 
 impl<C: CurveAffine, R: Rank, const NUM_POINTS: usize> MultiStageCircuit<C::Base, R>
     for EndoscalingStep<C, R, NUM_POINTS>
 {
     type Last = PointsStage<C, NUM_POINTS>;
-    type Instance<'source> = ();
-    type Witness<'source> = EndoscalingStepWitness<'source, C, NUM_POINTS>;
+    type Instance = ();
+    type Witness = EndoscalingStepWitness<C, NUM_POINTS>;
     type Output = Kind![C::Base; ()];
-    type Aux<'source> = ();
+    type Aux = ();
 
-    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
+    fn instance<'dr, D: Driver<'dr, F = C::Base>>(
         &self,
         _dr: &mut D,
-        _instance: DriverValue<D, Self::Instance<'source>>,
+        _instance: DriverValue<D, Self::Instance>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         Ok(())
     }
 
-    fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
+    fn witness<'a, 'dr, D: Driver<'dr, F = C::Base>>(
         &self,
         dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
-        witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<(
-        Bound<'dr, D, Self::Output>,
-        DriverValue<D, Self::Aux<'source>>,
-    )> {
+        witness: DriverValue<D, Self::Witness>,
+    ) -> Result<(Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux>)> {
         let (endoscalar_guard, dr) = dr.add_stage::<EndoscalarStage>()?;
         let (points_guard, dr) = dr.add_stage::<PointsStage<C, NUM_POINTS>>()?;
         let dr = dr.finish();
@@ -283,7 +280,7 @@ impl<C: CurveAffine, R: Rank, const NUM_POINTS: usize> MultiStageCircuit<C::Base
         // circuits (see #172). This only constrains the Horner accumulation
         // relationship between inputs and interstitials.
         let endoscalar = endoscalar_guard.unenforced(dr, witness.as_ref().map(|w| w.endoscalar))?;
-        let points = points_guard.unenforced(dr, witness.as_ref().map(|w| w.points))?;
+        let points = points_guard.unenforced(dr, witness.as_ref().map(|w| w.points.clone()))?;
 
         // acc = initial or previous interstitial, depending on step index
         let mut acc = self
@@ -324,6 +321,7 @@ mod tests {
         ENDOSCALINGS_PER_STEP, EndoscalarStage, EndoscalingStep, EndoscalingStepWitness, InputsLen,
         NumStepsLen, PointsStage, PointsWitness,
     };
+    use alloc::sync::Arc;
     use alloc::vec::Vec;
     use ff::Field;
     use pasta_curves::group::{Curve, Group, prime::PrimeCurveAffine};
@@ -431,6 +429,8 @@ mod tests {
         // Verify final interstitial matches expected
         assert_eq!(points.interstitials[num_steps - 1], expected);
 
+        let points_arc = Arc::new(points);
+
         // Run each step through the multi-stage circuit and verify correctness.
         for step in 0..num_steps {
             let step_circuit = EndoscalingStep::<EpAffine, R, NUM_POINTS>::new(step);
@@ -442,11 +442,12 @@ mod tests {
             let final_mask = PointsStage::<EpAffine, NUM_POINTS>::final_mask()?;
 
             let endoscalar_rx = <EndoscalarStage as StageExt<Fp, R>>::rx(endoscalar)?;
-            let points_rx = <PointsStage<EpAffine, NUM_POINTS> as StageExt<Fp, R>>::rx(&points)?;
+            let points_rx =
+                <PointsStage<EpAffine, NUM_POINTS> as StageExt<Fp, R>>::rx(points_arc.clone())?;
             let key = registry::Key::default();
             let (final_trace, _) = staged.rx(EndoscalingStepWitness {
                 endoscalar,
-                points: &points,
+                points: points_arc.clone(),
             })?;
             let final_rx = final_trace.assemble_trivial::<R>()?;
 
@@ -506,16 +507,17 @@ mod tests {
         // Verify final interstitial matches expected
         assert_eq!(points.interstitials[num_steps - 1], expected);
 
+        let points_arc = Arc::new(points);
+
         // Run each step through the multi-stage circuit.
         for step in 0..num_steps {
             let step_circuit = EndoscalingStep::<EpAffine, R, NUM_POINTS>::new(step);
 
             let staged = MultiStage::new(step_circuit.clone());
-
             let key = registry::Key::default();
             let (final_trace, _) = staged.rx(EndoscalingStepWitness {
                 endoscalar,
-                points: &points,
+                points: points_arc.clone(),
             })?;
             let final_rx = final_trace.assemble_trivial::<R>()?;
 
@@ -525,7 +527,8 @@ mod tests {
             let y = Fp::random(&mut rand::rng());
 
             let endoscalar_rx = <EndoscalarStage as StageExt<Fp, R>>::rx(endoscalar)?;
-            let points_rx = <PointsStage<EpAffine, NUM_POINTS> as StageExt<Fp, R>>::rx(&points)?;
+            let points_rx =
+                <PointsStage<EpAffine, NUM_POINTS> as StageExt<Fp, R>>::rx(points_arc.clone())?;
 
             // Verify combined circuit identity.
             let mut lhs = final_rx.clone();

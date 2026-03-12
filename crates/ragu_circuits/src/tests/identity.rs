@@ -1322,15 +1322,15 @@ where
         + Sync,
     for<'dr> Ro::Aux<'dr>: Send + Clone,
 {
-    type Instance<'source> = Fp;
+    type Instance = Fp;
     type Output = Kind![Fp; Element<'_, _>];
-    type Witness<'source> = Fp;
-    type Aux<'source> = ();
+    type Witness = Fp;
+    type Aux = ();
 
-    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+    fn instance<'dr, D: Driver<'dr, F = Fp>>(
         &self,
         dr: &mut D,
-        instance: DriverValue<D, Self::Instance<'source>>,
+        instance: DriverValue<D, Self::Instance>,
     ) -> Result<Bound<'dr, D, Self::Output>>
     where
         Self: 'dr,
@@ -1338,14 +1338,11 @@ where
         Element::alloc(dr, instance)
     }
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+    fn witness<'dr, D: Driver<'dr, F = Fp>>(
         &self,
         dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<(
-        Bound<'dr, D, Self::Output>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
+        witness: DriverValue<D, Self::Witness>,
+    ) -> Result<(Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux>)>
     where
         Self: 'dr,
     {

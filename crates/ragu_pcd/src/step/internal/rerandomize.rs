@@ -34,18 +34,18 @@ impl<H> Rerandomize<H> {
 impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
     const INDEX: Index = Index::internal(INTERNAL_ID);
 
-    type Witness<'source> = ();
-    type Aux<'source> = ();
+    type Witness = ();
+    type Aux = ();
 
     type Left = H;
     type Right = ();
     type Output = H;
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
+    fn witness<'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, H::Data<'source>>,
+        _: DriverValue<D, Self::Witness>,
+        left: DriverValue<D, H::Data>,
         right: DriverValue<D, ()>,
     ) -> Result<(
         (
@@ -53,8 +53,8 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data<'source>>,
-        DriverValue<D, Self::Aux<'source>>,
+        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
+        DriverValue<D, Self::Aux>,
     )> {
         // Use uniform encoding for left to ensure circuit uniformity across header types
         let left_encoded = Encoded::new_uniform(dr, left.clone())?;
@@ -94,11 +94,11 @@ fn test_rerandomize_consistency() {
     struct Single;
     impl Header<Fp> for Single {
         const SUFFIX: Suffix = Suffix::new(0);
-        type Data<'source> = Fp;
+        type Data = Fp;
         type Output = Kind![Fp; Element<'_, _>];
-        fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        fn encode<'dr, D: Driver<'dr, F = Fp>>(
             dr: &mut D,
-            witness: DriverValue<D, Self::Data<'source>>,
+            witness: DriverValue<D, Self::Data>,
         ) -> Result<Bound<'dr, D, Self::Output>> {
             Element::alloc(dr, witness)
         }
@@ -107,11 +107,11 @@ fn test_rerandomize_consistency() {
     struct Pair;
     impl Header<Fp> for Pair {
         const SUFFIX: Suffix = Suffix::new(1);
-        type Data<'source> = (Fp, Fp);
+        type Data = (Fp, Fp);
         type Output = Kind![Fp; (Element<'_, _>, Element<'_, _>)];
-        fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        fn encode<'dr, D: Driver<'dr, F = Fp>>(
             dr: &mut D,
-            witness: DriverValue<D, Self::Data<'source>>,
+            witness: DriverValue<D, Self::Data>,
         ) -> Result<Bound<'dr, D, Self::Output>> {
             let (a, b) = witness.cast();
             let a = Element::alloc(dr, a)?;

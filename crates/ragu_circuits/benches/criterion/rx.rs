@@ -63,27 +63,24 @@ struct HeavyRoutineCircuit {
 }
 
 impl Circuit<Fp> for HeavyRoutineCircuit {
-    type Instance<'instance> = Fp;
+    type Instance = Fp;
     type Output = Kind![Fp; Element<'_, _>];
-    type Witness<'witness> = Fp;
-    type Aux<'witness> = ();
+    type Witness = Fp;
+    type Aux = ();
 
-    fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = Fp>>(
+    fn instance<'dr, D: Driver<'dr, F = Fp>>(
         &self,
         dr: &mut D,
-        instance: DriverValue<D, Self::Instance<'instance>>,
+        instance: DriverValue<D, Self::Instance>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         Element::alloc(dr, instance)
     }
 
-    fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = Fp>>(
+    fn witness<'dr, D: Driver<'dr, F = Fp>>(
         &self,
         dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'witness>>,
-    ) -> Result<(
-        Bound<'dr, D, Self::Output>,
-        DriverValue<D, Self::Aux<'witness>>,
-    )> {
+        witness: DriverValue<D, Self::Witness>,
+    ) -> Result<(Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux>)> {
         let input = Element::alloc(dr, witness)?;
         let routine = HeavyKnownRoutine { depth: self.depth };
 

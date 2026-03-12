@@ -6,6 +6,7 @@
 //! the $k(Y)$ evaluations for the child proofs, as well as the temporary sponge
 //! state used to split the hashing operations across two circuits.
 
+use alloc::sync::Arc;
 use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
@@ -40,8 +41,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     pub(super) fn compute_errors_n<'dr, D, RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        preamble_witness: &native::stages::preamble::Witness<'_, C, R, HEADER_SIZE>,
-        error_m_witness: &native::stages::error_m::Witness<C, NativeParameters>,
+        preamble_witness: Arc<native::stages::preamble::Witness<C, R, HEADER_SIZE>>,
+        error_m_witness: Arc<native::stages::error_m::Witness<C, NativeParameters>>,
         claims: claims::Builder<'_, '_, C::CircuitField, R>,
         y: &Element<'dr, D>,
         mu: &Element<'dr, D>,
@@ -52,7 +53,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         >,
     ) -> Result<(
         proof::ErrorN<C, R>,
-        native::stages::error_n::Witness<C, NativeParameters>,
+        Arc<native::stages::error_n::Witness<C, NativeParameters>>,
         FixedVec<structured::Polynomial<C::CircuitField, R>, NativeN>,
         FixedVec<structured::Polynomial<C::CircuitField, R>, NativeN>,
     )>
@@ -74,7 +75,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 let (preamble_witness, error_terms_m, y, mu, nu) = witness.cast();
 
                 let preamble = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::default()
-                    .witness(dr, preamble_witness.as_ref().map(|w| *w))?;
+                    .witness(dr, preamble_witness)?;
 
                 let y = Element::alloc(dr, y)?;
                 let left_application_ky = preamble.left.application_ky(dr, &y)?;
@@ -132,14 +133,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         let error_terms = fold_revdot::compute_errors_n::<_, R, NativeParameters>(&a, &b);
 
-        let error_n_witness = native::stages::error_n::Witness::<C, NativeParameters> {
+        let error_n_witness = Arc::new(native::stages::error_n::Witness::<C, NativeParameters> {
             error_terms,
             collapsed,
             ky,
             sponge_state_elements,
-        };
+        });
         let native_rx = native::stages::error_n::Stage::<C, R, HEADER_SIZE, NativeParameters>::rx(
-            &error_n_witness,
+            Arc::clone(&error_n_witness),
         )?;
         let native_blind = C::CircuitField::random(&mut *rng);
         let native_commitment =
@@ -149,7 +150,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             native_error_n: native_commitment,
         };
         let nested_rx =
-            nested::stages::error_n::Stage::<C::HostCurve, R>::rx(&nested_error_n_witness)?;
+            nested::stages::error_n::Stage::<C::HostCurve, R>::rx(nested_error_n_witness)?;
         let nested_blind = C::ScalarField::random(&mut *rng);
         let nested_commitment =
             nested_rx.commit_to_affine(C::nested_generators(self.params), nested_blind);

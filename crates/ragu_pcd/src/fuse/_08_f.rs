@@ -171,7 +171,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nested_f_witness = f::Witness {
             native_f: commitment,
         };
-        let nested_rx = f::Stage::<C::HostCurve, R>::rx(&nested_f_witness)?;
+        let nested_rx = f::Stage::<C::HostCurve, R>::rx(nested_f_witness)?;
         let nested_blind = C::ScalarField::random(&mut *rng);
         let nested_commitment =
             nested_rx.commit_to_affine(C::nested_generators(self.params), nested_blind);

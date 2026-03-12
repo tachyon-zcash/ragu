@@ -29,27 +29,24 @@ pub struct SquareCircuit {
 }
 
 impl Circuit<Fp> for SquareCircuit {
-    type Instance<'instance> = Fp;
+    type Instance = Fp;
     type Output = Kind![Fp; Element<'_, _>];
-    type Witness<'witness> = Fp;
-    type Aux<'witness> = ();
+    type Witness = Fp;
+    type Aux = ();
 
-    fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = Fp>>(
+    fn instance<'dr, D: Driver<'dr, F = Fp>>(
         &self,
         dr: &mut D,
-        instance: DriverValue<D, Self::Instance<'instance>>,
+        instance: DriverValue<D, Self::Instance>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         Element::alloc(dr, instance)
     }
 
-    fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = Fp>>(
+    fn witness<'dr, D: Driver<'dr, F = Fp>>(
         &self,
         dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'witness>>,
-    ) -> Result<(
-        Bound<'dr, D, Self::Output>,
-        DriverValue<D, Self::Aux<'witness>>,
-    )> {
+        witness: DriverValue<D, Self::Witness>,
+    ) -> Result<(Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux>)> {
         let mut a = Element::alloc(dr, witness)?;
 
         for _ in 0..self.times {
@@ -93,15 +90,15 @@ fn test_simple_circuit() {
     struct MySimpleCircuit;
 
     impl Circuit<Fp> for MySimpleCircuit {
-        type Instance<'instance> = (Fp, Fp); // Public inputs: c and d
+        type Instance = (Fp, Fp); // Public inputs: c and d
         type Output = Kind![Fp; (Element<'_, _>, Element<'_, _>)];
-        type Witness<'witness> = (Fp, Fp); // Witness: a and b
-        type Aux<'witness> = ();
+        type Witness = (Fp, Fp); // Witness: a and b
+        type Aux = ();
 
-        fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = Fp>>(
+        fn instance<'dr, D: Driver<'dr, F = Fp>>(
             &self,
             dr: &mut D,
-            instance: DriverValue<D, Self::Instance<'instance>>,
+            instance: DriverValue<D, Self::Instance>,
         ) -> Result<Bound<'dr, D, Self::Output>> {
             let c = Element::alloc(dr, instance.as_ref().map(|v| v.0))?;
             let d = Element::alloc(dr, instance.as_ref().map(|v| v.1))?;
@@ -109,14 +106,11 @@ fn test_simple_circuit() {
             Ok((c, d))
         }
 
-        fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = Fp>>(
+        fn witness<'dr, D: Driver<'dr, F = Fp>>(
             &self,
             dr: &mut D,
-            witness: DriverValue<D, Self::Witness<'witness>>,
-        ) -> Result<(
-            Bound<'dr, D, Self::Output>,
-            DriverValue<D, Self::Aux<'witness>>,
-        )> {
+            witness: DriverValue<D, Self::Witness>,
+        ) -> Result<(Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux>)> {
             let a = Element::alloc(dr, witness.as_ref().map(|w| w.0))?;
             let b = Element::alloc(dr, witness.as_ref().map(|w| w.1))?;
 

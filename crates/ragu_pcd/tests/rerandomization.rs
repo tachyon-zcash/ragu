@@ -22,11 +22,11 @@ struct HeaderA;
 
 impl<F: Field> Header<F> for HeaderA {
     const SUFFIX: Suffix = Suffix::new(0);
-    type Data<'source> = ();
+    type Data = ();
     type Output = ();
-    fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+    fn encode<'dr, D: Driver<'dr, F = F>>(
         _: &mut D,
-        _: DriverValue<D, Self::Data<'source>>,
+        _: DriverValue<D, Self::Data>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         Ok(())
     }
@@ -37,11 +37,11 @@ struct HeaderWithData;
 
 impl Header<Fp> for HeaderWithData {
     const SUFFIX: Suffix = Suffix::new(2);
-    type Data<'source> = Fp;
+    type Data = Fp;
     type Output = Kind![Fp; Element<'_, _>];
-    fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+    fn encode<'dr, D: Driver<'dr, F = Fp>>(
         dr: &mut D,
-        witness: DriverValue<D, Self::Data<'source>>,
+        witness: DriverValue<D, Self::Data>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         Element::alloc(dr, witness)
     }
@@ -51,15 +51,15 @@ impl Header<Fp> for HeaderWithData {
 struct StepWithData;
 impl Step<Pasta> for StepWithData {
     const INDEX: Index = Index::new(0);
-    type Witness<'source> = Fp;
-    type Aux<'source> = ();
+    type Witness = Fp;
+    type Aux = ();
     type Left = ();
     type Right = ();
     type Output = HeaderWithData;
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
+    fn witness<'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        witness: DriverValue<D, Self::Witness>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
     ) -> Result<(
@@ -68,8 +68,8 @@ impl Step<Pasta> for StepWithData {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        DriverValue<D, <Self::Output as Header<Fp>>::Data<'source>>,
-        DriverValue<D, Self::Aux<'source>>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
+        DriverValue<D, Self::Aux>,
     )> {
         let left = Encoded::new(dr, left)?;
         let right = Encoded::new(dr, right)?;
@@ -82,15 +82,15 @@ impl Step<Pasta> for StepWithData {
 struct Step0;
 impl<C: Cycle> Step<C> for Step0 {
     const INDEX: Index = Index::new(0);
-    type Witness<'source> = ();
-    type Aux<'source> = ();
+    type Witness = ();
+    type Aux = ();
     type Left = ();
     type Right = ();
     type Output = HeaderA;
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
+    fn witness<'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _: DriverValue<D, Self::Witness<'source>>,
+        _: DriverValue<D, Self::Witness>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
     ) -> Result<(
@@ -99,8 +99,8 @@ impl<C: Cycle> Step<C> for Step0 {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data<'source>>,
-        DriverValue<D, Self::Aux<'source>>,
+        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
+        DriverValue<D, Self::Aux>,
     )> {
         let left = Encoded::new(dr, left)?;
         let right = Encoded::new(dr, right)?;
@@ -112,15 +112,15 @@ impl<C: Cycle> Step<C> for Step0 {
 struct Step1;
 impl<C: Cycle> Step<C> for Step1 {
     const INDEX: Index = Index::new(1);
-    type Witness<'source> = ();
-    type Aux<'source> = ();
+    type Witness = ();
+    type Aux = ();
     type Left = HeaderA;
     type Right = HeaderA;
     type Output = HeaderA;
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
+    fn witness<'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _: DriverValue<D, Self::Witness<'source>>,
+        _: DriverValue<D, Self::Witness>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
     ) -> Result<(
@@ -129,8 +129,8 @@ impl<C: Cycle> Step<C> for Step1 {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data<'source>>,
-        DriverValue<D, Self::Aux<'source>>,
+        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
+        DriverValue<D, Self::Aux>,
     )> {
         let left = Encoded::new(dr, left)?;
         let right = Encoded::new(dr, right)?;

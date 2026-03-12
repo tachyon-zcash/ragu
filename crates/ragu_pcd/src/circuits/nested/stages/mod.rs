@@ -44,6 +44,7 @@ macro_rules! define_nested_stage {
 
             /// Witness data for this nested stage.
             $(#[$meta])*
+            #[derive(Copy, Clone)]
             pub struct Witness<C: CurveAffine> {
                 $( pub $field_name: C, )+
             }
@@ -70,17 +71,17 @@ macro_rules! define_nested_stage {
                 for Stage<C, R>
             {
                 type Parent = $parent;
-                type Witness<'source> = &'source Witness<C>;
+                type Witness = Witness<C>;
                 type OutputKind = Kind![C::Base; Output<'_, _, C>];
 
                 fn values() -> usize {
                     NUM * 2
                 }
 
-                fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
+                fn witness<'dr, D: Driver<'dr, F = C::Base>>(
                     &self,
                     dr: &mut D,
-                    witness: DriverValue<D, Self::Witness<'source>>,
+                    witness: DriverValue<D, Self::Witness>,
                 ) -> Result<Bound<'dr, D, Self::OutputKind>>
                 where
                     Self: 'dr,

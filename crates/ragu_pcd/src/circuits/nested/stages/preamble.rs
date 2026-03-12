@@ -22,6 +22,7 @@ pub const NUM: usize = 13;
 /// Witness data for a single child proof in the nested preamble stage.
 ///
 /// Contains commitments from the child proof's circuits component.
+#[derive(Copy, Clone)]
 pub struct ChildWitness<C: CurveAffine> {
     /// Commitment from the child's application circuit.
     pub application: C,
@@ -52,6 +53,7 @@ impl<C: CurveAffine> ChildWitness<C> {
 }
 
 /// Witness data for the nested preamble stage.
+#[derive(Copy, Clone)]
 pub struct Witness<C: CurveAffine> {
     /// Commitment from the native preamble stage.
     pub native_preamble: C,
@@ -85,7 +87,7 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
 }
 
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChildOutput<'dr, D, C> {
-    fn alloc(dr: &mut D, witness: DriverValue<D, &ChildWitness<C>>) -> Result<Self> {
+    fn alloc(dr: &mut D, witness: DriverValue<D, ChildWitness<C>>) -> Result<Self> {
         Ok(ChildOutput {
             application: Point::alloc(dr, witness.as_ref().map(|w| w.application))?,
             hashes_1: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_1))?,
@@ -120,25 +122,25 @@ pub struct Stage<C: CurveAffine, R> {
 
 impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R> {
     type Parent = ();
-    type Witness<'source> = &'source Witness<C>;
+    type Witness = Witness<C>;
     type OutputKind = Kind![C::Base; Output<'_, _, C>];
 
     fn values() -> usize {
         NUM * 2
     }
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
+    fn witness<'dr, D: Driver<'dr, F = C::Base>>(
         &self,
         dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        witness: DriverValue<D, Self::Witness>,
     ) -> Result<Bound<'dr, D, Self::OutputKind>>
     where
         Self: 'dr,
     {
         Ok(Output {
             native_preamble: Point::alloc(dr, witness.as_ref().map(|w| w.native_preamble))?,
-            left: ChildOutput::alloc(dr, witness.as_ref().map(|w| &w.left))?,
-            right: ChildOutput::alloc(dr, witness.as_ref().map(|w| &w.right))?,
+            left: ChildOutput::alloc(dr, witness.as_ref().map(|w| w.left))?,
+            right: ChildOutput::alloc(dr, witness.as_ref().map(|w| w.right))?,
         })
     }
 }

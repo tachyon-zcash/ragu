@@ -40,7 +40,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             registry_wx1: native_registry_wx1_commitment,
         };
         let nested_s_prime_rx =
-            nested::stages::s_prime::Stage::<C::HostCurve, R>::rx(&nested_s_prime_witness)?;
+            nested::stages::s_prime::Stage::<C::HostCurve, R>::rx(nested_s_prime_witness)?;
         let nested_s_prime_blind = C::ScalarField::random(&mut *rng);
         let nested_s_prime_commitment = nested_s_prime_rx
             .commit_to_affine(C::nested_generators(self.params), nested_s_prime_blind);

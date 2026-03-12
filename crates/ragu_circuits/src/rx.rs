@@ -401,10 +401,10 @@ fn finish<F: Field>(mut segments: Vec<AnnotatedSegment<F>>) -> Trace<F> {
 ///
 /// The returned [`Trace`] can be assembled into a polynomial via
 /// [`Registry::assemble`](crate::registry::Registry::assemble).
-pub fn eval<'witness, F: Field, C: Circuit<F>>(
+pub fn eval<F: Field, C: Circuit<F>>(
     circuit: &C,
-    witness: C::Witness<'witness>,
-) -> Result<(Trace<F>, C::Aux<'witness>)> {
+    witness: C::Witness,
+) -> Result<(Trace<F>, C::Aux)> {
     #[cfg(feature = "multicore")]
     {
         let (tx, rx) = mpsc::channel();
@@ -495,27 +495,27 @@ mod tests {
     struct MulOnWriteCircuit;
 
     impl crate::Circuit<Fp> for MulOnWriteCircuit {
-        type Instance<'instance> = Fp;
+        type Instance = Fp;
         type Output = Kind![Fp; MulOnWrite<'_, _>];
-        type Witness<'witness> = Fp;
-        type Aux<'witness> = ();
+        type Witness = Fp;
+        type Aux = ();
 
-        fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = Fp>>(
+        fn instance<'dr, D: Driver<'dr, F = Fp>>(
             &self,
             dr: &mut D,
-            instance: ragu_core::drivers::DriverValue<D, Self::Instance<'instance>>,
+            instance: ragu_core::drivers::DriverValue<D, Self::Instance>,
         ) -> Result<Bound<'dr, D, Self::Output>> {
             let element = Element::alloc(dr, instance)?;
             Ok(MulOnWrite { element })
         }
 
-        fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = Fp>>(
+        fn witness<'dr, D: Driver<'dr, F = Fp>>(
             &self,
             dr: &mut D,
-            witness: ragu_core::drivers::DriverValue<D, Self::Witness<'witness>>,
+            witness: ragu_core::drivers::DriverValue<D, Self::Witness>,
         ) -> Result<(
             Bound<'dr, D, Self::Output>,
-            ragu_core::drivers::DriverValue<D, Self::Aux<'witness>>,
+            ragu_core::drivers::DriverValue<D, Self::Aux>,
         )> {
             let element = Element::alloc(dr, witness)?;
             Ok((MulOnWrite { element }, D::unit()))

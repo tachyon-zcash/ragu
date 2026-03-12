@@ -20,15 +20,15 @@ use ragu_primitives::Element;
 pub struct MySimpleCircuit;
 
 impl<F: Field> Circuit<F> for MySimpleCircuit {
-    type Instance<'instance> = (F, F); // Public inputs: c and d
+    type Instance = (F, F); // Public inputs: c and d
     type Output = Kind![F; (Element<'_, _>, Element<'_, _>)];
-    type Witness<'witness> = (F, F); // Witness: a and b
-    type Aux<'witness> = ();
+    type Witness = (F, F); // Witness: a and b
+    type Aux = ();
 
-    fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = F>>(
+    fn instance<'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: &mut D,
-        instance: DriverValue<D, Self::Instance<'instance>>,
+        instance: DriverValue<D, Self::Instance>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         let c = Element::alloc(dr, instance.as_ref().map(|v| v.0))?;
         let d = Element::alloc(dr, instance.as_ref().map(|v| v.1))?;
@@ -36,14 +36,11 @@ impl<F: Field> Circuit<F> for MySimpleCircuit {
         Ok((c, d))
     }
 
-    fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = F>>(
+    fn witness<'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'witness>>,
-    ) -> Result<(
-        Bound<'dr, D, Self::Output>,
-        DriverValue<D, Self::Aux<'witness>>,
-    )> {
+        witness: DriverValue<D, Self::Witness>,
+    ) -> Result<(Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux>)> {
         let a = Element::alloc(dr, witness.as_ref().map(|w| w.0))?;
         let b = Element::alloc(dr, witness.as_ref().map(|w| w.1))?;
 
@@ -72,27 +69,24 @@ pub struct SquareCircuit {
 }
 
 impl<F: Field> Circuit<F> for SquareCircuit {
-    type Instance<'instance> = F;
+    type Instance = F;
     type Output = Kind![F; Element<'_, _>];
-    type Witness<'witness> = F;
-    type Aux<'witness> = ();
+    type Witness = F;
+    type Aux = ();
 
-    fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = F>>(
+    fn instance<'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: &mut D,
-        instance: DriverValue<D, Self::Instance<'instance>>,
+        instance: DriverValue<D, Self::Instance>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         Element::alloc(dr, instance)
     }
 
-    fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = F>>(
+    fn witness<'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'witness>>,
-    ) -> Result<(
-        Bound<'dr, D, Self::Output>,
-        DriverValue<D, Self::Aux<'witness>>,
-    )> {
+        witness: DriverValue<D, Self::Witness>,
+    ) -> Result<(Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux>)> {
         let mut a = Element::alloc(dr, witness)?;
 
         for _ in 0..self.times {

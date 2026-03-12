@@ -4,6 +4,7 @@
 //! evaluations of every committed or accumulated polynomial (thus far) at the
 //! point $u$, except $f(u)$ which is _derived_ from said evaluations.
 
+use alloc::sync::Arc;
 use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{polynomials::Rank, staging::StageExt};
@@ -32,7 +33,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         error_m: &proof::ErrorM<C, R>,
         ab: &proof::AB<C, R>,
         query: &proof::Query<C, R>,
-    ) -> Result<(proof::Eval<C, R>, eval::Witness<C::CircuitField>)>
+    ) -> Result<(proof::Eval<C, R>, Arc<eval::Witness<C::CircuitField>>)>
     where
         D: Driver<'dr, F = C::CircuitField, MaybeKind = Always<()>>,
     {
@@ -54,7 +55,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 registry_xy: query.registry_xy_poly.eval(u),
             },
         };
-        let native_rx = eval::Stage::<C, R, HEADER_SIZE>::rx(&eval_witness)?;
+        let eval_witness = Arc::new(eval_witness);
+        let native_rx = eval::Stage::<C, R, HEADER_SIZE>::rx(Arc::clone(&eval_witness))?;
         let native_blind = C::CircuitField::random(&mut *rng);
         let native_commitment =
             native_rx.commit_to_affine(C::host_generators(self.params), native_blind);
@@ -62,7 +64,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nested_eval_witness = nested::stages::eval::Witness {
             native_eval: native_commitment,
         };
-        let nested_rx = nested::stages::eval::Stage::<C::HostCurve, R>::rx(&nested_eval_witness)?;
+        let nested_rx = nested::stages::eval::Stage::<C::HostCurve, R>::rx(nested_eval_witness)?;
         let nested_blind = C::ScalarField::random(&mut *rng);
         let nested_commitment =
             nested_rx.commit_to_affine(C::nested_generators(self.params), nested_blind);

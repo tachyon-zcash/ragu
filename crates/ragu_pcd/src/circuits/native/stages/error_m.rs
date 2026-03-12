@@ -16,6 +16,7 @@ use ragu_primitives::{
     vec::{FixedVec, Len},
 };
 
+use alloc::sync::Arc;
 use core::marker::PhantomData;
 
 pub(crate) use crate::circuits::native::InternalCircuitIndex::ErrorMStage as STAGING_ID;
@@ -29,6 +30,14 @@ pub struct Witness<C: Cycle, FP: fold_revdot::Parameters> {
     /// Error term elements for layer 1.
     /// Outer: N claims, Inner: M²-M error terms per claim.
     pub error_terms: FixedVec<FixedVec<C::CircuitField, ErrorTermsLen<FP::M>>, FP::N>,
+}
+
+impl<C: Cycle, FP: fold_revdot::Parameters> Clone for Witness<C, FP> {
+    fn clone(&self) -> Self {
+        Witness {
+            error_terms: self.error_terms.clone(),
+        }
+    }
 }
 
 /// Prover-internal output gadget for the error_m stage.
@@ -52,7 +61,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, FP>
 {
     type Parent = super::error_n::Stage<C, R, HEADER_SIZE, FP>;
-    type Witness<'source> = &'source Witness<C, FP>;
+    type Witness = Arc<Witness<C, FP>>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _, FP>];
 
     fn values() -> usize {
@@ -61,10 +70,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         FP::N::len() * error_terms_per_claim
     }
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
+    fn witness<'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
         dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        witness: DriverValue<D, Self::Witness>,
     ) -> Result<Bound<'dr, D, Self::OutputKind>>
     where
         Self: 'dr,

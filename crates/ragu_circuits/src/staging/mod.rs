@@ -139,7 +139,7 @@ pub trait Stage<F: Field, R: Rank> {
     type Parent: Stage<F, R>;
 
     /// The data needed to compute the assignment of this partial trace.
-    type Witness<'source>: Send;
+    type Witness: Send;
 
     /// The kind of gadget that this stage produces as output.
     ///
@@ -153,10 +153,10 @@ pub trait Stage<F: Field, R: Rank> {
     fn values() -> usize;
 
     /// Computes the witness for this stage.
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+    fn witness<'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        witness: DriverValue<D, Self::Witness>,
     ) -> Result<Bound<'dr, D, Self::OutputKind>>
     where
         Self: 'dr;
@@ -172,17 +172,17 @@ pub trait Stage<F: Field, R: Rank> {
 
 impl<F: Field, R: Rank> Stage<F, R> for () {
     type Parent = ();
-    type Witness<'source> = ();
+    type Witness = ();
     type OutputKind = ();
 
     fn values() -> usize {
         0
     }
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+    fn witness<'dr, D: Driver<'dr, F = F>>(
         &self,
         _: &mut D,
-        _: DriverValue<D, Self::Witness<'source>>,
+        _: DriverValue<D, Self::Witness>,
     ) -> Result<Bound<'dr, D, Self::OutputKind>>
     where
         Self: 'dr,
@@ -211,11 +211,11 @@ pub trait MultiStageCircuit<F: Field, R: Rank>: Sized + Send + Sync {
 
     /// The type of data that is needed to construct the expected output of this
     /// circuit.
-    type Instance<'source>: Send;
+    type Instance: Send;
 
     /// The type of data that is needed to compute a satisfying witness for this
     /// circuit.
-    type Witness<'source>: Send;
+    type Witness: Send;
 
     /// The circuit's public instance, serialized into the $k(Y)$ instance
     /// polynomial that the verifier checks.
@@ -227,7 +227,7 @@ pub trait MultiStageCircuit<F: Field, R: Rank>: Sized + Send + Sync {
     /// Auxiliary data produced during the computation of the
     /// [`witness`](MultiStageCircuit::witness) method that may be useful, such as
     /// interstitial witness material that is needed for future synthesis.
-    type Aux<'source>: Send;
+    type Aux: Send;
 
     /// Given an instance type for this circuit, use the provided [`Driver`] to
     /// return a `Self::Output` gadget that the _some_ corresponding witness
@@ -235,10 +235,10 @@ pub trait MultiStageCircuit<F: Field, R: Rank>: Sized + Send + Sync {
     /// [`witness`](MultiStageCircuit::witness) method. This can be seen as
     /// "short-circuiting" the computation involving the witness, which a
     /// verifier would not have in its possession.
-    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+    fn instance<'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: &mut D,
-        instance: DriverValue<D, Self::Instance<'source>>,
+        instance: DriverValue<D, Self::Instance>,
     ) -> Result<Bound<'dr, D, Self::Output>>
     where
         Self: 'dr;
@@ -247,14 +247,11 @@ pub trait MultiStageCircuit<F: Field, R: Rank>: Sized + Send + Sync {
     /// provided [`Driver`] and return the `Self::Output` gadget that the
     /// verifier's instance should produce as a result of the
     /// [`instance`](MultiStageCircuit::instance) method.
-    fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+    fn witness<'a, 'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
-        witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<(
-        Bound<'dr, D, Self::Output>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
+        witness: DriverValue<D, Self::Witness>,
+    ) -> Result<(Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux>)>
     where
         Self: 'dr;
 }
@@ -291,15 +288,15 @@ impl<F: Field, R: Rank, S: MultiStageCircuit<F, R>> MultiStage<F, R, S> {
 }
 
 impl<F: Field, R: Rank, S: MultiStageCircuit<F, R>> Circuit<F> for MultiStage<F, R, S> {
-    type Instance<'source> = S::Instance<'source>;
-    type Witness<'source> = S::Witness<'source>;
+    type Instance = S::Instance;
+    type Witness = S::Witness;
     type Output = S::Output;
-    type Aux<'source> = S::Aux<'source>;
+    type Aux = S::Aux;
 
-    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+    fn instance<'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: &mut D,
-        instance: DriverValue<D, S::Instance<'source>>,
+        instance: DriverValue<D, S::Instance>,
     ) -> Result<Bound<'dr, D, Self::Output>>
     where
         Self: 'dr,
@@ -307,11 +304,11 @@ impl<F: Field, R: Rank, S: MultiStageCircuit<F, R>> Circuit<F> for MultiStage<F,
         self.circuit.instance(dr, instance)
     }
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+    fn witness<'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: &mut D,
-        witness: DriverValue<D, S::Witness<'source>>,
-    ) -> Result<(Bound<'dr, D, Self::Output>, DriverValue<D, S::Aux<'source>>)>
+        witness: DriverValue<D, S::Witness>,
+    ) -> Result<(Bound<'dr, D, Self::Output>, DriverValue<D, S::Aux>)>
     where
         Self: 'dr,
     {
@@ -327,7 +324,7 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
     }
 
     /// Compute the (partial) trace polynomial $r(X)$ for this stage.
-    fn rx_configured(&self, witness: Self::Witness<'_>) -> Result<structured::Polynomial<F, R>> {
+    fn rx_configured(&self, witness: Self::Witness) -> Result<structured::Polynomial<F, R>> {
         let values = {
             let mut dr = Emulator::extractor();
             let out = self.witness(&mut dr, Always::maybe_just(|| witness))?;
@@ -377,7 +374,7 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
 
     /// Compute the (partial) trace polynomial $r(X)$ for this stage, using a
     /// default implementation.
-    fn rx(witness: Self::Witness<'_>) -> Result<structured::Polynomial<F, R>>
+    fn rx(witness: Self::Witness) -> Result<structured::Polynomial<F, R>>
     where
         Self: Default,
     {
