@@ -35,6 +35,9 @@ use crate::{
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     /// Fuse two [`Pcd`] into one using a provided [`Step`].
     ///
+    /// The provided `step` must have been previously registered with this
+    /// [`Application`] via [`ApplicationBuilder::register`](crate::ApplicationBuilder::register).
+    ///
     /// ## Parameters
     ///
     /// * `rng`: a random number generator used to sample randomness during

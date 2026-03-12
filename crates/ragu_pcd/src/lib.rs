@@ -1,4 +1,14 @@
-//! # `ragu_pcd`
+//! Proof-carrying data framework for Ragu.
+//!
+//! This crate provides the top-level API for building PCD applications:
+//!
+//! - [`ApplicationBuilder`] / [`Application`] — configure, build, then
+//!   [`seed`](Application::seed), [`fuse`](Application::fuse),
+//!   [`rerandomize`](Application::rerandomize), and
+//!   [`verify`](Application::verify) proofs.
+//! - [`step::Step`] — the trait that defines computation nodes (transitions).
+//! - [`header::Header`] — the trait that defines succinct state representations.
+//! - [`Proof`] / [`Pcd`] — the proof and proof-carrying-data structures.
 
 #![no_std]
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -70,8 +80,14 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     }
 
     /// Register a new application-defined [`Step`] in this context. The
-    /// provided [`Step`]'s [`INDEX`](Step::INDEX) should be the next sequential
+    /// provided [`Step`]'s [`INDEX`](Step::INDEX) must be the next sequential
     /// index that has not been inserted yet.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the step's index is not the next sequential index,
+    /// or if any of the step's header suffixes conflict with an
+    /// already-registered header type.
     pub fn register<S: Step<C> + 'params>(mut self, step: S) -> Result<Self> {
         S::INDEX.assert_index(self.num_application_steps)?;
 
@@ -104,6 +120,11 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
 
     /// Perform finalization and optimization steps to produce the
     /// [`Application`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if internal circuit registration or registry
+    /// finalization fails.
     pub fn finalize(
         mut self,
         params: &'params C::Params,

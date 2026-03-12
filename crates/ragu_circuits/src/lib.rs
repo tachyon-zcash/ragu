@@ -115,7 +115,7 @@ pub trait Circuit<F: Field>: Sized + Send + Sync {
         Self: 'dr;
 }
 
-/// An extension trait for all circuits.
+/// Extension trait blanket-implemented for all [`Circuit<F>`](Circuit) types.
 pub trait CircuitExt<F: Field>: Circuit<F> {
     /// Given a polynomial [`Rank`], convert this circuit into a boxed
     /// [`CircuitObject`] that provides methods for evaluating the $s(X, Y)$

@@ -37,6 +37,9 @@
 //! situations involving _nested_ optionality of witness data, which can be
 //! confusing in the context of recursive proofs.
 //!
+//! See the *Witness Data* chapter in the [book] for the full motivation
+//! and design rationale.
+//!
 //! ## Design
 //!
 //! End users typically have access to a [`Maybe<T>`] type that they can treat
@@ -64,8 +67,6 @@
 //! pieces of the enclosed value, or reinterpret the enclosed value somehow.
 //! This is done by value in a way that often does not lead to any runtime
 //! overhead due to existing memory layout optimizations in the Rust compiler.
-//!
-//! See also the [book] for a user-oriented introduction to witness handling.
 //!
 //! [book]: https://tachyon.z.cash/ragu/guide/drivers/witness.html
 

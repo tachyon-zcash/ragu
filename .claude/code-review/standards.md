@@ -16,6 +16,11 @@ focus-specific policy file.
 - **suggestion**: Improvement that would make the code clearer, more idiomatic,
   or easier to maintain, but isn't wrong as-is.
 
+## Shared Policies
+
+For content placement decisions (book vs. rustdoc), see
+`.claude/review-shared/surface-placement.md`.
+
 ## General Principles
 
 - Be specific. "This could be improved" is not actionable. Quote the code, name

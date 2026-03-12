@@ -40,6 +40,7 @@ If you're unsure what the user means, ask before launching reviewers.
    > Read these files:
    > - `.claude/book-review/standards.md` (master standards that always apply)
    > - `.claude/book-review/{focus}.md` (your specific review policy)
+   > - `.claude/review-shared/surface-placement.md` (book vs. rustdoc placement rules)
    >
    > **What to review:** {describe the specific content — file paths, line
    > ranges, the topic, whatever the user specified. If reviewing a diff,
@@ -144,6 +145,9 @@ After synthesizing findings, but before presenting them to the user:
    > Read these files:
    > - `.claude/book-review/standards.md` (master standards)
    > - `.claude/book-review/{focus}.md` (your policy)
+   > - `.claude/review-shared/surface-placement.md` (book vs. rustdoc placement rules)
+   > - `.claude/review-shared/writing.md` (shared writing rules)
+   > - `.claude/review-shared/math.md` (shared math rules)
    >
    > Here is the proposed plan of changes:
    > {numbered list of proposed changes with locations and suggested rewrites}

@@ -19,6 +19,11 @@ use crate::{
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     /// Verifies some [`Pcd`] for the provided [`Header`].
+    ///
+    /// Returns `Ok(true)` if all verification checks pass, `Ok(false)` if
+    /// any check fails (e.g., invalid circuit ID, header size mismatch,
+    /// corrupted commitments or evaluations), or `Err` if an internal
+    /// computation error occurs.
     pub fn verify<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         pcd: &Pcd<'_, C, R, H>,

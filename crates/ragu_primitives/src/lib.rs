@@ -40,7 +40,8 @@ pub use point::Point;
 pub use sendable::Sendable;
 pub use simulator::Simulator;
 
-/// Primitive extension trait for all gadgets.
+/// Extension trait that adds serialization ([`write`](GadgetExt::write)) and
+/// witness-stripping ([`demote`](GadgetExt::demote)) to all gadgets.
 pub trait GadgetExt<'dr, D: Driver<'dr>>: Gadget<'dr, D> {
     /// Write this gadget into a buffer, assuming the gadget's
     /// [`Kind`](Gadget::Kind) implements [`Write`].

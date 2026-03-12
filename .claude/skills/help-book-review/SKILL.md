@@ -10,10 +10,11 @@ Print the following help text exactly, then stop. Do not add commentary.
 
 ## Book Review Pipeline
 
-Two skills, one feedback loop:
+Three skills, one feedback loop:
 
 **`/book-review`** — review any part of the book
 **`/book-refine`** — improve the review system based on your feedback
+**`/doc-audit`** — audit book vs. rustdoc surface placement
 
 ### Reviewing
 
@@ -51,14 +52,16 @@ changes before executing. New policy files are auto-discovered by `/book-review`
 ### Policy files
 
 ```
-.claude/review-shared/writing.md   shared writing rules (grammar + prose reviewers)
-.claude/review-shared/math.md     shared math notation rules (math reviewer)
+.claude/review-shared/writing.md              shared writing rules (grammar + prose reviewers)
+.claude/review-shared/math.md                shared math notation rules (math reviewer)
+.claude/review-shared/surface-placement.md   book vs. rustdoc placement policy
 .claude/book-review/standards.md  master standards (all reviewers)
 .claude/book-review/grammar.md    book-specific grammar rules
 .claude/book-review/prose.md      transitions, terminology appendix
 .claude/book-review/structure.md  organization, flow, progressive disclosure
 .claude/book-review/math.md       notation, correctness, accessibility
 .claude/book-review/formatting.md line width, headings, code blocks
+.claude/book-review/formatting-examples.md   concrete before/after examples
 ```
 
 Edit these directly or let `/book-refine` manage them.
