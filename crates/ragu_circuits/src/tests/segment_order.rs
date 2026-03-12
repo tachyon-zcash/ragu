@@ -194,11 +194,11 @@ proptest! {
 
         for (i, (m, t)) in metrics.segments.iter().zip(trace.segments.iter()).enumerate() {
             prop_assert_eq!(
-                m.num_multiplication_constraints,
+                m.num_multiplication_constraints(),
                 t.a.len(),
                 "segment {}: mul count mismatch (metrics={}, trace={})",
                 i,
-                m.num_multiplication_constraints,
+                m.num_multiplication_constraints(),
                 t.a.len(),
             );
         }

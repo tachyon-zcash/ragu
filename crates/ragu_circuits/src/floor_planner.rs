@@ -85,11 +85,11 @@ pub fn floor_plan(segment_records: &[SegmentRecord]) -> Vec<ConstraintSegment> {
         result.push(ConstraintSegment {
             multiplication_start,
             linear_start,
-            num_multiplication_constraints: record.num_multiplication_constraints,
-            num_linear_constraints: record.num_linear_constraints,
+            num_multiplication_constraints: record.num_multiplication_constraints(),
+            num_linear_constraints: record.num_linear_constraints(),
         });
-        multiplication_start += record.num_multiplication_constraints;
-        linear_start += record.num_linear_constraints;
+        multiplication_start += record.num_multiplication_constraints();
+        linear_start += record.num_linear_constraints();
     }
 
     assert!(

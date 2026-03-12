@@ -159,17 +159,41 @@ impl RoutineFingerprint {
 /// | 2     | `RoutineB`     |  1  |  3 | b0+b1; `RoutineC` excluded |
 /// | 3     | `RoutineC`     |  1  |  2 | C's own constraints        |
 pub struct SegmentRecord {
+    num_multiplication_constraints: usize,
+    num_linear_constraints: usize,
+    identity: RoutineIdentity,
+}
+
+impl SegmentRecord {
+    pub(crate) fn new(
+        num_multiplication_constraints: usize,
+        num_linear_constraints: usize,
+        identity: RoutineIdentity,
+    ) -> Self {
+        Self {
+            num_multiplication_constraints,
+            num_linear_constraints,
+            identity,
+        }
+    }
+
     /// The number of multiplication constraints in this segment.
-    pub num_multiplication_constraints: usize,
+    pub fn num_multiplication_constraints(&self) -> usize {
+        self.num_multiplication_constraints
+    }
 
     /// The number of linear constraints in this segment, including constraints
     /// on wires of the input gadget and on wires allocated within the segment.
-    pub num_linear_constraints: usize,
+    pub fn num_linear_constraints(&self) -> usize {
+        self.num_linear_constraints
+    }
 
     /// The structural identity of this routine invocation.
     // TODO: consumed by the floor planner (not yet implemented)
     #[allow(dead_code)]
-    pub identity: RoutineIdentity,
+    pub(crate) fn identity(&self) -> &RoutineIdentity {
+        &self.identity
+    }
 }
 
 /// A summary of a circuit's constraint topology.
