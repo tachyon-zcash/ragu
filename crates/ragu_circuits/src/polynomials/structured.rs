@@ -350,9 +350,6 @@ impl Perspective for Backward {}
 ///
 /// The caller is responsible for ensuring that none of the exposed vectors
 /// exceed [`A::n()`](super::Rank::n) in length.
-///
-/// In the forward perspective, `a→u`, `b→v`, `c→w`, `d→d`.
-/// In the backward perspective, `a→v`, `b→u`, `c→d`, `d→w`.
 pub struct View<'a, F, R: Rank, M: Perspective> {
     /// The A wires of multiplication gates.
     pub a: &'a mut Vec<F>,
