@@ -76,9 +76,11 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
     /// Allocates two elements and returns them along with their product.
     ///
     /// This costs one multiplication constraint but produces three usable
-    /// elements. The product comes from the c wire of the multiplication
-    /// gate, constrained by the protocol's multiplication identity
-    /// $a_i \cdot b_i = c_i$.
+    /// elements. The product comes from the free c wire of the
+    /// multiplication gate, constrained by the protocol's multiplication
+    /// identity $a_i \cdot b_i = c_i$. When a product is needed
+    /// downstream, prefer this over separate allocations followed by a
+    /// multiply — the c wire is obtained at no extra gate cost.
     pub fn alloc_mul(
         dr: &mut D,
         a_assignment: DriverValue<D, D::F>,

@@ -181,8 +181,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
             // Step 1: Compute a(xz) and b(x) via two-layer revdot folding.
             // These aggregate all evaluation claims into a single pair.
             let (computed_ax, computed_bx) = {
-                // alloc_mul captures the products mu*nu and mu'*nu' as free
-                // c wires, saving two multiplication gates.
                 let (mu, nu, munu) = Element::alloc_mul(
                     dr,
                     unified_output.mu.instance(),

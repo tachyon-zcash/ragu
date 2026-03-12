@@ -157,8 +157,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 
         // Get layer 2 folding challenges. These are distinct from the layer 1
         // challenges (mu, nu) used in partial_collapse.
-        // alloc_mul captures the product mu'*nu' as a free c wire, saving one
-        // multiplication gate compared to separate alloc + mul.
         let (mu_prime, nu_prime, mu_prime_nu_prime) = Element::alloc_mul(
             dr,
             unified_output.mu_prime.instance(),

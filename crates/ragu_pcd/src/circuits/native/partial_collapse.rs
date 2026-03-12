@@ -158,8 +158,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
         // Get layer 1 folding challenges from the unified instance.
-        // alloc_mul captures the product mu*nu as a free c wire, saving one
-        // multiplication gate compared to separate alloc + mul.
         let (mu, nu, munu) = Element::alloc_mul(
             dr,
             unified_output.mu.instance(),
