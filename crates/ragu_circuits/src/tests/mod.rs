@@ -4,6 +4,7 @@ mod identity;
 mod segment_order;
 
 use ff::Field;
+use ragu_arithmetic::Coeff;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue, LinearExpression},
@@ -229,4 +230,119 @@ fn test_element() {
     let result = simulator.routine(TestRoutine, input).unwrap();
     assert_eq!(*result.value().take(), Fp::from(15u64));
     assert_eq!(simulator.num_allocations(), 3);
+}
+
+/// Circuit that uses `zero_product_mul` to create a gate where a*b=0 and the
+/// d-wire holds a free allocation.
+struct ZeroProductCircuit;
+
+impl Circuit<Fp> for ZeroProductCircuit {
+    type Instance<'instance> = Fp;
+    type Output = Kind![Fp; Element<'_, _>];
+    type Witness<'witness> = (Fp, Fp);
+    type Aux<'witness> = ();
+
+    fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        instance: DriverValue<D, Self::Instance<'instance>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Element::alloc(dr, instance)
+    }
+
+    fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'witness>>,
+    ) -> Result<(
+        Bound<'dr, D, Self::Output>,
+        DriverValue<D, Self::Aux<'witness>>,
+    )> {
+        // Allocate x = witness.0.
+        let x = Element::alloc(dr, witness.as_ref().map(|w| w.0))?;
+        let d_value = witness.as_ref().map(|w| w.1);
+
+        // Zero-product gate: x * 0 = 0, d-wire holds d_value.
+        let (x_wire, _zero_wire, d_wire) = dr.zero_product_mul(|| {
+            Ok((
+                Coeff::Arbitrary(*x.value().take()),
+                Coeff::Zero,
+                Coeff::Arbitrary(*d_value.snag()),
+            ))
+        })?;
+        // Constrain x_wire == x
+        dr.enforce_equal(&x_wire, x.wire())?;
+        // Build output: x + d_value, constrained via linear combination
+        let sum_wire = dr.add(|lc| lc.add(&d_wire).add(x.wire()));
+        let expected_sum = D::just(|| *x.value().take() + *d_value.snag());
+        let output = Element::promote(sum_wire, expected_sum);
+
+        Ok((output, D::unit()))
+    }
+}
+
+#[test]
+fn test_zero_product_circuit() {
+    type MyRank = TestRank;
+
+    let x_val = Fp::from(7u64);
+    let d_val = Fp::from(42u64);
+
+    let circuit1 = ZeroProductCircuit;
+    let (trace, _) = circuit1.rx((x_val, d_val)).unwrap();
+    let assignment = trace.assemble_trivial::<MyRank>().unwrap();
+
+    let circuit2 = ZeroProductCircuit;
+    let circuit = circuit2.into_object::<MyRank>().unwrap();
+
+    consistency_checks(&*circuit);
+
+    let y = Fp::random(&mut rand::rng());
+    let z = Fp::random(&mut rand::rng());
+    let k = registry::Key::default();
+    let floor_plan = crate::floor_planner::floor_plan(circuit.segment_records());
+
+    let a = assignment.clone();
+    let mut b = assignment.clone();
+    b.dilate(z);
+    b.add_assign(&circuit.sy(y, &k, &floor_plan));
+    b.add_assign(&MyRank::tz(z));
+
+    let expected = ZeroProductCircuit.ky(x_val + d_val, y).unwrap();
+
+    let a = a.unstructured();
+    let b = b.unstructured();
+
+    assert_eq!(expected, ragu_arithmetic::dot(a.iter(), b.iter().rev()));
+}
+
+#[test]
+fn test_zero_product_simulator() {
+    // Test that the Simulator correctly enforces a*b=0.
+    let mut sim = Simulator::<Fp>::new();
+    // Valid: a*b=0 (b is zero)
+    let (a, b, d) = sim
+        .zero_product_mul(|| {
+            Ok((
+                Coeff::Arbitrary(Fp::from(42u64)),
+                Coeff::Zero,
+                Coeff::Arbitrary(Fp::from(99u64)),
+            ))
+        })
+        .unwrap();
+    assert_eq!(a, Fp::from(42u64));
+    assert_eq!(b, Fp::ZERO);
+    assert_eq!(d, Fp::from(99u64));
+    assert_eq!(sim.num_multiplications(), 1);
+
+    // Invalid: a*b != 0
+    let mut sim2 = Simulator::<Fp>::new();
+    let result = sim2.zero_product_mul(|| {
+        Ok((
+            Coeff::Arbitrary(Fp::from(3u64)),
+            Coeff::Arbitrary(Fp::from(5u64)),
+            Coeff::Arbitrary(Fp::from(99u64)),
+        ))
+    });
+    assert!(result.is_err());
 }
