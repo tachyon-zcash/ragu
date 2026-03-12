@@ -13,6 +13,7 @@ use ragu_core::{
 };
 
 use crate::consistent::Consistent;
+use crate::util::InternalMaybe;
 
 use alloc::vec::Vec;
 use core::borrow::Borrow;
@@ -97,6 +98,41 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
             Element {
                 value: square,
                 wire: c,
+            },
+        ))
+    }
+
+    /// Allocates three elements $(a, b, d)$ using a single zero-product gate.
+    /// Enforces $a \cdot b = 0$ and places $d$ in the free d-wire.
+    ///
+    /// This costs one multiplication constraint and is useful when the caller
+    /// knows the product of two values is zero (e.g., `x * is_zero`).
+    pub fn alloc_zero_product(
+        dr: &mut D,
+        a: DriverValue<D, D::F>,
+        b: DriverValue<D, D::F>,
+        d: DriverValue<D, D::F>,
+    ) -> Result<(Self, Self, Self)> {
+        let (a_wire, b_wire, d_wire) = dr.zero_product_mul(|| {
+            Ok((
+                a.arbitrary().take(),
+                b.arbitrary().take(),
+                d.arbitrary().take(),
+            ))
+        })?;
+
+        Ok((
+            Element {
+                value: a,
+                wire: a_wire,
+            },
+            Element {
+                value: b,
+                wire: b_wire,
+            },
+            Element {
+                value: d,
+                wire: d_wire,
             },
         ))
     }
