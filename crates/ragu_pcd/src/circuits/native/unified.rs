@@ -385,6 +385,29 @@ impl<'dr, D: Driver<'dr>, T: Clone, W: Copy + Send + Sync> Slot<'dr, D, T, W> {
         Ok(value)
     }
 
+    /// Returns the instance value for external allocation.
+    ///
+    /// Use this when allocating the slot's value outside of the normal
+    /// [`get`](Self::get) path (e.g., via [`Element::alloc_mul`] to capture
+    /// a free product), followed by [`fill`](Self::fill) to store the result.
+    pub fn instance(&self) -> DriverValue<D, W> {
+        self.instance.as_ref().map(|w| *w)
+    }
+
+    /// Fills the slot with an externally allocated value.
+    ///
+    /// Like [`get`](Self::get) but skips allocation since the caller has
+    /// already allocated the value (e.g., via [`Element::alloc_mul`]).
+    /// Does not mark coverage — use [`set`](Self::set) for that.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the slot has already been filled.
+    pub fn fill(&mut self, value: T) {
+        assert!(self.value.is_none(), "Slot::fill: slot already filled");
+        self.value = Some(value);
+    }
+
     /// Consumes the slot and returns the stored value (allocating if
     /// needed) along with the coverage flag.
     ///

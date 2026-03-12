@@ -64,6 +64,8 @@ use super::{
     stages::{error_n, preamble},
     unified::{self, OutputBuilder},
 };
+use ragu_primitives::Element;
+
 use crate::components::fold_revdot;
 
 pub(crate) use super::InternalCircuitIndex::FullCollapseCircuit as CIRCUIT_ID;
@@ -155,14 +157,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 
         // Get layer 2 folding challenges. These are distinct from the layer 1
         // challenges (mu, nu) used in partial_collapse.
-        let mu_prime = unified_output.mu_prime.get(dr)?;
-        let nu_prime = unified_output.nu_prime.get(dr)?;
+        let (mu_prime, nu_prime, mu_prime_nu_prime) = Element::alloc_mul(
+            dr,
+            unified_output.mu_prime.instance(),
+            unified_output.nu_prime.instance(),
+        )?;
 
         // Compute the final folded revdot claim c via layer 2 reduction.
         // The collapsed values from layer 1 (verified by partial_collapse) serve
         // as the k(y) inputs for this final fold.
         {
-            let fold_products = fold_revdot::FoldProducts::new(dr, &mu_prime, &nu_prime)?;
+            let fold_products =
+                fold_revdot::FoldProducts::with_product(dr, &mu_prime, mu_prime_nu_prime)?;
+            unified_output.mu_prime.fill(mu_prime);
+            unified_output.nu_prime.fill(nu_prime);
             let computed_c = fold_products.fold_products_n::<FP>(
                 dr,
                 &error_n.error_terms,

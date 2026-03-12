@@ -181,14 +181,22 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
             // Step 1: Compute a(xz) and b(x) via two-layer revdot folding.
             // These aggregate all evaluation claims into a single pair.
             let (computed_ax, computed_bx) = {
-                let mu = unified_output.mu.get(dr)?;
-                let nu = unified_output.nu.get(dr)?;
-                let mu_prime = unified_output.mu_prime.get(dr)?;
-                let nu_prime = unified_output.nu_prime.get(dr)?;
+                let (mu, nu, munu) = Element::alloc_mul(
+                    dr,
+                    unified_output.mu.instance(),
+                    unified_output.nu.instance(),
+                )?;
+                unified_output.mu.fill(mu.clone());
+                unified_output.nu.fill(nu.clone());
+                let (mu_prime, nu_prime, mu_prime_nu_prime) = Element::alloc_mul(
+                    dr,
+                    unified_output.mu_prime.instance(),
+                    unified_output.nu_prime.instance(),
+                )?;
+                unified_output.mu_prime.fill(mu_prime.clone());
+                unified_output.nu_prime.fill(nu_prime.clone());
                 let mu_inv = mu.invert(dr)?;
                 let mu_prime_inv = mu_prime.invert(dr)?;
-                let munu = mu.mul(dr, &nu)?;
-                let mu_prime_nu_prime = mu_prime.mul(dr, &nu_prime)?;
 
                 compute_axbx::<_, NativeParameters>(
                     dr,

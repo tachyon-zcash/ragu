@@ -29,7 +29,8 @@ use crate::{
 ///
 /// ## Usage
 ///
-/// Elements can be allocated ([`Element::alloc`], [`Element::alloc_square`])
+/// Elements can be allocated ([`Element::alloc`], [`Element::alloc_square`],
+/// [`Element::alloc_mul`])
 /// with a provided witness assignment. Any constant field element can be turned
 /// into an [`Element`] without an allocation using [`Element::constant`] (or
 /// [`Element::one`] for the unitary case).
@@ -71,6 +72,47 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
             value: assignment,
             wire,
         })
+    }
+
+    /// Allocates two fresh elements and returns them along with their product.
+    ///
+    /// This costs one multiplication constraint but produces three usable
+    /// elements. The product comes from the free c wire of the
+    /// multiplication gate, constrained by the protocol's multiplication
+    /// identity $a_i \cdot b_i = c_i$. When a product is needed
+    /// downstream, prefer this over separate allocations followed by a
+    /// multiply — the c wire is obtained at no extra gate cost.
+    ///
+    /// This is only appropriate when both operands need fresh wires. To
+    /// multiply elements that already have wires, use [`Element::mul`].
+    /// To square, use [`Element::alloc_square`] which enforces `a == b`.
+    pub fn alloc_mul(
+        dr: &mut D,
+        a_assignment: DriverValue<D, D::F>,
+        b_assignment: DriverValue<D, D::F>,
+    ) -> Result<(Self, Self, Self)> {
+        let product = D::just(|| *a_assignment.snag() * *b_assignment.snag());
+        let (a, b, c) = dr.mul(|| {
+            Ok((
+                Coeff::Arbitrary(*a_assignment.snag()),
+                Coeff::Arbitrary(*b_assignment.snag()),
+                Coeff::Arbitrary(*product.snag()),
+            ))
+        })?;
+        Ok((
+            Element {
+                value: a_assignment,
+                wire: a,
+            },
+            Element {
+                value: b_assignment,
+                wire: b,
+            },
+            Element {
+                value: product,
+                wire: c,
+            },
+        ))
     }
 
     /// Allocates an element $a$ with the provided witness assignment and
@@ -432,6 +474,18 @@ mod proptests {
             .prop_map(|(a, b)| F::from(a) + F::from(b) * F::MULTIPLICATIVE_GENERATOR)
     }
 
+    /// Strategy that explicitly targets degenerate and extreme field values
+    /// alongside random ones.
+    fn arb_fe_with_edges() -> impl Strategy<Value = F> {
+        prop_oneof![
+            Just(F::ZERO),
+            Just(F::ONE),
+            Just(-F::ONE),
+            Just(F::ONE.double()),
+            arb_fe(),
+        ]
+    }
+
     proptest! {
         #[test]
         fn element_add_sub_roundtrip(a_fe in arb_fe(), b_fe in arb_fe()) {
@@ -465,6 +519,28 @@ mod proptests {
             } else {
                 return Err(TestCaseError::fail("missing simulated result"));
             }
+        }
+
+        // alloc_mul must produce exactly 0 allocations, 1 multiplication,
+        // and 0 linear constraints, with correct witness values.
+        #[test]
+        fn alloc_mul_constraint_cost(a_fe in arb_fe_with_edges(), b_fe in arb_fe_with_edges()) {
+            let mut actual = None;
+            let sim = Simulator::simulate((a_fe, b_fe), |dr, witness| {
+                let (a_w, b_w) = witness.cast();
+                dr.reset();
+                let (a, b, c) = Element::alloc_mul(dr, a_w, b_w)?;
+                actual = Some((*a.value().take(), *b.value().take(), *c.value().take()));
+                Ok(())
+            }).map_err(|e| TestCaseError::fail(format!("{e:?}")))?;
+
+            let (a_val, b_val, c_val) = actual.unwrap();
+            prop_assert_eq!(a_val, a_fe);
+            prop_assert_eq!(b_val, b_fe);
+            prop_assert_eq!(c_val, a_fe * b_fe);
+            prop_assert_eq!(sim.num_allocations(), 0);
+            prop_assert_eq!(sim.num_multiplications(), 1);
+            prop_assert_eq!(sim.num_linear_constraints(), 0);
         }
     }
 }

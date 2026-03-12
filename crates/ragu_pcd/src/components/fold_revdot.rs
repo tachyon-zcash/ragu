@@ -188,6 +188,16 @@ impl<'dr, D: Driver<'dr>> FoldProducts<'dr, D> {
         Ok(Self { munu, mu_inv })
     }
 
+    /// Create a folding context from mu and a pre-computed product $\mu\nu$.
+    ///
+    /// Use this when the product is already available (e.g., from
+    /// [`Element::alloc_mul`]), saving one multiplication constraint and two
+    /// linear constraints compared to [`new`](Self::new).
+    pub fn with_product(dr: &mut D, mu: &Element<'dr, D>, munu: Element<'dr, D>) -> Result<Self> {
+        let mu_inv = mu.invert(dr)?;
+        Ok(Self { munu, mu_inv })
+    }
+
     /// Compute folded revdot claim `c` for layer 1 (M-sized reduction).
     pub fn fold_products_m<P: Parameters>(
         &self,
