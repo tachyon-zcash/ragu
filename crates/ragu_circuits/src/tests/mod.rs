@@ -232,7 +232,7 @@ fn test_element() {
     assert_eq!(simulator.num_allocations(), 3);
 }
 
-/// Circuit that uses `zero_product_mul` to create a gate where a*b=0 and the
+/// Circuit that uses `alloc_zero_product` to create a gate where a*b=0 and the
 /// d-wire holds a free allocation.
 struct ZeroProductCircuit;
 
@@ -258,26 +258,16 @@ impl Circuit<Fp> for ZeroProductCircuit {
         Bound<'dr, D, Self::Output>,
         DriverValue<D, Self::Aux<'witness>>,
     )> {
-        // Allocate x = witness.0.
-        let x = Element::alloc(dr, witness.as_ref().map(|w| w.0))?;
+        let a_value = witness.as_ref().map(|w| w.0);
         let d_value = witness.as_ref().map(|w| w.1);
 
-        // Zero-product gate: x * 0 = 0, d-wire holds d_value.
-        let (x_wire, _zero_wire, d_wire) = dr.zero_product_mul(|| {
-            Ok((
-                Coeff::Arbitrary(*x.value().take()),
-                Coeff::Zero,
-                Coeff::Arbitrary(*d_value.snag()),
-            ))
-        })?;
-        // Constrain x_wire == x
-        dr.enforce_equal(&x_wire, x.wire())?;
-        // Build output: x + d_value, constrained via linear combination
-        let sum_wire = dr.add(|lc| lc.add(&d_wire).add(x.wire()));
-        let expected_sum = D::just(|| *x.value().take() + *d_value.snag());
-        let output = Element::promote(sum_wire, expected_sum);
+        // Zero-product gate: a * 0 = 0, d-wire holds d_value.
+        let (a, _b, d) = Element::alloc_zero_product(dr, a_value, D::just(|| Fp::ZERO), d_value)?;
 
-        Ok((output, D::unit()))
+        // Output: a + d, constrained via linear combination.
+        let sum = a.add(dr, &d);
+
+        Ok((sum, D::unit()))
     }
 }
 
