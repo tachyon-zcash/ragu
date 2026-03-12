@@ -570,4 +570,65 @@ mod tests {
             "nested_preamble_commitment",
         );
     }
+
+    type Dr = Emulator<ragu_core::drivers::emulator::Wireless<Empty, pasta_curves::Fp>>;
+    type Sl = Slot<'static, Dr, Element<'static, Dr>, pasta_curves::Fp>;
+
+    /// Helper: creates two independent element slots and a fresh emulator.
+    fn two_element_slots() -> (Dr, Sl, Sl) {
+        let dr = Emulator::counter();
+        let a = Slot::new(Empty, Element::alloc);
+        let b = Slot::new(Empty, Element::alloc);
+        (dr, a, b)
+    }
+
+    /// `get` allocates from witness, does NOT mark covered.
+    #[test]
+    fn slot_get_allocates_without_coverage() {
+        let (mut dr, mut a, mut b) = two_element_slots();
+        a.get(&mut dr).expect("get a");
+        b.get(&mut dr).expect("get b");
+        let (_, a_set) = a.take(&mut dr).expect("take a");
+        let (_, b_set) = b.take(&mut dr).expect("take b");
+        assert!(!a_set, "get() must not mark slot a as covered");
+        assert!(!b_set, "get() must not mark slot b as covered");
+    }
+
+    /// `set` stores a caller-supplied value and marks covered.
+    #[test]
+    fn slot_set_stores_value_and_marks_covered() {
+        let (mut dr, mut a, b) = two_element_slots();
+        let val_a = Element::alloc(&mut dr, Empty).expect("alloc a");
+        a.set(val_a);
+        // b left untouched — should remain uncovered.
+        let (_, a_set) = a.take(&mut dr).expect("take a");
+        let (_, b_set) = b.take(&mut dr).expect("take b");
+        assert!(a_set, "set() must mark slot a as covered");
+        assert!(!b_set, "set() on a must not affect slot b");
+    }
+
+    /// `verify` allocates from witness AND marks covered.
+    #[test]
+    fn slot_verify_allocates_and_marks_covered() {
+        let (mut dr, mut a, mut b) = two_element_slots();
+        let _ = a.verify(&mut dr).expect("verify a");
+        // b only gets `get` — should remain uncovered.
+        b.get(&mut dr).expect("get b");
+        let (_, a_set) = a.take(&mut dr).expect("take a");
+        let (_, b_set) = b.take(&mut dr).expect("take b");
+        assert!(a_set, "verify() must mark slot a as covered");
+        assert!(!b_set, "verify() on a must not affect slot b");
+    }
+
+    /// `take` on an untouched slot allocates from witness, does NOT mark covered.
+    #[test]
+    fn slot_take_untouched_allocates_without_coverage() {
+        let (mut dr, a, mut b) = two_element_slots();
+        // a is never touched by the circuit — finish calls take directly.
+        b.verify(&mut dr).expect("verify b");
+        let (_, a_set) = a.take(&mut dr).expect("take a");
+        let (_, b_set) = b.take(&mut dr).expect("take b");
+        assert!(!a_set, "untouched slot a must not be marked as covered");
+        assert!(b_set, "verified slot b must be marked as covered");
+    }
 }
