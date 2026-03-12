@@ -13,7 +13,6 @@ use ragu_core::{
 };
 
 use crate::consistent::Consistent;
-use crate::util::InternalMaybe;
 
 use alloc::vec::Vec;
 use core::borrow::Borrow;
@@ -115,9 +114,9 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
     ) -> Result<(Self, Self, Self)> {
         let (a_wire, b_wire, d_wire) = dr.zero_product_mul(|| {
             Ok((
-                a.arbitrary().take(),
-                b.arbitrary().take(),
-                d.arbitrary().take(),
+                Coeff::Arbitrary(*a.snag()),
+                Coeff::Arbitrary(*b.snag()),
+                Coeff::Arbitrary(*d.snag()),
             ))
         })?;
 
