@@ -97,6 +97,8 @@ pub mod sx;
 pub mod sxy;
 pub mod sy;
 
+pub use common::MemoCache;
+
 /// An extension trait for [`Driver`] for common (internal) $s(X, Y)$ constraint
 /// enforcement.
 ///

@@ -48,24 +48,28 @@
 //! [`sx`]: super::sx
 //! [`Driver::enforce_zero`]: ragu_core::drivers::Driver::enforce_zero
 
+use alloc::{collections::BTreeMap, vec};
+
 use ff::Field;
 use ragu_arithmetic::Coeff;
 use ragu_core::{
     Error, Result,
+    convert::{StripWires, WireMap as _},
     drivers::{Driver, DriverTypes, emulator::Emulator},
-    gadgets::Bound,
+    gadgets::{Bound, GadgetKind as _},
     maybe::Empty,
     routines::Routine,
 };
 use ragu_primitives::GadgetExt;
 
-use alloc::vec;
-
-use crate::{Circuit, DriverScope, floor_planner::ConstraintSegment, polynomials::Rank, registry};
+use crate::{
+    Circuit, DriverScope, RoutineFingerprint, RoutineIdentity, SegmentRecord,
+    floor_plan::FloorPlan, floor_planner::ConstraintSegment, polynomials::Rank, registry,
+};
 
 use super::{
     DriverExt,
-    common::{WireEval, WireEvalSum},
+    common::{CachedRoutine, MemoCache, WireEval, WireEvalSum, WireExtractor, WireInjector},
 };
 
 /// A [`Driver`] that computes the full evaluation $s(x, y)$.
@@ -134,8 +138,23 @@ struct Evaluator<'fp, F, R> {
     /// Floor plan mapping DFS routine index to absolute offsets.
     floor_plan: &'fp [ConstraintSegment],
 
+    /// Per-segment constraint records (from metrics), used to extract fingerprints.
+    segment_records: &'fp [SegmentRecord],
+
     /// Global monotonic DFS counter for routine entries.
     current_routine: usize,
+
+    /// Canonical floor plan for inter-circuit memoization (optional).
+    type_floor_plan: Option<&'fp FloorPlan>,
+
+    /// Cache for memoized routine contributions (optional).
+    memo_cache: Option<&'fp mut MemoCache<F>>,
+
+    /// Per-fingerprint invocation counters for cache key computation.
+    invocation_counts: BTreeMap<RoutineFingerprint, usize>,
+
+    /// Routine nesting depth; memoization only applies at depth 0.
+    routine_depth: usize,
 
     /// Marker for the rank type parameter.
     _marker: core::marker::PhantomData<R>,
@@ -256,7 +275,60 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         let multiplication_start = seg.multiplication_start;
         let linear_start = seg.linear_start;
 
-        // Jump to this routine's absolute position in the polynomial;
+        // Extract fingerprint from the segment record for this routine.
+        let fingerprint = match self.segment_records[self.current_routine].identity {
+            RoutineIdentity::Routine(fp) => fp,
+            RoutineIdentity::Root => unreachable!("routine segments are never Root"),
+        };
+        let invocation_index = *self.invocation_counts.get(&fingerprint).unwrap_or(&0);
+        self.invocation_counts
+            .entry(fingerprint)
+            .and_modify(|c| *c += 1)
+            .or_insert(1);
+
+        // Check for cache hit (only at top-level routines, depth == 0)
+        let can_memoize =
+            self.routine_depth == 0 && self.type_floor_plan.is_some() && self.memo_cache.is_some();
+
+        if can_memoize {
+            let type_floor_plan = self.type_floor_plan.unwrap();
+            if let Some(canonical_pos) =
+                type_floor_plan.get_invocation(&fingerprint, invocation_index)
+            {
+                // SAFETY: We just checked memo_cache.is_some()
+                let cache = self.memo_cache.as_ref().unwrap();
+                if let Some(cached) = cache.get(&fingerprint, canonical_pos) {
+                    // Cache hit: reconstruct output without re-executing routine
+                    let y_pow_linear_start = self.y.pow_vartime([linear_start as u64]);
+                    self.scope.sum += y_pow_linear_start * cached.contribution;
+
+                    // Reconstruct output gadget from cached wires:
+                    // 1. Execute with wireless emulator to get a template with unit wires
+                    // 2. Use WireInjector to convert unit wires to cached WireEval wires
+                    type W<F> = Emulator<ragu_core::drivers::emulator::Wireless<Empty, F>>;
+
+                    let dummy_input = StripWires::<Self>::remap(&input)?;
+                    let aux = routine
+                        .predict(&mut Emulator::wireless(), &dummy_input)?
+                        .into_aux();
+
+                    let wireless_input = StripWires::<Self>::remap(&input)?;
+                    let template =
+                        routine.execute(&mut Emulator::wireless(), wireless_input, aux)?;
+
+                    let mut injector = WireInjector::<_, W<F>, Self>::new(&cached.output_wires);
+                    let output = Ro::Output::map_gadget(&template, &mut injector)?;
+                    debug_assert!(
+                        injector.is_exhausted(),
+                        "wire cache should be fully consumed"
+                    );
+
+                    return Ok(output);
+                }
+            }
+        }
+
+        // Cache miss: jump to this routine's absolute position in the polynomial;
         // see the "Routine Scope Jumps" section in the `s` module doc.
         let init_scope = SxyScope {
             available_b: None,
@@ -272,10 +344,13 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         // Manual save/restore: we need to capture the routine's result
         // before restoring parent state.
         let saved = core::mem::replace(&mut self.scope, init_scope);
+        self.routine_depth += 1;
         let exec_result = {
             let aux = Emulator::predict(&routine, &input)?.into_aux();
             routine.execute(self, input, aux)
         };
+        self.routine_depth -= 1;
+
         // Verify this routine consumed exactly the expected constraints.
         assert_eq!(
             self.scope.multiplication_constraints,
@@ -291,9 +366,39 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         // Position the routine's local Horner result at its absolute Y offset,
         // then combine with any nested child contributions.
         let y_pow_linear_start = self.y.pow_vartime([linear_start as u64]);
-        let routine_contribution = y_pow_linear_start * self.scope.result + self.scope.sum;
+        let routine_contribution = self.scope.result + self.scope.sum;
+
+        // Store in cache if memoization is enabled
+        if can_memoize {
+            let type_floor_plan = self.type_floor_plan.unwrap();
+            if let Some(canonical_pos) =
+                type_floor_plan.get_invocation(&fingerprint, invocation_index)
+            {
+                // Extract output wires for caching
+                if let Ok(ref output) = exec_result {
+                    let mut extractor = WireExtractor::<_, Self>::new();
+                    // map_gadget visits all wires in the gadget, extracting them
+                    let _ = Ro::Output::map_gadget(output, &mut extractor);
+                    let output_wires = extractor.into_wires();
+
+                    let entry = CachedRoutine {
+                        contribution: routine_contribution,
+                        num_multiplications: seg.num_multiplication_constraints,
+                        num_constraints: seg.num_linear_constraints,
+                        output_wires,
+                    };
+
+                    // SAFETY: We checked memo_cache.is_some() above
+                    self.memo_cache
+                        .as_mut()
+                        .unwrap()
+                        .insert(fingerprint, canonical_pos, entry);
+                }
+            }
+        }
+
         self.scope = saved;
-        self.scope.sum += routine_contribution;
+        self.scope.sum += y_pow_linear_start * routine_contribution;
 
         exec_result
     }
@@ -322,6 +427,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     y: F,
     key: &registry::Key<F>,
     floor_plan: &[ConstraintSegment],
+    segment_records: &[SegmentRecord],
 ) -> Result<F> {
     if x == F::ZERO {
         // The polynomial is zero if x is zero.
@@ -360,7 +466,12 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
         base_u_x,
         base_v_x,
         floor_plan,
+        segment_records,
         current_routine: 0,
+        type_floor_plan: None,
+        memo_cache: None,
+        invocation_counts: BTreeMap::new(),
+        routine_depth: 0,
         _marker: core::marker::PhantomData,
     };
 
@@ -396,5 +507,103 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     );
 
     // The root's local Horner result plus any child contributions.
+    Ok(evaluator.scope.result + evaluator.scope.sum)
+}
+
+/// Evaluates $s(x, y)$ with inter-circuit memoization.
+///
+/// Like [`eval`], but caches routine contributions for reuse across circuits.
+/// Routines at the same canonical position (via `type_floor_plan`) share
+/// cached results when the same `cache` is passed to multiple calls.
+///
+/// # Arguments
+///
+/// - `circuit`: The circuit whose wiring polynomial to evaluate.
+/// - `x`: The evaluation point for the $X$ variable.
+/// - `y`: The evaluation point for the $Y$ variable.
+/// - `key`: The registry key for constraint binding.
+/// - `floor_plan`: Per-routine absolute offsets (per-circuit).
+/// - `segment_records`: Per-segment constraint records for fingerprint lookup.
+/// - `type_floor_plan`: Canonical routine positions for cache keys.
+/// - `cache`: Shared cache for inter-circuit memoization.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn eval_with_cache<F: Field, C: Circuit<F>, R: Rank>(
+    circuit: &C,
+    x: F,
+    y: F,
+    key: &registry::Key<F>,
+    floor_plan: &[ConstraintSegment],
+    segment_records: &[SegmentRecord],
+    type_floor_plan: &FloorPlan,
+    cache: &mut MemoCache<F>,
+) -> Result<F> {
+    if x == F::ZERO {
+        return Ok(F::ZERO);
+    }
+
+    let x_inv = x.invert().expect("x is not zero");
+    let xn = x.pow_vartime([R::n() as u64]);
+    let xn2 = xn.square();
+    let base_u_x = xn2 * x_inv;
+    let base_v_x = xn2;
+    let xn4 = xn2.square();
+    let one = xn4 * x_inv;
+
+    if y == F::ZERO {
+        return Ok(one);
+    }
+
+    let mut evaluator = Evaluator::<F, R> {
+        scope: SxyScope {
+            available_b: None,
+            current_u_x: base_u_x,
+            current_v_x: base_v_x,
+            current_w_x: one,
+            multiplication_constraints: 0,
+            linear_constraints: 0,
+            result: F::ZERO,
+            sum: F::ZERO,
+        },
+        x,
+        x_inv,
+        y,
+        one,
+        base_u_x,
+        base_v_x,
+        floor_plan,
+        segment_records,
+        current_routine: 0,
+        type_floor_plan: Some(type_floor_plan),
+        memo_cache: Some(cache),
+        invocation_counts: BTreeMap::new(),
+        routine_depth: 0,
+        _marker: core::marker::PhantomData,
+    };
+
+    let (key_wire, _, _one) = evaluator.mul(|| unreachable!())?;
+    evaluator.enforce_registry_key(&key_wire, key)?;
+
+    let mut outputs = vec![];
+    let (io, _) = circuit.witness(&mut evaluator, Empty)?;
+    io.write(&mut evaluator, &mut outputs)?;
+
+    evaluator.enforce_public_outputs(outputs.iter().map(|output| output.wire()))?;
+    evaluator.enforce_one()?;
+
+    assert_eq!(
+        evaluator.current_routine + 1,
+        evaluator.floor_plan.len(),
+        "floor plan routine count must match synthesis"
+    );
+    assert_eq!(
+        evaluator.scope.multiplication_constraints,
+        evaluator.floor_plan[0].num_multiplication_constraints,
+        "root multiplication constraint count must match floor plan"
+    );
+    assert_eq!(
+        evaluator.scope.linear_constraints, evaluator.floor_plan[0].num_linear_constraints,
+        "root linear constraint count must match floor plan"
+    );
+
     Ok(evaluator.scope.result + evaluator.scope.sum)
 }

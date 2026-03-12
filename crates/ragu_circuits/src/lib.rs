@@ -17,6 +17,7 @@ extern crate alloc;
 #[cfg(feature = "multicore")]
 extern crate std;
 
+pub mod floor_plan;
 pub mod floor_planner;
 pub mod horner;
 mod ky;
@@ -150,8 +151,36 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
                 key: &registry::Key<F>,
                 floor_plan: &[floor_planner::ConstraintSegment],
             ) -> F {
-                s::sxy::eval::<_, _, R>(&self.circuit, x, y, key, floor_plan)
-                    .expect("should succeed if metrics succeeded")
+                s::sxy::eval::<_, _, R>(
+                    &self.circuit,
+                    x,
+                    y,
+                    key,
+                    floor_plan,
+                    &self.metrics.segments,
+                )
+                .expect("should succeed if metrics succeeded")
+            }
+            fn sxy_with_cache(
+                &self,
+                x: F,
+                y: F,
+                key: &registry::Key<F>,
+                floor_plan: &[floor_planner::ConstraintSegment],
+                type_floor_plan: &floor_plan::FloorPlan,
+                cache: &mut s::MemoCache<F>,
+            ) -> F {
+                s::sxy::eval_with_cache::<_, _, R>(
+                    &self.circuit,
+                    x,
+                    y,
+                    key,
+                    floor_plan,
+                    &self.metrics.segments,
+                    type_floor_plan,
+                    cache,
+                )
+                .expect("should succeed if metrics succeeded")
             }
             fn sx(
                 &self,
@@ -220,6 +249,26 @@ pub trait CircuitObject<F: Field, R: Rank>: Send + Sync {
         y: F,
         key: &registry::Key<F>,
         floor_plan: &[floor_planner::ConstraintSegment],
+    ) -> F;
+
+    /// Evaluates $s(x, y)$ with memoization cache for inter-circuit sharing.
+    ///
+    /// Routines at the same canonical position across circuits can share
+    /// cached contributions, avoiding redundant computation.
+    ///
+    /// # Arguments
+    ///
+    /// - `floor_plan`: Per-circuit absolute offsets for monomial computation.
+    /// - `type_floor_plan`: Canonical positions for cache keys (inter-circuit sharing).
+    /// - `cache`: Shared cache populated/consulted during evaluation.
+    fn sxy_with_cache(
+        &self,
+        x: F,
+        y: F,
+        key: &registry::Key<F>,
+        floor_plan: &[floor_planner::ConstraintSegment],
+        type_floor_plan: &floor_plan::FloorPlan,
+        cache: &mut s::MemoCache<F>,
     ) -> F;
 
     /// Computes the polynomial restriction $s(x, Y)$ for some $x \in \mathbb{F}$.

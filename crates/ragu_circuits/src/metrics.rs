@@ -88,7 +88,7 @@ pub enum RoutineIdentity {
 /// equivalence maps without also comparing the segment record.
 ///
 /// [`TypeId`]: core::any::TypeId
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RoutineFingerprint {
     input_kind: TypeId,
     output_kind: TypeId,
@@ -114,10 +114,32 @@ impl RoutineFingerprint {
         }
     }
 
+    /// Returns the number of multiplication constraints in this routine.
+    pub fn num_multiplication_constraints(&self) -> usize {
+        self.local_num_multiplication_constraints
+    }
+
+    /// Returns the number of linear constraints in this routine.
+    pub fn num_linear_constraints(&self) -> usize {
+        self.local_num_linear_constraints
+    }
+
     /// Returns the raw evaluation scalar.
     #[cfg(test)]
     pub(crate) fn eval(&self) -> u64 {
         self.eval
+    }
+
+    /// Creates a fingerprint with synthetic values for testing.
+    #[cfg(test)]
+    pub(crate) fn test(eval: u64, num_mul: usize, num_lc: usize) -> Self {
+        Self {
+            input_kind: TypeId::of::<()>(),
+            output_kind: TypeId::of::<()>(),
+            eval,
+            local_num_multiplication_constraints: num_mul,
+            local_num_linear_constraints: num_lc,
+        }
     }
 }
 
@@ -158,6 +180,7 @@ impl RoutineFingerprint {
 /// | 1     | `RoutineA`     |  2  |  3 | A's own constraints        |
 /// | 2     | `RoutineB`     |  1  |  3 | b0+b1; `RoutineC` excluded |
 /// | 3     | `RoutineC`     |  1  |  2 | C's own constraints        |
+#[derive(Debug, Clone, Copy)]
 pub struct SegmentRecord {
     /// The number of multiplication constraints in this segment.
     pub num_multiplication_constraints: usize,
@@ -167,8 +190,6 @@ pub struct SegmentRecord {
     pub num_linear_constraints: usize,
 
     /// The structural identity of this routine invocation.
-    // TODO: consumed by the floor planner (not yet implemented)
-    #[allow(dead_code)]
     pub identity: RoutineIdentity,
 }
 

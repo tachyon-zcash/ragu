@@ -24,8 +24,10 @@ use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec::Vec};
 
 use crate::{
     Circuit, CircuitExt, CircuitObject,
+    floor_plan::FloorPlan,
     floor_planner::ConstraintSegment,
     polynomials::{Rank, structured, unstructured},
+    s::MemoCache,
     staging::{Stage, StageExt},
 };
 
@@ -205,11 +207,17 @@ impl<'params, F: FromUniformBytes<64>, R: Rank> RegistryBuilder<'params, F, R> {
             omega_lookup.insert(omega_j, i);
         }
 
+        // Compute type-based floor plan from segment records for inter-circuit memoization.
+        let segment_records_refs: Vec<&[crate::SegmentRecord]> =
+            circuits.iter().map(|c| c.segment_records()).collect();
+        let type_floor_plan = FloorPlan::from_segment_records(&segment_records_refs, R::n());
+
         // Create provisional registry (circuits still have placeholder K)
         let mut registry = Registry {
             domain,
             circuits,
             floor_plans,
+            type_floor_plan,
             omega_lookup,
             key: Key::default(),
         };
@@ -313,6 +321,9 @@ pub struct Registry<'params, F: PrimeField, R: Rank> {
     /// Per-circuit floor plans computed during finalization.
     floor_plans: Vec<Vec<ConstraintSegment>>,
 
+    /// Type-based floor plan for inter-circuit memoization.
+    type_floor_plan: FloorPlan,
+
     /// Maps from the OmegaKey (which represents some `omega^j`) to the index `i`
     /// of the circuits vector.
     omega_lookup: BTreeMap<OmegaKey, usize>,
@@ -380,6 +391,11 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
     /// Returns a slice of the circuit objects in this registry.
     pub fn circuits(&self) -> &[Box<dyn CircuitObject<F, R> + '_>] {
         &self.circuits
+    }
+
+    /// Returns the type-based floor plan for inter-circuit memoization.
+    pub fn type_floor_plan(&self) -> &FloorPlan {
+        &self.type_floor_plan
     }
 
     /// Evaluate the registry polynomial unrestricted at $W$.
@@ -483,6 +499,44 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
             registry: self,
             cache,
         }
+    }
+
+    /// Evaluates the registry polynomial with inter-circuit memoization.
+    ///
+    /// Routines at the same canonical position share cached contributions
+    /// across circuits during Lagrange interpolation. Result is identical
+    /// to [`wxy`](Self::wxy).
+    pub fn wxy_combined(&self, w: F, x: F, y: F) -> F {
+        let ell = self.domain.ell(w, self.domain.n());
+
+        let mut result = F::ZERO;
+
+        if let Some(ell) = ell {
+            // Lagrange interpolation with shared cache
+            let mut cache = MemoCache::new();
+
+            for (j, coeff) in ell.iter().enumerate() {
+                let i = bitreverse(j as u32, self.domain.log2_n()) as usize;
+                if let Some(circuit) = self.circuits.get(i) {
+                    let sxy = circuit.sxy_with_cache(
+                        x,
+                        y,
+                        &self.key,
+                        &self.floor_plans[i],
+                        &self.type_floor_plan,
+                        &mut cache,
+                    );
+                    result += sxy * coeff;
+                }
+            }
+        } else if let Some(i) = self.omega_lookup.get(&OmegaKey::from(w)) {
+            // w in domain: single circuit, no memoization benefit
+            if let Some(circuit) = self.circuits.get(*i) {
+                result = circuit.sxy(x, y, &self.key, &self.floor_plans[*i]);
+            }
+        }
+
+        result
     }
 }
 
@@ -965,6 +1019,37 @@ mod tests {
             .finalize()?;
 
         assert_eq!(registry2.circuits().len(), 4);
+
+        Ok(())
+    }
+
+    /// wxy_combined produces identical results to wxy (both in and out of domain).
+    #[test]
+    fn test_wxy_combined_equals_wxy() -> Result<()> {
+        let registry = TestRegistryBuilder::new()
+            .register_circuit(SquareCircuit { times: 2 })?
+            .register_circuit(SquareCircuit { times: 5 })?
+            .register_circuit(SquareCircuit { times: 10 })?
+            .register_circuit(SquareCircuit { times: 11 })?
+            .register_circuit(SquareCircuit { times: 19 })?
+            .register_circuit(SquareCircuit { times: 19 })?
+            .register_circuit(SquareCircuit { times: 19 })?
+            .register_circuit(SquareCircuit { times: 19 })?
+            .finalize()?;
+
+        let w = Fp::random(&mut rand::rng());
+        let x = Fp::random(&mut rand::rng());
+        let y = Fp::random(&mut rand::rng());
+
+        // Test out-of-domain
+        assert_eq!(registry.wxy(w, x, y), registry.wxy_combined(w, x, y));
+
+        // Test in-domain
+        let w_in_domain = registry.domain.omega();
+        assert_eq!(
+            registry.wxy(w_in_domain, x, y),
+            registry.wxy_combined(w_in_domain, x, y)
+        );
 
         Ok(())
     }
