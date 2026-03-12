@@ -29,7 +29,8 @@ use crate::{
 ///
 /// ## Usage
 ///
-/// Elements can be allocated ([`Element::alloc`], [`Element::alloc_square`])
+/// Elements can be allocated ([`Element::alloc`], [`Element::alloc_square`],
+/// [`Element::alloc_mul`])
 /// with a provided witness assignment. Any constant field element can be turned
 /// into an [`Element`] without an allocation using [`Element::constant`] (or
 /// [`Element::one`] for the unitary case).
@@ -564,6 +565,34 @@ fn test_invert() -> Result<()> {
 
     inv(F::from(4578u64))?;
     assert!(inv(F::ZERO).is_err());
+
+    Ok(())
+}
+
+#[test]
+fn test_alloc_mul() -> Result<()> {
+    type F = ragu_pasta::Fp;
+    type Simulator = crate::Simulator<F>;
+
+    let a_fe = F::from(7u64);
+    let b_fe = F::from(13u64);
+
+    let sim = Simulator::simulate((a_fe, b_fe), |dr, witness| {
+        let (a, b) = witness.cast();
+        dr.reset();
+        let (a, b, c) = Element::alloc_mul(dr, a, b)?;
+
+        assert_eq!(*a.value().take(), a_fe);
+        assert_eq!(*b.value().take(), b_fe);
+        assert_eq!(*c.value().take(), a_fe * b_fe);
+
+        Ok(())
+    })?;
+
+    // alloc_mul uses exactly one multiplication gate, no allocations, no LCs.
+    assert_eq!(sim.num_allocations(), 0);
+    assert_eq!(sim.num_multiplications(), 1);
+    assert_eq!(sim.num_linear_constraints(), 0);
 
     Ok(())
 }
