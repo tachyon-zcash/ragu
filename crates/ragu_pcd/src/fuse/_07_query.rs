@@ -8,9 +8,11 @@
 //! This phase of the fuse operation is also used to commit to the $m(W, x, y)$
 //! restriction.
 
-use ff::Field;
 use ragu_arithmetic::Cycle;
-use ragu_circuits::{polynomials::Rank, staging::StageExt};
+use ragu_circuits::{
+    polynomials::{Rank, structured, unstructured},
+    staging::StageExt,
+};
 use ragu_core::{
     Result,
     drivers::Driver,
@@ -52,11 +54,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let xz = x * *z.value().take();
 
         let registry_xy_poly = self.native_registry.xy(x, y);
-        let registry_xy_blind = C::CircuitField::random(&mut *rng);
+        let [registry_xy] =
+            unstructured::batch_commit(rng, C::host_generators(self.params), [registry_xy_poly]);
 
         let registry_at = |idx: InternalCircuitIndex| -> C::CircuitField {
             let circuit_id = idx.circuit_index();
-            registry_xy_poly.eval(circuit_id.omega_j())
+            registry_xy.poly().eval(circuit_id.omega_j())
         };
 
         let query_witness = query::Witness {
@@ -77,53 +80,43 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 full_collapse_circuit: registry_at(FullCollapseCircuit),
                 compute_v_circuit: registry_at(ComputeVCircuit),
             },
-            registry_wxy: registry_xy_poly.eval(w),
+            registry_wxy: registry_xy.poly().eval(w),
             left: query::ChildEvaluationsWitness::from_proof(
                 left,
                 w,
                 x,
                 xz,
-                &registry_xy_poly,
-                &error_m.registry_wy_poly,
+                registry_xy.poly(),
+                error_m.registry_wy.poly(),
             ),
             right: query::ChildEvaluationsWitness::from_proof(
                 right,
                 w,
                 x,
                 xz,
-                &registry_xy_poly,
-                &error_m.registry_wy_poly,
+                registry_xy.poly(),
+                error_m.registry_wy.poly(),
             ),
         };
 
-        let native_rx = query::Stage::<C, R, HEADER_SIZE>::rx(&query_witness)?;
-        let native_blind = C::CircuitField::random(&mut *rng);
-        let host_gen = C::host_generators(self.params);
-        let [registry_xy_commitment, native_commitment] = ragu_arithmetic::batch_to_affine([
-            registry_xy_poly.commit(host_gen, registry_xy_blind),
-            native_rx.commit(host_gen, native_blind),
-        ]);
+        let native_poly = query::Stage::<C, R, HEADER_SIZE>::rx(&query_witness)?;
+        let [native_rx] =
+            structured::batch_commit(rng, C::host_generators(self.params), [native_poly]);
 
         let nested_query_witness = nested::stages::query::Witness {
-            native_query: native_commitment,
-            registry_xy: registry_xy_commitment,
+            native_query: native_rx.commitment(),
+            registry_xy: registry_xy.commitment(),
         };
-        let nested_rx = nested::stages::query::Stage::<C::HostCurve, R>::rx(&nested_query_witness)?;
-        let nested_blind = C::ScalarField::random(&mut *rng);
-        let nested_commitment =
-            nested_rx.commit_to_affine(C::nested_generators(self.params), nested_blind);
+        let nested_poly =
+            nested::stages::query::Stage::<C::HostCurve, R>::rx(&nested_query_witness)?;
+        let [nested_rx] =
+            structured::batch_commit(rng, C::nested_generators(self.params), [nested_poly]);
 
         Ok((
             proof::Query {
-                registry_xy_poly,
-                registry_xy_blind,
-                registry_xy_commitment,
+                registry_xy,
                 native_rx,
-                native_blind,
-                native_commitment,
                 nested_rx,
-                nested_blind,
-                nested_commitment,
             },
             query_witness,
         ))

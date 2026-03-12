@@ -73,19 +73,19 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     ) -> &structured::Polynomial<C::CircuitField, R> {
         use RxComponent::*;
         match component {
-            AbA => &self.ab.a_poly,
-            AbB => &self.ab.b_poly,
-            Application => &self.application.rx,
-            Hashes1 => &self.circuits.hashes_1_rx,
-            Hashes2 => &self.circuits.hashes_2_rx,
-            PartialCollapse => &self.circuits.partial_collapse_rx,
-            FullCollapse => &self.circuits.full_collapse_rx,
-            ComputeV => &self.circuits.compute_v_rx,
-            Preamble => &self.preamble.native_rx,
-            ErrorM => &self.error_m.native_rx,
-            ErrorN => &self.error_n.native_rx,
-            Query => &self.query.native_rx,
-            Eval => &self.eval.native_rx,
+            AbA => self.ab.a.poly(),
+            AbB => self.ab.b.poly(),
+            Application => self.application.rx.poly(),
+            Hashes1 => self.circuits.hashes_1.poly(),
+            Hashes2 => self.circuits.hashes_2.poly(),
+            PartialCollapse => self.circuits.partial_collapse.poly(),
+            FullCollapse => self.circuits.full_collapse.poly(),
+            ComputeV => self.circuits.compute_v.poly(),
+            Preamble => self.preamble.native_rx.poly(),
+            ErrorM => self.error_m.native_rx.poly(),
+            ErrorN => self.error_n.native_rx.poly(),
+            Query => self.query.native_rx.poly(),
+            Eval => self.eval.native_rx.poly(),
         }
     }
 }
@@ -103,101 +103,65 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
         let zero_structured_nested = structured::Polynomial::<C::ScalarField, R>::new();
         let zero_unstructured = unstructured::Polynomial::<C::CircuitField, R>::new();
 
-        let host_commitment =
-            zero_structured_host.commit_to_affine(C::host_generators(self.params), host_blind);
-        let nested_commitment = zero_structured_nested
-            .commit_to_affine(C::nested_generators(self.params), nested_blind);
+        let host_gen = C::host_generators(self.params);
+        let nested_gen = C::nested_generators(self.params);
+
+        let [cp_host] =
+            structured::batch_commit_with_blinds(host_gen, [zero_structured_host], [host_blind]);
+        let [cp_nested] = structured::batch_commit_with_blinds(
+            nested_gen,
+            [zero_structured_nested.clone()],
+            [nested_blind],
+        );
+        let [cp_unstructured] =
+            unstructured::batch_commit_with_blinds(host_gen, [zero_unstructured], [host_blind]);
 
         Proof {
             application: Application {
                 circuit_id: CircuitIndex::new(0),
                 left_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
                 right_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
-                rx: zero_structured_host.clone(),
-                blind: host_blind,
-                commitment: host_commitment,
+                rx: cp_host.clone(),
             },
             preamble: Preamble {
-                native_rx: zero_structured_host.clone(),
-                native_blind: host_blind,
-                native_commitment: host_commitment,
-                nested_rx: zero_structured_nested.clone(),
-                nested_blind,
-                nested_commitment,
+                native_rx: cp_host.clone(),
+                nested_rx: cp_nested.clone(),
             },
             s_prime: SPrime {
-                registry_wx0_poly: zero_unstructured.clone(),
-                registry_wx0_blind: host_blind,
-                registry_wx0_commitment: host_commitment,
-                registry_wx1_poly: zero_unstructured.clone(),
-                registry_wx1_blind: host_blind,
-                registry_wx1_commitment: host_commitment,
-                nested_s_prime_rx: zero_structured_nested.clone(),
-                nested_s_prime_blind: nested_blind,
-                nested_s_prime_commitment: nested_commitment,
+                registry_wx0: cp_unstructured.clone(),
+                registry_wx1: cp_unstructured.clone(),
+                nested_s_prime_rx: cp_nested.clone(),
             },
             error_n: ErrorN {
-                native_rx: zero_structured_host.clone(),
-                native_blind: host_blind,
-                native_commitment: host_commitment,
-                nested_rx: zero_structured_nested.clone(),
-                nested_blind,
-                nested_commitment,
+                native_rx: cp_host.clone(),
+                nested_rx: cp_nested.clone(),
             },
             error_m: ErrorM {
-                registry_wy_poly: zero_structured_host.clone(),
-                registry_wy_blind: host_blind,
-                registry_wy_commitment: host_commitment,
-                native_rx: zero_structured_host.clone(),
-                native_blind: host_blind,
-                native_commitment: host_commitment,
-                nested_rx: zero_structured_nested.clone(),
-                nested_blind,
-                nested_commitment,
+                registry_wy: cp_host.clone(),
+                native_rx: cp_host.clone(),
+                nested_rx: cp_nested.clone(),
             },
             ab: AB {
-                a_poly: zero_structured_host.clone(),
-                a_blind: host_blind,
-                a_commitment: host_commitment,
-                b_poly: zero_structured_host.clone(),
-                b_blind: host_blind,
-                b_commitment: host_commitment,
+                a: cp_host.clone(),
+                b: cp_host.clone(),
                 c: C::CircuitField::ZERO,
-                nested_rx: zero_structured_nested.clone(),
-                nested_blind,
-                nested_commitment,
+                nested_rx: cp_nested.clone(),
             },
             query: Query {
-                registry_xy_poly: zero_unstructured.clone(),
-                registry_xy_blind: host_blind,
-                registry_xy_commitment: host_commitment,
-                native_rx: zero_structured_host.clone(),
-                native_blind: host_blind,
-                native_commitment: host_commitment,
-                nested_rx: zero_structured_nested.clone(),
-                nested_blind,
-                nested_commitment,
+                registry_xy: cp_unstructured.clone(),
+                native_rx: cp_host.clone(),
+                nested_rx: cp_nested.clone(),
             },
             f: F {
-                poly: zero_unstructured.clone(),
-                blind: host_blind,
-                commitment: host_commitment,
-                nested_rx: zero_structured_nested.clone(),
-                nested_blind,
-                nested_commitment,
+                aggregated: cp_unstructured.clone(),
+                nested_rx: cp_nested.clone(),
             },
             eval: Eval {
-                native_rx: zero_structured_host.clone(),
-                native_blind: host_blind,
-                native_commitment: host_commitment,
-                nested_rx: zero_structured_nested.clone(),
-                nested_blind,
-                nested_commitment,
+                native_rx: cp_host.clone(),
+                nested_rx: cp_nested.clone(),
             },
             p: P {
-                poly: zero_unstructured.clone(),
-                blind: host_blind,
-                commitment: host_commitment,
+                agg_qx: cp_unstructured,
                 v: C::CircuitField::ZERO,
                 endoscalar_rx: zero_structured_nested.clone(),
                 points_rx: zero_structured_nested.clone(),
@@ -208,21 +172,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
             },
             challenges: Challenges::trivial(),
             circuits: InternalCircuits {
-                hashes_1_rx: zero_structured_host.clone(),
-                hashes_1_blind: host_blind,
-                hashes_1_commitment: host_commitment,
-                hashes_2_rx: zero_structured_host.clone(),
-                hashes_2_blind: host_blind,
-                hashes_2_commitment: host_commitment,
-                partial_collapse_rx: zero_structured_host.clone(),
-                partial_collapse_blind: host_blind,
-                partial_collapse_commitment: host_commitment,
-                full_collapse_rx: zero_structured_host.clone(),
-                full_collapse_blind: host_blind,
-                full_collapse_commitment: host_commitment,
-                compute_v_rx: zero_structured_host,
-                compute_v_blind: host_blind,
-                compute_v_commitment: host_commitment,
+                hashes_1: cp_host.clone(),
+                hashes_2: cp_host.clone(),
+                partial_collapse: cp_host.clone(),
+                full_collapse: cp_host.clone(),
+                compute_v: cp_host,
             },
         }
     }

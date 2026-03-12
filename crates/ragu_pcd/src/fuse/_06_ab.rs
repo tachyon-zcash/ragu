@@ -68,37 +68,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mu_prime_nu_prime = mu_prime * nu_prime;
 
         let a_poly = fold_revdot::fold_polys_n::<_, R, NativeParameters>(a, mu_prime_inv);
-        let a_blind = C::CircuitField::random(&mut *rng);
         let b_poly = fold_revdot::fold_polys_n::<_, R, NativeParameters>(b, mu_prime_nu_prime);
-        let b_blind = C::CircuitField::random(&mut *rng);
-        let host_gen = C::host_generators(self.params);
-        let [a_commitment, b_commitment] = ragu_arithmetic::batch_to_affine([
-            a_poly.commit(host_gen, a_blind),
-            b_poly.commit(host_gen, b_blind),
-        ]);
-
         let c = a_poly.revdot(&b_poly);
 
-        let nested_ab_witness = nested::stages::ab::Witness {
-            a: a_commitment,
-            b: b_commitment,
-        };
-        let nested_rx = nested::stages::ab::Stage::<C::HostCurve, R>::rx(&nested_ab_witness)?;
-        let nested_blind = C::ScalarField::random(&mut *rng);
-        let nested_commitment =
-            nested_rx.commit_to_affine(C::nested_generators(self.params), nested_blind);
+        let [a, b] =
+            structured::batch_commit(rng, C::host_generators(self.params), [a_poly, b_poly]);
 
-        Ok(proof::AB {
-            a_poly,
-            a_blind,
-            a_commitment,
-            b_poly,
-            b_blind,
-            b_commitment,
-            c,
-            nested_rx,
-            nested_blind,
-            nested_commitment,
-        })
+        let nested_ab_witness = nested::stages::ab::Witness {
+            a: a.commitment(),
+            b: b.commitment(),
+        };
+        let nested_poly = nested::stages::ab::Stage::<C::HostCurve, R>::rx(&nested_ab_witness)?;
+        let [nested_rx] =
+            structured::batch_commit(rng, C::nested_generators(self.params), [nested_poly]);
+
+        Ok(proof::AB { a, b, c, nested_rx })
     }
 }
