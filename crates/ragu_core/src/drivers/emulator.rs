@@ -279,6 +279,13 @@ impl<'dr, M: MaybeKind, F: Field> Driver<'dr> for Emulator<Wireless<M, F>> {
 
     fn add(&mut self, _: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {}
 
+    fn zero_product_mul(
+        &mut self,
+        _: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
+    ) -> Result<(Self::Wire, Self::Wire, Self::Wire)> {
+        Ok(((), (), ()))
+    }
+
     fn enforce_zero(&mut self, _: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
         Ok(())
     }
@@ -311,6 +318,14 @@ impl<'dr, F: Field> Driver<'dr> for Emulator<Wired<F>> {
         // constraints.
 
         Ok((a.value(), b.value(), c.value()))
+    }
+
+    fn zero_product_mul(
+        &mut self,
+        f: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
+    ) -> Result<(Self::Wire, Self::Wire, Self::Wire)> {
+        let (a, b, d) = f()?;
+        Ok((a.value(), b.value(), d.value()))
     }
 
     fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {

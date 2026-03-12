@@ -118,6 +118,26 @@ impl<'dr, F: Field> Driver<'dr> for Simulator<F> {
         Ok((a, b, c))
     }
 
+    fn zero_product_mul(
+        &mut self,
+        values: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
+    ) -> Result<(Self::Wire, Self::Wire, Self::Wire)> {
+        let (a, b, d) = values()?;
+
+        let a = a.value();
+        let b = b.value();
+        let d = d.value();
+
+        if a * b != F::ZERO {
+            return Err(Error::InvalidWitness(
+                "zero-product constraint failed".into(),
+            ));
+        }
+
+        self.num_multiplications += 1;
+        Ok((a, b, d))
+    }
+
     fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {
         let lc = lc(DirectSum::default());
         lc.value()

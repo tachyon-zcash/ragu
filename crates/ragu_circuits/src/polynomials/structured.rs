@@ -357,6 +357,9 @@ pub struct View<'a, F, R: Rank, M: Perspective> {
     /// The C wires of multiplication gates.
     pub c: &'a mut Vec<F>,
 
+    /// The D wires of multiplication gates (available at zero-product gates).
+    pub d: &'a mut Vec<F>,
+
     _marker: core::marker::PhantomData<(R, M)>,
 }
 
@@ -367,6 +370,7 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
             a: &mut self.u,
             b: &mut self.v,
             c: &mut self.w,
+            d: &mut self.d,
             _marker: core::marker::PhantomData,
         }
     }
@@ -378,6 +382,7 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
             a: &mut self.v,
             b: &mut self.u,
             c: &mut self.d,
+            d: &mut self.w,
             _marker: core::marker::PhantomData,
         }
     }

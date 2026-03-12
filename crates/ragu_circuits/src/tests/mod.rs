@@ -2,6 +2,7 @@
 
 mod identity;
 mod segment_order;
+mod zero_product;
 
 use ff::Field;
 use ragu_core::{
