@@ -240,14 +240,7 @@ pub trait Driver<'dr>: DriverTypes<ImplWire = Self::Wire, ImplField = Self::F> +
     fn zero_product_mul(
         &mut self,
         values: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
-    ) -> Result<(Self::Wire, Self::Wire, Self::Wire)> {
-        // Suppress unused-variable warnings for drivers that never call this.
-        let _ = values;
-        unimplemented!(
-            "this driver does not support zero_product_mul; \
-             override required for correct d-wire placement"
-        )
-    }
+    ) -> Result<(Self::Wire, Self::Wire, Self::Wire)>;
 
     /// Asks the driver to create a virtual wire that is the linear combination
     /// of some existing wires. This may impose some runtime cost for circuit
