@@ -1,10 +1,12 @@
-use super::{Maybe, MaybeCast, MaybeKind, Perhaps};
+use super::{Maybe, MaybeCast, MaybeKind, Perhaps, sealed};
 
 /// The kind of `Maybe<T>` that represents a value that exists. This is
 /// guaranteed by the compiler to have the same size and memory layout as `T`
 /// itself.
 #[repr(transparent)]
 pub struct Always<T: Send>(T);
+
+impl<T: Send> sealed::Sealed for Always<T> {}
 
 impl MaybeKind for Always<()> {
     type Rebind<T: Send> = Always<T>;

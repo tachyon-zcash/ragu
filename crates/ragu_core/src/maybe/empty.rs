@@ -1,8 +1,10 @@
-use super::{Maybe, MaybeCast, MaybeKind, Perhaps};
+use super::{Maybe, MaybeCast, MaybeKind, Perhaps, sealed};
 
 /// The kind of `Maybe<T>` that represents a value that does not exist. This is
 /// a zero-sized type.
 pub struct Empty;
+
+impl sealed::Sealed for Empty {}
 
 impl MaybeKind for Empty {
     type Rebind<T: Send> = Empty;
