@@ -39,7 +39,13 @@ pub trait Rank:
         Self::RANK - 2
     }
 
-    /// Computes the coefficients of $$t(X, z) = -\sum_{i=0}^{n - 1} X^{4n - 1 - i} (z^{2n - 1 - i} + z^{2n + i})$$ for some $z \in \mathbb{F}$.
+    /// Computes the coefficients of
+    /// $$t(X, z) = -\sum_{i=0}^{n - 1} X^{4n - 1 - i} (z^{2n - 1 - i} + z^{2n + i})$$
+    /// for some $z \in \mathbb{F}$.
+    ///
+    /// Fixes $Z = z$ to produce a univariate polynomial in $X$. The resulting
+    /// structured polynomial aligns with the `b(X)` coefficient layout and
+    /// supplies the fixed term for the revdot identity.
     fn tz<F: Field>(z: F) -> structured::Polynomial<F, Self> {
         let mut tmp = structured::Polynomial::new();
         if z != F::ZERO {
@@ -58,7 +64,12 @@ pub trait Rank:
         tmp
     }
 
-    /// Computes the coefficients of $$t(x, Z) = -\sum_{i=0}^{n - 1} x^{4n - 1 - i} (Z^{2n - 1 - i} + Z^{2n + i})$$ for some $x \in \mathbb{F}$.
+    /// Computes the coefficients of
+    /// $$t(x, Z) = -\sum_{i=0}^{n - 1} x^{4n - 1 - i} (Z^{2n - 1 - i} + Z^{2n + i})$$
+    /// for some $x \in \mathbb{F}$.
+    ///
+    /// Fixes $X = x$ to produce a univariate polynomial in $Z$. This is
+    /// the symmetric counterpart to [`Rank::tz`].
     fn tx<F: Field>(x: F) -> structured::Polynomial<F, Self> {
         let mut tmp = structured::Polynomial::new();
         if x != F::ZERO {
@@ -76,7 +87,13 @@ pub trait Rank:
         tmp
     }
 
-    /// Computes $$t(x, z) = -\sum_{i=0}^{n - 1} x^{4n - 1 - i} (z^{2n - 1 - i} + z^{2n + i})$$ for some $x, z \in \mathbb{F}$.
+    /// Computes
+    /// $$t(x, z) = -\sum_{i=0}^{n - 1} x^{4n - 1 - i} (z^{2n - 1 - i} + z^{2n + i})$$
+    /// for some $x, z \in \mathbb{F}$.
+    ///
+    /// The exponent pattern mirrors the structured polynomial layout, which
+    /// is why this function delegates to the circuit-friendly evaluator in
+    /// [`txz::Evaluate`].
     fn txz<F: Field>(x: F, z: F) -> F {
         if x == F::ZERO || z == F::ZERO {
             return F::ZERO;

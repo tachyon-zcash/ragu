@@ -1,4 +1,8 @@
 //! Operations and utilities for reasoning about folded revdot claims.
+//!
+//! Folding combines many revdot claims into a single claim using verifier
+//! challenges. The off-diagonal products (i ≠ j) form the error terms that must
+//! also be enforced to preserve soundness.
 
 use ff::Field;
 use ragu_circuits::polynomials::{Rank, structured};
