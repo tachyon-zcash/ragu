@@ -27,11 +27,26 @@ use crate::header::Header;
 /// Represents proof-carrying data, a recursive proof for the correctness of
 /// some accompanying data.
 pub struct Pcd<'source, C: Cycle, R: Rank, H: Header<C::CircuitField>> {
-    /// The recursive proof for the accompanying data.
-    pub proof: Proof<C, R>,
+    proof: Proof<C, R>,
+    data: H::Data<'source>,
+}
 
-    /// Data needed to witness a [`Header`] within a [`Step`](super::Step).
-    pub data: H::Data<'source>,
+impl<'source, C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<'source, C, R, H> {
+    /// Returns a reference to the data that the proof accompanies.
+    pub fn data(&self) -> &H::Data<'source> {
+        &self.data
+    }
+
+    /// Returns a reference to the recursive proof.
+    pub(crate) fn proof(&self) -> &Proof<C, R> {
+        &self.proof
+    }
+
+    /// Consumes the proof-carrying data and returns the proof and data
+    /// separately.
+    pub(crate) fn into_parts(self) -> (Proof<C, R>, H::Data<'source>) {
+        (self.proof, self.data)
+    }
 }
 
 impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<'_, C, R, H> {

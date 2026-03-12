@@ -33,7 +33,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // (Internal circuit IDs are constants and don't need this check.)
         if !self
             .native_registry
-            .circuit_in_domain(pcd.proof.application.circuit_id)
+            .circuit_in_domain(pcd.proof().application.circuit_id)
         {
             return Ok(false);
         }
@@ -41,15 +41,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // Validate that the `left_header` and `right_header` lengths match
         // `HEADER_SIZE`. Alternatively, the `Proof` structure could be
         // parameterized on the `HEADER_SIZE`, but this appeared to be simpler.
-        if pcd.proof.application.left_header.len() != HEADER_SIZE
-            || pcd.proof.application.right_header.len() != HEADER_SIZE
+        if pcd.proof().application.left_header.len() != HEADER_SIZE
+            || pcd.proof().application.right_header.len() != HEADER_SIZE
         {
             return Ok(false);
         }
 
         // Compute unified k(y), unified_bridge k(y), and application k(y).
         let (unified_ky, unified_bridge_ky, application_ky) =
-            Emulator::emulate_wireless((&pcd.proof, pcd.data.clone(), y), |dr, witness| {
+            Emulator::emulate_wireless((pcd.proof(), pcd.data().clone(), y), |dr, witness| {
                 let (proof, data, y) = witness.cast();
                 let y = Element::alloc(dr, y)?;
                 let proof_inputs =
@@ -64,14 +64,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             })?;
 
         // Build a and b polynomials for each revdot claim.
-        let source = native::SingleProofSource { proof: &pcd.proof };
+        let source = native::SingleProofSource { proof: pcd.proof() };
         let mut builder = claims::Builder::new(&self.native_registry, y, z);
         claims::native::build(&source, &mut builder)?;
 
         // Check all native revdot claims.
         let native_revdot_claims = {
             let ky_source = native::SingleProofKySource {
-                raw_c: pcd.proof.ab.c,
+                raw_c: pcd.proof().ab.c,
                 application_ky,
                 unified_bridge_ky,
                 unified_ky,
@@ -84,7 +84,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Check all nested revdot claims.
         let nested_revdot_claims = {
-            let nested_source = nested::SingleProofSource { proof: &pcd.proof };
+            let nested_source = nested::SingleProofSource { proof: pcd.proof() };
             let y_nested = C::ScalarField::random(&mut rng);
             let z_nested = C::ScalarField::random(&mut rng);
             let mut nested_builder =
@@ -98,22 +98,22 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         };
 
         // Check polynomial evaluation claim.
-        let p_eval_claim = pcd.proof.p.poly.eval(pcd.proof.challenges.u) == pcd.proof.p.v;
+        let p_eval_claim = pcd.proof().p.poly.eval(pcd.proof().challenges.u) == pcd.proof().p.v;
 
         // Check P commitment corresponds to polynomial and blind.
         let p_commitment_claim = pcd
-            .proof
+            .proof()
             .p
             .poly
-            .commit_to_affine(C::host_generators(self.params), pcd.proof.p.blind)
-            == pcd.proof.p.commitment;
+            .commit_to_affine(C::host_generators(self.params), pcd.proof().p.blind)
+            == pcd.proof().p.commitment;
 
         // Check registry_xy polynomial evaluation at the sampled w.
         // registry_xy_poly is m(W, x, y) - the registry evaluated at current x, y, free in W.
         let registry_xy_claim = {
-            let x = pcd.proof.challenges.x;
-            let y = pcd.proof.challenges.y;
-            let poly_eval = pcd.proof.query.registry_xy_poly.eval(w);
+            let x = pcd.proof().challenges.x;
+            let y = pcd.proof().challenges.y;
+            let poly_eval = pcd.proof().query.registry_xy_poly.eval(w);
             let expected = self.native_registry.wxy(w, x, y);
             poly_eval == expected
         };

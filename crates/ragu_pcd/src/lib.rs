@@ -236,6 +236,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         pcd: Pcd<'source, C, R, H>,
         rng: &mut RNG,
     ) -> Result<Pcd<'source, C, R, H>> {
+
         // Seed a trivial proof for rerandomization.
         // TODO: this is a temporary hack that allows the base case logic to be simple
         let seeded_trivial = self.seeded_trivial_pcd(rng);
