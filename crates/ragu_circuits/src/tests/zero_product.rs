@@ -599,7 +599,7 @@ fn full_check<C: Circuit<Fp, Instance<'static> = Fp>>(
     let a = a.unstructured();
     let b = b.unstructured();
 
-    let expected = C::ky(&circuit_for_rx, expected_instance, y).unwrap();
+    let expected = C::ky(circuit_for_rx, expected_instance, y).unwrap();
     assert_eq!(expected, ragu_arithmetic::dot(a.iter(), b.iter().rev()));
 }
 
