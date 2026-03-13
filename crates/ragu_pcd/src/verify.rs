@@ -512,4 +512,35 @@ mod tests {
             "misaligned: claim[6] gets 0 from zero tail"
         );
     }
+
+    /// The registry polynomial m(W, X, Y) evaluates to zero at padding-slot
+    /// domain elements. Since s(y) = 0 for these slots, a prover using a
+    /// padding-slot circuit ID faces no application constraints — the revdot
+    /// claim becomes vacuously satisfiable.
+    #[test]
+    fn registry_polynomial_is_zero_at_padding_slot() {
+        type F = <Pasta as Cycle>::CircuitField;
+
+        let app = create_test_app();
+        let padding_index = CircuitIndex::new(15);
+        let registered_index = CircuitIndex::new(0);
+
+        let x = F::from(7u64);
+        let y = F::from(11u64);
+
+        let registered_eval = app.native_registry.wxy(registered_index.omega_j(), x, y);
+        assert_ne!(
+            registered_eval,
+            F::ZERO,
+            "registered circuit has nonzero m(W,X,Y)"
+        );
+
+        let padding_eval = app.native_registry.wxy(padding_index.omega_j(), x, y);
+        assert_eq!(padding_eval, F::ZERO, "padding slot has zero m(W,X,Y)");
+
+        let padding_eval2 =
+            app.native_registry
+                .wxy(padding_index.omega_j(), F::from(13u64), F::from(17u64));
+        assert_eq!(padding_eval2, F::ZERO, "padding slot is zero at all (x, y)");
+    }
 }
