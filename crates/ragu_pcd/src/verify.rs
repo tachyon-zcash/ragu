@@ -378,4 +378,138 @@ mod tests {
         let result = app.verify(&pcd, &mut rng).expect("verify should not error");
         assert!(!result, "verify should reject corrupted ab.c value");
     }
+
+    /// The native registry has 15 circuits (13 internal + 2 internal steps)
+    /// but the FFT domain is padded to size 16. Index 15 maps to a valid
+    /// domain element but has no registered circuit. `circuit_is_registered`
+    /// rejects it; the weaker `circuit_in_domain` would not.
+    #[test]
+    fn verify_rejects_padding_slot_circuit_id() {
+        let app = create_test_app();
+
+        let padding_index = CircuitIndex::new(15);
+
+        assert!(
+            app.native_registry.circuit_in_domain(padding_index),
+            "padding slot is in the FFT domain"
+        );
+        assert!(
+            !app.native_registry.circuit_is_registered(padding_index),
+            "padding slot is not a registered circuit"
+        );
+        assert_eq!(app.native_registry.circuits().len(), 15);
+
+        let mut proof = app.trivial_proof();
+        proof.application.circuit_id = padding_index;
+
+        let pcd = proof.carry::<()>(());
+        let mut rng = StdRng::seed_from_u64(1234);
+        let result = app.verify(&pcd, &mut rng).expect("verify should not error");
+        assert!(!result, "verify should reject padding-slot circuit_id");
+    }
+
+    /// Regression test for the `num_concrete_ky` / `num_stages` alignment
+    /// assertion.
+    ///
+    /// `ky_values` emits concrete k(y) values then an infinite zero tail.
+    /// `build` emits non-stage claims then stage claims. The verify loop zips
+    /// them. If a future code change causes the concrete count to diverge from
+    /// the non-stage claim count, the zero tail silently slides in early and
+    /// the zip pairs wrong k(y) values with wrong claims — verification
+    /// rejects with no indication of why.
+    ///
+    /// This test constructs a deliberately misaligned `KySource` (missing
+    /// `raw_c`) and confirms that `num_concrete_ky` detects the mismatch,
+    /// while also showing the silent zero-tail shift that would occur without
+    /// the assertion.
+    #[test]
+    fn ky_claim_alignment_assertion_catches_misalignment() {
+        use crate::components::claims::{self, native::KySource};
+
+        type F = <Pasta as Cycle>::CircuitField;
+
+        let app = create_test_app();
+        let proof = app.trivial_proof();
+
+        let y = F::from(42u64);
+        let z = F::from(43u64);
+        let source = super::native::SingleProofSource::<Pasta, TestR> { proof: &proof };
+        let mut builder = claims::Builder::new(&app.native_registry, y, z);
+        claims::native::build(&source, &mut builder).unwrap();
+
+        let total_claims = builder.a.len();
+        let non_stage_claims = total_claims - builder.num_stages;
+
+        assert_eq!(total_claims, 15);
+        assert_eq!(non_stage_claims, 7);
+        assert_eq!(builder.num_stages, 8);
+
+        let correct_source = super::native::SingleProofKySource {
+            raw_c: F::from(1u64),
+            application_ky: F::from(2u64),
+            unified_bridge_ky: F::from(3u64),
+            unified_ky: F::from(4u64),
+        };
+
+        assert_eq!(
+            super::native::num_concrete_ky(&correct_source),
+            non_stage_claims,
+            "correct source should align"
+        );
+
+        let correct_ky: alloc::vec::Vec<F> = claims::native::ky_values(&correct_source)
+            .take(total_claims)
+            .collect();
+
+        assert_eq!(correct_ky.iter().filter(|v| **v != F::ZERO).count(), 7);
+
+        struct MisalignedSource(F, F, F);
+
+        impl KySource for MisalignedSource {
+            type Ky = F;
+
+            fn raw_c(&self) -> impl Iterator<Item = F> {
+                core::iter::empty()
+            }
+
+            fn application_ky(&self) -> impl Iterator<Item = F> {
+                core::iter::once(self.0)
+            }
+
+            fn unified_bridge_ky(&self) -> impl Iterator<Item = F> {
+                core::iter::once(self.1)
+            }
+
+            fn unified_ky(&self) -> impl Iterator<Item = F> + Clone {
+                core::iter::once(self.2)
+            }
+
+            fn zero(&self) -> F {
+                F::ZERO
+            }
+        }
+
+        let misaligned = MisalignedSource(F::from(2u64), F::from(3u64), F::from(4u64));
+
+        assert_ne!(
+            claims::native::num_concrete_ky(&misaligned),
+            non_stage_claims,
+            "misaligned source should be caught by the assertion"
+        );
+
+        let misaligned_ky: alloc::vec::Vec<F> = claims::native::ky_values(&misaligned)
+            .take(total_claims)
+            .collect();
+
+        assert_eq!(
+            correct_ky[6],
+            F::from(4u64),
+            "correct: claim[6] gets unified_ky"
+        );
+        assert_eq!(
+            misaligned_ky[6],
+            F::ZERO,
+            "misaligned: claim[6] gets 0 from zero tail"
+        );
+    }
 }
