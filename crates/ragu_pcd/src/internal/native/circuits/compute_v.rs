@@ -163,8 +163,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
 
         // Enforce that child circuit IDs map to registered circuits (not padding slots).
         // The registry polynomial evaluates to zero at unregistered domain elements.
-        query.left.current_registry_xy_at_child_circuit_id.invert(dr)?;
-        query.right.current_registry_xy_at_child_circuit_id.invert(dr)?;
+        query
+            .left
+            .current_registry_xy_at_child_circuit_id
+            .invert(dr)?;
+        query
+            .right
+            .current_registry_xy_at_child_circuit_id
+            .invert(dr)?;
 
         let eval = eval.unenforced(dr, witness.as_ref().map(|w| w.eval_witness))?;
 
