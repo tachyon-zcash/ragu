@@ -29,12 +29,14 @@ flowchart TB
 
 ## Core Components
 
-The following diagram shows the crate dependency graph within the Ragu
-workspace. Arrows point from a crate to the crates it depends on.
-`ragu_arithmetic` sits at the foundation and nearly every other crate depends on
-it. `ragu_core` builds the `Driver` abstraction on top of the arithmetic
-layer; `ragu_primitives` and `ragu_circuits` build on both; and `ragu_pcd`
-ties together the circuit and arithmetic layers for recursive proofs.
+The following diagram is a high-level dependency sketch for the main library
+crates in the Ragu workspace. It omits placeholder and testing crates
+(`ragu_gadgets`, `ragu_testing`) as well as dev-dependencies. Arrows point
+from a crate to the crates it depends on. `ragu_arithmetic` sits at the
+foundation; `ragu_core` builds the `Driver` abstraction on top of it;
+`ragu_primitives` and `ragu_circuits` extend that layer with gadgets and
+protocol logic; and `ragu_pcd` ties those pieces together for recursive
+proofs.
 
 ```mermaid
 flowchart BT
@@ -53,10 +55,14 @@ flowchart BT
     core --> macros
     prims --> arith
     prims --> core
+    prims --> macros
     circuits --> arith
     circuits --> core
+    circuits --> prims
     pcd --> arith
     pcd --> circuits
+    pcd --> core
+    pcd --> prims
     ragu --> core
     ragu --> arith
     ragu --> prims
@@ -105,36 +111,25 @@ Ragu is developed as a Cargo workspace.
 
 ### From Protocol to Code
 
-The table below maps protocol-level concepts to their concrete Rust types.
+The table below maps protocol-level concepts to the primary Rust items and
+APIs that represent, compute, or manipulate them.
 
-| Protocol Concept | Rust Type | Crate |
+| Protocol Concept | Rust Item / API | Crate |
 |---|---|---|
-| Circuit | [`Circuit<F>`] | `ragu_circuits` |
-| Driver | [`Driver<'dr>`] | `ragu_core` |
+| Circuit | `Circuit<F>` | `ragu_circuits` |
+| Driver | `Driver<'dr>` | `ragu_core` |
 | Wire | `D::Wire` (associated type) | `ragu_core` |
-| Gadget | [`Gadget<'dr, D>`] | `ragu_core` |
-| Routine | [`Routine<F>`] | `ragu_core` |
-| Witness polynomial $r(X)$ | [`structured::Polynomial<F, R>`] | `ragu_circuits` |
-| Wiring polynomial $s(X, Y)$ | [`CircuitObject<F, R>`] | `ragu_circuits` |
-| Public input $k(Y)$ | `Circuit::Output: Write<F>` | `ragu_circuits` |
-| Domain | [`Domain<F>`] | `ragu_arithmetic` |
-| Commitment (IPA) | `Polynomial::commit()` | `ragu_circuits` |
-| Transcript (Fiat-Shamir) | [`Sponge<'dr, D, P>`] | `ragu_primitives` |
-| PCD step | [`Step<C>`] | `ragu_pcd` |
-| Proof / accumulator | [`Proof<C, R>`] | `ragu_pcd` |
-| Seed (base proof) | [`Application::seed()`] | `ragu_pcd` |
-| Fuse (accumulate) | [`Application::fuse()`] | `ragu_pcd` |
-
-[`Circuit<F>`]: ragu_circuits::Circuit
-[`Driver<'dr>`]: ragu_core::drivers::Driver
-[`Gadget<'dr, D>`]: ragu_core::gadgets::Gadget
-[`Routine<F>`]: ragu_core::routines::Routine
-[`structured::Polynomial<F, R>`]: ragu_circuits::polynomials::structured::Polynomial
-[`CircuitObject<F, R>`]: ragu_circuits::CircuitObject
-[`Domain<F>`]: ragu_arithmetic::Domain
-[`Sponge<'dr, D, P>`]: ragu_primitives::poseidon::Sponge
-[`Step<C>`]: ragu_pcd::step::Step
-[`Proof<C, R>`]: ragu_pcd::Proof
-[`Application::seed()`]: ragu_pcd::Application::seed
-[`Application::fuse()`]: ragu_pcd::Application::fuse
+| Gadget | `Gadget<'dr, D>` | `ragu_core` |
+| Routine | `Routine<F>` | `ragu_core` |
+| Witness polynomial $r(X)$ | `structured::Polynomial<F, R>` | `ragu_circuits` |
+| Wiring polynomial $s(X, Y)$ | `CircuitObject<F, R>` via `sxy`, `sx`, and `sy` | `ragu_circuits` |
+| Public input / instance encoding $k(Y)$ | `Circuit::Output: Write<F>` and `CircuitExt::ky()` | `ragu_circuits` |
+| Domain | `Domain<F>` | `ragu_arithmetic` |
+| Polynomial commitment (IPA) | `structured::Polynomial::commit()` and `unstructured::Polynomial::commit()` | `ragu_circuits` |
+| Transcript (Fiat-Shamir) | `Sponge<'dr, D, P>` | `ragu_primitives` |
+| PCD step | `Step<C>` | `ragu_pcd` |
+| Recursive proof | `Proof<C, R>` | `ragu_pcd` |
+| Proof-carrying data | `Pcd<'source, C, R, H>` | `ragu_pcd` |
+| Seed (base proof) | `Application::seed()` | `ragu_pcd` |
+| Fuse (accumulate) | `Application::fuse()` | `ragu_pcd` |
 [Pasta curve cycle]: https://electriccoin.co/blog/the-pasta-curves-for-halo-2-and-beyond/
