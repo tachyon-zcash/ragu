@@ -32,11 +32,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let y = C::CircuitField::random(&mut rng);
         let z = C::CircuitField::random(&mut rng);
 
-        // Validate that the application circuit_id is within the registry domain.
+        // Validate that the application circuit_id is a registered circuit.
+        // `is_registered` checks both domain membership and that the
+        // index maps to an actual circuit (not a power-of-2 padding slot).
         // (Internal circuit IDs are constants and don't need this check.)
         if !self
             .native_registry
-            .circuit_in_domain(pcd.proof().application.circuit_id)
+            .is_registered(pcd.proof().application.circuit_id)
         {
             return Ok(false);
         }
