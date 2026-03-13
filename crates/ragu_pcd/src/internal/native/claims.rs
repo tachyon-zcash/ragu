@@ -260,6 +260,19 @@ pub trait KySource {
     fn zero(&self) -> Self::Ky;
 }
 
+/// Returns the number of concrete (non-zero) k(y) values produced by
+/// [`ky_values`], i.e. the count before the infinite zero tail begins.
+///
+/// This must equal the number of non-stage claims produced by [`build`]
+/// for the same source shape. Use this in the verification path to assert
+/// alignment between `ky_values` and `build`.
+pub fn num_concrete_ky<S: KySource>(source: &S) -> usize {
+    source.raw_c().count()
+        + source.application_ky().count()
+        + source.unified_bridge_ky().count()
+        + source.unified_ky().count() * NUM_UNIFIED_CIRCUITS
+}
+
 /// Build an iterator over $k(y)$ values in claim order.
 ///
 /// Chains the $k(y)$ sources in the order required by [`build`],
@@ -269,6 +282,14 @@ pub trait KySource {
 /// The `unified_ky` and `unified_bridge_ky` values are computed by
 /// [`ProofInputs::unified_ky_values`](super::stages::preamble::ProofInputs::unified_ky_values)
 /// via Horner evaluation of the circuit instance polynomial.
+///
+/// # Note on the infinite zero tail
+///
+/// The infinite tail serves two roles: it provides k(y) = 0 for stage claims
+/// in verification, and provides zero-padding for the M×N fold grouping in
+/// circuit contexts (partial_collapse, error_n). Callers in the verification
+/// path must use [`num_concrete_ky`] to assert that the number of non-stage
+/// claims matches the number of concrete k(y) values.
 pub fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
     source
         .raw_c()
