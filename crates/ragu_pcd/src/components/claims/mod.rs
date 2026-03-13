@@ -70,6 +70,8 @@ pub struct Builder<'m, 'rx, F: PrimeField, R: Rank> {
     pub a: Vec<Cow<'rx, structured::Polynomial<F, R>>>,
     /// The accumulated `b` polynomials for revdot claims.
     pub b: Vec<Cow<'rx, structured::Polynomial<F, R>>>,
+    /// Number of stage claims (k(y) = 0) added by `stage_impl`.
+    pub num_stages: usize,
 }
 
 impl<'m, 'rx, F: PrimeField, R: Rank> Builder<'m, 'rx, F, R> {
@@ -82,6 +84,7 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Builder<'m, 'rx, F, R> {
             tz: R::tz(z),
             a: Vec::new(),
             b: Vec::new(),
+            num_stages: 0,
         }
     }
 
@@ -121,6 +124,7 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Builder<'m, 'rx, F, R> {
 
         self.a.push(a);
         self.b.push(Cow::Owned(sy));
+        self.num_stages += 1;
         Ok(())
     }
 }

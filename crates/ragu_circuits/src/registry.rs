@@ -414,6 +414,17 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
         self.domain.contains(w)
     }
 
+    /// Returns true if a circuit is actually registered at index `i`.
+    ///
+    /// Unlike [`circuit_in_domain`](Self::circuit_in_domain), which only checks
+    /// that the index's $\omega^j$ is a member of the FFT domain, this method
+    /// additionally verifies that a circuit was registered at that domain slot
+    /// (i.e., it is not a power-of-2 padding slot).
+    pub fn circuit_is_registered(&self, i: CircuitIndex) -> bool {
+        let w: F = i.omega_j();
+        self.domain.contains(w) && self.omega_lookup.contains_key(&OmegaKey::from(w))
+    }
+
     /// Evaluate the registry polynomial unrestricted at $X$.
     pub fn wy(&self, w: F, y: F) -> structured::Polynomial<F, R> {
         self.at(w).wy(y)
