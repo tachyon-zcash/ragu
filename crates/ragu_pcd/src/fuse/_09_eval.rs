@@ -17,7 +17,7 @@ use rand::CryptoRng;
 
 use crate::{
     Application, Proof,
-    circuits::{native::stages::eval, nested},
+    circuits::{native::stages::eval as native, nested::stages::eval as nested},
     proof,
 };
 
@@ -32,16 +32,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         error_m: &proof::ErrorM<C, R>,
         ab: &proof::AB<C, R>,
         query: &proof::Query<C, R>,
-    ) -> Result<(proof::Eval<C, R>, eval::Witness<C::CircuitField>)>
+    ) -> Result<(proof::Eval<C, R>, native::Witness<C::CircuitField>)>
     where
         D: Driver<'dr, F = C::CircuitField, MaybeKind = Always<()>>,
     {
         let u = *u.value().take();
 
-        let eval_witness = eval::Witness {
-            left: eval::ChildEvaluationsWitness::from_proof(left, u),
-            right: eval::ChildEvaluationsWitness::from_proof(right, u),
-            current: eval::CurrentStepWitness {
+        let eval_witness = native::Witness {
+            left: native::ChildEvaluationsWitness::from_proof(left, u),
+            right: native::ChildEvaluationsWitness::from_proof(right, u),
+            current: native::CurrentStepWitness {
                 // TODO: the registry evaluations here could _theoretically_ be more
                 // efficient if they're computed simultaneously with assistance
                 // from the registry itself, rather than individually evaluated for
@@ -54,15 +54,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 registry_xy: query.registry_xy_poly.eval(u),
             },
         };
-        let native_rx = eval::Stage::<C, R, HEADER_SIZE>::rx(&eval_witness)?;
+        let native_rx = native::Stage::<C, R, HEADER_SIZE>::rx(&eval_witness)?;
         let native_blind = C::CircuitField::random(&mut *rng);
         let native_commitment =
             native_rx.commit_to_affine(C::host_generators(self.params), native_blind);
 
-        let nested_eval_witness = nested::stages::eval::Witness {
+        let nested_eval_witness = nested::Witness {
             native_eval: native_commitment,
         };
-        let nested_rx = nested::stages::eval::Stage::<C::HostCurve, R>::rx(&nested_eval_witness)?;
+        let nested_rx = nested::Stage::<C::HostCurve, R>::rx(&nested_eval_witness)?;
         let nested_blind = C::ScalarField::random(&mut *rng);
         let nested_commitment =
             nested_rx.commit_to_affine(C::nested_generators(self.params), nested_blind);

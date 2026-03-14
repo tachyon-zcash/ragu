@@ -11,7 +11,7 @@ use rand::CryptoRng;
 
 use crate::{
     Application, Proof,
-    circuits::{native::stages::preamble as native_preamble, nested},
+    circuits::{native::stages::preamble as native, nested::stages::preamble as nested},
     proof,
 };
 
@@ -24,28 +24,27 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         application: &proof::Application<C, R>,
     ) -> Result<(
         proof::Preamble<C, R>,
-        native_preamble::Witness<'a, C, R, HEADER_SIZE>,
+        native::Witness<'a, C, R, HEADER_SIZE>,
     )> {
-        let preamble_witness = native_preamble::Witness::new(
+        let preamble_witness = native::Witness::new(
             left,
             right,
             &application.left_header,
             &application.right_header,
         )?;
 
-        let native_rx = native_preamble::Stage::<C, R, HEADER_SIZE>::rx(&preamble_witness)?;
+        let native_rx = native::Stage::<C, R, HEADER_SIZE>::rx(&preamble_witness)?;
         let native_blind = C::CircuitField::random(&mut *rng);
         let native_commitment =
             native_rx.commit_to_affine(C::host_generators(self.params), native_blind);
 
-        let nested_preamble_witness = nested::stages::preamble::Witness {
+        let nested_preamble_witness = nested::Witness {
             native_preamble: native_commitment,
-            left: nested::stages::preamble::ChildWitness::from_proof(left),
-            right: nested::stages::preamble::ChildWitness::from_proof(right),
+            left: nested::ChildWitness::from_proof(left),
+            right: nested::ChildWitness::from_proof(right),
         };
 
-        let nested_rx =
-            nested::stages::preamble::Stage::<C::HostCurve, R>::rx(&nested_preamble_witness)?;
+        let nested_rx = nested::Stage::<C::HostCurve, R>::rx(&nested_preamble_witness)?;
         let nested_blind = C::ScalarField::random(&mut *rng);
         let nested_commitment =
             nested_rx.commit_to_affine(C::nested_generators(self.params), nested_blind);

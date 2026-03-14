@@ -21,10 +21,12 @@ use rand::CryptoRng;
 
 use crate::{
     Application, Proof,
-    circuits::{self, native, native::stages::query, nested},
+    circuits::{
+        native::InternalCircuitIndex, native::stages::query as native,
+        nested::stages::query as nested,
+    },
     proof,
 };
-use native::InternalCircuitIndex;
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     pub(super) fn compute_query<'dr, D, RNG: CryptoRng>(
@@ -37,10 +39,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         error_m: &proof::ErrorM<C, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-    ) -> Result<(
-        proof::Query<C, R>,
-        circuits::native::stages::query::Witness<C>,
-    )>
+    ) -> Result<(proof::Query<C, R>, native::Witness<C>)>
     where
         D: Driver<'dr, F = C::CircuitField, MaybeKind = Always<()>>,
     {
@@ -59,8 +58,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             registry_xy_poly.eval(circuit_id.omega_j())
         };
 
-        let query_witness = query::Witness {
-            fixed_registry: query::FixedRegistryWitness {
+        let query_witness = native::Witness {
+            fixed_registry: native::FixedRegistryWitness {
                 // TODO: these can all be evaluated at the same time; in fact,
                 // that's what registry.xy is supposed to allow.
                 preamble_stage: registry_at(PreambleStage),
@@ -78,7 +77,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 compute_v_circuit: registry_at(ComputeVCircuit),
             },
             registry_wxy: registry_xy_poly.eval(w),
-            left: query::ChildEvaluationsWitness::from_proof(
+            left: native::ChildEvaluationsWitness::from_proof(
                 left,
                 w,
                 x,
@@ -86,7 +85,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 &registry_xy_poly,
                 &error_m.registry_wy_poly,
             ),
-            right: query::ChildEvaluationsWitness::from_proof(
+            right: native::ChildEvaluationsWitness::from_proof(
                 right,
                 w,
                 x,
@@ -96,7 +95,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             ),
         };
 
-        let native_rx = query::Stage::<C, R, HEADER_SIZE>::rx(&query_witness)?;
+        let native_rx = native::Stage::<C, R, HEADER_SIZE>::rx(&query_witness)?;
         let native_blind = C::CircuitField::random(&mut *rng);
         let host_gen = C::host_generators(self.params);
         let [registry_xy_commitment, native_commitment] = ragu_arithmetic::batch_to_affine([
@@ -104,11 +103,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             native_rx.commit(host_gen, native_blind),
         ]);
 
-        let nested_query_witness = nested::stages::query::Witness {
+        let nested_query_witness = nested::Witness {
             native_query: native_commitment,
             registry_xy: registry_xy_commitment,
         };
-        let nested_rx = nested::stages::query::Stage::<C::HostCurve, R>::rx(&nested_query_witness)?;
+        let nested_rx = nested::Stage::<C::HostCurve, R>::rx(&nested_query_witness)?;
         let nested_blind = C::ScalarField::random(&mut *rng);
         let nested_commitment =
             nested_rx.commit_to_affine(C::nested_generators(self.params), nested_blind);

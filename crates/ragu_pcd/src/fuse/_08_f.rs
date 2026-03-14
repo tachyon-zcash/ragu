@@ -26,7 +26,9 @@ use rand::CryptoRng;
 use alloc::vec::Vec;
 
 use crate::{
-    Application, Proof, circuits::native::InternalCircuitIndex, circuits::nested::stages::f, proof,
+    Application, Proof,
+    circuits::{native::InternalCircuitIndex, nested::stages::f as nested},
+    proof,
 };
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
@@ -168,10 +170,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let blind = C::CircuitField::random(&mut *rng);
         let commitment = poly.commit_to_affine(C::host_generators(self.params), blind);
 
-        let nested_f_witness = f::Witness {
+        let nested_f_witness = nested::Witness {
             native_f: commitment,
         };
-        let nested_rx = f::Stage::<C::HostCurve, R>::rx(&nested_f_witness)?;
+        let nested_rx = nested::Stage::<C::HostCurve, R>::rx(&nested_f_witness)?;
         let nested_blind = C::ScalarField::random(&mut *rng);
         let nested_commitment =
             nested_rx.commit_to_affine(C::nested_generators(self.params), nested_blind);
