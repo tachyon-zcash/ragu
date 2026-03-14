@@ -420,31 +420,31 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
     ) -> Result<Self> {
         let bridge_preamble_commitment =
             Point::alloc(dr, proof.as_ref().map(|p| p.preamble.bridge.commitment))?;
-        let w = Element::alloc(dr, proof.as_ref().map(|p| p.challenges.w))?;
+        let w = Element::alloc(dr, proof.as_ref().map(|p| *p.challenges.w))?;
         let bridge_s_prime_commitment =
             Point::alloc(dr, proof.as_ref().map(|p| p.s_prime.bridge.commitment))?;
-        let y = Element::alloc(dr, proof.as_ref().map(|p| p.challenges.y))?;
-        let z = Element::alloc(dr, proof.as_ref().map(|p| p.challenges.z))?;
+        let y = Element::alloc(dr, proof.as_ref().map(|p| *p.challenges.y))?;
+        let z = Element::alloc(dr, proof.as_ref().map(|p| *p.challenges.z))?;
         let bridge_inner_error_commitment =
             Point::alloc(dr, proof.as_ref().map(|p| p.inner_error.bridge.commitment))?;
-        let mu = Element::alloc(dr, proof.as_ref().map(|p| p.challenges.mu))?;
-        let nu = Element::alloc(dr, proof.as_ref().map(|p| p.challenges.nu))?;
+        let mu = Element::alloc(dr, proof.as_ref().map(|p| *p.challenges.mu))?;
+        let nu = Element::alloc(dr, proof.as_ref().map(|p| *p.challenges.nu))?;
         let bridge_outer_error_commitment =
             Point::alloc(dr, proof.as_ref().map(|p| p.outer_error.bridge.commitment))?;
-        let mu_prime = Element::alloc(dr, proof.as_ref().map(|p| p.challenges.mu_prime))?;
-        let nu_prime = Element::alloc(dr, proof.as_ref().map(|p| p.challenges.nu_prime))?;
+        let mu_prime = Element::alloc(dr, proof.as_ref().map(|p| *p.challenges.mu_prime))?;
+        let nu_prime = Element::alloc(dr, proof.as_ref().map(|p| *p.challenges.nu_prime))?;
         let c = Element::alloc(dr, proof.as_ref().map(|p| p.ab.native.c))?;
         let bridge_ab_commitment =
             Point::alloc(dr, proof.as_ref().map(|p| p.ab.bridge.commitment))?;
-        let x = Element::alloc(dr, proof.as_ref().map(|p| p.challenges.x))?;
+        let x = Element::alloc(dr, proof.as_ref().map(|p| *p.challenges.x))?;
         let bridge_query_commitment =
             Point::alloc(dr, proof.as_ref().map(|p| p.query.bridge.commitment))?;
-        let alpha = Element::alloc(dr, proof.as_ref().map(|p| p.challenges.alpha))?;
+        let alpha = Element::alloc(dr, proof.as_ref().map(|p| *p.challenges.alpha))?;
         let bridge_f_commitment = Point::alloc(dr, proof.as_ref().map(|p| p.f.bridge.commitment))?;
-        let u = Element::alloc(dr, proof.as_ref().map(|p| p.challenges.u))?;
+        let u = Element::alloc(dr, proof.as_ref().map(|p| *p.challenges.u))?;
         let bridge_eval_commitment =
             Point::alloc(dr, proof.as_ref().map(|p| p.eval.bridge.commitment))?;
-        let pre_beta = Element::alloc(dr, proof.as_ref().map(|p| p.challenges.pre_beta))?;
+        let pre_beta = Element::alloc(dr, proof.as_ref().map(|p| *p.challenges.pre_beta))?;
         let v = Element::alloc(dr, proof.as_ref().map(|p| p.p.native.v))?;
 
         Ok(Output {

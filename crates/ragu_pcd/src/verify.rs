@@ -102,7 +102,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Check polynomial evaluation claim.
         let p_eval_claim =
-            pcd.proof().p.native.poly.eval(pcd.proof().challenges.u) == pcd.proof().p.native.v;
+            pcd.proof().p.native.poly.eval(*pcd.proof().challenges.u) == pcd.proof().p.native.v;
 
         // Check P commitment corresponds to polynomial and blind.
         let p_commitment_claim = pcd
@@ -116,8 +116,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // Check registry_xy polynomial evaluation at the sampled w.
         // registry_xy_poly is m(W, x, y) - the registry evaluated at current x, y, free in W.
         let registry_xy_claim = {
-            let x = pcd.proof().challenges.x;
-            let y = pcd.proof().challenges.y;
+            let x = *pcd.proof().challenges.x;
+            let y = *pcd.proof().challenges.y;
             let poly_eval = pcd.proof().query.native.registry_xy_poly.eval(w);
             let expected = self.native_registry.wxy(w, x, y);
             poly_eval == expected

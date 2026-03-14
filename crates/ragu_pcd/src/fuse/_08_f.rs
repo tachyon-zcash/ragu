@@ -107,28 +107,28 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // in the `compute_v` circuit.
         let mut iters: Vec<_> = vec![
             // Child proof p(u)=v checks
-            factor_iter(left.p.native.poly.iter_coeffs(), left.challenges.u),
-            factor_iter(right.p.native.poly.iter_coeffs(), right.challenges.u),
+            factor_iter(left.p.native.poly.iter_coeffs(), *left.challenges.u),
+            factor_iter(right.p.native.poly.iter_coeffs(), *right.challenges.u),
             // Registry transitions
             factor_iter(left.query.native.registry_xy_poly.iter_coeffs(), w),
             factor_iter(right.query.native.registry_xy_poly.iter_coeffs(), w),
             factor_iter(
                 s_prime.native.registry_wx0_poly.iter_coeffs(),
-                left.challenges.y,
+                *left.challenges.y,
             ),
             factor_iter(
                 s_prime.native.registry_wx1_poly.iter_coeffs(),
-                right.challenges.y,
+                *right.challenges.y,
             ),
             factor_iter(s_prime.native.registry_wx0_poly.iter_coeffs(), y),
             factor_iter(s_prime.native.registry_wx1_poly.iter_coeffs(), y),
             factor_iter(
                 inner_error.native.registry_wy_poly.iter_coeffs(),
-                left.challenges.x,
+                *left.challenges.x,
             ),
             factor_iter(
                 inner_error.native.registry_wy_poly.iter_coeffs(),
-                right.challenges.x,
+                *right.challenges.x,
             ),
             factor_iter(inner_error.native.registry_wy_poly.iter_coeffs(), x),
             factor_iter(query.native.registry_xy_poly.iter_coeffs(), w),
