@@ -24,10 +24,10 @@ use crate::path_resolution::RaguAppPath;
 /// ```ignore
 /// #[application]
 /// enum MyApp<'param, C: Cycle> {
-///    #[step(left = (), right = (), output = LeafNode)]
+///    #[step(output = LeafNode)]
 ///    WitnessLeaf(WitnessLeaf<'params, C>),
 ///
-///    #[step(left = LeafNode, right = LeafNode, output = HashNode)]
+///    #[step(output = HashNode)]
 ///    Hash2(Hash2<'params, C>),
 /// }
 pub fn evaluate(input: ItemEnum) -> Result<TokenStream> {
@@ -92,17 +92,18 @@ pub fn evaluate(input: ItemEnum) -> Result<TokenStream> {
 // ---------------------------------------------------------------------------
 
 /// Parsed `#[step(...)]` attribute on a variant.
-/// Expected format: `#[step(left = Type, right = Type, output = Type)]`
+/// Expected format: `#[step(output = Type)]`
+///
+/// Only the `output` header type is required — left/right are inferred from
+/// the `ragu_app::Step` trait implementation. The macro needs `output` to
+/// collect unique header types for suffix assignment (proc-macros can't
+/// resolve associated types).
 struct StepAttr {
-    left: Type,
-    right: Type,
     output: Type,
 }
 
 impl Parse for StepAttr {
     fn parse(input: ParseStream<'_>) -> Result<Self> {
-        let mut left = None;
-        let mut right = None;
         let mut output = None;
 
         while !input.is_empty() {
@@ -111,8 +112,6 @@ impl Parse for StepAttr {
             let ty: Type = input.parse()?;
 
             match ident.to_string().as_str() {
-                "left" => left = Some(ty),
-                "right" => right = Some(ty),
                 "output" => output = Some(ty),
                 other => {
                     return Err(Error::new(
@@ -128,9 +127,6 @@ impl Parse for StepAttr {
         }
 
         Ok(StepAttr {
-            left: left.ok_or_else(|| Error::new(input.span(), "missing `left` in #[step(...)]"))?,
-            right: right
-                .ok_or_else(|| Error::new(input.span(), "missing `right` in #[step(...)]"))?,
             output: output
                 .ok_or_else(|| Error::new(input.span(), "missing `output` in #[step(...)]"))?,
         })
@@ -174,19 +170,18 @@ fn extract_variant_type(variant: &Variant) -> Result<Type> {
     }
 }
 
-/// Collect unique non-unit header types from step attributes, preserving
-/// first-appearance order (which determines suffix assignment).
+/// Collect unique non-unit header types from step `output` attributes,
+/// preserving first-appearance order (which determines suffix assignment).
 fn collect_unique_headers(variants: &[ParsedVariant]) -> Vec<Type> {
     let mut seen = BTreeSet::new();
     let mut headers = Vec::new();
     for v in variants {
-        for ty in [&v.step_attr.left, &v.step_attr.right, &v.step_attr.output] {
-            if is_unit_type(ty) {
-                continue;
-            }
-            if seen.insert(quote!(#ty).to_string()) {
-                headers.push(ty.clone());
-            }
+        let ty = &v.step_attr.output;
+        if is_unit_type(ty) {
+            continue;
+        }
+        if seen.insert(quote!(#ty).to_string()) {
+            headers.push(ty.clone());
         }
     }
     headers
@@ -278,20 +273,26 @@ fn type_args_with(generics: &Generics, extra: TokenStream) -> TokenStream {
 /// user's `ragu_app::Step::synthesize` (which works with pre-encoded `&Bound`
 /// gadgets), then wraps the output via `Encoded::from_gadget`.
 ///
+/// Associated types (`Left`, `Right`, `Output`) are delegated to the
+/// `ragu_app::Step` trait — the macro doesn't need to know them.
+///
 /// # Example
 ///
-/// For variant `#[step(left = LeafNode, right = LeafNode, output = ExponentNode)]
-/// Hash2(Hash2<'p, C>)` at index 1:
+/// For variant `#[step(output = ExponentNode)] Hash2(Hash2<'p, C>)` at index 1:
 ///
 /// ```ignore
 /// impl<'p, C: Cycle> PcdStep<C> for Hash2<'p, C>
 /// where
-///     Hash2<'p, C>: ragu_app::Step<C, Left = LeafNode, Right = LeafNode, Output = ExponentNode>,
-///     LeafNode: Header<C::CircuitField>,
-///     ExponentNode: Header<C::CircuitField>,
+///     Hash2<'p, C>: ragu_app::Step<C>,
+///     <Hash2<'p, C> as ragu_app::Step<C>>::Left: Header<C::CircuitField>,
+///     <Hash2<'p, C> as ragu_app::Step<C>>::Right: Header<C::CircuitField>,
+///     <Hash2<'p, C> as ragu_app::Step<C>>::Output: Header<C::CircuitField>,
 /// {
 ///     const INDEX: Index = Index::new(1);
-///     // ... type aliases and witness() bridging impl
+///     type Left = <Hash2<'p, C> as ragu_app::Step<C>>::Left;
+///     type Right = <Hash2<'p, C> as ragu_app::Step<C>>::Right;
+///     type Output = <Hash2<'p, C> as ragu_app::Step<C>>::Output;
+///     // ... witness() bridging impl
 /// }
 /// ```
 fn generate_step_impls(
@@ -308,28 +309,21 @@ fn generate_step_impls(
     for v in variants {
         let step_ty = &v.step_ty;
         let index = v.index;
-        let left_ty = &v.step_attr.left;
-        let right_ty = &v.step_attr.right;
-        let output_ty = &v.step_attr.output;
 
         impls.extend(quote! {
             impl<#(#enum_params),*> #prelude::PcdStep<#cycle> for #step_ty
             where
-                #step_ty: #app::Step<#cycle,
-                    Left = #left_ty,
-                    Right = #right_ty,
-                    Output = #output_ty,
-                >,
-                #left_ty: #prelude::Header<#cycle::CircuitField>,
-                #right_ty: #prelude::Header<#cycle::CircuitField>,
-                #output_ty: #prelude::Header<#cycle::CircuitField>,
+                #step_ty: #app::Step<#cycle>,
+                <#step_ty as #app::Step<#cycle>>::Left: #prelude::Header<#cycle::CircuitField>,
+                <#step_ty as #app::Step<#cycle>>::Right: #prelude::Header<#cycle::CircuitField>,
+                <#step_ty as #app::Step<#cycle>>::Output: #prelude::Header<#cycle::CircuitField>,
             {
                 const INDEX: #prelude::Index = #prelude::Index::new(#index);
 
                 type Witness = <#step_ty as #app::Step<#cycle>>::Witness;
-                type Left = #left_ty;
-                type Right = #right_ty;
-                type Output = #output_ty;
+                type Left = <#step_ty as #app::Step<#cycle>>::Left;
+                type Right = <#step_ty as #app::Step<#cycle>>::Right;
+                type Output = <#step_ty as #app::Step<#cycle>>::Output;
                 type Aux = <#step_ty as #app::Step<#cycle>>::Aux;
 
                 fn witness<'dr, __D: #prelude::Driver<'dr, F = #cycle::CircuitField>, const HEADER_SIZE: usize>(
@@ -467,10 +461,10 @@ fn generate_header_impls(
 /// ```ignore
 /// #[application]
 /// pub enum ExampleApp<'params, C: Cycle> {
-///     #[step(left = (), right = (), output = LeafNode)]
+///     #[step(output = LeafNode)]
 ///     WitnessLeaf(WitnessLeaf<'params, C>),
 ///
-///     #[step(left = LeafNode, right = LeafNode, output = ExponentNode)]
+///     #[step(output = ExponentNode)]
 ///     Hash2(Hash2<'params, C>),
 /// }
 /// ```
@@ -494,8 +488,8 @@ fn generate_header_impls(
 ///     // conditional on `ragu_app::Step<C>`. Without these, non-generic
 ///     // steps (e.g. `Endoscale: Step<Pasta>`) fail to resolve for
 ///     // generic `C`.
-///     WitnessLeaf<'params, C>: Step<C, Left = (), Right = (), Output = LeafNode>,
-///     Hash2<'params, C>: Step<C, Left = LeafNode, Right = LeafNode, Output = ExponentNode>,
+///     WitnessLeaf<'params, C>: Step<C>,
+///     Hash2<'params, C>: Step<C>,
 /// {
 ///     pub fn build(
 ///         params: &'params C::Params,
@@ -555,17 +549,16 @@ fn generate_wrapper(
         .map(|h| quote!(#h: #prelude::Header<#cycle::CircuitField>))
         .collect();
 
-    // Where clause: each step type must impl `ragu_app::Step<C>` with matching
-    // associated types. Required so `.register()` in `build()` can resolve the
-    // generated `PcdStep<C>` impl (which is conditional on this bound).
+    // Where clause: each step type must impl `ragu_app::Step<C>`.
+    // Required so `.register()` in `build()` can resolve the generated
+    // `PcdStep<C>` impl (which is conditional on this bound). Without these,
+    // non-generic steps (e.g. `Endoscale: Step<Pasta>`) fail to resolve for
+    // generic `C`.
     let step_bounds: Vec<_> = variants
         .iter()
         .map(|v| {
             let step_ty = &v.step_ty;
-            let left = &v.step_attr.left;
-            let right = &v.step_attr.right;
-            let output = &v.step_attr.output;
-            quote!(#step_ty: #app::Step<#cycle, Left = #left, Right = #right, Output = #output>)
+            quote!(#step_ty: #app::Step<#cycle>)
         })
         .collect();
 

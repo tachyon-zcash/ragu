@@ -192,13 +192,13 @@ impl ragu_app::Step<Pasta> for Endoscale {
 /// ```
 #[application]
 pub enum ExampleApp<'params, C: Cycle> {
-    #[step(left = (), right = (), output = LeafNode)]
+    #[step(output = LeafNode)]
     WitnessLeaf(WitnessLeaf<'params, C>),
 
-    #[step(left = LeafNode, right = LeafNode, output = ExponentNode)]
+    #[step(output = ExponentNode)]
     Hash2(Hash2<'params, C>),
 
-    #[step(left = ExponentNode, right = (), output = ScaledPoint)]
+    #[step(output = ScaledPoint)]
     Endoscale(Endoscale),
 }
 
