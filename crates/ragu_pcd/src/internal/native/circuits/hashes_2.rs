@@ -79,6 +79,10 @@ use super::super::{
 };
 use crate::internal::fold_revdot;
 use crate::internal::transcript::Transcript;
+use crate::proof::{
+    ChallengeAlpha, ChallengeMu, ChallengeMuPrime, ChallengeNu, ChallengeNuPrime, ChallengePreBeta,
+    ChallengeU, ChallengeX,
+};
 
 /// Second hash circuit for Fiat-Shamir challenge derivation.
 ///
@@ -172,10 +176,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             outer_error.sponge_state,
             C::circuit_poseidon(self.params),
         );
-        let mu = resumed.challenge(dr)?;
+        let mu = resumed.challenge::<ChallengeMu>(dr)?.into_inner();
         unified_output.mu.provide(mu);
 
-        let nu = resumed.challenge(dr)?;
+        let nu = resumed.challenge::<ChallengeNu>(dr)?.into_inner();
         unified_output.nu.provide(nu);
 
         // Transition back to absorb mode for the rest of the transcript
@@ -186,8 +190,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             let bridge_outer_error_commitment =
                 unified_output.bridge_outer_error_commitment.receive(dr)?;
             bridge_outer_error_commitment.write(dr, &mut transcript)?;
-            let mu_prime = transcript.challenge(dr)?;
-            let nu_prime = transcript.challenge(dr)?;
+            let mu_prime = transcript.challenge::<ChallengeMuPrime>(dr)?.into_inner();
+            let nu_prime = transcript.challenge::<ChallengeNuPrime>(dr)?.into_inner();
             (mu_prime, nu_prime)
         };
         unified_output.mu_prime.provide(mu_prime);
@@ -197,7 +201,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let x = {
             let bridge_ab_commitment = unified_output.bridge_ab_commitment.receive(dr)?;
             bridge_ab_commitment.write(dr, &mut transcript)?;
-            transcript.challenge(dr)?
+            transcript.challenge::<ChallengeX>(dr)?.into_inner()
         };
         unified_output.x.provide(x);
 
@@ -205,7 +209,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let alpha = {
             let bridge_query_commitment = unified_output.bridge_query_commitment.receive(dr)?;
             bridge_query_commitment.write(dr, &mut transcript)?;
-            transcript.challenge(dr)?
+            transcript.challenge::<ChallengeAlpha>(dr)?.into_inner()
         };
         unified_output.alpha.provide(alpha.clone());
 
@@ -213,7 +217,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let u = {
             let bridge_f_commitment = unified_output.bridge_f_commitment.receive(dr)?;
             bridge_f_commitment.write(dr, &mut transcript)?;
-            transcript.challenge(dr)?
+            transcript.challenge::<ChallengeU>(dr)?.into_inner()
         };
         unified_output.u.provide(u);
 
@@ -221,7 +225,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let pre_beta = {
             let bridge_eval_commitment = unified_output.bridge_eval_commitment.receive(dr)?;
             bridge_eval_commitment.write(dr, &mut transcript)?;
-            transcript.challenge(dr)?
+            transcript.challenge::<ChallengePreBeta>(dr)?.into_inner()
         };
         unified_output.pre_beta.provide(pre_beta);
 

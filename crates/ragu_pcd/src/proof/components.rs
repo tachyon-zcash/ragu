@@ -56,6 +56,11 @@ impl<F, T> Challenge<F, T> {
             _marker: PhantomData,
         }
     }
+
+    /// Unwraps the challenge, returning the inner value and discarding the tag.
+    pub(crate) fn into_inner(self) -> F {
+        self.inner
+    }
 }
 
 impl<F, T> Deref for Challenge<F, T> {
