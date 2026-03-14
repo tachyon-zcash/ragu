@@ -399,11 +399,11 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
     /// Index the $i$th circuit to field element $\omega^j$ as $w$, and evaluate
     /// the registry polynomial unrestricted at $X$.
     ///
-    /// Wraps [`Registry::at`] and [`RegistryAt::wy`].
+    /// Wraps [`Registry::at`] and [`RegistryAt::y`].
     /// See [`CircuitIndex::omega_j`] for more details.
     pub fn circuit_y(&self, i: CircuitIndex, y: F) -> structured::Polynomial<F, R> {
         let w: F = i.omega_j();
-        self.at(w).wy(y)
+        self.at(w).y(y)
     }
 
     /// Returns true if the circuit's $\omega^j$ value is in the registry domain.
@@ -416,17 +416,17 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
 
     /// Evaluate the registry polynomial unrestricted at $X$.
     pub fn wy(&self, w: F, y: F) -> structured::Polynomial<F, R> {
-        self.at(w).wy(y)
+        self.at(w).y(y)
     }
 
     /// Evaluate the registry polynomial unrestricted at $Y$.
     pub fn wx(&self, w: F, x: F) -> unstructured::Polynomial<F, R> {
-        self.at(w).wx(x)
+        self.at(w).x(x)
     }
 
     /// Evaluate the registry polynomial at the provided point.
     pub fn wxy(&self, w: F, x: F, y: F) -> F {
-        self.at(w).wxy(x, y)
+        self.at(w).xy(x, y)
     }
 
     /// Computes the polynomial restricted at $W$ based on the provided
@@ -488,7 +488,7 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
 
 impl<F: PrimeField, R: Rank> RegistryAt<'_, F, R> {
     /// Evaluate the registry polynomial restricted at $W$, unrestricted at $Y$.
-    pub fn wy(&self, y: F) -> structured::Polynomial<F, R> {
+    pub fn y(&self, y: F) -> structured::Polynomial<F, R> {
         self.registry.w_cached(
             &self.cache,
             structured::Polynomial::default,
@@ -501,7 +501,7 @@ impl<F: PrimeField, R: Rank> RegistryAt<'_, F, R> {
     }
 
     /// Evaluate the registry polynomial restricted at $W$, unrestricted at $X$.
-    pub fn wx(&self, x: F) -> unstructured::Polynomial<F, R> {
+    pub fn x(&self, x: F) -> unstructured::Polynomial<F, R> {
         self.registry.w_cached(
             &self.cache,
             unstructured::Polynomial::default,
@@ -514,7 +514,7 @@ impl<F: PrimeField, R: Rank> RegistryAt<'_, F, R> {
     }
 
     /// Evaluate the registry polynomial at the point ($W$, $X$, $Y$).
-    pub fn wxy(&self, x: F, y: F) -> F {
+    pub fn xy(&self, x: F, y: F) -> F {
         self.registry.w_cached(
             &self.cache,
             || F::ZERO,
@@ -667,29 +667,29 @@ mod tests {
         let registry_at_w = registry.at(w);
 
         assert_eq!(
-            registry_at_w.wx(x).eval(eval_point),
+            registry_at_w.x(x).eval(eval_point),
             registry.wx(w, x).eval(eval_point)
         );
         assert_eq!(
-            registry_at_w.wy(y).eval(eval_point),
+            registry_at_w.y(y).eval(eval_point),
             registry.wy(w, y).eval(eval_point)
         );
-        assert_eq!(registry_at_w.wxy(x, y), registry.wxy(w, x, y));
+        assert_eq!(registry_at_w.xy(x, y), registry.wxy(w, x, y));
 
         // Test with w in domain (omega^j)
         let w_in_domain = registry.domain.omega();
         let registry_at_w_in_domain = registry.at(w_in_domain);
 
         assert_eq!(
-            registry_at_w_in_domain.wx(x).eval(eval_point),
+            registry_at_w_in_domain.x(x).eval(eval_point),
             registry.wx(w_in_domain, x).eval(eval_point)
         );
         assert_eq!(
-            registry_at_w_in_domain.wy(y).eval(eval_point),
+            registry_at_w_in_domain.y(y).eval(eval_point),
             registry.wy(w_in_domain, y).eval(eval_point)
         );
         assert_eq!(
-            registry_at_w_in_domain.wxy(x, y),
+            registry_at_w_in_domain.xy(x, y),
             registry.wxy(w_in_domain, x, y)
         );
 
@@ -710,7 +710,7 @@ mod tests {
 
         let x = Fp::from(42u64);
         let y = Fp::from(43u64);
-        assert_ne!(registry.at(w).wxy(x, y), registry.at(omega).wxy(x, y));
+        assert_ne!(registry.at(w).xy(x, y), registry.at(omega).xy(x, y));
 
         Ok(())
     }
@@ -737,7 +737,7 @@ mod tests {
 
         let x = Fp::from(42u64);
         let y = Fp::from(43u64);
-        assert_ne!(registry.at(w).wxy(x, y), registry.at(omega).wxy(x, y));
+        assert_ne!(registry.at(w).xy(x, y), registry.at(omega).xy(x, y));
 
         Ok(())
     }

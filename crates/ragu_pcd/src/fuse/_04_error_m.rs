@@ -50,7 +50,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let y = *y.value().take();
         let z = *z.value().take();
 
-        let registry_wy_poly = registry_at_w.wy(y);
+        let registry_wy_poly = registry_at_w.y(y);
         let registry_wy_blind = C::CircuitField::random(&mut *rng);
 
         let source = FuseProofSource { left, right };

@@ -22,9 +22,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let x0 = left.challenges.x;
         let x1 = right.challenges.x;
 
-        let native_registry_wx0_poly = registry_at_w.wx(x0);
+        let native_registry_wx0_poly = registry_at_w.x(x0);
         let native_registry_wx0_blind = C::CircuitField::random(&mut *rng);
-        let native_registry_wx1_poly = registry_at_w.wx(x1);
+        let native_registry_wx1_poly = registry_at_w.x(x1);
         let native_registry_wx1_blind = C::CircuitField::random(&mut *rng);
         let host_gen = C::host_generators(self.params);
         let [
