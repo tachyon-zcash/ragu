@@ -17,7 +17,7 @@ use rand::CryptoRng;
 use crate::{
     Application,
     internal::{claims, fold_revdot, native, nested},
-    proof,
+    proof::{self, Challenge, ChallengeY, ChallengeZ},
 };
 
 use super::claims::{FuseBuilder, FuseProofSource};
@@ -27,8 +27,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         &self,
         rng: &mut RNG,
         native_registry: &RegistryAt<'_, C::CircuitField, R>,
-        y: &Element<'dr, D>,
-        z: &Element<'dr, D>,
+        y: &Challenge<Element<'dr, D>, ChallengeY>,
+        z: &Challenge<Element<'dr, D>, ChallengeZ>,
         source: &FuseProofSource<'rx, C, R>,
     ) -> Result<(
         proof::InnerError<C, R>,

@@ -23,7 +23,13 @@ use ragu_primitives::{GadgetExt, Point, vec::CollectFixed};
 use rand::CryptoRng;
 
 use crate::{
-    Application, Pcd, Proof, RAGU_TAG, internal::transcript::Transcript, proof, step::Step,
+    Application, Pcd, Proof, RAGU_TAG,
+    internal::transcript::Transcript,
+    proof::{
+        self, ChallengeAlpha, ChallengeMu, ChallengeMuPrime, ChallengeNu, ChallengeNuPrime,
+        ChallengePreBeta, ChallengeU, ChallengeW, ChallengeX, ChallengeY, ChallengeZ,
+    },
+    step::Step,
 };
 
 use claims::FuseProofSource;
@@ -63,14 +69,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             self.compute_preamble(rng, &left, &right, &application)?;
         let preamble_commitment = Point::constant(&mut dr, preamble.bridge.commitment)?;
         preamble_commitment.write(&mut dr, &mut transcript)?;
-        let w = transcript.challenge(&mut dr)?;
+        let w = transcript.typed_challenge::<ChallengeW>(&mut dr)?;
         let native_registry = self.native_registry.at(*w.value().take());
 
         let s_prime = self.compute_s_prime(rng, &native_registry, &left, &right)?;
         let s_prime_commitment = Point::constant(&mut dr, s_prime.bridge.commitment)?;
         s_prime_commitment.write(&mut dr, &mut transcript)?;
-        let y = transcript.challenge(&mut dr)?;
-        let z = transcript.challenge(&mut dr)?;
+        let y = transcript.typed_challenge::<ChallengeY>(&mut dr)?;
+        let z = transcript.typed_challenge::<ChallengeZ>(&mut dr)?;
 
         let source = FuseProofSource {
             left: &left,
@@ -93,8 +99,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             .map(|e| *e.value().take())
             .collect_fixed()?;
 
-        let mu = transcript.challenge(&mut dr)?;
-        let nu = transcript.challenge(&mut dr)?;
+        let mu = transcript.typed_challenge::<ChallengeMu>(&mut dr)?;
+        let nu = transcript.typed_challenge::<ChallengeNu>(&mut dr)?;
 
         let (outer_error, outer_error_witness, a, b) = self.outer_error_terms(
             rng,
@@ -108,19 +114,19 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         )?;
         let outer_error_commitment = Point::constant(&mut dr, outer_error.bridge.commitment)?;
         outer_error_commitment.write(&mut dr, &mut transcript)?;
-        let mu_prime = transcript.challenge(&mut dr)?;
-        let nu_prime = transcript.challenge(&mut dr)?;
+        let mu_prime = transcript.typed_challenge::<ChallengeMuPrime>(&mut dr)?;
+        let nu_prime = transcript.typed_challenge::<ChallengeNuPrime>(&mut dr)?;
 
         let ab = self.compute_ab(rng, a, b, &source, &mu_prime, &nu_prime)?;
         let ab_commitment = Point::constant(&mut dr, ab.bridge.commitment)?;
         ab_commitment.write(&mut dr, &mut transcript)?;
-        let x = transcript.challenge(&mut dr)?;
+        let x = transcript.typed_challenge::<ChallengeX>(&mut dr)?;
 
         let (query, query_witness) =
             self.compute_query(rng, &w, &x, &y, &z, &inner_error, &left, &right)?;
         let query_commitment = Point::constant(&mut dr, query.bridge.commitment)?;
         query_commitment.write(&mut dr, &mut transcript)?;
-        let alpha = transcript.challenge(&mut dr)?;
+        let alpha = transcript.typed_challenge::<ChallengeAlpha>(&mut dr)?;
 
         let f = self.compute_f(
             rng,
@@ -138,13 +144,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         )?;
         let f_commitment = Point::constant(&mut dr, f.bridge.commitment)?;
         f_commitment.write(&mut dr, &mut transcript)?;
-        let u = transcript.challenge(&mut dr)?;
+        let u = transcript.typed_challenge::<ChallengeU>(&mut dr)?;
 
         let (eval, eval_witness) =
             self.compute_eval(rng, &u, &left, &right, &s_prime, &inner_error, &ab, &query)?;
         let eval_commitment = Point::constant(&mut dr, eval.bridge.commitment)?;
         eval_commitment.write(&mut dr, &mut transcript)?;
-        let pre_beta = transcript.challenge(&mut dr)?;
+        let pre_beta = transcript.typed_challenge::<ChallengePreBeta>(&mut dr)?;
 
         let p = self.compute_p(
             &pre_beta,

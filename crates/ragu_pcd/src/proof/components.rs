@@ -278,17 +278,17 @@ pub(crate) struct Challenges<C: Cycle> {
 
 impl<C: Cycle> Challenges<C> {
     pub(crate) fn new<'dr, D>(
-        w: &Element<'dr, D>,
-        y: &Element<'dr, D>,
-        z: &Element<'dr, D>,
-        mu: &Element<'dr, D>,
-        nu: &Element<'dr, D>,
-        mu_prime: &Element<'dr, D>,
-        nu_prime: &Element<'dr, D>,
-        x: &Element<'dr, D>,
-        alpha: &Element<'dr, D>,
-        u: &Element<'dr, D>,
-        pre_beta: &Element<'dr, D>,
+        w: &Challenge<Element<'dr, D>, ChallengeW>,
+        y: &Challenge<Element<'dr, D>, ChallengeY>,
+        z: &Challenge<Element<'dr, D>, ChallengeZ>,
+        mu: &Challenge<Element<'dr, D>, ChallengeMu>,
+        nu: &Challenge<Element<'dr, D>, ChallengeNu>,
+        mu_prime: &Challenge<Element<'dr, D>, ChallengeMuPrime>,
+        nu_prime: &Challenge<Element<'dr, D>, ChallengeNuPrime>,
+        x: &Challenge<Element<'dr, D>, ChallengeX>,
+        alpha: &Challenge<Element<'dr, D>, ChallengeAlpha>,
+        u: &Challenge<Element<'dr, D>, ChallengeU>,
+        pre_beta: &Challenge<Element<'dr, D>, ChallengePreBeta>,
     ) -> Self
     where
         D: Driver<'dr, F = C::CircuitField, MaybeKind = Always<()>>,

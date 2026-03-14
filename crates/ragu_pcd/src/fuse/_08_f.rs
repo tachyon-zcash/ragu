@@ -24,18 +24,18 @@ use alloc::{vec, vec::Vec};
 use crate::{
     Application, Proof,
     internal::{native, native::RxIndex, nested},
-    proof,
+    proof::{self, Challenge, ChallengeAlpha, ChallengeW, ChallengeX, ChallengeY, ChallengeZ},
 };
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     pub(super) fn compute_f<'dr, D, RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        w: &Element<'dr, D>,
-        y: &Element<'dr, D>,
-        z: &Element<'dr, D>,
-        x: &Element<'dr, D>,
-        alpha: &Element<'dr, D>,
+        w: &Challenge<Element<'dr, D>, ChallengeW>,
+        y: &Challenge<Element<'dr, D>, ChallengeY>,
+        z: &Challenge<Element<'dr, D>, ChallengeZ>,
+        x: &Challenge<Element<'dr, D>, ChallengeX>,
+        alpha: &Challenge<Element<'dr, D>, ChallengeAlpha>,
         s_prime: &proof::SPrime<C, R>,
         inner_error: &proof::InnerError<C, R>,
         ab: &proof::AB<C, R>,
