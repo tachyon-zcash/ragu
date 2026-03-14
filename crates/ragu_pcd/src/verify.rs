@@ -18,6 +18,7 @@ use crate::{
     internal::claims,
     internal::native::stages::preamble::ProofInputs,
     internal::{native::claims as native_claims, nested::claims as nested_claims},
+    proof::{Challenge, ChallengeW, ChallengeY, ChallengeZ},
 };
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
@@ -28,9 +29,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         mut rng: RNG,
     ) -> Result<bool> {
         // Sample verification challenges w, y, and z.
-        let w = C::CircuitField::random(&mut rng);
-        let y = C::CircuitField::random(&mut rng);
-        let z = C::CircuitField::random(&mut rng);
+        let w = Challenge::<_, ChallengeW>::new(C::CircuitField::random(&mut rng));
+        let y = Challenge::<_, ChallengeY>::new(C::CircuitField::random(&mut rng));
+        let z = Challenge::<_, ChallengeZ>::new(C::CircuitField::random(&mut rng));
 
         // Validate that the application circuit_id is within the registry domain.
         // (Internal circuit IDs are constants and don't need this check.)
@@ -52,7 +53,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Compute unified k(y), unified_bridge k(y), and application k(y).
         let (unified_ky, unified_bridge_ky, application_ky) =
-            Emulator::emulate_wireless((pcd.proof(), pcd.data().clone(), y), |dr, witness| {
+            Emulator::emulate_wireless((pcd.proof(), pcd.data().clone(), *y), |dr, witness| {
                 let (proof, data, y) = witness.cast();
                 let y = Element::alloc(dr, y)?;
                 let proof_inputs =
@@ -68,7 +69,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Build a and b polynomials for each revdot claim.
         let source = native::SingleProofSource { proof: pcd.proof() };
-        let mut builder = claims::Builder::new(&self.native_registry, y, z);
+        let mut builder = claims::Builder::new(&self.native_registry, *y, *z);
         native_claims::build(&source, &mut builder)?;
 
         // Check all native revdot claims.
@@ -118,8 +119,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let registry_xy_claim = {
             let x = *pcd.proof().challenges.x;
             let y = *pcd.proof().challenges.y;
-            let poly_eval = pcd.proof().query.native.registry_xy_poly.eval(w);
-            let expected = self.native_registry.wxy(w, x, y);
+            let poly_eval = pcd.proof().query.native.registry_xy_poly.eval(*w);
+            let expected = self.native_registry.wxy(*w, x, y);
             poly_eval == expected
         };
 
