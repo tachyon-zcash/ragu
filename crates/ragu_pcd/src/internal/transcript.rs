@@ -32,6 +32,8 @@ use ragu_primitives::{
     poseidon::{SaveError, Sponge, SpongeState},
 };
 
+use crate::proof::Challenge;
+
 /// Transcript wrapper around Poseidon [`Sponge`] for Fiat-Shamir transforms.
 pub struct Transcript<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> {
     sponge: Sponge<'dr, D, P>,
@@ -90,6 +92,16 @@ impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> Transcript<'dr, D, P> {
     /// Squeezes a single field element challenge from the transcript.
     pub fn challenge(&mut self, dr: &mut D) -> Result<Element<'dr, D>> {
         self.sponge.squeeze(dr)
+    }
+
+    /// Squeezes a typed challenge from the transcript.
+    ///
+    /// The phantom tag `T` is inferred from the binding site.
+    pub(crate) fn typed_challenge<T>(
+        &mut self,
+        dr: &mut D,
+    ) -> Result<Challenge<Element<'dr, D>, T>> {
+        Ok(Challenge::new(self.sponge.squeeze(dr)?))
     }
 
     /// Saves the transcript state (analogous to flush).
