@@ -17,7 +17,7 @@ mod proc;
 mod substitution;
 
 use proc_macro::TokenStream;
-use syn::{DeriveInput, ItemEnum, LitInt, parse_macro_input};
+use syn::{DeriveInput, ItemEnum, ItemStruct, LitInt, parse_macro_input};
 
 use helpers::macro_body;
 
@@ -113,18 +113,48 @@ use ragu_pcd as _;
 ///
 /// ```ignore
 /// #[application]
-/// pub enum MerkleTree<C: Cycle> {
-///     #[step(left = (), right = (), output = LeafNode)]
-///     WitnessLeaf(WitnessLeaf<'_, C>),
+/// pub enum MerkleTree<'params, C: Cycle> {
+///     #[step(output = LeafNode)]
+///     WitnessLeaf(WitnessLeaf<'params, C>),
 ///
-///     #[step(left = LeafNode, right = LeafNode, output = InternalNode)]
-///     Hash2(Hash2<'_, C>),
+///     #[step(output = InternalNode)]
+///     Hash2(Hash2<'params, C>),
 /// }
 /// ```
 #[proc_macro_attribute]
 pub fn application(_attr: TokenStream, input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as ItemEnum);
     macro_body(|| proc::application::evaluate(input))
+}
+
+/// Attribute macro for generating single-gadget `HeaderContent` implementations.
+///
+/// For headers where `encode()` allocates a single gadget directly from
+/// witness data, this macro generates the full `HeaderContent` implementation.
+///
+/// # Attributes
+///
+/// - `data`: The witness data type (required).
+/// - `gadget`: The gadget type to allocate (required).
+/// - `field`: The field type for a concrete impl (optional; when omitted,
+///   `data` is used as a generic field type parameter).
+///
+/// # Example
+///
+/// ```ignore
+/// // Generic: F is both the field type and the witness data type
+/// #[header(data = F, gadget = Element)]
+/// pub struct LeafNode;
+///
+/// // Concrete: data is a curve point, field is explicit
+/// #[header(data = EpAffine, gadget = Point<EpAffine>, field = Fp)]
+/// pub struct ScaledPoint;
+/// ```
+#[proc_macro_attribute]
+pub fn header(attr: TokenStream, input: TokenStream) -> TokenStream {
+    let attr = parse_macro_input!(attr as proc::header::HeaderAttr);
+    let input = parse_macro_input!(input as ItemStruct);
+    macro_body(|| proc::header::evaluate(attr, input))
 }
 
 #[cfg(test)]
