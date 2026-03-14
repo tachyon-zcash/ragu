@@ -41,21 +41,21 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
     /// Create child evaluations witness from a proof evaluated at point u.
     pub fn from_proof<C: Cycle<CircuitField = F>, R: Rank>(proof: &Proof<C, R>, u: F) -> Self {
         ChildEvaluationsWitness {
-            application: proof.application.rx.eval(u),
-            preamble: proof.preamble.native_rx.eval(u),
-            error_n: proof.error_n.native_rx.eval(u),
-            error_m: proof.error_m.native_rx.eval(u),
-            a_poly: proof.ab.a_poly.eval(u),
-            b_poly: proof.ab.b_poly.eval(u),
-            query: proof.query.native_rx.eval(u),
-            registry_xy_poly: proof.query.registry_xy_poly.eval(u),
-            eval: proof.eval.native_rx.eval(u),
-            p_poly: proof.p.poly.eval(u),
-            hashes_1: proof.circuits.hashes_1_rx.eval(u),
-            hashes_2: proof.circuits.hashes_2_rx.eval(u),
-            partial_collapse: proof.circuits.partial_collapse_rx.eval(u),
-            full_collapse: proof.circuits.full_collapse_rx.eval(u),
-            compute_v: proof.circuits.compute_v_rx.eval(u),
+            application: proof.application.rx.poly().eval(u),
+            preamble: proof.preamble.native_rx.poly().eval(u),
+            error_n: proof.error_n.native_rx.poly().eval(u),
+            error_m: proof.error_m.native_rx.poly().eval(u),
+            a_poly: proof.ab.a.poly().eval(u),
+            b_poly: proof.ab.b.poly().eval(u),
+            query: proof.query.native_rx.poly().eval(u),
+            registry_xy_poly: proof.query.registry_xy.poly().eval(u),
+            eval: proof.eval.native_rx.poly().eval(u),
+            p_poly: proof.p.agg_qx.poly().eval(u),
+            hashes_1: proof.circuits.hashes_1.poly().eval(u),
+            hashes_2: proof.circuits.hashes_2.poly().eval(u),
+            partial_collapse: proof.circuits.partial_collapse.poly().eval(u),
+            full_collapse: proof.circuits.full_collapse.poly().eval(u),
+            compute_v: proof.circuits.compute_v.poly().eval(u),
         }
     }
 }

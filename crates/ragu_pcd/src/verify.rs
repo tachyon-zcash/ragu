@@ -98,27 +98,28 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         };
 
         // Check polynomial evaluation claim.
-        let p_eval_claim = pcd.proof.p.poly.eval(pcd.proof.challenges.u) == pcd.proof.p.v;
+        let p_eval_claim = pcd.proof.p.agg_qx.poly().eval(pcd.proof.challenges.u) == pcd.proof.p.v;
 
         // Check P commitment corresponds to polynomial and blind.
-        let p_commitment_claim = pcd
-            .proof
-            .p
-            .poly
-            .commit_to_affine(C::host_generators(self.params), pcd.proof.p.blind)
-            == pcd.proof.p.commitment;
+        let p_commitment_claim = Into::<C::HostCurve>::into(
+            pcd.proof
+                .p
+                .agg_qx
+                .poly()
+                .commit(C::host_generators(self.params), pcd.proof.p.agg_qx.blind()),
+        ) == pcd.proof.p.agg_qx.commitment();
 
         // Check registry_xy polynomial evaluation at the sampled w.
         // registry_xy_poly is m(W, x, y) - the registry evaluated at current x, y, free in W.
         let registry_xy_claim = {
             let x = pcd.proof.challenges.x;
             let y = pcd.proof.challenges.y;
-            let poly_eval = pcd.proof.query.registry_xy_poly.eval(w);
+            let poly_eval = pcd.proof.query.registry_xy.poly().eval(w);
             let expected = self.native_registry.wxy(w, x, y);
             poly_eval == expected
         };
 
-        // TODO: Add checks for registry_wx0_poly, registry_wx1_poly, and registry_wy_poly.
+        // TODO: Add checks for registry_wx0, registry_wx1, and registry_wy.
         // - registry_wx0/wx1: need child proof x challenges (x₀, x₁) which "disappear" in preamble
         // - registry_wy: interstitial value that will be elided later
 
@@ -317,14 +318,21 @@ mod tests {
 
     #[test]
     fn verify_rejects_corrupted_p_commitment() {
+        use ragu_circuits::polynomials::CommittedPolynomial;
+
         let app = create_test_app();
         let mut rng = StdRng::seed_from_u64(1234);
 
         // Create a valid trivial proof
         let mut proof = app.trivial_proof();
 
-        // Corrupt the P commitment by changing the blind
-        proof.p.blind = <Pasta as Cycle>::CircuitField::from(999u64);
+        // Corrupt the P commitment by changing the blind (creates an inconsistent triple)
+        let old = proof.p.agg_qx.clone();
+        proof.p.agg_qx = CommittedPolynomial::from_parts(
+            old.poly().clone(),
+            <Pasta as Cycle>::CircuitField::from(999u64),
+            old.commitment(),
+        );
 
         let pcd = proof.carry::<()>(());
         let result = app.verify(&pcd, &mut rng).expect("verify should not error");

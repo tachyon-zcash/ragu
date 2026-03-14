@@ -7,7 +7,10 @@
 
 use ff::Field;
 use ragu_arithmetic::Cycle;
-use ragu_circuits::{CircuitExt, polynomials::Rank};
+use ragu_circuits::{
+    CircuitExt,
+    polynomials::{CommittedPolynomial, Rank},
+};
 use ragu_core::Result;
 use rand::CryptoRng;
 
@@ -33,11 +36,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     )> {
         let (trace, aux) =
             Adapter::<C, S, R, HEADER_SIZE>::new(step).rx((left.data, right.data, witness))?;
-        let rx = self
-            .native_registry
-            .assemble(&trace, S::INDEX.circuit_index(self.num_application_steps)?)?;
-        let blind = C::CircuitField::random(&mut *rng);
-        let commitment = rx.commit_to_affine(C::host_generators(self.params), blind);
+        let circuit_id = S::INDEX.circuit_index(self.num_application_steps)?;
+        let assembled_poly = self.native_registry.assemble(&trace, circuit_id)?;
+        let blind = C::CircuitField::random(rng);
+        let commitment = assembled_poly.commit_to_affine(C::host_generators(self.params), blind);
+        let rx = CommittedPolynomial::from_parts(assembled_poly, blind, commitment);
 
         let ((left_header, right_header), output_data, step_aux) = aux;
 
@@ -45,12 +48,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             left.proof,
             right.proof,
             proof::Application {
-                circuit_id: S::INDEX.circuit_index(self.num_application_steps)?,
+                circuit_id,
                 left_header: left_header.into_inner(),
                 right_header: right_header.into_inner(),
                 rx,
-                blind,
-                commitment,
             },
             output_data,
             step_aux,

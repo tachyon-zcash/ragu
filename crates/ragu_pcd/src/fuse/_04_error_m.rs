@@ -9,7 +9,11 @@
 
 use ff::Field;
 use ragu_arithmetic::Cycle;
-use ragu_circuits::{polynomials::Rank, registry::RegistryAt, staging::StageExt};
+use ragu_circuits::{
+    polynomials::{CommittedPolynomial, Rank},
+    registry::RegistryAt,
+    staging::StageExt,
+};
 use ragu_core::{
     Result,
     drivers::Driver,
@@ -51,7 +55,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let z = *z.value().take();
 
         let registry_wy_poly = registry_at_w.wy(y);
-        let registry_wy_blind = C::CircuitField::random(&mut *rng);
 
         let source = FuseProofSource { left, right };
         let mut builder = claims::Builder::new(&self.native_registry, y, z);
@@ -62,37 +65,36 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         let error_m_witness =
             native::stages::error_m::Witness::<C, NativeParameters> { error_terms };
-        let native_rx = native::stages::error_m::Stage::<C, R, HEADER_SIZE, NativeParameters>::rx(
-            &error_m_witness,
-        )?;
-        let native_blind = C::CircuitField::random(&mut *rng);
-        let host_gen = C::host_generators(self.params);
-        let [registry_wy_commitment, native_commitment] = ragu_arithmetic::batch_to_affine([
-            registry_wy_poly.commit(host_gen, registry_wy_blind),
-            native_rx.commit(host_gen, native_blind),
+        let native_error_m_poly =
+            native::stages::error_m::Stage::<C, R, HEADER_SIZE, NativeParameters>::rx(
+                &error_m_witness,
+            )?;
+
+        let generators = C::host_generators(self.params);
+        let blind_wy = C::CircuitField::random(rng);
+        let blind_m = C::CircuitField::random(rng);
+        let [commit_wy, commit_m] = ragu_arithmetic::batch_to_affine([
+            registry_wy_poly.commit(generators, blind_wy),
+            native_error_m_poly.commit(generators, blind_m),
         ]);
+        let registry_wy = CommittedPolynomial::from_parts(registry_wy_poly, blind_wy, commit_wy);
+        let native_rx = CommittedPolynomial::from_parts(native_error_m_poly, blind_m, commit_m);
 
         let nested_error_m_witness = nested::stages::error_m::Witness {
-            native_error_m: native_commitment,
-            registry_wy: registry_wy_commitment,
+            native_error_m: native_rx.commitment(),
+            registry_wy: registry_wy.commitment(),
         };
-        let nested_rx =
+        let nested_poly =
             nested::stages::error_m::Stage::<C::HostCurve, R>::rx(&nested_error_m_witness)?;
-        let nested_blind = C::ScalarField::random(&mut *rng);
-        let nested_commitment =
-            nested_rx.commit_to_affine(C::nested_generators(self.params), nested_blind);
+        let blind = C::ScalarField::random(rng);
+        let commitment = nested_poly.commit_to_affine(C::nested_generators(self.params), blind);
+        let nested_rx = CommittedPolynomial::from_parts(nested_poly, blind, commitment);
 
         Ok((
             proof::ErrorM {
-                registry_wy_poly,
-                registry_wy_blind,
-                registry_wy_commitment,
+                registry_wy,
                 native_rx,
-                native_blind,
-                native_commitment,
                 nested_rx,
-                nested_blind,
-                nested_commitment,
             },
             error_m_witness,
             builder,

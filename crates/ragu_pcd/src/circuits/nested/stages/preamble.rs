@@ -41,12 +41,12 @@ impl<C: CurveAffine> ChildWitness<C> {
     /// Construct from a child proof's commitments.
     pub fn from_proof<CC: Cycle<HostCurve = C>, R: Rank>(proof: &Proof<CC, R>) -> Self {
         Self {
-            application: proof.application.commitment,
-            hashes_1: proof.circuits.hashes_1_commitment,
-            hashes_2: proof.circuits.hashes_2_commitment,
-            partial_collapse: proof.circuits.partial_collapse_commitment,
-            full_collapse: proof.circuits.full_collapse_commitment,
-            compute_v: proof.circuits.compute_v_commitment,
+            application: proof.application.rx.commitment(),
+            hashes_1: proof.circuits.hashes_1.commitment(),
+            hashes_2: proof.circuits.hashes_2.commitment(),
+            partial_collapse: proof.circuits.partial_collapse.commitment(),
+            full_collapse: proof.circuits.full_collapse.commitment(),
+            compute_v: proof.circuits.compute_v.commitment(),
         }
     }
 }

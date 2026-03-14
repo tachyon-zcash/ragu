@@ -1,8 +1,11 @@
 //! Representations and views of polynomials used in Ragu's proof system.
 
+pub mod committed;
 pub mod structured;
 pub mod txz;
 pub mod unstructured;
+
+pub use committed::CommittedPolynomial;
 
 use ff::Field;
 
@@ -43,13 +46,13 @@ pub trait Rank:
     fn tz<F: Field>(z: F) -> structured::Polynomial<F, Self> {
         let mut tmp = structured::Polynomial::new();
         if z != F::ZERO {
-            let tmp = tmp.backward();
+            let view = tmp.backward();
             let zinv = z.invert().unwrap();
             let zpow = z.pow_vartime([2 * Self::n() as u64]);
             let mut l = -zpow * zinv;
             let mut r = -zpow;
             for _ in 0..Self::n() {
-                tmp.c.push(l + r);
+                view.c.push(l + r);
                 l *= zinv;
                 r *= z;
             }
@@ -62,15 +65,15 @@ pub trait Rank:
     fn tx<F: Field>(x: F) -> structured::Polynomial<F, Self> {
         let mut tmp = structured::Polynomial::new();
         if x != F::ZERO {
-            let tmp = tmp.backward();
+            let view = tmp.backward();
             let mut xi = -x.pow([3 * Self::n() as u64]);
             for _ in 0..Self::n() {
-                tmp.a.push(xi);
-                tmp.b.push(xi);
+                view.a.push(xi);
+                view.b.push(xi);
                 xi *= x;
             }
-            tmp.a.reverse();
-            tmp.b.reverse();
+            view.a.reverse();
+            view.b.reverse();
         }
 
         tmp
@@ -140,9 +143,10 @@ fn test_tz() {
     type DemoR = TestRank;
 
     let mut poly = structured::Polynomial::<Fp, DemoR>::new();
+    let view = poly.forward();
     for _ in 0..DemoR::n() {
-        poly.u.push(Fp::ONE);
-        poly.v.push(Fp::ONE);
+        view.a.push(Fp::ONE);
+        view.b.push(Fp::ONE);
     }
     let z = Fp::random(&mut rand::rng());
     poly.dilate(z);
@@ -150,15 +154,15 @@ fn test_tz() {
 
     let mut expected_tz = structured::Polynomial::<Fp, DemoR>::new();
     {
-        let expected_tz = expected_tz.backward();
+        let view = expected_tz.backward();
         for i in 0..DemoR::n() {
-            expected_tz.c.push(poly.u[i] + poly.v[i]);
+            view.c.push(poly.u[i] + poly.v[i]);
         }
     }
 
-    let expected_tz = expected_tz.unstructured().coeffs;
+    let expected_tz = expected_tz.unstructured();
 
-    assert_eq!(expected_tz, DemoR::tz::<Fp>(z).unstructured().coeffs);
+    assert_eq!(expected_tz, DemoR::tz::<Fp>(z).unstructured());
 }
 
 #[test]
