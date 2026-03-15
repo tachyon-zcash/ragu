@@ -548,16 +548,16 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
 /// 1. **Child proof $p(u) = v$ checks** - Verify child proof evaluations
 /// 2. **Registry polynomial transitions** -
 ///    $m(W, x, y) \to m(w, x, Y) \to m(w, X, y) \to s(W, x, y)$
-/// 3. **Internal circuit registry evaluations** - $m(\omega^j, x, y)$ for each
-///    internal index
-/// 4. **Application circuit registry evaluations** -
+/// 3. **Application circuit registry evaluations** -
 ///    $m(\text{circuit\_id}, x, y)$
-/// 5. **$a(xz),\, b(x)$ polynomial queries** — $a$ at $xz$, $b$ at $x$,
+/// 4. **$a(xz),\, b(x)$ polynomial queries** — $a$ at $xz$, $b$ at $x$,
 ///    including verifier-computed values for each child and the current
 ///    accumulator
-/// 6. **Stage/circuit `rx` evaluations** — each $r\_i$ queried at $xz$ for each
+/// 5. **Stage/circuit `rx` evaluations** — each $r\_i$ queried at $xz$ for each
 ///    child. The same $r\_i(xz)$ evaluations feed into both the $A(xz)$
 ///    recomputation (undilated) and $B(x)$ ($Z$-dilated).
+/// 6. **Internal circuit registry evaluations** - $m(\omega^j, x, y)$ for each
+///    internal index
 ///
 /// The queries must be ordered exactly as in the prover's computation of $f(X)$
 /// in [`compute_f`], since the ordering affects the weight (with respect to
@@ -591,12 +591,6 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HE
         // m(w, X, y) -> s(W, x, y)
         (&eval.registry_wy,            &query.registry_wxy,                              &d.challenges.x),
         (&eval.registry_xy,            &query.registry_wxy,                              &d.challenges.w),
-    ].into_iter()
-    // m(\omega^j, x, y) evaluations for each internal index j
-    .chain(InternalCircuitIndex::ALL.iter().map(|&id| {
-        (&eval.registry_xy, query.fixed_registry.get(id), d.internal.get(id))
-    }))
-    .chain([
         // m(circuit_id_i, x, y) evaluations for the ith child proof
         (&eval.registry_xy,            &query.left.current_registry_xy_at_child_circuit_id,  &d.left.circuit_id),
         (&eval.registry_xy,            &query.right.current_registry_xy_at_child_circuit_id, &d.right.circuit_id),
@@ -610,7 +604,7 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HE
         // prover.
         (&eval.a_poly,             computed_ax,                                      &d.challenges.xz),
         (&eval.b_poly,             computed_bx,                                      &d.challenges.x),
-    ])
+    ].into_iter()
     // Stage and circuit rx evaluations at xz for each child proof.
     // The same r_i(xz) values feed into both A(xz) (undilated) and
     // B(x) (Z-dilated) recomputations.
@@ -629,6 +623,10 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HE
             (&eval.full_collapse,    &query.full_collapse),
             (&eval.compute_v,        &query.compute_v),
         ].into_iter().map(|(e, q)| (e, q, &d.challenges.xz))))
+    // m(\omega^j, x, y) evaluations for each internal index j
+    .chain(InternalCircuitIndex::ALL.iter().map(|&id| {
+        (&eval.registry_xy, query.fixed_registry.get(id), d.internal.get(id))
+    }))
 }
 
 /// Batch inverter for computing denominators.
