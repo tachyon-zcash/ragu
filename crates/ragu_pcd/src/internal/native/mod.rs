@@ -22,12 +22,12 @@ impl Parameters for RevdotParameters {
 
 pub mod stages;
 
-pub(crate) mod circuits;
-pub(crate) mod claims;
-pub(crate) mod unified;
+pub mod circuits;
+pub mod claims;
+pub mod unified;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum InternalCircuitIndex {
+pub enum InternalCircuitIndex {
     // Native circuits
     Hashes1Circuit,
     Hashes2Circuit,
@@ -48,11 +48,11 @@ pub(crate) enum InternalCircuitIndex {
 
 /// The number of internal circuits registered by [`register_all`],
 /// equal to the number of variants in [`InternalCircuitIndex`].
-pub(crate) const NUM_INTERNAL_CIRCUITS: usize = 13;
+pub const NUM_INTERNAL_CIRCUITS: usize = 13;
 
 /// Compute the total circuit count and log2 domain size from the number of
 /// application-defined steps.
-pub(crate) const fn total_circuit_counts(num_application_steps: usize) -> (usize, u32) {
+pub const fn total_circuit_counts(num_application_steps: usize) -> (usize, u32) {
     let total_circuits = num_application_steps + step::NUM_INTERNAL_STEPS + NUM_INTERNAL_CIRCUITS;
     let log2_circuits = total_circuits.next_power_of_two().trailing_zeros();
     (total_circuits, log2_circuits)
@@ -65,7 +65,7 @@ impl InternalCircuitIndex {
     /// in [`RegistryBuilder::finalize()`](ragu_circuits::registry::RegistryBuilder::finalize)
     /// (circuits before masks), since [`circuit_index()`](Self::circuit_index)
     /// derives indices from position in this array.
-    pub(crate) const ALL: [Self; NUM_INTERNAL_CIRCUITS] = [
+    pub const ALL: [Self; NUM_INTERNAL_CIRCUITS] = [
         Self::Hashes1Circuit,
         Self::Hashes2Circuit,
         Self::PartialCollapseCircuit,
@@ -81,8 +81,11 @@ impl InternalCircuitIndex {
         Self::EvalFinalStaged,
     ];
 
-    pub(crate) fn circuit_index(self) -> CircuitIndex {
-        let pos = Self::ALL.iter().position(|&v| v == self).unwrap();
+    pub fn circuit_index(self) -> CircuitIndex {
+        let pos = Self::ALL
+            .iter()
+            .position(|&v| v == self)
+            .expect("every variant appears in ALL");
         CircuitIndex::from_u32(pos as u32)
     }
 }
@@ -94,7 +97,7 @@ impl InternalCircuitIndex {
 /// [`from_fn`](Self::from_fn) / [`try_from_fn`](Self::try_from_fn) to
 /// construct from a closure.
 #[derive(Clone)]
-pub(crate) struct InternalCircuitValues<T> {
+pub struct InternalCircuitValues<T> {
     pub hashes_1_circuit: T,
     pub hashes_2_circuit: T,
     pub partial_collapse_circuit: T,
@@ -189,7 +192,7 @@ impl RxIndex {
     ///
     /// This order matches the evaluation order in `poly_queries` (compute_v.rs)
     /// and `_08_f.rs`, and drives the `Write` impl for `RxValues`.
-    pub(crate) const ALL: [Self; NUM_RX_COMPONENTS] = [
+    pub const ALL: [Self; NUM_RX_COMPONENTS] = [
         Self::Preamble,
         Self::ErrorM,
         Self::ErrorN,
@@ -243,6 +246,15 @@ impl<T> RxValues<T> {
         }
     }
 
+    /// Construct from a closure called once per variant in [`ALL`](RxIndex::ALL) order.
+    #[cfg(test)]
+    pub fn from_fn(mut f: impl FnMut(RxIndex) -> T) -> Self {
+        match Self::try_from_fn(|id| Ok::<_, core::convert::Infallible>(f(id))) {
+            Ok(v) => v,
+            Err(e) => match e {},
+        }
+    }
+
     /// Fallible construction from a closure called once per variant.
     ///
     /// The closure is called in [`ALL`](RxIndex::ALL) order.
@@ -279,11 +291,11 @@ pub enum RxComponent {
     Rx(RxIndex),
 }
 
-/// Registers internal native circuits into the provided registry.
+/// Registers internal native circuits and masks into the provided registry.
 ///
-/// All circuits registered here are internal and will be placed
-/// before any application steps.
-pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
+/// Does not register internal steps (rerandomize, trivial); those are
+/// registered by the caller after this function returns.
+pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
     mut registry: RegistryBuilder<'params, C::CircuitField, R>,
     params: &'params C::Params,
     log2_circuits: u32,

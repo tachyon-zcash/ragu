@@ -1,17 +1,17 @@
 use super::*;
 use crate::*;
 use native::{
-    InternalCircuitIndex, RevdotParameters,
+    InternalCircuitIndex, InternalCircuitValues, RevdotParameters, RxIndex, RxValues,
     stages::{error_m, error_n, eval, preamble, query},
 };
 use ragu_circuits::staging::{Stage, StageExt};
 use ragu_pasta::{Pasta, fp, fq};
-pub(crate) type R = ragu_circuits::polynomials::ProductionRank;
+pub type R = ragu_circuits::polynomials::ProductionRank;
 
 // When changing HEADER_SIZE, update the constraint counts by running:
 //   cargo test -p ragu_pcd --release print_internal_circuit -- --nocapture
 // Then copy-paste the output into the check_constraints! calls in the test below.
-pub(crate) const HEADER_SIZE: usize = 65;
+pub const HEADER_SIZE: usize = 65;
 
 // Number of dummy application circuits to register before testing internal
 // circuits. This ensures the tests work correctly even when application
