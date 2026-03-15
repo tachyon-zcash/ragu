@@ -867,8 +867,8 @@ dependencies = [
 name = "ragu_app"
 version = "0.0.0"
 dependencies = [
- "ff",
- "group",
+ "ff 0.14.0",
+ "group 0.14.0",
  "ragu_arithmetic",
  "ragu_circuits",
  "ragu_core",
@@ -876,7 +876,7 @@ dependencies = [
  "ragu_pasta",
  "ragu_pcd",
  "ragu_primitives",
- "rand 0.10.0",
+ "rand 0.10.1",
 ]
 
 [[package]]
