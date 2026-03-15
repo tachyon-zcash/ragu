@@ -155,101 +155,108 @@ where
 {
     use RxComponent::*;
 
-    // Raw claims (interleaved: iterate over all proofs for AbA/AbB)
+    // Raw claims (interleaved per proof)
     for (a, b) in source.rx(AbA).zip(source.rx(AbB)) {
         processor.raw_claim(a, b);
     }
 
-    // App circuits (interleaved)
+    // App circuits (interleaved per proof)
     for (app_id, rx) in source.app_circuits().zip(source.rx(Application)) {
         processor.circuit(app_id, rx);
     }
 
-    // hashes_1: needs Hashes1 + Preamble + ErrorN for each proof
-    for ((h1, pre), en) in source
-        .rx(Hashes1)
-        .zip(source.rx(Preamble))
-        .zip(source.rx(ErrorN))
-    {
-        processor.internal_circuit(
-            InternalCircuitIndex::Hashes1Circuit,
-            [h1, pre, en].into_iter(),
-        );
+    // Internal circuits and stages in canonical order.
+    for &id in &InternalCircuitIndex::ALL {
+        use InternalCircuitIndex::*;
+        match id {
+            // hashes_1: Hashes1 + Preamble + ErrorN
+            Hashes1Circuit => {
+                for ((h1, pre), en) in source
+                    .rx(Hashes1)
+                    .zip(source.rx(Preamble))
+                    .zip(source.rx(ErrorN))
+                {
+                    processor.internal_circuit(id, [h1, pre, en].into_iter());
+                }
+            }
+
+            // hashes_2: Hashes2 + ErrorN
+            Hashes2Circuit => {
+                for (h2, en) in source.rx(Hashes2).zip(source.rx(ErrorN)) {
+                    processor.internal_circuit(id, [h2, en].into_iter());
+                }
+            }
+
+            // partial_collapse: PartialCollapse + Preamble + ErrorM + ErrorN
+            PartialCollapseCircuit => {
+                for (((pc, pre), em), en) in source
+                    .rx(PartialCollapse)
+                    .zip(source.rx(Preamble))
+                    .zip(source.rx(ErrorM))
+                    .zip(source.rx(ErrorN))
+                {
+                    processor.internal_circuit(id, [pc, pre, em, en].into_iter());
+                }
+            }
+
+            // full_collapse: FullCollapse + Preamble + ErrorN
+            FullCollapseCircuit => {
+                for ((fc, pre), en) in source
+                    .rx(FullCollapse)
+                    .zip(source.rx(Preamble))
+                    .zip(source.rx(ErrorN))
+                {
+                    processor.internal_circuit(id, [fc, pre, en].into_iter());
+                }
+            }
+
+            // compute_v: ComputeV + Preamble + Query + Eval
+            ComputeVCircuit => {
+                for (((cv, pre), q), e) in source
+                    .rx(ComputeV)
+                    .zip(source.rx(Preamble))
+                    .zip(source.rx(Query))
+                    .zip(source.rx(Eval))
+                {
+                    processor.internal_circuit(id, [cv, pre, q, e].into_iter());
+                }
+            }
+
+            // Native stages (aggregated across all proofs)
+            PreambleStage => {
+                processor.stage(id, source.rx(Preamble))?;
+            }
+            ErrorMStage => {
+                processor.stage(id, source.rx(ErrorM))?;
+            }
+            ErrorNStage => {
+                processor.stage(id, source.rx(ErrorN))?;
+            }
+            QueryStage => {
+                processor.stage(id, source.rx(Query))?;
+            }
+            EvalStage => {
+                processor.stage(id, source.rx(Eval))?;
+            }
+
+            // Final stage masks
+            ErrorMFinalStaged => {
+                processor.stage(id, source.rx(PartialCollapse))?;
+            }
+            ErrorNFinalStaged => {
+                processor.stage(
+                    id,
+                    source
+                        .rx(Hashes1)
+                        .chain(source.rx(Hashes2))
+                        .chain(source.rx(FullCollapse)),
+                )?;
+            }
+            EvalFinalStaged => {
+                processor.stage(id, source.rx(ComputeV))?;
+            }
+        }
     }
-
-    // hashes_2: needs Hashes2 + ErrorN for each proof
-    for (h2, en) in source.rx(Hashes2).zip(source.rx(ErrorN)) {
-        processor.internal_circuit(InternalCircuitIndex::Hashes2Circuit, [h2, en].into_iter());
-    }
-
-    // partial_collapse: needs PartialCollapse + Preamble + ErrorM + ErrorN
-    for (((pc, pre), em), en) in source
-        .rx(PartialCollapse)
-        .zip(source.rx(Preamble))
-        .zip(source.rx(ErrorM))
-        .zip(source.rx(ErrorN))
-    {
-        processor.internal_circuit(
-            InternalCircuitIndex::PartialCollapseCircuit,
-            [pc, pre, em, en].into_iter(),
-        );
-    }
-
-    // full_collapse: needs FullCollapse + Preamble + ErrorN (no ErrorM)
-    for ((fc, pre), en) in source
-        .rx(FullCollapse)
-        .zip(source.rx(Preamble))
-        .zip(source.rx(ErrorN))
-    {
-        processor.internal_circuit(
-            InternalCircuitIndex::FullCollapseCircuit,
-            [fc, pre, en].into_iter(),
-        );
-    }
-
-    // compute_v: needs ComputeV + Preamble + Query + Eval
-    for (((cv, pre), q), e) in source
-        .rx(ComputeV)
-        .zip(source.rx(Preamble))
-        .zip(source.rx(Query))
-        .zip(source.rx(Eval))
-    {
-        processor.internal_circuit(
-            InternalCircuitIndex::ComputeVCircuit,
-            [cv, pre, q, e].into_iter(),
-        );
-    }
-
-    // Stages (aggregated: collect all proofs' rxs together)
-
-    // ErrorMFinalStaged: only partial_collapse uses error_m as final stage
-    processor.stage(
-        InternalCircuitIndex::ErrorMFinalStaged,
-        source.rx(PartialCollapse),
-    )?;
-
-    // ErrorNFinalStaged: hashes_1, hashes_2, full_collapse use error_n as final stage
-    processor.stage(
-        InternalCircuitIndex::ErrorNFinalStaged,
-        source
-            .rx(Hashes1)
-            .chain(source.rx(Hashes2))
-            .chain(source.rx(FullCollapse)),
-    )?;
-
-    // EvalFinalStaged: all compute_v rxs
-    processor.stage(InternalCircuitIndex::EvalFinalStaged, source.rx(ComputeV))?;
-
-    // Native stages (aggregated across all proofs)
-    processor.stage(InternalCircuitIndex::PreambleStage, source.rx(Preamble))?;
-
-    processor.stage(InternalCircuitIndex::ErrorMStage, source.rx(ErrorM))?;
-
-    processor.stage(InternalCircuitIndex::ErrorNStage, source.rx(ErrorN))?;
-
-    processor.stage(InternalCircuitIndex::QueryStage, source.rx(Query))?;
-
-    processor.stage(InternalCircuitIndex::EvalStage, source.rx(Eval))?;
 
     Ok(())
 }
