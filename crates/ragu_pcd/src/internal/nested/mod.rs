@@ -31,24 +31,28 @@ pub(crate) const NUM_ENDOSCALING_POINTS: usize = 37;
 /// These correspond to the circuit objects registered in [`register_all`].
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum InternalCircuitIndex {
+    /// `EndoscalingStep` circuit at given step.
+    EndoscalingStep(u32),
     /// `EndoscalarStage` stage mask.
     EndoscalarStage,
     /// `PointsStage` stage mask.
     PointsStage,
     /// `PointsStage` final staged mask.
     PointsFinalStaged,
-    /// `EndoscalingStep` circuit at given step.
-    EndoscalingStep(u32),
 }
 
 impl InternalCircuitIndex {
     /// Convert to a [`CircuitIndex`] for registry lookup.
+    ///
+    /// Circuit indices follow the `RegistryBuilder::finalize()` concatenation
+    /// order: internal circuits first, then internal masks.
     pub(crate) fn circuit_index(self) -> CircuitIndex {
+        let num_steps = NumStepsLen::<NUM_ENDOSCALING_POINTS>::len() as u32;
         match self {
-            Self::EndoscalarStage => CircuitIndex::from_u32(0),
-            Self::PointsStage => CircuitIndex::from_u32(1),
-            Self::PointsFinalStaged => CircuitIndex::from_u32(2),
-            Self::EndoscalingStep(step) => CircuitIndex::from_u32(3 + step),
+            Self::EndoscalingStep(step) => CircuitIndex::from_u32(step),
+            Self::EndoscalarStage => CircuitIndex::from_u32(num_steps),
+            Self::PointsStage => CircuitIndex::from_u32(num_steps + 1),
+            Self::PointsFinalStaged => CircuitIndex::from_u32(num_steps + 2),
         }
     }
 }
@@ -64,6 +68,15 @@ pub mod stages;
 pub(crate) fn register_all<'params, C: Cycle, R: Rank>(
     mut registry: RegistryBuilder<'params, C::ScalarField, R>,
 ) -> Result<RegistryBuilder<'params, C::ScalarField, R>> {
+    // Circuits first, then masks — matching RegistryBuilder::finalize()
+    // concatenation order and InternalCircuitIndex::circuit_index().
+    let num_steps = NumStepsLen::<NUM_ENDOSCALING_POINTS>::len();
+    for step in 0..num_steps {
+        let step_circuit = EndoscalingStep::<C::HostCurve, R, NUM_ENDOSCALING_POINTS>::new(step);
+        let staged = MultiStage::new(step_circuit);
+        registry = registry.register_internal_circuit(staged)?;
+    }
+
     registry = registry.register_internal_mask::<EndoscalarStage>()?;
 
     registry =
@@ -72,11 +85,5 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank>(
     registry = registry
         .register_internal_final_mask::<PointsStage<C::HostCurve, NUM_ENDOSCALING_POINTS>>()?;
 
-    let num_steps = NumStepsLen::<NUM_ENDOSCALING_POINTS>::len();
-    for step in 0..num_steps {
-        let step_circuit = EndoscalingStep::<C::HostCurve, R, NUM_ENDOSCALING_POINTS>::new(step);
-        let staged = MultiStage::new(step_circuit);
-        registry = registry.register_internal_circuit(staged)?;
-    }
     Ok(registry)
 }

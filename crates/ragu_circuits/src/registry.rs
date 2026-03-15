@@ -71,17 +71,17 @@ impl From<CircuitIndex> for usize {
 /// A builder that constructs a [`Registry`].
 ///
 /// Circuits are organized into four categories:
-/// - Internal masks: stage masks and final masks for internal stages
 /// - Internal circuits: system circuits for the PCD construction
+/// - Internal masks: stage masks and final masks for internal stages
 /// - Internal steps: internal step circuits (e.g. rerandomize, trivial)
 /// - Application steps: user-defined application step circuits
 ///
-/// During finalization, circuits are concatenated in registration order,
-/// ensuring internal masks can be optimized separately from circuits
-/// while maintaining proper PCD indexing.
+/// During finalization, circuits are concatenated in the order above,
+/// ensuring internal circuits get lower indices while maintaining
+/// proper PCD indexing.
 pub struct RegistryBuilder<'params, F: PrimeField, R: Rank> {
-    internal_masks: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
     internal_circuits: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
+    internal_masks: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
     internal_steps: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
     application_steps: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
 }
@@ -96,14 +96,14 @@ impl<'params, F: FromUniformBytes<64>, R: Rank> RegistryBuilder<'params, F, R> {
     /// Creates a new empty [`Registry`] builder.
     pub fn new() -> Self {
         Self {
-            internal_masks: Vec::new(),
             internal_circuits: Vec::new(),
+            internal_masks: Vec::new(),
             internal_steps: Vec::new(),
             application_steps: Vec::new(),
         }
     }
 
-    /// Returns the number of internal circuits (masks + circuits).
+    /// Returns the number of internal circuits (circuits + masks).
     pub fn num_internal_circuits(&self) -> usize {
         self.internal_masks.len() + self.internal_circuits.len()
     }
@@ -166,14 +166,13 @@ impl<'params, F: FromUniformBytes<64>, R: Rank> RegistryBuilder<'params, F, R> {
     /// Builds the [`Registry`].
     ///
     /// Circuits are concatenated in the following order for proper indexing:
-    /// 1. Internal masks: Stage enforcement masks and final masks
-    /// 2. Internal circuits: System circuits for the PCD construction
+    /// 1. Internal circuits: System circuits for the PCD construction
+    /// 2. Internal masks: Stage enforcement masks and final masks
     /// 3. Internal steps: Internal step circuits (e.g. rerandomize, trivial)
     /// 4. Application steps: User-defined step circuits
     ///
-    /// This ordering ensures internal masks can be optimized separately while
-    /// maintaining proper PCD indexing where internal items occupy indices
-    /// $0 \ldots N$ and application steps occupy indices $N$ onward.
+    /// This concatenation order must match [`InternalCircuitIndex::ALL`] in
+    /// `ragu_pcd`, which derives [`CircuitIndex`] from position in the array.
     pub fn finalize(self) -> Result<Registry<'params, F, R>>
     where
         F: FromUniformBytes<64>,
@@ -189,9 +188,9 @@ impl<'params, F: FromUniformBytes<64>, R: Rank> RegistryBuilder<'params, F, R> {
         let domain = Domain::<F>::new(log2_circuits);
 
         let circuits: Vec<_> = self
-            .internal_masks
+            .internal_circuits
             .into_iter()
-            .chain(self.internal_circuits)
+            .chain(self.internal_masks)
             .chain(self.internal_steps)
             .chain(self.application_steps)
             .collect();

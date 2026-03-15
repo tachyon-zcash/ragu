@@ -100,16 +100,14 @@ where
     }
 
     // 2. Stage checks SECOND (k(y) = 0)
-    // EndoscalarStage (index 0)
     processor.stage(
         InternalCircuitIndex::EndoscalarStage,
         source.rx(EndoscalarStage),
     )?;
 
-    // PointsStage (index 1)
     processor.stage(InternalCircuitIndex::PointsStage, source.rx(PointsStage))?;
 
-    // PointsFinalStaged (index 2) - final stage check
+    // PointsFinalStaged - final stage check
     // Aggregates all EndoscalingStep rxs from all proofs
     {
         let final_rxs = (0..num_steps).flat_map(|step| source.rx(EndoscalingStep(step as u32)));

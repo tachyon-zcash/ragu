@@ -18,6 +18,12 @@ pub(crate) mod unified;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InternalCircuitIndex {
+    // Native circuits
+    Hashes1Circuit,
+    Hashes2Circuit,
+    PartialCollapseCircuit,
+    FullCollapseCircuit,
+    ComputeVCircuit,
     // Native stages
     PreambleStage,
     ErrorMStage,
@@ -28,12 +34,6 @@ pub(crate) enum InternalCircuitIndex {
     ErrorMFinalStaged,
     ErrorNFinalStaged,
     EvalFinalStaged,
-    // Native circuits
-    Hashes1Circuit,
-    Hashes2Circuit,
-    PartialCollapseCircuit,
-    FullCollapseCircuit,
-    ComputeVCircuit,
 }
 
 /// The number of internal circuits registered by [`register_all`],
@@ -50,7 +50,17 @@ pub(crate) const fn total_circuit_counts(num_application_steps: usize) -> (usize
 
 impl InternalCircuitIndex {
     /// All variants in canonical iteration order.
+    ///
+    /// This order must match the registry finalization concatenation order
+    /// in [`RegistryBuilder::finalize()`](ragu_circuits::registry::RegistryBuilder::finalize)
+    /// (circuits before masks), since [`circuit_index()`](Self::circuit_index)
+    /// derives indices from position in this array.
     pub(crate) const ALL: [Self; NUM_INTERNAL_CIRCUITS] = [
+        Self::Hashes1Circuit,
+        Self::Hashes2Circuit,
+        Self::PartialCollapseCircuit,
+        Self::FullCollapseCircuit,
+        Self::ComputeVCircuit,
         Self::PreambleStage,
         Self::ErrorMStage,
         Self::ErrorNStage,
@@ -59,11 +69,6 @@ impl InternalCircuitIndex {
         Self::ErrorMFinalStaged,
         Self::ErrorNFinalStaged,
         Self::EvalFinalStaged,
-        Self::Hashes1Circuit,
-        Self::Hashes2Circuit,
-        Self::PartialCollapseCircuit,
-        Self::FullCollapseCircuit,
-        Self::ComputeVCircuit,
     ];
 
     pub(crate) fn circuit_index(self) -> CircuitIndex {
@@ -80,6 +85,11 @@ impl InternalCircuitIndex {
 /// construct from a closure.
 #[derive(Clone)]
 pub(crate) struct InternalCircuitValues<T> {
+    pub hashes_1_circuit: T,
+    pub hashes_2_circuit: T,
+    pub partial_collapse_circuit: T,
+    pub full_collapse_circuit: T,
+    pub compute_v_circuit: T,
     pub preamble_stage: T,
     pub error_m_stage: T,
     pub error_n_stage: T,
@@ -88,11 +98,6 @@ pub(crate) struct InternalCircuitValues<T> {
     pub error_m_final_staged: T,
     pub error_n_final_staged: T,
     pub eval_final_staged: T,
-    pub hashes_1_circuit: T,
-    pub hashes_2_circuit: T,
-    pub partial_collapse_circuit: T,
-    pub full_collapse_circuit: T,
-    pub compute_v_circuit: T,
 }
 
 impl<T> InternalCircuitValues<T> {
@@ -100,6 +105,11 @@ impl<T> InternalCircuitValues<T> {
     pub fn get(&self, id: InternalCircuitIndex) -> &T {
         use InternalCircuitIndex::*;
         match id {
+            Hashes1Circuit => &self.hashes_1_circuit,
+            Hashes2Circuit => &self.hashes_2_circuit,
+            PartialCollapseCircuit => &self.partial_collapse_circuit,
+            FullCollapseCircuit => &self.full_collapse_circuit,
+            ComputeVCircuit => &self.compute_v_circuit,
             PreambleStage => &self.preamble_stage,
             ErrorMStage => &self.error_m_stage,
             ErrorNStage => &self.error_n_stage,
@@ -108,11 +118,6 @@ impl<T> InternalCircuitValues<T> {
             ErrorMFinalStaged => &self.error_m_final_staged,
             ErrorNFinalStaged => &self.error_n_final_staged,
             EvalFinalStaged => &self.eval_final_staged,
-            Hashes1Circuit => &self.hashes_1_circuit,
-            Hashes2Circuit => &self.hashes_2_circuit,
-            PartialCollapseCircuit => &self.partial_collapse_circuit,
-            FullCollapseCircuit => &self.full_collapse_circuit,
-            ComputeVCircuit => &self.compute_v_circuit,
         }
     }
 
@@ -126,11 +131,18 @@ impl<T> InternalCircuitValues<T> {
     }
 
     /// Fallible construction from a closure called once per variant.
+    ///
+    /// The closure is called in [`ALL`](InternalCircuitIndex::ALL) order.
     pub fn try_from_fn<E>(
         mut f: impl FnMut(InternalCircuitIndex) -> core::result::Result<T, E>,
     ) -> core::result::Result<Self, E> {
         use InternalCircuitIndex::*;
         Ok(InternalCircuitValues {
+            hashes_1_circuit: f(Hashes1Circuit)?,
+            hashes_2_circuit: f(Hashes2Circuit)?,
+            partial_collapse_circuit: f(PartialCollapseCircuit)?,
+            full_collapse_circuit: f(FullCollapseCircuit)?,
+            compute_v_circuit: f(ComputeVCircuit)?,
             preamble_stage: f(PreambleStage)?,
             error_m_stage: f(ErrorMStage)?,
             error_n_stage: f(ErrorNStage)?,
@@ -139,11 +151,6 @@ impl<T> InternalCircuitValues<T> {
             error_m_final_staged: f(ErrorMFinalStaged)?,
             error_n_final_staged: f(ErrorNFinalStaged)?,
             eval_final_staged: f(EvalFinalStaged)?,
-            hashes_1_circuit: f(Hashes1Circuit)?,
-            hashes_2_circuit: f(Hashes2Circuit)?,
-            partial_collapse_circuit: f(PartialCollapseCircuit)?,
-            full_collapse_circuit: f(FullCollapseCircuit)?,
-            compute_v_circuit: f(ComputeVCircuit)?,
         })
     }
 }

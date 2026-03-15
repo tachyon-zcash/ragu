@@ -109,8 +109,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         params: &'params C::Params,
     ) -> Result<Application<'params, C, R, HEADER_SIZE>> {
         // Build the native registry:
-        // 1. Internal masks
-        // 2. Internal circuits
+        // 1. Internal circuits
+        // 2. Internal masks
         // 3. Internal steps
         // 4. Application circuits (already registered)
         let (total_circuits, log2_circuits) =
