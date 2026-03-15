@@ -197,7 +197,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         rng: &mut RNG,
         step: S,
         witness: S::Witness<'source>,
-    ) -> Result<(Pcd<'source, C, R, S::Output>, S::Aux<'source>)> {
+    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
         self.fuse(rng, step, witness, self.trivial_pcd(), self.trivial_pcd())
     }
 
@@ -209,7 +209,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     ///
     /// The proof is lazily created on first use and cached; subsequent calls
     /// return the same (non-random) proof.
-    fn seeded_trivial_pcd<'source, RNG: CryptoRng>(&self, rng: &mut RNG) -> Pcd<'source, C, R, ()> {
+    fn seeded_trivial_pcd<RNG: CryptoRng>(&self, rng: &mut RNG) -> Pcd<C, R, ()> {
         self.seeded_trivial
             .get_or_init(|| {
                 self.seed(rng, step::internal::trivial::Trivial::new(), ())
@@ -229,11 +229,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// is valid for the same [`Header`] but reveals nothing else about the
     /// original proof. As a result, [`Application::verify`] should produce the
     /// same result on the provided `pcd` as it would the output of this method.
-    pub fn rerandomize<'source, RNG: CryptoRng, H: Header<C::CircuitField>>(
+    pub fn rerandomize<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
-        pcd: Pcd<'source, C, R, H>,
+        pcd: Pcd<C, R, H>,
         rng: &mut RNG,
-    ) -> Result<Pcd<'source, C, R, H>> {
+    ) -> Result<Pcd<C, R, H>> {
         // Seed a trivial proof for rerandomization.
         // TODO: this is a temporary hack that allows the base case logic to be simple
         let seeded_trivial = self.seeded_trivial_pcd(rng);

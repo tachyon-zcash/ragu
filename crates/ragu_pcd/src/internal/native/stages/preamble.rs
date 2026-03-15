@@ -193,14 +193,11 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
 
     /// Allocate ProofInputs from a proof reference and some unprocessed header
     /// data.
-    pub fn alloc_for_verify<'source, R: Rank, H: Header<C::CircuitField>>(
+    pub fn alloc_for_verify<R: Rank, H: Header<C::CircuitField>>(
         dr: &mut D,
         proof: DriverValue<D, &Proof<C, R>>,
-        header_data: DriverValue<D, H::Data<'source>>,
-    ) -> Result<Self>
-    where
-        'source: 'dr,
-    {
+        header_data: DriverValue<D, H::Data>,
+    ) -> Result<Self> {
         let header_data = D::try_just(|| {
             use ragu_core::drivers::emulator::{Emulator, Wireless};
             let emulator = &mut Emulator::<Wireless<D::MaybeKind, D::F>>::wireless();

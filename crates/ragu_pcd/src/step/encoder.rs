@@ -108,10 +108,7 @@ impl<'dr, D: Driver<'dr, F: PrimeField>, H: Header<D::F>, const HEADER_SIZE: usi
     ///
     /// This is the standard encoding method used by most Steps. The gadget structure
     /// is preserved and will be serialized with padding during the write phase.
-    pub fn new<'source: 'dr>(
-        dr: &mut D,
-        witness: DriverValue<D, H::Data<'source>>,
-    ) -> Result<Self> {
+    pub fn new(dr: &mut D, witness: DriverValue<D, H::Data>) -> Result<Self> {
         Ok(Encoded::from_gadget(H::encode(dr, witness)?))
     }
 
@@ -124,10 +121,7 @@ impl<'dr, D: Driver<'dr, F: PrimeField>, H: Header<D::F>, const HEADER_SIZE: usi
     ///
     /// The tradeoff: less efficient (requires emulation + serialization) but achieves
     /// circuit uniformity across different header types.
-    pub(crate) fn new_uniform<'source: 'dr>(
-        dr: &mut D,
-        witness: DriverValue<D, H::Data<'source>>,
-    ) -> Result<Self> {
+    pub(crate) fn new_uniform(dr: &mut D, witness: DriverValue<D, H::Data>) -> Result<Self> {
         let mut emulator: Emulator<Wireless<D::MaybeKind, _>> = Emulator::wireless();
         let gadget = H::encode(&mut emulator, witness)?;
         let gadget = padded::for_header::<H, HEADER_SIZE, _>(&mut emulator, gadget)?;
@@ -157,12 +151,12 @@ mod tests {
 
     impl Header<Fp> for SingleHeader {
         const SUFFIX: Suffix = Suffix::new(100);
-        type Data<'source> = Fp;
+        type Data = Fp;
         type Output = Kind![Fp; Element<'_, _>];
 
-        fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        fn encode<'dr, D: Driver<'dr, F = Fp>>(
             dr: &mut D,
-            witness: DriverValue<D, Self::Data<'source>>,
+            witness: DriverValue<D, Self::Data>,
         ) -> Result<Bound<'dr, D, Self::Output>> {
             Element::alloc(dr, witness)
         }
@@ -172,12 +166,12 @@ mod tests {
 
     impl Header<Fp> for PairHeader {
         const SUFFIX: Suffix = Suffix::new(101);
-        type Data<'source> = (Fp, Fp);
+        type Data = (Fp, Fp);
         type Output = Kind![Fp; (Element<'_, _>, Element<'_, _>)];
 
-        fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        fn encode<'dr, D: Driver<'dr, F = Fp>>(
             dr: &mut D,
-            witness: DriverValue<D, Self::Data<'source>>,
+            witness: DriverValue<D, Self::Data>,
         ) -> Result<Bound<'dr, D, Self::Output>> {
             let (a, b) = witness.cast();
             Ok((Element::alloc(dr, a)?, Element::alloc(dr, b)?))

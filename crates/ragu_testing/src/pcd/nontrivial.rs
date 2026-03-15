@@ -18,12 +18,12 @@ pub struct LeafNode;
 
 impl<F: Field> Header<F> for LeafNode {
     const SUFFIX: Suffix = Suffix::new(0);
-    type Data<'source> = F;
+    type Data = F;
     type Output = Kind![F; Element<'_, _>];
 
-    fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+    fn encode<'dr, D: Driver<'dr, F = F>>(
         dr: &mut D,
-        witness: DriverValue<D, Self::Data<'source>>,
+        witness: DriverValue<D, Self::Data>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         Element::alloc(dr, witness)
     }
@@ -33,12 +33,12 @@ pub struct InternalNode;
 
 impl<F: Field> Header<F> for InternalNode {
     const SUFFIX: Suffix = Suffix::new(1);
-    type Data<'source> = F;
+    type Data = F;
     type Output = Kind![F; Element<'_, _>];
 
-    fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+    fn encode<'dr, D: Driver<'dr, F = F>>(
         dr: &mut D,
-        witness: DriverValue<D, Self::Data<'source>>,
+        witness: DriverValue<D, Self::Data>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         Element::alloc(dr, witness)
     }
@@ -68,7 +68,7 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data<'source>>,
+        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
@@ -112,7 +112,7 @@ impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data<'source>>,
+        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where

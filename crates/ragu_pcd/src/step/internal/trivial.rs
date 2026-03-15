@@ -44,7 +44,7 @@ impl<C: Cycle> Step<C> for Trivial {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data<'source>>,
+        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
         let left = Encoded::new(dr, left)?;

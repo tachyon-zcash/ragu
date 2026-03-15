@@ -175,15 +175,15 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
         &self,
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data<'source>>,
-        right: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data<'source>>,
+        left: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data>,
     ) -> Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data<'source>>,
+        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where

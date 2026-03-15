@@ -46,11 +46,11 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
     type Instance<'source> = (
         FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
         FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
-        <S::Output as Header<C::CircuitField>>::Data<'source>,
+        <S::Output as Header<C::CircuitField>>::Data,
     );
     type Witness<'source> = (
-        <S::Left as Header<C::CircuitField>>::Data<'source>,
-        <S::Right as Header<C::CircuitField>>::Data<'source>,
+        <S::Left as Header<C::CircuitField>>::Data,
+        <S::Right as Header<C::CircuitField>>::Data,
         S::Witness<'source>,
     );
     type Output = Kind![C::CircuitField; FixedVec<Element<'_, _>, TripleConstLen<HEADER_SIZE>>];
@@ -59,7 +59,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
             FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
             FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
         ),
-        <S::Output as Header<C::CircuitField>>::Data<'source>,
+        <S::Output as Header<C::CircuitField>>::Data,
         S::Aux<'source>,
     );
 
@@ -135,12 +135,12 @@ mod tests {
 
     impl Header<Fp> for TestHeader {
         const SUFFIX: Suffix = Suffix::new(50);
-        type Data<'source> = Fp;
+        type Data = Fp;
         type Output = Kind![Fp; Element<'_, _>];
 
-        fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        fn encode<'dr, D: Driver<'dr, F = Fp>>(
             dr: &mut D,
-            witness: DriverValue<D, Self::Data<'source>>,
+            witness: DriverValue<D, Self::Data>,
         ) -> Result<Bound<'dr, D, Self::Output>> {
             Element::alloc(dr, witness)
         }

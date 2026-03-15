@@ -21,11 +21,11 @@ struct HSuffixAOther;
 
 impl<F: Field> Header<F> for HSuffixA {
     const SUFFIX: Suffix = Suffix::new(0);
-    type Data<'source> = ();
+    type Data = ();
     type Output = ();
-    fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+    fn encode<'dr, D: Driver<'dr, F = F>>(
         _: &mut D,
-        _: DriverValue<D, Self::Data<'source>>,
+        _: DriverValue<D, Self::Data>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         Ok(())
     }
@@ -33,11 +33,11 @@ impl<F: Field> Header<F> for HSuffixA {
 
 impl<F: Field> Header<F> for HSuffixB {
     const SUFFIX: Suffix = Suffix::new(1);
-    type Data<'source> = ();
+    type Data = ();
     type Output = ();
-    fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+    fn encode<'dr, D: Driver<'dr, F = F>>(
         _: &mut D,
-        _: DriverValue<D, Self::Data<'source>>,
+        _: DriverValue<D, Self::Data>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         Ok(())
     }
@@ -45,11 +45,11 @@ impl<F: Field> Header<F> for HSuffixB {
 
 impl<F: Field> Header<F> for HSuffixAOther {
     const SUFFIX: Suffix = Suffix::new(0); // duplicate suffix
-    type Data<'source> = ();
+    type Data = ();
     type Output = ();
-    fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+    fn encode<'dr, D: Driver<'dr, F = F>>(
         _: &mut D,
-        _: DriverValue<D, Self::Data<'source>>,
+        _: DriverValue<D, Self::Data>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         Ok(())
     }
@@ -76,7 +76,7 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step0 {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data<'source>>,
+        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
         let left = Encoded::new(dr, left)?;
@@ -108,7 +108,7 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step1 {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data<'source>>,
+        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
         let left = Encoded::new(dr, left)?;
@@ -140,7 +140,7 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step1Dup {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data<'source>>,
+        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
         let left = Encoded::new(dr, left)?;

@@ -26,14 +26,14 @@ use crate::internal::nested::NUM_ENDOSCALING_POINTS;
 
 /// Represents proof-carrying data, a recursive proof for the correctness of
 /// some accompanying data.
-pub struct Pcd<'source, C: Cycle, R: Rank, H: Header<C::CircuitField>> {
+pub struct Pcd<C: Cycle, R: Rank, H: Header<C::CircuitField>> {
     proof: Proof<C, R>,
-    data: H::Data<'source>,
+    data: H::Data,
 }
 
-impl<'source, C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<'source, C, R, H> {
+impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
     /// Returns a reference to the data that the proof accompanies.
-    pub fn data(&self) -> &H::Data<'source> {
+    pub fn data(&self) -> &H::Data {
         &self.data
     }
 
@@ -44,12 +44,12 @@ impl<'source, C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<'source, C, R, 
 
     /// Consumes the proof-carrying data and returns the proof and data
     /// separately.
-    pub(crate) fn into_parts(self) -> (Proof<C, R>, H::Data<'source>) {
+    pub(crate) fn into_parts(self) -> (Proof<C, R>, H::Data) {
         (self.proof, self.data)
     }
 }
 
-impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<'_, C, R, H> {
+impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<C, R, H> {
     fn clone(&self) -> Self {
         Pcd {
             proof: self.proof.clone(),
@@ -77,7 +77,7 @@ pub struct Proof<C: Cycle, R: Rank> {
 
 impl<C: Cycle, R: Rank> Proof<C, R> {
     /// Augment a recursive proof with some data, described by a [`Header`].
-    pub fn carry<H: Header<C::CircuitField>>(self, data: H::Data<'_>) -> Pcd<'_, C, R, H> {
+    pub fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Pcd<C, R, H> {
         Pcd { proof: self, data }
     }
 
@@ -113,7 +113,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, HEADER_SIZE> {
-    pub(crate) fn trivial_pcd<'source>(&self) -> Pcd<'source, C, R, ()> {
+    pub(crate) fn trivial_pcd(&self) -> Pcd<C, R, ()> {
         self.trivial_proof().carry(())
     }
 

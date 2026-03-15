@@ -22,13 +22,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         rng: &mut RNG,
         step: S,
         witness: S::Witness<'source>,
-        left: Pcd<'source, C, R, S::Left>,
-        right: Pcd<'source, C, R, S::Right>,
+        left: Pcd<C, R, S::Left>,
+        right: Pcd<C, R, S::Right>,
     ) -> Result<(
         Proof<C, R>,
         Proof<C, R>,
         proof::Application<C, R>,
-        <S::Output as Header<C::CircuitField>>::Data<'source>,
+        <S::Output as Header<C::CircuitField>>::Data,
         S::Aux<'source>,
     )> {
         let (left_proof, left_data) = left.into_parts();

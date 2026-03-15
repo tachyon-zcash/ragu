@@ -84,15 +84,15 @@ pub trait Header<F: Field>: Send + Sync + Any {
     const SUFFIX: Suffix;
 
     /// The data needed to encode a header.
-    type Data<'source>: Send + Clone;
+    type Data: Send + Clone;
 
     /// The output gadget that encodes the data for this header.
     type Output: Write<F>;
 
     /// Encode some data into a gadget representing this header.
-    fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+    fn encode<'dr, D: Driver<'dr, F = F>>(
         dr: &mut D,
-        witness: DriverValue<D, Self::Data<'source>>,
+        witness: DriverValue<D, Self::Data>,
     ) -> Result<Bound<'dr, D, Self::Output>>;
 }
 
@@ -100,12 +100,12 @@ pub trait Header<F: Field>: Send + Sync + Any {
 impl<F: Field> Header<F> for () {
     const SUFFIX: Suffix = Suffix::internal(1);
 
-    type Data<'source> = ();
+    type Data = ();
     type Output = ();
 
-    fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+    fn encode<'dr, D: Driver<'dr, F = F>>(
         _: &mut D,
-        _: DriverValue<D, Self::Data<'source>>,
+        _: DriverValue<D, Self::Data>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         Ok(())
     }

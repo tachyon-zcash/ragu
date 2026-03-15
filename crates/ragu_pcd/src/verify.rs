@@ -24,7 +24,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// Verifies some [`Pcd`] for the provided [`Header`].
     pub fn verify<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
-        pcd: &Pcd<'_, C, R, H>,
+        pcd: &Pcd<C, R, H>,
         mut rng: RNG,
     ) -> Result<bool> {
         // Sample verification challenges w, y, and z.

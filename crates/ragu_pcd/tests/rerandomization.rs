@@ -22,11 +22,11 @@ struct HeaderA;
 
 impl<F: Field> Header<F> for HeaderA {
     const SUFFIX: Suffix = Suffix::new(0);
-    type Data<'source> = ();
+    type Data = ();
     type Output = ();
-    fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+    fn encode<'dr, D: Driver<'dr, F = F>>(
         _: &mut D,
-        _: DriverValue<D, Self::Data<'source>>,
+        _: DriverValue<D, Self::Data>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         Ok(())
     }
@@ -37,11 +37,11 @@ struct HeaderWithData;
 
 impl Header<Fp> for HeaderWithData {
     const SUFFIX: Suffix = Suffix::new(2);
-    type Data<'source> = Fp;
+    type Data = Fp;
     type Output = Kind![Fp; Element<'_, _>];
-    fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+    fn encode<'dr, D: Driver<'dr, F = Fp>>(
         dr: &mut D,
-        witness: DriverValue<D, Self::Data<'source>>,
+        witness: DriverValue<D, Self::Data>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         Element::alloc(dr, witness)
     }
@@ -68,7 +68,7 @@ impl Step<Pasta> for StepWithData {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        DriverValue<D, <Self::Output as Header<Fp>>::Data<'source>>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
         let left = Encoded::new(dr, left)?;
@@ -99,7 +99,7 @@ impl<C: Cycle> Step<C> for Step0 {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data<'source>>,
+        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
         let left = Encoded::new(dr, left)?;
@@ -129,7 +129,7 @@ impl<C: Cycle> Step<C> for Step1 {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data<'source>>,
+        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
         let left = Encoded::new(dr, left)?;
