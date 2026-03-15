@@ -209,7 +209,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     ///
     /// The proof is lazily created on first use and cached; subsequent calls
     /// return the same (non-random) proof.
-    fn seeded_trivial_pcd<RNG: CryptoRng>(&self, rng: &mut RNG) -> Pcd<C, R, ()> {
+    pub fn seeded_trivial_pcd<RNG: CryptoRng>(&self, rng: &mut RNG) -> Pcd<C, R, ()> {
         self.seeded_trivial
             .get_or_init(|| {
                 self.seed(rng, step::internal::trivial::Trivial::new(), ())

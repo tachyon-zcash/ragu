@@ -320,16 +320,16 @@ fn generate_step_impls(
             {
                 const INDEX: #prelude::Index = #prelude::Index::new(#index);
 
-                type Witness = <#step_ty as #app::Step<#cycle>>::Witness;
+                type Witness<'source> = <#step_ty as #app::Step<#cycle>>::Witness;
                 type Left = <#step_ty as #app::Step<#cycle>>::Left;
                 type Right = <#step_ty as #app::Step<#cycle>>::Right;
                 type Output = <#step_ty as #app::Step<#cycle>>::Output;
-                type Aux = <#step_ty as #app::Step<#cycle>>::Aux;
+                type Aux<'source> = <#step_ty as #app::Step<#cycle>>::Aux;
 
-                fn witness<'dr, __D: #prelude::Driver<'dr, F = #cycle::CircuitField>, const HEADER_SIZE: usize>(
+                fn witness<'dr, 'source: 'dr, __D: #prelude::Driver<'dr, F = #cycle::CircuitField>, const HEADER_SIZE: usize>(
                     &self,
                     dr: &mut __D,
-                    witness: #prelude::DriverValue<__D, Self::Witness>,
+                    witness: #prelude::DriverValue<__D, Self::Witness<'source>>,
                     left: #prelude::DriverValue<
                         __D,
                         <Self::Left as #prelude::Header<#cycle::CircuitField>>::Data,
@@ -348,7 +348,7 @@ fn generate_step_impls(
                         __D,
                         <Self::Output as #prelude::Header<#cycle::CircuitField>>::Data,
                     >,
-                    #prelude::DriverValue<__D, Self::Aux>,
+                    #prelude::DriverValue<__D, Self::Aux<'source>>,
                 )>
                 where
                     Self: 'dr,
@@ -585,24 +585,24 @@ fn generate_wrapper(
             }
 
             /// Seed a new computation by running a step with trivial inputs.
-            #vis fn seed<__RNG: #prelude::CryptoRng, __S: #prelude::PcdStep<#cycle, Left = (), Right = ()>>(
+            #vis fn seed<'source, __RNG: #prelude::CryptoRng, __S: #prelude::PcdStep<#cycle, Left = (), Right = ()>>(
                 &self,
                 rng: &mut __RNG,
                 step: __S,
-                witness: __S::Witness,
-            ) -> #prelude::Result<(#prelude::Pcd<#cycle, __R, __S::Output>, __S::Aux)> {
+                witness: __S::Witness<'source>,
+            ) -> #prelude::Result<(#prelude::Pcd<#cycle, __R, __S::Output>, __S::Aux<'source>)> {
                 self.inner.seed(rng, step, witness)
             }
 
             /// Fuse two pieces of proof-carrying data using a step.
-            #vis fn fuse<__RNG: #prelude::CryptoRng, __S: #prelude::PcdStep<#cycle>>(
+            #vis fn fuse<'source, __RNG: #prelude::CryptoRng, __S: #prelude::PcdStep<#cycle>>(
                 &self,
                 rng: &mut __RNG,
                 step: __S,
-                witness: __S::Witness,
+                witness: __S::Witness<'source>,
                 left: #prelude::Pcd<#cycle, __R, __S::Left>,
                 right: #prelude::Pcd<#cycle, __R, __S::Right>,
-            ) -> #prelude::Result<(#prelude::Pcd<#cycle, __R, __S::Output>, __S::Aux)> {
+            ) -> #prelude::Result<(#prelude::Pcd<#cycle, __R, __S::Output>, __S::Aux<'source>)> {
                 self.inner.fuse(rng, step, witness, left, right)
             }
 
