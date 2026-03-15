@@ -38,7 +38,7 @@ impl Routine<Fp> for SquareOnce {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -69,7 +69,7 @@ impl<const N: usize> Routine<Fp> for SquareN<N> {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -96,7 +96,7 @@ impl Routine<Fp> for SquareOnceAlias {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -115,7 +115,7 @@ impl Routine<Fp> for Produce {
         _input: Bound<'dr, D, Self::Input>,
         _aux: DriverValue<D, Self::Aux<'dr>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        Element::alloc(dr, D::just(|| Fp::ZERO))
+        Element::witness(dr, Fp::ZERO)
     }
 
     fn predict<'dr, D: Driver<'dr, F = Fp>>(
@@ -123,7 +123,7 @@ impl Routine<Fp> for Produce {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -151,7 +151,7 @@ impl Routine<Fp> for AddTwo {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -178,7 +178,7 @@ impl Routine<Fp> for Duplicate {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -211,7 +211,7 @@ impl Routine<Fp> for Passthrough {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -243,7 +243,7 @@ impl Routine<Fp> for DropFirst {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -270,7 +270,7 @@ impl Routine<Fp> for EmptyRoutine {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -297,7 +297,7 @@ impl Routine<Fp> for PureNesting {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -326,7 +326,7 @@ impl Routine<Fp> for NestingWithExtra {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -355,7 +355,7 @@ impl Routine<Fp> for LinearOnly {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -374,7 +374,7 @@ impl Routine<Fp> for MixedConstraints {
         input: Bound<'dr, D, Self::Input>,
         _aux: DriverValue<D, Self::Aux<'dr>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        let aux = Element::alloc(dr, D::just(|| Fp::ONE))?;
+        let aux = Element::witness(dr, Fp::ONE)?;
         let sq = input.square(dr)?;
         sq.enforce_zero(dr)?;
         Ok(aux)
@@ -385,7 +385,7 @@ impl Routine<Fp> for MixedConstraints {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -412,7 +412,7 @@ impl Routine<Fp> for TripleNesting {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -440,7 +440,7 @@ impl Routine<Fp> for NestThenSquare {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -468,7 +468,7 @@ impl Routine<Fp> for NestThenAdd {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -497,7 +497,7 @@ impl Routine<Fp> for DelegateThenEnforce {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -516,8 +516,8 @@ impl Routine<Fp> for AllocThenEnforce {
         _input: Bound<'dr, D, Self::Input>,
         _aux: DriverValue<D, Self::Aux<'dr>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        let _consume_paired_b = Element::alloc(dr, D::just(|| Fp::ZERO))?;
-        let fresh = Element::alloc(dr, D::just(|| Fp::ZERO))?;
+        let _consume_paired_b = Element::witness(dr, Fp::ZERO)?;
+        let fresh = Element::witness(dr, Fp::ZERO)?;
         fresh.enforce_zero(dr)?;
         Ok(fresh)
     }
@@ -527,7 +527,7 @@ impl Routine<Fp> for AllocThenEnforce {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -549,8 +549,8 @@ impl Routine<Fp> for AllocOnly {
         _input: Bound<'dr, D, Self::Input>,
         _aux: DriverValue<D, Self::Aux<'dr>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        let _consume_paired_b = Element::alloc(dr, D::just(|| Fp::ZERO))?;
-        Element::alloc(dr, D::just(|| Fp::ZERO))
+        let _consume_paired_b = Element::witness(dr, Fp::ZERO)?;
+        Element::witness(dr, Fp::ZERO)
     }
 
     fn predict<'dr, D: Driver<'dr, F = Fp>>(
@@ -558,7 +558,7 @@ impl Routine<Fp> for AllocOnly {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -588,7 +588,7 @@ impl Routine<Fp> for DelegateThenAddEnforce {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -607,8 +607,8 @@ impl Routine<Fp> for AllocThenAddEnforce {
         input: Bound<'dr, D, Self::Input>,
         _aux: DriverValue<D, Self::Aux<'dr>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        let _consume_paired_b = Element::alloc(dr, D::just(|| Fp::ZERO))?;
-        let fresh = Element::alloc(dr, D::just(|| Fp::ZERO))?;
+        let _consume_paired_b = Element::witness(dr, Fp::ZERO)?;
+        let fresh = Element::witness(dr, Fp::ZERO)?;
         let sum = fresh.add(dr, &input);
         sum.enforce_zero(dr)?;
         Ok(fresh)
@@ -619,7 +619,7 @@ impl Routine<Fp> for AllocThenAddEnforce {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -652,7 +652,7 @@ impl Routine<Fp> for SquareOnceWithLeadingTrivial {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -673,8 +673,8 @@ impl Routine<Fp> for DelegateEnforceChild {
         _aux: DriverValue<D, Self::Aux<'dr>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         let output = dr.routine(SquareOnce, input)?;
-        let _consume_b = Element::alloc(dr, D::just(|| Fp::ZERO))?;
-        let _pad = Element::alloc(dr, D::just(|| Fp::ZERO))?;
+        let _consume_b = Element::witness(dr, Fp::ZERO)?;
+        let _pad = Element::witness(dr, Fp::ZERO)?;
         output.enforce_zero(dr)?;
         Ok(output)
     }
@@ -684,7 +684,7 @@ impl Routine<Fp> for DelegateEnforceChild {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -705,8 +705,8 @@ impl Routine<Fp> for DelegateEnforceLocal {
         _aux: DriverValue<D, Self::Aux<'dr>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         let output = dr.routine(SquareOnce, input)?;
-        let _consume_b = Element::alloc(dr, D::just(|| Fp::ZERO))?;
-        let fresh = Element::alloc(dr, D::just(|| Fp::ZERO))?;
+        let _consume_b = Element::witness(dr, Fp::ZERO)?;
+        let fresh = Element::witness(dr, Fp::ZERO)?;
         fresh.enforce_zero(dr)?;
         Ok(output)
     }
@@ -716,7 +716,7 @@ impl Routine<Fp> for DelegateEnforceLocal {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -741,7 +741,7 @@ impl Routine<Fp> for DelegatePadEnforceOutput {
         _aux: DriverValue<D, Self::Aux<'dr>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         let output = dr.routine(SquareOnce, input)?;
-        let _pad = Element::alloc(dr, D::just(|| Fp::ZERO))?;
+        let _pad = Element::witness(dr, Fp::ZERO)?;
         output.enforce_zero(dr)?;
         Ok(output)
     }
@@ -751,7 +751,7 @@ impl Routine<Fp> for DelegatePadEnforceOutput {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -777,7 +777,7 @@ impl Routine<Fp> for DelegateAllocEnforceFirst {
         _aux: DriverValue<D, Self::Aux<'dr>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         let output = dr.routine(SquareOnce, input)?;
-        let local = Element::alloc(dr, D::just(|| Fp::ZERO))?;
+        let local = Element::witness(dr, Fp::ZERO)?;
         local.enforce_zero(dr)?;
         Ok(output)
     }
@@ -787,7 +787,7 @@ impl Routine<Fp> for DelegateAllocEnforceFirst {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -816,7 +816,7 @@ impl Routine<Fp> for PassthroughTriple {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -844,7 +844,7 @@ impl Routine<Fp> for PassthroughQuad {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -872,7 +872,7 @@ impl Routine<Fp> for TrivialEnforce {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -901,7 +901,7 @@ impl Routine<Fp> for TrivialEnforcePair {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -929,7 +929,7 @@ impl Routine<Fp> for EnforceInput {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -958,7 +958,7 @@ impl Routine<Fp> for EnforceInputPair {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -986,7 +986,7 @@ impl Routine<Fp> for SquareDuplicate {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -1013,7 +1013,7 @@ impl Routine<Fp> for PairPassthrough {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -1032,7 +1032,7 @@ impl Routine<Fp> for InternalEnforce {
         input: Bound<'dr, D, Self::Input>,
         _aux: DriverValue<D, Self::Aux<'dr>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        let aux = Element::alloc(dr, D::just(|| Fp::ZERO))?;
+        let aux = Element::witness(dr, Fp::ZERO)?;
         aux.enforce_zero(dr)?;
         Ok(input)
     }
@@ -1042,7 +1042,7 @@ impl Routine<Fp> for InternalEnforce {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -1061,7 +1061,7 @@ impl Routine<Fp> for InternalEnforcePair {
         input: Bound<'dr, D, Self::Input>,
         _aux: DriverValue<D, Self::Aux<'dr>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        let aux = Element::alloc(dr, D::just(|| Fp::ZERO))?;
+        let aux = Element::witness(dr, Fp::ZERO)?;
         aux.enforce_zero(dr)?;
         let (a, _) = input;
         Ok(a)
@@ -1072,7 +1072,7 @@ impl Routine<Fp> for InternalEnforcePair {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -1100,7 +1100,7 @@ impl Routine<Fp> for PureNestingPair {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -1130,7 +1130,7 @@ impl Routine<Fp> for TripleEnforceInput {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -1161,7 +1161,7 @@ impl Routine<Fp> for TripleEnforceInputPair {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -1189,7 +1189,7 @@ impl Routine<Fp> for OneWireEnforce {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -1218,7 +1218,7 @@ impl Routine<Fp> for OneWireEnforcePair {
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        Ok(Prediction::Unknown(D::just(|| ())))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -1351,7 +1351,7 @@ where
     {
         let input = Element::alloc(dr, witness)?;
         let output = dr.routine(self.0.clone(), input)?;
-        Ok((output, D::just(|| ())))
+        Ok((output, D::unit()))
     }
 }
 

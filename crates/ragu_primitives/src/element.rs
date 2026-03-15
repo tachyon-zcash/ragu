@@ -73,6 +73,14 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
         })
     }
 
+    /// Allocates an element with a known field value as witness.
+    ///
+    /// Shorthand for `Element::alloc(dr, D::just(move || value))`.
+    /// This costs one allocation.
+    pub fn witness(dr: &mut D, value: D::F) -> Result<Self> {
+        Self::alloc(dr, D::just(move || value))
+    }
+
     /// Allocates an element $a$ with the provided witness assignment and
     /// squares it in a single step. Returns $(a, a^2)$.
     ///

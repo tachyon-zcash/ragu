@@ -210,8 +210,8 @@ impl Routine<Fp> for TestRoutine {
         aux: DriverValue<D, Self::Aux<'dr>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         let precomputed_value = aux.take();
-        let element_from_aux = Element::alloc(dr, D::just(|| precomputed_value))?;
-        let other = Element::alloc(dr, D::just(|| Fp::from(5u64)))?;
+        let element_from_aux = Element::witness(dr, precomputed_value)?;
+        let other = Element::witness(dr, Fp::from(5u64))?;
         let result = element_from_aux.add(dr, &other);
         Ok(result)
     }
