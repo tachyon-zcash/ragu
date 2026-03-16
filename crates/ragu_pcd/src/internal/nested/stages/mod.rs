@@ -3,7 +3,7 @@
 /// Generates a nested stage module that witnesses curve points with named fields.
 ///
 /// The `parent` argument specifies the Parent stage type for this stage.
-/// Use `()` for stages with no parent, or a path like `super::nested_preamble::Stage`
+/// Use `()` for stages with no parent, or a path like `super::preamble::Stage`
 /// for stages that depend on another.
 ///
 /// The `fields` argument specifies named curve point fields.

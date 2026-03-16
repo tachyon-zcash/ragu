@@ -11,7 +11,7 @@ use ragu_primitives::vec::ConstLen;
 use crate::internal::fold_revdot::Parameters;
 use crate::step;
 
-/// Default parameters for native revdot folding
+/// Default parameters for native revdot folding.
 #[derive(Clone, Copy, Default)]
 pub struct RevdotParameters;
 
