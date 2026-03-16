@@ -154,8 +154,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
         // Get layer 1 folding challenges from the unified instance.
-        let mu = unified_output.mu.get(dr)?;
-        let nu = unified_output.nu.get(dr)?;
+        let mu = unified_output.mu.read(dr)?;
+        let nu = unified_output.nu.read(dr)?;
         let fold_products = fold_revdot::FoldProducts::new(dr, &mu, &nu)?;
 
         // Assemble k(y) values from multiple sources. The ordering must match

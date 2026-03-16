@@ -237,22 +237,22 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         // Derive w by absorbing bridge_preamble_commitment and squeezing
         let w = {
             let bridge_preamble_commitment =
-                unified_output.bridge_preamble_commitment.verify(dr)?;
+                unified_output.bridge_preamble_commitment.receive(dr)?;
             bridge_preamble_commitment.write(dr, &mut transcript)?;
             transcript.challenge(dr)?
         };
-        unified_output.w.set(w.clone());
+        unified_output.w.provide(w.clone());
 
         // Derive (y, z) by absorbing bridge_s_prime_commitment and squeezing twice
         let (y, z) = {
-            let bridge_s_prime_commitment = unified_output.bridge_s_prime_commitment.verify(dr)?;
+            let bridge_s_prime_commitment = unified_output.bridge_s_prime_commitment.receive(dr)?;
             bridge_s_prime_commitment.write(dr, &mut transcript)?;
             let y = transcript.challenge(dr)?;
             let z = transcript.challenge(dr)?;
             (y, z)
         };
-        unified_output.y.set(y.clone());
-        unified_output.z.set(z);
+        unified_output.y.provide(y.clone());
+        unified_output.z.provide(z);
 
         // Compute k(y) values from preamble and enforce equality with staged
         // values.
@@ -276,7 +276,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 
         // Absorb bridge_error_m_commitment and verify saved transcript state
         {
-            let bridge_error_m_commitment = unified_output.bridge_error_m_commitment.verify(dr)?;
+            let bridge_error_m_commitment = unified_output.bridge_error_m_commitment.receive(dr)?;
             bridge_error_m_commitment.write(dr, &mut transcript)?;
 
             // save_state() applies a permutation (since there's pending absorbed data)

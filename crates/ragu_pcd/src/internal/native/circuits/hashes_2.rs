@@ -170,56 +170,56 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let mut resumed =
             Transcript::resume_from_state(error_n.sponge_state, C::circuit_poseidon(self.params));
         let mu = resumed.challenge(dr)?;
-        unified_output.mu.set(mu);
+        unified_output.mu.provide(mu);
 
         let nu = resumed.challenge(dr)?;
-        unified_output.nu.set(nu);
+        unified_output.nu.provide(nu);
 
         // Transition back to absorb mode for the rest of the transcript
         let mut transcript = resumed.into_transcript();
 
         // Derive (mu_prime, nu_prime) by absorbing bridge_error_n_commitment
         let (mu_prime, nu_prime) = {
-            let bridge_error_n_commitment = unified_output.bridge_error_n_commitment.verify(dr)?;
+            let bridge_error_n_commitment = unified_output.bridge_error_n_commitment.receive(dr)?;
             bridge_error_n_commitment.write(dr, &mut transcript)?;
             let mu_prime = transcript.challenge(dr)?;
             let nu_prime = transcript.challenge(dr)?;
             (mu_prime, nu_prime)
         };
-        unified_output.mu_prime.set(mu_prime);
-        unified_output.nu_prime.set(nu_prime);
+        unified_output.mu_prime.provide(mu_prime);
+        unified_output.nu_prime.provide(nu_prime);
 
         // Derive x by absorbing bridge_ab_commitment and squeezing
         let x = {
-            let bridge_ab_commitment = unified_output.bridge_ab_commitment.verify(dr)?;
+            let bridge_ab_commitment = unified_output.bridge_ab_commitment.receive(dr)?;
             bridge_ab_commitment.write(dr, &mut transcript)?;
             transcript.challenge(dr)?
         };
-        unified_output.x.set(x);
+        unified_output.x.provide(x);
 
         // Derive alpha by absorbing bridge_query_commitment and squeezing
         let alpha = {
-            let bridge_query_commitment = unified_output.bridge_query_commitment.verify(dr)?;
+            let bridge_query_commitment = unified_output.bridge_query_commitment.receive(dr)?;
             bridge_query_commitment.write(dr, &mut transcript)?;
             transcript.challenge(dr)?
         };
-        unified_output.alpha.set(alpha.clone());
+        unified_output.alpha.provide(alpha.clone());
 
         // Derive u by absorbing bridge_f_commitment and squeezing
         let u = {
-            let bridge_f_commitment = unified_output.bridge_f_commitment.verify(dr)?;
+            let bridge_f_commitment = unified_output.bridge_f_commitment.receive(dr)?;
             bridge_f_commitment.write(dr, &mut transcript)?;
             transcript.challenge(dr)?
         };
-        unified_output.u.set(u);
+        unified_output.u.provide(u);
 
         // Derive pre_beta by absorbing bridge_eval_commitment and squeezing
         let pre_beta = {
-            let bridge_eval_commitment = unified_output.bridge_eval_commitment.verify(dr)?;
+            let bridge_eval_commitment = unified_output.bridge_eval_commitment.receive(dr)?;
             bridge_eval_commitment.write(dr, &mut transcript)?;
             transcript.challenge(dr)?
         };
-        unified_output.pre_beta.set(pre_beta);
+        unified_output.pre_beta.provide(pre_beta);
 
         unified_output.finish(dr)
     }

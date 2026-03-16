@@ -153,8 +153,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 
         // Get layer 2 folding challenges. These are distinct from the layer 1
         // challenges (mu, nu) used in partial_collapse.
-        let mu_prime = unified_output.mu_prime.get(dr)?;
-        let nu_prime = unified_output.nu_prime.get(dr)?;
+        let mu_prime = unified_output.mu_prime.read(dr)?;
+        let nu_prime = unified_output.nu_prime.read(dr)?;
 
         // Compute the final folded revdot claim c via layer 2 reduction.
         // The collapsed values from layer 1 (verified by partial_collapse) serve
@@ -169,7 +169,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 
             // Retrieve the witnessed c from the unified instance and mark it
             // as covered by this circuit.
-            let witnessed_c = unified_output.c.verify(dr)?;
+            let witnessed_c = unified_output.c.receive(dr)?;
 
             // Enforce witnessed_c == computed_c, but only when NOT in base case.
             // In base case (both children are trivial proofs), the prover may
