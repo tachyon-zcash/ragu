@@ -304,11 +304,13 @@ pub enum CircuitProofIndex {
     ComputeV,
 }
 
-pub(crate) const NUM_CIRCUIT_PROOFS: usize = 5;
+#[cfg(test)]
+const NUM_CIRCUIT_PROOFS: usize = 5;
 
 impl CircuitProofIndex {
     /// All variants in canonical order.
-    pub(crate) const ALL: [Self; NUM_CIRCUIT_PROOFS] = [
+    #[cfg(test)]
+    const ALL: [Self; NUM_CIRCUIT_PROOFS] = [
         Self::Hashes1,
         Self::Hashes2,
         Self::PartialCollapse,
