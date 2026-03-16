@@ -304,17 +304,31 @@ pub enum CircuitProofIndex {
     ComputeV,
 }
 
-const NUM_CIRCUIT_PROOFS: usize = 5;
+pub(crate) const NUM_CIRCUIT_PROOFS: usize = 5;
 
 impl CircuitProofIndex {
     /// All variants in canonical order.
-    pub const ALL: [Self; NUM_CIRCUIT_PROOFS] = [
+    pub(crate) const ALL: [Self; NUM_CIRCUIT_PROOFS] = [
         Self::Hashes1,
         Self::Hashes2,
         Self::PartialCollapse,
         Self::FullCollapse,
         Self::ComputeV,
     ];
+
+    /// Maps an [`RxIndex`] circuit variant to its [`CircuitProofIndex`].
+    ///
+    /// Returns `None` for non-circuit `RxIndex` variants (stages and application).
+    pub fn from_rx_index(idx: RxIndex) -> Option<Self> {
+        match idx {
+            RxIndex::Hashes1 => Some(Self::Hashes1),
+            RxIndex::Hashes2 => Some(Self::Hashes2),
+            RxIndex::PartialCollapse => Some(Self::PartialCollapse),
+            RxIndex::FullCollapse => Some(Self::FullCollapse),
+            RxIndex::ComputeV => Some(Self::ComputeV),
+            _ => None,
+        }
+    }
 }
 
 /// Per-circuit-proof storage indexed by [`CircuitProofIndex`].

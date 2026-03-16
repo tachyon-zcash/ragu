@@ -81,22 +81,60 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         Pcd { proof: self, data }
     }
 
-    /// Returns the rx polynomial for the given [`RxIndex`].
-    pub(crate) fn rx_poly(&self, idx: RxIndex) -> &structured::Polynomial<C::CircuitField, R> {
+    /// Returns the committed rx polynomial triple for the given [`RxIndex`].
+    pub(crate) fn committed_rx(
+        &self,
+        idx: RxIndex,
+    ) -> (
+        &structured::Polynomial<C::CircuitField, R>,
+        C::CircuitField,
+        C::HostCurve,
+    ) {
         use RxIndex::*;
         match idx {
-            Preamble => &self.preamble.native.rx,
-            ErrorM => &self.error_m.native.rx,
-            ErrorN => &self.error_n.native.rx,
-            Query => &self.query.native.rx,
-            Eval => &self.eval.native.rx,
-            Application => &self.application.rx,
-            Hashes1 => &self.circuits.get(CircuitProofIndex::Hashes1).rx,
-            Hashes2 => &self.circuits.get(CircuitProofIndex::Hashes2).rx,
-            PartialCollapse => &self.circuits.get(CircuitProofIndex::PartialCollapse).rx,
-            FullCollapse => &self.circuits.get(CircuitProofIndex::FullCollapse).rx,
-            ComputeV => &self.circuits.get(CircuitProofIndex::ComputeV).rx,
+            Preamble => (
+                &self.preamble.native.rx,
+                self.preamble.native.blind,
+                self.preamble.native.commitment,
+            ),
+            ErrorM => (
+                &self.error_m.native.rx,
+                self.error_m.native.blind,
+                self.error_m.native.commitment,
+            ),
+            ErrorN => (
+                &self.error_n.native.rx,
+                self.error_n.native.blind,
+                self.error_n.native.commitment,
+            ),
+            Query => (
+                &self.query.native.rx,
+                self.query.native.blind,
+                self.query.native.commitment,
+            ),
+            Eval => (
+                &self.eval.native.rx,
+                self.eval.native.blind,
+                self.eval.native.commitment,
+            ),
+            Application => (
+                &self.application.rx,
+                self.application.blind,
+                self.application.commitment,
+            ),
+            Hashes1 | Hashes2 | PartialCollapse | FullCollapse | ComputeV => {
+                let p = self.circuits.get(
+                    CircuitProofIndex::from_rx_index(idx)
+                        .expect("circuit variant maps to CircuitProofIndex"),
+                );
+                (&p.rx, p.blind, p.commitment)
+            }
         }
+    }
+
+    /// Returns the rx polynomial for the given [`RxIndex`].
+    pub(crate) fn rx_poly(&self, idx: RxIndex) -> &structured::Polynomial<C::CircuitField, R> {
+        self.committed_rx(idx).0
     }
 
     /// Returns the native-field rx polynomial for the given [`RxComponent`].

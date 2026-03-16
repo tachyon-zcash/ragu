@@ -25,7 +25,7 @@ use crate::internal::endoscalar::{
     EndoscalarStage, EndoscalingStep, EndoscalingStepWitness, NumStepsLen, PointsStage,
     PointsWitness,
 };
-use crate::internal::native::{CircuitProofIndex, RxIndex};
+use crate::internal::native::RxIndex;
 use crate::internal::nested::NUM_ENDOSCALING_POINTS;
 use crate::{Application, Proof, proof};
 
@@ -92,51 +92,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
             for proof in [left, right] {
                 for &id in &RxIndex::ALL {
-                    use RxIndex::*;
-                    match id {
-                        Preamble => acc.acc(
-                            &proof.preamble.native.rx,
-                            proof.preamble.native.blind,
-                            proof.preamble.native.commitment,
-                        ),
-                        ErrorM => acc.acc(
-                            &proof.error_m.native.rx,
-                            proof.error_m.native.blind,
-                            proof.error_m.native.commitment,
-                        ),
-                        ErrorN => acc.acc(
-                            &proof.error_n.native.rx,
-                            proof.error_n.native.blind,
-                            proof.error_n.native.commitment,
-                        ),
-                        Query => acc.acc(
-                            &proof.query.native.rx,
-                            proof.query.native.blind,
-                            proof.query.native.commitment,
-                        ),
-                        Eval => acc.acc(
-                            &proof.eval.native.rx,
-                            proof.eval.native.blind,
-                            proof.eval.native.commitment,
-                        ),
-                        Application => acc.acc(
-                            &proof.application.rx,
-                            proof.application.blind,
-                            proof.application.commitment,
-                        ),
-                        Hashes1 | Hashes2 | PartialCollapse | FullCollapse | ComputeV => {
-                            let cid = match id {
-                                Hashes1 => CircuitProofIndex::Hashes1,
-                                Hashes2 => CircuitProofIndex::Hashes2,
-                                PartialCollapse => CircuitProofIndex::PartialCollapse,
-                                FullCollapse => CircuitProofIndex::FullCollapse,
-                                ComputeV => CircuitProofIndex::ComputeV,
-                                _ => unreachable!(),
-                            };
-                            let p = proof.circuits.get(cid);
-                            acc.acc(&p.rx, p.blind, p.commitment);
-                        }
-                    }
+                    let (rx, blind, commitment) = proof.committed_rx(id);
+                    acc.acc(rx, blind, commitment);
                 }
                 acc.acc(
                     &proof.ab.native.a_poly,
