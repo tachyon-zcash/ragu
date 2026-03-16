@@ -229,6 +229,14 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
         self.add(dr, self)
     }
 
+    /// Constrain this element to be nonzero.
+    ///
+    /// Witnesses the inverse and enforces `self * inverse = 1`.
+    /// Fails to synthesize if the element is zero.
+    pub fn enforce_non_zero(&self, dr: &mut D) -> Result<()> {
+        self.invert(dr).map(|_| ())
+    }
+
     /// Invert this element if it is nonzero.
     ///
     /// This will fail to synthesize if the element is zero.

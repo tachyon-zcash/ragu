@@ -376,8 +376,8 @@ mod tests {
 
     /// The native registry has 15 circuits (13 internal + 2 internal steps)
     /// but the FFT domain is padded to size 16. Index 15 maps to a valid
-    /// domain element but has no registered circuit. `circuit_is_registered`
-    /// rejects it; the weaker `circuit_in_domain` would not.
+    /// domain element but has no registered circuit. `is_registered`
+    /// rejects it.
     #[test]
     fn verify_rejects_padding_slot_circuit_id() {
         let app = create_test_app();
@@ -385,11 +385,7 @@ mod tests {
         let padding_index = CircuitIndex::new(15);
 
         assert!(
-            app.native_registry.circuit_in_domain(padding_index),
-            "padding slot is in the FFT domain"
-        );
-        assert!(
-            !app.native_registry.circuit_is_registered(padding_index),
+            !app.native_registry.is_registered(padding_index),
             "padding slot is not a registered circuit"
         );
         assert_eq!(app.native_registry.circuits().len(), 15);

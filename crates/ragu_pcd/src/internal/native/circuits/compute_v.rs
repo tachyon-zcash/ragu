@@ -166,11 +166,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
         query
             .left
             .current_registry_xy_at_child_circuit_id
-            .invert(dr)?;
+            .enforce_non_zero(dr)?;
         query
             .right
             .current_registry_xy_at_child_circuit_id
-            .invert(dr)?;
+            .enforce_non_zero(dr)?;
 
         let eval = eval.unenforced(dr, witness.as_ref().map(|w| w.eval_witness))?;
 

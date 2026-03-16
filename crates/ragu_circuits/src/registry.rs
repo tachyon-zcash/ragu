@@ -419,21 +419,12 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
         self.at(w).y(y)
     }
 
-    /// Returns true if the circuit's $\omega^j$ value is in the registry domain.
-    ///
-    /// See [`CircuitIndex::omega_j`] for details on the $\omega^j$ mapping.
-    pub fn circuit_in_domain(&self, i: CircuitIndex) -> bool {
-        let w: F = i.omega_j();
-        self.domain.contains(w)
-    }
-
     /// Returns true if a circuit is actually registered at index `i`.
     ///
-    /// Unlike [`circuit_in_domain`](Self::circuit_in_domain), which only checks
-    /// that the index's $\omega^j$ is a member of the FFT domain, this method
-    /// additionally verifies that a circuit was registered at that domain slot
-    /// (i.e., it is not a power-of-2 padding slot).
-    pub fn circuit_is_registered(&self, i: CircuitIndex) -> bool {
+    /// Checks both that the index's $\omega^j$ is a member of the FFT domain
+    /// and that a circuit was registered at that domain slot (i.e., it is not
+    /// a power-of-2 padding slot).
+    pub fn is_registered(&self, i: CircuitIndex) -> bool {
         let w: F = i.omega_j();
         self.domain.contains(w) && self.omega_lookup.contains_key(&OmegaKey::from(w))
     }
@@ -877,7 +868,7 @@ mod tests {
     }
 
     #[test]
-    fn test_circuit_in_domain() -> Result<()> {
+    fn test_is_registered() -> Result<()> {
         let registry = TestRegistryBuilder::new()
             .register_circuit(SquareCircuit { times: 2 })?
             .register_circuit(SquareCircuit { times: 5 })?
@@ -885,23 +876,20 @@ mod tests {
             .register_circuit(SquareCircuit { times: 11 })?
             .finalize()?;
 
-        // All registered circuit indices should be in the domain
+        // All registered circuit indices should pass
         for i in 0..4 {
             assert!(
-                registry.circuit_in_domain(CircuitIndex::new(i)),
-                "Circuit {} should be in domain",
+                registry.is_registered(CircuitIndex::new(i)),
+                "Circuit {} should be registered",
                 i
             );
         }
 
-        // Indices beyond the domain size should not be in the domain
-        // The registry has 4 circuits, so domain size is 4 (2^2)
-        // CircuitIndex::omega_j uses F::S-bit reversal, which maps indices
-        // beyond the domain to non-domain elements
+        // Indices beyond the domain size should not pass
         for i in [1 << 16, 1 << 20, 1 << 30] {
             assert!(
-                !registry.circuit_in_domain(CircuitIndex::new(i)),
-                "Circuit {} should not be in domain",
+                !registry.is_registered(CircuitIndex::new(i)),
+                "Circuit {} should not be registered",
                 i
             );
         }
