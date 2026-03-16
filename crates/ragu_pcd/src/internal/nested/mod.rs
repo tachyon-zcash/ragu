@@ -46,6 +46,7 @@ impl InternalCircuitIndex {
     ///
     /// Circuit indices follow the `RegistryBuilder::finalize()` concatenation
     /// order: internal circuits first, then internal masks.
+    // TODO: align with native `InternalCircuitIndex::circuit_index()` impl.
     pub fn circuit_index(self) -> CircuitIndex {
         let num_steps = NumStepsLen::<NUM_ENDOSCALING_POINTS>::len() as u32;
         match self {
