@@ -155,7 +155,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             ));
         }
 
-        let mut coeffs = Vec::new();
+        let mut coeffs = Vec::with_capacity(R::num_coeffs());
         let (first, rest) = iters.split_first_mut().unwrap();
         for val in first.by_ref() {
             let c = rest
