@@ -29,7 +29,7 @@ pub const NUM_ENDOSCALING_POINTS: usize = 37;
 /// Index of internal nested circuits registered into the registry.
 ///
 /// These correspond to the circuit objects registered in [`register_all`].
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InternalCircuitIndex {
     /// `EndoscalingStep` circuit at given step.
     EndoscalingStep(u32),

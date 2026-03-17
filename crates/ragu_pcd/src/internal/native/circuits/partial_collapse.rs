@@ -68,11 +68,12 @@ use ragu_primitives::{Element, vec::FixedVec};
 
 use core::marker::PhantomData;
 
-use super::super::claims::{TwoProofKySource, ky_values};
+use super::super::claims::TwoProofKySource;
 use super::super::{
     stages::{error_m as native_error_m, error_n as native_error_n, preamble as native_preamble},
     unified::{self, OutputBuilder},
 };
+use crate::internal::claims::KySource;
 use crate::internal::fold_revdot;
 
 /// Circuit that verifies layer 1 of the two-layer revdot reduction.
@@ -158,12 +159,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let nu = unified_output.nu.read(dr)?;
         let fold_products = fold_revdot::FoldProducts::new(dr, &mu, &nu)?;
 
-        // Assemble k(y) values from multiple sources. The ordering must match
-        // claims's iteration order for correct folding correspondence.
-        // Sources include:
-        // - Child c values from preamble (the children's final revdot claims)
-        // - Application and unified k(y) evaluations from error_n
-        let ky = TwoProofKySource {
+        // Assemble k(y) values in claim_order() sequence.
+        let ky_source = TwoProofKySource {
             left_raw_c: preamble.left.unified.c.clone(),
             right_raw_c: preamble.right.unified.c.clone(),
             left_app: error_n.left.application.clone(),
@@ -174,7 +171,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             right_unified: error_n.right.unified.clone(),
             zero: Element::zero(dr),
         };
-        let mut ky = ky_values(&ky);
+        let mut ky = ky_source.padded_ky_values();
 
         // Verify each group's layer 1 reduction. For each group, fold the
         // error_m terms with the corresponding k(y) values and enforce the

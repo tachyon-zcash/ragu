@@ -23,6 +23,7 @@ use rand::CryptoRng;
 use crate::{
     Application,
     internal::{
+        claims::KySource,
         fold_revdot, native,
         native::stages::error_n::{ChildKyValues, KyValues},
         nested,
@@ -86,7 +87,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 let nu = Element::alloc(dr, nu)?;
 
                 // Build k(y) values in claim order.
-                let ky = native::claims::TwoProofKySource {
+                let ky_source = native::claims::TwoProofKySource {
                     left_raw_c: preamble.left.unified.c.clone(),
                     right_raw_c: preamble.right.unified.c.clone(),
                     left_app: left_application_ky.clone(),
@@ -97,7 +98,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     right_unified: right_unified_ky.clone(),
                     zero: Element::zero(dr),
                 };
-                let mut ky = native::claims::ky_values(&ky);
+                let mut ky = ky_source.padded_ky_values();
 
                 let fold_products = fold_revdot::FoldProducts::new(dr, &mu, &nu)?;
 

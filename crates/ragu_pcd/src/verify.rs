@@ -20,6 +20,9 @@ use crate::{
     internal::{native::claims as native_claims, nested::claims as nested_claims},
 };
 
+// Import KySource trait so `.padded_ky_values()` is available in `verify`.
+use crate::internal::claims::KySource as _;
+
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     /// Verifies some [`Pcd`] for the provided [`Header`].
     pub fn verify<RNG: CryptoRng, H: Header<C::CircuitField>>(
@@ -80,7 +83,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 unified_ky,
             };
 
-            native::ky_values(&ky_source)
+            ky_source
+                .padded_ky_values()
                 .zip(builder.a.iter().zip(builder.b.iter()))
                 .all(|(ky, (a, b))| a.revdot(b) == ky)
         };
@@ -95,7 +99,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_claims::build(&nested_source, &mut nested_builder)?;
 
             let ky_source = nested::SingleProofKySource::<C::ScalarField>::new();
-            nested::ky_values(&ky_source)
+            ky_source
+                .padded_ky_values()
                 .zip(nested_builder.a.iter().zip(nested_builder.b.iter()))
                 .all(|(ky, (a, b))| a.revdot(b) == ky)
         };
@@ -137,10 +142,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
 mod native {
     use super::*;
+    use crate::internal::claims::KySource;
     use crate::internal::claims::Source;
-    use crate::internal::native::{RxComponent, claims::KySource};
-
-    pub use crate::internal::native::claims::ky_values;
+    use crate::internal::native::RxComponent;
+    use crate::internal::native::claims::KyValues;
 
     pub struct SingleProofSource<'rx, C: Cycle, R: Rank> {
         pub proof: &'rx Proof<C, R>,
@@ -169,22 +174,17 @@ mod native {
     }
 
     impl<F: Field> KySource for SingleProofKySource<F> {
-        type Ky = F;
+        type Item = F;
 
-        fn raw_c(&self) -> impl Iterator<Item = F> {
-            once(self.raw_c)
-        }
-
-        fn application_ky(&self) -> impl Iterator<Item = F> {
-            once(self.application_ky)
-        }
-
-        fn unified_bridge_ky(&self) -> impl Iterator<Item = F> {
-            once(self.unified_bridge_ky)
-        }
-
-        fn unified_ky(&self) -> impl Iterator<Item = F> + Clone {
-            once(self.unified_ky)
+        fn ky_values(&self) -> impl Iterator<Item = F> {
+            KyValues {
+                raw: once(self.raw_c),
+                application: once(self.application_ky),
+                unified_bridge: once(self.unified_bridge_ky),
+                unified: once(self.unified_ky),
+                zero: F::ZERO,
+            }
+            .into_values()
         }
 
         fn zero(&self) -> F {
@@ -195,10 +195,9 @@ mod native {
 
 mod nested {
     use super::*;
+    use crate::internal::claims::KySource;
     use crate::internal::claims::Source;
-    use crate::internal::nested::claims::{KySource, RxComponent};
-
-    pub use crate::internal::nested::claims::ky_values;
+    use crate::internal::nested::claims::{KyValues, RxComponent};
 
     /// Source for nested field rx polynomials for single-proof verification.
     pub struct SingleProofSource<'rx, C: Cycle, R: Rank> {
@@ -235,10 +234,14 @@ mod nested {
     }
 
     impl<F: Field> KySource for SingleProofKySource<F> {
-        type Ky = F;
+        type Item = F;
 
-        fn one(&self) -> F {
-            F::ONE
+        fn ky_values(&self) -> impl Iterator<Item = F> {
+            KyValues {
+                circuit: once(F::ONE),
+                zero: F::ZERO,
+            }
+            .into_values()
         }
 
         fn zero(&self) -> F {
