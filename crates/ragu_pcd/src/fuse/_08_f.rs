@@ -143,7 +143,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // into both A(xz) (undilated) and B(x) (Z-dilated).
         for proof in [left, right] {
             for &id in &RxIndex::ALL {
-                iters.push(factor_iter(proof.rx_poly(id).iter_coeffs(), xz));
+                iters.push(factor_iter(proof.native_rx_poly(id).iter_coeffs(), xz));
             }
         }
 

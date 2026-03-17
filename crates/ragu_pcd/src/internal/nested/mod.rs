@@ -83,6 +83,21 @@ impl InternalCircuitIndex {
     }
 }
 
+/// Enum identifying which nested field rx polynomial to retrieve from a proof.
+///
+/// Analogous to [`native::RxIndex`](super::native::RxIndex) for the scalar
+/// field. Each variant maps to a polynomial in
+/// [`NestedP`](crate::proof::components::NestedP).
+#[derive(Clone, Copy, Debug)]
+pub enum RxIndex {
+    /// EndoscalarStage rx polynomial.
+    EndoscalarStage,
+    /// PointsStage rx polynomial.
+    PointsStage,
+    /// EndoscalingStep circuit rx polynomial (indexed by step number).
+    EndoscalingStep(u32),
+}
+
 pub mod claims;
 
 pub mod stages;

@@ -22,6 +22,7 @@ use alloc::vec;
 use crate::header::Header;
 use crate::internal::endoscalar::NumStepsLen;
 use crate::internal::native::{RxComponent, RxIndex};
+use crate::internal::nested;
 use crate::internal::nested::NUM_ENDOSCALING_POINTS;
 
 /// Represents proof-carrying data, a recursive proof for the correctness of
@@ -95,15 +96,38 @@ impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
     }
 }
 
+impl<C: Cycle, R: Rank> core::ops::Index<nested::RxIndex> for Proof<C, R> {
+    type Output = structured::Polynomial<C::ScalarField, R>;
+    fn index(&self, idx: nested::RxIndex) -> &structured::Polynomial<C::ScalarField, R> {
+        use nested::RxIndex::*;
+        match idx {
+            EndoscalarStage => &self.p.nested.endoscalar_rx,
+            PointsStage => &self.p.nested.points_rx,
+            EndoscalingStep(step) => &self.p.nested.step_rxs[step as usize],
+        }
+    }
+}
+
 impl<C: Cycle, R: Rank> Proof<C, R> {
     /// Augment a recursive proof with some data, described by a [`Header`].
     pub fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Pcd<C, R, H> {
         Pcd { proof: self, data }
     }
 
-    /// Returns the rx polynomial for the given [`RxIndex`].
-    pub(crate) fn rx_poly(&self, idx: RxIndex) -> &structured::Polynomial<C::CircuitField, R> {
+    /// Returns the native-field rx polynomial for the given [`RxIndex`].
+    pub(crate) fn native_rx_poly(
+        &self,
+        idx: RxIndex,
+    ) -> &structured::Polynomial<C::CircuitField, R> {
         &self[idx].rx
+    }
+
+    /// Returns the nested-field rx polynomial for the given [`nested::RxIndex`].
+    pub(crate) fn nested_rx_poly(
+        &self,
+        idx: nested::RxIndex,
+    ) -> &structured::Polynomial<C::ScalarField, R> {
+        &self[idx]
     }
 
     /// Returns the native-field rx polynomial for the given [`RxComponent`].

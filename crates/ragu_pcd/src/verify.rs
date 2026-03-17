@@ -196,7 +196,7 @@ mod native {
 mod nested {
     use super::*;
     use crate::internal::claims::Source;
-    use crate::internal::nested::claims::{KySource, RxComponent};
+    use crate::internal::nested::{RxIndex, claims::KySource};
 
     pub use crate::internal::nested::claims::ky_values;
 
@@ -206,18 +206,12 @@ mod nested {
     }
 
     impl<'rx, C: Cycle, R: Rank> Source for SingleProofSource<'rx, C, R> {
-        type RxComponent = RxComponent;
+        type RxComponent = RxIndex;
         type Rx = &'rx structured::Polynomial<C::ScalarField, R>;
         type AppCircuitId = ();
 
-        fn rx(&self, component: RxComponent) -> impl Iterator<Item = Self::Rx> {
-            use RxComponent::*;
-            let poly = match component {
-                EndoscalarStage => &self.proof.p.nested.endoscalar_rx,
-                PointsStage => &self.proof.p.nested.points_rx,
-                EndoscalingStep(step) => &self.proof.p.nested.step_rxs[step as usize], // TODO: bounds
-            };
-            core::iter::once(poly)
+        fn rx(&self, component: RxIndex) -> impl Iterator<Item = Self::Rx> {
+            core::iter::once(&self.proof[component])
         }
 
         fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {

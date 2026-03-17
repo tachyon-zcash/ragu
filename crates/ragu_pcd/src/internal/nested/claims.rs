@@ -15,19 +15,8 @@ use ff::PrimeField;
 use ragu_circuits::polynomials::{Rank, structured};
 use ragu_core::Result;
 
-use super::InternalCircuitIndex;
+use super::{InternalCircuitIndex, RxIndex};
 use crate::internal::claims::{Builder, Source, sum_polynomials};
-
-/// Enum identifying which nested field rx polynomial to retrieve from a proof.
-#[derive(Clone, Copy, Debug)]
-pub enum RxComponent {
-    /// EndoscalarStage rx polynomial.
-    EndoscalarStage,
-    /// PointsStage rx polynomial.
-    PointsStage,
-    /// EndoscalingStep circuit rx polynomial (indexed by step number).
-    EndoscalingStep(u32),
-}
 
 /// Trait for processing nested claim values into accumulated outputs.
 ///
@@ -76,7 +65,7 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx structured::Polynomial<F, R
 /// This ordering must match the ky_elements ordering from [`ky_values`].
 pub fn build<S, P>(source: &S, processor: &mut P) -> Result<()>
 where
-    S: Source<RxComponent = RxComponent>,
+    S: Source<RxComponent = RxIndex>,
     P: Processor<S::Rx>,
 {
     for &id in &InternalCircuitIndex::ALL {
@@ -84,23 +73,23 @@ where
         match id {
             EndoscalingStep(step) => {
                 for ((step_rx, endo_rx), pts_rx) in source
-                    .rx(RxComponent::EndoscalingStep(step))
-                    .zip(source.rx(RxComponent::EndoscalarStage))
-                    .zip(source.rx(RxComponent::PointsStage))
+                    .rx(RxIndex::EndoscalingStep(step))
+                    .zip(source.rx(RxIndex::EndoscalarStage))
+                    .zip(source.rx(RxIndex::PointsStage))
                 {
                     processor.internal_circuit(id, [step_rx, endo_rx, pts_rx].into_iter());
                 }
             }
             EndoscalarStage => {
-                processor.stage(id, source.rx(RxComponent::EndoscalarStage))?;
+                processor.stage(id, source.rx(RxIndex::EndoscalarStage))?;
             }
             PointsStage => {
-                processor.stage(id, source.rx(RxComponent::PointsStage))?;
+                processor.stage(id, source.rx(RxIndex::PointsStage))?;
             }
             PointsFinalStaged => {
                 let num_steps = super::NUM_ENDOSCALING_STEPS;
                 let final_rxs = (0..num_steps)
-                    .flat_map(|step| source.rx(RxComponent::EndoscalingStep(step as u32)));
+                    .flat_map(|step| source.rx(RxIndex::EndoscalingStep(step as u32)));
                 processor.stage(id, final_rxs)?;
             }
         }

@@ -68,7 +68,7 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
         registry_wy: &structured::Polynomial<F, R>,
     ) -> Self {
         ChildEvaluationsWitness {
-            rx: RxValues::from_fn(|id| proof.rx_poly(id).eval(xz)),
+            rx: RxValues::from_fn(|id| proof.native_rx_poly(id).eval(xz)),
             a_poly_at_xz: proof.ab.native.a_poly.eval(xz),
             b_poly_at_x: proof.ab.native.b_poly.eval(x),
             child_registry_xy_at_current_w: proof.query.native.registry_xy_poly.eval(w),
