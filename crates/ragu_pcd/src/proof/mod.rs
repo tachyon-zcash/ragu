@@ -126,7 +126,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
 
     pub(crate) fn trivial_proof(&self) -> Proof<C, R> {
         let host_blind = C::CircuitField::ONE;
-        let nested_blind = C::ScalarField::ONE;
+        let bridge_blind = C::ScalarField::ONE;
 
         let zero_structured_host = structured::Polynomial::<C::CircuitField, R>::new();
         let zero_structured_nested = structured::Polynomial::<C::ScalarField, R>::new();
@@ -134,13 +134,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
 
         let host_commitment =
             zero_structured_host.commit_to_affine(C::host_generators(self.params), host_blind);
-        let nested_commitment = zero_structured_nested
-            .commit_to_affine(C::nested_generators(self.params), nested_blind);
+        let bridge_commitment = zero_structured_nested
+            .commit_to_affine(C::nested_generators(self.params), bridge_blind);
 
         let trivial_bridge = Bridge {
             rx: zero_structured_nested.clone(),
-            blind: nested_blind,
-            commitment: nested_commitment,
+            blind: bridge_blind,
+            commitment: bridge_commitment,
         };
 
         let trivial_rx_triple = || RxTriple {

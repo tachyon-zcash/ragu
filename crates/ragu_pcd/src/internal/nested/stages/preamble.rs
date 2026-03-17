@@ -19,7 +19,7 @@ use core::marker::PhantomData;
 /// Number of curve points in this stage.
 pub const NUM_POINTS: usize = 13;
 
-/// Witness data for a single child proof in the nested preamble stage.
+/// Witness data for a single child proof in the preamble bridge stage.
 ///
 /// Contains commitments from the child proof's circuits component.
 pub struct ChildWitness<C: CurveAffine> {
@@ -52,7 +52,7 @@ impl<C: CurveAffine> ChildWitness<C> {
     }
 }
 
-/// Witness data for the nested preamble stage.
+/// Witness data for the preamble bridge stage.
 pub struct Witness<C: CurveAffine> {
     /// Commitment from the native preamble stage.
     pub native_preamble: C,
@@ -62,7 +62,7 @@ pub struct Witness<C: CurveAffine> {
     pub right: ChildWitness<C>,
 }
 
-/// Output gadget for a single child proof in the nested preamble stage.
+/// Output gadget for a single child proof in the preamble bridge stage.
 #[derive(Gadget, Write)]
 pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// Point commitment from the child's application circuit.
@@ -98,7 +98,7 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChildOutput<'dr, D, C> {
     }
 }
 
-/// Prover-internal output gadget for the nested preamble stage.
+/// Prover-internal output gadget for the preamble bridge stage.
 ///
 /// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget, Write)]
