@@ -21,7 +21,7 @@ use proc_macro::TokenStream;
 #[cfg(test)]
 #[allow(unused_imports)]
 use ragu_arithmetic::repr256 as _;
-use syn::{DeriveInput, LitInt, parse_macro_input};
+use syn::{DeriveInput, ItemEnum, LitInt, parse_macro_input};
 
 // Documentation for the `repr256` macro is in `macro@ragu_arithmetic::repr256`.
 #[allow(missing_docs)]
@@ -120,6 +120,38 @@ pub fn derive_gadget_equals(input: TokenStream) -> TokenStream {
             ragu_primitives_path,
         )
     })
+}
+
+#[cfg(test)]
+#[allow(unused_imports)]
+use ragu_app as _;
+
+#[cfg(test)]
+#[allow(unused_imports)]
+use ragu_pcd as _;
+
+/// Attribute macro for defining a PCD application.
+///
+/// Generates `ragu_pcd::Header` impls (with `const SUFFIX`),
+/// `ragu_pcd::Step` impls (with `const INDEX`), and a wrapper struct
+/// with `build()`/`seed()`/`fuse()`/`verify()`/`rerandomize()` methods.
+///
+/// # Example
+///
+/// ```ignore
+/// #[application]
+/// pub enum MerkleTree<C: Cycle> {
+///     #[step(left = (), right = (), output = LeafNode)]
+///     WitnessLeaf(WitnessLeaf<'_, C>),
+///
+///     #[step(left = LeafNode, right = LeafNode, output = InternalNode)]
+///     Hash2(Hash2<'_, C>),
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn application(_attr: TokenStream, input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as ItemEnum);
+    macro_body(|| proc::application::evaluate(input))
 }
 
 #[cfg(test)]
