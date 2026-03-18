@@ -1,7 +1,8 @@
 # Writing Circuits
 
-This guide explains how PCD applications are structured through Steps - the
-fundamental building blocks that combine proofs in Ragu's architecture.
+This guide explains how PCD applications are structured through Steps —
+the fundamental building blocks that combine proofs in Ragu's
+architecture.
 
 > **Note:** For a complete working example with full code, see
 > [Getting Started](getting_started.md). This guide focuses on explaining
@@ -9,9 +10,9 @@ fundamental building blocks that combine proofs in Ragu's architecture.
 
 ## Understanding PCD Steps
 
-A PCD application is built from **Steps** - computations that take proof
-inputs and produce new proofs. Unlike traditional circuits that just verify
-computation, PCD Steps can:
+A PCD application is built from **Steps** — computations that take
+proof inputs and produce new proofs. Unlike traditional circuits that
+verify computation, PCD Steps can:
 
 - Take proofs from previous steps as inputs
 - Combine multiple proofs together
@@ -25,29 +26,29 @@ Every Step must implement this core structure:
 pub trait Step<C: Cycle> {
     const INDEX: Index;
     type Witness<'source>;
-    type Aux<'source>;
     type Left: Header<C::CircuitField>;
     type Right: Header<C::CircuitField>;
     type Output: Header<C::CircuitField>;
+    type Aux<'source>;
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
-        left: Encoder<'dr, 'source, D, Self::Left, HEADER_SIZE>,
-        right: Encoder<'dr, 'source, D, Self::Right, HEADER_SIZE>,
+        left: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data<'source>>,
+        right: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data<'source>>,
     ) -> Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
+        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data<'source>>,
         DriverValue<D, Self::Aux<'source>>,
     )>;
 }
 ```
 
-Let's break down what each part means.
 
 ## Anatomy of a Step
 
@@ -64,12 +65,12 @@ distinct index starting from 0.
 
 **Witness**: Data provided by the prover (private input)
 ```rust
-type Witness<'source> = FieldElement;  // What the prover knows
+type Witness<'source> = C::CircuitField;  // What the prover knows
 ```
 
 **Aux**: Data returned to the caller (output values)
 ```rust
-type Aux<'source> = FieldElement;  // What to return
+type Aux<'source> = C::CircuitField;  // What to return
 ```
 
 **Left/Right**: Types of proofs this step accepts
@@ -87,9 +88,9 @@ type Output = InternalNode;  // What this step creates
 
 This is where the circuit logic is implemented. The function:
 1. Receives witness data from the prover
-2. Receives encoders for left/right input proofs
+2. Receives left/right header data as `DriverValue`
 3. Performs computation (constraints)
-4. Returns encoded proofs and auxiliary output
+4. Returns encoded proofs, output header data, and auxiliary output
 
 ## Two Types of Steps
 
@@ -122,31 +123,32 @@ type Output = InternalNode;  // Produces InternalNode
 
 The key operations in a fuse step:
 1. **Encode inputs** - Convert input proof headers to circuit gadgets via
-   `.encode(dr)?`
+   `Encoded::new(dr, data)?`
 2. **Extract data** - Get header values with `.as_gadget()`
 3. **Combine** - Hash or process the data together
 4. **Encode output** - Package combined result as a new proof
 
 These proofs are created using `app.fuse()`.
 
-## Understanding .encode()
+## Understanding Encoded::new()
 
-When working with input proofs in a fuse step:
+When working with input header data in a fuse step:
 
 ```rust
-let left = left.encode(dr)?;
-let right = right.encode(dr)?;
+let left = Encoded::new(dr, left)?;
+let right = Encoded::new(dr, right)?;
 ```
 
-The `.encode()` call:
-- Converts the header data into circuit gadgets (allocates field elements)
+`Encoded::new(dr, data)` calls `Header::encode` to convert the header data
+into a circuit gadget:
+- Allocates field elements in the constraint system
 - Makes the proof's header data available for use in circuit logic
-- Returns an `Encoded` proof that can be passed to the next step
+- Returns an `Encoded` value that can be passed back in the return tuple
 
-After encoding, extract the actual data with `.as_gadget()`:
+After encoding, extract the underlying gadget with `.as_gadget()`:
 ```rust
-let left_data = left.as_gadget();
-let right_data = right.as_gadget();
+let left_gadget = left.as_gadget();
+let right_gadget = right.as_gadget();
 ```
 
 ## Working with Headers
@@ -177,33 +179,7 @@ impl<F: Field> Header<F> for LeafNode {
 
 ## Common Patterns
 
-### Pattern 1: Seed Steps (Create Initial Proofs)
-
-```rust
-type Left = ();   // No left input
-type Right = ();  // No right input
-type Output = YourHeader;
-```
-
-Usage:
-```rust
-let (proof, aux) = app.seed(&mut rng, CreateLeaf { ... }, witness)?;
-```
-
-### Pattern 2: Fuse Steps (Combine Proofs)
-
-```rust
-type Left = HeaderA;
-type Right = HeaderB;
-type Output = HeaderC;
-```
-
-Usage:
-```rust
-let (proof, aux) = app.fuse(&mut rng, CombineNodes { ... }, (), left_pcd, right_pcd)?;
-```
-
-### Pattern 3: Stateful Steps
+### Pattern 1: Stateful Steps
 
 State can be passed through the witness:
 ```rust
@@ -215,7 +191,7 @@ fn witness(..., witness: DriverValue<D, Self::Witness<'source>>, ...) {
 }
 ```
 
-### Pattern 4: Multiple Header Types
+### Pattern 2: Multiple Header Types
 
 Different steps can produce different headers:
 ```rust
@@ -237,8 +213,8 @@ With Steps and Headers defined, an application is constructed as follows:
 ```rust
 let pasta = Pasta::baked();
 let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
-    .register(CreateLeaf { poseidon_params: Pasta::circuit_poseidon(pasta) })?
-    .register(CombineNodes { poseidon_params: Pasta::circuit_poseidon(pasta) })?
+    .register(WitnessLeaf { poseidon_params: Pasta::circuit_poseidon(pasta) })?
+    .register(Hash2 { poseidon_params: Pasta::circuit_poseidon(pasta) })?
     .finalize(pasta)?;
 ```
 
