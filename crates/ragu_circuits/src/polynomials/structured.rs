@@ -2,6 +2,7 @@
 
 use ff::Field;
 use ragu_arithmetic::CurveAffine;
+use ragu_arithmetic::MontgomeryRepr;
 use rand::CryptoRng;
 
 use alloc::vec::Vec;
@@ -121,17 +122,14 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
     }
 
     /// Inner product of `self` with the reversed `other`.
-    pub fn revdot(&self, other: &Self) -> F {
-        fn dot<F: Field>(a: &[F], b: &[F]) -> F {
-            a.iter()
-                .zip(b.iter())
-                .fold(F::ZERO, |acc, (a, b)| acc + (*a * *b))
-        }
-
-        dot(&self.u, &other.v)
-            + dot(&self.v, &other.u)
-            + dot(&self.w, &other.d)
-            + dot(&self.d, &other.w)
+    pub fn revdot(&self, other: &Self) -> F
+    where
+        F: MontgomeryRepr,
+    {
+        F::inner_product(&self.u, &other.v)
+            + F::inner_product(&self.v, &other.u)
+            + F::inner_product(&self.w, &other.d)
+            + F::inner_product(&self.d, &other.w)
     }
 
     /// Add the coefficients of `other` to `self`.
