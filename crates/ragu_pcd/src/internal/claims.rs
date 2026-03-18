@@ -1,6 +1,6 @@
 //! Common abstraction for orchestrating revdot claims.
 
-use ff::PrimeField;
+use ff::{Field, PrimeField};
 use ragu_circuits::{
     polynomials::{Rank, structured},
     registry::{CircuitIndex, Registry},
@@ -13,7 +13,7 @@ use core::borrow::Borrow;
 ///
 /// Returns `Cow::Borrowed` for a single polynomial, `Cow::Owned` for multiple.
 /// Panics if the iterator is empty.
-pub fn sum_polynomials<'rx, F: PrimeField, R: Rank>(
+pub fn sum_polynomials<'rx, F: Field, R: Rank>(
     mut rxs: impl Iterator<Item = &'rx structured::Polynomial<F, R>>,
 ) -> Cow<'rx, structured::Polynomial<F, R>> {
     let first = rxs.next().expect("must provide at least one rx polynomial");

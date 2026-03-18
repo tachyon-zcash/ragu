@@ -126,19 +126,19 @@ impl<K, F: Field, R: Rank> Borrow<structured::Polynomial<F, R>> for TrackedPoly<
 ///
 /// The fuse pipeline threads these through the claims builder so that each
 /// `A` polynomial retains a link back to its commitment.
-pub struct Atom<'rx, K, F: PrimeField, R: Rank> {
+pub struct Atom<'rx, K, F: Field, R: Rank> {
     pub key: K,
     pub poly: &'rx structured::Polynomial<F, R>,
 }
 
 // Manual Copy/Clone: derive(Copy) would add spurious F: Copy and R: Copy bounds.
 // Atom only holds a reference (always Copy) and a K (bounded K: Copy here).
-impl<K: Copy, F: PrimeField, R: Rank> Clone for Atom<'_, K, F, R> {
+impl<K: Copy, F: Field, R: Rank> Clone for Atom<'_, K, F, R> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<K: Copy, F: PrimeField, R: Rank> Copy for Atom<'_, K, F, R> {}
+impl<K: Copy, F: Field, R: Rank> Copy for Atom<'_, K, F, R> {}
 
 /// Identifies which of the two child proofs a polynomial came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
