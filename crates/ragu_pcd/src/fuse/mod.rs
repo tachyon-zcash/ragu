@@ -205,15 +205,15 @@ mod tests {
     use super::*;
     use crate::ApplicationBuilder;
     use crate::header::{Header, Suffix};
+    use crate::proof::Pcd;
     use crate::step::{Encoded, Index, Step};
-    use ragu_arithmetic::Cycle;
     use ragu_circuits::polynomials::R;
     use ragu_core::{
         drivers::{Driver, DriverValue},
         gadgets::Kind,
     };
     use ragu_pasta::{Fp, Pasta};
-    use ragu_primitives::Element;
+    use ragu_primitives::{Element, poseidon::Sponge};
     use rand::{SeedableRng, rngs::StdRng};
 
     type TestR = R<13>;
@@ -223,12 +223,12 @@ mod tests {
 
     impl Header<Fp> for TestHeader {
         const SUFFIX: Suffix = Suffix::new(200);
-        type Data<'source> = Fp;
+        type Data = Fp;
         type Output = Kind![Fp; Element<'_, _>];
 
-        fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        fn encode<'dr, D: Driver<'dr, F = Fp>>(
             dr: &mut D,
-            witness: DriverValue<D, Self::Data<'source>>,
+            witness: DriverValue<D, Self::Data>,
         ) -> Result<Element<'dr, D>> {
             Element::alloc(dr, witness)
         }
@@ -258,6 +258,7 @@ mod tests {
                 Encoded<'dr, D, Self::Output, HS>,
             ),
             DriverValue<D, Fp>,
+            DriverValue<D, Fp>,
         )> {
             let output_enc = Encoded::new(dr, witness.clone())?;
             Ok((
@@ -266,6 +267,7 @@ mod tests {
                     Encoded::from_gadget(()),
                     output_enc,
                 ),
+                witness.clone(),
                 witness,
             ))
         }
@@ -295,6 +297,7 @@ mod tests {
                 Encoded<'dr, D, Self::Output, HS>,
             ),
             DriverValue<D, Fp>,
+            DriverValue<D, Fp>,
         )> {
             let left_enc = Encoded::new(dr, left.clone())?;
             let right_enc = Encoded::new(dr, right.clone())?;
@@ -305,7 +308,7 @@ mod tests {
             let output_value = output.value().map(|v| *v);
             let output_enc = Encoded::from_gadget(output);
 
-            Ok(((left_enc, right_enc, output_enc), output_value))
+            Ok(((left_enc, right_enc, output_enc), output_value.clone(), output_value))
         }
     }
 
@@ -326,203 +329,185 @@ mod tests {
         right: u64,
     ) -> (
         Application<'static, Pasta, TestR, HEADER_SIZE>,
-        Proof<Pasta, TestR>,
+        Pcd<Pasta, TestR, TestHeader>,
     ) {
         let app = create_test_app();
         let mut rng = StdRng::seed_from_u64(seed);
 
         let left = app
             .seed(&mut rng, SeedStep, Fp::from(left))
-            .expect("seed should succeed");
-        let left = left.0.carry(left.1);
+            .expect("seed should succeed")
+            .0;
 
         let right = app
             .seed(&mut rng, SeedStep, Fp::from(right))
-            .expect("seed should succeed");
-        let right = right.0.carry(right.1);
+            .expect("seed should succeed")
+            .0;
 
-        let (proof, _) = app
+        let (pcd, _) = app
             .fuse(&mut rng, FuseStep, (), left, right)
             .expect("fuse should succeed");
 
-        (app, proof)
+        (app, pcd)
     }
 
     #[test]
     fn fuse_commitment_bindings_match_polynomials() {
-        let (app, proof) = seed_and_fuse(1234, 10, 20);
+        let (app, pcd) = seed_and_fuse(1234, 10, 20);
+        let proof = pcd.proof();
         let host = Pasta::host_generators(app.params);
         let nested = Pasta::nested_generators(app.params);
 
-        assert_eq!(
-            proof.application.commitment,
-            proof.application.rx.commit(host, proof.application.blind)
-        );
+        macro_rules! assert_host_commit {
+            ($poly:expr, $blind:expr, $commitment:expr) => {
+                assert_eq!($poly.commit_to_affine(host, $blind), $commitment);
+            };
+        }
 
-        assert_eq!(
-            proof.preamble.native_commitment,
-            proof
-                .preamble
-                .native_rx
-                .commit(host, proof.preamble.native_blind)
-        );
-        assert_eq!(
-            proof.preamble.nested_commitment,
-            proof
-                .preamble
-                .nested_rx
-                .commit(nested, proof.preamble.nested_blind)
-        );
+        macro_rules! assert_nested_commit {
+            ($poly:expr, $blind:expr, $commitment:expr) => {
+                assert_eq!($poly.commit_to_affine(nested, $blind), $commitment);
+            };
+        }
 
-        assert_eq!(
-            proof.s_prime.registry_wx0_commitment,
-            proof
-                .s_prime
-                .registry_wx0_poly
-                .commit(host, proof.s_prime.registry_wx0_blind)
+        assert_host_commit!(
+            proof.application.rx_triple.rx,
+            proof.application.rx_triple.blind,
+            proof.application.rx_triple.commitment
         );
-        assert_eq!(
-            proof.s_prime.registry_wx1_commitment,
-            proof
-                .s_prime
-                .registry_wx1_poly
-                .commit(host, proof.s_prime.registry_wx1_blind)
+        assert_host_commit!(
+            proof.preamble.native.rx,
+            proof.preamble.native.blind,
+            proof.preamble.native.commitment
         );
-        assert_eq!(
-            proof.s_prime.nested_s_prime_commitment,
-            proof
-                .s_prime
-                .nested_s_prime_rx
-                .commit(nested, proof.s_prime.nested_s_prime_blind)
+        assert_nested_commit!(
+            proof.preamble.bridge.rx,
+            proof.preamble.bridge.blind,
+            proof.preamble.bridge.commitment
         );
-
-        assert_eq!(
-            proof.error_m.registry_wy_commitment,
-            proof
-                .error_m
-                .registry_wy_poly
-                .commit(host, proof.error_m.registry_wy_blind)
+        assert_host_commit!(
+            proof.s_prime.native.registry_wx0_poly,
+            proof.s_prime.native.registry_wx0_blind,
+            proof.s_prime.native.registry_wx0_commitment
         );
-        assert_eq!(
-            proof.error_m.native_commitment,
-            proof
-                .error_m
-                .native_rx
-                .commit(host, proof.error_m.native_blind)
+        assert_host_commit!(
+            proof.s_prime.native.registry_wx1_poly,
+            proof.s_prime.native.registry_wx1_blind,
+            proof.s_prime.native.registry_wx1_commitment
         );
-        assert_eq!(
-            proof.error_m.nested_commitment,
-            proof
-                .error_m
-                .nested_rx
-                .commit(nested, proof.error_m.nested_blind)
+        assert_nested_commit!(
+            proof.s_prime.bridge.rx,
+            proof.s_prime.bridge.blind,
+            proof.s_prime.bridge.commitment
         );
-
-        assert_eq!(
-            proof.error_n.native_commitment,
-            proof
-                .error_n
-                .native_rx
-                .commit(host, proof.error_n.native_blind)
+        assert_host_commit!(
+            proof.error_m.native.registry_wy_poly,
+            proof.error_m.native.registry_wy_blind,
+            proof.error_m.native.registry_wy_commitment
         );
-        assert_eq!(
-            proof.error_n.nested_commitment,
-            proof
-                .error_n
-                .nested_rx
-                .commit(nested, proof.error_n.nested_blind)
+        assert_host_commit!(
+            proof.error_m.native.rx_triple.rx,
+            proof.error_m.native.rx_triple.blind,
+            proof.error_m.native.rx_triple.commitment
         );
-
-        assert_eq!(
-            proof.ab.a_commitment,
-            proof.ab.a_poly.commit(host, proof.ab.a_blind)
+        assert_nested_commit!(
+            proof.error_m.bridge.rx,
+            proof.error_m.bridge.blind,
+            proof.error_m.bridge.commitment
         );
-        assert_eq!(
-            proof.ab.b_commitment,
-            proof.ab.b_poly.commit(host, proof.ab.b_blind)
+        assert_host_commit!(
+            proof.error_n.native.rx,
+            proof.error_n.native.blind,
+            proof.error_n.native.commitment
         );
-        assert_eq!(
-            proof.ab.nested_commitment,
-            proof.ab.nested_rx.commit(nested, proof.ab.nested_blind)
+        assert_nested_commit!(
+            proof.error_n.bridge.rx,
+            proof.error_n.bridge.blind,
+            proof.error_n.bridge.commitment
         );
-
-        assert_eq!(
-            proof.query.registry_xy_commitment,
-            proof
-                .query
-                .registry_xy_poly
-                .commit(host, proof.query.registry_xy_blind)
+        assert_host_commit!(
+            proof.ab.native.a_poly,
+            proof.ab.native.a_blind,
+            proof.ab.native.a_commitment
         );
-        assert_eq!(
-            proof.query.native_commitment,
-            proof.query.native_rx.commit(host, proof.query.native_blind)
+        assert_host_commit!(
+            proof.ab.native.b_poly,
+            proof.ab.native.b_blind,
+            proof.ab.native.b_commitment
         );
-        assert_eq!(
-            proof.query.nested_commitment,
-            proof
-                .query
-                .nested_rx
-                .commit(nested, proof.query.nested_blind)
+        assert_nested_commit!(
+            proof.ab.bridge.rx,
+            proof.ab.bridge.blind,
+            proof.ab.bridge.commitment
         );
-
-        assert_eq!(proof.f.commitment, proof.f.poly.commit(host, proof.f.blind));
-        assert_eq!(
-            proof.f.nested_commitment,
-            proof.f.nested_rx.commit(nested, proof.f.nested_blind)
+        assert_host_commit!(
+            proof.query.native.registry_xy_poly,
+            proof.query.native.registry_xy_blind,
+            proof.query.native.registry_xy_commitment
         );
-
-        assert_eq!(
-            proof.eval.native_commitment,
-            proof.eval.native_rx.commit(host, proof.eval.native_blind)
+        assert_host_commit!(
+            proof.query.native.rx_triple.rx,
+            proof.query.native.rx_triple.blind,
+            proof.query.native.rx_triple.commitment
         );
-        assert_eq!(
-            proof.eval.nested_commitment,
-            proof.eval.nested_rx.commit(nested, proof.eval.nested_blind)
+        assert_nested_commit!(
+            proof.query.bridge.rx,
+            proof.query.bridge.blind,
+            proof.query.bridge.commitment
         );
-
-        assert_eq!(
-            proof.circuits.hashes_1_commitment,
-            proof
-                .circuits
-                .hashes_1_rx
-                .commit(host, proof.circuits.hashes_1_blind)
+        assert_host_commit!(proof.f.native.poly, proof.f.native.blind, proof.f.native.commitment);
+        assert_nested_commit!(
+            proof.f.bridge.rx,
+            proof.f.bridge.blind,
+            proof.f.bridge.commitment
         );
-        assert_eq!(
-            proof.circuits.hashes_2_commitment,
-            proof
-                .circuits
-                .hashes_2_rx
-                .commit(host, proof.circuits.hashes_2_blind)
+        assert_host_commit!(
+            proof.eval.native.rx,
+            proof.eval.native.blind,
+            proof.eval.native.commitment
         );
-        assert_eq!(
-            proof.circuits.partial_collapse_commitment,
-            proof
-                .circuits
-                .partial_collapse_rx
-                .commit(host, proof.circuits.partial_collapse_blind)
+        assert_nested_commit!(
+            proof.eval.bridge.rx,
+            proof.eval.bridge.blind,
+            proof.eval.bridge.commitment
         );
-        assert_eq!(
-            proof.circuits.full_collapse_commitment,
-            proof
-                .circuits
-                .full_collapse_rx
-                .commit(host, proof.circuits.full_collapse_blind)
+        assert_host_commit!(
+            proof.circuits.hashes_1.rx,
+            proof.circuits.hashes_1.blind,
+            proof.circuits.hashes_1.commitment
         );
-        assert_eq!(
-            proof.circuits.compute_v_commitment,
-            proof
-                .circuits
-                .compute_v_rx
-                .commit(host, proof.circuits.compute_v_blind)
+        assert_host_commit!(
+            proof.circuits.hashes_2.rx,
+            proof.circuits.hashes_2.blind,
+            proof.circuits.hashes_2.commitment
         );
-
-        assert_eq!(proof.p.commitment, proof.p.poly.commit(host, proof.p.blind));
+        assert_host_commit!(
+            proof.circuits.partial_collapse.rx,
+            proof.circuits.partial_collapse.blind,
+            proof.circuits.partial_collapse.commitment
+        );
+        assert_host_commit!(
+            proof.circuits.full_collapse.rx,
+            proof.circuits.full_collapse.blind,
+            proof.circuits.full_collapse.commitment
+        );
+        assert_host_commit!(
+            proof.circuits.compute_v.rx,
+            proof.circuits.compute_v.blind,
+            proof.circuits.compute_v.commitment
+        );
+        assert_host_commit!(
+            proof.p.native.poly,
+            proof.p.native.blind,
+            proof.p.native.commitment
+        );
     }
 
     #[test]
     fn fuse_p_evaluation_matches_polynomial() {
-        let (_app, proof) = seed_and_fuse(5678, 1, 2);
+        let (_app, pcd) = seed_and_fuse(5678, 1, 2);
+        let proof = pcd.proof();
         let u = proof.challenges.u;
-        assert_eq!(proof.p.v, proof.p.poly.eval(u));
+        assert_eq!(proof.p.native.v, proof.p.native.poly.eval(u));
     }
 }
