@@ -93,12 +93,12 @@ impl<F: PrimeField> Domain<F> {
     /// Computes the radix2 discrete Fourier transform (DFT) of a slice of
     /// generic ring elements using the Cooley-Tukey FFT algorithm.
     pub fn ring_fft<R: crate::fft::Ring<F = F>>(&self, input: &mut [R::R]) {
-        crate::fft::fft::<R>(self.log2_n, input, self.omega);
+        crate::fft::fft::<R>(input, self.omega, self.log2_n);
     }
 
     /// Performs the inverse operation of [`Self::ring_fft`].
     pub fn ring_ifft<R: crate::fft::Ring<F = F>>(&self, input: &mut [R::R]) {
-        crate::fft::fft::<R>(self.log2_n, input, self.omega_inv);
+        crate::fft::fft::<R>(input, self.omega_inv, self.log2_n);
 
         for input in input.iter_mut() {
             R::scale_assign(input, self.n_inv);
