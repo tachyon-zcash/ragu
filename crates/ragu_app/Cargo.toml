@@ -1,0 +1,33 @@
+[package]
+name = "ragu_app"
+description = "Developer APIs for building a PCD application"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+documentation = "https://docs.rs/ragu_app"
+categories = ["cryptography", "mathematics", "algorithms", "science", "no-std"]
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "katex-header.html"]
+all-features = true
+
+[lib]
+bench = false
+
+[dependencies]
+ff = { workspace = true }
+rand = { workspace = true }
+ragu_arithmetic = { path = "../ragu_arithmetic", version = "0.0.0" }
+ragu_circuits = { path = "../ragu_circuits", version = "0.0.0" }
+ragu_core = { path = "../ragu_core", version = "0.0.0" }
+ragu_macros = { path = "../ragu_macros", version = "0.0.0" }
+ragu_pcd = { path = "../ragu_pcd", version = "0.0.0" }
+ragu_primitives = { path = "../ragu_primitives", version = "0.0.0" }
+
+[dev-dependencies]
+group = { workspace = true }
+ragu_pasta = { path = "../ragu_pasta", version = "0.0.0", features = ["baked"] }
