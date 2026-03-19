@@ -73,9 +73,9 @@ pub trait BondingCircuit<F: Field>: Sized + Send + Sync {
         gates: &[(D::Wire, D::Wire, D::Wire)],
     ) -> Result<()>;
 
-    /// Produce a [`CircuitObject`] for registry registration via
+    /// Produce a [`BondingObject`](super::BondingObject) for registry registration via
     /// [`register_internal_bonding`](registry::RegistryBuilder::register_internal_bonding).
-    fn into_bonding_object<'a, R: Rank>(self) -> Result<Box<dyn CircuitObject<F, R> + 'a>>
+    fn into_bonding_object<'a, R: Rank>(self) -> Result<super::BondingObject<'a, F, R>>
     where
         Self: 'a,
         F: FromUniformBytes<64>,
@@ -92,7 +92,10 @@ pub trait BondingCircuit<F: Field>: Sized + Send + Sync {
             return Err(ragu_core::Error::MultiplicationBoundExceeded { limit: R::n() });
         }
 
-        Ok(Box::new(Processed { adapter, metrics }))
+        Ok(super::BondingObject(Box::new(Processed {
+            adapter,
+            metrics,
+        })))
     }
 }
 
@@ -239,7 +242,7 @@ mod tests {
     /// Bonding polynomials must have zero constant term (no ONE wire).
     #[test]
     fn zero_constant_term() {
-        let obj = RouteEqual.into_bonding_object::<R>().unwrap();
+        let obj = RouteEqual.into_bonding_object::<R>().unwrap().into_inner();
         let floor_plan = floor_planner::floor_plan(obj.segment_records());
         let key = registry::Key::new(Fp::random(&mut rand::rng()));
         let x = Fp::random(&mut rand::rng());
@@ -252,7 +255,7 @@ mod tests {
     /// sxy(x,y) = sx(x).eval(y) = sy(y).eval(x).
     #[test]
     fn evaluation_consistency() {
-        let obj = RouteEqual.into_bonding_object::<R>().unwrap();
+        let obj = RouteEqual.into_bonding_object::<R>().unwrap().into_inner();
         let floor_plan = floor_planner::floor_plan(obj.segment_records());
         let key = registry::Key::new(Fp::random(&mut rand::rng()));
         let x = Fp::random(&mut rand::rng());
@@ -284,7 +287,7 @@ mod tests {
     /// Revdot is zero when routed wires are equal, nonzero otherwise.
     #[test]
     fn revdot_routing_constraint() {
-        let obj = RouteEqual.into_bonding_object::<R>().unwrap();
+        let obj = RouteEqual.into_bonding_object::<R>().unwrap().into_inner();
         let floor_plan = floor_planner::floor_plan(obj.segment_records());
         let key = registry::Key::new(Fp::random(&mut rand::rng()));
         let y = Fp::random(&mut rand::rng());

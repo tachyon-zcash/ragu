@@ -155,9 +155,9 @@ impl<'params, F: FromUniformBytes<64>, R: Rank> RegistryBuilder<'params, F, R> {
     /// [`StageExt::final_mask`](crate::staging::StageExt::final_mask).
     pub fn register_internal_bonding(
         mut self,
-        bonding_poly: Box<dyn CircuitObject<F, R> + 'params>,
+        bonding_poly: crate::staging::BondingObject<'params, F, R>,
     ) -> Result<Self> {
-        self.internal_bonding_polys.push(bonding_poly);
+        self.internal_bonding_polys.push(bonding_poly.into_inner());
         Ok(self)
     }
 

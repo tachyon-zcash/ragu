@@ -444,9 +444,9 @@ mod tests {
 
             let staged = MultiStage::new(step_circuit.clone());
 
-            let endoscalar_mask = EndoscalarStage::mask()?;
-            let points_mask = PointsStage::<EpAffine, NUM_POINTS>::mask()?;
-            let final_mask = PointsStage::<EpAffine, NUM_POINTS>::final_mask()?;
+            let endoscalar_mask = EndoscalarStage::mask()?.into_inner();
+            let points_mask = PointsStage::<EpAffine, NUM_POINTS>::mask()?.into_inner();
+            let final_mask = PointsStage::<EpAffine, NUM_POINTS>::final_mask()?.into_inner();
 
             let endoscalar_rx = <EndoscalarStage as StageExt<Fp, R>>::rx(endoscalar)?;
             let points_rx = <PointsStage<EpAffine, NUM_POINTS> as StageExt<Fp, R>>::rx(&points)?;
