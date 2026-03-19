@@ -1,10 +1,6 @@
 name: Rust Setup
 description: Install pinned Rust toolchain, cache Cargo artifacts, and print versions
 inputs:
-  toolchain:
-    description: Rust toolchain version to install
-    required: false
-    default: "1.90.0"
   components:
     description: Optional Rust components to install (comma-separated)
     required: false
@@ -35,10 +31,9 @@ runs:
         sudo apt-get update
         sudo apt-get install -y ${{ inputs.apt-packages }}
 
-    - name: Install Rust toolchain
+    - name: Install Rust toolchain (from rust-toolchain.toml)
       uses: dtolnay/rust-toolchain@1.90.0
       with:
-        toolchain: ${{ inputs.toolchain }}
         components: ${{ inputs.components }}
         targets: ${{ inputs.targets }}
 
