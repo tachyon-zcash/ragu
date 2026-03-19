@@ -308,7 +308,11 @@ mod tests {
             let output_value = output.value().map(|v| *v);
             let output_enc = Encoded::from_gadget(output);
 
-            Ok(((left_enc, right_enc, output_enc), output_value.clone(), output_value))
+            Ok((
+                (left_enc, right_enc, output_enc),
+                output_value.clone(),
+                output_value,
+            ))
         }
     }
 
@@ -401,29 +405,29 @@ mod tests {
             proof.s_prime.bridge.commitment
         );
         assert_host_commit!(
-            proof.error_m.native.registry_wy_poly,
-            proof.error_m.native.registry_wy_blind,
-            proof.error_m.native.registry_wy_commitment
+            proof.inner_error.native.registry_wy_poly,
+            proof.inner_error.native.registry_wy_blind,
+            proof.inner_error.native.registry_wy_commitment
         );
         assert_host_commit!(
-            proof.error_m.native.rx_triple.rx,
-            proof.error_m.native.rx_triple.blind,
-            proof.error_m.native.rx_triple.commitment
+            proof.inner_error.native.rx_triple.rx,
+            proof.inner_error.native.rx_triple.blind,
+            proof.inner_error.native.rx_triple.commitment
         );
         assert_nested_commit!(
-            proof.error_m.bridge.rx,
-            proof.error_m.bridge.blind,
-            proof.error_m.bridge.commitment
+            proof.inner_error.bridge.rx,
+            proof.inner_error.bridge.blind,
+            proof.inner_error.bridge.commitment
         );
         assert_host_commit!(
-            proof.error_n.native.rx,
-            proof.error_n.native.blind,
-            proof.error_n.native.commitment
+            proof.outer_error.native.rx,
+            proof.outer_error.native.blind,
+            proof.outer_error.native.commitment
         );
         assert_nested_commit!(
-            proof.error_n.bridge.rx,
-            proof.error_n.bridge.blind,
-            proof.error_n.bridge.commitment
+            proof.outer_error.bridge.rx,
+            proof.outer_error.bridge.blind,
+            proof.outer_error.bridge.commitment
         );
         assert_host_commit!(
             proof.ab.native.a_poly,
@@ -455,7 +459,11 @@ mod tests {
             proof.query.bridge.blind,
             proof.query.bridge.commitment
         );
-        assert_host_commit!(proof.f.native.poly, proof.f.native.blind, proof.f.native.commitment);
+        assert_host_commit!(
+            proof.f.native.poly,
+            proof.f.native.blind,
+            proof.f.native.commitment
+        );
         assert_nested_commit!(
             proof.f.bridge.rx,
             proof.f.bridge.blind,
@@ -482,14 +490,14 @@ mod tests {
             proof.circuits.hashes_2.commitment
         );
         assert_host_commit!(
-            proof.circuits.partial_collapse.rx,
-            proof.circuits.partial_collapse.blind,
-            proof.circuits.partial_collapse.commitment
+            proof.circuits.inner_collapse.rx,
+            proof.circuits.inner_collapse.blind,
+            proof.circuits.inner_collapse.commitment
         );
         assert_host_commit!(
-            proof.circuits.full_collapse.rx,
-            proof.circuits.full_collapse.blind,
-            proof.circuits.full_collapse.commitment
+            proof.circuits.outer_collapse.rx,
+            proof.circuits.outer_collapse.blind,
+            proof.circuits.outer_collapse.commitment
         );
         assert_host_commit!(
             proof.circuits.compute_v.rx,
