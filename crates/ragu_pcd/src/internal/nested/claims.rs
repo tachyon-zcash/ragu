@@ -16,7 +16,52 @@ use ragu_circuits::polynomials::{Rank, structured};
 use ragu_core::Result;
 
 use super::InternalCircuitIndex;
-use crate::internal::claims::{Builder, Source, sum_polynomials};
+use crate::internal::claims::{Builder, KyIter, Source, sum_polynomials};
+
+/// Canonical claim ordering for nested claims.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ClaimOrder {
+    EndoscalingStep(u32),
+    Stage(InternalCircuitIndex),
+}
+
+/// Returns the canonical nested claim ordering: steps then stages.
+pub(crate) fn claim_order() -> impl Iterator<Item = ClaimOrder> {
+    use super::NUM_ENDOSCALING_POINTS;
+    use crate::internal::endoscalar::NumStepsLen;
+    use ragu_primitives::vec::Len;
+
+    let num_steps = NumStepsLen::<NUM_ENDOSCALING_POINTS>::len();
+
+    (0..num_steps)
+        .map(|step| ClaimOrder::EndoscalingStep(step as u32))
+        .chain([
+            ClaimOrder::Stage(InternalCircuitIndex::EndoscalarStage),
+            ClaimOrder::Stage(InternalCircuitIndex::PointsStage),
+            ClaimOrder::Stage(InternalCircuitIndex::PointsFinalStaged),
+        ])
+}
+
+/// Per-group $k(y)$ iterators for nested claims, flattened in [`claim_order`]
+/// sequence.
+pub(crate) struct KyValues<I: Iterator> {
+    pub(crate) circuit: I,
+    pub(crate) zero: I::Item,
+}
+
+impl<I: Clone + Iterator> KyValues<I>
+where
+    I::Item: Clone,
+{
+    /// Flatten into $k(y)$ values in [`claim_order`] sequence.
+    pub(crate) fn into_values(self) -> impl Iterator<Item = I::Item> {
+        let KyValues { circuit, zero } = self;
+        claim_order().flat_map(move |order| match order {
+            ClaimOrder::EndoscalingStep(_) => KyIter::Value(circuit.clone()),
+            ClaimOrder::Stage(_) => KyIter::Zero(core::iter::once(zero.clone())),
+        })
+    }
+}
 
 /// Enum identifying which nested field rx polynomial to retrieve from a proof.
 #[derive(Clone, Copy, Debug)]
@@ -67,13 +112,14 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx structured::Polynomial<F, R
 
 /// Build nested claims in unified interleaved order from a source.
 ///
-/// The ordering is:
+/// The ordering is driven by [`claim_order`]:
 /// 1. Circuit checks ($k(y) = 1$): [`EndoscalingStep`](InternalCircuitIndex::EndoscalingStep)
 ///    for each step, interleaved across proofs
 /// 2. Stage checks ($k(y) = 0$): [`EndoscalarStage`](InternalCircuitIndex::EndoscalarStage),
 ///    [`PointsStage`](InternalCircuitIndex::PointsStage), `PointsFinalStaged`
 ///
-/// This ordering must match the ky_elements ordering from [`ky_values`].
+/// This ordering must match the $k(y)$ ordering produced by
+/// [`KyValues::into_values`], which is also driven by [`claim_order`].
 pub fn build<S, P>(source: &S, processor: &mut P) -> Result<()>
 where
     S: Source<RxComponent = RxComponent>,
@@ -85,68 +131,39 @@ where
 
     let num_steps = NumStepsLen::<NUM_ENDOSCALING_POINTS>::len();
 
-    use RxComponent::*;
-
-    // 1. Circuit checks FIRST (k(y) = 1)
-    // Process all EndoscalingStep circuits (interleaved across proofs)
-    // Each circuit claim needs: step_rx + endoscalar_rx + points_rx
-    for step in 0..num_steps {
-        for ((step_rx, endo_rx), pts_rx) in source
-            .rx(EndoscalingStep(step as u32))
-            .zip(source.rx(EndoscalarStage))
-            .zip(source.rx(PointsStage))
-        {
-            processor.internal_circuit(
-                InternalCircuitIndex::EndoscalingStep(step as u32),
-                [step_rx, endo_rx, pts_rx].into_iter(),
-            );
+    for order in claim_order() {
+        match order {
+            ClaimOrder::EndoscalingStep(step) => {
+                for ((step_rx, endo_rx), pts_rx) in source
+                    .rx(RxComponent::EndoscalingStep(step))
+                    .zip(source.rx(RxComponent::EndoscalarStage))
+                    .zip(source.rx(RxComponent::PointsStage))
+                {
+                    processor.internal_circuit(
+                        InternalCircuitIndex::EndoscalingStep(step),
+                        [step_rx, endo_rx, pts_rx].into_iter(),
+                    );
+                }
+            }
+            ClaimOrder::Stage(id) => {
+                use InternalCircuitIndex::*;
+                match id {
+                    EndoscalarStage => {
+                        processor.stage(id, source.rx(RxComponent::EndoscalarStage))?;
+                    }
+                    PointsStage => {
+                        processor.stage(id, source.rx(RxComponent::PointsStage))?;
+                    }
+                    PointsFinalStaged => {
+                        let final_rxs = (0..num_steps)
+                            .flat_map(|step| source.rx(RxComponent::EndoscalingStep(step as u32)));
+                        processor.stage(id, final_rxs)?;
+                    }
+                    _ => unreachable!(),
+                }
+            }
         }
     }
 
-    // 2. Stage checks SECOND (k(y) = 0)
-    processor.stage(
-        InternalCircuitIndex::EndoscalarStage,
-        source.rx(EndoscalarStage),
-    )?;
-
-    processor.stage(InternalCircuitIndex::PointsStage, source.rx(PointsStage))?;
-
-    // PointsFinalStaged - final stage check
-    // Aggregates all EndoscalingStep rxs from all proofs
-    {
-        let final_rxs = (0..num_steps).flat_map(|step| source.rx(EndoscalingStep(step as u32)));
-        processor.stage(InternalCircuitIndex::PointsFinalStaged, final_rxs)?;
-    }
-
     Ok(())
-}
-
-/// Trait for providing $k(y)$ values for nested claim verification.
-pub trait KySource {
-    /// The $k(y)$ value type.
-    type Ky: Clone;
-
-    /// Returns 1 for circuit checks.
-    fn one(&self) -> Self::Ky;
-
-    /// Returns 0 for stage checks.
-    fn zero(&self) -> Self::Ky;
-}
-
-/// Build an iterator over $k(y)$ values in nested claim order.
-///
-/// Returns:
-/// - `num_steps` ones (for EndoscalingStep circuit checks, single-proof verification)
-/// - Infinite zeros (for stage checks)
-pub fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
-    use super::NUM_ENDOSCALING_POINTS;
-    use crate::internal::endoscalar::NumStepsLen;
-    use ragu_primitives::vec::Len;
-
-    let num_steps = NumStepsLen::<NUM_ENDOSCALING_POINTS>::len();
-
-    // Circuit checks: k(y) = 1 (for single-proof, num_circuit_claims = num_steps)
-    core::iter::repeat_n(source.one(), num_steps)
-        // Stage checks: k(y) = 0 (infinite, matches how native does it)
-        .chain(core::iter::repeat(source.zero()))
 }

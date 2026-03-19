@@ -55,6 +55,40 @@ pub trait Source {
     fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId>;
 }
 
+/// Either a per-proof value iterator or a single zero.
+pub(crate) enum KyIter<A, B> {
+    Value(A),
+    Zero(B),
+}
+
+impl<T, A: Iterator<Item = T>, B: Iterator<Item = T>> Iterator for KyIter<A, B> {
+    type Item = T;
+    fn next(&mut self) -> Option<T> {
+        match self {
+            Self::Value(a) => a.next(),
+            Self::Zero(b) => b.next(),
+        }
+    }
+}
+
+/// Trait for providing $k(y)$ values for claim verification.
+pub(crate) trait KySource {
+    /// The $k(y)$ value type.
+    type Item: Clone;
+
+    /// Returns $k(y)$ values in claim order.
+    fn ky_values(&self) -> impl Iterator<Item = Self::Item>;
+
+    /// The zero value for stage claims.
+    fn zero(&self) -> Self::Item;
+
+    /// Returns $k(y)$ values in claim order, followed by infinite zeros.
+    fn padded_ky_values(&self) -> impl Iterator<Item = Self::Item> {
+        let zero = self.zero();
+        self.ky_values().chain(core::iter::repeat(zero))
+    }
+}
+
 /// Processor that builds polynomial vectors for revdot claims.
 ///
 /// Accumulates (a, b) polynomial pairs for each claim type, using

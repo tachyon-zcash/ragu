@@ -11,7 +11,7 @@
 //! - [`build`]: Orchestrates claim building in unified order
 
 use alloc::borrow::Cow;
-use core::iter::{once, repeat_n};
+use core::iter::once;
 
 use ff::PrimeField;
 use ragu_circuits::{
@@ -23,24 +23,90 @@ use ragu_core::drivers::Driver;
 use ragu_primitives::Element;
 
 use super::{InternalCircuitIndex, RxComponent, RxIndex};
-use crate::internal::claims::{Builder, Source, sum_polynomials};
+use crate::internal::claims::{Builder, KyIter, KySource, Source, sum_polynomials};
 
-/// Number of circuits using unified $k(y)$ in [`build`].
-///
-/// These circuits use [`unified::InternalOutputKind`]:
-/// [`hashes_2`], [`partial_collapse`], [`full_collapse`], [`compute_v`].
-///
-/// Note: [`hashes_1`] separately uses `unified_bridge_ky` because its public
-/// inputs include child proof headers (see [`hashes_1::Output`]).
-///
-/// [`hashes_1`]: crate::internal::native::circuits::hashes_1
-/// [`hashes_1::Output`]: crate::internal::native::circuits::hashes_1::Output
-/// [`hashes_2`]: crate::internal::native::circuits::hashes_2
-/// [`partial_collapse`]: crate::internal::native::circuits::partial_collapse
-/// [`full_collapse`]: crate::internal::native::circuits::full_collapse
-/// [`compute_v`]: crate::internal::native::circuits::compute_v
-/// [`unified::InternalOutputKind`]: crate::internal::native::unified::InternalOutputKind
-const NUM_UNIFIED_CIRCUITS: usize = 4;
+/// Which $k(y)$ group a claim belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum KyKind {
+    Raw,
+    Application,
+    UnifiedBridge,
+    Unified,
+    Zero,
+}
+
+/// Canonical claim ordering, shared by [`build`] and [`KyValues::into_values`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ClaimOrder {
+    Raw,
+    Application,
+    Internal(InternalCircuitIndex),
+}
+
+impl ClaimOrder {
+    pub(crate) fn ky_kind(&self) -> KyKind {
+        match self {
+            Self::Raw => KyKind::Raw,
+            Self::Application => KyKind::Application,
+            Self::Internal(id) => {
+                use InternalCircuitIndex::*;
+                match id {
+                    Hashes1Circuit => KyKind::UnifiedBridge,
+                    Hashes2Circuit
+                    | PartialCollapseCircuit
+                    | FullCollapseCircuit
+                    | ComputeVCircuit => KyKind::Unified,
+                    PreambleStage | ErrorMStage | ErrorNStage | QueryStage | EvalStage
+                    | ErrorMFinalStaged | ErrorNFinalStaged | EvalFinalStaged => KyKind::Zero,
+                }
+            }
+        }
+    }
+}
+
+/// Returns the canonical claim ordering: raw, application, then all internal circuits.
+pub(crate) fn claim_order() -> impl Iterator<Item = ClaimOrder> {
+    once(ClaimOrder::Raw)
+        .chain(once(ClaimOrder::Application))
+        .chain(
+            InternalCircuitIndex::ALL
+                .iter()
+                .copied()
+                .map(ClaimOrder::Internal),
+        )
+}
+
+/// Per-group $k(y)$ iterators, flattened in [`claim_order`] sequence.
+pub(crate) struct KyValues<I: Iterator> {
+    pub(crate) raw: I,
+    pub(crate) application: I,
+    pub(crate) unified_bridge: I,
+    pub(crate) unified: I,
+    pub(crate) zero: I::Item,
+}
+
+impl<I: Clone + Iterator> KyValues<I>
+where
+    I::Item: Clone,
+{
+    /// Flatten into $k(y)$ values in [`claim_order`] sequence.
+    pub(crate) fn into_values(self) -> impl Iterator<Item = I::Item> {
+        let KyValues {
+            raw,
+            application,
+            unified_bridge,
+            unified,
+            zero,
+        } = self;
+        claim_order().flat_map(move |order| match order.ky_kind() {
+            KyKind::Raw => KyIter::Value(raw.clone()),
+            KyKind::Application => KyIter::Value(application.clone()),
+            KyKind::UnifiedBridge => KyIter::Value(unified_bridge.clone()),
+            KyKind::Unified => KyIter::Value(unified.clone()),
+            KyKind::Zero => KyIter::Zero(once(zero.clone())),
+        })
+    }
+}
 
 /// Trait that processes claim values into accumulated outputs.
 ///
@@ -115,13 +181,13 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx structured::Polynomial<F, R
 
 /// Build claims in unified interleaved order from a source.
 ///
-/// The ordering is: for each claim type, add claims for all proofs before
-/// moving to the next claim type. This produces an interleaved order:
-/// `[L_raw, R_raw, L_app, R_app, L_h1, R_h1, ...]` for two-proof sources.
+/// The ordering is driven by [`claim_order`]: for each claim type, add claims
+/// for all proofs before moving to the next claim type. This produces an
+/// interleaved order: `[L_raw, R_raw, L_app, R_app, L_h1, R_h1, ...]` for
+/// two-proof sources.
 ///
-/// This ordering must match the $k(y)$ ordering in
-/// [`partial_collapse`](crate::internal::native::circuits::partial_collapse)
-/// and `compute_errors_n` in the fuse implementation.
+/// This ordering must match the $k(y)$ ordering produced by
+/// [`KyValues::into_values`], which is also driven by [`claim_order`].
 pub fn build<S, P>(source: &S, processor: &mut P) -> Result<()>
 where
     S: Source<RxComponent = RxComponent>,
@@ -130,148 +196,113 @@ where
     use RxComponent::*;
     use RxIndex::*;
 
-    // Raw claims (interleaved per proof)
-    for (a, b) in source.rx(AbA).zip(source.rx(AbB)) {
-        processor.raw_claim(a, b);
-    }
-
-    // App circuits (interleaved per proof)
-    for (app_id, rx) in source.app_circuits().zip(source.rx(Rx(Application))) {
-        processor.circuit(app_id, rx);
-    }
-
-    // Internal circuits and stages in canonical order.
-    for &id in &InternalCircuitIndex::ALL {
-        use InternalCircuitIndex::*;
-        match id {
-            // hashes_1: Hashes1 + Preamble + ErrorN
-            Hashes1Circuit => {
-                for ((h1, pre), en) in source
-                    .rx(Rx(Hashes1))
-                    .zip(source.rx(Rx(Preamble)))
-                    .zip(source.rx(Rx(ErrorN)))
-                {
-                    processor.internal_circuit(id, [h1, pre, en].into_iter());
+    for order in claim_order() {
+        match order {
+            ClaimOrder::Raw => {
+                for (a, b) in source.rx(AbA).zip(source.rx(AbB)) {
+                    processor.raw_claim(a, b);
                 }
             }
-
-            // hashes_2: Hashes2 + ErrorN
-            Hashes2Circuit => {
-                for (h2, en) in source.rx(Rx(Hashes2)).zip(source.rx(Rx(ErrorN))) {
-                    processor.internal_circuit(id, [h2, en].into_iter());
+            ClaimOrder::Application => {
+                for (app_id, rx) in source.app_circuits().zip(source.rx(Rx(Application))) {
+                    processor.circuit(app_id, rx);
                 }
             }
+            ClaimOrder::Internal(id) => {
+                use InternalCircuitIndex::*;
+                match id {
+                    // hashes_1: Hashes1 + Preamble + ErrorN
+                    Hashes1Circuit => {
+                        for ((h1, pre), en) in source
+                            .rx(Rx(Hashes1))
+                            .zip(source.rx(Rx(Preamble)))
+                            .zip(source.rx(Rx(ErrorN)))
+                        {
+                            processor.internal_circuit(id, [h1, pre, en].into_iter());
+                        }
+                    }
 
-            // partial_collapse: PartialCollapse + Preamble + ErrorM + ErrorN
-            PartialCollapseCircuit => {
-                for (((pc, pre), em), en) in source
-                    .rx(Rx(PartialCollapse))
-                    .zip(source.rx(Rx(Preamble)))
-                    .zip(source.rx(Rx(ErrorM)))
-                    .zip(source.rx(Rx(ErrorN)))
-                {
-                    processor.internal_circuit(id, [pc, pre, em, en].into_iter());
+                    // hashes_2: Hashes2 + ErrorN
+                    Hashes2Circuit => {
+                        for (h2, en) in source.rx(Rx(Hashes2)).zip(source.rx(Rx(ErrorN))) {
+                            processor.internal_circuit(id, [h2, en].into_iter());
+                        }
+                    }
+
+                    // partial_collapse: PartialCollapse + Preamble + ErrorM + ErrorN
+                    PartialCollapseCircuit => {
+                        for (((pc, pre), em), en) in source
+                            .rx(Rx(PartialCollapse))
+                            .zip(source.rx(Rx(Preamble)))
+                            .zip(source.rx(Rx(ErrorM)))
+                            .zip(source.rx(Rx(ErrorN)))
+                        {
+                            processor.internal_circuit(id, [pc, pre, em, en].into_iter());
+                        }
+                    }
+
+                    // full_collapse: FullCollapse + Preamble + ErrorN
+                    FullCollapseCircuit => {
+                        for ((fc, pre), en) in source
+                            .rx(Rx(FullCollapse))
+                            .zip(source.rx(Rx(Preamble)))
+                            .zip(source.rx(Rx(ErrorN)))
+                        {
+                            processor.internal_circuit(id, [fc, pre, en].into_iter());
+                        }
+                    }
+
+                    // compute_v: ComputeV + Preamble + Query + Eval
+                    ComputeVCircuit => {
+                        for (((cv, pre), q), e) in source
+                            .rx(Rx(ComputeV))
+                            .zip(source.rx(Rx(Preamble)))
+                            .zip(source.rx(Rx(Query)))
+                            .zip(source.rx(Rx(Eval)))
+                        {
+                            processor.internal_circuit(id, [cv, pre, q, e].into_iter());
+                        }
+                    }
+
+                    // Native stages (aggregated across all proofs)
+                    PreambleStage => {
+                        processor.stage(id, source.rx(Rx(Preamble)))?;
+                    }
+                    ErrorMStage => {
+                        processor.stage(id, source.rx(Rx(ErrorM)))?;
+                    }
+                    ErrorNStage => {
+                        processor.stage(id, source.rx(Rx(ErrorN)))?;
+                    }
+                    QueryStage => {
+                        processor.stage(id, source.rx(Rx(Query)))?;
+                    }
+                    EvalStage => {
+                        processor.stage(id, source.rx(Rx(Eval)))?;
+                    }
+
+                    // Final stage masks
+                    ErrorMFinalStaged => {
+                        processor.stage(id, source.rx(Rx(PartialCollapse)))?;
+                    }
+                    ErrorNFinalStaged => {
+                        processor.stage(
+                            id,
+                            source
+                                .rx(Rx(Hashes1))
+                                .chain(source.rx(Rx(Hashes2)))
+                                .chain(source.rx(Rx(FullCollapse))),
+                        )?;
+                    }
+                    EvalFinalStaged => {
+                        processor.stage(id, source.rx(Rx(ComputeV)))?;
+                    }
                 }
-            }
-
-            // full_collapse: FullCollapse + Preamble + ErrorN
-            FullCollapseCircuit => {
-                for ((fc, pre), en) in source
-                    .rx(Rx(FullCollapse))
-                    .zip(source.rx(Rx(Preamble)))
-                    .zip(source.rx(Rx(ErrorN)))
-                {
-                    processor.internal_circuit(id, [fc, pre, en].into_iter());
-                }
-            }
-
-            // compute_v: ComputeV + Preamble + Query + Eval
-            ComputeVCircuit => {
-                for (((cv, pre), q), e) in source
-                    .rx(Rx(ComputeV))
-                    .zip(source.rx(Rx(Preamble)))
-                    .zip(source.rx(Rx(Query)))
-                    .zip(source.rx(Rx(Eval)))
-                {
-                    processor.internal_circuit(id, [cv, pre, q, e].into_iter());
-                }
-            }
-
-            // Native stages (aggregated across all proofs)
-            PreambleStage => {
-                processor.stage(id, source.rx(Rx(Preamble)))?;
-            }
-            ErrorMStage => {
-                processor.stage(id, source.rx(Rx(ErrorM)))?;
-            }
-            ErrorNStage => {
-                processor.stage(id, source.rx(Rx(ErrorN)))?;
-            }
-            QueryStage => {
-                processor.stage(id, source.rx(Rx(Query)))?;
-            }
-            EvalStage => {
-                processor.stage(id, source.rx(Rx(Eval)))?;
-            }
-
-            // Final stage masks
-            ErrorMFinalStaged => {
-                processor.stage(id, source.rx(Rx(PartialCollapse)))?;
-            }
-            ErrorNFinalStaged => {
-                processor.stage(
-                    id,
-                    source
-                        .rx(Rx(Hashes1))
-                        .chain(source.rx(Rx(Hashes2)))
-                        .chain(source.rx(Rx(FullCollapse))),
-                )?;
-            }
-            EvalFinalStaged => {
-                processor.stage(id, source.rx(Rx(ComputeV)))?;
             }
         }
     }
 
     Ok(())
-}
-
-/// Trait for providing $k(y)$ values for claim verification.
-pub trait KySource {
-    /// The $k(y)$ value type.
-    type Ky: Clone;
-
-    /// Iterator over raw_c values (the c from AB proof / preamble unified).
-    fn raw_c(&self) -> impl Iterator<Item = Self::Ky>;
-
-    /// Iterator over application circuit $k(y)$ values.
-    fn application_ky(&self) -> impl Iterator<Item = Self::Ky>;
-
-    /// Iterator over unified bridge $k(y)$ values.
-    fn unified_bridge_ky(&self) -> impl Iterator<Item = Self::Ky>;
-
-    /// Base iterator over unified $k(y)$ values.
-    ///
-    /// Will be repeated [`NUM_UNIFIED_CIRCUITS`] times.
-    /// The `+ Clone` bound is required for `repeat_n` in [`ky_values`].
-    fn unified_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
-
-    /// The zero value for stage claims.
-    fn zero(&self) -> Self::Ky;
-}
-
-/// Build an iterator over $k(y)$ values in claim order.
-///
-/// Chains the $k(y)$ sources in the order required by [`build`],
-/// with `unified_ky` repeated [`NUM_UNIFIED_CIRCUITS`] times,
-/// followed by infinite zeros for stage claims.
-pub fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
-    source
-        .raw_c()
-        .chain(source.application_ky())
-        .chain(source.unified_bridge_ky())
-        .chain(repeat_n(source.unified_ky(), NUM_UNIFIED_CIRCUITS).flatten())
-        .chain(core::iter::repeat(source.zero()))
 }
 
 pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
@@ -287,22 +318,19 @@ pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
 }
 
 impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
-    type Ky = Element<'dr, D>;
+    type Item = Element<'dr, D>;
 
-    fn raw_c(&self) -> impl Iterator<Item = Element<'dr, D>> {
-        once(self.left_raw_c.clone()).chain(once(self.right_raw_c.clone()))
-    }
-
-    fn application_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
-        once(self.left_app.clone()).chain(once(self.right_app.clone()))
-    }
-
-    fn unified_bridge_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
-        once(self.left_bridge.clone()).chain(once(self.right_bridge.clone()))
-    }
-
-    fn unified_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
-        once(self.left_unified.clone()).chain(once(self.right_unified.clone()))
+    fn ky_values(&self) -> impl Iterator<Item = Element<'dr, D>> {
+        let pair =
+            |l: &Element<'dr, D>, r: &Element<'dr, D>| once(l.clone()).chain(once(r.clone()));
+        KyValues {
+            raw: pair(&self.left_raw_c, &self.right_raw_c),
+            application: pair(&self.left_app, &self.right_app),
+            unified_bridge: pair(&self.left_bridge, &self.right_bridge),
+            unified: pair(&self.left_unified, &self.right_unified),
+            zero: self.zero.clone(),
+        }
+        .into_values()
     }
 
     fn zero(&self) -> Element<'dr, D> {
