@@ -3,6 +3,7 @@
 mod identity;
 mod segment_order;
 
+use alloc::format;
 use ff::Field;
 use ragu_core::{
     Error, Result,
@@ -248,8 +249,8 @@ impl Circuit<Fp> for WellBehavedCircuit {
         dr: &mut D,
         instance: DriverValue<D, Self::Instance<'instance>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        let c = Element::alloc(dr, instance.view().map(|v| v.0))?;
-        let d = Element::alloc(dr, instance.view().map(|v| v.1))?;
+        let c = Element::alloc(dr, instance.as_ref().map(|v| v.0))?;
+        let d = Element::alloc(dr, instance.as_ref().map(|v| v.1))?;
         Ok((c, d))
     }
 
@@ -261,8 +262,8 @@ impl Circuit<Fp> for WellBehavedCircuit {
         Bound<'dr, D, Self::Output>,
         DriverValue<D, Self::Aux<'witness>>,
     )> {
-        let a = Element::alloc(dr, witness.view().map(|w| w.0))?;
-        let b = Element::alloc(dr, witness.view().map(|w| w.1))?;
+        let a = Element::alloc(dr, witness.as_ref().map(|w| w.0))?;
+        let b = Element::alloc(dr, witness.as_ref().map(|w| w.1))?;
         let c = a.add(dr, &b);
         let d = a.sub(dr, &b);
         Ok(((c, d), D::just(|| ())))
@@ -288,8 +289,8 @@ impl Circuit<Fp> for ErrorSwallowingCircuit {
         dr: &mut D,
         instance: DriverValue<D, Self::Instance<'instance>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        let c = Element::alloc(dr, instance.view().map(|v| v.0))?;
-        let d = Element::alloc(dr, instance.view().map(|v| v.1))?;
+        let c = Element::alloc(dr, instance.as_ref().map(|v| v.0))?;
+        let d = Element::alloc(dr, instance.as_ref().map(|v| v.1))?;
         Ok((c, d))
     }
 
@@ -301,13 +302,13 @@ impl Circuit<Fp> for ErrorSwallowingCircuit {
         Bound<'dr, D, Self::Output>,
         DriverValue<D, Self::Aux<'witness>>,
     )> {
-        let a = Element::alloc(dr, witness.view().map(|w| w.0))?;
+        let a = Element::alloc(dr, witness.as_ref().map(|w| w.0))?;
         // Swallow the error: available_b was consumed, but the closure's error
         // is silently dropped. In rx, this corrupts gate b/c slots (they stay
         // zero). In sx/sy/sxy/Counter, the closure is never called, so the
         // allocation succeeds and the returned wire is simply dropped.
         let _ = dr.alloc(|| Err(Error::InvalidWitness("swallowed".into())));
-        let b = Element::alloc(dr, witness.view().map(|w| w.1))?;
+        let b = Element::alloc(dr, witness.as_ref().map(|w| w.1))?;
         let c = a.add(dr, &b);
         let d = a.sub(dr, &b);
         Ok(((c, d), D::just(|| ())))
@@ -332,8 +333,8 @@ fn test_propagated_alloc_error_caught() {
             dr: &mut D,
             instance: DriverValue<D, Self::Instance<'instance>>,
         ) -> Result<Bound<'dr, D, Self::Output>> {
-            let c = Element::alloc(dr, instance.view().map(|v| v.0))?;
-            let d = Element::alloc(dr, instance.view().map(|v| v.1))?;
+            let c = Element::alloc(dr, instance.as_ref().map(|v| v.0))?;
+            let d = Element::alloc(dr, instance.as_ref().map(|v| v.1))?;
             Ok((c, d))
         }
 
@@ -345,10 +346,10 @@ fn test_propagated_alloc_error_caught() {
             Bound<'dr, D, Self::Output>,
             DriverValue<D, Self::Aux<'witness>>,
         )> {
-            let a = Element::alloc(dr, witness.view().map(|w| w.0))?;
+            let a = Element::alloc(dr, witness.as_ref().map(|w| w.0))?;
             // Properly propagate the error with `?` — unlike ErrorSwallowingCircuit.
             let _bogus = dr.alloc(|| Err(Error::InvalidWitness("propagated".into())))?;
-            let b = Element::alloc(dr, witness.view().map(|w| w.1))?;
+            let b = Element::alloc(dr, witness.as_ref().map(|w| w.1))?;
             let c = a.add(dr, &b);
             let d = a.sub(dr, &b);
             Ok(((c, d), D::just(|| ())))
@@ -359,7 +360,7 @@ fn test_propagated_alloc_error_caught() {
     let result = ErrorPropagatingCircuit.rx(witness);
     match result {
         Err(Error::InvalidWitness(err)) => {
-            assert_eq!(err.to_string(), "propagated");
+            assert_eq!(format!("{err}"), "propagated");
         }
         Err(other) => panic!("expected InvalidWitness, got {:?}", other),
         Ok(_) => panic!("rx should fail when alloc error is properly propagated with `?`"),
@@ -432,7 +433,7 @@ fn test_error_swallowing_breaks_revdot() {
 
     // sy from the well-behaved circuit (different gate structure)
     let good_circuit = WellBehavedCircuit.into_object::<TestRank>().unwrap();
-    let floor_plan = crate::floor_planner::floor_plan(good_circuit.routine_records());
+    let floor_plan = crate::floor_planner::floor_plan(good_circuit.segment_records());
     let key = registry::Key::default();
 
     let y = Fp::from(2u64);
@@ -444,7 +445,7 @@ fn test_error_swallowing_breaks_revdot() {
     b_poly.add_assign(&good_circuit.sy(y, &key, &floor_plan));
     b_poly.add_assign(&TestRank::tz(z));
 
-    let ky_eval = ragu_arithmetic::eval(&WellBehavedCircuit.ky(instance).unwrap(), y);
+    let ky_eval = WellBehavedCircuit.ky(instance, y).unwrap();
 
     let rx_u = rx_poly.unstructured();
     let b_u = b_poly.unstructured();
@@ -489,11 +490,11 @@ fn test_multiplication_bound_exact() {
 fn test_multiplication_bound_exceeded() {
     let result = SquareCircuit { times: 31 }.into_object::<TestRank>();
     match result {
-        Err(Error::MultiplicationBoundExceeded(bound)) => {
-            assert_eq!(bound, TestRank::n());
+        Err(Error::MultiplicationBoundExceeded { limit }) => {
+            assert_eq!(limit, TestRank::n());
         }
         other => panic!(
-            "expected MultiplicationBoundExceeded({}), got {:?}",
+            "expected MultiplicationBoundExceeded {{ limit: {} }}, got {:?}",
             TestRank::n(),
             other.map(|_| "(ok)")
         ),
@@ -541,11 +542,11 @@ fn test_linear_bound_exceeded() {
 
     let result = ManyLinearCircuit.into_object::<TestRank>();
     match result {
-        Err(Error::LinearBoundExceeded(bound)) => {
-            assert_eq!(bound, TestRank::num_coeffs());
+        Err(Error::LinearBoundExceeded { limit }) => {
+            assert_eq!(limit, TestRank::num_coeffs());
         }
         other => panic!(
-            "expected LinearBoundExceeded({}), got {:?}",
+            "expected LinearBoundExceeded {{ limit: {} }}, got {:?}",
             TestRank::num_coeffs(),
             other.map(|_| "(ok)")
         ),
