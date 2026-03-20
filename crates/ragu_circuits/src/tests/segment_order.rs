@@ -13,7 +13,7 @@ use ragu_core::{
 };
 use ragu_pasta::Fp;
 
-use crate::Circuit;
+use crate::{Circuit, CircuitExt as _, polynomials::TestRank};
 
 /// Maximum number of wire allocations generated at any one point in a scope.
 const MAX_ALLOCS: usize = 6;
@@ -171,6 +171,26 @@ impl Circuit<Fp> for TreeCircuit {
 }
 
 proptest! {
+    /// Cross-evaluator polynomial consistency: verifies that all three
+    /// independent evaluators (sxy, sx, sy) agree on the polynomial value
+    /// for random routine trees.
+    ///
+    /// Each evaluator computes the wiring polynomial via a different
+    /// strategy (full-point Horner, partial-X coefficients, partial-Y
+    /// structured form). Agreement confirms that all three correctly
+    /// handle routine scope jumps, segment offsets, and Horner
+    /// accumulation across arbitrary nesting topologies.
+    #[test]
+    fn polynomial_consistency(tree in arb_tree()) {
+        let circuit = TreeCircuit(tree);
+        // Skip trees that exceed TestRank's multiplication bound.
+        let circuit_obj = match circuit.into_object::<TestRank>() {
+            Ok(obj) => obj,
+            Err(_) => return Ok(()),
+        };
+        super::consistency_checks(&*circuit_obj);
+    }
+
     /// Checks that [`crate::metrics::eval`] and [`crate::rx::eval`] agree on
     /// segment count and per-segment multiplication-gate counts.
     ///
