@@ -69,10 +69,10 @@ pub trait Processor<Rx, AppCircuitId> {
     /// The processor looks up registry via [`InternalCircuitIndex`] from its stored context.
     fn internal_circuit(&mut self, id: InternalCircuitIndex, rxs: impl Iterator<Item = Rx>);
 
-    /// Process a stage claim (fold of rxs, $k(y) = 0$).
+    /// Process a bonding claim (fold of rxs, $k(y) = 0$).
     ///
     /// Returns `Result<()>` because evaluation context requires fallible fold operations.
-    fn stage(&mut self, id: InternalCircuitIndex, rxs: impl Iterator<Item = Rx>) -> Result<()>;
+    fn bonding(&mut self, id: InternalCircuitIndex, rxs: impl Iterator<Item = Rx>) -> Result<()>;
 }
 
 impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx structured::Polynomial<F, R>, CircuitIndex>
@@ -101,14 +101,14 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx structured::Polynomial<F, R
         self.circuit_impl(circuit_id, rx);
     }
 
-    fn stage(
+    fn bonding(
         &mut self,
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = &'rx structured::Polynomial<F, R>>,
     ) -> Result<()> {
         let circuit_id = id.circuit_index();
-        let folded = self.fold_stage_polys(rxs);
-        self.stage_impl(circuit_id, folded);
+        let folded = self.fold_bonding_polys(rxs);
+        self.bonding_impl(circuit_id, folded);
         Ok(())
     }
 }
@@ -199,27 +199,27 @@ where
 
             // Native stages (aggregated across all proofs)
             PreambleStage => {
-                processor.stage(id, source.rx(Rx(Preamble)))?;
+                processor.bonding(id, source.rx(Rx(Preamble)))?;
             }
             InnerErrorStage => {
-                processor.stage(id, source.rx(Rx(InnerError)))?;
+                processor.bonding(id, source.rx(Rx(InnerError)))?;
             }
             OuterErrorStage => {
-                processor.stage(id, source.rx(Rx(OuterError)))?;
+                processor.bonding(id, source.rx(Rx(OuterError)))?;
             }
             QueryStage => {
-                processor.stage(id, source.rx(Rx(Query)))?;
+                processor.bonding(id, source.rx(Rx(Query)))?;
             }
             EvalStage => {
-                processor.stage(id, source.rx(Rx(Eval)))?;
+                processor.bonding(id, source.rx(Rx(Eval)))?;
             }
 
             // Final stage masks
             InnerErrorFinalStaged => {
-                processor.stage(id, source.rx(Rx(InnerCollapse)))?;
+                processor.bonding(id, source.rx(Rx(InnerCollapse)))?;
             }
             OuterErrorFinalStaged => {
-                processor.stage(
+                processor.bonding(
                     id,
                     source
                         .rx(Rx(Hashes1))
@@ -228,7 +228,7 @@ where
                 )?;
             }
             EvalFinalStaged => {
-                processor.stage(id, source.rx(Rx(ComputeV)))?;
+                processor.bonding(id, source.rx(Rx(ComputeV)))?;
             }
         }
     }

@@ -23,10 +23,9 @@ use ragu_core::{Error, Result};
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec::Vec};
 
 use crate::{
-    Circuit, CircuitObject,
+    BondingObject, Circuit, CircuitObject,
     floor_planner::ConstraintSegment,
     polynomials::{Rank, structured, unstructured},
-    staging::{Stage, StageExt},
 };
 
 /// Represents a simple numeric index of a circuit in the registry.
@@ -72,7 +71,7 @@ impl From<CircuitIndex> for usize {
 ///
 /// Circuits are organized into four categories:
 /// - Internal circuits: system circuits for the PCD construction
-/// - Internal masks: stage masks and final masks for internal stages
+/// - Bonding: bonding polynomials for well-formedness enforcement
 /// - Internal steps: internal step circuits (e.g. rerandomize, trivial)
 /// - Application steps: user-defined application step circuits
 ///
@@ -81,7 +80,7 @@ impl From<CircuitIndex> for usize {
 /// proper PCD indexing.
 pub struct RegistryBuilder<'params, F: PrimeField, R: Rank> {
     internal_circuits: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
-    internal_masks: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
+    bonding: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
     internal_steps: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
     application_steps: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
 }
@@ -97,15 +96,15 @@ impl<'params, F: FromUniformBytes<64>, R: Rank> RegistryBuilder<'params, F, R> {
     pub fn new() -> Self {
         Self {
             internal_circuits: Vec::new(),
-            internal_masks: Vec::new(),
+            bonding: Vec::new(),
             internal_steps: Vec::new(),
             application_steps: Vec::new(),
         }
     }
 
-    /// Returns the number of internal circuits (circuits + masks).
+    /// Returns the number of internal circuits (circuits + bonding).
     pub fn num_internal_circuits(&self) -> usize {
-        self.internal_masks.len() + self.internal_circuits.len()
+        self.bonding.len() + self.internal_circuits.len()
     }
 
     /// Returns the total number of circuits across all categories.
@@ -148,29 +147,17 @@ impl<'params, F: FromUniformBytes<64>, R: Rank> RegistryBuilder<'params, F, R> {
         Ok(self)
     }
 
-    /// Registers an internal stage mask.
-    pub fn register_internal_mask<S>(mut self) -> Result<Self>
-    where
-        S: Stage<F, R>,
-    {
-        self.internal_masks.push(S::mask()?.into_inner());
-        Ok(self)
-    }
-
-    /// Registers an internal final stage mask.
-    pub fn register_internal_final_mask<S>(mut self) -> Result<Self>
-    where
-        S: Stage<F, R>,
-    {
-        self.internal_masks.push(S::final_mask()?.into_inner());
-        Ok(self)
+    /// Registers a bonding polynomial.
+    pub fn register_bonding(mut self, bonding: BondingObject<'params, F, R>) -> Self {
+        self.bonding.push(bonding.into_inner());
+        self
     }
 
     /// Builds the [`Registry`].
     ///
     /// Circuits are concatenated in the following order for proper indexing:
     /// 1. Internal circuits: System circuits for the PCD construction
-    /// 2. Internal masks: Stage enforcement masks and final masks
+    /// 2. Bonding: bonding polynomials
     /// 3. Internal steps: Internal step circuits (e.g. rerandomize, trivial)
     /// 4. Application steps: User-defined step circuits
     ///
@@ -193,7 +180,7 @@ impl<'params, F: FromUniformBytes<64>, R: Rank> RegistryBuilder<'params, F, R> {
         let circuits: Vec<_> = self
             .internal_circuits
             .into_iter()
-            .chain(self.internal_masks)
+            .chain(self.bonding)
             .chain(self.internal_steps)
             .chain(self.application_steps)
             .collect();

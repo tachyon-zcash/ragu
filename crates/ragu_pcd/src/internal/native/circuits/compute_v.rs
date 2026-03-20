@@ -454,7 +454,7 @@ impl<'a, 'dr, D: Driver<'dr>> Processor<&'a Element<'dr, D>, &'a Element<'dr, D>
         self.bx.push(sum.add(self.dr, sy).add(self.dr, self.txz));
     }
 
-    fn stage(
+    fn bonding(
         &mut self,
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = &'a Element<'dr, D>>,

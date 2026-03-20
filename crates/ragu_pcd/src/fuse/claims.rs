@@ -245,7 +245,7 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<Atom<'rx, FoldKey, F, R>, Circui
         self.circuit_impl(circuit_id, TrackedPoly::new(poly, decomp));
     }
 
-    fn stage(
+    fn bonding(
         &mut self,
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = Atom<'rx, FoldKey, F, R>>,
@@ -254,7 +254,7 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<Atom<'rx, FoldKey, F, R>, Circui
             .map(|a| TrackedPoly::single(Cow::Borrowed(a.poly), a.key))
             .collect();
         let folded = fold_revdot::fold(&tracked, self.z);
-        self.stage_impl(id.circuit_index(), folded);
+        self.bonding_impl(id.circuit_index(), folded);
         Ok(())
     }
 }

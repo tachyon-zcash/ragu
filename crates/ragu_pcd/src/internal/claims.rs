@@ -103,8 +103,9 @@ where
         self.b.push(Cow::Owned(b));
     }
 
-    /// Push a stage claim. `b` is just `sy` (no rx transformation).
-    pub fn stage_impl(&mut self, circuit_id: CircuitIndex, a: A) {
+    /// Push a bonding claim. There is no dilation and no $t(z)$, so
+    /// $b = s\_{y}$ and $k(y) = 0$.
+    pub fn bonding_impl(&mut self, circuit_id: CircuitIndex, a: A) {
         let sy = self.registry.circuit_y(circuit_id, self.y);
         self.a.push(a);
         self.b.push(Cow::Owned(sy));
@@ -116,7 +117,10 @@ where
     /// The fold gives item `i` coefficient `z^(n-1-i)`. Callers that track
     /// commitment decompositions must assign the same coefficients to the
     /// corresponding source keys.
-    pub fn fold_stage_polys(
+    ///
+    /// Folding is sound because the revdot identity for bonding polynomials is
+    /// linear in the trace.
+    pub fn fold_bonding_polys(
         &self,
         mut rxs: impl Iterator<Item = &'rx structured::Polynomial<F, R>>,
     ) -> Cow<'rx, structured::Polynomial<F, R>> {

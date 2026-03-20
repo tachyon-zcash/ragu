@@ -69,9 +69,8 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
         let reserved: usize = R::n() - self.skip_multiplications - self.num_multiplications - 1;
 
         if x == F::ZERO || y == F::ZERO {
-            // If either x or y is zero, the polynomial evaluates to zero. This
-            // is unlike standard circuits because the constant term is not used
-            // to constrain the `ONE` wire.
+            // If either x or y is zero, the polynomial evaluates to zero
+            // (the constant term of a bonding polynomial is always zero).
             return F::ZERO;
         }
 

@@ -45,9 +45,9 @@
 //!
 //! In order for this to work, each of the individual stages (including the
 //! final stage) of the trace must be constrained to be well-formed, meaning
-//! that their wire assignments cannot overlap. Some of these checks can be
-//! batched efficiently because well-formedness checks of the kind we need are
-//! highly linearized.
+//! that their wire assignments cannot overlap. These well-formedness checks
+//! use [bonding circuits](crate::BondingObject), whose traces can be folded
+//! and checked in a single batched revdot claim.
 //!
 //! ## Usage
 //!
