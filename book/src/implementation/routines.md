@@ -39,7 +39,7 @@ Most of the linear constraints created within a routine consist purely of wires
 created within that routine, meaning that the **internal** contribution of a
 routine can be written as polynomials $g_x, g_{x^{-1}}$ and memoized if the
 routine is invoked multiple times. Given a cache hit, we need only scale $g_x$
-and $g_{x^{-1}}$ by powers of $Y^j X^i$ (or $Y^j X^{-1}$) to obtain the correct
+and $g_{x^{-1}}$ by powers of $Y^j X^i$ (or $Y^j X^{-i}$) to obtain the correct
 internal $s(X, Y)$ for an equivalent invocation.
 
 The **interface** contribution to $s(X, Y)$ involves wires created outside the
@@ -60,17 +60,19 @@ for some **repositioning** values $i, j$.
 
 ```mermaid
 graph LR
+    C[circuit]
     subgraph tp[trace path]
-        W[witness] --> rx --> trace
-        TP["r(X)"]
+        W[witness] --> rx --> trace --> TP["r(X)"]
     end
     subgraph R[registry]
         FP[floor plan]
     end
     subgraph ep[eval path]
-        C[circuit] --> MP[metrics pass] --> metrics
+        MP[metrics pass] --> metrics
         ED[eval drivers] --> SP["s(X,Y)"]
     end
+    C --> rx
+    C --> MP
     trace --> R
     metrics --> R
     FP --> ED
@@ -79,10 +81,10 @@ graph LR
 
 Ragu learns about invocations by executing circuit code in an analysis pass that
 collects metrics about each routine invocation. Because circuit synthesis is
-deterministic, invocations have a canonical order in which they appear during
-synthesis, called their **DFS index**. The metrics can reliably identify each
-invocation by this index for the benefit of future execution of the same circuit
-code.
+deterministic, invocations appear in a canonical **DFS order** during
+synthesis. Each invocation's position in that order is its **DFS index**. The
+metrics can reliably identify each invocation by this index for the benefit of
+future execution of the same circuit code.
 
 All of the metrics for every wiring polynomial added to the registry are fed
 into a **floor planner** that is responsible for making scheduling and
@@ -151,6 +153,5 @@ out-of-line.**
 [`enforce_zero`]: ragu_core::drivers::Driver::enforce_zero
 [`mul`]: ragu_core::drivers::Driver::mul
 [`alloc`]: ragu_core::drivers::Driver::alloc
-[`add`]: ragu_core::drivers::Driver::add
 [`Any`]: core::any::Any
 [conversions]: ../guide/gadgets/conversion.md
