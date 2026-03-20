@@ -11,8 +11,10 @@ use ragu_pasta::Fp;
 use ragu_primitives::{Element, Simulator};
 
 use crate::{
-    Circuit,
-    metrics::{self, RoutineFingerprint, RoutineIdentity},
+    Circuit, CircuitExt as _,
+    metrics::{self, MemoFingerprint, RoutineIdentity},
+    polynomials::TestRank,
+    registry,
 };
 
 /// Canonical single-square routine.
@@ -1224,7 +1226,7 @@ impl Routine<Fp> for OneWireEnforcePair {
 
 fn fingerprint_triple(
     routine: &impl Routine<Fp, Input = Kind![Fp; (Element<'_, _>, (Element<'_, _>, Element<'_, _>))]>,
-) -> RoutineFingerprint {
+) -> MemoFingerprint {
     let sim = &mut Simulator::<Fp>::new();
     let a = Element::alloc(sim, Always::<Fp>::just(|| Fp::ONE)).unwrap();
     let b = Element::alloc(sim, Always::<Fp>::just(|| Fp::ONE)).unwrap();
@@ -1242,7 +1244,7 @@ fn fingerprint_quad(
         Fp,
         Input = Kind![Fp; ((Element<'_, _>, Element<'_, _>), (Element<'_, _>, Element<'_, _>))],
     >,
-) -> RoutineFingerprint {
+) -> MemoFingerprint {
     let sim = &mut Simulator::<Fp>::new();
     let a = Element::alloc(sim, Always::<Fp>::just(|| Fp::ONE)).unwrap();
     let b = Element::alloc(sim, Always::<Fp>::just(|| Fp::ONE)).unwrap();
@@ -1258,7 +1260,7 @@ fn fingerprint_quad(
 
 fn fingerprint_elem(
     routine: &impl Routine<Fp, Input = Kind![Fp; Element<'_, _>]>,
-) -> RoutineFingerprint {
+) -> MemoFingerprint {
     let mut sim = Simulator::<Fp>::new();
     let input = Element::alloc(&mut sim, Always::<Fp>::just(|| Fp::ONE)).unwrap();
     match metrics::tests::fingerprint_routine::<Fp, Simulator<Fp>, _>(routine, &input).unwrap() {
@@ -1267,7 +1269,7 @@ fn fingerprint_elem(
     }
 }
 
-fn fingerprint_unit(routine: &impl Routine<Fp, Input = Kind![Fp; ()]>) -> RoutineFingerprint {
+fn fingerprint_unit(routine: &impl Routine<Fp, Input = Kind![Fp; ()]>) -> MemoFingerprint {
     match metrics::tests::fingerprint_routine::<Fp, Simulator<Fp>, _>(routine, &()).unwrap() {
         RoutineIdentity::Routine(fp) => fp,
         RoutineIdentity::Root => panic!("expected Routine variant"),
@@ -1276,7 +1278,7 @@ fn fingerprint_unit(routine: &impl Routine<Fp, Input = Kind![Fp; ()]>) -> Routin
 
 fn fingerprint_pair(
     routine: &impl Routine<Fp, Input = Kind![Fp; (Element<'_, _>, Element<'_, _>)]>,
-) -> RoutineFingerprint {
+) -> MemoFingerprint {
     let sim = &mut Simulator::<Fp>::new();
     let a = Element::alloc(sim, Always::<Fp>::just(|| Fp::ONE)).unwrap();
     let b = Element::alloc(sim, Always::<Fp>::just(|| Fp::ONE)).unwrap();
@@ -1289,7 +1291,7 @@ fn fingerprint_pair(
 /// Extracts a routine's fingerprint via `metrics::eval`, which runs
 /// through `Counter::routine` (the production path that correctly clears
 /// `available_b` after input remapping).
-fn fingerprint_via_eval<Ro>(routine: &Ro) -> RoutineFingerprint
+fn fingerprint_via_eval<Ro>(routine: &Ro) -> MemoFingerprint
 where
     Ro: Routine<Fp, Input = Kind![Fp; Element<'_, _>], Output = Kind![Fp; Element<'_, _>]>
         + Clone
@@ -1423,7 +1425,10 @@ fn test_nesting() {
     assert_ne!(pure, extra);
 }
 
-/// Zero-constraint routines are distinguished by TypeId pairs alone.
+/// Degenerate routines: EmptyRoutine (() → ()) allocates nothing while
+/// Produce (() → Element) allocates one wire (1 mul gate), so their
+/// routine fingerprints differ by constraint count. Duplicate vs
+/// SquareOnce differ in constraints too.
 #[test]
 fn test_degenerate_cases() {
     assert_ne!(fingerprint_unit(&EmptyRoutine), fingerprint_unit(&Produce));
@@ -1485,12 +1490,15 @@ fn test_mixed_constraints() {
     assert_ne!(mixed, fingerprint_elem(&LinearOnly));
 }
 
-/// Pure delegation wrappers are nesting-depth-invariant; metrics produces correct segment count.
+/// Pure delegation wrappers share the same shallow fingerprint (same constraint
+/// shape) but differ in their deep fingerprint (different recursive subtree).
 #[test]
 fn test_triple_nesting() {
     let triple = fingerprint_elem(&TripleNesting);
-    assert_eq!(triple, fingerprint_elem(&PureNesting));
-    assert_ne!(triple, fingerprint_elem(&SquareOnce));
+    let single = fingerprint_elem(&PureNesting);
+    assert_eq!(triple.routine(), single.routine());
+    assert_ne!(triple.deep(), single.deep());
+    assert_ne!(triple.routine(), fingerprint_elem(&SquareOnce).routine());
 
     let metrics = metrics::eval(&SingleRoutineCircuit(TripleNesting)).unwrap();
     assert_eq!(metrics.segments.len(), 4);
@@ -1693,102 +1701,110 @@ fn test_wire_collision_via_eval_metrics_identical() {
 
 /// `Passthrough` (Input = Element) and `DropFirst` (Input = (Element,
 /// Element)) have zero body constraints and identical Horner scalars —
-/// paired allocation packs 1 and 2 input wires into the same gate
-/// count during the uncounted input remap, leaving the geometric
-/// sequences in the same state.  Without `input_kind` in the
-/// fingerprint, these would collide.
+/// same polynomial contribution (routine fingerprints match), but
+/// different memoization identity (deep hashes differ via TypeIds).
 #[test]
-fn test_typeid_necessary_for_input_discrimination() {
+fn test_type_distinct_input_discrimination() {
     let a = fingerprint_elem(&Passthrough);
     let b = fingerprint_pair(&DropFirst);
 
-    // Confirm the scalar component is identical (both equal to the
-    // untouched Horner seed `h`).
-    assert_eq!(a.eval(), b.eval());
-
-    // The fingerprints must still differ — only TypeId saves us.
+    assert_eq!(a.routine(), b.routine());
+    assert_ne!(a.deep(), b.deep());
     assert_ne!(a, b);
 }
 
 /// `Passthrough` (Output = Element) and `Duplicate` (Output =
 /// (Element, Element)) share the same Input type and have zero body
-/// constraints, so their `(scalar, mul_count, linear_count)` triples
-/// are identical.  Without `output_kind` in the fingerprint, these
-/// would collide.
+/// constraints — same polynomial contribution, different memoization
+/// identity.
 #[test]
-fn test_typeid_necessary_for_output_discrimination() {
+fn test_type_distinct_output_discrimination() {
     let a = fingerprint_elem(&Passthrough);
     let b = fingerprint_elem(&Duplicate);
 
-    assert_eq!(a.eval(), b.eval());
+    assert_eq!(a.routine(), b.routine());
+    assert_ne!(a.deep(), b.deep());
     assert_ne!(a, b);
 }
 
 /// 3 vs 4 input wires produce identical post-remap Counter state.
+/// Same polynomial contribution, different memoization identity.
 #[test]
-fn test_typeid_triple_vs_quad_input_wires() {
+fn test_type_distinct_triple_vs_quad_input_wires() {
     let a = fingerprint_triple(&PassthroughTriple);
     let b = fingerprint_quad(&PassthroughQuad);
 
-    assert_eq!(a.eval(), b.eval());
+    assert_eq!(a.routine(), b.routine());
+    assert_ne!(a.deep(), b.deep());
     assert_ne!(a, b);
 }
 
 /// Trivial enforce_zero (empty LC) with 1 vs 2 input wires.
+/// Same polynomial contribution, different memoization identity.
 #[test]
-fn test_typeid_trivial_enforce_zero() {
+fn test_type_distinct_trivial_enforce_zero() {
     let a = fingerprint_elem(&TrivialEnforce);
     let b = fingerprint_pair(&TrivialEnforcePair);
 
-    assert_eq!(a.eval(), b.eval());
+    assert_eq!(a.routine(), b.routine());
+    assert_ne!(a.deep(), b.deep());
     assert_ne!(a, b);
 }
 
 /// Input-dependent enforce_zero with 1 vs 2 input wires.
+/// Same polynomial contribution, different memoization identity.
 #[test]
-fn test_typeid_enforce_first_input() {
+fn test_type_distinct_enforce_first_input() {
     let a = fingerprint_elem(&EnforceInput);
     let b = fingerprint_pair(&EnforceInputPair);
 
-    assert_eq!(a.eval(), b.eval());
+    assert_eq!(a.routine(), b.routine());
+    assert_ne!(a.deep(), b.deep());
     assert_ne!(a, b);
 }
 
 /// SquareOnce (Output = Element) vs SquareDuplicate (Output = (Element, Element)):
-/// identical body constraints, distinguished by output TypeId.
+/// identical body constraints. Same polynomial contribution, different
+/// memoization identity.
 #[test]
-fn test_typeid_output_with_square() {
+fn test_type_distinct_output_with_square() {
     let a = fingerprint_elem(&SquareOnce);
     let b = fingerprint_elem(&SquareDuplicate);
 
-    assert_eq!(a.eval(), b.eval());
+    assert_eq!(a.routine(), b.routine());
+    assert_ne!(a.deep(), b.deep());
     assert_ne!(a, b);
 }
 
 /// Passthrough (Element → Element) vs PairPassthrough ((Element, Element) →
 /// (Element, Element)): both TypeIds differ simultaneously.
+/// Same polynomial contribution, different memoization identity.
 #[test]
-fn test_typeid_both_differ() {
+fn test_type_distinct_both_differ() {
     let a = fingerprint_elem(&Passthrough);
     let b = fingerprint_pair(&PairPassthrough);
 
-    assert_eq!(a.eval(), b.eval());
+    assert_eq!(a.routine(), b.routine());
+    assert_ne!(a.deep(), b.deep());
     assert_ne!(a, b);
 }
 
 /// Internal-only constraint (alloc + enforce_zero) with 1 vs 2 input wires.
+/// Same polynomial contribution, different memoization identity.
 #[test]
-fn test_typeid_internal_only_constraints() {
+fn test_type_distinct_internal_only_constraints() {
     let a = fingerprint_elem(&InternalEnforce);
     let b = fingerprint_pair(&InternalEnforcePair);
 
-    assert_eq!(a.eval(), b.eval());
+    assert_eq!(a.routine(), b.routine());
+    assert_ne!(a.deep(), b.deep());
     assert_ne!(a, b);
 }
 
 /// Production path cross-check: Passthrough via eval vs DropFirst via pair.
+/// Same polynomial contribution, different memoization identity.
 #[test]
-fn test_typeid_production_path() {
+fn test_type_distinct_production_path() {
     let a = fingerprint_via_eval(&Passthrough);
     let b = fingerprint_pair(&DropFirst);
 
@@ -1796,36 +1812,704 @@ fn test_typeid_production_path() {
         fingerprint_via_eval(&Passthrough),
         fingerprint_elem(&Passthrough),
     );
-    assert_eq!(a.eval(), b.eval());
+    assert_eq!(a.routine(), b.routine());
+    assert_ne!(a.deep(), b.deep());
     assert_ne!(a, b);
 }
 
 /// Nested delegation with 1 vs 2 input wires.
+/// Same polynomial contribution, different memoization identity.
 #[test]
-fn test_typeid_nested_with_pairing() {
+fn test_type_distinct_nested_with_pairing() {
     let a = fingerprint_elem(&PureNesting);
     let b = fingerprint_pair(&PureNestingPair);
 
-    assert_eq!(a.eval(), b.eval());
+    assert_eq!(a.routine(), b.routine());
+    assert_ne!(a.deep(), b.deep());
     assert_ne!(a, b);
 }
 
 /// Three Horner steps (3× enforce_zero) with 1 vs 2 input wires.
+/// Same polynomial contribution, different memoization identity.
 #[test]
-fn test_typeid_multiple_horner_steps() {
+fn test_type_distinct_multiple_horner_steps() {
     let a = fingerprint_elem(&TripleEnforceInput);
     let b = fingerprint_pair(&TripleEnforceInputPair);
 
-    assert_eq!(a.eval(), b.eval());
+    assert_eq!(a.routine(), b.routine());
+    assert_ne!(a.deep(), b.deep());
     assert_ne!(a, b);
 }
 
 /// ONE wire reference in enforce_zero with 1 vs 2 input wires.
+/// Same polynomial contribution, different memoization identity.
 #[test]
-fn test_typeid_one_wire_constraint() {
+fn test_type_distinct_one_wire_constraint() {
     let a = fingerprint_elem(&OneWireEnforce);
     let b = fingerprint_pair(&OneWireEnforcePair);
 
-    assert_eq!(a.eval(), b.eval());
+    assert_eq!(a.routine(), b.routine());
+    assert_ne!(a.deep(), b.deep());
     assert_ne!(a, b);
+}
+
+/// Circuit wrapper for `(Element, Element) → Element` routines.
+///
+/// Allocates two input wires via paired allocation (consuming one
+/// multiplication gate, matching [`SingleRoutineCircuit`]'s root
+/// structure), then calls the routine.
+struct PairRoutineCircuit<Ro: Clone>(Ro);
+
+impl<Ro> Circuit<Fp> for PairRoutineCircuit<Ro>
+where
+    Ro: Routine<
+            Fp,
+            Input = Kind![Fp; (Element<'_, _>, Element<'_, _>)],
+            Output = Kind![Fp; Element<'_, _>],
+        > + Clone
+        + Send
+        + Sync,
+    for<'dr> Ro::Aux<'dr>: Send + Clone,
+{
+    type Instance<'source> = Fp;
+    type Output = Kind![Fp; Element<'_, _>];
+    type Witness<'source> = Fp;
+    type Aux<'source> = ();
+
+    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        instance: DriverValue<D, Self::Instance<'source>>,
+    ) -> Result<Bound<'dr, D, Self::Output>>
+    where
+        Self: 'dr,
+    {
+        Element::alloc(dr, instance)
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<(
+        Bound<'dr, D, Self::Output>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let a = Element::alloc(dr, witness.clone())?;
+        let b = Element::alloc(dr, witness)?;
+        let output = dr.routine(self.0.clone(), (a, b))?;
+        Ok((output, D::just(|| ())))
+    }
+}
+
+/// Verifies that routines with matching [`RoutineFingerprint`] (same
+/// polynomial contribution) produce identical circuit polynomials, even
+/// when their TypeIds differ.
+///
+/// This is the test that catches over-capture: if TypeIds affected the
+/// polynomial, these assertions would fail. Each pair wraps a
+/// single-input routine in [`SingleRoutineCircuit`] and a pair-input
+/// routine in [`PairRoutineCircuit`]. Both wrappers allocate via paired
+/// allocation (one mul gate), so the root segments are structurally
+/// identical. The routines have matching `(eval, num_mul, num_lc)` but
+/// different `Input` TypeIds.
+///
+/// [`RoutineFingerprint`]: crate::RoutineFingerprint
+#[test]
+fn test_typeid_does_not_affect_polynomial() {
+    let x = Fp::random(&mut rand::rng());
+    let y = Fp::random(&mut rand::rng());
+    let k = registry::Key::new(Fp::random(&mut rand::rng()));
+
+    /// Compares s(x,y) for a single-input circuit vs a pair-input circuit
+    /// whose routines share the same `RoutineFingerprint`.
+    fn assert_same_polynomial<RoElem, RoPair>(
+        elem_routine: RoElem,
+        pair_routine: RoPair,
+        x: Fp,
+        y: Fp,
+        k: &registry::Key<Fp>,
+        label: &str,
+    ) where
+        RoElem: Routine<Fp, Input = Kind![Fp; Element<'_, _>], Output = Kind![Fp; Element<'_, _>]>
+            + Clone
+            + Send
+            + Sync,
+        for<'dr> RoElem::Aux<'dr>: Send + Clone,
+        RoPair: Routine<
+                Fp,
+                Input = Kind![Fp; (Element<'_, _>, Element<'_, _>)],
+                Output = Kind![Fp; Element<'_, _>],
+            > + Clone
+            + Send
+            + Sync,
+        for<'dr> RoPair::Aux<'dr>: Send + Clone,
+    {
+        // Confirm the routine fingerprints (polynomial identity) match.
+        let fp_elem = fingerprint_elem(&elem_routine);
+        let fp_pair = fingerprint_pair(&pair_routine);
+        assert_eq!(
+            fp_elem.routine(),
+            fp_pair.routine(),
+            "{label}: RoutineFingerprint mismatch — test premise violated"
+        );
+
+        let obj_elem = SingleRoutineCircuit(elem_routine)
+            .into_object::<TestRank>()
+            .unwrap();
+        let obj_pair = PairRoutineCircuit(pair_routine)
+            .into_object::<TestRank>()
+            .unwrap();
+
+        let fp_elem = crate::floor_planner::floor_plan(obj_elem.segment_records());
+        let fp_pair = crate::floor_planner::floor_plan(obj_pair.segment_records());
+
+        let sxy_elem = obj_elem.sxy(x, y, k, &fp_elem);
+        let sxy_pair = obj_pair.sxy(x, y, k, &fp_pair);
+
+        assert_eq!(
+            sxy_elem, sxy_pair,
+            "{label}: same RoutineFingerprint but different s(x,y) — \
+             TypeIds affect the polynomial (this would be a soundness issue)"
+        );
+    }
+
+    assert_same_polynomial(Passthrough, DropFirst, x, y, &k, "Passthrough vs DropFirst");
+    assert_same_polynomial(
+        TrivialEnforce,
+        TrivialEnforcePair,
+        x,
+        y,
+        &k,
+        "TrivialEnforce vs TrivialEnforcePair",
+    );
+    assert_same_polynomial(
+        EnforceInput,
+        EnforceInputPair,
+        x,
+        y,
+        &k,
+        "EnforceInput vs EnforceInputPair",
+    );
+    assert_same_polynomial(
+        InternalEnforce,
+        InternalEnforcePair,
+        x,
+        y,
+        &k,
+        "InternalEnforce vs InternalEnforcePair",
+    );
+    assert_same_polynomial(
+        OneWireEnforce,
+        OneWireEnforcePair,
+        x,
+        y,
+        &k,
+        "OneWireEnforce vs OneWireEnforcePair",
+    );
+    assert_same_polynomial(
+        TripleEnforceInput,
+        TripleEnforceInputPair,
+        x,
+        y,
+        &k,
+        "TripleEnforceInput vs TripleEnforceInputPair",
+    );
+}
+
+mod proptest_fingerprint {
+    use super::*;
+    use crate::metrics::tests::deep_hash_wrapper;
+    use alloc::vec;
+    use alloc::vec::Vec;
+    use core::any::TypeId;
+    use proptest::prelude::*;
+
+    fn dhw(
+        input_kind: TypeId,
+        output_kind: TypeId,
+        eval: u64,
+        num_mul: usize,
+        num_lc: usize,
+        output_eval: u64,
+        children: &[u64],
+    ) -> u64 {
+        deep_hash_wrapper(
+            input_kind,
+            output_kind,
+            eval,
+            num_mul,
+            num_lc,
+            output_eval,
+            children,
+        )
+    }
+
+    fn tid_a() -> TypeId {
+        TypeId::of::<u8>()
+    }
+    fn tid_b() -> TypeId {
+        TypeId::of::<u16>()
+    }
+
+    fn fingerprint_square_n(n: usize) -> MemoFingerprint {
+        match n {
+            1 => fingerprint_elem(&SquareN::<1>),
+            2 => fingerprint_elem(&SquareN::<2>),
+            3 => fingerprint_elem(&SquareN::<3>),
+            4 => fingerprint_elem(&SquareN::<4>),
+            5 => fingerprint_elem(&SquareN::<5>),
+            6 => fingerprint_elem(&SquareN::<6>),
+            7 => fingerprint_elem(&SquareN::<7>),
+            8 => fingerprint_elem(&SquareN::<8>),
+            _ => unreachable!(),
+        }
+    }
+
+    proptest! {
+        // 1. deep_hash determinism
+        #[test]
+        fn deep_hash_determinism(
+            eval in any::<u64>(), num_mul in 0usize..100, num_lc in 0usize..100,
+            output_eval in any::<u64>(), children in prop::collection::vec(any::<u64>(), 0..8),
+        ) {
+            let a = dhw(tid_a(), tid_b(), eval, num_mul, num_lc, output_eval, &children);
+            let b = dhw(tid_a(), tid_b(), eval, num_mul, num_lc, output_eval, &children);
+            prop_assert_eq!(a, b);
+        }
+
+        // 2. deep_hash single-field sensitivity (6 fields)
+        #[test]
+        fn deep_hash_field_sensitivity(
+            eval in any::<u64>(), num_mul in 0usize..100, num_lc in 0usize..100,
+            output_eval in any::<u64>(), children in prop::collection::vec(any::<u64>(), 0..4),
+            alt_eval in any::<u64>(), alt_mul in 0usize..100, alt_lc in 0usize..100,
+            alt_oe in any::<u64>(),
+        ) {
+            let base = dhw(tid_a(), tid_b(), eval, num_mul, num_lc, output_eval, &children);
+            // input_kind
+            let v = dhw(tid_b(), tid_b(), eval, num_mul, num_lc, output_eval, &children);
+            prop_assert_ne!(base, v, "input_kind");
+            // output_kind
+            let v = dhw(tid_a(), tid_a(), eval, num_mul, num_lc, output_eval, &children);
+            prop_assert_ne!(base, v, "output_kind");
+            // eval
+            prop_assume!(eval != alt_eval);
+            let v = dhw(tid_a(), tid_b(), alt_eval, num_mul, num_lc, output_eval, &children);
+            prop_assert_ne!(base, v, "eval");
+            // num_mul
+            prop_assume!(num_mul != alt_mul);
+            let v = dhw(tid_a(), tid_b(), eval, alt_mul, num_lc, output_eval, &children);
+            prop_assert_ne!(base, v, "num_mul");
+            // num_lc
+            prop_assume!(num_lc != alt_lc);
+            let v = dhw(tid_a(), tid_b(), eval, num_mul, alt_lc, output_eval, &children);
+            prop_assert_ne!(base, v, "num_lc");
+            // output_eval
+            prop_assume!(output_eval != alt_oe);
+            let v = dhw(tid_a(), tid_b(), eval, num_mul, num_lc, alt_oe, &children);
+            prop_assert_ne!(base, v, "output_eval");
+        }
+
+        // 3. deep_hash child count discrimination
+        #[test]
+        fn deep_hash_child_count(
+            eval in any::<u64>(), output_eval in any::<u64>(),
+            base_children in prop::collection::vec(any::<u64>(), 1..8),
+        ) {
+            let full = dhw(tid_a(), tid_b(), eval, 0, 0, output_eval, &base_children);
+            let shorter = dhw(tid_a(), tid_b(), eval, 0, 0, output_eval, &base_children[..base_children.len() - 1]);
+            prop_assert_ne!(full, shorter, "different child counts must differ");
+        }
+
+        // 4. deep_hash child ordering (swap two)
+        #[test]
+        fn deep_hash_child_swap(
+            eval in any::<u64>(), output_eval in any::<u64>(),
+            children in prop::collection::vec(any::<u64>(), 2..8),
+            i in any::<prop::sample::Index>(), j in any::<prop::sample::Index>(),
+        ) {
+            let i = i.index(children.len());
+            let j = j.index(children.len());
+            prop_assume!(i != j && children[i] != children[j]);
+            let mut swapped = children.clone();
+            swapped.swap(i, j);
+            let a = dhw(tid_a(), tid_b(), eval, 0, 0, output_eval, &children);
+            let b = dhw(tid_a(), tid_b(), eval, 0, 0, output_eval, &swapped);
+            prop_assert_ne!(a, b, "swapping children must change hash");
+        }
+
+        // 5. deep_hash permutation sensitivity (shuffle)
+        #[test]
+        fn deep_hash_permutation(
+            eval in any::<u64>(), output_eval in any::<u64>(),
+            mut children in prop::collection::vec(any::<u64>(), 3..8),
+            seed in any::<u64>(),
+        ) {
+            let original = children.clone();
+            // Simple deterministic shuffle via seed
+            let n = children.len();
+            for k in 0..n {
+                let swap_idx = (seed.wrapping_mul(k as u64 + 1).wrapping_add(7)) as usize % n;
+                children.swap(k, swap_idx);
+            }
+            prop_assume!(children != original);
+            let a = dhw(tid_a(), tid_b(), eval, 0, 0, output_eval, &original);
+            let b = dhw(tid_a(), tid_b(), eval, 0, 0, output_eval, &children);
+            prop_assert_ne!(a, b, "permutation must change hash");
+        }
+
+        // 6. deep_hash framing: [0, x] vs [x]
+        #[test]
+        fn deep_hash_framing(
+            eval in any::<u64>(), output_eval in any::<u64>(),
+            x in any::<u64>(),
+        ) {
+            let a = dhw(tid_a(), tid_b(), eval, 0, 0, output_eval, &[0, x]);
+            let b = dhw(tid_a(), tid_b(), eval, 0, 0, output_eval, &[x]);
+            prop_assert_ne!(a, b, "length prefix prevents [0,x] vs [x] confusion");
+        }
+
+        // 7. SquareN sensitivity: N != M => different MemoFingerprint
+        #[test]
+        fn square_n_sensitivity(n in 1usize..=8, m in 1usize..=8) {
+            prop_assume!(n != m);
+            prop_assert_ne!(
+                fingerprint_square_n(n), fingerprint_square_n(m),
+                "SquareN<{}> vs SquareN<{}>", n, m
+            );
+        }
+
+        // 8. SquareN determinism
+        #[test]
+        fn square_n_determinism(n in 1usize..=8) {
+            prop_assert_eq!(fingerprint_square_n(n), fingerprint_square_n(n));
+        }
+    }
+
+    // 9. Shallow equality for pure delegation (no local constraints)
+    #[test]
+    fn shallow_eq_pure_delegation() {
+        let pure = fingerprint_elem(&PureNesting);
+        let triple = fingerprint_elem(&TripleNesting);
+        assert_eq!(pure.routine(), triple.routine());
+    }
+
+    // 10. Deep inequality for different nesting depths
+    #[test]
+    fn deep_ne_nesting_depths() {
+        let pure = fingerprint_elem(&PureNesting);
+        let triple = fingerprint_elem(&TripleNesting);
+        assert_ne!(pure.deep(), triple.deep());
+    }
+
+    // 11. TypeId discrimination in deep_hash
+    #[test]
+    fn typeid_discrimination_in_deep_hash() {
+        let a = dhw(tid_a(), tid_a(), 42, 1, 1, 99, &[]);
+        let b = dhw(tid_b(), tid_a(), 42, 1, 1, 99, &[]);
+        let c = dhw(tid_a(), tid_b(), 42, 1, 1, 99, &[]);
+        assert_ne!(
+            a, b,
+            "different input TypeId must produce different deep hash"
+        );
+        assert_ne!(
+            a, c,
+            "different output TypeId must produce different deep hash"
+        );
+        assert_ne!(b, c, "swapping TypeId positions must differ");
+    }
+
+    // 12. Zero children vs one child with deep hash 0
+    #[test]
+    fn deep_hash_zero_children_vs_one_zero_child() {
+        let a = dhw(tid_a(), tid_b(), 42, 1, 1, 99, &[]);
+        let b = dhw(tid_a(), tid_b(), 42, 1, 1, 99, &[0]);
+        assert_ne!(a, b, "zero children must differ from one child with hash 0");
+    }
+
+    // --- Interpreted routine for property-based topology testing ---
+    //
+    // An `Element → Element` routine parameterized by a `Vec<Op>`.
+    // Proptest generates random op sequences, exercising arbitrary
+    // constraint topologies that subsume many hand-written routines:
+    //
+    //   `[]`                                  ≡ Passthrough
+    //   `[Square]`                            ≡ SquareOnce / SquareOnceAlias / SquareN<1>
+    //   `[Square, Square]`                    ≡ SquareN<2>
+    //   `[EnforceAcc, EnforceAcc]`            ≡ LinearOnly
+    //   `[NestSquare]`                        ≡ PureNesting
+    //   `[NestDeep]`                          ≡ TripleNesting
+    //   `[NestSquare, Square]`                ≡ NestThenSquare
+    //   `[NestSquare, AddSelf]`               ≡ NestThenAdd
+    //   `[NestSquare, EnforceAcc]`            ≡ NestingWithExtra / DelegateThenEnforce
+    //   `[TrivialEnforce]`                    ≡ TrivialEnforce
+    //   `[EnforceAcc]`                        ≡ EnforceInput
+    //   `[OneWireEnforce]`                    ≡ OneWireEnforce
+    //   `[TrivialEnforce, TrivialEnforce, Square]` ≡ SquareOnceWithLeadingTrivial
+    //   `[EnforceAcc, EnforceAcc, EnforceAcc]`     ≡ TripleEnforceInput
+    //   `[AllocEnforce]`                      ≡ InternalEnforce
+    //   `[AllocReplace, AllocReplace]`         ≡ AllocOnly
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum Op {
+        /// `acc = acc.square(dr)` — 1 mul gate, 2 linear constraints.
+        Square,
+        /// `acc.enforce_zero(dr)` — 1 linear constraint referencing acc.
+        EnforceAcc,
+        /// `dr.enforce_zero(|lc| lc)` — 1 empty linear constraint.
+        TrivialEnforce,
+        /// `dr.enforce_zero(|lc| lc.add(&D::ONE))` — 1 LC referencing ONE.
+        OneWireEnforce,
+        /// `acc = Element::alloc(dr, ...)` — fresh wire, replaces acc.
+        AllocReplace,
+        /// Alloc a fresh wire and enforce it zero; acc unchanged.
+        AllocEnforce,
+        /// `acc = acc.add(dr, &acc)` — doubles acc, no constraint.
+        AddSelf,
+        /// `acc = dr.routine(SquareOnce, acc)` — one level of nesting.
+        NestSquare,
+        /// `acc = dr.routine(PureNesting, acc)` — two levels of nesting.
+        NestDeep,
+    }
+
+    #[derive(Clone)]
+    struct InterpretedRoutine(Vec<Op>);
+
+    impl Routine<Fp> for InterpretedRoutine {
+        type Input = Kind![Fp; Element<'_, _>];
+        type Output = Kind![Fp; Element<'_, _>];
+        type Aux<'dr> = ();
+
+        fn execute<'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            input: Bound<'dr, D, Self::Input>,
+            _aux: DriverValue<D, Self::Aux<'dr>>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            let mut acc = input;
+            for op in &self.0 {
+                match op {
+                    Op::Square => acc = acc.square(dr)?,
+                    Op::EnforceAcc => acc.enforce_zero(dr)?,
+                    Op::TrivialEnforce => dr.enforce_zero(|lc| lc)?,
+                    Op::OneWireEnforce => dr.enforce_zero(|lc| lc.add(&D::ONE))?,
+                    Op::AllocReplace => {
+                        acc = Element::alloc(dr, D::just(|| Fp::ZERO))?;
+                    }
+                    Op::AllocEnforce => {
+                        let fresh = Element::alloc(dr, D::just(|| Fp::ZERO))?;
+                        fresh.enforce_zero(dr)?;
+                    }
+                    Op::AddSelf => acc = acc.add(dr, &acc),
+                    Op::NestSquare => acc = dr.routine(SquareOnce, acc)?,
+                    Op::NestDeep => acc = dr.routine(PureNesting, acc)?,
+                }
+            }
+            Ok(acc)
+        }
+
+        fn predict<'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            _dr: &mut D,
+            _input: &Bound<'dr, D, Self::Input>,
+        ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>>
+        {
+            Ok(Prediction::Unknown(D::just(|| ())))
+        }
+    }
+
+    fn arb_op() -> impl Strategy<Value = Op> {
+        prop_oneof![
+            Just(Op::Square),
+            Just(Op::EnforceAcc),
+            Just(Op::TrivialEnforce),
+            Just(Op::OneWireEnforce),
+            Just(Op::AllocReplace),
+            Just(Op::AllocEnforce),
+            Just(Op::AddSelf),
+            Just(Op::NestSquare),
+            Just(Op::NestDeep),
+        ]
+    }
+
+    fn arb_ops() -> impl Strategy<Value = Vec<Op>> {
+        prop::collection::vec(arb_op(), 0..8)
+    }
+
+    proptest! {
+        /// Same ops always produce the same fingerprint.
+        #[test]
+        fn interpreted_determinism(ops in arb_ops()) {
+            let r = InterpretedRoutine(ops);
+            prop_assert_eq!(fingerprint_elem(&r), fingerprint_elem(&r));
+        }
+
+        /// `fingerprint_routine` (standalone) and `fingerprint_via_eval`
+        /// (production path through `Counter::routine`) agree.
+        #[test]
+        fn interpreted_cross_path(ops in arb_ops()) {
+            let r = InterpretedRoutine(ops);
+            prop_assert_eq!(
+                fingerprint_elem(&r),
+                fingerprint_via_eval(&r),
+                "cross-path mismatch"
+            );
+        }
+
+        /// Appending any op to a sequence changes the fingerprint.
+        #[test]
+        fn interpreted_append_sensitivity(
+            ops in arb_ops(),
+            extra in arb_op(),
+        ) {
+            let mut extended = ops.clone();
+            extended.push(extra);
+            let a = fingerprint_elem(&InterpretedRoutine(ops));
+            let b = fingerprint_elem(&InterpretedRoutine(extended));
+            prop_assert_ne!(a, b, "appending an op should change fingerprint");
+        }
+
+        /// Swapping two enforce_zero ops that produce different LC values
+        /// (EnforceAcc references a wire; TrivialEnforce contributes zero)
+        /// changes the eval scalar even though constraint counts are
+        /// identical.  Tests Horner order sensitivity (Schwartz–Zippel).
+        #[test]
+        fn interpreted_enforce_order_sensitivity(prefix in arb_ops()) {
+            let mut ab = prefix.clone();
+            ab.push(Op::EnforceAcc);
+            ab.push(Op::TrivialEnforce);
+
+            let mut ba = prefix;
+            ba.push(Op::TrivialEnforce);
+            ba.push(Op::EnforceAcc);
+
+            let fp_ab = fingerprint_elem(&InterpretedRoutine(ab));
+            let fp_ba = fingerprint_elem(&InterpretedRoutine(ba));
+
+            // Same ops reordered ⇒ identical constraint counts, but the
+            // Horner accumulation is order-sensitive: different LC values
+            // land at different powers of y, producing distinct evals.
+            prop_assert_ne!(fp_ab.eval(), fp_ba.eval(),
+                "swapped enforce ops should produce different eval scalars");
+        }
+
+        /// Appending NestSquare vs NestDeep to any prefix yields the same
+        /// shallow fingerprint (both add zero local constraints) but
+        /// different deep fingerprints (different child subtree hashes).
+        #[test]
+        fn interpreted_nesting_depth_discrimination(prefix in arb_ops()) {
+            let mut with_shallow = prefix.clone();
+            with_shallow.push(Op::NestSquare);
+
+            let mut with_deep = prefix;
+            with_deep.push(Op::NestDeep);
+
+            let fp_s = fingerprint_elem(&InterpretedRoutine(with_shallow));
+            let fp_d = fingerprint_elem(&InterpretedRoutine(with_deep));
+
+            prop_assert_eq!(fp_s.routine(), fp_d.routine(),
+                "NestSquare and NestDeep should have identical shallow fingerprints");
+            prop_assert_ne!(fp_s.deep(), fp_d.deep(),
+                "NestSquare and NestDeep should have different deep hashes");
+        }
+    }
+
+    /// NestSquare and NestDeep are both pure delegation wrappers: same
+    /// shallow fingerprint (zero local constraints) but different deep
+    /// fingerprints (different recursive subtree).
+    #[test]
+    fn interpreted_shallow_vs_deep() {
+        let one_level = fingerprint_elem(&InterpretedRoutine(vec![Op::NestSquare]));
+        let two_level = fingerprint_elem(&InterpretedRoutine(vec![Op::NestDeep]));
+        assert_eq!(one_level.routine(), two_level.routine());
+        assert_ne!(one_level.deep(), two_level.deep());
+    }
+
+    /// `[]` and `[AddSelf]` share the same eval, num_mul, and num_lc
+    /// (AddSelf adds no constraints) but differ in `output_eval`
+    /// (the output wire is doubled). Proves `output_eval` is
+    /// load-bearing in the fingerprint.
+    #[test]
+    fn output_eval_is_load_bearing() {
+        let passthrough = fingerprint_elem(&InterpretedRoutine(vec![]));
+        let doubled = fingerprint_elem(&InterpretedRoutine(vec![Op::AddSelf]));
+        assert_eq!(passthrough.routine(), doubled.routine());
+        assert_ne!(passthrough.output_eval(), doubled.output_eval());
+        assert_ne!(passthrough, doubled);
+    }
+
+    /// Interpreted op sequences reproduce the fingerprints of their
+    /// hand-written equivalents, confirming both encodings describe
+    /// the same constraint topology.
+    #[test]
+    fn interpreted_matches_handwritten() {
+        let cases: Vec<(Vec<Op>, MemoFingerprint)> = vec![
+            (vec![], fingerprint_elem(&Passthrough)),
+            (vec![Op::Square], fingerprint_elem(&SquareOnce)),
+            (vec![Op::Square], fingerprint_elem(&SquareOnceAlias)),
+            (vec![Op::Square], fingerprint_elem(&SquareN::<1>)),
+            (
+                vec![Op::Square, Op::Square],
+                fingerprint_elem(&SquareN::<2>),
+            ),
+            (
+                vec![Op::Square, Op::Square, Op::Square],
+                fingerprint_elem(&SquareN::<3>),
+            ),
+            (
+                vec![Op::EnforceAcc, Op::EnforceAcc],
+                fingerprint_elem(&LinearOnly),
+            ),
+            (vec![Op::NestSquare], fingerprint_elem(&PureNesting)),
+            (vec![Op::NestDeep], fingerprint_elem(&TripleNesting)),
+            (
+                vec![Op::NestSquare, Op::Square],
+                fingerprint_elem(&NestThenSquare),
+            ),
+            (
+                vec![Op::NestSquare, Op::AddSelf],
+                fingerprint_elem(&NestThenAdd),
+            ),
+            (
+                vec![Op::NestSquare, Op::EnforceAcc],
+                fingerprint_elem(&NestingWithExtra),
+            ),
+            (
+                vec![Op::NestSquare, Op::EnforceAcc],
+                fingerprint_elem(&DelegateThenEnforce),
+            ),
+            (vec![Op::TrivialEnforce], fingerprint_elem(&TrivialEnforce)),
+            (vec![Op::EnforceAcc], fingerprint_elem(&EnforceInput)),
+            (vec![Op::OneWireEnforce], fingerprint_elem(&OneWireEnforce)),
+            (
+                vec![Op::TrivialEnforce, Op::TrivialEnforce, Op::Square],
+                fingerprint_elem(&SquareOnceWithLeadingTrivial),
+            ),
+            (
+                vec![Op::EnforceAcc, Op::EnforceAcc, Op::EnforceAcc],
+                fingerprint_elem(&TripleEnforceInput),
+            ),
+            (vec![Op::AllocEnforce], fingerprint_elem(&InternalEnforce)),
+            (
+                vec![Op::AllocReplace, Op::AllocReplace],
+                fingerprint_elem(&AllocOnly),
+            ),
+            (
+                vec![Op::AllocReplace, Op::AllocReplace, Op::EnforceAcc],
+                fingerprint_elem(&AllocThenEnforce),
+            ),
+        ];
+        for (ops, expected) in cases {
+            assert_eq!(
+                fingerprint_elem(&InterpretedRoutine(ops.clone())),
+                expected,
+                "mismatch for ops {:?}",
+                ops,
+            );
+        }
+    }
 }

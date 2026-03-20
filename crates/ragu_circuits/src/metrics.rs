@@ -10,11 +10,23 @@
 //!
 //! # Fingerprinting
 //!
-//! A routine's fingerprint is the tuple `(TypeId(Input), TypeId(Output),
-//! eval, num_mul, num_lc)`. The [`TypeId`] pairs cheaply narrow equivalence
-//! candidates by type; the constraint counts further partition by shape; the
-//! scalar confirms structural equivalence via random evaluation
-//! (Schwartz–Zippel).
+//! Routine fingerprints come in two levels, separating polynomial equivalence
+//! from memoization safety:
+//!
+//! - **Routine** ([`RoutineFingerprint`]): the tuple `(eval, num_mul, num_lc)`.
+//!   Captures only the routine's local $s(X,Y)$ contribution — constraint
+//!   counts and the Schwartz–Zippel evaluation scalar. No [`TypeId`] pairs:
+//!   type identity does not affect what a segment contributes to the polynomial.
+//!   Floor planning uses routine fingerprints to group segments with the same
+//!   polynomial shape.
+//!
+//! - **Memo** ([`MemoFingerprint`]): extends the routine fingerprint with
+//!   `output_eval` (which wires flow to which output slots) and a recursive
+//!   `deep` hash that folds in [`TypeId`] pairs, all routine fingerprint
+//!   fields, `output_eval`, child count, and each child's deep hash.
+//!   Two routines with the same memo fingerprint are fully equivalent —
+//!   same constraint structure, same output wire mapping, same recursive
+//!   subtree structure. Memoization uses memo fingerprints as cache keys.
 //!
 //! The fingerprint is wrapped in [`RoutineIdentity`], an enum that
 //! distinguishes the root circuit body ([`Root`](RoutineIdentity::Root)) from
@@ -23,13 +35,13 @@
 //! traits, forcing callers to explicitly handle the root variant rather than
 //! accidentally including it in equivalence maps.
 //!
-//! The scalar is the routine's $s(X,Y)$ contribution (see
+//! The `eval` scalar is the routine's $s(X,Y)$ contribution (see
 //! [`sxy::eval`](super::s::sxy::eval)) evaluated at deterministic
 //! pseudorandom points derived from a domain-separated BLAKE2b hash: three
 //! independent geometric sequences are assigned to the $a$, $b$, $c$ wires and
 //! constraint values are accumulated via Horner's rule. If two routines produce
-//! the same fingerprint, they are structurally equivalent with overwhelming
-//! probability.
+//! the same routine fingerprint, they contribute the same thing to the SXY
+//! polynomial with overwhelming probability.
 //!
 //! [`TypeId`]: core::any::TypeId
 
@@ -47,6 +59,7 @@ use ragu_primitives::GadgetExt;
 
 use alloc::vec::Vec;
 use core::any::TypeId;
+use core::hash::{Hash, Hasher};
 
 use super::Circuit;
 use super::s::common::{WireEval, WireEvalSum};
@@ -65,22 +78,24 @@ use super::s::common::{WireEval, WireEvalSum};
 pub enum RoutineIdentity {
     /// The root circuit body (record 0). Cannot be floated or memoized.
     Root,
-    /// An actual routine invocation with a Schwartz–Zippel fingerprint.
-    Routine(RoutineFingerprint),
+    /// An actual routine invocation with a deep fingerprint.
+    Routine(MemoFingerprint),
 }
 
-/// A Schwartz–Zippel fingerprint for a routine invocation's constraint
-/// structure.
+/// Polynomial-equivalence fingerprint for a single routine invocation.
 ///
-/// Two routines share a fingerprint when they have matching [`TypeId`] pairs,
-/// matching evaluation scalars, and matching constraint counts. The scalar is
-/// the low 64 bits of the field element produced by running the routine's
-/// synthesis on the `Counter` driver.
+/// Captures only the routine's local $s(X,Y)$ contribution: constraint counts
+/// and the Schwartz–Zippel evaluation scalar. Two routines with the same
+/// routine fingerprint contribute the same thing to the SXY polynomial (with
+/// overwhelming probability) but may differ in output wire mapping, nested
+/// subtree structure, or Rust type identity.
+///
+/// [`TypeId`] pairs are deliberately excluded — they do not affect what a
+/// segment contributes to the polynomial. Floor planning uses routine
+/// fingerprints to group segments with the same polynomial shape.
 ///
 /// The 64-bit truncation gives ~2^{-64} collision probability per pair,
-/// adequate for floor-planner equivalence classes. If fingerprints are
-/// ever used for security-critical decisions, store the full field
-/// representation (`[u8; 32]`) instead — the cost is negligible.
+/// adequate for floor-planner equivalence classes.
 ///
 /// The constraint counts duplicate the values in the enclosing
 /// [`SegmentRecord`]. This is intentional: it makes the fingerprint a
@@ -90,34 +105,149 @@ pub enum RoutineIdentity {
 /// [`TypeId`]: core::any::TypeId
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RoutineFingerprint {
-    input_kind: TypeId,
-    output_kind: TypeId,
     eval: u64,
     local_num_multiplication_constraints: usize,
     local_num_linear_constraints: usize,
 }
 
-impl RoutineFingerprint {
-    /// Constructs a [`RoutineFingerprint`] from a routine's `Input`/`Output`
-    /// type ids, a field element evaluation, and local constraint counts.
+/// Full recursive fingerprint for memoization.
+///
+/// Extends [`RoutineFingerprint`] with `output_eval` (which wires flow to
+/// which output slots) and a recursive `deep` hash that folds in [`TypeId`]
+/// pairs, all routine fingerprint fields, `output_eval`, child count, and
+/// each child's deep hash. Two routines with the same memo fingerprint are
+/// fully equivalent: same constraint structure, same output wire mapping,
+/// same recursive subtree structure, and same Rust type identity.
+///
+/// The separation from [`RoutineFingerprint`] prevents accidental conflation
+/// of polynomial equivalence (floor planning) with memoization safety (cache
+/// keys). The floor planner groups by [`RoutineFingerprint`]; the memo cache
+/// keys by [`MemoFingerprint`].
+///
+/// The 64-bit `deep` hash gives ~2^{-64} collision probability per pair,
+/// adequate for memoization equivalence classes. If fingerprints are ever
+/// used for security-critical decisions, store the full field
+/// representation (`[u8; 32]`) instead — the cost is negligible.
+///
+/// [`TypeId`]: core::any::TypeId
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct MemoFingerprint {
+    routine: RoutineFingerprint,
+    output_eval: u64,
+    deep: u64,
+}
+
+/// Extracts a deterministic `u64` from a [`TypeId`] by feeding its
+/// [`Hash`] output through a passthrough [`Hasher`] that captures the
+/// first `write_u64` call.
+///
+/// [`TypeId`]: core::any::TypeId
+fn type_id_u64(id: TypeId) -> u64 {
+    struct PassU64(u64);
+    impl core::hash::Hasher for PassU64 {
+        fn finish(&self) -> u64 {
+            self.0
+        }
+        fn write(&mut self, bytes: &[u8]) {
+            // Fallback if TypeId::Hash ever stops calling write_u64.
+            for (i, &b) in bytes.iter().enumerate().take(8) {
+                self.0 |= (b as u64) << (i * 8);
+            }
+        }
+        fn write_u64(&mut self, i: u64) {
+            self.0 = i;
+        }
+    }
+    let mut h = PassU64(0);
+    id.hash(&mut h);
+    h.finish()
+}
+
+/// Computes the recursive deep hash from [`TypeId`] pairs, all
+/// [`RoutineFingerprint`] fields, `output_eval`, child count, and each
+/// child's deep hash, producing a single 64-bit BLAKE2b digest.
+///
+/// [`TypeId`] pairs are included here (not in [`RoutineFingerprint`]) because
+/// they are relevant to memoization safety — routines with different types may
+/// have different output wire layouts — but not to polynomial equivalence.
+///
+/// [`TypeId`]: core::any::TypeId
+fn deep_hash(
+    input_kind: TypeId,
+    output_kind: TypeId,
+    routine: &RoutineFingerprint,
+    output_eval: u64,
+    children: &[u64],
+) -> u64 {
+    let mut state = blake2b_simd::Params::new().personal(b"FIXME").to_state();
+    state.update(&type_id_u64(input_kind).to_le_bytes());
+    state.update(&type_id_u64(output_kind).to_le_bytes());
+    state.update(&routine.eval.to_le_bytes());
+    state.update(&(routine.local_num_multiplication_constraints as u64).to_le_bytes());
+    state.update(&(routine.local_num_linear_constraints as u64).to_le_bytes());
+    state.update(&output_eval.to_le_bytes());
+    state.update(&(children.len() as u64).to_le_bytes());
+    for child in children {
+        state.update(&child.to_le_bytes());
+    }
+    let hash = state.finalize();
+    u64::from_le_bytes(
+        hash.as_array()[..8]
+            .try_into()
+            .expect("BLAKE2b output is 64 bytes"),
+    )
+}
+
+impl MemoFingerprint {
+    /// Constructs a [`MemoFingerprint`] from a routine's type ids, evaluation
+    /// scalars, local constraint counts, and child deep hashes.
     fn of<F: PrimeField, Ro: Routine<F>>(
         eval: F,
+        output_eval: F,
         local_num_multiplication_constraints: usize,
         local_num_linear_constraints: usize,
+        children_deep: &[u64],
     ) -> Self {
-        Self {
-            input_kind: TypeId::of::<Ro::Input>(),
-            output_kind: TypeId::of::<Ro::Output>(),
+        let routine = RoutineFingerprint {
             eval: ragu_arithmetic::low_u64(&eval),
             local_num_multiplication_constraints,
             local_num_linear_constraints,
+        };
+        let output_eval = ragu_arithmetic::low_u64(&output_eval);
+        let deep = deep_hash(
+            TypeId::of::<Ro::Input>(),
+            TypeId::of::<Ro::Output>(),
+            &routine,
+            output_eval,
+            children_deep,
+        );
+        Self {
+            routine,
+            output_eval,
+            deep,
         }
     }
 
-    /// Returns the raw evaluation scalar.
+    /// Returns the routine fingerprint (polynomial equivalence only).
+    pub fn routine(&self) -> &RoutineFingerprint {
+        &self.routine
+    }
+
+    /// Returns the recursive deep hash.
+    pub fn deep(&self) -> u64 {
+        self.deep
+    }
+
+    /// Returns the raw constraint evaluation scalar.
     #[cfg(test)]
     pub(crate) fn eval(&self) -> u64 {
-        self.eval
+        self.routine.eval
+    }
+
+    /// Returns the output wire evaluation scalar.
+    #[cfg(test)]
+    pub(crate) fn output_eval(&self) -> u64 {
+        self.output_eval
     }
 }
 
@@ -242,6 +372,9 @@ struct CounterScope<F> {
 
     /// Horner accumulator for the fingerprint evaluation result.
     result: F,
+
+    /// Deep hashes of direct child routines, accumulated during execution.
+    child_deep_hashes: Vec<u64>,
 }
 
 /// A [`Driver`] that simultaneously counts constraints and computes routine
@@ -255,7 +388,7 @@ struct CounterScope<F> {
 /// Nested routine outputs are treated as auxiliary inputs to the caller: on
 /// return, output wires are remapped to fresh allocations in the parent scope
 /// rather than folding the child's fingerprint scalar. This makes each
-/// routine's fingerprint capture only its *internal* constraint structure.
+/// routine's fingerprint capture only its own constraint structure.
 struct Counter<F> {
     scope: CounterScope<F>,
     num_linear_constraints: usize,
@@ -301,6 +434,13 @@ struct Counter<F> {
     /// `h * y^n + c_1 * y^{n-1} + …`, making the leading power of `y`
     /// always visible.
     h: F,
+
+    /// Base for the output fingerprint geometric sequence.
+    ///
+    /// Used to compute `output_eval`: each output wire's evaluation is
+    /// multiplied by a successive power of `z` and summed, capturing which
+    /// wires flow to which output slots.
+    z: F,
 }
 
 impl<F: FromUniformBytes<64>> Counter<F> {
@@ -318,6 +458,7 @@ impl<F: FromUniformBytes<64>> Counter<F> {
         let y = point(3);
         let h = point(4);
         let one = point(5);
+        let z = point(6);
 
         Self {
             scope: CounterScope {
@@ -327,6 +468,7 @@ impl<F: FromUniformBytes<64>> Counter<F> {
                 current_b: x1,
                 current_c: x2,
                 result: h,
+                child_deep_hashes: Vec::new(),
             },
             num_linear_constraints: 0,
             num_multiplication_constraints: 0,
@@ -342,6 +484,7 @@ impl<F: FromUniformBytes<64>> Counter<F> {
             y,
             one,
             h,
+            z,
         }
     }
 
@@ -443,6 +586,7 @@ impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
                 current_b: self.x1,
                 current_c: self.x2,
                 result: self.h,
+                child_deep_hashes: Vec::new(),
             },
         );
 
@@ -456,17 +600,33 @@ impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
         let aux = Emulator::predict(&routine, &new_input)?.into_aux();
         let output = routine.execute(self, new_input, aux)?;
 
+        // Compute output_eval: accumulate output wire evaluations to capture
+        // which wires flow to which output slots.
+        let output_eval = {
+            let mut acc = OutputEvaluator {
+                current_z: self.z,
+                z: self.z,
+                result: F::ZERO,
+                one: self.one,
+            };
+            let _ = Ro::Output::map_gadget(&output, &mut acc)?;
+            acc.result
+        };
+
         // Extract fingerprint from the child's Horner accumulator and counts.
         let seg = &self.segments[segment_idx];
-        self.segments[segment_idx].identity =
-            RoutineIdentity::Routine(RoutineFingerprint::of::<F, Ro>(
-                self.scope.result,
-                seg.num_multiplication_constraints,
-                seg.num_linear_constraints,
-            ));
+        let fingerprint = MemoFingerprint::of::<F, Ro>(
+            self.scope.result,
+            output_eval,
+            seg.num_multiplication_constraints,
+            seg.num_linear_constraints,
+            &self.scope.child_deep_hashes,
+        );
+        self.segments[segment_idx].identity = RoutineIdentity::Routine(fingerprint);
 
-        // Restore parent scope.
+        // Restore parent scope and record this child's deep hash.
         self.scope = saved;
+        self.scope.child_deep_hashes.push(fingerprint.deep);
 
         // Remap child output wires as fresh parent allocations.
         //
@@ -531,6 +691,39 @@ impl<F: FromUniformBytes<64>> WireMap<F> for Counter<F> {
 
     fn convert_wire(&mut self, _: &WireEval<F>) -> Result<WireEval<F>> {
         self.alloc(|| unreachable!())
+    }
+}
+
+/// Evaluates output wire mappings into a single scalar.
+///
+/// Used to compute the `output_eval` field of [`MemoFingerprint`].
+/// Each output wire's evaluation is multiplied by a successive power of `z`
+/// and summed, capturing which wires flow to which output slots.
+struct OutputEvaluator<F> {
+    /// Running geometric power: $z^{i+1}$ at output slot $i$.
+    current_z: F,
+    /// Base for the geometric sequence.
+    z: F,
+    /// Accumulated result.
+    result: F,
+    /// Evaluation of the `ONE` wire.
+    one: F,
+}
+
+/// [`WireMap`] extracts output wire evaluations without
+/// producing real wires in the destination.
+impl<F: Field> WireMap<F> for OutputEvaluator<F> {
+    type Src = Counter<F>;
+    type Dst = core::marker::PhantomData<F>;
+
+    fn convert_wire(&mut self, wire: &WireEval<F>) -> Result<()> {
+        let value = match wire {
+            WireEval::One => self.one,
+            WireEval::Value(v) => *v,
+        };
+        self.result += value * self.current_z;
+        self.current_z *= self.z;
+        Ok(())
     }
 }
 
@@ -664,15 +857,29 @@ pub(crate) mod tests {
 
         // Predict (on a wireless emulator) then execute on the counter.
         let aux = Emulator::predict(routine, &new_input)?.into_aux();
-        routine.execute(&mut counter, new_input, aux)?;
+        let output = routine.execute(&mut counter, new_input, aux)?;
+
+        // Compute output_eval from the routine's output wires.
+        let output_eval = {
+            let mut acc = OutputEvaluator {
+                current_z: counter.z,
+                z: counter.z,
+                result: F::ZERO,
+                one: counter.one,
+            };
+            let _ = Ro::Output::map_gadget(&output, &mut acc)?;
+            acc.result
+        };
 
         // Segment 0 holds only this routine's own constraints; nested
         // routine constraints live in their own segments.
         let seg = &counter.segments[0];
-        Ok(RoutineIdentity::Routine(RoutineFingerprint::of::<F, Ro>(
+        Ok(RoutineIdentity::Routine(MemoFingerprint::of::<F, Ro>(
             counter.scope.result,
+            output_eval,
             seg.num_multiplication_constraints,
             seg.num_linear_constraints,
+            &counter.scope.child_deep_hashes,
         )))
     }
 
@@ -739,5 +946,24 @@ pub(crate) mod tests {
     #[test]
     fn dangling_alloc_in_routine() {
         super::eval::<Fp, _>(&DanglingAllocCircuit).expect("metrics eval should succeed");
+    }
+
+    /// Test-only wrapper exposing the private `deep_hash` function for
+    /// property-based testing in sibling test modules.
+    pub(crate) fn deep_hash_wrapper(
+        input_kind: TypeId,
+        output_kind: TypeId,
+        eval: u64,
+        num_mul: usize,
+        num_lc: usize,
+        output_eval: u64,
+        children: &[u64],
+    ) -> u64 {
+        let routine = RoutineFingerprint {
+            eval,
+            local_num_multiplication_constraints: num_mul,
+            local_num_linear_constraints: num_lc,
+        };
+        super::deep_hash(input_kind, output_kind, &routine, output_eval, children)
     }
 }
