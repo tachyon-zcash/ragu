@@ -454,7 +454,7 @@ impl<'a, 'dr, D: Driver<'dr>> Processor<&'a Element<'dr, D>, &'a Element<'dr, D>
         self.bx.push(sum.add(self.dr, sy).add(self.dr, self.txz));
     }
 
-    fn stage(
+    fn bonding(
         &mut self,
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = &'a Element<'dr, D>>,
@@ -487,7 +487,7 @@ impl<'a, 'dr, D: Driver<'dr>> Processor<&'a Element<'dr, D>, &'a Element<'dr, D>
 ///   $r\_i(xz) + s\_y + t(xz)$.
 /// - **Internal circuit claims**: `ax` receives $\sum r\_i(xz)$; `bx` receives
 ///   $\sum r\_i(xz) + s\_y + t(xz)$.
-/// - **Stage claims**: `ax` receives $\text{fold}(r\_i(xz),\, z)$; `bx`
+/// - **Bonding polynomial claims**: `ax` receives $\text{fold}(r\_i(xz),\, z)$; `bx`
 ///   receives $s\_y$.
 /// - **Raw $a$/$b$ claims**: `ax` receives $a(xz)$; `bx` receives $b(x)$.
 ///

@@ -38,20 +38,20 @@ $r'(X), b(X), \cdots$, or in other words $a(X)$ should not contain
 allocated wires in locations that would overwrite or become overwritten by
 the other terms in the sum $r'(X) + a(X) + b(X) + \cdots$.
 
-In order to enforce this, we use a special "stage mask" that performs a
-well-formed check on each of the stage polynomials. The stage mask is
-defined by the start and size of the portion of the partial trace that is
-reserved for that polynomial; in order to be safe, all wires in $a(X)$
-should be set to zero if they are not within this range. The stage mask
-simply enforces that everything must be nonzero in this range via simple
-linear constraints.
+In order to enforce this, we use a stage mask (a type of bonding polynomial)
+that performs a well-formed check on each of the stage polynomials. The
+stage mask is defined by the start and size of the portion of the partial
+trace that is reserved for that polynomial; in order to be safe, all wires
+in $a(X)$ should be set to zero if they are not within this range. The
+stage mask simply enforces that everything must be nonzero in this range
+via simple linear constraints.
 
 In order to check that a stage polynomial satisfies this well-formed check,
 we perform a revdot claim like so:
 
 $$\revdot{\v{a}}{\v{s}}$$
 
-where $\v{s}$ is the polynomial derived from the stage mask. Notice, this is expressly different from the traditional revdot claim that would be seen in a full circuit evaluation, which takes the form
+where $\v{s}$ is the stage mask. Notice, this is expressly different from the traditional revdot claim that would be seen in a full circuit evaluation, which takes the form
 
 $$
 \revdot{\v{r}}{\v{r} \circ \v{z^{4n}} + \v{s} + \v{t}}

@@ -55,7 +55,7 @@ impl Index {
     /// Returns the circuit index for this step.
     ///
     /// Circuits are registered in the following order: internal circuits,
-    /// internal masks, internal steps, then application steps.
+    /// internal bonding polynomials, internal steps, then application steps.
     ///
     /// Pass the known number of application steps to validate and compute the
     /// final index of this step. Returns an error if an application step index

@@ -26,7 +26,6 @@ use crate::{
     Circuit, CircuitExt, CircuitObject,
     floor_planner::ConstraintSegment,
     polynomials::{Rank, structured, unstructured},
-    staging::{Stage, StageExt},
 };
 
 /// Represents a simple numeric index of a circuit in the registry.
@@ -72,7 +71,8 @@ impl From<CircuitIndex> for usize {
 ///
 /// Circuits are organized into four categories:
 /// - Internal circuits: system circuits for the PCD construction
-/// - Internal masks: stage masks and final masks for internal stages
+/// - Internal bonding polynomials: witnessless wiring polynomials (stage
+///   masks, routing constraints, etc.) that encode only linear constraints
 /// - Internal steps: internal step circuits (e.g. rerandomize, trivial)
 /// - Application steps: user-defined application step circuits
 ///
@@ -81,7 +81,7 @@ impl From<CircuitIndex> for usize {
 /// proper PCD indexing.
 pub struct RegistryBuilder<'params, F: PrimeField, R: Rank> {
     internal_circuits: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
-    internal_masks: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
+    internal_bonding_polys: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
     internal_steps: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
     application_steps: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
 }
@@ -97,15 +97,15 @@ impl<'params, F: FromUniformBytes<64>, R: Rank> RegistryBuilder<'params, F, R> {
     pub fn new() -> Self {
         Self {
             internal_circuits: Vec::new(),
-            internal_masks: Vec::new(),
+            internal_bonding_polys: Vec::new(),
             internal_steps: Vec::new(),
             application_steps: Vec::new(),
         }
     }
 
-    /// Returns the number of internal circuits (circuits + masks).
+    /// Returns the number of internal circuits (circuits + bonding polynomials).
     pub fn num_internal_circuits(&self) -> usize {
-        self.internal_masks.len() + self.internal_circuits.len()
+        self.internal_bonding_polys.len() + self.internal_circuits.len()
     }
 
     /// Returns the total number of circuits across all categories.
@@ -145,21 +145,19 @@ impl<'params, F: FromUniformBytes<64>, R: Rank> RegistryBuilder<'params, F, R> {
         Ok(self)
     }
 
-    /// Registers an internal stage mask.
-    pub fn register_internal_mask<S>(mut self) -> Result<Self>
-    where
-        S: Stage<F, R>,
-    {
-        self.internal_masks.push(S::mask()?);
-        Ok(self)
-    }
-
-    /// Registers an internal final stage mask.
-    pub fn register_internal_final_mask<S>(mut self) -> Result<Self>
-    where
-        S: Stage<F, R>,
-    {
-        self.internal_masks.push(S::final_mask()?);
+    /// Registers an internal bonding polynomial.
+    ///
+    /// Bonding polynomials are witnessless wiring polynomials that encode only
+    /// linear constraints, with a zero constant term. Stage masks and routing
+    /// polynomials are both bonding polynomials produced by different factories.
+    ///
+    /// For stage masks, pass [`StageExt::mask`](crate::staging::StageExt::mask) or
+    /// [`StageExt::final_mask`](crate::staging::StageExt::final_mask).
+    pub fn register_internal_bonding(
+        mut self,
+        bonding_poly: crate::staging::BondingObject<'params, F, R>,
+    ) -> Result<Self> {
+        self.internal_bonding_polys.push(bonding_poly.into_inner());
         Ok(self)
     }
 
@@ -167,7 +165,7 @@ impl<'params, F: FromUniformBytes<64>, R: Rank> RegistryBuilder<'params, F, R> {
     ///
     /// Circuits are concatenated in the following order for proper indexing:
     /// 1. Internal circuits: System circuits for the PCD construction
-    /// 2. Internal masks: Stage enforcement masks and final masks
+    /// 2. Internal bonding polynomials
     /// 3. Internal steps: Internal step circuits (e.g. rerandomize, trivial)
     /// 4. Application steps: User-defined step circuits
     ///
@@ -190,7 +188,7 @@ impl<'params, F: FromUniformBytes<64>, R: Rank> RegistryBuilder<'params, F, R> {
         let circuits: Vec<_> = self
             .internal_circuits
             .into_iter()
-            .chain(self.internal_masks)
+            .chain(self.internal_bonding_polys)
             .chain(self.internal_steps)
             .chain(self.application_steps)
             .collect();
@@ -991,7 +989,7 @@ mod tests {
             .register_internal_step(SquareCircuit { times: 4 })?
             .register_circuit(SquareCircuit { times: 5 })?;
 
-        // num_internal_circuits counts masks + circuits only (not steps)
+        // num_internal_circuits counts bonding polynomials + circuits only (not steps)
         assert_eq!(builder.num_internal_circuits(), 2);
         // num_circuits counts all categories
         assert_eq!(builder.num_circuits(), 5);

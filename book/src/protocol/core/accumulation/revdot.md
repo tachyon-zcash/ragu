@@ -27,7 +27,7 @@ Revdot products appear in several contexts in the Ragu protocol:
   [consolidated constraint](../arithmetization.md#consolidated-constraints)
   against its public inputs
 - checking [staging polynomials](../../extensions/staging.md)'
-  well-formedness via their revdot products with stage mask
+  well-formedness via their revdot products with bonding
   polynomials
 - folding the accumulator $\acc.\v{a}, \acc.\v{b}$ from the
   previous PCD step

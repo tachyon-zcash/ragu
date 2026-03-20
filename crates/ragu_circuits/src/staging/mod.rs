@@ -112,8 +112,11 @@
 //! Assuming stages are well-formed, they can be combined by merely adding them
 //! together with the final staging polynomial, producing the desired $r(X)$.
 
+mod bonding;
 mod builder;
 pub(crate) mod mask;
+
+pub use bonding::{BondingCircuit, BondingDriver};
 
 use ff::Field;
 use ragu_core::{
@@ -132,6 +135,18 @@ use crate::{
 };
 
 pub use builder::{StageBuilder, StageGuard};
+
+/// A bonding polynomial — a witnessless wiring polynomial with zero constant
+/// term. Can only be constructed by bonding polynomial factories
+/// ([`StageExt::mask`], [`StageExt::final_mask`], [`BondingCircuit::into_bonding_object`]).
+pub struct BondingObject<'a, F: ff::Field, R: Rank>(Box<dyn CircuitObject<F, R> + 'a>);
+
+impl<'a, F: ff::Field, R: Rank> BondingObject<'a, F, R> {
+    /// Unwrap into the inner [`CircuitObject`].
+    pub fn into_inner(self) -> Box<dyn CircuitObject<F, R> + 'a> {
+        self.0
+    }
+}
 
 /// Represents a partial trace component for a multi-stage circuit.
 pub trait Stage<F: Field, R: Rank> {
@@ -285,7 +300,7 @@ impl<F: Field, R: Rank, S: MultiStageCircuit<F, R>> MultiStage<F, R, S> {
     }
 
     /// Proxy for [`S::Last::final_mask`](StageExt::final_mask).
-    pub fn final_mask<'a>(&self) -> Result<Box<dyn CircuitObject<F, R> + 'a>> {
+    pub fn final_mask<'a>(&self) -> Result<BondingObject<'a, F, R>> {
         S::Last::final_mask()
     }
 }
@@ -390,20 +405,20 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
     /// Staging circuits do not behave like normal circuits because they do not
     /// have a `ONE` wire and are used solely for partial trace commitments.
     /// As a result, they must be computed differently.
-    fn mask<'a>() -> Result<Box<dyn CircuitObject<F, R> + 'a>> {
-        Ok(Box::new(mask::StageMask::new(
+    fn mask<'a>() -> Result<BondingObject<'a, F, R>> {
+        Ok(BondingObject(Box::new(mask::StageMask::new(
             Self::skip_multiplications(),
             Self::num_multiplications(),
-        )?))
+        )?)))
     }
 
     /// Creates a circuit object that can be used to enforce well-formedness
     /// checks on any final trace (stage) that has this stage as its
     /// [`MultiStageCircuit::Last`] stage.
-    fn final_mask<'a>() -> Result<Box<dyn CircuitObject<F, R> + 'a>> {
-        Ok(Box::new(mask::StageMask::new_final(
+    fn final_mask<'a>() -> Result<BondingObject<'a, F, R>> {
+        Ok(BondingObject(Box::new(mask::StageMask::new_final(
             Self::skip_multiplications() + Self::num_multiplications(),
-        )?))
+        )?)))
     }
 
     /// Returns the generator index for the i-th A coefficient of this stage.

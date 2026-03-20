@@ -9,6 +9,12 @@ use crate::{
     registry,
 };
 
+/// A specialized bonding polynomial factory for stage well-formedness.
+///
+/// Produces a wiring polynomial that enforces all gate wires outside a
+/// stage's range to be zero. This is a hand-optimized implementation;
+/// for general bonding polynomials (e.g. routing constraints), see
+/// [`BondingCircuit`](super::BondingCircuit).
 #[derive(Clone)]
 pub struct StageMask<R: Rank> {
     skip_multiplications: usize,
@@ -403,8 +409,8 @@ mod tests {
         let rx1_b = MyStage1::rx(endoscalar_b)?;
         let rx2 = MyStage2::rx((p1, p2))?;
 
-        let circ1 = MyStage1::mask()?;
-        let circ2 = MyStage2::mask()?;
+        let circ1 = MyStage1::mask()?.into_inner();
+        let circ2 = MyStage2::mask()?.into_inner();
 
         let z = Fp::random(&mut rand::rng());
         let y = Fp::random(&mut rand::rng());
@@ -658,7 +664,7 @@ mod tests {
 
         let rx = ConstrainedStage::rx(valid_witness).unwrap();
 
-        let stage_mask = ConstrainedStage::mask::<'_>().unwrap();
+        let stage_mask = ConstrainedStage::mask::<'_>().unwrap().into_inner();
 
         // rx.revdot(&stage_mask) == 0 for well-formed stages
         let y = Fp::random(&mut rand::rng());

@@ -4,6 +4,7 @@ use ragu_arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::Rank,
     registry::{CircuitIndex, RegistryBuilder},
+    staging::StageExt,
 };
 use ragu_core::Result;
 use ragu_primitives::vec::ConstLen;
@@ -34,7 +35,7 @@ pub enum InternalCircuitIndex {
     InnerCollapseCircuit,
     OuterCollapseCircuit,
     ComputeVCircuit,
-    // Native stages
+    // Native stage masks
     PreambleStage,
     InnerErrorStage,
     OuterErrorStage,
@@ -63,7 +64,7 @@ impl InternalCircuitIndex {
     ///
     /// This order must match the registry finalization concatenation order
     /// in [`RegistryBuilder::finalize()`](ragu_circuits::registry::RegistryBuilder::finalize)
-    /// (circuits before masks), since [`circuit_index()`](Self::circuit_index)
+    /// (circuits before bonding polynomials), since [`circuit_index()`](Self::circuit_index)
     /// derives indices from position in this array.
     pub const ALL: [Self; NUM_INTERNAL_CIRCUITS] = super::unwrap_all(Self::all_slots());
 
@@ -304,7 +305,7 @@ pub enum RxComponent {
     Rx(RxIndex),
 }
 
-/// Registers internal native circuits and masks into the provided registry.
+/// Registers internal native circuits and bonding polynomials into the provided registry.
 ///
 /// Does not register internal steps (rerandomize, trivial); those are
 /// registered by the caller after this function returns.
@@ -319,43 +320,87 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
         use InternalCircuitIndex::*;
         registry = match id {
             PreambleStage => {
-                registry.register_internal_mask::<stages::preamble::Stage<C, R, HEADER_SIZE>>()?
+                registry.register_internal_bonding(
+                    stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?,
+                )?
             }
-            InnerErrorStage => {
-                registry.register_internal_mask::<stages::inner_error::Stage<C, R, HEADER_SIZE, RevdotParameters>>()?
-            }
-            OuterErrorStage => {
-                registry.register_internal_mask::<stages::outer_error::Stage<C, R, HEADER_SIZE, RevdotParameters>>()?
-            }
+            InnerErrorStage => registry.register_internal_bonding(stages::inner_error::Stage::<
+                C,
+                R,
+                HEADER_SIZE,
+                RevdotParameters,
+            >::mask()?)?,
+            OuterErrorStage => registry.register_internal_bonding(stages::outer_error::Stage::<
+                C,
+                R,
+                HEADER_SIZE,
+                RevdotParameters,
+            >::mask()?)?,
             QueryStage => {
-                registry.register_internal_mask::<stages::query::Stage<C, R, HEADER_SIZE>>()?
+                registry
+                    .register_internal_bonding(stages::query::Stage::<C, R, HEADER_SIZE>::mask()?)?
             }
             EvalStage => {
-                registry.register_internal_mask::<stages::eval::Stage<C, R, HEADER_SIZE>>()?
+                registry
+                    .register_internal_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::mask()?)?
             }
             InnerErrorFinalStaged => {
-                registry.register_internal_final_mask::<stages::inner_error::Stage<C, R, HEADER_SIZE, RevdotParameters>>()?
+                registry.register_internal_bonding(stages::inner_error::Stage::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                    RevdotParameters,
+                >::final_mask()?)?
             }
             OuterErrorFinalStaged => {
-                registry.register_internal_final_mask::<stages::outer_error::Stage<C, R, HEADER_SIZE, RevdotParameters>>()?
+                registry.register_internal_bonding(stages::outer_error::Stage::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                    RevdotParameters,
+                >::final_mask()?)?
             }
             EvalFinalStaged => {
-                registry.register_internal_final_mask::<stages::eval::Stage<C, R, HEADER_SIZE>>()?
+                registry.register_internal_bonding(
+                    stages::eval::Stage::<C, R, HEADER_SIZE>::final_mask()?,
+                )?
             }
             Hashes1Circuit => {
-                registry.register_internal_circuit(circuits::hashes_1::Circuit::<C, R, HEADER_SIZE, RevdotParameters>::new(params, log2_circuits))?
+                registry.register_internal_circuit(circuits::hashes_1::Circuit::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                    RevdotParameters,
+                >::new(params, log2_circuits))?
             }
-            Hashes2Circuit => {
-                registry.register_internal_circuit(circuits::hashes_2::Circuit::<C, R, HEADER_SIZE, RevdotParameters>::new(params))?
-            }
+            Hashes2Circuit => registry.register_internal_circuit(circuits::hashes_2::Circuit::<
+                C,
+                R,
+                HEADER_SIZE,
+                RevdotParameters,
+            >::new(params))?,
             InnerCollapseCircuit => {
-                registry.register_internal_circuit(circuits::inner_collapse::Circuit::<C, R, HEADER_SIZE, RevdotParameters>::new())?
+                registry.register_internal_circuit(circuits::inner_collapse::Circuit::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                    RevdotParameters,
+                >::new())?
             }
             OuterCollapseCircuit => {
-                registry.register_internal_circuit(circuits::outer_collapse::Circuit::<C, R, HEADER_SIZE, RevdotParameters>::new())?
+                registry.register_internal_circuit(circuits::outer_collapse::Circuit::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                    RevdotParameters,
+                >::new())?
             }
             ComputeVCircuit => {
-                registry.register_internal_circuit(circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new())?
+                registry.register_internal_circuit(circuits::compute_v::Circuit::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                >::new())?
             }
         };
     }
