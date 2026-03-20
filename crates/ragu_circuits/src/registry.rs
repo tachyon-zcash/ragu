@@ -390,9 +390,14 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
         self.key.value()
     }
 
-    /// Returns a slice of the circuit objects in this registry.
-    pub fn circuits(&self) -> &[Box<dyn CircuitObject<F, R> + '_>] {
-        &self.circuits
+    /// Returns the number of circuits in this registry.
+    pub fn num_circuits(&self) -> usize {
+        self.circuits.len()
+    }
+
+    /// Returns the constraint counts for the given circuit.
+    pub fn constraint_counts(&self, circuit: CircuitIndex) -> (usize, usize) {
+        self.circuits[usize::from(circuit)].constraint_counts()
     }
 
     /// Evaluate the registry polynomial unrestricted at $W$.
@@ -952,7 +957,7 @@ mod tests {
 
         // Finalize the registry
         let registry = builder.finalize()?;
-        assert_eq!(registry.circuits().len(), 4);
+        assert_eq!(registry.num_circuits(), 4);
 
         Ok(())
     }
@@ -967,7 +972,7 @@ mod tests {
             .register_circuit(SquareCircuit { times: 4 })?
             .finalize()?;
 
-        assert_eq!(registry.circuits().len(), 4);
+        assert_eq!(registry.num_circuits(), 4);
 
         // Test circuit count with interleaved registration
         let registry2 = TestRegistryBuilder::new()
@@ -977,7 +982,7 @@ mod tests {
             .register_internal_circuit(SquareCircuit { times: 2 })?
             .finalize()?;
 
-        assert_eq!(registry2.circuits().len(), 4);
+        assert_eq!(registry2.num_circuits(), 4);
 
         Ok(())
     }
@@ -997,7 +1002,7 @@ mod tests {
         assert_eq!(builder.num_circuits(), 5);
 
         let registry = builder.finalize()?;
-        assert_eq!(registry.circuits().len(), 5);
+        assert_eq!(registry.num_circuits(), 5);
 
         // Verify evaluation consistency
         let w = Fp::random(&mut rand::rng());

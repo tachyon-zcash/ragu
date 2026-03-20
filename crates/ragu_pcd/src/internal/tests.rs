@@ -63,13 +63,10 @@ fn test_internal_circuit_constraint_counts() {
         .finalize(pasta)
         .unwrap();
 
-    let circuits = app.native_registry.circuits();
-
     macro_rules! check_constraints {
         ($variant:ident, mul = $mul:expr, lin = $lin:expr) => {{
-            let idx: usize = InternalCircuitIndex::$variant.circuit_index().into();
-            let circuit = &circuits[idx];
-            let (actual_mul, actual_lin) = circuit.constraint_counts();
+            let circuit_index = InternalCircuitIndex::$variant.circuit_index();
+            let (actual_mul, actual_lin) = app.native_registry.constraint_counts(circuit_index);
             assert_eq!(
                 actual_mul,
                 $mul,
@@ -129,8 +126,6 @@ fn print_internal_circuit_constraint_counts() {
         .finalize(pasta)
         .unwrap();
 
-    let circuits = app.native_registry.circuits();
-
     let variants = [
         ("Hashes1Circuit", InternalCircuitIndex::Hashes1Circuit),
         ("Hashes2Circuit", InternalCircuitIndex::Hashes2Circuit),
@@ -147,9 +142,8 @@ fn print_internal_circuit_constraint_counts() {
 
     println!("\n// Copy-paste the following into test_internal_circuit_constraint_counts:");
     for (name, variant) in variants {
-        let idx: usize = variant.circuit_index().into();
-        let circuit = &circuits[idx];
-        let (mul, lin) = circuit.constraint_counts();
+        let circuit_index = variant.circuit_index();
+        let (mul, lin) = app.native_registry.constraint_counts(circuit_index);
         println!(
             "        check_constraints!({:<24} mul = {:<4}, lin = {});",
             format!("{},", name),
