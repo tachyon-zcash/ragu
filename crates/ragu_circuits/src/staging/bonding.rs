@@ -62,7 +62,7 @@ impl<'a, 'dr, D: Driver<'dr>> BondingDriver<'a, 'dr, D> {
 ///
 /// To reference a specific stage's wires, index into `gates` using the
 /// stage's [`skip_multiplications`](super::Stage::skip_multiplications) offset.
-pub trait BondingCircuit<F: Field>: Sized + Send + Sync {
+pub trait BondingCircuit<F: Field, R: Rank>: Sized + Send + Sync {
     /// How many gates to pre-allocate wire handles for.
     fn num_gates(&self) -> usize;
 
@@ -75,12 +75,12 @@ pub trait BondingCircuit<F: Field>: Sized + Send + Sync {
 
     /// Produce a [`BondingObject`](super::BondingObject) for registry registration via
     /// [`register_internal_bonding`](registry::RegistryBuilder::register_internal_bonding).
-    fn into_bonding_object<'a, R: Rank>(self) -> Result<super::BondingObject<'a, F, R>>
+    fn into_bonding_object<'a>(self) -> Result<super::BondingObject<'a, F, R>>
     where
         Self: 'a,
         F: FromUniformBytes<64>,
     {
-        let adapter = Adapter(self);
+        let adapter = Adapter(self, core::marker::PhantomData);
         let metrics = metrics::eval(&adapter)?;
 
         if metrics.num_linear_constraints > R::num_coeffs() {
@@ -102,9 +102,9 @@ pub trait BondingCircuit<F: Field>: Sized + Send + Sync {
 /// Bridges [`BondingCircuit`] to [`Circuit`] so we can reuse the standard
 /// synthesis drivers. Pre-allocates gate wire handles, then hands the
 /// restricted [`BondingDriver`] to the bonding circuit's `witness`.
-struct Adapter<B>(B);
+struct Adapter<B, R>(B, core::marker::PhantomData<R>);
 
-impl<F: Field, B: BondingCircuit<F>> Circuit<F> for Adapter<B> {
+impl<F: Field, R: Rank, B: BondingCircuit<F, R>> Circuit<F> for Adapter<B, R> {
     type Instance<'source> = ();
     type Witness<'source> = ();
     type Output = ();
@@ -139,13 +139,13 @@ impl<F: Field, B: BondingCircuit<F>> Circuit<F> for Adapter<B> {
 /// The standard synthesis includes an `enforce_one` constraint that anchors
 /// the ONE wire. Bonding polynomials must not have this (zero constant term),
 /// so each evaluation method runs the full synthesis then strips it out.
-struct Processed<B> {
-    adapter: Adapter<B>,
+struct Processed<B, R> {
+    adapter: Adapter<B, R>,
     metrics: metrics::CircuitMetrics,
 }
 
-impl<F: Field + FromUniformBytes<64>, B: BondingCircuit<F>, R: Rank> CircuitObject<F, R>
-    for Processed<B>
+impl<F: Field + FromUniformBytes<64>, R: Rank, B: BondingCircuit<F, R>> CircuitObject<F, R>
+    for Processed<B, R>
 {
     fn sxy(&self, x: F, y: F, key: &registry::Key<F>, floor_plan: &[ConstraintSegment]) -> F {
         if x == F::ZERO || y == F::ZERO {
@@ -223,7 +223,7 @@ mod tests {
     /// Enforces gate 0's a-wire equals gate 1's a-wire.
     struct RouteEqual;
 
-    impl BondingCircuit<Fp> for RouteEqual {
+    impl BondingCircuit<Fp, R> for RouteEqual {
         fn num_gates(&self) -> usize {
             2
         }
@@ -242,7 +242,7 @@ mod tests {
     /// Bonding polynomials must have zero constant term (no ONE wire).
     #[test]
     fn zero_constant_term() {
-        let obj = RouteEqual.into_bonding_object::<R>().unwrap().into_inner();
+        let obj = RouteEqual.into_bonding_object().unwrap().into_inner();
         let floor_plan = floor_planner::floor_plan(obj.segment_records());
         let key = registry::Key::new(Fp::random(&mut rand::rng()));
         let x = Fp::random(&mut rand::rng());
@@ -255,7 +255,7 @@ mod tests {
     /// sxy(x,y) = sx(x).eval(y) = sy(y).eval(x).
     #[test]
     fn evaluation_consistency() {
-        let obj = RouteEqual.into_bonding_object::<R>().unwrap().into_inner();
+        let obj = RouteEqual.into_bonding_object().unwrap().into_inner();
         let floor_plan = floor_planner::floor_plan(obj.segment_records());
         let key = registry::Key::new(Fp::random(&mut rand::rng()));
         let x = Fp::random(&mut rand::rng());
@@ -287,7 +287,7 @@ mod tests {
     /// Revdot is zero when routed wires are equal, nonzero otherwise.
     #[test]
     fn revdot_routing_constraint() {
-        let obj = RouteEqual.into_bonding_object::<R>().unwrap().into_inner();
+        let obj = RouteEqual.into_bonding_object().unwrap().into_inner();
         let floor_plan = floor_planner::floor_plan(obj.segment_records());
         let key = registry::Key::new(Fp::random(&mut rand::rng()));
         let y = Fp::random(&mut rand::rng());
