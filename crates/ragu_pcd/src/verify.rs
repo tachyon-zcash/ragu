@@ -32,11 +32,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let y = C::CircuitField::random(&mut rng);
         let z = C::CircuitField::random(&mut rng);
 
-        // Validate that the application circuit_id is within the registry domain.
+        // Validate that the application circuit_id is a registered circuit.
+        // `is_registered` checks both domain membership and that the
+        // index maps to an actual circuit (not a power-of-2 padding slot).
         // (Internal circuit IDs are constants and don't need this check.)
         if !self
             .native_registry
-            .circuit_in_domain(pcd.proof().application.circuit_id)
+            .is_registered(pcd.proof().application.circuit_id)
         {
             return Ok(false);
         }
@@ -80,6 +82,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 unified_ky,
             };
 
+            // Assert alignment between concrete k(y) count and non-stage claims.
+            assert_eq!(
+                native::num_concrete_ky(&ky_source),
+                builder.a.len() - builder.num_stages,
+                "native k(y) / claim count mismatch"
+            );
+
             native::ky_values(&ky_source)
                 .zip(builder.a.iter().zip(builder.b.iter()))
                 .all(|(ky, (a, b))| a.revdot(b) == ky)
@@ -93,6 +102,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             let mut nested_builder =
                 claims::Builder::new(&self.nested_registry, y_nested, z_nested);
             nested_claims::build(&nested_source, &mut nested_builder)?;
+
+            // Assert alignment between concrete k(y) count and non-stage claims.
+            assert_eq!(
+                nested::num_concrete_ky(),
+                nested_builder.a.len() - nested_builder.num_stages,
+                "nested k(y) / claim count mismatch"
+            );
 
             let ky_source = nested::SingleProofKySource::<C::ScalarField>::new();
             nested::ky_values(&ky_source)
@@ -140,7 +156,7 @@ mod native {
     use crate::internal::claims::Source;
     use crate::internal::native::{RxComponent, claims::KySource};
 
-    pub use crate::internal::native::claims::ky_values;
+    pub use crate::internal::native::claims::{ky_values, num_concrete_ky};
 
     pub struct SingleProofSource<'rx, C: Cycle, R: Rank> {
         pub proof: &'rx Proof<C, R>,
@@ -198,7 +214,7 @@ mod nested {
     use crate::internal::claims::Source;
     use crate::internal::nested::{RxIndex, claims::KySource};
 
-    pub use crate::internal::nested::claims::ky_values;
+    pub use crate::internal::nested::claims::{ky_values, num_concrete_ky};
 
     /// Source for nested field rx polynomials for single-proof verification.
     pub struct SingleProofSource<'rx, C: Cycle, R: Rank> {
@@ -356,5 +372,168 @@ mod tests {
         let pcd = proof.carry::<()>(());
         let result = app.verify(&pcd, &mut rng).expect("verify should not error");
         assert!(!result, "verify should reject corrupted ab.c value");
+    }
+
+    /// The native registry has 15 circuits (13 internal + 2 internal steps)
+    /// but the FFT domain is padded to size 16. Index 15 maps to a valid
+    /// domain element but has no registered circuit. `is_registered`
+    /// rejects it.
+    #[test]
+    fn verify_rejects_padding_slot_circuit_id() {
+        let app = create_test_app();
+
+        let padding_index = CircuitIndex::new(15);
+
+        assert!(
+            !app.native_registry.is_registered(padding_index),
+            "padding slot is not a registered circuit"
+        );
+        assert_eq!(app.native_registry.circuits().len(), 15);
+
+        let mut proof = app.trivial_proof();
+        proof.application.circuit_id = padding_index;
+
+        let pcd = proof.carry::<()>(());
+        let mut rng = StdRng::seed_from_u64(1234);
+        let result = app.verify(&pcd, &mut rng).expect("verify should not error");
+        assert!(!result, "verify should reject padding-slot circuit_id");
+    }
+
+    /// Regression test for the `num_concrete_ky` / `num_stages` alignment
+    /// assertion.
+    ///
+    /// `ky_values` emits concrete k(y) values then an infinite zero tail.
+    /// `build` emits non-stage claims then stage claims. The verify loop zips
+    /// them. If a future code change causes the concrete count to diverge from
+    /// the non-stage claim count, the zero tail silently slides in early and
+    /// the zip pairs wrong k(y) values with wrong claims — verification
+    /// rejects with no indication of why.
+    ///
+    /// This test constructs a deliberately misaligned `KySource` (missing
+    /// `raw_c`) and confirms that `num_concrete_ky` detects the mismatch,
+    /// while also showing the silent zero-tail shift that would occur without
+    /// the assertion.
+    #[test]
+    fn ky_claim_alignment_assertion_catches_misalignment() {
+        use crate::internal::claims;
+        use crate::internal::native::claims as native_claims;
+        use native_claims::KySource;
+
+        type F = <Pasta as Cycle>::CircuitField;
+
+        let app = create_test_app();
+        let proof = app.trivial_proof();
+
+        let y = F::from(42u64);
+        let z = F::from(43u64);
+        let source = super::native::SingleProofSource::<Pasta, TestR> { proof: &proof };
+        let mut builder = claims::Builder::new(&app.native_registry, y, z);
+        native_claims::build(&source, &mut builder).unwrap();
+
+        let total_claims = builder.a.len();
+        let non_stage_claims = total_claims - builder.num_stages;
+
+        assert_eq!(total_claims, 15);
+        assert_eq!(non_stage_claims, 7);
+        assert_eq!(builder.num_stages, 8);
+
+        let correct_source = super::native::SingleProofKySource {
+            raw_c: F::from(1u64),
+            application_ky: F::from(2u64),
+            unified_bridge_ky: F::from(3u64),
+            unified_ky: F::from(4u64),
+        };
+
+        assert_eq!(
+            super::native::num_concrete_ky(&correct_source),
+            non_stage_claims,
+            "correct source should align"
+        );
+
+        let correct_ky: alloc::vec::Vec<F> = native_claims::ky_values(&correct_source)
+            .take(total_claims)
+            .collect();
+
+        assert_eq!(correct_ky.iter().filter(|v| **v != F::ZERO).count(), 7);
+
+        struct MisalignedSource(F, F, F);
+
+        impl KySource for MisalignedSource {
+            type Ky = F;
+
+            fn raw_c(&self) -> impl Iterator<Item = F> {
+                core::iter::empty()
+            }
+
+            fn application_ky(&self) -> impl Iterator<Item = F> {
+                core::iter::once(self.0)
+            }
+
+            fn unified_bridge_ky(&self) -> impl Iterator<Item = F> {
+                core::iter::once(self.1)
+            }
+
+            fn unified_ky(&self) -> impl Iterator<Item = F> + Clone {
+                core::iter::once(self.2)
+            }
+
+            fn zero(&self) -> F {
+                F::ZERO
+            }
+        }
+
+        let misaligned = MisalignedSource(F::from(2u64), F::from(3u64), F::from(4u64));
+
+        assert_ne!(
+            native_claims::num_concrete_ky(&misaligned),
+            non_stage_claims,
+            "misaligned source should be caught by the assertion"
+        );
+
+        let misaligned_ky: alloc::vec::Vec<F> = native_claims::ky_values(&misaligned)
+            .take(total_claims)
+            .collect();
+
+        assert_eq!(
+            correct_ky[6],
+            F::from(4u64),
+            "correct: claim[6] gets unified_ky"
+        );
+        assert_eq!(
+            misaligned_ky[6],
+            F::ZERO,
+            "misaligned: claim[6] gets 0 from zero tail"
+        );
+    }
+
+    /// The registry polynomial m(W, X, Y) evaluates to zero at padding-slot
+    /// domain elements. Since s(y) = 0 for these slots, a prover using a
+    /// padding-slot circuit ID faces no application constraints — the revdot
+    /// claim becomes vacuously satisfiable.
+    #[test]
+    fn registry_polynomial_is_zero_at_padding_slot() {
+        type F = <Pasta as Cycle>::CircuitField;
+
+        let app = create_test_app();
+        let padding_index = CircuitIndex::new(15);
+        let registered_index = CircuitIndex::new(0);
+
+        let x = F::from(7u64);
+        let y = F::from(11u64);
+
+        let registered_eval = app.native_registry.wxy(registered_index.omega_j(), x, y);
+        assert_ne!(
+            registered_eval,
+            F::ZERO,
+            "registered circuit has nonzero m(W,X,Y)"
+        );
+
+        let padding_eval = app.native_registry.wxy(padding_index.omega_j(), x, y);
+        assert_eq!(padding_eval, F::ZERO, "padding slot has zero m(W,X,Y)");
+
+        let padding_eval2 =
+            app.native_registry
+                .wxy(padding_index.omega_j(), F::from(13u64), F::from(17u64));
+        assert_eq!(padding_eval2, F::ZERO, "padding slot is zero at all (x, y)");
     }
 }

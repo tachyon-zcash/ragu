@@ -73,6 +73,8 @@ pub struct Builder<'m, 'rx, A, F: PrimeField, R: Rank> {
     pub a: Vec<A>,
     /// The accumulated `b` polynomials for revdot claims.
     pub b: Vec<Cow<'rx, structured::Polynomial<F, R>>>,
+    /// Number of stage claims (k(y) = 0) added by `stage_impl`.
+    pub num_stages: usize,
 }
 
 impl<'m, 'rx, A, F: PrimeField, R: Rank> Builder<'m, 'rx, A, F, R>
@@ -88,6 +90,7 @@ where
             tz: R::tz(z),
             a: Vec::new(),
             b: Vec::new(),
+            num_stages: 0,
         }
     }
 
@@ -108,6 +111,7 @@ where
         let sy = self.registry.circuit_y(circuit_id, self.y);
         self.a.push(a);
         self.b.push(Cow::Owned(sy));
+        self.num_stages += 1;
     }
 
     /// Horner-fold polynomial references. Returns `Cow::Borrowed` for a single

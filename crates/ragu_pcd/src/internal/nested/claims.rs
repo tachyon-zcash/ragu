@@ -135,16 +135,33 @@ pub trait KySource {
     fn zero(&self) -> Self::Ky;
 }
 
+/// Returns the number of concrete (non-zero) k(y) values produced by
+/// [`ky_values`], i.e. the count before the infinite zero tail begins.
+///
+/// This must equal the number of non-stage claims produced by [`build`]
+/// for the same source shape.
+pub fn num_concrete_ky() -> usize {
+    use super::NUM_ENDOSCALING_POINTS;
+    use crate::internal::endoscalar::NumStepsLen;
+    use ragu_primitives::vec::Len;
+
+    NumStepsLen::<NUM_ENDOSCALING_POINTS>::len()
+}
+
 /// Build an iterator over $k(y)$ values in nested claim order.
 ///
 /// Returns:
 /// - `num_steps` ones (for EndoscalingStep circuit checks, single-proof verification)
 /// - Infinite zeros (for stage checks)
+///
+/// See [`native::ky_values`] for notes on the infinite zero tail.
+///
+/// [`native::ky_values`]: crate::internal::native::claims::ky_values
 pub fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
     let num_steps = super::NUM_ENDOSCALING_STEPS;
 
     // Circuit checks: k(y) = 1 (for single-proof, num_circuit_claims = num_steps)
     core::iter::repeat_n(source.one(), num_steps)
-        // Stage checks: k(y) = 0 (infinite, matches how native does it)
+        // Stage checks: k(y) = 0 (infinite, also used for fold grouping padding)
         .chain(core::iter::repeat(source.zero()))
 }

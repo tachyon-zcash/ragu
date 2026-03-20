@@ -160,6 +160,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
         let preamble = preamble.enforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
 
         let query = query.unenforced(dr, witness.as_ref().map(|w| w.query_witness))?;
+
+        // Enforce that child circuit IDs map to registered circuits (not padding slots).
+        // The registry polynomial evaluates to zero at unregistered domain elements.
+        query
+            .left
+            .current_registry_xy_at_child_circuit_id
+            .enforce_non_zero(dr)?;
+        query
+            .right
+            .current_registry_xy_at_child_circuit_id
+            .enforce_non_zero(dr)?;
+
         let eval = eval.unenforced(dr, witness.as_ref().map(|w| w.eval_witness))?;
 
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
