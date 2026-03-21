@@ -1,12 +1,7 @@
 //! Driver for executing circuit code natively with minimal overhead.
 //!
-//! ## Overview
-//!
-//! Circuit code is written with the [`Driver`] abstraction, which is used to
-//! express operations such as allocating wires and enforcing constraints
-//! alongside the corresponding witness generation logic. The simplest driver
-//! would be one that simply executes circuit code directly _without_ enforcing
-//! constraints; that is the purpose of this module's [`Emulator`].
+//! The [`Emulator`] executes circuit code directly without enforcing
+//! constraints, making it the simplest [`Driver`] implementation.
 //!
 //! The [`Emulator`] driver never checks multiplication or linear constraints,
 //! but it _can_ be used to collect and compute wire assignments.

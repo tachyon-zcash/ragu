@@ -42,6 +42,7 @@ If you're unsure what the user means, ask before launching reviewers.
    {if focus is "documentation", also include:}
    > - `.claude/review-shared/writing.md` (shared writing rules)
    > - `.claude/review-shared/math.md` (shared math rules)
+   > - `.claude/review-shared/surface-placement.md` (book vs. rustdoc placement rules)
    >
    > **What to review:** {describe the specific content — file paths, line
    > ranges, the diff, whatever the user specified. If reviewing a diff, include

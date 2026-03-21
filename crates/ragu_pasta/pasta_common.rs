@@ -14,8 +14,8 @@ const DOMAIN_PREFIX: &str = "Ragu-Parameters";
 pub const DEFAULT_EP_K: usize = 13;
 pub const DEFAULT_EQ_K: usize = 13;
 
-/// Runtime parameters for the Pasta curve cycle, holding generators and
-/// Poseidon constants.
+/// Runtime parameters for the Pasta curve cycle, holding generator points
+/// for the Pallas and Vesta curves.
 pub struct PastaParams {
     pub(crate) pallas: PallasGenerators,
     pub(crate) vesta: VestaGenerators,

@@ -155,7 +155,7 @@ pub trait Circuit<F: Field>: Sized + Send + Sync {
         Self: 'dr;
 }
 
-/// An extension trait for all circuits.
+/// Extension trait blanket-implemented for all [`Circuit<F>`](Circuit) types.
 pub trait CircuitExt<F: Field>: Circuit<F> {
     /// Computes the trace for this circuit from a witness.
     ///

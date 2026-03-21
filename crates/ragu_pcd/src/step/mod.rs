@@ -146,6 +146,9 @@ fn test_index_map() -> Result<()> {
 
 /// Represents a node in the computational graph (or the proof-carrying data
 /// tree) that represents the merging of two pieces of proof-carrying data.
+///
+/// See the [Writing Circuits](https://tachyon.z.cash/guide/writing_circuits.html)
+/// guide for usage patterns and examples.
 pub trait Step<C: Cycle>: Sized + Send + Sync {
     /// Each unique [`Step`] implementation within a provided context must have
     /// a unique index.

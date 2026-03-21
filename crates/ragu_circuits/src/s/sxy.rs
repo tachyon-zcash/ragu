@@ -131,7 +131,7 @@ struct Evaluator<'fp, F, R> {
     /// Base monomial $x^{2n}$, used to compute routine starting monomials.
     base_v_x: F,
 
-    /// Floor plan mapping DFS routine index to absolute offsets.
+    /// Floor plan mapping DFS segment index to absolute offsets.
     floor_plan: &'fp [ConstraintSegment],
 
     /// Global monotonic DFS counter for routine entries.
@@ -257,7 +257,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         let linear_start = seg.linear_start;
 
         // Jump to this routine's absolute position in the polynomial;
-        // see the "Routine Scope Jumps" section in the `s` module doc.
+        // see "Polynomial Encoding and Scope Jumps" in the `s` module doc.
         let init_scope = SxyScope {
             available_b: None,
             current_u_x: self.base_u_x * self.x_inv.pow_vartime([multiplication_start as u64]),
@@ -312,7 +312,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
 ///   enforcing `key_wire - key = 0` as a constraint. This randomizes
 ///   evaluations of $s(x, y)$, preventing trivial forgeries across registry
 ///   contexts.
-/// - `floor_plan`: Per-routine absolute offsets, computed by
+/// - `floor_plan`: Per-segment absolute offsets, computed by
 ///   [`floor_plan()`](crate::floor_planner::floor_plan).
 ///
 /// [`Registry`]: crate::registry::Registry

@@ -29,8 +29,8 @@ ApplicationBuilder::<Pasta, ...>::new()
 
 Pasta is a 2-cycle of elliptic curves (Pallas and Vesta) specifically
 designed for efficient recursion:
-- **Pallas**: Field elements for the circuit layer
-- **Vesta**: Field elements for the proof layer
+- **Pallas**: base field (`Fp`) used in the circuit layer
+- **Vesta**: base field (`Fq`) used in the proof layer
 
 These curves have matching field/group orders, enabling efficient proof
 recursion without expensive non-native field arithmetic.
@@ -42,13 +42,15 @@ Load the Pasta parameters:
 ```rust
 use ragu_pasta::Pasta;
 
-let pasta = Pasta::baked();  // Loads precomputed parameters
+let pasta = Pasta::baked();  // Requires the `baked` crate feature
 ```
 
-The `baked()` feature includes:
-- Generator points for commitments
-- Poseidon hash parameters
-- Precomputed constants for efficiency
+Without the `baked` feature, use [`Pasta::generate()`] to compute parameters
+at runtime instead.
+
+The `baked()` method returns precomputed generator points for Pallas and
+Vesta, loaded from data embedded in the binary. Poseidon parameters are
+compile-time constants and do not require initialization.
 
 ### Why Pasta?
 
@@ -69,41 +71,38 @@ ApplicationBuilder::<Pasta, R<13>, ...>::new()
 
 ### Understanding Rank
 
-`R<N>` means your circuits can handle up to **2^N constraints**:
+`R<N>` sets the polynomial size to 2^N coefficients, which determines two
+constraint limits:
 
-| Rank | Constraints | Typical Use Case |
-|------|-------------|------------------|
-| `R<11>` | 2,048 | Testing, small circuits |
-| `R<12>` | 4,096 | Medium circuits |
-| `R<13>` | 8,192 | Production (default) |
-| `R<14>` | 16,384 | Large circuits |
-| `R<15>` | 32,768 | Very large circuits |
+- **Multiplication constraints**: up to 2^(N−2)
+- **Linear constraints**: up to 2^N
+
+Currently only `R<7>` (testing) and `R<13>` (production) are implemented.
+See the `Rank` trait documentation for how to add new values.
+
+| Rank | Multiplication Limit | Linear Limit | Use Case |
+|------|---------------------|-------------|----------|
+| `R<7>` | 32 | 128 | Unit tests |
+| `R<13>` | 2,048 | 8,192 | Production |
 
 ### Choosing the Right Rank
 
-**For development/testing**: Start with `R<11>` or `R<12>`
-- Faster proving times
-- Quicker iteration
-- Good for small test cases
+**For testing**: Use `R<7>`
+- Fast proving, quick iteration
+- Suitable for small test circuits
 
-**For production**: Use `R<13>` or `R<14>`
+**For production**: Use `R<13>`
+- 2,048 multiplication constraints, 8,192 linear constraints
 - Standard capacity for most applications
-- Balances performance and flexibility
-- Used in `nontrivial.rs` tests
-
-**For complex circuits**: Use `R<15>` or higher
-- Large proof trees
-- Complex Step computations
-- Multiple Poseidon hashes per step
 
 ### What Happens if You Exceed Rank?
 
 ```rust
-Error: exceeded the maximum number of multiplication constraints (8192)
+Error: exceeded the maximum number of multiplication constraints (2048)
 ```
 
 **Solutions**:
-1. Increase rank: `R<13>` → `R<14>` (doubles capacity)
+1. Add a larger rank (see the `Rank` trait documentation) and switch to it
 2. Optimize circuit: Reduce unnecessary operations
 3. Split into multiple steps: Break large computation into smaller pieces
 
@@ -210,7 +209,7 @@ let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
 
 **Why these parameters?**
 - `Pasta`: Standard curve cycle for PCD
-- `R<13>`: 8,192 constraints - enough for most steps
+- `R<13>`: 2,048 multiplication constraints — enough for most steps
 - `4`: Four field elements per header - balance between flexibility and
   performance
 
@@ -218,17 +217,12 @@ let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
 
 ### Starting a New Project
 
-1. **Prototype**: `ApplicationBuilder::<Pasta, R<11>, 1>`
+1. **Testing**: `ApplicationBuilder::<Pasta, R<7>, 1>`
    - Quick iterations
    - Minimal overhead
    - Test your logic
 
-2. **Development**: `ApplicationBuilder::<Pasta, R<12>, 2>`
-   - Realistic constraints
-   - Room to grow
-   - Still fast
-
-3. **Production**: `ApplicationBuilder::<Pasta, R<13>, 4>`
+2. **Production**: `ApplicationBuilder::<Pasta, R<13>, 4>`
    - Standard capacity
    - Proven parameters
    - Well-tested
@@ -249,10 +243,10 @@ println!("Multiplications: {}", sim.num_multiplications());
 println!("Allocations: {}", sim.num_allocations());
 ```
 
-If multiplications < 2,048: `R<11>` is enough
-If multiplications < 4,096: Use `R<12>`
-If multiplications < 8,192: Use `R<13>`
-And so on...
+For `R<7>`, the multiplication limit is 32.
+For `R<13>`, the multiplication limit is 2,048.
+If your circuit exceeds these, add a larger rank (see the `Rank` trait
+documentation).
 
 ## Advanced: Multiple Configurations
 
@@ -260,12 +254,12 @@ You can build different applications with different parameters:
 
 ```rust
 // Small, fast application for testing
-let test_app = ApplicationBuilder::<Pasta, R<10>, 1>::new()
+let test_app = ApplicationBuilder::<Pasta, TestRank, 1>::new()
     .register(small_step)?
     .finalize(pasta)?;
 
-// Large, production application
-let prod_app = ApplicationBuilder::<Pasta, R<14>, 8>::new()
+// Production application
+let prod_app = ApplicationBuilder::<Pasta, ProductionRank, 8>::new()
     .register(complex_step)?
     .finalize(pasta)?;
 ```
@@ -292,27 +286,28 @@ impl Header<F> for MyHeader {
 ### ✗ Rank Too Small
 
 ```rust
-ApplicationBuilder::<Pasta, R<10>, 4>::new()  // Only 1024 constraints
+ApplicationBuilder::<Pasta, R<7>, 4>::new()  // Only 32 multiplication constraints
 
 // Step uses 2 Poseidon hashes = ~280 constraints
 // Plus proof verification overhead = ~1500 total
-// Exceeds 1024!
+// Exceeds 32!
 ```
 
-**Error**: `MultiplicationBoundExceeded(1024)` at runtime.
+**Error**: `MultiplicationBoundExceeded(32)` at runtime.
 
-**Fix**: Increase rank to `R<11>` or higher.
+**Fix**: Switch to `R<13>` or add a larger rank.
 
-### ✗ Forgetting to Bake Pasta
+### ✗ Missing the `baked` Feature
 
-```rust
-let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
-    .finalize(pasta)?;  // But pasta was never initialized!
+```toml
+[dependencies]
+ragu_pasta = "0.1"  # Missing features = ["baked"]
 ```
 
-**Error**: Panic or undefined behavior.
+**Error**: Compile error — `Pasta::baked()` does not exist without the feature.
 
-**Fix**: Always `let pasta = Pasta::baked();` first.
+**Fix**: Add `features = ["baked"]` to the `ragu_pasta` dependency, or use
+`Pasta::generate()` instead.
 
 ## Next Steps
 

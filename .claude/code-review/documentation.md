@@ -5,6 +5,8 @@
 Review documentation in Rust source files — doc comments (`///`, `//!`), code
 comments (`//`), and module-level documentation. For shared prose and math
 rules, see `.claude/review-shared/writing.md` and `.claude/review-shared/math.md`.
+For book vs. rustdoc placement rules, see
+`.claude/review-shared/surface-placement.md`.
 
 ## Prose in Doc Comments
 

@@ -319,7 +319,7 @@ impl<F: Field, R: Rank, S: MultiStageCircuit<F, R>> Circuit<F> for MultiStage<F,
     }
 }
 
-/// Extension traits for staging circuits.
+/// Extension trait blanket-implemented for all [`Stage<F, R>`](Stage) types.
 pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
     /// Returns the number of multiplication gates used for allocations.
     fn num_multiplications() -> usize {

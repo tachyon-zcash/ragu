@@ -25,24 +25,10 @@ use super::{Header, internal::padded};
 /// Preserves the header's gadget structure. The gadget will be serialized with
 /// padding during the write phase. This is the efficient default used by most Steps.
 ///
-/// Different header types produce different circuit structures (e.g., a single-element
-/// header vs a tuple header will have different constraint systems).
-///
 /// ## `Uniform` - Circuit-Uniform Encoding
 /// Pre-serializes the header into a fixed-size array of field elements using an
-/// emulator. This ensures identical circuit structure regardless of the underlying
-/// header type.
-///
-/// Used internally for rerandomization where `Rerandomize<H>` must produce the same
-/// circuit for any header type `H`. The tradeoff is reduced efficiency (emulation
-/// overhead) in exchange for circuit uniformity.
-///
-/// # Why Two Variants?
-///
-/// Most Steps benefit from structural encoding (`Gadget`) - it's efficient and the
-/// circuit structure matches the computation. However, rerandomization requires that
-/// the same circuit handles any header type, necessitating the uniform encoding
-/// (`Uniform`) that erases type-level differences through serialization.
+/// emulator, ensuring identical circuit structure regardless of the underlying
+/// header type. Used internally for rerandomization.
 enum EncodedInner<'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_SIZE: usize> {
     /// Standard gadget encoding preserving structure (efficient, type-dependent circuit)
     Gadget(Bound<'dr, D, H::Output>),
@@ -83,6 +69,12 @@ impl<'dr, D: Driver<'dr, F: PrimeField>, H: Header<D::F>, const HEADER_SIZE: usi
     }
 
     /// Returns a reference to the underlying gadget.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self` was created with the internal `Uniform` encoding
+    /// variant. This method is only valid for the standard `Gadget`
+    /// encoding produced by [`Encoded::new`] or [`Encoded::from_gadget`].
     pub fn as_gadget(&self) -> &Bound<'dr, D, H::Output> {
         match &self.0 {
             EncodedInner::Gadget(g) => g,

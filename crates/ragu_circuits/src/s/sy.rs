@@ -383,7 +383,7 @@ struct Evaluator<'table, 'sy, 'fp, F: Field, R: Rank> {
     /// maintaining multiple [`Wire`] handles.
     virtual_table: &'table RefCell<VirtualTable<'sy, F, R>>,
 
-    /// Floor plan mapping DFS routine index to absolute offsets.
+    /// Floor plan mapping DFS segment index to absolute offsets.
     floor_plan: &'fp [ConstraintSegment],
 
     /// Global monotonic DFS counter for routine entries.
@@ -605,7 +605,7 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, '
         let seg = &self.floor_plan[self.current_routine];
 
         // Jump to this routine's absolute position in the polynomial;
-        // see the "Routine Scope Jumps" section in the `s` module doc.
+        // see "Polynomial Encoding and Scope Jumps" in the `s` module doc.
         let init_scope = SyScope {
             available_b: None,
             // When num_linear_constraints == 0 the routine emits no

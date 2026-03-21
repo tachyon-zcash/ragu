@@ -145,7 +145,8 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
         Ok(Point::new_unchecked(x3, y3))
     }
 
-    /// Adds two points with different x-coordinates.
+    /// Adds two points with different x-coordinates. If the x-coordinates are
+    /// equal, the division by `x_1 - x_0` is undefined and synthesis will fail.
     ///
     /// If you cannot guarantee `x_0 != x_1` up front, pass `Some(acc)` via
     /// `nonzero`. On each call, `*acc` is multiplied by `x_1 - x_0`. After
@@ -181,6 +182,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
 
     /// Computes $\[2\] Q + P$. **The caller must ensure that $P$ and $Q$ do not
     /// have the same x-coordinate and that the result is not the identity.**
+    /// Violating either precondition causes a division by zero during synthesis.
     pub fn double_and_add_incomplete(&self, dr: &mut D, other: &Self) -> Result<Self> {
         // See <https://github.com/zcash/zcash/issues/3924> for an explanation.
 

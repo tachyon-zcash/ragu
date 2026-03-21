@@ -78,6 +78,9 @@ fn test_suffix_map() {
 /// Headers are succinct representations of data, essentially used as public
 /// inputs to recursive proofs in order to represent the current state of the
 /// computation.
+///
+/// See the [Writing Circuits](https://tachyon.z.cash/guide/writing_circuits.html)
+/// guide for usage patterns and examples.
 pub trait Header<F: Field>: Send + Sync + Any {
     /// Each header should use a unique suffix to distinguish itself from other
     /// headers.

@@ -3,6 +3,11 @@
 Master standards that apply to all book reviewers. Every reviewer agent reads
 this file in addition to its focus-specific policy.
 
+## Shared Policies
+
+For content placement decisions (book vs. rustdoc), see
+`.claude/review-shared/surface-placement.md`.
+
 ## Page Roles
 
 The book's introduction (`book/src/introduction.md`) serves as a landing page,

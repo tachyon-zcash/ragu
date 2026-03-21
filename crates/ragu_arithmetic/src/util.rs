@@ -87,8 +87,9 @@ where
     })
 }
 
-/// Returns an iterator that yields the coefficients of $a / (X - b)$ with no remainder
-/// for the given univariate polynomial $a \in \mathbb{F}\[X]$ and value $b \in \mathbb{F}$.
+/// Returns an iterator that yields the coefficients of $a / (X - b)$,
+/// assuming $b$ is a root of $a$ (i.e., the division is exact). If $b$ is not
+/// a root, the returned quotient silently drops the remainder.
 /// The coefficients are yielded in reverse order (highest degree first).
 ///
 /// # Panics
@@ -104,7 +105,9 @@ where
     Box::new(factor_iter_inner(a, b))
 }
 
-/// Computes $a / (X - b)$ with no remainder for the given univariate polynomial $a \in \mathbb{F}\[X]$ and value $b \in \mathbb{F}$.
+/// Computes $a / (X - b)$, assuming $b$ is a root of $a$ (i.e., the division
+/// is exact). If $b$ is not a root, the returned quotient silently drops the
+/// remainder.
 ///
 /// # Panics
 ///
@@ -174,10 +177,14 @@ pub fn batch_to_affine<C: CurveAffine, const N: usize>(projectives: [C::Curve; N
 /// $\mathbf{a} \in \mathbb{F}^n$ is a vector of scalars and $\mathbf{G} \in \mathbb{G}^n$
 /// is a vector of bases.
 ///
-/// # Usage
+/// When the `multicore` feature is enabled, window computation is parallelized
+/// using rayon.
 ///
-/// Ensure that the provided iterators have the same length, or this function may not
-/// behave properly or could even panic.
+/// # Correctness
+///
+/// The caller must ensure that `coeffs` and `bases` yield the same number of
+/// elements. If they differ, the shorter iterator silently wins (via `zip`)
+/// and the result will be incorrect.
 pub fn mul<
     'a,
     C: CurveAffine,
