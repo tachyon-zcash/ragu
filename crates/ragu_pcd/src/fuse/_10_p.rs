@@ -27,6 +27,7 @@ use crate::internal::endoscalar::{
 };
 use crate::internal::native::RxIndex;
 use crate::internal::nested::NUM_ENDOSCALING_POINTS;
+use crate::proof::{Challenge, ChallengePreBeta, ChallengeU};
 use crate::{Application, Proof, proof};
 
 /// Accumulates polynomials with their blinds and commitments.
@@ -52,8 +53,8 @@ impl<C: Cycle, R: Rank> Accumulator<'_, C, R> {
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     pub(super) fn compute_p<'dr, D>(
         &self,
-        pre_beta: &Element<'dr, D>,
-        u: &Element<'dr, D>,
+        pre_beta: &Challenge<Element<'dr, D>, ChallengePreBeta>,
+        u: &Challenge<Element<'dr, D>, ChallengeU>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
         s_prime: &proof::SPrime<C, R>,

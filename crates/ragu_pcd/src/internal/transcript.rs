@@ -12,13 +12,13 @@
 //! // Absorb a single field element via Buffer trait
 //! value.write(dr, &mut transcript)?;
 //!
-//! // Squeeze a single field element challenge
-//! let w = transcript.challenge(dr)?;
+//! // Squeeze a typed challenge
+//! let w = transcript.challenge::<ChallengeW>(dr)?;
 //!
 //! // Save/resume for multi-circuit protocols
 //! let state = transcript.save_state(dr)?;
 //! let mut resumed = Transcript::resume_from_state(state, params);
-//! let challenge = resumed.challenge(dr)?; // must squeeze first
+//! let mu = resumed.challenge::<ChallengeMu>(dr)?; // must squeeze first
 //! let mut transcript = resumed.into_transcript(); // then can absorb again
 //! ```
 
@@ -31,6 +31,8 @@ use ragu_primitives::{
     io::Buffer,
     poseidon::{SaveError, Sponge, SpongeState},
 };
+
+use crate::proof::Challenge;
 
 /// Transcript wrapper around Poseidon [`Sponge`] for Fiat-Shamir transforms.
 pub struct Transcript<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> {
@@ -87,9 +89,11 @@ impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> Transcript<'dr, D, P> {
         Ok(Transcript { sponge, params })
     }
 
-    /// Squeezes a single field element challenge from the transcript.
-    pub fn challenge(&mut self, dr: &mut D) -> Result<Element<'dr, D>> {
-        self.sponge.squeeze(dr)
+    /// Squeezes a typed challenge from the transcript.
+    ///
+    /// The phantom tag `T` is inferred from the binding site.
+    pub(crate) fn challenge<T>(&mut self, dr: &mut D) -> Result<Challenge<Element<'dr, D>, T>> {
+        Ok(Challenge::new(self.sponge.squeeze(dr)?))
     }
 
     /// Saves the transcript state (analogous to flush).
@@ -136,10 +140,12 @@ pub struct ResumedTranscript<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> 
 }
 
 impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> ResumedTranscript<'dr, D, P> {
-    /// Squeezes a single field element challenge.
-    pub fn challenge(&mut self, dr: &mut D) -> Result<Element<'dr, D>> {
+    /// Squeezes a typed challenge from the resumed transcript.
+    ///
+    /// The phantom tag `T` is inferred from the binding site.
+    pub(crate) fn challenge<T>(&mut self, dr: &mut D) -> Result<Challenge<Element<'dr, D>, T>> {
         self.squeezed = true;
-        self.sponge.squeeze(dr)
+        Ok(Challenge::new(self.sponge.squeeze(dr)?))
     }
 
     /// Transitions back to a full transcript that supports absorbing.
@@ -195,8 +201,8 @@ mod tests {
         value.write(&mut dr, &mut transcript2)?;
 
         // Different domains should produce different challenges
-        let challenge1 = transcript1.challenge(&mut dr)?;
-        let challenge2 = transcript2.challenge(&mut dr)?;
+        let challenge1 = transcript1.challenge::<()>(&mut dr)?;
+        let challenge2 = transcript2.challenge::<()>(&mut dr)?;
 
         assert_ne!(*challenge1.value().take(), *challenge2.value().take());
 
@@ -213,7 +219,7 @@ mod tests {
             Transcript::new(&mut dr, Pasta::circuit_poseidon(params), b"test-protocol")?;
         let value1 = Element::constant(&mut dr, Fp::from(123));
         value1.write(&mut dr, &mut transcript1)?;
-        let challenge1 = transcript1.challenge(&mut dr)?;
+        let challenge1 = transcript1.challenge::<()>(&mut dr)?;
 
         // Save/resume flow: absorb, save state, resume, then squeeze
         let mut transcript2 =
@@ -225,7 +231,7 @@ mod tests {
             .expect("save_state should succeed");
 
         let mut resumed = Transcript::resume_from_state(state, Pasta::circuit_poseidon(params));
-        let challenge2 = resumed.challenge(&mut dr)?;
+        let challenge2 = resumed.challenge::<()>(&mut dr)?;
 
         // Both flows should produce the same challenge
         assert_eq!(*challenge1.value().take(), *challenge2.value().take());
@@ -257,8 +263,8 @@ mod tests {
         value1.write(&mut dr, &mut transcript2)?;
         value2.write(&mut dr, &mut transcript2)?;
 
-        let challenge1 = transcript1.challenge(&mut dr)?;
-        let challenge2 = transcript2.challenge(&mut dr)?;
+        let challenge1 = transcript1.challenge::<()>(&mut dr)?;
+        let challenge2 = transcript2.challenge::<()>(&mut dr)?;
         assert_eq!(*challenge1.value().take(), *challenge2.value().take());
 
         Ok(())
@@ -273,10 +279,10 @@ mod tests {
         let value = Element::constant(&mut dr, Fp::from(123));
         value.write(&mut dr, &mut transcript)?;
 
-        let c0 = *transcript.challenge(&mut dr)?.value().take();
-        let c1 = *transcript.challenge(&mut dr)?.value().take();
-        let c2 = *transcript.challenge(&mut dr)?.value().take();
-        let c3 = *transcript.challenge(&mut dr)?.value().take();
+        let c0 = *transcript.challenge::<()>(&mut dr)?.value().take();
+        let c1 = *transcript.challenge::<()>(&mut dr)?.value().take();
+        let c2 = *transcript.challenge::<()>(&mut dr)?.value().take();
+        let c3 = *transcript.challenge::<()>(&mut dr)?.value().take();
 
         // Each squeeze must produce a non-zero, distinct value.
         for c in [c0, c1, c2, c3] {
@@ -302,18 +308,18 @@ mod tests {
 
         let mut t = Transcript::new(&mut dr, poseidon, b"resume-test")?;
         v1.write(&mut dr, &mut t)?;
-        let expected_c1 = *t.challenge(&mut dr)?.value().take();
+        let expected_c1 = *t.challenge::<()>(&mut dr)?.value().take();
         v2.write(&mut dr, &mut t)?;
-        let expected_c2 = *t.challenge(&mut dr)?.value().take();
+        let expected_c2 = *t.challenge::<()>(&mut dr)?.value().take();
 
         let mut t = Transcript::new(&mut dr, poseidon, b"resume-test")?;
         v1.write(&mut dr, &mut t)?;
         let state = t.save_state(&mut dr).expect("save_state should succeed");
         let mut resumed = Transcript::resume_from_state(state, poseidon);
-        let c1 = *resumed.challenge(&mut dr)?.value().take();
+        let c1 = *resumed.challenge::<()>(&mut dr)?.value().take();
         let mut t = resumed.into_transcript();
         v2.write(&mut dr, &mut t)?;
-        let c2 = *t.challenge(&mut dr)?.value().take();
+        let c2 = *t.challenge::<()>(&mut dr)?.value().take();
 
         assert_eq!(c1, expected_c1);
         assert_eq!(c2, expected_c2);

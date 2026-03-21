@@ -14,14 +14,14 @@ use rand::CryptoRng;
 use crate::{
     Application, Proof,
     internal::{native, nested},
-    proof,
+    proof::{self, Challenge, ChallengeU},
 };
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     pub(super) fn compute_eval<'dr, D, RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        u: &Element<'dr, D>,
+        u: &Challenge<Element<'dr, D>, ChallengeU>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
         s_prime: &proof::SPrime<C, R>,

@@ -99,6 +99,7 @@ use super::super::{
 use crate::RAGU_TAG;
 use crate::internal::fold_revdot;
 use crate::internal::{suffix::WithSuffix, transcript::Transcript};
+use crate::proof::{ChallengeW, ChallengeY, ChallengeZ};
 
 /// Public output of the first hash circuit.
 ///
@@ -238,7 +239,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             let bridge_preamble_commitment =
                 unified_output.bridge_preamble_commitment.receive(dr)?;
             bridge_preamble_commitment.write(dr, &mut transcript)?;
-            transcript.challenge(dr)?
+            transcript.challenge::<ChallengeW>(dr)?.into_inner()
         };
         unified_output.w.provide(w.clone());
 
@@ -246,8 +247,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let (y, z) = {
             let bridge_s_prime_commitment = unified_output.bridge_s_prime_commitment.receive(dr)?;
             bridge_s_prime_commitment.write(dr, &mut transcript)?;
-            let y = transcript.challenge(dr)?;
-            let z = transcript.challenge(dr)?;
+            let y = transcript.challenge::<ChallengeY>(dr)?.into_inner();
+            let z = transcript.challenge::<ChallengeZ>(dr)?.into_inner();
             (y, z)
         };
         unified_output.y.provide(y.clone());

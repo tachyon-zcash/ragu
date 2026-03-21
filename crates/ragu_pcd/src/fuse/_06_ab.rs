@@ -42,7 +42,7 @@ use alloc::vec::Vec;
 use crate::{
     Application,
     internal::{fold_revdot, native, nested},
-    proof,
+    proof::{self, Challenge, ChallengeMuPrime, ChallengeNuPrime},
 };
 
 use super::claims::{FoldKey, FuseProofSource, TrackedPoly};
@@ -56,8 +56,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         a: FixedVec<TrackedPoly<'_, FoldKey, C::CircuitField, R>, NativeNumGroups>,
         b: FixedVec<structured::Polynomial<C::CircuitField, R>, NativeNumGroups>,
         source: &FuseProofSource<'_, C, R>,
-        mu_prime: &Element<'dr, D>,
-        nu_prime: &Element<'dr, D>,
+        mu_prime: &Challenge<Element<'dr, D>, ChallengeMuPrime>,
+        nu_prime: &Challenge<Element<'dr, D>, ChallengeNuPrime>,
     ) -> Result<proof::AB<C, R>>
     where
         D: Driver<'dr, F = C::CircuitField>,
