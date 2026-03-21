@@ -101,22 +101,21 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
         ))
     }
 
-    /// Allocates three elements $(a, b, d)$ using a single zero-product gate.
-    /// Enforces $a \cdot b = 0$ and places $d$ in the free d-wire.
+    /// Allocates two elements $(a, b)$ via a single gate with layout
+    /// $(0, a, 0, b)$.
     ///
-    /// This costs one multiplication constraint and is useful when the caller
-    /// knows the product of two values is zero (e.g., `x * is_zero`).
-    pub fn alloc_zero_product(
+    /// This costs one multiplication constraint but allocates two values,
+    /// and the structurally-zero first and third wires cost less in multiexp
+    /// than two separate [`alloc`](Self::alloc) calls.
+    pub fn alloc_d(
         dr: &mut D,
         a: DriverValue<D, D::F>,
         b: DriverValue<D, D::F>,
-        d: DriverValue<D, D::F>,
-    ) -> Result<(Self, Self, Self)> {
-        let (a_wire, b_wire, d_wire) = dr.zero_product_mul(|| {
+    ) -> Result<(Self, Self)> {
+        let (a_wire, b_wire) = dr.alloc_d(|| {
             Ok((
                 Coeff::Arbitrary(*a.snag()),
                 Coeff::Arbitrary(*b.snag()),
-                Coeff::Arbitrary(*d.snag()),
             ))
         })?;
 
@@ -128,10 +127,6 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
             Element {
                 value: b,
                 wire: b_wire,
-            },
-            Element {
-                value: d,
-                wire: d_wire,
             },
         ))
     }
