@@ -106,7 +106,7 @@ fn arb_sparse_from_coeffs_poly() -> impl Strategy<Value = Polynomial<Fp, R>> {
         ],
         R::num_coeffs(),
     )
-    .prop_map(|coeffs| Polynomial::<Fp, R>::from_coeffs(coeffs, |x| bool::from(x.is_zero())))
+    .prop_map(Polynomial::<Fp, R>::from_coeffs)
 }
 
 /// Any polynomial: randomly picks between different construction paths and
@@ -147,7 +147,7 @@ proptest! {
 
     #[test]
     fn from_coeffs_roundtrip(coeffs in arb_dense_coeffs()) {
-        let poly = Polynomial::<Fp, R>::from_coeffs(coeffs.clone(), |x| bool::from(x.is_zero()));
+        let poly = Polynomial::<Fp, R>::from_coeffs(coeffs.clone());
         let mut expected = coeffs;
         expected.resize(R::num_coeffs(), Fp::ZERO);
         prop_assert_eq!(poly.to_dense(), expected);
@@ -416,33 +416,16 @@ proptest! {
 
     #[test]
     fn eq_across_construction_paths(coeffs in arb_dense_coeffs()) {
-        let from_coeffs = Polynomial::<Fp, R>::from_coeffs(
-            coeffs.clone(),
-            |x| bool::from(x.is_zero()),
-        );
+        let from_coeffs = Polynomial::<Fp, R>::from_coeffs(coeffs.clone());
         let mut padded = coeffs;
         padded.resize(R::num_coeffs(), Fp::ZERO);
-        let from_full = Polynomial::<Fp, R>::from_coeffs(
-            padded,
-            |x| bool::from(x.is_zero()),
-        );
+        let from_full = Polynomial::<Fp, R>::from_coeffs(padded);
         prop_assert_eq!(from_coeffs, from_full);
     }
 
     #[test]
     fn eq_reflexive(poly in arb_any_poly()) {
         prop_assert_eq!(&poly, &poly);
-    }
-
-    // -----------------------------------------------------------------------
-    // set_constant_term
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn set_constant_term_proptest(poly in arb_any_poly(), val in arb_fe()) {
-        let mut result = poly;
-        result.set_constant_term(val);
-        prop_assert_eq!(result.to_dense()[0], val);
     }
 
     // -----------------------------------------------------------------------
@@ -552,7 +535,7 @@ fn single_coefficient_at_degree_boundaries() {
     ] {
         let mut coeffs = alloc::vec![Fp::ZERO; R::num_coeffs()];
         coeffs[degree] = val;
-        let poly = Polynomial::<Fp, R>::from_coeffs(coeffs, |f| bool::from(f.is_zero()));
+        let poly = Polynomial::<Fp, R>::from_coeffs(coeffs);
         assert_eq!(
             poly.eval(x),
             val * x.pow_vartime([u64::try_from(degree).unwrap()]),
@@ -627,146 +610,4 @@ fn alloc_optimization_pattern() {
     let d_nonzero = d_region.iter().filter(|x| bool::from(!x.is_zero())).count();
     let expected_allocs = (0..n).filter(|i| i % 10 == 0).count();
     assert_eq!(d_nonzero, expected_allocs);
-}
-
-// ---------------------------------------------------------------------------
-// ensure_index edge cases
-// ---------------------------------------------------------------------------
-
-#[test]
-fn ensure_index_extend_prev_with_merge() {
-    // Construct blocks at [0,2) and [3,5) with a gap at index 2.
-    // ensure_index(2) should extend the first block and merge with the second.
-    let v1 = Fp::from(1u64);
-    let v2 = Fp::from(2u64);
-    let v3 = Fp::from(3u64);
-    let v4 = Fp::from(4u64);
-
-    let mut coeffs = alloc::vec![Fp::ZERO; R::num_coeffs()];
-    coeffs[0] = v1;
-    coeffs[1] = v2;
-    coeffs[3] = v3;
-    coeffs[4] = v4;
-    let mut poly = Polynomial::<Fp, R>::from_coeffs(coeffs, |f| bool::from(f.is_zero()));
-
-    // Before: two blocks: (0, [v1, v2]) and (3, [v3, v4]).
-    assert_eq!(poly.blocks().len(), 2);
-
-    let written = Fp::from(99u64);
-    *poly.ensure_index(2, Fp::ZERO) = written;
-
-    // After: one merged block (0, [v1, v2, written, v3, v4]).
-    assert_eq!(poly.blocks().len(), 1);
-    assert_eq!(poly.blocks()[0].0, 0);
-    assert_eq!(poly.blocks()[0].1.len(), 5);
-
-    let dense = poly.to_dense();
-    assert_eq!(dense[0], v1);
-    assert_eq!(dense[1], v2);
-    assert_eq!(dense[2], written);
-    assert_eq!(dense[3], v3);
-    assert_eq!(dense[4], v4);
-}
-
-#[test]
-fn ensure_index_extend_prev_no_merge() {
-    // Blocks at [0,2) and [5,7). ensure_index(2) extends the first block
-    // without merging (gap of 2 to the next block).
-    let v1 = Fp::from(1u64);
-    let v2 = Fp::from(2u64);
-    let v5 = Fp::from(5u64);
-    let v6 = Fp::from(6u64);
-
-    let mut coeffs = alloc::vec![Fp::ZERO; R::num_coeffs()];
-    coeffs[0] = v1;
-    coeffs[1] = v2;
-    coeffs[5] = v5;
-    coeffs[6] = v6;
-    let mut poly = Polynomial::<Fp, R>::from_coeffs(coeffs, |f| bool::from(f.is_zero()));
-
-    assert_eq!(poly.blocks().len(), 2);
-
-    let written = Fp::from(42u64);
-    *poly.ensure_index(2, Fp::ZERO) = written;
-
-    // Still two blocks: (0, [v1, v2, written]) and (5, [v5, v6]).
-    assert_eq!(poly.blocks().len(), 2);
-    assert_eq!(poly.blocks()[0].1.len(), 3);
-
-    let dense = poly.to_dense();
-    assert_eq!(dense[2], written);
-    assert_eq!(dense[5], v5);
-}
-
-#[test]
-fn ensure_index_prepend_next() {
-    // Single block at [5,7). ensure_index(4) should prepend.
-    let v5 = Fp::from(5u64);
-    let v6 = Fp::from(6u64);
-
-    let mut coeffs = alloc::vec![Fp::ZERO; R::num_coeffs()];
-    coeffs[5] = v5;
-    coeffs[6] = v6;
-    let mut poly = Polynomial::<Fp, R>::from_coeffs(coeffs, |f| bool::from(f.is_zero()));
-
-    assert_eq!(poly.blocks().len(), 1);
-    assert_eq!(poly.blocks()[0].0, 5);
-
-    let written = Fp::from(77u64);
-    *poly.ensure_index(4, Fp::ZERO) = written;
-
-    // One block at [4,7).
-    assert_eq!(poly.blocks().len(), 1);
-    assert_eq!(poly.blocks()[0].0, 4);
-    assert_eq!(poly.blocks()[0].1.len(), 3);
-
-    let dense = poly.to_dense();
-    assert_eq!(dense[4], written);
-    assert_eq!(dense[5], v5);
-    assert_eq!(dense[6], v6);
-}
-
-#[test]
-fn ensure_index_new_block_in_gap() {
-    // Blocks at [0,2) and [10,12). ensure_index(5) creates a new block.
-    let mut coeffs = alloc::vec![Fp::ZERO; R::num_coeffs()];
-    coeffs[0] = Fp::from(1u64);
-    coeffs[1] = Fp::from(2u64);
-    coeffs[10] = Fp::from(10u64);
-    coeffs[11] = Fp::from(11u64);
-    let mut poly = Polynomial::<Fp, R>::from_coeffs(coeffs, |f| bool::from(f.is_zero()));
-
-    assert_eq!(poly.blocks().len(), 2);
-
-    let written = Fp::from(55u64);
-    *poly.ensure_index(5, Fp::ZERO) = written;
-
-    assert_eq!(poly.blocks().len(), 3);
-    assert_eq!(poly.to_dense()[5], written);
-}
-
-#[test]
-fn ensure_index_inside_existing_block() {
-    let mut coeffs = alloc::vec![Fp::ZERO; R::num_coeffs()];
-    coeffs[3] = Fp::from(30u64);
-    coeffs[4] = Fp::from(40u64);
-    coeffs[5] = Fp::from(50u64);
-    let mut poly = Polynomial::<Fp, R>::from_coeffs(coeffs, |f| bool::from(f.is_zero()));
-
-    let written = Fp::from(99u64);
-    *poly.ensure_index(4, Fp::ZERO) = written;
-
-    assert_eq!(poly.to_dense()[4], written);
-    assert_eq!(poly.blocks().len(), 1);
-}
-
-#[test]
-fn ensure_index_empty_polynomial() {
-    let mut poly = Polynomial::<Fp, R>::new();
-    let written = Fp::from(7u64);
-    *poly.ensure_index(10, Fp::ZERO) = written;
-
-    assert_eq!(poly.blocks().len(), 1);
-    assert_eq!(poly.blocks()[0].0, 10);
-    assert_eq!(poly.to_dense()[10], written);
 }

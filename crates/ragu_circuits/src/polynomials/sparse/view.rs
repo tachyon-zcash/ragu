@@ -44,11 +44,11 @@ mod private {
 pub trait Perspective: private::Sealed {
     /// Maps the four wire buffers (a, b, c, d) to degree-ordered blocks.
     ///
-    /// Returns up to 4 blocks sorted by start degree. Adjacent blocks are
-    /// possible (for example, when both `b` and `a` are full) and must be
-    /// merged by the caller before constructing a [`Polynomial`].
-    /// [`View::build`] handles this merge automatically. The `n` parameter
-    /// is `R::n()` (the maximum number of multiplication gates).
+    /// Returns up to 4 blocks sorted by start degree. Adjacent blocks can
+    /// occur when wire regions share a boundary (for example, when both `b`
+    /// and `a` are full); this is permitted by the sparse polynomial
+    /// representation. The `n` parameter is `R::n()` (the maximum number of
+    /// multiplication gates).
     #[doc(hidden)]
     fn map_to_blocks<T>(
         a: Vec<T>,
@@ -173,23 +173,9 @@ impl<T, R: Rank, P: Perspective> View<T, R, P> {
             self.d.len()
         );
 
-        let mut blocks = P::map_to_blocks(self.a, self.b, self.c, self.d, n);
+        let blocks = P::map_to_blocks(self.a, self.b, self.c, self.d, n);
 
-        // Adjacent blocks are possible whenever two wire regions share a
-        // boundary (e.g. c ends at c.len(), b starts at 2*n-b.len(); or b
-        // ends at 2*n, a starts at 2*n). Merge any adjacent blocks.
-        let mut merged: Vec<(usize, Vec<T>)> = Vec::with_capacity(blocks.len());
-        for (start, data) in blocks.drain(..) {
-            if let Some((prev_start, prev_data)) = merged.last_mut()
-                && *prev_start + prev_data.len() == start
-            {
-                prev_data.extend(data);
-                continue;
-            }
-            merged.push((start, data));
-        }
-
-        Polynomial::from_blocks(merged)
+        Polynomial::from_blocks(blocks)
     }
 }
 
