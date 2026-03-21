@@ -383,6 +383,7 @@ mod poly_with_roots_tests {
     use ff::Field;
     use pasta_curves::Fp as F;
     use proptest::prelude::*;
+    use ragu_testing::strategies;
 
     fn check(roots: &[F]) -> Result<(), TestCaseError> {
         let poly = poly_with_roots(roots);
@@ -410,54 +411,11 @@ mod poly_with_roots_tests {
         Ok(())
     }
 
-    fn size_strategy() -> impl Strategy<Value = usize> {
-        prop::sample::select(vec![
-            0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 633,
-        ])
-    }
-
-    fn arb_field_element() -> impl Strategy<Value = F> {
-        (0u64..10000).prop_map(|i| F::from(i) * F::MULTIPLICATIVE_GENERATOR + F::DELTA)
-    }
-
-    fn roots_strategy() -> impl Strategy<Value = Vec<F>> {
-        let w = Domain::<F>::new(6).omega();
-
-        prop_oneof![
-            // Distinct roots at boundary sizes
-            size_strategy().prop_map(|n| (0..n).map(|i| F::from(i as u64) + F::DELTA).collect()),
-            // Repeated roots at different tree levels
-            Just(vec![F::from(7); 2]), // level 0: (X-7)²
-            Just(vec![F::from(3); 4]), // level 1: (X-3)⁴
-            Just(vec![F::from(5); 8]), // FFT level: (X-5)⁸
-            // Zero roots (tests interaction with internal zero-padding)
-            Just(vec![F::ZERO, F::from(1), F::from(2)]),
-            Just(vec![F::ZERO; 5]),
-            // Roots of unity (vanishing polynomials)
-            Just((0..4).map(|i| w.pow([i * 16])).collect()), // 4th roots
-            Just((0..16).map(|i| w.pow([i * 4])).collect()), // 16th roots
-            Just((0..64).map(|i| w.pow([i as u64])).collect()), // 64th roots
-            // Mixed: repeated roots of unity + arbitrary elements
-            Just(vec![
-                w,
-                w,
-                w.square(),
-                w.square(),
-                F::from(42),
-                F::from(123)
-            ]),
-            // Random roots with random size
-            (1usize..100).prop_flat_map(|n| { proptest::collection::vec(arb_field_element(), n) }),
-            // All-same random root
-            (arb_field_element(), 1usize..20).prop_map(|(r, n)| vec![r; n]),
-        ]
-    }
-
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(256))]
 
         #[test]
-        fn test_poly_with_roots(roots in roots_strategy()) {
+        fn proptest_poly_with_roots(roots in strategies::poly_with_roots::<F>()) {
             check(&roots)?;
         }
     }
