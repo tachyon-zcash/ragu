@@ -246,18 +246,19 @@ impl<'scope, 'env, F: Field> Driver<'env> for Evaluator<'scope, 'env, F> {
     const ONE: Self::Wire = ();
 
     fn alloc(&mut self, value: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
-        // Packs two allocations into one multiplication gate when possible, enabling consecutive
-        // allocations to share gates.
+        // Packs two allocations into one gate with layout (0, a, 0, b),
+        // which costs less in multiexp than two separate gates.
         if let Some(index) = self.state.available_b.take() {
             let seg = &mut self.segments[self.state.current_segment].segment;
-            let a = seg.a[index];
-            let b = value()?;
-            seg.b[index] = b.value();
-            seg.c[index] = a * b.value();
+            seg.d[index] = value()?.value();
             Ok(())
         } else {
-            let index = self.segments[self.state.current_segment].segment.a.len();
-            self.mul(|| Ok((value()?, Coeff::Zero, Coeff::Zero)))?;
+            let seg = &mut self.segments[self.state.current_segment].segment;
+            let index = seg.a.len();
+            seg.a.push(F::ZERO);
+            seg.b.push(value()?.value());
+            seg.c.push(F::ZERO);
+            seg.d.push(F::ZERO);
             self.state.available_b = Some(index);
             Ok(())
         }
