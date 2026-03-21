@@ -1,4 +1,13 @@
 //! Polynomials with coefficients in a split structure arrangement.
+//!
+//! The structured representation stores coefficients in four vectors
+//! `(u, v, w, d)` that map to interleaved degree ranges. This layout is chosen
+//! so that reversing coefficients swaps `(u, v)` and `(w, d)` cleanly, which
+//! makes `revdot(a, b)` computable as simple vector dot products.
+//!
+//! This representation is also aligned with the wiring polynomial layout used
+//! by the circuit synthesis code, so structured polynomials can be combined
+//! with `s(X, Y)` and `t(X, z)` without reshaping.
 
 use ff::Field;
 use ragu_arithmetic::CurveAffine;
