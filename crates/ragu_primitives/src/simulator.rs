@@ -118,6 +118,16 @@ impl<'dr, F: Field> Driver<'dr> for Simulator<F> {
         Ok((a, b, c))
     }
 
+    fn dual_alloc(
+        &mut self,
+        values: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>)>,
+    ) -> Result<(Self::Wire, Self::Wire)> {
+        let (a, b) = values()?;
+
+        self.num_multiplications += 1;
+        Ok((a.value(), b.value()))
+    }
+
     fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {
         let lc = lc(DirectSum::default());
         lc.value()

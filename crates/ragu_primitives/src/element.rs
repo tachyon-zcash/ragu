@@ -101,6 +101,36 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
         ))
     }
 
+    /// Allocates two elements $(a, b)$ via a single gate with layout
+    /// $(0, a, 0, b)$.
+    ///
+    /// This costs one multiplication constraint but allocates two values,
+    /// and the structurally-zero first and third wires cost less in multiexp
+    /// than two separate [`alloc`](Self::alloc) calls.
+    pub fn dual_alloc(
+        dr: &mut D,
+        a: DriverValue<D, D::F>,
+        b: DriverValue<D, D::F>,
+    ) -> Result<(Self, Self)> {
+        let (a_wire, b_wire) = dr.dual_alloc(|| {
+            Ok((
+                Coeff::Arbitrary(*a.snag()),
+                Coeff::Arbitrary(*b.snag()),
+            ))
+        })?;
+
+        Ok((
+            Element {
+                value: a,
+                wire: a_wire,
+            },
+            Element {
+                value: b,
+                wire: b_wire,
+            },
+        ))
+    }
+
     /// Creates an element for the unitary constant value.
     pub fn one() -> Self {
         Element {

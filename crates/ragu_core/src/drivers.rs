@@ -228,6 +228,20 @@ pub trait Driver<'dr>: DriverTypes<ImplWire = Self::Wire, ImplField = Self::F> +
         values: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
     ) -> Result<(Self::Wire, Self::Wire, Self::Wire)>;
 
+    /// Allocates two values via a single gate with layout $(0, a, 0, b)$.
+    ///
+    /// This is cheaper than two separate [`alloc`](Driver::alloc) calls because
+    /// the first and third wire positions are structurally zero, leaving only
+    /// two nonzero entries in the multiexp.
+    ///
+    /// The provided closure returns `(a, b)` coefficients. The returned wires
+    /// occupy the second and fourth regions of the structured polynomial at
+    /// this gate.
+    fn dual_alloc(
+        &mut self,
+        values: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>)>,
+    ) -> Result<(Self::Wire, Self::Wire)>;
+
     /// Asks the driver to create a virtual wire that is the linear combination
     /// of some existing wires. This may impose some runtime cost for circuit
     /// synthesis depending on the driver. However, it is relatively "free" to
