@@ -41,8 +41,8 @@
     - [Registry Polynomial](protocol/extensions/registry.md) <!-- todo -->
     - [Endoscalars](protocol/extensions/endoscalar.md) <!-- todo -->
     - [Staging](protocol/extensions/staging.md) <!-- todo -->
-  - [Recursion]()
-    - [Public Inputs](protocol/recursion/public_inputs.md) <!-- todo -->
+  - [Recursion](protocol/recursion/index.md)
+    - [Public Inputs](protocol/recursion/public_inputs.md)
   - [Analysis](protocol/analysis.md) <!-- todo -->
 - [Part III: Implementation]()
   - [Architecture Overview](implementation/arch.md) <!-- todo -->
