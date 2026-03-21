@@ -62,6 +62,13 @@ impl<'dr, D: Driver<'dr>> Driver<'dr> for DemotedDriver<D> {
         unreachable!("DemotedDriver cannot be constructed")
     }
 
+    fn zero_product_mul(
+        &mut self,
+        _: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
+    ) -> Result<(Self::Wire, Self::Wire, Self::Wire)> {
+        unreachable!("DemotedDriver cannot be constructed")
+    }
+
     fn add(&mut self, _: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {
         unreachable!("DemotedDriver cannot be constructed")
     }
