@@ -103,27 +103,34 @@ actual trace polynomial $r(X)$.
 ## Segments
 
 Execution traces are divided into **segments**. All wires allocated outside of
-routine invocations belong to a single **root segment**. Each routine invocation
-creates a new segment containing only the wires allocated directly within it;
-nested calls produce their own segments in turn. The `CircuitExt::rx` method
-produces a `Trace` that contains these segments in DFS order, but their actual
-arrangement in the trace polynomial depends on the floor plan's repositioning
-values.
+routine invocations belong to a single **root segment**.[^root-segment] Each
+routine invocation creates a new segment containing only the wires allocated
+directly within it; nested calls produce their own segments in turn. The
+`CircuitExt::rx` method produces a `Trace` that contains these segments in DFS
+order, but their actual arrangement in the trace polynomial depends on the floor
+plan's repositioning values.
 
-```admonish info
-The root segment is not repositioned. It contains the special `ONE` wire and is
-where all stage wires are located.
-```
+[^root-segment]: The root segment is not repositioned. It contains the special
+    `ONE` wire and is where all stage wires are located.
 
-Segments have a corresponding [contribution](#algebraic-description) to $s(X, Y)$. For a leaf invocation
-— one with no nested routine calls — the contribution is just its segment's.
-When an invocation nests further calls, its total contribution includes all
-descendant segments, forming a subtree. Whether this subtree behaves as a single
-relocatable unit depends on the floor planner: if descendant segments sit at
-fixed relative offsets from the root, the entire subtree shifts uniformly and can
-be memoized as one piece. If the floor planner positions descendants
-independently, the subtree's contribution acquires multiple independent
-positional degrees of freedom and must be handled per-segment.
+Each segment has its own [contribution](#algebraic-description) to $s(X, Y)$. A
+leaf routine invocation — one with no nested calls — contributes exactly one
+segment. When a routine nests further calls, its **total contribution** is the
+sum of its own segment's contribution and every descendant segment's. These
+segments are not independent: routines send and receive wires through [`Input`]
+and [`Output`] gadgets, and those wires are often allocated in different
+segments.
+
+Because each wire's location in $s(X, Y)$ is a monomial in $X$ determined by the
+gate offset of whichever segment allocated it, a constraint referencing a
+foreign wire creates a positional dependency between the two segments. A routine
+invocation and all of its descendants thus form a **subtree** of
+positionally-dependent segments. If every segment in a subtree sits at a fixed
+relative offset from the root, all wire locations shift uniformly — the subtree
+is a single relocatable unit that can be memoized. If the floor planner
+positions descendants independently, cross-segment wire locations introduce
+additional positional degrees of freedom and the subtree must be handled
+per-segment.
 
 ### Allocation
 
