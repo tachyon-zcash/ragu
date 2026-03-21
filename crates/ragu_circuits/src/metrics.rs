@@ -165,18 +165,6 @@ pub struct SegmentRecord {
 }
 
 impl SegmentRecord {
-    pub(crate) fn new(
-        num_multiplication_constraints: usize,
-        num_linear_constraints: usize,
-        identity: RoutineIdentity,
-    ) -> Self {
-        Self {
-            num_multiplication_constraints,
-            num_linear_constraints,
-            identity,
-        }
-    }
-
     /// The number of multiplication constraints in this segment.
     pub fn num_multiplication_constraints(&self) -> usize {
         self.num_multiplication_constraints

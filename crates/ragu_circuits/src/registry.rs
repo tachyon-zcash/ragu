@@ -413,6 +413,11 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
         self.at(w).y(y)
     }
 
+    /// Evaluates the registry polynomial $s(x, y)$ for circuit `i`.
+    pub fn circuit_xy(&self, i: CircuitIndex, x: F, y: F) -> F {
+        self.wxy(i.omega_j(), x, y)
+    }
+
     /// Returns true if the circuit's $\omega^j$ value is in the registry domain.
     ///
     /// See [`CircuitIndex::omega_j`] for details on the $\omega^j$ mapping.

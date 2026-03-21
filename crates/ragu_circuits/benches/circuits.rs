@@ -7,6 +7,7 @@ use std::hint::black_box;
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::{ProductionRank, TestRank, structured, unstructured};
+use ragu_circuits::registry::CircuitIndex;
 use ragu_circuits::registry::{Registry, RegistryBuilder};
 use ragu_circuits::{Circuit, CircuitExt};
 use ragu_pasta::{Fp, Pasta};
@@ -89,14 +90,24 @@ fn eval_ky((a, b, y): (Fp, Fp, Fp)) {
 
 #[library_benchmark]
 #[bench::simple(MySimpleCircuit)]
-fn constraint_counts_simple(circuit: impl Circuit<Fp>) {
-    black_box(CircuitExt::<Fp>::constraint_counts_trivial(&circuit)).unwrap();
+fn constraint_counts_simple(circuit: impl Circuit<Fp> + 'static) {
+    let registry = RegistryBuilder::<Fp, TestRank>::new()
+        .register_internal_circuit(circuit)
+        .unwrap()
+        .finalize()
+        .unwrap();
+    black_box(registry.constraint_counts(CircuitIndex::new(0)));
 }
 
 #[library_benchmark]
 #[benches::multiple( SquareCircuit { times: 2 }, SquareCircuit { times: 10 },)]
-fn constraint_counts_square(circuit: impl Circuit<Fp>) {
-    black_box(CircuitExt::<Fp>::constraint_counts_trivial(&circuit)).unwrap();
+fn constraint_counts_square(circuit: impl Circuit<Fp> + 'static) {
+    let registry = RegistryBuilder::<Fp, TestRank>::new()
+        .register_internal_circuit(circuit)
+        .unwrap()
+        .finalize()
+        .unwrap();
+    black_box(registry.constraint_counts(CircuitIndex::new(0)));
 }
 
 #[library_benchmark(setup = setup_rng)]

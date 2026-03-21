@@ -21,10 +21,7 @@ use alloc::{vec, vec::Vec};
 #[cfg(feature = "multicore")]
 use std::sync::mpsc;
 
-use super::{
-    Circuit, DriverScope, Rank, floor_planner::ConstraintSegment, metrics::SegmentRecord, registry,
-    structured,
-};
+use super::{Circuit, DriverScope, Rank, floor_planner::ConstraintSegment, registry, structured};
 
 /// A contiguous group of multiplication gates.
 ///
@@ -77,27 +74,6 @@ pub struct Trace<F> {
 }
 
 impl<F: Field> Trace<F> {
-    /// Assembles this trace into a [`structured::Polynomial`] using
-    /// a default [`Key`](registry::Key), without registry
-    /// optimizations.
-    ///
-    /// This is a convenience for tests that need a polynomial from a
-    /// trace but don't have (or need) a full
-    /// [`Registry`](registry::Registry).
-    ///
-    /// **Note:** This synthesizes a trivial floor plan from segment lengths with
-    /// zero linear constraints. It is only correct for traces produced by
-    /// circuits (or stages) that have no linear constraints in any segment.
-    pub fn assemble_trivial<R: Rank>(&self) -> Result<structured::Polynomial<F, R>> {
-        let segment_records: Vec<SegmentRecord> = self
-            .segments
-            .iter()
-            .map(|seg| SegmentRecord::new(seg.a.len(), 0, super::metrics::RoutineIdentity::Root))
-            .collect();
-        let plan = super::floor_planner::floor_plan(&segment_records);
-        self.assemble_with_key(&registry::Key::default(), &plan)
-    }
-
     /// Assembles this trace into a [`structured::Polynomial`] using
     /// the provided registry [`Key`](registry::Key).
     ///
