@@ -552,10 +552,13 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
 ///
 /// The queries must be ordered exactly as in the prover's computation of $f(X)$
 /// in [`compute_f`], since the ordering affects the weight (with respect to
-/// [$\alpha$]) of each quotient polynomial.
+/// [$\alpha$]) of each quotient polynomial. See [`NUM_POLY_QUERIES`] for the
+/// shared count.
 ///
 /// [`compute_f`]: crate::Application::compute_f
 /// [$\alpha$]: unified::Output::alpha
+/// [`NUM_POLY_QUERIES`]: super::super::NUM_POLY_QUERIES
+///
 #[rustfmt::skip]
 fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>(
     eval: &'a native_eval::Output<'dr, D>,
@@ -565,7 +568,7 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HE
     computed_ax: &'a Element<'dr, D>,
     computed_bx: &'a Element<'dr, D>,
 ) -> impl Iterator<Item = (&'a Element<'dr, D>, &'a Element<'dr, D>, &'a Element<'dr, D>)> {
-    [
+    let static_queries = [
         // Check p(u) = v for each child proof.
         (&eval.left.p_poly,        &preamble.left.unified.v,                     &d.left.u),
         (&eval.right.p_poly,       &preamble.right.unified.v,                    &d.right.u),
@@ -595,7 +598,13 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HE
         // prover.
         (&eval.a_poly,             computed_ax,                                      &d.challenges.xz),
         (&eval.b_poly,             computed_bx,                                      &d.challenges.x),
-    ].into_iter()
+    ];
+    assert_eq!(
+        static_queries.len() + 2 * RxIndex::ALL.len() + InternalCircuitIndex::ALL.len(),
+        super::super::NUM_POLY_QUERIES,
+        "poly_queries count diverged from compute_f"
+    );
+    static_queries.into_iter()
     // Stage and circuit rx evaluations at xz for each child proof.
     // The same r_i(xz) values feed into both A(xz) (undilated) and
     // B(x) (Z-dilated) recomputations.

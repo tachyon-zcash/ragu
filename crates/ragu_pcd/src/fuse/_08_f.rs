@@ -104,7 +104,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         };
 
         // This must exactly match the ordering of the `poly_queries` function
-        // in the `compute_v` circuit.
+        // in the `compute_v` circuit. See `NUM_POLY_QUERIES` for the count.
         let mut iters: Vec<_> = vec![
             // Child proof p(u)=v checks
             factor_iter(left.p.native.poly.iter_coeffs(), left.challenges.u),
@@ -165,6 +165,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 omega_j(id),
             ));
         }
+
+        assert_eq!(
+            iters.len(),
+            native::NUM_POLY_QUERIES,
+            "compute_f query count diverged from poly_queries"
+        );
 
         let mut coeffs = Vec::with_capacity(R::num_coeffs());
         let (first, rest) = iters.split_first_mut().unwrap();
