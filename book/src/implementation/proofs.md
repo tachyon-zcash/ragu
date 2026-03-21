@@ -1,18 +1,18 @@
 # PCD Step and Proofs
 
-The proof structure in Ragu represents the cryptographic evidence that a
-computation was performed correctly. Proofs are _recursive_ and each proof can
-verify previous proofs while simultaneously attesting to a new computation.
-This enables construction of arbitrarily deep proof trees where each node
-carries evidence of its entire computational history.
+The proof structure in Ragu represents the cryptographic evidence that
+a computation was performed correctly. Each attestation is _recursive_:
+it verifies previous claims while certifying a new computation. This
+enables construction of arbitrarily deep trees where each node carries
+evidence of its entire computational history.
 
 ## Arity-2 PCD
 
-Instead of using separate proof structures for IVC and PCD which would inject
-additional engineering complexity into the internal layers. Ragu treats all
-recursion steps as PCD-based, even when only IVC semantics are required for a
-given step. This allows the use of a dummy second input to maintain a uniform
-structure.
+Instead of using separate proof structures for IVC and PCD, which would
+inject additional engineering complexity into the internal layers, Ragu
+treats all recursion steps as PCD-based, even when only IVC semantics are
+required for a given step. This allows the use of a dummy second input to
+maintain a uniform structure.
 
 Although conjectural, the performance cost of two-input PCD over single-input
 IVC is likely negligible, which motivates this design choice. Visually, this
@@ -24,25 +24,25 @@ with dummy accumulator inputs, forming a lopsided binary tree structure.
 The primary type that applications interact with is `Pcd` (proof-carrying data):
 
 ```rust
-pub struct Pcd<'source, C: Cycle, R: Rank, H: Header<C::CircuitField>> {
-    pub proof: Proof<C, R>,
-    pub data: H::Data<'source>,
+pub struct Pcd<C: Cycle, R: Rank, H: Header<C::CircuitField>> {
+    proof: Proof<C, R>,
+    data: H::Data,
 }
 ```
 
 A `Pcd` bundles two components:
 
 * **`proof`**: The cryptographic proof object containing all data necessary
-  for verification.
+  for verification. Accessed internally; not directly exposed.
 * **`data`**: Application-defined public inputs, with a succinct
   encoded representation as a `Header` representing the current
-  state of the computation.
+  state of the computation. Accessed via `pcd.data()`.
 
 The type parameters configure the proof system:
 
 * **`C: Cycle`**: The elliptic curve cycle used for recursion (e.g., Pasta).
-* **`R: Rank`**: The circuit capacity as a power of two (e.g., `R<13>` for
-  2^13 constraints).
+* **`R: Rank`**: The circuit capacity (e.g., `R<13>` for up to 2,048
+  multiplication gates).
 * **`H: Header`**: The header type providing a succinct encoded representation
   of the proof's public inputs.
 
@@ -57,13 +57,14 @@ pub trait Step<C: Cycle> {
     const INDEX: Index;
 
     type Witness<'source>;
+    type Left: Header<C::CircuitField>;
+    type Right: Header<C::CircuitField>;
+    type Output: Header<C::CircuitField>;
     type Aux<'source>;
-    type Left: Header;
-    type Right: Header;
-    type Output: Header;
 
-    // Simplified signature - actual API includes driver and encoder abstractions
-    fn witness(&self, dr, left, right) -> Result<(HeaderGadget<Left>, HeaderGadget<Right>, HeaderGadget<Output>), Aux>;
+    // Simplified — see Writing Circuits for the full signature
+    fn witness(&self, dr, witness, left_data, right_data)
+        -> Result<((Encoded<Left>, Encoded<Right>, Encoded<Output>), OutputData, Aux)>;
 }
 ```
 
@@ -71,8 +72,8 @@ The associated types define the step's interface:
 
 * **`INDEX`**: Unique identifier for this step within the application.
 * **`Witness`**: Private data provided by the prover (not visible to verifiers).
-* **`Aux`**: Auxiliary output returned after proving, often used to construct
-  the output header data.
+* **`Aux`**: Auxiliary data returned to the caller after proving, useful
+  for pipelining witness data to subsequent steps.
 * **`Left`, `Right`**: The header types of the two child proofs.
 * **`Output`**: The header type of the resulting proof.
 
@@ -112,12 +113,12 @@ Creates a new proof from witness data alone, without requiring child proofs.
 This is the entry point for leaf nodes in a PCD tree:
 
 ```rust
-let (proof, aux) = app.seed(&mut rng, MyLeafStep { ... }, witness)?;
-let pcd = proof.carry(aux);
+let (pcd, aux) = app.seed(&mut rng, MyLeafStep { ... }, witness)?;
 ```
 
-Internally, `seed` fuses the step with trivial proofs. Steps used with `seed`
-must have `Left = ()` and `Right = ()`.
+`seed` returns a `(Pcd, Aux)` tuple directly. The `Pcd` already contains the
+proof and header data. Internally, `seed` fuses the step with trivial proofs.
+Steps used with `seed` must have `Left = ()` and `Right = ()`.
 
 #### Trivial Proofs
 
@@ -136,31 +137,32 @@ child proofs are available.
 Combines two child proofs using a step's logic:
 
 ```rust
-let (proof, aux) = app.fuse(&mut rng, DoubleAndAddStep, step_witness, left_pcd, right_pcd)?;
-let pcd = proof.carry::<OutputHeader>(aux);
+let (pcd, aux) = app.fuse(&mut rng, DoubleAndAddStep, step_witness, left_pcd, right_pcd)?;
 ```
 
-The `step_witness` parameter provides any additional private data
+Like `seed`, `fuse` returns a `(Pcd, Aux)` tuple directly. The
+`step_witness` parameter provides any additional private data
 the step needs (in our `DoubleAndAddStep` example above, this is
 just `()` since the step doesn't require extra witness data beyond
 the child proofs).
 
-Within the step's `witness` function, calling `.encode()` on the
-child encoders commits the child proof data to the witness
-polynomials. Verification of these claims is deferred and occurs
+Within the step's `witness` function, calling `Encoded::new(dr, data)?`
+on the child header data commits it to the witness polynomials via
+`Header::encode`. Verification of these claims is deferred and occurs
 when this proof is itself folded into a subsequent step.
 
 ## The `carry` Method
 
-The `carry` method converts a raw `Proof` into a `Pcd` by
+Internally, `carry` converts a raw `Proof` into a `Pcd` by
 attaching header data:
 
 ```rust
 let pcd: Pcd<'_, _, _, MyHeader> = proof.carry(header_data);
 ```
 
-This separation allows the proving methods to return auxiliary data that
-applications use to construct the final header.
+This is used internally by `seed` and `fuse` — application code does not
+need to call `carry` directly. The proving methods return `(Pcd, Aux)`
+tuples where the `Pcd` already contains the header data.
 
 ## Verification
 
@@ -199,7 +201,7 @@ Ragu uses an
 _[accumulation scheme](../protocol/core/accumulation/index.md)_
 (similar to [Halo]) to achieve efficient recursion. Rather than fully
 verifying each child proof inside the circuit,
-proofs are _folded_ together deferring expensive verification work while
+proofs are _folded_ together, deferring expensive verification work while
 accumulating claims that will eventually be checked.
 
 The `Proof` type serves as a **unified accumulator** that
@@ -209,7 +211,7 @@ carries both:
 * Accumulated claims from all previous proofs in the tree
 
 This design means a single proof structure handles the entire recursive
-history, regardless of tree depth. 
+history, regardless of tree depth.
 
 [Halo]: https://eprint.iacr.org/2019/1021
 
@@ -217,9 +219,11 @@ history, regardless of tree depth.
 
 Ragu exposes a single proof structure capable of operating in two modes:
 
-* **Uncompressed mode**: BCLMS21-style split-accumulation form
-  that is non-succinct (not sublinear in the circuit size), with a
-  large witness but inexpensive to generate.
+* **Uncompressed mode**:
+  [BCLMS20](https://eprint.iacr.org/2020/1618)-style
+  split-accumulation form that is non-succinct (not sublinear in
+  the circuit size), with a large witness but inexpensive to
+  generate.
 * **Compressed mode**: A succinct form (logarithmic in the circuit
   size) using an IPA polynomial commitment scheme, with a more
   expensive verifier (outer decision procedure) that's dominated by
@@ -249,7 +253,7 @@ This is the natural operating mode during recursive proving. When calling
 * **Use case**: Final proof for transmission/storage
 * **Verification**: Dominated by multi-scalar multiplication
 
-Compression is applied at _boundary points_ for example, before broadcasting
+Compression is applied at _boundary points_ — for example, before broadcasting
 a proof onchain where bandwidth matters.
 
 ```admonish tip title="When to Compress"
