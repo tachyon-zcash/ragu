@@ -46,7 +46,7 @@ impl Suffix {
 
     /// Obtain this suffix's `u64` value based on whether this represents an
     /// internal or application [`Header`] suffix.
-    pub(crate) fn get(&self) -> u64 {
+    pub const fn get(&self) -> u64 {
         match self.suffix {
             HeaderSuffix::Internal(i) => i as u64,
             HeaderSuffix::Application(i) => (i + NUM_INTERNAL_SUFFIXES as usize) as u64,

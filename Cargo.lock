@@ -732,6 +732,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ragu_app"
+version = "0.0.0"
+dependencies = [
+ "ff",
+ "group",
+ "ragu_arithmetic",
+ "ragu_circuits",
+ "ragu_core",
+ "ragu_macros",
+ "ragu_pasta",
+ "ragu_pcd",
+ "ragu_primitives",
+ "rand 0.10.0",
+]
+
+[[package]]
 name = "ragu_arithmetic"
 version = "0.0.0"
 dependencies = [
@@ -786,13 +802,16 @@ version = "0.0.0"
 name = "ragu_macros"
 version = "0.0.0"
 dependencies = [
+ "heck",
  "num-bigint",
  "num-traits",
  "proc-macro-crate",
  "proc-macro2",
  "quote",
+ "ragu_app",
  "ragu_arithmetic",
  "ragu_core",
+ "ragu_pcd",
  "ragu_primitives",
  "syn",
 ]
