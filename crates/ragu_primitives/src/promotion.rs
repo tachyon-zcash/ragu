@@ -62,7 +62,7 @@ impl<'dr, D: Driver<'dr>> Driver<'dr> for DemotedDriver<D> {
         unreachable!("DemotedDriver cannot be constructed")
     }
 
-    fn alloc_d(
+    fn dual_alloc(
         &mut self,
         _: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>)>,
     ) -> Result<(Self::Wire, Self::Wire)> {

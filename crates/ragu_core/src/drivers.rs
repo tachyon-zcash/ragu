@@ -237,7 +237,7 @@ pub trait Driver<'dr>: DriverTypes<ImplWire = Self::Wire, ImplField = Self::F> +
     /// The provided closure returns `(a, b)` coefficients. The returned wires
     /// occupy the second and fourth regions of the structured polynomial at
     /// this gate.
-    fn alloc_d(
+    fn dual_alloc(
         &mut self,
         values: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>)>,
     ) -> Result<(Self::Wire, Self::Wire)>;

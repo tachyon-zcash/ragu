@@ -67,7 +67,7 @@ impl Circuit<Fp> for AllDAllocCircuit {
     )> {
         let mut sum = Element::zero(dr);
         for _ in 0..self.num_gates {
-            let (_a, b) = Element::alloc_d(
+            let (_a, b) = Element::dual_alloc(
                 dr,
                 D::just(|| Fp::ONE),
                 witness.as_ref().map(|v| *v),
@@ -103,7 +103,7 @@ impl Circuit<Fp> for SingleDAllocCircuit {
         Bound<'dr, D, Self::Output>,
         DriverValue<D, Self::Aux<'witness>>,
     )> {
-        let (a, b) = Element::alloc_d(
+        let (a, b) = Element::dual_alloc(
             dr,
             witness.as_ref().map(|w| w.0),
             witness.as_ref().map(|w| w.1),
@@ -112,7 +112,7 @@ impl Circuit<Fp> for SingleDAllocCircuit {
     }
 }
 
-/// Interleaves alloc and alloc_d. Output = x1 + x2 + a + b + 1.
+/// Interleaves alloc and dual_alloc. Output = x1 + x2 + a + b + 1.
 struct MixedAllocCircuit;
 
 impl Circuit<Fp> for MixedAllocCircuit {
@@ -139,7 +139,7 @@ impl Circuit<Fp> for MixedAllocCircuit {
     )> {
         let x1 = Element::alloc(dr, witness.as_ref().map(|w| w.0))?;
         let x2 = Element::alloc(dr, witness.as_ref().map(|w| w.1))?;
-        let (a, b) = Element::alloc_d(
+        let (a, b) = Element::dual_alloc(
             dr,
             witness.as_ref().map(|w| w.2),
             witness.as_ref().map(|w| w.3),
@@ -182,7 +182,7 @@ impl Circuit<Fp> for DWireEnforceCircuit {
     )> {
         let a_val = witness.as_ref().map(|w| w.0);
         let b_val = witness.as_ref().map(|w| w.1);
-        let (a, b) = Element::alloc_d(dr, a_val, b_val)?;
+        let (a, b) = Element::dual_alloc(dr, a_val, b_val)?;
         dr.enforce_equal(a.wire(), b.wire())?;
         Ok((a, D::unit()))
     }
@@ -213,7 +213,7 @@ impl Circuit<Fp> for DWireMulCircuit {
         Bound<'dr, D, Self::Output>,
         DriverValue<D, Self::Aux<'witness>>,
     )> {
-        let (_a, b) = Element::alloc_d(
+        let (_a, b) = Element::dual_alloc(
             dr,
             witness.as_ref().map(|w| w.0),
             witness.as_ref().map(|w| w.1),
@@ -249,7 +249,7 @@ impl Circuit<Fp> for AllocThenDAllocCircuit {
         DriverValue<D, Self::Aux<'witness>>,
     )> {
         let x = Element::alloc(dr, witness.as_ref().map(|w| w.0))?;
-        let (_a, b) = Element::alloc_d(
+        let (_a, b) = Element::dual_alloc(
             dr,
             witness.as_ref().map(|w| w.1),
             witness.as_ref().map(|w| w.2),
@@ -283,7 +283,7 @@ impl Circuit<Fp> for DAllocThenAllocCircuit {
         Bound<'dr, D, Self::Output>,
         DriverValue<D, Self::Aux<'witness>>,
     )> {
-        let (a, b) = Element::alloc_d(
+        let (a, b) = Element::dual_alloc(
             dr,
             witness.as_ref().map(|w| w.0),
             witness.as_ref().map(|w| w.1),
@@ -320,7 +320,7 @@ impl Circuit<Fp> for ConsecutiveDAllocCircuit {
     )> {
         let mut sum = Element::zero(dr);
         for i in 0..5u64 {
-            let (_a, b) = Element::alloc_d(
+            let (_a, b) = Element::dual_alloc(
                 dr,
                 D::just(move || Fp::from(i)),
                 D::just(move || Fp::from(i * 10)),
@@ -358,7 +358,7 @@ impl Circuit<Fp> for MixedMulDAllocCircuit {
     )> {
         let x1 = Element::alloc(dr, witness.as_ref().map(|w| w.0))?;
         let x1_sq = x1.square(dr)?;
-        let (_a, b) = Element::alloc_d(
+        let (_a, b) = Element::dual_alloc(
             dr,
             witness.as_ref().map(|w| w.1),
             witness.as_ref().map(|w| w.2),
@@ -382,7 +382,7 @@ impl Routine<Fp> for DAllocRoutine {
         input: Bound<'dr, D, Self::Input>,
         aux: DriverValue<D, Self::Aux<'dr>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        let (a, b) = Element::alloc_d(dr, input.value().map(|v| *v), aux)?;
+        let (a, b) = Element::dual_alloc(dr, input.value().map(|v| *v), aux)?;
         dr.enforce_equal(a.wire(), input.wire())?;
         Ok(a.add(dr, &b))
     }
@@ -470,7 +470,7 @@ impl Routine<Fp> for DAllocRoutineFP {
         _input: Bound<'dr, D, Self::Input>,
         _aux: DriverValue<D, Self::Aux<'dr>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        let (_a, b) = Element::alloc_d(
+        let (_a, b) = Element::dual_alloc(
             dr,
             D::just(|| Fp::from(2u64)),
             D::just(|| Fp::from(3u64)),
@@ -502,7 +502,7 @@ impl Routine<Fp> for DAllocRoutineFP2 {
         input: Bound<'dr, D, Self::Input>,
         _aux: DriverValue<D, Self::Aux<'dr>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        let (_a, b) = Element::alloc_d(
+        let (_a, b) = Element::dual_alloc(
             dr,
             input.value().map(|v| *v),
             D::just(|| Fp::from(42u64)),
@@ -550,7 +550,7 @@ fn full_check<C: Circuit<Fp, Instance<'static> = Fp>>(
 }
 
 proptest! {
-    /// rx always sets wire positions 0 and 2 to zero for alloc_d gates.
+    /// rx always sets wire positions 0 and 2 to zero for dual_alloc gates.
     #[test]
     fn structural_rx_zeros(
         a_val in arb_fe_with_edges(),
@@ -559,7 +559,7 @@ proptest! {
         let (trace, _) = SingleDAllocCircuit.rx((a_val, b_val)).unwrap();
         let seg = &trace.segments[0];
 
-        // Gate 0 is the instance alloc; gate 1 is the alloc_d gate.
+        // Gate 0 is the instance alloc; gate 1 is the dual_alloc gate.
         prop_assert_eq!(seg.a[1], Fp::ZERO);
         prop_assert_eq!(seg.c[1], Fp::ZERO);
         prop_assert_eq!(seg.b[1], a_val);
@@ -606,7 +606,7 @@ proptest! {
         );
     }
 
-    /// Interleaved alloc and alloc_d satisfies the revdot identity.
+    /// Interleaved alloc and dual_alloc satisfies the revdot identity.
     #[test]
     fn boundary_mixed_alloc(
         x1 in arb_fe_with_edges(),
@@ -622,15 +622,15 @@ proptest! {
         );
     }
 
-    /// Simulator accepts any values for alloc_d (no constraint to violate).
+    /// Simulator accepts any values for dual_alloc (no constraint to violate).
     #[test]
-    fn domain_simulator_accepts_alloc_d(
+    fn domain_simulator_accepts_dual_alloc(
         a_val in arb_fe_with_edges(),
         b_val in arb_fe_with_edges(),
     ) {
         let result = Simulator::<Fp>::simulate((a_val, b_val), |dr, witness| {
             let (a, b) = witness.cast();
-            Element::alloc_d(dr, a, b)?;
+            Element::dual_alloc(dr, a, b)?;
             Ok(())
         });
         prop_assert!(result.is_ok());
@@ -640,7 +640,7 @@ proptest! {
     #[test]
     fn domain_zero_witness(_dummy in Just(())) {
         let sim = Simulator::<Fp>::simulate((), |dr, _witness| {
-            let (a, b) = Element::alloc_d(
+            let (a, b) = Element::dual_alloc(
                 dr,
                 Simulator::<Fp>::just(|| Fp::ZERO),
                 Simulator::<Fp>::just(|| Fp::ZERO),
@@ -652,12 +652,12 @@ proptest! {
         prop_assert!(sim.is_ok());
     }
 
-    /// Each alloc_d call counts as exactly one multiplication gate.
+    /// Each dual_alloc call counts as exactly one multiplication gate.
     #[test]
     fn domain_simulator_counts(n in 1usize..10) {
         let sim = Simulator::<Fp>::simulate((), |dr, _| {
             for _ in 0..n {
-                Element::alloc_d(
+                Element::dual_alloc(
                     dr,
                     Simulator::<Fp>::just(|| Fp::ZERO),
                     Simulator::<Fp>::just(|| Fp::from(1u64)),
@@ -678,25 +678,25 @@ proptest! {
         let mut sim = Simulator::<Fp>::new();
 
         let (a, b) = sim
-            .alloc_d(|| Ok((Coeff::Zero, Coeff::Arbitrary(b_val))))
+            .dual_alloc(|| Ok((Coeff::Zero, Coeff::Arbitrary(b_val))))
             .unwrap();
         prop_assert_eq!(a, Fp::ZERO);
         prop_assert_eq!(b, b_val);
 
         let (a, b) = sim
-            .alloc_d(|| Ok((Coeff::Zero, Coeff::Zero)))
+            .dual_alloc(|| Ok((Coeff::Zero, Coeff::Zero)))
             .unwrap();
         prop_assert_eq!(a, Fp::ZERO);
         prop_assert_eq!(b, Fp::ZERO);
 
         let (a, b) = sim
-            .alloc_d(|| Ok((Coeff::Zero, Coeff::One)))
+            .dual_alloc(|| Ok((Coeff::Zero, Coeff::One)))
             .unwrap();
         prop_assert_eq!(a, Fp::ZERO);
         prop_assert_eq!(b, Fp::ONE);
 
         let (a, b) = sim
-            .alloc_d(|| Ok((Coeff::Zero, Coeff::NegativeOne)))
+            .dual_alloc(|| Ok((Coeff::Zero, Coeff::NegativeOne)))
             .unwrap();
         prop_assert_eq!(a, Fp::ZERO);
         prop_assert_eq!(b, -Fp::ONE);
@@ -718,14 +718,14 @@ proptest! {
         );
     }
 
-    /// alloc_d counts as a multiplication constraint in metrics.
+    /// dual_alloc counts as a multiplication constraint in metrics.
     #[test]
     fn domain_d_alloc_counted_as_mul(_dummy in Just(())) {
         let metrics = metrics::eval(&SingleDAllocCircuit).unwrap();
         prop_assert_eq!(metrics.num_multiplication_constraints, 2);
     }
 
-    /// Wire positions 0 and 2 are zero; a and b hold expected values at alloc_d gates.
+    /// Wire positions 0 and 2 are zero; a and b hold expected values at dual_alloc gates.
     #[test]
     fn domain_rx_trace_layout(
         a_val in arb_fe_with_edges(),
@@ -740,7 +740,7 @@ proptest! {
         prop_assert_eq!(seg.d[1], b_val);
     }
 
-    /// Forward c (w in storage) is zero at alloc_d gates, so tz contribution vanishes.
+    /// Forward c (w in storage) is zero at dual_alloc gates, so tz contribution vanishes.
     #[test]
     fn domain_tz_vanishes_at_d_alloc_gates(
         a_val in arb_fe_with_edges(),
@@ -757,7 +757,7 @@ proptest! {
     fn domain_b_wire_in_enforce_equal(val in arb_fe_with_edges()) {
         let sim = Simulator::<Fp>::simulate((val, val), |dr, witness| {
             let (a, b) = witness.cast();
-            let (ae, be) = Element::alloc_d(dr, a, b)?;
+            let (ae, be) = Element::dual_alloc(dr, a, b)?;
             dr.enforce_equal(ae.wire(), be.wire())?;
             Ok(())
         });
@@ -767,7 +767,7 @@ proptest! {
         if val != other {
             let sim = Simulator::<Fp>::simulate((val, other), |dr, witness| {
                 let (a, b) = witness.cast();
-                let (ae, be) = Element::alloc_d(dr, a, b)?;
+                let (ae, be) = Element::dual_alloc(dr, a, b)?;
                 dr.enforce_equal(ae.wire(), be.wire())?;
                 Ok(())
             });
@@ -809,7 +809,7 @@ proptest! {
 
         let sim = Simulator::<Fp>::simulate((a_val, b_val, x_val), |dr, witness| {
             let (a_v, b_v, x_v) = witness.cast();
-            let (_ae, be) = Element::alloc_d(dr, a_v, b_v)?;
+            let (_ae, be) = Element::dual_alloc(dr, a_v, b_v)?;
             let xe = Element::alloc(dr, x_v)?;
             let product = be.mul(dr, &xe)?;
             assert_eq!(*product.value().take(), b_val * x_val);
@@ -825,7 +825,7 @@ proptest! {
         );
     }
 
-    /// Pending b-wire from alloc is flushed before the alloc_d gate starts.
+    /// Pending b-wire from alloc is flushed before the dual_alloc gate starts.
     #[test]
     fn domain_alloc_then_d_alloc_flush(
         x in arb_fe_with_edges(),
@@ -840,7 +840,7 @@ proptest! {
         );
     }
 
-    /// Alloc after alloc_d starts a new gate correctly.
+    /// Alloc after dual_alloc starts a new gate correctly.
     #[test]
     fn domain_d_alloc_then_alloc(
         a in arb_fe_with_edges(),
@@ -855,7 +855,7 @@ proptest! {
         );
     }
 
-    /// Five consecutive alloc_d gates satisfy the revdot identity.
+    /// Five consecutive dual_alloc gates satisfy the revdot identity.
     #[test]
     fn domain_consecutive_d_alloc_gates(_dummy in Just(())) {
         let expected_sum = Fp::from(0u64)
@@ -889,7 +889,7 @@ proptest! {
         );
     }
 
-    /// alloc_d inside a routine boundary satisfies the revdot identity.
+    /// dual_alloc inside a routine boundary satisfies the revdot identity.
     #[test]
     fn domain_d_alloc_routine(input_val in arb_fe_with_edges()) {
         let b_val = Fp::from(100u64);
@@ -901,7 +901,7 @@ proptest! {
         );
     }
 
-    /// Circuit mixing regular mul and alloc_d satisfies the revdot identity.
+    /// Circuit mixing regular mul and dual_alloc satisfies the revdot identity.
     #[test]
     fn domain_mixed_mul_d_alloc_revdot(
         x1 in arb_fe_with_edges(),
@@ -915,7 +915,7 @@ proptest! {
         );
     }
 
-    /// Structured revdot agrees with unstructured dot for alloc_d circuits.
+    /// Structured revdot agrees with unstructured dot for dual_alloc circuits.
     #[test]
     fn domain_structured_vs_unstructured_revdot(
         a_val in arb_fe_with_edges(),

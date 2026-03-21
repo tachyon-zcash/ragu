@@ -42,7 +42,7 @@ impl<F: Field> Driver<'_> for core::marker::PhantomData<F> {
         Ok(((), (), ()))
     }
 
-    fn alloc_d(
+    fn dual_alloc(
         &mut self,
         _: impl Fn() -> Result<(Coeff<F>, Coeff<F>)>,
     ) -> Result<(Self::Wire, Self::Wire)> {

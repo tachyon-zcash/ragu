@@ -405,7 +405,7 @@ impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
 
     /// Consumes an allocation gate $(0, a, 0, b)$, returning the evaluations
     /// for the two allocated values.
-    fn alloc_d(
+    fn dual_alloc(
         &mut self,
         _: impl Fn() -> Result<(Coeff<F>, Coeff<F>)>,
     ) -> Result<(Self::Wire, Self::Wire)> {

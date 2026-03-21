@@ -555,7 +555,7 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, '
 
     /// Consumes an allocation gate $(0, a, 0, b)$, returning wire handles
     /// for $(a, b)$.
-    fn alloc_d(
+    fn dual_alloc(
         &mut self,
         _: impl Fn() -> Result<(Coeff<F>, Coeff<F>)>,
     ) -> Result<(Self::Wire, Self::Wire)> {

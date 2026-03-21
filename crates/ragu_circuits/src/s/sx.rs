@@ -243,7 +243,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
 
     /// Consumes an allocation gate $(0, a, 0, b)$, returning the monomials
     /// for the two allocated values.
-    fn alloc_d(
+    fn dual_alloc(
         &mut self,
         _: impl Fn() -> Result<(Coeff<F>, Coeff<F>)>,
     ) -> Result<(Self::Wire, Self::Wire)> {

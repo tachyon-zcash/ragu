@@ -279,7 +279,7 @@ impl<'dr, M: MaybeKind, F: Field> Driver<'dr> for Emulator<Wireless<M, F>> {
 
     fn add(&mut self, _: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {}
 
-    fn alloc_d(
+    fn dual_alloc(
         &mut self,
         _: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>)>,
     ) -> Result<(Self::Wire, Self::Wire)> {
@@ -320,7 +320,7 @@ impl<'dr, F: Field> Driver<'dr> for Emulator<Wired<F>> {
         Ok((a.value(), b.value(), c.value()))
     }
 
-    fn alloc_d(
+    fn dual_alloc(
         &mut self,
         f: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>)>,
     ) -> Result<(Self::Wire, Self::Wire)> {

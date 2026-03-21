@@ -118,7 +118,7 @@ impl<'dr, F: Field> Driver<'dr> for Simulator<F> {
         Ok((a, b, c))
     }
 
-    fn alloc_d(
+    fn dual_alloc(
         &mut self,
         values: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>)>,
     ) -> Result<(Self::Wire, Self::Wire)> {

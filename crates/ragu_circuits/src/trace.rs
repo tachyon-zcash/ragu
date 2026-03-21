@@ -267,7 +267,7 @@ impl<'scope, 'env, F: Field> Driver<'env> for Evaluator<'scope, 'env, F> {
         Ok(((), (), ()))
     }
 
-    fn alloc_d(
+    fn dual_alloc(
         &mut self,
         values: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>)>,
     ) -> Result<((), ())> {
