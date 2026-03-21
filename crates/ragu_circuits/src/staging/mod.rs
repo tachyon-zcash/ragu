@@ -115,6 +115,7 @@
 //! Assuming stages are well-formed, they can be combined by merely adding them
 //! together with the final staging polynomial, producing the desired $r(X)$.
 
+mod bonding;
 mod builder;
 pub(crate) mod mask;
 
@@ -257,6 +258,31 @@ pub trait MultiStageCircuit<F: Field, R: Rank>: Sized + Send + Sync {
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>>
     where
         Self: 'dr;
+
+    /// Number of multiplication gates to pre-allocate for routing constraints.
+    ///
+    /// Returns 0 (no routing) by default. Override alongside
+    /// [`routing`](Self::routing) to declare cross-stage linear constraints.
+    fn num_routing_gates() -> usize {
+        0
+    }
+
+    /// Declare routing constraints between stages.
+    ///
+    /// Routing constraints are linear constraints between wire positions in
+    /// different stages. Wire handles come from the `gates` slice, where
+    /// `gates[i]` holds `(a, b, c)` handles for multiplication gate `i + 1`
+    /// (gate 0 is reserved for the registry key).
+    ///
+    /// To reference a specific stage's wires, index into `gates` using the
+    /// stage's [`skip_multiplications`](Stage::skip_multiplications) offset.
+    fn routing<'dr, D: Driver<'dr, F = F>>(
+        dr: &mut D,
+        gates: &[(D::Wire, D::Wire, D::Wire)],
+    ) -> Result<()> {
+        let _ = (dr, gates);
+        Ok(())
+    }
 }
 
 /// Wrapper type that implements [`Circuit`] for a given [`MultiStageCircuit`].
@@ -287,6 +313,18 @@ impl<F: Field, R: Rank, S: MultiStageCircuit<F, R>> MultiStage<F, R, S> {
     /// Proxy for [`S::Last::final_mask`](StageExt::final_mask).
     pub fn final_mask<'a>(&self) -> Result<BondingObject<'a, F, R>> {
         S::Last::final_mask()
+    }
+
+    /// Produce a [`BondingObject`] from `S`'s routing constraints, if any.
+    ///
+    /// Returns `None` when [`S::num_routing_gates`](MultiStageCircuit::num_routing_gates)
+    /// is zero.
+    pub fn routing_object<'a>(&self) -> Result<Option<BondingObject<'a, F, R>>>
+    where
+        F: ff::FromUniformBytes<64>,
+        S: 'a,
+    {
+        bonding::routing_object::<F, R, S>()
     }
 }
 
