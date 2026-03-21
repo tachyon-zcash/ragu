@@ -324,20 +324,12 @@ impl<'dr, F: Field> Driver<'dr> for Emulator<Wired<F>> {
 
         Ok(())
     }
-
-    fn routine<R: Routine<Self::F> + 'dr>(
-        &mut self,
-        routine: R,
-        input: Bound<'dr, Self, R::Input>,
-    ) -> Result<Bound<'dr, Self, R::Output>> {
-        short_circuit_routine(self, routine, input)
-    }
 }
 
 /// The [`Emulator`] will short-circuit execution if the [`Routine`] can predict
 /// its output, as the [`Emulator`] is not involved in enforcing any
 /// constraints.
-fn short_circuit_routine<'dr, D: Driver<'dr>, R: Routine<D::F> + 'dr>(
+fn short_circuit_routine<'dr, D: Driver<'dr, Wire = ()>, R: Routine<D::F> + 'dr>(
     dr: &mut D,
     routine: R,
     input: Bound<'dr, D, R::Input>,
@@ -717,10 +709,10 @@ mod tests {
         }
     }
 
-    // When predict returns Known, the emulator short-circuits: execute must
-    // NOT be called.
+    // The wired emulator always executes routines because `predict` requires
+    // `Wire = ()` and cannot produce wired output.
     #[test]
-    fn wired_routine_short_circuits_on_known_prediction() -> Result<()> {
+    fn wired_routine_always_executes() -> Result<()> {
         let executed = Arc::new(AtomicBool::new(false));
         let mut dr = Emulator::<Wired<F>>::extractor();
         let routine = AlwaysKnownRoutine {
@@ -728,8 +720,8 @@ mod tests {
         };
         dr.routine(routine, ())?;
         assert!(
-            !executed.load(Ordering::Relaxed),
-            "execute should not be called on Known prediction"
+            executed.load(Ordering::Relaxed),
+            "wired emulator must always execute"
         );
         Ok(())
     }

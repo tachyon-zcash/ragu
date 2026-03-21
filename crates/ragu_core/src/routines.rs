@@ -64,7 +64,7 @@ pub trait Routine<F: Field>: Clone + Send {
     /// witness data or malformed input—and must be propagated by drivers. Use
     /// [`Prediction::Unknown`] instead when the routine simply cannot
     /// efficiently predict its output.
-    fn predict<'dr, D: Driver<'dr, F = F>>(
+    fn predict<'dr, D: Driver<'dr, F = F, Wire = ()>>(
         &self,
         dr: &mut D,
         input: &Bound<'dr, D, Self::Input>,

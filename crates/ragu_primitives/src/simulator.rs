@@ -7,10 +7,10 @@ use ff::Field;
 use ragu_arithmetic::Coeff;
 use ragu_core::{
     Error, Result,
-    drivers::{DirectSum, Driver, DriverTypes},
-    gadgets::{Bound, Gadget},
+    drivers::{DirectSum, Driver, DriverTypes, emulator::Emulator},
+    gadgets::Bound,
     maybe::{Always, MaybeKind},
-    routines::{Prediction, Routine},
+    routines::Routine,
 };
 
 /// A driver that fully simulates everything that happens during synthesis,
@@ -139,18 +139,7 @@ impl<'dr, F: Field> Driver<'dr> for Simulator<F> {
         routine: R,
         input: Bound<'dr, Self, R::Input>,
     ) -> Result<Bound<'dr, Self, R::Output>> {
-        let mut tmp = self.clone();
-        match routine.predict(&mut tmp, &input)? {
-            Prediction::Known(output, aux) => {
-                // Even if the output is known, we still need to execute the
-                // routine to ensure consistency with the prediction.
-                let expected = routine.execute(self, input, aux)?;
-                // Assert equality without creating constraints in the main
-                // simulator by running the check on a disposable clone.
-                output.enforce_equal(&mut self.clone(), &expected)?;
-                Ok(output)
-            }
-            Prediction::Unknown(aux) => routine.execute(self, input, aux),
-        }
+        let aux = Emulator::predict(&routine, &input)?.into_aux();
+        routine.execute(self, input, aux)
     }
 }
