@@ -48,3 +48,8 @@ harness = false
 name = "msm_criterion"
 path = "benches/criterion/msm.rs"
 harness = false
+
+[[bench]]
+name = "fft_criterion"
+path = "benches/criterion/fft.rs"
+harness = false

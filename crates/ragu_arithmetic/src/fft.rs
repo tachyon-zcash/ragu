@@ -1,9 +1,10 @@
+use crate::multicore;
 use ff::{Field, PrimeField};
 
 /// A ring that can be used for FFTs.
 pub trait Ring {
     /// Elements of the ring.
-    type R: Default + Clone;
+    type R: Default + Clone + Send;
 
     /// Scalar field for the ring.
     type F: Field;
@@ -45,41 +46,112 @@ pub fn bitreverse(n: u32, l: u32) -> u32 {
     n.reverse_bits() >> (32 - l)
 }
 
-pub(crate) fn fft<R: Ring>(log2_n: u32, input: &mut [R::R], omega: R::F) {
-    // Enforce that the input and domain sizes match.
-    let n = input.len() as u32;
-    assert_eq!(n, 1 << log2_n);
+/// Adapted from halo2_proofs::arithmetic::best_fft. The only changes are the
+/// use of the `Ring` trait (which abstracts over Clone-based ring elements)
+/// instead of halo2's `FftGroup` trait (which requires Copy).
+pub(crate) fn fft<R: Ring>(a: &mut [R::R], omega: R::F, log_n: u32) {
+    let threads = multicore::current_num_threads();
+    let log_threads = log2_floor(threads);
+    let n = a.len();
+    assert_eq!(n, 1 << log_n);
 
-    for i in 0..n {
-        let ri = bitreverse(i, log2_n);
-        if i < ri {
-            input.swap(ri as usize, i as usize);
+    for k in 0..n {
+        let rk = bitreverse(k as u32, log_n) as usize;
+        if k < rk {
+            a.swap(rk, k);
         }
     }
 
-    let mut m = 1;
-    for _ in 0..log2_n {
-        let w_m = omega.pow([(n / (m << 1)) as u64]);
+    // precompute twiddle factors
+    let twiddles: alloc::vec::Vec<_> = (0..(n / 2))
+        .scan(R::F::ONE, |w, _| {
+            let tw = *w;
+            *w *= &omega;
+            Some(tw)
+        })
+        .collect();
 
-        let mut i = 0;
-        while i < n {
-            let mut w = R::F::ONE;
-            for j in 0..m {
-                let mut a = R::R::default();
-                core::mem::swap(&mut a, &mut input[(i + j + m) as usize]);
-                R::scale_assign(&mut a, w);
-                let mut b = input[(i + j) as usize].clone();
-                R::sub_assign(&mut b, &a);
-                input[(i + j + m) as usize] = b;
-                R::add_assign(&mut input[(i + j) as usize], &a);
-                w *= w_m;
-            }
+    if log_n <= log_threads {
+        let mut chunk = 2_usize;
+        let mut twiddle_chunk = n / 2;
+        for _ in 0..log_n {
+            a.chunks_mut(chunk).for_each(|coeffs| {
+                let (left, right) = coeffs.split_at_mut(chunk / 2);
 
-            i += m << 1;
+                // case when twiddle factor is one
+                let (a, left) = left.split_at_mut(1);
+                let (b, right) = right.split_at_mut(1);
+                let t = b[0].clone();
+                b[0] = a[0].clone();
+                R::add_assign(&mut a[0], &t);
+                R::sub_assign(&mut b[0], &t);
+
+                left.iter_mut()
+                    .zip(right.iter_mut())
+                    .enumerate()
+                    .for_each(|(i, (a, b))| {
+                        let mut t = b.clone();
+                        R::scale_assign(&mut t, twiddles[(i + 1) * twiddle_chunk]);
+                        *b = a.clone();
+                        R::add_assign(a, &t);
+                        R::sub_assign(b, &t);
+                    });
+            });
+            chunk *= 2;
+            twiddle_chunk /= 2;
         }
-
-        m <<= 1;
+    } else {
+        recursive_butterfly_arithmetic::<R>(a, n, 1, &twiddles)
     }
+}
+
+/// Adapted from halo2_proofs::arithmetic::recursive_butterfly_arithmetic.
+pub(crate) fn recursive_butterfly_arithmetic<R: Ring>(
+    a: &mut [R::R],
+    n: usize,
+    twiddle_chunk: usize,
+    twiddles: &[R::F],
+) {
+    if n == 2 {
+        let t = a[1].clone();
+        a[1] = a[0].clone();
+        R::add_assign(&mut a[0], &t);
+        R::sub_assign(&mut a[1], &t);
+    } else {
+        let (left, right) = a.split_at_mut(n / 2);
+        multicore::join(
+            || recursive_butterfly_arithmetic::<R>(left, n / 2, twiddle_chunk * 2, twiddles),
+            || recursive_butterfly_arithmetic::<R>(right, n / 2, twiddle_chunk * 2, twiddles),
+        );
+
+        // case when twiddle factor is one
+        let (a, left) = left.split_at_mut(1);
+        let (b, right) = right.split_at_mut(1);
+        let t = b[0].clone();
+        b[0] = a[0].clone();
+        R::add_assign(&mut a[0], &t);
+        R::sub_assign(&mut b[0], &t);
+
+        left.iter_mut()
+            .zip(right.iter_mut())
+            .enumerate()
+            .for_each(|(i, (a, b))| {
+                let mut t = b.clone();
+                R::scale_assign(&mut t, twiddles[(i + 1) * twiddle_chunk]);
+                *b = a.clone();
+                R::add_assign(a, &t);
+                R::sub_assign(b, &t);
+            });
+    }
+}
+
+fn log2_floor(num: usize) -> u32 {
+    assert!(num > 0);
+    let mut pow = 0;
+    while (1 << (pow + 1)) <= num {
+        pow += 1;
+    }
+    pow
 }
 
 #[cfg(test)]
@@ -112,7 +184,7 @@ mod tests {
                 .collect();
 
             let mut fft_result = input.clone();
-            fft::<FFTField<Fp>>(log2_n, &mut fft_result, domain.omega());
+            fft::<FFTField<Fp>>(&mut fft_result, domain.omega(), log2_n);
 
             let dft_result = naive_dft(&input, domain.omega());
 
@@ -131,7 +203,7 @@ mod tests {
         let domain = Domain::<Fp>::new(0);
         let mut data = vec![Fp::from(42u64)];
 
-        fft::<FFTField<Fp>>(0, &mut data, domain.omega());
+        fft::<FFTField<Fp>>(&mut data, domain.omega(), 0);
 
         assert_eq!(data[0], Fp::from(42u64));
     }
