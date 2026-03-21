@@ -17,7 +17,7 @@ mod proc;
 mod substitution;
 
 use proc_macro::TokenStream;
-use syn::{DeriveInput, LitInt, parse_macro_input};
+use syn::{DeriveInput, ItemEnum, LitInt, parse_macro_input};
 
 use helpers::macro_body;
 
@@ -93,6 +93,38 @@ pub fn derive_consistent(input: TokenStream) -> TokenStream {
         let ragu_primitives_path = path_resolution::RaguPrimitivesPath::resolve()?;
         derive::consistent::derive(input, ragu_core_path, ragu_primitives_path)
     })
+}
+
+#[cfg(test)]
+#[allow(unused_imports)]
+use ragu_app as _;
+
+#[cfg(test)]
+#[allow(unused_imports)]
+use ragu_pcd as _;
+
+/// Attribute macro for defining a PCD application.
+///
+/// Generates `ragu_pcd::Header` impls (with `const SUFFIX`),
+/// `ragu_pcd::Step` impls (with `const INDEX`), and a wrapper struct
+/// with `build()`/`seed()`/`fuse()`/`verify()`/`rerandomize()` methods.
+///
+/// # Example
+///
+/// ```ignore
+/// #[application]
+/// pub enum MerkleTree<C: Cycle> {
+///     #[step(left = (), right = (), output = LeafNode)]
+///     WitnessLeaf(WitnessLeaf<'_, C>),
+///
+///     #[step(left = LeafNode, right = LeafNode, output = InternalNode)]
+///     Hash2(Hash2<'_, C>),
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn application(_attr: TokenStream, input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as ItemEnum);
+    macro_body(|| proc::application::evaluate(input))
 }
 
 #[cfg(test)]
