@@ -166,13 +166,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             ));
         }
 
-        let mut coeffs = Vec::with_capacity(R::num_coeffs());
         let (first, rest) = iters.split_first_mut().unwrap();
-        for val in first.by_ref() {
-            let c = rest
-                .iter_mut()
-                .fold(val, |acc, iter| alpha * acc + iter.next().unwrap());
-            coeffs.push(c);
+        let mut coeffs: Vec<_> = first.collect();
+
+        for iter in rest.iter_mut() {
+            for c in coeffs.chunks_exact_mut(4) {
+                let [a, b, c, d] = c else { unreachable!() };
+                *a = alpha * *a + iter.next().unwrap();
+                *b = alpha * *b + iter.next().unwrap();
+                *c = alpha * *c + iter.next().unwrap();
+                *d = alpha * *d + iter.next().unwrap();
+            }
+            for c in coeffs.chunks_exact_mut(4).into_remainder() {
+                *c = alpha * *c + iter.next().unwrap();
+            }
         }
         coeffs.reverse();
 

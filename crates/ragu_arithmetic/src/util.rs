@@ -1,5 +1,6 @@
 use ff::{Field, PrimeField};
 use pasta_curves::{
+    MontgomeryRepr,
     arithmetic::CurveAffine,
     group::{Curve, Group},
 };
@@ -45,7 +46,12 @@ where
 /// # Panics
 ///
 /// Panics if the lengths of $\mathbf{a}$ and $\mathbf{b}$ are not equal.
-pub fn dot<'a, F: Field, I1: IntoIterator<Item = &'a F>, I2: IntoIterator<Item = &'a F>>(
+pub fn dot<
+    'a,
+    F: Field + MontgomeryRepr,
+    I1: IntoIterator<Item = &'a F>,
+    I2: IntoIterator<Item = &'a F>,
+>(
     a: I1,
     b: I2,
 ) -> F
@@ -53,13 +59,10 @@ where
     I1::IntoIter: ExactSizeIterator,
     I2::IntoIter: ExactSizeIterator,
 {
-    let a = a.into_iter();
-    let b = b.into_iter();
+    let a: Vec<F> = a.into_iter().copied().collect();
+    let b: Vec<F> = b.into_iter().copied().collect();
     assert_eq!(a.len(), b.len());
-    a.into_iter()
-        .zip(b)
-        .map(|(a, b)| *a * *b)
-        .fold(F::ZERO, |acc, x| acc + x)
+    F::inner_product(&a, &b)
 }
 
 fn factor_iter_inner<F: Field, I: IntoIterator<Item = F>>(a: I, mut b: F) -> impl Iterator<Item = F>

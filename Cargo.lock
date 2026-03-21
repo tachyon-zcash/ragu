@@ -604,7 +604,7 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 [[package]]
 name = "pasta_curves"
 version = "0.5.1"
-source = "git+https://github.com/ebfull/pasta_curves?branch=ff-0.14-with-rand-0.10#ad4c7a24d9b0829f9da5f305aab6b4ab97a97900"
+source = "git+https://github.com/alxiong/pasta_curves?branch=v0.5.2-rc.1#59e30c5377191c6ef10f5051c3d95da43eb1081e"
 dependencies = [
  "blake2b_simd",
  "ff",
@@ -755,6 +755,7 @@ dependencies = [
  "group",
  "gungraun",
  "maybe-rayon",
+ "pasta_curves",
  "proptest",
  "ragu_arithmetic",
  "ragu_core",
