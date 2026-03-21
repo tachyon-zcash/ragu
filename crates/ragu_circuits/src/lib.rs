@@ -54,9 +54,11 @@ use polynomials::{Rank, structured, unstructured};
 /// Returned by [`Circuit::witness`] and [`CircuitExt::trace`] to pair the
 /// circuit's output with any auxiliary data produced during synthesis.
 /// Most circuits set `Aux = ()` and callers can use [`into_output`] to
-/// discard the auxiliary component, or [`into_parts`] to destructure both.
+/// discard the auxiliary component, [`into_aux`] to discard the output,
+/// or [`into_parts`] to destructure both.
 ///
 /// [`into_output`]: WithAux::into_output
+/// [`into_aux`]: WithAux::into_aux
 /// [`into_parts`]: WithAux::into_parts
 pub struct WithAux<O, A> {
     /// The primary output value.

@@ -9,5 +9,5 @@
 | Well-formedness check for a stage; $s$ polynomial enforcing linear independence (for multi-stage circuits, these masks are batched in the revdot check) | **Stage mask** | `Stage::mask()` or `Stage::final_mask()` |
 | Circuit using staged traces | **Multi-stage circuit** | `MultiStageCircuit` |
 | Combined witness across all stages | **Multi-stage witness** | implicit, concatenation of stage witness |
-| Combined $r(X) = a(X) + b(X) + \cdots + f(X)$ | **Multi-stage trace polynomial $r(X)$** | implicit, sum of all `Stage::trace()` |
+| Combined $r(X) = a(X) + b(X) + \cdots + f(X)$ | **Multi-stage trace polynomial $r(X)$** | implicit, sum of all `Stage::rx()` |
 | Collection of circuits indexed by $\omega^i$; $m(W, X, Y)$ interpolating wiring polynomials | **Registry** | `Registry`, `RegistryBuilder` |

@@ -413,7 +413,9 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
         self.at(w).y(y)
     }
 
-    /// Evaluates the registry polynomial $s(x, y)$ for circuit `i`.
+    /// Evaluates $s_i(x, y)$ for circuit `i` at point $(x, y)$.
+    ///
+    /// See [`CircuitIndex::omega_j`] for details on the $\omega^j$ mapping.
     pub fn circuit_xy(&self, i: CircuitIndex, x: F, y: F) -> F {
         self.wxy(i.omega_j(), x, y)
     }

@@ -1,8 +1,12 @@
 //! Test harness for building a [`Registry`].
 //!
-//! Tests can register circuits and bonding objects in any order and receive
-//! opaque handles that are later used to query the finalized registry,
-//! without manual index arithmetic.
+//! [`RegistryBuilder`] concatenates circuits from different categories in a
+//! fixed order, so callers cannot know the final [`CircuitIndex`] at
+//! registration time. This module provides [`TestRegistryBuilder`], which
+//! returns opaque [`Handle`] values and resolves them to the correct
+//! [`CircuitIndex`] when querying the finalized registry.
+//!
+//! All circuits must be registered before any bonding objects.
 
 use ff::{FromUniformBytes, PrimeField};
 use ragu_circuits::{

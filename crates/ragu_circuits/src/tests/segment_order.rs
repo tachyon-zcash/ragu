@@ -181,7 +181,7 @@ proptest! {
         let metrics = crate::metrics::eval::<Fp, _>(&circuit)
             .map_err(|e| TestCaseError::fail(format!("metrics: {e:?}")))?;
         let trace = crate::trace::eval::<Fp, _>(&circuit, ())
-            .map_err(|e| TestCaseError::fail(format!("rx: {e:?}")))?.into_output();
+            .map_err(|e| TestCaseError::fail(format!("trace: {e:?}")))?.into_output();
 
         prop_assert_eq!(
             metrics.segments.len(),

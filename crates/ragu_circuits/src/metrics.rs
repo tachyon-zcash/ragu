@@ -438,7 +438,7 @@ impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
         // fingerprint captures only internal structure, not caller context.
         // Uncounted: these gates only seed the geometric sequences.
         let new_input = self.uncounted(|c| Ro::Input::map_gadget(&input, c))?;
-        self.scope.available_b = None; // match sxy/rx initial state
+        self.scope.available_b = None; // match sxy/trace initial state
 
         // Predict and execute.
         let aux = Emulator::predict(&routine, &new_input)?.into_aux();

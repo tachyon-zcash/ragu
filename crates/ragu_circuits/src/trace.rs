@@ -458,7 +458,7 @@ mod tests {
             _buf: &mut B,
         ) -> Result<()> {
             // These calls synthesize constraints during serialization.
-            // If io.write() were removed from rx::eval, they would be lost.
+            // If io.write() were removed from trace::eval, they would be lost.
             dr.mul(|| Ok((Coeff::One, Coeff::One, Coeff::One)))?;
             dr.enforce_zero(|lc| lc)?;
             Ok(())

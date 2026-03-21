@@ -66,10 +66,12 @@
 //! ```rust,ignore
 //! let a = MyStage::rx(my_stage_witness)?;
 //!
-//! let mask = MyStage::mask()?;
+//! // Register the mask into a registry to obtain s(X, y).
+//! let mask_handle = builder.register_bonding(MyStage::mask()?);
+//! let registry = builder.finalize()?;
+//!
 //! let y = Fp::random(&mut rand::rng());
-//! let registry_key = Fp::random(&mut rand::rng());
-//! assert_eq!(a.revdot(&mask.sy(y, registry_key)), Fp::ZERO);
+//! assert_eq!(a.revdot(&registry.y(mask_handle, y)), Fp::ZERO);
 //! ```
 //!
 //! If two or more stage polynomials must satisfy the same well-formedness
@@ -86,10 +88,11 @@
 //! combined.scale(z);
 //! combined.add_assign(&b);
 //!
-//! let mask = MyStage::mask()?;
+//! let mask_handle = builder.register_bonding(MyStage::mask()?);
+//! let registry = builder.finalize()?;
+//!
 //! let y = Fp::random(&mut rand::rng());
-//! let registry_key = Fp::random(&mut rand::rng());
-//! assert_eq!(combined.revdot(&mask.sy(y, registry_key)), Fp::ZERO);
+//! assert_eq!(combined.revdot(&registry.y(mask_handle, y)), Fp::ZERO);
 //! ```
 //!
 //! ### Final Stage
