@@ -15,6 +15,7 @@ extern crate alloc;
 extern crate std;
 
 mod fuse;
+pub mod fuzz_utils;
 pub mod header;
 mod internal;
 mod proof;
