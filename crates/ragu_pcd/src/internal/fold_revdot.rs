@@ -1,6 +1,7 @@
 //! Operations and utilities for reasoning about folded revdot claims.
 
 use ff::Field;
+use ragu_arithmetic::MontgomeryRepr;
 use ragu_circuits::{
     horner::Horner,
     polynomials::{Rank, structured},
@@ -136,7 +137,7 @@ pub fn fold_outer<T: Foldable<F>, F: Field, P: Parameters>(
 ///
 /// This computes off-diagonal revdot products for each group of `Inner`
 /// polynomials, producing `Outer` groups of error terms.
-fn compute_errors_impl<F: Field, R: Rank, Outer: Len, Inner: Len>(
+fn compute_errors_impl<F: Field + MontgomeryRepr, R: Rank, Outer: Len, Inner: Len>(
     a: &[impl Borrow<structured::Polynomial<F, R>>],
     b: &[impl Borrow<structured::Polynomial<F, R>>],
 ) -> FixedVec<FixedVec<F, NumErrorTerms<Inner>>, Outer> {
@@ -174,7 +175,7 @@ fn compute_errors_impl<F: Field, R: Rank, Outer: Len, Inner: Len>(
 }
 
 /// Inner error terms: `NumGroups` groups of `GroupSize`*(`GroupSize`-1) off-diagonal revdot products.
-pub fn inner_error_terms<F: Field, R: Rank, P: Parameters>(
+pub fn inner_error_terms<F: Field + MontgomeryRepr, R: Rank, P: Parameters>(
     a: &[impl Borrow<structured::Polynomial<F, R>>],
     b: &[impl Borrow<structured::Polynomial<F, R>>],
 ) -> FixedVec<FixedVec<F, NumErrorTerms<P::GroupSize>>, P::NumGroups> {
@@ -182,7 +183,7 @@ pub fn inner_error_terms<F: Field, R: Rank, P: Parameters>(
 }
 
 /// Outer error terms: `NumGroups`*(`NumGroups`-1) off-diagonal revdot products.
-pub fn outer_error_terms<F: Field, R: Rank, P: Parameters>(
+pub fn outer_error_terms<F: Field + MontgomeryRepr, R: Rank, P: Parameters>(
     a: &[impl Borrow<structured::Polynomial<F, R>>],
     b: &[impl Borrow<structured::Polynomial<F, R>>],
 ) -> FixedVec<F, NumErrorTerms<P::NumGroups>> {
