@@ -162,8 +162,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
 
         let host_commitment =
             zero_host.commit_to_affine(C::host_generators(self.params), host_blind);
-        let bridge_commitment = zero_nested
-            .commit_to_affine(C::nested_generators(self.params), bridge_blind);
+        let bridge_commitment =
+            zero_nested.commit_to_affine(C::nested_generators(self.params), bridge_blind);
 
         let trivial_bridge = Bridge {
             rx: zero_nested.clone(),

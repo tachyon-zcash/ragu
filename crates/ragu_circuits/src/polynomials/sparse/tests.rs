@@ -6,7 +6,7 @@ use ragu_pasta::Fp;
 use crate::polynomials::{Rank, TestRank};
 
 use super::Polynomial;
-use super::view::{Backward, Forward, View};
+use super::View;
 
 type R = TestRank;
 
@@ -51,7 +51,7 @@ fn arb_forward_poly() -> impl Strategy<Value = Polynomial<Fp, R>> {
         arb_wire_vec(),
     )
         .prop_map(|(a, b, c, d)| {
-            let mut view = View::<Fp, R, Forward>::new();
+            let mut view = View::<_, R, _>::forward();
             view.a = a;
             view.b = b;
             view.c = c;
@@ -69,7 +69,7 @@ fn arb_backward_poly() -> impl Strategy<Value = Polynomial<Fp, R>> {
         arb_wire_vec(),
     )
         .prop_map(|(a, b, c, d)| {
-            let mut view = View::<Fp, R, Backward>::new();
+            let mut view = View::<_, R, _>::backward();
             view.a = a;
             view.b = b;
             view.c = c;
@@ -88,7 +88,7 @@ fn arb_sparse_forward_poly() -> impl Strategy<Value = Polynomial<Fp, R>> {
         arb_sparse_wire_vec(),
     )
         .prop_map(|(a, b, c, d)| {
-            let mut view = View::<Fp, R, Forward>::new();
+            let mut view = View::<_, R, _>::forward();
             view.a = a;
             view.b = b;
             view.c = c;
@@ -165,7 +165,7 @@ proptest! {
         d in arb_wire_vec(),
     ) {
         let n = R::n();
-        let mut view = View::<Fp, R, Forward>::new();
+        let mut view = View::<_, R, _>::forward();
         view.a = a.clone();
         view.b = b.clone();
         view.c = c.clone();
@@ -199,7 +199,7 @@ proptest! {
         d in arb_sparse_wire_vec(),
     ) {
         let n = R::n();
-        let mut view = View::<Fp, R, Forward>::new();
+        let mut view = View::<_, R, _>::forward();
         view.a = a.clone();
         view.b = b.clone();
         view.c = c.clone();
@@ -228,14 +228,14 @@ proptest! {
         c in arb_wire_vec(),
         d in arb_wire_vec(),
     ) {
-        let mut fwd_view = View::<Fp, R, Forward>::new();
+        let mut fwd_view = View::<_, R, _>::forward();
         fwd_view.a = a.clone();
         fwd_view.b = b.clone();
         fwd_view.c = c.clone();
         fwd_view.d = d.clone();
         let fwd = fwd_view.build();
 
-        let mut bwd_view = View::<Fp, R, Backward>::new();
+        let mut bwd_view = View::<_, R, _>::backward();
         bwd_view.a = a;
         bwd_view.b = b;
         bwd_view.c = c;
@@ -537,7 +537,7 @@ fn single_coefficient_at_degree_boundaries() {
 #[test]
 fn only_a_wire_data() {
     let n = R::n();
-    let mut view = View::<Fp, R, Forward>::new();
+    let mut view = View::<_, R, _>::forward();
     let a_vals: Vec<Fp> = (0..n).map(|_| Fp::random(&mut rand::rng())).collect();
     view.a = a_vals.clone();
     let poly = view.build();
@@ -552,7 +552,7 @@ fn only_a_wire_data() {
 #[test]
 fn only_d_wire_data() {
     let n = R::n();
-    let mut view = View::<Fp, R, Forward>::new();
+    let mut view = View::<_, R, _>::forward();
     let d_vals: Vec<Fp> = (0..n).map(|_| Fp::random(&mut rand::rng())).collect();
     view.d = d_vals.clone();
     let poly = view.build();
@@ -571,7 +571,7 @@ fn alloc_optimization_pattern() {
     // Simulate the alloc optimization: most gates are mul (a,b,c,0),
     // a few are alloc (a,0,0,d).
     let n = R::n();
-    let mut view = View::<Fp, R, Forward>::new();
+    let mut view = View::<_, R, _>::forward();
     for i in 0..n {
         if i % 10 == 0 {
             // Alloc gate: a is non-zero, b=c=0, d is non-zero.

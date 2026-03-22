@@ -186,7 +186,7 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
         let mut yq = y.pow_vartime([(num_linear_from_gates + 1) as u64]);
         let y_inv = y.invert().expect("y is not zero");
 
-        let mut view = sparse::view::View::<F, R, sparse::view::Backward>::new();
+        let mut view = sparse::View::backward();
 
         // Placeholder contribution: Y^q - k * Y^q.
         view.a.push(yq);
@@ -563,14 +563,14 @@ mod tests {
                 let mut sx = generic.sx(x, &k, &plan);
                 {
                     // Subtract x^(4n-1) from the constant term (degree 0).
-                    let mut correction = sparse::view::View::<Fp, R, sparse::view::Forward>::new();
+                    let mut correction = sparse::View::forward();
                     correction.c.push(x_4n_minus_1);
                     sx.sub_assign(&correction.build());
                 }
                 let mut sy = generic.sy(y, &k, &plan);
                 {
                     // Subtract 1 from the backward view's c[0], which is degree 4n-1.
-                    let mut correction = sparse::view::View::<Fp, R, sparse::view::Backward>::new();
+                    let mut correction = sparse::View::backward();
                     correction.c.push(Fp::ONE);
                     sy.sub_assign(&correction.build());
                 }

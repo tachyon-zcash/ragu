@@ -7,7 +7,7 @@
 //! stores coefficients as sorted, non-overlapping blocks of contiguous
 //! values. Gaps between blocks are implicitly zero; individual elements
 //! within a block may be zero when the polynomial is built from wire
-//! buffers via [`view::View`].
+//! buffers via [`View`].
 //!
 //! [`Polynomial<T, R>`] stores a degree $4n - 1$ polynomial (where $4n$ =
 //! `R::num_coeffs()`) as sorted, non-overlapping blocks of contiguous
@@ -20,9 +20,9 @@
 //! - [`Polynomial::new`]: empty (zero) polynomial.
 //! - [`Polynomial::from_coeffs`]: compress a dense coefficient vector,
 //!   omitting zero elements.
-//! - [`view::View`]: a builder with four dense wire buffers (a, b, c, d) that
+//! - [`View`]: a builder with four dense wire buffers (a, b, c, d) that
 //!   maps gate-indexed values to degree positions and produces a polynomial via
-//!   [`View::build`](view::View::build). Zero elements within a wire buffer
+//!   [`View::build`]. Zero elements within a wire buffer
 //!   are preserved in the resulting blocks.
 //!
 //! Once constructed, the polynomial supports algebraic operations ([`scale`],
@@ -40,7 +40,8 @@
 //! [`fold`]: Polynomial::fold
 //! [`commit`]: Polynomial::commit
 
-pub mod view;
+pub(crate) mod view;
+pub use view::View;
 
 #[cfg(test)]
 mod tests;

@@ -40,7 +40,7 @@ pub trait Rank:
 
     /// Computes the coefficients of $$t(X, z) = -\sum_{i=0}^{n - 1} X^{4n - 1 - i} (z^{2n - 1 - i} + z^{2n + i})$$ for some $z \in \mathbb{F}$.
     fn tz<F: Field>(z: F) -> sparse::Polynomial<F, Self> {
-        let mut view = sparse::view::View::<F, Self, sparse::view::Backward>::new();
+        let mut view = sparse::View::backward();
         if z != F::ZERO {
             let zinv = z.invert().unwrap();
             let zpow = z.pow_vartime([2 * Self::n() as u64]);
@@ -58,7 +58,7 @@ pub trait Rank:
 
     /// Computes the coefficients of $$t(x, Z) = -\sum_{i=0}^{n - 1} x^{4n - 1 - i} (Z^{2n - 1 - i} + Z^{2n + i})$$ for some $x \in \mathbb{F}$.
     fn tx<F: Field>(x: F) -> sparse::Polynomial<F, Self> {
-        let mut view = sparse::view::View::<F, Self, sparse::view::Backward>::new();
+        let mut view = sparse::View::backward();
         if x != F::ZERO {
             let mut xi = -x.pow([3 * Self::n() as u64]);
             for _ in 0..Self::n() {
@@ -137,7 +137,7 @@ fn test_tz() {
     type DemoR = TestRank;
 
     // Construct a polynomial with all a and b wires = ONE.
-    let mut view = sparse::view::View::<Fp, DemoR, sparse::view::Forward>::new();
+    let mut view = sparse::View::<_, DemoR, _>::forward();
     for _ in 0..DemoR::n() {
         view.a.push(Fp::ONE);
         view.b.push(Fp::ONE);
@@ -150,7 +150,7 @@ fn test_tz() {
 
     // Construct the expected tz via backward view with c[i] = poly[2n+i] + poly[2n-1-i].
     let n = DemoR::n();
-    let mut expected_view = sparse::view::View::<Fp, DemoR, sparse::view::Backward>::new();
+    let mut expected_view = sparse::View::<_, DemoR, _>::backward();
     for i in 0..n {
         expected_view
             .c

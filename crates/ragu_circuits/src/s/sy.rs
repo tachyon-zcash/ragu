@@ -52,11 +52,11 @@
 //! coefficients of $s(X, y)$ in a specific order based on wire type. Rather
 //! than building a flat coefficient vector and reinterpreting it, the backward
 //! view provides direct access to the $a$, $b$, and $c$ coefficient regions.
-//! See [`sparse::view::View`] for details.
+//! See [`sparse::View`] for details.
 //!
 //! ### Coefficient Order
 //!
-//! The output polynomial $s(X, y)$ is built via [`sparse::view::View`],
+//! The output polynomial $s(X, y)$ is built via [`sparse::View`],
 //! with each wire type ($a$, $b$, $c$) occupying a separate coefficient
 //! region with its appropriate exponent range.
 //!
@@ -64,7 +64,7 @@
 //! [`sx`]: super::sx
 //! [`sxy`]: super::sxy
 //! [`Driver::add`]: ragu_core::drivers::Driver::add
-//! [`sparse::view::View`]: crate::polynomials::sparse::view::View
+//! [`sparse::View`]: crate::polynomials::sparse::View
 
 use ff::Field;
 use ragu_arithmetic::Coeff;
@@ -672,7 +672,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     key: &registry::Key<F>,
     floor_plan: &[ConstraintSegment],
 ) -> Result<sparse::Polynomial<F, R>> {
-    let mut view = sparse::view::View::<F, R, sparse::view::Backward>::new();
+    let mut view = sparse::View::backward();
 
     if y == F::ZERO {
         // If y is zero, all terms y^j for j > 0 vanish, leaving only the ONE

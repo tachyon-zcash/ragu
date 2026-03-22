@@ -24,7 +24,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! let mut view = View::<Fp, R, Forward>::new();
+//! let mut view = View::forward();
 //! view.a.push(some_value);
 //! view.b.push(other_value);
 //! view.c.push(product);
@@ -120,7 +120,10 @@ impl Perspective for Backward {
 
 /// A builder for constructing a [`Polynomial`] from gate-indexed wire values.
 ///
-/// See the [module documentation](self) for details and usage.
+/// Fill the wire buffers (`a`, `b`, `c`, `d`) by gate index, then call
+/// [`build`](Self::build) to map them to degree positions. Use
+/// [`forward`](Self::forward) for trace polynomials or
+/// [`backward`](Self::backward) for wiring polynomials.
 pub struct View<T, R: Rank, P: Perspective> {
     /// The A wires of multiplication gates.
     pub a: Vec<T>,
@@ -137,9 +140,9 @@ pub struct View<T, R: Rank, P: Perspective> {
     _marker: PhantomData<(R, P)>,
 }
 
-impl<T, R: Rank, P: Perspective> View<T, R, P> {
-    /// Creates a new empty view.
-    pub fn new() -> Self {
+impl<T, R: Rank> View<T, R, Forward> {
+    /// Creates a new empty forward view.
+    pub fn forward() -> Self {
         Self {
             a: Vec::new(),
             b: Vec::new(),
@@ -148,7 +151,22 @@ impl<T, R: Rank, P: Perspective> View<T, R, P> {
             _marker: PhantomData,
         }
     }
+}
 
+impl<T, R: Rank> View<T, R, Backward> {
+    /// Creates a new empty backward view.
+    pub fn backward() -> Self {
+        Self {
+            a: Vec::new(),
+            b: Vec::new(),
+            c: Vec::new(),
+            d: Vec::new(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T, R: Rank, P: Perspective> View<T, R, P> {
     /// Consumes this view, mapping wire buffers to degree positions and
     /// producing a sparse [`Polynomial`].
     ///
@@ -182,11 +200,5 @@ impl<T, R: Rank, P: Perspective> View<T, R, P> {
         let blocks = P::map_to_blocks(self.a, self.b, self.c, self.d, n);
 
         Polynomial::from_blocks(blocks)
-    }
-}
-
-impl<T, R: Rank, P: Perspective> Default for View<T, R, P> {
-    fn default() -> Self {
-        Self::new()
     }
 }

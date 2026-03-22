@@ -343,7 +343,7 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
         assert!(values.len() <= Self::values());
 
         let mut values = values.into_iter();
-        let mut view = sparse::view::View::<F, R, sparse::view::Forward>::new();
+        let mut view = sparse::View::forward();
 
         let len = 1 + Self::skip_multiplications() + Self::num_multiplications();
         view.a.reserve_exact(len);

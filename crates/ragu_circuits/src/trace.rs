@@ -108,7 +108,7 @@ impl<F: Field> Trace<F> {
             return Err(Error::MultiplicationBoundExceeded { limit: R::n() });
         }
 
-        let mut view = sparse::view::View::<F, R, sparse::view::Forward>::new();
+        let mut view = sparse::View::forward();
 
         // Pre-allocate zero-filled vectors for random-access scatter.
         view.a.resize(total_gates, F::ZERO);
