@@ -201,88 +201,105 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
     }
 
     /// Merges another polynomial into this one using the given binary
-    /// operation, pruning zero-valued results.
+    /// operation, pruning all-zero blocks from the result.
     fn combine_assign(&mut self, other: &Self, mut op: impl FnMut(&mut F, &F)) {
-        let lhs_blocks = core::mem::take(&mut self.blocks);
-
-        let mut li = lhs_blocks
-            .iter()
-            .flat_map(|(start, data)| (*start..).zip(data.iter()))
-            .peekable();
-        let mut ri = other
-            .blocks
-            .iter()
-            .flat_map(|(start, data)| (*start..).zip(data.iter()))
-            .peekable();
-
-        let mut blocks: Vec<(usize, Vec<F>)> = Vec::new();
-        let mut current_block: Option<(usize, Vec<F>)> = None;
-
-        loop {
-            let (idx, val) = match (li.peek(), ri.peek()) {
-                (Some(&(li_idx, _)), Some(&(ri_idx, _))) => match li_idx.cmp(&ri_idx) {
-                    core::cmp::Ordering::Less => {
-                        let (i, lv) = li.next().unwrap();
-                        (i, *lv)
+        if other.blocks.is_empty() {
+            return;
+        }
+        if self.blocks.is_empty() {
+            self.blocks = other
+                .blocks
+                .iter()
+                .map(|(s, d)| {
+                    let mut v = alloc::vec![F::ZERO; d.len()];
+                    for (o, r) in v.iter_mut().zip(d) {
+                        op(o, r);
                     }
-                    core::cmp::Ordering::Greater => {
-                        let (i, rv) = ri.next().unwrap();
-                        let mut out = F::ZERO;
-                        op(&mut out, rv);
-                        (i, out)
-                    }
-                    core::cmp::Ordering::Equal => {
-                        let (i, lv) = li.next().unwrap();
-                        let (_, rv) = ri.next().unwrap();
-                        let mut out = *lv;
-                        op(&mut out, rv);
-                        (i, out)
-                    }
-                },
-                (Some(_), None) => {
-                    let (i, lv) = li.next().unwrap();
-                    (i, *lv)
-                }
-                (None, Some(_)) => {
-                    let (i, rv) = ri.next().unwrap();
-                    let mut out = F::ZERO;
-                    op(&mut out, rv);
-                    (i, out)
-                }
+                    (*s, v)
+                })
+                .collect();
+            self.blocks
+                .retain(|(_, data)| data.iter().any(|x| !bool::from(x.is_zero())));
+            return;
+        }
+
+        let mut lhs = core::mem::take(&mut self.blocks);
+        let rhs = &other.blocks;
+        let mut out: Vec<(usize, Vec<F>)> = Vec::with_capacity(lhs.len() + rhs.len());
+        let mut li = 0usize;
+        let mut ri = 0usize;
+
+        while li < lhs.len() || ri < rhs.len() {
+            // Start of the next cluster of overlapping/adjacent blocks.
+            let cluster_start = match (lhs.get(li), rhs.get(ri)) {
+                (Some(l), Some(r)) => l.0.min(r.0),
+                (Some(l), None) => l.0,
+                (None, Some(r)) => r.0,
                 (None, None) => break,
             };
 
-            if bool::from(val.is_zero()) {
-                if let Some(block) = current_block.take() {
-                    blocks.push(block);
+            // Extend the cluster to cover all overlapping or adjacent blocks.
+            let mut cluster_end = cluster_start;
+            let li_start = li;
+            let ri_start = ri;
+            loop {
+                let mut extended = false;
+                while li < lhs.len() && lhs[li].0 <= cluster_end {
+                    cluster_end = cluster_end.max(lhs[li].0 + lhs[li].1.len());
+                    li += 1;
+                    extended = true;
                 }
-            } else {
-                match &mut current_block {
-                    Some((start, data)) if *start + data.len() == idx => {
-                        data.push(val);
-                    }
-                    _ => {
-                        if let Some(block) = current_block.take() {
-                            blocks.push(block);
-                        }
-                        current_block = Some((idx, alloc::vec![val]));
-                    }
+                while ri < rhs.len() && rhs[ri].0 <= cluster_end {
+                    cluster_end = cluster_end.max(rhs[ri].0 + rhs[ri].1.len());
+                    ri += 1;
+                    extended = true;
+                }
+                if !extended {
+                    break;
                 }
             }
+
+            let cluster_len = cluster_end - cluster_start;
+
+            // If one LHS block covers the entire cluster, reuse its
+            // allocation instead of copying into a fresh buffer.
+            let mut data = if li == li_start + 1
+                && lhs[li_start].0 == cluster_start
+                && lhs[li_start].1.len() == cluster_len
+            {
+                core::mem::take(&mut lhs[li_start].1)
+            } else {
+                let mut data = alloc::vec![F::ZERO; cluster_len];
+                for (ls, ld) in &lhs[li_start..li] {
+                    let off = ls - cluster_start;
+                    data[off..off + ld.len()].copy_from_slice(ld);
+                }
+                data
+            };
+
+            // Apply RHS contributions with tight slice loops.
+            for (rs, rd) in &rhs[ri_start..ri] {
+                let off = rs - cluster_start;
+                for (d, r) in data[off..off + rd.len()].iter_mut().zip(rd) {
+                    op(d, r);
+                }
+            }
+
+            out.push((cluster_start, data));
         }
 
-        if let Some(block) = current_block {
-            blocks.push(block);
-        }
-        self.blocks = blocks;
+        // Remove all-zero blocks (possible after cancellation).
+        out.retain(|(_, data)| data.iter().any(|x| !bool::from(x.is_zero())));
+        self.blocks = out;
     }
 
-    /// Multiplies all coefficients by `by`, dropping any blocks that become
-    /// entirely zero.
+    /// Multiplies all coefficients by `by`.
     pub fn scale(&mut self, by: F) {
-        self.apply_all(|x| *x *= by);
-        self.blocks
-            .retain(|(_, data)| data.iter().any(|x| !bool::from(x.is_zero())));
+        if bool::from(by.is_zero()) {
+            self.blocks.clear();
+        } else {
+            self.apply_all(|x| *x *= by);
+        }
     }
 
     /// Adds the coefficients of `other` to `self`.
