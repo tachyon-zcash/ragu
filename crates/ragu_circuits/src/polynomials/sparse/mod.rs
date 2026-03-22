@@ -17,12 +17,13 @@
 //!
 //! - [`Polynomial::new`]: empty (zero) polynomial.
 //! - [`Polynomial::from_coeffs`]: compress a dense coefficient vector, stripping
-//!   zero runs.
+//!   leading and trailing zeros; short interior zero gaps are kept inline
+//!   within blocks.
 //! - [`View`]: a builder that maps four gate-indexed wire buffers to degree
 //!   positions, producing a polynomial via [`View::build`]. Zero elements within
 //!   a wire buffer are **preserved** in the resulting blocks — push only
 //!   non-zero values for maximum compression, or use [`Polynomial::from_coeffs`]
-//!   to strip zeros from a pre-built dense vector.
+//!   to compress a pre-built dense vector.
 //!
 //! Once constructed, the polynomial supports algebraic operations ([`scale`],
 //! [`add_assign`], [`sub_assign`], [`negate`], [`eval`], [`revdot`],
@@ -99,21 +100,41 @@ impl<T, R: Rank> Polynomial<T, R> {
     }
 }
 
-/// Splits `data` into maximal runs of non-zero coefficients and appends each
-/// run to `out` as `(base + run_offset, run_values)`.
-fn extend_nonzero_runs<F: Field>(out: &mut Vec<(usize, Vec<F>)>, base: usize, data: Vec<F>) {
-    let mut run_start = None;
+/// Maximum number of consecutive zero coefficients that may be kept inline
+/// within a block rather than triggering a split. Small gaps are cheaper to
+/// store and iterate than the per-block overhead in [`eval`](Polynomial::eval)
+/// and [`dilate`](Polynomial::dilate) — each extra block requires a
+/// `pow_vartime` call to skip the gap.
+const GAP_TOLERANCE: usize = 4;
+
+/// Splits `data` into runs of coefficients and appends each run to `out` as
+/// `(base + run_offset, run_values)`. Zero gaps of up to [`GAP_TOLERANCE`]
+/// consecutive zeros are kept inline within a run; longer gaps cause a split.
+/// Leading and trailing zeros are always trimmed.
+fn extend_runs<F: Field>(out: &mut Vec<(usize, Vec<F>)>, base: usize, data: Vec<F>) {
+    let mut run_start: Option<usize> = None;
     let mut run = Vec::new();
+    let mut zero_count: usize = 0;
 
     for (i, coeff) in data.into_iter().enumerate() {
         if bool::from(coeff.is_zero()) {
-            if let Some(s) = run_start.take() {
-                out.push((s, core::mem::take(&mut run)));
+            if run_start.is_some() {
+                zero_count += 1;
+                if zero_count > GAP_TOLERANCE {
+                    out.push((
+                        run_start.take().expect("checked is_some above"),
+                        core::mem::take(&mut run),
+                    ));
+                    zero_count = 0;
+                }
             }
         } else {
             if run_start.is_none() {
                 run_start = Some(base + i);
+            } else {
+                run.resize(run.len() + zero_count, F::ZERO);
             }
+            zero_count = 0;
             run.push(coeff);
         }
     }
@@ -140,8 +161,9 @@ impl<T, R: Rank> Polynomial<T, R> {
 }
 
 impl<F: Field, R: Rank> Polynomial<F, R> {
-    /// Compresses a dense coefficient vector into sparse block form, stripping
-    /// zero runs.
+    /// Compresses a dense coefficient vector into sparse block form. Short
+    /// interior zero gaps are kept inline within blocks; longer gaps cause a
+    /// block split. Leading and trailing zeros are always stripped.
     ///
     /// Panics if `coeffs.len()` exceeds `R::num_coeffs()`.
     pub fn from_coeffs(coeffs: Vec<F>) -> Self {
@@ -153,7 +175,7 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
         );
 
         let mut blocks = Vec::new();
-        extend_nonzero_runs(&mut blocks, 0, coeffs);
+        extend_runs(&mut blocks, 0, coeffs);
         Self::from_blocks(blocks)
     }
 
@@ -202,7 +224,7 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
                 for (o, r) in v.iter_mut().zip(d) {
                     op(o, r);
                 }
-                extend_nonzero_runs(&mut out, *s, v);
+                extend_runs(&mut out, *s, v);
             }
             self.blocks = out;
             return;
@@ -270,7 +292,7 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
                 }
             }
 
-            extend_nonzero_runs(&mut out, cluster_start, data);
+            extend_runs(&mut out, cluster_start, data);
         }
 
         out.shrink_to_fit();
