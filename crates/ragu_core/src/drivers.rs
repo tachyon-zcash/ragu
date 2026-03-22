@@ -228,6 +228,20 @@ pub trait Driver<'dr>: DriverTypes<ImplWire = Self::Wire, ImplField = Self::F> +
         values: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
     ) -> Result<(Self::Wire, Self::Wire, Self::Wire)>;
 
+    /// Allocates the wires $(A, B, D)$ for a zero-product gate where $A \cdot
+    /// B = 0$ is structurally enforced.
+    ///
+    /// The provided closure returns `(a, b, d)` coefficients. The $c$ wire is
+    /// fixed to zero. The returned $D$ wire occupies the polynomial's d-region
+    /// at this gate and can be constrained via [`enforce_zero`](Driver::enforce_zero).
+    ///
+    /// This is useful at gates where the product is algebraically zero (e.g.,
+    /// `x * is_zero = 0`), freeing the d-wire for an extra allocation.
+    fn zero_product_mul(
+        &mut self,
+        values: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
+    ) -> Result<(Self::Wire, Self::Wire, Self::Wire)>;
+
     /// Asks the driver to create a virtual wire that is the linear combination
     /// of some existing wires. This may impose some runtime cost for circuit
     /// synthesis depending on the driver. However, it is relatively "free" to

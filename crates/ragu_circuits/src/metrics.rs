@@ -228,6 +228,9 @@ struct CounterScope<F> {
     /// Running monomial for $c$ wires: $x_2^{i+1}$ at gate $i$.
     current_c: F,
 
+    /// Running monomial for $d$ wires: $x_3^{i+1}$ at gate $i$.
+    current_d: F,
+
     /// Horner accumulator for the fingerprint evaluation result.
     result: F,
 }
@@ -264,6 +267,9 @@ struct Counter<F> {
 
     /// Base for the $c$-wire geometric sequence.
     x2: F,
+
+    /// Base for the $d$-wire geometric sequence.
+    x3: F,
 
     /// Multiplier for Horner accumulation, applied per [`enforce_zero`] call.
     ///
@@ -306,6 +312,7 @@ impl<F: FromUniformBytes<64>> Counter<F> {
         let y = point(3);
         let h = point(4);
         let one = point(5);
+        let x3 = point(6);
 
         Self {
             scope: CounterScope {
@@ -314,6 +321,7 @@ impl<F: FromUniformBytes<64>> Counter<F> {
                 current_a: x0,
                 current_b: x1,
                 current_c: x2,
+                current_d: x3,
                 result: h,
             },
             num_linear_constraints: 0,
@@ -327,6 +335,7 @@ impl<F: FromUniformBytes<64>> Counter<F> {
             x0,
             x1,
             x2,
+            x3,
             y,
             one,
             h,
@@ -389,8 +398,32 @@ impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
         self.scope.current_a *= self.x0;
         self.scope.current_b *= self.x1;
         self.scope.current_c *= self.x2;
+        self.scope.current_d *= self.x3;
 
         Ok((WireEval::Value(a), WireEval::Value(b), WireEval::Value(c)))
+    }
+
+    /// Consumes a zero-product gate: same as [`mul`](Self::mul) but returns the
+    /// $d$-wire evaluation instead of $c$.
+    fn zero_product_mul(
+        &mut self,
+        _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>,
+    ) -> Result<(Self::Wire, Self::Wire, Self::Wire)> {
+        if self.counting {
+            self.num_multiplication_constraints += 1;
+            self.segments[self.scope.current_segment].num_multiplication_constraints += 1;
+        }
+
+        let a = self.scope.current_a;
+        let b = self.scope.current_b;
+        let d = self.scope.current_d;
+
+        self.scope.current_a *= self.x0;
+        self.scope.current_b *= self.x1;
+        self.scope.current_c *= self.x2;
+        self.scope.current_d *= self.x3;
+
+        Ok((WireEval::Value(a), WireEval::Value(b), WireEval::Value(d)))
     }
 
     /// Computes a linear combination of wire evaluations.
@@ -430,6 +463,7 @@ impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
                 current_a: self.x0,
                 current_b: self.x1,
                 current_c: self.x2,
+                current_d: self.x3,
                 result: self.h,
             },
         );
