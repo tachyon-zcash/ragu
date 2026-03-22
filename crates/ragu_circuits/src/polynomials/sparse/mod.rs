@@ -4,7 +4,10 @@
 //! `b` and `c` wires are zero for most alloc gates and the `d` wire is zero
 //! for most multiplication gates. A dense coefficient vector would store those
 //! zeros explicitly, wasting memory and commitment bandwidth. This module
-//! stores only the non-zero runs, keeping the zero gaps implicit.
+//! stores coefficients as sorted, non-overlapping blocks of contiguous
+//! values. Gaps between blocks are implicitly zero; individual elements
+//! within a block may be zero when the polynomial is built from wire
+//! buffers via [`view::View`].
 //!
 //! [`Polynomial<T, R>`] stores a degree $4n - 1$ polynomial (where $4n$ =
 //! `R::num_coeffs()`) as sorted, non-overlapping blocks of contiguous
@@ -15,21 +18,26 @@
 //! There are three ways to create a polynomial:
 //!
 //! - [`Polynomial::new`]: empty (zero) polynomial.
-//! - [`Polynomial::from_coeffs`]: compress a dense coefficient vector.
+//! - [`Polynomial::from_coeffs`]: compress a dense coefficient vector,
+//!   omitting zero elements.
 //! - [`view::View`]: a builder with four dense wire buffers (a, b, c, d) that
 //!   maps gate-indexed values to degree positions and produces a polynomial via
-//!   [`View::build`](view::View::build).
+//!   [`View::build`](view::View::build). Zero elements within a wire buffer
+//!   are preserved in the resulting blocks.
 //!
 //! Once constructed, the polynomial supports algebraic operations ([`scale`],
-//! [`add_assign`], [`eval`], [`revdot`], [`dilate`], [`commit`], etc.) but
-//! cannot be converted back to a view. Construction and mutation are separate
-//! phases.
+//! [`add_assign`], [`sub_assign`], [`negate`], [`eval`], [`revdot`],
+//! [`dilate`], [`fold`], [`commit`], etc.) but cannot be converted back to a
+//! view. Construction and mutation are separate phases.
 //!
 //! [`scale`]: Polynomial::scale
 //! [`add_assign`]: Polynomial::add_assign
+//! [`sub_assign`]: Polynomial::sub_assign
+//! [`negate`]: Polynomial::negate
 //! [`eval`]: Polynomial::eval
 //! [`revdot`]: Polynomial::revdot
 //! [`dilate`]: Polynomial::dilate
+//! [`fold`]: Polynomial::fold
 //! [`commit`]: Polynomial::commit
 
 pub mod view;
@@ -190,13 +198,13 @@ impl<T, R: Rank> Polynomial<T, R> {
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Polynomial operations (require F: Field)
 // ---------------------------------------------------------------------------
 
 impl<F: Field, R: Rank> Polynomial<F, R> {
     /// Expands to a dense coefficient vector of length `R::num_coeffs()`.
+    #[cfg(test)]
     fn to_dense(&self) -> Vec<F> {
         let mut dense = alloc::vec![F::ZERO; R::num_coeffs()];
         for (start, data) in &self.blocks {
@@ -240,7 +248,8 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
         self.blocks = blocks;
     }
 
-    /// Multiplies all coefficients by `by`, pruning any that become zero.
+    /// Multiplies all coefficients by `by`, dropping any blocks that become
+    /// entirely zero.
     pub fn scale(&mut self, by: F) {
         self.apply_all(|x| *x *= by);
         self.blocks
@@ -264,9 +273,10 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
 
     /// Horner-style weighted sum of polynomials by powers of `scale_factor`.
     ///
-    /// Given polynomials $p_0, p_1, \ldots, p_{k-1}$ and factor $\alpha$:
+    /// Given polynomials $p\_{0}, p\_{1}, \ldots, p\_{k-1}$ and factor
+    /// $\alpha$:
     ///
-    /// $$\text{fold} = \alpha^{k-1} p_0 + \alpha^{k-2} p_1 + \cdots + p_{k-1}$$
+    /// $$\text{fold} = \alpha^{k-1} p\_{0} + \alpha^{k-2} p\_{1} + \cdots + p\_{k-1}$$
     pub fn fold<E: Borrow<Self>>(polys: impl IntoIterator<Item = E>, scale_factor: F) -> Self {
         polys.into_iter().fold(Self::default(), |mut acc, poly| {
             acc.scale(scale_factor);
@@ -312,9 +322,10 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
 
     /// Inner product of `self` with the coefficient-reversed `other`.
     ///
-    /// Computes $\sum_k \text{self}\[k\] \cdot \text{other}\[4n - 1 - k\]$.
+    /// Computes $\sum\_{k} \text{self}\[k\] \cdot \text{other}\[4n - 1 - k\]$.
     ///
-    /// Uses a two-pointer merge over both block lists for O(nnz) time.
+    /// Uses a two-pointer merge over both block lists for $O(\text{nnz})$
+    /// time.
     pub fn revdot(&self, other: &Self) -> F {
         let max_deg = R::num_coeffs() - 1;
         let mut result = F::ZERO;
@@ -364,7 +375,10 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
         result
     }
 
-    /// Computes a commitment in projective form.
+    /// Computes a commitment to this polynomial in projective form. Use
+    /// [`batch_to_affine`](ragu_arithmetic::batch_to_affine) to efficiently
+    /// convert multiple projective commitments to affine with a single
+    /// field inversion.
     pub fn commit<C: CurveAffine<ScalarExt = F>>(
         &self,
         generators: &impl ragu_arithmetic::FixedGenerators<C>,
@@ -373,25 +387,22 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
         assert!(generators.g().len() >= R::num_coeffs());
 
         let g = generators.g();
-        let indices: Vec<usize> = self
-            .blocks
-            .iter()
-            .flat_map(|(start, data)| *start..*start + data.len())
-            .collect();
-
         ragu_arithmetic::mul(
             self.blocks
                 .iter()
                 .flat_map(|(_, data)| data.iter())
                 .chain(core::iter::once(&blind)),
-            indices
+            self.blocks
                 .iter()
-                .map(|&i| &g[i])
+                .flat_map(|(start, data)| &g[*start..*start + data.len()])
                 .chain(core::iter::once(generators.h())),
         )
     }
 
-    /// Computes a commitment normalized to affine.
+    /// Computes a commitment to this polynomial, normalized to affine. For
+    /// multiple commitments, prefer [`commit`](Self::commit) with
+    /// [`batch_to_affine`](ragu_arithmetic::batch_to_affine) to share a
+    /// single field inversion.
     pub fn commit_to_affine<C: CurveAffine<ScalarExt = F>>(
         &self,
         generators: &impl ragu_arithmetic::FixedGenerators<C>,
@@ -404,7 +415,6 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
 // ---------------------------------------------------------------------------
 // Trait impls
 // ---------------------------------------------------------------------------
-
 
 impl<F: Field, R: Rank> ragu_arithmetic::Ring for Polynomial<F, R> {
     type R = Self;

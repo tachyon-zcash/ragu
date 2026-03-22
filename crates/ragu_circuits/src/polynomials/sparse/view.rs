@@ -6,6 +6,8 @@
 //!
 //! # Perspectives
 //!
+//! Here $n$ = `R::n()` is the maximum number of multiplication gates.
+//!
 //! - **[`Forward`]**: the standard perspective for trace polynomials $r(X)$.
 //!   - `a[i]` maps to degree $2n + i$
 //!   - `b[i]` maps to degree $2n - 1 - i$
@@ -49,7 +51,6 @@ pub trait Perspective: private::Sealed {
     /// and `a` are full); this is permitted by the sparse polynomial
     /// representation. The `n` parameter is `R::n()` (the maximum number of
     /// multiplication gates).
-    #[doc(hidden)]
     fn map_to_blocks<T>(
         a: Vec<T>,
         b: Vec<T>,
@@ -59,8 +60,8 @@ pub trait Perspective: private::Sealed {
     ) -> Vec<(usize, Vec<T>)>;
 }
 
-/// Standard perspective: `a[i]` maps to degree $2n+i$, `b[i]` to $2n-1-i$,
-/// `c[i]` to $i$, and `d[i]` to $4n-1-i$.
+/// Standard perspective: `a[i]` maps to degree $2n + i$, `b[i]` to
+/// $2n - 1 - i$, `c[i]` to $i$, and `d[i]` to $4n - 1 - i$.
 pub struct Forward;
 
 /// Reversed perspective: swaps `a` with `b` and `c` with `d` relative to
@@ -123,12 +124,16 @@ impl Perspective for Backward {
 pub struct View<T, R: Rank, P: Perspective> {
     /// The A wires of multiplication gates.
     pub a: Vec<T>,
+
     /// The B wires of multiplication gates.
     pub b: Vec<T>,
+
     /// The C wires of multiplication gates.
     pub c: Vec<T>,
+
     /// The D wires of multiplication gates.
     pub d: Vec<T>,
+
     _marker: PhantomData<(R, P)>,
 }
 
@@ -149,7 +154,8 @@ impl<T, R: Rank, P: Perspective> View<T, R, P> {
     ///
     /// # Panics
     ///
-    /// Panics if any buffer exceeds `R::n()` in length.
+    /// Panics if any wire buffer exceeds `R::n()` entries (one entry per
+    /// multiplication gate).
     pub fn build(self) -> Polynomial<T, R> {
         let n = R::n();
         assert!(
