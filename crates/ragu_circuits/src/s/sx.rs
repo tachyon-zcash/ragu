@@ -243,22 +243,9 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         if let Some(monomial) = self.scope.available_d.take() {
             Ok(monomial)
         } else {
-            // Consume a gate slot, returning the b and d monomials.
-            let index = self.scope.multiplication_constraints;
-            if index == R::n() {
-                return Err(Error::MultiplicationBoundExceeded { limit: R::n() });
-            }
-            self.scope.multiplication_constraints += 1;
-
-            let b = self.scope.current_b_x;
-            let d = self.scope.current_b_x * self.base_b_x_inv;
-
-            self.scope.current_a_x *= self.x_inv;
-            self.scope.current_b_x *= self.x;
-            self.scope.current_c_x *= self.x_inv;
-
-            self.scope.available_d = Some(WireEval::Value(d));
-            Ok(WireEval::Value(b))
+            let (_, b, _, d) = self.gate(|| unreachable!())?;
+            self.scope.available_d = Some(d);
+            Ok(b)
         }
     }
 

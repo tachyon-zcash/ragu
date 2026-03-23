@@ -399,26 +399,15 @@ impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
     type Wire = WireEval<F>;
     const ONE: Self::Wire = WireEval::One;
 
-    /// Allocates a wire using paired allocation.
+    /// Allocates a wire using paired allocation with layout $(0, a, 0, b)$.
     fn alloc(&mut self, _: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
         if let Some(wire) = self.scope.available_d.take() {
             Ok(wire)
         } else {
-            if self.counting {
-                self.num_multiplication_constraints += 1;
-                self.segments[self.scope.current_segment].num_multiplication_constraints += 1;
-            }
-
-            let b = self.scope.current_b;
             let d = self.scope.current_d;
-
-            self.scope.current_a *= self.x0;
-            self.scope.current_b *= self.x1;
-            self.scope.current_c *= self.x2;
-            self.scope.current_d *= self.x3;
-
+            let (_, b, _) = self.mul(|| unreachable!())?;
             self.scope.available_d = Some(WireEval::Value(d));
-            Ok(WireEval::Value(b))
+            Ok(b)
         }
     }
 
