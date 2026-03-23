@@ -74,7 +74,7 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
             child_registry_xy_at_current_w: proof.query.native.registry_xy_poly.eval(w),
             current_registry_xy_at_child_circuit_id: registry_xy
                 .eval(proof.application.circuit_id.omega_j()),
-            current_registry_wy_at_child_x: registry_wy.eval(proof.challenges.x),
+            current_registry_wy_at_child_x: registry_wy.eval(*proof.challenges.x),
         }
     }
 }

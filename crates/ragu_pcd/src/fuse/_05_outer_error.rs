@@ -27,7 +27,7 @@ use crate::{
         native::stages::outer_error::{ChildKyValues, KyValues},
         nested,
     },
-    proof,
+    proof::{self, Challenge, ChallengeMu, ChallengeNu, ChallengeY},
 };
 
 use super::claims::{FoldKey, FuseBuilder, TrackedPoly};
@@ -41,9 +41,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         preamble_witness: &native::stages::preamble::Witness<'_, C, R, HEADER_SIZE>,
         inner_error_witness: &native::stages::inner_error::Witness<C, native::RevdotParameters>,
         claims: FuseBuilder<'_, 'rx, C::CircuitField, R>,
-        y: &Element<'dr, D>,
-        mu: &Element<'dr, D>,
-        nu: &Element<'dr, D>,
+        y: &Challenge<Element<'dr, D>, ChallengeY>,
+        mu: &Challenge<Element<'dr, D>, ChallengeMu>,
+        nu: &Challenge<Element<'dr, D>, ChallengeNu>,
         sponge_state_elements: FixedVec<
             C::CircuitField,
             ragu_primitives::poseidon::PoseidonStateLen<C::CircuitField, C::CircuitPoseidon>,
