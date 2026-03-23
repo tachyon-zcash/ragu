@@ -283,7 +283,7 @@ where
 ///    simplifies to $b = s\_{y}$.
 ///
 /// 2. **$k(y) = 0$ and stripped ONE wire.** Bonding claims require
-///    $k(y) = 0$; to enforce this the ONE wire's `enforce_one` constraint
+///    $k(0) = 0$; to enforce this the ONE wire's `enforce_one` constraint
 ///    is stripped, zeroing its contribution at $Y^0$. General wiring
 ///    polynomials carry the ONE monomial ($x^{2n}$) at the $Y^0$ position,
 ///    so its absence distinguishes bonding polynomials and prevents
