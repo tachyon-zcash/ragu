@@ -73,13 +73,13 @@ impl<T, R: Rank> Polynomial<T, R> {
     fn assert_invariants(&self) {
         let mut prev_end: usize = 0;
         for (i, (start, data)) in self.blocks.iter().enumerate() {
-            debug_assert!(!data.is_empty(), "block {i} is empty");
-            debug_assert!(
+            assert!(!data.is_empty(), "block {i} is empty");
+            assert!(
                 *start + data.len() <= R::num_coeffs(),
                 "block {i} exceeds capacity"
             );
             if i > 0 {
-                debug_assert!(
+                assert!(
                     *start >= prev_end,
                     "block {i} overlaps previous (start={start}, prev_end={prev_end})"
                 );
@@ -107,6 +107,8 @@ impl<T, R: Rank> Polynomial<T, R> {
 /// iterations in [`combine_assign`](Polynomial::combine_assign)) — eval and
 /// dilate gap-skip costs are handled by [`pow_gap`], which avoids the
 /// fixed 64-squaring overhead of `pow_vartime` for small exponents.
+///
+/// TODO(#608): benchmark to determine the optimal value.
 const GAP_TOLERANCE: usize = 4;
 
 /// Computes `z^gap` using chained multiplication for small gaps and
@@ -136,25 +138,26 @@ fn extend_runs<F: Field>(out: &mut Vec<(usize, Vec<F>)>, base: usize, data: Vec<
     let mut zero_count: usize = 0;
 
     for (i, coeff) in data.into_iter().enumerate() {
-        if bool::from(coeff.is_zero()) {
-            if run_start.is_some() {
+        let is_zero = bool::from(coeff.is_zero());
+
+        match (run_start, is_zero) {
+            (None, true) => {}
+            (None, false) => {
+                run_start = Some(base + i);
+                run.push(coeff);
+            }
+            (Some(_), false) => {
+                run.extend(core::iter::repeat_n(F::ZERO, zero_count));
+                zero_count = 0;
+                run.push(coeff);
+            }
+            (Some(_), true) => {
                 zero_count += 1;
                 if zero_count > GAP_TOLERANCE {
-                    out.push((
-                        run_start.take().expect("checked is_some above"),
-                        core::mem::take(&mut run),
-                    ));
+                    out.push((run_start.take().unwrap(), core::mem::take(&mut run)));
                     zero_count = 0;
                 }
             }
-        } else {
-            if run_start.is_none() {
-                run_start = Some(base + i);
-            } else {
-                run.resize(run.len() + zero_count, F::ZERO);
-            }
-            zero_count = 0;
-            run.push(coeff);
         }
     }
 
@@ -246,6 +249,7 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
                 extend_runs(&mut out, *s, v);
             }
             self.blocks = out;
+            self.assert_invariants();
             return;
         }
 
@@ -311,11 +315,15 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
                 }
             }
 
-            extend_runs(&mut out, cluster_start, data);
+            if cluster_start == 0 && cluster_len == R::num_coeffs() {
+                out.push((cluster_start, data));
+            } else {
+                extend_runs(&mut out, cluster_start, data);
+            }
         }
 
-        out.shrink_to_fit();
         self.blocks = out;
+        self.assert_invariants();
     }
 
     /// Multiplies all coefficients by `by`.
@@ -581,6 +589,12 @@ impl<F: Field, R: Rank> ragu_arithmetic::Ring for Polynomial<F, R> {
 impl<F: Field, R: Rank> core::ops::AddAssign<&Self> for Polynomial<F, R> {
     fn add_assign(&mut self, rhs: &Self) {
         Polynomial::add_assign(self, rhs);
+    }
+}
+
+impl<F: Field, R: Rank> core::ops::SubAssign<&Self> for Polynomial<F, R> {
+    fn sub_assign(&mut self, rhs: &Self) {
+        Polynomial::sub_assign(self, rhs);
     }
 }
 
