@@ -24,10 +24,11 @@ and the synthesis context it runs in.
 
 The driver exposes three core operations:
 
-* [`mul()`]: returns wires $(a, b, c)$ with the initial constraint $a \cdot b =
-      c$, simultaneously assigning their values. The caller provides a closure
-      that returns the three assignments; it is evaluated only in contexts where
-      [witness data](witness.md) is needed.
+* [`gate()`]: returns wires $(a, b, c, d)$ with the constraint $a \cdot b =
+      c$, simultaneously assigning their values. The $d$ wire is auxiliary and
+      not part of the multiplication constraint. The caller provides a closure
+      that returns the three assignments $(a, b, c)$; it is evaluated only in
+      contexts where [witness data](witness.md) is needed.
 * [`enforce_zero()`]: enforces that a linear combination of previously created
       wires equals zero. This operation takes a closure that is only executed
       when the driver needs to know about the constraint system. The closure is
@@ -45,16 +46,16 @@ wire that scales [`ONE`].
 
 ### Allocation
 
-Sometimes only a single wire is needed, but [`mul()`] always allocates three. To
+Sometimes only a single wire is needed, but [`gate()`] always allocates four. To
 support single-wire allocation, drivers provide an additional [`alloc()`] method
 that allocates and assigns one wire.
 
-By default, `alloc` calls `mul`, returns the $a$ wire, and sets the
-corresponding $b$ and $c$ wires to zero to satisfy the multiplication
-constraint—wasting $b$ and $c$. Drivers may override `alloc` to avoid this
-overhead. For example, synthesis drivers return the $a$ wire from a `mul`
-operation, stash the associated $b$ wire for the next `alloc` call, and fill in
-$c$ later to satisfy the constraint.
+By default, `alloc` calls `gate`, returns the $a$ wire, and sets the
+corresponding $b$, $c$, and $d$ wires to zero to satisfy the multiplication
+constraint—wasting the remaining three wires. Drivers may override `alloc` to
+avoid this overhead. For example, synthesis drivers return a wire from a `gate`
+operation, stash another wire for the next `alloc` call, and fill in the
+remaining wires later to satisfy the constraint.
 
 ### The `'dr` Lifetime
 
@@ -81,7 +82,7 @@ abstractions over drivers.
 
 ### Purity {#purity}
 
-All four closure-accepting `Driver` methods—[`mul()`], [`alloc()`], [`add()`],
+All four closure-accepting `Driver` methods—[`gate()`], [`alloc()`], [`add()`],
 and [`enforce_zero()`]—require their closures to be [`Fn`], not `FnOnce` or
 `FnMut`. This is a deliberate signal that closures should be side-effect-free:
 synthesis must produce identical constraints regardless of whether a given
@@ -89,7 +90,7 @@ driver invokes the closure. `Fn` prevents accidental `&mut` captures, although
 it does not prevent interior mutability.
 
 The two closure families differ in whether they have additional protection
-beyond `Fn`. For the witness-providing closures on [`mul()`] and [`alloc()`],
+beyond `Fn`. For the witness-providing closures on [`gate()`] and [`alloc()`],
 the [`Maybe`]/[`DriverValue`] system provides a harder compile-time guarantee:
 drivers with `MaybeKind = Empty` never call those closures at all, and the
 closure bodies are dead-code-eliminated. The expression-building closures on
@@ -101,7 +102,7 @@ closure bodies are dead-code-eliminated. The expression-building closures on
 The [`enforce_equal()`] method is a convenience helper that constrains two wires
 to have the same value by calling [`enforce_zero()`] on their difference.
 
-[`mul()`]: ragu_core::drivers::Driver::gate
+[`gate()`]: ragu_core::drivers::Driver::gate
 [`enforce_zero()`]: ragu_core::drivers::Driver::enforce_zero
 [`add()`]: ragu_core::drivers::Driver::add
 [`ONE`]: ragu_core::drivers::Driver::ONE
