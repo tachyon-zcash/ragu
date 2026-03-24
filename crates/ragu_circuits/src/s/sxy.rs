@@ -343,7 +343,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     let base_b_x = xn2; // x^(2n)
     let xn4 = xn2.square(); // x^(4n)
     let base_w_x = xn4 * x_inv; // x^(4n - 1)
-    let one = base_v_x; // x^(2n)
+    let one = base_b_x; // x^(2n)
 
     if y == F::ZERO {
         // If y is zero, all terms y^j for j > 0 vanish, leaving only the ONE

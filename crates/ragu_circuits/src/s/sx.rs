@@ -355,7 +355,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     let base_b_x = xn2;
     let xn4 = xn2.square();
     let base_w_x = xn4 * x_inv;
-    let one = base_v_x;
+    let one = base_b_x;
 
     let mut evaluator = Evaluator::<F, R> {
         // Zero-initialized: the evaluator fills specific indices during
