@@ -398,8 +398,8 @@ mod tests {
             let mu_inv = mu.invert().unwrap();
             let munu = mu * nu;
 
-            // Compute error_m and fold polynomials for layer 1
-            let error_m = inner_error_terms::<Fp, TestRank, P>(&lhs, &rhs);
+            // Compute inner error and fold polynomials for layer 1
+            let inner_error = inner_error_terms::<Fp, TestRank, P>(&lhs, &rhs);
             let folded_lhs_m = fold_inner::<_, Fp, P>(&lhs, mu_inv);
             let folded_rhs_m = fold_inner::<_, Fp, P>(&rhs, munu);
 
@@ -425,7 +425,7 @@ mod tests {
                     Element::constant(dr, val)
                 });
                 let error_group: FixedVec<Element<'_, _>, _> =
-                    FixedVec::from_fn(|i| Element::constant(dr, error_m[g][i]));
+                    FixedVec::from_fn(|i| Element::constant(dr, inner_error[g][i]));
 
                 let computed = fold_products.fold_inner::<P>(dr, &error_group, &ky_group)?;
                 let computed_val = *computed.value().take();
@@ -502,8 +502,8 @@ mod tests {
             let mu_inv = mu.invert().unwrap();
             let munu = mu * nu;
 
-            // Compute error_m: N groups of M*(M-1) off-diagonal revdot products
-            let error_m = inner_error_terms::<Fp, TestRank, P>(&lhs, &rhs);
+            // Compute inner error: N groups of M*(M-1) off-diagonal revdot products
+            let inner_error = inner_error_terms::<Fp, TestRank, P>(&lhs, &rhs);
 
             // Fold polynomials for layer 1
             let folded_lhs = fold_inner::<_, Fp, P>(&lhs, mu_inv);
@@ -511,8 +511,8 @@ mod tests {
 
             // Compute collapsed values via ClaimFolder
             let collapsed: FixedVec<Fp, P::NumGroups> =
-                Emulator::emulate_wireless((&error_m, &ky_values, mu, nu), |dr, witness| {
-                    let (error_m, ky_values, mu, nu) = witness.cast();
+                Emulator::emulate_wireless((&inner_error, &ky_values, mu, nu), |dr, witness| {
+                    let (inner_error, ky_values, mu, nu) = witness.cast();
                     let mu = Element::alloc(dr, mu)?;
                     let nu = Element::alloc(dr, nu)?;
                     let fold_products = ClaimFolder::new(dr, &mu, &nu)?;
@@ -520,7 +520,7 @@ mod tests {
                     let mut ky_idx = 0;
                     let collapsed = FixedVec::try_from_fn(|group| {
                         let errors = FixedVec::try_from_fn(|j| {
-                            Element::alloc(dr, error_m.as_ref().map(|e| e[group][j]))
+                            Element::alloc(dr, inner_error.as_ref().map(|e| e[group][j]))
                         })?;
                         let ky = FixedVec::try_from_fn(|_| {
                             let idx = ky_idx;
@@ -549,8 +549,8 @@ mod tests {
             let mu_prime_inv = mu_prime.invert().unwrap();
             let mu_prime_nu_prime = mu_prime * nu_prime;
 
-            // Compute error_n from layer 1 folded polynomials
-            let error_n = outer_error_terms::<Fp, TestRank, P>(&folded_lhs, &folded_rhs);
+            // Compute outer error from layer 1 folded polynomials
+            let outer_error = outer_error_terms::<Fp, TestRank, P>(&folded_lhs, &folded_rhs);
 
             // Fold to final polynomials
             let final_lhs = fold_outer::<_, Fp, P>(folded_lhs, mu_prime_inv);
@@ -558,15 +558,15 @@ mod tests {
 
             // Compute final c via ClaimFolder
             let final_c: Fp = Emulator::emulate_wireless(
-                (&error_n, &collapsed, mu_prime, nu_prime),
+                (&outer_error, &collapsed, mu_prime, nu_prime),
                 |dr, witness| {
-                    let (error_n, collapsed, mu_prime, nu_prime) = witness.cast();
+                    let (outer_error, collapsed, mu_prime, nu_prime) = witness.cast();
                     let mu_prime = Element::alloc(dr, mu_prime)?;
                     let nu_prime = Element::alloc(dr, nu_prime)?;
                     let fold_products = ClaimFolder::new(dr, &mu_prime, &nu_prime)?;
 
                     let error_terms = FixedVec::try_from_fn(|i| {
-                        Element::alloc(dr, error_n.as_ref().map(|e| e[i]))
+                        Element::alloc(dr, outer_error.as_ref().map(|e| e[i]))
                     })?;
                     let collapsed = FixedVec::try_from_fn(|i| {
                         Element::alloc(dr, collapsed.as_ref().map(|c| c[i]))
@@ -805,9 +805,9 @@ mod tests {
         }
 
         // Error computation on empty input should produce zero errors
-        let error_m = inner_error_terms::<Fp, TestRank, P>(&empty, &empty);
+        let inner_error = inner_error_terms::<Fp, TestRank, P>(&empty, &empty);
         for g in 0..n {
-            for e in error_m[g].iter() {
+            for e in inner_error[g].iter() {
                 assert_eq!(*e, Fp::ZERO, "Error terms should be zero for empty input");
             }
         }
@@ -914,7 +914,7 @@ mod tests {
         let fold_products = ClaimFolder::new(dr, &mu_elem, &nu_elem)?;
 
         let ky_values: Vec<Fp> = lhs.iter().zip(&rhs).map(|(l, r)| l.revdot(r)).collect();
-        let error_m = inner_error_terms::<Fp, TestRank, RevdotParameters>(&lhs, &rhs);
+        let inner_error = inner_error_terms::<Fp, TestRank, RevdotParameters>(&lhs, &rhs);
 
         // Check first 4 groups (those with actual data)
         let num_groups = count.div_ceil(m);
@@ -932,7 +932,7 @@ mod tests {
                 Element::constant(dr, val)
             });
             let error_group: FixedVec<Element<'_, _>, _> =
-                FixedVec::from_fn(|i| Element::constant(dr, error_m[g][i]));
+                FixedVec::from_fn(|i| Element::constant(dr, inner_error[g][i]));
 
             let computed =
                 fold_products.fold_inner::<RevdotParameters>(dr, &error_group, &ky_group)?;
