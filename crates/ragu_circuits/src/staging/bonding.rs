@@ -105,7 +105,7 @@ impl<F: Field> LinearExpression<BondingWire, F> for RejectOne {
 ///
 /// Bonding circuits may only use [`alloc`](Driver::alloc),
 /// [`add`](Driver::add), and [`enforce_zero`](Driver::enforce_zero) with
-/// normal wires. Calling [`mul`](Driver::mul)/[`gate`](Driver::gate),
+/// normal wires. Calling [`mul`](Driver::mul)/[`gate`](DriverTypes::gate),
 /// [`constant`](Driver::constant), or referencing the [`ONE`](Driver::ONE)
 /// wire in any linear constraint records a violation.
 ///
@@ -135,16 +135,6 @@ impl<F: Field> DriverTypes for BondingValidator<F> {
     type MaybeKind = Empty;
     type LCadd = RejectOne;
     type LCenforce = RejectOne;
-}
-
-impl<'dr, F: Field> Driver<'dr> for BondingValidator<F> {
-    type F = F;
-    type Wire = BondingWire;
-    const ONE: Self::Wire = BondingWire::One;
-
-    fn alloc(&mut self, _: impl Fn() -> Result<Coeff<F>>) -> Result<BondingWire> {
-        Ok(BondingWire::Normal)
-    }
 
     fn gate(
         &mut self,
@@ -157,6 +147,16 @@ impl<'dr, F: Field> Driver<'dr> for BondingValidator<F> {
             BondingWire::Normal,
             BondingWire::Normal,
         ))
+    }
+}
+
+impl<'dr, F: Field> Driver<'dr> for BondingValidator<F> {
+    type F = F;
+    type Wire = BondingWire;
+    const ONE: Self::Wire = BondingWire::One;
+
+    fn alloc(&mut self, _: impl Fn() -> Result<Coeff<F>>) -> Result<BondingWire> {
+        Ok(BondingWire::Normal)
     }
 
     fn constant(&mut self, _: Coeff<F>) -> BondingWire {

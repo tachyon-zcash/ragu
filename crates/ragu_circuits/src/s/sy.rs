@@ -498,6 +498,39 @@ impl<'table, 'sy, F: Field, R: Rank> DriverTypes for Evaluator<'table, 'sy, '_, 
     type LCenforce = TermEnforcer<'table, 'sy, F, R>;
     type ImplField = F;
     type ImplWire = Wire<'table, 'sy, F, R>;
+
+    /// Consumes a multiplication gate, returning wire handles for $(a, b, c)$.
+    ///
+    /// The gate index comes from the absolute floor-plan position tracked in
+    /// `scope.multiplication_constraints`. Backward view slots are
+    /// pre-allocated, so no push is needed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::MultiplicationBoundExceeded`] if the gate count reaches
+    /// [`Rank::n()`].
+    fn gate(
+        &mut self,
+        _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>,
+    ) -> Result<(
+        Wire<'table, 'sy, F, R>,
+        Wire<'table, 'sy, F, R>,
+        Wire<'table, 'sy, F, R>,
+        Wire<'table, 'sy, F, R>,
+    )> {
+        let index = self.scope.multiplication_constraints;
+        if index == R::n() {
+            return Err(Error::MultiplicationBoundExceeded { limit: R::n() });
+        }
+        self.scope.multiplication_constraints += 1;
+
+        let a = Wire::new(WireIndex::A(index), self.virtual_table);
+        let b = Wire::new(WireIndex::B(index), self.virtual_table);
+        let c = Wire::new(WireIndex::C(index), self.virtual_table);
+        let d = Wire::new(WireIndex::D(index), self.virtual_table);
+
+        Ok((a, b, c, d))
+    }
 }
 
 impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, '_, F, R> {
@@ -522,34 +555,6 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, '
 
             Ok(a)
         }
-    }
-
-    /// Consumes a multiplication gate, returning wire handles for $(a, b, c)$.
-    ///
-    /// The gate index comes from the absolute floor-plan position tracked in
-    /// `scope.multiplication_constraints`. Backward view slots are
-    /// pre-allocated, so no push is needed.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::MultiplicationBoundExceeded`] if the gate count reaches
-    /// [`Rank::n()`].
-    fn gate(
-        &mut self,
-        _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>,
-    ) -> Result<(Self::Wire, Self::Wire, Self::Wire, Self::Wire)> {
-        let index = self.scope.multiplication_constraints;
-        if index == R::n() {
-            return Err(Error::MultiplicationBoundExceeded { limit: R::n() });
-        }
-        self.scope.multiplication_constraints += 1;
-
-        let a = Wire::new(WireIndex::A(index), self.virtual_table);
-        let b = Wire::new(WireIndex::B(index), self.virtual_table);
-        let c = Wire::new(WireIndex::C(index), self.virtual_table);
-        let d = Wire::new(WireIndex::D(index), self.virtual_table);
-
-        Ok((a, b, c, d))
     }
 
     /// Creates a virtual wire representing a linear combination.

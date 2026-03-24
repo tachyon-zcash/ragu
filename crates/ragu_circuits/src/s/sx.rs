@@ -19,7 +19,7 @@
 //!
 //! The driver redefines each operation as follows:
 //!
-//! - [`mul()`][`Driver::mul`] / [`gate()`][`Driver::gate`]: Returns wire
+//! - [`mul()`][`Driver::mul`] / [`gate()`][`DriverTypes::gate`]: Returns wire
 //!   handles that hold monomial evaluations $x^{2n - 1 - i}$, $x^{2n + i}$,
 //!   $x^{4n - 1 - i}$, $x^{i}$ for the $i$-th gate.
 //!
@@ -67,7 +67,7 @@
 //! [`Driver::alloc`]: ragu_core::drivers::Driver::alloc
 //! [`Driver::enforce_zero`]: ragu_core::drivers::Driver::enforce_zero
 //! [`Driver::mul`]: ragu_core::drivers::Driver::mul
-//! [`Driver::gate`]: ragu_core::drivers::Driver::gate
+//! [`DriverTypes::gate`]: ragu_core::drivers::DriverTypes::gate
 //! [`sxy`]: super::sxy
 
 use ff::Field;
@@ -189,25 +189,6 @@ impl<F: Field, R: Rank> DriverTypes for Evaluator<'_, F, R> {
     type LCenforce = WireEvalSum<F>;
     type ImplField = F;
     type ImplWire = WireEval<F>;
-}
-
-impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
-    type F = F;
-    type Wire = WireEval<F>;
-
-    const ONE: Self::Wire = WireEval::One;
-
-    /// Allocates a wire using paired allocation.
-    fn alloc(&mut self, _: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
-        if let Some(monomial) = self.scope.available_b.take() {
-            Ok(monomial)
-        } else {
-            let (a, b, _) = self.mul(|| unreachable!())?;
-            self.scope.available_b = Some(b);
-
-            Ok(a)
-        }
-    }
 
     /// Consumes a multiplication gate, returning evaluated monomials for $(a, b, c)$.
     ///
@@ -224,7 +205,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
     fn gate(
         &mut self,
         _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>,
-    ) -> Result<(Self::Wire, Self::Wire, Self::Wire, Self::Wire)> {
+    ) -> Result<(WireEval<F>, WireEval<F>, WireEval<F>, WireEval<F>)> {
         let index = self.scope.multiplication_constraints;
         if index == R::n() {
             return Err(Error::MultiplicationBoundExceeded { limit: R::n() });
@@ -247,6 +228,25 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
             WireEval::Value(c),
             WireEval::Value(d),
         ))
+    }
+}
+
+impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
+    type F = F;
+    type Wire = WireEval<F>;
+
+    const ONE: Self::Wire = WireEval::One;
+
+    /// Allocates a wire using paired allocation.
+    fn alloc(&mut self, _: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
+        if let Some(monomial) = self.scope.available_b.take() {
+            Ok(monomial)
+        } else {
+            let (a, b, _) = self.mul(|| unreachable!())?;
+            self.scope.available_b = Some(b);
+
+            Ok(a)
+        }
     }
 
     /// Computes a linear combination of wire evaluations.

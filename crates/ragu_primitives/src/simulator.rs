@@ -81,6 +81,35 @@ impl<F: Field> DriverTypes for Simulator<F> {
     type MaybeKind = Always<()>;
     type LCadd = DirectSum<F>;
     type LCenforce = DirectSum<F>;
+
+    fn gate(
+        &mut self,
+        values: impl Fn() -> Result<(
+            Coeff<Self::ImplField>,
+            Coeff<Self::ImplField>,
+            Coeff<Self::ImplField>,
+        )>,
+    ) -> Result<(
+        Self::ImplWire,
+        Self::ImplWire,
+        Self::ImplWire,
+        Self::ImplWire,
+    )> {
+        let (a, b, c) = values()?;
+
+        let a = a.value();
+        let b = b.value();
+        let c = c.value();
+
+        if a * b != c {
+            return Err(Error::InvalidWitness(
+                "multiplication constraint failed".into(),
+            ));
+        }
+
+        self.num_multiplications += 1;
+        Ok((a, b, c, F::ZERO))
+    }
 }
 
 impl<'dr, F: Field> Driver<'dr> for Simulator<F> {
@@ -96,26 +125,6 @@ impl<'dr, F: Field> Driver<'dr> for Simulator<F> {
 
     fn constant(&mut self, value: Coeff<Self::F>) -> Self::Wire {
         value.value()
-    }
-
-    fn gate(
-        &mut self,
-        values: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
-    ) -> Result<(Self::Wire, Self::Wire, Self::Wire, Self::Wire)> {
-        let (a, b, c) = values()?;
-
-        let a = a.value();
-        let b = b.value();
-        let c = c.value();
-
-        if a * b != c {
-            return Err(Error::InvalidWitness(
-                "multiplication constraint failed".into(),
-            ));
-        }
-
-        self.num_multiplications += 1;
-        Ok((a, b, c, F::ZERO))
     }
 
     fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {

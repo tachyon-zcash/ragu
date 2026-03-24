@@ -105,6 +105,12 @@ pub trait Mode: sealed::Sealed {
 
     /// Equal to the resulting [`Emulator`]'s [`DriverTypes::LCenforce`].
     type LCenforce: LinearExpression<Self::Wire, Self::F>;
+
+    /// Mode-specific gate allocation. Delegated to by
+    /// [`DriverTypes::gate`] for [`Emulator<M>`].
+    fn gate(
+        values: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
+    ) -> Result<(Self::Wire, Self::Wire, Self::Wire, Self::Wire)>;
 }
 
 /// Mode for an [`Emulator`] that tracks wire assignments.
@@ -120,6 +126,15 @@ impl<F: Field> Mode for Wired<F> {
     type Wire = F;
     type LCadd = DirectSum<F>;
     type LCenforce = DirectSum<F>;
+
+    fn gate(values: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>) -> Result<(F, F, F, F)> {
+        let (a, b, c) = values()?;
+
+        // Despite wires existing, the emulator does not enforce multiplication
+        // constraints.
+
+        Ok((a.value(), b.value(), c.value(), F::ZERO))
+    }
 }
 
 /// Mode for an [`Emulator`] that does not track wire assignments.
@@ -133,6 +148,10 @@ impl<M: MaybeKind, F: Field> Mode for Wireless<M, F> {
     type Wire = ();
     type LCadd = ();
     type LCenforce = ();
+
+    fn gate(_: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>) -> Result<((), (), (), ())> {
+        Ok(((), (), (), ()))
+    }
 }
 
 /// A driver used to natively execute circuit code without enforcing
@@ -261,6 +280,13 @@ impl<M: Mode> DriverTypes for Emulator<M> {
     type MaybeKind = M::MaybeKind;
     type LCadd = M::LCadd;
     type LCenforce = M::LCenforce;
+
+    fn gate(
+        &mut self,
+        values: impl Fn() -> Result<(Coeff<M::F>, Coeff<M::F>, Coeff<M::F>)>,
+    ) -> Result<(M::Wire, M::Wire, M::Wire, M::Wire)> {
+        M::gate(values)
+    }
 }
 
 impl<'dr, M: MaybeKind, F: Field> Driver<'dr> for Emulator<Wireless<M, F>> {
@@ -269,13 +295,6 @@ impl<'dr, M: MaybeKind, F: Field> Driver<'dr> for Emulator<Wireless<M, F>> {
     const ONE: Self::Wire = ();
 
     fn constant(&mut self, _: Coeff<Self::F>) -> Self::Wire {}
-
-    fn gate(
-        &mut self,
-        _: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
-    ) -> Result<(Self::Wire, Self::Wire, Self::Wire, Self::Wire)> {
-        Ok(((), (), (), ()))
-    }
 
     fn add(&mut self, _: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {}
 
@@ -299,18 +318,6 @@ impl<'dr, F: Field> Driver<'dr> for Emulator<Wired<F>> {
 
     fn constant(&mut self, coeff: Coeff<Self::F>) -> Self::Wire {
         coeff.value()
-    }
-
-    fn gate(
-        &mut self,
-        f: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
-    ) -> Result<(Self::Wire, Self::Wire, Self::Wire, Self::Wire)> {
-        let (a, b, c) = f()?;
-
-        // Despite wires existing, the emulator does not enforce multiplication
-        // constraints.
-
-        Ok((a.value(), b.value(), c.value(), F::ZERO))
     }
 
     fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {

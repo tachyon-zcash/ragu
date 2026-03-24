@@ -33,7 +33,7 @@
 //!
 //! [`TypeId`]: core::any::TypeId
 
-use ff::{Field, FromUniformBytes, PrimeField};
+use ff::{FromUniformBytes, PrimeField};
 use ragu_arithmetic::Coeff;
 use ragu_core::{
     Result,
@@ -346,29 +346,12 @@ impl<F: FromUniformBytes<64>> Counter<F> {
     }
 }
 
-impl<F: Field> DriverTypes for Counter<F> {
+impl<F: FromUniformBytes<64>> DriverTypes for Counter<F> {
     type MaybeKind = Empty;
     type ImplField = F;
     type ImplWire = WireEval<F>;
     type LCadd = WireEvalSum<F>;
     type LCenforce = WireEvalSum<F>;
-}
-
-impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
-    type F = F;
-    type Wire = WireEval<F>;
-    const ONE: Self::Wire = WireEval::One;
-
-    /// Allocates a wire using paired allocation.
-    fn alloc(&mut self, _: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
-        if let Some(wire) = self.scope.available_b.take() {
-            Ok(wire)
-        } else {
-            let (a, b, _) = self.mul(|| unreachable!())?;
-            self.scope.available_b = Some(b);
-            Ok(a)
-        }
-    }
 
     /// Consumes a multiplication gate: increments constraint counts and returns
     /// wire values from three independent geometric sequences, advancing each
@@ -376,7 +359,7 @@ impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
     fn gate(
         &mut self,
         _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>,
-    ) -> Result<(Self::Wire, Self::Wire, Self::Wire, Self::Wire)> {
+    ) -> Result<(WireEval<F>, WireEval<F>, WireEval<F>, WireEval<F>)> {
         if self.counting {
             self.num_multiplication_constraints += 1;
             self.segments[self.scope.current_segment].num_multiplication_constraints += 1;
@@ -396,6 +379,23 @@ impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
             WireEval::Value(c),
             WireEval::Value(F::ZERO),
         ))
+    }
+}
+
+impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
+    type F = F;
+    type Wire = WireEval<F>;
+    const ONE: Self::Wire = WireEval::One;
+
+    /// Allocates a wire using paired allocation.
+    fn alloc(&mut self, _: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
+        if let Some(wire) = self.scope.available_b.take() {
+            Ok(wire)
+        } else {
+            let (a, b, _) = self.mul(|| unreachable!())?;
+            self.scope.available_b = Some(b);
+            Ok(a)
+        }
     }
 
     /// Computes a linear combination of wire evaluations.

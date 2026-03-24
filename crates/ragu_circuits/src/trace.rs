@@ -220,6 +220,19 @@ impl<F: Field> DriverTypes for Evaluator<'_, '_, F> {
     type MaybeKind = Always<()>;
     type LCadd = ();
     type LCenforce = ();
+
+    fn gate(
+        &mut self,
+        values: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>,
+    ) -> Result<((), (), (), ())> {
+        let (a, b, c) = values()?;
+        let seg = &mut self.segments[self.state.current_segment].segment;
+        seg.a.push(a.value());
+        seg.b.push(b.value());
+        seg.c.push(c.value());
+
+        Ok(((), (), (), ()))
+    }
 }
 
 impl<'scope, 'env, F: Field> Driver<'env> for Evaluator<'scope, 'env, F> {
@@ -243,19 +256,6 @@ impl<'scope, 'env, F: Field> Driver<'env> for Evaluator<'scope, 'env, F> {
             self.state.available_b = Some(index);
             Ok(())
         }
-    }
-
-    fn gate(
-        &mut self,
-        values: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
-    ) -> Result<((), (), (), ())> {
-        let (a, b, c) = values()?;
-        let seg = &mut self.segments[self.state.current_segment].segment;
-        seg.a.push(a.value());
-        seg.b.push(b.value());
-        seg.c.push(c.value());
-
-        Ok(((), (), (), ()))
     }
 
     fn add(&mut self, _: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {}

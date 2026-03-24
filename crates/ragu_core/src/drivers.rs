@@ -68,8 +68,8 @@ pub use linexp::{DirectSum, LinearExpression};
 /// and private data.
 pub type DriverValue<D, T> = Perhaps<<D as DriverTypes>::MaybeKind, T>;
 
-/// Associated types for a [`Driver`] that can be named without binding the
-/// `'dr` lifetime.
+/// Associated types and low-level gate allocation for a [`Driver`], without
+/// binding the `'dr` lifetime.
 ///
 /// `Driver<'dr>` re-exports some of these types (as [`Driver::F`] and
 /// [`Driver::Wire`]) but deliberately omits others:
@@ -79,14 +79,18 @@ pub type DriverValue<D, T> = Perhaps<<D as DriverTypes>::MaybeKind, T>;
 /// focused on its core API while still making the types available to
 /// infrastructure that needs them.
 ///
+/// The [`gate`](Self::gate) method also lives here because it is an
+/// implementor-facing detail: circuit code should call [`Driver::mul`] instead,
+/// which wraps `gate` and drops the auxiliary $D$ wire.
+///
 /// The lifetime-free aspect is equally important: the [`DriverValue`] type
 /// alias and [wire-map conversions](crate::convert) both reference
 /// `DriverTypes` associated types without requiring `'dr`, so they can be
 /// defined and used in contexts where no driver lifetime is in scope.
 ///
 /// Circuit code should bound on `Driver<'dr>`, not `DriverTypes`. This trait is
-/// relevant when writing conversion helpers or other abstractions that must be
-/// lifetime-polymorphic over drivers.
+/// relevant when writing driver implementations, conversion helpers, or other
+/// abstractions that must be lifetime-polymorphic over drivers.
 pub trait DriverTypes {
     /// The field that this driver operates over.
     type ImplField: Field;
@@ -113,6 +117,43 @@ pub trait DriverTypes {
     /// the concrete type to appear in the trait hierarchy because
     /// `enforce_zero` accepts a closure parameterized over it.
     type LCenforce: LinearExpression<Self::ImplWire, Self::ImplField>;
+
+    /// Allocates the wires $(A, B, C, D)$ with the constraints $A \cdot B = C$
+    /// and $C \cdot D = 0$. The second constraint usually makes $D$ useless:
+    /// whenever $C$ is nonzero, $D$ is forced to zero. But when $C$ is
+    /// guaranteed to be zero, $D$ becomes unconstrained and available for use.
+    ///
+    /// Circuit code should prefer [`Driver::mul`], which wraps this method and
+    /// discards $D$. Only code that exploits an unconstrained $D$ wire should
+    /// call `gate` directly.
+    ///
+    /// The provided closure may be called by the driver if an assignment is
+    /// needed. If it is called, any errors are propagated from it, and the
+    /// closure can rely on [`Witness<Self, T>::take`](crate::maybe::Maybe::take)
+    /// succeeding unconditionally.
+    ///
+    /// # Purity
+    ///
+    /// The `Fn` bound signals that this closure should be side-effect-free:
+    /// synthesis must produce identical constraints regardless of whether the
+    /// driver invokes it. `Fn` prevents accidental `&mut` captures but does not
+    /// prevent interior mutability; for drivers with `MaybeKind = Empty`, the
+    /// [`Maybe`]/[`DriverValue`] system provides a
+    /// stronger guarantee—those drivers never call this closure, and its body
+    /// is dead-code-eliminated after monomorphization.
+    fn gate(
+        &mut self,
+        values: impl Fn() -> Result<(
+            Coeff<Self::ImplField>,
+            Coeff<Self::ImplField>,
+            Coeff<Self::ImplField>,
+        )>,
+    ) -> Result<(
+        Self::ImplWire,
+        Self::ImplWire,
+        Self::ImplWire,
+        Self::ImplWire,
+    )>;
 }
 
 /// A context for executing cryptographic algorithms and synthesizing their
@@ -158,12 +199,15 @@ pub trait DriverTypes {
 /// # Supertrait: `DriverTypes`
 ///
 /// `Driver<'dr>` requires [`DriverTypes`], which collects the associated types
-/// that can be named without binding `'dr`. Some of those types (`ImplField`,
+/// that can be named without binding `'dr`, along with the low-level
+/// [`gate`](DriverTypes::gate) method. Some of those types (`ImplField`,
 /// `ImplWire`) are re-exported here as [`F`](Self::F) and [`Wire`](Self::Wire);
 /// others ([`MaybeKind`](DriverTypes::MaybeKind),
 /// [`LCadd`](DriverTypes::LCadd), [`LCenforce`](DriverTypes::LCenforce))
 /// remain on `DriverTypes` only, since circuit code rarely needs to refer to
-/// them. Infrastructure that must name a driver's types without binding
+/// them. The `gate` method lives on `DriverTypes` because it is an
+/// implementor-facing detail—circuit code should call [`mul`](Self::mul)
+/// instead. Infrastructure that must name a driver's types without binding
 /// `'dr`—see the [`convert`](crate::convert) module—bounds on `DriverTypes`
 /// instead.
 pub trait Driver<'dr>: DriverTypes<ImplWire = Self::Wire, ImplField = Self::F> + Sized {
@@ -209,7 +253,7 @@ pub trait Driver<'dr>: DriverTypes<ImplWire = Self::Wire, ImplField = Self::F> +
     /// Asks the driver to allocate the wires $(A, B, C)$ with the constraint
     /// $A \cdot B = C$.
     ///
-    /// This is a convenience wrapper around [`gate`](Driver::gate) that drops
+    /// This is a convenience wrapper around [`DriverTypes::gate`] that drops
     /// the auxiliary $D$ wire. Most circuit code should use this method.
     ///
     /// The provided closure may be called by the driver if an assignment is
@@ -220,7 +264,7 @@ pub trait Driver<'dr>: DriverTypes<ImplWire = Self::Wire, ImplField = Self::F> +
     /// # Purity
     ///
     /// The `Fn` bound signals that this closure should be side-effect-free;
-    /// see [`gate`](Driver::gate) for details.
+    /// see [`DriverTypes::gate`] for details.
     fn mul(
         &mut self,
         values: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
@@ -228,29 +272,6 @@ pub trait Driver<'dr>: DriverTypes<ImplWire = Self::Wire, ImplField = Self::F> +
         let (a, b, c, _) = self.gate(values)?;
         Ok((a, b, c))
     }
-
-    /// Asks the driver to allocate the wires $(A, B, C, D)$ with the
-    /// constraint $A \cdot B = C$. The $D$ wire is auxiliary and not part of
-    /// the multiplication constraint; its value defaults to zero.
-    ///
-    /// The provided closure may be called by the driver if an assignment is
-    /// needed. If it is called, any errors are propagated from it, and the
-    /// closure can rely on [`Witness<Self, T>::take`](Maybe::take) succeeding
-    /// unconditionally.
-    ///
-    /// # Purity
-    ///
-    /// The `Fn` bound signals that this closure should be side-effect-free:
-    /// synthesis must produce identical constraints regardless of whether the
-    /// driver invokes it. `Fn` prevents accidental `&mut` captures but does not
-    /// prevent interior mutability; for drivers with `MaybeKind = Empty`, the
-    /// [`Maybe`]/[`DriverValue`] system provides a stronger guarantee—those
-    /// drivers never call this closure, and its body is dead-code-eliminated
-    /// after monomorphization.
-    fn gate(
-        &mut self,
-        values: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
-    ) -> Result<(Self::Wire, Self::Wire, Self::Wire, Self::Wire)>;
 
     /// Asks the driver to create a virtual wire that is the linear combination
     /// of some existing wires. This may impose some runtime cost for circuit
