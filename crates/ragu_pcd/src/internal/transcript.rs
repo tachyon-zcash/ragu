@@ -314,9 +314,9 @@ mod tests {
 
             let before_ops: Vec<Op> = before_prefix
                 .into_iter()
-                .chain(std::iter::once(Op::Absorb(before_final)))
+                .chain(core::iter::once(Op::Absorb(before_final)))
                 .collect();
-            let after_ops: Vec<Op> = std::iter::once(Op::Squeeze)
+            let after_ops: Vec<Op> = core::iter::once(Op::Squeeze)
                 .chain(after_rest)
                 .collect();
 
