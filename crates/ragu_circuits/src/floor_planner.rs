@@ -10,7 +10,7 @@
 //! where the *i*-th segment (in DFS order) is placed in the polynomial. A
 //! reordering floor planner changes the **values** (offsets), not the
 //! **indices**. All consumers — the three `s(X, Y)` evaluators, the `rx`
-//! evaluator, and `assemble_with_key` — depend on this convention.
+//! evaluator, and `assemble` — depend on this convention.
 //!
 //! The root segment (index 0) is always pinned at offset 0; see the
 //! [`floor_plan`] function for details.

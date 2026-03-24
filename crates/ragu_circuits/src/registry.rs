@@ -475,7 +475,9 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
                 }
             }
             LagrangeCache::Empty => {
-                // The circuit is not defined and defaults to the zero polynomial.
+                // No circuit at this domain point; circuit contribution is zero.
+                // The registry key term is added by the caller (`RegistryAt`
+                // methods), so the overall evaluation is not zero.
             }
         }
 
