@@ -68,4 +68,8 @@ rules, see `.claude/review-shared/writing.md` and `.claude/review-shared/math.md
 - Document intended behavior, not incidental capabilities.
 - For polynomial eval functions: verify fixed vs free variables match the
   signature. Convention: uppercase (X, Y) = polynomial variables; lowercase
-  (x, y) = fixed evaluation points.
+  (x, y) = fixed evaluation points. Method names list the *fixed* variables
+  (e.g., `y()` fixes y and returns a polynomial in X; `xy()` fixes both).
+  Do not flag comments that name the free variable as the "restricted"
+  dimension — "Restricted to X" in `y()` is correct; it identifies the
+  polynomial variable of the result.

@@ -208,7 +208,7 @@ impl<'params, F: FromUniformBytes<64>, R: Rank> RegistryBuilder<'params, F, R> {
             omega_lookup.insert(omega_j, i);
         }
 
-        // Create provisional registry (circuits still have placeholder K)
+        // Create provisional registry (key not yet computed)
         let mut registry = Registry {
             domain,
             circuits,
@@ -262,45 +262,33 @@ impl<'params, F: FromUniformBytes<64>, R: Rank> RegistryBuilder<'params, F, R> {
 /// break the self-reference more elegantly without preprocessing or reliance on
 /// public inputs.
 ///
-/// Concretely, we retroactively inject the registry key into each member circuit
-/// of `m` as a special wire `key_wire`, enforced by a simple linear constraint
-/// `key_wire = k`. This binds each circuit's wiring polynomial to the registry
-/// polynomial, and thus the entire registry polynomial to the Fiat-Shamir
-/// transcript without self-reference. The key randomizes the wiring polynomial
-/// directly.
+/// Concretely, the registry key $k$ is injected as the monomial
+/// $k \cdot (XY)^{4n-1}$ at the registry level, binding each circuit's wiring
+/// polynomial to the registry polynomial and thus the entire registry polynomial
+/// to the Fiat-Shamir transcript without self-reference. The key randomizes the
+/// wiring polynomial directly.
 ///
 /// The key is computed during [`RegistryBuilder::finalize`] and used during
 /// polynomial evaluations of circuits in the registry.
 ///
 /// [#78]: https://github.com/tachyon-zcash/ragu/issues/78
-pub struct Key<F: Field> {
-    /// Registry digest value
-    val: F,
-    /// Cached inverse of digest
-    inv: F,
-}
+pub struct Key<F: Field>(F);
 
 impl<F: Field> Default for Key<F> {
     fn default() -> Self {
-        Self::new(F::ONE)
+        Self(F::ONE)
     }
 }
 
 impl<F: Field> Key<F> {
-    /// Creates a new registry key from a field element, panic if zero.
+    /// Creates a new registry key from a field element.
     pub fn new(val: F) -> Self {
-        let inv = val.invert().expect("registry digest should never be zero");
-        Self { val, inv }
+        Self(val)
     }
 
     /// Returns the registry key value.
     pub fn value(&self) -> F {
-        self.val
-    }
-
-    /// Returns the cached inverse of the registry key.
-    pub fn inverse(&self) -> F {
-        self.inv
+        self.0
     }
 }
 
@@ -361,13 +349,13 @@ impl<F: PrimeField> From<F> for OmegaKey {
 
 impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
     /// Assembles a [`Trace`](crate::Trace) into a [`sparse::Polynomial`] using
-    /// this registry's key and the floor plan for the specified circuit.
+    /// the floor plan for the specified circuit.
     pub fn assemble(
         &self,
         trace: &crate::trace::Trace<F>,
         circuit: CircuitIndex,
     ) -> Result<sparse::Polynomial<F, R>> {
-        trace.assemble_with_key(&self.key, &self.floor_plans[usize::from(circuit)])
+        trace.assemble(&self.floor_plans[usize::from(circuit)])
     }
 
     /// Returns the registry digest value.
@@ -389,16 +377,32 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
         self.circuits[usize::from(circuit)].constraint_counts()
     }
 
+    /// Evaluates the registry key contribution $k \cdot (XY)^{4n-1}$
+    /// at $(x, y)$, returning a scalar.
+    fn key_sxy(&self, x: F, y: F) -> F {
+        if x == F::ZERO || y == F::ZERO {
+            return F::ZERO;
+        }
+        let xy_4n_minus_1 = (x * y).pow_vartime([(4 * R::n() - 1) as u64]);
+        self.key.value() * xy_4n_minus_1
+    }
+
     /// Evaluate the registry polynomial unrestricted at $W$.
     pub fn xy(&self, x: F, y: F) -> sparse::Polynomial<F, R> {
+        let key_scalar = self.key_sxy(x, y);
         let mut coeffs = alloc::vec![F::ZERO; R::num_coeffs()];
         for (i, circuit) in self.circuits.iter().enumerate() {
             let j = bitreverse(i as u32, self.domain.log2_n()) as usize;
-            coeffs[j] = circuit.sxy(x, y, &self.key, &self.floor_plans[i]);
+            coeffs[j] = circuit.sxy(x, y, &self.floor_plans[i]);
         }
         // Convert from the Lagrange basis.
         let domain = &self.domain;
         domain.ifft(&mut coeffs[..domain.n()]);
+
+        // The key term k * (XY)^{4n-1} has no W factor, so it evaluates to
+        // the same scalar at every domain point. After IFFT the contribution
+        // lives entirely in the W^0 (DC) coefficient.
+        coeffs[0] += key_scalar;
 
         sparse::Polynomial::from_coeffs(coeffs)
     }
@@ -471,7 +475,9 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
                 }
             }
             LagrangeCache::Empty => {
-                // The circuit is not defined and defaults to the zero polynomial.
+                // No circuit at this domain point; circuit contribution is zero.
+                // The registry key term is added by the caller (`RegistryAt`
+                // methods), so the overall evaluation is not zero.
             }
         }
 
@@ -503,39 +509,68 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
 impl<F: PrimeField, R: Rank> RegistryAt<'_, F, R> {
     /// Evaluate the registry polynomial restricted at $W$, unrestricted at $Y$.
     pub fn y(&self, y: F) -> sparse::Polynomial<F, R> {
-        self.registry.w_cached(
+        let mut poly = self.registry.w_cached(
             &self.cache,
             sparse::Polynomial::default,
             |circuit, floor_plan, coeff, poly| {
-                let mut tmp = circuit.sy(y, &self.registry.key, floor_plan);
+                let mut tmp = circuit.sy(y, floor_plan);
                 tmp.scale(coeff);
                 poly.add_assign(&tmp);
             },
-        )
+        );
+
+        // Add the registry key contribution k * (XY)^{4n-1}.  Restricted
+        // at Y, this is k * y^{4n-1} at X^{4n-1} (c-wire of gate 0 in
+        // the backward layout).
+        if y != F::ZERO {
+            let y_4n_minus_1 = y.pow_vartime([(4 * R::n() - 1) as u64]);
+            let mut key_view = sparse::View::<_, R, _>::backward();
+            key_view.c.push(self.registry.key.value() * y_4n_minus_1);
+            poly.add_assign(&key_view.build());
+        }
+
+        poly
     }
 
     /// Evaluate the registry polynomial restricted at $W$, unrestricted at $X$.
     pub fn x(&self, x: F) -> sparse::Polynomial<F, R> {
-        self.registry.w_cached(
+        let mut poly = self.registry.w_cached(
             &self.cache,
             sparse::Polynomial::default,
             |circuit, floor_plan, coeff, poly| {
-                let mut tmp = circuit.sx(x, &self.registry.key, floor_plan);
+                let mut tmp = circuit.sx(x, floor_plan);
                 tmp.scale(coeff);
                 poly.add_assign(&tmp);
             },
-        )
+        );
+
+        // Add the registry key contribution k * (XY)^{4n-1}.  Restricted
+        // at X, this is k * x^{4n-1} at Y^{4n-1}.
+        if x != F::ZERO {
+            let x_4n_minus_1 = x.pow_vartime([(4 * R::n() - 1) as u64]);
+            let key_coeff = self.registry.key.value() * x_4n_minus_1;
+            let mut key_coeffs = alloc::vec![F::ZERO; R::num_coeffs()];
+            // Y^{4n-1} is the last coefficient (index num_coeffs() - 1 = 4n - 1),
+            // the slot reserved by circuit-level bounds checks.
+            key_coeffs[R::num_coeffs() - 1] = key_coeff;
+            poly.add_assign(&sparse::Polynomial::from_coeffs(key_coeffs));
+        }
+
+        poly
     }
 
     /// Evaluate the registry polynomial at the point ($W$, $X$, $Y$).
     pub fn xy(&self, x: F, y: F) -> F {
-        self.registry.w_cached(
+        let result: F = self.registry.w_cached(
             &self.cache,
             || F::ZERO,
             |circuit, floor_plan, coeff, result| {
-                *result += circuit.sxy(x, y, &self.registry.key, floor_plan) * coeff;
+                *result += circuit.sxy(x, y, floor_plan) * coeff;
             },
-        )
+        );
+
+        // Add the registry key contribution.
+        result + self.registry.key_sxy(x, y)
     }
 }
 
@@ -897,13 +932,6 @@ mod tests {
         }
 
         Ok(())
-    }
-
-    #[test]
-    #[should_panic = "registry digest should never be zero"]
-    fn zero_registry_key_panics() {
-        use ff::Field;
-        let _ = super::Key::new(<Fp as Field>::ZERO);
     }
 
     #[test]

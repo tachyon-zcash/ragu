@@ -530,9 +530,6 @@ pub fn eval<F: FromUniformBytes<64>, C: Circuit<F>>(circuit: &C) -> Result<Circu
     // ONE gate
     collector.mul(|| Ok((Coeff::One, Coeff::One, Coeff::One)))?;
 
-    // Registry key constraint
-    collector.enforce_zero(|lc| lc)?;
-
     // Circuit synthesis
     let io = circuit.witness(&mut collector, Empty)?.into_output();
     io.write(&mut collector, &mut degree_ky)?;

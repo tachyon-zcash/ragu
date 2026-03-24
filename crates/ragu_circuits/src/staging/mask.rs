@@ -6,7 +6,6 @@ use alloc::vec::Vec;
 use crate::{
     CircuitObject,
     polynomials::{Rank, sparse},
-    registry,
 };
 
 #[derive(Clone)]
@@ -57,13 +56,7 @@ impl<R: Rank> StageMask<R> {
 }
 
 impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
-    fn sxy(
-        &self,
-        x: F,
-        y: F,
-        key: &registry::Key<F>,
-        _floor_plan: &[crate::floor_planner::ConstraintSegment],
-    ) -> F {
+    fn sxy(&self, x: F, y: F, _floor_plan: &[crate::floor_planner::ConstraintSegment]) -> F {
         // Bound is enforced in `StageMask::new`.
         assert!(self.skip_multiplications + self.num_multiplications < R::n());
         let reserved: usize = R::n() - self.skip_multiplications - self.num_multiplications - 1;
@@ -79,13 +72,6 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
         let y3 = y * y2;
         let x_y3 = x * y3;
         let xinv_y3 = x_inv * y3;
-
-        // Placeholder contribution: Y^(q+1) * (X^(2n-1) - K *X^(4n-1)).
-        let num_linear_from_gates = 3 * (self.skip_multiplications + reserved);
-        let y_power = y.pow_vartime([(num_linear_from_gates + 1) as u64]);
-        let x_2n_minus_1 = x.pow_vartime([(2 * R::n() - 1) as u64]);
-        let x_4n_minus_1 = x.pow_vartime([(4 * R::n() - 1) as u64]);
-        let placeholder = y_power * (x_2n_minus_1 - key.value() * x_4n_minus_1);
 
         let block = |end: usize, len: usize| -> F {
             let w = y * x.pow_vartime([(4 * R::n() - 2 - end) as u64]);
@@ -106,13 +92,12 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
         };
         let c2 = block(R::n() - 2, reserved);
 
-        placeholder + y.pow_vartime([(3 * reserved) as u64]) * c1 + c2
+        y.pow_vartime([(3 * reserved) as u64]) * c1 + c2
     }
 
     fn sx(
         &self,
         x: F,
-        key: &registry::Key<F>,
         _floor_plan: &[crate::floor_planner::ConstraintSegment],
     ) -> sparse::Polynomial<F, R> {
         // Bound is enforced in `StageMask::new`.
@@ -141,9 +126,10 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
                 out
             };
 
-            // Placeholder contribution: x^(2n-1) - k * x^(4n-1).
-            let (key_wire, _, one) = alloc();
-            coeffs.push(key_wire - key.value() * one);
+            // Skip the ONE gate (gate 0) — its wires are consumed but not
+            // constrained here. The registry key constraint is injected at the
+            // registry level.
+            alloc();
 
             let mut enforce_zero = |out: (F, F, F)| {
                 coeffs.push(out.0);
@@ -171,7 +157,6 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
     fn sy(
         &self,
         y: F,
-        key: &registry::Key<F>,
         _floor_plan: &[crate::floor_planner::ConstraintSegment],
     ) -> sparse::Polynomial<F, R> {
         // Bound is enforced in `StageMask::new`.
@@ -183,16 +168,20 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
         }
 
         let num_linear_from_gates = 3 * (reserved + self.skip_multiplications);
-        let mut yq = y.pow_vartime([(num_linear_from_gates + 1) as u64]);
+        // Start at y^{3*(reserved + skip)}: the highest Y-power used by gate
+        // constraints. The registry key constraint (formerly counted here as +1)
+        // now occupies Y^{4n-1} at the registry level and is excluded.
+        let mut yq = y.pow_vartime([num_linear_from_gates as u64]);
         let y_inv = y.invert().expect("y is not zero");
 
         let mut view = sparse::View::backward();
 
-        // Placeholder contribution: Y^q - k * Y^q.
-        view.a.push(yq);
+        // Skip the ONE gate (gate 0). In the backward wire layout b[0] maps
+        // to X^{2n} (the ONE wire). The registry key contribution at c[0] is
+        // supplied by RegistryAt::y(), not here.
+        view.a.push(F::ZERO);
         view.b.push(F::ZERO);
-        view.c.push(-key.value() * yq);
-        yq *= y_inv;
+        view.c.push(F::ZERO);
 
         for _ in 0..self.skip_multiplications {
             view.a.push(yq);
@@ -221,7 +210,9 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
 
     fn constraint_counts(&self) -> (usize, usize) {
         let num_multiplication_constraints = R::n();
-        let num_linear_constraints = 3 * (R::n() - self.num_multiplications - 1) + 2;
+        // 3 constraints per non-multiplied gate + 1 for the ONE constraint.
+        // The registry key constraint is handled at the registry level.
+        let num_linear_constraints = 3 * (R::n() - self.num_multiplications - 1) + 1;
         (num_multiplication_constraints, num_linear_constraints)
     }
 
@@ -252,7 +243,6 @@ mod tests {
     use crate::{
         CircuitObject, WithAux, floor_planner, into_circuit_object, metrics,
         polynomials::{Rank, sparse},
-        registry,
         staging::StageBuilder,
         tests::SquareCircuit,
     };
@@ -402,10 +392,9 @@ mod tests {
 
         let z = Fp::random(&mut rand::rng());
         let y = Fp::random(&mut rand::rng());
-        let k = registry::Key::new(Fp::random(&mut rand::rng()));
 
         {
-            let rhs = circ1.sy(y, &k, &[]);
+            let rhs = circ1.sy(y, &[]);
             assert_eq!(rx1_a.revdot(&rhs), Fp::ZERO);
             assert_eq!(rx1_b.revdot(&rhs), Fp::ZERO);
 
@@ -419,10 +408,10 @@ mod tests {
             assert_eq!(combined.revdot(&rhs), Fp::ZERO);
         }
 
-        assert_eq!(rx1_a.revdot(&circ1.sy(y, &k, &[])), Fp::ZERO);
-        assert_eq!(rx2.revdot(&circ2.sy(y, &k, &[])), Fp::ZERO);
-        assert!(rx1_a.revdot(&circ2.sy(y, &k, &[])) != Fp::ZERO);
-        assert!(rx2.revdot(&circ1.sy(y, &k, &[])) != Fp::ZERO);
+        assert_eq!(rx1_a.revdot(&circ1.sy(y, &[])), Fp::ZERO);
+        assert_eq!(rx2.revdot(&circ2.sy(y, &[])), Fp::ZERO);
+        assert!(rx1_a.revdot(&circ2.sy(y, &[])) != Fp::ZERO);
+        assert!(rx2.revdot(&circ1.sy(y, &[])) != Fp::ZERO);
 
         Ok(())
     }
@@ -433,11 +422,10 @@ mod tests {
 
         let x = Fp::random(&mut rand::rng());
         let y = Fp::random(&mut rand::rng());
-        let k = registry::Key::new(Fp::random(&mut rand::rng()));
 
-        let sxy = stage_mask.sxy(x, y, &k, &[]);
-        let sx = stage_mask.sx(x, &k, &[]);
-        let sy = stage_mask.sy(y, &k, &[]);
+        let sxy = stage_mask.sxy(x, y, &[]);
+        let sx = stage_mask.sx(x, &[]);
+        let sy = stage_mask.sy(y, &[]);
 
         assert_eq!(sxy, sx.eval(y));
         assert_eq!(sxy, sy.eval(x));
@@ -449,52 +437,63 @@ mod tests {
         let stage = StageMask::<R>::new(0, R::n() - 1).unwrap();
         let x = Fp::random(&mut rand::rng());
         let y = Fp::random(&mut rand::rng());
-        let k = registry::Key::new(Fp::random(&mut rand::rng()));
 
         let generic = into_circuit_object::<_, _, R>(stage.clone()).unwrap();
         let plan = floor_planner::floor_plan(generic.segment_records());
         let stripped = crate::staging::bonding::Stripped(generic);
-        let comparison_sxy = stripped.sxy(x, y, &k, &plan);
+        let comparison_sxy = stripped.sxy(x, y, &plan);
 
-        assert_eq!(stage.sxy(x, y, &k, &[]), comparison_sxy);
-        assert_eq!(comparison_sxy, stripped.sx(x, &k, &plan).eval(y));
-        assert_eq!(comparison_sxy, stripped.sy(y, &k, &plan).eval(x));
+        assert_eq!(stage.sxy(x, y, &[]), comparison_sxy);
+        assert_eq!(comparison_sxy, stripped.sx(x, &plan).eval(y));
+        assert_eq!(comparison_sxy, stripped.sy(y, &plan).eval(x));
     }
 
     #[test]
     fn test_minimum_linear_constraints() {
         let circuit = into_circuit_object::<_, _, R>(SquareCircuit { times: 2 }).unwrap();
         let y = Fp::random(&mut rand::rng());
-        let k = registry::Key::new(Fp::random(&mut rand::rng()));
 
         let (_, num_linear_constraints) = circuit.constraint_counts();
         let plan = floor_planner::floor_plan(circuit.segment_records());
-        let sy = circuit.sy(y, &k, &plan);
+        let sy = circuit.sy(y, &plan);
 
-        // The first gate (ONE gate) should have the highest y-power.
-        // In the backward view, a[0] corresponds to degree 2n-1.
-        let expected_y_power = num_linear_constraints - 1;
+        // The ONE wire (b-wire of gate 0) should have the y^0 coefficient.
+        // In the backward view, b[0] maps to degree 2n.
         let sy_dense = sy.to_dense();
-        let actual_first_coeff = sy_dense[2 * R::n() - 1];
-        let expected_first_coeff = y.pow_vartime([expected_y_power as u64]);
+        let actual_one_coeff = sy_dense[2 * R::n()];
 
+        // The ONE constraint is at Y^0, so its coefficient is y^0 = 1.
         assert_eq!(
-            actual_first_coeff, expected_first_coeff,
-            "First coefficient should have correct y-power"
+            actual_one_coeff,
+            Fp::ONE,
+            "ONE wire coefficient should be 1 (y^0 from enforce_one)"
         );
+
+        // The a-wire of gate 0 is not constrained at the circuit level —
+        // the registry key constraint is injected at the registry level on
+        // the c-wire only — so its coefficient should be zero.
+        let actual_a0_coeff = sy_dense[2 * R::n() - 1];
+        assert_eq!(
+            actual_a0_coeff,
+            Fp::ZERO,
+            "a-wire of gate 0 should be zero (not constrained at circuit level)"
+        );
+
+        // Verify the expected number of constraints.
+        assert!(num_linear_constraints >= 1);
     }
 
     #[test]
-    fn test_root_routine_has_at_least_two_linear_constraints() {
-        // The root segment always gets the registry key constraint and
-        // the ONE constraint from metrics::eval(), so its num_linear_constraints
-        // must be at least 2.  This invariant prevents the `- 1` underflow in
-        // sy::eval's initial y-power computation.
+    fn test_root_routine_has_at_least_one_linear_constraint() {
+        // The root segment always gets the ONE constraint from
+        // metrics::eval(), so its num_linear_constraints must be at least 1.
+        // This invariant prevents the `- 1` underflow in sy::eval's initial
+        // y-power computation.
         let circuit = into_circuit_object::<_, _, R>(SquareCircuit { times: 0 }).unwrap();
         let floor_plan = floor_planner::floor_plan(circuit.segment_records());
         assert!(
-            floor_plan[0].num_linear_constraints >= 2,
-            "root segment must have at least 2 linear constraints (registry key + ONE), got {}",
+            floor_plan[0].num_linear_constraints >= 1,
+            "root segment must have at least 1 linear constraint (ONE), got {}",
             floor_plan[0].num_linear_constraints,
         );
     }
@@ -515,11 +514,10 @@ mod tests {
 
         let x = Fp::random(&mut rand::rng());
         let y = Fp::random(&mut rand::rng());
-        let k = registry::Key::new(Fp::random(&mut rand::rng()));
 
-        let sxy = stage.sxy(x, y, &k, &[]);
-        let sx = stage.sx(x, &k, &[]);
-        let sy = stage.sy(y, &k, &[]);
+        let sxy = stage.sxy(x, y, &[]);
+        let sx = stage.sx(x, &[]);
+        let sy = stage.sy(y, &[]);
 
         assert_eq!(sxy, sx.eval(y));
         assert_eq!(sxy, sy.eval(x));
@@ -549,8 +547,6 @@ mod tests {
 
             let stage_mask = StageMask::<R>::new(skip, num).unwrap();
 
-            let k = registry::Key::new(Fp::random(&mut rand::rng()));
-
             let generic = into_circuit_object::<_, _, R>(
                 StageMask::<R>::new(skip, num).unwrap()
             ).unwrap();
@@ -559,15 +555,15 @@ mod tests {
             let stripped = crate::staging::bonding::Stripped(generic);
 
             let check = |x: Fp, y: Fp| {
-                let sxy = stripped.sxy(x, y, &k, &plan);
-                let sx = stripped.sx(x, &k, &plan);
-                let sy = stripped.sy(y, &k, &plan);
+                let sxy = stripped.sxy(x, y, &plan);
+                let sx = stripped.sx(x, &plan);
+                let sy = stripped.sy(y, &plan);
 
                 prop_assert_eq!(sy.eval(x), sxy);
                 prop_assert_eq!(sx.eval(y), sxy);
-                prop_assert_eq!(stage_mask.sxy(x, y, &k, &[]), sxy);
-                prop_assert_eq!(stage_mask.sx(x, &k, &[]).eval(y), sxy);
-                prop_assert_eq!(stage_mask.sy(y, &k, &[]).eval(x), sxy);
+                prop_assert_eq!(stage_mask.sxy(x, y, &[]), sxy);
+                prop_assert_eq!(stage_mask.sx(x, &[]).eval(y), sxy);
+                prop_assert_eq!(stage_mask.sy(y, &[]).eval(x), sxy);
 
                 Ok(())
             };
@@ -646,8 +642,7 @@ mod tests {
 
         // rx.revdot(&stage_mask) == 0 for well-formed stages
         let y = Fp::random(&mut rand::rng());
-        let k = registry::Key::new(Fp::ONE);
-        let sy = stage_mask.sy(y, &k, &[]);
+        let sy = stage_mask.sy(y, &[]);
 
         let check = rx.revdot(&sy);
         assert_eq!(
@@ -752,12 +747,11 @@ mod tests {
 
         let x = Fp::random(&mut rand::rng());
         let y = Fp::random(&mut rand::rng());
-        let k = registry::Key::new(Fp::random(&mut rand::rng()));
 
         // None of these must panic — previously sy would underflow on `- 1`.
-        let sxy = circuit.sxy(x, y, &k, &floor_plan);
-        let sx = circuit.sx(x, &k, &floor_plan);
-        let sy = circuit.sy(y, &k, &floor_plan);
+        let sxy = circuit.sxy(x, y, &floor_plan);
+        let sx = circuit.sx(x, &floor_plan);
+        let sy = circuit.sy(y, &floor_plan);
 
         assert_eq!(sxy, sx.eval(y));
         assert_eq!(sxy, sy.eval(x));

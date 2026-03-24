@@ -86,7 +86,6 @@
 //! [`floor_plan`]: crate::floor_planner::floor_plan
 //! [wiring polynomials]: http://TODO
 
-use ragu_arithmetic::Coeff;
 use ragu_core::{
     Result,
     drivers::{Driver, LinearExpression},
@@ -136,22 +135,6 @@ trait DriverExt<'dr>: Driver<'dr> {
     /// constant term of $k(Y)$.
     fn enforce_one(&mut self) -> Result<()> {
         self.enforce_zero(|lc| lc.add(&Self::ONE))
-    }
-
-    /// Enforces the registry key constraint that binds a key wire to the registry's
-    /// random key value.
-    ///
-    /// This method enforces the linear constraint `key_wire - key = 0`, which
-    /// randomizes non-trivial evaluations of the wiring polynomial.
-    fn enforce_registry_key(
-        &mut self,
-        key_wire: &Self::Wire,
-        key: &crate::registry::Key<Self::F>,
-    ) -> Result<()> {
-        self.enforce_zero(|lc| {
-            lc.add(key_wire)
-                .add_term(&Self::ONE, Coeff::NegativeArbitrary(key.value()))
-        })
     }
 }
 

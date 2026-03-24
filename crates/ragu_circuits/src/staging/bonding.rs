@@ -33,7 +33,6 @@ use crate::{
     floor_planner::ConstraintSegment,
     into_circuit_object,
     polynomials::{Rank, sparse},
-    registry,
 };
 
 use super::{MultiStage, MultiStageCircuit};
@@ -184,18 +183,13 @@ impl<'dr, F: Field> Driver<'dr> for BondingValidator<F> {
 pub(crate) struct Stripped<'a, F: Field, R: Rank>(pub(crate) Box<dyn CircuitObject<F, R> + 'a>);
 
 impl<F: Field, R: Rank> CircuitObject<F, R> for Stripped<'_, F, R> {
-    fn sxy(&self, x: F, y: F, key: &registry::Key<F>, floor_plan: &[ConstraintSegment]) -> F {
-        // Remove the ONE wire contribution: x^(4n-1) at y^0.
-        self.0.sxy(x, y, key, floor_plan) - x.pow_vartime([(4 * R::n() - 1) as u64])
+    fn sxy(&self, x: F, y: F, floor_plan: &[ConstraintSegment]) -> F {
+        // Remove the ONE wire contribution: x^(2n) at y^0.
+        self.0.sxy(x, y, floor_plan) - x.pow_vartime([(2 * R::n()) as u64])
     }
 
-    fn sx(
-        &self,
-        x: F,
-        key: &registry::Key<F>,
-        floor_plan: &[ConstraintSegment],
-    ) -> sparse::Polynomial<F, R> {
-        let mut poly = self.0.sx(x, key, floor_plan);
+    fn sx(&self, x: F, floor_plan: &[ConstraintSegment]) -> sparse::Polynomial<F, R> {
+        let mut poly = self.0.sx(x, floor_plan);
         // Horner places the last constraint (enforce_one) at y^0 = coeffs[0].
         // TODO: sparse::Polynomial should support subtracting a field element
         // from the constant term directly.
@@ -205,17 +199,12 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for Stripped<'_, F, R> {
         poly
     }
 
-    fn sy(
-        &self,
-        y: F,
-        key: &registry::Key<F>,
-        floor_plan: &[ConstraintSegment],
-    ) -> sparse::Polynomial<F, R> {
-        let mut poly = self.0.sy(y, key, floor_plan);
-        // Gate 0's c-wire holds the ONE wire; remove its y^0 contribution.
-        // In the backward perspective, c[0] maps to degree 4n - 1.
+    fn sy(&self, y: F, floor_plan: &[ConstraintSegment]) -> sparse::Polynomial<F, R> {
+        let mut poly = self.0.sy(y, floor_plan);
+        // Gate 0's b-wire holds the ONE wire; remove its y^0 contribution.
+        // In the backward perspective, b[0] maps to degree 2n.
         let mut correction = sparse::View::<_, R, _>::backward();
-        correction.c.push(F::ONE);
+        correction.b.push(F::ONE);
         poly.sub_assign(&correction.build());
         poly
     }
@@ -440,14 +429,14 @@ mod tests {
     fn zero_constant_term() {
         let obj = bonding_obj();
         let floor_plan = floor_planner::floor_plan(obj.segment_records());
-        let key = registry::Key::new(Fp::random(&mut rand::rng()));
+
         let x = Fp::random(&mut rand::rng());
         let y = Fp::random(&mut rand::rng());
 
         // s(0, y) = 0: no constraint on d_0 wires.
-        assert_eq!(obj.sxy(Fp::ZERO, y, &key, &floor_plan), Fp::ZERO);
+        assert_eq!(obj.sxy(Fp::ZERO, y, &floor_plan), Fp::ZERO);
         // s(x, 0) = 0: forces k(Y) = 0.
-        assert_eq!(obj.sxy(x, Fp::ZERO, &key, &floor_plan), Fp::ZERO);
+        assert_eq!(obj.sxy(x, Fp::ZERO, &floor_plan), Fp::ZERO);
     }
 
     /// sxy(x,y) = sx(x).eval(y) = sy(y).eval(x).
@@ -455,13 +444,13 @@ mod tests {
     fn evaluation_consistency() {
         let obj = bonding_obj();
         let floor_plan = floor_planner::floor_plan(obj.segment_records());
-        let key = registry::Key::new(Fp::random(&mut rand::rng()));
+
         let x = Fp::random(&mut rand::rng());
         let y = Fp::random(&mut rand::rng());
 
-        let sxy = obj.sxy(x, y, &key, &floor_plan);
-        assert_eq!(sxy, obj.sx(x, &key, &floor_plan).eval(y));
-        assert_eq!(sxy, obj.sy(y, &key, &floor_plan).eval(x));
+        let sxy = obj.sxy(x, y, &floor_plan);
+        assert_eq!(sxy, obj.sx(x, &floor_plan).eval(y));
+        assert_eq!(sxy, obj.sy(y, &floor_plan).eval(x));
     }
 
     /// Build a trace with gate 0 as ONE (zeros) and gates 1..n from (a, b)
@@ -484,9 +473,9 @@ mod tests {
     fn revdot_bonding_constraint() {
         let obj = bonding_obj();
         let floor_plan = floor_planner::floor_plan(obj.segment_records());
-        let key = registry::Key::new(Fp::random(&mut rand::rng()));
+
         let y = Fp::random(&mut rand::rng());
-        let sy = obj.sy(y, &key, &floor_plan);
+        let sy = obj.sy(y, &floor_plan);
 
         let v = Fp::random(&mut rand::rng());
         let w = Fp::random(&mut rand::rng());

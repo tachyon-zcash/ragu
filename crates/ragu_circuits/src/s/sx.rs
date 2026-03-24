@@ -34,7 +34,7 @@
 //!
 //! Wires are represented as evaluated monomials using the running monomial
 //! pattern described in the [`common`] module. The `ONE` wire evaluates to
-//! $x^{4n - 1}$.
+//! $x^{2n}$.
 //!
 //! [`common`]: super::common
 //!
@@ -52,14 +52,15 @@
 //! and [`sxy`] agree on which constraint maps to which $Y$-power.
 //!
 //! After reversal, the root segment's coefficients are ordered as:
-//! 1. $c\_{0}$: `ONE` wire constraint (the constant $x^{4n - 1}$)
+//! 1. $c\_{0}$: `ONE` wire constraint (the constant $x^{2n}$)
 //! 2. $c\_{1}, \ldots, c\_{p}$: public output constraints
 //! 3. $c\_{p+1}, \ldots, c\_{p+m}$: circuit-specific constraints
-//! 4. $c\_{p+m+1}$: registry key binding constraint
 //!
-//! This follows from the root segment's synthesis order — registry key first,
-//! then circuit body, public outputs, and `ONE` last — being flipped by the
-//! reversal.
+//! This follows from the root segment's synthesis order — circuit body first,
+//! then public outputs, and `ONE` last — being flipped by the reversal.
+//!
+//! The registry key constraint is **not** included in these coefficients; it
+//! occupies the fixed $Y^{4n-1}$ slot and is injected at the registry level.
 //!
 //! [`Driver`]: ragu_core::drivers::Driver
 //! [`Driver::add`]: ragu_core::drivers::Driver::add
@@ -85,7 +86,6 @@ use crate::{
     Circuit, DriverScope,
     floor_planner::ConstraintSegment,
     polynomials::{Rank, sparse},
-    registry,
 };
 
 use super::{
@@ -141,7 +141,7 @@ struct Evaluator<'fp, F: Field, R: Rank> {
     /// Cached inverse $x^{-1}$, used to advance decreasing monomials.
     x_inv: F,
 
-    /// Evaluation of the `ONE` wire: $x^{4n - 1}$.
+    /// Evaluation of the `ONE` wire: $x^{2n}$.
     ///
     /// Passed to [`WireEvalSum::new`] so that [`WireEval::One`] variants can be
     /// resolved during linear combination accumulation.
@@ -152,6 +152,10 @@ struct Evaluator<'fp, F: Field, R: Rank> {
 
     /// Base monomial $x^{2n}$, used to compute routine starting monomials.
     base_v_x: F,
+
+    /// Base monomial $x^{4n-1}$, used to compute routine starting monomials
+    /// for the $c$ wire.
+    base_w_x: F,
 
     /// Floor plan mapping DFS routine index to absolute offsets.
     floor_plan: &'fp [ConstraintSegment],
@@ -253,12 +257,13 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
     /// # Errors
     ///
     /// Returns [`Error::LinearBoundExceeded`] if the constraint count reaches
-    /// [`Rank::num_coeffs()`].
+    /// `Rank::num_coeffs() - 1` (the last slot is reserved for the registry
+    /// key constraint).
     fn enforce_zero(&mut self, lc: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
         let q = self.scope.linear_constraints;
-        if q == R::num_coeffs() {
+        if q >= R::num_coeffs() - 1 {
             return Err(Error::LinearBoundExceeded {
-                limit: R::num_coeffs(),
+                limit: R::num_coeffs() - 1,
             });
         }
         self.scope.linear_constraints += 1;
@@ -282,7 +287,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
             available_b: None,
             current_u_x: self.base_u_x * self.x_inv.pow_vartime([seg.multiplication_start as u64]),
             current_v_x: self.base_v_x * self.x.pow_vartime([seg.multiplication_start as u64]),
-            current_w_x: self.one * self.x_inv.pow_vartime([seg.multiplication_start as u64]),
+            current_w_x: self.base_w_x * self.x_inv.pow_vartime([seg.multiplication_start as u64]),
             multiplication_constraints: seg.multiplication_start,
             linear_constraints: seg.linear_start,
         };
@@ -318,23 +323,15 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
 ///
 /// - `circuit`: The circuit whose wiring polynomial to evaluate.
 /// - `x`: The evaluation point for the $X$ variable.
-/// - `key`: The registry key that binds this evaluation to a [`Registry`] context by
-///   enforcing `key_wire - key = 0` as a constraint. This randomizes
-///   evaluations of $s(x, Y)$, preventing trivial forgeries across registry
-///   contexts.
-///
 /// - `floor_plan`: Per-routine absolute offsets, computed by
 ///   [`floor_plan()`](crate::floor_planner::floor_plan).
 ///
 /// # Special Cases
 ///
 /// If $x = 0$, returns the zero polynomial since all monomials vanish.
-///
-/// [`Registry`]: crate::registry::Registry
 pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     circuit: &C,
     x: F,
-    key: &registry::Key<F>,
     floor_plan: &[ConstraintSegment],
 ) -> Result<sparse::Polynomial<F, R>> {
     if x == F::ZERO {
@@ -347,7 +344,8 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     let base_u_x = xn2 * x_inv;
     let base_v_x = xn2;
     let xn4 = xn2.square();
-    let one = xn4 * x_inv;
+    let base_w_x = xn4 * x_inv;
+    let one = base_v_x;
 
     let mut evaluator = Evaluator::<F, R> {
         // Zero-initialized: the evaluator fills specific indices during
@@ -358,7 +356,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
             available_b: None,
             current_u_x: base_u_x,
             current_v_x: base_v_x,
-            current_w_x: one,
+            current_w_x: base_w_x,
             multiplication_constraints: 0,
             linear_constraints: 0,
         },
@@ -367,16 +365,15 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
         one,
         base_u_x,
         base_v_x,
+        base_w_x,
         floor_plan,
         current_routine: 0,
         _marker: core::marker::PhantomData,
     };
 
-    // Allocate the key_wire and ONE wires
-    let (key_wire, _, _one_wire) = evaluator.mul(|| unreachable!())?;
-
-    // Registry key constraint
-    evaluator.enforce_registry_key(&key_wire, key)?;
+    // Allocate the ONE gate (gate 0). The registry key constraint is
+    // injected at the registry level, not here.
+    evaluator.mul(|| unreachable!())?;
 
     let mut outputs = vec![];
     let io = circuit.witness(&mut evaluator, Empty)?.into_output();

@@ -21,7 +21,7 @@ use alloc::{vec, vec::Vec};
 #[cfg(feature = "multicore")]
 use std::sync::mpsc;
 
-use super::{Circuit, DriverScope, Rank, floor_planner::ConstraintSegment, registry, sparse};
+use super::{Circuit, DriverScope, Rank, floor_planner::ConstraintSegment, sparse};
 use crate::WithAux;
 
 /// A contiguous group of multiplication gates.
@@ -76,15 +76,14 @@ pub struct Trace<F> {
 
 impl<F: Field> Trace<F> {
     /// Assembles this trace into a [`sparse::Polynomial`] using
-    /// the provided registry [`Key`](registry::Key).
+    /// the provided floor plan.
     ///
     /// Each segment is scattered to the absolute position assigned by
     /// `floor_plan`, so that gate *i* in the resulting polynomial
     /// holds the trace values for the constraint that s(X,Y)
     /// evaluates at monomial position *i*.
-    pub(crate) fn assemble_with_key<R: Rank>(
+    pub(crate) fn assemble<R: Rank>(
         &self,
-        key: &registry::Key<F>,
         floor_plan: &[ConstraintSegment],
     ) -> Result<sparse::Polynomial<F, R>> {
         assert_eq!(
@@ -133,11 +132,10 @@ impl<F: Field> Trace<F> {
             view.c[offset..offset + seg.c.len()].copy_from_slice(&seg.c);
         }
 
-        // Overwrite segment 0's zeroed ONE gate placeholder with
-        // actual key values.
-        view.a[0] = key.value();
-        view.b[0] = key.inverse();
-        view.c[0] = F::ONE;
+        // Overwrite segment 0's zeroed ONE gate placeholder.
+        // The prover sets a[0] = c[0] = 0 (already zero from initialization)
+        // and b[0] = 1 (the ONE wire).
+        view.b[0] = F::ONE;
 
         Ok(view.build())
     }
