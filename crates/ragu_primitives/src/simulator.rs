@@ -88,6 +88,7 @@ impl<F: Field> DriverTypes for Simulator<F> {
             Coeff<Self::ImplField>,
             Coeff<Self::ImplField>,
             Coeff<Self::ImplField>,
+            Coeff<Self::ImplField>,
         )>,
     ) -> Result<(
         Self::ImplWire,
@@ -95,11 +96,12 @@ impl<F: Field> DriverTypes for Simulator<F> {
         Self::ImplWire,
         Self::ImplWire,
     )> {
-        let (a, b, c) = values()?;
+        let (a, b, c, d) = values()?;
 
         let a = a.value();
         let b = b.value();
         let c = c.value();
+        let d = d.value();
 
         if a * b != c {
             return Err(Error::InvalidWitness(
@@ -107,8 +109,12 @@ impl<F: Field> DriverTypes for Simulator<F> {
             ));
         }
 
+        if c * d != F::ZERO {
+            return Err(Error::InvalidWitness("auxiliary constraint failed".into()));
+        }
+
         self.num_multiplications += 1;
-        Ok((a, b, c, F::ZERO))
+        Ok((a, b, c, d))
     }
 }
 

@@ -367,7 +367,7 @@ impl<F: FromUniformBytes<64>> DriverTypes for Counter<F> {
     /// by its base.
     fn gate(
         &mut self,
-        _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>,
+        _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>, Coeff<F>)>,
     ) -> Result<(WireEval<F>, WireEval<F>, WireEval<F>, WireEval<F>)> {
         if self.counting {
             self.num_multiplication_constraints += 1;

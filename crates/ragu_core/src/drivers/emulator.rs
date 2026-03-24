@@ -109,7 +109,12 @@ pub trait Mode: sealed::Sealed {
     /// Mode-specific gate allocation. Delegated to by
     /// [`DriverTypes::gate`] for [`Emulator<M>`].
     fn gate(
-        values: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
+        values: impl Fn() -> Result<(
+            Coeff<Self::F>,
+            Coeff<Self::F>,
+            Coeff<Self::F>,
+            Coeff<Self::F>,
+        )>,
     ) -> Result<(Self::Wire, Self::Wire, Self::Wire, Self::Wire)>;
 }
 
@@ -127,13 +132,15 @@ impl<F: Field> Mode for Wired<F> {
     type LCadd = DirectSum<F>;
     type LCenforce = DirectSum<F>;
 
-    fn gate(values: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>) -> Result<(F, F, F, F)> {
-        let (a, b, c) = values()?;
+    fn gate(
+        values: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>, Coeff<F>)>,
+    ) -> Result<(F, F, F, F)> {
+        let (a, b, c, d) = values()?;
 
         // Despite wires existing, the emulator does not enforce multiplication
         // constraints.
 
-        Ok((a.value(), b.value(), c.value(), F::ZERO))
+        Ok((a.value(), b.value(), c.value(), d.value()))
     }
 }
 
@@ -149,7 +156,9 @@ impl<M: MaybeKind, F: Field> Mode for Wireless<M, F> {
     type LCadd = ();
     type LCenforce = ();
 
-    fn gate(_: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>) -> Result<((), (), (), ())> {
+    fn gate(
+        _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>, Coeff<F>)>,
+    ) -> Result<((), (), (), ())> {
         Ok(((), (), (), ()))
     }
 }
@@ -283,7 +292,7 @@ impl<M: Mode> DriverTypes for Emulator<M> {
 
     fn gate(
         &mut self,
-        values: impl Fn() -> Result<(Coeff<M::F>, Coeff<M::F>, Coeff<M::F>)>,
+        values: impl Fn() -> Result<(Coeff<M::F>, Coeff<M::F>, Coeff<M::F>, Coeff<M::F>)>,
     ) -> Result<(M::Wire, M::Wire, M::Wire, M::Wire)> {
         M::gate(values)
     }

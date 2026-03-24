@@ -205,7 +205,7 @@ impl<F: Field, R: Rank> DriverTypes for Evaluator<'_, F, R> {
     /// [`Rank::n()`].
     fn gate(
         &mut self,
-        _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>,
+        _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>, Coeff<F>)>,
     ) -> Result<(WireEval<F>, WireEval<F>, WireEval<F>, WireEval<F>)> {
         let index = self.scope.multiplication_constraints;
         if index == R::n() {

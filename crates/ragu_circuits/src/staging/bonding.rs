@@ -138,7 +138,7 @@ impl<F: Field> DriverTypes for BondingValidator<F> {
 
     fn gate(
         &mut self,
-        _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>,
+        _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>, Coeff<F>)>,
     ) -> Result<(BondingWire, BondingWire, BondingWire, BondingWire)> {
         self.record("bonding circuits must not call mul/gate");
         Ok((

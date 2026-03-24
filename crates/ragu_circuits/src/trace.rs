@@ -33,6 +33,7 @@ pub(crate) struct Segment<F> {
     pub(crate) a: Vec<F>,
     pub(crate) b: Vec<F>,
     pub(crate) c: Vec<F>,
+    pub(crate) d: Vec<F>,
 }
 
 /// A segment paired with the DFS path that produced it, so that segments from
@@ -59,6 +60,7 @@ impl<F: Field> AnnotatedSegment<F> {
                 a: init(),
                 b: init(),
                 c: init(),
+                d: init(),
             },
         }
     }
@@ -113,6 +115,7 @@ impl<F: Field> Trace<F> {
         view.a.resize(total_gates, F::ZERO);
         view.b.resize(total_gates, F::ZERO);
         view.c.resize(total_gates, F::ZERO);
+        view.d.resize(total_gates, F::ZERO);
 
         // Scatter each segment to its floor-plan position.
         for (seg_idx, seg) in self.segments.iter().enumerate() {
@@ -130,6 +133,7 @@ impl<F: Field> Trace<F> {
             view.a[offset..offset + seg.a.len()].copy_from_slice(&seg.a);
             view.b[offset..offset + seg.b.len()].copy_from_slice(&seg.b);
             view.c[offset..offset + seg.c.len()].copy_from_slice(&seg.c);
+            view.d[offset..offset + seg.d.len()].copy_from_slice(&seg.d);
         }
 
         // Overwrite segment 0's zeroed ONE gate placeholder.
@@ -223,13 +227,14 @@ impl<F: Field> DriverTypes for Evaluator<'_, '_, F> {
 
     fn gate(
         &mut self,
-        values: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>,
+        values: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>, Coeff<F>)>,
     ) -> Result<((), (), (), ())> {
-        let (a, b, c) = values()?;
+        let (a, b, c, d) = values()?;
         let seg = &mut self.segments[self.state.current_segment].segment;
         seg.a.push(a.value());
         seg.b.push(b.value());
         seg.c.push(c.value());
+        seg.d.push(d.value());
 
         Ok(((), (), (), ()))
     }

@@ -128,7 +128,7 @@ pub trait DriverTypes {
     /// method by default and discards $D$. Only code that needs an
     /// unconstrained $D$ wire should call `gate` directly.
     ///
-    /// The provided closure may be called by the driver if an assignment is
+    /// The provided closure may be called by the driver if assignments are
     /// needed. If it is called, any errors are propagated from it, and the
     /// closure can rely on [`Witness<Self, T>::take`](crate::maybe::Maybe::take)
     /// succeeding unconditionally.
@@ -145,6 +145,7 @@ pub trait DriverTypes {
     fn gate(
         &mut self,
         values: impl Fn() -> Result<(
+            Coeff<Self::ImplField>,
             Coeff<Self::ImplField>,
             Coeff<Self::ImplField>,
             Coeff<Self::ImplField>,
@@ -270,7 +271,10 @@ pub trait Driver<'dr>: DriverTypes<ImplWire = Self::Wire, ImplField = Self::F> +
         &mut self,
         values: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
     ) -> Result<(Self::Wire, Self::Wire, Self::Wire)> {
-        let (a, b, c, _) = self.gate(values)?;
+        let (a, b, c, _) = self.gate(|| {
+            let (a, b, c) = values()?;
+            Ok((a, b, c, Coeff::Zero))
+        })?;
         Ok((a, b, c))
     }
 

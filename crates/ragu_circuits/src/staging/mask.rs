@@ -287,7 +287,8 @@ mod tests {
             assert!(reserved <= R::n());
 
             for _ in 0..self.skip_multiplications {
-                let (a, b, c, d) = dr.gate(|| Ok((Coeff::Zero, Coeff::Zero, Coeff::Zero)))?;
+                let (a, b, c, d) =
+                    dr.gate(|| Ok((Coeff::Zero, Coeff::Zero, Coeff::Zero, Coeff::Zero)))?;
                 dr.enforce_zero(|lc| lc.add(&a))?;
                 dr.enforce_zero(|lc| lc.add(&b))?;
                 dr.enforce_zero(|lc| lc.add(&c))?;
@@ -299,7 +300,8 @@ mod tests {
             }
 
             for _ in 0..(R::n() - reserved) {
-                let (a, b, c, d) = dr.gate(|| Ok((Coeff::Zero, Coeff::Zero, Coeff::Zero)))?;
+                let (a, b, c, d) =
+                    dr.gate(|| Ok((Coeff::Zero, Coeff::Zero, Coeff::Zero, Coeff::Zero)))?;
                 dr.enforce_zero(|lc| lc.add(&a))?;
                 dr.enforce_zero(|lc| lc.add(&b))?;
                 dr.enforce_zero(|lc| lc.add(&c))?;

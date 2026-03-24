@@ -51,6 +51,7 @@ impl<D: DriverTypes> DriverTypes for DemotedDriver<D> {
             Coeff<Self::ImplField>,
             Coeff<Self::ImplField>,
             Coeff<Self::ImplField>,
+            Coeff<Self::ImplField>,
         )>,
     ) -> Result<(
         Self::ImplWire,

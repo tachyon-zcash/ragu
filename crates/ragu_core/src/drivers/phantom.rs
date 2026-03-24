@@ -36,7 +36,7 @@ impl<F: Field> DriverTypes for core::marker::PhantomData<F> {
 
     fn gate(
         &mut self,
-        _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>,
+        _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>, Coeff<F>)>,
     ) -> Result<((), (), (), ())> {
         Ok(((), (), (), ()))
     }
