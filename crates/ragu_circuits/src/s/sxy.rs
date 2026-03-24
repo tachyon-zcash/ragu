@@ -135,13 +135,13 @@ struct Evaluator<'fp, F, R> {
     /// for the $c$ wire.
     base_c_x: F,
 
-    /// Inverse of `base_b_x`: $(x^{2n})^{-1}$. Used in [`gate`](DriverTypes::gate)
-    /// to derive the $d$-wire monomial $x^i$ from `current_b_x` ($x^{2n+i}$)
-    /// without tracking a separate running monomial.
+    /// Correction factor $(x^{-2n})$ that converts a $b$-wire monomial
+    /// $x^{2n+i}$ into the corresponding $d$-wire monomial $x^i$.
     ///
-    /// This field is only read by `gate`, not by [`mul`](Driver::mul), so the
-    /// extra multiplication is skipped when callers don't need the $d$ wire.
-    base_b_x_inv: F,
+    /// Only read by [`gate`](DriverTypes::gate), not by [`mul`](Driver::mul),
+    /// so the extra multiplication is skipped when callers don't need the
+    /// $d$ wire.
+    b_to_d: F,
 
     /// Floor plan mapping DFS routine index to absolute offsets.
     floor_plan: &'fp [ConstraintSegment],
@@ -164,7 +164,7 @@ impl<F: Field, R: Rank> Evaluator<'_, F, R> {
     /// $(a, b, c)$ monomial evaluations before advancement.
     ///
     /// This is the shared core of [`gate`](DriverTypes::gate) and
-    /// [`mul`](Driver::mul). The $d$-wire monomial ($b \cdot \text{base\_b\_x\_inv}$)
+    /// [`mul`](Driver::mul). The $d$-wire monomial ($b \cdot \text{b\_to\_d}$)
     /// is only computed by `gate`, saving one field multiplication per `mul` call.
     fn advance_gate(&mut self) -> Result<(F, F, F)> {
         let index = self.scope.multiplication_constraints;
@@ -208,7 +208,7 @@ impl<F: Field, R: Rank> DriverTypes for Evaluator<'_, F, R> {
     /// - $c$: multiplied by $x^{-1}$ (decreasing exponent)
     ///
     /// The $d$-wire monomial $x^i$ is derived from $b = x^{2n+i}$ via
-    /// `base_b_x_inv`. This computation is confined to `gate` and skipped
+    /// `b_to_d`. This computation is confined to `gate` and skipped
     /// by the [`mul`](Driver::mul) override.
     ///
     /// # Errors
@@ -220,7 +220,7 @@ impl<F: Field, R: Rank> DriverTypes for Evaluator<'_, F, R> {
         _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>, Coeff<F>)>,
     ) -> Result<(WireEval<F>, WireEval<F>, WireEval<F>, WireEval<F>)> {
         let (a, b, c) = self.advance_gate()?;
-        let d = b * self.base_b_x_inv;
+        let d = b * self.b_to_d;
 
         Ok((
             WireEval::Value(a),
@@ -402,7 +402,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
         base_a_x,
         base_b_x,
         base_c_x,
-        base_b_x_inv,
+        b_to_d: base_b_x_inv,
         floor_plan,
         current_routine: 0,
         _marker: core::marker::PhantomData,
