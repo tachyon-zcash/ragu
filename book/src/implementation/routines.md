@@ -4,7 +4,7 @@
 that satisfy a simple function-like interface: they take a single [`Input`]
 gadget and a [`Driver`] handle, and return a single [`Output`] gadget. They are
 permitted to do anything that normal circuit code can do with a
-[driver](../guide/drivers.md), such as making gates ([`mul`], [`alloc`]) and
+[driver](../guide/drivers.md), such as making gates ([`gate`], [`mul`], [`alloc`]) and
 constraining their wires ([`enforce_zero`]).
 
 It is possible to invoke them by manually calling their [`Routine::execute`]
@@ -32,7 +32,7 @@ algebraic properties at routine boundaries.
 Routines exploit the fact that contiguous sections of code tend to have
 algebraically convenient structure in the resulting wiring polynomial $s(X, Y)$:
 
-* `mul` advances an $i$ counter and returns $(X^{2n - 1 - i}, X^{2n + i}, X^{4n - 1 - i})$ wires.
+* [`gate`] advances an $i$ counter and returns $(X^{2n - 1 - i}, X^{2n + i}, X^{4n - 1 - i}, X^i)$ wires.
 * `enforce_zero` advances a counter $j$ and adds a fresh linear combination of previous wires multiplied by $Y^j$.
 
 Most of the linear constraints created within a routine consist purely of wires
@@ -160,6 +160,7 @@ out-of-line.**
 [`Output`]: ragu_core::routines::Routine::Output
 [`Routine::execute`]: ragu_core::routines::Routine::execute
 [`enforce_zero`]: ragu_core::drivers::Driver::enforce_zero
+[`gate`]: ragu_core::drivers::DriverTypes::gate
 [`mul`]: ragu_core::drivers::Driver::mul
 [`alloc`]: ragu_core::drivers::Driver::alloc
 [`Any`]: core::any::Any
