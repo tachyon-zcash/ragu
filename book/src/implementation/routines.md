@@ -61,21 +61,23 @@ for some **repositioning** values $i, j$.
 ```mermaid
 graph LR
     C[circuit]
-    subgraph tp[trace path]
-        W[witness] --> rx --> trace --> TP["r(X)"]
+    W([witness])
+    subgraph ep[eval path]
+        MP[metrics pass] --> metrics
+        metrics --> ED[eval drivers] --> SP["s(X,Y)"]
     end
     subgraph R[registry]
         FP[floor plan]
     end
-    subgraph ep[eval path]
-        MP[metrics pass] --> metrics
-        ED[eval drivers] --> SP["s(X,Y)"]
+    subgraph tp[trace path]
+        rx --> trace
     end
-    C --> rx
     C --> MP
-    trace --> R
-    metrics --> R
+    C --> rx
+    W --> rx
+    metrics --> FP
     FP --> ED
+    trace --> TP["r(X)"]
     FP --> TP
 ```
 
