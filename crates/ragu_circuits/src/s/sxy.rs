@@ -135,7 +135,7 @@ struct Evaluator<'fp, F, R> {
 
     /// Base monomial $x^{4n-1}$, used to compute routine starting monomials
     /// for the $c$ wire.
-    base_w_x: F,
+    base_c_x: F,
 
     /// Floor plan mapping DFS routine index to absolute offsets.
     floor_plan: &'fp [ConstraintSegment],
@@ -276,7 +276,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
             available_b: None,
             current_a_x: self.base_a_x * self.x_inv.pow_vartime([multiplication_start as u64]),
             current_b_x: self.base_b_x * self.x.pow_vartime([multiplication_start as u64]),
-            current_c_x: self.base_w_x * self.x_inv.pow_vartime([multiplication_start as u64]),
+            current_c_x: self.base_c_x * self.x_inv.pow_vartime([multiplication_start as u64]),
             current_d_x: self.x.pow_vartime([multiplication_start as u64]),
             multiplication_constraints: multiplication_start,
             linear_constraints: linear_start,
@@ -342,7 +342,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     let base_a_x = xn2 * x_inv; // x^(2n - 1)
     let base_b_x = xn2; // x^(2n)
     let xn4 = xn2.square(); // x^(4n)
-    let base_w_x = xn4 * x_inv; // x^(4n - 1)
+    let base_c_x = xn4 * x_inv; // x^(4n - 1)
     let one = base_b_x; // x^(2n)
 
     if y == F::ZERO {
@@ -356,7 +356,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
             available_b: None,
             current_a_x: base_a_x,
             current_b_x: base_b_x,
-            current_c_x: base_w_x,
+            current_c_x: base_c_x,
             current_d_x: F::ONE,
             multiplication_constraints: 0,
             linear_constraints: 0,
@@ -369,7 +369,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
         one,
         base_a_x,
         base_b_x,
-        base_w_x,
+        base_c_x,
         floor_plan,
         current_routine: 0,
         _marker: core::marker::PhantomData,
