@@ -265,7 +265,7 @@ mod tests {
         }
     }
 
-    /// Circuit that calls `gate` — should be rejected.
+    /// Circuit that calls `mul`/`gate` — should be rejected.
     struct UsesMul;
 
     impl MultiStageCircuit<Fp, R> for UsesMul {

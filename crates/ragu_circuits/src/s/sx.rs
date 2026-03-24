@@ -190,13 +190,14 @@ impl<F: Field, R: Rank> DriverTypes for Evaluator<'_, F, R> {
     type ImplField = F;
     type ImplWire = WireEval<F>;
 
-    /// Consumes a multiplication gate, returning evaluated monomials for $(a, b, c)$.
+    /// Consumes a multiplication gate, returning evaluated monomials for $(a, b, c, d)$.
     ///
     /// Returns the current values of the running monomials as [`WireEval::Value`]
     /// wires, then advances the monomials for the next gate:
     /// - $a$: multiplied by $x^{-1}$ (decreasing exponent)
     /// - $b$: multiplied by $x$ (increasing exponent)
     /// - $c$: multiplied by $x^{-1}$ (decreasing exponent)
+    /// - $d$: multiplied by $x$ (increasing exponent)
     ///
     /// # Errors
     ///

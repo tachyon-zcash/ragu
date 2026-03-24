@@ -42,7 +42,7 @@
 //!    constituent terms, then recursively free those terms.
 //!
 //! 4. **Cascading to allocated wires** — Resolution cascades through the
-//!    virtual wire graph until reaching allocated wires ($a$, $b$, $c$), where
+//!    virtual wire graph until reaching allocated wires ($a$, $b$, $c$, $d$), where
 //!    values are written directly to the backward view of the polynomial.
 //!
 //! ### Backward View
@@ -51,7 +51,7 @@
 //! uses a "revdot" inner product: coefficients of $r(X)$ are matched against
 //! coefficients of $s(X, y)$ in a specific order based on wire type. Rather
 //! than building a flat coefficient vector and reinterpreting it, the backward
-//! view provides direct access to the $a$, $b$, and $c$ coefficient regions.
+//! view provides direct access to the $a$, $b$, $c$, and $d$ coefficient regions.
 //! See [`sparse::View`] for details.
 //!
 //! [`common`]: super::common
@@ -89,8 +89,8 @@ use crate::{
 ///
 /// # Variants
 ///
-/// - `A(i)`, `B(i)`, `C(i)` — Allocated wires from gate $i$, corresponding to
-///   the $a$, $b$, $c$ wires respectively. Values are written directly to the
+/// - `A(i)`, `B(i)`, `C(i)`, `D(i)` — Allocated wires from gate $i$, corresponding
+///   to the $a$, $b$, $c$, $d$ wires respectively. Values are written directly to the
 ///   backward view when resolved.
 ///
 /// - `Virtual(i)` — A virtual wire (linear combination) at index $i$ in the
@@ -119,7 +119,7 @@ enum WireIndex {
 /// increments the refcount; dropping decrements it. When a virtual wire's
 /// refcount reaches zero, it resolves (see [`VirtualTable::free`]).
 ///
-/// For allocated wires (`A`, `B`, `C`), reference counting is a no-op since
+/// For allocated wires (`A`, `B`, `C`, `D`), reference counting is a no-op since
 /// these wires write directly to the backward view upon resolution.
 ///
 /// # The `ONE` Wire
@@ -285,7 +285,7 @@ impl<F: Field, R: Rank> VirtualTable<'_, F, R> {
     ///
     /// Resolved virtual wires distribute their accumulated value to all
     /// constituent terms, which are then recursively freed. This cascading
-    /// resolution eventually reaches allocated wires (A, B, C) where the values
+    /// resolution eventually reaches allocated wires (A, B, C, D) where the values
     /// are written to the polynomial.
     fn free(&mut self, index: WireIndex) {
         if let WireIndex::Virtual(index) = index {
@@ -499,7 +499,7 @@ impl<'table, 'sy, F: Field, R: Rank> DriverTypes for Evaluator<'table, 'sy, '_, 
     type ImplField = F;
     type ImplWire = Wire<'table, 'sy, F, R>;
 
-    /// Consumes a multiplication gate, returning wire handles for $(a, b, c)$.
+    /// Consumes a multiplication gate, returning wire handles for $(a, b, c, d)$.
     ///
     /// The gate index comes from the absolute floor-plan position tracked in
     /// `scope.multiplication_constraints`. Backward view slots are
