@@ -1,29 +1,28 @@
-//! Block-compressed sparse polynomial representation.
+//! Sparse polynomial representation using three fixed-region segments.
 //!
 //! [`Polynomial<T, R>`] stores a polynomial of degree up to
-//! `R::num_coeffs() - 1` as sorted, non-overlapping blocks of contiguous
-//! coefficients. Gaps between blocks are implicitly zero, so memory and
-//! commitment cost scale with the number of stored coefficients rather than the
-//! total degree.
+//! `R::num_coeffs() - 1` using three dense segments separated by two gaps,
+//! with each segment constrained to a fixed degree region:
 //!
-//! Several sources of sparsity arise in practice:
+//! - **lo**: degrees `[0, n)` — the `c`-wire region
+//! - **mid**: degrees `[n, 3n)` — the `b_rev ++ a` region (meeting at `2n`)
+//! - **hi**: degrees `[3n, 4n)` — the `d_rev` region
 //!
-//! - **Alloc-optimized circuits** leave most `b`/`c`-wire coefficients zero for
-//!   allocation gates and the `d`-wire zero for multiplication gates.
-//! - **Stage polynomials** are zero outside a small active region.
-//! - **Tail-sparse vectors** have long trailing zero runs after synthesis.
+//! where `n = R::n()`. Each segment stores an offset and a dense vector
+//! within its region. The fixed region boundaries guarantee that
+//! segment-wise arithmetic is always safe — no variant dispatch or
+//! compatibility checks needed.
 //!
 //! # Construction
 //!
 //! - [`Polynomial::new`]: empty (zero) polynomial.
-//! - [`Polynomial::from_coeffs`]: compress a dense coefficient vector, stripping
-//!   leading and trailing zeros; short interior zero gaps are kept inline
-//!   within blocks.
+//! - [`Polynomial::from_coeffs`]: decompose a dense coefficient vector into the
+//!   three regions, trimming leading and trailing zeros within each.
 //! - [`View`]: a builder that maps four gate-indexed wire buffers to degree
-//!   positions, producing a polynomial via [`View::build`]. Zero elements within
-//!   a wire buffer are **preserved** in the resulting blocks — push only
-//!   non-zero values for maximum compression, or use [`Polynomial::from_coeffs`]
-//!   to compress a pre-built dense vector.
+//!   positions via [`View::build`]. Zero elements within a wire buffer are
+//!   **preserved** in the resulting segments — push only non-zero values for
+//!   maximum compression, or use [`Polynomial::from_coeffs`] to strip a
+//!   pre-built dense vector.
 //!
 //! Once constructed, the polynomial supports algebraic operations ([`scale`],
 //! [`add_assign`], [`sub_assign`], [`negate`], [`eval`], [`revdot`],
@@ -56,95 +55,77 @@ use core::marker::PhantomData;
 
 use super::Rank;
 
-/// A sparse polynomial with coefficients stored as non-overlapping blocks.
+/// A sparse polynomial with coefficients stored in three fixed-region segments.
 ///
 /// See the [module documentation](self) for details.
 #[derive(Clone, Debug)]
 pub struct Polynomial<T, R: Rank> {
-    /// Sorted, non-overlapping, non-empty blocks of `(start_index, values)`.
-    blocks: Vec<(usize, Vec<T>)>,
+    lo_offset: usize,
+    lo: Vec<T>,
+    mid_offset: usize,
+    mid: Vec<T>,
+    hi_offset: usize,
+    hi: Vec<T>,
     _marker: PhantomData<R>,
 }
 
 impl<T, R: Rank> Polynomial<T, R> {
-    /// Panics if the block list violates any structural invariant: blocks must
-    /// be sorted by start index, non-empty, non-overlapping, and each block
-    /// must fit within `[0, R::num_coeffs())`. Adjacent blocks are permitted.
+    /// Panics if the representation violates region-bound invariants.
+    ///
+    /// Each segment must stay within its fixed degree region:
+    /// - `lo` within `[0, n)`
+    /// - `mid` within `[n, 3n)`
+    /// - `hi` within `[3n, 4n)`
     fn assert_invariants(&self) {
-        let mut prev_end: usize = 0;
-        for (i, (start, data)) in self.blocks.iter().enumerate() {
-            assert!(!data.is_empty(), "block {i} is empty");
-            assert!(
-                *start + data.len() <= R::num_coeffs(),
-                "block {i} exceeds capacity"
-            );
-            if i > 0 {
-                assert!(
-                    *start >= prev_end,
-                    "block {i} overlaps previous (start={start}, prev_end={prev_end})"
-                );
-            }
-            prev_end = *start + data.len();
-        }
+        let n = R::n();
+        assert!(
+            self.lo_offset + self.lo.len() <= n,
+            "lo [{}, {}) exceeds region [0, {n})",
+            self.lo_offset,
+            self.lo_offset + self.lo.len(),
+        );
+        assert!(
+            n <= self.mid_offset,
+            "mid_offset {} below region start {n}",
+            self.mid_offset,
+        );
+        assert!(
+            self.mid_offset + self.mid.len() <= 3 * n,
+            "mid [{}, {}) exceeds region [{n}, {})",
+            self.mid_offset,
+            self.mid_offset + self.mid.len(),
+            3 * n,
+        );
+        assert!(
+            3 * n <= self.hi_offset,
+            "hi_offset {} below region start {}",
+            self.hi_offset,
+            3 * n,
+        );
+        assert!(
+            self.hi_offset + self.hi.len() <= R::num_coeffs(),
+            "hi [{}, {}) exceeds capacity {}",
+            self.hi_offset,
+            self.hi_offset + self.hi.len(),
+            R::num_coeffs(),
+        );
     }
 
-    /// Creates a polynomial from pre-built blocks. The caller must ensure
-    /// blocks are sorted, non-overlapping, non-empty, and within capacity.
-    fn from_blocks(blocks: Vec<(usize, Vec<T>)>) -> Self {
+    // Constructs from three `(offset, data)` blocks, asserting region-bound
+    // invariants. The blocks correspond to lo, mid, hi in order.
+    fn from_blocks(blocks: [(usize, Vec<T>); 3]) -> Self {
+        let [(lo_offset, lo), (mid_offset, mid), (hi_offset, hi)] = blocks;
         let poly = Self {
-            blocks,
+            lo_offset,
+            lo,
+            mid_offset,
+            mid,
+            hi_offset,
+            hi,
             _marker: PhantomData,
         };
         poly.assert_invariants();
         poly
-    }
-}
-
-/// Maximum number of consecutive zero coefficients that may be kept inline
-/// within a block rather than triggering a split. Inline zeros waste MSM
-/// slots in [`commit`](Polynomial::commit), so this is kept small. The
-/// tolerance covers only the per-block overhead (allocation, merge
-/// iterations in [`combine_assign`](Polynomial::combine_assign)) — each
-/// extra block requires a `pow_vartime` call to skip the gap.
-///
-/// TODO(#608): benchmark to determine the optimal value.
-const GAP_TOLERANCE: usize = 4;
-
-/// Splits `data` into runs of coefficients and appends each run to `out` as
-/// `(base + run_offset, run_values)`. Zero gaps of up to [`GAP_TOLERANCE`]
-/// consecutive zeros are kept inline within a run; longer gaps cause a split.
-/// Leading and trailing zeros are always trimmed.
-fn extend_runs<F: Field>(out: &mut Vec<(usize, Vec<F>)>, base: usize, data: Vec<F>) {
-    let mut run_start: Option<usize> = None;
-    let mut run = Vec::new();
-    let mut zero_count: usize = 0;
-
-    for (i, coeff) in data.into_iter().enumerate() {
-        let is_zero = bool::from(coeff.is_zero());
-
-        match (run_start, is_zero) {
-            (None, true) => {}
-            (None, false) => {
-                run_start = Some(base + i);
-                run.push(coeff);
-            }
-            (Some(_), false) => {
-                run.extend(core::iter::repeat_n(F::ZERO, zero_count));
-                zero_count = 0;
-                run.push(coeff);
-            }
-            (Some(_), true) => {
-                zero_count += 1;
-                if zero_count > GAP_TOLERANCE {
-                    out.push((run_start.take().unwrap(), core::mem::take(&mut run)));
-                    zero_count = 0;
-                }
-            }
-        }
-    }
-
-    if let Some(s) = run_start {
-        out.push((s, run));
     }
 }
 
@@ -158,19 +139,23 @@ impl<T, R: Rank> Polynomial<T, R> {
     /// Creates a new empty (zero) polynomial.
     pub fn new() -> Self {
         Self {
-            blocks: Vec::new(),
+            lo_offset: 0,
+            lo: Vec::new(),
+            mid_offset: R::n(),
+            mid: Vec::new(),
+            hi_offset: 3 * R::n(),
+            hi: Vec::new(),
             _marker: PhantomData,
         }
     }
 }
 
 impl<F: Field, R: Rank> Polynomial<F, R> {
-    /// Compresses a dense coefficient vector into sparse block form. Short
-    /// interior zero gaps are kept inline within blocks; longer gaps cause a
-    /// block split. Leading and trailing zeros are always stripped.
+    /// Decomposes a dense coefficient vector into three fixed-region segments,
+    /// trimming leading and trailing zeros within each region.
     ///
     /// Panics if `coeffs.len()` exceeds `R::num_coeffs()`.
-    pub fn from_coeffs(coeffs: Vec<F>) -> Self {
+    pub fn from_coeffs(mut coeffs: Vec<F>) -> Self {
         assert!(
             coeffs.len() <= R::num_coeffs(),
             "coefficient vector length {} exceeds capacity {}",
@@ -178,167 +163,218 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
             R::num_coeffs()
         );
 
-        let mut blocks = Vec::new();
-        extend_runs(&mut blocks, 0, coeffs);
-        Self::from_blocks(blocks)
+        let n = R::n();
+        coeffs.resize(R::num_coeffs(), F::ZERO);
+
+        let mut hi = coeffs.split_off(3 * n);
+        let mut mid = coeffs.split_off(n);
+        let mut lo = coeffs;
+
+        let mut lo_offset = 0;
+        let mut mid_offset = n;
+        let mut hi_offset = 3 * n;
+
+        Self::trim_segment(&mut lo_offset, &mut lo);
+        Self::trim_segment(&mut mid_offset, &mut mid);
+        Self::trim_segment(&mut hi_offset, &mut hi);
+
+        Self::from_blocks([(lo_offset, lo), (mid_offset, mid), (hi_offset, hi)])
     }
 
     /// Creates a polynomial with random coefficients filling all `4n` slots.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
         assert!(R::num_coeffs() > 0, "num_coeffs must be positive");
-        let coeffs: Vec<F> = (0..R::num_coeffs()).map(|_| F::random(&mut *rng)).collect();
-        Self::from_blocks(alloc::vec![(0, coeffs)])
+        let n = R::n();
+        let mut coeffs: Vec<F> = (0..R::num_coeffs()).map(|_| F::random(&mut *rng)).collect();
+        let hi = coeffs.split_off(3 * n);
+        let mid = coeffs.split_off(n);
+        let lo = coeffs;
+        Self::from_blocks([(0, lo), (n, mid), (3 * n, hi)])
     }
 }
 
 impl<T, R: Rank> Polynomial<T, R> {
     /// Applies a closure to every stored element.
     fn apply_all(&mut self, mut op: impl FnMut(&mut T)) {
-        for (_, data) in &mut self.blocks {
-            for elem in data.iter_mut() {
-                op(elem);
-            }
+        for elem in &mut self.lo {
+            op(elem);
+        }
+        for elem in &mut self.mid {
+            op(elem);
+        }
+        for elem in &mut self.hi {
+            op(elem);
         }
     }
 }
 
 impl<F: Field, R: Rank> Polynomial<F, R> {
     /// Returns an iterator over the coefficients of this polynomial in
-    /// ascending degree order, yielding `F::ZERO` for gaps between blocks.
+    /// ascending degree order, yielding `F::ZERO` for gaps between segments.
     pub fn iter_coeffs(&self) -> impl DoubleEndedIterator<Item = F> + ExactSizeIterator + '_ {
+        let (segments, num_segments) = self.as_segments();
         CoeffIter {
-            blocks: &self.blocks,
+            segments,
+            num_segments,
             front: 0,
             back: R::num_coeffs(),
-            front_block: 0,
-            back_block: self.blocks.len(),
+            front_seg: 0,
+            back_seg: num_segments,
         }
     }
 
-    /// Merges another polynomial into this one using the given binary
-    /// operation, pruning all-zero blocks from the result.
-    fn combine_assign(&mut self, other: &Self, mut op: impl FnMut(&mut F, &F)) {
-        if other.blocks.is_empty() {
-            return;
+    /// Returns the stored segments as a fixed-size array of `(offset, slice)`
+    /// pairs plus a count of how many are populated (skipping empty segments).
+    fn as_segments(&self) -> ([(usize, &[F]); 3], usize) {
+        let mut segs: [(usize, &[F]); 3] = [(0, &[]), (0, &[]), (0, &[])];
+        let mut n = 0;
+        if !self.lo.is_empty() {
+            segs[n] = (self.lo_offset, &self.lo);
+            n += 1;
         }
-        if self.blocks.is_empty() {
-            let mut out = Vec::new();
-            for (s, d) in &other.blocks {
-                let mut v = alloc::vec![F::ZERO; d.len()];
-                for (o, r) in v.iter_mut().zip(d) {
-                    op(o, r);
-                }
-                extend_runs(&mut out, *s, v);
-            }
-            self.blocks = out;
-            self.assert_invariants();
-            return;
+        if !self.mid.is_empty() {
+            segs[n] = (self.mid_offset, &self.mid);
+            n += 1;
         }
-
-        let mut lhs = core::mem::take(&mut self.blocks);
-        let rhs = &other.blocks;
-        let mut out = Vec::with_capacity(lhs.len() + rhs.len());
-        let mut li = 0usize;
-        let mut ri = 0usize;
-
-        while li < lhs.len() || ri < rhs.len() {
-            // Start of the next cluster of overlapping/adjacent blocks.
-            let cluster_start = match (lhs.get(li), rhs.get(ri)) {
-                (Some(l), Some(r)) => l.0.min(r.0),
-                (Some(l), None) => l.0,
-                (None, Some(r)) => r.0,
-                (None, None) => break,
-            };
-
-            // Extend the cluster to cover all overlapping or adjacent blocks.
-            let mut cluster_end = cluster_start;
-            let li_start = li;
-            let ri_start = ri;
-            loop {
-                let mut extended = false;
-                while li < lhs.len() && lhs[li].0 <= cluster_end {
-                    cluster_end = cluster_end.max(lhs[li].0 + lhs[li].1.len());
-                    li += 1;
-                    extended = true;
-                }
-                while ri < rhs.len() && rhs[ri].0 <= cluster_end {
-                    cluster_end = cluster_end.max(rhs[ri].0 + rhs[ri].1.len());
-                    ri += 1;
-                    extended = true;
-                }
-                if !extended {
-                    break;
-                }
-            }
-
-            // No RHS blocks in this cluster — LHS blocks pass through
-            // unchanged, avoiding the dense intermediate buffer.
-            if ri == ri_start {
-                for block in &mut lhs[li_start..li] {
-                    out.push((block.0, core::mem::take(&mut block.1)));
-                }
-                continue;
-            }
-
-            let cluster_len = cluster_end - cluster_start;
-
-            // If one LHS block covers the entire cluster, reuse its
-            // allocation instead of copying into a fresh buffer.
-            let mut data = if li == li_start + 1
-                && lhs[li_start].0 == cluster_start
-                && lhs[li_start].1.len() == cluster_len
-            {
-                core::mem::take(&mut lhs[li_start].1)
-            } else {
-                let mut data = alloc::vec![F::ZERO; cluster_len];
-                for (ls, ld) in &lhs[li_start..li] {
-                    let off = ls - cluster_start;
-                    data[off..off + ld.len()].copy_from_slice(ld);
-                }
-                data
-            };
-
-            // Apply RHS contributions with tight slice loops.
-            for (rs, rd) in &rhs[ri_start..ri] {
-                let off = rs - cluster_start;
-                for (d, r) in data[off..off + rd.len()].iter_mut().zip(rd) {
-                    op(d, r);
-                }
-            }
-
-            if cluster_start == 0 && cluster_len == R::num_coeffs() {
-                out.push((cluster_start, data));
-            } else {
-                extend_runs(&mut out, cluster_start, data);
-            }
+        if !self.hi.is_empty() {
+            segs[n] = (self.hi_offset, &self.hi);
+            n += 1;
         }
+        (segs, n)
+    }
 
-        self.blocks = out;
-        self.assert_invariants();
+    /// Returns mutable segment references as a fixed-size array.
+    fn as_segments_mut(&mut self) -> ([(usize, &mut [F]); 3], usize) {
+        let mut segs: [(usize, &mut [F]); 3] = [(0, &mut []), (0, &mut []), (0, &mut [])];
+        let mut n = 0;
+        if !self.lo.is_empty() {
+            segs[n] = (self.lo_offset, self.lo.as_mut_slice());
+            n += 1;
+        }
+        if !self.mid.is_empty() {
+            segs[n] = (self.mid_offset, self.mid.as_mut_slice());
+            n += 1;
+        }
+        if !self.hi.is_empty() {
+            segs[n] = (self.hi_offset, self.hi.as_mut_slice());
+            n += 1;
+        }
+        (segs, n)
     }
 
     /// Multiplies all coefficients by `by`.
     pub fn scale(&mut self, by: F) {
         if bool::from(by.is_zero()) {
-            self.blocks.clear();
+            self.lo.clear();
+            self.lo_offset = 0;
+            self.mid.clear();
+            self.mid_offset = R::n();
+            self.hi.clear();
+            self.hi_offset = 3 * R::n();
         } else {
             self.apply_all(|x| *x *= by);
         }
     }
 
+    /// Negates all coefficients.
+    pub fn negate(&mut self) {
+        self.apply_all(|x| *x = -*x);
+    }
+
     /// Adds the coefficients of `other` to `self`.
     pub fn add_assign(&mut self, other: &Self) {
-        self.combine_assign(other, |a, b| *a += *b);
+        self.op_assign(other, |a, b| *a += *b);
     }
 
     /// Subtracts the coefficients of `other` from `self`.
     pub fn sub_assign(&mut self, other: &Self) {
-        self.combine_assign(other, |a, b| *a -= *b);
+        self.op_assign(other, |a, b| *a -= *b);
     }
 
-    /// Negates all coefficients.
-    pub fn negate(&mut self) {
-        self.apply_all(|x| *x = -*x);
+    /// Applies a binary operation segment-wise. Always safe because both
+    /// polynomials have segments within the same fixed region bounds.
+    fn op_assign(&mut self, other: &Self, op: impl Fn(&mut F, &F)) {
+        Self::merge(
+            &mut self.lo_offset,
+            &mut self.lo,
+            other.lo_offset,
+            &other.lo,
+            &op,
+        );
+        Self::merge(
+            &mut self.mid_offset,
+            &mut self.mid,
+            other.mid_offset,
+            &other.mid,
+            &op,
+        );
+        Self::merge(
+            &mut self.hi_offset,
+            &mut self.hi,
+            other.hi_offset,
+            &other.hi,
+            &op,
+        );
+        Self::trim_segment(&mut self.lo_offset, &mut self.lo);
+        Self::trim_segment(&mut self.mid_offset, &mut self.mid);
+        Self::trim_segment(&mut self.hi_offset, &mut self.hi);
+    }
+
+    /// Strips leading and trailing zeros from a segment in place, adjusting
+    /// the offset. Clears the segment entirely if all elements are zero.
+    fn trim_segment(offset: &mut usize, data: &mut Vec<F>) {
+        // Trim trailing zeros.
+        while data.last().is_some_and(|v| bool::from(v.is_zero())) {
+            data.pop();
+        }
+        // Trim leading zeros.
+        let leading = data
+            .iter()
+            .position(|v| !bool::from(v.is_zero()))
+            .unwrap_or(0);
+        if leading > 0 {
+            data.drain(..leading);
+            *offset += leading;
+        }
+    }
+
+    /// Merges `other` segment into `self` segment, expanding `self` to cover
+    /// the union range if needed, then applying `op` element-wise.
+    fn merge(
+        s_off: &mut usize,
+        s_data: &mut Vec<F>,
+        o_off: usize,
+        o_data: &[F],
+        op: &impl Fn(&mut F, &F),
+    ) {
+        if o_data.is_empty() {
+            return;
+        }
+        if s_data.is_empty() {
+            *s_off = o_off;
+            *s_data = alloc::vec![F::ZERO; o_data.len()];
+            for (dst, src) in s_data.iter_mut().zip(o_data) {
+                op(dst, src);
+            }
+            return;
+        }
+        let s_end = *s_off + s_data.len();
+        let o_end = o_off + o_data.len();
+        let new_off = (*s_off).min(o_off);
+        let new_end = s_end.max(o_end);
+
+        if new_off < *s_off || new_end > s_end {
+            let mut new_buf = alloc::vec![F::ZERO; new_end - new_off];
+            let rel = *s_off - new_off;
+            new_buf[rel..rel + s_data.len()].copy_from_slice(s_data);
+            *s_data = new_buf;
+            *s_off = new_off;
+        }
+
+        let rel = o_off - *s_off;
+        for (dst, src) in s_data[rel..rel + o_data.len()].iter_mut().zip(o_data) {
+            op(dst, src);
+        }
     }
 
     /// Horner-style weighted sum of polynomials by powers of `scale_factor`.
@@ -355,11 +391,15 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
         })
     }
 
-    /// Evaluates this polynomial at `z` using reverse Horner's method by block.
+    /// Evaluates this polynomial at `z` using reverse Horner's method by
+    /// segment.
     pub fn eval(&self, z: F) -> F {
+        let (segments, num_segments) = self.as_segments();
         let mut result = F::ZERO;
         let mut prev_start = R::num_coeffs();
-        for (start, data) in self.blocks.iter().rev() {
+
+        for i in (0..num_segments).rev() {
+            let (start, data) = segments[i];
             let gap = prev_start - (start + data.len());
             if gap > 0 {
                 result *= z.pow_vartime([gap as u64]);
@@ -367,7 +407,7 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
             for coeff in data.iter().rev() {
                 result = result * z + *coeff;
             }
-            prev_start = *start;
+            prev_start = start;
         }
         if prev_start > 0 {
             result *= z.pow_vartime([prev_start as u64]);
@@ -378,10 +418,12 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
     /// Transforms `p(X)` into `p(zX)` by multiplying each coefficient at
     /// degree `k` by `z^k`.
     pub fn dilate(&mut self, z: F) {
+        let (mut segments, num_segments) = self.as_segments_mut();
         let mut power = F::ONE;
         let mut prev_end: usize = 0;
-        for (start, data) in &mut self.blocks {
-            let gap = *start - prev_end;
+
+        for &mut (start, ref mut data) in &mut segments[..num_segments] {
+            let gap = start - prev_end;
             if gap > 0 {
                 power *= z.pow_vartime([gap as u64]);
             }
@@ -389,62 +431,60 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
                 *coeff *= power;
                 power *= z;
             }
-            prev_end = *start + data.len();
+            prev_end = start + data.len();
         }
     }
 
     /// Inner product of `self` with the coefficient-reversed `other`.
     ///
     /// Computes $\sum\_{k} \text{self}\[k\] \cdot \text{other}\[4n - 1 - k\]$.
-    ///
-    /// Uses a two-pointer merge over both block lists for $O(\text{nnz})$
-    /// time.
     pub fn revdot(&self, other: &Self) -> F {
-        let max_deg = R::num_coeffs() - 1;
+        let n4 = R::num_coeffs();
+        let (s_segs, s_n) = self.as_segments();
+        let (o_segs, o_n) = other.as_segments();
         let mut result = F::ZERO;
-
-        let mut a_iter = self.blocks.iter().peekable();
-        // Iterating other's blocks in reverse yields ascending reversed-index
-        // ranges, suitable for a merge with self's ascending blocks.
-        let mut b_iter = other.blocks.iter().rev().peekable();
-
-        while let (Some(a_blk), Some(b_blk)) = (a_iter.peek(), b_iter.peek()) {
-            let (a_start, a_data) = (a_blk.0, &a_blk.1);
-            let (b_start, b_data) = (b_blk.0, &b_blk.1);
-
-            let a_end = a_start + a_data.len();
-            let b_len = b_data.len();
-            // Other block (b_start, b_data) covers original indices
-            // [b_start, b_start + b_len). In the reversed view these map to
-            // [max_deg - b_start - b_len + 1, max_deg - b_start + 1).
-            let rev_lo = max_deg + 1 - b_start - b_len;
-            let rev_hi = max_deg + 1 - b_start;
-
-            let overlap_lo = a_start.max(rev_lo);
-            let overlap_hi = a_end.min(rev_hi);
-
-            if overlap_lo < overlap_hi {
-                let a_slice = &a_data[overlap_lo - a_start..overlap_hi - a_start];
-                // For index k in [overlap_lo, overlap_hi), the other value is
-                // at b_data[max_deg - k - b_start]. As k increases, the
-                // b_data index decreases, so we zip a forward with b reversed.
-                let b_idx_lo = max_deg - (overlap_hi - 1) - b_start;
-                let b_idx_hi = max_deg - overlap_lo - b_start;
-                let b_slice = &b_data[b_idx_lo..=b_idx_hi];
-
-                for (a_val, b_val) in a_slice.iter().zip(b_slice.iter().rev()) {
-                    result += *a_val * *b_val;
-                }
-            }
-
-            if a_end <= rev_hi {
-                a_iter.next();
-            }
-            if rev_hi <= a_end {
-                b_iter.next();
+        for &(s_off, s_data) in &s_segs[..s_n] {
+            for &(o_off, o_data) in &o_segs[..o_n] {
+                result += Self::revdot_segment_pair(s_off, s_data, o_off, o_data, n4);
             }
         }
+        result
+    }
 
+    /// Computes the revdot contribution between one segment from self at
+    /// `[a_off, a_off + a_data.len())` and one segment from other at
+    /// `[b_off, b_off + b_data.len())`, where other is coefficient-reversed.
+    ///
+    /// The reversed segment maps to `[n4 - b_off - b_data.len(), n4 - b_off)`.
+    fn revdot_segment_pair(a_off: usize, a_data: &[F], b_off: usize, b_data: &[F], n4: usize) -> F {
+        if a_data.is_empty() || b_data.is_empty() {
+            return F::ZERO;
+        }
+
+        let a_end = a_off + a_data.len();
+        // Reversed range of other's segment.
+        let rev_lo = n4 - b_off - b_data.len();
+        let rev_hi = n4 - b_off;
+
+        let overlap_lo = a_off.max(rev_lo);
+        let overlap_hi = a_end.min(rev_hi);
+
+        if overlap_lo >= overlap_hi {
+            return F::ZERO;
+        }
+
+        let a_slice = &a_data[overlap_lo - a_off..overlap_hi - a_off];
+        // For index k in [overlap_lo, overlap_hi), other's value is at
+        // b_data[n4 - 1 - k - b_off]. As k increases, the b_data index
+        // decreases, so we zip a forward with b reversed.
+        let b_idx_lo = n4 - 1 - (overlap_hi - 1) - b_off;
+        let b_idx_hi = n4 - 1 - overlap_lo - b_off;
+        let b_slice = &b_data[b_idx_lo..=b_idx_hi];
+
+        let mut result = F::ZERO;
+        for (a_val, b_val) in a_slice.iter().zip(b_slice.iter().rev()) {
+            result += *a_val * *b_val;
+        }
         result
     }
 
@@ -459,13 +499,14 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
     ) -> C::Curve {
         assert!(generators.g().len() >= R::num_coeffs());
 
+        let (segments, num_segments) = self.as_segments();
         let g = generators.g();
         ragu_arithmetic::mul(
-            self.blocks
+            segments[..num_segments]
                 .iter()
                 .flat_map(|(_, data)| data.iter())
                 .chain(core::iter::once(&blind)),
-            self.blocks
+            segments[..num_segments]
                 .iter()
                 .flat_map(|(start, data)| &g[*start..*start + data.len()])
                 .chain(core::iter::once(generators.h())),
@@ -486,15 +527,16 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
 }
 
 /// An iterator over all coefficients of a sparse polynomial in ascending
-/// degree order, yielding `F::ZERO` for gaps between blocks.
+/// degree order, yielding `F::ZERO` for gaps between segments.
 struct CoeffIter<'a, F> {
-    blocks: &'a [(usize, Vec<F>)],
+    segments: [(usize, &'a [F]); 3],
+    num_segments: usize,
     front: usize,
     back: usize,
-    /// Index of the first block whose end extends past `front`.
-    front_block: usize,
-    /// One past the last block whose start is at or before `back - 1`.
-    back_block: usize,
+    /// Index of the first segment whose end extends past `front`.
+    front_seg: usize,
+    /// One past the last segment whose start is at or before `back - 1`.
+    back_seg: usize,
 }
 
 impl<F: Field> Iterator for CoeffIter<'_, F> {
@@ -504,18 +546,18 @@ impl<F: Field> Iterator for CoeffIter<'_, F> {
         if self.front >= self.back {
             return None;
         }
-        // Advance past blocks fully before `front`.
-        while self.front_block < self.blocks.len() {
-            let (start, data) = &self.blocks[self.front_block];
-            if *start + data.len() > self.front {
+        // Advance past segments fully before `front`.
+        while self.front_seg < self.num_segments {
+            let (start, data) = self.segments[self.front_seg];
+            if start + data.len() > self.front {
                 break;
             }
-            self.front_block += 1;
+            self.front_seg += 1;
         }
-        let val = if self.front_block < self.blocks.len() {
-            let (start, data) = &self.blocks[self.front_block];
-            if self.front >= *start {
-                data[self.front - *start]
+        let val = if self.front_seg < self.num_segments {
+            let (start, data) = self.segments[self.front_seg];
+            if self.front >= start {
+                data[self.front - start]
             } else {
                 F::ZERO
             }
@@ -538,18 +580,18 @@ impl<F: Field> DoubleEndedIterator for CoeffIter<'_, F> {
             return None;
         }
         self.back -= 1;
-        // Retreat past blocks that start after `back`.
-        while self.back_block > 0 {
-            let (start, _) = &self.blocks[self.back_block - 1];
-            if *start <= self.back {
+        // Retreat past segments that start after `back`.
+        while self.back_seg > 0 {
+            let (start, _) = self.segments[self.back_seg - 1];
+            if start <= self.back {
                 break;
             }
-            self.back_block -= 1;
+            self.back_seg -= 1;
         }
-        let val = if self.back_block > 0 {
-            let (start, data) = &self.blocks[self.back_block - 1];
-            if self.back < *start + data.len() {
-                data[self.back - *start]
+        let val = if self.back_seg > 0 {
+            let (start, data) = self.segments[self.back_seg - 1];
+            if self.back < start + data.len() {
+                data[self.back - start]
             } else {
                 F::ZERO
             }
