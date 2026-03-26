@@ -192,28 +192,17 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
     /// Returns an iterator over the coefficients of this polynomial in
     /// ascending degree order, yielding `F::ZERO` for gaps between blocks.
     pub fn iter_coeffs(&self) -> impl DoubleEndedIterator<Item = F> + ExactSizeIterator + '_ {
-        let (packed, num_blocks) = self.non_empty_blocks();
         CoeffIter {
-            blocks: packed,
-            num_blocks,
+            blocks: [
+                (self.blocks[0].0, self.blocks[0].1.as_slice()),
+                (self.blocks[1].0, self.blocks[1].1.as_slice()),
+                (self.blocks[2].0, self.blocks[2].1.as_slice()),
+            ],
             front: 0,
             back: R::num_coeffs(),
             front_blk: 0,
-            back_blk: num_blocks,
+            back_blk: 3,
         }
-    }
-
-    /// Returns non-empty blocks as a packed fixed-size array plus a count.
-    fn non_empty_blocks(&self) -> ([(usize, &[F]); 3], usize) {
-        let mut packed: [(usize, &[F]); 3] = [(0, &[]); 3];
-        let mut n = 0;
-        for (off, data) in &self.blocks {
-            if !data.is_empty() {
-                packed[n] = (*off, data);
-                n += 1;
-            }
-        }
-        (packed, n)
     }
 
     /// Multiplies all coefficients by `by`.
@@ -376,41 +365,49 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
     /// Inner product of `self` with the coefficient-reversed `other`.
     ///
     /// Computes $\sum\_{k} \text{self}\[k\] \cdot \text{other}\[4n - 1 - k\]$.
+    ///
+    /// The fixed region boundaries mean only 3 pairs contribute:
+    /// lo `[0,n)` pairs with reversed hi `[3n,4n)`, mid `[n,3n)` with
+    /// reversed mid, and hi with reversed lo.
     pub fn revdot(&self, other: &Self) -> F {
         let n4 = R::num_coeffs();
+        // lo x rev(hi), mid x rev(mid), hi x rev(lo)
+        Self::revdot_pair(&self.blocks[0], &other.blocks[2], n4)
+            + Self::revdot_pair(&self.blocks[1], &other.blocks[1], n4)
+            + Self::revdot_pair(&self.blocks[2], &other.blocks[0], n4)
+    }
+
+    /// Dot product of block `a` with the coefficient-reversed block `b`.
+    fn revdot_pair(a: &(usize, Vec<F>), b: &(usize, Vec<F>), n4: usize) -> F {
+        let (a_off, a_data) = (a.0, a.1.as_slice());
+        let (b_off, b_data) = (b.0, b.1.as_slice());
+        if a_data.is_empty() || b_data.is_empty() {
+            return F::ZERO;
+        }
+
+        // Block b at [b_off, b_off+b_len) reversed maps to
+        // [n4 - b_off - b_len, n4 - b_off).
+        let a_end = a_off + a_data.len();
+        let rev_lo = n4 - b_off - b_data.len();
+        let rev_hi = n4 - b_off;
+
+        let overlap_lo = a_off.max(rev_lo);
+        let overlap_hi = a_end.min(rev_hi);
+        if overlap_lo >= overlap_hi {
+            return F::ZERO;
+        }
+
+        let a_slice = &a_data[overlap_lo - a_off..overlap_hi - a_off];
+        // For index k in [overlap_lo, overlap_hi), b's value is at
+        // b_data[n4 - 1 - k - b_off]. As k increases, the b_data index
+        // decreases, so we zip a forward with b reversed.
+        let b_idx_lo = n4 - 1 - (overlap_hi - 1) - b_off;
+        let b_idx_hi = n4 - 1 - overlap_lo - b_off;
+        let b_slice = &b_data[b_idx_lo..=b_idx_hi];
+
         let mut result = F::ZERO;
-        for &(a_off, ref a_data) in &self.blocks {
-            if a_data.is_empty() {
-                continue;
-            }
-            let a_end = a_off + a_data.len();
-            for &(b_off, ref b_data) in &other.blocks {
-                if b_data.is_empty() {
-                    continue;
-                }
-                // Other's block [b_off, b_off+b_len) reversed maps to
-                // [n4 - b_off - b_len, n4 - b_off).
-                let rev_lo = n4 - b_off - b_data.len();
-                let rev_hi = n4 - b_off;
-
-                let overlap_lo = a_off.max(rev_lo);
-                let overlap_hi = a_end.min(rev_hi);
-                if overlap_lo >= overlap_hi {
-                    continue;
-                }
-
-                let a_slice = &a_data[overlap_lo - a_off..overlap_hi - a_off];
-                // For index k in [overlap_lo, overlap_hi), other's value is at
-                // b_data[n4 - 1 - k - b_off]. As k increases, the b_data
-                // index decreases, so we zip a forward with b reversed.
-                let b_idx_lo = n4 - 1 - (overlap_hi - 1) - b_off;
-                let b_idx_hi = n4 - 1 - overlap_lo - b_off;
-                let b_slice = &b_data[b_idx_lo..=b_idx_hi];
-
-                for (a_val, b_val) in a_slice.iter().zip(b_slice.iter().rev()) {
-                    result += *a_val * *b_val;
-                }
-            }
+        for (a_val, b_val) in a_slice.iter().zip(b_slice.iter().rev()) {
+            result += *a_val * *b_val;
         }
         result
     }
@@ -457,8 +454,9 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
 /// An iterator over all coefficients of a sparse polynomial in ascending
 /// degree order, yielding `F::ZERO` for gaps between blocks.
 struct CoeffIter<'a, F> {
+    /// All 3 blocks (including empty ones — skipped naturally by the
+    /// advance/retreat logic since empty blocks have `start + 0 <= front`).
     blocks: [(usize, &'a [F]); 3],
-    num_blocks: usize,
     front: usize,
     back: usize,
     /// Index of the first block whose end extends past `front`.
@@ -475,14 +473,14 @@ impl<F: Field> Iterator for CoeffIter<'_, F> {
             return None;
         }
         // Advance past blocks fully before `front`.
-        while self.front_blk < self.num_blocks {
+        while self.front_blk < 3 {
             let (start, data) = self.blocks[self.front_blk];
             if start + data.len() > self.front {
                 break;
             }
             self.front_blk += 1;
         }
-        let val = if self.front_blk < self.num_blocks {
+        let val = if self.front_blk < 3 {
             let (start, data) = self.blocks[self.front_blk];
             if self.front >= start {
                 data[self.front - start]
