@@ -130,13 +130,13 @@ impl<'dr, F: Field> Driver<'dr> for Simulator<F> {
         Ok(value.value())
     }
 
-    fn constant(&mut self, value: Coeff<Self::F>) -> Self::Wire {
-        value.value()
+    fn constant(&mut self, value: Coeff<Self::F>) -> Result<Self::Wire> {
+        Ok(value.value())
     }
 
-    fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {
+    fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Result<Self::Wire> {
         let lc = lc(DirectSum::default());
-        lc.value()
+        Ok(lc.value())
     }
 
     fn enforce_zero(&mut self, lc: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {

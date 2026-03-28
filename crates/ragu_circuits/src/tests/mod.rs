@@ -121,8 +121,8 @@ fn test_simple_circuit() {
 
             dr.enforce_zero(|lc| lc.add(a5.wire()).sub(b2.wire()))?;
 
-            let c = a.add(dr, &b);
-            let d = a.sub(dr, &b);
+            let c = a.add(dr, &b)?;
+            let d = a.sub(dr, &b)?;
 
             Ok(WithAux::new((c, d), D::unit()))
         }
@@ -203,7 +203,7 @@ impl Routine<Fp> for TestRoutine {
         let precomputed_value = aux.take();
         let element_from_aux = Element::alloc(dr, D::just(|| precomputed_value))?;
         let other = Element::alloc(dr, D::just(|| Fp::from(5u64)))?;
-        let result = element_from_aux.add(dr, &other);
+        let result = element_from_aux.add(dr, &other)?;
         Ok(result)
     }
 

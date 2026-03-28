@@ -251,11 +251,11 @@ fn fold_products_impl<'dr, D: Driver<'dr>, S: Len>(
             };
             inner_horner.write(dr, term)?;
         }
-        let row_result = inner_horner.finish(dr);
+        let row_result = inner_horner.finish(dr)?;
         outer_horner.write(dr, &row_result)?;
     }
 
-    Ok(outer_horner.finish(dr))
+    outer_horner.finish(dr)
 }
 
 pub fn fold_two_layer<'dr, D: Driver<'dr>, P: Parameters>(
@@ -267,7 +267,7 @@ pub fn fold_two_layer<'dr, D: Driver<'dr>, P: Parameters>(
     let m = P::GroupSize::len();
     let mut results = alloc::vec::Vec::with_capacity(P::NumGroups::len());
 
-    let zero = Element::zero(dr);
+    let zero = Element::zero(dr)?;
     for chunk in sources.chunks(m) {
         results.push(Element::fold(
             dr,
@@ -337,20 +337,18 @@ mod tests {
 
         // Run routine with Emulator
         let dr = &mut Emulator::execute();
-        let mu_elem = Element::constant(dr, mu);
-        let nu_elem = Element::constant(dr, nu);
+        let mu_elem = Element::constant(dr, mu)?;
+        let nu_elem = Element::constant(dr, nu)?;
 
         let error_terms = error
             .iter()
             .map(|&v| Element::constant(dr, v))
-            .collect_fixed()
-            .unwrap();
+            .try_collect_fixed()?;
 
         let ky_values = ky
             .iter()
             .map(|&v| Element::constant(dr, v))
-            .collect_fixed()
-            .unwrap();
+            .try_collect_fixed()?;
 
         let fold_products = ClaimFolder::new(dr, &mu_elem, &nu_elem)?;
         let result = fold_products.fold_outer::<P>(dr, &error_terms, &ky_values)?;
@@ -402,8 +400,8 @@ mod tests {
 
             // Verify layer 1 invariant for each group
             let dr = &mut Emulator::execute();
-            let mu_elem = Element::constant(dr, mu);
-            let nu_elem = Element::constant(dr, nu);
+            let mu_elem = Element::constant(dr, mu)?;
+            let nu_elem = Element::constant(dr, nu)?;
             let fold_products = ClaimFolder::new(dr, &mu_elem, &nu_elem)?;
 
             for g in 0..n {
@@ -413,16 +411,16 @@ mod tests {
                 // Compute claim via ClaimFolder
                 let ky_start = g * m;
                 let ky_end = (ky_start + m).min(count);
-                let ky_group: FixedVec<Element<'_, _>, _> = FixedVec::from_fn(|i| {
+                let ky_group: FixedVec<Element<'_, _>, _> = FixedVec::try_from_fn(|i| {
                     let val = if ky_start + i < ky_end {
                         ky_values[ky_start + i]
                     } else {
                         Fp::ZERO
                     };
                     Element::constant(dr, val)
-                });
+                })?;
                 let error_group: FixedVec<Element<'_, _>, _> =
-                    FixedVec::from_fn(|i| Element::constant(dr, inner_error[g][i]));
+                    FixedVec::try_from_fn(|i| Element::constant(dr, inner_error[g][i]))?;
 
                 let computed = fold_products.fold_inner::<P>(dr, &error_group, &ky_group)?;
                 let computed_val = *computed.value().take();
@@ -449,12 +447,12 @@ mod tests {
     fn test_fold_products_constraints() -> Result<()> {
         fn measure<P: Parameters>() -> Result<usize> {
             let sim = Simulator::simulate((), |dr, _| {
-                let mu = Element::constant(dr, Fp::random(&mut rand::rng()));
-                let nu = Element::constant(dr, Fp::random(&mut rand::rng()));
+                let mu = Element::constant(dr, Fp::random(&mut rand::rng()))?;
+                let nu = Element::constant(dr, Fp::random(&mut rand::rng()))?;
                 let error_terms =
-                    FixedVec::from_fn(|_| Element::constant(dr, Fp::random(&mut rand::rng())));
+                    FixedVec::try_from_fn(|_| Element::constant(dr, Fp::random(&mut rand::rng())))?;
                 let ky_values =
-                    FixedVec::from_fn(|_| Element::constant(dr, Fp::random(&mut rand::rng())));
+                    FixedVec::try_from_fn(|_| Element::constant(dr, Fp::random(&mut rand::rng())))?;
 
                 let fold_products = ClaimFolder::new(dr, &mu, &nu)?;
                 fold_products.fold_outer::<P>(dr, &error_terms, &ky_values)?;
@@ -647,16 +645,16 @@ mod tests {
             let lhs_elems: Vec<Element<'_, _>> = lhs_evals
                 .iter()
                 .map(|&v| Element::constant(dr, v))
-                .collect();
+                .collect::<Result<_>>()?;
             let rhs_elems: Vec<Element<'_, _>> = rhs_evals
                 .iter()
                 .map(|&v| Element::constant(dr, v))
-                .collect();
+                .collect::<Result<_>>()?;
 
-            let mu_inv_elem = Element::constant(dr, mu_inv);
-            let mu_prime_inv_elem = Element::constant(dr, mu_prime_inv);
-            let munu_elem = Element::constant(dr, munu);
-            let mu_prime_nu_prime_elem = Element::constant(dr, mu_prime_nu_prime);
+            let mu_inv_elem = Element::constant(dr, mu_inv)?;
+            let mu_prime_inv_elem = Element::constant(dr, mu_prime_inv)?;
+            let munu_elem = Element::constant(dr, munu)?;
+            let mu_prime_nu_prime_elem = Element::constant(dr, mu_prime_nu_prime)?;
 
             let lhs_result =
                 fold_two_layer::<_, P>(dr, &lhs_elems, &mu_inv_elem, &mu_prime_inv_elem)?;
@@ -854,12 +852,12 @@ mod tests {
         // Verify layer 1 constraint count formula: 2M^2 + 1 per group
         fn measure_m<const M: usize>() -> Result<usize> {
             let sim = Simulator::simulate((), |dr, _| {
-                let mu = Element::constant(dr, Fp::random(&mut rand::rng()));
-                let nu = Element::constant(dr, Fp::random(&mut rand::rng()));
+                let mu = Element::constant(dr, Fp::random(&mut rand::rng()))?;
+                let nu = Element::constant(dr, Fp::random(&mut rand::rng()))?;
                 let error_terms: FixedVec<_, NumErrorTerms<ConstLen<M>>> =
-                    FixedVec::from_fn(|_| Element::constant(dr, Fp::random(&mut rand::rng())));
+                    FixedVec::try_from_fn(|_| Element::constant(dr, Fp::random(&mut rand::rng())))?;
                 let ky_values: FixedVec<_, ConstLen<M>> =
-                    FixedVec::from_fn(|_| Element::constant(dr, Fp::random(&mut rand::rng())));
+                    FixedVec::try_from_fn(|_| Element::constant(dr, Fp::random(&mut rand::rng())))?;
 
                 let fold_products = ClaimFolder::new(dr, &mu, &nu)?;
                 fold_products.fold_inner::<TestParams<1, M>>(dr, &error_terms, &ky_values)?;
@@ -906,8 +904,8 @@ mod tests {
 
         // Verify at least the first few groups
         let dr = &mut Emulator::execute();
-        let mu_elem = Element::constant(dr, mu);
-        let nu_elem = Element::constant(dr, nu);
+        let mu_elem = Element::constant(dr, mu)?;
+        let nu_elem = Element::constant(dr, nu)?;
         let fold_products = ClaimFolder::new(dr, &mu_elem, &nu_elem)?;
 
         let ky_values: Vec<Fp> = lhs.iter().zip(&rhs).map(|(l, r)| l.revdot(r)).collect();
@@ -920,16 +918,16 @@ mod tests {
 
             let ky_start = g * m;
             let ky_end = (ky_start + m).min(count);
-            let ky_group: FixedVec<Element<'_, _>, _> = FixedVec::from_fn(|i| {
+            let ky_group: FixedVec<Element<'_, _>, _> = FixedVec::try_from_fn(|i| {
                 let val = if ky_start + i < ky_end {
                     ky_values[ky_start + i]
                 } else {
                     Fp::ZERO
                 };
                 Element::constant(dr, val)
-            });
+            })?;
             let error_group: FixedVec<Element<'_, _>, _> =
-                FixedVec::from_fn(|i| Element::constant(dr, inner_error[g][i]));
+                FixedVec::try_from_fn(|i| Element::constant(dr, inner_error[g][i]))?;
 
             let computed =
                 fold_products.fold_inner::<RevdotParameters>(dr, &error_group, &ky_group)?;

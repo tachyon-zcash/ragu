@@ -62,12 +62,16 @@ pub trait Processor<Rx, AppCircuitId> {
     fn raw_claim(&mut self, a: Rx, b: Rx);
 
     /// Process an application circuit claim ($k(y) = \text{application\_ky}$).
-    fn circuit(&mut self, app_id: AppCircuitId, rx: Rx);
+    fn circuit(&mut self, app_id: AppCircuitId, rx: Rx) -> Result<()>;
 
     /// Process an internal circuit claim (sum of rxs, $k(y) = \text{internal\_ky}$).
     ///
     /// The processor looks up registry via [`InternalCircuitIndex`] from its stored context.
-    fn internal_circuit(&mut self, id: InternalCircuitIndex, rxs: impl Iterator<Item = Rx>);
+    fn internal_circuit(
+        &mut self,
+        id: InternalCircuitIndex,
+        rxs: impl Iterator<Item = Rx>,
+    ) -> Result<()>;
 
     /// Process a bonding claim (fold of rxs, $k(y) = 0$).
     ///
@@ -83,18 +87,24 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx sparse::Polynomial<F, R>, C
         self.b.push(Cow::Borrowed(b));
     }
 
-    fn circuit(&mut self, circuit_id: CircuitIndex, rx: &'rx sparse::Polynomial<F, R>) {
+    fn circuit(
+        &mut self,
+        circuit_id: CircuitIndex,
+        rx: &'rx sparse::Polynomial<F, R>,
+    ) -> Result<()> {
         self.circuit_impl(circuit_id, Cow::Borrowed(rx));
+        Ok(())
     }
 
     fn internal_circuit(
         &mut self,
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
-    ) {
+    ) -> Result<()> {
         let circuit_id = id.circuit_index();
         let rx = sum_polynomials(rxs);
         self.circuit_impl(circuit_id, rx);
+        Ok(())
     }
 
     fn bonding(
@@ -133,7 +143,7 @@ where
 
     // App circuits (interleaved per proof)
     for (app_id, rx) in source.app_circuits().zip(source.rx(Rx(Application))) {
-        processor.circuit(app_id, rx);
+        processor.circuit(app_id, rx)?;
     }
 
     // Internal circuits and stages in canonical order.
@@ -147,14 +157,14 @@ where
                     .zip(source.rx(Rx(Preamble)))
                     .zip(source.rx(Rx(OuterError)))
                 {
-                    processor.internal_circuit(id, [h1, pre, en].into_iter());
+                    processor.internal_circuit(id, [h1, pre, en].into_iter())?;
                 }
             }
 
             // hashes_2: Hashes2 + OuterError
             Hashes2Circuit => {
                 for (h2, en) in source.rx(Rx(Hashes2)).zip(source.rx(Rx(OuterError))) {
-                    processor.internal_circuit(id, [h2, en].into_iter());
+                    processor.internal_circuit(id, [h2, en].into_iter())?;
                 }
             }
 
@@ -166,7 +176,7 @@ where
                     .zip(source.rx(Rx(InnerError)))
                     .zip(source.rx(Rx(OuterError)))
                 {
-                    processor.internal_circuit(id, [pc, pre, em, en].into_iter());
+                    processor.internal_circuit(id, [pc, pre, em, en].into_iter())?;
                 }
             }
 
@@ -177,7 +187,7 @@ where
                     .zip(source.rx(Rx(Preamble)))
                     .zip(source.rx(Rx(OuterError)))
                 {
-                    processor.internal_circuit(id, [fc, pre, en].into_iter());
+                    processor.internal_circuit(id, [fc, pre, en].into_iter())?;
                 }
             }
 
@@ -189,7 +199,7 @@ where
                     .zip(source.rx(Rx(Query)))
                     .zip(source.rx(Rx(Eval)))
                 {
-                    processor.internal_circuit(id, [cv, pre, q, e].into_iter());
+                    processor.internal_circuit(id, [cv, pre, q, e].into_iter())?;
                 }
             }
 
@@ -294,8 +304,8 @@ impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
         right_raw_c: Element<'dr, D>,
         left_ky: &super::stages::outer_error::ChildKyOutputs<'dr, D>,
         right_ky: &super::stages::outer_error::ChildKyOutputs<'dr, D>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        Ok(Self {
             left_raw_c,
             right_raw_c,
             left_app: left_ky.application.clone(),
@@ -304,8 +314,8 @@ impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
             right_bridge: right_ky.unified_bridge.clone(),
             left_unified: left_ky.unified.clone(),
             right_unified: right_ky.unified.clone(),
-            zero: Element::zero(dr),
-        }
+            zero: Element::zero(dr)?,
+        })
     }
 }
 

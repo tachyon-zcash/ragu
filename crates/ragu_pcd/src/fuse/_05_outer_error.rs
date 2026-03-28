@@ -107,7 +107,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     preamble.right.unified.c.clone(),
                     &left_ky,
                     &right_ky,
-                );
+                )?;
                 let mut ky = native::claims::ky_values(&ky_source);
 
                 let fold_products = fold_revdot::ClaimFolder::new(dr, &mu, &nu)?;

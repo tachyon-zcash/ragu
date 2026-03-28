@@ -411,8 +411,8 @@ impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
     }
 
     /// Computes a linear combination of wire evaluations.
-    fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {
-        WireEval::Value(lc(WireEvalSum::new(self.one)).value)
+    fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Result<Self::Wire> {
+        Ok(WireEval::Value(lc(WireEvalSum::new(self.one)).value))
     }
 
     /// Increments linear constraint count and applies one Horner step:

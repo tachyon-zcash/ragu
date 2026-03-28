@@ -223,18 +223,19 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<Atom<'rx, FoldKey, F, R>, Circui
         self.b.push(Cow::Borrowed(b.poly));
     }
 
-    fn circuit(&mut self, circuit_id: CircuitIndex, rx: Atom<'rx, FoldKey, F, R>) {
+    fn circuit(&mut self, circuit_id: CircuitIndex, rx: Atom<'rx, FoldKey, F, R>) -> Result<()> {
         self.circuit_impl(
             circuit_id,
             TrackedPoly::single(Cow::Borrowed(rx.poly), rx.key),
         );
+        Ok(())
     }
 
     fn internal_circuit(
         &mut self,
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = Atom<'rx, FoldKey, F, R>>,
-    ) {
+    ) -> Result<()> {
         let atoms: Vec<_> = rxs.collect();
         // Plain sum: poly = sum_i rx_i, so each constituent has coefficient 1.
         let decomp = CommitmentDecomposition {
@@ -243,6 +244,7 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<Atom<'rx, FoldKey, F, R>, Circui
         let circuit_id = id.circuit_index();
         let poly = sum_polynomials(atoms.iter().map(|a| a.poly));
         self.circuit_impl(circuit_id, TrackedPoly::new(poly, decomp));
+        Ok(())
     }
 
     fn bonding(

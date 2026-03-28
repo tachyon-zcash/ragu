@@ -77,15 +77,15 @@ impl<F: Field, R: Rank> Routine<F> for Evaluate<R> {
         let mut xzinv_step = x_inv.mul(dr, &z_inv)?;
         for _ in 0..R::log2_n() {
             let l_mul = l.mul(dr, &xz_step)?;
-            l = l.add(dr, &l_mul);
+            l = l.add(dr, &l_mul)?;
             let r_mul = r.mul(dr, &xzinv_step)?;
-            r = r.add(dr, &r_mul);
+            r = r.add(dr, &r_mul)?;
             xz_step = xz_step.square(dr)?;
             xzinv_step = xzinv_step.square(dr)?;
         }
         let r_zinv = r.mul(dr, &z_inv)?;
-        let sum = l.add(dr, &r_zinv);
-        Ok(sum.negate(dr))
+        let sum = l.add(dr, &r_zinv)?;
+        sum.negate(dr)
     }
 
     fn predict<'dr, D: Driver<'dr, F = F>>(

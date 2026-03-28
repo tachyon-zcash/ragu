@@ -115,13 +115,13 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         Ok((
             ({
                 let mut ky = ky.clone();
-                Element::zero(dr).write(dr, &mut ky)?;
+                Element::zero(dr)?.write(dr, &mut ky)?;
                 ky.finish_ky(dr)?
             }),
             ({
                 self.children.left.write(dr, &mut ky)?;
                 self.children.right.write(dr, &mut ky)?;
-                Element::zero(dr).write(dr, &mut ky)?;
+                Element::zero(dr)?.write(dr, &mut ky)?;
                 ky.finish_ky(dr)?
             }),
         ))

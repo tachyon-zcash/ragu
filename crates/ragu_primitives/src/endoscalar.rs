@@ -152,7 +152,7 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
         dr: &mut D,
         p: &Point<'dr, D, C>,
     ) -> Result<Point<'dr, D, C>> {
-        let mut acc = p.endo(dr).add_incomplete(dr, p, None)?.double(dr)?;
+        let mut acc = p.endo(dr)?.add_incomplete(dr, p, None)?.double(dr)?;
         let mut bits = self.bits();
 
         // Uendo::BITS is guaranteed to be even (enforced in ragu_arithmetic).
@@ -181,7 +181,7 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
             (D::F::ONE - D::F::ZETA).double(),
         ];
 
-        let mut acc = Element::zero(dr);
+        let mut acc = Element::zero(dr)?;
         let mut bits = self.bits();
 
         // Uendo::BITS is guaranteed to be even (enforced in ragu_arithmetic).
@@ -190,21 +190,21 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
             let e = bits.next().unwrap();
             let ne = n.and(dr, &e)?;
 
-            acc = acc.double(dr);
+            acc = acc.double(dr)?;
             constant_term = constant_term.double();
             constant_term += D::F::ONE;
 
-            let n = n.element().scale(dr, Coeff::Arbitrary(coeffs[0]));
-            let e = e.element().scale(dr, Coeff::Arbitrary(coeffs[1]));
-            let ne = ne.element().scale(dr, Coeff::Arbitrary(coeffs[2]));
+            let n = n.element().scale(dr, Coeff::Arbitrary(coeffs[0]))?;
+            let e = e.element().scale(dr, Coeff::Arbitrary(coeffs[1]))?;
+            let ne = ne.element().scale(dr, Coeff::Arbitrary(coeffs[2]))?;
 
-            acc = acc.add(dr, &n);
-            acc = acc.add(dr, &e);
-            acc = acc.add(dr, &ne);
+            acc = acc.add(dr, &n)?;
+            acc = acc.add(dr, &e)?;
+            acc = acc.add(dr, &ne)?;
         }
 
-        let tmp = Element::constant(dr, constant_term);
-        acc = acc.add(dr, &tmp);
+        let tmp = Element::constant(dr, constant_term)?;
+        acc = acc.add(dr, &tmp)?;
 
         Ok(acc)
     }

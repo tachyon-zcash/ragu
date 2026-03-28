@@ -50,7 +50,9 @@ impl<F: Field> Driver<'_> for core::marker::PhantomData<F> {
     type Wire = ();
     const ONE: Self::Wire = ();
 
-    fn add(&mut self, _: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {}
+    fn add(&mut self, _: impl Fn(Self::LCadd) -> Self::LCadd) -> Result<Self::Wire> {
+        Ok(())
+    }
 
     fn enforce_zero(&mut self, _: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
         Ok(())
@@ -82,7 +84,7 @@ mod tests {
         dr.add(|lc| {
             called.set(called.get() + 1);
             lc
-        });
+        })?;
 
         dr.enforce_zero(|lc| {
             called.set(called.get() + 1);
@@ -94,7 +96,7 @@ mod tests {
             Ok(Coeff::One)
         })?;
 
-        dr.constant(Coeff::One);
+        dr.constant(Coeff::One)?;
 
         assert_eq!(called.get(), 0);
         Ok(())
@@ -108,9 +110,10 @@ mod tests {
     }
 
     #[test]
-    fn phantom_add_returns_unit() {
+    fn phantom_add_returns_unit() -> Result<()> {
         let mut dr = PhantomData::<F>;
-        let _: () = dr.add(|_lc| panic!("must not be called"));
+        let _: () = dr.add(|_lc| panic!("must not be called"))?;
+        Ok(())
     }
 
     #[test]
@@ -128,9 +131,10 @@ mod tests {
     }
 
     #[test]
-    fn phantom_constant_returns_unit() {
+    fn phantom_constant_returns_unit() -> Result<()> {
         let mut dr = PhantomData::<F>;
-        let _: () = dr.constant(Coeff::Arbitrary(F::from(42)));
+        let _: () = dr.constant(Coeff::Arbitrary(F::from(42)))?;
+        Ok(())
     }
 
     #[test]

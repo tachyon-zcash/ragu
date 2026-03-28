@@ -172,7 +172,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             preamble.right.unified.c.clone(),
             &outer_error.left,
             &outer_error.right,
-        );
+        )?;
         let mut ky = ky_values(&ky);
 
         // Verify each group's layer 1 reduction. For each group, fold the

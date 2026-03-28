@@ -561,15 +561,15 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, '
     /// Allocates a new virtual wire from [`VirtualTable`], collects terms via
     /// [`TermCollector`], and stores them in the virtual wire. The returned
     /// [`Wire`] handle owns one reference to the virtual wire.
-    fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {
+    fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Result<Self::Wire> {
         let wire = self.virtual_table.borrow_mut().alloc();
         let terms = lc(TermCollector::new()).terms;
         self.virtual_table.borrow_mut().update(wire, terms);
 
-        Wire {
+        Ok(Wire {
             index: wire,
             table: Some(self.virtual_table),
-        }
+        })
     }
 
     /// Applies a linear constraint weighted by the current $y$ power.

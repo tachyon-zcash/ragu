@@ -297,7 +297,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             unified,
         };
 
-        let zero = Element::zero(dr);
+        let zero = Element::zero(dr)?;
         Ok(WithAux::new(WithSuffix::new(output, zero), updated))
     }
 }

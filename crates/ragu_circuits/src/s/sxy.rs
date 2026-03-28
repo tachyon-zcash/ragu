@@ -262,8 +262,8 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
     ///
     /// Evaluates the linear combination immediately using [`WireEvalSum`] and
     /// returns the sum as a [`WireEval::Value`].
-    fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {
-        WireEval::Value(lc(WireEvalSum::new(self.one)).value)
+    fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Result<Self::Wire> {
+        Ok(WireEval::Value(lc(WireEvalSum::new(self.one)).value))
     }
 
     /// Applies one Horner step: `result = result * y + coefficient`.

@@ -822,11 +822,11 @@ mod tests {
             // Allocate each challenge value followed by zero, which
             // ensures challenges land in b-positions, zeros in d-positions.
             let a0 = Element::alloc(dr, witness.as_ref().map(|w| w[0]))?;
-            let b0 = Element::zero(dr);
+            let b0 = Element::zero(dr)?;
             let a1 = Element::alloc(dr, witness.as_ref().map(|w| w[1]))?;
-            let b1 = Element::zero(dr);
+            let b1 = Element::zero(dr)?;
             let a2 = Element::alloc(dr, witness.as_ref().map(|w| w[2]))?;
-            let b2 = Element::zero(dr);
+            let b2 = Element::zero(dr)?;
 
             Ok(ThreeAOnlyElements {
                 a0,
@@ -863,11 +863,11 @@ mod tests {
             Self: 'dr,
         {
             let a0 = Element::alloc(dr, witness.as_ref().map(|w| w[0]))?;
-            let b0 = Element::zero(dr);
+            let b0 = Element::zero(dr)?;
             let a1 = Element::alloc(dr, witness.as_ref().map(|w| w[1]))?;
-            let b1 = Element::zero(dr);
+            let b1 = Element::zero(dr)?;
             let a2 = Element::alloc(dr, witness.as_ref().map(|w| w[2]))?;
-            let b2 = Element::zero(dr);
+            let b2 = Element::zero(dr)?;
 
             Ok(ThreeAOnlyElements {
                 a0,

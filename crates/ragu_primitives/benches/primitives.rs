@@ -51,7 +51,7 @@ fn element_is_zero((mut emu, (elem,)): (BenchEmu, (Element<'static, BenchEmu>,))
 fn element_multiadd(
     (mut emu, (elements, coeffs)): (BenchEmu, (Vec<Element<'static, BenchEmu>>, Vec<Fp>)),
 ) {
-    black_box(multiadd(&mut emu, &elements, &coeffs));
+    black_box(multiadd(&mut emu, &elements, &coeffs)).unwrap();
 }
 
 library_benchmark_group!(
@@ -96,7 +96,7 @@ fn point_double_and_add_incomplete(
 #[library_benchmark(setup = setup_emu)]
 #[bench::point_endo((alloc_point,))]
 fn point_endo((mut emu, (point,)): (BenchEmu, (Point<'static, BenchEmu, EpAffine>,))) {
-    black_box(point.endo(&mut emu));
+    black_box(point.endo(&mut emu)).unwrap();
 }
 
 library_benchmark_group!(

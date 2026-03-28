@@ -77,7 +77,7 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
         let left = Encoded::new(dr, left)?;
         let right = Encoded::new(dr, right)?;
 
-        let mut sponge = Sponge::new(dr, self.poseidon_params);
+        let mut sponge = Sponge::new(dr, self.poseidon_params)?;
         sponge.absorb(dr, left.as_gadget())?;
         sponge.absorb(dr, right.as_gadget())?;
         let output = sponge.squeeze(dr)?;
@@ -119,7 +119,7 @@ impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
         Self: 'dr,
     {
         let leaf = Element::alloc(dr, witness)?;
-        let mut sponge = Sponge::new(dr, self.poseidon_params);
+        let mut sponge = Sponge::new(dr, self.poseidon_params)?;
         sponge.absorb(dr, &leaf)?;
         let leaf = sponge.squeeze(dr)?;
         let leaf_data = leaf.value().map(|v| *v);

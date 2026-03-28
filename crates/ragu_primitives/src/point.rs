@@ -74,8 +74,8 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
     /// identity.
     pub fn constant(dr: &mut D, p: C) -> Result<Self> {
         if let Some(coordinates) = p.coordinates().into_option() {
-            let x = Element::constant(dr, *coordinates.x());
-            let y = Element::constant(dr, *coordinates.y());
+            let x = Element::constant(dr, *coordinates.x())?;
+            let y = Element::constant(dr, *coordinates.y())?;
 
             Ok(Point::new_unchecked(x, y))
         } else {
@@ -95,30 +95,30 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
     }
 
     /// Applies the endomorphism to this point.
-    pub fn endo(&self, dr: &mut D) -> Self {
-        let x = self.x.scale(dr, Coeff::Arbitrary(C::Base::ZETA));
-        Point::new_unchecked(x, self.y.clone())
+    pub fn endo(&self, dr: &mut D) -> Result<Self> {
+        let x = self.x.scale(dr, Coeff::Arbitrary(C::Base::ZETA))?;
+        Ok(Point::new_unchecked(x, self.y.clone()))
     }
 
     /// Negates this point.
-    pub fn negate(&self, dr: &mut D) -> Self {
-        Point {
+    pub fn negate(&self, dr: &mut D) -> Result<Self> {
+        Ok(Point {
             x: self.x.clone(),
-            y: self.y.negate(dr),
+            y: self.y.negate(dr)?,
             _marker: PhantomData,
-        }
+        })
     }
 
     /// Apply the endomorphism iff the provided condition is true.
     pub fn conditional_endo(&self, dr: &mut D, condition: &Boolean<'dr, D>) -> Result<Self> {
-        let endo_x = self.x.scale(dr, Coeff::Arbitrary(D::F::ZETA));
+        let endo_x = self.x.scale(dr, Coeff::Arbitrary(D::F::ZETA))?;
         let x = condition.conditional_select(dr, &self.x, &endo_x)?;
         Ok(Point::new_unchecked(x, self.y.clone()))
     }
 
     /// Apply the negation map iff the provided condition is true.
     pub fn conditional_negate(&self, dr: &mut D, condition: &Boolean<'dr, D>) -> Result<Self> {
-        let neg_y = self.y.negate(dr);
+        let neg_y = self.y.negate(dr)?;
         let y = condition.conditional_select(dr, &self.y, &neg_y)?;
         Ok(Point::new_unchecked(self.x.clone(), y))
     }
@@ -127,20 +127,20 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
     /// two, and thus all affine points have affine doubles.
     pub fn double(&self, dr: &mut D) -> Result<Self> {
         // delta = 3x^2 / 2y
-        let double_y = self.y.double(dr);
+        let double_y = self.y.double(dr)?;
         let delta = self
             .x
             .square(dr)?
-            .scale(dr, Coeff::Arbitrary(D::F::from(3)))
+            .scale(dr, Coeff::Arbitrary(D::F::from(3)))?
             .div_nonzero(dr, &double_y)?;
 
         // x3 = delta^2 - 2x
-        let double_x = self.x.double(dr);
-        let x3 = delta.square(dr)?.sub(dr, &double_x);
+        let double_x = self.x.double(dr)?;
+        let x3 = delta.square(dr)?.sub(dr, &double_x)?;
 
         // y3 = delta * (x - x3) - y
-        let x_sub_x3 = self.x.sub(dr, &x3);
-        let y3 = delta.mul(dr, &x_sub_x3)?.sub(dr, &self.y);
+        let x_sub_x3 = self.x.sub(dr, &x3)?;
+        let y3 = delta.mul(dr, &x_sub_x3)?.sub(dr, &self.y)?;
 
         Ok(Point::new_unchecked(x3, y3))
     }
@@ -160,18 +160,18 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
         nonzero: Option<&mut Element<'dr, D>>,
     ) -> Result<Self> {
         // delta = (y1 - y0) / (x1 - x0)
-        let tmp = other.x.sub(dr, &self.x);
+        let tmp = other.x.sub(dr, &self.x)?;
         if let Some(nonzero) = nonzero {
             *nonzero = nonzero.mul(dr, &tmp)?;
         }
-        let delta = other.y.sub(dr, &self.y).div_nonzero(dr, &tmp)?;
+        let delta = other.y.sub(dr, &self.y)?.div_nonzero(dr, &tmp)?;
 
         // x3 = delta^2 - x0 - x1
-        let x3 = delta.square(dr)?.sub(dr, &self.x).sub(dr, &other.x);
+        let x3 = delta.square(dr)?.sub(dr, &self.x)?.sub(dr, &other.x)?;
 
         // y3 = delta * (x0 - x3) - y0
-        let tmp = self.x.sub(dr, &x3);
-        let y3 = delta.mul(dr, &tmp)?.sub(dr, &self.y);
+        let tmp = self.x.sub(dr, &x3)?;
+        let y3 = delta.mul(dr, &tmp)?.sub(dr, &self.y)?;
 
         Ok(Point {
             x: x3,
@@ -187,22 +187,26 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
         // See <https://github.com/zcash/zcash/issues/3924> for an explanation.
 
         // lambda_1 = (y_q - y_p)/(x_q - x_p)
-        let tmp = other.x.sub(dr, &self.x);
-        let lambda_1 = other.y.sub(dr, &self.y).div_nonzero(dr, &tmp)?;
+        let tmp = other.x.sub(dr, &self.x)?;
+        let lambda_1 = other.y.sub(dr, &self.y)?.div_nonzero(dr, &tmp)?;
 
         // x_r = lambda_1^2 - x_p - x_q
-        let x_r = lambda_1.square(dr)?.sub(dr, &self.x).sub(dr, &other.x);
+        let x_r = lambda_1.square(dr)?.sub(dr, &self.x)?.sub(dr, &other.x)?;
 
         // lambda_2 = 2 y_p /(x_p - x_r) - lambda_1
-        let tmp = self.x.sub(dr, &x_r);
-        let lambda_2 = self.y.double(dr).div_nonzero(dr, &tmp)?.sub(dr, &lambda_1);
+        let tmp = self.x.sub(dr, &x_r)?;
+        let lambda_2 = self
+            .y
+            .double(dr)?
+            .div_nonzero(dr, &tmp)?
+            .sub(dr, &lambda_1)?;
 
         // x_s = lambda_2^2 - x_r - x_p
-        let x_s = lambda_2.square(dr)?.sub(dr, &x_r).sub(dr, &self.x);
+        let x_s = lambda_2.square(dr)?.sub(dr, &x_r)?.sub(dr, &self.x)?;
 
         // y_s = lambda_2 (x_p - x_s) - y_p
-        let tmp = self.x.sub(dr, &x_s);
-        let y_s = lambda_2.mul(dr, &tmp)?.sub(dr, &self.y);
+        let tmp = self.x.sub(dr, &x_s)?;
+        let y_s = lambda_2.mul(dr, &tmp)?.sub(dr, &self.y)?;
 
         Ok(Point {
             x: x_s,

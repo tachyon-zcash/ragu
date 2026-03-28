@@ -43,7 +43,7 @@ pub(crate) fn for_header<
     gadget: Bound<'dr, D, H::Output>,
 ) -> Result<Padded<'dr, D, H::Output, HEADER_SIZE>> {
     let padded_content = PaddedContent { gadget };
-    let suffix = Element::constant(dr, D::F::from(H::SUFFIX.get()));
+    let suffix = Element::constant(dr, D::F::from(H::SUFFIX.get()))?;
     Ok(Padded {
         inner: WithSuffix::new(padded_content, suffix),
     })
@@ -83,7 +83,7 @@ impl<F: Field, G: GadgetKind<F> + Write<F>, const HEADER_SIZE: usize> Write<F>
         // Add padding to reach HEADER_SIZE - 1 elements (suffix will be added
         // after).
         while counting.written < HEADER_SIZE - 1 {
-            Element::zero(dr).write(dr, &mut counting)?;
+            Element::zero(dr)?.write(dr, &mut counting)?;
         }
 
         Ok(())
@@ -158,7 +158,7 @@ mod tests {
                 gadget: gadget.clone(),
             };
             let padded_gadget = Padded::<'_, _, Kind![F; MySillyGadget<'_, _>], 6> {
-                inner: WithSuffix::new(padded_content, Element::constant(dr, F::from(42u64))),
+                inner: WithSuffix::new(padded_content, Element::constant(dr, F::from(42u64))?),
             };
             let mut buffer = vec![];
             padded_gadget.write(dr, &mut buffer)?;
@@ -193,7 +193,7 @@ mod tests {
                 gadget: gadget.clone(),
             };
             let padded_gadget = Padded::<'_, _, Kind![F; MySillyGadget<'_, _>], 4> {
-                inner: WithSuffix::new(padded_content, Element::constant(dr, F::from(42u64))),
+                inner: WithSuffix::new(padded_content, Element::constant(dr, F::from(42u64))?),
             };
             let mut buffer = vec![];
             assert!(padded_gadget.write(dr, &mut buffer).is_err());

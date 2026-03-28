@@ -295,9 +295,13 @@ impl<'dr, M: MaybeKind, F: Field> Driver<'dr> for Emulator<Wireless<M, F>> {
     type Wire = ();
     const ONE: Self::Wire = ();
 
-    fn constant(&mut self, _: Coeff<Self::F>) -> Self::Wire {}
+    fn constant(&mut self, _: Coeff<Self::F>) -> Result<Self::Wire> {
+        Ok(())
+    }
 
-    fn add(&mut self, _: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {}
+    fn add(&mut self, _: impl Fn(Self::LCadd) -> Self::LCadd) -> Result<Self::Wire> {
+        Ok(())
+    }
 
     fn enforce_zero(&mut self, _: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
         Ok(())
@@ -317,13 +321,13 @@ impl<'dr, F: Field> Driver<'dr> for Emulator<Wired<F>> {
     type Wire = F;
     const ONE: Self::Wire = F::ONE;
 
-    fn constant(&mut self, coeff: Coeff<Self::F>) -> Self::Wire {
-        coeff.value()
+    fn constant(&mut self, coeff: Coeff<Self::F>) -> Result<Self::Wire> {
+        Ok(coeff.value())
     }
 
-    fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {
+    fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Result<Self::Wire> {
         let lc = lc(DirectSum::default());
-        lc.value()
+        Ok(lc.value())
     }
 
     fn enforce_zero(&mut self, _: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
@@ -443,12 +447,12 @@ mod tests {
     fn wired_constant_returns_correct_wire() -> Result<()> {
         let mut dr = Emulator::<Wired<F>>::extractor();
 
-        let c_one = dr.constant(Coeff::One);
-        let c_zero = dr.constant(Coeff::Zero);
-        let c_neg = dr.constant(Coeff::NegativeOne);
-        let c_arb = dr.constant(Coeff::Arbitrary(F::from(7)));
-        let c_two = dr.constant(Coeff::Two);
-        let c_neg_arb = dr.constant(Coeff::NegativeArbitrary(F::from(13)));
+        let c_one = dr.constant(Coeff::One)?;
+        let c_zero = dr.constant(Coeff::Zero)?;
+        let c_neg = dr.constant(Coeff::NegativeOne)?;
+        let c_arb = dr.constant(Coeff::Arbitrary(F::from(7)))?;
+        let c_two = dr.constant(Coeff::Two)?;
+        let c_neg_arb = dr.constant(Coeff::NegativeArbitrary(F::from(13)))?;
 
         assert_eq!(c_one, F::ONE);
         assert_eq!(c_zero, F::ZERO);
@@ -487,7 +491,7 @@ mod tests {
         let w2 = dr.alloc(|| Ok(Coeff::Arbitrary(F::from(20))))?;
 
         // 1*w1 + 3*w2 = 10 + 60 = 70
-        let sum = dr.add(|lc| lc.add(&w1).add_term(&w2, Coeff::Arbitrary(F::from(3))));
+        let sum = dr.add(|lc| lc.add(&w1).add_term(&w2, Coeff::Arbitrary(F::from(3))))?;
 
         assert_eq!(sum, F::from(70));
         Ok(())
@@ -524,7 +528,7 @@ mod tests {
         let wires = Emulator::<Wired<F>>::emulate_wired((), |dr, _witness| {
             let a = dr.alloc(|| Ok(Coeff::Arbitrary(F::from(5))))?;
             let b = dr.alloc(|| Ok(Coeff::Arbitrary(F::from(10))))?;
-            let sum = dr.add(|lc| lc.add(&a).add(&b));
+            let sum = dr.add(|lc| lc.add(&a).add(&b))?;
 
             let gadget = TwoWires {
                 a,
@@ -554,7 +558,7 @@ mod tests {
             Ok(Coeff::Arbitrary(F::from(42)))
         })?;
 
-        let () = dr.constant(Coeff::One);
+        let () = dr.constant(Coeff::One)?;
 
         let ((), (), ()) = dr.mul(|| {
             called.set(called.get() + 1);
@@ -568,7 +572,7 @@ mod tests {
         let () = dr.add(|lc| {
             called.set(called.get() + 1);
             lc
-        });
+        })?;
 
         let r = dr.enforce_zero(|lc| {
             called.set(called.get() + 1);
@@ -588,7 +592,7 @@ mod tests {
 
         let ((), (), ()) = dr.mul(|| Ok((Coeff::One, Coeff::One, Coeff::One)))?;
 
-        let () = dr.add(|lc| lc);
+        let () = dr.add(|lc| lc)?;
         Ok(())
     }
 

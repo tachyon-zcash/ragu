@@ -66,9 +66,6 @@ where
         // Validate: run synthesis with a driver that rejects mul/gate and ONE usage.
         let mut validator = BondingValidator::<F>::new();
         self.witness(&mut validator, Empty)?;
-        if let Some(msg) = validator.error {
-            return Err(ragu_core::Error::InvalidWitness(msg.into()));
-        }
 
         // Build the CircuitObject via the standard pipeline.
         let inner = into_circuit_object::<_, _, R>(self)?;
@@ -107,25 +104,12 @@ impl<F: Field> LinearExpression<BondingWire, F> for RejectOne {
 /// [`add`](Driver::add), and [`enforce_zero`](Driver::enforce_zero) with
 /// normal wires. Calling [`mul`](Driver::mul)/[`gate`](DriverTypes::gate),
 /// [`constant`](Driver::constant), or referencing the [`ONE`](Driver::ONE)
-/// wire in any linear constraint records a violation.
-///
-/// All methods succeed; violations are accumulated in the `error` field and
-/// checked by the caller after the witness completes.
-struct BondingValidator<F> {
-    error: Option<&'static str>,
-    _marker: core::marker::PhantomData<F>,
-}
+/// wire in any linear constraint returns an error immediately.
+struct BondingValidator<F>(core::marker::PhantomData<F>);
 
 impl<F> BondingValidator<F> {
     fn new() -> Self {
-        BondingValidator {
-            error: None,
-            _marker: core::marker::PhantomData,
-        }
-    }
-
-    fn record(&mut self, msg: &'static str) {
-        self.error.get_or_insert(msg);
+        BondingValidator(core::marker::PhantomData)
     }
 }
 
@@ -140,12 +124,8 @@ impl<F: Field> DriverTypes for BondingValidator<F> {
         &mut self,
         _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>, Coeff<F>)>,
     ) -> Result<(BondingWire, BondingWire, BondingWire, BondingWire)> {
-        self.record("bonding circuits must not call mul/gate");
-        Ok((
-            BondingWire::Normal,
-            BondingWire::Normal,
-            BondingWire::Normal,
-            BondingWire::Normal,
+        Err(ragu_core::Error::InvalidWitness(
+            "bonding circuits must not call mul/gate".into(),
         ))
     }
 }
@@ -159,21 +139,26 @@ impl<'dr, F: Field> Driver<'dr> for BondingValidator<F> {
         Ok(BondingWire::Normal)
     }
 
-    fn constant(&mut self, _: Coeff<F>) -> BondingWire {
-        self.record("bonding circuits must not create constants");
-        BondingWire::Normal
+    fn constant(&mut self, _: Coeff<F>) -> Result<BondingWire> {
+        Err(ragu_core::Error::InvalidWitness(
+            "bonding circuits must not create constants".into(),
+        ))
     }
 
-    fn add(&mut self, lc: impl Fn(RejectOne) -> RejectOne) -> BondingWire {
+    fn add(&mut self, lc: impl Fn(RejectOne) -> RejectOne) -> Result<BondingWire> {
         if lc(RejectOne(false)).0 {
-            self.record("bonding circuits must not reference the ONE wire");
+            return Err(ragu_core::Error::InvalidWitness(
+                "bonding circuits must not reference the ONE wire".into(),
+            ));
         }
-        BondingWire::Normal
+        Ok(BondingWire::Normal)
     }
 
     fn enforce_zero(&mut self, lc: impl Fn(RejectOne) -> RejectOne) -> Result<()> {
         if lc(RejectOne(false)).0 {
-            self.record("bonding circuits must not reference the ONE wire");
+            return Err(ragu_core::Error::InvalidWitness(
+                "bonding circuits must not reference the ONE wire".into(),
+            ));
         }
         Ok(())
     }
@@ -328,7 +313,7 @@ mod tests {
             _: DriverValue<D, ()>,
         ) -> Result<WithAux<Bound<'dr, D, ()>, DriverValue<D, ()>>> {
             let dr = builder.finish();
-            let _ = dr.constant(Coeff::One);
+            dr.constant(Coeff::One)?;
             Ok(WithAux::new((), D::unit()))
         }
     }
@@ -387,7 +372,7 @@ mod tests {
             _: DriverValue<D, ()>,
         ) -> Result<WithAux<Bound<'dr, D, ()>, DriverValue<D, ()>>> {
             let dr = builder.finish();
-            let _ = dr.add(|lc| lc.add(&D::ONE));
+            dr.add(|lc| lc.add(&D::ONE))?;
             Ok(WithAux::new((), D::unit()))
         }
     }

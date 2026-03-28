@@ -72,7 +72,7 @@ impl<'dr, D: Driver<'dr>> Driver<'dr> for DemotedDriver<D> {
         unreachable!("DemotedDriver cannot be constructed")
     }
 
-    fn add(&mut self, _: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {
+    fn add(&mut self, _: impl Fn(Self::LCadd) -> Self::LCadd) -> Result<Self::Wire> {
         unreachable!("DemotedDriver cannot be constructed")
     }
 

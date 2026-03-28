@@ -489,7 +489,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> OutputBuilder<'dr, D, C
         Bound<'dr, D, InternalOutputKind<C>>,
         DriverValue<D, Instance<C>>,
     )> {
-        let zero = Element::zero(dr);
+        let zero = Element::zero(dr)?;
         let (output, instance) = self.finish_no_suffix(dr)?;
         Ok((WithSuffix::new(output, zero), instance))
     }

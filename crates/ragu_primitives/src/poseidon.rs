@@ -104,18 +104,20 @@ impl<'dr, D: Driver<'dr>, P: ragu_arithmetic::PoseidonPermutation<D::F>> Buffer<
 
 impl<'dr, D: Driver<'dr>, P: ragu_arithmetic::PoseidonPermutation<D::F>> Sponge<'dr, D, P> {
     /// Initialize the sponge in absorb mode with a fixed initial state.
-    pub fn new(dr: &mut D, params: &'dr P) -> Self {
-        Sponge {
+    pub fn new(dr: &mut D, params: &'dr P) -> Result<Self> {
+        Ok(Sponge {
             mode: Mode::Absorb {
                 values: vec![],
                 state: SpongeState {
-                    values: vec![Element::zero(dr); P::T]
+                    values: (0..P::T)
+                        .map(|_| Element::zero(dr))
+                        .collect::<Result<Vec<_>>>()?
                         .try_into()
                         .expect("P::T is the state length"),
                 },
             },
             params,
-        }
+        })
     }
 
     fn permute(&mut self, dr: &mut D) -> Result<()> {
@@ -126,7 +128,7 @@ impl<'dr, D: Driver<'dr>, P: ragu_arithmetic::PoseidonPermutation<D::F>> Sponge<
             }
             Mode::Absorb { values, state } => {
                 for (state, v) in state.values.iter_mut().zip(values.iter()) {
-                    *state = state.add(dr, v);
+                    *state = state.add(dr, v)?;
                 }
                 values.clear();
                 *state = dr.routine(Permutation::from(self.params), state.clone())?;
@@ -328,12 +330,9 @@ fn mds<'i, 'dr, D: Driver<'dr>>(
 ) -> Result<()> {
     assert_eq!(state.len(), matrix.len());
     scratch.clear();
-    scratch.extend(
-        state
-            .iter()
-            .zip(matrix)
-            .map(|(_, coeffs)| multiadd(dr, state, coeffs)),
-    );
+    for (_, coeffs) in state.iter().zip(matrix) {
+        scratch.push(multiadd(dr, state, coeffs)?);
+    }
     state.clone_from_slice(&scratch[..]);
 
     Ok(())
@@ -343,11 +342,12 @@ fn add_round_constants<'dr, D: Driver<'dr>>(
     dr: &mut D,
     state: &mut [Element<'dr, D>],
     round_constants: &[D::F],
-) {
+) -> Result<()> {
     assert_eq!(state.len(), round_constants.len());
     for (x, c) in state.iter_mut().zip(round_constants) {
-        *x = x.add_coeff(dr, &Element::one(), Coeff::Arbitrary(*c));
+        *x = x.add_coeff(dr, &Element::one(), Coeff::Arbitrary(*c))?;
     }
+    Ok(())
 }
 
 struct Permutation<'a, F: Field, P: ragu_arithmetic::PoseidonPermutation<F>> {
@@ -394,7 +394,7 @@ impl<F: Field, P: ragu_arithmetic::PoseidonPermutation<F>> Routine<F> for Permut
                 dr,
                 &mut state.values[..],
                 rcs.next().expect("round constants match total round count"),
-            );
+            )?;
             sbox::<_, P>(dr, &mut state.values[0..elems])?;
             mds(
                 dr,
@@ -445,7 +445,7 @@ mod tests {
             let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
                 dr,
                 Pasta::circuit_poseidon(params),
-            );
+            )?;
             let value = Element::alloc(dr, value)?;
             sponge.absorb(dr, &value)?;
             sponge.squeeze(dr)?;
@@ -467,7 +467,7 @@ mod tests {
             let sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
                 dr,
                 Pasta::circuit_poseidon(params),
-            );
+            )?;
             // Try to save without absorbing anything
             let result = sponge.save_state(dr);
             assert!(matches!(result, Err(SaveError::NothingAbsorbed)));
@@ -485,7 +485,7 @@ mod tests {
         let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
             &mut dr,
             Pasta::circuit_poseidon(params),
-        );
+        )?;
 
         // Squeeze without absorbing anything should fail
         assert!(sponge.squeeze(&mut dr).is_err());
@@ -500,7 +500,7 @@ mod tests {
             let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
                 dr,
                 Pasta::circuit_poseidon(params),
-            );
+            )?;
             let value = Element::alloc(dr, value)?;
             sponge.absorb(dr, &value)?;
             // Squeeze to enter squeeze mode
@@ -523,7 +523,7 @@ mod tests {
             let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
                 dr,
                 Pasta::circuit_poseidon(params),
-            );
+            )?;
             let value = Element::alloc(dr, value)?;
             sponge.absorb(dr, &value)?;
             // Save should succeed
@@ -548,7 +548,7 @@ mod tests {
             let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
                 dr,
                 Pasta::circuit_poseidon(params),
-            );
+            )?;
             let value = Element::alloc(dr, value)?;
             sponge.absorb(dr, &value)?;
             let squeezed = sponge.squeeze(dr)?;
@@ -561,7 +561,7 @@ mod tests {
             let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
                 dr,
                 Pasta::circuit_poseidon(params),
-            );
+            )?;
             let value = Element::alloc(dr, value)?;
             sponge.absorb(dr, &value)?;
             let state = sponge.save_state(dr).expect("save_state should succeed");
@@ -592,7 +592,7 @@ mod tests {
             let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
                 dr,
                 Pasta::circuit_poseidon(params),
-            );
+            )?;
             let (v1, v2) = v.cast();
             let v1 = Element::alloc(dr, v1)?;
             let v2 = Element::alloc(dr, v2)?;
@@ -611,7 +611,7 @@ mod tests {
             let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
                 dr,
                 Pasta::circuit_poseidon(params),
-            );
+            )?;
             let (v1, v2) = v.cast();
             let v1 = Element::alloc(dr, v1)?;
             let v2 = Element::alloc(dr, v2)?;

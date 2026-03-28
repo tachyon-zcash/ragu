@@ -173,7 +173,7 @@ mod tests {
             let right_elem = Element::alloc(dr, right)?;
 
             // Output is sum of left and right
-            let output_elem = left_elem.add(dr, &right_elem);
+            let output_elem = left_elem.add(dr, &right_elem)?;
             let output_val = output_elem.value().map(|v| *v);
 
             let left_enc = Encoded::from_gadget(left_elem);

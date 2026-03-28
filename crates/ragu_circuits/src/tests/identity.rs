@@ -143,7 +143,7 @@ impl Routine<Fp> for AddTwo {
         _aux: DriverValue<D, Self::Aux<'dr>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         let (a, b) = input;
-        Ok(a.add(dr, &b))
+        a.add(dr, &b)
     }
 
     fn predict<'dr, D: Driver<'dr, F = Fp>>(
@@ -460,7 +460,7 @@ impl Routine<Fp> for NestThenAdd {
         _aux: DriverValue<D, Self::Aux<'dr>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         let nested = dr.routine(SquareOnce, input)?;
-        Ok(nested.add(dr, &nested))
+        nested.add(dr, &nested)
     }
 
     fn predict<'dr, D: Driver<'dr, F = Fp>>(
@@ -578,7 +578,7 @@ impl Routine<Fp> for DelegateThenAddEnforce {
         _aux: DriverValue<D, Self::Aux<'dr>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         let output = dr.routine(SquareOnce, input.clone())?;
-        let sum = output.add(dr, &input);
+        let sum = output.add(dr, &input)?;
         sum.enforce_zero(dr)?;
         Ok(output)
     }
@@ -609,7 +609,7 @@ impl Routine<Fp> for AllocThenAddEnforce {
     ) -> Result<Bound<'dr, D, Self::Output>> {
         let _consume_paired_b = Element::alloc(dr, D::just(|| Fp::ZERO))?;
         let fresh = Element::alloc(dr, D::just(|| Fp::ZERO))?;
-        let sum = fresh.add(dr, &input);
+        let sum = fresh.add(dr, &input)?;
         sum.enforce_zero(dr)?;
         Ok(fresh)
     }

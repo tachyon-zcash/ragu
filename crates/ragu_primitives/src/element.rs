@@ -110,19 +110,19 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
     }
 
     /// Creates an element for the zero constant value.
-    pub fn zero(dr: &mut D) -> Self {
-        let wire = dr.constant(Coeff::Zero);
+    pub fn zero(dr: &mut D) -> Result<Self> {
+        let wire = dr.constant(Coeff::Zero)?;
         let value = D::just(|| D::F::ZERO);
 
-        Element { value, wire }
+        Ok(Element { value, wire })
     }
 
     /// Creates an element for the provided constant value.
-    pub fn constant(dr: &mut D, value: D::F) -> Self {
-        let wire = dr.constant(Coeff::Arbitrary(value));
+    pub fn constant(dr: &mut D, value: D::F) -> Result<Self> {
+        let wire = dr.constant(Coeff::Arbitrary(value))?;
         let value = D::just(|| value);
 
-        Element { value, wire }
+        Ok(Element { value, wire })
     }
 
     /// Constructs a new element from a wire and a witness value. **It is the
@@ -179,54 +179,54 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
     }
 
     /// Negates this element.
-    pub fn negate(&self, dr: &mut D) -> Self {
+    pub fn negate(&self, dr: &mut D) -> Result<Self> {
         self.scale(dr, Coeff::NegativeOne)
     }
 
     /// Add two elements together.
-    pub fn add(&self, dr: &mut D, other: &Self) -> Self {
+    pub fn add(&self, dr: &mut D, other: &Self) -> Result<Self> {
         let value = D::just(|| {
             let a = *self.value.snag();
             let b = *other.value.snag();
             a + b
         });
 
-        let wire = dr.add(|lc| lc.add(&self.wire).add(&other.wire));
+        let wire = dr.add(|lc| lc.add(&self.wire).add(&other.wire))?;
 
-        Element { value, wire }
+        Ok(Element { value, wire })
     }
 
     /// Subtracts another element from this one.
-    pub fn sub(&self, dr: &mut D, other: &Self) -> Self {
+    pub fn sub(&self, dr: &mut D, other: &Self) -> Result<Self> {
         let value = D::just(|| {
             let a = *self.value.snag();
             let b = *other.value.snag();
             a - b
         });
 
-        let wire = dr.add(|lc| lc.add(&self.wire).sub(&other.wire));
+        let wire = dr.add(|lc| lc.add(&self.wire).sub(&other.wire))?;
 
-        Element { value, wire }
+        Ok(Element { value, wire })
     }
 
     /// Add another element scaled by a constant: `self` + `other` * `coeff`.
-    pub fn add_coeff(&self, dr: &mut D, other: &Self, coeff: Coeff<D::F>) -> Self {
+    pub fn add_coeff(&self, dr: &mut D, other: &Self, coeff: Coeff<D::F>) -> Result<Self> {
         let value = D::just(|| {
             *self.value.snag() + (Coeff::Arbitrary(*other.value.snag()) * coeff).value()
         });
-        let wire = dr.add(|lc| lc.add(&self.wire).add_term(&other.wire, coeff));
-        Element { value, wire }
+        let wire = dr.add(|lc| lc.add(&self.wire).add_term(&other.wire, coeff))?;
+        Ok(Element { value, wire })
     }
 
     /// Scale this element by a constant.
-    pub fn scale(&self, dr: &mut D, coeff: Coeff<D::F>) -> Self {
+    pub fn scale(&self, dr: &mut D, coeff: Coeff<D::F>) -> Result<Self> {
         let value = D::just(|| (Coeff::Arbitrary(*self.value.snag()) * coeff).value());
-        let wire = dr.add(|lc| lc.add_term(&self.wire, coeff));
-        Element { value, wire }
+        let wire = dr.add(|lc| lc.add_term(&self.wire, coeff))?;
+        Ok(Element { value, wire })
     }
 
     /// Double this element.
-    pub fn double(&self, dr: &mut D) -> Self {
+    pub fn double(&self, dr: &mut D) -> Result<Self> {
         self.add(dr, self)
     }
 
@@ -310,7 +310,7 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
 
     /// Returns a boolean indicating whether this element equals another.
     pub fn is_equal(&self, dr: &mut D, other: &Self) -> Result<Boolean<'dr, D>> {
-        let diff = self.sub(dr, other);
+        let diff = self.sub(dr, other)?;
         diff.is_zero(dr)
     }
 
@@ -327,11 +327,11 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
     ) -> Result<Self> {
         let mut iter = elements.into_iter();
         let Some(first) = iter.next() else {
-            return Ok(Element::zero(dr));
+            return Element::zero(dr);
         };
         iter.try_fold(first.borrow().clone(), |acc, elem| {
             acc.mul(dr, scale_factor)
-                .map(|scaled| scaled.add(dr, elem.borrow()))
+                .and_then(|scaled| scaled.add(dr, elem.borrow()))
         })
     }
 
@@ -342,7 +342,7 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
             value = value.square(dr)?;
         }
         let one = Element::one();
-        let diff = value.sub(dr, &one);
+        let diff = value.sub(dr, &one)?;
         diff.enforce_zero(dr)?;
         Ok(())
     }
@@ -354,10 +354,10 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
     pub fn sum<E: Borrow<Element<'dr, D>>>(
         dr: &mut D,
         elements: impl IntoIterator<Item = E>,
-    ) -> Self {
+    ) -> Result<Self> {
         elements
             .into_iter()
-            .fold(Element::zero(dr), |acc, elem| acc.add(dr, elem.borrow()))
+            .try_fold(Element::zero(dr)?, |acc, elem| acc.add(dr, elem.borrow()))
     }
 }
 
@@ -409,7 +409,7 @@ pub fn multiadd<'dr, D: Driver<'dr>>(
     dr: &mut D,
     values: &[Element<'dr, D>],
     coeffs: &[D::F],
-) -> Element<'dr, D> {
+) -> Result<Element<'dr, D>> {
     assert_eq!(values.len(), coeffs.len());
     let value = D::just(|| {
         let mut sum = D::F::ZERO;
@@ -423,9 +423,9 @@ pub fn multiadd<'dr, D: Driver<'dr>>(
             lc = lc.add_term(value.wire(), Coeff::Arbitrary(*coeff));
         }
         lc
-    });
+    })?;
 
-    Element::promote(wire, value)
+    Ok(Element::promote(wire, value))
 }
 
 #[cfg(test)]
@@ -532,8 +532,8 @@ mod proptests {
                 let (a, b) = witness.cast();
                 let a = Element::alloc(dr, a)?;
                 let b = Element::alloc(dr, b)?;
-                let sum = a.add(dr, &b);
-                let result = sum.sub(dr, &b);
+                let sum = a.add(dr, &b)?;
+                let result = sum.sub(dr, &b)?;
                 actual = Some(*result.value().take());
                 Ok(())
             }).map_err(|e| TestCaseError::fail(format!("{e:?}")))?;

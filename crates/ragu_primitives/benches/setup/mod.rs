@@ -72,7 +72,7 @@ pub fn alloc_sponge(
     emu: &mut BenchEmu,
     _rng: &mut StdRng,
 ) -> Sponge<'static, BenchEmu, PoseidonFp> {
-    Sponge::new(emu, Pasta::circuit_poseidon(Pasta::baked()))
+    Sponge::new(emu, Pasta::circuit_poseidon(Pasta::baked())).unwrap()
 }
 
 // Parameterized allocators for collections

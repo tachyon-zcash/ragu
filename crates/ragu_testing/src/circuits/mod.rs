@@ -52,8 +52,8 @@ impl<F: Field> Circuit<F> for MySimpleCircuit {
 
         dr.enforce_zero(|lc| lc.add(a5.wire()).sub(b2.wire()))?;
 
-        let c = a.add(dr, &b);
-        let d = a.sub(dr, &b);
+        let c = a.add(dr, &b)?;
+        let d = a.sub(dr, &b)?;
 
         Ok(WithAux::new((c, d), D::unit()))
     }

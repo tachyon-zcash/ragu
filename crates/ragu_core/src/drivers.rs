@@ -247,7 +247,7 @@ pub trait Driver<'dr>: DriverTypes<ImplWire = Self::Wire, ImplField = Self::F> +
     }
 
     /// Returns a virtual wire that has a fixed constant value.
-    fn constant(&mut self, value: Coeff<Self::F>) -> Self::Wire {
+    fn constant(&mut self, value: Coeff<Self::F>) -> Result<Self::Wire> {
         self.add(|lc| lc.add_term(&Self::ONE, value))
     }
 
@@ -298,7 +298,7 @@ pub trait Driver<'dr>: DriverTypes<ImplWire = Self::Wire, ImplField = Self::F> +
     /// drivers with `MaybeKind = Empty` still call expression-building closures
     /// when they need constraint structure, so `Fn` is the sole type-level
     /// purity signal here.
-    fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire;
+    fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Result<Self::Wire>;
 
     /// Asks the driver to create a constraint that a linear combination of
     /// wires equals zero.

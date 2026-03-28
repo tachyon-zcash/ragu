@@ -215,9 +215,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
                     &computed_ax,
                     &computed_bx,
                 ) {
-                    pu.sub(dr, v).mul(dr, denominator)?.write(dr, &mut horner)?;
+                    pu.sub(dr, v)?
+                        .mul(dr, denominator)?
+                        .write(dr, &mut horner)?;
                 }
-                horner.finish(dr)
+                horner.finish(dr)?
             };
 
             // Step 3: Compute v = f(u) + beta * eval via Horner accumulation.
@@ -230,7 +232,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
                 let mut horner = Horner::new(&effective_beta);
                 fu.write(dr, &mut horner)?;
                 eval.write(dr, &mut horner)?;
-                horner.finish(dr)
+                horner.finish(dr)?
             };
 
             // Constrain v: the computed value must equal the claimed v in the
@@ -425,32 +427,34 @@ impl<'a, 'dr, D: Driver<'dr>> Processor<&'a Element<'dr, D>, &'a Element<'dr, D>
         self.bx.push(b.clone());
     }
 
-    fn circuit(&mut self, sy: &'a Element<'dr, D>, rx: &'a Element<'dr, D>) {
+    fn circuit(&mut self, sy: &'a Element<'dr, D>, rx: &'a Element<'dr, D>) -> Result<()> {
         // a(xz) = rx(xz)
         self.ax.push(rx.clone());
 
         // b(x) = rx(xz) + s_y + t(xz)
-        self.bx.push(rx.add(self.dr, sy).add(self.dr, self.txz));
+        self.bx.push(rx.add(self.dr, sy)?.add(self.dr, self.txz)?);
+        Ok(())
     }
 
     fn internal_circuit(
         &mut self,
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = &'a Element<'dr, D>>,
-    ) {
+    ) -> Result<()> {
         let sy = self.fixed_registry.get(id);
 
-        let mut sum = Element::zero(self.dr);
+        let mut sum = Element::zero(self.dr)?;
 
         for rx in rxs {
-            sum = sum.add(self.dr, rx);
+            sum = sum.add(self.dr, rx)?;
         }
 
         // a(xz) = rx(xz)
         self.ax.push(sum.clone());
 
         // b(x) = rx(xz) + s_y + t(xz)
-        self.bx.push(sum.add(self.dr, sy).add(self.dr, self.txz));
+        self.bx.push(sum.add(self.dr, sy)?.add(self.dr, self.txz)?);
+        Ok(())
     }
 
     fn bonding(
@@ -650,7 +654,7 @@ impl<'dr, D: Driver<'dr, F: ff::PrimeField>> Inverter<'dr, D> {
     /// after calling [`invert`](Self::invert).
     fn add(&mut self, dr: &mut D, value: &Element<'dr, D>) -> Result<usize> {
         let index = self.differences.len();
-        let diff = self.base.sub(dr, value);
+        let diff = self.base.sub(dr, value)?;
         self.differences.push(diff);
         Ok(index)
     }
@@ -666,7 +670,7 @@ impl<'dr, D: Driver<'dr, F: ff::PrimeField>> Inverter<'dr, D> {
     /// Returns an index that can be used to retrieve the inverted difference
     /// after calling [`invert`](Self::invert).
     fn add_constant(&mut self, dr: &mut D, value: D::F) -> Result<usize> {
-        let constant = Element::constant(dr, value);
+        let constant = Element::constant(dr, value)?;
         self.add(dr, &constant)
     }
 

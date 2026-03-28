@@ -58,11 +58,11 @@ impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
     }
 
     /// Computes the NOT of this boolean. This is "free" in the circuit model.
-    pub fn not(&self, dr: &mut D) -> Self {
+    pub fn not(&self, dr: &mut D) -> Result<Self> {
         // The wire w is transformed into 1 - w, its logical NOT.
-        let wire = dr.add(|lc| lc.add(&D::ONE).sub(self.wire()));
+        let wire = dr.add(|lc| lc.add(&D::ONE).sub(self.wire()))?;
         let value = self.value().not();
-        Boolean { wire, value }
+        Ok(Boolean { wire, value })
     }
 
     /// Computes the AND of two booleans. This costs one multiplication
@@ -96,9 +96,9 @@ impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
         b: &Element<'dr, D>,
     ) -> Result<Element<'dr, D>> {
         // Result = a + cond * (b - a)
-        let diff = b.sub(dr, a);
+        let diff = b.sub(dr, a)?;
         let cond_times_diff = self.element().mul(dr, &diff)?;
-        Ok(a.add(dr, &cond_times_diff))
+        a.add(dr, &cond_times_diff)
     }
 
     /// Conditionally enforces that two elements are equal.
@@ -115,7 +115,7 @@ impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
         // Equivalent to: condition * (a - b) == 0
         // - When condition = 1: a - b = 0
         // - When condition = 0: 0 = 0 (trivially satisfied)
-        let diff = a.sub(dr, b);
+        let diff = a.sub(dr, b)?;
         let product = self.element().mul(dr, &diff)?;
         product.enforce_zero(dr)
     }
@@ -240,7 +240,7 @@ pub fn multipack<'dr, D: Driver<'dr, F: ff::PrimeField>>(
                 lc = lc.gain(Coeff::Two);
             }
             lc
-        });
+        })?;
 
         v.push(Element::promote(wire, value));
     }
@@ -456,7 +456,7 @@ mod proptests {
             let mut actual = None;
             Simulator::simulate(a_val, |dr, witness| {
                 let a = Boolean::alloc(dr, witness)?;
-                let not_a = a.not(dr);
+                let not_a = a.not(dr)?;
                 let result = a.and(dr, &not_a)?;
                 actual = Some(result.value().take());
                 Ok(())

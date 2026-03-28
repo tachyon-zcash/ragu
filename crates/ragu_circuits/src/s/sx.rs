@@ -286,8 +286,8 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
     /// Evaluates the linear combination immediately using [`WireEvalSum`] and
     /// returns the sum as a [`WireEval::Value`]. No deferred computation is
     /// needed because all wire values are concrete field elements.
-    fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {
-        WireEval::Value(lc(WireEvalSum::new(self.one)).value)
+    fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Result<Self::Wire> {
+        Ok(WireEval::Value(lc(WireEvalSum::new(self.one)).value))
     }
 
     /// Records a linear constraint as a polynomial coefficient.

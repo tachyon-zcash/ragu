@@ -39,22 +39,25 @@ impl<'a, 'dr, D: Driver<'dr>> Horner<'a, 'dr, D> {
     /// Finishes the evaluation, returning the accumulated result.
     ///
     /// Returns zero if no elements were written.
-    pub fn finish(self, dr: &mut D) -> Element<'dr, D> {
-        self.result.unwrap_or_else(|| Element::zero(dr))
+    pub fn finish(self, dr: &mut D) -> Result<Element<'dr, D>> {
+        match self.result {
+            Some(el) => Ok(el),
+            None => Element::zero(dr),
+        }
     }
 
     /// Finishes the evaluation with a trailing constant $1$ term appended,
     /// following the $k(Y)$ polynomial convention.
     pub fn finish_ky(mut self, dr: &mut D) -> Result<Element<'dr, D>> {
         Element::one().write(dr, &mut self)?;
-        Ok(self.finish(dr))
+        self.finish(dr)
     }
 }
 
 impl<'a, 'dr, D: Driver<'dr>> Buffer<'dr, D> for Horner<'a, 'dr, D> {
     fn write(&mut self, dr: &mut D, value: &Element<'dr, D>) -> Result<()> {
         self.result = Some(match self.result.take() {
-            Some(acc) => acc.mul(dr, self.point)?.add(dr, value),
+            Some(acc) => acc.mul(dr, self.point)?.add(dr, value)?,
             None => value.clone(),
         });
         Ok(())

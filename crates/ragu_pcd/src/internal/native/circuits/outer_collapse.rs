@@ -176,7 +176,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             // witness any c value to seed the recursion.
             preamble
                 .is_base_case(dr)?
-                .not(dr)
+                .not(dr)?
                 .conditional_enforce_equal(dr, &witnessed_c, &computed_c)?;
         }
 

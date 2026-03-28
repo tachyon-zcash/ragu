@@ -85,16 +85,16 @@ impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> Transcript<'dr, D, P> {
     where
         D::F: PrimeField,
     {
-        let mut sponge = Sponge::new(dr, params);
+        let mut sponge = Sponge::new(dr, params)?;
 
         // prefix with the tag length
-        let len_elem = Element::constant(dr, D::F::from(tag.len() as u64));
+        let len_elem = Element::constant(dr, D::F::from(tag.len() as u64))?;
         sponge.absorb(dr, &len_elem)?;
 
         // Then absorb the tag content in 16-byte chunks as u128
         for chunk in tag.chunks(16) {
             let bytes: [u8; 16] = core::array::from_fn(|i| chunk.get(i).copied().unwrap_or(0));
-            let elem = Element::constant(dr, D::F::from_u128(u128::from_le_bytes(bytes)));
+            let elem = Element::constant(dr, D::F::from_u128(u128::from_le_bytes(bytes)))?;
             sponge.absorb(dr, &elem)?;
         }
 
@@ -224,7 +224,7 @@ mod tests {
         ops.iter()
             .filter_map(|op| match op {
                 Op::Absorb(v) => {
-                    let e = Element::constant(dr, *v);
+                    let e = Element::constant(dr, *v).unwrap();
                     e.write(dr, t).unwrap();
                     None
                 }
@@ -244,7 +244,7 @@ mod tests {
             let mut tr1 = Transcript::new(&mut dr, poseidon, &t1).unwrap();
             let mut tr2 = Transcript::new(&mut dr, poseidon, &t2).unwrap();
 
-            let elem = Element::constant(&mut dr, v);
+            let elem = Element::constant(&mut dr, v).unwrap();
             elem.write(&mut dr, &mut tr1).unwrap();
             elem.write(&mut dr, &mut tr2).unwrap();
 
@@ -262,7 +262,7 @@ mod tests {
                 let mut dr = Sim::new();
                 let mut t = Transcript::new(&mut dr, poseidon, b"determinism").unwrap();
                 for &v in vs {
-                    let e = Element::constant(&mut dr, v);
+                    let e = Element::constant(&mut dr, v).unwrap();
                     e.write(&mut dr, &mut t).unwrap();
                 }
                 *t.challenge(&mut dr).unwrap().value().take()
@@ -277,7 +277,7 @@ mod tests {
             let mut dr = Sim::new();
 
             let mut t = Transcript::new(&mut dr, Pasta::circuit_poseidon(params), b"distinct").unwrap();
-            let e = Element::constant(&mut dr, v);
+            let e = Element::constant(&mut dr, v).unwrap();
             e.write(&mut dr, &mut t).unwrap();
 
             let c0 = *t.challenge(&mut dr).unwrap().value().take();
@@ -357,7 +357,7 @@ mod tests {
 
         let mut t =
             Transcript::new(&mut dr, Pasta::circuit_poseidon(params), b"skip-squeeze").unwrap();
-        let e = Element::constant(&mut dr, Fp::from(42u64));
+        let e = Element::constant(&mut dr, Fp::from(42u64)).unwrap();
         e.write(&mut dr, &mut t).unwrap();
 
         let state = t.save_state(&mut dr).expect("save_state should succeed");
