@@ -118,11 +118,11 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
         let xy_2n = xy.pow_vartime([2 * R::n() as u64]);
         let xy_inv = xy.invert().expect("xy is not zero");
 
-        pub fn global<F: Field>(xy: F, xy_2n: F, n: usize) -> F {
+        fn global<F: Field>(xy: F, xy_2n: F, n: usize) -> F {
             geosum(xy, n << 2) - xy_2n - F::ONE
         }
 
-        pub fn notch<F: Field>(xy: F, xy_2n: F, xy_inv: F, g: usize, m: usize) -> F {
+        fn notch<F: Field>(xy: F, xy_2n: F, xy_inv: F, g: usize, m: usize) -> F {
             let gsum = geosum(xy, m);
             let xy_g = xy.pow_vartime([g as u64]);
             let xy_h = xy_2n * xy_inv.pow_vartime([(g + m) as u64]);
