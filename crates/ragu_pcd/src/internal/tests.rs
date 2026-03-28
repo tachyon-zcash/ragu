@@ -6,6 +6,16 @@ use native::{
 };
 use ragu_circuits::staging::{Stage, StageExt};
 use ragu_pasta::{Pasta, fp, fq};
+
+#[cfg(feature = "std")]
+use ff::Field;
+#[cfg(feature = "std")]
+use ragu_arithmetic::Cycle;
+#[cfg(feature = "std")]
+use ragu_circuits::polynomials::structured;
+#[cfg(feature = "std")]
+use rand::{SeedableRng, rngs::StdRng};
+
 pub type R = ragu_circuits::polynomials::ProductionRank;
 
 use ff::PrimeField;
@@ -299,4 +309,162 @@ fn test_rx_index_all_exhaustive() {
         collected.push(id);
     });
     assert_eq!(collected.as_slice(), RxIndex::ALL);
+}
+
+#[cfg(feature = "std")]
+const BEHAVIORAL_HEADER_SIZE: usize = 4;
+
+#[cfg(feature = "std")]
+fn behavioral_app() -> crate::Application<'static, Pasta, R, BEHAVIORAL_HEADER_SIZE> {
+    let pasta = Pasta::baked();
+    ApplicationBuilder::<Pasta, R, BEHAVIORAL_HEADER_SIZE>::new()
+        .finalize(pasta)
+        .unwrap()
+}
+
+#[cfg(feature = "std")]
+fn seed_behavioral_proof() -> &'static crate::Proof<Pasta, R> {
+    use std::sync::OnceLock;
+    static CACHED: OnceLock<crate::Proof<Pasta, R>> = OnceLock::new();
+    CACHED.get_or_init(|| {
+        let app = behavioral_app();
+        let mut rng = StdRng::seed_from_u64(502);
+        let (pcd, _aux) = app
+            .seed(&mut rng, step::internal::trivial::Trivial::new(), ())
+            .unwrap();
+        pcd.into_parts().0
+    })
+}
+
+#[cfg(feature = "std")]
+macro_rules! valid_circuit_commitment_binds {
+    ($test_name:ident, $circuit:ident) => {
+        #[test]
+        fn $test_name() {
+            let proof = seed_behavioral_proof();
+            let gens = Pasta::host_generators(Pasta::baked());
+            let triple = &proof.circuits.$circuit;
+            assert_eq!(
+                triple.rx.commit(gens, triple.blind),
+                triple.commitment.into(),
+                "{} commitment mismatch",
+                stringify!($circuit)
+            );
+        }
+    };
+}
+
+#[cfg(feature = "std")]
+valid_circuit_commitment_binds!(seeded_hashes_1_commitment_binds, hashes_1);
+#[cfg(feature = "std")]
+valid_circuit_commitment_binds!(seeded_hashes_2_commitment_binds, hashes_2);
+#[cfg(feature = "std")]
+valid_circuit_commitment_binds!(seeded_inner_collapse_commitment_binds, inner_collapse);
+#[cfg(feature = "std")]
+valid_circuit_commitment_binds!(seeded_outer_collapse_commitment_binds, outer_collapse);
+#[cfg(feature = "std")]
+valid_circuit_commitment_binds!(seeded_compute_v_commitment_binds, compute_v);
+
+/// Baseline: a seeded proof with internal circuits passes verification.
+#[cfg(feature = "std")]
+#[test]
+fn seeded_proof_with_internal_circuits_verifies() {
+    let app = behavioral_app();
+    let proof = seed_behavioral_proof();
+    let mut rng = StdRng::seed_from_u64(502_001);
+    let pcd = proof.clone().carry::<()>(());
+    let result = app.verify(&pcd, &mut rng).expect("verify should not error");
+    assert!(result, "seeded proof should verify");
+}
+
+#[cfg(feature = "std")]
+macro_rules! corrupted_circuit_rx_rejects {
+    ($test_name:ident, $circuit:ident) => {
+        #[test]
+        fn $test_name() {
+            let app = behavioral_app();
+            let proof = seed_behavioral_proof();
+            let mut corrupted = proof.clone();
+            corrupted.circuits.$circuit.rx = structured::Polynomial::new();
+            let pcd = corrupted.carry::<()>(());
+            let mut rng = StdRng::seed_from_u64(502_002);
+            let result = app.verify(&pcd, &mut rng).expect("verify should not error");
+            assert!(
+                !result,
+                "corrupted {} should be rejected",
+                stringify!($circuit)
+            );
+        }
+    };
+}
+
+#[cfg(feature = "std")]
+corrupted_circuit_rx_rejects!(corrupted_hashes_1_rx_rejects, hashes_1);
+#[cfg(feature = "std")]
+corrupted_circuit_rx_rejects!(corrupted_hashes_2_rx_rejects, hashes_2);
+#[cfg(feature = "std")]
+corrupted_circuit_rx_rejects!(corrupted_inner_collapse_rx_rejects, inner_collapse);
+#[cfg(feature = "std")]
+corrupted_circuit_rx_rejects!(corrupted_outer_collapse_rx_rejects, outer_collapse);
+#[cfg(feature = "std")]
+corrupted_circuit_rx_rejects!(corrupted_compute_v_rx_rejects, compute_v);
+
+/// Seeding with the same RNG produces identical internal circuit commitments and blinds.
+#[cfg(feature = "std")]
+#[test]
+fn deterministic_internal_circuit_synthesis() {
+    let pasta = Pasta::baked();
+    let app = ApplicationBuilder::<Pasta, R, BEHAVIORAL_HEADER_SIZE>::new()
+        .finalize(pasta)
+        .unwrap();
+
+    let mut rng1 = StdRng::seed_from_u64(502_100);
+    let (pcd1, _) = app
+        .seed(&mut rng1, step::internal::trivial::Trivial::new(), ())
+        .unwrap();
+    let (proof1, _) = pcd1.into_parts();
+
+    let mut rng2 = StdRng::seed_from_u64(502_100);
+    let (pcd2, _) = app
+        .seed(&mut rng2, step::internal::trivial::Trivial::new(), ())
+        .unwrap();
+    let (proof2, _) = pcd2.into_parts();
+
+    let c1 = &proof1.circuits;
+    let c2 = &proof2.circuits;
+
+    assert_eq!(c1.hashes_1.commitment, c2.hashes_1.commitment);
+    assert_eq!(c1.hashes_1.blind, c2.hashes_1.blind);
+    assert_eq!(c1.hashes_2.commitment, c2.hashes_2.commitment);
+    assert_eq!(c1.hashes_2.blind, c2.hashes_2.blind);
+    assert_eq!(c1.inner_collapse.commitment, c2.inner_collapse.commitment);
+    assert_eq!(c1.inner_collapse.blind, c2.inner_collapse.blind);
+    assert_eq!(c1.outer_collapse.commitment, c2.outer_collapse.commitment);
+    assert_eq!(c1.outer_collapse.blind, c2.outer_collapse.blind);
+    assert_eq!(c1.compute_v.commitment, c2.compute_v.commitment);
+    assert_eq!(c1.compute_v.blind, c2.compute_v.blind);
+}
+
+/// Each internal circuit's rx polynomial has at least one non-zero coefficient,
+/// confirming synthesis produced nontrivial witness polynomials.
+#[cfg(feature = "std")]
+#[test]
+fn seeded_internal_circuits_are_nontrivial() {
+    let proof = seed_behavioral_proof();
+    let is_nonzero = |poly: &structured::Polynomial<<Pasta as Cycle>::CircuitField, R>| {
+        poly.iter_coeffs()
+            .any(|coeff| coeff != <Pasta as Cycle>::CircuitField::ZERO)
+    };
+    let c = &proof.circuits;
+    assert!(is_nonzero(&c.hashes_1.rx), "hashes_1 is trivial");
+    assert!(is_nonzero(&c.hashes_2.rx), "hashes_2 is trivial");
+    assert!(
+        is_nonzero(&c.inner_collapse.rx),
+        "inner_collapse is trivial"
+    );
+    assert!(
+        is_nonzero(&c.outer_collapse.rx),
+        "outer_collapse is trivial"
+    );
+    assert!(is_nonzero(&c.compute_v.rx), "compute_v is trivial");
 }
