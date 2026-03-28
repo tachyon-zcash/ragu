@@ -94,13 +94,11 @@ the destination driver's context:
 let output: Bound<'dst, DstDriver, _> = CloneWires::remap(&gadget)?;
 ```
 
-```admonish tip
-This strategy is useful for [demotion][gadgetext-demote]. Internally, a demoted
-gadget uses [`CloneWires`][clonewires-type] to preserve wires and strip witness
-data. The corresponding [`promote`][demoted-promote] method allows the original
-gadget to be restored.
-
-<!-- TODO: When a demotion page is added to the book, let's rework this block. -->
+```admonish info
+[`CloneWires`][clonewires-type] is the mechanism behind
+[demotion](demotion.md): it preserves wires while the destination
+driver's `Empty` [`MaybeKind`][maybekind-trait] discards witness
+data. See the [Demotion](demotion.md) page for the full lifecycle.
 ```
 
 ## [`StripWires`][stripwires-type] {#stripwires}

@@ -17,6 +17,7 @@
     - [The GadgetKind Trait](guide/gadgets/gadgetkind.md)
     - [The Kind! Macro](guide/gadgets/kind.md)
     - [Conversion](guide/gadgets/conversion.md)
+    - [Demotion](guide/gadgets/demotion.md)
   - [Routines](guide/routines.md)
   - [The Primitives Standard Library](guide/standard_library.md) <!-- todo -->
   - [Writing Circuits](guide/writing_circuits.md) <!-- todo -->
