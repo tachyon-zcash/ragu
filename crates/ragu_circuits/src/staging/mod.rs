@@ -12,7 +12,7 @@
 //!
 //! where $\mathbf{r}$ is the coefficient vector for $r(X)$, and $\mathbf{s},
 //! \mathbf{t}$ are determined by $y$ and $z$ (respectively) to enforce the
-//! linear and multiplication constraints (respectively) of the particular
+//! gates and constraints (respectively) of the particular
 //! circuit. We say that $\mathbf{s}$ is the coefficient vector for $s(X, Y)$ at
 //! the restriction $Y = y$.
 //!
@@ -64,7 +64,7 @@
 //! stage's [staging mask](StageExt::mask).
 //!
 //! ```rust,ignore
-//! let a = MyStage::rx(my_stage_witness)?;
+//! let a = MyStage::rx(alpha, my_stage_witness)?;
 //!
 //! // Register the mask into a registry to obtain s(X, y).
 //! let mask_handle = builder.register_bonding(MyStage::mask()?);
@@ -78,8 +78,8 @@
 //! check, they can be combined using a random challenge $z$:
 //!
 //! ```rust,ignore
-//! let a = MyStage::rx(my_stage_witness)?;
-//! let b = MyStage::rx(my_stage_witness)?;
+//! let a = MyStage::rx(alpha_a, my_stage_witness)?;
+//! let b = MyStage::rx(alpha_b, my_stage_witness)?;
 //!
 //! // Sample random challenge z after committing to `a` and `b`
 //! let z = Fp::random(&mut rand::rng());
@@ -165,12 +165,12 @@ pub trait Stage<F: Field, R: Rank> {
     where
         Self: 'dr;
 
-    /// Returns the number of multiplication gates to skip before starting this
-    /// stage, not including the ONE gate which is skipped in all stages. **This
-    /// should not be overridden by implementations except by the base
-    /// implementation for `()`**.
-    fn skip_multiplications() -> usize {
-        Self::Parent::skip_multiplications() + Self::Parent::num_multiplications()
+    /// Returns the number of gates to skip before starting this
+    /// stage. The count includes gate 0 (the ONE gate), so the base
+    /// case `()` returns 1. **This should not be overridden by
+    /// implementations except by the base implementation for `()`**.
+    fn skip_gates() -> usize {
+        Self::Parent::skip_gates() + Self::Parent::num_gates()
     }
 }
 
@@ -194,8 +194,8 @@ impl<F: Field, R: Rank> Stage<F, R> for () {
         Ok(())
     }
 
-    fn skip_multiplications() -> usize {
-        0
+    fn skip_gates() -> usize {
+        1
     }
 }
 
@@ -322,13 +322,26 @@ impl<F: Field, R: Rank, S: MultiStageCircuit<F, R>> Circuit<F> for MultiStage<F,
 
 /// Extension trait blanket-implemented for all [`Stage<F, R>`](Stage) types.
 pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
-    /// Returns the number of multiplication gates used for allocations.
-    fn num_multiplications() -> usize {
+    /// Returns the number of gates used for allocations.
+    fn num_gates() -> usize {
         Self::values().div_ceil(2)
     }
 
     /// Compute the (partial) $r(X)$ polynomial for this stage.
-    fn rx_configured(&self, witness: Self::Witness<'_>) -> Result<sparse::Polynomial<F, R>> {
+    ///
+    /// `alpha` is placed at `d[0]` of the resulting polynomial. Stage
+    /// traces can be all-zero without it, and linear combinations of
+    /// polynomials with predictable `d[0]` values could cancel to zero in
+    /// derived polynomials — either case produces a point-at-infinity
+    /// commitment. A random alpha prevents this.
+    ///
+    /// Pass a random field element in production; `F::ZERO` is acceptable
+    /// in tests.
+    fn rx_configured(
+        &self,
+        alpha: F,
+        witness: Self::Witness<'_>,
+    ) -> Result<sparse::Polynomial<F, R>> {
         let values = {
             let mut dr = Emulator::extractor();
             let out = self.witness(&mut dr, Always::maybe_just(|| witness))?;
@@ -336,8 +349,8 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
         };
 
         if values.len() > Self::values() {
-            return Err(ragu_core::Error::MultiplicationBoundExceeded {
-                limit: Self::num_multiplications(),
+            return Err(ragu_core::Error::GateBoundExceeded {
+                limit: Self::num_gates(),
             });
         }
 
@@ -346,19 +359,20 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
         let mut values = values.into_iter();
         let mut view = sparse::View::forward();
 
-        let len = 1 + Self::skip_multiplications() + Self::num_multiplications();
+        let len = Self::skip_gates() + Self::num_gates();
         view.a.reserve_exact(len);
         view.b.reserve_exact(len);
         view.c.reserve_exact(len);
         view.d.reserve_exact(len);
 
-        // ONE is not set.
+        // ONE gate: d[0] receives alpha (degree 4n-1) to prevent
+        // point-at-infinity commitments.
         view.a.push(F::ZERO);
         view.b.push(F::ZERO);
         view.c.push(F::ZERO);
-        view.d.push(F::ZERO);
+        view.d.push(alpha);
 
-        for _ in 0..Self::skip_multiplications() {
+        for _ in 0..(Self::skip_gates() - 1) {
             view.a.push(F::ZERO);
             view.b.push(F::ZERO);
             view.c.push(F::ZERO);
@@ -366,7 +380,7 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
         }
 
         // Layout: (0, b, 0, d) per gate.
-        for _ in 0..Self::num_multiplications() {
+        for _ in 0..Self::num_gates() {
             let b = values.next().unwrap_or(F::ZERO);
             let d = values.next().unwrap_or(F::ZERO);
             view.a.push(F::ZERO);
@@ -379,24 +393,26 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
     }
 
     /// Compute the (partial) $r(X)$ polynomial for this stage, using a
-    /// default implementation.
-    fn rx(witness: Self::Witness<'_>) -> Result<sparse::Polynomial<F, R>>
+    /// default implementation. See [`rx_configured`](Self::rx_configured)
+    /// for details on the `alpha` parameter.
+    fn rx(alpha: F, witness: Self::Witness<'_>) -> Result<sparse::Polynomial<F, R>>
     where
         Self: Default,
     {
-        Self::default().rx_configured(witness)
+        Self::default().rx_configured(alpha, witness)
     }
 
     /// Creates a bonding polynomial that enforces well-formedness checks on
     /// this stage's partial trace.
     ///
-    /// Staging circuits do not behave like normal circuits because they do not
-    /// have a `ONE` wire and are used solely for partial trace commitments.
-    /// As a result, they must be computed differently.
+    /// Staging circuits do not behave like normal circuits because their
+    /// `ONE` gate carries only an alpha value in `d[0]` (no `b[0] = 1` ONE
+    /// wire) and they are used solely for partial trace commitments. As a
+    /// result, their mask must be computed differently.
     fn mask<'a>() -> Result<BondingObject<'a, F, R>> {
         Ok(BondingObject::new(Box::new(mask::StageMask::new(
-            Self::skip_multiplications(),
-            Self::num_multiplications(),
+            Self::skip_gates(),
+            Self::num_gates(),
         )?)))
     }
 
@@ -405,7 +421,7 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
     /// [`MultiStageCircuit::Last`] stage.
     fn final_mask<'a>() -> Result<BondingObject<'a, F, R>> {
         Ok(BondingObject::new(Box::new(mask::StageMask::new_final(
-            Self::skip_multiplications() + Self::num_multiplications(),
+            Self::skip_gates() + Self::num_gates(),
         )?)))
     }
 
@@ -413,16 +429,16 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
     /// this stage's alloc gates.
     ///
     /// With the `(0, b, 0, d)` gate layout, the first allocated value occupies
-    /// the B-wire position at degree `2n - 1 - (1 + skip + i)`.
+    /// the B-wire position at degree `2n - 1 - skip_gates - i`.
     fn generator_index_for_b(coefficient_index: usize) -> usize {
         assert!(
-            coefficient_index < Self::num_multiplications(),
-            "coefficient_index {} exceeds num_multiplications {}",
+            coefficient_index < Self::num_gates(),
+            "coefficient_index {} exceeds num_gates {}",
             coefficient_index,
-            Self::num_multiplications()
+            Self::num_gates()
         );
 
-        2 * R::n() - 2 - Self::skip_multiplications() - coefficient_index
+        2 * R::n() - 1 - Self::skip_gates() - coefficient_index
     }
 }
 

@@ -109,13 +109,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let p_eval_claim =
             pcd.proof().p.native.poly.eval(pcd.proof().challenges.u) == pcd.proof().p.native.v;
 
-        // Check P commitment corresponds to polynomial and blind.
+        // Check P commitment corresponds to polynomial.
         let p_commitment_claim = pcd
             .proof()
             .p
             .native
             .poly
-            .commit_to_affine(C::host_generators(self.params), pcd.proof().p.native.blind)
+            .commit_to_affine(C::host_generators(self.params))
             == pcd.proof().p.native.commitment;
 
         // Check registry_xy polynomial evaluation at the sampled w.
@@ -323,8 +323,12 @@ mod tests {
         // Create a valid trivial proof
         let mut proof = app.trivial_proof();
 
-        // Corrupt the P commitment by changing the blind
-        proof.p.native.blind = <Pasta as Cycle>::CircuitField::from(999u64);
+        // Corrupt the P commitment by altering the polynomial (mismatches commitment)
+        proof
+            .p
+            .native
+            .poly
+            .scale(<Pasta as Cycle>::CircuitField::from(2u64));
 
         let pcd = proof.carry::<()>(());
         let result = app.verify(&pcd, &mut rng).expect("verify should not error");

@@ -345,10 +345,7 @@ mod tests {
 
             dr.reset();
             assert_eq!(r.group_scale(dr, &p)?.value().take(), expected);
-            assert_eq!(
-                dr.num_multiplications(),
-                7 * (1 + (Uendo::BITS as usize / 2))
-            );
+            assert_eq!(dr.num_gates(), 7 * (1 + (Uendo::BITS as usize / 2)));
 
             Ok(())
         })?;

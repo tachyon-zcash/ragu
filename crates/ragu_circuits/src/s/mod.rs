@@ -3,7 +3,7 @@
 //! # Background
 //!
 //! Circuits are fully described by [wiring polynomials] that encode their
-//! linear constraints, and all linear constraints are determined by a sequence
+//! constraints, and all constraints are determined by a sequence
 //! of [`enforce_zero`] calls made during circuit synthesis. In each such call,
 //! a new univariate polynomial in $X$ (representing the constraint over the
 //! wires) is added to $s(X, Y)$ as a separate term weighted by $Y$ to keep
@@ -20,7 +20,7 @@
 //! )\right)
 //! $$
 //!
-//! where $q$ is the number of linear constraints (at most
+//! where $q$ is the number of constraints (at most
 //! [`num_coeffs()`](crate::polynomials::Rank::num_coeffs)), and
 //! $\mathbf{a}, \mathbf{b}, \mathbf{c}, \mathbf{d}$ are fixed coefficient
 //! matrices determined by the `enforce_zero` (and indirectly,
@@ -57,14 +57,14 @@
 //! ### Polynomial Encoding and Scope Jumps
 //!
 //! The [`floor_plan`] partitions the global constraint index space so that each
-//! segment owns a contiguous block of $Y$-powers (for linear constraints) and
-//! gate indices (for multiplication constraints). If segment $i$ has linear
-//! offset $\ell\_{i}$ and multiplication offset $m\_{i}$, then the $j$-th
-//! linear constraint emitted within that segment is placed at
+//! segment owns a contiguous block of $Y$-powers (for constraints) and
+//! gate indices (for gates). If segment $i$ has constraint
+//! offset $\ell\_{i}$ and gate offset $m\_{i}$, then the $j$-th
+//! constraint emitted within that segment is placed at
 //!
 //! $$Y^{\ell\_{i} + j}$$
 //!
-//! in $s(X, Y)$. Similarly, the $k$-th multiplication gate in segment $i$
+//! in $s(X, Y)$. Similarly, the $k$-th gate in segment $i$
 //! occupies absolute gate index $m\_{i} + k$.
 //!
 //! Because synthesis interleaves a segment's own constraints with nested
@@ -104,7 +104,7 @@ pub mod sy;
 ///
 /// # Public Input Enforcement
 ///
-/// Algebraically, all linear constraints relate linear combinations of wires to
+/// Algebraically, all constraints relate linear combinations of wires to
 /// elements in the public input vector. However, circuits are usually concerned
 /// with enforcing that combinations of wires equal zero, and hence
 /// [`enforce_zero`] is offered as the primary API even though it is technically

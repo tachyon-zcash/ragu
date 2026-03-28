@@ -28,7 +28,7 @@
 //! $r\_i(x)$ queries.
 
 use ff::Field;
-use ragu_arithmetic::{Cycle, FixedGenerators as _};
+use ragu_arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::{Rank, sparse},
     staging::StageExt,
@@ -50,9 +50,9 @@ use super::claims::{FoldKey, FuseProofSource, TrackedPoly};
 type NativeNumGroups = <native::RevdotParameters as fold_revdot::Parameters>::NumGroups;
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
-    pub(super) fn compute_ab<'dr, D, RNG: CryptoRng>(
+    pub(super) fn compute_ab<'dr, D>(
         &self,
-        rng: &mut RNG,
+        rng: &mut impl CryptoRng,
         a: FixedVec<TrackedPoly<'_, FoldKey, C::CircuitField, R>, NativeNumGroups>,
         b: FixedVec<sparse::Polynomial<C::CircuitField, R>, NativeNumGroups>,
         source: &FuseProofSource<'_, C, R>,
@@ -62,23 +62,24 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
-        let native = self.compute_native_ab(rng, a, b, source, mu_prime, nu_prime)?;
+        let native = self.compute_native_ab(a, b, source, mu_prime, nu_prime)?;
 
         let bridge = proof::Bridge::commit(
             self.params,
-            rng,
-            nested::stages::ab::Stage::<C::HostCurve, R>::rx(&nested::stages::ab::Witness {
-                a: native.a_commitment,
-                b: native.b_commitment,
-            })?,
+            nested::stages::ab::Stage::<C::HostCurve, R>::rx(
+                C::ScalarField::random(&mut *rng),
+                &nested::stages::ab::Witness {
+                    a: native.a_commitment,
+                    b: native.b_commitment,
+                },
+            )?,
         );
 
         Ok(proof::AB { native, bridge })
     }
 
-    fn compute_native_ab<'dr, D, RNG: CryptoRng>(
+    fn compute_native_ab<'dr, D>(
         &self,
-        rng: &mut RNG,
         a: FixedVec<TrackedPoly<'_, FoldKey, C::CircuitField, R>, NativeNumGroups>,
         b: FixedVec<sparse::Polynomial<C::CircuitField, R>, NativeNumGroups>,
         source: &FuseProofSource<'_, C, R>,
@@ -98,11 +99,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             decomp: a_decomp,
         } = fold_revdot::fold_outer::<_, _, native::RevdotParameters>(a, mu_prime_inv);
         let a_poly = a_poly.into_owned();
-        let a_blind = C::CircuitField::random(&mut *rng);
 
         let b_poly =
             fold_revdot::fold_outer::<_, _, native::RevdotParameters>(b, mu_prime_nu_prime);
-        let b_blind = C::CircuitField::random(&mut *rng);
         let host_gen = C::host_generators(self.params);
 
         // Compute a_commitment from decomposition: small MSM over known
@@ -121,34 +120,24 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 }
             }
 
-            let mut accumulated_blind = C::CircuitField::ZERO;
-            let mut msm: Vec<(C::CircuitField, C::HostCurve)> =
-                Vec::with_capacity(entries.len() + 1);
+            let mut msm: Vec<(C::CircuitField, C::HostCurve)> = Vec::with_capacity(entries.len());
             for (key, coeff) in entries {
-                let (commitment, blind) = source.get(key);
-                accumulated_blind += coeff * blind;
+                let commitment = source.get(key);
                 msm.push((coeff, commitment));
             }
-            // Each source commitment cm_i = <poly_i, G> + blind_i * H, so
-            // sum_i coeff_i * cm_i = <a_poly, G> + accumulated_blind * H.
-            // We want a fresh commitment <a_poly, G> + a_blind * H, so we
-            // correct the blinding factor by pushing (a_blind - accumulated_blind) * H.
-            msm.push((a_blind - accumulated_blind, *host_gen.h()));
 
             ragu_arithmetic::mul(msm.iter().map(|(c, _)| c), msm.iter().map(|(_, b)| b))
         };
 
         let [a_commitment, b_commitment] =
-            ragu_arithmetic::batch_to_affine([a_commitment_proj, b_poly.commit(host_gen, b_blind)]);
+            ragu_arithmetic::batch_to_affine([a_commitment_proj, b_poly.commit(host_gen)]);
 
         let c = a_poly.revdot(&b_poly);
 
         Ok(proof::NativeAB {
             a_poly,
-            a_blind,
             a_commitment,
             b_poly,
-            b_blind,
             b_commitment,
             c,
         })

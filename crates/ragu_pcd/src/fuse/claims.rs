@@ -153,24 +153,24 @@ pub(super) type FoldKey = (Side, RxComponent);
 
 /// The two child proofs being fused. Provides [`Atom`]-tagged rx values
 /// for claim building, and resolves [`FoldKey`] keys back to their
-/// `(commitment, blind)` pairs for the MSM in `_06_ab`.
+/// commitments for the MSM in `_06_ab`.
 pub(super) struct FuseProofSource<'rx, C: Cycle, R: Rank> {
     pub(super) left: &'rx Proof<C, R>,
     pub(super) right: &'rx Proof<C, R>,
 }
 
 impl<'rx, C: Cycle, R: Rank> FuseProofSource<'rx, C, R> {
-    /// Look up the `(commitment, blind)` pair for a [`FoldKey`] in the
-    /// corresponding child proof.
-    pub(super) fn get(&self, (side, component): FoldKey) -> (C::HostCurve, C::CircuitField) {
+    /// Look up the commitment for a [`FoldKey`] in the corresponding child
+    /// proof.
+    pub(super) fn get(&self, (side, component): FoldKey) -> C::HostCurve {
         let proof = match side {
             Side::Left => self.left,
             Side::Right => self.right,
         };
         match component {
-            RxComponent::AbA => (proof.ab.native.a_commitment, proof.ab.native.a_blind),
-            RxComponent::AbB => (proof.ab.native.b_commitment, proof.ab.native.b_blind),
-            RxComponent::Rx(idx) => (proof[idx].commitment, proof[idx].blind),
+            RxComponent::AbA => proof.ab.native.a_commitment,
+            RxComponent::AbB => proof.ab.native.b_commitment,
+            RxComponent::Rx(idx) => proof[idx].commitment,
         }
     }
 }

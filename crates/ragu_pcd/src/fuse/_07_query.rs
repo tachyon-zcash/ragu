@@ -41,11 +41,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         let bridge = proof::Bridge::commit(
             self.params,
-            rng,
-            nested::stages::query::Stage::<C::HostCurve, R>::rx(&nested::stages::query::Witness {
-                native_query: native_query.rx_triple.commitment,
-                registry_xy: native_query.registry_xy_commitment,
-            })?,
+            nested::stages::query::Stage::<C::HostCurve, R>::rx(
+                C::ScalarField::random(&mut *rng),
+                &nested::stages::query::Witness {
+                    native_query: native_query.rx_triple.commitment,
+                    registry_xy: native_query.registry_xy_commitment,
+                },
+            )?,
         );
 
         Ok((
@@ -77,7 +79,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let xz = x * *z.value().take();
 
         let registry_xy_poly = self.native_registry.xy(x, y);
-        let registry_xy_blind = C::CircuitField::random(&mut *rng);
 
         let query_witness = native::stages::query::Witness {
             // TODO: these can all be evaluated at the same time; in fact,
@@ -104,24 +105,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             ),
         };
 
-        let rx = native::stages::query::Stage::<C, R, HEADER_SIZE>::rx(&query_witness)?;
-        let blind = C::CircuitField::random(&mut *rng);
+        let rx = native::stages::query::Stage::<C, R, HEADER_SIZE>::rx(
+            C::CircuitField::random(&mut *rng),
+            &query_witness,
+        )?;
         let host_gen = C::host_generators(self.params);
         let [registry_xy_commitment, commitment] = ragu_arithmetic::batch_to_affine([
-            registry_xy_poly.commit(host_gen, registry_xy_blind),
-            rx.commit(host_gen, blind),
+            registry_xy_poly.commit(host_gen),
+            rx.commit(host_gen),
         ]);
 
         Ok((
             proof::NativeQuery {
                 registry_xy_poly,
-                registry_xy_blind,
                 registry_xy_commitment,
-                rx_triple: proof::RxTriple {
-                    rx,
-                    blind,
-                    commitment,
-                },
+                rx_triple: proof::RxTriple { rx, commitment },
             },
             query_witness,
         ))

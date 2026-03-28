@@ -1,4 +1,3 @@
-use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{CircuitExt, polynomials::Rank};
 use ragu_core::Result;
@@ -73,8 +72,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let hashes_1_rx = self.native_registry.assemble(
             &hashes_1_trace,
             native::InternalCircuitIndex::Hashes1Circuit.circuit_index(),
+            &mut *rng,
         )?;
-        let hashes_1_blind = C::CircuitField::random(&mut *rng);
 
         let (hashes_2_trace, unified) = native::circuits::hashes_2::Circuit::<
             C,
@@ -90,8 +89,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let hashes_2_rx = self.native_registry.assemble(
             &hashes_2_trace,
             native::InternalCircuitIndex::Hashes2Circuit.circuit_index(),
+            &mut *rng,
         )?;
-        let hashes_2_blind = C::CircuitField::random(&mut *rng);
 
         let (inner_collapse_trace, unified) = native::circuits::inner_collapse::Circuit::<
             C,
@@ -109,8 +108,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let inner_collapse_rx = self.native_registry.assemble(
             &inner_collapse_trace,
             native::InternalCircuitIndex::InnerCollapseCircuit.circuit_index(),
+            &mut *rng,
         )?;
-        let inner_collapse_blind = C::CircuitField::random(&mut *rng);
 
         let (outer_collapse_trace, unified) = native::circuits::outer_collapse::Circuit::<
             C,
@@ -127,8 +126,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let outer_collapse_rx = self.native_registry.assemble(
             &outer_collapse_trace,
             native::InternalCircuitIndex::OuterCollapseCircuit.circuit_index(),
+            &mut *rng,
         )?;
-        let outer_collapse_blind = C::CircuitField::random(&mut *rng);
 
         let (compute_v_trace, unified) =
             native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new()
@@ -142,8 +141,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let compute_v_rx = self.native_registry.assemble(
             &compute_v_trace,
             native::InternalCircuitIndex::ComputeVCircuit.circuit_index(),
+            &mut *rng,
         )?;
-        let compute_v_blind = C::CircuitField::random(&mut *rng);
 
         // Cross-circuit coverage validation (prover-time development assertion,
         // not a verifier check): all internal recursion circuits together must
@@ -159,37 +158,32 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             outer_collapse_commitment,
             compute_v_commitment,
         ] = ragu_arithmetic::batch_to_affine([
-            hashes_1_rx.commit(host_gen, hashes_1_blind),
-            hashes_2_rx.commit(host_gen, hashes_2_blind),
-            inner_collapse_rx.commit(host_gen, inner_collapse_blind),
-            outer_collapse_rx.commit(host_gen, outer_collapse_blind),
-            compute_v_rx.commit(host_gen, compute_v_blind),
+            hashes_1_rx.commit(host_gen),
+            hashes_2_rx.commit(host_gen),
+            inner_collapse_rx.commit(host_gen),
+            outer_collapse_rx.commit(host_gen),
+            compute_v_rx.commit(host_gen),
         ]);
 
         Ok(proof::InternalCircuits {
             hashes_1: proof::RxTriple {
                 rx: hashes_1_rx,
-                blind: hashes_1_blind,
                 commitment: hashes_1_commitment,
             },
             hashes_2: proof::RxTriple {
                 rx: hashes_2_rx,
-                blind: hashes_2_blind,
                 commitment: hashes_2_commitment,
             },
             inner_collapse: proof::RxTriple {
                 rx: inner_collapse_rx,
-                blind: inner_collapse_blind,
                 commitment: inner_collapse_commitment,
             },
             outer_collapse: proof::RxTriple {
                 rx: outer_collapse_rx,
-                blind: outer_collapse_blind,
                 commitment: outer_collapse_commitment,
             },
             compute_v: proof::RxTriple {
                 rx: compute_v_rx,
-                blind: compute_v_blind,
                 commitment: compute_v_commitment,
             },
         })

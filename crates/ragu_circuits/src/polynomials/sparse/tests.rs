@@ -394,24 +394,20 @@ proptest! {
     }
 
     #[test]
-    fn commit_matches_dense(poly in arb_any_poly(), blind in arb_fe()) {
+    fn commit_matches_dense(poly in arb_any_poly()) {
         use ragu_arithmetic::{Cycle, FixedGenerators};
         use ragu_pasta::Pasta;
 
         let pasta = Pasta::baked();
         let generators = Pasta::host_generators(pasta);
 
-        let sparse_commit = poly.commit_to_affine(generators, blind);
+        let sparse_commit = poly.commit_to_affine(generators);
 
         // Compute commitment from the dense representation directly.
         let dense = poly.to_dense();
         let dense_commit: <Pasta as Cycle>::HostCurve = ragu_arithmetic::mul(
-            dense.iter().chain(core::iter::once(&blind)),
-            generators
-                .g()
-                .iter()
-                .take(dense.len())
-                .chain(core::iter::once(generators.h())),
+            dense.iter(),
+            generators.g().iter().take(dense.len()),
         )
         .into();
 

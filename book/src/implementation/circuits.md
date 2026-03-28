@@ -22,7 +22,7 @@ $\v{c} || \v{\hat{b}} || \v{a} || \v{0^n}$, which is an example of a
 
 ### Virtual Wires
 
-The left-hand side of all linear constraints are linear combinations of
+The left-hand side of all constraints are linear combinations of
 elements within $\v{a}, \v{b}, \v{c}$. Any linear combination of wires can
 itself be considered a _virtual_ wire (as opposed to an allocated wire)
 which imposes no cost on the protocol.
@@ -31,5 +31,5 @@ which imposes no cost on the protocol.
 
 Circuits always have the specially-labeled `ONE` wire $\v{c}_0 = 1$. This
 is enforced with the
-[linear constraint](../protocol/core/arithmetization.md#linear-constraints)
+[constraint](../protocol/core/arithmetization.md#constraints)
 $\v{c}_0 = \v{k}_0 = 1$.

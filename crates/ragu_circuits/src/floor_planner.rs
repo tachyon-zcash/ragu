@@ -44,8 +44,8 @@ use super::metrics::SegmentRecord;
 
 /// A segment's placement in a constraint system.
 ///
-/// Each segment in a circuit occupies a contiguous range of multiplication
-/// gates and linear constraints. The primary segment boundaries are [`Routine`]
+/// Each segment in a circuit occupies a contiguous range of gates and
+/// constraints. The primary segment boundaries are [`Routine`]
 /// calls; index 0 is the root segment (not backed by any [`Routine`]).
 /// The floor plan assigns absolute positions (offsets) and sizes to each
 /// segment in DFS order.
@@ -63,14 +63,14 @@ use super::metrics::SegmentRecord;
 ///
 /// [`Routine`]: ragu_core::routines::Routine
 pub struct ConstraintSegment {
-    /// Gate index where this segment's multiplication constraints begin.
-    pub(crate) multiplication_start: usize,
-    /// Y-power index where this segment's linear constraints begin.
-    pub(crate) linear_start: usize,
-    /// Number of multiplication constraints in this segment.
-    pub(crate) num_multiplication_constraints: usize,
-    /// Number of linear constraints in this segment.
-    pub(crate) num_linear_constraints: usize,
+    /// Gate index where this segment's gates begin.
+    pub(crate) gate_start: usize,
+    /// Y-power index where this segment's constraints begin.
+    pub(crate) constraint_start: usize,
+    /// Number of gates in this segment.
+    pub(crate) num_gates: usize,
+    /// Number of constraints in this segment.
+    pub(crate) num_constraints: usize,
 }
 
 /// Computes a floor plan from per-segment constraint records.
@@ -79,23 +79,23 @@ pub struct ConstraintSegment {
 /// sum, preserving synthesis (DFS) order.
 pub fn floor_plan(segment_records: &[SegmentRecord]) -> Vec<ConstraintSegment> {
     let mut result = Vec::with_capacity(segment_records.len());
-    let mut multiplication_start = 0usize;
-    let mut linear_start = 0usize;
+    let mut gate_start = 0usize;
+    let mut constraint_start = 0usize;
     for record in segment_records {
         result.push(ConstraintSegment {
-            multiplication_start,
-            linear_start,
-            num_multiplication_constraints: record.num_multiplication_constraints(),
-            num_linear_constraints: record.num_linear_constraints(),
+            gate_start,
+            constraint_start,
+            num_gates: record.num_gates(),
+            num_constraints: record.num_constraints(),
         });
-        multiplication_start += record.num_multiplication_constraints();
-        linear_start += record.num_linear_constraints();
+        gate_start += record.num_gates();
+        constraint_start += record.num_constraints();
     }
 
     assert!(
         result
             .first()
-            .is_none_or(|r| r.multiplication_start == 0 && r.linear_start == 0),
+            .is_none_or(|r| r.gate_start == 0 && r.constraint_start == 0),
         "root segment must be placed at the polynomial origin"
     );
 

@@ -47,7 +47,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         D: Driver<'dr, F = C::CircuitField>,
     {
         let native = self.compute_native_f(
-            rng,
             w,
             y,
             z,
@@ -63,18 +62,19 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         let bridge = proof::Bridge::commit(
             self.params,
-            rng,
-            nested::stages::f::Stage::<C::HostCurve, R>::rx(&nested::stages::f::Witness {
-                native_f: native.commitment,
-            })?,
+            nested::stages::f::Stage::<C::HostCurve, R>::rx(
+                C::ScalarField::random(&mut *rng),
+                &nested::stages::f::Witness {
+                    native_f: native.commitment,
+                },
+            )?,
         );
 
         Ok(proof::F { native, bridge })
     }
 
-    fn compute_native_f<'dr, D, RNG: CryptoRng>(
+    fn compute_native_f<'dr, D>(
         &self,
-        rng: &mut RNG,
         w: &Element<'dr, D>,
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
@@ -177,13 +177,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         coeffs.reverse();
 
         let poly = sparse::Polynomial::from_coeffs(coeffs);
-        let blind = C::CircuitField::random(&mut *rng);
-        let commitment = poly.commit_to_affine(C::host_generators(self.params), blind);
+        let commitment = poly.commit_to_affine(C::host_generators(self.params));
 
-        Ok(proof::NativeF {
-            poly,
-            blind,
-            commitment,
-        })
+        Ok(proof::NativeF { poly, commitment })
     }
 }

@@ -40,10 +40,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         let bridge = proof::Bridge::commit(
             self.params,
-            rng,
-            nested::stages::eval::Stage::<C::HostCurve, R>::rx(&nested::stages::eval::Witness {
-                native_eval: native_eval.commitment,
-            })?,
+            nested::stages::eval::Stage::<C::HostCurve, R>::rx(
+                C::ScalarField::random(&mut *rng),
+                &nested::stages::eval::Witness {
+                    native_eval: native_eval.commitment,
+                },
+            )?,
         );
 
         Ok((
@@ -90,17 +92,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 registry_xy: query.native.registry_xy_poly.eval(u),
             },
         };
-        let rx = native::stages::eval::Stage::<C, R, HEADER_SIZE>::rx(&eval_witness)?;
-        let blind = C::CircuitField::random(&mut *rng);
-        let commitment = rx.commit_to_affine(C::host_generators(self.params), blind);
+        let rx = native::stages::eval::Stage::<C, R, HEADER_SIZE>::rx(
+            C::CircuitField::random(&mut *rng),
+            &eval_witness,
+        )?;
+        let commitment = rx.commit_to_affine(C::host_generators(self.params));
 
-        Ok((
-            proof::RxTriple {
-                rx,
-                blind,
-                commitment,
-            },
-            eval_witness,
-        ))
+        Ok((proof::RxTriple { rx, commitment }, eval_witness))
     }
 }

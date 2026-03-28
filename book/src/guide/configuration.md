@@ -74,13 +74,13 @@ ApplicationBuilder::<Pasta, R<13>, ...>::new()
 `R<N>` sets the polynomial size to 2^N coefficients, which determines two
 constraint limits:
 
-- **Multiplication constraints**: up to 2^(N−2)
-- **Linear constraints**: up to 2^N
+- **Gates**: up to 2^(N−2)
+- **Constraints**: up to 2^N
 
 Currently only `R<7>` (testing) and `R<13>` (production) are implemented.
 See the `Rank` trait documentation for how to add new values.
 
-| Rank | Multiplication Limit | Linear Limit | Use Case |
+| Rank | Gate Limit | Constraint Limit | Use Case |
 |------|---------------------|-------------|----------|
 | `R<7>` | 32 | 128 | Unit tests |
 | `R<13>` | 2,048 | 8,192 | Production |
@@ -92,13 +92,13 @@ See the `Rank` trait documentation for how to add new values.
 - Suitable for small test circuits
 
 **For production**: Use `R<13>`
-- 2,048 multiplication constraints, 8,192 linear constraints
+- 2,048 gates, 8,192 constraints
 - Standard capacity for most applications
 
 ### What Happens if You Exceed Rank?
 
 ```rust
-Error: exceeded the maximum number of multiplication constraints (2048)
+Error: exceeded the maximum number of gates (2048)
 ```
 
 **Solutions**:
@@ -209,7 +209,7 @@ let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
 
 **Why these parameters?**
 - `Pasta`: Standard curve cycle for PCD
-- `R<13>`: 2,048 multiplication constraints — enough for most steps
+- `R<13>`: 2,048 gates — enough for most steps
 - `4`: Four field elements per header - balance between flexibility and
   performance
 
@@ -239,12 +239,12 @@ let sim = Simulator::simulate(witness, |dr, w| {
     Ok(())
 })?;
 
-println!("Multiplications: {}", sim.num_multiplications());
+println!("Gates: {}", sim.num_gates());
 println!("Allocations: {}", sim.num_allocations());
 ```
 
-For `R<7>`, the multiplication limit is 32.
-For `R<13>`, the multiplication limit is 2,048.
+For `R<7>`, the gate limit is 32.
+For `R<13>`, the gate limit is 2,048.
 If your circuit exceeds these, add a larger rank (see the `Rank` trait
 documentation).
 
@@ -286,14 +286,14 @@ impl Header<F> for MyHeader {
 ### ✗ Rank Too Small
 
 ```rust
-ApplicationBuilder::<Pasta, R<7>, 4>::new()  // Only 32 multiplication constraints
+ApplicationBuilder::<Pasta, R<7>, 4>::new()  // Only 32 gates
 
 // Step uses 2 Poseidon hashes = ~280 constraints
 // Plus proof verification overhead = ~1500 total
 // Exceeds 32!
 ```
 
-**Error**: `MultiplicationBoundExceeded(32)` at runtime.
+**Error**: `GateBoundExceeded(32)` at runtime.
 
 **Fix**: Switch to `R<13>` or add a larger rank.
 

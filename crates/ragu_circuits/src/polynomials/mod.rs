@@ -24,14 +24,14 @@ pub trait Rank:
     /// Returns the $2^\text{RANK}$ number of coefficients in the polynomials
     /// for this rank. The corresponding degree is thus `Self::num_coeffs() - 1`.
     ///
-    /// This also serves as the upper bound on the number of linear constraints
-    /// a circuit may contain.
+    /// This also serves as the upper bound on the number of constraints a
+    /// circuit may contain.
     fn num_coeffs() -> usize {
         1 << Self::RANK
     }
 
     /// Returns the vector length $n$ which represents the maximum number of
-    /// multiplication constraints allowed for circuits in this rank.
+    /// gates allowed for circuits in this rank.
     fn n() -> usize {
         1 << (Self::RANK - 2)
     }
@@ -110,13 +110,13 @@ pub struct R<const RANK: u32>;
 /// The standard production rank for Ragu circuits.
 ///
 /// Provides $2^{13} = 8192$ polynomial coefficients and supports up to
-/// $2^{11} = 2048$ multiplication constraints.
+/// $2^{11} = 2048$ gates.
 pub type ProductionRank = R<13>;
 
 /// A small rank for fast unit tests.
 ///
 /// Provides $2^7 = 128$ polynomial coefficients and supports up to
-/// $2^5 = 32$ multiplication constraints.
+/// $2^5 = 32$ gates.
 pub type TestRank = R<7>;
 
 /// Macro to implement [`Rank`] for various `R<N>`.

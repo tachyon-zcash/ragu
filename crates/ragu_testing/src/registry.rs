@@ -103,9 +103,17 @@ pub struct TestRegistry<'p, F: PrimeField, R: Rank> {
 
 impl<F: PrimeField, R: Rank> TestRegistry<'_, F, R> {
     /// Assembles a [`Trace`] into a polynomial for the entry identified
-    /// by `handle`, using the registry's key and floor plan.
-    pub fn assemble(&self, trace: &Trace<F>, handle: Handle) -> Result<sparse::Polynomial<F, R>> {
-        self.inner.assemble(trace, handle.resolve())
+    /// by `handle`, using the registry's key and floor plan. `alpha` is
+    /// written to `d[0]` of the resulting polynomial; pass a random field
+    /// element in production or `F::ZERO` in tests.
+    pub fn assemble(
+        &self,
+        trace: &Trace<F>,
+        handle: Handle,
+        alpha: F,
+    ) -> Result<sparse::Polynomial<F, R>> {
+        self.inner
+            .assemble_with_alpha(trace, handle.resolve(), alpha)
     }
 
     /// Returns $s(X, y)$ for the entry at `handle`.

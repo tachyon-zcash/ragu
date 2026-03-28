@@ -163,7 +163,7 @@ pub trait DriverTypes {
 /// Drivers are used to write code that is intended to be synthesized into
 /// arithmetic circuits over a field determined by the [`Driver::F`] associated
 /// type. Arithmetic circuits are represented in Ragu (equivalently) as a set of
-/// wires for multiplication gates and a set of linear constraints placed on
+/// wires for gates and a set of constraints placed on
 /// their assigned field values to encode addition gates.
 ///
 /// ## Usage
@@ -231,8 +231,8 @@ pub trait Driver<'dr>: DriverTypes<ImplWire = Self::Wire, ImplField = Self::F> +
     /// unconditionally.
     ///
     /// The default implementation calls [`mul`](Driver::mul), returns the $b$
-    /// wire, and sets $a$ and $c$ to zero to satisfy the multiplication
-    /// constraint—wasting those two wires. Drivers may override this to avoid
+    /// wire, and sets $a$ and $c$ to zero to satisfy the gate
+    /// equation—wasting those two wires. Drivers may override this to avoid
     /// the overhead, e.g. by pairing consecutive allocations into a single
     /// gate.
     ///

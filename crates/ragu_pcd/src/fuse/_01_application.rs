@@ -5,7 +5,6 @@
 //! proof. The inputs are all consumed, and the `left` and `right proofs are
 //! returned to the caller along with the output data from the step circuit.
 
-use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{CircuitExt, polynomials::Rank};
 use ragu_core::Result;
@@ -36,11 +35,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let (trace, aux) = Adapter::<C, S, R, HEADER_SIZE>::new(step)
             .trace((left_data, right_data, witness))?
             .into_parts();
-        let rx = self
-            .native_registry
-            .assemble(&trace, S::INDEX.circuit_index(self.num_application_steps)?)?;
-        let blind = C::CircuitField::random(&mut *rng);
-        let commitment = rx.commit_to_affine(C::host_generators(self.params), blind);
+        let rx = self.native_registry.assemble(
+            &trace,
+            S::INDEX.circuit_index(self.num_application_steps)?,
+            &mut *rng,
+        )?;
+        let commitment = rx.commit_to_affine(C::host_generators(self.params));
 
         let ((left_header, right_header), output_data, step_aux) = aux;
 
@@ -51,11 +51,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 circuit_id: S::INDEX.circuit_index(self.num_application_steps)?,
                 left_header: left_header.into_inner(),
                 right_header: right_header.into_inner(),
-                rx_triple: proof::RxTriple {
-                    rx,
-                    blind,
-                    commitment,
-                },
+                rx_triple: proof::RxTriple { rx, commitment },
             },
             output_data,
             step_aux,

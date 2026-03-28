@@ -1,10 +1,10 @@
 //! Bonding polynomials for multi-stage circuits.
 //!
 //! This module produces a [`BondingObject`] from any [`MultiStageCircuit`]
-//! whose witness uses only linear constraints: [`Driver::alloc`],
-//! [`Driver::add`], and [`Driver::enforce_zero`] with normal wires (no
-//! [`Driver::mul`], [`Driver::constant`], or `ONE`-wire references). Because
-//! the circuit has no multiplication gates, it needs no final trace of its own
+//! whose witness uses no gates: [`Driver::alloc`],
+//! [`Driver::add`], and [`Driver::enforce_zero`] with normal wires are
+//! permitted (no [`Driver::mul`], [`Driver::constant`], or `ONE`-wire
+//! references). Because the circuit has no gates, it needs no final trace
 //! and exists purely to enforce wiring between stages.
 //!
 //! The `ONE`-wire contribution is stripped so that the constant term in $Y$ is
@@ -45,7 +45,7 @@ where
 {
     /// Builds a [`BondingObject`] from this [`MultiStage`] circuit.
     ///
-    /// The witness must use only linear constraints: [`Driver::alloc`],
+    /// The witness must use no gates: [`Driver::alloc`],
     /// [`Driver::add`], and [`Driver::enforce_zero`] are permitted (without
     /// referencing the [`Driver::ONE`] wire), but [`Driver::mul`] and
     /// [`Driver::constant`] are rejected.
@@ -107,7 +107,7 @@ impl<F: Field> LinearExpression<BondingWire, F> for RejectOne {
 /// [`add`](Driver::add), and [`enforce_zero`](Driver::enforce_zero) with
 /// normal wires. Calling [`mul`](Driver::mul)/[`gate`](DriverTypes::gate),
 /// [`constant`](Driver::constant), or referencing the [`ONE`](Driver::ONE)
-/// wire in any linear constraint records a violation.
+/// wire in any constraint records a violation.
 ///
 /// All methods succeed; violations are accumulated in the `error` field and
 /// checked by the caller after the witness completes.
