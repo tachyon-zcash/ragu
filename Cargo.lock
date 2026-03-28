@@ -742,6 +742,7 @@ dependencies = [
  "pasta_curves",
  "proptest",
  "ragu_macros",
+ "ragu_testing",
  "rand 0.10.0",
 ]
 
@@ -774,6 +775,7 @@ dependencies = [
  "ragu_arithmetic",
  "ragu_macros",
  "ragu_pasta",
+ "ragu_testing",
  "rand 0.10.0",
  "thiserror",
 ]
@@ -839,6 +841,7 @@ dependencies = [
  "ragu_core",
  "ragu_macros",
  "ragu_pasta",
+ "ragu_testing",
  "rand 0.10.0",
  "thiserror",
 ]
@@ -848,6 +851,7 @@ name = "ragu_testing"
 version = "0.0.0"
 dependencies = [
  "ff",
+ "proptest",
  "ragu_arithmetic",
  "ragu_circuits",
  "ragu_core",
