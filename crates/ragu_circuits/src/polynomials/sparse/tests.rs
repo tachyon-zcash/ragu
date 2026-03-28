@@ -750,3 +750,50 @@ fn ring_convolution() {
 
     assert_eq!(a.revdot(&b), cx);
 }
+
+/// Verifies that `from_coeffs` followed by `iter_coeffs` yields the same
+/// order as the input coefficients.
+#[test]
+fn from_coeffs_iter_matches_input() {
+    let coeffs: Vec<Fp> = (0..R::num_coeffs()).map(|i| Fp::from(i as u64)).collect();
+    let poly = Polynomial::<Fp, R>::from_coeffs(coeffs.clone());
+    let recovered: Vec<Fp> = poly.iter_coeffs().collect();
+    assert_eq!(recovered, coeffs);
+}
+
+/// Verifies `from_coeffs` with leading zeros does not allocate unnecessary storage.
+#[test]
+fn from_coeffs_leading_zeros_trimmed() {
+    // A polynomial with a single non-zero at degree 5 (within [0, n)).
+    let mut coeffs = alloc::vec![Fp::ZERO; R::num_coeffs()];
+    coeffs[5] = Fp::from(42u64);
+    let poly = Polynomial::<Fp, R>::from_coeffs(coeffs.clone());
+
+    // Verify correctness.
+    let recovered: Vec<Fp> = poly.iter_coeffs().collect();
+    assert_eq!(recovered, coeffs);
+
+    // Verify the lo segment is trimmed (not storing 5 leading zeros).
+    assert_eq!(poly.blocks[0].0, 5);
+    assert_eq!(poly.blocks[0].1.len(), 1);
+}
+
+/// Verifies `from_coeffs` decomposes across all three regions correctly.
+#[test]
+fn from_coeffs_spans_all_regions() {
+    let n = R::n();
+    // Non-zero at degree 0 (lo), degree 2n (mid), degree 4n-1 (hi).
+    let mut coeffs = alloc::vec![Fp::ZERO; R::num_coeffs()];
+    coeffs[0] = Fp::from(1u64);
+    coeffs[2 * n] = Fp::from(2u64);
+    coeffs[4 * n - 1] = Fp::from(3u64);
+    let poly = Polynomial::<Fp, R>::from_coeffs(coeffs.clone());
+
+    let recovered: Vec<Fp> = poly.iter_coeffs().collect();
+    assert_eq!(recovered, coeffs);
+
+    // Each region should have exactly 1 element.
+    assert_eq!(poly.blocks[0].1.len(), 1);
+    assert_eq!(poly.blocks[1].1.len(), 1);
+    assert_eq!(poly.blocks[2].1.len(), 1);
+}

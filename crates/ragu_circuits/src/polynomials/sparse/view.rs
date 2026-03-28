@@ -2,7 +2,7 @@
 //!
 //! A [`View`] provides four dense wire buffers (`a`, `b`, `c`, `d`) that the
 //! caller fills in at gate indices. Calling [`View::build`] maps each buffer
-//! to the appropriate degree positions and produces a sparse [`Polynomial`].
+//! to the appropriate degree positions and produces a [`Polynomial`].
 //!
 //! # Perspectives
 //!
@@ -34,9 +34,7 @@
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use ff::Field;
-
-use super::{Polynomial, Rank, extend_runs};
+use super::{Polynomial, Rank};
 
 mod private {
     pub trait Sealed {}
@@ -46,13 +44,11 @@ mod private {
 
 /// Marker trait for the perspective of a [`View`].
 pub trait Perspective: private::Sealed {
-    /// Maps the four wire buffers (a, b, c, d) to degree-ordered blocks.
+    /// Maps the four wire buffers to three `(offset, data)` blocks
+    /// corresponding to the lo, mid, and hi degree regions.
     ///
-    /// Returns up to 4 blocks sorted by start degree. Adjacent blocks can
-    /// occur when wire regions share a boundary (for example, when both `b`
-    /// and `a` are full); this is permitted by the sparse polynomial
-    /// representation. The `n` parameter is `R::n()` (the maximum number of
-    /// multiplication gates).
+    /// The `n` parameter is `R::n()` (the maximum number of multiplication
+    /// gates).
     ///
     /// # Preconditions
     ///
@@ -64,7 +60,7 @@ pub trait Perspective: private::Sealed {
         c: Vec<T>,
         d: Vec<T>,
         n: usize,
-    ) -> Vec<(usize, Vec<T>)>;
+    ) -> [(usize, Vec<T>); 3];
 }
 
 /// Standard perspective: `a[i]` maps to degree $2n + i$, `b[i]` to
@@ -83,7 +79,7 @@ impl Perspective for Forward {
         c: Vec<T>,
         mut d: Vec<T>,
         n: usize,
-    ) -> Vec<(usize, Vec<T>)> {
+    ) -> [(usize, Vec<T>); 3] {
         // c[i] -> degree i             (range [0, c.len()))
         // b[i] -> degree 2*n-1-i       (reversed, range [2*n-b.len(), 2*n))
         // a[i] -> degree 2*n+i         (range [2*n, 2*n+a.len()))
@@ -91,20 +87,14 @@ impl Perspective for Forward {
         b.reverse();
         d.reverse();
 
-        let mut blocks = Vec::new();
-        if !c.is_empty() {
-            blocks.push((0, c));
-        }
-        if !b.is_empty() {
-            blocks.push((2 * n - b.len(), b));
-        }
-        if !a.is_empty() {
-            blocks.push((2 * n, a));
-        }
-        if !d.is_empty() {
-            blocks.push((4 * n - d.len(), d));
-        }
-        blocks
+        // b_rev and a are adjacent at the 2n boundary, forming the mid segment
+        let mid_offset = 2 * n - b.len();
+        let mut mid = b;
+        mid.extend(a);
+
+        let hi_offset = 4 * n - d.len();
+
+        [(0, c), (mid_offset, mid), (hi_offset, d)]
     }
 }
 
@@ -115,7 +105,7 @@ impl Perspective for Backward {
         c: Vec<T>,
         d: Vec<T>,
         n: usize,
-    ) -> Vec<(usize, Vec<T>)> {
+    ) -> [(usize, Vec<T>); 3] {
         // Backward swaps a<->b and c<->d relative to Forward:
         //   a[i] -> degree 2*n-1-i   (b's forward mapping)
         //   b[i] -> degree 2*n+i     (a's forward mapping)
@@ -177,19 +167,15 @@ impl<T, R: Rank> View<T, R, Backward> {
     }
 }
 
-impl<F: Field, R: Rank, P: Perspective> View<F, R, P> {
+impl<T, R: Rank, P: Perspective> View<T, R, P> {
     /// Consumes this view, mapping wire buffers to degree positions and
     /// producing a [`Polynomial`].
-    ///
-    /// Raw blocks are compressed via `extend_runs` (stripping leading/trailing
-    /// zeros and splitting interior zero gaps exceeding `GAP_TOLERANCE`) before
-    /// final validation.
     ///
     /// # Panics
     ///
     /// Panics if any wire buffer exceeds `R::n()` entries (one entry per
     /// multiplication gate).
-    pub fn build(self) -> Polynomial<F, R> {
+    pub fn build(self) -> Polynomial<T, R> {
         let n = R::n();
         assert!(
             self.a.len() <= n,
@@ -212,11 +198,6 @@ impl<F: Field, R: Rank, P: Perspective> View<F, R, P> {
             self.d.len()
         );
 
-        let raw_blocks = P::map_to_blocks(self.a, self.b, self.c, self.d, n);
-        let mut blocks = Vec::with_capacity(raw_blocks.len());
-        for (start, data) in raw_blocks {
-            extend_runs(&mut blocks, start, data);
-        }
-        Polynomial::from_blocks(blocks)
+        Polynomial::from_blocks(P::map_to_blocks(self.a, self.b, self.c, self.d, n))
     }
 }
