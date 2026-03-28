@@ -52,7 +52,7 @@ Bootle16 CS is practically identical to the more commonly known R1CS, as they
 are linear-time interreducible, thus equivalent for all practical purposes.
 See [appendix](../../appendix/cs.md) for a more detailed comparison.
 
-## Multiplication Constraints
+## Multiplication Constraints {#multiplication-constraints}
 
 The multiplication constraints over the witness can be rewritten as $\v{a} \circ
 \v{b} = \v{c}$. It is possible to _probabilistically_ reduce this to a dot
@@ -145,7 +145,7 @@ ${\v{c} \circ \v{d} = \v{0^n}}$ each hold with high probability. (The latter
 claim is useless and redundant for our purposes, since $\v{d} = \v{0^n}$ for
 witness vectors anyway.)
 
-## Linear Constraints
+## Linear Constraints {#linear-constraints}
 
 Given a choice of witness $\v{a}, \v{b}, \v{c}$, if for some random choice of
 $y \in \F$ the equality
