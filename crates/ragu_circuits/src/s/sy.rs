@@ -123,7 +123,7 @@ enum WireIndex {
 ///
 /// # The `ONE` Wire
 ///
-/// The constant [`Driver::ONE`] is the $b$ wire from gate 0. Since `const`
+/// The constant [`Driver::ONE`] is the $b$ wire of the SYSTEM gate. Since `const`
 /// items cannot hold references, `ONE` uses `table: None`. This is safe because
 /// the ONE wire is allocated (not virtual) and needs no reference counting.
 ///

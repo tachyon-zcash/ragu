@@ -166,7 +166,7 @@ pub trait Stage<F: Field, R: Rank> {
         Self: 'dr;
 
     /// Returns the number of gates to skip before starting this
-    /// stage. The count includes gate 0 (the SYSTEM gate), so the base
+    /// stage. The count includes the SYSTEM gate (gate 0), so the base
     /// case `()` returns 1. **This should not be overridden by
     /// implementations except by the base implementation for `()`**.
     fn skip_gates() -> usize {

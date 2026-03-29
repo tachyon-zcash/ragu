@@ -81,10 +81,10 @@ $$
 s_\text{global}(X, Y) = \sum_{i=0}^{4n - 1} (XY)^i - \left((XY)^{2n} + 1\right)\left((XY)^{2n-1} + 1\right)
 $$
 
-which enforces that every wire _except_ the special-purpose wires in the 0th
-gate are zero. The 0th gate wires are unconstrained by the mask, meaning the
-trace is not forced to zero at those positions. This leaves $d_0$ free for use
-as an arbitrary blinding factor.
+which enforces that every wire _except_ the four wires of the SYSTEM gate
+(gate 0) are zero. The SYSTEM gate wires are unconstrained by the mask:
+$b_0$ carries the constant $1$ (the `ONE` wire), $d_0$ carries an arbitrary
+blinding factor $\alpha$, and $a_0$, $c_0$ are zero but left unconstrained.
 
 Given $g = \text{skip\_gates}$ (the starting active gate index) and
 $m = \text{num\_gates}$ (the number of active gates in the stage), we can define

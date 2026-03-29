@@ -17,14 +17,14 @@ pub struct StageMask<R: Rank> {
 impl<R: Rank> StageMask<R> {
     /// Creates a new staging wiring polynomial with the given
     /// `skip_gates` and `num_gates` values. `skip_gates` includes
-    /// gate 0 (the SYSTEM gate) and must be at least 1. Gate wires are
+    /// the SYSTEM gate (gate 0) and must be at least 1. Gate wires are
     /// enforced to zero for gates `1..skip_gates` and
-    /// `(skip_gates + num_gates)..n`. Gate 0 is not constrained
+    /// `(skip_gates + num_gates)..n`. The SYSTEM gate is not constrained
     /// here because `d[0]` carries the alpha blinding factor and
     /// `b[0]` may or may not be set to 1; `a[0]` and `c[0]` are
     /// zero in all cases.
     pub fn new(skip_gates: usize, num_gates: usize) -> Result<Self> {
-        assert!(skip_gates > 0, "skip_gates must include gate 0");
+        assert!(skip_gates > 0, "skip_gates must include the SYSTEM gate");
         if skip_gates + num_gates > R::n() {
             return Err(ragu_core::Error::GateBoundExceeded { limit: R::n() });
         }
@@ -37,11 +37,11 @@ impl<R: Rank> StageMask<R> {
 
     /// Creates the final staging wiring polynomial with the given
     /// `skip_gates` and maximum possible gates. `skip_gates` must
-    /// be at least 1 (it includes gate 0, the SYSTEM gate). The number
+    /// be at least 1 (it includes the SYSTEM gate). The number
     /// of gates will be `R::n() - skip_gates`, which is the maximum
     /// before bounds are reached.
     pub fn new_final(skip_gates: usize) -> Result<Self> {
-        assert!(skip_gates > 0, "skip_gates must include gate 0");
+        assert!(skip_gates > 0, "skip_gates must include the SYSTEM gate");
         if skip_gates > R::n() {
             return Err(ragu_core::Error::GateBoundExceeded { limit: R::n() });
         }
@@ -58,7 +58,7 @@ impl<R: Rank> StageMask<R> {
     /// Projects the bivariate mask polynomial onto a univariate sparse
     /// polynomial by evaluating one variable at `p`. Used by both
     /// `sx` ($S(x, Y)$) and `sy` ($S(X, y)$). Unconstrained wires
-    /// (gate 0 and active-stage gates) are zeroed out.
+    /// (the SYSTEM gate and active-stage gates) are zeroed out.
     fn project<F: Field>(&self, p: F) -> sparse::Polynomial<F, R> {
         let n = R::n();
         let mut view = sparse::View::<F, R, _>::wiring();
@@ -85,7 +85,7 @@ impl<R: Rank> StageMask<R> {
             cur *= p;
         }
 
-        // The wires in the 0th gate are unconstrained.
+        // The wires in the SYSTEM gate are unconstrained.
         view.a[0] = F::ZERO;
         view.b[0] = F::ZERO;
         view.c[0] = F::ZERO;
@@ -118,7 +118,7 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
         let xy_inv = xy.invert().expect("xy is not zero");
 
         /// Full wiring polynomial $S(xy)$ over all $4n$ wire slots,
-        /// minus gate 0's four unconstrained wires.
+        /// minus the SYSTEM gate's four unconstrained wires.
         fn global<F: Field>(xy: F, xy_2n: F, xy_inv: F, n: usize) -> F {
             geosum(xy, n << 2) - (xy_2n + F::ONE) * (xy_2n * xy_inv + F::ONE)
         }
@@ -156,7 +156,7 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageMask<R> {
     fn constraint_counts(&self) -> (usize, usize) {
         let num_gates = R::n();
         // 4n-2 enforce_zero (all degrees from 4n-2 to 1, with dummies for
-        // active gates and gate 0's inaccessible wires) + 1 enforce_one.
+        // active gates and the SYSTEM gate's inaccessible wires) + 1 enforce_one.
         let num_constraints = 4 * R::n() - 1;
         (num_gates, num_constraints)
     }
@@ -208,7 +208,7 @@ mod tests {
         fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
             &self,
             dr: &mut D,
-            gate0: GateWires<D::Wire>,
+            system_gate: GateWires<D::Wire>,
             _: DriverValue<D, Self::Witness<'source>>,
         ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>>
         where
@@ -216,10 +216,10 @@ mod tests {
         {
             assert!(self.skip_gates + self.num_gates <= R::n());
 
-            // Collect all n gates. Gate 0 comes from the orchestration
-            // function; gates 1..n are allocated here.
+            // Collect all n gates. The SYSTEM gate comes from the
+            // orchestration function; gates 1..n are allocated here.
             let mut gates = alloc::vec::Vec::with_capacity(R::n());
-            gates.push(gate0);
+            gates.push(system_gate);
             for _ in 1..R::n() {
                 gates.push(GateWires::from(dr.gate(|| unimplemented!())?));
             }
@@ -229,8 +229,8 @@ mod tests {
 
             // Issue 4n-2 enforce_zero in decreasing degree order so that the
             // driver assigns y^k to the constraint at degree k. Dummy (empty
-            // LC) constraints fill gaps for active gates. Gate 0 wires are
-            // now directly accessible via gates[0].
+            // LC) constraints fill gaps for active gates. SYSTEM gate wires
+            // are directly accessible via gates[0].
             //
             // c[j] at degree 4n-1-j (j=1..n-1), b[j] at degree 2n+j (j=n-1..0),
             // a[j] at degree 2n-1-j (j=0..n-1), d[j] at degree j (j=n-1..1).
@@ -288,7 +288,7 @@ mod tests {
         /// coefficient of this stage.
         ///
         /// The $b$-wire at gate $j$ occupies degree $2n - 1 - j$ in the
-        /// witness polynomial. Gate 0 is included in `skip_gates`, so the
+        /// witness polynomial. The SYSTEM gate is included in `skip_gates`, so the
         /// first active gate is at index `skip_gates` and the formula
         /// becomes $2n - 1 - \text{skip\_gates} - \text{coefficient\_index}$.
         fn generator_for_b_coefficient<C: CurveAffine>(
@@ -463,7 +463,7 @@ mod tests {
 
     #[test]
     fn test_stage_mask_reserved_zero() {
-        // When reserved = 0, all gates except gate 0 are active.
+        // When reserved = 0, all gates except the SYSTEM gate are active.
         let stage = StageMask::<R>::new(1, R::n() - 1).expect("valid stage mask");
 
         let x = Fp::random(&mut rand::rng());
@@ -485,7 +485,7 @@ mod tests {
                 let _ = StageMask::<R>::new(skip, num).expect("valid stage mask");
 
                 // The Circuit impl always issues 4n-2 enforce_zero
-                // (with dummies for active gates and gate 0).
+                // (with dummies for active gates and the SYSTEM gate).
                 let num_constraints_from_gates = 4 * R::n() - 2;
                 assert!(
                     num_constraints_from_gates < R::num_coeffs(),
