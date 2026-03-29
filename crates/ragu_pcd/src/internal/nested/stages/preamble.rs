@@ -5,6 +5,8 @@
 use ragu_arithmetic::{CurveAffine, Cycle};
 use ragu_circuits::polynomials::Rank;
 
+use crate::internal::{endoscalar::PointsStage, nested::NUM_ENDOSCALING_POINTS};
+
 use crate::Proof;
 use ragu_core::{
     Result,
@@ -176,7 +178,7 @@ pub struct Stage<C: CurveAffine, R> {
 }
 
 impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R> {
-    type Parent = ();
+    type Parent = PointsStage<C, NUM_ENDOSCALING_POINTS>;
     type Witness<'source> = &'source Witness<C>;
     type OutputKind = Kind![C::Base; Output<'_, _, C>];
 
