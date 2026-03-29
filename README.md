@@ -49,7 +49,6 @@ Ragu's approach to `std` and `no_std` follows four principles:
 [`alloc`]: https://doc.rust-lang.org/alloc/
 
 <!-- END SYNC -->
-
 ## License
 
 This library is distributed under the terms of both the MIT license and the Apache License (Version 2.0). See [LICENSE-APACHE](./LICENSE-APACHE), [LICENSE-MIT](./LICENSE-MIT) and [COPYRIGHT](./COPYRIGHT).

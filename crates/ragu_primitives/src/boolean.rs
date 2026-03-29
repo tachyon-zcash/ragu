@@ -429,14 +429,10 @@ mod proptests {
     use super::*;
     use proptest::prelude::*;
     use ragu_core::maybe::Maybe;
+    use ragu_testing::strategies;
 
     type F = ragu_pasta::Fp;
     type Simulator = crate::Simulator<F>;
-
-    fn arb_fe() -> impl Strategy<Value = F> {
-        (any::<u64>(), any::<u64>())
-            .prop_map(|(a, b)| F::from(a) + F::from(b) * F::MULTIPLICATIVE_GENERATOR)
-    }
 
     proptest! {
         #[test]
@@ -448,6 +444,7 @@ mod proptests {
                 actual = Some(result.value().take());
                 Ok(())
             }).map_err(|e| TestCaseError::fail(format!("{e:?}")))?;
+
             prop_assert_eq!(actual, Some(a_val));
         }
 
@@ -461,14 +458,15 @@ mod proptests {
                 actual = Some(result.value().take());
                 Ok(())
             }).map_err(|e| TestCaseError::fail(format!("{e:?}")))?;
+
             prop_assert_eq!(actual, Some(false));
         }
 
         #[test]
         fn conditional_select_correctness(
             cond in proptest::bool::ANY,
-            a_fe in arb_fe(),
-            b_fe in arb_fe(),
+            a_fe in strategies::prime_field_element::<F>(),
+            b_fe in strategies::prime_field_element::<F>(),
         ) {
             let expected = if cond { b_fe } else { a_fe };
             let mut actual = None;
@@ -481,6 +479,7 @@ mod proptests {
                 actual = Some(*result.value().take());
                 Ok(())
             }).map_err(|e| TestCaseError::fail(format!("{e:?}")))?;
+
             prop_assert_eq!(actual, Some(expected));
         }
     }
