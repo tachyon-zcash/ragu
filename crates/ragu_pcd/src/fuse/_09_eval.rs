@@ -76,14 +76,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     {
         let u = *u.value().take();
 
-        let eval_witness = native::stages::eval::Witness {
-            left: native::stages::eval::ChildEvaluationsWitness::from_proof(left, u),
-            right: native::stages::eval::ChildEvaluationsWitness::from_proof(right, u),
-            current: native::stages::eval::CurrentStepWitness {
-                // TODO: the registry evaluations here could _theoretically_ be more
-                // efficient if they're computed simultaneously with assistance
-                // from the registry itself, rather than individually evaluated for
-                // each of these restrictions.
+        // Evaluate left/right child witnesses concurrently with the
+        // current-step polynomial evaluations at u.
+        let (left_right, current) = maybe_rayon::join(
+            || {
+                maybe_rayon::join(
+                    || native::stages::eval::ChildEvaluationsWitness::from_proof(left, u),
+                    || native::stages::eval::ChildEvaluationsWitness::from_proof(right, u),
+                )
+            },
+            || native::stages::eval::CurrentStepWitness {
                 registry_wx0: s_prime.native.registry_wx0_poly.eval(u),
                 registry_wx1: s_prime.native.registry_wx1_poly.eval(u),
                 registry_wy: inner_error.native.registry_wy_poly.eval(u),
@@ -91,6 +93,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 b_poly: ab.native.b_poly.eval(u),
                 registry_xy: query.native.registry_xy_poly.eval(u),
             },
+        );
+        let (left_witness, right_witness) = left_right;
+        let eval_witness = native::stages::eval::Witness {
+            left: left_witness,
+            right: right_witness,
+            current,
         };
         let rx = native::stages::eval::Stage::<C, R, HEADER_SIZE>::rx(
             C::CircuitField::random(&mut *rng),

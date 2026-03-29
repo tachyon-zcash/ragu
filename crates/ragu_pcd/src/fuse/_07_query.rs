@@ -80,29 +80,48 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         let registry_xy_poly = self.native_registry.xy(x, y);
 
+        // Evaluate the registry polynomial at all internal-circuit points and
+        // at w concurrently with the left/right child witness construction.
+        let ((fixed_registry, registry_wxy), (left_witness, right_witness)) = maybe_rayon::join(
+            || {
+                (
+                    // TODO: these evaluations could be batched by the registry more efficiently in theory.
+                    native::InternalCircuitValues::from_fn(|id| {
+                        registry_xy_poly.eval(id.circuit_index().omega_j())
+                    }),
+                    registry_xy_poly.eval(w),
+                )
+            },
+            || {
+                maybe_rayon::join(
+                    || {
+                        native::stages::query::ChildEvaluationsWitness::from_proof(
+                            left,
+                            w,
+                            x,
+                            xz,
+                            &registry_xy_poly,
+                            &inner_error.native.registry_wy_poly,
+                        )
+                    },
+                    || {
+                        native::stages::query::ChildEvaluationsWitness::from_proof(
+                            right,
+                            w,
+                            x,
+                            xz,
+                            &registry_xy_poly,
+                            &inner_error.native.registry_wy_poly,
+                        )
+                    },
+                )
+            },
+        );
         let query_witness = native::stages::query::Witness {
-            // TODO: these can all be evaluated at the same time; in fact,
-            // that's what registry.xy is supposed to allow.
-            fixed_registry: native::InternalCircuitValues::from_fn(|id| {
-                registry_xy_poly.eval(id.circuit_index().omega_j())
-            }),
-            registry_wxy: registry_xy_poly.eval(w),
-            left: native::stages::query::ChildEvaluationsWitness::from_proof(
-                left,
-                w,
-                x,
-                xz,
-                &registry_xy_poly,
-                &inner_error.native.registry_wy_poly,
-            ),
-            right: native::stages::query::ChildEvaluationsWitness::from_proof(
-                right,
-                w,
-                x,
-                xz,
-                &registry_xy_poly,
-                &inner_error.native.registry_wy_poly,
-            ),
+            fixed_registry,
+            registry_wxy,
+            left: left_witness,
+            right: right_witness,
         };
 
         let rx = native::stages::query::Stage::<C, R, HEADER_SIZE>::rx(
