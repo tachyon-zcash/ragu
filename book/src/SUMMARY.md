@@ -50,6 +50,7 @@
 - [Part III: Implementation]()
   - [Architecture Overview](implementation/arch.md) <!-- todo -->
   - [Circuits](implementation/circuits.md) <!-- todo -->
+  - [Routines](implementation/routines.md) <!-- todo -->
   - [Polynomial Management](implementation/polynomials.md) <!-- todo -->
   - [PCD Step and Proofs](implementation/proofs.md) <!-- todo -->
   - [Staging](implementation/staging.md) <!-- todo -->
