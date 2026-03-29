@@ -196,6 +196,17 @@ pub enum RxIndex {
 /// The number of rx polynomial components.
 const NUM_RX_COMPONENTS: usize = 11;
 
+/// Total number of polynomial queries in the multi-quotient polynomial $f(X)$.
+///
+/// Both `compute_f` (prover, `fuse/_08_f.rs`) and `poly_queries` (verifier
+/// circuit, `compute_v.rs`) must enumerate exactly this many queries in
+/// identical order. The breakdown is:
+///
+/// - 20 static queries (p evals, registry transitions, a/b polynomials)
+/// - `2 * NUM_RX_COMPONENTS` rx evaluations (one per component per child)
+/// - `NUM_INTERNAL_CIRCUITS` internal circuit registry evaluations
+pub(crate) const NUM_POLY_QUERIES: usize = 20 + 2 * NUM_RX_COMPONENTS + NUM_INTERNAL_CIRCUITS;
+
 impl RxIndex {
     /// All variants in canonical order.
     ///
