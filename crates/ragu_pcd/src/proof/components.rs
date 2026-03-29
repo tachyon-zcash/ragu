@@ -140,16 +140,8 @@ pub(crate) struct NativeP<C: Cycle, R: Rank> {
 }
 
 #[derive(Clone)]
-pub(crate) struct NestedP<C: Cycle, R: Rank> {
-    pub(crate) step_rxs: Vec<sparse::Polynomial<C::ScalarField, R>>,
-    pub(crate) endoscalar_rx: sparse::Polynomial<C::ScalarField, R>,
-    pub(crate) points_rx: sparse::Polynomial<C::ScalarField, R>,
-}
-
-#[derive(Clone)]
 pub(crate) struct P<C: Cycle, R: Rank> {
     pub(crate) native: NativeP<C, R>,
-    pub(crate) nested: NestedP<C, R>,
 }
 
 #[derive(Clone)]
@@ -217,6 +209,15 @@ impl<C: Cycle> Challenges<C> {
     }
 }
 
+/// Rx polynomials for all internal circuits in a single proof step.
+///
+/// The first five fields are native-field circuits: each is an [`RxTriple`]
+/// pairing the rx polynomial (over `C::CircuitField`) with its host-curve
+/// commitment.
+///
+/// The remaining fields are nested-field circuits: bare rx polynomials over
+/// `C::ScalarField` for the endoscaling commitment computation (no host-curve
+/// commitment; verified via the nested registry).
 #[derive(Clone)]
 pub(crate) struct InternalCircuits<C: Cycle, R: Rank> {
     pub(crate) hashes_1: RxTriple<C, R>,
@@ -224,4 +225,7 @@ pub(crate) struct InternalCircuits<C: Cycle, R: Rank> {
     pub(crate) inner_collapse: RxTriple<C, R>,
     pub(crate) outer_collapse: RxTriple<C, R>,
     pub(crate) compute_v: RxTriple<C, R>,
+    pub(crate) step_rxs: Vec<sparse::Polynomial<C::ScalarField, R>>,
+    pub(crate) endoscalar_rx: sparse::Polynomial<C::ScalarField, R>,
+    pub(crate) points_rx: sparse::Polynomial<C::ScalarField, R>,
 }

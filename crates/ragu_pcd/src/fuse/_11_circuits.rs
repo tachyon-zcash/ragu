@@ -1,11 +1,33 @@
-use ragu_arithmetic::Cycle;
-use ragu_circuits::{CircuitExt, polynomials::Rank};
+//! Construct internal circuit traces.
+//!
+//! This creates the [`proof::InternalCircuits`] component, containing rx
+//! polynomials for all native recursion circuits (hashes, collapse, compute-v)
+//! and the nested endoscaling circuits whose witnesses are passed in from
+//! [`super::_10_p`].
+
+use alloc::vec::Vec;
+use ff::Field;
+use ragu_arithmetic::{Cycle, Uendo};
+use ragu_circuits::{
+    CircuitExt,
+    polynomials::Rank,
+    staging::{MultiStage, StageExt},
+};
 use ragu_core::Result;
+use ragu_primitives::vec::Len;
 use rand::CryptoRng;
 
 use crate::{
     Application,
-    internal::{native, native::total_circuit_counts},
+    internal::{
+        endoscalar::{
+            EndoscalarStage, EndoscalingStep, EndoscalingStepWitness, NumStepsLen, PointsStage,
+            PointsWitness,
+        },
+        native,
+        native::total_circuit_counts,
+        nested::NUM_ENDOSCALING_POINTS,
+    },
     proof,
 };
 
@@ -28,6 +50,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         query_witness: &native::stages::query::Witness<C>,
         eval_witness: &native::stages::eval::Witness<C::CircuitField>,
         challenges: &proof::Challenges<C>,
+        beta_endo: Uendo,
+        points_witness: &PointsWitness<C::HostCurve, NUM_ENDOSCALING_POINTS>,
     ) -> Result<proof::InternalCircuits<C, R>> {
         let unified = native::unified::Instance {
             bridge_preamble_commitment: preamble.bridge.commitment,
@@ -165,6 +189,37 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             compute_v_rx.commit(host_gen),
         ]);
 
+        // Nested circuit traces for the endoscaling commitment computation.
+        let endoscalar_rx = <EndoscalarStage as StageExt<C::ScalarField, R>>::rx(
+            C::ScalarField::random(&mut *rng),
+            beta_endo,
+        )?;
+        let points_rx = <PointsStage<C::HostCurve, NUM_ENDOSCALING_POINTS> as StageExt<
+            C::ScalarField,
+            R,
+        >>::rx(C::ScalarField::random(&mut *rng), points_witness)?;
+
+        let num_steps = NumStepsLen::<NUM_ENDOSCALING_POINTS>::len();
+        let mut step_rxs = Vec::with_capacity(num_steps);
+        for step in 0..num_steps {
+            let step_circuit =
+                EndoscalingStep::<C::HostCurve, R, NUM_ENDOSCALING_POINTS>::new(step);
+            let staged = MultiStage::new(step_circuit);
+            let step_trace = staged
+                .trace(EndoscalingStepWitness {
+                    endoscalar: beta_endo,
+                    points: points_witness,
+                })?
+                .into_output();
+            let step_rx = self.nested_registry.assemble(
+                &step_trace,
+                crate::internal::nested::InternalCircuitIndex::EndoscalingStep(step as u32)
+                    .circuit_index(),
+                &mut *rng,
+            )?;
+            step_rxs.push(step_rx);
+        }
+
         Ok(proof::InternalCircuits {
             hashes_1: proof::RxTriple {
                 rx: hashes_1_rx,
@@ -186,6 +241,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 rx: compute_v_rx,
                 commitment: compute_v_commitment,
             },
+            step_rxs,
+            endoscalar_rx,
+            points_rx,
         })
     }
 }

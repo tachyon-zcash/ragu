@@ -101,9 +101,9 @@ impl<C: Cycle, R: Rank> core::ops::Index<nested::RxIndex> for Proof<C, R> {
     fn index(&self, idx: nested::RxIndex) -> &sparse::Polynomial<C::ScalarField, R> {
         use nested::RxIndex::*;
         match idx {
-            EndoscalingStep(step) => &self.p.nested.step_rxs[step as usize],
-            EndoscalarStage => &self.p.nested.endoscalar_rx,
-            PointsStage => &self.p.nested.points_rx,
+            EndoscalingStep(step) => &self.circuits.step_rxs[step as usize],
+            EndoscalarStage => &self.circuits.endoscalar_rx,
+            PointsStage => &self.circuits.points_rx,
             BridgePreamble => &self.preamble.bridge.rx,
             BridgeSPrime => &self.s_prime.bridge.rx,
             BridgeInnerError => &self.inner_error.bridge.rx,
@@ -265,14 +265,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                     commitment: host_commitment,
                     v,
                 },
-                nested: NestedP {
-                    step_rxs: vec![
-                        ones_nested.clone();
-                        NumStepsLen::<NUM_ENDOSCALING_POINTS>::len()
-                    ],
-                    endoscalar_rx: ones_nested.clone(),
-                    points_rx: ones_nested,
-                },
             },
             challenges,
             circuits: InternalCircuits {
@@ -281,6 +273,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 inner_collapse: trivial_rx_triple(),
                 outer_collapse: trivial_rx_triple(),
                 compute_v: trivial_rx_triple(),
+                step_rxs: vec![ones_nested.clone(); NumStepsLen::<NUM_ENDOSCALING_POINTS>::len()],
+                endoscalar_rx: ones_nested.clone(),
+                points_rx: ones_nested,
             },
         }
     }

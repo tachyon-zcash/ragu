@@ -149,8 +149,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         eval_commitment.write(&mut dr, &mut transcript)?;
         let pre_beta = transcript.challenge(&mut dr)?;
 
-        let p = self.compute_p(
-            rng,
+        let (p, beta_endo, points_witness) = self.compute_p(
             &pre_beta,
             &u,
             &left,
@@ -183,6 +182,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             &query_witness,
             &eval_witness,
             &challenges,
+            beta_endo,
+            &points_witness,
         )?;
 
         let proof = Proof {
