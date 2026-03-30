@@ -1,7 +1,7 @@
 //! Copying circuit for the nested field.
 //!
 //! This bonding circuit enforces that each child proof's commitments witnessed
-//! in the preamble [`ChildOutput`] match the native commitments inside that
+//! in the preamble [`ChildOutput`](super::super::stages::preamble::ChildOutput) match the native commitments inside that
 //! child's own bridge stages. It uses `enforce_equal` to bind each preamble
 //! child field to the corresponding bridge stage field.
 //!

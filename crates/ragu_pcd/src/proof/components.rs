@@ -224,7 +224,7 @@ pub(crate) struct ChildBridges<C: Cycle, R: Rank> {
 }
 
 impl<C: Cycle, R: Rank> ChildBridges<C, R> {
-    /// Returns the rx polynomial for the given child bridge [`RxIndex`] variant.
+    /// Returns the rx polynomial for the given child bridge [`RxIndex`](crate::internal::nested::RxIndex) variant.
     pub(crate) fn rx(
         &self,
         idx: crate::internal::nested::RxIndex,
