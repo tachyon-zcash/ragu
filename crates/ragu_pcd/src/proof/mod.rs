@@ -149,7 +149,9 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, HEADER_SIZE> {
-    pub(crate) fn trivial_pcd(&self) -> Pcd<C, R, ()> {
+    /// Returns a trivial PCD with no header data, useful as a placeholder
+    /// input for steps that only use one of their two inputs.
+    pub fn trivial_pcd(&self) -> Pcd<C, R, ()> {
         self.trivial_proof().carry(())
     }
 
