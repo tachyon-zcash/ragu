@@ -11,7 +11,7 @@ This working PCD application shows how to:
 - Combine leaf proofs into internal nodes
 - Verify the entire proof tree
 
-The example illustrates the core functions of PCD: **data that carries its
+The example illustrates the core idea of PCD: **data that carries its
 own proof of correctness**.
 
 ## Prerequisites
@@ -20,15 +20,17 @@ Add Ragu to your `Cargo.toml`:
 
 ```toml
 [dependencies]
+ragu_arithmetic = "0.1"
 ragu_circuits = "0.1"
 ragu_core = "0.1"
 ragu_pasta = { version = "0.1", features = ["baked"] }
 ragu_pcd = "0.1"
 ragu_primitives = "0.1"
-ragu_arithmetic = "0.1"
 ff = "0.13"
 rand = "0.8"
 ```
+
+The `baked` feature on `ragu_pasta` includes precomputed curve parameters.
 
 ## Configuration at a Glance
 
@@ -37,7 +39,7 @@ This guide uses `ApplicationBuilder::<Pasta, R<13>, 4>`:
 | Parameter | Value | Meaning |
 |-----------|-------|---------|
 | **Cycle** | `Pasta` | Elliptic curve cycle for proof recursion (standard choice) |
-| **Rank** | `R<13>` | Circuit capacity: 2^13 = 8,192 constraints |
+| **Rank** | `R<13>` | Up to 2,048 multiplication gates (8,192 polynomial coefficients) |
 | **Header Size** | `4` | Each proof carries 4 field elements of data |
 
 These defaults work for most applications. See
@@ -47,8 +49,8 @@ These defaults work for most applications. See
 
 This application implements two core operations:
 
-1. **CreateLeaf**: Takes a value, hashes it, and produces a leaf proof
-2. **CombineNodes**: Takes two leaf proofs and combines them into an internal
+1. **WitnessLeaf**: Takes a value, hashes it, and produces a leaf proof
+2. **Hash2**: Takes two leaf proofs and combines them into an internal
    node proof
 
 The result is a proof tree where each node proves it was correctly computed
@@ -64,14 +66,13 @@ use ff::Field;
 use ragu_core::{Result, drivers::{Driver, DriverValue}, gadgets::{Bound, Kind}, maybe::Maybe};
 use ragu_pcd::header::{Header, Suffix};
 use ragu_primitives::Element;
-use ragu_primitives::poseidon::Sponge;
 
 // LeafNode: carries a hash of raw data
 struct LeafNode;
 
 impl<F: Field> Header<F> for LeafNode {
     const SUFFIX: Suffix = Suffix::new(0);  // Unique ID
-    type Data = F;                  // Field element
+    type Data = F;                           // Field element
     type Output = Kind![F; Element<'_, _>];  // Circuit representation
 
     fn encode<'dr, D: Driver<'dr, F = F>>(
@@ -101,11 +102,11 @@ impl<F: Field> Header<F> for InternalNode {
 
 **Key Points:**
 - `SUFFIX`: Unique identifier for each header type
-- `Data`: The Rust type for this header's data (field elements)
+- `Data`: The Rust type for this header's data (a field element)
 - `Output`: The circuit representation (Element gadget)
 - `encode`: How to convert Data into circuit form
 
-## Step 2: Implement CreateLeaf Step
+## Step 2: Implement WitnessLeaf Step
 
 This step creates leaf proofs from raw values:
 
@@ -114,15 +115,15 @@ use ragu_arithmetic::Cycle;
 use ragu_pcd::step::{Encoded, Index, Step};
 use ragu_primitives::poseidon::Sponge;
 
-struct CreateLeaf<'params, C: Cycle> {
+struct WitnessLeaf<'params, C: Cycle> {
     poseidon_params: &'params C::CircuitPoseidon,
 }
 
-impl<'params, C: Cycle> Step<C> for CreateLeaf<'params, C> {
+impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
     const INDEX: Index = Index::new(0);  // Step ID
 
     type Witness<'source> = C::CircuitField;  // Input: field element
-    type Aux<'source> = ();                   // Output: hash result
+    type Aux<'source> = ();                   // No auxiliary output
     type Left = ();                           // No left input
     type Right = ();                          // No right input
     type Output = LeafNode;                   // Produces LeafNode
@@ -153,10 +154,10 @@ impl<'params, C: Cycle> Step<C> for CreateLeaf<'params, C> {
         sponge.absorb(dr, &leaf)?;
         let leaf = sponge.squeeze(dr)?;
 
-        // 3. Extract the hash value to return
-        let leaf_value = leaf.value().map(|v| *v);
+        // 3. Extract the hash value for the output header
+        let leaf_data = leaf.value().map(|v| *v);
 
-        // 4. Encode as a proof
+        // 4. Encode as output proof
         let leaf_encoded = Encoded::from_gadget(leaf);
 
         // 5. Return (left, right, output) proofs + output data + aux
@@ -166,7 +167,7 @@ impl<'params, C: Cycle> Step<C> for CreateLeaf<'params, C> {
                 Encoded::from_gadget(()),  // No right
                 leaf_encoded,              // Our output
             ),
-            leaf_value,  // Hash result
+            leaf_data,  // Hash result
             D::unit(),
         ))
     }
@@ -174,29 +175,29 @@ impl<'params, C: Cycle> Step<C> for CreateLeaf<'params, C> {
 ```
 
 **What's happening:**
-1. Convert witness to circuit element (creates constraint)
+1. Allocate witness value in the circuit (one wire allocation)
 2. Hash using Poseidon (288 constraints)
-3. Extract hash value to return to caller
+3. Extract hash value for the output header data
 4. Package as encoded proof
-5. Return proof tuple + auxiliary output
+5. Return proof tuple + header data + auxiliary output
 
-## Step 3: Implement CombineNodes Step
+## Step 3: Implement Hash2 Step
 
 This step combines two leaf proofs:
 
 ```rust
-struct CombineNodes<'params, C: Cycle> {
+struct Hash2<'params, C: Cycle> {
     poseidon_params: &'params C::CircuitPoseidon,
 }
 
-impl<'params, C: Cycle> Step<C> for CombineNodes<'params, C> {
+impl<C: Cycle> Step<C> for Hash2<'_, C> {
     const INDEX: Index = Index::new(1);  // Different step ID
 
-    type Witness<'source> = ();  // No extra witness
-    type Aux<'source> = ();      // Return combined hash
-    type Left = LeafNode;        // Takes LeafNode
-    type Right = LeafNode;       // Takes LeafNode
-    type Output = InternalNode;  // Produces InternalNode
+    type Witness<'source> = ();           // No extra witness
+    type Aux<'source> = ();               // No auxiliary output
+    type Left = LeafNode;                 // Takes LeafNode
+    type Right = LeafNode;                // Takes LeafNode
+    type Output = InternalNode;           // Produces InternalNode
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
@@ -227,17 +228,17 @@ impl<'params, C: Cycle> Step<C> for CombineNodes<'params, C> {
         let output = sponge.squeeze(dr)?;
 
         // 3. Extract and encode result
-        let output_value = output.value().map(|v| *v);
+        let output_data = output.value().map(|v| *v);
         let output = Encoded::from_gadget(output);
 
-        // 4. Return verified proofs + output data + aux
-        Ok(((left, right, output), output_value, D::unit()))
+        // 4. Return encoded proofs + output data + aux
+        Ok(((left, right, output), output_data, D::unit()))
     }
 }
 ```
 
-**What `Encoded::new(dr, left)?` does:** Converts the header data into a
-circuit gadget by allocating field elements. This makes the input proof's
+**What `Encoded::new(dr, data)?` does:** Converts the header data into a
+circuit gadget by calling `Header::encode`. This makes the input proof's
 header data available for use in the circuit logic (e.g., hashing the two
 headers together).
 
@@ -258,10 +259,10 @@ fn main() -> Result<()> {
 
     // 2. Build application with our steps
     let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
-        .register(CreateLeaf {
+        .register(WitnessLeaf {
             poseidon_params: Pasta::circuit_poseidon(pasta),
         })?
-        .register(CombineNodes {
+        .register(Hash2 {
             poseidon_params: Pasta::circuit_poseidon(pasta),
         })?
         .finalize(pasta)?;
@@ -278,35 +279,32 @@ fn main() -> Result<()> {
 The application can now be used to create and verify proofs:
 
 ```rust
-// Create first leaf using seed
-let leaf1 = app.seed(
+// Create first leaf
+let (leaf1, _) = app.seed(
     &mut rng,
-    CreateLeaf { poseidon_params: Pasta::circuit_poseidon(pasta) },
+    WitnessLeaf { poseidon_params: Pasta::circuit_poseidon(pasta) },
     Fp::from(100u64),  // Hash the value 100
 )?;
-let leaf1 = leaf1.0.carry(leaf1.1);
 assert!(app.verify(&leaf1, &mut rng)?);
 println!("Leaf 1 verified (value: 100)");
 
 // Create second leaf
-let leaf2 = app.seed(
+let (leaf2, _) = app.seed(
     &mut rng,
-    CreateLeaf { poseidon_params: Pasta::circuit_poseidon(pasta) },
+    WitnessLeaf { poseidon_params: Pasta::circuit_poseidon(pasta) },
     Fp::from(200u64),  // Hash the value 200
 )?;
-let leaf2 = leaf2.0.carry(leaf2.1);
 assert!(app.verify(&leaf2, &mut rng)?);
 println!("Leaf 2 verified (value: 200)");
 
-// Combine leaves into internal node using fuse
-let node1 = app.fuse(
+// Combine leaves into internal node
+let (node1, _) = app.fuse(
     &mut rng,
-    CombineNodes { poseidon_params: Pasta::circuit_poseidon(pasta) },
+    Hash2 { poseidon_params: Pasta::circuit_poseidon(pasta) },
     (),  // No extra witness
     leaf1,
     leaf2,
 )?;
-let node1 = node1.0.carry::<InternalNode>(node1.1);
 assert!(app.verify(&node1, &mut rng)?);
 println!("Internal node verified!");
 
@@ -319,23 +317,22 @@ println!("   (100)    (200)");
 
 ## Understanding the Flow
 
-The proof creation and verification process follows these steps:
+The three core operations work as follows:
 
-1. **seed()/fuse()** calls the Step's `witness()` function
-2. The circuit logic executes (hashing, combining, etc.)
-3. A SNARK proof is generated for that computation
-4. The proof bundles:
-   - The computation result (header data)
-   - Cryptographic proof of correctness
-   - References to input proofs (if any)
+**seed()** calls the Step's `witness()` function with trivial inputs,
+executes the circuit logic, and generates a SNARK proof. The result is
+a `Pcd` bundling the computation result (header data) with a
+cryptographic proof of correctness.
 
-5. **verify()** checks:
-   - The SNARK proof is valid
-   - Input proofs are valid (recursively)
-   - Header data matches claimed computation
+**fuse()** takes two existing `Pcd` values and combines them through a
+Step, producing a new `Pcd` with proof of the combined computation.
 
-This is **proof-carrying data**: each node carries a proof that it was
-correctly computed from its children, all the way down to the leaves.
+**verify()** checks that the SNARK proof is valid, all accumulated
+claims from prior steps are sound, and header data matches the claimed
+computation.
+
+Each node carries a proof of correct computation from its children,
+all the way down to the leaves.
 
 ## Related Topics
 
@@ -359,4 +356,4 @@ This example covered the foundational concepts of PCD in Ragu:
 - Application configuration and building
 - Proof creation and verification workflows
 
-These concepts form the base upon which all Ragu PCD applications are built.
+These are the building blocks of all Ragu PCD applications.
