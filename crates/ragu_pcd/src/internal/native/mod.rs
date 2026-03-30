@@ -4,6 +4,7 @@ use ragu_arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::Rank,
     registry::{CircuitIndex, RegistryBuilder},
+    staging::StageExt,
 };
 use ragu_core::Result;
 use ragu_primitives::vec::ConstLen;
@@ -16,8 +17,8 @@ use crate::step;
 pub struct RevdotParameters;
 
 impl Parameters for RevdotParameters {
-    type N = ConstLen<19>;
-    type M = ConstLen<7>;
+    type NumGroups = ConstLen<19>;
+    type GroupSize = ConstLen<7>;
 }
 
 pub mod stages;
@@ -31,18 +32,18 @@ pub enum InternalCircuitIndex {
     // Native circuits
     Hashes1Circuit,
     Hashes2Circuit,
-    PartialCollapseCircuit,
-    FullCollapseCircuit,
+    InnerCollapseCircuit,
+    OuterCollapseCircuit,
     ComputeVCircuit,
     // Native stages
     PreambleStage,
-    ErrorMStage,
-    ErrorNStage,
+    InnerErrorStage,
+    OuterErrorStage,
     QueryStage,
     EvalStage,
     // Final stage masks
-    ErrorMFinalStaged,
-    ErrorNFinalStaged,
+    InnerErrorFinalStaged,
+    OuterErrorFinalStaged,
     EvalFinalStaged,
 }
 
@@ -65,21 +66,27 @@ impl InternalCircuitIndex {
     /// in [`RegistryBuilder::finalize()`](ragu_circuits::registry::RegistryBuilder::finalize)
     /// (circuits before masks), since [`circuit_index()`](Self::circuit_index)
     /// derives indices from position in this array.
-    pub const ALL: [Self; NUM_INTERNAL_CIRCUITS] = [
-        Self::Hashes1Circuit,
-        Self::Hashes2Circuit,
-        Self::PartialCollapseCircuit,
-        Self::FullCollapseCircuit,
-        Self::ComputeVCircuit,
-        Self::PreambleStage,
-        Self::ErrorMStage,
-        Self::ErrorNStage,
-        Self::QueryStage,
-        Self::EvalStage,
-        Self::ErrorMFinalStaged,
-        Self::ErrorNFinalStaged,
-        Self::EvalFinalStaged,
-    ];
+    pub const ALL: [Self; NUM_INTERNAL_CIRCUITS] = super::unwrap_all(Self::all_slots());
+
+    const fn all_slots() -> [Option<Self>; NUM_INTERNAL_CIRCUITS] {
+        let mut slots = [None; NUM_INTERNAL_CIRCUITS];
+        let mut c = 0;
+        super::push(&mut slots, &mut c, Self::Hashes1Circuit);
+        super::push(&mut slots, &mut c, Self::Hashes2Circuit);
+        super::push(&mut slots, &mut c, Self::InnerCollapseCircuit);
+        super::push(&mut slots, &mut c, Self::OuterCollapseCircuit);
+        super::push(&mut slots, &mut c, Self::ComputeVCircuit);
+        super::push(&mut slots, &mut c, Self::PreambleStage);
+        super::push(&mut slots, &mut c, Self::InnerErrorStage);
+        super::push(&mut slots, &mut c, Self::OuterErrorStage);
+        super::push(&mut slots, &mut c, Self::QueryStage);
+        super::push(&mut slots, &mut c, Self::EvalStage);
+        super::push(&mut slots, &mut c, Self::InnerErrorFinalStaged);
+        super::push(&mut slots, &mut c, Self::OuterErrorFinalStaged);
+        super::push(&mut slots, &mut c, Self::EvalFinalStaged);
+        assert!(c == NUM_INTERNAL_CIRCUITS);
+        slots
+    }
 
     pub fn circuit_index(self) -> CircuitIndex {
         let pos = Self::ALL
@@ -100,16 +107,16 @@ impl InternalCircuitIndex {
 pub struct InternalCircuitValues<T> {
     pub hashes_1_circuit: T,
     pub hashes_2_circuit: T,
-    pub partial_collapse_circuit: T,
-    pub full_collapse_circuit: T,
+    pub inner_collapse_circuit: T,
+    pub outer_collapse_circuit: T,
     pub compute_v_circuit: T,
     pub preamble_stage: T,
-    pub error_m_stage: T,
-    pub error_n_stage: T,
+    pub inner_error_stage: T,
+    pub outer_error_stage: T,
     pub query_stage: T,
     pub eval_stage: T,
-    pub error_m_final_staged: T,
-    pub error_n_final_staged: T,
+    pub inner_error_final_staged: T,
+    pub outer_error_final_staged: T,
     pub eval_final_staged: T,
 }
 
@@ -120,16 +127,16 @@ impl<T> InternalCircuitValues<T> {
         match id {
             Hashes1Circuit => &self.hashes_1_circuit,
             Hashes2Circuit => &self.hashes_2_circuit,
-            PartialCollapseCircuit => &self.partial_collapse_circuit,
-            FullCollapseCircuit => &self.full_collapse_circuit,
+            InnerCollapseCircuit => &self.inner_collapse_circuit,
+            OuterCollapseCircuit => &self.outer_collapse_circuit,
             ComputeVCircuit => &self.compute_v_circuit,
             PreambleStage => &self.preamble_stage,
-            ErrorMStage => &self.error_m_stage,
-            ErrorNStage => &self.error_n_stage,
+            InnerErrorStage => &self.inner_error_stage,
+            OuterErrorStage => &self.outer_error_stage,
             QueryStage => &self.query_stage,
             EvalStage => &self.eval_stage,
-            ErrorMFinalStaged => &self.error_m_final_staged,
-            ErrorNFinalStaged => &self.error_n_final_staged,
+            InnerErrorFinalStaged => &self.inner_error_final_staged,
+            OuterErrorFinalStaged => &self.outer_error_final_staged,
             EvalFinalStaged => &self.eval_final_staged,
         }
     }
@@ -153,16 +160,16 @@ impl<T> InternalCircuitValues<T> {
         Ok(InternalCircuitValues {
             hashes_1_circuit: f(Hashes1Circuit)?,
             hashes_2_circuit: f(Hashes2Circuit)?,
-            partial_collapse_circuit: f(PartialCollapseCircuit)?,
-            full_collapse_circuit: f(FullCollapseCircuit)?,
+            inner_collapse_circuit: f(InnerCollapseCircuit)?,
+            outer_collapse_circuit: f(OuterCollapseCircuit)?,
             compute_v_circuit: f(ComputeVCircuit)?,
             preamble_stage: f(PreambleStage)?,
-            error_m_stage: f(ErrorMStage)?,
-            error_n_stage: f(ErrorNStage)?,
+            inner_error_stage: f(InnerErrorStage)?,
+            outer_error_stage: f(OuterErrorStage)?,
             query_stage: f(QueryStage)?,
             eval_stage: f(EvalStage)?,
-            error_m_final_staged: f(ErrorMFinalStaged)?,
-            error_n_final_staged: f(ErrorNFinalStaged)?,
+            inner_error_final_staged: f(InnerErrorFinalStaged)?,
+            outer_error_final_staged: f(OuterErrorFinalStaged)?,
             eval_final_staged: f(EvalFinalStaged)?,
         })
     }
@@ -171,17 +178,19 @@ impl<T> InternalCircuitValues<T> {
 /// Enum identifying which rx polynomial component to index within [`RxValues`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RxIndex {
-    Preamble,
-    ErrorM,
-    ErrorN,
-    Query,
-    Eval,
+    // Circuits
     Application,
     Hashes1,
     Hashes2,
-    PartialCollapse,
-    FullCollapse,
+    InnerCollapse,
+    OuterCollapse,
     ComputeV,
+    // Stages
+    Preamble,
+    InnerError,
+    OuterError,
+    Query,
+    Eval,
 }
 
 /// The number of rx polynomial components.
@@ -192,19 +201,25 @@ impl RxIndex {
     ///
     /// This order matches the evaluation order in `poly_queries` (compute_v.rs)
     /// and `_08_f.rs`, and drives the `Write` impl for `RxValues`.
-    pub const ALL: [Self; NUM_RX_COMPONENTS] = [
-        Self::Preamble,
-        Self::ErrorM,
-        Self::ErrorN,
-        Self::Query,
-        Self::Eval,
-        Self::Application,
-        Self::Hashes1,
-        Self::Hashes2,
-        Self::PartialCollapse,
-        Self::FullCollapse,
-        Self::ComputeV,
-    ];
+    pub const ALL: [Self; NUM_RX_COMPONENTS] = super::unwrap_all(Self::all_slots());
+
+    const fn all_slots() -> [Option<Self>; NUM_RX_COMPONENTS] {
+        let mut slots = [None; NUM_RX_COMPONENTS];
+        let mut c = 0;
+        super::push(&mut slots, &mut c, Self::Application);
+        super::push(&mut slots, &mut c, Self::Hashes1);
+        super::push(&mut slots, &mut c, Self::Hashes2);
+        super::push(&mut slots, &mut c, Self::InnerCollapse);
+        super::push(&mut slots, &mut c, Self::OuterCollapse);
+        super::push(&mut slots, &mut c, Self::ComputeV);
+        super::push(&mut slots, &mut c, Self::Preamble);
+        super::push(&mut slots, &mut c, Self::InnerError);
+        super::push(&mut slots, &mut c, Self::OuterError);
+        super::push(&mut slots, &mut c, Self::Query);
+        super::push(&mut slots, &mut c, Self::Eval);
+        assert!(c == NUM_RX_COMPONENTS);
+        slots
+    }
 }
 
 /// Per-rx-component storage indexed by [`RxIndex`].
@@ -214,17 +229,17 @@ impl RxIndex {
 /// [`try_from_fn`](Self::try_from_fn) to construct from a closure.
 #[derive(Clone)]
 pub struct RxValues<T> {
-    pub preamble: T,
-    pub error_m: T,
-    pub error_n: T,
-    pub query: T,
-    pub eval: T,
     pub application: T,
     pub hashes_1: T,
     pub hashes_2: T,
-    pub partial_collapse: T,
-    pub full_collapse: T,
+    pub inner_collapse: T,
+    pub outer_collapse: T,
     pub compute_v: T,
+    pub preamble: T,
+    pub inner_error: T,
+    pub outer_error: T,
+    pub query: T,
+    pub eval: T,
 }
 
 impl<T> RxValues<T> {
@@ -232,17 +247,17 @@ impl<T> RxValues<T> {
     pub fn get(&self, id: RxIndex) -> &T {
         use RxIndex::*;
         match id {
-            Preamble => &self.preamble,
-            ErrorM => &self.error_m,
-            ErrorN => &self.error_n,
-            Query => &self.query,
-            Eval => &self.eval,
             Application => &self.application,
             Hashes1 => &self.hashes_1,
             Hashes2 => &self.hashes_2,
-            PartialCollapse => &self.partial_collapse,
-            FullCollapse => &self.full_collapse,
+            InnerCollapse => &self.inner_collapse,
+            OuterCollapse => &self.outer_collapse,
             ComputeV => &self.compute_v,
+            Preamble => &self.preamble,
+            InnerError => &self.inner_error,
+            OuterError => &self.outer_error,
+            Query => &self.query,
+            Eval => &self.eval,
         }
     }
 
@@ -262,17 +277,17 @@ impl<T> RxValues<T> {
     ) -> core::result::Result<Self, E> {
         use RxIndex::*;
         Ok(RxValues {
-            preamble: f(Preamble)?,
-            error_m: f(ErrorM)?,
-            error_n: f(ErrorN)?,
-            query: f(Query)?,
-            eval: f(Eval)?,
             application: f(Application)?,
             hashes_1: f(Hashes1)?,
             hashes_2: f(Hashes2)?,
-            partial_collapse: f(PartialCollapse)?,
-            full_collapse: f(FullCollapse)?,
+            inner_collapse: f(InnerCollapse)?,
+            outer_collapse: f(OuterCollapse)?,
             compute_v: f(ComputeV)?,
+            preamble: f(Preamble)?,
+            inner_error: f(InnerError)?,
+            outer_error: f(OuterError)?,
+            query: f(Query)?,
+            eval: f(Eval)?,
         })
     }
 }
@@ -305,43 +320,77 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
         use InternalCircuitIndex::*;
         registry = match id {
             PreambleStage => {
-                registry.register_internal_mask::<stages::preamble::Stage<C, R, HEADER_SIZE>>()?
+                registry.register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)
             }
-            ErrorMStage => {
-                registry.register_internal_mask::<stages::error_m::Stage<C, R, HEADER_SIZE, RevdotParameters>>()?
-            }
-            ErrorNStage => {
-                registry.register_internal_mask::<stages::error_n::Stage<C, R, HEADER_SIZE, RevdotParameters>>()?
-            }
+            InnerErrorStage => registry.register_bonding(stages::inner_error::Stage::<
+                C,
+                R,
+                HEADER_SIZE,
+                RevdotParameters,
+            >::mask()?),
+            OuterErrorStage => registry.register_bonding(stages::outer_error::Stage::<
+                C,
+                R,
+                HEADER_SIZE,
+                RevdotParameters,
+            >::mask()?),
             QueryStage => {
-                registry.register_internal_mask::<stages::query::Stage<C, R, HEADER_SIZE>>()?
+                registry.register_bonding(stages::query::Stage::<C, R, HEADER_SIZE>::mask()?)
             }
             EvalStage => {
-                registry.register_internal_mask::<stages::eval::Stage<C, R, HEADER_SIZE>>()?
+                registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::mask()?)
             }
-            ErrorMFinalStaged => {
-                registry.register_internal_final_mask::<stages::error_m::Stage<C, R, HEADER_SIZE, RevdotParameters>>()?
-            }
-            ErrorNFinalStaged => {
-                registry.register_internal_final_mask::<stages::error_n::Stage<C, R, HEADER_SIZE, RevdotParameters>>()?
-            }
+            InnerErrorFinalStaged => registry.register_bonding(stages::inner_error::Stage::<
+                C,
+                R,
+                HEADER_SIZE,
+                RevdotParameters,
+            >::final_mask()?),
+            OuterErrorFinalStaged => registry.register_bonding(stages::outer_error::Stage::<
+                C,
+                R,
+                HEADER_SIZE,
+                RevdotParameters,
+            >::final_mask()?),
             EvalFinalStaged => {
-                registry.register_internal_final_mask::<stages::eval::Stage<C, R, HEADER_SIZE>>()?
+                registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::final_mask()?)
             }
             Hashes1Circuit => {
-                registry.register_internal_circuit(circuits::hashes_1::Circuit::<C, R, HEADER_SIZE, RevdotParameters>::new(params, log2_circuits))?
+                registry.register_internal_circuit(circuits::hashes_1::Circuit::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                    RevdotParameters,
+                >::new(params, log2_circuits))?
             }
-            Hashes2Circuit => {
-                registry.register_internal_circuit(circuits::hashes_2::Circuit::<C, R, HEADER_SIZE, RevdotParameters>::new(params))?
+            Hashes2Circuit => registry.register_internal_circuit(circuits::hashes_2::Circuit::<
+                C,
+                R,
+                HEADER_SIZE,
+                RevdotParameters,
+            >::new(params))?,
+            InnerCollapseCircuit => {
+                registry.register_internal_circuit(circuits::inner_collapse::Circuit::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                    RevdotParameters,
+                >::new())?
             }
-            PartialCollapseCircuit => {
-                registry.register_internal_circuit(circuits::partial_collapse::Circuit::<C, R, HEADER_SIZE, RevdotParameters>::new())?
-            }
-            FullCollapseCircuit => {
-                registry.register_internal_circuit(circuits::full_collapse::Circuit::<C, R, HEADER_SIZE, RevdotParameters>::new())?
+            OuterCollapseCircuit => {
+                registry.register_internal_circuit(circuits::outer_collapse::Circuit::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                    RevdotParameters,
+                >::new())?
             }
             ComputeVCircuit => {
-                registry.register_internal_circuit(circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new())?
+                registry.register_internal_circuit(circuits::compute_v::Circuit::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                >::new())?
             }
         };
     }

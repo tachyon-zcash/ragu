@@ -27,6 +27,21 @@
 
 use super::{Coeff, Driver, DriverTypes, Field, Result};
 
+impl<F: Field> DriverTypes for core::marker::PhantomData<F> {
+    type ImplField = F;
+    type ImplWire = ();
+    type MaybeKind = crate::maybe::Empty;
+    type LCadd = ();
+    type LCenforce = ();
+
+    fn gate(
+        &mut self,
+        _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>, Coeff<F>)>,
+    ) -> Result<((), (), (), ())> {
+        Ok(((), (), (), ()))
+    }
+}
+
 /// Dummy driver that does absolutely nothing. All gates and constraints are
 /// no-ops, and witness closures are dead-code eliminated via `MaybeKind =
 /// Empty`.
@@ -35,26 +50,11 @@ impl<F: Field> Driver<'_> for core::marker::PhantomData<F> {
     type Wire = ();
     const ONE: Self::Wire = ();
 
-    fn mul(
-        &mut self,
-        _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>,
-    ) -> Result<(Self::Wire, Self::Wire, Self::Wire)> {
-        Ok(((), (), ()))
-    }
-
     fn add(&mut self, _: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {}
 
     fn enforce_zero(&mut self, _: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
         Ok(())
     }
-}
-
-impl<F: Field> DriverTypes for core::marker::PhantomData<F> {
-    type ImplField = F;
-    type ImplWire = ();
-    type MaybeKind = crate::maybe::Empty;
-    type LCadd = ();
-    type LCenforce = ();
 }
 
 #[cfg(test)]
@@ -101,7 +101,7 @@ mod tests {
     }
 
     #[test]
-    fn phantom_mul_returns_unit_triple() -> Result<()> {
+    fn phantom_mul_returns_unit_tuple() -> Result<()> {
         let mut dr = PhantomData::<F>;
         let (_a, _b, _c): ((), (), ()) = dr.mul(|| panic!("must not be called"))?;
         Ok(())

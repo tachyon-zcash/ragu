@@ -1,4 +1,4 @@
-//! Error stage (layer 2) for fuse operations.
+//! Outer error stage (layer 2) for fuse operations.
 //!
 //! This stage handles the final N-sized revdot claim reduction.
 
@@ -19,7 +19,7 @@ use ragu_primitives::{
 
 use core::marker::PhantomData;
 
-use crate::internal::fold_revdot::{self, ErrorTermsLen};
+use crate::internal::fold_revdot::{self, NumErrorTerms};
 
 /// $k(Y)$ evaluation values for a single child proof.
 pub struct ChildKyValues<F> {
@@ -39,23 +39,23 @@ pub struct KyValues<F> {
     pub right: ChildKyValues<F>,
 }
 
-/// Witness data for the error_n stage (layer 2).
+/// Witness data for the outer error stage (layer 2).
 ///
 /// Contains $N^2 - N$ error terms for the second layer of reduction, plus the
 /// $N$ collapsed values from layer 1 folding, and the saved sponge state for
 /// bridging the transcript between hashes_1 and hashes_2.
 pub struct Witness<C: Cycle, FP: fold_revdot::Parameters> {
     /// Error term elements for layer 2.
-    pub error_terms: FixedVec<C::CircuitField, ErrorTermsLen<FP::N>>,
+    pub error_terms: FixedVec<C::CircuitField, NumErrorTerms<FP::NumGroups>>,
 
     /// Collapsed values from layer 1 folding ($N$ values). These are the
     /// outputs of $N$ individual size-$M$ revdot reductions.
-    pub collapsed: FixedVec<C::CircuitField, FP::N>,
+    pub collapsed: FixedVec<C::CircuitField, FP::NumGroups>,
 
     /// $k(y)$ evaluation values.
     pub ky: KyValues<C::CircuitField>,
 
-    /// Sponge state elements saved after absorbing bridge_error_m_commitment.
+    /// Sponge state elements saved after absorbing bridge_inner_error_commitment.
     /// Used to bridge the Fiat-Shamir transcript between hashes_1 and hashes_2.
     pub sponge_state_elements:
         FixedVec<C::CircuitField, PoseidonStateLen<C::CircuitField, C::CircuitPoseidon>>,
@@ -75,7 +75,7 @@ pub struct ChildKyOutputs<'dr, D: Driver<'dr>> {
     pub unified_bridge: Element<'dr, D>,
 }
 
-/// Prover-internal output gadget for the error_n stage.
+/// Prover-internal output gadget for the outer error stage.
 ///
 /// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget, Consistent)]
@@ -87,23 +87,23 @@ pub struct Output<
 > {
     /// Error term elements for layer 2.
     #[ragu(gadget)]
-    pub error_terms: FixedVec<Element<'dr, D>, ErrorTermsLen<FP::N>>,
+    pub error_terms: FixedVec<Element<'dr, D>, NumErrorTerms<FP::NumGroups>>,
     /// Collapsed values from layer 1 folding (N values).
     #[ragu(gadget)]
-    pub collapsed: FixedVec<Element<'dr, D>, FP::N>,
+    pub collapsed: FixedVec<Element<'dr, D>, FP::NumGroups>,
     /// k(y) values for left child proof.
     #[ragu(gadget)]
     pub left: ChildKyOutputs<'dr, D>,
     /// k(y) values for right child proof.
     #[ragu(gadget)]
     pub right: ChildKyOutputs<'dr, D>,
-    /// Sponge state saved after absorbing bridge_error_m_commitment.
+    /// Sponge state saved after absorbing bridge_inner_error_commitment.
     /// Used to bridge the Fiat-Shamir transcript between hashes_1 and hashes_2.
     #[ragu(gadget)]
     pub sponge_state: SpongeState<'dr, D, Poseidon>,
 }
 
-/// The error_n stage (layer 2) of the fuse witness.
+/// The outer error stage (layer 2) of the fuse witness.
 #[derive(Default)]
 pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
     _marker: PhantomData<(C, R, FP)>,
@@ -118,8 +118,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 
     fn values() -> usize {
         // N² - N error terms + N collapsed values + 6 ky values + sponge state elements
-        ErrorTermsLen::<FP::N>::len()
-            + FP::N::len()
+        NumErrorTerms::<FP::NumGroups>::len()
+            + FP::NumGroups::len()
             + 6
             + PoseidonStateLen::<C::CircuitField, C::CircuitPoseidon>::len()
     }
@@ -132,10 +132,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     where
         Self: 'dr,
     {
-        let error_terms = ErrorTermsLen::<FP::N>::range()
+        let error_terms = NumErrorTerms::<FP::NumGroups>::range()
             .map(|i| Element::alloc(dr, witness.as_ref().map(|w| w.error_terms[i])))
             .try_collect_fixed()?;
-        let collapsed = FP::N::range()
+        let collapsed = FP::NumGroups::range()
             .map(|i| Element::alloc(dr, witness.as_ref().map(|w| w.collapsed[i])))
             .try_collect_fixed()?;
         let left = ChildKyOutputs {

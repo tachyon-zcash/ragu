@@ -166,8 +166,8 @@ mod tests {
             dr.routine(evaluator.clone(), (x, z))?;
 
             assert_eq!(dr.num_allocations(), 0);
-            assert_eq!(dr.num_multiplications(), 76);
-            assert_eq!(dr.num_linear_constraints(), 152);
+            assert_eq!(dr.num_gates(), 76);
+            assert_eq!(dr.num_constraints(), 152);
 
             Ok(())
         })?;

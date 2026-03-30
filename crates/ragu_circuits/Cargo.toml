@@ -50,6 +50,6 @@ name = "circuits"
 harness = false
 
 [[bench]]
-name = "rx_criterion"
-path = "benches/criterion/rx.rs"
+name = "trace_criterion"
+path = "benches/criterion/trace.rs"
 harness = false

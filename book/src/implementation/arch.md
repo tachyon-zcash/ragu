@@ -17,9 +17,9 @@ Ragu is developed as a Cargo workspace.
       crate in this project.
     * **`ragu_macros`**: Internal crate that contains procedural macros both
       used within the project and exposed to users in other crates.
-    * **`ragu_pasta`**: Compatibility shim and parameter generation utilities
-      for the
-      [Pasta curve cycle].
+    * **`ragu_pasta`**: Implements the [`Cycle`] trait for the
+      [Pasta curve cycle], providing parameter generation and baked-in
+      constants.
     * **`ragu_core`**: The fundamental crate of the library. Presents the
       `Driver` abstraction and related traits and utilities. All circuit
       development and most algorithms are written using the API provided by
@@ -34,8 +34,11 @@ Ragu is developed as a Cargo workspace.
       Ragu protocol and utilities for building arithmetic circuits in Ragu.
     * **`ragu_gadgets`**: This is just a placeholder, and may be removed in
       the future.
-    * **`ragu_pcd`**: This contains WIP development code for recursive proof
-      circuits and scaffolding.
+    * **`ragu_pcd`**: Top-level API for proof-carrying data applications,
+      providing `ApplicationBuilder`, `Application`, `Step`, `Header`,
+      `Proof`, and `Pcd`.
+    * **`ragu_testing`**: Test scaffolding and nontrivial example Steps/Headers
+      used in integration tests.
 
 > Ragu is still under active development and the crates that have been
 > published so far on [`crates.io`](https://crates.io/) are just

@@ -1,5 +1,5 @@
 use ff::Field;
-use ragu_circuits::polynomials::{ProductionRank, TestRank, structured, unstructured};
+use ragu_circuits::polynomials::{ProductionRank, TestRank, sparse};
 use ragu_circuits::registry::{Registry, RegistryBuilder};
 use ragu_pasta::Fp;
 use ragu_testing::circuits::{MySimpleCircuit, SquareCircuit};
@@ -52,20 +52,14 @@ pub fn f<F: Field>(rng: &mut StdRng) -> F {
     F::random(rng)
 }
 
-pub fn rand_structured_poly(rng: &mut StdRng) -> structured::Polynomial<Fp, ProductionRank> {
-    structured::Polynomial::random(rng)
+pub fn rand_sparse_poly(rng: &mut StdRng) -> sparse::Polynomial<Fp, ProductionRank> {
+    sparse::Polynomial::random(rng)
 }
 
-pub fn rand_structured_poly_vec<const N: usize>(
+pub fn rand_sparse_poly_vec<const N: usize>(
     rng: &mut StdRng,
-) -> Vec<structured::Polynomial<Fp, ProductionRank>> {
-    (0..N)
-        .map(|_| structured::Polynomial::random(rng))
-        .collect()
-}
-
-pub fn rand_unstructured_poly(rng: &mut StdRng) -> unstructured::Polynomial<Fp, ProductionRank> {
-    unstructured::Polynomial::random(rng)
+) -> Vec<sparse::Polynomial<Fp, ProductionRank>> {
+    (0..N).map(|_| sparse::Polynomial::random(rng)).collect()
 }
 
 pub fn builder_squares<'a>() -> RegistryBuilder<'a, Fp, ProductionRank> {

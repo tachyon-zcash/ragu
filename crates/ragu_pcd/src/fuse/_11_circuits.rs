@@ -1,4 +1,3 @@
-use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{CircuitExt, polynomials::Rank};
 use ragu_core::Result;
@@ -16,16 +15,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         rng: &mut RNG,
         preamble: &proof::Preamble<C, R>,
         s_prime: &proof::SPrime<C, R>,
-        error_n: &proof::ErrorN<C, R>,
-        error_m: &proof::ErrorM<C, R>,
+        outer_error: &proof::OuterError<C, R>,
+        inner_error: &proof::InnerError<C, R>,
         ab: &proof::AB<C, R>,
         query: &proof::Query<C, R>,
         f: &proof::F<C, R>,
         eval: &proof::Eval<C, R>,
         p: &proof::P<C, R>,
         preamble_witness: &native::stages::preamble::Witness<'_, C, R, HEADER_SIZE>,
-        error_n_witness: &native::stages::error_n::Witness<C, native::RevdotParameters>,
-        error_m_witness: &native::stages::error_m::Witness<C, native::RevdotParameters>,
+        outer_error_witness: &native::stages::outer_error::Witness<C, native::RevdotParameters>,
+        inner_error_witness: &native::stages::inner_error::Witness<C, native::RevdotParameters>,
         query_witness: &native::stages::query::Witness<C>,
         eval_witness: &native::stages::eval::Witness<C::CircuitField>,
         challenges: &proof::Challenges<C>,
@@ -36,10 +35,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             bridge_s_prime_commitment: s_prime.bridge.commitment,
             y: challenges.y,
             z: challenges.z,
-            bridge_error_m_commitment: error_m.bridge.commitment,
+            bridge_inner_error_commitment: inner_error.bridge.commitment,
             mu: challenges.mu,
             nu: challenges.nu,
-            bridge_error_n_commitment: error_n.bridge.commitment,
+            bridge_outer_error_commitment: outer_error.bridge.commitment,
             mu_prime: challenges.mu_prime,
             nu_prime: challenges.nu_prime,
             c: ab.native.c,
@@ -64,16 +63,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             self.params,
             total_circuit_counts(self.num_application_steps).1,
         )
-        .rx(native::circuits::hashes_1::Witness {
+        .trace(native::circuits::hashes_1::Witness {
             unified,
             preamble_witness,
-            error_n_witness,
-        })?;
+            outer_error_witness,
+        })?
+        .into_parts();
         let hashes_1_rx = self.native_registry.assemble(
             &hashes_1_trace,
             native::InternalCircuitIndex::Hashes1Circuit.circuit_index(),
+            &mut *rng,
         )?;
-        let hashes_1_blind = C::CircuitField::random(&mut *rng);
 
         let (hashes_2_trace, unified) = native::circuits::hashes_2::Circuit::<
             C,
@@ -81,65 +81,68 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             HEADER_SIZE,
             native::RevdotParameters,
         >::new(self.params)
-        .rx(native::circuits::hashes_2::Witness {
+        .trace(native::circuits::hashes_2::Witness {
             unified,
-            error_n_witness,
-        })?;
+            outer_error_witness,
+        })?
+        .into_parts();
         let hashes_2_rx = self.native_registry.assemble(
             &hashes_2_trace,
             native::InternalCircuitIndex::Hashes2Circuit.circuit_index(),
+            &mut *rng,
         )?;
-        let hashes_2_blind = C::CircuitField::random(&mut *rng);
 
-        let (partial_collapse_trace, unified) = native::circuits::partial_collapse::Circuit::<
+        let (inner_collapse_trace, unified) = native::circuits::inner_collapse::Circuit::<
             C,
             R,
             HEADER_SIZE,
             native::RevdotParameters,
         >::new()
-        .rx(native::circuits::partial_collapse::Witness {
+        .trace(native::circuits::inner_collapse::Witness {
             preamble_witness,
             unified,
-            error_n_witness,
-            error_m_witness,
-        })?;
-        let partial_collapse_rx = self.native_registry.assemble(
-            &partial_collapse_trace,
-            native::InternalCircuitIndex::PartialCollapseCircuit.circuit_index(),
+            outer_error_witness,
+            inner_error_witness,
+        })?
+        .into_parts();
+        let inner_collapse_rx = self.native_registry.assemble(
+            &inner_collapse_trace,
+            native::InternalCircuitIndex::InnerCollapseCircuit.circuit_index(),
+            &mut *rng,
         )?;
-        let partial_collapse_blind = C::CircuitField::random(&mut *rng);
 
-        let (full_collapse_trace, unified) = native::circuits::full_collapse::Circuit::<
+        let (outer_collapse_trace, unified) = native::circuits::outer_collapse::Circuit::<
             C,
             R,
             HEADER_SIZE,
             native::RevdotParameters,
         >::new()
-        .rx(native::circuits::full_collapse::Witness {
+        .trace(native::circuits::outer_collapse::Witness {
             unified,
             preamble_witness,
-            error_n_witness,
-        })?;
-        let full_collapse_rx = self.native_registry.assemble(
-            &full_collapse_trace,
-            native::InternalCircuitIndex::FullCollapseCircuit.circuit_index(),
+            outer_error_witness,
+        })?
+        .into_parts();
+        let outer_collapse_rx = self.native_registry.assemble(
+            &outer_collapse_trace,
+            native::InternalCircuitIndex::OuterCollapseCircuit.circuit_index(),
+            &mut *rng,
         )?;
-        let full_collapse_blind = C::CircuitField::random(&mut *rng);
 
         let (compute_v_trace, unified) =
-            native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new().rx(
-                native::circuits::compute_v::Witness {
+            native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new()
+                .trace(native::circuits::compute_v::Witness {
                     unified,
                     preamble_witness,
                     query_witness,
                     eval_witness,
-                },
-            )?;
+                })?
+                .into_parts();
         let compute_v_rx = self.native_registry.assemble(
             &compute_v_trace,
             native::InternalCircuitIndex::ComputeVCircuit.circuit_index(),
+            &mut *rng,
         )?;
-        let compute_v_blind = C::CircuitField::random(&mut *rng);
 
         // Cross-circuit coverage validation (prover-time development assertion,
         // not a verifier check): all internal recursion circuits together must
@@ -151,41 +154,36 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let [
             hashes_1_commitment,
             hashes_2_commitment,
-            partial_collapse_commitment,
-            full_collapse_commitment,
+            inner_collapse_commitment,
+            outer_collapse_commitment,
             compute_v_commitment,
         ] = ragu_arithmetic::batch_to_affine([
-            hashes_1_rx.commit(host_gen, hashes_1_blind),
-            hashes_2_rx.commit(host_gen, hashes_2_blind),
-            partial_collapse_rx.commit(host_gen, partial_collapse_blind),
-            full_collapse_rx.commit(host_gen, full_collapse_blind),
-            compute_v_rx.commit(host_gen, compute_v_blind),
+            hashes_1_rx.commit(host_gen),
+            hashes_2_rx.commit(host_gen),
+            inner_collapse_rx.commit(host_gen),
+            outer_collapse_rx.commit(host_gen),
+            compute_v_rx.commit(host_gen),
         ]);
 
         Ok(proof::InternalCircuits {
             hashes_1: proof::RxTriple {
                 rx: hashes_1_rx,
-                blind: hashes_1_blind,
                 commitment: hashes_1_commitment,
             },
             hashes_2: proof::RxTriple {
                 rx: hashes_2_rx,
-                blind: hashes_2_blind,
                 commitment: hashes_2_commitment,
             },
-            partial_collapse: proof::RxTriple {
-                rx: partial_collapse_rx,
-                blind: partial_collapse_blind,
-                commitment: partial_collapse_commitment,
+            inner_collapse: proof::RxTriple {
+                rx: inner_collapse_rx,
+                commitment: inner_collapse_commitment,
             },
-            full_collapse: proof::RxTriple {
-                rx: full_collapse_rx,
-                blind: full_collapse_blind,
-                commitment: full_collapse_commitment,
+            outer_collapse: proof::RxTriple {
+                rx: outer_collapse_rx,
+                commitment: outer_collapse_commitment,
             },
             compute_v: proof::RxTriple {
                 rx: compute_v_rx,
-                blind: compute_v_blind,
                 commitment: compute_v_commitment,
             },
         })

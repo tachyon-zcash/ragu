@@ -32,7 +32,7 @@
 //! ### Memory Efficiency
 //!
 //! Where [`sx`] allocates a coefficient vector of size $q$ (the number of
-//! linear constraints), this module maintains only a single field element
+//! constraints), this module maintains only a single field element
 //! accumulator.
 //!
 //! ### Memoization Eligibility
@@ -57,16 +57,10 @@ use ragu_core::{
     maybe::Empty,
     routines::Routine,
 };
-use ragu_primitives::GadgetExt;
 
-use alloc::vec;
+use crate::{DriverScope, floor_planner::ConstraintSegment, polynomials::Rank, raw::RawCircuit};
 
-use crate::{Circuit, DriverScope, floor_planner::ConstraintSegment, polynomials::Rank, registry};
-
-use super::{
-    DriverExt,
-    common::{WireEval, WireEvalSum},
-};
+use super::common::{WireEval, WireEvalSum};
 
 /// A [`Driver`] that computes the full evaluation $s(x, y)$.
 ///
@@ -83,20 +77,20 @@ use super::{
 /// [`Driver::enforce_zero`]: ragu_core::drivers::Driver::enforce_zero
 /// Per-routine state saved and restored across routine boundaries.
 struct SxyScope<F> {
-    /// Stashed $b$ wire from paired allocation.
-    available_b: Option<WireEval<F>>,
+    /// Stashed $d$ wire from paired allocation.
+    available_d: Option<WireEval<F>>,
     /// Running monomial for $a$ wires: $x^{2n - 1 - i}$ at gate $i$.
-    current_u_x: F,
+    current_a_x: F,
     /// Running monomial for $b$ wires: $x^{2n + i}$ at gate $i$.
-    current_v_x: F,
+    current_b_x: F,
     /// Running monomial for $c$ wires: $x^{4n - 1 - i}$ at gate $i$.
-    current_w_x: F,
-    /// Absolute index of the next multiplication constraint to be written.
-    /// Initialized to `segment.multiplication_start` on routine entry.
-    multiplication_constraints: usize,
-    /// Absolute index of the next linear constraint to be written.
-    /// Initialized to `segment.linear_start` on routine entry.
-    linear_constraints: usize,
+    current_c_x: F,
+    /// Absolute index of the next gate to be written.
+    /// Initialized to `segment.gate_start` on routine entry.
+    gates: usize,
+    /// Absolute index of the next constraint to be written.
+    /// Initialized to `segment.constraint_start` on routine entry.
+    constraints: usize,
 
     /// Local Horner accumulator for this routine's constraints.
     result: F,
@@ -119,19 +113,31 @@ struct Evaluator<'fp, F, R> {
     /// The evaluation point $y$, used for Horner accumulation.
     y: F,
 
-    /// Evaluation of the `ONE` wire: $x^{4n - 1}$.
+    /// Evaluation of the `ONE` wire: $x^{2n}$.
     ///
     /// Passed to [`WireEvalSum::new`] so that [`WireEval::One`] variants can be
     /// resolved during linear combination accumulation.
     one: F,
 
     /// Base monomial $x^{2n-1}$, used to compute routine starting monomials.
-    base_u_x: F,
+    base_a_x: F,
 
     /// Base monomial $x^{2n}$, used to compute routine starting monomials.
-    base_v_x: F,
+    base_b_x: F,
 
-    /// Floor plan mapping DFS routine index to absolute offsets.
+    /// Base monomial $x^{4n-1}$, used to compute routine starting monomials
+    /// for the $c$ wire.
+    base_c_x: F,
+
+    /// Correction factor $(x^{-2n})$ that converts a $b$-wire monomial
+    /// $x^{2n+i}$ into the corresponding $d$-wire monomial $x^i$.
+    ///
+    /// Only read by [`gate`](DriverTypes::gate), not by [`mul`](Driver::mul),
+    /// so the extra multiplication is skipped when callers don't need the
+    /// $d$ wire.
+    b_to_d: F,
+
+    /// Floor plan mapping DFS segment index to absolute offsets.
     floor_plan: &'fp [ConstraintSegment],
 
     /// Global monotonic DFS counter for routine entries.
@@ -144,6 +150,32 @@ struct Evaluator<'fp, F, R> {
 impl<F: Field, R: Rank> DriverScope<SxyScope<F>> for Evaluator<'_, F, R> {
     fn scope(&mut self) -> &mut SxyScope<F> {
         &mut self.scope
+    }
+}
+
+impl<F: Field, R: Rank> Evaluator<'_, F, R> {
+    /// Advances the gate counter and running monomials, returning the raw
+    /// $(a, b, c)$ monomial evaluations before advancement.
+    ///
+    /// This is the shared core of [`gate`](DriverTypes::gate) and
+    /// [`mul`](Driver::mul). The $d$-wire monomial ($b \cdot \text{b\_to\_d}$)
+    /// is only computed by `gate`, saving one field multiplication per `mul` call.
+    fn advance_gate(&mut self) -> Result<(F, F, F)> {
+        let index = self.scope.gates;
+        if index == R::n() {
+            return Err(Error::GateBoundExceeded { limit: R::n() });
+        }
+        self.scope.gates += 1;
+
+        let a = self.scope.current_a_x;
+        let b = self.scope.current_b_x;
+        let c = self.scope.current_c_x;
+
+        self.scope.current_a_x *= self.x_inv;
+        self.scope.current_b_x *= self.x;
+        self.scope.current_c_x *= self.x_inv;
+
+        Ok((a, b, c))
     }
 }
 
@@ -160,6 +192,37 @@ impl<F: Field, R: Rank> DriverTypes for Evaluator<'_, F, R> {
     type LCenforce = WireEvalSum<F>;
     type ImplField = F;
     type ImplWire = WireEval<F>;
+
+    /// Consumes a gate, returning evaluated monomials for $(a, b, c, d)$.
+    ///
+    /// Returns the current values of the running monomials as [`WireEval::Value`]
+    /// wires, then advances the monomials for the next gate:
+    /// - $a$: multiplied by $x^{-1}$ (decreasing exponent)
+    /// - $b$: multiplied by $x$ (increasing exponent)
+    /// - $c$: multiplied by $x^{-1}$ (decreasing exponent)
+    ///
+    /// The $d$-wire monomial $x^i$ is derived from $b = x^{2n+i}$ via
+    /// `b_to_d`. This computation is confined to `gate` and skipped
+    /// by the [`mul`](Driver::mul) override.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::GateBoundExceeded`] if the gate count reaches
+    /// [`Rank::n()`].
+    fn gate(
+        &mut self,
+        _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>, Coeff<F>)>,
+    ) -> Result<(WireEval<F>, WireEval<F>, WireEval<F>, WireEval<F>)> {
+        let (a, b, c) = self.advance_gate()?;
+        let d = b * self.b_to_d;
+
+        Ok((
+            WireEval::Value(a),
+            WireEval::Value(b),
+            WireEval::Value(c),
+            WireEval::Value(d),
+        ))
+    }
 }
 
 impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
@@ -168,48 +231,24 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
 
     const ONE: Self::Wire = WireEval::One;
 
-    /// Allocates a wire using paired allocation.
+    /// Allocates a wire using paired allocation with layout $(0, b, 0, d)$.
     fn alloc(&mut self, _: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
-        if let Some(wire) = self.scope.available_b.take() {
-            Ok(wire)
+        if let Some(monomial) = self.scope.available_d.take() {
+            Ok(monomial)
         } else {
-            let (a, b, _) = self.mul(|| unreachable!())?;
-            self.scope.available_b = Some(b);
-
-            Ok(a)
+            let (_, b, _, d) = self.gate(|| unreachable!())?;
+            self.scope.available_d = Some(d);
+            Ok(b)
         }
     }
 
-    /// Consumes a multiplication gate, returning evaluated monomials for $(a, b, c)$.
-    ///
-    /// Returns the current values of the running monomials as [`WireEval::Value`]
-    /// wires, then advances the monomials for the next gate:
-    /// - $a$: multiplied by $x^{-1}$ (decreasing exponent)
-    /// - $b$: multiplied by $x$ (increasing exponent)
-    /// - $c$: multiplied by $x^{-1}$ (decreasing exponent)
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::MultiplicationBoundExceeded`] if the gate count reaches
-    /// [`Rank::n()`].
+    /// Advances the gate counter and returns $(a, b, c)$ without computing the
+    /// $d$-wire monomial.
     fn mul(
         &mut self,
-        _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>,
+        _: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
     ) -> Result<(Self::Wire, Self::Wire, Self::Wire)> {
-        let index = self.scope.multiplication_constraints;
-        if index == R::n() {
-            return Err(Error::MultiplicationBoundExceeded { limit: R::n() });
-        }
-        self.scope.multiplication_constraints += 1;
-
-        let a = self.scope.current_u_x;
-        let b = self.scope.current_v_x;
-        let c = self.scope.current_w_x;
-
-        self.scope.current_u_x *= self.x_inv;
-        self.scope.current_v_x *= self.x;
-        self.scope.current_w_x *= self.x_inv;
-
+        let (a, b, c) = self.advance_gate()?;
         Ok((WireEval::Value(a), WireEval::Value(b), WireEval::Value(c)))
     }
 
@@ -229,16 +268,17 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::LinearBoundExceeded`] if the constraint count reaches
-    /// [`Rank::num_coeffs()`].
+    /// Returns [`Error::ConstraintBoundExceeded`] if the constraint count reaches
+    /// `Rank::num_coeffs() - 1` (the last slot is reserved for the registry
+    /// key constraint).
     fn enforce_zero(&mut self, lc: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
-        let q = self.scope.linear_constraints;
-        if q == R::num_coeffs() {
-            return Err(Error::LinearBoundExceeded {
-                limit: R::num_coeffs(),
+        let q = self.scope.constraints;
+        if q >= R::num_coeffs() - 1 {
+            return Err(Error::ConstraintBoundExceeded {
+                limit: R::num_coeffs() - 1,
             });
         }
-        self.scope.linear_constraints += 1;
+        self.scope.constraints += 1;
 
         self.scope.result *= self.y;
         self.scope.result += lc(WireEvalSum::new(self.one)).value;
@@ -253,18 +293,18 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
     ) -> Result<Bound<'dr, Self, Ro::Output>> {
         self.current_routine += 1;
         let seg = &self.floor_plan[self.current_routine];
-        let multiplication_start = seg.multiplication_start;
-        let linear_start = seg.linear_start;
+        let gate_start = seg.gate_start;
+        let constraint_start = seg.constraint_start;
 
         // Jump to this routine's absolute position in the polynomial;
-        // see the "Routine Scope Jumps" section in the `s` module doc.
+        // see "Polynomial Encoding and Scope Jumps" in the `s` module doc.
         let init_scope = SxyScope {
-            available_b: None,
-            current_u_x: self.base_u_x * self.x_inv.pow_vartime([multiplication_start as u64]),
-            current_v_x: self.base_v_x * self.x.pow_vartime([multiplication_start as u64]),
-            current_w_x: self.one * self.x_inv.pow_vartime([multiplication_start as u64]),
-            multiplication_constraints: multiplication_start,
-            linear_constraints: linear_start,
+            available_d: None,
+            current_a_x: self.base_a_x * self.x_inv.pow_vartime([gate_start as u64]),
+            current_b_x: self.base_b_x * self.x.pow_vartime([gate_start as u64]),
+            current_c_x: self.base_c_x * self.x_inv.pow_vartime([gate_start as u64]),
+            gates: gate_start,
+            constraints: constraint_start,
             result: F::ZERO,
             sum: F::ZERO,
         };
@@ -278,20 +318,20 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         };
         // Verify this routine consumed exactly the expected constraints.
         assert_eq!(
-            self.scope.multiplication_constraints,
-            seg.multiplication_start + seg.num_multiplication_constraints,
-            "routine multiplication constraint count must match floor plan"
+            self.scope.gates,
+            seg.gate_start + seg.num_gates,
+            "routine gate count must match floor plan"
         );
         assert_eq!(
-            self.scope.linear_constraints,
-            seg.linear_start + seg.num_linear_constraints,
-            "routine linear constraint count must match floor plan"
+            self.scope.constraints,
+            seg.constraint_start + seg.num_constraints,
+            "routine constraint count must match floor plan"
         );
 
         // Position the routine's local Horner result at its absolute Y offset,
         // then combine with any nested child contributions.
-        let y_pow_linear_start = self.y.pow_vartime([linear_start as u64]);
-        let routine_contribution = y_pow_linear_start * self.scope.result + self.scope.sum;
+        let y_pow_constraint_start = self.y.pow_vartime([constraint_start as u64]);
+        let routine_contribution = y_pow_constraint_start * self.scope.result + self.scope.sum;
         self.scope = saved;
         self.scope.sum += routine_contribution;
 
@@ -308,19 +348,12 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
 /// - `circuit`: The circuit whose wiring polynomial to evaluate.
 /// - `x`: The evaluation point for the $X$ variable.
 /// - `y`: The evaluation point for the $Y$ variable.
-/// - `key`: The registry key that binds this evaluation to a [`Registry`] context by
-///   enforcing `key_wire - key = 0` as a constraint. This randomizes
-///   evaluations of $s(x, y)$, preventing trivial forgeries across registry
-///   contexts.
-/// - `floor_plan`: Per-routine absolute offsets, computed by
+/// - `floor_plan`: Per-segment absolute offsets, computed by
 ///   [`floor_plan()`](crate::floor_planner::floor_plan).
-///
-/// [`Registry`]: crate::registry::Registry
-pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
-    circuit: &C,
+pub fn eval<F: Field, RC: RawCircuit<F>, R: Rank>(
+    circuit: &RC,
     x: F,
     y: F,
-    key: &registry::Key<F>,
     floor_plan: &[ConstraintSegment],
 ) -> Result<F> {
     if x == F::ZERO {
@@ -331,10 +364,13 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     let x_inv = x.invert().expect("x is not zero");
     let xn = x.pow_vartime([R::n() as u64]); // xn = x^n
     let xn2 = xn.square(); // xn2 = x^(2n)
-    let base_u_x = xn2 * x_inv; // x^(2n - 1)
-    let base_v_x = xn2; // x^(2n)
+    let base_a_x = xn2 * x_inv; // x^(2n - 1)
+    let base_b_x = xn2; // x^(2n)
     let xn4 = xn2.square(); // x^(4n)
-    let one = xn4 * x_inv; // x^(4n - 1)
+    let base_c_x = xn4 * x_inv; // x^(4n - 1)
+    let xn_inv = x_inv.pow_vartime([R::n() as u64]); // x^(-n)
+    let base_b_x_inv = xn_inv.square(); // x^(-2n)
+    let one = base_b_x; // x^(2n)
 
     if y == F::ZERO {
         // If y is zero, all terms y^j for j > 0 vanish, leaving only the ONE
@@ -344,12 +380,12 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
 
     let mut evaluator = Evaluator::<F, R> {
         scope: SxyScope {
-            available_b: None,
-            current_u_x: base_u_x,
-            current_v_x: base_v_x,
-            current_w_x: one,
-            multiplication_constraints: 0,
-            linear_constraints: 0,
+            available_d: None,
+            current_a_x: base_a_x,
+            current_b_x: base_b_x,
+            current_c_x: base_c_x,
+            gates: 0,
+            constraints: 0,
             result: F::ZERO,
             sum: F::ZERO,
         },
@@ -357,27 +393,16 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
         x_inv,
         y,
         one,
-        base_u_x,
-        base_v_x,
+        base_a_x,
+        base_b_x,
+        base_c_x,
+        b_to_d: base_b_x_inv,
         floor_plan,
         current_routine: 0,
         _marker: core::marker::PhantomData,
     };
 
-    // Allocate the key_wire and ONE wires
-    let (key_wire, _, _one_wire) = evaluator.mul(|| unreachable!())?;
-
-    // Registry key constraint
-    evaluator.enforce_registry_key(&key_wire, key)?;
-
-    let mut outputs = vec![];
-
-    let (io, _) = circuit.witness(&mut evaluator, Empty)?;
-    io.write(&mut evaluator, &mut outputs)?;
-
-    // Enforcing public inputs
-    evaluator.enforce_public_outputs(outputs.iter().map(|output| output.wire()))?;
-    evaluator.enforce_one()?;
+    crate::raw::orchestrate(&mut evaluator, circuit, Empty)?;
 
     // Verify all floor plan segments were consumed and counts match.
     assert_eq!(
@@ -386,13 +411,12 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
         "floor plan routine count must match synthesis"
     );
     assert_eq!(
-        evaluator.scope.multiplication_constraints,
-        evaluator.floor_plan[0].num_multiplication_constraints,
-        "root multiplication constraint count must match floor plan"
+        evaluator.scope.gates, evaluator.floor_plan[0].num_gates,
+        "root gate count must match floor plan"
     );
     assert_eq!(
-        evaluator.scope.linear_constraints, evaluator.floor_plan[0].num_linear_constraints,
-        "root linear constraint count must match floor plan"
+        evaluator.scope.constraints, evaluator.floor_plan[0].num_constraints,
+        "root constraint count must match floor plan"
     );
 
     // The root's local Horner result plus any child contributions.

@@ -30,7 +30,7 @@ more complicated type:
 
 ```rust
 pub struct SpongeState<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> {
-    values: FixedVec<Element<'dr, D>, T<D::F, P>>,
+    values: FixedVec<Element<'dr, D>, PoseidonStateLen<D::F, P>>,
 }
 ```
 

@@ -49,6 +49,7 @@ criterion = { workspace = true }
 ragu_pasta = { path = "../ragu_pasta", version = "0.0.0", features = ["baked"] }
 gungraun = { workspace = true }
 ragu_testing = { path = "../ragu_testing", version = "0.0.0" }
+proptest = { workspace = true }
 
 [[bench]]
 name = "pcd"

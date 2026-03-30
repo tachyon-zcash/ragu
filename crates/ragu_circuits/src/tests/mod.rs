@@ -14,9 +14,8 @@ use ragu_pasta::Fp;
 use ragu_primitives::Element;
 
 use crate::{
-    Circuit, CircuitExt, CircuitObject,
+    Circuit, CircuitExt, CircuitObject, WithAux, floor_planner, into_circuit_object,
     polynomials::{Rank, TestRank},
-    registry,
 };
 use ragu_core::maybe::Always;
 use ragu_core::routines::Prediction;
@@ -46,44 +45,40 @@ impl Circuit<Fp> for SquareCircuit {
         &self,
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'witness>>,
-    ) -> Result<(
-        Bound<'dr, D, Self::Output>,
-        DriverValue<D, Self::Aux<'witness>>,
-    )> {
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'witness>>>> {
         let mut a = Element::alloc(dr, witness)?;
 
         for _ in 0..self.times {
             a = a.square(dr)?;
         }
 
-        Ok((a, D::unit()))
+        Ok(WithAux::new(a, D::unit()))
     }
 }
 
-fn consistency_checks<R: Rank>(circuit: &dyn CircuitObject<Fp, R>) {
+fn consistency_checks<R: Rank>(obj: &dyn CircuitObject<Fp, R>) {
     let x = Fp::random(&mut rand::rng());
     let y = Fp::random(&mut rand::rng());
-    let k = registry::Key::new(Fp::random(&mut rand::rng()));
-    let floor_plan = crate::floor_planner::floor_plan(circuit.segment_records());
+    let plan = floor_planner::floor_plan(obj.segment_records());
 
-    let sxy_eval = circuit.sxy(x, y, &k, &floor_plan);
-    let s0y_eval = circuit.sxy(Fp::ZERO, y, &k, &floor_plan);
-    let sx0_eval = circuit.sxy(x, Fp::ZERO, &k, &floor_plan);
-    let s00_eval = circuit.sxy(Fp::ZERO, Fp::ZERO, &k, &floor_plan);
+    let sxy_eval = obj.sxy(x, y, &plan);
+    let s0y_eval = obj.sxy(Fp::ZERO, y, &plan);
+    let sx0_eval = obj.sxy(x, Fp::ZERO, &plan);
+    let s00_eval = obj.sxy(Fp::ZERO, Fp::ZERO, &plan);
 
-    let sxY_poly = circuit.sx(x, &k, &floor_plan);
-    let sXy_poly = circuit.sy(y, &k, &floor_plan).unstructured();
-    let s0Y_poly = circuit.sx(Fp::ZERO, &k, &floor_plan);
-    let sX0_poly = circuit.sy(Fp::ZERO, &k, &floor_plan).unstructured();
+    let sxY_poly = obj.sx(x, &plan);
+    let sXy_poly = obj.sy(y, &plan);
+    let s0Y_poly = obj.sx(Fp::ZERO, &plan);
+    let sX0_poly = obj.sy(Fp::ZERO, &plan);
 
-    assert_eq!(sxy_eval, ragu_arithmetic::eval(&sXy_poly[..], x));
-    assert_eq!(sxy_eval, ragu_arithmetic::eval(&sxY_poly[..], y));
-    assert_eq!(s0y_eval, ragu_arithmetic::eval(&sXy_poly[..], Fp::ZERO));
-    assert_eq!(sx0_eval, ragu_arithmetic::eval(&sxY_poly[..], Fp::ZERO));
-    assert_eq!(s0y_eval, ragu_arithmetic::eval(&s0Y_poly[..], y));
-    assert_eq!(sx0_eval, ragu_arithmetic::eval(&sX0_poly[..], x));
-    assert_eq!(s00_eval, ragu_arithmetic::eval(&s0Y_poly[..], Fp::ZERO));
-    assert_eq!(s00_eval, ragu_arithmetic::eval(&sX0_poly[..], Fp::ZERO));
+    assert_eq!(sxy_eval, sXy_poly.eval(x));
+    assert_eq!(sxy_eval, sxY_poly.eval(y));
+    assert_eq!(s0y_eval, sXy_poly.eval(Fp::ZERO));
+    assert_eq!(sx0_eval, sxY_poly.eval(Fp::ZERO));
+    assert_eq!(s0y_eval, s0Y_poly.eval(y));
+    assert_eq!(sx0_eval, sX0_poly.eval(x));
+    assert_eq!(s00_eval, s0Y_poly.eval(Fp::ZERO));
+    assert_eq!(s00_eval, sX0_poly.eval(Fp::ZERO));
 }
 
 #[test]
@@ -113,10 +108,8 @@ fn test_simple_circuit() {
             &self,
             dr: &mut D,
             witness: DriverValue<D, Self::Witness<'witness>>,
-        ) -> Result<(
-            Bound<'dr, D, Self::Output>,
-            DriverValue<D, Self::Aux<'witness>>,
-        )> {
+        ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'witness>>>>
+        {
             let a = Element::alloc(dr, witness.as_ref().map(|w| w.0))?;
             let b = Element::alloc(dr, witness.as_ref().map(|w| w.1))?;
 
@@ -131,12 +124,12 @@ fn test_simple_circuit() {
             let c = a.add(dr, &b);
             let d = a.sub(dr, &b);
 
-            Ok(((c, d), D::unit()))
+            Ok(WithAux::new((c, d), D::unit()))
         }
     }
 
-    let (trace, _) = MySimpleCircuit
-        .rx((
+    let trace = MySimpleCircuit
+        .trace((
             Fp::from_raw([
                 1833481853729904510,
                 5119040798866070668,
@@ -150,23 +143,24 @@ fn test_simple_circuit() {
                 2277752110332726989,
             ]),
         ))
-        .unwrap();
-    let assignment = trace.assemble_trivial::<MyRank>().unwrap();
-
+        .unwrap()
+        .into_output();
     type MyRank = TestRank;
-    let circuit = MySimpleCircuit.into_object::<MyRank>().unwrap();
 
-    consistency_checks(&*circuit);
+    let obj = into_circuit_object::<_, _, MyRank>(MySimpleCircuit).unwrap();
+    let plan = floor_planner::floor_plan(obj.segment_records());
+
+    let assignment = trace.assemble(&plan, Fp::ZERO).unwrap();
+
+    consistency_checks::<MyRank>(&*obj);
 
     let y = Fp::random(&mut rand::rng());
     let z = Fp::random(&mut rand::rng());
-    let k = registry::Key::default();
-    let floor_plan = crate::floor_planner::floor_plan(circuit.segment_records());
 
     let a = assignment.clone();
     let mut b = assignment.clone();
     b.dilate(z);
-    b.add_assign(&circuit.sy(y, &k, &floor_plan));
+    b.add_assign(&obj.sy(y, &plan));
     b.add_assign(&MyRank::tz(z));
 
     let expected = MySimpleCircuit
@@ -189,10 +183,7 @@ fn test_simple_circuit() {
         )
         .unwrap();
 
-    let a = a.unstructured();
-    let b = b.unstructured();
-
-    assert_eq!(expected, ragu_arithmetic::dot(a.iter(), b.iter().rev()),);
+    assert_eq!(expected, a.revdot(&b));
 }
 
 #[derive(Clone)]

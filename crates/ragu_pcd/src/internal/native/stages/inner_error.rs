@@ -1,4 +1,4 @@
-//! Error stage (layer 1) for fuse operations.
+//! Inner error stage (layer 1) for fuse operations.
 //!
 //! This stage handles N separate M-sized revdot claim reductions.
 
@@ -18,18 +18,19 @@ use ragu_primitives::{
 
 use core::marker::PhantomData;
 
-use crate::internal::fold_revdot::{self, ErrorTermsLen};
+use crate::internal::fold_revdot::{self, NumErrorTerms};
 
-/// Witness data for the error_m stage (layer 1).
+/// Witness data for the inner error stage (layer 1).
 ///
 /// Contains N sets of M-sized error terms for the first layer of reduction.
 pub struct Witness<C: Cycle, FP: fold_revdot::Parameters> {
     /// Error term elements for layer 1.
     /// Outer: N claims, Inner: M²-M error terms per claim.
-    pub error_terms: FixedVec<FixedVec<C::CircuitField, ErrorTermsLen<FP::M>>, FP::N>,
+    pub error_terms:
+        FixedVec<FixedVec<C::CircuitField, NumErrorTerms<FP::GroupSize>>, FP::NumGroups>,
 }
 
-/// Prover-internal output gadget for the error_m stage.
+/// Prover-internal output gadget for the inner error stage.
 ///
 /// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget, Consistent)]
@@ -37,10 +38,11 @@ pub struct Output<'dr, D: Driver<'dr>, FP: fold_revdot::Parameters> {
     /// Error term elements for layer 1.
     /// Outer: N claims, Inner: M²-M error terms per claim.
     #[ragu(gadget)]
-    pub error_terms: FixedVec<FixedVec<Element<'dr, D>, ErrorTermsLen<FP::M>>, FP::N>,
+    pub error_terms:
+        FixedVec<FixedVec<Element<'dr, D>, NumErrorTerms<FP::GroupSize>>, FP::NumGroups>,
 }
 
-/// The error_m stage (layer 1) of the fuse witness.
+/// The inner error stage (layer 1) of the fuse witness.
 #[derive(Default)]
 pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
     _marker: PhantomData<(C, R, FP)>,
@@ -49,14 +51,14 @@ pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Paramet
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, FP>
 {
-    type Parent = super::error_n::Stage<C, R, HEADER_SIZE, FP>;
+    type Parent = super::outer_error::Stage<C, R, HEADER_SIZE, FP>;
     type Witness<'source> = &'source Witness<C, FP>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _, FP>];
 
     fn values() -> usize {
         // N * (M² - M) error terms
-        let error_terms_per_claim = ErrorTermsLen::<FP::M>::len();
-        FP::N::len() * error_terms_per_claim
+        let error_terms_per_claim = NumErrorTerms::<FP::GroupSize>::len();
+        FP::NumGroups::len() * error_terms_per_claim
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

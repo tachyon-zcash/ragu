@@ -2,3 +2,4 @@
 
 pub mod circuits;
 pub mod pcd;
+pub mod registry;

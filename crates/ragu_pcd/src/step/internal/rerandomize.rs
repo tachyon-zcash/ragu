@@ -78,7 +78,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
 #[test]
 fn test_rerandomize_consistency() {
     use crate::header::{Header, Suffix};
-    use ragu_circuits::{CircuitExt, polynomials, registry};
+    use ragu_circuits::polynomials;
     use ragu_core::{
         Result,
         drivers::{Driver, DriverValue},
@@ -87,6 +87,7 @@ fn test_rerandomize_consistency() {
     };
     use ragu_pasta::{Fp, Pasta};
     use ragu_primitives::Element;
+    use ragu_testing::registry::TestRegistryBuilder;
 
     const HEADER_SIZE: usize = 4;
     type R = polynomials::TestRank;
@@ -121,28 +122,20 @@ fn test_rerandomize_consistency() {
         }
     }
 
-    let circuit_single =
-        super::adapter::Adapter::<Pasta, Rerandomize<Single>, R, HEADER_SIZE>::new(
-            Rerandomize::new(),
-        )
-        .into_object::<R>()
-        .unwrap();
+    let circuit_single = super::adapter::Adapter::<Pasta, Rerandomize<Single>, R, HEADER_SIZE>::new(
+        Rerandomize::new(),
+    );
     let circuit_pair = super::adapter::Adapter::<Pasta, Rerandomize<Pair>, R, HEADER_SIZE>::new(
         Rerandomize::new(),
-    )
-    .into_object::<R>()
-    .unwrap();
+    );
+
+    let mut builder: TestRegistryBuilder<'_, _, R> = TestRegistryBuilder::new();
+    let single_h = builder.register_circuit(circuit_single).unwrap();
+    let pair_h = builder.register_circuit(circuit_pair).unwrap();
+    let registry = builder.finalize().unwrap();
 
     let x = Fp::from(5u64);
     let y = Fp::from(17u64);
-    let key = registry::Key::default();
 
-    let floor_plan_single =
-        ragu_circuits::floor_planner::floor_plan(circuit_single.segment_records());
-    let floor_plan_pair = ragu_circuits::floor_planner::floor_plan(circuit_pair.segment_records());
-
-    let eval_single = circuit_single.sxy(x, y, &key, &floor_plan_single);
-    let eval_pair = circuit_pair.sxy(x, y, &key, &floor_plan_pair);
-
-    assert_eq!(eval_single, eval_pair,);
+    assert_eq!(registry.xy(single_h, x, y), registry.xy(pair_h, x, y),);
 }

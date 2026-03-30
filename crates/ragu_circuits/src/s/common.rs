@@ -21,10 +21,10 @@
 //!
 //! ### `ONE` Wire Evaluation
 //!
-//! The `ONE` wire corresponds to the $c$ wire from gate 0, with monomial
-//! $x^{4n-1}$. Since [`Driver::ONE`] must be a compile-time constant, it cannot
+//! The `ONE` wire corresponds to the $b$ wire of the SYSTEM gate, with monomial
+//! $x^{2n}$. Since [`Driver::ONE`] must be a compile-time constant, it cannot
 //! hold this computed value. Instead, [`WireEval::One`] serves as a sentinel
-//! that [`WireEvalSum::add_term`] resolves to the cached $x^{4n - 1}$ value
+//! that [`WireEvalSum::add_term`] resolves to the cached $x^{2n}$ value
 //! at runtime.
 //!
 //! [`sx`]: super::sx
@@ -49,7 +49,7 @@ use ragu_core::drivers::LinearExpression;
 ///
 /// - `One` — Represents the ONE wire. This variant exists because `Driver::ONE`
 ///   must be a compile-time constant, but the `ONE` wire's actual evaluation
-///   (e.g., $x^{4n-1}$) depends on the evaluation point.
+///   (e.g., $x^{2n}$) depends on the evaluation point.
 ///   [`WireEvalSum::add_term`] resolves `One` to the cached evaluation at
 ///   runtime.
 ///

@@ -1,11 +1,13 @@
 /// Poseidon permutation parameters for Vesta's base field
+/// ([`Fq`](pasta_curves::Fq), the [`ScalarField`](ragu_arithmetic::Cycle::ScalarField)
+/// in the Pasta cycle).
+///
+/// Constants generated using the [Hades/Poseidon reference
+/// implementation](https://extgit.isec.tugraz.at/krypto/hadeshash)
+/// (via the `daira/pasta-hadeshash` fork) with state size 5, $x^5$ sbox,
+/// 8 full rounds, and 56 partial rounds.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct PoseidonFq;
-
-// Generated using https://extgit.isec.tugraz.at/krypto/hadeshash (via the daira/pasta-hadeshash fork)
-// sage generate_parameters_grain.sage 1 0 255 5 8 56 0x40000000000000000000000000000000224698fc0994a8dd8c46eb2100000001
-// which has the correct round constants (8 and 56) given the output of calc_round_numbers.py for the state size 5 and the
-// use of x^5 for the sbox, for the prime q
 impl ragu_arithmetic::PoseidonPermutation<pasta_curves::Fq> for PoseidonFq {
     const T: usize = 5;
     const RATE: usize = 4;

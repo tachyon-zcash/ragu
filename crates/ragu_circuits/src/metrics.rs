@@ -3,7 +3,7 @@
 //!
 //! This module provides constraint system analysis by simulating circuit
 //! execution without computing actual values, counting the number of
-//! multiplication and linear constraints a circuit requires. It simultaneously
+//! gates and constraints a circuit requires. It simultaneously
 //! computes Schwartz–Zippel fingerprints for each routine invocation via the
 //! merged [`Counter`] driver, which combines constraint counting with identity
 //! evaluation in a single DFS traversal.
@@ -33,7 +33,7 @@
 //!
 //! [`TypeId`]: core::any::TypeId
 
-use ff::{Field, FromUniformBytes, PrimeField};
+use ff::{FromUniformBytes, PrimeField};
 use ragu_arithmetic::Coeff;
 use ragu_core::{
     Result,
@@ -43,12 +43,12 @@ use ragu_core::{
     maybe::Empty,
     routines::Routine,
 };
-use ragu_primitives::GadgetExt;
 
 use alloc::vec::Vec;
 use core::any::TypeId;
 
 use super::Circuit;
+use super::raw::RawCircuit;
 use super::s::common::{WireEval, WireEvalSum};
 
 /// The structural identity of a routine record.
@@ -93,8 +93,8 @@ pub struct RoutineFingerprint {
     input_kind: TypeId,
     output_kind: TypeId,
     eval: u64,
-    local_num_multiplication_constraints: usize,
-    local_num_linear_constraints: usize,
+    local_num_gates: usize,
+    local_num_constraints: usize,
 }
 
 impl RoutineFingerprint {
@@ -102,15 +102,15 @@ impl RoutineFingerprint {
     /// type ids, a field element evaluation, and local constraint counts.
     fn of<F: PrimeField, Ro: Routine<F>>(
         eval: F,
-        local_num_multiplication_constraints: usize,
-        local_num_linear_constraints: usize,
+        local_num_gates: usize,
+        local_num_constraints: usize,
     ) -> Self {
         Self {
             input_kind: TypeId::of::<Ro::Input>(),
             output_kind: TypeId::of::<Ro::Output>(),
             eval: ragu_arithmetic::low_u64(&eval),
-            local_num_multiplication_constraints,
-            local_num_linear_constraints,
+            local_num_gates,
+            local_num_constraints,
         }
     }
 
@@ -123,7 +123,7 @@ impl RoutineFingerprint {
 
 /// Constraint counts for one segment of the circuit, collected during synthesis.
 ///
-/// Each record captures the multiplication and linear constraints contributed
+/// Each record captures the gates and constraints contributed
 /// by a single segment in DFS order. Segments are the primary boundary for
 /// floor planning: the floor planner decides where each segment's constraints
 /// are placed in the polynomial layout.
@@ -159,33 +159,21 @@ impl RoutineFingerprint {
 /// | 2     | `RoutineB`     |  1  |  3 | b0+b1; `RoutineC` excluded |
 /// | 3     | `RoutineC`     |  1  |  2 | C's own constraints        |
 pub struct SegmentRecord {
-    num_multiplication_constraints: usize,
-    num_linear_constraints: usize,
+    num_gates: usize,
+    num_constraints: usize,
     identity: RoutineIdentity,
 }
 
 impl SegmentRecord {
-    pub(crate) fn new(
-        num_multiplication_constraints: usize,
-        num_linear_constraints: usize,
-        identity: RoutineIdentity,
-    ) -> Self {
-        Self {
-            num_multiplication_constraints,
-            num_linear_constraints,
-            identity,
-        }
+    /// The number of gates in this segment.
+    pub fn num_gates(&self) -> usize {
+        self.num_gates
     }
 
-    /// The number of multiplication constraints in this segment.
-    pub fn num_multiplication_constraints(&self) -> usize {
-        self.num_multiplication_constraints
-    }
-
-    /// The number of linear constraints in this segment, including constraints
+    /// The number of constraints in this segment, including constraints
     /// on wires of the input gadget and on wires allocated within the segment.
-    pub fn num_linear_constraints(&self) -> usize {
-        self.num_linear_constraints
+    pub fn num_constraints(&self) -> usize {
+        self.num_constraints
     }
 
     /// The structural identity of this routine invocation.
@@ -201,11 +189,11 @@ impl SegmentRecord {
 /// Captures constraint counts and per-routine records by simulating circuit
 /// execution without computing actual values.
 pub struct CircuitMetrics {
-    /// The number of linear constraints, including those for instance enforcement.
-    pub(crate) num_linear_constraints: usize,
+    /// The number of constraints, including those for instance enforcement.
+    pub(crate) num_constraints: usize,
 
-    /// The number of multiplication constraints, including those used for allocations.
-    pub(crate) num_multiplication_constraints: usize,
+    /// The number of gates, including those used for allocations.
+    pub(crate) num_gates: usize,
 
     /// The degree of the instance polynomial $k(Y)$.
     // TODO(ebfull): not sure if we'll need this later
@@ -225,8 +213,8 @@ pub struct CircuitMetrics {
 /// Contains both the constraint counting record index and the identity
 /// evaluation state (geometric sequence runners and Horner accumulator).
 struct CounterScope<F> {
-    /// Stashed $b$ wire from paired allocation (see [`Driver::alloc`]).
-    available_b: Option<WireEval<F>>,
+    /// Stashed $d$ wire from paired allocation (see [`Driver::alloc`]).
+    available_d: Option<WireEval<F>>,
 
     /// Index into [`Counter::segments`] for the current routine.
     current_segment: usize,
@@ -240,6 +228,9 @@ struct CounterScope<F> {
     /// Running monomial for $c$ wires: $x_2^{i+1}$ at gate $i$.
     current_c: F,
 
+    /// Running monomial for $d$ wires: $x_3^{i+1}$ at gate $i$.
+    current_d: F,
+
     /// Horner accumulator for the fingerprint evaluation result.
     result: F,
 }
@@ -247,10 +238,11 @@ struct CounterScope<F> {
 /// A [`Driver`] that simultaneously counts constraints and computes routine
 /// identity fingerprints via Schwartz–Zippel evaluation.
 ///
-/// Assigns three independent geometric sequences (bases $x_0, x_1, x_2$) to
-/// the $a$, $b$, $c$ wires and accumulates constraint values via Horner's rule
-/// over $y$. When entering a routine, the identity state is saved and reset so
-/// that each routine is fingerprinted independently of its calling context.
+/// Assigns four independent geometric sequences (bases $x_0, x_1, x_2, x_3$) to
+/// the $a$, $b$, $c$, $d$ wires and accumulates constraint values via Horner's
+/// rule over $y$. When entering a routine, the identity state is saved and
+/// reset so that each routine is fingerprinted independently of its calling
+/// context.
 ///
 /// Nested routine outputs are treated as auxiliary inputs to the caller: on
 /// return, output wires are remapped to fresh allocations in the parent scope
@@ -258,14 +250,14 @@ struct CounterScope<F> {
 /// routine's fingerprint capture only its *internal* constraint structure.
 struct Counter<F> {
     scope: CounterScope<F>,
-    num_linear_constraints: usize,
-    num_multiplication_constraints: usize,
+    num_constraints: usize,
+    num_gates: usize,
     segments: Vec<SegmentRecord>,
 
-    /// When false, `mul` advances geometric sequences but does not increment
+    /// When false, `gate` advances geometric sequences but does not increment
     /// constraint counts.  Used during input and output wire remapping in
     /// [`routine`](Driver::routine), where only `alloc` (and transitively
-    /// `mul`) is reachable via [`WireMap::convert_wire`].
+    /// `mul`, which calls `gate`) is reachable via [`WireMap::convert_wire`].
     counting: bool,
 
     /// Base for the $a$-wire geometric sequence.
@@ -276,6 +268,9 @@ struct Counter<F> {
 
     /// Base for the $c$-wire geometric sequence.
     x2: F,
+
+    /// Base for the $d$-wire geometric sequence.
+    x3: F,
 
     /// Multiplier for Horner accumulation, applied per [`enforce_zero`] call.
     ///
@@ -315,30 +310,33 @@ impl<F: FromUniformBytes<64>> Counter<F> {
         let x0 = point(0);
         let x1 = point(1);
         let x2 = point(2);
-        let y = point(3);
-        let h = point(4);
-        let one = point(5);
+        let x3 = point(3);
+        let y = point(4);
+        let h = point(5);
+        let one = point(6);
 
         Self {
             scope: CounterScope {
-                available_b: None,
+                available_d: None,
                 current_segment: 0,
                 current_a: x0,
                 current_b: x1,
                 current_c: x2,
+                current_d: x3,
                 result: h,
             },
-            num_linear_constraints: 0,
-            num_multiplication_constraints: 0,
+            num_constraints: 0,
+            num_gates: 0,
             segments: alloc::vec![SegmentRecord {
-                num_multiplication_constraints: 0,
-                num_linear_constraints: 0,
+                num_gates: 0,
+                num_constraints: 0,
                 identity: RoutineIdentity::Root,
             }],
             counting: true,
             x0,
             x1,
             x2,
+            x3,
             y,
             one,
             h,
@@ -347,7 +345,7 @@ impl<F: FromUniformBytes<64>> Counter<F> {
 
     /// Runs `f` with `counting` set to `false`, restoring it afterward.
     ///
-    /// Used during wire remapping so that `mul` advances geometric
+    /// Used during wire remapping so that `gate` advances geometric
     /// sequences without incrementing constraint counts, and
     /// `enforce_zero` is a no-op.
     fn uncounted<R>(&mut self, f: impl FnOnce(&mut Self) -> Result<R>) -> Result<R> {
@@ -358,12 +356,42 @@ impl<F: FromUniformBytes<64>> Counter<F> {
     }
 }
 
-impl<F: Field> DriverTypes for Counter<F> {
+impl<F: FromUniformBytes<64>> DriverTypes for Counter<F> {
     type MaybeKind = Empty;
     type ImplField = F;
     type ImplWire = WireEval<F>;
     type LCadd = WireEvalSum<F>;
     type LCenforce = WireEvalSum<F>;
+
+    /// Consumes a gate: increments gate counts and returns
+    /// wire values from four independent geometric sequences, advancing each
+    /// by its base.
+    fn gate(
+        &mut self,
+        _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>, Coeff<F>)>,
+    ) -> Result<(WireEval<F>, WireEval<F>, WireEval<F>, WireEval<F>)> {
+        if self.counting {
+            self.num_gates += 1;
+            self.segments[self.scope.current_segment].num_gates += 1;
+        }
+
+        let a = self.scope.current_a;
+        let b = self.scope.current_b;
+        let c = self.scope.current_c;
+        let d = self.scope.current_d;
+
+        self.scope.current_a *= self.x0;
+        self.scope.current_b *= self.x1;
+        self.scope.current_c *= self.x2;
+        self.scope.current_d *= self.x3;
+
+        Ok((
+            WireEval::Value(a),
+            WireEval::Value(b),
+            WireEval::Value(c),
+            WireEval::Value(d),
+        ))
+    }
 }
 
 impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
@@ -371,38 +399,15 @@ impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
     type Wire = WireEval<F>;
     const ONE: Self::Wire = WireEval::One;
 
-    /// Allocates a wire using paired allocation.
+    /// Allocates a wire using paired allocation with layout $(0, b, 0, d)$.
     fn alloc(&mut self, _: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
-        if let Some(wire) = self.scope.available_b.take() {
+        if let Some(wire) = self.scope.available_d.take() {
             Ok(wire)
         } else {
-            let (a, b, _) = self.mul(|| unreachable!())?;
-            self.scope.available_b = Some(b);
-            Ok(a)
+            let (_, b, _, d) = self.gate(|| unreachable!())?;
+            self.scope.available_d = Some(d);
+            Ok(b)
         }
-    }
-
-    /// Consumes a multiplication gate: increments constraint counts and returns
-    /// wire values from three independent geometric sequences, advancing each
-    /// by its base.
-    fn mul(
-        &mut self,
-        _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>,
-    ) -> Result<(Self::Wire, Self::Wire, Self::Wire)> {
-        if self.counting {
-            self.num_multiplication_constraints += 1;
-            self.segments[self.scope.current_segment].num_multiplication_constraints += 1;
-        }
-
-        let a = self.scope.current_a;
-        let b = self.scope.current_b;
-        let c = self.scope.current_c;
-
-        self.scope.current_a *= self.x0;
-        self.scope.current_b *= self.x1;
-        self.scope.current_c *= self.x2;
-
-        Ok((WireEval::Value(a), WireEval::Value(b), WireEval::Value(c)))
     }
 
     /// Computes a linear combination of wire evaluations.
@@ -410,11 +415,11 @@ impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
         WireEval::Value(lc(WireEvalSum::new(self.one)).value)
     }
 
-    /// Increments linear constraint count and applies one Horner step:
+    /// Increments constraint count and applies one Horner step:
     /// `result = result * y + coefficient`.
     fn enforce_zero(&mut self, lc: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
-        self.num_linear_constraints += 1;
-        self.segments[self.scope.current_segment].num_linear_constraints += 1;
+        self.num_constraints += 1;
+        self.segments[self.scope.current_segment].num_constraints += 1;
         self.scope.result *= self.y;
         self.scope.result += lc(WireEvalSum::new(self.one)).value;
         Ok(())
@@ -427,8 +432,8 @@ impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
     ) -> Result<Bound<'dr, Self, Ro::Output>> {
         // Push new segment with placeholder identity.
         self.segments.push(SegmentRecord {
-            num_multiplication_constraints: 0,
-            num_linear_constraints: 0,
+            num_gates: 0,
+            num_constraints: 0,
             identity: RoutineIdentity::Root,
         });
         let segment_idx = self.segments.len() - 1;
@@ -437,11 +442,12 @@ impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
         let saved = core::mem::replace(
             &mut self.scope,
             CounterScope {
-                available_b: None,
+                available_d: None,
                 current_segment: segment_idx,
                 current_a: self.x0,
                 current_b: self.x1,
                 current_c: self.x2,
+                current_d: self.x3,
                 result: self.h,
             },
         );
@@ -450,7 +456,7 @@ impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
         // fingerprint captures only internal structure, not caller context.
         // Uncounted: these gates only seed the geometric sequences.
         let new_input = self.uncounted(|c| Ro::Input::map_gadget(&input, c))?;
-        self.scope.available_b = None; // match sxy/rx initial state
+        self.scope.available_d = None; // match sxy/trace initial state
 
         // Predict and execute.
         let aux = Emulator::predict(&routine, &new_input)?.into_aux();
@@ -461,8 +467,8 @@ impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
         self.segments[segment_idx].identity =
             RoutineIdentity::Routine(RoutineFingerprint::of::<F, Ro>(
                 self.scope.result,
-                seg.num_multiplication_constraints,
-                seg.num_linear_constraints,
+                seg.num_gates,
+                seg.num_constraints,
             ));
 
         // Restore parent scope.
@@ -478,12 +484,12 @@ impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
         // parent's geometric sequences.
         //
         // The remap calls `alloc` for each output wire, which may call
-        // `mul` internally. This has two side effects on the parent scope:
+        // `gate` internally. This has two side effects on the parent scope:
         //
         // 1. Geometric sequences advance — `current_a`, `current_b`,
         //    `current_c` move past the remap gates.
-        // 2. `available_b` changes — the remap may consume a pending
-        //    b-wire or create a new one.
+        // 2. `available_d` changes — the remap may consume a pending
+        //    d-wire or create a new one.
         //
         // Effect (1) is kept; effect (2) is rolled back. The asymmetry is
         // deliberate:
@@ -494,30 +500,30 @@ impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
         // the remap positions achieves this — each output wire lands at a
         // unique geometric position in the parent's sequence space.
         //
-        // `available_b` must be restored because in the real drivers
+        // `available_d` must be restored because in the real drivers
         // (sxy, sx, sy), output wires are received directly from the
         // child's evaluation — no parent gates are consumed and the
         // parent's pairing state is untouched. The output remap is a
         // Counter-only operation that exists solely to assign parent-scope
         // evaluations to child output wires. If the remap were allowed to
-        // mutate `available_b`, the parent's subsequent allocation pattern
-        // would diverge from the real drivers: a pending b-wire could be
+        // mutate `available_d`, the parent's subsequent allocation pattern
+        // would diverge from the real drivers: a pending d-wire could be
         // consumed or created by the remap, changing which wire types
-        // subsequent `alloc` calls return. Restoring `available_b` keeps
+        // subsequent `alloc` calls return. Restoring `available_d` keeps
         // the parent's pairing trajectory identical to the real drivers.
         //
-        // After a routine call where the parent had a pending b-wire, the
+        // After a routine call where the parent had a pending d-wire, the
         // stashed wire retains its pre-call geometric value while the
         // sequences have jumped forward past the remap positions. This
         // creates a non-contiguous gap in the parent's sequence coverage.
         // The gap is harmless — the stashed wire already has a distinct
         // value, and Schwartz–Zippel only requires that all wire
         // evaluations be distinct, not contiguous.
-        let saved_b = self.scope.available_b.take();
+        let saved_d = self.scope.available_d.take();
 
         let parent_output = self.uncounted(|c| Ro::Output::map_gadget(&output, c))?;
 
-        self.scope.available_b = saved_b;
+        self.scope.available_d = saved_d;
 
         Ok(parent_output)
     }
@@ -536,45 +542,21 @@ impl<F: FromUniformBytes<64>> WireMap<F> for Counter<F> {
 
 /// Evaluates the constraint topology of a circuit.
 pub fn eval<F: FromUniformBytes<64>, C: Circuit<F>>(circuit: &C) -> Result<CircuitMetrics> {
+    eval_raw(&super::raw::CircuitAdapterRef(circuit))
+}
+
+/// Evaluates the constraint topology of a [`RawCircuit`].
+pub(crate) fn eval_raw<F: FromUniformBytes<64>, RC: RawCircuit<F>>(
+    circuit: &RC,
+) -> Result<CircuitMetrics> {
     let mut collector = Counter::<F>::new();
-    let mut degree_ky = 0usize;
 
-    // ONE gate
-    collector.mul(|| Ok((Coeff::One, Coeff::One, Coeff::One)))?;
+    let result = super::raw::orchestrate(&mut collector, circuit, Empty)?;
 
-    // Registry key constraint
-    collector.enforce_zero(|lc| lc)?;
-
-    // Circuit synthesis
-    let (io, _) = circuit.witness(&mut collector, Empty)?;
-    io.write(&mut collector, &mut degree_ky)?;
-
-    // Public output constraints
-    for _ in 0..degree_ky {
-        collector.enforce_zero(|lc| lc)?;
-    }
-
-    // ONE constraint
-    collector.enforce_zero(|lc| lc)?;
-
-    let recorded_multiplications: usize = collector
-        .segments
-        .iter()
-        .map(|r| r.num_multiplication_constraints)
-        .sum();
-    let recorded_linear_constraints: usize = collector
-        .segments
-        .iter()
-        .map(|r| r.num_linear_constraints)
-        .sum();
-    assert_eq!(
-        recorded_multiplications,
-        collector.num_multiplication_constraints
-    );
-    assert_eq!(
-        recorded_linear_constraints,
-        collector.num_linear_constraints
-    );
+    let recorded_gates: usize = collector.segments.iter().map(|r| r.num_gates).sum();
+    let recorded_constraints: usize = collector.segments.iter().map(|r| r.num_constraints).sum();
+    assert_eq!(recorded_gates, collector.num_gates);
+    assert_eq!(recorded_constraints, collector.num_constraints);
 
     assert!(
         matches!(collector.segments[0].identity, RoutineIdentity::Root),
@@ -591,9 +573,9 @@ pub fn eval<F: FromUniformBytes<64>, C: Circuit<F>>(circuit: &C) -> Result<Circu
     );
 
     Ok(CircuitMetrics {
-        num_linear_constraints: collector.num_linear_constraints,
-        num_multiplication_constraints: collector.num_multiplication_constraints,
-        degree_ky,
+        num_constraints: collector.num_constraints,
+        num_gates: collector.num_gates,
+        degree_ky: result.degree_ky,
         segments: collector.segments,
     })
 }
@@ -601,6 +583,7 @@ pub fn eval<F: FromUniformBytes<64>, C: Circuit<F>>(circuit: &C) -> Result<Circu
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::WithAux;
     use core::marker::PhantomData;
     use ragu_core::{
         drivers::{Driver, DriverValue},
@@ -652,7 +635,7 @@ pub(crate) mod tests {
         let mut counter = Counter::<F>::new();
 
         // Remap input wires into Counter, mirroring Counter::routine:
-        // uncounted (seeding only) and available_b cleared afterward.
+        // uncounted (seeding only) and available_d cleared afterward.
         let new_input = counter.uncounted(|c| {
             let mut remap = CounterRemap {
                 counter: c,
@@ -660,7 +643,7 @@ pub(crate) mod tests {
             };
             Ro::Input::map_gadget(input, &mut remap)
         })?;
-        counter.scope.available_b = None;
+        counter.scope.available_d = None;
 
         // Predict (on a wireless emulator) then execute on the counter.
         let aux = Emulator::predict(routine, &new_input)?.into_aux();
@@ -671,12 +654,12 @@ pub(crate) mod tests {
         let seg = &counter.segments[0];
         Ok(RoutineIdentity::Routine(RoutineFingerprint::of::<F, Ro>(
             counter.scope.result,
-            seg.num_multiplication_constraints,
-            seg.num_linear_constraints,
+            seg.num_gates,
+            seg.num_constraints,
         )))
     }
 
-    // A routine that allocates exactly one wire, leaving the "b" slot dangling
+    // A routine that allocates exactly one wire, leaving the "d" slot dangling
     // in a pair-allocated driver like `Counter`.
     // This must not panic when processed.
     #[derive(Clone)]
@@ -727,12 +710,10 @@ pub(crate) mod tests {
             &self,
             dr: &mut D,
             _witness: DriverValue<D, Self::Witness<'source>>,
-        ) -> Result<(
-            Bound<'dr, D, Self::Output>,
-            DriverValue<D, Self::Aux<'source>>,
-        )> {
+        ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>>
+        {
             dr.routine(DanglingAllocRoutine, ())?;
-            Ok(((), D::unit()))
+            Ok(WithAux::new((), D::unit()))
         }
     }
 

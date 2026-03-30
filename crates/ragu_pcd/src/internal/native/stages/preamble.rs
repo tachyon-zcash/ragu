@@ -100,6 +100,10 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     /// Returns `(unified_ky, unified_bridge_ky)` where:
     /// - `unified_ky` = k(y) for `(unified, 0)`
     /// - `unified_bridge_ky` = k(y) for `(unified, children.left, children.right, 0)`
+    ///
+    /// The Horner evaluation order and trailing zero here define the numerical
+    /// values that [`ky_values`](super::super::claims::ky_values) must produce
+    /// in matching positions.
     pub fn unified_ky_values(
         &self,
         dr: &mut D,

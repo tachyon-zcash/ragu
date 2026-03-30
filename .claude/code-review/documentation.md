@@ -5,6 +5,8 @@
 Review documentation in Rust source files — doc comments (`///`, `//!`), code
 comments (`//`), and module-level documentation. For shared prose and math
 rules, see `.claude/review-shared/writing.md` and `.claude/review-shared/math.md`.
+For book vs. rustdoc placement rules, see
+`.claude/review-shared/surface-placement.md`.
 
 ## Prose in Doc Comments
 
@@ -58,6 +60,15 @@ rules, see `.claude/review-shared/writing.md` and `.claude/review-shared/math.md
 - In non-doc `//` comments, avoid Unicode math symbols. Prefer breaking into
   smaller functions with doc comments that render KaTeX.
 
+## API Contracts
+
+- State the contract; don't spell out consequences of violating it. "Must be
+  smaller than `T`" is sufficient — adding "violations may cause panics or
+  incorrect behavior" is noise, since *any* contract violation can produce
+  incorrect behavior.
+- Exception: `# Safety` sections on `unsafe` items, where the consequences
+  are undefined behavior and the caller must be warned explicitly.
+
 ## Content Guidelines
 
 - Establish documentation ownership: one authoritative location per concept.
@@ -68,4 +79,8 @@ rules, see `.claude/review-shared/writing.md` and `.claude/review-shared/math.md
 - Document intended behavior, not incidental capabilities.
 - For polynomial eval functions: verify fixed vs free variables match the
   signature. Convention: uppercase (X, Y) = polynomial variables; lowercase
-  (x, y) = fixed evaluation points.
+  (x, y) = fixed evaluation points. Method names list the *fixed* variables
+  (e.g., `y()` fixes y and returns a polynomial in X; `xy()` fixes both).
+  Do not flag comments that name the free variable as the "restricted"
+  dimension — "Restricted to X" in `y()` is correct; it identifies the
+  polynomial variable of the result.

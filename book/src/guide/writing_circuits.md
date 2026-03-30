@@ -68,7 +68,7 @@ distinct index starting from 0.
 type Witness<'source> = C::CircuitField;  // What the prover knows
 ```
 
-**Aux**: Data returned to the caller (output values)
+**Aux**: Auxiliary data returned alongside the output header value (e.g., for pipelining to future steps)
 ```rust
 type Aux<'source> = C::CircuitField;  // What to return
 ```
@@ -88,7 +88,7 @@ type Output = InternalNode;  // What this step creates
 
 This is where the circuit logic is implemented. The function:
 1. Receives witness data from the prover
-2. Receives left/right header data as `DriverValue`
+2. Receives left/right header data as `DriverValue`s
 3. Performs computation (constraints)
 4. Returns encoded proofs, output header data, and auxiliary output
 

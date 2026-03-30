@@ -25,14 +25,15 @@ pub mod horner;
 mod ky;
 mod metrics;
 pub mod polynomials;
+mod raw;
 pub mod registry;
-mod rx;
 mod s;
 pub mod staging;
+mod trace;
 mod trivial;
 
 pub use metrics::{RoutineFingerprint, RoutineIdentity, SegmentRecord};
-pub use rx::Trace;
+pub use trace::Trace;
 
 #[cfg(test)]
 mod tests;
@@ -47,7 +48,47 @@ use ragu_primitives::io::Write;
 
 use alloc::boxed::Box;
 
-use polynomials::{Rank, structured, unstructured};
+use polynomials::{Rank, sparse};
+
+/// Bundles a primary value with auxiliary data.
+///
+/// Returned by [`Circuit::witness`] and [`CircuitExt::trace`] to pair the
+/// circuit's output with any auxiliary data produced during synthesis.
+/// Most circuits set `Aux = ()` and callers can use [`into_output`] to
+/// discard the auxiliary component, [`into_aux`] to discard the output,
+/// or [`into_parts`] to destructure both.
+///
+/// [`into_output`]: WithAux::into_output
+/// [`into_aux`]: WithAux::into_aux
+/// [`into_parts`]: WithAux::into_parts
+pub struct WithAux<O, A> {
+    /// The primary output value.
+    pub(crate) output: O,
+    /// Auxiliary data produced alongside the output.
+    pub(crate) aux: A,
+}
+
+impl<O, A> WithAux<O, A> {
+    /// Creates a new `WithAux` from an output and auxiliary data.
+    pub fn new(output: O, aux: A) -> Self {
+        Self { output, aux }
+    }
+
+    /// Discards auxiliary data, returning only the output.
+    pub fn into_output(self) -> O {
+        self.output
+    }
+
+    /// Discards the output, returning only auxiliary data.
+    pub fn into_aux(self) -> A {
+        self.aux
+    }
+
+    /// Destructures into both components.
+    pub fn into_parts(self) -> (O, A) {
+        (self.output, self.aux)
+    }
+}
 
 /// A trait for drivers that carry per-routine state which must be saved and
 /// restored across routine boundaries.
@@ -110,97 +151,22 @@ pub trait Circuit<F: Field>: Sized + Send + Sync {
         &self,
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<(
-        Bound<'dr, D, Self::Output>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>>
     where
         Self: 'dr;
 }
 
-/// An extension trait for all circuits.
+/// Extension trait blanket-implemented for all [`Circuit<F>`](Circuit) types.
 pub trait CircuitExt<F: Field>: Circuit<F> {
-    /// Given a polynomial [`Rank`], convert this circuit into a boxed
-    /// [`CircuitObject`] that provides methods for evaluating the $s(X, Y)$
-    /// polynomial for this circuit.
-    fn into_object<'a, R: Rank>(self) -> Result<Box<dyn CircuitObject<F, R> + 'a>>
-    where
-        Self: 'a,
-        F: FromUniformBytes<64>,
-    {
-        let metrics = metrics::eval(&self)?;
-
-        if metrics.num_linear_constraints > R::num_coeffs() {
-            return Err(Error::LinearBoundExceeded {
-                limit: R::num_coeffs(),
-            });
-        }
-
-        if metrics.num_multiplication_constraints > R::n() {
-            return Err(Error::MultiplicationBoundExceeded { limit: R::n() });
-        }
-
-        struct ProcessedCircuit<C> {
-            circuit: C,
-            metrics: metrics::CircuitMetrics,
-        }
-
-        impl<F: Field, C: Circuit<F>, R: Rank> CircuitObject<F, R> for ProcessedCircuit<C> {
-            fn sxy(
-                &self,
-                x: F,
-                y: F,
-                key: &registry::Key<F>,
-                floor_plan: &[floor_planner::ConstraintSegment],
-            ) -> F {
-                s::sxy::eval::<_, _, R>(&self.circuit, x, y, key, floor_plan)
-                    .expect("should succeed if metrics succeeded")
-            }
-            fn sx(
-                &self,
-                x: F,
-                key: &registry::Key<F>,
-                floor_plan: &[floor_planner::ConstraintSegment],
-            ) -> unstructured::Polynomial<F, R> {
-                s::sx::eval(&self.circuit, x, key, floor_plan)
-                    .expect("should succeed if metrics succeeded")
-            }
-            fn sy(
-                &self,
-                y: F,
-                key: &registry::Key<F>,
-                floor_plan: &[floor_planner::ConstraintSegment],
-            ) -> structured::Polynomial<F, R> {
-                s::sy::eval(&self.circuit, y, key, floor_plan)
-                    .expect("should succeed if metrics succeeded")
-            }
-            fn constraint_counts(&self) -> (usize, usize) {
-                (
-                    self.metrics.num_multiplication_constraints,
-                    self.metrics.num_linear_constraints,
-                )
-            }
-            fn segment_records(&self) -> &[SegmentRecord] {
-                &self.metrics.segments
-            }
-        }
-
-        let circuit = ProcessedCircuit {
-            circuit: self,
-            metrics,
-        };
-        Ok(Box::new(circuit))
-    }
-
     /// Computes the trace for this circuit from a witness.
     ///
     /// The returned [`Trace`] can be assembled into a polynomial
     /// via [`Registry::assemble`](registry::Registry::assemble).
-    fn rx<'witness>(
+    fn trace<'witness>(
         &self,
         witness: Self::Witness<'witness>,
-    ) -> Result<(rx::Trace<F>, Self::Aux<'witness>)> {
-        rx::eval(self, witness)
+    ) -> Result<WithAux<trace::Trace<F>, Self::Aux<'witness>>> {
+        trace::eval(self, witness)
     }
 
     /// Evaluates the instance polynomial $k(y)$ for the given instance at
@@ -214,39 +180,147 @@ impl<F: Field, C: Circuit<F>> CircuitExt<F> for C {}
 
 /// A trait for (partially) evaluating $s(X, Y)$ for some circuit.
 ///
-/// See [`CircuitExt::into_object`].
-pub trait CircuitObject<F: Field, R: Rank>: Send + Sync {
+/// Constructed internally from a [`Circuit`] implementation.
+///
+/// The registry key constraint is **not** part of these evaluations; it is
+/// injected at the [`Registry`] level at the fixed $Y^{4n-1}$ position.
+///
+/// [`Registry`]: registry::Registry
+pub(crate) trait CircuitObject<F: Field, R: Rank>: Send + Sync {
     /// Evaluates the polynomial $s(x, y)$ for some $x, y \in \mathbb{F}$.
-    fn sxy(
-        &self,
-        x: F,
-        y: F,
-        key: &registry::Key<F>,
-        floor_plan: &[floor_planner::ConstraintSegment],
-    ) -> F;
+    fn sxy(&self, x: F, y: F, floor_plan: &[floor_planner::ConstraintSegment]) -> F;
 
     /// Computes the polynomial restriction $s(x, Y)$ for some $x \in \mathbb{F}$.
-    fn sx(
-        &self,
-        x: F,
-        key: &registry::Key<F>,
-        floor_plan: &[floor_planner::ConstraintSegment],
-    ) -> unstructured::Polynomial<F, R>;
+    fn sx(&self, x: F, floor_plan: &[floor_planner::ConstraintSegment])
+    -> sparse::Polynomial<F, R>;
 
     /// Computes the polynomial restriction $s(X, y)$ for some $y \in \mathbb{F}$.
-    fn sy(
-        &self,
-        y: F,
-        key: &registry::Key<F>,
-        floor_plan: &[floor_planner::ConstraintSegment],
-    ) -> structured::Polynomial<F, R>;
+    fn sy(&self, y: F, floor_plan: &[floor_planner::ConstraintSegment])
+    -> sparse::Polynomial<F, R>;
 
-    /// Returns the number of constraints: `(multiplication, linear)`.
+    /// Returns constraint counts as `(gates, constraints)`, where gates is
+    /// the number of multiplication gates and constraints is the number of
+    /// [`enforce_zero`](ragu_core::drivers::Driver::enforce_zero) calls.
     fn constraint_counts(&self) -> (usize, usize);
 
-    /// Returns per-segment constraint records in DFS order.
+    /// Returns per-segment constraint records in DFS synthesis order.
     ///
-    /// These records serve as input to
-    /// [`floor_planner::floor_plan`] for computing absolute offsets.
+    /// These records serve as input to [`floor_planner::floor_plan`] for
+    /// computing absolute constraint offsets.
     fn segment_records(&self) -> &[SegmentRecord];
+}
+
+/// Wraps a circuit into a boxed [`CircuitObject`] that can evaluate the
+/// $s(X, Y)$ polynomial.
+pub(crate) fn into_circuit_object<'a, F, C, R>(
+    circuit: C,
+) -> Result<Box<dyn CircuitObject<F, R> + 'a>>
+where
+    F: FromUniformBytes<64>,
+    C: Circuit<F> + 'a,
+    R: Rank,
+{
+    let metrics = metrics::eval(&circuit)?;
+
+    // Reserve the last coefficient slot (Y^{4n-1}) for the registry key
+    // constraint, which is injected at the registry level.
+    if metrics.num_constraints >= R::num_coeffs() {
+        return Err(Error::ConstraintBoundExceeded {
+            limit: R::num_coeffs() - 1,
+        });
+    }
+
+    if metrics.num_gates > R::n() {
+        return Err(Error::GateBoundExceeded { limit: R::n() });
+    }
+
+    into_raw_circuit_object(raw::CircuitAdapter(circuit), metrics)
+}
+
+/// Like [`into_circuit_object`] but accepts a [`RawCircuit`](raw::RawCircuit)
+/// directly. Metrics must have been pre-computed and validated by the caller.
+pub(crate) fn into_raw_circuit_object<'a, F, RC, R>(
+    circuit: RC,
+    metrics: metrics::CircuitMetrics,
+) -> Result<Box<dyn CircuitObject<F, R> + 'a>>
+where
+    F: Field,
+    RC: raw::RawCircuit<F> + 'a,
+    R: Rank,
+{
+    struct Processed<RC> {
+        circuit: RC,
+        metrics: metrics::CircuitMetrics,
+    }
+
+    impl<F: Field, RC: raw::RawCircuit<F>, R: Rank> CircuitObject<F, R> for Processed<RC> {
+        fn sxy(&self, x: F, y: F, floor_plan: &[floor_planner::ConstraintSegment]) -> F {
+            s::sxy::eval::<_, _, R>(&self.circuit, x, y, floor_plan)
+                .expect("should succeed if metrics succeeded")
+        }
+        fn sx(
+            &self,
+            x: F,
+            floor_plan: &[floor_planner::ConstraintSegment],
+        ) -> sparse::Polynomial<F, R> {
+            s::sx::eval(&self.circuit, x, floor_plan).expect("should succeed if metrics succeeded")
+        }
+        fn sy(
+            &self,
+            y: F,
+            floor_plan: &[floor_planner::ConstraintSegment],
+        ) -> sparse::Polynomial<F, R> {
+            s::sy::eval(&self.circuit, y, floor_plan).expect("should succeed if metrics succeeded")
+        }
+        fn constraint_counts(&self) -> (usize, usize) {
+            (self.metrics.num_gates, self.metrics.num_constraints)
+        }
+        fn segment_records(&self) -> &[SegmentRecord] {
+            &self.metrics.segments
+        }
+    }
+
+    Ok(Box::new(Processed { circuit, metrics }))
+}
+
+/// An evaluable bonding object $s(X, Y)$ used to enforce well-formedness
+/// of a staged trace.
+///
+/// A bonding polynomial is the wiring polynomial of a bonding circuit —
+/// a circuit that has only constraints (no gates).
+/// This gives bonding polynomials three properties that general wiring
+/// polynomials lack:
+///
+/// 1. **No dilation term.** Because the underlying circuit has no
+///    gates there is no $t(z)$, and the revdot identity
+///    simplifies to $b = s\_{y}$.
+///
+/// 2. **$k(y) = 0$ and stripped ONE wire.** Bonding claims require
+///    $k(0) = 0$; to enforce this the ONE wire's `enforce_one` constraint
+///    is stripped, zeroing its contribution at $Y^0$. General wiring
+///    polynomials carry the ONE monomial ($x^{2n}$) at the $Y^0$ position,
+///    so its absence distinguishes bonding polynomials and prevents
+///    substitution attacks.
+///
+/// 3. **Batchable.** Without gates the revdot identity is
+///    linear in the trace, so multiple traces can be folded with a random
+///    challenge and verified in a single claim.
+///
+/// Constructed via [`StageExt::mask`] and [`StageExt::final_mask`]; the
+/// underlying implementation is private to this crate.
+///
+/// [`StageExt::mask`]: crate::staging::StageExt::mask
+/// [`StageExt::final_mask`]: crate::staging::StageExt::final_mask
+pub struct BondingObject<'a, F: Field, R: Rank> {
+    inner: Box<dyn CircuitObject<F, R> + 'a>,
+}
+
+impl<'a, F: Field, R: Rank> BondingObject<'a, F, R> {
+    pub(crate) fn new(inner: Box<dyn CircuitObject<F, R> + 'a>) -> Self {
+        Self { inner }
+    }
+
+    pub(crate) fn into_inner(self) -> Box<dyn CircuitObject<F, R> + 'a> {
+        self.inner
+    }
 }

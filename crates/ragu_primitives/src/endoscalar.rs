@@ -117,7 +117,7 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
             // Enforce that the square is equal to
             //     (elem + i) if bit == 1
             //     (elem + i) * MULTIPLICATIVE_GENERATOR) if bit == 0
-            // This is done by enforcing the linear constraint:
+            // This is done by enforcing the constraint:
             //
             //     square = bit * (elem + i)
             //            + (1 - bit) * ((elem + i) * MULTIPLICATIVE_GENERATOR)
@@ -345,10 +345,7 @@ mod tests {
 
             dr.reset();
             assert_eq!(r.group_scale(dr, &p)?.value().take(), expected);
-            assert_eq!(
-                dr.num_multiplications(),
-                7 * (1 + (Uendo::BITS as usize / 2))
-            );
+            assert_eq!(dr.num_gates(), 7 * (1 + (Uendo::BITS as usize / 2)));
 
             Ok(())
         })?;

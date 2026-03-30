@@ -5,7 +5,7 @@
 use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
-    polynomials::{Rank, structured, unstructured},
+    polynomials::{Rank, sparse},
     registry::CircuitIndex,
 };
 use ragu_core::{
@@ -13,23 +13,16 @@ use ragu_core::{
     maybe::{Always, Maybe},
 };
 use ragu_primitives::Element;
-use rand::CryptoRng;
 
 use alloc::vec::Vec;
 
-/// A grouped `(rx, blind, commitment)` triple for a native-field rx polynomial.
-///
-/// The `commitment` is the Pedersen commitment to `rx` under blinding scalar
-/// `blind`.
+/// A grouped `(rx, commitment)` triple for a native-field rx polynomial.
 #[derive(Clone)]
 pub struct RxTriple<C: Cycle, R: Rank> {
     /// The rx polynomial.
-    pub(crate) rx: structured::Polynomial<C::CircuitField, R>,
+    pub(crate) rx: sparse::Polynomial<C::CircuitField, R>,
 
-    /// The Pedersen blinding scalar for `rx`.
-    pub(crate) blind: C::CircuitField,
-
-    /// The Pedersen commitment to `rx` under `blind`.
+    /// The commitment to `rx`.
     pub(crate) commitment: C::HostCurve,
 }
 
@@ -43,24 +36,14 @@ pub(crate) struct Application<C: Cycle, R: Rank> {
 
 #[derive(Clone)]
 pub(crate) struct Bridge<C: Cycle, R: Rank> {
-    pub(crate) rx: structured::Polynomial<C::ScalarField, R>,
-    pub(crate) blind: C::ScalarField,
+    pub(crate) rx: sparse::Polynomial<C::ScalarField, R>,
     pub(crate) commitment: C::NestedCurve,
 }
 
 impl<C: Cycle, R: Rank> Bridge<C, R> {
-    pub(crate) fn commit(
-        params: &C::Params,
-        rng: &mut impl CryptoRng,
-        rx: structured::Polynomial<C::ScalarField, R>,
-    ) -> Self {
-        let blind = C::ScalarField::random(&mut *rng);
-        let commitment = rx.commit_to_affine(C::nested_generators(params), blind);
-        Bridge {
-            rx,
-            blind,
-            commitment,
-        }
+    pub(crate) fn commit(params: &C::Params, rx: sparse::Polynomial<C::ScalarField, R>) -> Self {
+        let commitment = rx.commit_to_affine(C::nested_generators(params));
+        Bridge { rx, commitment }
     }
 }
 
@@ -72,11 +55,9 @@ pub(crate) struct Preamble<C: Cycle, R: Rank> {
 
 #[derive(Clone)]
 pub(crate) struct NativeSPrime<C: Cycle, R: Rank> {
-    pub(crate) registry_wx0_poly: unstructured::Polynomial<C::CircuitField, R>,
-    pub(crate) registry_wx0_blind: C::CircuitField,
+    pub(crate) registry_wx0_poly: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) registry_wx0_commitment: C::HostCurve,
-    pub(crate) registry_wx1_poly: unstructured::Polynomial<C::CircuitField, R>,
-    pub(crate) registry_wx1_blind: C::CircuitField,
+    pub(crate) registry_wx1_poly: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) registry_wx1_commitment: C::HostCurve,
 }
 
@@ -87,32 +68,29 @@ pub(crate) struct SPrime<C: Cycle, R: Rank> {
 }
 
 #[derive(Clone)]
-pub(crate) struct NativeErrorM<C: Cycle, R: Rank> {
-    pub(crate) registry_wy_poly: structured::Polynomial<C::CircuitField, R>,
-    pub(crate) registry_wy_blind: C::CircuitField,
+pub(crate) struct NativeInnerError<C: Cycle, R: Rank> {
+    pub(crate) registry_wy_poly: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) registry_wy_commitment: C::HostCurve,
     pub(crate) rx_triple: RxTriple<C, R>,
 }
 
 #[derive(Clone)]
-pub(crate) struct ErrorM<C: Cycle, R: Rank> {
-    pub(crate) native: NativeErrorM<C, R>,
+pub(crate) struct InnerError<C: Cycle, R: Rank> {
+    pub(crate) native: NativeInnerError<C, R>,
     pub(crate) bridge: Bridge<C, R>,
 }
 
 #[derive(Clone)]
-pub(crate) struct ErrorN<C: Cycle, R: Rank> {
+pub(crate) struct OuterError<C: Cycle, R: Rank> {
     pub(crate) native: RxTriple<C, R>,
     pub(crate) bridge: Bridge<C, R>,
 }
 
 #[derive(Clone)]
 pub(crate) struct NativeAB<C: Cycle, R: Rank> {
-    pub(crate) a_poly: structured::Polynomial<C::CircuitField, R>,
-    pub(crate) a_blind: C::CircuitField,
+    pub(crate) a_poly: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) a_commitment: C::HostCurve,
-    pub(crate) b_poly: structured::Polynomial<C::CircuitField, R>,
-    pub(crate) b_blind: C::CircuitField,
+    pub(crate) b_poly: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) b_commitment: C::HostCurve,
     pub(crate) c: C::CircuitField,
 }
@@ -125,8 +103,7 @@ pub(crate) struct AB<C: Cycle, R: Rank> {
 
 #[derive(Clone)]
 pub(crate) struct NativeQuery<C: Cycle, R: Rank> {
-    pub(crate) registry_xy_poly: unstructured::Polynomial<C::CircuitField, R>,
-    pub(crate) registry_xy_blind: C::CircuitField,
+    pub(crate) registry_xy_poly: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) registry_xy_commitment: C::HostCurve,
     pub(crate) rx_triple: RxTriple<C, R>,
 }
@@ -139,8 +116,7 @@ pub(crate) struct Query<C: Cycle, R: Rank> {
 
 #[derive(Clone)]
 pub(crate) struct NativeF<C: Cycle, R: Rank> {
-    pub(crate) poly: unstructured::Polynomial<C::CircuitField, R>,
-    pub(crate) blind: C::CircuitField,
+    pub(crate) poly: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) commitment: C::HostCurve,
 }
 
@@ -158,17 +134,16 @@ pub(crate) struct Eval<C: Cycle, R: Rank> {
 
 #[derive(Clone)]
 pub(crate) struct NativeP<C: Cycle, R: Rank> {
-    pub(crate) poly: unstructured::Polynomial<C::CircuitField, R>,
-    pub(crate) blind: C::CircuitField,
+    pub(crate) poly: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) commitment: C::HostCurve,
     pub(crate) v: C::CircuitField,
 }
 
 #[derive(Clone)]
 pub(crate) struct NestedP<C: Cycle, R: Rank> {
-    pub(crate) endoscalar_rx: structured::Polynomial<C::ScalarField, R>,
-    pub(crate) points_rx: structured::Polynomial<C::ScalarField, R>,
-    pub(crate) step_rxs: Vec<structured::Polynomial<C::ScalarField, R>>,
+    pub(crate) step_rxs: Vec<sparse::Polynomial<C::ScalarField, R>>,
+    pub(crate) endoscalar_rx: sparse::Polynomial<C::ScalarField, R>,
+    pub(crate) points_rx: sparse::Polynomial<C::ScalarField, R>,
 }
 
 #[derive(Clone)]
@@ -227,17 +202,17 @@ impl<C: Cycle> Challenges<C> {
 
     pub(crate) fn trivial() -> Self {
         Self {
-            w: C::CircuitField::ZERO,
-            y: C::CircuitField::ZERO,
-            z: C::CircuitField::ZERO,
-            mu: C::CircuitField::ZERO,
-            nu: C::CircuitField::ZERO,
-            mu_prime: C::CircuitField::ZERO,
-            nu_prime: C::CircuitField::ZERO,
-            x: C::CircuitField::ZERO,
-            alpha: C::CircuitField::ZERO,
-            u: C::CircuitField::ZERO,
-            pre_beta: C::CircuitField::ZERO,
+            w: C::CircuitField::ONE,
+            y: C::CircuitField::ONE,
+            z: C::CircuitField::ONE,
+            mu: C::CircuitField::ONE,
+            nu: C::CircuitField::ONE,
+            mu_prime: C::CircuitField::ONE,
+            nu_prime: C::CircuitField::ONE,
+            x: C::CircuitField::ONE,
+            alpha: C::CircuitField::ONE,
+            u: C::CircuitField::ONE,
+            pre_beta: C::CircuitField::ONE,
         }
     }
 }
@@ -246,7 +221,7 @@ impl<C: Cycle> Challenges<C> {
 pub(crate) struct InternalCircuits<C: Cycle, R: Rank> {
     pub(crate) hashes_1: RxTriple<C, R>,
     pub(crate) hashes_2: RxTriple<C, R>,
-    pub(crate) partial_collapse: RxTriple<C, R>,
-    pub(crate) full_collapse: RxTriple<C, R>,
+    pub(crate) inner_collapse: RxTriple<C, R>,
+    pub(crate) outer_collapse: RxTriple<C, R>,
     pub(crate) compute_v: RxTriple<C, R>,
 }

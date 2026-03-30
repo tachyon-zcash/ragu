@@ -17,7 +17,7 @@ use core::borrow::Borrow;
 use ff::{Field, PrimeField};
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
-    polynomials::{Rank, structured},
+    polynomials::{Rank, sparse},
     registry::CircuitIndex,
 };
 use ragu_core::Result;
@@ -65,18 +65,18 @@ impl<K: Copy, F: Field> CommitmentDecomposition<K, F> {
 /// corresponding commitments so that `a_commitment` can be computed cheaply.
 /// Rather than materializing the commitment at each fold step, we track the
 /// linear combination of source polynomials and resolve to commitments once
-/// at the end. Implements [`Foldable`] so it flows through [`fold_polys_m`]
-/// / [`fold_polys_n`] transparently.
+/// at the end. Implements [`Foldable`] so it flows through [`fold_inner`]
+/// / [`fold_outer`] transparently.
 ///
 /// The polynomial is held as a [`Cow`] to avoid cloning borrowed polynomials
 /// during claim building; the fold itself always produces owned results.
 ///
 /// [`Cow`]: alloc::borrow::Cow
-/// [`fold_polys_m`]: crate::internal::fold_revdot::fold_polys_m
-/// [`fold_polys_n`]: crate::internal::fold_revdot::fold_polys_n
+/// [`fold_inner`]: crate::internal::fold_revdot::fold_inner
+/// [`fold_outer`]: crate::internal::fold_revdot::fold_outer
 #[derive(Clone)]
 pub(super) struct TrackedPoly<'a, K, F: Field, R: Rank> {
-    pub(super) poly: Cow<'a, structured::Polynomial<F, R>>,
+    pub(super) poly: Cow<'a, sparse::Polynomial<F, R>>,
     pub(super) decomp: CommitmentDecomposition<K, F>,
 }
 
@@ -91,13 +91,13 @@ impl<K, F: Field, R: Rank> Default for TrackedPoly<'_, K, F, R> {
 
 impl<'a, K: Copy, F: Field, R: Rank> TrackedPoly<'a, K, F, R> {
     pub(super) fn new(
-        poly: Cow<'a, structured::Polynomial<F, R>>,
+        poly: Cow<'a, sparse::Polynomial<F, R>>,
         decomp: CommitmentDecomposition<K, F>,
     ) -> Self {
         Self { poly, decomp }
     }
 
-    pub(super) fn single(poly: Cow<'a, structured::Polynomial<F, R>>, key: K) -> Self {
+    pub(super) fn single(poly: Cow<'a, sparse::Polynomial<F, R>>, key: K) -> Self {
         Self::new(poly, CommitmentDecomposition::single(key))
     }
 }
@@ -115,8 +115,8 @@ impl<K: Copy, F: Field, R: Rank> Foldable<F> for TrackedPoly<'_, K, F, R> {
     }
 }
 
-impl<K, F: Field, R: Rank> Borrow<structured::Polynomial<F, R>> for TrackedPoly<'_, K, F, R> {
-    fn borrow(&self) -> &structured::Polynomial<F, R> {
+impl<K, F: Field, R: Rank> Borrow<sparse::Polynomial<F, R>> for TrackedPoly<'_, K, F, R> {
+    fn borrow(&self) -> &sparse::Polynomial<F, R> {
         &self.poly
     }
 }
@@ -128,7 +128,7 @@ impl<K, F: Field, R: Rank> Borrow<structured::Polynomial<F, R>> for TrackedPoly<
 /// `A` polynomial retains a link back to its commitment.
 pub(super) struct Atom<'rx, K, F: Field, R: Rank> {
     pub(super) key: K,
-    pub(super) poly: &'rx structured::Polynomial<F, R>,
+    pub(super) poly: &'rx sparse::Polynomial<F, R>,
 }
 
 // Manual Copy/Clone: derive(Copy) would add spurious F: Copy and R: Copy bounds.
@@ -153,24 +153,24 @@ pub(super) type FoldKey = (Side, RxComponent);
 
 /// The two child proofs being fused. Provides [`Atom`]-tagged rx values
 /// for claim building, and resolves [`FoldKey`] keys back to their
-/// `(commitment, blind)` pairs for the MSM in `_06_ab`.
+/// commitments for the MSM in `_06_ab`.
 pub(super) struct FuseProofSource<'rx, C: Cycle, R: Rank> {
     pub(super) left: &'rx Proof<C, R>,
     pub(super) right: &'rx Proof<C, R>,
 }
 
 impl<'rx, C: Cycle, R: Rank> FuseProofSource<'rx, C, R> {
-    /// Look up the `(commitment, blind)` pair for a [`FoldKey`] in the
-    /// corresponding child proof.
-    pub(super) fn get(&self, (side, component): FoldKey) -> (C::HostCurve, C::CircuitField) {
+    /// Look up the commitment for a [`FoldKey`] in the corresponding child
+    /// proof.
+    pub(super) fn get(&self, (side, component): FoldKey) -> C::HostCurve {
         let proof = match side {
             Side::Left => self.left,
             Side::Right => self.right,
         };
         match component {
-            RxComponent::AbA => (proof.ab.native.a_commitment, proof.ab.native.a_blind),
-            RxComponent::AbB => (proof.ab.native.b_commitment, proof.ab.native.b_blind),
-            RxComponent::Rx(idx) => (proof[idx].commitment, proof[idx].blind),
+            RxComponent::AbA => proof.ab.native.a_commitment,
+            RxComponent::AbB => proof.ab.native.b_commitment,
+            RxComponent::Rx(idx) => proof[idx].commitment,
         }
     }
 }
@@ -245,7 +245,7 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<Atom<'rx, FoldKey, F, R>, Circui
         self.circuit_impl(circuit_id, TrackedPoly::new(poly, decomp));
     }
 
-    fn stage(
+    fn bonding(
         &mut self,
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = Atom<'rx, FoldKey, F, R>>,
@@ -254,7 +254,7 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<Atom<'rx, FoldKey, F, R>, Circui
             .map(|a| TrackedPoly::single(Cow::Borrowed(a.poly), a.key))
             .collect();
         let folded = fold_revdot::fold(&tracked, self.z);
-        self.stage_impl(id.circuit_index(), folded);
+        self.bonding_impl(id.circuit_index(), folded);
         Ok(())
     }
 }

@@ -7,19 +7,20 @@ use ff::Field;
 use ragu_arithmetic::Coeff;
 use ragu_core::{
     Error, Result,
-    drivers::{DirectSum, Driver, DriverTypes},
-    gadgets::{Bound, Gadget},
+    drivers::{DirectSum, Driver, DriverTypes, emulator::Emulator},
+    gadgets::Bound,
     maybe::{Always, MaybeKind},
-    routines::{Prediction, Routine},
+    routines::Routine,
 };
 
-/// A driver that fully simulates everything that happens during synthesis,
-/// primarily for testing purposes.
+/// A driver that fully simulates circuit synthesis, enforcing constraint
+/// satisfaction and tracking allocation, gate, and constraint
+/// counts. Primarily used for testing.
 #[derive(Clone)]
 pub struct Simulator<F: Field> {
     num_allocations: usize,
-    num_multiplications: usize,
-    num_linear_constraints: usize,
+    num_gates: usize,
+    num_constraints: usize,
     _marker: core::marker::PhantomData<F>,
 }
 
@@ -34,8 +35,8 @@ impl<F: Field> Simulator<F> {
     pub fn new() -> Self {
         Simulator {
             num_allocations: 0,
-            num_multiplications: 0,
-            num_linear_constraints: 0,
+            num_gates: 0,
+            num_constraints: 0,
             _marker: core::marker::PhantomData,
         }
     }
@@ -43,8 +44,8 @@ impl<F: Field> Simulator<F> {
     /// Reset the metrics of the simulator.
     pub fn reset(&mut self) {
         self.num_allocations = 0;
-        self.num_multiplications = 0;
-        self.num_linear_constraints = 0;
+        self.num_gates = 0;
+        self.num_constraints = 0;
     }
 
     /// Returns the number of `alloc` calls made.
@@ -52,14 +53,18 @@ impl<F: Field> Simulator<F> {
         self.num_allocations
     }
 
-    /// Returns the number of `mul` calls made.
-    pub fn num_multiplications(&self) -> usize {
-        self.num_multiplications
+    /// Returns the number of gates (i.e., [`Driver::mul`] calls made).
+    ///
+    /// [`Driver::mul`]: ragu_core::drivers::Driver::mul
+    pub fn num_gates(&self) -> usize {
+        self.num_gates
     }
 
-    /// Returns the number of `enforce_zero` calls made.
-    pub fn num_linear_constraints(&self) -> usize {
-        self.num_linear_constraints
+    /// Returns the number of constraints (i.e., [`Driver::enforce_zero`] calls made).
+    ///
+    /// [`Driver::enforce_zero`]: ragu_core::drivers::Driver::enforce_zero
+    pub fn num_constraints(&self) -> usize {
+        self.num_constraints
     }
 
     /// Execute the provided closure with a fresh `Simulator` driver.
@@ -81,6 +86,39 @@ impl<F: Field> DriverTypes for Simulator<F> {
     type MaybeKind = Always<()>;
     type LCadd = DirectSum<F>;
     type LCenforce = DirectSum<F>;
+
+    fn gate(
+        &mut self,
+        values: impl Fn() -> Result<(
+            Coeff<Self::ImplField>,
+            Coeff<Self::ImplField>,
+            Coeff<Self::ImplField>,
+            Coeff<Self::ImplField>,
+        )>,
+    ) -> Result<(
+        Self::ImplWire,
+        Self::ImplWire,
+        Self::ImplWire,
+        Self::ImplWire,
+    )> {
+        let (a, b, c, d) = values()?;
+
+        let a = a.value();
+        let b = b.value();
+        let c = c.value();
+        let d = d.value();
+
+        if a * b != c {
+            return Err(Error::InvalidWitness("gate check failed".into()));
+        }
+
+        if c * d != F::ZERO {
+            return Err(Error::InvalidWitness("auxiliary constraint failed".into()));
+        }
+
+        self.num_gates += 1;
+        Ok((a, b, c, d))
+    }
 }
 
 impl<'dr, F: Field> Driver<'dr> for Simulator<F> {
@@ -98,26 +136,6 @@ impl<'dr, F: Field> Driver<'dr> for Simulator<F> {
         value.value()
     }
 
-    fn mul(
-        &mut self,
-        values: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
-    ) -> Result<(Self::Wire, Self::Wire, Self::Wire)> {
-        let (a, b, c) = values()?;
-
-        let a = a.value();
-        let b = b.value();
-        let c = c.value();
-
-        if a * b != c {
-            return Err(Error::InvalidWitness(
-                "multiplication constraint failed".into(),
-            ));
-        }
-
-        self.num_multiplications += 1;
-        Ok((a, b, c))
-    }
-
     fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {
         let lc = lc(DirectSum::default());
         lc.value()
@@ -127,10 +145,10 @@ impl<'dr, F: Field> Driver<'dr> for Simulator<F> {
         let lc = lc(DirectSum::default());
 
         if lc.value() != F::ZERO {
-            return Err(Error::InvalidWitness("linear constraint failed".into()));
+            return Err(Error::InvalidWitness("constraint failed".into()));
         }
 
-        self.num_linear_constraints += 1;
+        self.num_constraints += 1;
         Ok(())
     }
 
@@ -139,18 +157,7 @@ impl<'dr, F: Field> Driver<'dr> for Simulator<F> {
         routine: R,
         input: Bound<'dr, Self, R::Input>,
     ) -> Result<Bound<'dr, Self, R::Output>> {
-        let mut tmp = self.clone();
-        match routine.predict(&mut tmp, &input)? {
-            Prediction::Known(output, aux) => {
-                // Even if the output is known, we still need to execute the
-                // routine to ensure consistency with the prediction.
-                let expected = routine.execute(self, input, aux)?;
-                // Assert equality without creating constraints in the main
-                // simulator by running the check on a disposable clone.
-                output.enforce_equal(&mut self.clone(), &expected)?;
-                Ok(output)
-            }
-            Prediction::Unknown(aux) => routine.execute(self, input, aux),
-        }
+        let aux = Emulator::predict(&routine, &input)?.into_aux();
+        routine.execute(self, input, aux)
     }
 }

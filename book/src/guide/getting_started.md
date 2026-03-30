@@ -26,8 +26,8 @@ ragu_core = "0.1"
 ragu_pasta = { version = "0.1", features = ["baked"] }
 ragu_pcd = "0.1"
 ragu_primitives = "0.1"
-ff = "0.14"
-rand = "0.10"
+ff = "0.13"
+rand = "0.8"
 ```
 
 The `baked` feature on `ragu_pasta` includes precomputed curve parameters.
@@ -123,17 +123,17 @@ impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
     const INDEX: Index = Index::new(0);  // Step ID
 
     type Witness<'source> = C::CircuitField;  // Input: field element
-    type Left = ();                            // No left input
-    type Right = ();                           // No right input
-    type Output = LeafNode;                    // Produces LeafNode
     type Aux<'source> = ();                   // No auxiliary output
+    type Left = ();                           // No left input
+    type Right = ();                          // No right input
+    type Output = LeafNode;                   // Produces LeafNode
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
-        _left: DriverValue<D, ()>,
-        _right: DriverValue<D, ()>,
+        _: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data>,
+        _: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data>,
     ) -> Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
@@ -160,15 +160,15 @@ impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
         // 4. Encode as output proof
         let leaf_encoded = Encoded::from_gadget(leaf);
 
-        // 5. Return (left, right, output) proofs + header data + aux
+        // 5. Return (left, right, output) proofs + output data + aux
         Ok((
             (
                 Encoded::from_gadget(()),  // No left
                 Encoded::from_gadget(()),  // No right
-                leaf_encoded,               // Our output
+                leaf_encoded,              // Our output
             ),
-            leaf_data,  // Output header data (carried in the Pcd)
-            D::unit(),  // No auxiliary output
+            leaf_data,  // Hash result
+            D::unit(),
         ))
     }
 }
@@ -194,17 +194,17 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
     const INDEX: Index = Index::new(1);  // Different step ID
 
     type Witness<'source> = ();           // No extra witness
+    type Aux<'source> = ();               // No auxiliary output
     type Left = LeafNode;                 // Takes LeafNode
     type Right = LeafNode;                // Takes LeafNode
     type Output = InternalNode;           // Produces InternalNode
-    type Aux<'source> = ();               // No auxiliary output
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
         _: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, C::CircuitField>,
-        right: DriverValue<D, C::CircuitField>,
+        left: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data>,
     ) -> Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
@@ -217,7 +217,7 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
     where
         Self: 'dr,
     {
-        // 1. Encode input header data into circuit gadgets
+        // 1. Encode input proofs
         let left = Encoded::new(dr, left)?;
         let right = Encoded::new(dr, right)?;
 
@@ -231,15 +231,15 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
         let output_data = output.value().map(|v| *v);
         let output = Encoded::from_gadget(output);
 
-        // 4. Return encoded proofs + header data + aux
+        // 4. Return encoded proofs + output data + aux
         Ok(((left, right, output), output_data, D::unit()))
     }
 }
 ```
 
-**What `Encoded::new(dr, data)?` does:** Creates a circuit gadget from the
-input proof's header data by calling `Header::encode`. This makes the child
-proof's data available for use in the circuit logic (e.g., hashing the two
+**What `Encoded::new(dr, data)?` does:** Converts the header data into a
+circuit gadget by calling `Header::encode`. This makes the input proof's
+header data available for use in the circuit logic (e.g., hashing the two
 headers together).
 
 ## Step 4: Build the Application

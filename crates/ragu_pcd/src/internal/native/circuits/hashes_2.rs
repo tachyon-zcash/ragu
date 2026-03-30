@@ -7,11 +7,11 @@
 //! This circuit completes the Fiat-Shamir transcript started in
 //! [`hashes_1`][super::hashes_1], invoking $5$ Poseidon permutations:
 //! - Resume transcript from saved state via [`Transcript::resume_from_state`] using
-//!   the state witnessed in [`error_n`]. (This state was computed by `hashes_1`
-//!   after absorbing [`bridge_error_m_commitment`] and applying the permutation
+//!   the state witnessed in [`outer_error`]. (This state was computed by `hashes_1`
+//!   after absorbing [`bridge_inner_error_commitment`] and applying the permutation
 //!   to move into squeeze mode.)
 //! - Squeeze [$\mu$] and [$\nu$] challenges.
-//! - Absorb [`bridge_error_n_commitment`].
+//! - Absorb [`bridge_outer_error_commitment`].
 //! - Squeeze [$\mu'$] and [$\nu'$] challenges.
 //! - Absorb [`bridge_ab_commitment`].
 //! - Squeeze [$x$] challenge.
@@ -28,10 +28,10 @@
 //! ## Staging
 //!
 //! This circuit is a multi-stage circuit based on the
-//! [`error_n`][super::super::stages::error_n] stage, which inherits in the
+//! [`outer_error`][super::super::stages::outer_error] stage, which inherits in the
 //! following chain:
 //! - [`preamble`][super::super::stages::preamble] (skipped)
-//! - [`error_n`][super::super::stages::error_n] (unenforced)
+//! - [`outer_error`][super::super::stages::outer_error] (unenforced)
 //!
 //! ## Instance
 //!
@@ -40,10 +40,10 @@
 //! [`hashes_1`][super::hashes_1] and ensures the instance serialization aligns
 //! with the $k(y)$ computation for `unified_ky`.
 //!
-//! [`bridge_error_m_commitment`]: unified::Output::bridge_error_m_commitment
+//! [`bridge_inner_error_commitment`]: unified::Output::bridge_inner_error_commitment
 //! [$\mu$]: unified::Output::mu
 //! [$\nu$]: unified::Output::nu
-//! [`bridge_error_n_commitment`]: unified::Output::bridge_error_n_commitment
+//! [`bridge_outer_error_commitment`]: unified::Output::bridge_outer_error_commitment
 //! [$\mu'$]: unified::Output::mu_prime
 //! [$\nu'$]: unified::Output::nu_prime
 //! [`bridge_ab_commitment`]: unified::Output::bridge_ab_commitment
@@ -54,12 +54,13 @@
 //! [$u$]: unified::Output::u
 //! [`bridge_eval_commitment`]: unified::Output::bridge_eval_commitment
 //! [$\beta$]: unified::Output::pre_beta
-//! [`error_n`]: super::super::stages::error_n
+//! [`outer_error`]: super::super::stages::outer_error
 //! [`WithSuffix`]: crate::internal::suffix::WithSuffix
 //! [`Transcript::resume_from_state`]: crate::internal::transcript::Transcript::resume_from_state
 
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
+    WithAux,
     polynomials::Rank,
     staging::{MultiStage, MultiStageCircuit, StageBuilder},
 };
@@ -74,7 +75,7 @@ use ragu_primitives::GadgetExt;
 use core::marker::PhantomData;
 
 use super::super::{
-    stages::{error_n as native_error_n, preamble as native_preamble},
+    stages::{outer_error as native_outer_error, preamble as native_preamble},
     unified::{self, OutputBuilder},
 };
 use crate::internal::fold_revdot;
@@ -110,24 +111,24 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Para
 /// Witness data for the second hash circuit.
 ///
 /// Combines the unified instance with the
-/// [`error_n`](super::super::stages::error_n) stage witness needed to resume
+/// [`outer_error`](super::super::stages::outer_error) stage witness needed to resume
 /// the Fiat-Shamir transcript from the saved sponge state.
 pub struct Witness<'a, C: Cycle, FP: fold_revdot::Parameters> {
     /// The unified instance containing expected challenge values and
     /// accumulated coverage from prior circuits.
     pub unified: unified::Instance<C>,
 
-    /// Witness for the [`error_n`](super::super::stages::error_n) stage
+    /// Witness for the [`outer_error`](super::super::stages::outer_error) stage
     /// (unenforced).
     ///
     /// Provides the saved sponge state for transcript resumption.
-    pub error_n_witness: &'a native_error_n::Witness<C, FP>,
+    pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, FP>
 {
-    type Last = native_error_n::Stage<C, R, HEADER_SIZE, FP>;
+    type Last = native_outer_error::Stage<C, R, HEADER_SIZE, FP>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, FP>;
@@ -149,26 +150,26 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         &self,
         builder: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
         witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<(
-        Bound<'dr, D, Self::Output>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>>
     where
         Self: 'dr,
     {
         let builder = builder.skip_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
-        let (error_n, builder) =
-            builder.add_stage::<native_error_n::Stage<C, R, HEADER_SIZE, FP>>()?;
+        let (outer_error, builder) =
+            builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();
 
-        let error_n = error_n.unenforced(dr, witness.as_ref().map(|w| w.error_n_witness))?;
+        let outer_error =
+            outer_error.unenforced(dr, witness.as_ref().map(|w| w.outer_error_witness))?;
 
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
-        // Resume transcript from saved state (error_m already absorbed in hashes_1)
-        // and squeeze mu, nu (challenges from error_m absorption)
-        let mut resumed =
-            Transcript::resume_from_state(error_n.sponge_state, C::circuit_poseidon(self.params));
+        // Resume transcript from saved state (inner_error already absorbed in hashes_1)
+        // and squeeze mu, nu (challenges from inner_error absorption)
+        let mut resumed = Transcript::resume_from_state(
+            outer_error.sponge_state,
+            C::circuit_poseidon(self.params),
+        );
         let mu = resumed.challenge(dr)?;
         unified_output.mu.provide(mu);
 
@@ -178,10 +179,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         // Transition back to absorb mode for the rest of the transcript
         let mut transcript = resumed.into_transcript();
 
-        // Derive (mu_prime, nu_prime) by absorbing bridge_error_n_commitment
+        // Derive (mu_prime, nu_prime) by absorbing bridge_outer_error_commitment
         let (mu_prime, nu_prime) = {
-            let bridge_error_n_commitment = unified_output.bridge_error_n_commitment.receive(dr)?;
-            bridge_error_n_commitment.write(dr, &mut transcript)?;
+            let bridge_outer_error_commitment =
+                unified_output.bridge_outer_error_commitment.receive(dr)?;
+            bridge_outer_error_commitment.write(dr, &mut transcript)?;
             let mu_prime = transcript.challenge(dr)?;
             let nu_prime = transcript.challenge(dr)?;
             (mu_prime, nu_prime)
@@ -221,6 +223,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         };
         unified_output.pre_beta.provide(pre_beta);
 
-        unified_output.finish(dr)
+        let (output, aux) = unified_output.finish(dr)?;
+        Ok(WithAux::new(output, aux))
     }
 }

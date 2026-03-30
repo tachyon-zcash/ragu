@@ -6,8 +6,8 @@
 mod _01_application;
 mod _02_preamble;
 mod _03_s_prime;
-mod _04_error_m;
-mod _05_error_n;
+mod _04_inner_error;
+mod _05_outer_error;
 mod _06_ab;
 mod _07_query;
 mod _08_f;
@@ -30,6 +30,9 @@ use claims::FuseProofSource;
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     /// Fuse two [`Pcd`] into one using a provided [`Step`].
+    ///
+    /// The provided `step` must have been previously registered with this
+    /// [`Application`] via [`ApplicationBuilder::register`](crate::ApplicationBuilder::register).
     ///
     /// ## Parameters
     ///
@@ -77,10 +80,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             right: &right,
         };
 
-        let (error_m, error_m_witness, claims) =
-            self.compute_errors_m(rng, &native_registry, &y, &z, &source)?;
-        let error_m_commitment = Point::constant(&mut dr, error_m.bridge.commitment)?;
-        error_m_commitment.write(&mut dr, &mut transcript)?;
+        let (inner_error, inner_error_witness, claims) =
+            self.inner_error_terms(rng, &native_registry, &y, &z, &source)?;
+        let inner_error_commitment = Point::constant(&mut dr, inner_error.bridge.commitment)?;
+        inner_error_commitment.write(&mut dr, &mut transcript)?;
 
         // Clone-then-save: `save_state` consumes the transcript, but we need
         // the original to keep squeezing. Both paths apply the same permutation.
@@ -96,18 +99,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mu = transcript.challenge(&mut dr)?;
         let nu = transcript.challenge(&mut dr)?;
 
-        let (error_n, error_n_witness, a, b) = self.compute_errors_n(
+        let (outer_error, outer_error_witness, a, b) = self.outer_error_terms(
             rng,
             &preamble_witness,
-            &error_m_witness,
+            &inner_error_witness,
             claims,
             &y,
             &mu,
             &nu,
             saved_transcript_state,
         )?;
-        let error_n_commitment = Point::constant(&mut dr, error_n.bridge.commitment)?;
-        error_n_commitment.write(&mut dr, &mut transcript)?;
+        let outer_error_commitment = Point::constant(&mut dr, outer_error.bridge.commitment)?;
+        outer_error_commitment.write(&mut dr, &mut transcript)?;
         let mu_prime = transcript.challenge(&mut dr)?;
         let nu_prime = transcript.challenge(&mut dr)?;
 
@@ -117,26 +120,46 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let x = transcript.challenge(&mut dr)?;
 
         let (query, query_witness) =
-            self.compute_query(rng, &w, &x, &y, &z, &error_m, &left, &right)?;
+            self.compute_query(rng, &w, &x, &y, &z, &inner_error, &left, &right)?;
         let query_commitment = Point::constant(&mut dr, query.bridge.commitment)?;
         query_commitment.write(&mut dr, &mut transcript)?;
         let alpha = transcript.challenge(&mut dr)?;
 
         let f = self.compute_f(
-            rng, &w, &y, &z, &x, &alpha, &s_prime, &error_m, &ab, &query, &left, &right,
+            rng,
+            &w,
+            &y,
+            &z,
+            &x,
+            &alpha,
+            &s_prime,
+            &inner_error,
+            &ab,
+            &query,
+            &left,
+            &right,
         )?;
         let f_commitment = Point::constant(&mut dr, f.bridge.commitment)?;
         f_commitment.write(&mut dr, &mut transcript)?;
         let u = transcript.challenge(&mut dr)?;
 
         let (eval, eval_witness) =
-            self.compute_eval(rng, &u, &left, &right, &s_prime, &error_m, &ab, &query)?;
+            self.compute_eval(rng, &u, &left, &right, &s_prime, &inner_error, &ab, &query)?;
         let eval_commitment = Point::constant(&mut dr, eval.bridge.commitment)?;
         eval_commitment.write(&mut dr, &mut transcript)?;
         let pre_beta = transcript.challenge(&mut dr)?;
 
         let p = self.compute_p(
-            &pre_beta, &u, &left, &right, &s_prime, &error_m, &ab, &query, &f,
+            rng,
+            &pre_beta,
+            &u,
+            &left,
+            &right,
+            &s_prime,
+            &inner_error,
+            &ab,
+            &query,
+            &f,
         )?;
 
         let challenges = proof::Challenges::new(
@@ -147,16 +170,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             rng,
             &preamble,
             &s_prime,
-            &error_n,
-            &error_m,
+            &outer_error,
+            &inner_error,
             &ab,
             &query,
             &f,
             &eval,
             &p,
             &preamble_witness,
-            &error_n_witness,
-            &error_m_witness,
+            &outer_error_witness,
+            &inner_error_witness,
             &query_witness,
             &eval_witness,
             &challenges,
@@ -166,8 +189,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             application,
             preamble,
             s_prime,
-            error_m,
-            error_n,
+            inner_error,
+            outer_error,
             ab,
             query,
             f,

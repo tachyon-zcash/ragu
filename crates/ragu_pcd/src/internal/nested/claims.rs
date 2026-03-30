@@ -5,29 +5,18 @@
 //!
 //! The nested claim structure is simpler than native:
 //! - Circuit checks ([`EndoscalingStep`](InternalCircuitIndex::EndoscalingStep)): $k(y) = 1$
-//! - Stage checks ([`EndoscalarStage`](InternalCircuitIndex::EndoscalarStage),
+//! - Bonding checks ([`EndoscalarStage`](InternalCircuitIndex::EndoscalarStage),
 //!   [`PointsStage`](InternalCircuitIndex::PointsStage),
-//!   `PointsFinalStaged`): $k(y) = 0$
+//!   `PointsFinalStaged`, and all `Bridge*` variants): $k(y) = 0$
 
 use alloc::borrow::Cow;
 
 use ff::PrimeField;
-use ragu_circuits::polynomials::{Rank, structured};
+use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::Result;
 
-use super::InternalCircuitIndex;
+use super::{InternalCircuitIndex, RxIndex};
 use crate::internal::claims::{Builder, Source, sum_polynomials};
-
-/// Enum identifying which nested field rx polynomial to retrieve from a proof.
-#[derive(Clone, Copy, Debug)]
-pub enum RxComponent {
-    /// EndoscalarStage rx polynomial.
-    EndoscalarStage,
-    /// PointsStage rx polynomial.
-    PointsStage,
-    /// EndoscalingStep circuit rx polynomial (indexed by step number).
-    EndoscalingStep(u32),
-}
 
 /// Trait for processing nested claim values into accumulated outputs.
 ///
@@ -36,31 +25,31 @@ pub trait Processor<Rx> {
     /// Process an internal circuit claim (EndoscalingStep) - sums rxs then processes.
     fn internal_circuit(&mut self, id: InternalCircuitIndex, rxs: impl Iterator<Item = Rx>);
 
-    /// Process a stage claim - aggregates rxs from all proofs.
-    fn stage(&mut self, id: InternalCircuitIndex, rxs: impl Iterator<Item = Rx>) -> Result<()>;
+    /// Process a bonding claim - aggregates rxs from all proofs.
+    fn bonding(&mut self, id: InternalCircuitIndex, rxs: impl Iterator<Item = Rx>) -> Result<()>;
 }
 
-impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx structured::Polynomial<F, R>>
-    for Builder<'m, 'rx, Cow<'rx, structured::Polynomial<F, R>>, F, R>
+impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx sparse::Polynomial<F, R>>
+    for Builder<'m, 'rx, Cow<'rx, sparse::Polynomial<F, R>>, F, R>
 {
     fn internal_circuit(
         &mut self,
         id: InternalCircuitIndex,
-        rxs: impl Iterator<Item = &'rx structured::Polynomial<F, R>>,
+        rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
     ) {
         let circuit_id = id.circuit_index();
         let rx = sum_polynomials(rxs);
         self.circuit_impl(circuit_id, rx);
     }
 
-    fn stage(
+    fn bonding(
         &mut self,
         id: InternalCircuitIndex,
-        rxs: impl Iterator<Item = &'rx structured::Polynomial<F, R>>,
+        rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
     ) -> Result<()> {
         let circuit_id = id.circuit_index();
-        let folded = self.fold_stage_polys(rxs);
-        self.stage_impl(circuit_id, folded);
+        let folded = self.fold_bonding_polys(rxs);
+        self.bonding_impl(circuit_id, folded);
         Ok(())
     }
 }
@@ -70,52 +59,65 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx structured::Polynomial<F, R
 /// The ordering is:
 /// 1. Circuit checks ($k(y) = 1$): [`EndoscalingStep`](InternalCircuitIndex::EndoscalingStep)
 ///    for each step, interleaved across proofs
-/// 2. Stage checks ($k(y) = 0$): [`EndoscalarStage`](InternalCircuitIndex::EndoscalarStage),
-///    [`PointsStage`](InternalCircuitIndex::PointsStage), `PointsFinalStaged`
+/// 2. Bonding checks ($k(y) = 0$): [`EndoscalarStage`](InternalCircuitIndex::EndoscalarStage),
+///    [`PointsStage`](InternalCircuitIndex::PointsStage), `PointsFinalStaged`,
+///    and all `Bridge*` variants
 ///
 /// This ordering must match the ky_elements ordering from [`ky_values`].
 pub fn build<S, P>(source: &S, processor: &mut P) -> Result<()>
 where
-    S: Source<RxComponent = RxComponent>,
+    S: Source<RxComponent = RxIndex>,
     P: Processor<S::Rx>,
 {
-    use super::NUM_ENDOSCALING_POINTS;
-    use crate::internal::endoscalar::NumStepsLen;
-    use ragu_primitives::vec::Len;
-
-    let num_steps = NumStepsLen::<NUM_ENDOSCALING_POINTS>::len();
-
-    use RxComponent::*;
-
-    // 1. Circuit checks FIRST (k(y) = 1)
-    // Process all EndoscalingStep circuits (interleaved across proofs)
-    // Each circuit claim needs: step_rx + endoscalar_rx + points_rx
-    for step in 0..num_steps {
-        for ((step_rx, endo_rx), pts_rx) in source
-            .rx(EndoscalingStep(step as u32))
-            .zip(source.rx(EndoscalarStage))
-            .zip(source.rx(PointsStage))
-        {
-            processor.internal_circuit(
-                InternalCircuitIndex::EndoscalingStep(step as u32),
-                [step_rx, endo_rx, pts_rx].into_iter(),
-            );
+    for &id in &InternalCircuitIndex::ALL {
+        use InternalCircuitIndex::*;
+        match id {
+            EndoscalingStep(step) => {
+                for ((step_rx, endo_rx), pts_rx) in source
+                    .rx(RxIndex::EndoscalingStep(step))
+                    .zip(source.rx(RxIndex::EndoscalarStage))
+                    .zip(source.rx(RxIndex::PointsStage))
+                {
+                    processor.internal_circuit(id, [step_rx, endo_rx, pts_rx].into_iter());
+                }
+            }
+            EndoscalarStage => {
+                processor.bonding(id, source.rx(RxIndex::EndoscalarStage))?;
+            }
+            PointsStage => {
+                processor.bonding(id, source.rx(RxIndex::PointsStage))?;
+            }
+            PointsFinalStaged => {
+                let num_steps = super::NUM_ENDOSCALING_STEPS;
+                let final_rxs = (0..num_steps)
+                    .flat_map(|step| source.rx(RxIndex::EndoscalingStep(step as u32)));
+                processor.bonding(id, final_rxs)?;
+            }
+            BridgePreamble => {
+                processor.bonding(id, source.rx(RxIndex::BridgePreamble))?;
+            }
+            BridgeSPrime => {
+                processor.bonding(id, source.rx(RxIndex::BridgeSPrime))?;
+            }
+            BridgeInnerError => {
+                processor.bonding(id, source.rx(RxIndex::BridgeInnerError))?;
+            }
+            BridgeOuterError => {
+                processor.bonding(id, source.rx(RxIndex::BridgeOuterError))?;
+            }
+            BridgeAB => {
+                processor.bonding(id, source.rx(RxIndex::BridgeAB))?;
+            }
+            BridgeQuery => {
+                processor.bonding(id, source.rx(RxIndex::BridgeQuery))?;
+            }
+            BridgeF => {
+                processor.bonding(id, source.rx(RxIndex::BridgeF))?;
+            }
+            BridgeEval => {
+                processor.bonding(id, source.rx(RxIndex::BridgeEval))?;
+            }
         }
-    }
-
-    // 2. Stage checks SECOND (k(y) = 0)
-    processor.stage(
-        InternalCircuitIndex::EndoscalarStage,
-        source.rx(EndoscalarStage),
-    )?;
-
-    processor.stage(InternalCircuitIndex::PointsStage, source.rx(PointsStage))?;
-
-    // PointsFinalStaged - final stage check
-    // Aggregates all EndoscalingStep rxs from all proofs
-    {
-        let final_rxs = (0..num_steps).flat_map(|step| source.rx(EndoscalingStep(step as u32)));
-        processor.stage(InternalCircuitIndex::PointsFinalStaged, final_rxs)?;
     }
 
     Ok(())
@@ -139,14 +141,10 @@ pub trait KySource {
 /// - `num_steps` ones (for EndoscalingStep circuit checks, single-proof verification)
 /// - Infinite zeros (for stage checks)
 pub fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
-    use super::NUM_ENDOSCALING_POINTS;
-    use crate::internal::endoscalar::NumStepsLen;
-    use ragu_primitives::vec::Len;
-
-    let num_steps = NumStepsLen::<NUM_ENDOSCALING_POINTS>::len();
+    let num_steps = super::NUM_ENDOSCALING_STEPS;
 
     // Circuit checks: k(y) = 1 (for single-proof, num_circuit_claims = num_steps)
     core::iter::repeat_n(source.one(), num_steps)
-        // Stage checks: k(y) = 0 (infinite, matches how native does it)
+        // Bonding checks: k(y) = 0 (infinite, matches how native does it)
         .chain(core::iter::repeat(source.zero()))
 }

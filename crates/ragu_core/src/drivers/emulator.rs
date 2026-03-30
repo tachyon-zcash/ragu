@@ -1,14 +1,6 @@
 //! Driver for executing circuit code natively with minimal overhead.
 //!
-//! ## Overview
-//!
-//! Circuit code is written with the [`Driver`] abstraction, which is used to
-//! express operations such as allocating wires and enforcing constraints
-//! alongside the corresponding witness generation logic. The simplest driver
-//! would be one that simply executes circuit code directly _without_ enforcing
-//! constraints; that is the purpose of this module's [`Emulator`].
-//!
-//! The [`Emulator`] driver never checks multiplication or linear constraints,
+//! The [`Emulator`] driver never checks gate or constraint satisfaction,
 //! but it _can_ be used to collect and compute wire assignments.
 //! When instantiated in [`Wireless`] mode, the emulator simply executes the
 //! circuit code natively without wires (i.e., `Wire=()`), saving memory.
@@ -105,6 +97,17 @@ pub trait Mode: sealed::Sealed {
 
     /// Equal to the resulting [`Emulator`]'s [`DriverTypes::LCenforce`].
     type LCenforce: LinearExpression<Self::Wire, Self::F>;
+
+    /// Mode-specific gate allocation. Delegated to by
+    /// [`DriverTypes::gate`] for [`Emulator<M>`].
+    fn gate(
+        values: impl Fn() -> Result<(
+            Coeff<Self::F>,
+            Coeff<Self::F>,
+            Coeff<Self::F>,
+            Coeff<Self::F>,
+        )>,
+    ) -> Result<(Self::Wire, Self::Wire, Self::Wire, Self::Wire)>;
 }
 
 /// Mode for an [`Emulator`] that tracks wire assignments.
@@ -120,6 +123,17 @@ impl<F: Field> Mode for Wired<F> {
     type Wire = F;
     type LCadd = DirectSum<F>;
     type LCenforce = DirectSum<F>;
+
+    fn gate(
+        values: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>, Coeff<F>)>,
+    ) -> Result<(F, F, F, F)> {
+        let (a, b, c, d) = values()?;
+
+        // Despite wires existing, the emulator does not enforce gate
+        // equations.
+
+        Ok((a.value(), b.value(), c.value(), d.value()))
+    }
 }
 
 /// Mode for an [`Emulator`] that does not track wire assignments.
@@ -133,6 +147,12 @@ impl<M: MaybeKind, F: Field> Mode for Wireless<M, F> {
     type Wire = ();
     type LCadd = ();
     type LCenforce = ();
+
+    fn gate(
+        _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>, Coeff<F>)>,
+    ) -> Result<((), (), (), ())> {
+        Ok(((), (), (), ()))
+    }
 }
 
 /// A driver used to natively execute circuit code without enforcing
@@ -261,6 +281,13 @@ impl<M: Mode> DriverTypes for Emulator<M> {
     type MaybeKind = M::MaybeKind;
     type LCadd = M::LCadd;
     type LCenforce = M::LCenforce;
+
+    fn gate(
+        &mut self,
+        values: impl Fn() -> Result<(Coeff<M::F>, Coeff<M::F>, Coeff<M::F>, Coeff<M::F>)>,
+    ) -> Result<(M::Wire, M::Wire, M::Wire, M::Wire)> {
+        M::gate(values)
+    }
 }
 
 impl<'dr, M: MaybeKind, F: Field> Driver<'dr> for Emulator<Wireless<M, F>> {
@@ -269,13 +296,6 @@ impl<'dr, M: MaybeKind, F: Field> Driver<'dr> for Emulator<Wireless<M, F>> {
     const ONE: Self::Wire = ();
 
     fn constant(&mut self, _: Coeff<Self::F>) -> Self::Wire {}
-
-    fn mul(
-        &mut self,
-        _: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
-    ) -> Result<(Self::Wire, Self::Wire, Self::Wire)> {
-        Ok(((), (), ()))
-    }
 
     fn add(&mut self, _: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {}
 
@@ -301,18 +321,6 @@ impl<'dr, F: Field> Driver<'dr> for Emulator<Wired<F>> {
         coeff.value()
     }
 
-    fn mul(
-        &mut self,
-        f: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
-    ) -> Result<(Self::Wire, Self::Wire, Self::Wire)> {
-        let (a, b, c) = f()?;
-
-        // Despite wires existing, the emulator does not enforce multiplication
-        // constraints.
-
-        Ok((a.value(), b.value(), c.value()))
-    }
-
     fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {
         let lc = lc(DirectSum::default());
         lc.value()
@@ -324,20 +332,12 @@ impl<'dr, F: Field> Driver<'dr> for Emulator<Wired<F>> {
 
         Ok(())
     }
-
-    fn routine<R: Routine<Self::F> + 'dr>(
-        &mut self,
-        routine: R,
-        input: Bound<'dr, Self, R::Input>,
-    ) -> Result<Bound<'dr, Self, R::Output>> {
-        short_circuit_routine(self, routine, input)
-    }
 }
 
 /// The [`Emulator`] will short-circuit execution if the [`Routine`] can predict
 /// its output, as the [`Emulator`] is not involved in enforcing any
 /// constraints.
-fn short_circuit_routine<'dr, D: Driver<'dr>, R: Routine<D::F> + 'dr>(
+fn short_circuit_routine<'dr, D: Driver<'dr, Wire = ()>, R: Routine<D::F> + 'dr>(
     dr: &mut D,
     routine: R,
     input: Bound<'dr, D, R::Input>,
@@ -717,10 +717,10 @@ mod tests {
         }
     }
 
-    // When predict returns Known, the emulator short-circuits: execute must
-    // NOT be called.
+    // The wired emulator always executes routines because `predict` requires
+    // `Wire = ()` and cannot produce wired output.
     #[test]
-    fn wired_routine_short_circuits_on_known_prediction() -> Result<()> {
+    fn wired_routine_always_executes() -> Result<()> {
         let executed = Arc::new(AtomicBool::new(false));
         let mut dr = Emulator::<Wired<F>>::extractor();
         let routine = AlwaysKnownRoutine {
@@ -728,8 +728,8 @@ mod tests {
         };
         dr.routine(routine, ())?;
         assert!(
-            !executed.load(Ordering::Relaxed),
-            "execute should not be called on Known prediction"
+            executed.load(Ordering::Relaxed),
+            "wired emulator must always execute"
         );
         Ok(())
     }

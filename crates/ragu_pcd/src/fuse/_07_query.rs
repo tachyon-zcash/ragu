@@ -29,7 +29,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         x: &Element<'dr, D>,
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
-        error_m: &proof::ErrorM<C, R>,
+        inner_error: &proof::InnerError<C, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
     ) -> Result<(proof::Query<C, R>, native::stages::query::Witness<C>)>
@@ -37,15 +37,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         D: Driver<'dr, F = C::CircuitField>,
     {
         let (native_query, query_witness) =
-            self.compute_native_query(rng, w, x, y, z, error_m, left, right)?;
+            self.compute_native_query(rng, w, x, y, z, inner_error, left, right)?;
 
         let bridge = proof::Bridge::commit(
             self.params,
-            rng,
-            nested::stages::query::Stage::<C::HostCurve, R>::rx(&nested::stages::query::Witness {
-                native_query: native_query.rx_triple.commitment,
-                registry_xy: native_query.registry_xy_commitment,
-            })?,
+            nested::stages::query::Stage::<C::HostCurve, R>::rx(
+                C::ScalarField::random(&mut *rng),
+                &nested::stages::query::Witness {
+                    native_query: native_query.rx_triple.commitment,
+                    registry_xy: native_query.registry_xy_commitment,
+                },
+            )?,
         );
 
         Ok((
@@ -64,7 +66,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         x: &Element<'dr, D>,
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
-        error_m: &proof::ErrorM<C, R>,
+        inner_error: &proof::InnerError<C, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
     ) -> Result<(proof::NativeQuery<C, R>, native::stages::query::Witness<C>)>
@@ -77,7 +79,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let xz = x * *z.value().take();
 
         let registry_xy_poly = self.native_registry.xy(x, y);
-        let registry_xy_blind = C::CircuitField::random(&mut *rng);
 
         let query_witness = native::stages::query::Witness {
             // TODO: these can all be evaluated at the same time; in fact,
@@ -92,7 +93,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 x,
                 xz,
                 &registry_xy_poly,
-                &error_m.native.registry_wy_poly,
+                &inner_error.native.registry_wy_poly,
             ),
             right: native::stages::query::ChildEvaluationsWitness::from_proof(
                 right,
@@ -100,28 +101,25 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 x,
                 xz,
                 &registry_xy_poly,
-                &error_m.native.registry_wy_poly,
+                &inner_error.native.registry_wy_poly,
             ),
         };
 
-        let rx = native::stages::query::Stage::<C, R, HEADER_SIZE>::rx(&query_witness)?;
-        let blind = C::CircuitField::random(&mut *rng);
+        let rx = native::stages::query::Stage::<C, R, HEADER_SIZE>::rx(
+            C::CircuitField::random(&mut *rng),
+            &query_witness,
+        )?;
         let host_gen = C::host_generators(self.params);
         let [registry_xy_commitment, commitment] = ragu_arithmetic::batch_to_affine([
-            registry_xy_poly.commit(host_gen, registry_xy_blind),
-            rx.commit(host_gen, blind),
+            registry_xy_poly.commit(host_gen),
+            rx.commit(host_gen),
         ]);
 
         Ok((
             proof::NativeQuery {
                 registry_xy_poly,
-                registry_xy_blind,
                 registry_xy_commitment,
-                rx_triple: proof::RxTriple {
-                    rx,
-                    blind,
-                    commitment,
-                },
+                rx_triple: proof::RxTriple { rx, commitment },
             },
             query_witness,
         ))

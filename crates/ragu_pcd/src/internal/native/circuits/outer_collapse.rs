@@ -5,14 +5,14 @@
 //! ### Layer 2 verification
 //!
 //! This circuit verifies layer 2 of the two-layer reduction, completing the
-//! folding process started by [`partial_collapse`]:
+//! folding process started by [`inner_collapse`]:
 //! - Retrieves [$\mu'$] and [$\nu'$] challenges from the unified instance.
 //!   These are distinct from the layer 1 challenges ([$\mu$], [$\nu$]) used in
-//!   [`partial_collapse`].
-//! - Uses the collapsed values from layer 1 (verified by [`partial_collapse`])
+//!   [`inner_collapse`].
+//! - Uses the collapsed values from layer 1 (verified by [`inner_collapse`])
 //!   as the $k(y)$ inputs.
 //! - Computes the final folded revdot claim [$c$] using
-//!   [`FoldProducts::fold_products_n`].
+//!   [`ClaimFolder::fold_outer`].
 //! - Enforces that the computed [$c$] matches the witnessed value from the
 //!   unified instance (with base case exception below).
 //!
@@ -25,29 +25,30 @@
 //!
 //! ## Staging
 //!
-//! This circuit uses [`error_n`] as its final stage, which inherits in the
+//! This circuit uses [`outer_error`] as its final stage, which inherits in the
 //! following chain:
 //! - [`preamble`] (unenforced)
-//! - [`error_n`] (unenforced)
+//! - [`outer_error`] (unenforced)
 //!
 //! ## Public Inputs
 //!
 //! This circuit uses the standard [`unified::InternalOutputKind`] as its public
 //! inputs, providing the unified instance fields needed for verification.
 //!
-//! [`partial_collapse`]: super::partial_collapse
+//! [`inner_collapse`]: super::inner_collapse
 //! [$\mu'$]: unified::Output::mu_prime
 //! [$\nu'$]: unified::Output::nu_prime
 //! [$\mu$]: unified::Output::mu
 //! [$\nu$]: unified::Output::nu
 //! [$c$]: unified::Output::c
-//! [`error_n`]: super::super::stages::error_n
+//! [`outer_error`]: super::super::stages::outer_error
 //! [`preamble`]: super::super::stages::preamble
-//! [`FoldProducts::fold_products_n`]: fold_revdot::FoldProducts::fold_products_n
+//! [`ClaimFolder::fold_outer`]: fold_revdot::ClaimFolder::fold_outer
 //! [`is_base_case`]: super::super::stages::preamble::Output::is_base_case
 
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
+    WithAux,
     polynomials::Rank,
     staging::{MultiStage, MultiStageCircuit, StageBuilder},
 };
@@ -61,7 +62,7 @@ use ragu_core::{
 use core::marker::PhantomData;
 
 use super::super::{
-    stages::{error_n, preamble},
+    stages::{outer_error, preamble},
     unified::{self, OutputBuilder},
 };
 use crate::internal::fold_revdot;
@@ -87,7 +88,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     }
 }
 
-/// Witness data for the full collapse circuit.
+/// Witness data for the outer collapse circuit.
 ///
 /// Combines the unified instance with stage witnesses needed to perform the
 /// layer 2 revdot verification and base case check.
@@ -103,17 +104,17 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     /// for conditional constraint enforcement.
     pub preamble_witness: &'a preamble::Witness<'a, C, R, HEADER_SIZE>,
 
-    /// Witness for the [`error_n`] stage
+    /// Witness for the [`outer_error`] stage
     /// (unenforced).
     ///
     /// Provides layer 2 error terms and collapsed values from layer 1.
-    pub error_n_witness: &'a error_n::Witness<C, FP>,
+    pub outer_error_witness: &'a outer_error::Witness<C, FP>,
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     MultiStageCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, FP>
 {
-    type Last = error_n::Stage<C, R, HEADER_SIZE, FP>;
+    type Last = outer_error::Stage<C, R, HEADER_SIZE, FP>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
@@ -135,36 +136,35 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         &self,
         builder: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
         witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<(
-        Bound<'dr, D, Self::Output>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>>
     where
         Self: 'dr,
     {
         let (preamble, builder) = builder.add_stage::<preamble::Stage<C, R, HEADER_SIZE>>()?;
-        let (error_n, builder) = builder.add_stage::<error_n::Stage<C, R, HEADER_SIZE, FP>>()?;
+        let (outer_error, builder) =
+            builder.add_stage::<outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();
 
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
-        let error_n = error_n.unenforced(dr, witness.as_ref().map(|w| w.error_n_witness))?;
+        let outer_error =
+            outer_error.unenforced(dr, witness.as_ref().map(|w| w.outer_error_witness))?;
 
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
         // Get layer 2 folding challenges. These are distinct from the layer 1
-        // challenges (mu, nu) used in partial_collapse.
+        // challenges (mu, nu) used in inner_collapse.
         let mu_prime = unified_output.mu_prime.read(dr)?;
         let nu_prime = unified_output.nu_prime.read(dr)?;
 
         // Compute the final folded revdot claim c via layer 2 reduction.
-        // The collapsed values from layer 1 (verified by partial_collapse) serve
+        // The collapsed values from layer 1 (verified by inner_collapse) serve
         // as the k(y) inputs for this final fold.
         {
-            let fold_products = fold_revdot::FoldProducts::new(dr, &mu_prime, &nu_prime)?;
-            let computed_c = fold_products.fold_products_n::<FP>(
+            let fold_products = fold_revdot::ClaimFolder::new(dr, &mu_prime, &nu_prime)?;
+            let computed_c = fold_products.fold_outer::<FP>(
                 dr,
-                &error_n.error_terms,
-                &error_n.collapsed,
+                &outer_error.error_terms,
+                &outer_error.collapsed,
             )?;
 
             // Retrieve the witnessed c from the unified instance and mark it
@@ -180,6 +180,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
                 .conditional_enforce_equal(dr, &witnessed_c, &computed_c)?;
         }
 
-        unified_output.finish(dr)
+        let (output, aux) = unified_output.finish(dr)?;
+        Ok(WithAux::new(output, aux))
     }
 }

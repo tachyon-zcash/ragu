@@ -1,4 +1,6 @@
-/// Creates a raw [`Fp`](pasta_curves::Fp) element from a hex string literal
+/// Creates an [`Fp`](pasta_curves::Fp) element from a `0x`-prefixed hex
+/// literal via [`Fp::from_raw`](pasta_curves::Fp::from_raw) (non-Montgomery
+/// representation).
 #[macro_export]
 macro_rules! fp {
     ( $x:expr ) => {
@@ -6,7 +8,9 @@ macro_rules! fp {
     };
 }
 
-/// Creates a raw [`Fq`](pasta_curves::Fq) element from a hex string literal
+/// Creates an [`Fq`](pasta_curves::Fq) element from a `0x`-prefixed hex
+/// literal via [`Fq::from_raw`](pasta_curves::Fq::from_raw) (non-Montgomery
+/// representation).
 #[macro_export]
 macro_rules! fq {
     ( $x:expr ) => {

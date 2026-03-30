@@ -2,11 +2,39 @@ use super::*;
 use crate::*;
 use native::{
     InternalCircuitIndex, InternalCircuitValues, RevdotParameters, RxIndex, RxValues,
-    stages::{error_m, error_n, eval, preamble, query},
+    stages::{eval, inner_error, outer_error, preamble, query},
 };
 use ragu_circuits::staging::{Stage, StageExt};
 use ragu_pasta::{Pasta, fp, fq};
 pub type R = ragu_circuits::polynomials::ProductionRank;
+
+use ff::PrimeField;
+use ragu_circuits::polynomials::Rank;
+use ragu_core::{
+    drivers::emulator::{Emulator, Wireless},
+    gadgets::{Bound, Gadget},
+    maybe::Empty,
+};
+
+pub fn assert_stage_values<F, R, S>(stage: &S)
+where
+    F: PrimeField,
+    R: Rank,
+    S: Stage<F, R>,
+    for<'dr> Bound<'dr, Emulator<Wireless<Empty, F>>, S::OutputKind>:
+        Gadget<'dr, Emulator<Wireless<Empty, F>>>,
+{
+    let mut emulator = Emulator::counter();
+    let output = stage
+        .witness(&mut emulator, Empty)
+        .expect("allocation should succeed");
+
+    assert_eq!(
+        output.num_wires().expect("wire counting should succeed"),
+        S::values(),
+        "Stage::values() does not match actual wire count"
+    );
+}
 
 // When changing HEADER_SIZE, update the constraint counts by running:
 //   cargo test -p ragu_pcd --release print_internal_circuit -- --nocapture
@@ -19,8 +47,8 @@ pub const HEADER_SIZE: usize = 65;
 const NUM_APP_STEPS: usize = 6000;
 
 type Preamble = preamble::Stage<Pasta, R, HEADER_SIZE>;
-type ErrorN = error_n::Stage<Pasta, R, HEADER_SIZE, RevdotParameters>;
-type ErrorM = error_m::Stage<Pasta, R, HEADER_SIZE, RevdotParameters>;
+type OuterError = outer_error::Stage<Pasta, R, HEADER_SIZE, RevdotParameters>;
+type InnerError = inner_error::Stage<Pasta, R, HEADER_SIZE, RevdotParameters>;
 type Query = query::Stage<Pasta, R, HEADER_SIZE>;
 type Eval = eval::Stage<Pasta, R, HEADER_SIZE>;
 
@@ -35,37 +63,35 @@ fn test_internal_circuit_constraint_counts() {
         .finalize(pasta)
         .unwrap();
 
-    let circuits = app.native_registry.circuits();
-
     macro_rules! check_constraints {
         ($variant:ident, mul = $mul:expr, lin = $lin:expr) => {{
-            let idx: usize = InternalCircuitIndex::$variant.circuit_index().into();
-            let circuit = &circuits[idx];
-            let (actual_mul, actual_lin) = circuit.constraint_counts();
+            let circuit_index = InternalCircuitIndex::$variant.circuit_index();
+            let (actual_gates, actual_constraints) =
+                app.native_registry.constraint_counts(circuit_index);
             assert_eq!(
-                actual_mul,
+                actual_gates,
                 $mul,
-                "{}: multiplication constraints: expected {}, got {}",
+                "{}: gates: expected {}, got {}",
                 stringify!($variant),
                 $mul,
-                actual_mul
+                actual_gates
             );
             assert_eq!(
-                actual_lin,
+                actual_constraints,
                 $lin,
-                "{}: linear constraints: expected {}, got {}",
+                "{}: constraints: expected {}, got {}",
                 stringify!($variant),
                 $lin,
-                actual_lin
+                actual_constraints
             );
         }};
     }
 
-    check_constraints!(Hashes1Circuit,         mul = 2045, lin = 3423);
-    check_constraints!(Hashes2Circuit,         mul = 1879, lin = 2952);
-    check_constraints!(PartialCollapseCircuit, mul = 1756, lin = 1919);
-    check_constraints!(FullCollapseCircuit,    mul = 811 , lin = 809);
-    check_constraints!(ComputeVCircuit,        mul = 1140, lin = 1774);
+    check_constraints!(Hashes1Circuit,         mul = 2045, lin = 3422);
+    check_constraints!(Hashes2Circuit,         mul = 1879, lin = 2951);
+    check_constraints!(InnerCollapseCircuit,  mul = 1756, lin = 1918);
+    check_constraints!(OuterCollapseCircuit,  mul = 811 , lin = 808);
+    check_constraints!(ComputeVCircuit,        mul = 1140, lin = 1773);
 }
 
 #[rustfmt::skip]
@@ -73,16 +99,16 @@ fn test_internal_circuit_constraint_counts() {
 fn test_internal_stage_parameters() {
     macro_rules! check_stage {
         ($Stage:ty, skip = $skip:expr, num = $num:expr) => {{
-            assert_eq!(<$Stage>::skip_multiplications(), $skip, "{}: skip", stringify!($Stage));
-            assert_eq!(<$Stage as StageExt<_, _>>::num_multiplications(), $num, "{}: num", stringify!($Stage));
+            assert_eq!(<$Stage>::skip_gates(), $skip, "{}: skip", stringify!($Stage));
+            assert_eq!(<$Stage as StageExt<_, _>>::num_gates(), $num, "{}: num", stringify!($Stage));
         }};
     }
 
-    check_stage!(Preamble, skip =   0, num = 225);
-    check_stage!(ErrorN,  skip = 225, num = 186);
-    check_stage!(ErrorM,  skip = 411, num = 399);
-    check_stage!(Query,   skip = 225, num =  23);
-    check_stage!(Eval,    skip = 248, num =  18);
+    check_stage!(Preamble, skip =   1, num = 225);
+    check_stage!(OuterError,  skip = 226, num = 186);
+    check_stage!(InnerError,  skip = 412, num = 399);
+    check_stage!(Query,   skip = 226, num =  23);
+    check_stage!(Eval,    skip = 249, num =  18);
 }
 
 /// Helper test to print current constraint counts in copy-pasteable format.
@@ -101,27 +127,24 @@ fn print_internal_circuit_constraint_counts() {
         .finalize(pasta)
         .unwrap();
 
-    let circuits = app.native_registry.circuits();
-
     let variants = [
         ("Hashes1Circuit", InternalCircuitIndex::Hashes1Circuit),
         ("Hashes2Circuit", InternalCircuitIndex::Hashes2Circuit),
         (
-            "PartialCollapseCircuit",
-            InternalCircuitIndex::PartialCollapseCircuit,
+            "InnerCollapseCircuit",
+            InternalCircuitIndex::InnerCollapseCircuit,
         ),
         (
-            "FullCollapseCircuit",
-            InternalCircuitIndex::FullCollapseCircuit,
+            "OuterCollapseCircuit",
+            InternalCircuitIndex::OuterCollapseCircuit,
         ),
         ("ComputeVCircuit", InternalCircuitIndex::ComputeVCircuit),
     ];
 
     println!("\n// Copy-paste the following into test_internal_circuit_constraint_counts:");
     for (name, variant) in variants {
-        let idx: usize = variant.circuit_index().into();
-        let circuit = &circuits[idx];
-        let (mul, lin) = circuit.constraint_counts();
+        let circuit_index = variant.circuit_index();
+        let (mul, lin) = app.native_registry.constraint_counts(circuit_index);
         println!(
             "        check_constraints!({:<24} mul = {:<4}, lin = {});",
             format!("{},", name),
@@ -141,8 +164,8 @@ fn print_internal_stage_parameters() {
 
     macro_rules! print_stage {
         ($Stage:ty) => {{
-            let skip = <$Stage>::skip_multiplications();
-            let num = <$Stage as StageExt<_, _>>::num_multiplications();
+            let skip = <$Stage>::skip_gates();
+            let num = <$Stage as StageExt<_, _>>::num_gates();
             println!(
                 "        check_stage!({:<8} skip = {:>3}, num = {:>3});",
                 format!("{},", stringify!($Stage)),
@@ -154,8 +177,8 @@ fn print_internal_stage_parameters() {
 
     println!("\n// Copy-paste the following into test_internal_stage_parameters:");
     print_stage!(Preamble);
-    print_stage!(ErrorN);
-    print_stage!(ErrorM);
+    print_stage!(OuterError);
+    print_stage!(InnerError);
     print_stage!(Query);
     print_stage!(Eval);
 }
@@ -175,7 +198,7 @@ fn test_native_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fp!(0x27e46fa6cc3da244cd0ece800ccba42bc93a107684629501b75b17121b7dceac);
+    let expected = fp!(0x339e595491fd177b620ea6dc286cf85c3caab480edba867792383f33714019e4);
 
     assert_eq!(
         app.native_registry.digest(),
@@ -199,7 +222,7 @@ fn test_nested_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fq!(0x19eee1ec7cbd105fbaab44be187c935497612ee71d898ae064ca3c7166e2d645);
+    let expected = fq!(0x31cda5818b2554cf6064590380712d5d44461fb3bc0628ac8742343eb731d271);
 
     assert_eq!(
         app.nested_registry.digest(),

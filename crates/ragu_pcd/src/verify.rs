@@ -3,7 +3,7 @@
 use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
-    polynomials::{Rank, structured},
+    polynomials::{Rank, sparse},
     registry::CircuitIndex,
 };
 use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
@@ -22,6 +22,11 @@ use crate::{
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     /// Verifies some [`Pcd`] for the provided [`Header`].
+    ///
+    /// Returns `Ok(true)` if all verification checks pass, `Ok(false)` if
+    /// any check fails (e.g., invalid circuit ID, header size mismatch,
+    /// corrupted commitments or evaluations), or `Err` if an internal
+    /// computation error occurs.
     pub fn verify<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         pcd: &Pcd<C, R, H>,
@@ -104,13 +109,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let p_eval_claim =
             pcd.proof().p.native.poly.eval(pcd.proof().challenges.u) == pcd.proof().p.native.v;
 
-        // Check P commitment corresponds to polynomial and blind.
+        // Check P commitment corresponds to polynomial.
         let p_commitment_claim = pcd
             .proof()
             .p
             .native
             .poly
-            .commit_to_affine(C::host_generators(self.params), pcd.proof().p.native.blind)
+            .commit_to_affine(C::host_generators(self.params))
             == pcd.proof().p.native.commitment;
 
         // Check registry_xy polynomial evaluation at the sampled w.
@@ -148,7 +153,7 @@ mod native {
 
     impl<'rx, C: Cycle, R: Rank> Source for SingleProofSource<'rx, C, R> {
         type RxComponent = RxComponent;
-        type Rx = &'rx structured::Polynomial<C::CircuitField, R>;
+        type Rx = &'rx sparse::Polynomial<C::CircuitField, R>;
         type AppCircuitId = CircuitIndex;
 
         fn rx(&self, component: RxComponent) -> impl Iterator<Item = Self::Rx> {
@@ -196,7 +201,7 @@ mod native {
 mod nested {
     use super::*;
     use crate::internal::claims::Source;
-    use crate::internal::nested::claims::{KySource, RxComponent};
+    use crate::internal::nested::{RxIndex, claims::KySource};
 
     pub use crate::internal::nested::claims::ky_values;
 
@@ -206,18 +211,12 @@ mod nested {
     }
 
     impl<'rx, C: Cycle, R: Rank> Source for SingleProofSource<'rx, C, R> {
-        type RxComponent = RxComponent;
-        type Rx = &'rx structured::Polynomial<C::ScalarField, R>;
+        type RxComponent = RxIndex;
+        type Rx = &'rx sparse::Polynomial<C::ScalarField, R>;
         type AppCircuitId = ();
 
-        fn rx(&self, component: RxComponent) -> impl Iterator<Item = Self::Rx> {
-            use RxComponent::*;
-            let poly = match component {
-                EndoscalarStage => &self.proof.p.nested.endoscalar_rx,
-                PointsStage => &self.proof.p.nested.points_rx,
-                EndoscalingStep(step) => &self.proof.p.nested.step_rxs[step as usize], // TODO: bounds
-            };
-            core::iter::once(poly)
+        fn rx(&self, component: RxIndex) -> impl Iterator<Item = Self::Rx> {
+            core::iter::once(&self.proof[component])
         }
 
         fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
@@ -324,8 +323,12 @@ mod tests {
         // Create a valid trivial proof
         let mut proof = app.trivial_proof();
 
-        // Corrupt the P commitment by changing the blind
-        proof.p.native.blind = <Pasta as Cycle>::CircuitField::from(999u64);
+        // Corrupt the P commitment by altering the polynomial (mismatches commitment)
+        proof
+            .p
+            .native
+            .poly
+            .scale(<Pasta as Cycle>::CircuitField::from(2u64));
 
         let pcd = proof.carry::<()>(());
         let result = app.verify(&pcd, &mut rng).expect("verify should not error");

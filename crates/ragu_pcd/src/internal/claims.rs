@@ -2,7 +2,7 @@
 
 use ff::{Field, PrimeField};
 use ragu_circuits::{
-    polynomials::{Rank, structured},
+    polynomials::{Rank, sparse},
     registry::{CircuitIndex, Registry},
 };
 
@@ -14,8 +14,8 @@ use core::borrow::Borrow;
 /// Returns `Cow::Borrowed` for a single polynomial, `Cow::Owned` for multiple.
 /// Panics if the iterator is empty.
 pub fn sum_polynomials<'rx, F: Field, R: Rank>(
-    mut rxs: impl Iterator<Item = &'rx structured::Polynomial<F, R>>,
-) -> Cow<'rx, structured::Polynomial<F, R>> {
+    mut rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
+) -> Cow<'rx, sparse::Polynomial<F, R>> {
     let first = rxs.next().expect("must provide at least one rx polynomial");
     match rxs.next() {
         None => Cow::Borrowed(first),
@@ -68,16 +68,16 @@ pub struct Builder<'m, 'rx, A, F: PrimeField, R: Rank> {
     pub registry: &'m Registry<'m, F, R>,
     pub y: F,
     pub z: F,
-    pub tz: structured::Polynomial<F, R>,
+    pub tz: sparse::Polynomial<F, R>,
     /// The accumulated `a` polynomials.
     pub a: Vec<A>,
     /// The accumulated `b` polynomials for revdot claims.
-    pub b: Vec<Cow<'rx, structured::Polynomial<F, R>>>,
+    pub b: Vec<Cow<'rx, sparse::Polynomial<F, R>>>,
 }
 
 impl<'m, 'rx, A, F: PrimeField, R: Rank> Builder<'m, 'rx, A, F, R>
 where
-    A: Borrow<structured::Polynomial<F, R>>,
+    A: Borrow<sparse::Polynomial<F, R>>,
 {
     /// Create a new claim builder.
     pub fn new(registry: &'m Registry<'m, F, R>, y: F, z: F) -> Self {
@@ -103,8 +103,9 @@ where
         self.b.push(Cow::Owned(b));
     }
 
-    /// Push a stage claim. `b` is just `sy` (no rx transformation).
-    pub fn stage_impl(&mut self, circuit_id: CircuitIndex, a: A) {
+    /// Push a bonding claim. There is no dilation and no $t(z)$, so
+    /// $b = s\_{y}$ and $k(y) = 0$.
+    pub fn bonding_impl(&mut self, circuit_id: CircuitIndex, a: A) {
         let sy = self.registry.circuit_y(circuit_id, self.y);
         self.a.push(a);
         self.b.push(Cow::Owned(sy));
@@ -116,14 +117,17 @@ where
     /// The fold gives item `i` coefficient `z^(n-1-i)`. Callers that track
     /// commitment decompositions must assign the same coefficients to the
     /// corresponding source keys.
-    pub fn fold_stage_polys(
+    ///
+    /// Folding is sound because the revdot identity for bonding polynomials is
+    /// linear in the trace.
+    pub fn fold_bonding_polys(
         &self,
-        mut rxs: impl Iterator<Item = &'rx structured::Polynomial<F, R>>,
-    ) -> Cow<'rx, structured::Polynomial<F, R>> {
+        mut rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
+    ) -> Cow<'rx, sparse::Polynomial<F, R>> {
         let first = rxs.next().expect("must provide at least one rx polynomial");
         match rxs.next() {
             None => Cow::Borrowed(first),
-            Some(second) => Cow::Owned(structured::Polynomial::fold(
+            Some(second) => Cow::Owned(sparse::Polynomial::fold(
                 core::iter::once(first)
                     .chain(core::iter::once(second))
                     .chain(rxs),

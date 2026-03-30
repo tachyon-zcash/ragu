@@ -2,7 +2,7 @@
 //!
 //! The [`eval`] function in this module processes witness data for a
 //! particular [`Circuit`] and produces raw gate values as a [`Trace`].
-//! The [`Trace`] is later assembled into a [`structured::Polynomial`]
+//! The [`Trace`] is later assembled into a [`sparse::Polynomial`]
 //! by the registry.
 
 use ff::Field;
@@ -21,10 +21,8 @@ use alloc::{vec, vec::Vec};
 #[cfg(feature = "multicore")]
 use std::sync::mpsc;
 
-use super::{
-    Circuit, DriverScope, Rank, floor_planner::ConstraintSegment, metrics::SegmentRecord, registry,
-    structured,
-};
+use super::{Circuit, DriverScope, Rank, floor_planner::ConstraintSegment, sparse};
+use crate::WithAux;
 
 /// A contiguous group of multiplication gates.
 ///
@@ -35,6 +33,7 @@ pub(crate) struct Segment<F> {
     pub(crate) a: Vec<F>,
     pub(crate) b: Vec<F>,
     pub(crate) c: Vec<F>,
+    pub(crate) d: Vec<F>,
 }
 
 /// A segment paired with the DFS path that produced it, so that segments from
@@ -61,6 +60,7 @@ impl<F: Field> AnnotatedSegment<F> {
                 a: init(),
                 b: init(),
                 c: init(),
+                d: init(),
             },
         }
     }
@@ -69,7 +69,7 @@ impl<F: Field> AnnotatedSegment<F> {
 /// Trace data produced by evaluating a circuit.
 ///
 /// Pass to [`Registry::assemble`](crate::registry::Registry::assemble)
-/// to obtain the corresponding [`structured::Polynomial`].
+/// to obtain the corresponding [`sparse::Polynomial`].
 pub struct Trace<F> {
     /// Gate groups in DFS order. Segment 0 is the root segment;
     /// segments 1+ are created by [`Driver::routine`] calls.
@@ -77,46 +77,25 @@ pub struct Trace<F> {
 }
 
 impl<F: Field> Trace<F> {
-    /// Assembles this trace into a [`structured::Polynomial`] using
-    /// a default [`Key`](registry::Key), without registry
-    /// optimizations.
-    ///
-    /// This is a convenience for tests that need a polynomial from a
-    /// trace but don't have (or need) a full
-    /// [`Registry`](registry::Registry).
-    ///
-    /// **Note:** This synthesizes a trivial floor plan from segment lengths with
-    /// zero linear constraints. It is only correct for traces produced by
-    /// circuits (or stages) that have no linear constraints in any segment.
-    pub fn assemble_trivial<R: Rank>(&self) -> Result<structured::Polynomial<F, R>> {
-        let segment_records: Vec<SegmentRecord> = self
-            .segments
-            .iter()
-            .map(|seg| SegmentRecord::new(seg.a.len(), 0, super::metrics::RoutineIdentity::Root))
-            .collect();
-        let plan = super::floor_planner::floor_plan(&segment_records);
-        self.assemble_with_key(&registry::Key::default(), &plan)
-    }
-
-    /// Assembles this trace into a [`structured::Polynomial`] using
-    /// the provided registry [`Key`](registry::Key).
+    /// Assembles this trace into a [`sparse::Polynomial`] using
+    /// the provided floor plan.
     ///
     /// Each segment is scattered to the absolute position assigned by
     /// `floor_plan`, so that gate *i* in the resulting polynomial
     /// holds the trace values for the constraint that s(X,Y)
     /// evaluates at monomial position *i*.
-    pub(crate) fn assemble_with_key<R: Rank>(
+    pub(crate) fn assemble<R: Rank>(
         &self,
-        key: &registry::Key<F>,
         floor_plan: &[ConstraintSegment],
-    ) -> Result<structured::Polynomial<F, R>> {
+        alpha: F,
+    ) -> Result<sparse::Polynomial<F, R>> {
         assert_eq!(
             floor_plan.len(),
             self.segments.len(),
             "floor plan and trace must have the same number of segment entries"
         );
         assert_eq!(
-            floor_plan[0].multiplication_start, 0,
+            floor_plan[0].gate_start, 0,
             "root segment must be placed at the polynomial origin"
         );
 
@@ -124,54 +103,54 @@ impl<F: Field> Trace<F> {
             .segments
             .iter()
             .enumerate()
-            .map(|(i, seg)| floor_plan[i].multiplication_start + seg.a.len())
+            .map(|(i, seg)| floor_plan[i].gate_start + seg.a.len())
             .max()
             .expect("floor plan is never empty (root segment always exists)");
         if total_gates > R::n() {
-            return Err(Error::MultiplicationBoundExceeded { limit: R::n() });
+            return Err(Error::GateBoundExceeded { limit: R::n() });
         }
 
-        let mut poly = structured::Polynomial::<F, R>::new();
-        {
-            let view = poly.forward();
+        let mut view = sparse::View::trace();
 
-            // Pre-allocate zero-filled vectors for random-access scatter.
-            view.a.resize(total_gates, F::ZERO);
-            view.b.resize(total_gates, F::ZERO);
-            view.c.resize(total_gates, F::ZERO);
+        // Pre-allocate zero-filled vectors for random-access scatter.
+        view.a.resize(total_gates, F::ZERO);
+        view.b.resize(total_gates, F::ZERO);
+        view.c.resize(total_gates, F::ZERO);
+        view.d.resize(total_gates, F::ZERO);
 
-            // Scatter each segment to its floor-plan position.
-            for (seg_idx, seg) in self.segments.iter().enumerate() {
-                let segment = &floor_plan[seg_idx];
+        // Scatter each segment to its floor-plan position.
+        for (seg_idx, seg) in self.segments.iter().enumerate() {
+            let segment = &floor_plan[seg_idx];
 
-                // Verify segment size matches floor plan expectation.
-                assert_eq!(
-                    seg.a.len(),
-                    segment.num_multiplication_constraints,
-                    "segment {} size must match floor plan",
-                    seg_idx
-                );
+            // Verify segment size matches floor plan expectation.
+            assert_eq!(
+                seg.a.len(),
+                segment.num_gates,
+                "segment {} size must match floor plan",
+                seg_idx
+            );
 
-                let offset = segment.multiplication_start;
-                view.a[offset..offset + seg.a.len()].copy_from_slice(&seg.a);
-                view.b[offset..offset + seg.b.len()].copy_from_slice(&seg.b);
-                view.c[offset..offset + seg.c.len()].copy_from_slice(&seg.c);
-            }
-
-            // Overwrite segment 0's zeroed ONE gate placeholder with
-            // actual key values.
-            view.a[0] = key.value();
-            view.b[0] = key.inverse();
-            view.c[0] = F::ONE;
+            let offset = segment.gate_start;
+            view.a[offset..offset + seg.a.len()].copy_from_slice(&seg.a);
+            view.b[offset..offset + seg.b.len()].copy_from_slice(&seg.b);
+            view.c[offset..offset + seg.c.len()].copy_from_slice(&seg.c);
+            view.d[offset..offset + seg.d.len()].copy_from_slice(&seg.d);
         }
-        Ok(poly)
+
+        // Overwrite segment 0's zeroed SYSTEM gate placeholder:
+        // a[0] = c[0] = 0 (already zero), b[0] = 1 (ONE wire),
+        // d[0] = alpha (prevents point-at-infinity commitments).
+        view.b[0] = F::ONE;
+        view.d[0] = alpha;
+
+        Ok(view.build())
     }
 }
 
 /// Per-routine state that is saved and restored by [`DriverScope`].
 struct TraceScope {
     /// Gate index within the current segment, from paired allocation.
-    available_b: Option<usize>,
+    available_d: Option<usize>,
 
     /// Index of the segment that receives new gates.
     current_segment: usize,
@@ -211,7 +190,7 @@ impl<'scope, 'env, F: Field> Evaluator<'scope, 'env, F> {
             scope,
             tx,
             state: TraceScope {
-                available_b: None,
+                available_d: None,
                 current_segment: 0,
                 routine_counter: 0,
                 dfs_prefix: prefix,
@@ -226,7 +205,7 @@ impl<'scope, 'env, F: Field> Evaluator<'scope, 'env, F> {
             scope,
             deferred: Vec::new(),
             state: TraceScope {
-                available_b: None,
+                available_d: None,
                 current_segment: 0,
                 routine_counter: 0,
                 dfs_prefix: prefix,
@@ -247,6 +226,20 @@ impl<F: Field> DriverTypes for Evaluator<'_, '_, F> {
     type MaybeKind = Always<()>;
     type LCadd = ();
     type LCenforce = ();
+
+    fn gate(
+        &mut self,
+        values: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>, Coeff<F>)>,
+    ) -> Result<((), (), (), ())> {
+        let (a, b, c, d) = values()?;
+        let seg = &mut self.segments[self.state.current_segment].segment;
+        seg.a.push(a.value());
+        seg.b.push(b.value());
+        seg.c.push(c.value());
+        seg.d.push(d.value());
+
+        Ok(((), (), (), ()))
+    }
 }
 
 impl<'scope, 'env, F: Field> Driver<'env> for Evaluator<'scope, 'env, F> {
@@ -255,34 +248,22 @@ impl<'scope, 'env, F: Field> Driver<'env> for Evaluator<'scope, 'env, F> {
     const ONE: Self::Wire = ();
 
     fn alloc(&mut self, value: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
-        // Packs two allocations into one multiplication gate when possible, enabling consecutive
-        // allocations to share gates.
-        if let Some(index) = self.state.available_b.take() {
+        // Packs two allocations into one gate with layout (0, b, 0, d),
+        // which costs less in multiexp than two separate gates.
+        if let Some(index) = self.state.available_d.take() {
             let seg = &mut self.segments[self.state.current_segment].segment;
-            let a = seg.a[index];
-            let b = value()?;
-            seg.b[index] = b.value();
-            seg.c[index] = a * b.value();
+            seg.d[index] = value()?.value();
             Ok(())
         } else {
-            let index = self.segments[self.state.current_segment].segment.a.len();
-            self.mul(|| Ok((value()?, Coeff::Zero, Coeff::Zero)))?;
-            self.state.available_b = Some(index);
+            let seg = &mut self.segments[self.state.current_segment].segment;
+            let index = seg.a.len();
+            seg.a.push(F::ZERO);
+            seg.b.push(value()?.value());
+            seg.c.push(F::ZERO);
+            seg.d.push(F::ZERO);
+            self.state.available_d = Some(index);
             Ok(())
         }
-    }
-
-    fn mul(
-        &mut self,
-        values: impl Fn() -> Result<(Coeff<Self::F>, Coeff<Self::F>, Coeff<Self::F>)>,
-    ) -> Result<((), (), ())> {
-        let (a, b, c) = values()?;
-        let seg = &mut self.segments[self.state.current_segment].segment;
-        seg.a.push(a.value());
-        seg.b.push(b.value());
-        seg.c.push(c.value());
-
-        Ok(((), (), ()))
     }
 
     fn add(&mut self, _: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {}
@@ -359,7 +340,7 @@ impl<'scope, 'env, F: Field> Driver<'env> for Evaluator<'scope, 'env, F> {
                 let seg_idx = self.segments.len() - 1;
                 self.with_scope(
                     TraceScope {
-                        available_b: None,
+                        available_d: None,
                         current_segment: seg_idx,
                         routine_counter: 0,
                         dfs_prefix: child_prefix,
@@ -400,7 +381,7 @@ fn finish<F: Field>(mut segments: Vec<AnnotatedSegment<F>>) -> Trace<F> {
 pub fn eval<'witness, F: Field, C: Circuit<F>>(
     circuit: &C,
     witness: C::Witness<'witness>,
-) -> Result<(Trace<F>, C::Aux<'witness>)> {
+) -> Result<WithAux<Trace<F>, C::Aux<'witness>>> {
     #[cfg(feature = "multicore")]
     {
         let (tx, rx) = mpsc::channel();
@@ -409,9 +390,9 @@ pub fn eval<'witness, F: Field, C: Circuit<F>>(
             let mut evaluator = Evaluator::new(Vec::new(), s, tx);
 
             let aux = {
-                let (io, aux) = circuit.witness(&mut evaluator, Always::maybe_just(|| witness))?;
-                io.write(&mut evaluator, &mut ())?;
-                aux.take()
+                let cw = circuit.witness(&mut evaluator, Always::maybe_just(|| witness))?;
+                cw.output.write(&mut evaluator, &mut ())?;
+                cw.aux.take()
             };
 
             Ok((evaluator.segments, aux))
@@ -422,7 +403,7 @@ pub fn eval<'witness, F: Field, C: Circuit<F>>(
             segments.extend(batch?);
         }
 
-        Ok((finish(segments), aux))
+        Ok(WithAux::new(finish(segments), aux))
     }
 
     #[cfg(not(feature = "multicore"))]
@@ -431,9 +412,9 @@ pub fn eval<'witness, F: Field, C: Circuit<F>>(
             let mut evaluator = Evaluator::new(Vec::new(), s);
 
             let aux = {
-                let (io, aux) = circuit.witness(&mut evaluator, Always::maybe_just(|| witness))?;
-                io.write(&mut evaluator, &mut ())?;
-                aux.take()
+                let cw = circuit.witness(&mut evaluator, Always::maybe_just(|| witness))?;
+                cw.output.write(&mut evaluator, &mut ())?;
+                cw.aux.take()
             };
 
             let mut segments = evaluator.segments;
@@ -441,7 +422,7 @@ pub fn eval<'witness, F: Field, C: Circuit<F>>(
             Ok((segments, aux))
         })?;
 
-        Ok((finish(segments), aux))
+        Ok(WithAux::new(finish(segments), aux))
     }
 }
 
@@ -454,10 +435,10 @@ mod tests {
     use ragu_primitives::Element;
 
     #[test]
-    fn test_rx() {
+    fn test_trace() {
         let circuit = SquareCircuit { times: 10 };
         let witness: Fp = Fp::from(3);
-        let (trace, _aux) = eval::<Fp, _>(&circuit, witness).unwrap();
+        let trace = eval::<Fp, _>(&circuit, witness).unwrap().into_output();
         for seg in &trace.segments {
             for i in 0..seg.a.len() {
                 assert_eq!(seg.a[i] * seg.b[i], seg.c[i]);
@@ -481,7 +462,7 @@ mod tests {
             _buf: &mut B,
         ) -> Result<()> {
             // These calls synthesize constraints during serialization.
-            // If io.write() were removed from rx::eval, they would be lost.
+            // If io.write() were removed from trace::eval, they would be lost.
             dr.mul(|| Ok((Coeff::One, Coeff::One, Coeff::One)))?;
             dr.enforce_zero(|lc| lc)?;
             Ok(())
@@ -509,12 +490,14 @@ mod tests {
             &self,
             dr: &mut D,
             witness: ragu_core::drivers::DriverValue<D, Self::Witness<'witness>>,
-        ) -> Result<(
-            Bound<'dr, D, Self::Output>,
-            ragu_core::drivers::DriverValue<D, Self::Aux<'witness>>,
-        )> {
+        ) -> Result<
+            WithAux<
+                Bound<'dr, D, Self::Output>,
+                ragu_core::drivers::DriverValue<D, Self::Aux<'witness>>,
+            >,
+        > {
             let element = Element::alloc(dr, witness)?;
-            Ok((MulOnWrite { element }, D::unit()))
+            Ok(WithAux::new(MulOnWrite { element }, D::unit()))
         }
     }
 
@@ -522,7 +505,7 @@ mod tests {
     fn test_write_gadget_synthesizes_into_trace() {
         let circuit = MulOnWriteCircuit;
         let witness = Fp::from(42u64);
-        let (trace, _) = eval::<Fp, _>(&circuit, witness).unwrap();
+        let trace = eval::<Fp, _>(&circuit, witness).unwrap().into_output();
 
         let root_gates = trace.segments[0].a.len();
         assert_eq!(

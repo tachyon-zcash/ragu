@@ -17,7 +17,7 @@
 use ff::PrimeField;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
-    polynomials::{Rank, structured, unstructured},
+    polynomials::{Rank, sparse},
     staging,
 };
 use ragu_core::{
@@ -64,11 +64,11 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
         w: F,
         x: F,
         xz: F,
-        registry_xy: &unstructured::Polynomial<F, R>,
-        registry_wy: &structured::Polynomial<F, R>,
+        registry_xy: &sparse::Polynomial<F, R>,
+        registry_wy: &sparse::Polynomial<F, R>,
     ) -> Self {
         ChildEvaluationsWitness {
-            rx: RxValues::from_fn(|id| proof.rx_poly(id).eval(xz)),
+            rx: RxValues::from_fn(|id| proof.native_rx_poly(id).eval(xz)),
             a_poly_at_xz: proof.ab.native.a_poly.eval(xz),
             b_poly_at_x: proof.ab.native.b_poly.eval(x),
             child_registry_xy_at_current_w: proof.query.native.registry_xy_poly.eval(w),

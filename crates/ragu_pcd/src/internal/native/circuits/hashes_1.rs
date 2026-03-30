@@ -11,23 +11,23 @@
 //! - Squeeze [$w$] challenge.
 //! - Absorb [`bridge_s_prime_commitment`].
 //! - Squeeze [$y$] and [$z$] challenges.
-//! - Absorb [`bridge_error_m_commitment`].
+//! - Absorb [`bridge_inner_error_commitment`].
 //! - Call [`Transcript::save_state`] to capture the transcript state for resumption
 //!   in [`hashes_2`][super::hashes_2]. This applies a permutation (the third) since we're at the
 //!   absorb-to-squeeze boundary.
-//! - Verify the saved state matches the witnessed value from [`error_n`][super::super::stages::error_n].
+//! - Verify the saved state matches the witnessed value from [`outer_error`][super::super::stages::outer_error].
 //!
 //! The squeezed $w, y, z$ challenges are set in the unified instance by this
 //! circuit. **The rest of the transcript computations are performed in the
 //! [`hashes_2`][super::hashes_2] circuit.** The sponge state is witnessed in
-//! the [`error_n`][super::super::stages::error_n] stage and verified here to
+//! the [`outer_error`][super::super::stages::outer_error] stage and verified here to
 //! enable resumption in `hashes_2`.
 //!
 //! ### $k(y)$ evaluations
 //!
 //! This circuit also is responsible for using the derived $y$ value to compute
 //! the $k(y)$ (instance polynomial evaluations) for the child proofs. These
-//! are witnessed in the [`error_n`][super::super::stages::error_n] stage and
+//! are witnessed in the [`outer_error`][super::super::stages::outer_error] stage and
 //! enforced to be consistent by this circuit.
 //!
 //! ### Valid circuit IDs
@@ -40,10 +40,10 @@
 //! ## Staging
 //!
 //! This circuit is a multi-stage circuit based on the
-//! [`error_n`][super::super::stages::error_n] stage, which inherits in the
+//! [`outer_error`][super::super::stages::outer_error] stage, which inherits in the
 //! following chain:
 //! - [`preamble`][super::super::stages::preamble] (unenforced)
-//! - [`error_n`][super::super::stages::error_n] (unenforced)
+//! - [`outer_error`][super::super::stages::outer_error] (unenforced)
 //!
 //! ## Instance
 //!
@@ -65,7 +65,7 @@
 //!
 //! [`bridge_preamble_commitment`]: unified::Output::bridge_preamble_commitment
 //! [`bridge_s_prime_commitment`]: unified::Output::bridge_s_prime_commitment
-//! [`bridge_error_m_commitment`]: unified::Output::bridge_error_m_commitment
+//! [`bridge_inner_error_commitment`]: unified::Output::bridge_inner_error_commitment
 //! [$w$]: unified::Output::w
 //! [$y$]: unified::Output::y
 //! [$z$]: unified::Output::z
@@ -74,6 +74,7 @@
 
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
+    WithAux,
     polynomials::Rank,
     staging::{MultiStage, MultiStageCircuit, StageBuilder},
 };
@@ -92,7 +93,7 @@ use ragu_primitives::{
 use core::marker::PhantomData;
 
 use super::super::{
-    stages::{error_n as native_error_n, preamble as native_preamble},
+    stages::{outer_error as native_outer_error, preamble as native_preamble},
     unified::{self, OutputBuilder},
 };
 use crate::RAGU_TAG;
@@ -170,18 +171,18 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     /// Provides output headers and data for computing $k(y)$ evaluations.
     pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
 
-    /// Witness for the [`error_n`](super::super::stages::error_n) stage
+    /// Witness for the [`outer_error`](super::super::stages::outer_error) stage
     /// (unenforced).
     ///
     /// Provides the saved sponge state and pre-computed $k(y)$ values for
     /// consistency verification.
-    pub error_n_witness: &'a native_error_n::Witness<C, FP>,
+    pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, FP>
 {
-    type Last = native_error_n::Stage<C, R, HEADER_SIZE, FP>;
+    type Last = native_outer_error::Stage<C, R, HEADER_SIZE, FP>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
@@ -203,21 +204,19 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         &self,
         builder: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
         witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<(
-        Bound<'dr, D, Self::Output>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>>
     where
         Self: 'dr,
     {
         let (preamble, builder) =
             builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
-        let (error_n, builder) =
-            builder.add_stage::<native_error_n::Stage<C, R, HEADER_SIZE, FP>>()?;
+        let (outer_error, builder) =
+            builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();
 
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
-        let error_n = error_n.unenforced(dr, witness.as_ref().map(|w| w.error_n_witness))?;
+        let outer_error =
+            outer_error.unenforced(dr, witness.as_ref().map(|w| w.outer_error_witness))?;
 
         // Verify circuit IDs are valid roots of unity in the registry domain.
         preamble
@@ -260,31 +259,32 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             let left_application_ky = preamble.left.application_ky(dr, &y)?;
             let right_application_ky = preamble.right.application_ky(dr, &y)?;
 
-            left_application_ky.enforce_equal(dr, &error_n.left.application)?;
-            right_application_ky.enforce_equal(dr, &error_n.right.application)?;
+            left_application_ky.enforce_equal(dr, &outer_error.left.application)?;
+            right_application_ky.enforce_equal(dr, &outer_error.right.application)?;
 
             let (left_unified_ky, left_unified_bridge_ky) =
                 preamble.left.unified_ky_values(dr, &y)?;
             let (right_unified_ky, right_unified_bridge_ky) =
                 preamble.right.unified_ky_values(dr, &y)?;
 
-            left_unified_ky.enforce_equal(dr, &error_n.left.unified)?;
-            right_unified_ky.enforce_equal(dr, &error_n.right.unified)?;
-            left_unified_bridge_ky.enforce_equal(dr, &error_n.left.unified_bridge)?;
-            right_unified_bridge_ky.enforce_equal(dr, &error_n.right.unified_bridge)?;
+            left_unified_ky.enforce_equal(dr, &outer_error.left.unified)?;
+            right_unified_ky.enforce_equal(dr, &outer_error.right.unified)?;
+            left_unified_bridge_ky.enforce_equal(dr, &outer_error.left.unified_bridge)?;
+            right_unified_bridge_ky.enforce_equal(dr, &outer_error.right.unified_bridge)?;
         }
 
-        // Absorb bridge_error_m_commitment and verify saved transcript state
+        // Absorb bridge_inner_error_commitment and verify saved transcript state
         {
-            let bridge_error_m_commitment = unified_output.bridge_error_m_commitment.receive(dr)?;
-            bridge_error_m_commitment.write(dr, &mut transcript)?;
+            let bridge_inner_error_commitment =
+                unified_output.bridge_inner_error_commitment.receive(dr)?;
+            bridge_inner_error_commitment.write(dr, &mut transcript)?;
 
             // save_state() applies a permutation (since there's pending absorbed data)
             // and returns the raw state, ready for squeeze-mode resumption in hashes_2.
             transcript
                 .save_state(dr)
                 .expect("save_state should succeed after absorbing")
-                .enforce_equal(dr, &error_n.sponge_state)?;
+                .enforce_equal(dr, &outer_error.sponge_state)?;
         }
 
         // Output headers from preamble + unified instance. Verification with
@@ -298,6 +298,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         };
 
         let zero = Element::zero(dr);
-        Ok((WithSuffix::new(output, zero), updated))
+        Ok(WithAux::new(WithSuffix::new(output, zero), updated))
     }
 }

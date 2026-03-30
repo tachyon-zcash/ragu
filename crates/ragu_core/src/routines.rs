@@ -58,13 +58,16 @@ pub trait Routine<F: Field>: Clone + Send {
     /// routine-specific auxiliary data that can be leveraged during actual
     /// execution to avoid duplicated effort.
     ///
+    /// The returned auxiliary data must be forwarded to
+    /// [`execute`](Routine::execute) if the driver proceeds with execution.
+    ///
     /// # Errors
     ///
     /// An `Err` return signals an unrecoverable failure—for example, missing
     /// witness data or malformed input—and must be propagated by drivers. Use
     /// [`Prediction::Unknown`] instead when the routine simply cannot
     /// efficiently predict its output.
-    fn predict<'dr, D: Driver<'dr, F = F>>(
+    fn predict<'dr, D: Driver<'dr, F = F, Wire = ()>>(
         &self,
         dr: &mut D,
         input: &Bound<'dr, D, Self::Input>,

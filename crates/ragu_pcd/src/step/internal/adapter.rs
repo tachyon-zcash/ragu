@@ -1,5 +1,5 @@
 use ragu_arithmetic::Cycle;
-use ragu_circuits::{Circuit, polynomials::Rank};
+use ragu_circuits::{Circuit, WithAux, polynomials::Rank};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
@@ -75,10 +75,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         &self,
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<(
-        Bound<'dr, D, Self::Output>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>>
     where
         Self: 'dr,
     {
@@ -111,7 +108,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
             ))
         })?;
 
-        Ok((FixedVec::try_from(elements)?, adapter_aux))
+        Ok(WithAux::new(FixedVec::try_from(elements)?, adapter_aux))
     }
 }
 
@@ -202,9 +199,10 @@ mod tests {
         let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep);
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
-        let (output, _aux) = adapter
+        let output = adapter
             .witness(dr, witness)
-            .expect("witness should succeed");
+            .expect("witness should succeed")
+            .into_output();
 
         // Output should have 3 * HEADER_SIZE elements (left + right + output headers)
         assert_eq!(output.len(), HEADER_SIZE * 3);
@@ -218,9 +216,10 @@ mod tests {
         let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep);
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
-        let (_output, aux) = adapter
+        let aux = adapter
             .witness(dr, witness)
-            .expect("witness should succeed");
+            .expect("witness should succeed")
+            .into_aux();
 
         let ((left_header, right_header), output_data, _step_aux) = aux.take();
 

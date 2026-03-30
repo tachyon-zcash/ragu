@@ -31,6 +31,11 @@ corresponding file contains identical content. Flag any drift as
 `must-fix`. When editing a synced block (e.g. during fix-up), update
 both files in the same change.
 
+## Shared Policies
+
+For content placement decisions (book vs. rustdoc), see
+`.claude/review-shared/surface-placement.md`.
+
 ## General Principles
 
 - Be specific. "This could be improved" is not actionable. Quote the code, name

@@ -19,6 +19,9 @@
 //! not all gadgets need to implement these traits if they are not intended to
 //! be used with [routines](crate::routines).
 //!
+//! See the *Gadgets* chapter in the [book] for design motivation,
+//! composition examples, and the derive macro walkthrough.
+//!
 //! #### Basic Properties
 //!
 //! * All gadgets are [`Clone`].
@@ -137,8 +140,8 @@ pub trait Gadget<'dr, D: Driver<'dr>>: Clone {
 
     /// Returns how many wires are in this gadget.
     ///
-    /// Gadgets do not vary in the number of wires they contain, so this should
-    /// return the same quantity regardless of the specific instance of this
+    /// Gadgets do not vary in the number of wires they contain, so this
+    /// returns the same quantity regardless of the specific instance of this
     /// [`Gadget`] implementation.
     ///
     /// # Errors
@@ -213,6 +216,10 @@ pub unsafe trait GadgetKind<F: Field>: core::any::Any {
 
     /// Maps a gadget of this kind from one driver to another using a
     /// [`WireMap`].
+    ///
+    /// The mapping behavior must be deterministic and agnostic to the
+    /// instance's state (this follows from
+    /// [fungibility](Gadget#fungibility)).
     fn map_gadget<'src, 'dst, WM: WireMap<F, Src: Driver<'src, F = F>, Dst: Driver<'dst, F = F>>>(
         this: &Bound<'src, WM::Src, Self>,
         wm: &mut WM,
@@ -220,7 +227,7 @@ pub unsafe trait GadgetKind<F: Field>: core::any::Any {
 
     /// Enforces that two gadgets' wires are equal.
     ///
-    /// The provided driver is used to create linear constraints between the
+    /// The provided driver is used to create constraints between the
     /// gadgets' wires through recursive descent through the gadget structure.
     /// The provided gadgets can be for another driver, since it's only
     /// important that the wire type be the same.

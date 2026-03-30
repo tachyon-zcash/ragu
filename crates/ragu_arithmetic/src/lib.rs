@@ -190,12 +190,11 @@ pub trait PoseidonPermutation<F: Field>: Send + Sync + 'static {
     const T: usize;
 
     /// The rate, which caps the number of elements that can be squeezed or
-    /// absorbed before a permutation is applied. This must be smaller than `T`.
+    /// absorbed before a permutation is applied. Must be smaller than `T`.
     const RATE: usize;
 
     /// Number of full rounds where the sbox is applied to every element of the
-    /// state. This must be even, since exactly half of these rounds are applied
-    /// at the start and then half at the end of the permutation.
+    /// state. Must be even (half at the start, half at the end).
     const FULL_ROUNDS: usize;
 
     /// Number of partial rounds where the sbox is applied only to the first

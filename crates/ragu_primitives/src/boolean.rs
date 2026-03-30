@@ -39,7 +39,7 @@ pub struct Boolean<'dr, D: Driver<'dr>> {
 impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
     /// Allocates a boolean with the provided witness value.
     ///
-    /// This costs one multiplication constraint and two linear constraints.
+    /// This costs one gate and two constraints.
     pub fn alloc(dr: &mut D, value: DriverValue<D, bool>) -> Result<Self> {
         let (a, b, c) = dr.mul(|| {
             let value = value.coeff().take();
@@ -65,8 +65,8 @@ impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
         Boolean { wire, value }
     }
 
-    /// Computes the AND of two booleans. This costs one multiplication
-    /// constraint and two linear constraints.
+    /// Computes the AND of two booleans. This costs one gate and two
+    /// constraints.
     pub fn and(&self, dr: &mut D, other: &Self) -> Result<Self> {
         let result = D::just(|| self.value.snag() & other.value.snag());
         let (a, b, c) = dr.mul(|| {
@@ -88,7 +88,7 @@ impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
     /// Selects between two elements based on this boolean's value.
     /// Returns `a` when false, `b` when true.
     ///
-    /// This costs one multiplication constraint and two linear constraints.
+    /// This costs one gate and two constraints.
     pub fn conditional_select(
         &self,
         dr: &mut D,
@@ -104,7 +104,7 @@ impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
     /// Conditionally enforces that two elements are equal.
     /// When this boolean is true, enforces `a == b`; when false, no constraint.
     ///
-    /// This costs one multiplication constraint and three linear constraints.
+    /// This costs one gate and three constraints.
     pub fn conditional_enforce_equal(
         &self,
         dr: &mut D,
@@ -270,8 +270,8 @@ fn test_boolean_alloc() -> Result<()> {
         })?;
 
         assert_eq!(sim.num_allocations(), 0);
-        assert_eq!(sim.num_multiplications(), 1);
-        assert_eq!(sim.num_linear_constraints(), 2);
+        assert_eq!(sim.num_gates(), 1);
+        assert_eq!(sim.num_constraints(), 2);
         Ok(())
     };
 
@@ -332,8 +332,8 @@ fn test_conditional_enforce_equal() -> Result<()> {
         Ok(())
     })?;
 
-    assert_eq!(sim.num_multiplications(), 1);
-    assert_eq!(sim.num_linear_constraints(), 3);
+    assert_eq!(sim.num_gates(), 1);
+    assert_eq!(sim.num_constraints(), 3);
 
     // When condition is false, constraint is trivially satisfied even if a != b
     Simulator::simulate((false, F::from(1u64), F::from(2u64)), |dr, witness| {
@@ -398,8 +398,8 @@ mod tests {
             Ok(())
         })?;
 
-        assert_eq!(sim.num_multiplications(), 2);
-        assert_eq!(sim.num_linear_constraints(), 4);
+        assert_eq!(sim.num_gates(), 2);
+        assert_eq!(sim.num_constraints(), 4);
 
         Ok(())
     }

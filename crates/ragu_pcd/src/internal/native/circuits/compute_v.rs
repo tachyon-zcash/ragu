@@ -46,6 +46,7 @@
 use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
+    WithAux,
     polynomials::{Rank, txz::Evaluate},
     staging::{MultiStage, MultiStageCircuit, StageBuilder},
 };
@@ -140,10 +141,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
         &self,
         builder: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
         witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<(
-        Bound<'dr, D, Self::Output>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>>
     where
         Self: 'dr,
     {
@@ -240,7 +238,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
             unified_output.v.provide(computed_v);
         }
 
-        unified_output.finish(dr)
+        let (output, aux) = unified_output.finish(dr)?;
+        Ok(WithAux::new(output, aux))
     }
 }
 
@@ -454,7 +453,7 @@ impl<'a, 'dr, D: Driver<'dr>> Processor<&'a Element<'dr, D>, &'a Element<'dr, D>
         self.bx.push(sum.add(self.dr, sy).add(self.dr, self.txz));
     }
 
-    fn stage(
+    fn bonding(
         &mut self,
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = &'a Element<'dr, D>>,

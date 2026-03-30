@@ -97,7 +97,7 @@ macro_rules! define_unified_instance {
         ///
         /// Fields are ordered to match the current proof's transcript:
         ///
-        /// - **Commitments**: Points on the nested curve from current proof components
+        /// - **Bridge commitments**: Points on the nested curve from current proof components
         /// - **Challenges**: Fiat-Shamir challenges computed by [`hashes_1`] and [`hashes_2`]
         /// - **Final values**: The revdot claim $c$ and expected evaluation $v$
         ///
@@ -241,43 +241,43 @@ macro_rules! define_unified_instance {
 // Define all unified instance fields in one place.
 // Field order is significant: it determines wire ordering in the circuit.
 define_unified_instance! {
-    /// Commitment from the preamble proof component.
+    /// Bridge commitment from the preamble proof component.
     bridge_preamble_commitment: Point,
     /// Fiat-Shamir challenge $w$.
     w: Element,
-    /// Commitment from the s_prime proof component.
+    /// Bridge commitment from the s_prime proof component.
     bridge_s_prime_commitment: Point,
     /// Fiat-Shamir challenge $y$.
     y: Element,
     /// Fiat-Shamir challenge $z$.
     z: Element,
-    /// Commitment from the error_m proof component.
-    bridge_error_m_commitment: Point,
+    /// Bridge commitment from the inner error proof component.
+    bridge_inner_error_commitment: Point,
     /// First folding layer challenge $\mu$.
     mu: Element,
     /// First folding layer challenge $\nu$.
     nu: Element,
-    /// Commitment from the error_n proof component.
-    bridge_error_n_commitment: Point,
+    /// Bridge commitment from the outer error proof component.
+    bridge_outer_error_commitment: Point,
     /// Second folding layer challenge $\mu'$.
     mu_prime: Element,
     /// Second folding layer challenge $\nu'$.
     nu_prime: Element,
     /// Final revdot claim value from the ab proof component.
     c: Element,
-    /// Commitment from the ab proof component.
+    /// Bridge commitment from the ab proof component.
     bridge_ab_commitment: Point,
     /// Polynomial commitment challenge $x$.
     x: Element,
-    /// Commitment from the query proof component.
+    /// Bridge commitment from the query proof component.
     bridge_query_commitment: Point,
     /// Query polynomial challenge $\alpha$.
     alpha: Element,
-    /// Commitment from the f proof component.
+    /// Bridge commitment from the f proof component.
     bridge_f_commitment: Point,
     /// Final polynomial challenge $u$.
     u: Element,
-    /// Commitment from the eval proof component.
+    /// Bridge commitment from the eval proof component.
     bridge_eval_commitment: Point,
     /// Pre-endoscalar beta challenge. Effective beta is derived in compute_v.
     pre_beta: Element,
@@ -425,12 +425,12 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
             Point::alloc(dr, proof.as_ref().map(|p| p.s_prime.bridge.commitment))?;
         let y = Element::alloc(dr, proof.as_ref().map(|p| p.challenges.y))?;
         let z = Element::alloc(dr, proof.as_ref().map(|p| p.challenges.z))?;
-        let bridge_error_m_commitment =
-            Point::alloc(dr, proof.as_ref().map(|p| p.error_m.bridge.commitment))?;
+        let bridge_inner_error_commitment =
+            Point::alloc(dr, proof.as_ref().map(|p| p.inner_error.bridge.commitment))?;
         let mu = Element::alloc(dr, proof.as_ref().map(|p| p.challenges.mu))?;
         let nu = Element::alloc(dr, proof.as_ref().map(|p| p.challenges.nu))?;
-        let bridge_error_n_commitment =
-            Point::alloc(dr, proof.as_ref().map(|p| p.error_n.bridge.commitment))?;
+        let bridge_outer_error_commitment =
+            Point::alloc(dr, proof.as_ref().map(|p| p.outer_error.bridge.commitment))?;
         let mu_prime = Element::alloc(dr, proof.as_ref().map(|p| p.challenges.mu_prime))?;
         let nu_prime = Element::alloc(dr, proof.as_ref().map(|p| p.challenges.nu_prime))?;
         let c = Element::alloc(dr, proof.as_ref().map(|p| p.ab.native.c))?;
@@ -453,10 +453,10 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
             bridge_s_prime_commitment,
             y,
             z,
-            bridge_error_m_commitment,
+            bridge_inner_error_commitment,
             mu,
             nu,
-            bridge_error_n_commitment,
+            bridge_outer_error_commitment,
             mu_prime,
             nu_prime,
             c,
@@ -525,10 +525,10 @@ mod tests {
             bridge_s_prime_commitment: true,
             y: true,
             z: true,
-            bridge_error_m_commitment: true,
+            bridge_inner_error_commitment: true,
             mu: true,
             nu: true,
-            bridge_error_n_commitment: true,
+            bridge_outer_error_commitment: true,
             mu_prime: true,
             nu_prime: true,
             c: true,

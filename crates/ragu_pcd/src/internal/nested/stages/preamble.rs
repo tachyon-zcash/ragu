@@ -19,7 +19,7 @@ use core::marker::PhantomData;
 /// Number of curve points in this stage.
 pub const NUM_POINTS: usize = 13;
 
-/// Witness data for a single child proof in the nested preamble stage.
+/// Witness data for a single child proof in the preamble bridge stage.
 ///
 /// Contains commitments from the child proof's circuits component.
 pub struct ChildWitness<C: CurveAffine> {
@@ -29,10 +29,10 @@ pub struct ChildWitness<C: CurveAffine> {
     pub hashes_1: C,
     /// Commitment from the child's second hashes circuit.
     pub hashes_2: C,
-    /// Commitment from the child's partial collapse circuit.
-    pub partial_collapse: C,
-    /// Commitment from the child's full collapse circuit.
-    pub full_collapse: C,
+    /// Commitment from the child's inner collapse circuit.
+    pub inner_collapse: C,
+    /// Commitment from the child's outer collapse circuit.
+    pub outer_collapse: C,
     /// Commitment from the child's compute_v circuit.
     pub compute_v: C,
 }
@@ -45,14 +45,14 @@ impl<C: CurveAffine> ChildWitness<C> {
             application: proof[RxIndex::Application].commitment,
             hashes_1: proof[RxIndex::Hashes1].commitment,
             hashes_2: proof[RxIndex::Hashes2].commitment,
-            partial_collapse: proof[RxIndex::PartialCollapse].commitment,
-            full_collapse: proof[RxIndex::FullCollapse].commitment,
+            inner_collapse: proof[RxIndex::InnerCollapse].commitment,
+            outer_collapse: proof[RxIndex::OuterCollapse].commitment,
             compute_v: proof[RxIndex::ComputeV].commitment,
         }
     }
 }
 
-/// Witness data for the nested preamble stage.
+/// Witness data for the preamble bridge stage.
 pub struct Witness<C: CurveAffine> {
     /// Commitment from the native preamble stage.
     pub native_preamble: C,
@@ -62,7 +62,7 @@ pub struct Witness<C: CurveAffine> {
     pub right: ChildWitness<C>,
 }
 
-/// Output gadget for a single child proof in the nested preamble stage.
+/// Output gadget for a single child proof in the preamble bridge stage.
 #[derive(Gadget, Write)]
 pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// Point commitment from the child's application circuit.
@@ -74,12 +74,12 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// Point commitment from the child's second hashes circuit.
     #[ragu(gadget)]
     pub hashes_2: Point<'dr, D, C>,
-    /// Point commitment from the child's partial collapse circuit.
+    /// Point commitment from the child's inner collapse circuit.
     #[ragu(gadget)]
-    pub partial_collapse: Point<'dr, D, C>,
-    /// Point commitment from the child's full collapse circuit.
+    pub inner_collapse: Point<'dr, D, C>,
+    /// Point commitment from the child's outer collapse circuit.
     #[ragu(gadget)]
-    pub full_collapse: Point<'dr, D, C>,
+    pub outer_collapse: Point<'dr, D, C>,
     /// Point commitment from the child's compute_v circuit.
     #[ragu(gadget)]
     pub compute_v: Point<'dr, D, C>,
@@ -91,14 +91,14 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChildOutput<'dr, D, C> {
             application: Point::alloc(dr, witness.as_ref().map(|w| w.application))?,
             hashes_1: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_1))?,
             hashes_2: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_2))?,
-            partial_collapse: Point::alloc(dr, witness.as_ref().map(|w| w.partial_collapse))?,
-            full_collapse: Point::alloc(dr, witness.as_ref().map(|w| w.full_collapse))?,
+            inner_collapse: Point::alloc(dr, witness.as_ref().map(|w| w.inner_collapse))?,
+            outer_collapse: Point::alloc(dr, witness.as_ref().map(|w| w.outer_collapse))?,
             compute_v: Point::alloc(dr, witness.as_ref().map(|w| w.compute_v))?,
         })
     }
 }
 
-/// Prover-internal output gadget for the nested preamble stage.
+/// Prover-internal output gadget for the preamble bridge stage.
 ///
 /// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget, Write)]
@@ -141,5 +141,17 @@ impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stag
             left: ChildOutput::alloc(dr, witness.as_ref().map(|w| &w.left))?,
             right: ChildOutput::alloc(dr, witness.as_ref().map(|w| &w.right))?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::internal::tests::{R, assert_stage_values};
+    use ragu_pasta::EqAffine;
+
+    #[test]
+    fn stage_values_matches_wire_count() {
+        assert_stage_values(&Stage::<EqAffine, R>::default());
     }
 }
