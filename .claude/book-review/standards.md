@@ -51,6 +51,17 @@ rules:
 - Nested brackets are acceptable when a citation tag appears inside link
   text (e.g., `[Halo [BGH19]](url)`). Do not flag this as a style issue.
 
+## API Contracts
+
+When describing API contracts (preconditions, invariants, required properties),
+state the contract itself — not the consequences of violating it. Adding
+"violations may cause panics or incorrect behavior" is noise, since *any*
+contract violation can produce incorrect behavior. The documentation should be
+aimed at consumers; implementors know they must satisfy the contract.
+
+Exception: `# Safety` sections on `unsafe` items, where the consequences
+are undefined behavior and the caller must be warned explicitly.
+
 ## Code Accuracy
 
 When book prose describes a specific API signature, trait method, default
