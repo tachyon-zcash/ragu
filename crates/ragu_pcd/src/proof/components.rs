@@ -51,6 +51,8 @@ impl<C: Cycle, R: Rank> Bridge<C, R> {
 pub(crate) struct Preamble<C: Cycle, R: Rank> {
     pub(crate) native: RxTriple<C, R>,
     pub(crate) bridge: Bridge<C, R>,
+    pub(crate) left_child_bridges: ChildBridges<C, R>,
+    pub(crate) right_child_bridges: ChildBridges<C, R>,
 }
 
 #[derive(Clone)]
@@ -140,16 +142,8 @@ pub(crate) struct NativeP<C: Cycle, R: Rank> {
 }
 
 #[derive(Clone)]
-pub(crate) struct NestedP<C: Cycle, R: Rank> {
-    pub(crate) step_rxs: Vec<sparse::Polynomial<C::ScalarField, R>>,
-    pub(crate) endoscalar_rx: sparse::Polynomial<C::ScalarField, R>,
-    pub(crate) points_rx: sparse::Polynomial<C::ScalarField, R>,
-}
-
-#[derive(Clone)]
 pub(crate) struct P<C: Cycle, R: Rank> {
     pub(crate) native: NativeP<C, R>,
-    pub(crate) nested: NestedP<C, R>,
 }
 
 #[derive(Clone)]
@@ -217,6 +211,49 @@ impl<C: Cycle> Challenges<C> {
     }
 }
 
+/// Bridge rx polynomials preserved from a child proof for the copying circuit.
+///
+/// Each field is a scalar-field rx polynomial from the corresponding bridge
+/// stage of the child proof. Only the rx polynomial is stored; the nested-curve
+/// commitment is derivable from it and never needed after construction.
+#[derive(Clone)]
+pub(crate) struct ChildBridges<C: Cycle, R: Rank> {
+    pub(crate) inner_error: sparse::Polynomial<C::ScalarField, R>,
+    pub(crate) outer_error: sparse::Polynomial<C::ScalarField, R>,
+    pub(crate) ab: sparse::Polynomial<C::ScalarField, R>,
+    pub(crate) query: sparse::Polynomial<C::ScalarField, R>,
+    pub(crate) eval: sparse::Polynomial<C::ScalarField, R>,
+    pub(crate) points: sparse::Polynomial<C::ScalarField, R>,
+}
+
+impl<C: Cycle, R: Rank> ChildBridges<C, R> {
+    /// Returns the rx polynomial for the given child bridge [`RxIndex`](crate::internal::nested::RxIndex) variant.
+    pub(crate) fn rx(
+        &self,
+        idx: crate::internal::nested::RxIndex,
+    ) -> &sparse::Polynomial<C::ScalarField, R> {
+        use crate::internal::nested::RxIndex::*;
+        match idx {
+            ChildBridgeInnerError(_) => &self.inner_error,
+            ChildBridgeOuterError(_) => &self.outer_error,
+            ChildBridgeAB(_) => &self.ab,
+            ChildBridgeQuery(_) => &self.query,
+            ChildBridgeEval(_) => &self.eval,
+            ChildPointsStage(_) => &self.points,
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// Rx polynomials for all internal circuits in a single proof step.
+///
+/// The first five fields are native-field circuits: each is an [`RxTriple`]
+/// pairing the rx polynomial (over `C::CircuitField`) with its host-curve
+/// commitment.
+///
+/// The remaining fields are nested-field circuits: bare rx polynomials over
+/// `C::ScalarField` for the endoscaling commitment computation (no host-curve
+/// commitment; verified via the nested registry).
 #[derive(Clone)]
 pub(crate) struct InternalCircuits<C: Cycle, R: Rank> {
     pub(crate) hashes_1: RxTriple<C, R>,
@@ -224,4 +261,7 @@ pub(crate) struct InternalCircuits<C: Cycle, R: Rank> {
     pub(crate) inner_collapse: RxTriple<C, R>,
     pub(crate) outer_collapse: RxTriple<C, R>,
     pub(crate) compute_v: RxTriple<C, R>,
+    pub(crate) step_rxs: Vec<sparse::Polynomial<C::ScalarField, R>>,
+    pub(crate) endoscalar_rx: sparse::Polynomial<C::ScalarField, R>,
+    pub(crate) points_rx: sparse::Polynomial<C::ScalarField, R>,
 }

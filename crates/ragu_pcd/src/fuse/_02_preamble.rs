@@ -41,7 +41,24 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             )?,
         );
 
-        Ok((proof::Preamble { native, bridge }, preamble_witness))
+        let child_bridges = |child: &Proof<C, R>| proof::ChildBridges {
+            inner_error: child.inner_error.bridge.rx.clone(),
+            outer_error: child.outer_error.bridge.rx.clone(),
+            ab: child.ab.bridge.rx.clone(),
+            query: child.query.bridge.rx.clone(),
+            eval: child.eval.bridge.rx.clone(),
+            points: child.circuits.points_rx.clone(),
+        };
+
+        Ok((
+            proof::Preamble {
+                native,
+                bridge,
+                left_child_bridges: child_bridges(left),
+                right_child_bridges: child_bridges(right),
+            },
+            preamble_witness,
+        ))
     }
 
     fn compute_native_preamble<'a, RNG: CryptoRng>(

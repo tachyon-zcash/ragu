@@ -130,6 +130,7 @@ define_bridge_stage!(s_prime, parent = super::preamble::Stage<C, R>, fields = {
 define_bridge_stage!(inner_error, parent = super::s_prime::Stage<C, R>, fields = {
     native_inner_error: C,
     registry_wy: C,
+    stashed_native_preamble: C,
 });
 
 define_bridge_stage!(outer_error, parent = super::inner_error::Stage<C, R>, fields = {
