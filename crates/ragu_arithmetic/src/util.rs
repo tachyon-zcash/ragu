@@ -183,8 +183,7 @@ pub fn batch_to_affine<C: CurveAffine, const N: usize>(projectives: [C::Curve; N
 /// # Correctness
 ///
 /// The caller must ensure that `coeffs` and `bases` yield the same number of
-/// elements. If they differ, the shorter iterator silently wins (via `zip`)
-/// and the result will be incorrect.
+/// elements.
 pub fn mul<
     'a,
     C: CurveAffine,

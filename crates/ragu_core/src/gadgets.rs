@@ -201,8 +201,7 @@ pub trait Gadget<'dr, D: Driver<'dr>>: Clone {
 /// * `D::Wire: Send` implies `Rebind<'dr, D>: Send`.
 ///
 /// This is the **only** safety invariant. Fungibility (documented on
-/// [`Gadget`]) is a separate API contract: violating it may produce incorrect
-/// circuits but does not cause undefined behavior and is not `unsafe`.
+/// [`Gadget`]) is a separate API contract, not a safety invariant.
 ///
 /// It is difficult to express the `Send` bound for all gadgets in Rust's type
 /// system, though it can be done with enormous API complexity. Instead, this
