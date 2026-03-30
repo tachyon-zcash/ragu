@@ -223,6 +223,7 @@ pub(crate) struct ChildBridges<C: Cycle, R: Rank> {
     pub(crate) ab: sparse::Polynomial<C::ScalarField, R>,
     pub(crate) query: sparse::Polynomial<C::ScalarField, R>,
     pub(crate) eval: sparse::Polynomial<C::ScalarField, R>,
+    pub(crate) points: sparse::Polynomial<C::ScalarField, R>,
 }
 
 impl<C: Cycle, R: Rank> ChildBridges<C, R> {
@@ -238,6 +239,7 @@ impl<C: Cycle, R: Rank> ChildBridges<C, R> {
             ChildBridgeAB(_) => &self.ab,
             ChildBridgeQuery(_) => &self.query,
             ChildBridgeEval(_) => &self.eval,
+            ChildPointsStage(_) => &self.points,
             _ => unreachable!(),
         }
     }

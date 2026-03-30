@@ -51,10 +51,6 @@ impl<'a, 'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> InputWalker<'a, 'dr, 
         Ok(())
     }
 
-    fn skip(&mut self) {
-        self.idx += 1;
-    }
-
     fn finish(self) {
         assert_eq!(
             self.idx,
@@ -133,8 +129,7 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Loading<C, R> {
             walker.enforce_equal(dr, &child.a)?;
             walker.enforce_equal(dr, &child.b)?;
             walker.enforce_equal(dr, &child.registry_xy)?;
-            // TODO: bind the P commitment once it has a bridge stage.
-            walker.skip();
+            walker.enforce_equal(dr, &child.p)?;
         }
 
         // Current proof components.

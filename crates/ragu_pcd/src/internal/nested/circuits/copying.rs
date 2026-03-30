@@ -26,9 +26,11 @@ use ragu_core::{
     maybe::MaybeKind,
 };
 
+use ragu_primitives::vec::Len;
+
 use crate::internal::{
     Side,
-    endoscalar::{EndoscalarStage, PointsStage},
+    endoscalar::{EndoscalarStage, NumStepsLen, PointsStage},
     nested::{NUM_ENDOSCALING_POINTS, stages},
 };
 
@@ -70,7 +72,8 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Copying<C, R> {
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
         // Build stage chain, skipping stages whose data is not needed.
         let builder = builder.skip_stage::<EndoscalarStage>()?;
-        let builder = builder.skip_stage::<PointsStage<C, NUM_ENDOSCALING_POINTS>>()?;
+        let (points_guard, builder) =
+            builder.add_stage::<PointsStage<C, NUM_ENDOSCALING_POINTS>>()?;
         let (preamble_guard, builder) = builder.add_stage::<stages::preamble::Stage<C, R>>()?;
         let builder = builder.skip_stage::<stages::s_prime::Stage<C, R>>()?;
         let (inner_error_guard, builder) =
@@ -85,6 +88,7 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Copying<C, R> {
 
         // Load stage outputs. Witness values are empty because this circuit is
         // only used as a bonding polynomial (never traced with real data).
+        let points = points_guard.unenforced(dr, D::MaybeKind::empty())?;
         let preamble_out = preamble_guard.unenforced(dr, D::MaybeKind::empty())?;
         let inner_error_out = inner_error_guard.unenforced(dr, D::MaybeKind::empty())?;
         let outer_error_out = outer_error_guard.unenforced(dr, D::MaybeKind::empty())?;
@@ -116,6 +120,13 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Copying<C, R> {
         child
             .preamble
             .enforce_equal(dr, &inner_error_out.stashed_native_preamble)?;
+
+        // Enforce that the preamble's child P commitment matches the child's
+        // PointsStage last interstitial (which is the child's P value).
+        child.p.enforce_equal(
+            dr,
+            &points.interstitials[NumStepsLen::<NUM_ENDOSCALING_POINTS>::len() - 1],
+        )?;
 
         Ok(WithAux::new((), D::unit()))
     }

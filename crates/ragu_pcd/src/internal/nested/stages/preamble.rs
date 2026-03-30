@@ -19,7 +19,7 @@ use ragu_primitives::{Point, io::Write};
 use core::marker::PhantomData;
 
 /// Number of curve points in this stage.
-pub const NUM_POINTS: usize = 29;
+pub const NUM_POINTS: usize = 31;
 
 /// Witness data for a single child proof in the preamble bridge stage.
 ///
@@ -53,6 +53,8 @@ pub struct ChildWitness<C: CurveAffine> {
     pub b: C,
     /// Commitment `registry_xy` from the child's query component.
     pub registry_xy: C,
+    /// Commitment from the child's P component.
+    pub p: C,
 }
 
 impl<C: CurveAffine> ChildWitness<C> {
@@ -74,6 +76,7 @@ impl<C: CurveAffine> ChildWitness<C> {
             a: proof.ab.native.a_commitment,
             b: proof.ab.native.b_commitment,
             registry_xy: proof.query.native.registry_xy_commitment,
+            p: proof.p.native.commitment,
         }
     }
 }
@@ -133,6 +136,9 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// Point commitment `registry_xy` from the child's query component.
     #[ragu(gadget)]
     pub registry_xy: Point<'dr, D, C>,
+    /// Point commitment from the child's P component.
+    #[ragu(gadget)]
+    pub p: Point<'dr, D, C>,
 }
 
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChildOutput<'dr, D, C> {
@@ -172,6 +178,7 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChildOutput<'dr, D, C> {
             a: Point::alloc(dr, witness.as_ref().map(|w| w.a))?,
             b: Point::alloc(dr, witness.as_ref().map(|w| w.b))?,
             registry_xy: Point::alloc(dr, witness.as_ref().map(|w| w.registry_xy))?,
+            p: Point::alloc(dr, witness.as_ref().map(|w| w.p))?,
         })
     }
 }

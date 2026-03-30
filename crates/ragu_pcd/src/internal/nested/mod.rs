@@ -158,11 +158,13 @@ pub enum RxIndex {
     ChildBridgeQuery(Side),
     /// Child proof's `eval` bridge rx polynomial for a given side.
     ChildBridgeEval(Side),
+    /// Child proof's `PointsStage` rx polynomial for a given side.
+    ChildPointsStage(Side),
 }
 
 /// The number of rx components in the nested field,
 /// equal to the number of entries in [`RxIndex::ALL`].
-pub const NUM_RX_COMPONENTS: usize = NUM_ENDOSCALING_STEPS + 20;
+pub const NUM_RX_COMPONENTS: usize = NUM_ENDOSCALING_STEPS + 22;
 
 impl RxIndex {
     /// All variants in canonical order (circuits, then stages).
@@ -201,6 +203,8 @@ impl RxIndex {
         super::push(&mut slots, &mut c, Self::ChildBridgeQuery(Side::Right));
         super::push(&mut slots, &mut c, Self::ChildBridgeEval(Side::Left));
         super::push(&mut slots, &mut c, Self::ChildBridgeEval(Side::Right));
+        super::push(&mut slots, &mut c, Self::ChildPointsStage(Side::Left));
+        super::push(&mut slots, &mut c, Self::ChildPointsStage(Side::Right));
         assert!(c == NUM_RX_COMPONENTS);
         slots
     }

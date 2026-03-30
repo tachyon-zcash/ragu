@@ -16,13 +16,13 @@ use ragu_circuits::{
     registry::CircuitIndex,
     staging::StageExt,
 };
-use ragu_primitives::vec::Len;
+use ragu_primitives::vec::{FixedVec, Len};
 
 use alloc::vec;
 
 use crate::header::Header;
 use crate::internal::Side;
-use crate::internal::endoscalar::NumStepsLen;
+use crate::internal::endoscalar::{NumStepsLen, PointsStage, PointsWitness};
 use crate::internal::native::{RxComponent, RxIndex};
 use crate::internal::nested;
 use crate::internal::nested::NUM_ENDOSCALING_POINTS;
@@ -118,7 +118,8 @@ impl<C: Cycle, R: Rank> core::ops::Index<nested::RxIndex> for Proof<C, R> {
             | ChildBridgeOuterError(side)
             | ChildBridgeAB(side)
             | ChildBridgeQuery(side)
-            | ChildBridgeEval(side) => self.child_bridges(side).rx(idx),
+            | ChildBridgeEval(side)
+            | ChildPointsStage(side) => self.child_bridges(side).rx(idx),
         }
     }
 }
@@ -261,6 +262,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
             )
             .expect("trivial eval bridge rx"),
         );
+        let points_rx =
+            <PointsStage<C::HostCurve, NUM_ENDOSCALING_POINTS> as StageExt<C::ScalarField, R>>::rx(
+                C::ScalarField::ONE,
+                &PointsWitness {
+                    initial: host_commitment,
+                    inputs: FixedVec::from_fn(|_| host_commitment),
+                    interstitials: FixedVec::from_fn(|_| host_commitment),
+                },
+            )
+            .expect("trivial points rx");
 
         let trivial_rx_triple = || RxTriple {
             rx: ones_host.clone(),
@@ -283,6 +294,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                     ab: ab_bridge.rx.clone(),
                     query: query_bridge.rx.clone(),
                     eval: eval_bridge.rx.clone(),
+                    points: points_rx.clone(),
                 },
                 right_child_bridges: ChildBridges {
                     inner_error: inner_error_bridge.rx.clone(),
@@ -290,6 +302,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                     ab: ab_bridge.rx.clone(),
                     query: query_bridge.rx.clone(),
                     eval: eval_bridge.rx.clone(),
+                    points: points_rx.clone(),
                 },
             },
             s_prime: SPrime {
@@ -359,8 +372,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 outer_collapse: trivial_rx_triple(),
                 compute_v: trivial_rx_triple(),
                 step_rxs: vec![ones_nested.clone(); NumStepsLen::<NUM_ENDOSCALING_POINTS>::len()],
-                endoscalar_rx: ones_nested.clone(),
-                points_rx: ones_nested,
+                endoscalar_rx: ones_nested,
+                points_rx,
             },
         }
     }

@@ -47,6 +47,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             ab: child.ab.bridge.rx.clone(),
             query: child.query.bridge.rx.clone(),
             eval: child.eval.bridge.rx.clone(),
+            points: child.circuits.points_rx.clone(),
         };
 
         Ok((
