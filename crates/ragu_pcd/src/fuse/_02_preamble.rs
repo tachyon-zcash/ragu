@@ -26,8 +26,27 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         proof::Preamble<C, R>,
         native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>,
     )> {
-        let (native, preamble_witness) =
-            self.compute_native_preamble(rng, left, right, application)?;
+        // Compute child bridges first — the points commitment is needed by
+        // the native preamble witness for the k(Y) constraint.
+        let child_bridges = |child: &Proof<C, R>| proof::ChildBridges {
+            inner_error: child.inner_error.bridge.clone(),
+            outer_error: child.outer_error.bridge.clone(),
+            ab: child.ab.bridge.clone(),
+            query: child.query.bridge.clone(),
+            eval: child.eval.bridge.clone(),
+            points: proof::Bridge::commit(self.params, child.circuits.points_rx.clone()),
+        };
+        let left_child_bridges = child_bridges(left);
+        let right_child_bridges = child_bridges(right);
+
+        let (native, preamble_witness) = self.compute_native_preamble(
+            rng,
+            left,
+            right,
+            application,
+            left_child_bridges.points.commitment,
+            right_child_bridges.points.commitment,
+        )?;
 
         let bridge = proof::Bridge::commit(
             self.params,
@@ -41,7 +60,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             )?,
         );
 
-        Ok((proof::Preamble { native, bridge }, preamble_witness))
+        Ok((
+            proof::Preamble {
+                native,
+                bridge,
+                left_child_bridges,
+                right_child_bridges,
+            },
+            preamble_witness,
+        ))
     }
 
     fn compute_native_preamble<'a, RNG: CryptoRng>(
@@ -50,6 +77,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
         application: &proof::Application<C, R>,
+        left_points_commitment: C::NestedCurve,
+        right_points_commitment: C::NestedCurve,
     ) -> Result<(
         proof::RxTriple<C, R>,
         native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>,
@@ -59,6 +88,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             right,
             &application.left_header,
             &application.right_header,
+            left_points_commitment,
+            right_points_commitment,
         )?;
 
         let rx = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::rx(

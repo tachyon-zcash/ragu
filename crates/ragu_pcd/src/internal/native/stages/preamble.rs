@@ -20,6 +20,8 @@ use ragu_primitives::{
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
+use ragu_primitives::Point;
+
 use crate::{Proof, header::Header, internal::native::unified, step::internal::padded};
 
 type HeaderVec<'dr, D, const HEADER_SIZE: usize> = FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>;
@@ -30,6 +32,9 @@ pub struct ChildWitness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     pub output_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
     /// Reference to the child proof.
     pub proof: &'a Proof<C, R>,
+    /// Pre-computed NestedCurve commitment to the child's `points_rx`
+    /// polynomial. Stored here because the child proof doesn't carry it.
+    pub points_commitment: C::NestedCurve,
 }
 
 /// Witness for the native preamble stage.
@@ -50,15 +55,19 @@ impl<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> Witness<'a, C, R, HEADER_S
         right: &'a Proof<C, R>,
         left_output_header: &[C::CircuitField],
         right_output_header: &[C::CircuitField],
+        left_points_commitment: C::NestedCurve,
+        right_points_commitment: C::NestedCurve,
     ) -> Result<Self> {
         Ok(Witness {
             left: ChildWitness {
                 output_header: FixedVec::try_from(left_output_header.to_vec())?,
                 proof: left,
+                points_commitment: left_points_commitment,
             },
             right: ChildWitness {
                 output_header: FixedVec::try_from(right_output_header.to_vec())?,
                 proof: right,
+                points_commitment: right_points_commitment,
             },
         })
     }
@@ -89,6 +98,10 @@ pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const
     pub circuit_id: Element<'dr, D>,
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
+    /// NestedCurve commitment to the child's `points_rx` polynomial.
+    /// Needed because `points_rx` has no stored commitment in the child proof.
+    #[ragu(gadget)]
+    pub child_points_commitment: Point<'dr, D, C::NestedCurve>,
 }
 
 impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize>
@@ -153,6 +166,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         dr: &mut D,
         proof: DriverValue<D, &Proof<C, R>>,
         output_header: DriverValue<D, &FixedVec<D::F, ConstLen<HEADER_SIZE>>>,
+        points_commitment: DriverValue<D, C::NestedCurve>,
     ) -> Result<Self> {
         fn alloc_header<'dr, D: Driver<'dr>, const N: usize>(
             dr: &mut D,
@@ -192,6 +206,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 proof.as_ref().map(|p| p.application.circuit_id.omega_j()),
             )?,
             unified: unified::Output::alloc_from_proof(dr, proof)?,
+            child_points_commitment: Point::alloc(dr, points_commitment)?,
         })
     }
 
@@ -218,7 +233,10 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 .collect_fixed()
         })?;
 
-        Self::alloc(dr, proof, header_data.as_ref())
+        let points_commitment = proof
+            .as_ref()
+            .map(|p| p.preamble.left_child_bridges.points.commitment);
+        Self::alloc(dr, proof, header_data.as_ref(), points_commitment)
     }
 }
 
@@ -258,8 +276,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     type OutputKind = Kind![C::CircuitField; Output<'_, _, C, HEADER_SIZE>];
 
     fn values() -> usize {
-        // 2 proofs * (3 headers * HEADER_SIZE + 1 circuit_id + unified instance wires)
-        2 * (3 * HEADER_SIZE + 1 + unified::NUM_WIRES)
+        // 2 proofs * (3 headers * HEADER_SIZE + 1 circuit_id + unified instance wires + 1 Point)
+        2 * (3 * HEADER_SIZE + 1 + unified::NUM_WIRES + 2)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -274,12 +292,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
             dr,
             witness.as_ref().map(|w| w.left.proof),
             witness.as_ref().map(|w| &w.left.output_header),
+            witness.as_ref().map(|w| w.left.points_commitment),
         )?;
 
         let right = ProofInputs::alloc(
             dr,
             witness.as_ref().map(|w| w.right.proof),
             witness.as_ref().map(|w| &w.right.output_header),
+            witness.as_ref().map(|w| w.right.points_commitment),
         )?;
 
         Ok(Output { left, right })

@@ -39,7 +39,7 @@ pub type InternalOutputKind<C: Cycle> = Kind![C::CircuitField; WithSuffix<'_, _,
 /// The number of wires in an [`Output`] gadget.
 ///
 /// Used for allocation sizing and verified by tests.
-pub const NUM_WIRES: usize = 29;
+pub const NUM_WIRES: usize = 53;
 
 /// Maps a field type to its `Output` gadget type.
 macro_rules! unified_output_type {
@@ -279,6 +279,30 @@ define_unified_instance! {
     u: Element,
     /// Bridge commitment from the eval proof component.
     bridge_eval_commitment: Point,
+    /// Left child's inner error bridge commitment.
+    left_child_bridge_inner_error: Point,
+    /// Left child's outer error bridge commitment.
+    left_child_bridge_outer_error: Point,
+    /// Left child's ab bridge commitment.
+    left_child_bridge_ab: Point,
+    /// Left child's query bridge commitment.
+    left_child_bridge_query: Point,
+    /// Left child's eval bridge commitment.
+    left_child_bridge_eval: Point,
+    /// Left child's points stage commitment.
+    left_child_bridge_points: Point,
+    /// Right child's inner error bridge commitment.
+    right_child_bridge_inner_error: Point,
+    /// Right child's outer error bridge commitment.
+    right_child_bridge_outer_error: Point,
+    /// Right child's ab bridge commitment.
+    right_child_bridge_ab: Point,
+    /// Right child's query bridge commitment.
+    right_child_bridge_query: Point,
+    /// Right child's eval bridge commitment.
+    right_child_bridge_eval: Point,
+    /// Right child's points stage commitment.
+    right_child_bridge_points: Point,
     /// Pre-endoscalar beta challenge. Effective beta is derived in compute_v.
     pre_beta: Element,
     /// Expected evaluation at the challenge point for consistency verification.
@@ -444,6 +468,78 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
         let u = Element::alloc(dr, proof.as_ref().map(|p| p.challenges.u))?;
         let bridge_eval_commitment =
             Point::alloc(dr, proof.as_ref().map(|p| p.eval.bridge.commitment))?;
+        let left_child_bridge_inner_error = Point::alloc(
+            dr,
+            proof
+                .as_ref()
+                .map(|p| p.preamble.left_child_bridges.inner_error.commitment),
+        )?;
+        let left_child_bridge_outer_error = Point::alloc(
+            dr,
+            proof
+                .as_ref()
+                .map(|p| p.preamble.left_child_bridges.outer_error.commitment),
+        )?;
+        let left_child_bridge_ab = Point::alloc(
+            dr,
+            proof
+                .as_ref()
+                .map(|p| p.preamble.left_child_bridges.ab.commitment),
+        )?;
+        let left_child_bridge_query = Point::alloc(
+            dr,
+            proof
+                .as_ref()
+                .map(|p| p.preamble.left_child_bridges.query.commitment),
+        )?;
+        let left_child_bridge_eval = Point::alloc(
+            dr,
+            proof
+                .as_ref()
+                .map(|p| p.preamble.left_child_bridges.eval.commitment),
+        )?;
+        let left_child_bridge_points = Point::alloc(
+            dr,
+            proof
+                .as_ref()
+                .map(|p| p.preamble.left_child_bridges.points.commitment),
+        )?;
+        let right_child_bridge_inner_error = Point::alloc(
+            dr,
+            proof
+                .as_ref()
+                .map(|p| p.preamble.right_child_bridges.inner_error.commitment),
+        )?;
+        let right_child_bridge_outer_error = Point::alloc(
+            dr,
+            proof
+                .as_ref()
+                .map(|p| p.preamble.right_child_bridges.outer_error.commitment),
+        )?;
+        let right_child_bridge_ab = Point::alloc(
+            dr,
+            proof
+                .as_ref()
+                .map(|p| p.preamble.right_child_bridges.ab.commitment),
+        )?;
+        let right_child_bridge_query = Point::alloc(
+            dr,
+            proof
+                .as_ref()
+                .map(|p| p.preamble.right_child_bridges.query.commitment),
+        )?;
+        let right_child_bridge_eval = Point::alloc(
+            dr,
+            proof
+                .as_ref()
+                .map(|p| p.preamble.right_child_bridges.eval.commitment),
+        )?;
+        let right_child_bridge_points = Point::alloc(
+            dr,
+            proof
+                .as_ref()
+                .map(|p| p.preamble.right_child_bridges.points.commitment),
+        )?;
         let pre_beta = Element::alloc(dr, proof.as_ref().map(|p| p.challenges.pre_beta))?;
         let v = Element::alloc(dr, proof.as_ref().map(|p| p.p.native.v))?;
 
@@ -467,6 +563,18 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
             bridge_f_commitment,
             u,
             bridge_eval_commitment,
+            left_child_bridge_inner_error,
+            left_child_bridge_outer_error,
+            left_child_bridge_ab,
+            left_child_bridge_query,
+            left_child_bridge_eval,
+            left_child_bridge_points,
+            right_child_bridge_inner_error,
+            right_child_bridge_outer_error,
+            right_child_bridge_ab,
+            right_child_bridge_query,
+            right_child_bridge_eval,
+            right_child_bridge_points,
             pre_beta,
             v,
         })
@@ -539,6 +647,18 @@ mod tests {
             bridge_f_commitment: true,
             u: true,
             bridge_eval_commitment: true,
+            left_child_bridge_inner_error: true,
+            left_child_bridge_outer_error: true,
+            left_child_bridge_ab: true,
+            left_child_bridge_query: true,
+            left_child_bridge_eval: true,
+            left_child_bridge_points: true,
+            right_child_bridge_inner_error: true,
+            right_child_bridge_outer_error: true,
+            right_child_bridge_ab: true,
+            right_child_bridge_query: true,
+            right_child_bridge_eval: true,
+            right_child_bridge_points: true,
             pre_beta: true,
             v: true,
         };

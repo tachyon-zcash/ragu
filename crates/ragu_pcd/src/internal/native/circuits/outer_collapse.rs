@@ -52,6 +52,7 @@ use ragu_circuits::{
     polynomials::Rank,
     staging::{MultiStage, MultiStageCircuit, StageBuilder},
 };
+use ragu_core::gadgets::Gadget;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
@@ -151,6 +152,29 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
+        // Compute k(y) values from preamble and enforce equality with staged
+        // values. Moved here from hashes_1 to stay within the gate budget
+        // after unified instance expansion.
+        {
+            let y = unified_output.y.read(dr)?;
+
+            let left_application_ky = preamble.left.application_ky(dr, &y)?;
+            let right_application_ky = preamble.right.application_ky(dr, &y)?;
+
+            left_application_ky.enforce_equal(dr, &outer_error.left.application)?;
+            right_application_ky.enforce_equal(dr, &outer_error.right.application)?;
+
+            let (left_unified_ky, left_unified_bridge_ky) =
+                preamble.left.unified_ky_values(dr, &y)?;
+            let (right_unified_ky, right_unified_bridge_ky) =
+                preamble.right.unified_ky_values(dr, &y)?;
+
+            left_unified_ky.enforce_equal(dr, &outer_error.left.unified)?;
+            right_unified_ky.enforce_equal(dr, &outer_error.right.unified)?;
+            left_unified_bridge_ky.enforce_equal(dr, &outer_error.left.unified_bridge)?;
+            right_unified_bridge_ky.enforce_equal(dr, &outer_error.right.unified_bridge)?;
+        }
+
         // Get layer 2 folding challenges. These are distinct from the layer 1
         // challenges (mu, nu) used in inner_collapse.
         let mu_prime = unified_output.mu_prime.read(dr)?;
@@ -179,6 +203,61 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
                 .not(dr)
                 .conditional_enforce_equal(dr, &witnessed_c, &computed_c)?;
         }
+
+        // Constrain child bridge commitments: the unified instance values
+        // must match what the preamble witnessed from each child proof's
+        // unified output. For 5 of 6 fields the data is already in the
+        // child's `unified::Output`; `points` needs a dedicated preamble
+        // field because `points_rx` has no stored commitment in the child.
+        unified_output
+            .left_child_bridge_inner_error
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.left.unified.bridge_inner_error_commitment)?;
+        unified_output
+            .left_child_bridge_outer_error
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.left.unified.bridge_outer_error_commitment)?;
+        unified_output
+            .left_child_bridge_ab
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.left.unified.bridge_ab_commitment)?;
+        unified_output
+            .left_child_bridge_query
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.left.unified.bridge_query_commitment)?;
+        unified_output
+            .left_child_bridge_eval
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.left.unified.bridge_eval_commitment)?;
+        unified_output
+            .left_child_bridge_points
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.left.child_points_commitment)?;
+
+        unified_output
+            .right_child_bridge_inner_error
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.right.unified.bridge_inner_error_commitment)?;
+        unified_output
+            .right_child_bridge_outer_error
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.right.unified.bridge_outer_error_commitment)?;
+        unified_output
+            .right_child_bridge_ab
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.right.unified.bridge_ab_commitment)?;
+        unified_output
+            .right_child_bridge_query
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.right.unified.bridge_query_commitment)?;
+        unified_output
+            .right_child_bridge_eval
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.right.unified.bridge_eval_commitment)?;
+        unified_output
+            .right_child_bridge_points
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.right.child_points_commitment)?;
 
         let (output, aux) = unified_output.finish(dr)?;
         Ok(WithAux::new(output, aux))
