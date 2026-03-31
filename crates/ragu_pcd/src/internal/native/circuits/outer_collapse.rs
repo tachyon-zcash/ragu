@@ -52,6 +52,7 @@ use ragu_circuits::{
     polynomials::Rank,
     staging::{MultiStage, MultiStageCircuit, StageBuilder},
 };
+use ragu_core::gadgets::Gadget;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
@@ -150,6 +151,29 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             outer_error.unenforced(dr, witness.as_ref().map(|w| w.outer_error_witness))?;
 
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
+
+        // Compute k(y) values from preamble and enforce equality with staged
+        // values. Moved here from hashes_1 to stay within the gate budget
+        // after unified instance expansion.
+        {
+            let y = unified_output.y.read(dr)?;
+
+            let left_application_ky = preamble.left.application_ky(dr, &y)?;
+            let right_application_ky = preamble.right.application_ky(dr, &y)?;
+
+            left_application_ky.enforce_equal(dr, &outer_error.left.application)?;
+            right_application_ky.enforce_equal(dr, &outer_error.right.application)?;
+
+            let (left_unified_ky, left_unified_bridge_ky) =
+                preamble.left.unified_ky_values(dr, &y)?;
+            let (right_unified_ky, right_unified_bridge_ky) =
+                preamble.right.unified_ky_values(dr, &y)?;
+
+            left_unified_ky.enforce_equal(dr, &outer_error.left.unified)?;
+            right_unified_ky.enforce_equal(dr, &outer_error.right.unified)?;
+            left_unified_bridge_ky.enforce_equal(dr, &outer_error.left.unified_bridge)?;
+            right_unified_bridge_ky.enforce_equal(dr, &outer_error.right.unified_bridge)?;
+        }
 
         // Get layer 2 folding challenges. These are distinct from the layer 1
         // challenges (mu, nu) used in inner_collapse.

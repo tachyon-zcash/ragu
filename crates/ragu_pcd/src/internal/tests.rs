@@ -87,11 +87,11 @@ fn test_internal_circuit_constraint_counts() {
         }};
     }
 
-    check_constraints!(Hashes1Circuit,         mul = 2045, lin = 3422);
-    check_constraints!(Hashes2Circuit,         mul = 1879, lin = 2951);
-    check_constraints!(InnerCollapseCircuit,  mul = 1756, lin = 1918);
-    check_constraints!(OuterCollapseCircuit,  mul = 811 , lin = 808);
-    check_constraints!(ComputeVCircuit,        mul = 1140, lin = 1773);
+    check_constraints!(Hashes1Circuit,          mul = 1391, lin = 2072);
+    check_constraints!(Hashes2Circuit,          mul = 1939, lin = 3035);
+    check_constraints!(InnerCollapseCircuit,    mul = 1816, lin = 2002);
+    check_constraints!(OuterCollapseCircuit,    mul = 1633, lin = 2422);
+    check_constraints!(ComputeVCircuit,         mul = 1272, lin = 2025);
 }
 
 #[rustfmt::skip]
@@ -104,11 +104,11 @@ fn test_internal_stage_parameters() {
         }};
     }
 
-    check_stage!(Preamble, skip =   1, num = 225);
-    check_stage!(OuterError,  skip = 226, num = 186);
-    check_stage!(InnerError,  skip = 412, num = 399);
-    check_stage!(Query,   skip = 226, num =  23);
-    check_stage!(Eval,    skip = 249, num =  18);
+    check_stage!(Preamble, skip =   1, num = 249);
+    check_stage!(OuterError,  skip = 250, num = 186);
+    check_stage!(InnerError,  skip = 436, num = 399);
+    check_stage!(Query,   skip = 250, num =  23);
+    check_stage!(Eval,    skip = 273, num =  18);
 }
 
 /// Helper test to print current constraint counts in copy-pasteable format.
@@ -198,7 +198,7 @@ fn test_native_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fp!(0x339e595491fd177b620ea6dc286cf85c3caab480edba867792383f33714019e4);
+    let expected = fp!(0x22efebe26a06b6872c46df6d889d09d5b45932c1688cd4904d29f9ab6b063c56);
 
     assert_eq!(
         app.native_registry.digest(),
