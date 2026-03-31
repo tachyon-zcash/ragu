@@ -206,10 +206,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 proof.as_ref().map(|p| p.application.circuit_id.omega_j()),
             )?,
             unified: unified::Output::alloc_from_proof(dr, proof)?,
-            child_points_commitment: Point::alloc(
-                dr,
-                points_commitment,
-            )?,
+            child_points_commitment: Point::alloc(dr, points_commitment)?,
         })
     }
 
