@@ -204,21 +204,60 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
                 .conditional_enforce_equal(dr, &witnessed_c, &computed_c)?;
         }
 
-        // Receive child bridge commitments. These are bound via k(Y) but
-        // not absorbed into the Fiat-Shamir transcript (child data is fully
-        // formed before the current step's challenges are derived).
-        unified_output.left_child_bridge_inner_error.receive(dr)?;
-        unified_output.left_child_bridge_outer_error.receive(dr)?;
-        unified_output.left_child_bridge_ab.receive(dr)?;
-        unified_output.left_child_bridge_query.receive(dr)?;
-        unified_output.left_child_bridge_eval.receive(dr)?;
-        unified_output.left_child_bridge_points.receive(dr)?;
-        unified_output.right_child_bridge_inner_error.receive(dr)?;
-        unified_output.right_child_bridge_outer_error.receive(dr)?;
-        unified_output.right_child_bridge_ab.receive(dr)?;
-        unified_output.right_child_bridge_query.receive(dr)?;
-        unified_output.right_child_bridge_eval.receive(dr)?;
-        unified_output.right_child_bridge_points.receive(dr)?;
+        // Constrain child bridge commitments: the unified instance values
+        // must match what the preamble witnessed from each child proof's
+        // unified output. For 5 of 6 fields the data is already in the
+        // child's `unified::Output`; `points` needs a dedicated preamble
+        // field because `points_rx` has no stored commitment in the child.
+        unified_output
+            .left_child_bridge_inner_error
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.left.unified.bridge_inner_error_commitment)?;
+        unified_output
+            .left_child_bridge_outer_error
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.left.unified.bridge_outer_error_commitment)?;
+        unified_output
+            .left_child_bridge_ab
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.left.unified.bridge_ab_commitment)?;
+        unified_output
+            .left_child_bridge_query
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.left.unified.bridge_query_commitment)?;
+        unified_output
+            .left_child_bridge_eval
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.left.unified.bridge_eval_commitment)?;
+        unified_output
+            .left_child_bridge_points
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.left.child_points_commitment)?;
+
+        unified_output
+            .right_child_bridge_inner_error
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.right.unified.bridge_inner_error_commitment)?;
+        unified_output
+            .right_child_bridge_outer_error
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.right.unified.bridge_outer_error_commitment)?;
+        unified_output
+            .right_child_bridge_ab
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.right.unified.bridge_ab_commitment)?;
+        unified_output
+            .right_child_bridge_query
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.right.unified.bridge_query_commitment)?;
+        unified_output
+            .right_child_bridge_eval
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.right.unified.bridge_eval_commitment)?;
+        unified_output
+            .right_child_bridge_points
+            .receive(dr)?
+            .enforce_equal(dr, &preamble.right.child_points_commitment)?;
 
         let (output, aux) = unified_output.finish(dr)?;
         Ok(WithAux::new(output, aux))
