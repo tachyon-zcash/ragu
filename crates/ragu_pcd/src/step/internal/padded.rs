@@ -7,6 +7,7 @@ use ragu_core::{
 use ragu_primitives::{
     Element, GadgetExt,
     io::{Buffer, Write},
+    vec::Len,
 };
 
 use core::marker::PhantomData;
@@ -18,31 +19,31 @@ use crate::internal::suffix::WithSuffix;
 ///
 /// The serialization order is `[gadget_data | zeros | suffix]`:
 /// - First, the header gadget data
-/// - Then, zero padding to fill up to `HEADER_SIZE - 1` elements
-/// - Finally, the suffix element at position `HEADER_SIZE - 1`
+/// - Then, zero padding to fill up to `HS::len() - 1` elements
+/// - Finally, the suffix element at position `HS::len() - 1`
 #[derive(Gadget, Write)]
 pub(crate) struct Padded<
     'dr,
     D: Driver<'dr>,
     G: GadgetKind<D::F> + Write<D::F>,
-    const HEADER_SIZE: usize,
+    HS: Len,
 > {
     #[ragu(gadget)]
-    inner: WithSuffix<'dr, D, Kind![D::F; PaddedContent<'_, _, G, HEADER_SIZE>]>,
+    inner: WithSuffix<'dr, D, Kind![D::F; PaddedContent<'_, _, G, HS>]>,
 }
 
 /// Constructs a [`Padded`] gadget representing a gadget for a [`Header`] padded
-/// to some fixed size `HEADER_SIZE` encoding, including the header suffix.
+/// to some fixed header size encoding, including the header suffix.
 pub(crate) fn for_header<
     'dr,
     H: Header<D::F>,
-    const HEADER_SIZE: usize,
+    HS: Len,
     D: Driver<'dr, F: PrimeField>,
 >(
     dr: &mut D,
     gadget: Bound<'dr, D, H::Output>,
-) -> Result<Padded<'dr, D, H::Output, HEADER_SIZE>> {
-    let padded_content = PaddedContent { gadget };
+) -> Result<Padded<'dr, D, H::Output, HS>> {
+    let padded_content = PaddedContent { gadget, _hs: PhantomData };
     let suffix = Element::constant(dr, D::F::from(H::SUFFIX.get()));
     Ok(Padded {
         inner: WithSuffix::new(padded_content, suffix),
@@ -50,39 +51,43 @@ pub(crate) fn for_header<
 }
 
 /// Inner gadget that writes the header gadget followed by zero padding up to
-/// `HEADER_SIZE - 1` elements (reserving space for the suffix).
+/// `HS::len() - 1` elements (reserving space for the suffix).
 #[derive(Gadget)]
 pub(crate) struct PaddedContent<
     'dr,
     D: Driver<'dr>,
     G: GadgetKind<D::F> + Write<D::F>,
-    const HEADER_SIZE: usize,
+    HS: Len,
 > {
     #[ragu(gadget)]
     gadget: Bound<'dr, D, G>,
+    #[ragu(phantom)]
+    _hs: PhantomData<HS>,
 }
 
-impl<F: Field, G: GadgetKind<F> + Write<F>, const HEADER_SIZE: usize> Write<F>
-    for PaddedContent<'static, PhantomData<F>, G, HEADER_SIZE>
+impl<F: Field, G: GadgetKind<F> + Write<F>, HS: Len> Write<F>
+    for PaddedContent<'static, PhantomData<F>, G, HS>
 {
     fn write_gadget<'dr, D: Driver<'dr, F = F>, B: Buffer<'dr, D>>(
         this: &Bound<'dr, D, Self>,
         dr: &mut D,
         buf: &mut B,
     ) -> Result<()> {
+        let header_size = HS::len();
         // Create a buffer that intercepts the data being written and counts it,
-        // prohibiting more than HEADER_SIZE - 1 writes (reserving space for
+        // prohibiting more than HS::len() - 1 writes (reserving space for
         // suffix).
-        let mut counting = CountingBuffer::<B, HEADER_SIZE> {
+        let mut counting = CountingBuffer::<B, HS> {
             written: 0,
             inner: buf,
+            _hs: PhantomData,
         };
 
         this.gadget.write(dr, &mut counting)?;
 
-        // Add padding to reach HEADER_SIZE - 1 elements (suffix will be added
+        // Add padding to reach HS::len() - 1 elements (suffix will be added
         // after).
-        while counting.written < HEADER_SIZE - 1 {
+        while counting.written < header_size - 1 {
             Element::zero(dr).write(dr, &mut counting)?;
         }
 
@@ -90,23 +95,25 @@ impl<F: Field, G: GadgetKind<F> + Write<F>, const HEADER_SIZE: usize> Write<F>
     }
 }
 
-struct CountingBuffer<'a, B, const HEADER_SIZE: usize> {
+struct CountingBuffer<'a, B, HS: Len> {
     written: usize,
     inner: &'a mut B,
+    _hs: PhantomData<HS>,
 }
 
-impl<'dr, D, B, const HEADER_SIZE: usize> Buffer<'dr, D> for CountingBuffer<'_, B, HEADER_SIZE>
+impl<'dr, D, B, HS: Len> Buffer<'dr, D> for CountingBuffer<'_, B, HS>
 where
     D: Driver<'dr>,
     B: Buffer<'dr, D>,
 {
     fn write(&mut self, dr: &mut D, value: &Element<'dr, D>) -> Result<()> {
+        let header_size = HS::len();
         // Limit is N - 1 to reserve space for the suffix element
-        if self.written >= HEADER_SIZE - 1 {
+        if self.written >= header_size - 1 {
             return Err(ragu_core::Error::MalformedEncoding(
                 alloc::format!(
-                    "Header encoding size exceeded HEADER_SIZE - 1 ({})",
-                    HEADER_SIZE - 1,
+                    "Header encoding size exceeded HS::len() - 1 ({})",
+                    header_size - 1,
                 )
                 .into(),
             ));
@@ -154,10 +161,11 @@ mod tests {
 
         {
             // Create Padded gadget with suffix value 42
-            let padded_content = super::PaddedContent::<'_, _, Kind![F; MySillyGadget<'_, _>], 6> {
+            let padded_content = super::PaddedContent::<'_, _, Kind![F; MySillyGadget<'_, _>], ConstLen<6>> {
                 gadget: gadget.clone(),
+                _hs: core::marker::PhantomData,
             };
-            let padded_gadget = Padded::<'_, _, Kind![F; MySillyGadget<'_, _>], 6> {
+            let padded_gadget = Padded::<'_, _, Kind![F; MySillyGadget<'_, _>], ConstLen<6>> {
                 inner: WithSuffix::new(padded_content, Element::constant(dr, F::from(42u64))),
             };
             let mut buffer = vec![];
@@ -189,10 +197,11 @@ mod tests {
         {
             // HEADER_SIZE=4 means only 3 elements for content (4 - 1 for suffix)
             // But gadget has 4 elements, so it should fail
-            let padded_content = super::PaddedContent::<'_, _, Kind![F; MySillyGadget<'_, _>], 4> {
+            let padded_content = super::PaddedContent::<'_, _, Kind![F; MySillyGadget<'_, _>], ConstLen<4>> {
                 gadget: gadget.clone(),
+                _hs: core::marker::PhantomData,
             };
-            let padded_gadget = Padded::<'_, _, Kind![F; MySillyGadget<'_, _>], 4> {
+            let padded_gadget = Padded::<'_, _, Kind![F; MySillyGadget<'_, _>], ConstLen<4>> {
                 inner: WithSuffix::new(padded_content, Element::constant(dr, F::from(42u64))),
             };
             let mut buffer = vec![];

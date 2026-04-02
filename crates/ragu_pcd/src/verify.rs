@@ -7,20 +7,20 @@ use ragu_circuits::{
     registry::CircuitIndex,
 };
 use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
-use ragu_primitives::Element;
+use ragu_primitives::{Element, vec::Len};
 use rand::CryptoRng;
 
 use core::iter::once;
 
 use crate::{
-    Application, Pcd, Proof,
+    Application, Pcd, PcdConfig, Proof,
     header::Header,
     internal::claims,
     internal::native::stages::preamble::ProofInputs,
     internal::{native::claims as native_claims, nested::claims as nested_claims},
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, Cfg: PcdConfig> Application<'_, C, R, Cfg> {
     /// Verifies some [`Pcd`] for the provided [`Header`].
     ///
     /// Returns `Ok(true)` if all verification checks pass, `Ok(false)` if
@@ -49,8 +49,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // Validate that the `left_header` and `right_header` lengths match
         // `HEADER_SIZE`. Alternatively, the `Proof` structure could be
         // parameterized on the `HEADER_SIZE`, but this appeared to be simpler.
-        if pcd.proof().application.left_header.len() != HEADER_SIZE
-            || pcd.proof().application.right_header.len() != HEADER_SIZE
+        let header_size = Cfg::HeaderSize::len();
+        if pcd.proof().application.left_header.len() != header_size
+            || pcd.proof().application.right_header.len() != header_size
         {
             return Ok(false);
         }
@@ -61,7 +62,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 let (proof, data, y) = witness.cast();
                 let y = Element::alloc(dr, y)?;
                 let proof_inputs =
-                    ProofInputs::<_, C, HEADER_SIZE>::alloc_for_verify::<R, H>(dr, proof, data)?;
+                    ProofInputs::<_, C, Cfg::HeaderSize>::alloc_for_verify::<R, H>(dr, proof, data)?;
 
                 let (unified_ky, unified_bridge_ky) = proof_inputs.unified_ky_values(dr, &y)?;
                 let unified_ky = *unified_ky.value().take();
@@ -253,14 +254,18 @@ mod tests {
     use ff::Field;
     use ragu_circuits::{polynomials::ProductionRank, registry::CircuitIndex};
     use ragu_pasta::Pasta;
+    use ragu_primitives::vec::ConstLen;
     use rand::{SeedableRng, rngs::StdRng};
 
     type TestR = ProductionRank;
     const HEADER_SIZE: usize = 4;
 
-    fn create_test_app() -> crate::Application<'static, Pasta, TestR, HEADER_SIZE> {
+    struct TestCfg;
+    impl PcdConfig for TestCfg { type HeaderSize = ConstLen<HEADER_SIZE>; }
+
+    fn create_test_app() -> crate::Application<'static, Pasta, TestR, TestCfg> {
         let pasta = Pasta::baked();
-        ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
+        ApplicationBuilder::<Pasta, TestR, TestCfg>::new()
             .finalize(pasta)
             .expect("failed to create test application")
     }

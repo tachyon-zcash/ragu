@@ -40,7 +40,7 @@ use rand::CryptoRng;
 use alloc::vec::Vec;
 
 use crate::{
-    Application,
+    Application, PcdConfig,
     internal::{fold_revdot, native, nested},
     proof,
 };
@@ -49,7 +49,7 @@ use super::claims::{FoldKey, FuseProofSource, TrackedPoly};
 
 type NativeNumGroups = <native::RevdotParameters as fold_revdot::Parameters>::NumGroups;
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, Cfg: PcdConfig> Application<'_, C, R, Cfg> {
     pub(super) fn compute_ab<'dr, D>(
         &self,
         rng: &mut impl CryptoRng,

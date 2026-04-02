@@ -12,12 +12,12 @@ use ragu_primitives::Element;
 use rand::CryptoRng;
 
 use crate::{
-    Application, Proof,
+    Application, PcdConfig, Proof,
     internal::{native, nested},
     proof,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, Cfg: PcdConfig> Application<'_, C, R, Cfg> {
     pub(super) fn compute_eval<'dr, D, RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -92,7 +92,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 registry_xy: query.native.registry_xy_poly.eval(u),
             },
         };
-        let rx = native::stages::eval::Stage::<C, R, HEADER_SIZE>::rx(
+        let rx = native::stages::eval::Stage::<C, R, Cfg::HeaderSize>::rx(
             C::CircuitField::random(&mut *rng),
             &eval_witness,
         )?;

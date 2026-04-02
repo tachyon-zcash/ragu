@@ -2,7 +2,11 @@ use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::Result;
 use ragu_pasta::{Fp, Pasta};
-use ragu_pcd::ApplicationBuilder;
+use ragu_pcd::{ApplicationBuilder, PcdConfig};
+use ragu_primitives::vec::ConstLen;
+
+struct TestCfg;
+impl PcdConfig for TestCfg { type HeaderSize = ConstLen<4>; }
 use ragu_testing::pcd::nontrivial::{Hash2, WitnessLeaf};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -10,7 +14,7 @@ use rand::rngs::StdRng;
 #[test]
 fn various_merging_operations() -> Result<()> {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, TestCfg>::new()
         .register(WitnessLeaf {
             poseidon_params: Pasta::circuit_poseidon(pasta),
         })?

@@ -6,6 +6,7 @@ use native::{
 };
 use ragu_circuits::staging::{Stage, StageExt};
 use ragu_pasta::{Pasta, fp, fq};
+use ragu_primitives::vec::ConstLen;
 pub type R = ragu_circuits::polynomials::ProductionRank;
 
 use ff::PrimeField;
@@ -40,24 +41,28 @@ where
 //   cargo test -p ragu_pcd --release print_internal_circuit -- --nocapture
 // Then copy-paste the output into the check_constraints! calls in the test below.
 pub const HEADER_SIZE: usize = 65;
+pub type HS = ConstLen<HEADER_SIZE>;
+
+struct TestCfg;
+impl PcdConfig for TestCfg { type HeaderSize = HS; }
 
 // Number of dummy application circuits to register before testing internal
 // circuits. This ensures the tests work correctly even when application
 // steps are present.
 const NUM_APP_STEPS: usize = 6000;
 
-type Preamble = preamble::Stage<Pasta, R, HEADER_SIZE>;
-type OuterError = outer_error::Stage<Pasta, R, HEADER_SIZE, RevdotParameters>;
-type InnerError = inner_error::Stage<Pasta, R, HEADER_SIZE, RevdotParameters>;
-type Query = query::Stage<Pasta, R, HEADER_SIZE>;
-type Eval = eval::Stage<Pasta, R, HEADER_SIZE>;
+type Preamble = preamble::Stage<Pasta, R, HS>;
+type OuterError = outer_error::Stage<Pasta, R, HS, RevdotParameters>;
+type InnerError = inner_error::Stage<Pasta, R, HS, RevdotParameters>;
+type Query = query::Stage<Pasta, R, HS>;
+type Eval = eval::Stage<Pasta, R, HS>;
 
 #[rustfmt::skip]
 #[test]
 fn test_internal_circuit_constraint_counts() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
+    let app = ApplicationBuilder::<Pasta, R, TestCfg>::new()
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
         .finalize(pasta)
@@ -121,7 +126,7 @@ fn print_internal_circuit_constraint_counts() {
 
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
+    let app = ApplicationBuilder::<Pasta, R, TestCfg>::new()
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
         .finalize(pasta)
@@ -192,7 +197,7 @@ fn print_internal_stage_parameters() {
 fn test_native_registry_digest() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
+    let app = ApplicationBuilder::<Pasta, R, TestCfg>::new()
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
         .finalize(pasta)
@@ -216,7 +221,7 @@ fn test_native_registry_digest() {
 fn test_nested_registry_digest() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
+    let app = ApplicationBuilder::<Pasta, R, TestCfg>::new()
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
         .finalize(pasta)
@@ -242,7 +247,7 @@ fn print_registry_digests() {
 
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
+    let app = ApplicationBuilder::<Pasta, R, TestCfg>::new()
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
         .finalize(pasta)

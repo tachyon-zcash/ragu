@@ -37,6 +37,7 @@ use ragu_circuits::{
     registry::{Registry, RegistryBuilder},
 };
 use ragu_core::{Error, Result};
+use ragu_primitives::vec::Len;
 use rand::CryptoRng;
 
 use alloc::collections::BTreeMap;
@@ -46,29 +47,48 @@ use header::Header;
 pub use proof::{Pcd, Proof};
 use step::{Step, internal::adapter::Adapter};
 
+/// Configuration trait for PCD parameters.
+///
+/// Bundles compile-time parameters that would otherwise cascade as const
+/// generics through the crate. Use [`ConstLen`](ragu_primitives::vec::ConstLen)
+/// to supply a concrete header size:
+///
+/// ```ignore
+/// use ragu_primitives::vec::ConstLen;
+///
+/// struct MyConfig;
+/// impl PcdConfig for MyConfig {
+///     type HeaderSize = ConstLen<4>;
+/// }
+/// ```
+pub trait PcdConfig: 'static + Send + Sync {
+    /// The fixed number of field elements in an encoded header.
+    type HeaderSize: Len;
+}
+
 /// Domain separation tag for Ragu PCD protocol.
 // FIXME: choose a permanent domain separation tag before release.
 pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 
 /// Builder for an [`Application`] for proof-carrying data.
-pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, Cfg: PcdConfig> {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
     num_application_steps: usize,
     header_map: BTreeMap<header::Suffix, TypeId>,
-    _marker: PhantomData<[(); HEADER_SIZE]>,
+    _marker: PhantomData<Cfg>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Default
-    for ApplicationBuilder<'_, C, R, HEADER_SIZE>
+impl<C: Cycle, R: Rank, Cfg: PcdConfig> Default
+    for ApplicationBuilder<'_, C, R, Cfg>
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
-    ApplicationBuilder<'params, C, R, HEADER_SIZE>
+impl<'params, C: Cycle, R: Rank, Cfg: PcdConfig>
+    ApplicationBuilder<'params, C, R, Cfg>
 {
     /// Create an empty [`ApplicationBuilder`] for proof-carrying data.
     pub fn new() -> Self {
@@ -99,7 +119,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
 
         self.native_registry =
             self.native_registry
-                .register_circuit(Adapter::<C, S, R, HEADER_SIZE>::new(step))?;
+                .register_circuit(Adapter::<C, S, R, Cfg>::new(step))?;
         self.num_application_steps += 1;
 
         Ok(self)
@@ -130,7 +150,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     pub fn finalize(
         mut self,
         params: &'params C::Params,
-    ) -> Result<Application<'params, C, R, HEADER_SIZE>> {
+    ) -> Result<Application<'params, C, R, Cfg>> {
         // Build the native registry:
         // 1. Application circuits (already registered)
         // 2. Internal circuits and masks
@@ -139,7 +159,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             internal::native::total_circuit_counts(self.num_application_steps);
 
         // First, register internal circuits and masks
-        self.native_registry = internal::native::register_all::<C, R, HEADER_SIZE>(
+        self.native_registry = internal::native::register_all::<C, R, Cfg::HeaderSize>(
             self.native_registry,
             params,
             log2_circuits,
@@ -148,12 +168,12 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         // Then, register internal steps
         self.native_registry =
             self.native_registry
-                .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
+                .register_internal_step(Adapter::<C, _, R, Cfg>::new(
                     step::internal::rerandomize::Rerandomize::<()>::new(),
                 ))?;
         self.native_registry =
             self.native_registry
-                .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
+                .register_internal_step(Adapter::<C, _, R, Cfg>::new(
                     step::internal::trivial::Trivial::new(),
                 ))?;
 
@@ -200,17 +220,17 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
 }
 
 /// The recursion context that is used to create and verify proof-carrying data.
-pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+pub struct Application<'params, C: Cycle, R: Rank, Cfg: PcdConfig> {
     native_registry: Registry<'params, C::CircuitField, R>,
     nested_registry: Registry<'params, C::ScalarField, R>,
     params: &'params C::Params,
     num_application_steps: usize,
     /// Cached seeded trivial proof for rerandomization.
     seeded_trivial: OnceCell<Proof<C, R>>,
-    _marker: PhantomData<[(); HEADER_SIZE]>,
+    _marker: PhantomData<Cfg>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, Cfg: PcdConfig> Application<'_, C, R, Cfg> {
     /// Seed a new computation by running a step with trivial inputs.
     ///
     /// This is the entry point for creating leaf nodes in a PCD tree.

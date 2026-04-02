@@ -65,7 +65,7 @@ use ragu_core::{
     gadgets::{Bound, Gadget},
     maybe::Maybe,
 };
-use ragu_primitives::vec::FixedVec;
+use ragu_primitives::vec::{FixedVec, Len};
 
 use core::marker::PhantomData;
 
@@ -85,12 +85,12 @@ use crate::internal::fold_revdot;
 /// performed by this circuit.
 ///
 /// [module-level documentation]: self
-pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
-    _marker: PhantomData<(C, R, FP)>,
+pub struct Circuit<C: Cycle, R, HS: Len, FP: fold_revdot::Parameters> {
+    _marker: PhantomData<fn() -> (C, R, HS, FP)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    Circuit<C, R, HEADER_SIZE, FP>
+impl<C: Cycle, R: Rank, HS: Len, FP: fold_revdot::Parameters>
+    Circuit<C, R, HS, FP>
 {
     /// Creates a new multi-stage circuit for layer 1 revdot verification.
     pub fn new() -> MultiStage<C::CircuitField, R, Self> {
@@ -101,9 +101,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 }
 
 /// Witness for the inner collapse circuit.
-pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
+pub struct Witness<'a, C: Cycle, R: Rank, HS: Len, FP: fold_revdot::Parameters> {
     /// Witness for the preamble stage (contains child unified instances with c values).
-    pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
+    pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HS>,
     /// The unified instance containing challenges and accumulated coverage.
     pub unified: unified::Instance<C>,
     /// Witness for the inner error stage (layer 1 error terms).
@@ -112,13 +112,13 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    MultiStageCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, FP>
+impl<C: Cycle, R: Rank, HS: Len, FP: fold_revdot::Parameters>
+    MultiStageCircuit<C::CircuitField, R> for Circuit<C, R, HS, FP>
 {
-    type Last = native_inner_error::Stage<C, R, HEADER_SIZE, FP>;
+    type Last = native_inner_error::Stage<C, R, HS, FP>;
 
     type Instance<'source> = &'source unified::Instance<C>;
-    type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
+    type Witness<'source> = Witness<'source, C, R, HS, FP>;
     type Output = unified::InternalOutputKind<C>;
     type Aux<'source> = unified::Instance<C>;
 
@@ -142,11 +142,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         Self: 'dr,
     {
         let (preamble, builder) =
-            builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
+            builder.add_stage::<native_preamble::Stage<C, R, HS>>()?;
         let (outer_error, builder) =
-            builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
+            builder.add_stage::<native_outer_error::Stage<C, R, HS, FP>>()?;
         let (inner_error, builder) =
-            builder.add_stage::<native_inner_error::Stage<C, R, HEADER_SIZE, FP>>()?;
+            builder.add_stage::<native_inner_error::Stage<C, R, HS, FP>>()?;
         let dr = builder.finish();
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
         let outer_error =

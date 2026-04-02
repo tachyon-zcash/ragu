@@ -10,7 +10,7 @@ use ragu_core::{
 use ragu_primitives::{
     Element, GadgetExt,
     io::Pipe,
-    vec::{ConstLen, FixedVec},
+    vec::{FixedVec, Len},
 };
 
 use alloc::vec::Vec;
@@ -43,20 +43,20 @@ use super::{Header, internal::padded};
 /// circuit structure matches the computation. However, rerandomization requires that
 /// the same circuit handles any header type, necessitating the uniform encoding
 /// (`Uniform`) that erases type-level differences through serialization.
-enum EncodedInner<'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_SIZE: usize> {
+enum EncodedInner<'dr, D: Driver<'dr>, H: Header<D::F>, HS: Len> {
     /// Standard gadget encoding preserving structure (efficient, type-dependent circuit)
     Gadget(Bound<'dr, D, H::Output>),
     /// Uniform encoding as field elements (less efficient, type-independent circuit)
-    Uniform(FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>),
+    Uniform(FixedVec<Element<'dr, D>, HS>),
 }
 
 /// The result of encoding a header within a step.
-pub struct Encoded<'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_SIZE: usize>(
-    EncodedInner<'dr, D, H, HEADER_SIZE>,
+pub struct Encoded<'dr, D: Driver<'dr>, H: Header<D::F>, HS: Len>(
+    EncodedInner<'dr, D, H, HS>,
 );
 
-impl<'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_SIZE: usize> Clone
-    for EncodedInner<'dr, D, H, HEADER_SIZE>
+impl<'dr, D: Driver<'dr>, H: Header<D::F>, HS: Len> Clone
+    for EncodedInner<'dr, D, H, HS>
 {
     fn clone(&self) -> Self {
         match self {
@@ -66,16 +66,16 @@ impl<'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_SIZE: usize> Clone
     }
 }
 
-impl<'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_SIZE: usize> Clone
-    for Encoded<'dr, D, H, HEADER_SIZE>
+impl<'dr, D: Driver<'dr>, H: Header<D::F>, HS: Len> Clone
+    for Encoded<'dr, D, H, HS>
 {
     fn clone(&self) -> Self {
         Encoded(self.0.clone())
     }
 }
 
-impl<'dr, D: Driver<'dr, F: PrimeField>, H: Header<D::F>, const HEADER_SIZE: usize>
-    Encoded<'dr, D, H, HEADER_SIZE>
+impl<'dr, D: Driver<'dr, F: PrimeField>, H: Header<D::F>, HS: Len>
+    Encoded<'dr, D, H, HS>
 {
     /// Create an encoded header from a gadget value.
     pub fn from_gadget(gadget: Bound<'dr, D, H::Output>) -> Self {
@@ -95,7 +95,7 @@ impl<'dr, D: Driver<'dr, F: PrimeField>, H: Header<D::F>, const HEADER_SIZE: usi
     pub(crate) fn write(self, dr: &mut D, buf: &mut Vec<Element<'dr, D>>) -> Result<()> {
         match self.0 {
             EncodedInner::Gadget(gadget) => {
-                padded::for_header::<H, HEADER_SIZE, _>(dr, gadget)?.write(dr, buf)?
+                padded::for_header::<H, HS, _>(dr, gadget)?.write(dr, buf)?
             }
             EncodedInner::Uniform(elements) => {
                 buf.extend(elements.into_inner());
@@ -124,9 +124,9 @@ impl<'dr, D: Driver<'dr, F: PrimeField>, H: Header<D::F>, const HEADER_SIZE: usi
     pub(crate) fn new_uniform(dr: &mut D, witness: DriverValue<D, H::Data>) -> Result<Self> {
         let mut emulator: Emulator<Wireless<D::MaybeKind, _>> = Emulator::wireless();
         let gadget = H::encode(&mut emulator, witness)?;
-        let gadget = padded::for_header::<H, HEADER_SIZE, _>(&mut emulator, gadget)?;
+        let gadget = padded::for_header::<H, HS, _>(&mut emulator, gadget)?;
 
-        let mut raw = Vec::with_capacity(HEADER_SIZE);
+        let mut raw = Vec::with_capacity(HS::len());
         gadget.write(&mut emulator, &mut Pipe::new(dr, &mut raw))?;
 
         Ok(Encoded(EncodedInner::Uniform(FixedVec::try_from(raw)?)))
@@ -144,7 +144,9 @@ mod tests {
         maybe::{Always, Maybe, MaybeKind},
     };
     use ragu_pasta::Fp;
+    use ragu_primitives::vec::ConstLen;
 
+    type HS = ConstLen<4>;
     const HEADER_SIZE: usize = 4;
 
     struct SingleHeader;
@@ -184,7 +186,7 @@ mod tests {
         let dr = &mut dr;
 
         let witness = Always::maybe_just(|| Fp::from(42u64));
-        let encoded = Encoded::<_, SingleHeader, HEADER_SIZE>::new(dr, witness)
+        let encoded = Encoded::<_, SingleHeader, HS>::new(dr, witness)
             .expect("encoding should succeed");
 
         let mut buf = vec![];
@@ -199,7 +201,7 @@ mod tests {
         let dr = &mut dr;
 
         let witness = Always::maybe_just(|| Fp::from(42u64));
-        let encoded = Encoded::<_, SingleHeader, HEADER_SIZE>::new_uniform(dr, witness)
+        let encoded = Encoded::<_, SingleHeader, HS>::new_uniform(dr, witness)
             .expect("encoding should succeed");
 
         let mut buf = vec![];
@@ -214,7 +216,7 @@ mod tests {
         let dr = &mut dr;
 
         let witness = Always::maybe_just(|| Fp::from(99u64));
-        let encoded = Encoded::<_, SingleHeader, HEADER_SIZE>::new(dr, witness)
+        let encoded = Encoded::<_, SingleHeader, HS>::new(dr, witness)
             .expect("encoding should succeed");
 
         let gadget = encoded.as_gadget();
@@ -227,7 +229,7 @@ mod tests {
         let dr = &mut dr;
 
         let witness = Always::maybe_just(|| Fp::from(1u64));
-        let encoded = Encoded::<_, SingleHeader, HEADER_SIZE>::new(dr, witness)
+        let encoded = Encoded::<_, SingleHeader, HS>::new(dr, witness)
             .expect("encoding should succeed");
 
         let mut buf = vec![];
@@ -242,19 +244,19 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let single = Encoded::<_, SingleHeader, HEADER_SIZE>::new_uniform(
+        let single = Encoded::<_, SingleHeader, HS>::new_uniform(
             dr,
             Always::maybe_just(|| Fp::from(1u64)),
         )
         .expect("single encoding should succeed");
 
-        let pair = Encoded::<_, PairHeader, HEADER_SIZE>::new_uniform(
+        let pair = Encoded::<_, PairHeader, HS>::new_uniform(
             dr,
             Always::maybe_just(|| (Fp::from(2u64), Fp::from(3u64))),
         )
         .expect("pair encoding should succeed");
 
-        let trivial = Encoded::<_, (), HEADER_SIZE>::new_uniform(dr, Always::maybe_just(|| ()))
+        let trivial = Encoded::<_, (), HS>::new_uniform(dr, Always::maybe_just(|| ()))
             .expect("trivial encoding should succeed");
 
         let mut buf_single = vec![];
@@ -277,7 +279,7 @@ mod tests {
         let dr = &mut dr;
 
         let witness = Always::maybe_just(|| Fp::from(77u64));
-        let original = Encoded::<_, SingleHeader, HEADER_SIZE>::new(dr, witness)
+        let original = Encoded::<_, SingleHeader, HS>::new(dr, witness)
             .expect("encoding should succeed");
         let cloned = original.clone();
 

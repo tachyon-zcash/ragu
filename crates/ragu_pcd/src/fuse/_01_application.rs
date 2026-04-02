@@ -11,11 +11,11 @@ use ragu_core::Result;
 use rand::CryptoRng;
 
 use crate::{
-    Application, Header, Pcd, Proof, proof,
+    Application, Header, Pcd, PcdConfig, Proof, proof,
     step::{Step, internal::adapter::Adapter},
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, Cfg: PcdConfig> Application<'_, C, R, Cfg> {
     pub(super) fn compute_application_proof<'source, RNG: CryptoRng, S: Step<C>>(
         &self,
         rng: &mut RNG,
@@ -32,7 +32,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     )> {
         let (left_proof, left_data) = left.into_parts();
         let (right_proof, right_data) = right.into_parts();
-        let (trace, aux) = Adapter::<C, S, R, HEADER_SIZE>::new(step)
+        let (trace, aux) = Adapter::<C, S, R, Cfg>::new(step)
             .trace((left_data, right_data, witness))?
             .into_parts();
         let rx = self.native_registry.assemble(

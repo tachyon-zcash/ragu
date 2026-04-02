@@ -10,12 +10,12 @@ use ragu_core::Result;
 use rand::CryptoRng;
 
 use crate::{
-    Application, Proof,
+    Application, PcdConfig, Proof,
     internal::{native, nested},
     proof,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, Cfg: PcdConfig> Application<'_, C, R, Cfg> {
     pub(super) fn compute_preamble<'a, RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -24,7 +24,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         application: &proof::Application<C, R>,
     ) -> Result<(
         proof::Preamble<C, R>,
-        native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>,
+        native::stages::preamble::Witness<'a, C, R, Cfg::HeaderSize>,
     )> {
         let (native, preamble_witness) =
             self.compute_native_preamble(rng, left, right, application)?;
@@ -52,7 +52,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         application: &proof::Application<C, R>,
     ) -> Result<(
         proof::RxTriple<C, R>,
-        native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>,
+        native::stages::preamble::Witness<'a, C, R, Cfg::HeaderSize>,
     )> {
         let preamble_witness = native::stages::preamble::Witness::new(
             left,
@@ -61,7 +61,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             &application.right_header,
         )?;
 
-        let rx = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::rx(
+        let rx = native::stages::preamble::Stage::<C, R, Cfg::HeaderSize>::rx(
             C::CircuitField::random(&mut *rng),
             &preamble_witness,
         )?;

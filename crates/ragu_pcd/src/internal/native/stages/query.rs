@@ -26,8 +26,7 @@ use ragu_core::{
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::Element;
-
+use ragu_primitives::{Element, vec::Len};
 use core::marker::PhantomData;
 
 use crate::Proof;
@@ -270,15 +269,20 @@ pub struct Output<'dr, D: Driver<'dr>> {
 }
 
 /// The query stage of the fuse witness.
-#[derive(Default)]
-pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
-    _marker: PhantomData<(C, R)>,
+pub struct Stage<C: Cycle, R, HS: Len> {
+    _marker: PhantomData<fn() -> (C, R, HS)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
-    for Stage<C, R, HEADER_SIZE>
+impl<C: Cycle, R, HS: Len> Default for Stage<C, R, HS> {
+    fn default() -> Self {
+        Stage { _marker: PhantomData }
+    }
+}
+
+impl<C: Cycle, R: Rank, HS: Len> staging::Stage<C::CircuitField, R>
+    for Stage<C, R, HS>
 {
-    type Parent = super::preamble::Stage<C, R, HEADER_SIZE>;
+    type Parent = super::preamble::Stage<C, R, HS>;
     type Witness<'source> = &'source Witness<C>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
@@ -311,11 +315,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal::native::stages::tests::{HEADER_SIZE, R, assert_stage_values};
+    use crate::internal::native::stages::tests::{HS, R, assert_stage_values};
     use ragu_pasta::Pasta;
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }>::default());
+        assert_stage_values(&Stage::<Pasta, R, HS>::default());
     }
 }

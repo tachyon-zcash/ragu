@@ -15,14 +15,14 @@ use ragu_primitives::Element;
 use rand::CryptoRng;
 
 use crate::{
-    Application,
+    Application, PcdConfig,
     internal::{claims, fold_revdot, native, nested},
     proof,
 };
 
 use super::claims::{FuseBuilder, FuseProofSource};
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, Cfg: PcdConfig> Application<'_, C, R, Cfg> {
     pub(super) fn inner_error_terms<'dr, 'rx, D, RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -90,7 +90,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 ),
             };
         let native_rx =
-            native::stages::inner_error::Stage::<C, R, HEADER_SIZE, native::RevdotParameters>::rx(
+            native::stages::inner_error::Stage::<C, R, Cfg::HeaderSize, native::RevdotParameters>::rx(
                 C::CircuitField::random(&mut *rng),
                 &inner_error_witness,
             )?;

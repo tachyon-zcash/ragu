@@ -12,8 +12,7 @@ use ragu_pcd::{
     header::{Header, Suffix},
     step::{Encoded, Index, Step},
 };
-use ragu_primitives::{Element, poseidon::Sponge};
-
+use ragu_primitives::{Element, poseidon::Sponge, vec::Len};
 pub struct LeafNode;
 
 impl<F: Field> Header<F> for LeafNode {
@@ -56,7 +55,7 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
     type Right = LeafNode;
     type Output = InternalNode;
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, HS: Len>(
         &self,
         dr: &mut D,
         _: DriverValue<D, Self::Witness<'source>>,
@@ -64,9 +63,9 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
         right: DriverValue<D, C::CircuitField>,
     ) -> Result<(
         (
-            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
         ),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
@@ -100,7 +99,7 @@ impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
     type Right = ();
     type Output = LeafNode;
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, HS: Len>(
         &self,
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
@@ -108,9 +107,9 @@ impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
         _right: DriverValue<D, ()>,
     ) -> Result<(
         (
-            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
         ),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,

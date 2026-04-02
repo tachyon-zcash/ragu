@@ -16,12 +16,12 @@ use ragu_primitives::Element;
 use rand::CryptoRng;
 
 use crate::{
-    Application, Proof,
+    Application, PcdConfig, Proof,
     internal::{native, nested},
     proof,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, Cfg: PcdConfig> Application<'_, C, R, Cfg> {
     pub(super) fn compute_query<'dr, D, RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -105,7 +105,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             ),
         };
 
-        let rx = native::stages::query::Stage::<C, R, HEADER_SIZE>::rx(
+        let rx = native::stages::query::Stage::<C, R, Cfg::HeaderSize>::rx(
             C::CircuitField::random(&mut *rng),
             &query_witness,
         )?;

@@ -11,6 +11,7 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
+use ragu_primitives::vec::Len;
 
 use core::marker::PhantomData;
 
@@ -41,7 +42,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
     type Right = ();
     type Output = H;
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, HS: Len>(
         &self,
         dr: &mut D,
         _: DriverValue<D, Self::Witness<'source>>,
@@ -49,9 +50,9 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         right: DriverValue<D, ()>,
     ) -> Result<(
         (
-            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
         ),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
@@ -67,7 +68,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         // development. It's possible some other component(s) of the proof being
         // randomized is sufficient, which would be nice since it would avoid
         // extra work here. It would also be complicated to add random wires
-        // here if the amount of wires needed depended on HEADER_SIZE and R:
+        // here if the amount of wires needed depended on HS and R:
         // Rank, both of which are not in scope here.
 
         // Return left's data as the output data - this preserves it!
@@ -89,7 +90,9 @@ fn test_rerandomize_consistency() {
     use ragu_primitives::Element;
     use ragu_testing::registry::TestRegistryBuilder;
 
-    const HEADER_SIZE: usize = 4;
+    use ragu_primitives::vec::ConstLen;
+
+    type HS = ConstLen<4>;
     type R = polynomials::TestRank;
 
     struct Single;
@@ -122,10 +125,15 @@ fn test_rerandomize_consistency() {
         }
     }
 
-    let circuit_single = super::adapter::Adapter::<Pasta, Rerandomize<Single>, R, HEADER_SIZE>::new(
+    use crate::PcdConfig;
+
+    struct TestCfg;
+    impl PcdConfig for TestCfg { type HeaderSize = HS; }
+
+    let circuit_single = super::adapter::Adapter::<Pasta, Rerandomize<Single>, R, TestCfg>::new(
         Rerandomize::new(),
     );
-    let circuit_pair = super::adapter::Adapter::<Pasta, Rerandomize<Pair>, R, HEADER_SIZE>::new(
+    let circuit_pair = super::adapter::Adapter::<Pasta, Rerandomize<Pair>, R, TestCfg>::new(
         Rerandomize::new(),
     );
 

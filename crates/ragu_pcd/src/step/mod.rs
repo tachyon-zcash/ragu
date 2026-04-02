@@ -9,6 +9,7 @@ use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
 };
+use ragu_primitives::vec::Len;
 
 use super::header::Header;
 use crate::internal::native::NUM_INTERNAL_CIRCUITS;
@@ -174,7 +175,7 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     ///
     /// Returns the encoded headers (left, right, output), the data to be
     /// carried in the resulting PCD, and any auxiliary witness data.
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, HS: Len>(
         &self,
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
@@ -182,9 +183,9 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
         right: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data>,
     ) -> Result<(
         (
-            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
         ),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,

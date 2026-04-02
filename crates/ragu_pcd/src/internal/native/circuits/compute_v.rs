@@ -56,7 +56,7 @@ use ragu_core::{
     gadgets::Bound,
     maybe::Maybe,
 };
-use ragu_primitives::{Element, Endoscalar, GadgetExt};
+use ragu_primitives::{Element, Endoscalar, GadgetExt, vec::Len};
 
 use alloc::{vec, vec::Vec};
 use core::marker::PhantomData;
@@ -85,11 +85,11 @@ use ragu_circuits::horner::Horner;
 ///
 /// [module-level documentation]: self
 /// [$v$]: unified::Output::v
-pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize> {
-    _marker: PhantomData<(C, R)>,
+pub struct Circuit<C: Cycle, R, HS: Len> {
+    _marker: PhantomData<fn() -> (C, R, HS)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Circuit<C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, HS: Len> Circuit<C, R, HS> {
     pub fn new() -> MultiStage<C::CircuitField, R, Self> {
         MultiStage::new(Circuit {
             _marker: PhantomData,
@@ -105,24 +105,24 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Circuit<C, R, HEADER_SIZE> {
 /// - Evaluation component polynomials from eval stage
 ///
 /// [$v$]: unified::Output::v
-pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+pub struct Witness<'a, C: Cycle, R: Rank, HS: Len> {
     /// The unified instance containing challenges and accumulated coverage.
     pub unified: unified::Instance<C>,
     /// Witness for the preamble stage (provides child proof data).
-    pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
+    pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HS>,
     /// Witness for the query stage (provides registry and polynomial evaluations).
     pub query_witness: &'a native_query::Witness<C>,
     /// Witness for the eval stage (provides evaluation component polynomials).
     pub eval_witness: &'a native_eval::Witness<C::CircuitField>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitField, R>
-    for Circuit<C, R, HEADER_SIZE>
+impl<C: Cycle, R: Rank, HS: Len> MultiStageCircuit<C::CircuitField, R>
+    for Circuit<C, R, HS>
 {
-    type Last = native_eval::Stage<C, R, HEADER_SIZE>;
+    type Last = native_eval::Stage<C, R, HS>;
 
     type Instance<'source> = &'source unified::Instance<C>;
-    type Witness<'source> = Witness<'source, C, R, HEADER_SIZE>;
+    type Witness<'source> = Witness<'source, C, R, HS>;
     type Output = unified::InternalOutputKind<C>;
     type Aux<'source> = unified::Instance<C>;
 
@@ -148,9 +148,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
         // Set up multi-stage circuit pipeline: preamble -> query -> eval.
         // Each stage provides data needed for the v computation.
         let (preamble, builder) =
-            builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
-        let (query, builder) = builder.add_stage::<native_query::Stage<C, R, HEADER_SIZE>>()?;
-        let (eval, builder) = builder.add_stage::<native_eval::Stage<C, R, HEADER_SIZE>>()?;
+            builder.add_stage::<native_preamble::Stage<C, R, HS>>()?;
+        let (query, builder) = builder.add_stage::<native_query::Stage<C, R, HS>>()?;
+        let (eval, builder) = builder.add_stage::<native_eval::Stage<C, R, HS>>()?;
         let dr = builder.finish();
 
         // Preamble is enforced because it contains child proof data that must
@@ -277,14 +277,14 @@ struct Denominators<'dr, D: Driver<'dr>> {
 }
 
 impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
-    fn new<C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>(
+    fn new<C: Cycle<CircuitField = D::F>, HS: Len>(
         dr: &mut D,
         u: &Element<'dr, D>,
         w: &Element<'dr, D>,
         x: &Element<'dr, D>,
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
-        preamble: &native_preamble::Output<'dr, D, C, HEADER_SIZE>,
+        preamble: &native_preamble::Output<'dr, D, C, HS>,
     ) -> Result<Self>
     where
         D::F: ff::PrimeField,
@@ -556,10 +556,10 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
 /// [`compute_f`]: crate::Application::compute_f
 /// [$\alpha$]: unified::Output::alpha
 #[rustfmt::skip]
-fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>(
+fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, HS: Len>(
     eval: &'a native_eval::Output<'dr, D>,
     query: &'a native_query::Output<'dr, D>,
-    preamble: &'a native_preamble::Output<'dr, D, C, HEADER_SIZE>,
+    preamble: &'a native_preamble::Output<'dr, D, C, HS>,
     d: &'a Denominators<'dr, D>,
     computed_ax: &'a Element<'dr, D>,
     computed_bx: &'a Element<'dr, D>,

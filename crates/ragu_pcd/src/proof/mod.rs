@@ -148,7 +148,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, Cfg: crate::PcdConfig> crate::Application<'_, C, R, Cfg> {
     pub(crate) fn trivial_pcd(&self) -> Pcd<C, R, ()> {
         self.trivial_proof().carry(())
     }
@@ -199,8 +199,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
         Proof {
             application: Application {
                 circuit_id: CircuitIndex::new(0),
-                left_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
-                right_header: vec![C::CircuitField::ZERO; HEADER_SIZE],
+                left_header: vec![C::CircuitField::ZERO; Cfg::HeaderSize::len()],
+                right_header: vec![C::CircuitField::ZERO; Cfg::HeaderSize::len()],
                 rx_triple: trivial_rx_triple(),
             },
             preamble: Preamble {

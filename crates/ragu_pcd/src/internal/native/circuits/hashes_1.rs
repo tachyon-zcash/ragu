@@ -87,7 +87,7 @@ use ragu_core::{
 use ragu_primitives::{
     Element, GadgetExt,
     io::Write,
-    vec::{ConstLen, FixedVec},
+    vec::{Len, FixedVec},
 };
 
 use core::marker::PhantomData;
@@ -110,16 +110,16 @@ use crate::internal::{suffix::WithSuffix, transcript::Transcript};
 /// Other internal circuits use only the [`unified::Output`] to avoid the
 /// overhead of witnessing headers in circuits that do not require them.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize> {
+pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, HS: Len> {
     /// The unified instance shared across internal circuits.
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
     /// The left child proof's output header.
     #[ragu(gadget)]
-    pub left_header: FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>,
+    pub left_header: FixedVec<Element<'dr, D>, HS>,
     /// The right child proof's output header.
     #[ragu(gadget)]
-    pub right_header: FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>,
+    pub right_header: FixedVec<Element<'dr, D>, HS>,
 }
 
 /// First hash circuit for Fiat-Shamir challenge derivation.
@@ -128,14 +128,14 @@ pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEAD
 /// circuit.
 ///
 /// [module-level documentation]: self
-pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
+pub struct Circuit<'params, C: Cycle, R, HS: Len, FP: fold_revdot::Parameters> {
     params: &'params C::Params,
     log2_circuits: u32,
-    _marker: PhantomData<(R, FP)>,
+    _marker: PhantomData<fn() -> (R, HS, FP)>,
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    Circuit<'params, C, R, HEADER_SIZE, FP>
+impl<'params, C: Cycle, R: Rank, HS: Len, FP: fold_revdot::Parameters>
+    Circuit<'params, C, R, HS, FP>
 {
     /// Creates a new multi-stage circuit.
     ///
@@ -160,7 +160,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Para
 ///
 /// Combines the unified instance with stage witnesses needed to perform the
 /// Fiat-Shamir derivations and $k(y)$ consistency checks.
-pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
+pub struct Witness<'a, C: Cycle, R: Rank, HS: Len, FP: fold_revdot::Parameters> {
     /// The unified instance containing expected challenge values and
     /// accumulated coverage from prior circuits.
     pub unified: unified::Instance<C>,
@@ -169,7 +169,7 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     /// (unenforced).
     ///
     /// Provides output headers and data for computing $k(y)$ evaluations.
-    pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
+    pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HS>,
 
     /// Witness for the [`outer_error`](super::super::stages::outer_error) stage
     /// (unenforced).
@@ -179,14 +179,14 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, FP>
+impl<C: Cycle, R: Rank, HS: Len, FP: fold_revdot::Parameters>
+    MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HS, FP>
 {
-    type Last = native_outer_error::Stage<C, R, HEADER_SIZE, FP>;
+    type Last = native_outer_error::Stage<C, R, HS, FP>;
 
     type Instance<'source> = &'source unified::Instance<C>;
-    type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
-    type Output = Kind![C::CircuitField; WithSuffix<'_, _, Output<'_, _, C, HEADER_SIZE>>];
+    type Witness<'source> = Witness<'source, C, R, HS, FP>;
+    type Output = Kind![C::CircuitField; WithSuffix<'_, _, Output<'_, _, C, HS>>];
     type Aux<'source> = unified::Instance<C>;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -209,9 +209,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         Self: 'dr,
     {
         let (preamble, builder) =
-            builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
+            builder.add_stage::<native_preamble::Stage<C, R, HS>>()?;
         let (outer_error, builder) =
-            builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
+            builder.add_stage::<native_outer_error::Stage<C, R, HS, FP>>()?;
         let dr = builder.finish();
 
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
