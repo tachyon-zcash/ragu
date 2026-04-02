@@ -71,6 +71,7 @@
 //! [book]: https://tachyon.z.cash/ragu/guide/drivers/witness.html
 
 mod always;
+mod arith;
 mod cast;
 mod empty;
 
@@ -79,6 +80,7 @@ mod sealed {
 }
 
 pub use always::Always;
+pub use arith::MaybeArith;
 pub use empty::Empty;
 
 /// Represents a value that may or may not exist, like an `Option<T>`, except
