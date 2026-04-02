@@ -9,7 +9,7 @@ use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue, LinearExpression},
     gadgets::{Gadget, Kind},
-    maybe::Maybe,
+    maybe::{Maybe, MaybeArith},
 };
 
 use crate::consistent::Consistent;
@@ -146,11 +146,7 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
 
     /// Multiply two elements together.
     pub fn mul(&self, dr: &mut D, other: &Self) -> Result<Self> {
-        let product = D::just(|| {
-            let a = *self.value.snag();
-            let b = *other.value.snag();
-            a * b
-        });
+        let product = self.value.maybe_mul(&other.value);
 
         let (a, b, c) = dr.mul(|| {
             Ok((
@@ -185,11 +181,7 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
 
     /// Add two elements together.
     pub fn add(&self, dr: &mut D, other: &Self) -> Self {
-        let value = D::just(|| {
-            let a = *self.value.snag();
-            let b = *other.value.snag();
-            a + b
-        });
+        let value = self.value.maybe_add(&other.value);
 
         let wire = dr.add(|lc| lc.add(&self.wire).add(&other.wire));
 
@@ -198,11 +190,7 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
 
     /// Subtracts another element from this one.
     pub fn sub(&self, dr: &mut D, other: &Self) -> Self {
-        let value = D::just(|| {
-            let a = *self.value.snag();
-            let b = *other.value.snag();
-            a - b
-        });
+        let value = self.value.maybe_sub(&other.value);
 
         let wire = dr.add(|lc| lc.add(&self.wire).sub(&other.wire));
 
