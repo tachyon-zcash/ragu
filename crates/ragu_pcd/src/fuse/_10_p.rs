@@ -27,7 +27,7 @@ use crate::internal::endoscalar::{
 };
 use crate::internal::native::RxIndex;
 use crate::internal::nested::NUM_ENDOSCALING_POINTS;
-use crate::{Application, Proof, proof};
+use crate::{Application, PcdConfig, Proof, proof};
 
 /// Accumulates polynomials with their commitments.
 struct Accumulator<'a, C: Cycle, R: Rank> {
@@ -47,7 +47,7 @@ impl<C: Cycle, R: Rank> Accumulator<'_, C, R> {
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, Cfg: PcdConfig> Application<'_, C, R, Cfg> {
     pub(super) fn compute_p<'dr, D, RNG: rand::CryptoRng>(
         &self,
         rng: &mut RNG,

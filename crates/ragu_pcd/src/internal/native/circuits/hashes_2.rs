@@ -70,8 +70,7 @@ use ragu_core::{
     gadgets::Bound,
     maybe::Maybe,
 };
-use ragu_primitives::GadgetExt;
-
+use ragu_primitives::{GadgetExt, vec::Len};
 use core::marker::PhantomData;
 
 use super::super::{
@@ -87,13 +86,13 @@ use crate::internal::transcript::Transcript;
 /// circuit.
 ///
 /// [module-level documentation]: self
-pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
+pub struct Circuit<'params, C: Cycle, R, HS: Len, FP: fold_revdot::Parameters> {
     params: &'params C::Params,
-    _marker: PhantomData<(R, FP)>,
+    _marker: PhantomData<fn() -> (R, HS, FP)>,
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    Circuit<'params, C, R, HEADER_SIZE, FP>
+impl<'params, C: Cycle, R: Rank, HS: Len, FP: fold_revdot::Parameters>
+    Circuit<'params, C, R, HS, FP>
 {
     /// Creates a new multi-stage circuit.
     ///
@@ -125,10 +124,10 @@ pub struct Witness<'a, C: Cycle, FP: fold_revdot::Parameters> {
     pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, FP>
+impl<C: Cycle, R: Rank, HS: Len, FP: fold_revdot::Parameters>
+    MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HS, FP>
 {
-    type Last = native_outer_error::Stage<C, R, HEADER_SIZE, FP>;
+    type Last = native_outer_error::Stage<C, R, HS, FP>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, FP>;
@@ -154,9 +153,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     where
         Self: 'dr,
     {
-        let builder = builder.skip_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
+        let builder = builder.skip_stage::<native_preamble::Stage<C, R, HS>>()?;
         let (outer_error, builder) =
-            builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
+            builder.add_stage::<native_outer_error::Stage<C, R, HS, FP>>()?;
         let dr = builder.finish();
 
         let outer_error =

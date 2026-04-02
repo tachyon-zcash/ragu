@@ -7,7 +7,7 @@ use ragu_circuits::{
     staging::StageExt,
 };
 use ragu_core::Result;
-use ragu_primitives::vec::ConstLen;
+use ragu_primitives::vec::{ConstLen, Len};
 
 use crate::internal::fold_revdot::Parameters;
 use crate::step;
@@ -309,7 +309,7 @@ pub enum RxComponent {
 ///
 /// Does not register internal steps (rerandomize, trivial); those are
 /// registered by the caller after this function returns.
-pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
+pub fn register_all<'params, C: Cycle, R: Rank, HS: Len>(
     mut registry: RegistryBuilder<'params, C::CircuitField, R>,
     params: &'params C::Params,
     log2_circuits: u32,
@@ -320,60 +320,60 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
         use InternalCircuitIndex::*;
         registry = match id {
             PreambleStage => {
-                registry.register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)
+                registry.register_bonding(stages::preamble::Stage::<C, R, HS>::mask()?)
             }
             InnerErrorStage => registry.register_bonding(stages::inner_error::Stage::<
                 C,
                 R,
-                HEADER_SIZE,
+                HS,
                 RevdotParameters,
             >::mask()?),
             OuterErrorStage => registry.register_bonding(stages::outer_error::Stage::<
                 C,
                 R,
-                HEADER_SIZE,
+                HS,
                 RevdotParameters,
             >::mask()?),
             QueryStage => {
-                registry.register_bonding(stages::query::Stage::<C, R, HEADER_SIZE>::mask()?)
+                registry.register_bonding(stages::query::Stage::<C, R, HS>::mask()?)
             }
             EvalStage => {
-                registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::mask()?)
+                registry.register_bonding(stages::eval::Stage::<C, R, HS>::mask()?)
             }
             InnerErrorFinalStaged => registry.register_bonding(stages::inner_error::Stage::<
                 C,
                 R,
-                HEADER_SIZE,
+                HS,
                 RevdotParameters,
             >::final_mask()?),
             OuterErrorFinalStaged => registry.register_bonding(stages::outer_error::Stage::<
                 C,
                 R,
-                HEADER_SIZE,
+                HS,
                 RevdotParameters,
             >::final_mask()?),
             EvalFinalStaged => {
-                registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::final_mask()?)
+                registry.register_bonding(stages::eval::Stage::<C, R, HS>::final_mask()?)
             }
             Hashes1Circuit => {
                 registry.register_internal_circuit(circuits::hashes_1::Circuit::<
                     C,
                     R,
-                    HEADER_SIZE,
+                    HS,
                     RevdotParameters,
                 >::new(params, log2_circuits))?
             }
             Hashes2Circuit => registry.register_internal_circuit(circuits::hashes_2::Circuit::<
                 C,
                 R,
-                HEADER_SIZE,
+                HS,
                 RevdotParameters,
             >::new(params))?,
             InnerCollapseCircuit => {
                 registry.register_internal_circuit(circuits::inner_collapse::Circuit::<
                     C,
                     R,
-                    HEADER_SIZE,
+                    HS,
                     RevdotParameters,
                 >::new())?
             }
@@ -381,7 +381,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
                 registry.register_internal_circuit(circuits::outer_collapse::Circuit::<
                     C,
                     R,
-                    HEADER_SIZE,
+                    HS,
                     RevdotParameters,
                 >::new())?
             }
@@ -389,7 +389,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
                 registry.register_internal_circuit(circuits::compute_v::Circuit::<
                     C,
                     R,
-                    HEADER_SIZE,
+                    HS,
                 >::new())?
             }
         };

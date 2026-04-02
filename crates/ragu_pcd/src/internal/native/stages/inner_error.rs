@@ -43,15 +43,20 @@ pub struct Output<'dr, D: Driver<'dr>, FP: fold_revdot::Parameters> {
 }
 
 /// The inner error stage (layer 1) of the fuse witness.
-#[derive(Default)]
-pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
-    _marker: PhantomData<(C, R, FP)>,
+pub struct Stage<C: Cycle, R, HS: Len, FP: fold_revdot::Parameters> {
+    _marker: PhantomData<fn() -> (C, R, HS, FP)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, FP>
+impl<C: Cycle, R, HS: Len, FP: fold_revdot::Parameters> Default for Stage<C, R, HS, FP> {
+    fn default() -> Self {
+        Stage { _marker: PhantomData }
+    }
+}
+
+impl<C: Cycle, R: Rank, HS: Len, FP: fold_revdot::Parameters>
+    staging::Stage<C::CircuitField, R> for Stage<C, R, HS, FP>
 {
-    type Parent = super::outer_error::Stage<C, R, HEADER_SIZE, FP>;
+    type Parent = super::outer_error::Stage<C, R, HS, FP>;
     type Witness<'source> = &'source Witness<C, FP>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _, FP>];
 
@@ -84,12 +89,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 mod tests {
     use super::*;
     use crate::internal::native::stages::tests::{
-        HEADER_SIZE, R, RevdotParameters, assert_stage_values,
+        HS, R, RevdotParameters, assert_stage_values,
     };
     use ragu_pasta::Pasta;
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }, RevdotParameters>::default());
+        assert_stage_values(&Stage::<Pasta, R, HS, RevdotParameters>::default());
     }
 }

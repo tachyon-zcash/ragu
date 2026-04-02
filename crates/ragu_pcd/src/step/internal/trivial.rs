@@ -8,6 +8,7 @@ use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
 };
+use ragu_primitives::vec::Len;
 
 use super::super::{Encoded, Index, Step};
 use crate::Header;
@@ -32,7 +33,7 @@ impl<C: Cycle> Step<C> for Trivial {
     type Right = ();
     type Output = ();
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, HS: Len>(
         &self,
         dr: &mut D,
         _: DriverValue<D, Self::Witness<'source>>,
@@ -40,9 +41,9 @@ impl<C: Cycle> Step<C> for Trivial {
         right: DriverValue<D, ()>,
     ) -> Result<(
         (
-            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
         ),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,

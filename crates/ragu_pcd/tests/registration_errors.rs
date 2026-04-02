@@ -6,11 +6,15 @@ use ragu_core::{
     gadgets::Bound,
 };
 use ragu_pasta::Pasta;
-use ragu_pcd::step::{Encoded, Index, Step};
 use ragu_pcd::{
-    ApplicationBuilder,
+    ApplicationBuilder, PcdConfig,
     header::{Header, Suffix},
+    step::{Encoded, Index, Step},
 };
+use ragu_primitives::vec::{ConstLen, Len};
+
+struct TestCfg;
+impl PcdConfig for TestCfg { type HeaderSize = ConstLen<4>; }
 
 // Header A with suffix 0
 struct HSuffixA;
@@ -64,7 +68,7 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step0 {
     type Left = ();
     type Right = ();
     type Output = HSuffixA;
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, HS: Len>(
         &self,
         dr: &mut D,
         _: DriverValue<D, Self::Witness<'source>>,
@@ -72,9 +76,9 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step0 {
         right: DriverValue<D, ()>,
     ) -> Result<(
         (
-            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
         ),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
@@ -96,7 +100,7 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step1 {
     type Left = HSuffixA;
     type Right = HSuffixA;
     type Output = HSuffixB;
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, HS: Len>(
         &self,
         dr: &mut D,
         _: DriverValue<D, Self::Witness<'source>>,
@@ -104,9 +108,9 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step1 {
         right: DriverValue<D, ()>,
     ) -> Result<(
         (
-            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
         ),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
@@ -128,7 +132,7 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step1Dup {
     type Left = HSuffixA;
     type Right = HSuffixA;
     type Output = HSuffixAOther;
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, HS: Len>(
         &self,
         dr: &mut D,
         _: DriverValue<D, Self::Witness<'source>>,
@@ -136,9 +140,9 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step1Dup {
         right: DriverValue<D, ()>,
     ) -> Result<(
         (
-            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
         ),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
@@ -154,7 +158,7 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step1Dup {
 #[test]
 fn register_steps_success_and_finalize() {
     let pasta = Pasta::baked();
-    let builder = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let builder = ApplicationBuilder::<Pasta, ProductionRank, TestCfg>::new()
         .register(Step0)
         .unwrap()
         .register(Step1)
@@ -165,7 +169,7 @@ fn register_steps_success_and_finalize() {
 #[test]
 #[should_panic]
 fn register_steps_out_of_order_should_fail() {
-    ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    ApplicationBuilder::<Pasta, ProductionRank, TestCfg>::new()
         .register(Step1)
         .unwrap();
 }
@@ -173,7 +177,7 @@ fn register_steps_out_of_order_should_fail() {
 #[test]
 #[should_panic]
 fn register_steps_duplicate_suffix_should_fail() {
-    ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    ApplicationBuilder::<Pasta, ProductionRank, TestCfg>::new()
         .register(Step0)
         .unwrap()
         .register(Step1Dup)

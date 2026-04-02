@@ -22,12 +22,12 @@ use rand::CryptoRng;
 use alloc::{vec, vec::Vec};
 
 use crate::{
-    Application, Proof,
+    Application, PcdConfig, Proof,
     internal::{native, native::RxIndex, nested},
     proof,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, Cfg: PcdConfig> Application<'_, C, R, Cfg> {
     pub(super) fn compute_f<'dr, D, RNG: CryptoRng>(
         &self,
         rng: &mut RNG,

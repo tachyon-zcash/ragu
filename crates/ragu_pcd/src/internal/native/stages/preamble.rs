@@ -14,7 +14,7 @@ use ragu_core::{
 use ragu_primitives::{
     Boolean, Element, GadgetExt,
     consistent::Consistent,
-    vec::{CollectFixed, ConstLen, FixedVec},
+    vec::{CollectFixed, FixedVec, Len},
 };
 
 use alloc::vec::Vec;
@@ -22,12 +22,12 @@ use core::marker::PhantomData;
 
 use crate::{Proof, header::Header, internal::native::unified, step::internal::padded};
 
-type HeaderVec<'dr, D, const HEADER_SIZE: usize> = FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>;
+type HeaderVec<'dr, D, HS> = FixedVec<Element<'dr, D>, HS>;
 
 /// Witness data for a single child proof in the preamble stage.
-pub struct ChildWitness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+pub struct ChildWitness<'a, C: Cycle, R: Rank, HS: Len> {
     /// Output header for this child proof.
-    pub output_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
+    pub output_header: FixedVec<C::CircuitField, HS>,
     /// Reference to the child proof.
     pub proof: &'a Proof<C, R>,
 }
@@ -36,14 +36,14 @@ pub struct ChildWitness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
 ///
 /// Contains references to the left and right proofs, plus output headers
 /// computed outside the circuit.
-pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+pub struct Witness<'a, C: Cycle, R: Rank, HS: Len> {
     /// Left child proof witness.
-    pub left: ChildWitness<'a, C, R, HEADER_SIZE>,
+    pub left: ChildWitness<'a, C, R, HS>,
     /// Right child proof witness.
-    pub right: ChildWitness<'a, C, R, HEADER_SIZE>,
+    pub right: ChildWitness<'a, C, R, HS>,
 }
 
-impl<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> Witness<'a, C, R, HEADER_SIZE> {
+impl<'a, C: Cycle, R: Rank, HS: Len> Witness<'a, C, R, HS> {
     /// Create a witness from child proof references and pre-computed output headers.
     pub fn new(
         left: &'a Proof<C, R>,
@@ -66,33 +66,33 @@ impl<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> Witness<'a, C, R, HEADER_S
 
 /// Headers claimed by a child proof for its own left and right children.
 #[derive(Gadget, Consistent)]
-pub struct ChildHeaders<'dr, D: Driver<'dr>, const HEADER_SIZE: usize> {
+pub struct ChildHeaders<'dr, D: Driver<'dr>, HS: Len> {
     /// Left child header (grandchild from current perspective).
     #[ragu(gadget)]
-    pub left: HeaderVec<'dr, D, HEADER_SIZE>,
+    pub left: HeaderVec<'dr, D, HS>,
     /// Right child header (grandchild from current perspective).
     #[ragu(gadget)]
-    pub right: HeaderVec<'dr, D, HEADER_SIZE>,
+    pub right: HeaderVec<'dr, D, HS>,
 }
 
 /// Processed inputs from a single child proof in the preamble stage.
 #[derive(Gadget, Consistent)]
-pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>
+pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, HS: Len>
 {
     /// Headers this child proof claimed for its own children.
     #[ragu(gadget)]
-    pub children: ChildHeaders<'dr, D, HEADER_SIZE>,
+    pub children: ChildHeaders<'dr, D, HS>,
     /// Output header of this child proof.
     #[ragu(gadget)]
-    pub output_header: HeaderVec<'dr, D, HEADER_SIZE>,
+    pub output_header: HeaderVec<'dr, D, HS>,
     #[ragu(gadget)]
     pub circuit_id: Element<'dr, D>,
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
 }
 
-impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize>
-    ProofInputs<'dr, D, C, HEADER_SIZE>
+impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, HS: Len>
+    ProofInputs<'dr, D, C, HS>
 {
     /// Compute unified k(y) and unified+bridged k(y) values simultaneously,
     /// sharing computation.
@@ -140,35 +140,36 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
 
     /// Returns true if this child proof is a trivial proof (output header suffix == 1).
     pub fn is_trivial(&self, dr: &mut D) -> Result<Boolean<'dr, D>> {
-        let suffix = &self.output_header[HEADER_SIZE - 1];
+        let suffix = &self.output_header[HS::len() - 1];
         suffix.is_equal(dr, &Element::one())
     }
 }
 
-impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize>
-    ProofInputs<'dr, D, C, HEADER_SIZE>
+impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, HS: Len>
+    ProofInputs<'dr, D, C, HS>
 {
     /// Allocate ProofInputs from a proof reference and pre-computed output header.
     pub fn alloc<R: Rank>(
         dr: &mut D,
         proof: DriverValue<D, &Proof<C, R>>,
-        output_header: DriverValue<D, &FixedVec<D::F, ConstLen<HEADER_SIZE>>>,
+        output_header: DriverValue<D, &FixedVec<D::F, HS>>,
     ) -> Result<Self> {
-        fn alloc_header<'dr, D: Driver<'dr>, const N: usize>(
+        fn alloc_header<'dr, D: Driver<'dr>, L: Len>(
             dr: &mut D,
             data: DriverValue<D, &[D::F]>,
-        ) -> Result<FixedVec<Element<'dr, D>, ConstLen<N>>> {
+        ) -> Result<FixedVec<Element<'dr, D>, L>> {
+            let n = L::len();
             D::try_just(|| {
-                if data.as_ref().take().len() != N {
+                if data.as_ref().take().len() != n {
                     return Err(Error::MalformedEncoding(
-                        "Header data length does not match HEADER_SIZE".into(),
+                        "Header data length does not match header size".into(),
                     ));
                 }
 
                 Ok(())
             })?;
 
-            (0..N)
+            (0..n)
                 .map(|i| Element::alloc(dr, data.as_ref().map(|d| d[i])))
                 .try_collect_fixed()
         }
@@ -207,9 +208,9 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
             let emulator = &mut Emulator::<Wireless<D::MaybeKind, D::F>>::wireless();
 
             let output = H::encode(emulator, header_data)?;
-            let output = padded::for_header::<H, HEADER_SIZE, _>(emulator, output)?;
+            let output = padded::for_header::<H, HS, _>(emulator, output)?;
 
-            let mut header_data = Vec::with_capacity(HEADER_SIZE);
+            let mut header_data = Vec::with_capacity(HS::len());
             output.write(emulator, &mut header_data)?;
 
             header_data
@@ -227,15 +228,15 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
 /// This is stage communication data, not part of the circuit's public instance.
 /// The verifier never sees these values directly.
 #[derive(Gadget, Consistent)]
-pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize> {
+pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, HS: Len> {
     #[ragu(gadget)]
-    pub left: ProofInputs<'dr, D, C, HEADER_SIZE>,
+    pub left: ProofInputs<'dr, D, C, HS>,
     #[ragu(gadget)]
-    pub right: ProofInputs<'dr, D, C, HEADER_SIZE>,
+    pub right: ProofInputs<'dr, D, C, HS>,
 }
 
-impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>
-    Output<'dr, D, C, HEADER_SIZE>
+impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, HS: Len>
+    Output<'dr, D, C, HS>
 {
     /// Returns true if both child proofs are trivial proofs.
     pub fn is_base_case(&self, dr: &mut D) -> Result<Boolean<'dr, D>> {
@@ -245,21 +246,26 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usiz
     }
 }
 
-#[derive(Default)]
-pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
-    _marker: PhantomData<(C, R)>,
+pub struct Stage<C: Cycle, R, HS: Len> {
+    _marker: PhantomData<fn() -> (C, R, HS)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
-    for Stage<C, R, HEADER_SIZE>
+impl<C: Cycle, R, HS: Len> Default for Stage<C, R, HS> {
+    fn default() -> Self {
+        Stage { _marker: PhantomData }
+    }
+}
+
+impl<C: Cycle, R: Rank, HS: Len> staging::Stage<C::CircuitField, R>
+    for Stage<C, R, HS>
 {
     type Parent = ();
-    type Witness<'source> = &'source Witness<'source, C, R, HEADER_SIZE>;
-    type OutputKind = Kind![C::CircuitField; Output<'_, _, C, HEADER_SIZE>];
+    type Witness<'source> = &'source Witness<'source, C, R, HS>;
+    type OutputKind = Kind![C::CircuitField; Output<'_, _, C, HS>];
 
     fn values() -> usize {
-        // 2 proofs * (3 headers * HEADER_SIZE + 1 circuit_id + unified instance wires)
-        2 * (3 * HEADER_SIZE + 1 + unified::NUM_WIRES)
+        // 2 proofs * (3 headers * HS::len() + 1 circuit_id + unified instance wires)
+        2 * (3 * HS::len() + 1 + unified::NUM_WIRES)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -289,11 +295,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal::native::stages::tests::{HEADER_SIZE, R, assert_stage_values};
+    use crate::internal::native::stages::tests::{HS, R, assert_stage_values};
     use ragu_pasta::Pasta;
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }>::default());
+        assert_stage_values(&Stage::<Pasta, R, HS>::default());
     }
 }

@@ -9,13 +9,16 @@ use ragu_core::{
 };
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::{
-    ApplicationBuilder,
+    ApplicationBuilder, PcdConfig,
     header::{Header, Suffix},
     step::{Encoded, Index, Step},
 };
-use ragu_primitives::Element;
+use ragu_primitives::{Element, vec::{ConstLen, Len}};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
+
+struct TestCfg;
+impl PcdConfig for TestCfg { type HeaderSize = ConstLen<4>; }
 
 // Header A (suffix 0) - unit data
 struct HeaderA;
@@ -56,7 +59,7 @@ impl Step<Pasta> for StepWithData {
     type Left = ();
     type Right = ();
     type Output = HeaderWithData;
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, HS: Len>(
         &self,
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
@@ -64,9 +67,9 @@ impl Step<Pasta> for StepWithData {
         right: DriverValue<D, ()>,
     ) -> Result<(
         (
-            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
         ),
         DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
@@ -87,7 +90,7 @@ impl<C: Cycle> Step<C> for Step0 {
     type Left = ();
     type Right = ();
     type Output = HeaderA;
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, HS: Len>(
         &self,
         dr: &mut D,
         _: DriverValue<D, Self::Witness<'source>>,
@@ -95,9 +98,9 @@ impl<C: Cycle> Step<C> for Step0 {
         right: DriverValue<D, ()>,
     ) -> Result<(
         (
-            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
         ),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
@@ -117,7 +120,7 @@ impl<C: Cycle> Step<C> for Step1 {
     type Left = HeaderA;
     type Right = HeaderA;
     type Output = HeaderA;
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, HS: Len>(
         &self,
         dr: &mut D,
         _: DriverValue<D, Self::Witness<'source>>,
@@ -125,9 +128,9 @@ impl<C: Cycle> Step<C> for Step1 {
         right: DriverValue<D, ()>,
     ) -> Result<(
         (
-            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
         ),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
@@ -142,7 +145,7 @@ impl<C: Cycle> Step<C> for Step1 {
 #[test]
 fn rerandomization_flow() {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, TestCfg>::new()
         .register(Step0)
         .unwrap()
         .register(Step1)
@@ -171,7 +174,7 @@ fn rerandomization_flow() {
 #[test]
 fn multiple_rerandomizations_all_verify() {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, TestCfg>::new()
         .register(Step0)
         .unwrap()
         .finalize(pasta)
@@ -197,7 +200,7 @@ fn multiple_rerandomizations_all_verify() {
 #[test]
 fn rerandomization_preserves_header_data() {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, TestCfg>::new()
         .register(StepWithData)
         .unwrap()
         .finalize(pasta)
@@ -230,7 +233,7 @@ fn rerandomization_preserves_header_data() {
 #[test]
 fn rerandomized_fused_proof_verifies() {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, TestCfg>::new()
         .register(Step0)
         .unwrap()
         .register(Step1)

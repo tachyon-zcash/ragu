@@ -21,7 +21,7 @@ use ragu_primitives::{Element, vec::FixedVec};
 use rand::CryptoRng;
 
 use crate::{
-    Application,
+    Application, PcdConfig,
     internal::{
         fold_revdot, native,
         native::stages::outer_error::{ChildKyValues, KyValues},
@@ -34,11 +34,11 @@ use super::claims::{FoldKey, FuseBuilder, TrackedPoly};
 
 type NativeNumGroups = <native::RevdotParameters as fold_revdot::Parameters>::NumGroups;
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, Cfg: PcdConfig> Application<'_, C, R, Cfg> {
     pub(super) fn outer_error_terms<'dr, 'rx, D, RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        preamble_witness: &native::stages::preamble::Witness<'_, C, R, HEADER_SIZE>,
+        preamble_witness: &native::stages::preamble::Witness<'_, C, R, Cfg::HeaderSize>,
         inner_error_witness: &native::stages::inner_error::Witness<C, native::RevdotParameters>,
         claims: FuseBuilder<'_, 'rx, C::CircuitField, R>,
         y: &Element<'dr, D>,
@@ -77,7 +77,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             |dr, witness| {
                 let (preamble_witness, inner_error_terms, y, mu, nu) = witness.cast();
 
-                let preamble = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::default()
+                let preamble = native::stages::preamble::Stage::<C, R, Cfg::HeaderSize>::default()
                     .witness(dr, preamble_witness.as_ref().map(|w| *w))?;
 
                 let y = Element::alloc(dr, y)?;
@@ -175,7 +175,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         outer_error_witness: &native::stages::outer_error::Witness<C, native::RevdotParameters>,
     ) -> Result<proof::RxTriple<C, R>> {
         let rx =
-            native::stages::outer_error::Stage::<C, R, HEADER_SIZE, native::RevdotParameters>::rx(
+            native::stages::outer_error::Stage::<C, R, Cfg::HeaderSize, native::RevdotParameters>::rx(
                 C::CircuitField::random(&mut *rng),
                 outer_error_witness,
             )?;

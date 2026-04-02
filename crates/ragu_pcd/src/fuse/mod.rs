@@ -23,12 +23,12 @@ use ragu_primitives::{GadgetExt, Point, vec::CollectFixed};
 use rand::CryptoRng;
 
 use crate::{
-    Application, Pcd, Proof, RAGU_TAG, internal::transcript::Transcript, proof, step::Step,
+    Application, Pcd, PcdConfig, Proof, RAGU_TAG, internal::transcript::Transcript, proof, step::Step,
 };
 
 use claims::FuseProofSource;
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, Cfg: PcdConfig> Application<'_, C, R, Cfg> {
     /// Fuse two [`Pcd`] into one using a provided [`Step`].
     ///
     /// The provided `step` must have been previously registered with this

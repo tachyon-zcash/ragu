@@ -4,12 +4,12 @@ use ragu_core::Result;
 use rand::CryptoRng;
 
 use crate::{
-    Application,
+    Application, PcdConfig,
     internal::{native, native::total_circuit_counts},
     proof,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, Cfg: PcdConfig> Application<'_, C, R, Cfg> {
     pub(super) fn compute_internal_circuits<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -22,7 +22,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         f: &proof::F<C, R>,
         eval: &proof::Eval<C, R>,
         p: &proof::P<C, R>,
-        preamble_witness: &native::stages::preamble::Witness<'_, C, R, HEADER_SIZE>,
+        preamble_witness: &native::stages::preamble::Witness<'_, C, R, Cfg::HeaderSize>,
         outer_error_witness: &native::stages::outer_error::Witness<C, native::RevdotParameters>,
         inner_error_witness: &native::stages::inner_error::Witness<C, native::RevdotParameters>,
         query_witness: &native::stages::query::Witness<C>,
@@ -57,7 +57,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let (hashes_1_trace, unified) = native::circuits::hashes_1::Circuit::<
             C,
             R,
-            HEADER_SIZE,
+            Cfg::HeaderSize,
             native::RevdotParameters,
         >::new(
             self.params,
@@ -78,7 +78,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let (hashes_2_trace, unified) = native::circuits::hashes_2::Circuit::<
             C,
             R,
-            HEADER_SIZE,
+            Cfg::HeaderSize,
             native::RevdotParameters,
         >::new(self.params)
         .trace(native::circuits::hashes_2::Witness {
@@ -95,7 +95,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let (inner_collapse_trace, unified) = native::circuits::inner_collapse::Circuit::<
             C,
             R,
-            HEADER_SIZE,
+            Cfg::HeaderSize,
             native::RevdotParameters,
         >::new()
         .trace(native::circuits::inner_collapse::Witness {
@@ -114,7 +114,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let (outer_collapse_trace, unified) = native::circuits::outer_collapse::Circuit::<
             C,
             R,
-            HEADER_SIZE,
+            Cfg::HeaderSize,
             native::RevdotParameters,
         >::new()
         .trace(native::circuits::outer_collapse::Witness {
@@ -130,7 +130,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         )?;
 
         let (compute_v_trace, unified) =
-            native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new()
+            native::circuits::compute_v::Circuit::<C, R, Cfg::HeaderSize>::new()
                 .trace(native::circuits::compute_v::Witness {
                     unified,
                     preamble_witness,

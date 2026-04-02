@@ -8,30 +8,30 @@ use ragu_core::{
 };
 use ragu_primitives::{
     Element,
-    vec::{CollectFixed, ConstLen, FixedVec, Len},
+    vec::{CollectFixed, FixedVec, Len},
 };
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use super::super::Step;
-use crate::Header;
+use crate::{Header, PcdConfig};
 
-/// Represents triple a length determined at compile time.
-pub struct TripleConstLen<const N: usize>;
+/// Represents triple a [`Len`] type.
+pub struct TripleLen<L: Len>(PhantomData<L>);
 
-impl<const N: usize> Len for TripleConstLen<N> {
+impl<L: Len> Len for TripleLen<L> {
     fn len() -> usize {
-        N * 3
+        L::len() * 3
     }
 }
 
-pub(crate) struct Adapter<C, S, R, const HEADER_SIZE: usize> {
+pub(crate) struct Adapter<C, S, R, Cfg: PcdConfig> {
     step: S,
-    _marker: PhantomData<(C, R)>,
+    _marker: PhantomData<(C, R, Cfg)>,
 }
 
-impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Adapter<C, S, R, HEADER_SIZE> {
+impl<C: Cycle, S: Step<C>, R: Rank, Cfg: PcdConfig> Adapter<C, S, R, Cfg> {
     pub fn new(step: S) -> Self {
         Adapter {
             step,
@@ -40,12 +40,12 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Adapter<C, S, R, H
     }
 }
 
-impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::CircuitField>
-    for Adapter<C, S, R, HEADER_SIZE>
+impl<C: Cycle, S: Step<C>, R: Rank, Cfg: PcdConfig> Circuit<C::CircuitField>
+    for Adapter<C, S, R, Cfg>
 {
     type Instance<'source> = (
-        FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
-        FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
+        FixedVec<C::CircuitField, Cfg::HeaderSize>,
+        FixedVec<C::CircuitField, Cfg::HeaderSize>,
         <S::Output as Header<C::CircuitField>>::Data,
     );
     type Witness<'source> = (
@@ -53,11 +53,11 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         <S::Right as Header<C::CircuitField>>::Data,
         S::Witness<'source>,
     );
-    type Output = Kind![C::CircuitField; FixedVec<Element<'_, _>, TripleConstLen<HEADER_SIZE>>];
+    type Output = Kind![C::CircuitField; FixedVec<Element<'_, _>, TripleLen<Cfg::HeaderSize>>];
     type Aux<'source> = (
         (
-            FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
-            FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
+            FixedVec<C::CircuitField, Cfg::HeaderSize>,
+            FixedVec<C::CircuitField, Cfg::HeaderSize>,
         ),
         <S::Output as Header<C::CircuitField>>::Data,
         S::Aux<'source>,
@@ -79,24 +79,25 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
     where
         Self: 'dr,
     {
+        let header_size = Cfg::HeaderSize::len();
         let (left, right, witness) = witness.cast();
 
         let ((left, right, output), output_data, step_aux) = self
             .step
-            .witness::<_, HEADER_SIZE>(dr, witness, left, right)?;
+            .witness::<_, Cfg::HeaderSize>(dr, witness, left, right)?;
 
-        let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
+        let mut elements = Vec::with_capacity(header_size * 3);
         left.write(dr, &mut elements)?;
         right.write(dr, &mut elements)?;
         output.write(dr, &mut elements)?;
 
         let adapter_aux = D::try_just(|| {
-            let left_header = elements[0..HEADER_SIZE]
+            let left_header = elements[0..header_size]
                 .iter()
                 .map(|e| *e.value().take())
                 .collect_fixed()?;
 
-            let right_header = elements[HEADER_SIZE..HEADER_SIZE * 2]
+            let right_header = elements[header_size..header_size * 2]
                 .iter()
                 .map(|e| *e.value().take())
                 .collect_fixed()?;
@@ -124,9 +125,14 @@ mod tests {
         maybe::{Always, Maybe, MaybeKind},
     };
     use ragu_pasta::{Fp, Pasta};
+    use ragu_primitives::vec::ConstLen;
 
     type TestR = TestRank;
+    type HS = ConstLen<4>;
     const HEADER_SIZE: usize = 4;
+
+    struct TestCfg;
+    impl PcdConfig for TestCfg { type HeaderSize = HS; }
 
     struct TestHeader;
 
@@ -153,7 +159,7 @@ mod tests {
         type Right = TestHeader;
         type Output = TestHeader;
 
-        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, HeaderSize: Len>(
             &self,
             dr: &mut D,
             _: DriverValue<D, ()>,
@@ -161,9 +167,9 @@ mod tests {
             right: DriverValue<D, Fp>,
         ) -> Result<(
             (
-                Encoded<'dr, D, Self::Left, HS>,
-                Encoded<'dr, D, Self::Right, HS>,
-                Encoded<'dr, D, Self::Output, HS>,
+                Encoded<'dr, D, Self::Left, HeaderSize>,
+                Encoded<'dr, D, Self::Right, HeaderSize>,
+                Encoded<'dr, D, Self::Output, HeaderSize>,
             ),
             DriverValue<D, Fp>,
             DriverValue<D, ()>,
@@ -185,10 +191,10 @@ mod tests {
     }
 
     #[test]
-    fn triple_const_len_returns_3n() {
-        assert_eq!(TripleConstLen::<1>::len(), 3);
-        assert_eq!(TripleConstLen::<4>::len(), 12);
-        assert_eq!(TripleConstLen::<10>::len(), 30);
+    fn triple_len_returns_3n() {
+        assert_eq!(TripleLen::<ConstLen<1>>::len(), 3);
+        assert_eq!(TripleLen::<ConstLen<4>>::len(), 12);
+        assert_eq!(TripleLen::<ConstLen<10>>::len(), 30);
     }
 
     #[test]
@@ -196,7 +202,7 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep);
+        let adapter = Adapter::<Pasta, TestStep, TestR, TestCfg>::new(TestStep);
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
         let output = adapter
@@ -213,7 +219,7 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep);
+        let adapter = Adapter::<Pasta, TestStep, TestR, TestCfg>::new(TestStep);
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
         let aux = adapter
