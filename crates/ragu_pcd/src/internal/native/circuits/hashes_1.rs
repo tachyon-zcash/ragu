@@ -253,25 +253,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         unified_output.y.provide(y.clone());
         unified_output.z.provide(z);
 
-        // Compute k(y) values from preamble and enforce equality with staged
-        // values.
-        {
-            let left_application_ky = preamble.left.application_ky(dr, &y)?;
-            let right_application_ky = preamble.right.application_ky(dr, &y)?;
-
-            left_application_ky.enforce_equal(dr, &outer_error.left.application)?;
-            right_application_ky.enforce_equal(dr, &outer_error.right.application)?;
-
-            let (left_unified_ky, left_unified_bridge_ky) =
-                preamble.left.unified_ky_values(dr, &y)?;
-            let (right_unified_ky, right_unified_bridge_ky) =
-                preamble.right.unified_ky_values(dr, &y)?;
-
-            left_unified_ky.enforce_equal(dr, &outer_error.left.unified)?;
-            right_unified_ky.enforce_equal(dr, &outer_error.right.unified)?;
-            left_unified_bridge_ky.enforce_equal(dr, &outer_error.left.unified_bridge)?;
-            right_unified_bridge_ky.enforce_equal(dr, &outer_error.right.unified_bridge)?;
-        }
+        // k(y) evaluation (application_ky, unified_ky_values) is performed
+        // in outer_collapse, which also has the preamble and outer_error
+        // stages. Moved there to stay within the gate budget after the
+        // preamble stage expansion.
 
         // Absorb bridge_inner_error_commitment and verify saved transcript state
         {
