@@ -64,13 +64,14 @@ impl<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> Witness<'a, C, R, HEADER_S
     }
 }
 
-/// Headers claimed by a child proof for its own left and right children.
+/// Headers this proof consumed from its left and right inputs.
+///
+/// In the fuse pipeline, where this proof is a child of the current step,
+/// these are grandchild headers from the current step's perspective.
 #[derive(Gadget, Consistent)]
 pub struct ChildHeaders<'dr, D: Driver<'dr>, const HEADER_SIZE: usize> {
-    /// Left child header (grandchild from current perspective).
     #[ragu(gadget)]
     pub left: HeaderVec<'dr, D, HEADER_SIZE>,
-    /// Right child header (grandchild from current perspective).
     #[ragu(gadget)]
     pub right: HeaderVec<'dr, D, HEADER_SIZE>,
 }
@@ -79,7 +80,9 @@ pub struct ChildHeaders<'dr, D: Driver<'dr>, const HEADER_SIZE: usize> {
 #[derive(Gadget, Consistent)]
 pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>
 {
-    /// Headers this child proof claimed for its own children.
+    /// This proof's children's headers (the left and right inputs it consumed).
+    /// In the fuse pipeline these are grandchild headers from the current
+    /// step's perspective.
     #[ragu(gadget)]
     pub children: ChildHeaders<'dr, D, HEADER_SIZE>,
     /// Output header of this child proof.

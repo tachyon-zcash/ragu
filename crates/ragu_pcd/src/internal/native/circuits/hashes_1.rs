@@ -235,10 +235,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             .circuit_id
             .enforce_root_of_unity(dr, self.log2_circuits)?;
 
-        let points_commitment = Point::alloc(
-            dr,
-            witness.as_ref().map(|w| w.points_commitment),
-        )?;
+        let points_commitment = Point::alloc(dr, witness.as_ref().map(|w| w.points_commitment))?;
 
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 

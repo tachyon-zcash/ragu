@@ -82,10 +82,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // for its instance polynomial (to match unified_bridge_ky).
         let points_rx = proof::Bridge::commit(
             self.params,
-            <PointsStage<C::HostCurve, NUM_ENDOSCALING_POINTS> as StageExt<
-                C::ScalarField,
-                R,
-            >>::rx(C::ScalarField::random(&mut *rng), points_witness)?,
+            <PointsStage<C::HostCurve, NUM_ENDOSCALING_POINTS> as StageExt<C::ScalarField, R>>::rx(
+                C::ScalarField::random(&mut *rng),
+                points_witness,
+            )?,
         );
 
         let (hashes_1_trace, unified) = native::circuits::hashes_1::Circuit::<
