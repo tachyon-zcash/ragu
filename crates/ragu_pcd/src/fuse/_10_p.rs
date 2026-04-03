@@ -8,23 +8,18 @@
 //! $\text{commit}(\sum\_j \beta^j \cdot p\_j) = \sum\_j \beta^j \cdot C\_j$.
 //!
 //! The commitment is computed via [`PointsWitness`] Horner evaluation.
+//! The [`PointsWitness`] and [`Uendo`] endoscalar are returned alongside the proof
+//! component so that [`super::_11_circuits`] can create the corresponding
+//! nested circuit traces.
 
 use alloc::vec::Vec;
 use core::ops::AddAssign;
-use ff::Field;
-use ragu_arithmetic::Cycle;
-use ragu_circuits::{
-    CircuitExt,
-    polynomials::{Rank, sparse},
-    staging::{MultiStage, StageExt},
-};
+use ragu_arithmetic::{Cycle, Uendo};
+use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{Result, drivers::Driver, maybe::Maybe};
-use ragu_primitives::{Element, extract_endoscalar, lift_endoscalar, vec::Len};
+use ragu_primitives::{Element, extract_endoscalar, lift_endoscalar};
 
-use crate::internal::endoscalar::{
-    EndoscalarStage, EndoscalingStep, EndoscalingStepWitness, NumStepsLen, PointsStage,
-    PointsWitness,
-};
+use crate::internal::endoscalar::PointsWitness;
 use crate::internal::native::RxIndex;
 use crate::internal::nested::NUM_ENDOSCALING_POINTS;
 use crate::{Application, Proof, proof};
@@ -48,9 +43,8 @@ impl<C: Cycle, R: Rank> Accumulator<'_, C, R> {
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
-    pub(super) fn compute_p<'dr, D, RNG: rand::CryptoRng>(
+    pub(super) fn compute_p<'dr, D>(
         &self,
-        rng: &mut RNG,
         pre_beta: &Element<'dr, D>,
         u: &Element<'dr, D>,
         left: &Proof<C, R>,
@@ -60,7 +54,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         ab: &proof::AB<C, R>,
         query: &proof::Query<C, R>,
         f: &proof::F<C, R>,
-    ) -> Result<proof::P<C, R>>
+    ) -> Result<(
+        proof::P<C, R>,
+        Uendo,
+        PointsWitness<C::HostCurve, NUM_ENDOSCALING_POINTS>,
+    )>
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
@@ -87,6 +85,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 beta: effective_beta,
             };
 
+            // This accumulation order must match the loading circuit in
+            // `nested::circuits::loading::Loading`.
             for proof in [left, right] {
                 for &id in &RxIndex::ALL {
                     let t = &proof[id];
@@ -123,69 +123,31 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Construct commitment via PointsWitness Horner evaluation.
         // Points order: [f.commitment, commitments...] computes β^n·f + β^{n-1}·C₀ + ...
-        let (commitment, endoscalar_rx, points_rx, step_rxs) = {
+        let witness = {
             let mut points = Vec::with_capacity(NUM_ENDOSCALING_POINTS);
             points.push(f.native.commitment);
             points.extend_from_slice(&commitments);
 
-            let witness =
-                PointsWitness::<C::HostCurve, NUM_ENDOSCALING_POINTS>::new(beta_endo, &points);
-
-            let endoscalar_rx = <EndoscalarStage as StageExt<C::ScalarField, R>>::rx(
-                C::ScalarField::random(&mut *rng),
-                beta_endo,
-            )?;
-            let points_rx = <PointsStage<C::HostCurve, NUM_ENDOSCALING_POINTS> as StageExt<
-                C::ScalarField,
-                R,
-            >>::rx(C::ScalarField::random(&mut *rng), &witness)?;
-
-            // Create rx polynomials for each endoscaling step circuit
-            let num_steps = NumStepsLen::<NUM_ENDOSCALING_POINTS>::len();
-            let mut step_rxs = Vec::with_capacity(num_steps);
-            for step in 0..num_steps {
-                let step_circuit =
-                    EndoscalingStep::<C::HostCurve, R, NUM_ENDOSCALING_POINTS>::new(step);
-                let staged = MultiStage::new(step_circuit);
-                let step_trace = staged
-                    .trace(EndoscalingStepWitness {
-                        endoscalar: beta_endo,
-                        points: &witness,
-                    })?
-                    .into_output();
-                let step_rx = self.nested_registry.assemble(
-                    &step_trace,
-                    crate::internal::nested::InternalCircuitIndex::EndoscalingStep(step as u32)
-                        .circuit_index(),
-                    &mut *rng,
-                )?;
-                step_rxs.push(step_rx);
-            }
-
-            (
-                *witness
-                    .interstitials
-                    .last()
-                    .expect("NumStepsLen guarantees at least one interstitial"),
-                endoscalar_rx,
-                points_rx,
-                step_rxs,
-            )
+            PointsWitness::<C::HostCurve, NUM_ENDOSCALING_POINTS>::new(beta_endo, &points)
         };
+
+        let commitment = *witness
+            .interstitials
+            .last()
+            .expect("NumStepsLen guarantees at least one interstitial");
 
         let v = poly.eval(*u.value().take());
 
-        Ok(proof::P {
-            native: proof::NativeP {
-                poly,
-                commitment,
-                v,
+        Ok((
+            proof::P {
+                native: proof::NativeP {
+                    poly,
+                    commitment,
+                    v,
+                },
             },
-            nested: proof::NestedP {
-                step_rxs,
-                endoscalar_rx,
-                points_rx,
-            },
-        })
+            beta_endo,
+            witness,
+        ))
     }
 }

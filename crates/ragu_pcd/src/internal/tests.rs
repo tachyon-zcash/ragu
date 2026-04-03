@@ -87,11 +87,11 @@ fn test_internal_circuit_constraint_counts() {
         }};
     }
 
-    check_constraints!(Hashes1Circuit,         mul = 2045, lin = 3422);
-    check_constraints!(Hashes2Circuit,         mul = 1879, lin = 2951);
-    check_constraints!(InnerCollapseCircuit,  mul = 1756, lin = 1918);
-    check_constraints!(OuterCollapseCircuit,  mul = 811 , lin = 808);
-    check_constraints!(ComputeVCircuit,        mul = 1140, lin = 1773);
+    check_constraints!(Hashes1Circuit,          mul = 1336, lin = 1995);
+    check_constraints!(Hashes2Circuit,          mul = 1881, lin = 2951);
+    check_constraints!(InnerCollapseCircuit,    mul = 1758, lin = 1918);
+    check_constraints!(OuterCollapseCircuit,    mul = 1531, lin = 2250);
+    check_constraints!(ComputeVCircuit,         mul = 1148, lin = 1787);
 }
 
 #[rustfmt::skip]
@@ -104,11 +104,11 @@ fn test_internal_stage_parameters() {
         }};
     }
 
-    check_stage!(Preamble, skip =   1, num = 225);
-    check_stage!(OuterError,  skip = 226, num = 186);
-    check_stage!(InnerError,  skip = 412, num = 399);
-    check_stage!(Query,   skip = 226, num =  23);
-    check_stage!(Eval,    skip = 249, num =  18);
+    check_stage!(Preamble, skip =   1, num = 227);
+    check_stage!(OuterError,  skip = 228, num = 186);
+    check_stage!(InnerError,  skip = 414, num = 399);
+    check_stage!(Query,   skip = 228, num =  23);
+    check_stage!(Eval,    skip = 251, num =  18);
 }
 
 /// Helper test to print current constraint counts in copy-pasteable format.
@@ -198,7 +198,7 @@ fn test_native_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fp!(0x339e595491fd177b620ea6dc286cf85c3caab480edba867792383f33714019e4);
+    let expected = fp!(0x1a3c9a85d12c1ff388ccde201092bd4aad1b429dc8a628379f5b86b8326063b3);
 
     assert_eq!(
         app.native_registry.digest(),
@@ -222,7 +222,7 @@ fn test_nested_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fq!(0x31cda5818b2554cf6064590380712d5d44461fb3bc0628ac8742343eb731d271);
+    let expected = fq!(0x2794ead93909d9973a09b422614dbb1178d998fb6f525e5888b6e6804ab801d8);
 
     assert_eq!(
         app.nested_registry.digest(),

@@ -12,7 +12,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Boolean, Element, GadgetExt,
+    Boolean, Element, GadgetExt, Point,
     consistent::Consistent,
     vec::{CollectFixed, ConstLen, FixedVec},
 };
@@ -64,13 +64,14 @@ impl<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> Witness<'a, C, R, HEADER_S
     }
 }
 
-/// Headers claimed by a child proof for its own left and right children.
+/// Headers this proof consumed from its left and right inputs.
+///
+/// In the fuse pipeline, where this proof is a child of the current step,
+/// these are grandchild headers from the current step's perspective.
 #[derive(Gadget, Consistent)]
 pub struct ChildHeaders<'dr, D: Driver<'dr>, const HEADER_SIZE: usize> {
-    /// Left child header (grandchild from current perspective).
     #[ragu(gadget)]
     pub left: HeaderVec<'dr, D, HEADER_SIZE>,
-    /// Right child header (grandchild from current perspective).
     #[ragu(gadget)]
     pub right: HeaderVec<'dr, D, HEADER_SIZE>,
 }
@@ -79,7 +80,9 @@ pub struct ChildHeaders<'dr, D: Driver<'dr>, const HEADER_SIZE: usize> {
 #[derive(Gadget, Consistent)]
 pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>
 {
-    /// Headers this child proof claimed for its own children.
+    /// This proof's children's headers (the left and right inputs it consumed).
+    /// In the fuse pipeline these are grandchild headers from the current
+    /// step's perspective.
     #[ragu(gadget)]
     pub children: ChildHeaders<'dr, D, HEADER_SIZE>,
     /// Output header of this child proof.
@@ -87,6 +90,10 @@ pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const
     pub output_header: HeaderVec<'dr, D, HEADER_SIZE>,
     #[ragu(gadget)]
     pub circuit_id: Element<'dr, D>,
+    /// NestedCurve commitment to the child's `points_rx` polynomial.
+    /// Not in the child's unified instance; bound via `unified_bridge_ky`.
+    #[ragu(gadget)]
+    pub points_commitment: Point<'dr, D, C::NestedCurve>,
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
 }
@@ -99,7 +106,8 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     ///
     /// Returns `(unified_ky, unified_bridge_ky)` where:
     /// - `unified_ky` = k(y) for `(unified, 0)`
-    /// - `unified_bridge_ky` = k(y) for `(unified, children.left, children.right, 0)`
+    /// - `unified_bridge_ky` = k(y) for `(unified, points_commitment,
+    ///   children.left, children.right, 0)`
     ///
     /// The Horner evaluation order and trailing zero here define the numerical
     /// values that [`ky_values`](super::super::claims::ky_values) must produce
@@ -119,6 +127,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 ky.finish_ky(dr)?
             }),
             ({
+                self.points_commitment.write(dr, &mut ky)?;
                 self.children.left.write(dr, &mut ky)?;
                 self.children.right.write(dr, &mut ky)?;
                 Element::zero(dr).write(dr, &mut ky)?;
@@ -191,6 +200,11 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 dr,
                 proof.as_ref().map(|p| p.application.circuit_id.omega_j()),
             )?,
+            points_commitment: Point::alloc(
+                dr,
+                proof.as_ref().map(|p| p.circuits.points_rx.commitment),
+            )?,
+            // alloc_from_proof moves `proof`, so it must come last.
             unified: unified::Output::alloc_from_proof(dr, proof)?,
         })
     }
@@ -258,8 +272,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     type OutputKind = Kind![C::CircuitField; Output<'_, _, C, HEADER_SIZE>];
 
     fn values() -> usize {
-        // 2 proofs * (3 headers * HEADER_SIZE + 1 circuit_id + unified instance wires)
-        2 * (3 * HEADER_SIZE + 1 + unified::NUM_WIRES)
+        // 2 proofs * (3 headers * HEADER_SIZE + 1 circuit_id + 1 Point + unified instance wires)
+        2 * (3 * HEADER_SIZE + 1 + 2 + unified::NUM_WIRES)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

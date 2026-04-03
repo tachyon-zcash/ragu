@@ -85,7 +85,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element, GadgetExt,
+    Element, GadgetExt, Point,
     io::Write,
     vec::{ConstLen, FixedVec},
 };
@@ -114,6 +114,10 @@ pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEAD
     /// The unified instance shared across internal circuits.
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
+    /// NestedCurve commitment to the current proof's `points_rx` polynomial.
+    /// Position must match the Horner order in `unified_ky_values`.
+    #[ragu(gadget)]
+    pub points_commitment: Point<'dr, D, C::NestedCurve>,
     /// The left child proof's output header.
     #[ragu(gadget)]
     pub left_header: FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>,
@@ -164,6 +168,9 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     /// The unified instance containing expected challenge values and
     /// accumulated coverage from prior circuits.
     pub unified: unified::Instance<C>,
+
+    /// NestedCurve commitment to the current proof's `points_rx` polynomial.
+    pub points_commitment: C::NestedCurve,
 
     /// Witness for the [`preamble`](super::super::stages::preamble) stage
     /// (unenforced).
@@ -228,6 +235,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             .circuit_id
             .enforce_root_of_unity(dr, self.log2_circuits)?;
 
+        let points_commitment = Point::alloc(dr, witness.as_ref().map(|w| w.points_commitment))?;
+
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
         // Create a transcript for all challenge derivations
@@ -253,25 +262,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         unified_output.y.provide(y.clone());
         unified_output.z.provide(z);
 
-        // Compute k(y) values from preamble and enforce equality with staged
-        // values.
-        {
-            let left_application_ky = preamble.left.application_ky(dr, &y)?;
-            let right_application_ky = preamble.right.application_ky(dr, &y)?;
-
-            left_application_ky.enforce_equal(dr, &outer_error.left.application)?;
-            right_application_ky.enforce_equal(dr, &outer_error.right.application)?;
-
-            let (left_unified_ky, left_unified_bridge_ky) =
-                preamble.left.unified_ky_values(dr, &y)?;
-            let (right_unified_ky, right_unified_bridge_ky) =
-                preamble.right.unified_ky_values(dr, &y)?;
-
-            left_unified_ky.enforce_equal(dr, &outer_error.left.unified)?;
-            right_unified_ky.enforce_equal(dr, &outer_error.right.unified)?;
-            left_unified_bridge_ky.enforce_equal(dr, &outer_error.left.unified_bridge)?;
-            right_unified_bridge_ky.enforce_equal(dr, &outer_error.right.unified_bridge)?;
-        }
+        // k(y) evaluation (application_ky, unified_ky_values) is performed
+        // in outer_collapse, which also has the preamble and outer_error
+        // stages. Moved there to stay within the gate budget after the
+        // preamble stage expansion.
 
         // Absorb bridge_inner_error_commitment and verify saved transcript state
         {
@@ -292,9 +286,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         // headers.
         let (unified, updated) = unified_output.finish_no_suffix(dr)?;
         let output = Output {
+            unified,
+            points_commitment,
             left_header: preamble.left.output_header,
             right_header: preamble.right.output_header,
-            unified,
         };
 
         let zero = Element::zero(dr);

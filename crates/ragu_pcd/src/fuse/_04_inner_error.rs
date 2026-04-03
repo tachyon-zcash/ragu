@@ -30,6 +30,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
         source: &FuseProofSource<'rx, C, R>,
+        preamble: &proof::Preamble<C, R>,
     ) -> Result<(
         proof::InnerError<C, R>,
         native::stages::inner_error::Witness<C, native::RevdotParameters>,
@@ -48,6 +49,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 &nested::stages::inner_error::Witness {
                     native_inner_error: native_inner_error.rx_triple.commitment,
                     registry_wy: native_inner_error.registry_wy_commitment,
+                    stashed_native_preamble: preamble.native.commitment,
                 },
             )?,
         );

@@ -140,12 +140,7 @@ impl<K: Copy, F: Field, R: Rank> Clone for Atom<'_, K, F, R> {
 }
 impl<K: Copy, F: Field, R: Rank> Copy for Atom<'_, K, F, R> {}
 
-/// Identifies which of the two child proofs a polynomial came from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Side {
-    Left,
-    Right,
-}
+use crate::internal::Side;
 
 /// Key identifying a polynomial and its corresponding commitment within the
 /// fuse pipeline: which child proof, and which component of that proof.
