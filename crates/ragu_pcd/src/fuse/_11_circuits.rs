@@ -194,10 +194,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             C::ScalarField::random(&mut *rng),
             beta_endo,
         )?;
-        let points_rx = <PointsStage<C::HostCurve, NUM_ENDOSCALING_POINTS> as StageExt<
-            C::ScalarField,
-            R,
-        >>::rx(C::ScalarField::random(&mut *rng), points_witness)?;
+        let points_rx = proof::Bridge::commit(
+            self.params,
+            <PointsStage<C::HostCurve, NUM_ENDOSCALING_POINTS> as StageExt<
+                C::ScalarField,
+                R,
+            >>::rx(C::ScalarField::random(&mut *rng), points_witness)?,
+        );
 
         let num_steps = NumStepsLen::<NUM_ENDOSCALING_POINTS>::len();
         let mut step_rxs = Vec::with_capacity(num_steps);

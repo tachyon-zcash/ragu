@@ -263,5 +263,5 @@ pub(crate) struct InternalCircuits<C: Cycle, R: Rank> {
     pub(crate) compute_v: RxTriple<C, R>,
     pub(crate) step_rxs: Vec<sparse::Polynomial<C::ScalarField, R>>,
     pub(crate) endoscalar_rx: sparse::Polynomial<C::ScalarField, R>,
-    pub(crate) points_rx: sparse::Polynomial<C::ScalarField, R>,
+    pub(crate) points_rx: Bridge<C, R>,
 }

@@ -105,7 +105,7 @@ impl<C: Cycle, R: Rank> core::ops::Index<nested::RxIndex> for Proof<C, R> {
         match idx {
             EndoscalingStep(step) => &self.circuits.step_rxs[step as usize],
             EndoscalarStage => &self.circuits.endoscalar_rx,
-            PointsStage => &self.circuits.points_rx,
+            PointsStage => &self.circuits.points_rx.rx,
             BridgePreamble => &self.preamble.bridge.rx,
             BridgeSPrime => &self.s_prime.bridge.rx,
             BridgeInnerError => &self.inner_error.bridge.rx,
@@ -373,7 +373,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 compute_v: trivial_rx_triple(),
                 step_rxs: vec![ones_nested.clone(); NumStepsLen::<NUM_ENDOSCALING_POINTS>::len()],
                 endoscalar_rx: ones_nested,
-                points_rx,
+                points_rx: Bridge::commit(self.params, points_rx),
             },
         }
     }
