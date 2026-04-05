@@ -31,9 +31,9 @@ constraints over the witness vectors $\v{a},\v{b},\v{c}\in\F^n$ and public input
 vector $\v{k}\in\F^{4n}$.
 
 The witness vectors $\v{a}, \v{b}, \v{c} \in \F^n$ must satisfy $n$
-_multiplication constraints_, where the $i$th such constraint takes the form
+_gates_, where the $i$th such gate takes the form
 $\v{a}_i \cdot \v{b}_i = \v{c}_i$. In addition, the witness must satisfy a set
-of $4n$ _linear constraints_, where the $j$th such constraint is of the form
+of $4n$ _constraints_, where the $j$th such constraint is of the form
 
 $$
 \sum_{i = 0}^{n - 1} \big( \v{u}_{j,i} \cdot \mathbf{a}_i \big) +
@@ -52,9 +52,9 @@ Bootle16 CS is practically identical to the more commonly known R1CS, as they
 are linear-time interreducible, thus equivalent for all practical purposes.
 See [appendix](../../appendix/cs.md) for a more detailed comparison.
 
-## Multiplication Constraints
+## Gates
 
-The multiplication constraints over the witness can be rewritten as $\v{a} \circ
+The gates over the witness can be rewritten as $\v{a} \circ
 \v{b} = \v{c}$. It is possible to _probabilistically_ reduce this to a dot
 product claim using a random challenge $z \in \F$:
 
@@ -145,7 +145,7 @@ ${\v{c} \circ \v{d} = \v{0^n}}$ each hold with high probability. (The latter
 claim is useless and redundant for our purposes, since $\v{d} = \v{0^n}$ for
 witness vectors anyway.)
 
-## Linear Constraints
+## Constraints
 
 Given a choice of witness $\v{a}, \v{b}, \v{c}$, if for some random choice of
 $y \in \F$ the equality
@@ -167,14 +167,14 @@ $$
 \Bigg) = 0
 $$
 
-holds, then with high probability the $4n$ linear constraints are all satisfied
+holds, then with high probability the $4n$ constraints are all satisfied
 as well. Define 
 
 $$
 \v{s}=(\v{0}\| \sum_{j=0}^{4n-1}y^j\cdot\rv{u}_j \| \sum_j y^j\cdot\v{v}_j \| \sum_j y^j\cdot \rv{w}_j)
 $$
 
-where each subvector is a random linear combination of the wiring constraints,
+where each subvector is a random linear combination of the wiring,
 we observe that:
 
 $$
@@ -185,8 +185,8 @@ for the witness vector $\v{r}$.
 
 ## Consolidated Constraints
 
-The equation for enforcing _multiplication constraints_ (using random challenge
-$z$) and _linear constraints_ (using random challenge $y$) can be combined into
+The equation for enforcing _gates_ (using random challenge
+$z$) and _constraints_ (using random challenge $y$) can be combined into
 a single equation
 
 $$

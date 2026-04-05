@@ -49,8 +49,8 @@ pub(crate) fn fold<T: Foldable<F>, F: Field>(
 /// revdot reduction.
 ///
 /// The parameters here collapse as much as $m \cdot n$ claims into a single
-/// claim using roughly $f(m, n) = nm^2 + n^2 - n + 3$ multiplication
-/// constraints (using nested Horner evaluation).
+/// claim using roughly $f(m, n) = nm^2 + n^2 - n + 3$ gates
+/// (using nested Horner evaluation).
 pub trait Parameters: 'static + Send + Sync + Clone + Copy + Default {
     type NumGroups: Len;
     type GroupSize: Len;
@@ -461,7 +461,7 @@ mod tests {
                 Ok(())
             })?;
 
-            Ok(sim.num_multiplications())
+            Ok(sim.num_gates())
         }
 
         // Formula: N^2 + 1
@@ -700,7 +700,7 @@ mod tests {
         Ok(())
     }
 
-    /// Computes the number of multiplication constraints for given M, N.
+    /// Computes the number of gates for given M, N.
     ///
     /// Formula: NM^2 + N^2 - N + 3
     /// - Layer 1: 2 + N(M^2 - 1) = NM^2 - N + 2
@@ -764,7 +764,7 @@ mod tests {
                 Ok(())
             })?;
 
-            assert_eq!(sim.num_multiplications(), muls(M, N));
+            assert_eq!(sim.num_gates(), muls(M, N));
             Ok(())
         }
 
@@ -866,7 +866,7 @@ mod tests {
                 Ok(())
             })?;
 
-            Ok(sim.num_multiplications())
+            Ok(sim.num_gates())
         }
 
         // Formula: M^2 + 1

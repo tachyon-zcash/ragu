@@ -32,7 +32,7 @@ The driver exposes three core operations:
       default.
 * [`enforce_zero()`]: enforces that a linear combination of previously created
       wires equals zero. This operation takes a closure that is only executed
-      when the driver needs to know about the constraint system. The closure is
+      when the driver needs to know about constraints. The closure is
       used to [build the linear combination](linear.md#the-closure-pattern) in a
       way that suits the driver's needs and optimization opportunities.
 * [`add()`]: returns a new _virtual_ wire representing a linear combination of
@@ -52,11 +52,10 @@ support single-wire allocation, drivers provide an additional [`alloc()`] method
 that allocates and assigns one wire.
 
 By default, `alloc` calls `mul`, returns the $a$ wire, and sets the
-corresponding $b$ and $c$ wires to zero to satisfy the multiplication
-constraint—wasting $b$ and $c$. Drivers may override `alloc` to avoid this
+corresponding $b$ and $c$ wires to zero to satisfy the gate—wasting $b$ and $c$. Drivers may override `alloc` to avoid this
 overhead. For example, synthesis drivers return the $a$ wire from a `mul`
 operation, stash the associated $b$ wire for the next `alloc` call, and fill in
-$c$ later to satisfy the constraint.
+$c$ later to satisfy the gate.
 
 ### The `'dr` Lifetime {#the-dr-lifetime}
 

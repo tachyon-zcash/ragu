@@ -154,26 +154,45 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
     }
 
     pub(crate) fn trivial_proof(&self) -> Proof<C, R> {
-        let host_blind = C::CircuitField::ONE;
-        let bridge_blind = C::ScalarField::ONE;
+        // a[0] = b[0] = c[0] = d[0] = 1, all others zero.
+        let ones_host = {
+            let mut view = sparse::View::<_, R, _>::trace();
+            view.a.push(C::CircuitField::ONE);
+            view.b.push(C::CircuitField::ONE);
+            view.c.push(C::CircuitField::ONE);
+            view.d.push(C::CircuitField::ONE);
+            view.build()
+        };
+        let ones_nested = {
+            let mut view = sparse::View::<_, R, _>::trace();
+            view.a.push(C::ScalarField::ONE);
+            view.b.push(C::ScalarField::ONE);
+            view.c.push(C::ScalarField::ONE);
+            view.d.push(C::ScalarField::ONE);
+            view.build()
+        };
 
-        let zero_host = sparse::Polynomial::<C::CircuitField, R>::new();
-        let zero_nested = sparse::Polynomial::<C::ScalarField, R>::new();
+        let host_commitment = ones_host.commit_to_affine(C::host_generators(self.params));
+        let bridge_commitment = ones_nested.commit_to_affine(C::nested_generators(self.params));
 
-        let host_commitment =
-            zero_host.commit_to_affine(C::host_generators(self.params), host_blind);
-        let bridge_commitment =
-            zero_nested.commit_to_affine(C::nested_generators(self.params), bridge_blind);
+        let challenges = Challenges::trivial();
+
+        // registry_xy must be the actual registry evaluation (fuse cross-checks it).
+        let registry_xy_poly = self.native_registry.xy(challenges.x, challenges.y);
+        let registry_xy_commitment =
+            registry_xy_poly.commit_to_affine(C::host_generators(self.params));
+
+        // Derived values must be consistent with the polynomials.
+        let c = ones_host.revdot(&ones_host);
+        let v = ones_host.eval(challenges.u);
 
         let trivial_bridge = Bridge {
-            rx: zero_nested.clone(),
-            blind: bridge_blind,
+            rx: ones_nested.clone(),
             commitment: bridge_commitment,
         };
 
         let trivial_rx_triple = || RxTriple {
-            rx: zero_host.clone(),
-            blind: host_blind,
+            rx: ones_host.clone(),
             commitment: host_commitment,
         };
 
@@ -190,19 +209,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
             },
             s_prime: SPrime {
                 native: NativeSPrime {
-                    registry_wx0_poly: zero_host.clone(),
-                    registry_wx0_blind: host_blind,
+                    // registry_wx0/wx1 are not cross-checked by the verifier,
+                    // so placeholder ones polys suffice for the trivial proof.
+                    registry_wx0_poly: ones_host.clone(),
                     registry_wx0_commitment: host_commitment,
-                    registry_wx1_poly: zero_host.clone(),
-                    registry_wx1_blind: host_blind,
+                    registry_wx1_poly: ones_host.clone(),
                     registry_wx1_commitment: host_commitment,
                 },
                 bridge: trivial_bridge.clone(),
             },
             inner_error: InnerError {
                 native: NativeInnerError {
-                    registry_wy_poly: zero_host.clone(),
-                    registry_wy_blind: host_blind,
+                    registry_wy_poly: ones_host.clone(),
                     registry_wy_commitment: host_commitment,
                     rx_triple: trivial_rx_triple(),
                 },
@@ -214,29 +232,25 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
             },
             ab: AB {
                 native: NativeAB {
-                    a_poly: zero_host.clone(),
-                    a_blind: host_blind,
+                    a_poly: ones_host.clone(),
                     a_commitment: host_commitment,
-                    b_poly: zero_host.clone(),
-                    b_blind: host_blind,
+                    b_poly: ones_host.clone(),
                     b_commitment: host_commitment,
-                    c: C::CircuitField::ZERO,
+                    c,
                 },
                 bridge: trivial_bridge.clone(),
             },
             query: Query {
                 native: NativeQuery {
-                    registry_xy_poly: zero_host.clone(),
-                    registry_xy_blind: host_blind,
-                    registry_xy_commitment: host_commitment,
+                    registry_xy_poly,
+                    registry_xy_commitment,
                     rx_triple: trivial_rx_triple(),
                 },
                 bridge: trivial_bridge.clone(),
             },
             f: F {
                 native: NativeF {
-                    poly: zero_host.clone(),
-                    blind: host_blind,
+                    poly: ones_host.clone(),
                     commitment: host_commitment,
                 },
                 bridge: trivial_bridge.clone(),
@@ -247,21 +261,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
             },
             p: P {
                 native: NativeP {
-                    poly: zero_host.clone(),
-                    blind: host_blind,
+                    poly: ones_host.clone(),
                     commitment: host_commitment,
-                    v: C::CircuitField::ZERO,
+                    v,
                 },
                 nested: NestedP {
                     step_rxs: vec![
-                        zero_nested.clone();
+                        ones_nested.clone();
                         NumStepsLen::<NUM_ENDOSCALING_POINTS>::len()
                     ],
-                    endoscalar_rx: zero_nested.clone(),
-                    points_rx: zero_nested.clone(),
+                    endoscalar_rx: ones_nested.clone(),
+                    points_rx: ones_nested,
                 },
             },
-            challenges: Challenges::trivial(),
+            challenges,
             circuits: InternalCircuits {
                 hashes_1: trivial_rx_triple(),
                 hashes_2: trivial_rx_triple(),

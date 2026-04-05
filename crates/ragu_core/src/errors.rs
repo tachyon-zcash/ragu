@@ -18,19 +18,18 @@ pub type Result<T> = result::Result<T, Error>;
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// Backends may fail to synthesize circuits that demand too many
-    /// multiplication constraints to be enforced.
-    #[error("exceeded the maximum number of multiplication constraints ({limit})")]
-    MultiplicationBoundExceeded {
-        /// The maximum number of multiplication constraints allowed by the backend.
+    /// Backends may fail to synthesize circuits that demand too many gates.
+    #[error("exceeded the maximum number of gates ({limit})")]
+    GateBoundExceeded {
+        /// The maximum number of gates allowed by the backend.
         limit: usize,
     },
 
-    /// Backends may fail to synthesize circuits that demand too many linear
+    /// Backends may fail to synthesize circuits that demand too many
     /// constraints to be enforced.
-    #[error("exceeded the maximum number of linear constraints ({limit})")]
-    LinearBoundExceeded {
-        /// The maximum number of linear constraints allowed by the backend.
+    #[error("exceeded the maximum number of constraints ({limit})")]
+    ConstraintBoundExceeded {
+        /// The maximum number of constraints allowed by the backend.
         limit: usize,
     },
 
@@ -79,12 +78,12 @@ fn test_error_display() {
     use alloc::format;
 
     assert_eq!(
-        format!("{}", Error::MultiplicationBoundExceeded { limit: 1024 }),
-        "exceeded the maximum number of multiplication constraints (1024)"
+        format!("{}", Error::GateBoundExceeded { limit: 1024 }),
+        "exceeded the maximum number of gates (1024)"
     );
     assert_eq!(
-        format!("{}", Error::LinearBoundExceeded { limit: 4096 }),
-        "exceeded the maximum number of linear constraints (4096)"
+        format!("{}", Error::ConstraintBoundExceeded { limit: 4096 }),
+        "exceeded the maximum number of constraints (4096)"
     );
     assert_eq!(
         format!("{}", Error::CircuitBoundExceeded { limit: 256 }),
@@ -148,10 +147,10 @@ fn test_error_source() {
     );
 
     // Bound variants and VectorLengthMismatch should not chain an inner error.
-    let err = Error::MultiplicationBoundExceeded { limit: 1 };
+    let err = Error::GateBoundExceeded { limit: 1 };
     assert!(err.source().is_none());
 
-    let err = Error::LinearBoundExceeded { limit: 1 };
+    let err = Error::ConstraintBoundExceeded { limit: 1 };
     assert!(err.source().is_none());
 
     let err = Error::CircuitBoundExceeded { limit: 1 };

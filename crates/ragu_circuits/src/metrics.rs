@@ -3,7 +3,7 @@
 //!
 //! This module provides constraint system analysis by simulating circuit
 //! execution without computing actual values, counting the number of
-//! multiplication and linear constraints a circuit requires. It simultaneously
+//! gates and constraints a circuit requires. It simultaneously
 //! computes Schwartz–Zippel fingerprints for each routine invocation via the
 //! merged [`Counter`] driver, which combines constraint counting with identity
 //! evaluation in a single DFS traversal.
@@ -43,12 +43,12 @@ use ragu_core::{
     maybe::Empty,
     routines::Routine,
 };
-use ragu_primitives::GadgetExt;
 
 use alloc::vec::Vec;
 use core::any::TypeId;
 
 use super::Circuit;
+use super::raw::RawCircuit;
 use super::s::common::{WireEval, WireEvalSum};
 
 /// The structural identity of a routine record.
@@ -93,8 +93,8 @@ pub struct RoutineFingerprint {
     input_kind: TypeId,
     output_kind: TypeId,
     eval: u64,
-    local_num_multiplication_constraints: usize,
-    local_num_linear_constraints: usize,
+    local_num_gates: usize,
+    local_num_constraints: usize,
 }
 
 impl RoutineFingerprint {
@@ -102,15 +102,15 @@ impl RoutineFingerprint {
     /// type ids, a field element evaluation, and local constraint counts.
     fn of<F: PrimeField, Ro: Routine<F>>(
         eval: F,
-        local_num_multiplication_constraints: usize,
-        local_num_linear_constraints: usize,
+        local_num_gates: usize,
+        local_num_constraints: usize,
     ) -> Self {
         Self {
             input_kind: TypeId::of::<Ro::Input>(),
             output_kind: TypeId::of::<Ro::Output>(),
             eval: ragu_arithmetic::low_u64(&eval),
-            local_num_multiplication_constraints,
-            local_num_linear_constraints,
+            local_num_gates,
+            local_num_constraints,
         }
     }
 
@@ -123,7 +123,7 @@ impl RoutineFingerprint {
 
 /// Constraint counts for one segment of the circuit, collected during synthesis.
 ///
-/// Each record captures the multiplication and linear constraints contributed
+/// Each record captures the gates and constraints contributed
 /// by a single segment in DFS order. Segments are the primary boundary for
 /// floor planning: the floor planner decides where each segment's constraints
 /// are placed in the polynomial layout.
@@ -159,21 +159,21 @@ impl RoutineFingerprint {
 /// | 2     | `RoutineB`     |  1  |  3 | b0+b1; `RoutineC` excluded |
 /// | 3     | `RoutineC`     |  1  |  2 | C's own constraints        |
 pub struct SegmentRecord {
-    num_multiplication_constraints: usize,
-    num_linear_constraints: usize,
+    num_gates: usize,
+    num_constraints: usize,
     identity: RoutineIdentity,
 }
 
 impl SegmentRecord {
-    /// The number of multiplication constraints in this segment.
-    pub fn num_multiplication_constraints(&self) -> usize {
-        self.num_multiplication_constraints
+    /// The number of gates in this segment.
+    pub fn num_gates(&self) -> usize {
+        self.num_gates
     }
 
-    /// The number of linear constraints in this segment, including constraints
+    /// The number of constraints in this segment, including constraints
     /// on wires of the input gadget and on wires allocated within the segment.
-    pub fn num_linear_constraints(&self) -> usize {
-        self.num_linear_constraints
+    pub fn num_constraints(&self) -> usize {
+        self.num_constraints
     }
 
     /// The structural identity of this routine invocation.
@@ -189,11 +189,11 @@ impl SegmentRecord {
 /// Captures constraint counts and per-routine records by simulating circuit
 /// execution without computing actual values.
 pub struct CircuitMetrics {
-    /// The number of linear constraints, including those for instance enforcement.
-    pub(crate) num_linear_constraints: usize,
+    /// The number of constraints, including those for instance enforcement.
+    pub(crate) num_constraints: usize,
 
-    /// The number of multiplication constraints, including those used for allocations.
-    pub(crate) num_multiplication_constraints: usize,
+    /// The number of gates, including those used for allocations.
+    pub(crate) num_gates: usize,
 
     /// The degree of the instance polynomial $k(Y)$.
     // TODO(ebfull): not sure if we'll need this later
@@ -250,8 +250,8 @@ struct CounterScope<F> {
 /// routine's fingerprint capture only its *internal* constraint structure.
 struct Counter<F> {
     scope: CounterScope<F>,
-    num_linear_constraints: usize,
-    num_multiplication_constraints: usize,
+    num_constraints: usize,
+    num_gates: usize,
     segments: Vec<SegmentRecord>,
 
     /// When false, `gate` advances geometric sequences but does not increment
@@ -325,11 +325,11 @@ impl<F: FromUniformBytes<64>> Counter<F> {
                 current_d: x3,
                 result: h,
             },
-            num_linear_constraints: 0,
-            num_multiplication_constraints: 0,
+            num_constraints: 0,
+            num_gates: 0,
             segments: alloc::vec![SegmentRecord {
-                num_multiplication_constraints: 0,
-                num_linear_constraints: 0,
+                num_gates: 0,
+                num_constraints: 0,
                 identity: RoutineIdentity::Root,
             }],
             counting: true,
@@ -363,7 +363,7 @@ impl<F: FromUniformBytes<64>> DriverTypes for Counter<F> {
     type LCadd = WireEvalSum<F>;
     type LCenforce = WireEvalSum<F>;
 
-    /// Consumes a multiplication gate: increments constraint counts and returns
+    /// Consumes a gate: increments gate counts and returns
     /// wire values from four independent geometric sequences, advancing each
     /// by its base.
     fn gate(
@@ -371,8 +371,8 @@ impl<F: FromUniformBytes<64>> DriverTypes for Counter<F> {
         _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>, Coeff<F>)>,
     ) -> Result<(WireEval<F>, WireEval<F>, WireEval<F>, WireEval<F>)> {
         if self.counting {
-            self.num_multiplication_constraints += 1;
-            self.segments[self.scope.current_segment].num_multiplication_constraints += 1;
+            self.num_gates += 1;
+            self.segments[self.scope.current_segment].num_gates += 1;
         }
 
         let a = self.scope.current_a;
@@ -415,11 +415,11 @@ impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
         WireEval::Value(lc(WireEvalSum::new(self.one)).value)
     }
 
-    /// Increments linear constraint count and applies one Horner step:
+    /// Increments constraint count and applies one Horner step:
     /// `result = result * y + coefficient`.
     fn enforce_zero(&mut self, lc: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
-        self.num_linear_constraints += 1;
-        self.segments[self.scope.current_segment].num_linear_constraints += 1;
+        self.num_constraints += 1;
+        self.segments[self.scope.current_segment].num_constraints += 1;
         self.scope.result *= self.y;
         self.scope.result += lc(WireEvalSum::new(self.one)).value;
         Ok(())
@@ -432,8 +432,8 @@ impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
     ) -> Result<Bound<'dr, Self, Ro::Output>> {
         // Push new segment with placeholder identity.
         self.segments.push(SegmentRecord {
-            num_multiplication_constraints: 0,
-            num_linear_constraints: 0,
+            num_gates: 0,
+            num_constraints: 0,
             identity: RoutineIdentity::Root,
         });
         let segment_idx = self.segments.len() - 1;
@@ -467,8 +467,8 @@ impl<'dr, F: FromUniformBytes<64>> Driver<'dr> for Counter<F> {
         self.segments[segment_idx].identity =
             RoutineIdentity::Routine(RoutineFingerprint::of::<F, Ro>(
                 self.scope.result,
-                seg.num_multiplication_constraints,
-                seg.num_linear_constraints,
+                seg.num_gates,
+                seg.num_constraints,
             ));
 
         // Restore parent scope.
@@ -542,42 +542,21 @@ impl<F: FromUniformBytes<64>> WireMap<F> for Counter<F> {
 
 /// Evaluates the constraint topology of a circuit.
 pub fn eval<F: FromUniformBytes<64>, C: Circuit<F>>(circuit: &C) -> Result<CircuitMetrics> {
+    eval_raw(&super::raw::CircuitAdapterRef(circuit))
+}
+
+/// Evaluates the constraint topology of a [`RawCircuit`].
+pub(crate) fn eval_raw<F: FromUniformBytes<64>, RC: RawCircuit<F>>(
+    circuit: &RC,
+) -> Result<CircuitMetrics> {
     let mut collector = Counter::<F>::new();
-    let mut degree_ky = 0usize;
 
-    // ONE gate
-    collector.mul(|| Ok((Coeff::One, Coeff::One, Coeff::One)))?;
+    let result = super::raw::orchestrate(&mut collector, circuit, Empty)?;
 
-    // Circuit synthesis
-    let io = circuit.witness(&mut collector, Empty)?.into_output();
-    io.write(&mut collector, &mut degree_ky)?;
-
-    // Public output constraints
-    for _ in 0..degree_ky {
-        collector.enforce_zero(|lc| lc)?;
-    }
-
-    // ONE constraint
-    collector.enforce_zero(|lc| lc)?;
-
-    let recorded_multiplications: usize = collector
-        .segments
-        .iter()
-        .map(|r| r.num_multiplication_constraints)
-        .sum();
-    let recorded_linear_constraints: usize = collector
-        .segments
-        .iter()
-        .map(|r| r.num_linear_constraints)
-        .sum();
-    assert_eq!(
-        recorded_multiplications,
-        collector.num_multiplication_constraints
-    );
-    assert_eq!(
-        recorded_linear_constraints,
-        collector.num_linear_constraints
-    );
+    let recorded_gates: usize = collector.segments.iter().map(|r| r.num_gates).sum();
+    let recorded_constraints: usize = collector.segments.iter().map(|r| r.num_constraints).sum();
+    assert_eq!(recorded_gates, collector.num_gates);
+    assert_eq!(recorded_constraints, collector.num_constraints);
 
     assert!(
         matches!(collector.segments[0].identity, RoutineIdentity::Root),
@@ -594,9 +573,9 @@ pub fn eval<F: FromUniformBytes<64>, C: Circuit<F>>(circuit: &C) -> Result<Circu
     );
 
     Ok(CircuitMetrics {
-        num_linear_constraints: collector.num_linear_constraints,
-        num_multiplication_constraints: collector.num_multiplication_constraints,
-        degree_ky,
+        num_constraints: collector.num_constraints,
+        num_gates: collector.num_gates,
+        degree_ky: result.degree_ky,
         segments: collector.segments,
     })
 }
@@ -675,8 +654,8 @@ pub(crate) mod tests {
         let seg = &counter.segments[0];
         Ok(RoutineIdentity::Routine(RoutineFingerprint::of::<F, Ro>(
             counter.scope.result,
-            seg.num_multiplication_constraints,
-            seg.num_linear_constraints,
+            seg.num_gates,
+            seg.num_constraints,
         )))
     }
 

@@ -449,15 +449,16 @@ mod tests {
 
             let staged = MultiStage::new(step_circuit);
 
-            let endoscalar_rx = <EndoscalarStage as StageExt<Fp, R>>::rx(endoscalar)?;
-            let points_rx = <PointsStage<EpAffine, NUM_POINTS> as StageExt<Fp, R>>::rx(&points)?;
+            let endoscalar_rx = <EndoscalarStage as StageExt<Fp, R>>::rx(Fp::ZERO, endoscalar)?;
+            let points_rx =
+                <PointsStage<EpAffine, NUM_POINTS> as StageExt<Fp, R>>::rx(Fp::ZERO, &points)?;
             let final_trace = staged
                 .trace(EndoscalingStepWitness {
                     endoscalar,
                     points: &points,
                 })?
                 .into_output();
-            let final_rx = registry.assemble(&final_trace, staged_h)?;
+            let final_rx = registry.assemble(&final_trace, staged_h, Fp::ZERO)?;
 
             let y = Fp::random(&mut rand::rng());
 
@@ -524,12 +525,13 @@ mod tests {
                     points: &points,
                 })?
                 .into_output();
-            let final_rx = registry.assemble(&final_trace, staged_h)?;
+            let final_rx = registry.assemble(&final_trace, staged_h, Fp::ZERO)?;
 
             let y = Fp::random(&mut rand::rng());
 
-            let endoscalar_rx = <EndoscalarStage as StageExt<Fp, R>>::rx(endoscalar)?;
-            let points_rx = <PointsStage<EpAffine, NUM_POINTS> as StageExt<Fp, R>>::rx(&points)?;
+            let endoscalar_rx = <EndoscalarStage as StageExt<Fp, R>>::rx(Fp::ZERO, endoscalar)?;
+            let points_rx =
+                <PointsStage<EpAffine, NUM_POINTS> as StageExt<Fp, R>>::rx(Fp::ZERO, &points)?;
 
             // Verify combined circuit identity.
             let mut lhs = final_rx.clone();

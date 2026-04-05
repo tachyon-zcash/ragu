@@ -66,22 +66,23 @@ fn test_internal_circuit_constraint_counts() {
     macro_rules! check_constraints {
         ($variant:ident, mul = $mul:expr, lin = $lin:expr) => {{
             let circuit_index = InternalCircuitIndex::$variant.circuit_index();
-            let (actual_mul, actual_lin) = app.native_registry.constraint_counts(circuit_index);
+            let (actual_gates, actual_constraints) =
+                app.native_registry.constraint_counts(circuit_index);
             assert_eq!(
-                actual_mul,
+                actual_gates,
                 $mul,
-                "{}: multiplication constraints: expected {}, got {}",
+                "{}: gates: expected {}, got {}",
                 stringify!($variant),
                 $mul,
-                actual_mul
+                actual_gates
             );
             assert_eq!(
-                actual_lin,
+                actual_constraints,
                 $lin,
-                "{}: linear constraints: expected {}, got {}",
+                "{}: constraints: expected {}, got {}",
                 stringify!($variant),
                 $lin,
-                actual_lin
+                actual_constraints
             );
         }};
     }
@@ -98,16 +99,16 @@ fn test_internal_circuit_constraint_counts() {
 fn test_internal_stage_parameters() {
     macro_rules! check_stage {
         ($Stage:ty, skip = $skip:expr, num = $num:expr) => {{
-            assert_eq!(<$Stage>::skip_multiplications(), $skip, "{}: skip", stringify!($Stage));
-            assert_eq!(<$Stage as StageExt<_, _>>::num_multiplications(), $num, "{}: num", stringify!($Stage));
+            assert_eq!(<$Stage>::skip_gates(), $skip, "{}: skip", stringify!($Stage));
+            assert_eq!(<$Stage as StageExt<_, _>>::num_gates(), $num, "{}: num", stringify!($Stage));
         }};
     }
 
-    check_stage!(Preamble, skip =   0, num = 225);
-    check_stage!(OuterError,  skip = 225, num = 186);
-    check_stage!(InnerError,  skip = 411, num = 399);
-    check_stage!(Query,   skip = 225, num =  23);
-    check_stage!(Eval,    skip = 248, num =  18);
+    check_stage!(Preamble, skip =   1, num = 225);
+    check_stage!(OuterError,  skip = 226, num = 186);
+    check_stage!(InnerError,  skip = 412, num = 399);
+    check_stage!(Query,   skip = 226, num =  23);
+    check_stage!(Eval,    skip = 249, num =  18);
 }
 
 /// Helper test to print current constraint counts in copy-pasteable format.
@@ -163,8 +164,8 @@ fn print_internal_stage_parameters() {
 
     macro_rules! print_stage {
         ($Stage:ty) => {{
-            let skip = <$Stage>::skip_multiplications();
-            let num = <$Stage as StageExt<_, _>>::num_multiplications();
+            let skip = <$Stage>::skip_gates();
+            let num = <$Stage as StageExt<_, _>>::num_gates();
             println!(
                 "        check_stage!({:<8} skip = {:>3}, num = {:>3});",
                 format!("{},", stringify!($Stage)),
@@ -197,7 +198,7 @@ fn test_native_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fp!(0x07c92629c59ab07c4f51c5b9fa976f2a2489e9a68c43cda8805d29405fbb2df9);
+    let expected = fp!(0x339e595491fd177b620ea6dc286cf85c3caab480edba867792383f33714019e4);
 
     assert_eq!(
         app.native_registry.digest(),
@@ -221,7 +222,7 @@ fn test_nested_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fq!(0x3fc83d6620ddaa901105e3b851b6763fc36d889eda11607770e8f461aced66fb);
+    let expected = fq!(0x31cda5818b2554cf6064590380712d5d44461fb3bc0628ac8742343eb731d271);
 
     assert_eq!(
         app.nested_registry.digest(),

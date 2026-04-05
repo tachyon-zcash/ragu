@@ -31,8 +31,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         let bridge = proof::Bridge::commit(
             self.params,
-            rng,
             nested::stages::preamble::Stage::<C::HostCurve, R>::rx(
+                C::ScalarField::random(&mut *rng),
                 &nested::stages::preamble::Witness {
                     native_preamble: native.commitment,
                     left: nested::stages::preamble::ChildWitness::from_proof(left),
@@ -61,17 +61,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             &application.right_header,
         )?;
 
-        let rx = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::rx(&preamble_witness)?;
-        let blind = C::CircuitField::random(&mut *rng);
-        let commitment = rx.commit_to_affine(C::host_generators(self.params), blind);
+        let rx = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::rx(
+            C::CircuitField::random(&mut *rng),
+            &preamble_witness,
+        )?;
+        let commitment = rx.commit_to_affine(C::host_generators(self.params));
 
-        Ok((
-            proof::RxTriple {
-                rx,
-                blind,
-                commitment,
-            },
-            preamble_witness,
-        ))
+        Ok((proof::RxTriple { rx, commitment }, preamble_witness))
     }
 }

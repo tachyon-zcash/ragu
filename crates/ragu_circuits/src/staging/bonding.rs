@@ -1,10 +1,10 @@
 //! Bonding polynomials for multi-stage circuits.
 //!
 //! This module produces a [`BondingObject`] from any [`MultiStageCircuit`]
-//! whose witness uses only linear constraints: [`Driver::alloc`],
-//! [`Driver::add`], and [`Driver::enforce_zero`] with normal wires (no
-//! [`Driver::mul`], [`Driver::constant`], or `ONE`-wire references). Because
-//! the circuit has no multiplication gates, it needs no final trace of its own
+//! whose witness uses no gates: [`Driver::alloc`],
+//! [`Driver::add`], and [`Driver::enforce_zero`] with normal wires are
+//! permitted (no [`Driver::mul`], [`Driver::constant`], or `ONE`-wire
+//! references). Because the circuit has no gates, it needs no final trace
 //! and exists purely to enforce wiring between stages.
 //!
 //! The `ONE`-wire contribution is stripped so that the constant term in $Y$ is
@@ -45,7 +45,7 @@ where
 {
     /// Builds a [`BondingObject`] from this [`MultiStage`] circuit.
     ///
-    /// The witness must use only linear constraints: [`Driver::alloc`],
+    /// The witness must use no gates: [`Driver::alloc`],
     /// [`Driver::add`], and [`Driver::enforce_zero`] are permitted (without
     /// referencing the [`Driver::ONE`] wire), but [`Driver::mul`] and
     /// [`Driver::constant`] are rejected.
@@ -107,7 +107,7 @@ impl<F: Field> LinearExpression<BondingWire, F> for RejectOne {
 /// [`add`](Driver::add), and [`enforce_zero`](Driver::enforce_zero) with
 /// normal wires. Calling [`mul`](Driver::mul)/[`gate`](DriverTypes::gate),
 /// [`constant`](Driver::constant), or referencing the [`ONE`](Driver::ONE)
-/// wire in any linear constraint records a violation.
+/// wire in any constraint records a violation.
 ///
 /// All methods succeed; violations are accumulated in the `error` field and
 /// checked by the caller after the witness completes.
@@ -208,16 +208,16 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for Stripped<'_, F, R> {
 
     fn sy(&self, y: F, floor_plan: &[ConstraintSegment]) -> sparse::Polynomial<F, R> {
         let mut poly = self.0.sy(y, floor_plan);
-        // Gate 0's b-wire holds the ONE wire; remove its y^0 contribution.
-        // In the backward perspective, b[0] maps to degree 2n.
-        let mut correction = sparse::View::<_, R, _>::backward();
+        // The SYSTEM gate's b-wire holds the ONE wire; remove its y^0 contribution.
+        // In the wiring perspective, b[0] maps to degree 2n.
+        let mut correction = sparse::View::<_, R, _>::wiring();
         correction.b.push(F::ONE);
         poly.sub_assign(&correction.build());
         poly
     }
 
     // TODO(#614): revisit constraint_counts semantics — ambiguous with
-    // system constraints (enforce_one, registry key, ONE gate).
+    // system constraints (enforce_one, registry key, SYSTEM gate).
     fn constraint_counts(&self) -> (usize, usize) {
         let (mul, lin) = self.0.constraint_counts();
         // The inner object includes the `enforce_one` constraint that we strip.
@@ -492,11 +492,11 @@ mod tests {
         assert_eq!(sxy, obj.sy(y, &floor_plan).eval(x));
     }
 
-    /// Build a trace with gate 0 as ONE (zeros) and gates 1..n from (b, d)
+    /// Build a trace with the SYSTEM gate zeroed and gates 1..n from (b, d)
     /// pairs.
     fn build_trace(gate_values: &[(Fp, Fp)]) -> sparse::Polynomial<Fp, R> {
-        let mut view = sparse::View::<_, R, _>::forward();
-        // ONE gate placeholder.
+        let mut view = sparse::View::<_, R, _>::trace();
+        // SYSTEM gate placeholder.
         view.a.push(Fp::ZERO);
         view.b.push(Fp::ZERO);
         view.c.push(Fp::ZERO);

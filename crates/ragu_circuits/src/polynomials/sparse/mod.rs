@@ -455,20 +455,15 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
     pub fn commit<C: CurveAffine<ScalarExt = F>>(
         &self,
         generators: &impl ragu_arithmetic::FixedGenerators<C>,
-        blind: F,
     ) -> C::Curve {
         assert!(generators.g().len() >= R::num_coeffs());
 
         let g = generators.g();
         ragu_arithmetic::mul(
+            self.blocks.iter().flat_map(|(_, data)| data.iter()),
             self.blocks
                 .iter()
-                .flat_map(|(_, data)| data.iter())
-                .chain(core::iter::once(&blind)),
-            self.blocks
-                .iter()
-                .flat_map(|(start, data)| &g[*start..*start + data.len()])
-                .chain(core::iter::once(generators.h())),
+                .flat_map(|(start, data)| &g[*start..*start + data.len()]),
         )
     }
 
@@ -479,9 +474,8 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
     pub fn commit_to_affine<C: CurveAffine<ScalarExt = F>>(
         &self,
         generators: &impl ragu_arithmetic::FixedGenerators<C>,
-        blind: F,
     ) -> C {
-        self.commit(generators, blind).into()
+        self.commit(generators).into()
     }
 }
 

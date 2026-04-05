@@ -454,7 +454,7 @@ mod tests {
         })?;
 
         assert_eq!(sim.num_allocations(), 1);
-        assert_eq!(sim.num_multiplications(), 288);
+        assert_eq!(sim.num_gates(), 288);
 
         Ok(())
     }

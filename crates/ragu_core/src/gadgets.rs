@@ -227,7 +227,7 @@ pub unsafe trait GadgetKind<F: Field>: core::any::Any {
 
     /// Enforces that two gadgets' wires are equal.
     ///
-    /// The provided driver is used to create linear constraints between the
+    /// The provided driver is used to create constraints between the
     /// gadgets' wires through recursive descent through the gadget structure.
     /// The provided gadgets can be for another driver, since it's only
     /// important that the wire type be the same.

@@ -330,7 +330,7 @@ impl Routine<Fp> for NestingWithExtra {
     }
 }
 
-/// Linear constraints only — no multiplications.
+/// Constraints only — no gates.
 #[derive(Clone)]
 struct LinearOnly;
 
@@ -724,7 +724,7 @@ impl Routine<Fp> for DelegateEnforceLocal {
 /// enforces the CHILD OUTPUT wire == 0.
 ///
 /// Paired with [`DelegateAllocEnforceFirst`]: both have one local mul
-/// gate and one linear constraint after delegation, but one enforces the
+/// gate and one constraint after delegation, but one enforces the
 /// child output while the other enforces the local allocation.
 #[derive(Clone)]
 struct DelegatePadEnforceOutput;
@@ -759,7 +759,7 @@ impl Routine<Fp> for DelegatePadEnforceOutput {
 /// wire == 0.
 ///
 /// Paired with [`DelegatePadEnforceOutput`]: both have one local mul
-/// gate and one linear constraint, but this routine enforces a fresh
+/// gate and one constraint, but this routine enforces a fresh
 /// input-independent allocation instead of the child's input-dependent
 /// output.
 #[derive(Clone)]
@@ -1462,10 +1462,10 @@ fn test_metrics_integration() {
         RoutineIdentity::Routine(fp) => assert_eq!(fp, direct),
         RoutineIdentity::Root => panic!("record 1 should be Routine"),
     }
-    assert!(metrics.segments[1].num_multiplication_constraints() > 0);
+    assert!(metrics.segments[1].num_gates() > 0);
 }
 
-/// Routines with only linear constraints (no multiplications) get nonzero fingerprints.
+/// Routines with only constraints (no gates) get nonzero fingerprints.
 #[test]
 fn test_linear_only() {
     let linear = fingerprint_elem(&LinearOnly);
@@ -1533,13 +1533,13 @@ fn test_aliasing_propagates_through_linear_combinations() {
     );
 }
 
-/// SquareOnce (2 linear constraints) vs SquareOnceWithLeadingTrivial
+/// SquareOnce (2 constraints) vs SquareOnceWithLeadingTrivial
 /// (2 leading empty `enforce_zero` + 2 from square = 4 total).  The
 /// nonzero Horner seed makes leading empty constraints visible: the
 /// seed shifts through extra powers of $y$, producing distinct scalars.
-/// Linear constraint counts also differ (2 vs 4).
+/// Constraint counts also differ (2 vs 4).
 #[test]
-fn test_aliasing_leading_trivial_linear_constraints() {
+fn test_aliasing_leading_trivial_constraints() {
     assert_ne!(
         fingerprint_elem(&SquareOnce),
         fingerprint_elem(&SquareOnceWithLeadingTrivial),
@@ -1591,11 +1591,8 @@ fn test_wire_collision_metrics_identical() {
     assert_eq!(m1.segments.len(), m2.segments.len());
     assert_eq!(m1.segments.len(), 3);
     for (s1, s2) in m1.segments.iter().zip(m2.segments.iter()) {
-        assert_eq!(
-            s1.num_multiplication_constraints(),
-            s2.num_multiplication_constraints()
-        );
-        assert_eq!(s1.num_linear_constraints(), s2.num_linear_constraints());
+        assert_eq!(s1.num_gates(), s2.num_gates());
+        assert_eq!(s1.num_constraints(), s2.num_constraints());
     }
 }
 
@@ -1649,7 +1646,7 @@ fn test_missing_counts_via_eval() {
 
 /// Regression: via `eval`, SquareOnce and SquareOnceWithLeadingTrivial
 /// now produce distinct scalars thanks to the nonzero Horner seed.
-/// They also differ in linear constraint count (2 vs 4).
+/// They also differ in constraint count (2 vs 4).
 #[test]
 fn test_vanishing_leading_trivial_via_eval() {
     assert_ne!(
@@ -1680,11 +1677,8 @@ fn test_wire_collision_via_eval_metrics_identical() {
     assert_eq!(m1.segments.len(), m2.segments.len());
     assert_eq!(m1.segments.len(), 3);
     for (s1, s2) in m1.segments.iter().zip(m2.segments.iter()) {
-        assert_eq!(
-            s1.num_multiplication_constraints(),
-            s2.num_multiplication_constraints()
-        );
-        assert_eq!(s1.num_linear_constraints(), s2.num_linear_constraints());
+        assert_eq!(s1.num_gates(), s2.num_gates());
+        assert_eq!(s1.num_constraints(), s2.num_constraints());
     }
 }
 

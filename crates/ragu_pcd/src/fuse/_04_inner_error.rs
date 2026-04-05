@@ -43,8 +43,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         let bridge = proof::Bridge::commit(
             self.params,
-            rng,
             nested::stages::inner_error::Stage::<C::HostCurve, R>::rx(
+                C::ScalarField::random(&mut *rng),
                 &nested::stages::inner_error::Witness {
                     native_inner_error: native_inner_error.rx_triple.commitment,
                     registry_wy: native_inner_error.registry_wy_commitment,
@@ -91,28 +91,24 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             };
         let native_rx =
             native::stages::inner_error::Stage::<C, R, HEADER_SIZE, native::RevdotParameters>::rx(
+                C::CircuitField::random(&mut *rng),
                 &inner_error_witness,
             )?;
 
-        let native_blind = C::CircuitField::random(&mut *rng);
-
         let registry_wy_poly = native_registry.y(y);
-        let registry_wy_blind = C::CircuitField::random(&mut *rng);
 
         let host_gen = C::host_generators(self.params);
         let [registry_wy_commitment, native_commitment] = ragu_arithmetic::batch_to_affine([
-            registry_wy_poly.commit(host_gen, registry_wy_blind),
-            native_rx.commit(host_gen, native_blind),
+            registry_wy_poly.commit(host_gen),
+            native_rx.commit(host_gen),
         ]);
 
         Ok((
             proof::NativeInnerError {
                 registry_wy_poly,
-                registry_wy_blind,
                 registry_wy_commitment,
                 rx_triple: proof::RxTriple {
                     rx: native_rx,
-                    blind: native_blind,
                     commitment: native_commitment,
                 },
             },

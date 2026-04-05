@@ -150,7 +150,7 @@ fn test_simple_circuit() {
     let obj = into_circuit_object::<_, _, MyRank>(MySimpleCircuit).unwrap();
     let plan = floor_planner::floor_plan(obj.segment_records());
 
-    let assignment = trace.assemble(&plan).unwrap();
+    let assignment = trace.assemble(&plan, Fp::ZERO).unwrap();
 
     consistency_checks::<MyRank>(&*obj);
 

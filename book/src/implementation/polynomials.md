@@ -5,7 +5,7 @@
 Individual arithmetic circuits are defined by the
 [structured vector](../protocol/prelim/structured_vectors.md)
 $\v{s} \in \F^{4n}$ that describes the
-[linear constraints](../protocol/core/arithmetization.md#linear-constraints)
+[constraints](../protocol/core/arithmetization.md#constraints)
 enforced over the witness, given a concrete choice of random challenge $y$.
 This vector is the coefficient vector of a special polynomial
 
@@ -26,11 +26,11 @@ the reduced wiring polynomial. There are two operations that influence this
 polynomial:
 
 * `enforce_zero` creates a
-  [linear constraint](../protocol/core/arithmetization.md#linear-constraints)
+  [constraint](../protocol/core/arithmetization.md#constraints)
   that enforces that a linear combination of wires must equal zero. This
   produces a new term in $Y^j$ for some unused $j$.
 * `mul` creates new wires $(a, b, c)$ that must satisfy a
-  [multiplication constraint]
+  [gate]
   $ab = c$. This allocates (or assigns) the corresponding powers
   $(X^{2n + i}, X^{2n - 1 - i}, X^i)$ for some unused $i$.
 
@@ -51,5 +51,5 @@ definition, and so its evaluation can be fully memoized for future
 invocations of an identical sequence of operations by simply scaling by
 $X^i Y^j$.
 
-[multiplication constraint]: ../protocol/core/arithmetization.md#multiplication-constraints
+[gate]: ../protocol/core/arithmetization.md#gates
 

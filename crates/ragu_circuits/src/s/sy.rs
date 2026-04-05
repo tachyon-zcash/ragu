@@ -43,14 +43,14 @@
 //!
 //! 4. **Cascading to allocated wires** — Resolution cascades through the
 //!    virtual wire graph until reaching allocated wires ($a$, $b$, $c$, $d$), where
-//!    values are written directly to the backward view of the polynomial.
+//!    values are written directly to the wiring view of the polynomial.
 //!
-//! ### Backward View
+//! ### Wiring View
 //!
 //! The wiring constraint $\langle\langle r(X), s(X, y) \rangle\rangle = k(y)$
 //! uses a "revdot" inner product: coefficients of $r(X)$ are matched against
 //! coefficients of $s(X, y)$ in a specific order based on wire type. Rather
-//! than building a flat coefficient vector and reinterpreting it, the backward
+//! than building a flat coefficient vector and reinterpreting it, the wiring
 //! view provides direct access to the $a$, $b$, $c$, and $d$ coefficient regions.
 //! See [`sparse::View`] for details.
 //!
@@ -69,16 +69,15 @@ use ragu_core::{
     maybe::Empty,
     routines::Routine,
 };
-use ragu_primitives::GadgetExt;
 
 use alloc::{vec, vec::Vec};
 use core::cell::{RefCell, RefMut};
 
-use super::DriverExt;
 use crate::{
-    Circuit, DriverScope,
+    DriverScope,
     floor_planner::ConstraintSegment,
     polynomials::{Rank, sparse},
+    raw::RawCircuit,
 };
 
 /// An index identifying a wire in the evaluator.
@@ -91,7 +90,7 @@ use crate::{
 ///
 /// - `A(i)`, `B(i)`, `C(i)`, `D(i)` — Allocated wires from gate $i$, corresponding
 ///   to the $a$, $b$, $c$, $d$ wires respectively. Values are written directly to the
-///   backward view when resolved.
+///   wiring view when resolved.
 ///
 /// - `Virtual(i)` — A virtual wire (linear combination) at index $i$ in the
 ///   [`VirtualTable`]. Uses reference counting for deferred resolution.
@@ -120,11 +119,11 @@ enum WireIndex {
 /// refcount reaches zero, it resolves (see [`VirtualTable::free`]).
 ///
 /// For allocated wires (`A`, `B`, `C`, `D`), reference counting is a no-op since
-/// these wires write directly to the backward view upon resolution.
+/// these wires write directly to the wiring view upon resolution.
 ///
 /// # The `ONE` Wire
 ///
-/// The constant [`Driver::ONE`] is the $b$ wire from gate 0. Since `const`
+/// The constant [`Driver::ONE`] is the $b$ wire of the SYSTEM gate. Since `const`
 /// items cannot hold references, `ONE` uses `table: None`. This is safe because
 /// the ONE wire is allocated (not virtual) and needs no reference counting.
 ///
@@ -230,12 +229,12 @@ struct VirtualWire<F: Field> {
     value: Coeff<F>,
 }
 
-/// Manages virtual wires and the coefficient buffers for the backward view of $s(X, y)$.
+/// Manages virtual wires and the coefficient buffers for the wiring view of $s(X, y)$.
 ///
 /// The virtual table maintains:
 /// - A vector of [`VirtualWire`]s representing deferred linear combinations
 /// - A free list for reusing virtual wire slots after resolution
-/// - Mutable references to the backward view's $a$, $b$, $c$ coefficient vectors
+/// - Mutable references to the wiring view's $a$, $b$, $c$ coefficient vectors
 ///
 /// See [`Self::free`] for the resolution algorithm and reference counting details.
 struct VirtualTable<'sy, F: Field, R: Rank> {
@@ -252,12 +251,12 @@ struct VirtualTable<'sy, F: Field, R: Rank> {
     /// `wires`.
     free: Vec<usize>,
 
-    /// Backward-view wire buffers for the polynomial $s(X, y)$.
+    /// Wiring-view wire buffers for the polynomial $s(X, y)$.
     ///
     /// Provides direct mutable access to the $a$, $b$, $c$, $d$ coefficient
     /// vectors. When allocated wires (A/B/C/D) receive values during
     /// resolution, they are written here. See the [module documentation](self)
-    /// for the backward view concept.
+    /// for the wiring view concept.
     a: &'sy mut Vec<F>,
     b: &'sy mut Vec<F>,
     c: &'sy mut Vec<F>,
@@ -349,12 +348,12 @@ struct SyScope<'table, 'sy, F: Field, R: Rank> {
     available_d: Option<Wire<'table, 'sy, F, R>>,
     /// Current $y$ power being applied to constraints in this routine.
     current_y: F,
-    /// Absolute index of the next multiplication constraint to be written.
-    /// Initialized to `segment.multiplication_start` on routine entry.
-    multiplication_constraints: usize,
-    /// Absolute index of the next linear constraint to be written.
-    /// Initialized to `segment.linear_start` on routine entry.
-    linear_constraints: usize,
+    /// Absolute index of the next gate to be written.
+    /// Initialized to `segment.gate_start` on routine entry.
+    gates: usize,
+    /// Absolute index of the next constraint to be written.
+    /// Initialized to `segment.constraint_start` on routine entry.
+    constraints: usize,
 }
 
 /// A [`Driver`] that computes $s(X, y)$ at a fixed $y$.
@@ -442,7 +441,7 @@ impl<'table, 'sy, F: Field, R: Rank> LinearExpression<Wire<'table, 'sy, F, R>, F
     }
 }
 
-/// Directly enforces a linear constraint by distributing $y^j$ values.
+/// Directly enforces a constraint by distributing $y^j$ values.
 ///
 /// Used by [`Driver::enforce_zero`] to add weighted contributions to wires.
 /// Unlike [`TermCollector`] which builds a term list for deferred resolution,
@@ -499,15 +498,15 @@ impl<'table, 'sy, F: Field, R: Rank> DriverTypes for Evaluator<'table, 'sy, '_, 
     type ImplField = F;
     type ImplWire = Wire<'table, 'sy, F, R>;
 
-    /// Consumes a multiplication gate, returning wire handles for $(a, b, c, d)$.
+    /// Consumes a gate, returning wire handles for $(a, b, c, d)$.
     ///
     /// The gate index comes from the absolute floor-plan position tracked in
-    /// `scope.multiplication_constraints`. Backward view slots are
+    /// `scope.gates`. Wiring view slots are
     /// pre-allocated, so no push is needed.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::MultiplicationBoundExceeded`] if the gate count reaches
+    /// Returns [`Error::GateBoundExceeded`] if the gate count reaches
     /// [`Rank::n()`].
     fn gate(
         &mut self,
@@ -518,11 +517,11 @@ impl<'table, 'sy, F: Field, R: Rank> DriverTypes for Evaluator<'table, 'sy, '_, 
         Wire<'table, 'sy, F, R>,
         Wire<'table, 'sy, F, R>,
     )> {
-        let index = self.scope.multiplication_constraints;
+        let index = self.scope.gates;
         if index == R::n() {
-            return Err(Error::MultiplicationBoundExceeded { limit: R::n() });
+            return Err(Error::GateBoundExceeded { limit: R::n() });
         }
-        self.scope.multiplication_constraints += 1;
+        self.scope.gates += 1;
 
         let a = Wire::new(WireIndex::A(index), self.virtual_table);
         let b = Wire::new(WireIndex::B(index), self.virtual_table);
@@ -572,7 +571,7 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, '
         }
     }
 
-    /// Applies a linear constraint weighted by the current $y$ power.
+    /// Applies a constraint weighted by the current $y$ power.
     ///
     /// Distributes `current_y * coeff` to each wire in the linear combination
     /// via [`TermEnforcer`], then advances `current_y` by multiplying with
@@ -580,17 +579,17 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, '
     ///
     /// # Errors
     ///
-    /// Returns [`Error::LinearBoundExceeded`] if the constraint count reaches
+    /// Returns [`Error::ConstraintBoundExceeded`] if the constraint count reaches
     /// `Rank::num_coeffs() - 1` (the last slot is reserved for the registry
     /// key constraint).
     fn enforce_zero(&mut self, lc: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
-        let q = self.scope.linear_constraints;
+        let q = self.scope.constraints;
         if q >= R::num_coeffs() - 1 {
-            return Err(Error::LinearBoundExceeded {
+            return Err(Error::ConstraintBoundExceeded {
                 limit: R::num_coeffs() - 1,
             });
         }
-        self.scope.linear_constraints += 1;
+        self.scope.constraints += 1;
 
         lc(TermEnforcer(
             self.virtual_table.borrow_mut(),
@@ -614,17 +613,17 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, '
         // see "Polynomial Encoding and Scope Jumps" in the `s` module doc.
         let init_scope = SyScope {
             available_d: None,
-            // When num_linear_constraints == 0 the routine emits no
+            // When num_constraints == 0 the routine emits no
             // enforce_zero calls, so current_y is never read; use
             // F::ZERO as an inert sentinel.
-            current_y: if seg.num_linear_constraints == 0 {
+            current_y: if seg.num_constraints == 0 {
                 F::ZERO
             } else {
                 self.y
-                    .pow_vartime([(seg.linear_start + seg.num_linear_constraints - 1) as u64])
+                    .pow_vartime([(seg.constraint_start + seg.num_constraints - 1) as u64])
             },
-            multiplication_constraints: seg.multiplication_start,
-            linear_constraints: seg.linear_start,
+            gates: seg.gate_start,
+            constraints: seg.constraint_start,
         };
 
         self.with_scope(init_scope, |this| {
@@ -633,14 +632,14 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, '
 
             // Verify this routine consumed exactly the expected constraints.
             assert_eq!(
-                this.scope.multiplication_constraints,
-                seg.multiplication_start + seg.num_multiplication_constraints,
-                "routine multiplication constraint count must match floor plan"
+                this.scope.gates,
+                seg.gate_start + seg.num_gates,
+                "routine gate count must match floor plan"
             );
             assert_eq!(
-                this.scope.linear_constraints,
-                seg.linear_start + seg.num_linear_constraints,
-                "routine linear constraint count must match floor plan"
+                this.scope.constraints,
+                seg.constraint_start + seg.num_constraints,
+                "routine constraint count must match floor plan"
             );
 
             Ok(result)
@@ -660,14 +659,14 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, '
 /// - `y`: The evaluation point for the $Y$ variable.
 /// - `floor_plan`: Per-segment absolute offsets, computed by
 ///   [`floor_plan()`](crate::floor_planner::floor_plan). The root segment's
-///   `num_linear_constraints` determines the initial `current_y = y^{q-1}`
+///   `num_constraints` determines the initial `current_y = y^{q-1}`
 ///   for reverse Horner iteration.
-pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
-    circuit: &C,
+pub fn eval<F: Field, RC: RawCircuit<F>, R: Rank>(
+    circuit: &RC,
     y: F,
     floor_plan: &[ConstraintSegment],
 ) -> Result<sparse::Polynomial<F, R>> {
-    let mut view = sparse::View::backward();
+    let mut view = sparse::View::wiring();
 
     if y == F::ZERO {
         // If y is zero, all terms y^j for j > 0 vanish, leaving only the ONE
@@ -676,17 +675,14 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
         return Ok(view.build());
     }
 
-    let total_multiplications: usize = floor_plan
-        .iter()
-        .map(|s| s.num_multiplication_constraints)
-        .sum();
+    let total_gates: usize = floor_plan.iter().map(|s| s.num_gates).sum();
 
-    // Circuit-scope segment's linear constraint count (for initial current_y).
+    // Circuit-scope segment's constraint count (for initial current_y).
     // This segment always has at least the ONE constraint.
-    let root_linear_constraints = floor_plan[0].num_linear_constraints;
+    let root_constraints = floor_plan[0].num_constraints;
     assert!(
-        root_linear_constraints > 0,
-        "root segment must have at least one linear constraint"
+        root_constraints > 0,
+        "root segment must have at least one constraint"
     );
 
     {
@@ -700,13 +696,13 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
             _marker: core::marker::PhantomData,
         });
 
-        // Pre-allocate backward view slots for all multiplication gates.
+        // Pre-allocate wiring view slots for all gates.
         {
             let mut table = virtual_table.borrow_mut();
-            table.a.resize(total_multiplications, F::ZERO);
-            table.b.resize(total_multiplications, F::ZERO);
-            table.c.resize(total_multiplications, F::ZERO);
-            table.d.resize(total_multiplications, F::ZERO);
+            table.a.resize(total_gates, F::ZERO);
+            table.b.resize(total_gates, F::ZERO);
+            table.c.resize(total_gates, F::ZERO);
+            table.d.resize(total_gates, F::ZERO);
         }
 
         {
@@ -714,9 +710,9 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
                 scope: SyScope {
                     available_d: None,
                     // Assertion above prevents this from underflowing.
-                    current_y: y.pow_vartime([(root_linear_constraints - 1) as u64]),
-                    multiplication_constraints: 0,
-                    linear_constraints: 0,
+                    current_y: y.pow_vartime([(root_constraints - 1) as u64]),
+                    gates: 0,
+                    constraints: 0,
                 },
                 y,
                 y_inv: y.invert().expect("y is not zero"),
@@ -726,17 +722,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
                 _marker: core::marker::PhantomData,
             };
 
-            // Allocate the ONE gate (gate 0). The registry key constraint is
-            // injected at the registry level, not here.
-            evaluator.mul(|| unreachable!())?;
-
-            let mut outputs = vec![];
-            let io = circuit.witness(&mut evaluator, Empty)?.into_output();
-            io.write(&mut evaluator, &mut outputs)?;
-
-            // Enforcing public inputs
-            evaluator.enforce_public_outputs(outputs.iter().map(|output| output.wire()))?;
-            evaluator.enforce_one()?;
+            crate::raw::orchestrate(&mut evaluator, circuit, Empty)?;
 
             // Verify all floor plan segments were consumed and counts match.
             assert_eq!(
@@ -745,13 +731,12 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
                 "floor plan routine count must match synthesis"
             );
             assert_eq!(
-                evaluator.scope.multiplication_constraints,
-                evaluator.floor_plan[0].num_multiplication_constraints,
-                "root multiplication constraint count must match floor plan"
+                evaluator.scope.gates, evaluator.floor_plan[0].num_gates,
+                "root gate count must match floor plan"
             );
             assert_eq!(
-                evaluator.scope.linear_constraints, evaluator.floor_plan[0].num_linear_constraints,
-                "root linear constraint count must match floor plan"
+                evaluator.scope.constraints, evaluator.floor_plan[0].num_constraints,
+                "root constraint count must match floor plan"
             );
         }
 

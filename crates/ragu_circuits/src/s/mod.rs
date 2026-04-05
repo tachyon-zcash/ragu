@@ -3,7 +3,7 @@
 //! # Background
 //!
 //! Circuits are fully described by [wiring polynomials] that encode their
-//! linear constraints, and all linear constraints are determined by a sequence
+//! constraints, and all constraints are determined by a sequence
 //! of [`enforce_zero`] calls made during circuit synthesis. In each such call,
 //! a new univariate polynomial in $X$ (representing the constraint over the
 //! wires) is added to $s(X, Y)$ as a separate term weighted by $Y$ to keep
@@ -20,7 +20,7 @@
 //! )\right)
 //! $$
 //!
-//! where $q$ is the number of linear constraints (at most
+//! where $q$ is the number of constraints (at most
 //! [`num_coeffs()`](crate::polynomials::Rank::num_coeffs)), and
 //! $\mathbf{a}, \mathbf{b}, \mathbf{c}, \mathbf{d}$ are fixed coefficient
 //! matrices determined by the `enforce_zero` (and indirectly,
@@ -57,14 +57,14 @@
 //! ### Polynomial Encoding and Scope Jumps
 //!
 //! The [`floor_plan`] partitions the global constraint index space so that each
-//! segment owns a contiguous block of $Y$-powers (for linear constraints) and
-//! gate indices (for multiplication constraints). If segment $i$ has linear
-//! offset $\ell\_{i}$ and multiplication offset $m\_{i}$, then the $j$-th
-//! linear constraint emitted within that segment is placed at
+//! segment owns a contiguous block of $Y$-powers (for constraints) and
+//! gate indices (for gates). If segment $i$ has constraint
+//! offset $\ell\_{i}$ and gate offset $m\_{i}$, then the $j$-th
+//! constraint emitted within that segment is placed at
 //!
 //! $$Y^{\ell\_{i} + j}$$
 //!
-//! in $s(X, Y)$. Similarly, the $k$-th multiplication gate in segment $i$
+//! in $s(X, Y)$. Similarly, the $k$-th gate in segment $i$
 //! occupies absolute gate index $m\_{i} + k$.
 //!
 //! Because synthesis interleaves a segment's own constraints with nested
@@ -89,56 +89,7 @@
 //! [`floor_plan`]: crate::floor_planner::floor_plan
 //! [wiring polynomials]: http://TODO
 
-use ragu_core::{
-    Result,
-    drivers::{Driver, LinearExpression},
-};
-
 pub(crate) mod common;
 pub mod sx;
 pub mod sxy;
 pub mod sy;
-
-/// An extension trait for [`Driver`] for common (internal) $s(X, Y)$ constraint
-/// enforcement.
-///
-/// # Public Input Enforcement
-///
-/// Algebraically, all linear constraints relate linear combinations of wires to
-/// elements in the public input vector. However, circuits are usually concerned
-/// with enforcing that combinations of wires equal zero, and hence
-/// [`enforce_zero`] is offered as the primary API even though it is technically
-/// a special case that constrains against an element of the (sparse) public
-/// input vector that is implicitly assigned to zero.
-///
-/// This trait provides [`enforce_public_outputs`] and [`enforce_one`] methods
-/// to explicitly denote when constraints _actually_ intend to bind against
-/// designated coefficients of the low-degree $k(Y)$ public input polynomial.
-/// Internally, these just proxy to `enforce_zero` anyway.
-///
-/// [`enforce_zero`]: ragu_core::drivers::Driver::enforce_zero
-/// [`enforce_public_outputs`]: DriverExt::enforce_public_outputs
-/// [`enforce_one`]: DriverExt::enforce_one
-trait DriverExt<'dr>: Driver<'dr> {
-    /// Enforces public output constraints by binding output wires to
-    /// coefficients of $k(Y)$.
-    fn enforce_public_outputs<'w>(
-        &mut self,
-        outputs: impl IntoIterator<Item = &'w Self::Wire>,
-    ) -> Result<()>
-    where
-        Self::Wire: 'w,
-    {
-        outputs
-            .into_iter()
-            .try_for_each(|output| self.enforce_zero(|lc| lc.add(output)))
-    }
-
-    /// Enforces the special `ONE` constraint that is enforced against the
-    /// constant term of $k(Y)$.
-    fn enforce_one(&mut self) -> Result<()> {
-        self.enforce_zero(|lc| lc.add(&Self::ONE))
-    }
-}
-
-impl<'dr, D: Driver<'dr>> DriverExt<'dr> for D {}

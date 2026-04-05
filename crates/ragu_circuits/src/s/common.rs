@@ -21,7 +21,7 @@
 //!
 //! ### `ONE` Wire Evaluation
 //!
-//! The `ONE` wire corresponds to the $b$ wire from gate 0, with monomial
+//! The `ONE` wire corresponds to the $b$ wire of the SYSTEM gate, with monomial
 //! $x^{2n}$. Since [`Driver::ONE`] must be a compile-time constant, it cannot
 //! hold this computed value. Instead, [`WireEval::One`] serves as a sentinel
 //! that [`WireEvalSum::add_term`] resolves to the cached $x^{2n}$ value

@@ -1,5 +1,5 @@
 //! Property tests verifying that [`crate::metrics::eval`] and [`crate::trace::eval`]
-//! agree on segment count and per-segment multiplication-gate counts, confirming
+//! agree on segment count and per-segment gate counts, confirming
 //! that both evaluators traverse the routine call tree in identical DFS order.
 
 use alloc::{format, vec, vec::Vec};
@@ -169,7 +169,7 @@ impl Circuit<Fp> for TreeCircuit {
 
 proptest! {
     /// Checks that [`crate::metrics::eval`] and [`crate::trace::eval`] agree on
-    /// segment count and per-segment multiplication-gate counts.
+    /// segment count and per-segment gate counts.
     ///
     /// The two evaluators are implemented independently. Agreement confirms
     /// that both traverse the routine call tree in the same DFS order and
@@ -191,11 +191,11 @@ proptest! {
 
         for (i, (m, t)) in metrics.segments.iter().zip(trace.segments.iter()).enumerate() {
             prop_assert_eq!(
-                m.num_multiplication_constraints(),
+                m.num_gates(),
                 t.a.len(),
                 "segment {}: mul count mismatch (metrics={}, trace={})",
                 i,
-                m.num_multiplication_constraints(),
+                m.num_gates(),
                 t.a.len(),
             );
         }

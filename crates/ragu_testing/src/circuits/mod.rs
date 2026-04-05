@@ -62,7 +62,7 @@ impl<F: Field> Circuit<F> for MySimpleCircuit {
 /// A parameterized circuit that squares an input element a configurable number of times.
 ///
 /// Given witness `w`, this circuit computes `w^(2^times)` and returns it as output.
-/// The number of multiplication constraints is equal to `times`.
+/// The number of gates is equal to `times`.
 pub struct SquareCircuit {
     /// The number of times to square the input.
     pub times: usize,

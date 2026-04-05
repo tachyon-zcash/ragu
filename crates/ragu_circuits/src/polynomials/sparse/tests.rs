@@ -38,8 +38,8 @@ fn arb_sparse_wire_vec() -> impl Strategy<Value = Vec<Fp>> {
     })
 }
 
-/// Build a polynomial via forward view with random wire vectors.
-fn arb_forward_poly() -> impl Strategy<Value = Polynomial<Fp, R>> {
+/// Build a polynomial via trace view with random wire vectors.
+fn arb_trace_poly() -> impl Strategy<Value = Polynomial<Fp, R>> {
     (
         arb_wire_vec(),
         arb_wire_vec(),
@@ -47,7 +47,7 @@ fn arb_forward_poly() -> impl Strategy<Value = Polynomial<Fp, R>> {
         arb_wire_vec(),
     )
         .prop_map(|(a, b, c, d)| {
-            let mut view = View::<_, R, _>::forward();
+            let mut view = View::<_, R, _>::trace();
             view.a = a;
             view.b = b;
             view.c = c;
@@ -56,8 +56,8 @@ fn arb_forward_poly() -> impl Strategy<Value = Polynomial<Fp, R>> {
         })
 }
 
-/// Build a polynomial via backward view with random wire vectors.
-fn arb_backward_poly() -> impl Strategy<Value = Polynomial<Fp, R>> {
+/// Build a polynomial via wiring view with random wire vectors.
+fn arb_wiring_poly() -> impl Strategy<Value = Polynomial<Fp, R>> {
     (
         arb_wire_vec(),
         arb_wire_vec(),
@@ -65,7 +65,7 @@ fn arb_backward_poly() -> impl Strategy<Value = Polynomial<Fp, R>> {
         arb_wire_vec(),
     )
         .prop_map(|(a, b, c, d)| {
-            let mut view = View::<_, R, _>::backward();
+            let mut view = View::<_, R, _>::wiring();
             view.a = a;
             view.b = b;
             view.c = c;
@@ -74,9 +74,9 @@ fn arb_backward_poly() -> impl Strategy<Value = Polynomial<Fp, R>> {
         })
 }
 
-/// Build a polynomial via forward view with sparse (mostly-zero) wire vectors,
+/// Build a polynomial via trace view with sparse (mostly-zero) wire vectors,
 /// mimicking the alloc optimization pattern.
-fn arb_sparse_forward_poly() -> impl Strategy<Value = Polynomial<Fp, R>> {
+fn arb_sparse_trace_poly() -> impl Strategy<Value = Polynomial<Fp, R>> {
     (
         arb_sparse_wire_vec(),
         arb_sparse_wire_vec(),
@@ -84,7 +84,7 @@ fn arb_sparse_forward_poly() -> impl Strategy<Value = Polynomial<Fp, R>> {
         arb_sparse_wire_vec(),
     )
         .prop_map(|(a, b, c, d)| {
-            let mut view = View::<_, R, _>::forward();
+            let mut view = View::<_, R, _>::trace();
             view.a = a;
             view.b = b;
             view.c = c;
@@ -109,9 +109,9 @@ fn arb_sparse_from_coeffs_poly() -> impl Strategy<Value = Polynomial<Fp, R>> {
 /// sparsity patterns.
 fn arb_any_poly() -> impl Strategy<Value = Polynomial<Fp, R>> {
     prop_oneof![
-        2 => arb_forward_poly(),
-        2 => arb_backward_poly(),
-        3 => arb_sparse_forward_poly(),
+        2 => arb_trace_poly(),
+        2 => arb_wiring_poly(),
+        3 => arb_sparse_trace_poly(),
         2 => arb_sparse_from_coeffs_poly(),
         1 => Just(Polynomial::<Fp, R>::new()),
     ]
@@ -142,14 +142,14 @@ proptest! {
     }
 
     #[test]
-    fn forward_view_degree_mapping(
+    fn trace_view_degree_mapping(
         a in arb_wire_vec(),
         b in arb_wire_vec(),
         c in arb_wire_vec(),
         d in arb_wire_vec(),
     ) {
         let n = R::n();
-        let mut view = View::<_, R, _>::forward();
+        let mut view = View::<_, R, _>::trace();
         view.a = a.clone();
         view.b = b.clone();
         view.c = c.clone();
@@ -176,14 +176,14 @@ proptest! {
     }
 
     #[test]
-    fn forward_view_sparse_mapping(
+    fn trace_view_sparse_mapping(
         a in arb_sparse_wire_vec(),
         b in arb_sparse_wire_vec(),
         c in arb_sparse_wire_vec(),
         d in arb_sparse_wire_vec(),
     ) {
         let n = R::n();
-        let mut view = View::<_, R, _>::forward();
+        let mut view = View::<_, R, _>::trace();
         view.a = a.clone();
         view.b = b.clone();
         view.c = c.clone();
@@ -206,20 +206,20 @@ proptest! {
     }
 
     #[test]
-    fn backward_is_reversal_of_forward(
+    fn wiring_is_reversal_of_trace(
         a in arb_wire_vec(),
         b in arb_wire_vec(),
         c in arb_wire_vec(),
         d in arb_wire_vec(),
     ) {
-        let mut fwd_view = View::<_, R, _>::forward();
+        let mut fwd_view = View::<_, R, _>::trace();
         fwd_view.a = a.clone();
         fwd_view.b = b.clone();
         fwd_view.c = c.clone();
         fwd_view.d = d.clone();
         let fwd = fwd_view.build();
 
-        let mut bwd_view = View::<_, R, _>::backward();
+        let mut bwd_view = View::<_, R, _>::wiring();
         bwd_view.a = a;
         bwd_view.b = b;
         bwd_view.c = c;
@@ -258,9 +258,9 @@ proptest! {
     }
 
     #[test]
-    fn revdot_forward_against_backward(
-        a in arb_forward_poly(),
-        b in arb_backward_poly(),
+    fn revdot_trace_against_wiring(
+        a in arb_trace_poly(),
+        b in arb_wiring_poly(),
     ) {
         let a_dense = a.to_dense();
         let b_dense = b.to_dense();
@@ -394,24 +394,20 @@ proptest! {
     }
 
     #[test]
-    fn commit_matches_dense(poly in arb_any_poly(), blind in arb_fe()) {
+    fn commit_matches_dense(poly in arb_any_poly()) {
         use ragu_arithmetic::{Cycle, FixedGenerators};
         use ragu_pasta::Pasta;
 
         let pasta = Pasta::baked();
         let generators = Pasta::host_generators(pasta);
 
-        let sparse_commit = poly.commit_to_affine(generators, blind);
+        let sparse_commit = poly.commit_to_affine(generators);
 
         // Compute commitment from the dense representation directly.
         let dense = poly.to_dense();
         let dense_commit: <Pasta as Cycle>::HostCurve = ragu_arithmetic::mul(
-            dense.iter().chain(core::iter::once(&blind)),
-            generators
-                .g()
-                .iter()
-                .take(dense.len())
-                .chain(core::iter::once(generators.h())),
+            dense.iter(),
+            generators.g().iter().take(dense.len()),
         )
         .into();
 
@@ -474,7 +470,7 @@ proptest! {
     }
 
     #[test]
-    fn iter_coeffs_sparse_rev(poly in arb_sparse_forward_poly()) {
+    fn iter_coeffs_sparse_rev(poly in arb_sparse_trace_poly()) {
         let mut dense = poly.to_dense();
         dense.reverse();
         let from_iter: Vec<Fp> = poly.iter_coeffs().rev().collect();
@@ -548,7 +544,7 @@ fn single_coefficient_at_degree_boundaries() {
 #[test]
 fn only_a_wire_data() {
     let n = R::n();
-    let mut view = View::<_, R, _>::forward();
+    let mut view = View::<_, R, _>::trace();
     let a_vals: Vec<Fp> = (0..n).map(|_| Fp::random(&mut rand::rng())).collect();
     view.a = a_vals.clone();
     let poly = view.build();
@@ -563,7 +559,7 @@ fn only_a_wire_data() {
 #[test]
 fn only_d_wire_data() {
     let n = R::n();
-    let mut view = View::<_, R, _>::forward();
+    let mut view = View::<_, R, _>::trace();
     let d_vals: Vec<Fp> = (0..n).map(|_| Fp::random(&mut rand::rng())).collect();
     view.d = d_vals.clone();
     let poly = view.build();
@@ -582,7 +578,7 @@ fn alloc_optimization_pattern() {
     // Simulate the alloc optimization: most gates are mul (a,b,c,0),
     // a few are alloc (a,0,0,d).
     let n = R::n();
-    let mut view = View::<_, R, _>::forward();
+    let mut view = View::<_, R, _>::trace();
     for i in 0..n {
         if i % 10 == 0 {
             // Alloc gate: a is non-zero, b=c=0, d is non-zero.
@@ -672,7 +668,7 @@ fn iter_coeffs_fully_drain_both_ends() {
 /// (c = a * b), `rx.revdot(rx_dilated + tz) == 0`.
 #[test]
 fn product_identity() {
-    let mut view = View::<_, R, _>::forward();
+    let mut view = View::<_, R, _>::trace();
     for _ in 0..R::n() {
         let a = Fp::random(&mut rand::rng());
         let b = Fp::random(&mut rand::rng());

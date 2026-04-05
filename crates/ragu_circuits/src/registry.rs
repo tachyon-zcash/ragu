@@ -350,12 +350,33 @@ impl<F: PrimeField> From<F> for OmegaKey {
 impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
     /// Assembles a [`Trace`](crate::Trace) into a [`sparse::Polynomial`] using
     /// the floor plan for the specified circuit.
+    ///
+    /// Calls [`assemble_with_alpha`](Self::assemble_with_alpha) with a
+    /// random value sampled from `rng`.
     pub fn assemble(
         &self,
         trace: &crate::trace::Trace<F>,
         circuit: CircuitIndex,
+        rng: &mut impl rand::CryptoRng,
     ) -> Result<sparse::Polynomial<F, R>> {
-        trace.assemble(&self.floor_plans[usize::from(circuit)])
+        self.assemble_with_alpha(trace, circuit, F::random(rng))
+    }
+
+    /// Like [`assemble`](Self::assemble), but accepts an explicit
+    /// `alpha` instead of sampling one from an RNG.
+    ///
+    /// `alpha` is written to `d[0]` of the assembled polynomial to
+    /// prevent point-at-infinity commitments. Circuit traces are never
+    /// all-zero (the ONE wire ensures this), but linear combinations of
+    /// polynomials with predictable `d[0]` values could cancel to zero
+    /// in derived polynomials.
+    pub fn assemble_with_alpha(
+        &self,
+        trace: &crate::trace::Trace<F>,
+        circuit: CircuitIndex,
+        alpha: F,
+    ) -> Result<sparse::Polynomial<F, R>> {
+        trace.assemble(&self.floor_plans[usize::from(circuit)], alpha)
     }
 
     /// Returns the registry digest value.
@@ -520,11 +541,11 @@ impl<F: PrimeField, R: Rank> RegistryAt<'_, F, R> {
         );
 
         // Add the registry key contribution k * (XY)^{4n-1}.  Restricted
-        // at Y, this is k * y^{4n-1} at X^{4n-1} (c-wire of gate 0 in
-        // the backward layout).
+        // at Y, this is k * y^{4n-1} at X^{4n-1} (c-wire of the SYSTEM gate in
+        // the wiring layout).
         if y != F::ZERO {
             let y_4n_minus_1 = y.pow_vartime([(4 * R::n() - 1) as u64]);
-            let mut key_view = sparse::View::<_, R, _>::backward();
+            let mut key_view = sparse::View::<_, R, _>::wiring();
             key_view.c.push(self.registry.key.value() * y_4n_minus_1);
             poly.add_assign(&key_view.build());
         }

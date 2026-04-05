@@ -122,8 +122,8 @@ must have `Left = ()` and `Right = ()`.
 A _trivial proof_ is a dummy proof used to seed the base case of
 recursion. It does not encode any real computation; instead, it
 provides a well-formed starting proof that allows the recursive
-machinery to bootstrap. Internally, trivial proofs use zero
-polynomials and deterministic blinding factors.
+machinery to bootstrap. Internally, trivial proofs use non-degenerate
+polynomials and deterministic challenges.
 
 Trivial proofs are not meant to verify independently—they exist
 solely to provide valid input structure for `seed()` when no real
@@ -261,5 +261,5 @@ For deeper background, see
 The `Proof` type contains the cryptographic data required for
 verification, organized into components that mirror the protocol's
 [staging system](../protocol/extensions/staging.md). Each proof
-component captures polynomials,
-blinding factors, and commitments on both the host and nested curves.
+component captures polynomials and commitments on both the host and
+nested curves.

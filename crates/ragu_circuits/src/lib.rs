@@ -25,6 +25,7 @@ pub mod horner;
 mod ky;
 mod metrics;
 pub mod polynomials;
+mod raw;
 pub mod registry;
 mod s;
 pub mod staging;
@@ -197,7 +198,9 @@ pub(crate) trait CircuitObject<F: Field, R: Rank>: Send + Sync {
     fn sy(&self, y: F, floor_plan: &[floor_planner::ConstraintSegment])
     -> sparse::Polynomial<F, R>;
 
-    /// Returns the number of constraints: `(multiplication, linear)`.
+    /// Returns constraint counts as `(gates, constraints)`, where gates is
+    /// the number of multiplication gates and constraints is the number of
+    /// [`enforce_zero`](ragu_core::drivers::Driver::enforce_zero) calls.
     fn constraint_counts(&self) -> (usize, usize);
 
     /// Returns per-segment constraint records in DFS synthesis order.
@@ -221,22 +224,36 @@ where
 
     // Reserve the last coefficient slot (Y^{4n-1}) for the registry key
     // constraint, which is injected at the registry level.
-    if metrics.num_linear_constraints >= R::num_coeffs() {
-        return Err(Error::LinearBoundExceeded {
+    if metrics.num_constraints >= R::num_coeffs() {
+        return Err(Error::ConstraintBoundExceeded {
             limit: R::num_coeffs() - 1,
         });
     }
 
-    if metrics.num_multiplication_constraints > R::n() {
-        return Err(Error::MultiplicationBoundExceeded { limit: R::n() });
+    if metrics.num_gates > R::n() {
+        return Err(Error::GateBoundExceeded { limit: R::n() });
     }
 
-    struct ProcessedCircuit<C> {
-        circuit: C,
+    into_raw_circuit_object(raw::CircuitAdapter(circuit), metrics)
+}
+
+/// Like [`into_circuit_object`] but accepts a [`RawCircuit`](raw::RawCircuit)
+/// directly. Metrics must have been pre-computed and validated by the caller.
+pub(crate) fn into_raw_circuit_object<'a, F, RC, R>(
+    circuit: RC,
+    metrics: metrics::CircuitMetrics,
+) -> Result<Box<dyn CircuitObject<F, R> + 'a>>
+where
+    F: Field,
+    RC: raw::RawCircuit<F> + 'a,
+    R: Rank,
+{
+    struct Processed<RC> {
+        circuit: RC,
         metrics: metrics::CircuitMetrics,
     }
 
-    impl<F: Field, C: Circuit<F>, R: Rank> CircuitObject<F, R> for ProcessedCircuit<C> {
+    impl<F: Field, RC: raw::RawCircuit<F>, R: Rank> CircuitObject<F, R> for Processed<RC> {
         fn sxy(&self, x: F, y: F, floor_plan: &[floor_planner::ConstraintSegment]) -> F {
             s::sxy::eval::<_, _, R>(&self.circuit, x, y, floor_plan)
                 .expect("should succeed if metrics succeeded")
@@ -256,30 +273,26 @@ where
             s::sy::eval(&self.circuit, y, floor_plan).expect("should succeed if metrics succeeded")
         }
         fn constraint_counts(&self) -> (usize, usize) {
-            (
-                self.metrics.num_multiplication_constraints,
-                self.metrics.num_linear_constraints,
-            )
+            (self.metrics.num_gates, self.metrics.num_constraints)
         }
         fn segment_records(&self) -> &[SegmentRecord] {
             &self.metrics.segments
         }
     }
 
-    let circuit = ProcessedCircuit { circuit, metrics };
-    Ok(Box::new(circuit))
+    Ok(Box::new(Processed { circuit, metrics }))
 }
 
 /// An evaluable bonding object $s(X, Y)$ used to enforce well-formedness
 /// of a staged trace.
 ///
 /// A bonding polynomial is the wiring polynomial of a bonding circuit —
-/// a circuit that has only linear constraints (no multiplication gates).
+/// a circuit that has only constraints (no gates).
 /// This gives bonding polynomials three properties that general wiring
 /// polynomials lack:
 ///
 /// 1. **No dilation term.** Because the underlying circuit has no
-///    multiplication gates there is no $t(z)$, and the revdot identity
+///    gates there is no $t(z)$, and the revdot identity
 ///    simplifies to $b = s\_{y}$.
 ///
 /// 2. **$k(y) = 0$ and stripped ONE wire.** Bonding claims require
@@ -289,7 +302,7 @@ where
 ///    so its absence distinguishes bonding polynomials and prevents
 ///    substitution attacks.
 ///
-/// 3. **Batchable.** Without multiplication gates the revdot identity is
+/// 3. **Batchable.** Without gates the revdot identity is
 ///    linear in the trace, so multiple traces can be folded with a random
 ///    challenge and verified in a single claim.
 ///

@@ -4,7 +4,7 @@
 //! polynomial evaluated at a concrete $x$, yielding a univariate polynomial in
 //! $Y$. See the [parent module][`super`] for background on $s(X, Y)$.
 //!
-//! The output $s(x, Y) = \sum\_{j} c\_{j} Y^j$ has one coefficient per linear
+//! The output $s(x, Y) = \sum\_{j} c\_{j} Y^j$ has one coefficient per
 //! constraint in the circuit. Each $c\_{j}$ is computed by evaluating a
 //! univariate polynomial in $X$ that consists of a linear combination of
 //! monomial terms at $X = x$.
@@ -79,20 +79,17 @@ use ragu_core::{
     maybe::Empty,
     routines::Routine,
 };
-use ragu_primitives::GadgetExt;
 
 use alloc::{vec, vec::Vec};
 
 use crate::{
-    Circuit, DriverScope,
+    DriverScope,
     floor_planner::ConstraintSegment,
     polynomials::{Rank, sparse},
+    raw::RawCircuit,
 };
 
-use super::{
-    DriverExt,
-    common::{WireEval, WireEvalSum},
-};
+use super::common::{WireEval, WireEvalSum};
 
 /// A [`Driver`] that computes the partial evaluation $s(x, Y)$.
 ///
@@ -117,12 +114,12 @@ struct SxScope<F> {
     current_b_x: F,
     /// Running monomial for $c$ wires: $x^{4n - 1 - i}$ at gate $i$.
     current_c_x: F,
-    /// Absolute index of the next multiplication constraint to be written.
-    /// Initialized to `segment.multiplication_start` on routine entry.
-    multiplication_constraints: usize,
-    /// Absolute index of the next linear constraint to be written.
-    /// Initialized to `segment.linear_start` on routine entry.
-    linear_constraints: usize,
+    /// Absolute index of the next gate to be written.
+    /// Initialized to `segment.gate_start` on routine entry.
+    gates: usize,
+    /// Absolute index of the next constraint to be written.
+    /// Initialized to `segment.constraint_start` on routine entry.
+    constraints: usize,
 }
 
 struct Evaluator<'fp, F: Field, R: Rank> {
@@ -190,11 +187,11 @@ impl<F: Field, R: Rank> Evaluator<'_, F, R> {
     /// [`mul`](Driver::mul). The $d$-wire monomial ($b \cdot \text{b\_to\_d}$)
     /// is only computed by `gate`, saving one field multiplication per `mul` call.
     fn advance_gate(&mut self) -> Result<(F, F, F)> {
-        let index = self.scope.multiplication_constraints;
+        let index = self.scope.gates;
         if index == R::n() {
-            return Err(Error::MultiplicationBoundExceeded { limit: R::n() });
+            return Err(Error::GateBoundExceeded { limit: R::n() });
         }
-        self.scope.multiplication_constraints += 1;
+        self.scope.gates += 1;
 
         let a = self.scope.current_a_x;
         let b = self.scope.current_b_x;
@@ -222,7 +219,7 @@ impl<F: Field, R: Rank> DriverTypes for Evaluator<'_, F, R> {
     type ImplField = F;
     type ImplWire = WireEval<F>;
 
-    /// Consumes a multiplication gate, returning evaluated monomials for $(a, b, c, d)$.
+    /// Consumes a gate, returning evaluated monomials for $(a, b, c, d)$.
     ///
     /// Returns the current values of the running monomials as [`WireEval::Value`]
     /// wires, then advances the monomials for the next gate:
@@ -236,7 +233,7 @@ impl<F: Field, R: Rank> DriverTypes for Evaluator<'_, F, R> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::MultiplicationBoundExceeded`] if the gate count reaches
+    /// Returns [`Error::GateBoundExceeded`] if the gate count reaches
     /// [`Rank::n()`].
     fn gate(
         &mut self,
@@ -290,7 +287,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         WireEval::Value(lc(WireEvalSum::new(self.one)).value)
     }
 
-    /// Records a linear constraint as a polynomial coefficient.
+    /// Records a constraint as a polynomial coefficient.
     ///
     /// Evaluates the linear combination to get coefficient $c\_q$, stores it at
     /// index $q$ in the result polynomial, and increments the constraint
@@ -298,17 +295,17 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::LinearBoundExceeded`] if the constraint count reaches
+    /// Returns [`Error::ConstraintBoundExceeded`] if the constraint count reaches
     /// `Rank::num_coeffs() - 1` (the last slot is reserved for the registry
     /// key constraint).
     fn enforce_zero(&mut self, lc: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
-        let q = self.scope.linear_constraints;
+        let q = self.scope.constraints;
         if q >= R::num_coeffs() - 1 {
-            return Err(Error::LinearBoundExceeded {
+            return Err(Error::ConstraintBoundExceeded {
                 limit: R::num_coeffs() - 1,
             });
         }
-        self.scope.linear_constraints += 1;
+        self.scope.constraints += 1;
 
         self.result[q] = lc(WireEvalSum::new(self.one)).value;
 
@@ -327,11 +324,11 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         // see "Polynomial Encoding and Scope Jumps" in the `s` module doc.
         let init_scope = SxScope {
             available_d: None,
-            current_a_x: self.base_a_x * self.x_inv.pow_vartime([seg.multiplication_start as u64]),
-            current_b_x: self.base_b_x * self.x.pow_vartime([seg.multiplication_start as u64]),
-            current_c_x: self.base_c_x * self.x_inv.pow_vartime([seg.multiplication_start as u64]),
-            multiplication_constraints: seg.multiplication_start,
-            linear_constraints: seg.linear_start,
+            current_a_x: self.base_a_x * self.x_inv.pow_vartime([seg.gate_start as u64]),
+            current_b_x: self.base_b_x * self.x.pow_vartime([seg.gate_start as u64]),
+            current_c_x: self.base_c_x * self.x_inv.pow_vartime([seg.gate_start as u64]),
+            gates: seg.gate_start,
+            constraints: seg.constraint_start,
         };
 
         self.with_scope(init_scope, |this| {
@@ -340,14 +337,14 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
 
             // Verify this routine consumed exactly the expected constraints.
             assert_eq!(
-                this.scope.multiplication_constraints,
-                seg.multiplication_start + seg.num_multiplication_constraints,
-                "routine multiplication constraint count must match floor plan"
+                this.scope.gates,
+                seg.gate_start + seg.num_gates,
+                "routine gate count must match floor plan"
             );
             assert_eq!(
-                this.scope.linear_constraints,
-                seg.linear_start + seg.num_linear_constraints,
-                "routine linear constraint count must match floor plan"
+                this.scope.constraints,
+                seg.constraint_start + seg.num_constraints,
+                "routine constraint count must match floor plan"
             );
 
             Ok(result)
@@ -371,8 +368,8 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
 /// # Special Cases
 ///
 /// If $x = 0$, returns the zero polynomial since all monomials vanish.
-pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
-    circuit: &C,
+pub fn eval<F: Field, RC: RawCircuit<F>, R: Rank>(
+    circuit: &RC,
     x: F,
     floor_plan: &[ConstraintSegment],
 ) -> Result<sparse::Polynomial<F, R>> {
@@ -401,8 +398,8 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
             current_a_x: base_a_x,
             current_b_x: base_b_x,
             current_c_x: base_c_x,
-            multiplication_constraints: 0,
-            linear_constraints: 0,
+            gates: 0,
+            constraints: 0,
         },
         x,
         x_inv,
@@ -416,17 +413,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
         _marker: core::marker::PhantomData,
     };
 
-    // Allocate the ONE gate (gate 0). The registry key constraint is
-    // injected at the registry level, not here.
-    evaluator.mul(|| unreachable!())?;
-
-    let mut outputs = vec![];
-    let io = circuit.witness(&mut evaluator, Empty)?.into_output();
-    io.write(&mut evaluator, &mut outputs)?;
-
-    // Enforcing public inputs
-    evaluator.enforce_public_outputs(outputs.iter().map(|output| output.wire()))?;
-    evaluator.enforce_one()?;
+    crate::raw::orchestrate(&mut evaluator, circuit, Empty)?;
 
     // Verify all floor plan segments were consumed and counts match.
     assert_eq!(
@@ -435,19 +422,19 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
         "floor plan routine count must match synthesis"
     );
     assert_eq!(
-        evaluator.scope.multiplication_constraints,
-        evaluator.floor_plan[0].num_multiplication_constraints,
-        "root multiplication constraint count must match floor plan"
+        evaluator.scope.gates, evaluator.floor_plan[0].num_gates,
+        "root gate count must match floor plan"
     );
     assert_eq!(
-        evaluator.scope.linear_constraints, evaluator.floor_plan[0].num_linear_constraints,
-        "root linear constraint count must match floor plan"
+        evaluator.scope.constraints, evaluator.floor_plan[0].num_constraints,
+        "root constraint count must match floor plan"
     );
 
-    // Reverse to canonical coefficient order within each routine's linear
-    // constraint range.
+    // Reverse to canonical coefficient order within each routine's constraint
+    // range.
     for seg in evaluator.floor_plan {
-        evaluator.result[seg.linear_start..seg.linear_start + seg.num_linear_constraints].reverse();
+        evaluator.result[seg.constraint_start..seg.constraint_start + seg.num_constraints]
+            .reverse();
     }
     assert_eq!(evaluator.result[0], evaluator.one);
 

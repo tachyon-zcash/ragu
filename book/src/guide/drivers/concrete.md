@@ -79,9 +79,9 @@ testing or when feeding assignments into a downstream synthesis driver.
 
 The [`Simulator`] (provided by `ragu_primitives`) also executes circuit code
 natively, but unlike the emulator it **does enforce constraints**. Every
-multiplication and linear constraint is checked for correctness as it is
+gate and constraint is checked for correctness as it is
 created, and the simulator collects realistic metrics (allocation count,
-multiplication count, constraint count) in the process.
+gate count, constraint count) in the process.
 
 ## `PhantomData<F>` {#phantom-driver}
 

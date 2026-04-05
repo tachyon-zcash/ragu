@@ -14,13 +14,13 @@ use ragu_core::{
 };
 
 /// A driver that fully simulates circuit synthesis, enforcing constraint
-/// satisfaction and tracking allocation, multiplication, and linear-constraint
+/// satisfaction and tracking allocation, gate, and constraint
 /// counts. Primarily used for testing.
 #[derive(Clone)]
 pub struct Simulator<F: Field> {
     num_allocations: usize,
-    num_multiplications: usize,
-    num_linear_constraints: usize,
+    num_gates: usize,
+    num_constraints: usize,
     _marker: core::marker::PhantomData<F>,
 }
 
@@ -35,8 +35,8 @@ impl<F: Field> Simulator<F> {
     pub fn new() -> Self {
         Simulator {
             num_allocations: 0,
-            num_multiplications: 0,
-            num_linear_constraints: 0,
+            num_gates: 0,
+            num_constraints: 0,
             _marker: core::marker::PhantomData,
         }
     }
@@ -44,8 +44,8 @@ impl<F: Field> Simulator<F> {
     /// Reset the metrics of the simulator.
     pub fn reset(&mut self) {
         self.num_allocations = 0;
-        self.num_multiplications = 0;
-        self.num_linear_constraints = 0;
+        self.num_gates = 0;
+        self.num_constraints = 0;
     }
 
     /// Returns the number of `alloc` calls made.
@@ -53,14 +53,18 @@ impl<F: Field> Simulator<F> {
         self.num_allocations
     }
 
-    /// Returns the number of `mul` calls made.
-    pub fn num_multiplications(&self) -> usize {
-        self.num_multiplications
+    /// Returns the number of gates (i.e., [`Driver::mul`] calls made).
+    ///
+    /// [`Driver::mul`]: ragu_core::drivers::Driver::mul
+    pub fn num_gates(&self) -> usize {
+        self.num_gates
     }
 
-    /// Returns the number of `enforce_zero` calls made.
-    pub fn num_linear_constraints(&self) -> usize {
-        self.num_linear_constraints
+    /// Returns the number of constraints (i.e., [`Driver::enforce_zero`] calls made).
+    ///
+    /// [`Driver::enforce_zero`]: ragu_core::drivers::Driver::enforce_zero
+    pub fn num_constraints(&self) -> usize {
+        self.num_constraints
     }
 
     /// Execute the provided closure with a fresh `Simulator` driver.
@@ -105,16 +109,14 @@ impl<F: Field> DriverTypes for Simulator<F> {
         let d = d.value();
 
         if a * b != c {
-            return Err(Error::InvalidWitness(
-                "multiplication constraint failed".into(),
-            ));
+            return Err(Error::InvalidWitness("gate check failed".into()));
         }
 
         if c * d != F::ZERO {
             return Err(Error::InvalidWitness("auxiliary constraint failed".into()));
         }
 
-        self.num_multiplications += 1;
+        self.num_gates += 1;
         Ok((a, b, c, d))
     }
 }
@@ -143,10 +145,10 @@ impl<'dr, F: Field> Driver<'dr> for Simulator<F> {
         let lc = lc(DirectSum::default());
 
         if lc.value() != F::ZERO {
-            return Err(Error::InvalidWitness("linear constraint failed".into()));
+            return Err(Error::InvalidWitness("constraint failed".into()));
         }
 
-        self.num_linear_constraints += 1;
+        self.num_constraints += 1;
         Ok(())
     }
 

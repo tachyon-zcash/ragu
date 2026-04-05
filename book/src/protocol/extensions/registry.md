@@ -2,7 +2,7 @@
 
 As [previously discussed](../core/arithmetization.md), individual
 circuits can be represented entirely by a wiring polynomial $s(X, Y)$
-that represents all of its linear constraints. In order to make many
+that represents all of its constraints. In order to make many
 different circuits available within the protocol simultaneously, it
 will be useful to define a registry polynomial $m(W, X, Y)$ in that
 third formal indeterminate $W$ that interpolates such that

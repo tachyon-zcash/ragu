@@ -76,7 +76,7 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
     /// Allocates an element $a$ with the provided witness assignment and
     /// squares it in a single step. Returns $(a, a^2)$.
     ///
-    /// This costs one multiplication constraint.
+    /// This costs one gate.
     pub fn alloc_square(dr: &mut D, assignment: DriverValue<D, D::F>) -> Result<(Self, Self)> {
         let square = D::just(|| assignment.snag().square());
         let (a, b, c) = dr.mul(|| {
@@ -350,7 +350,7 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
     /// Sums an iterator of elements.
     ///
     /// This is more efficient than [`Element::fold`] with scale=1 because it
-    /// avoids multiplication constraints.
+    /// avoids gates.
     pub fn sum<E: Borrow<Element<'dr, D>>>(
         dr: &mut D,
         elements: impl IntoIterator<Item = E>,
@@ -583,8 +583,8 @@ fn test_div_nonzero() -> Result<()> {
         })?;
 
         assert_eq!(sim.num_allocations(), 2);
-        assert_eq!(sim.num_multiplications(), 1);
-        assert_eq!(sim.num_linear_constraints(), 2);
+        assert_eq!(sim.num_gates(), 1);
+        assert_eq!(sim.num_constraints(), 2);
         Ok(())
     };
 
@@ -612,8 +612,8 @@ fn test_invert() -> Result<()> {
         })?;
 
         assert_eq!(sim.num_allocations(), 0);
-        assert_eq!(sim.num_multiplications(), 1);
-        assert_eq!(sim.num_linear_constraints(), 2);
+        assert_eq!(sim.num_gates(), 1);
+        assert_eq!(sim.num_constraints(), 2);
         Ok(())
     };
 

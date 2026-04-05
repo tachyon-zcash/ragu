@@ -1,6 +1,6 @@
 //! Driver for executing circuit code natively with minimal overhead.
 //!
-//! The [`Emulator`] driver never checks multiplication or linear constraints,
+//! The [`Emulator`] driver never checks gate or constraint satisfaction,
 //! but it _can_ be used to collect and compute wire assignments.
 //! When instantiated in [`Wireless`] mode, the emulator simply executes the
 //! circuit code natively without wires (i.e., `Wire=()`), saving memory.
@@ -129,8 +129,8 @@ impl<F: Field> Mode for Wired<F> {
     ) -> Result<(F, F, F, F)> {
         let (a, b, c, d) = values()?;
 
-        // Despite wires existing, the emulator does not enforce multiplication
-        // constraints.
+        // Despite wires existing, the emulator does not enforce gate
+        // equations.
 
         Ok((a.value(), b.value(), c.value(), d.value()))
     }

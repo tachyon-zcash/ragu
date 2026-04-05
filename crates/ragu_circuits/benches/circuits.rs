@@ -18,17 +18,14 @@ use setup::{
 };
 
 #[library_benchmark(setup = setup_with_rng)]
-#[bench::sparse(
-    Pasta::host_generators(Pasta::baked()),
-    (rand_sparse_poly, f),
-)]
+#[bench::sparse(Pasta::host_generators(Pasta::baked()), (rand_sparse_poly,))]
 fn commit_sparse(
-    (generators, (poly, blind)): (
+    (generators, (poly,)): (
         &'static <Pasta as Cycle>::HostGenerators,
-        (sparse::Polynomial<Fp, ProductionRank>, Fp),
+        (sparse::Polynomial<Fp, ProductionRank>,),
     ),
 ) {
-    black_box(poly.commit_to_affine(generators, blind));
+    black_box(poly.commit_to_affine(generators));
 }
 
 library_benchmark_group!(

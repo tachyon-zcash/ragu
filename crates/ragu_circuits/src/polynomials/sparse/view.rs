@@ -8,13 +8,13 @@
 //!
 //! Here $n$ = `R::n()` is the maximum number of multiplication gates.
 //!
-//! - **[`Forward`]**: the standard perspective for trace polynomials $r(X)$.
+//! - **[`Trace`]**: the standard perspective for trace polynomials $r(X)$.
 //!   - `a[i]` maps to degree $2n + i$
 //!   - `b[i]` maps to degree $2n - 1 - i$
 //!   - `c[i]` maps to degree $i$
 //!   - `d[i]` maps to degree $4n - 1 - i$
 //!
-//! - **[`Backward`]**: the reversed perspective for wiring polynomials
+//! - **[`Wiring`]**: the reversed perspective for wiring polynomials
 //!   $s(X, y)$. Swaps `a` with `b` and `c` with `d` in the degree mapping.
 //!   - `a[i]` maps to degree $2n - 1 - i$
 //!   - `b[i]` maps to degree $2n + i$
@@ -24,7 +24,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! let mut view = View::forward();
+//! let mut view = View::trace();
 //! view.a.push(some_value);
 //! view.b.push(other_value);
 //! view.c.push(product);
@@ -40,8 +40,8 @@ use super::{Polynomial, Rank, extend_runs};
 
 mod private {
     pub trait Sealed {}
-    impl Sealed for super::Forward {}
-    impl Sealed for super::Backward {}
+    impl Sealed for super::Trace {}
+    impl Sealed for super::Wiring {}
 }
 
 /// Marker trait for the perspective of a [`View`].
@@ -67,16 +67,16 @@ pub trait Perspective: private::Sealed {
     ) -> Vec<(usize, Vec<T>)>;
 }
 
-/// Standard perspective: `a[i]` maps to degree $2n + i$, `b[i]` to
+/// Trace perspective: `a[i]` maps to degree $2n + i$, `b[i]` to
 /// $2n - 1 - i$, `c[i]` to $i$, and `d[i]` to $4n - 1 - i$.
-pub struct Forward;
+pub struct Trace;
 
-/// Reversed perspective: swaps `a` with `b` and `c` with `d` relative to
-/// [`Forward`]. See the [module documentation](self) for the full degree
+/// Wiring perspective: swaps `a` with `b` and `c` with `d` relative to
+/// [`Trace`]. See the [module documentation](self) for the full degree
 /// mapping.
-pub struct Backward;
+pub struct Wiring;
 
-impl Perspective for Forward {
+impl Perspective for Trace {
     fn map_to_blocks<T>(
         a: Vec<T>,
         mut b: Vec<T>,
@@ -108,7 +108,7 @@ impl Perspective for Forward {
     }
 }
 
-impl Perspective for Backward {
+impl Perspective for Wiring {
     fn map_to_blocks<T>(
         a: Vec<T>,
         b: Vec<T>,
@@ -116,12 +116,12 @@ impl Perspective for Backward {
         d: Vec<T>,
         n: usize,
     ) -> Vec<(usize, Vec<T>)> {
-        // Backward swaps a<->b and c<->d relative to Forward:
-        //   a[i] -> degree 2*n-1-i   (b's forward mapping)
-        //   b[i] -> degree 2*n+i     (a's forward mapping)
-        //   c[i] -> degree 4*n-1-i   (d's forward mapping)
-        //   d[i] -> degree i         (c's forward mapping)
-        Forward::map_to_blocks(b, a, d, c, n)
+        // Wiring swaps a<->b and c<->d relative to Trace:
+        //   a[i] -> degree 2*n-1-i   (b's trace mapping)
+        //   b[i] -> degree 2*n+i     (a's trace mapping)
+        //   c[i] -> degree 4*n-1-i   (d's trace mapping)
+        //   d[i] -> degree i         (c's trace mapping)
+        Trace::map_to_blocks(b, a, d, c, n)
     }
 }
 
@@ -129,8 +129,8 @@ impl Perspective for Backward {
 ///
 /// Fill the wire buffers (`a`, `b`, `c`, `d`) by gate index, then call
 /// [`build`](Self::build) to map them to degree positions. Use
-/// [`forward`](Self::forward) for trace polynomials or
-/// [`backward`](Self::backward) for wiring polynomials.
+/// [`trace`](Self::trace) for trace polynomials or
+/// [`wiring`](Self::wiring) for wiring polynomials.
 ///
 /// Each wire buffer must have at most `R::n()` entries. This invariant is
 /// enforced by [`build`](Self::build), which panics if any buffer exceeds the
@@ -151,9 +151,9 @@ pub struct View<T, R: Rank, P: Perspective> {
     _marker: PhantomData<(R, P)>,
 }
 
-impl<T, R: Rank> View<T, R, Forward> {
-    /// Creates a new empty forward view.
-    pub fn forward() -> Self {
+impl<T, R: Rank> View<T, R, Trace> {
+    /// Creates a new empty trace view.
+    pub fn trace() -> Self {
         Self {
             a: Vec::new(),
             b: Vec::new(),
@@ -164,9 +164,9 @@ impl<T, R: Rank> View<T, R, Forward> {
     }
 }
 
-impl<T, R: Rank> View<T, R, Backward> {
-    /// Creates a new empty backward view.
-    pub fn backward() -> Self {
+impl<T, R: Rank> View<T, R, Wiring> {
+    /// Creates a new empty wiring view.
+    pub fn wiring() -> Self {
         Self {
             a: Vec::new(),
             b: Vec::new(),

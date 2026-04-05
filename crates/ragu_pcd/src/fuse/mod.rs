@@ -150,6 +150,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let pre_beta = transcript.challenge(&mut dr)?;
 
         let p = self.compute_p(
+            rng,
             &pre_beta,
             &u,
             &left,

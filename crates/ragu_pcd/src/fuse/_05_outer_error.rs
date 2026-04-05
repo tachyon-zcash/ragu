@@ -153,8 +153,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         let bridge = proof::Bridge::commit(
             self.params,
-            rng,
             nested::stages::outer_error::Stage::<C::HostCurve, R>::rx(
+                C::ScalarField::random(&mut *rng),
                 &nested::stages::outer_error::Witness {
                     native_outer_error: native.commitment,
                 },
@@ -176,15 +176,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     ) -> Result<proof::RxTriple<C, R>> {
         let rx =
             native::stages::outer_error::Stage::<C, R, HEADER_SIZE, native::RevdotParameters>::rx(
+                C::CircuitField::random(&mut *rng),
                 outer_error_witness,
             )?;
-        let blind = C::CircuitField::random(&mut *rng);
-        let commitment = rx.commit_to_affine(C::host_generators(self.params), blind);
+        let commitment = rx.commit_to_affine(C::host_generators(self.params));
 
-        Ok(proof::RxTriple {
-            rx,
-            blind,
-            commitment,
-        })
+        Ok(proof::RxTriple { rx, commitment })
     }
 }

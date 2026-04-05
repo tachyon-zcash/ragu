@@ -3,15 +3,15 @@
 //! This creates the [`proof::P`] component of the proof, which contains the
 //! accumulated polynomial $p(X)$ and its claimed evaluation $p(u) = v$.
 //!
-//! The commitment and blinding factor are derived as linear combinations of
-//! all constituent polynomial commitments/blinds using the additive
-//! homomorphism of Pedersen commitments:
-//! `commit(Σ β^j * p_j, Σ β^j * r_j) = Σ β^j * C_j`.
+//! The commitment is derived as a linear combination of all constituent
+//! polynomial commitments using additive homomorphism:
+//! $\text{commit}(\sum\_j \beta^j \cdot p\_j) = \sum\_j \beta^j \cdot C\_j$.
 //!
 //! The commitment is computed via [`PointsWitness`] Horner evaluation.
 
 use alloc::vec::Vec;
 use core::ops::AddAssign;
+use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
     CircuitExt,
@@ -29,29 +29,28 @@ use crate::internal::native::RxIndex;
 use crate::internal::nested::NUM_ENDOSCALING_POINTS;
 use crate::{Application, Proof, proof};
 
-/// Accumulates polynomials with their blinds and commitments.
+/// Accumulates polynomials with their commitments.
 struct Accumulator<'a, C: Cycle, R: Rank> {
     poly: &'a mut sparse::Polynomial<C::CircuitField, R>,
-    blind: &'a mut C::CircuitField,
     commitments: &'a mut Vec<C::HostCurve>,
     beta: C::CircuitField,
 }
 
 impl<C: Cycle, R: Rank> Accumulator<'_, C, R> {
-    fn acc<P>(&mut self, poly: &P, blind: C::CircuitField, commitment: C::HostCurve)
+    fn acc<P>(&mut self, poly: &P, commitment: C::HostCurve)
     where
         for<'p> sparse::Polynomial<C::CircuitField, R>: AddAssign<&'p P>,
     {
         self.poly.scale(self.beta);
         *self.poly += poly;
-        *self.blind = self.beta * *self.blind + blind;
         self.commitments.push(commitment);
     }
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
-    pub(super) fn compute_p<'dr, D>(
+    pub(super) fn compute_p<'dr, D, RNG: rand::CryptoRng>(
         &self,
+        rng: &mut RNG,
         pre_beta: &Element<'dr, D>,
         u: &Element<'dr, D>,
         left: &Proof<C, R>,
@@ -66,7 +65,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         D: Driver<'dr, F = C::CircuitField>,
     {
         let mut poly = f.native.poly.clone();
-        let mut blind = f.native.blind;
 
         // Collect commitments for PointsWitness construction.
         let mut commitments: Vec<C::HostCurve> = Vec::new();
@@ -74,8 +72,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // The orderings in this code must match the `Write` serialization
         // order of `native::stages::eval::Output`.
         //
-        // We accumulate polynomial and blind in lock-step, while collecting
-        // MSM terms for the commitment computation.
+        // We accumulate polynomials while collecting MSM terms for the
+        // commitment computation.
 
         // Extract endoscalar from pre_beta and compute effective beta
         let pre_beta_value = *pre_beta.value().take();
@@ -85,7 +83,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         {
             let mut acc: Accumulator<'_, C, R> = Accumulator {
                 poly: &mut poly,
-                blind: &mut blind,
                 commitments: &mut commitments,
                 beta: effective_beta,
             };
@@ -93,50 +90,33 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             for proof in [left, right] {
                 for &id in &RxIndex::ALL {
                     let t = &proof[id];
-                    acc.acc(&t.rx, t.blind, t.commitment);
+                    acc.acc(&t.rx, t.commitment);
                 }
-                acc.acc(
-                    &proof.ab.native.a_poly,
-                    proof.ab.native.a_blind,
-                    proof.ab.native.a_commitment,
-                );
-                acc.acc(
-                    &proof.ab.native.b_poly,
-                    proof.ab.native.b_blind,
-                    proof.ab.native.b_commitment,
-                );
+                acc.acc(&proof.ab.native.a_poly, proof.ab.native.a_commitment);
+                acc.acc(&proof.ab.native.b_poly, proof.ab.native.b_commitment);
                 acc.acc(
                     &proof.query.native.registry_xy_poly,
-                    proof.query.native.registry_xy_blind,
                     proof.query.native.registry_xy_commitment,
                 );
-                acc.acc(
-                    &proof.p.native.poly,
-                    proof.p.native.blind,
-                    proof.p.native.commitment,
-                );
+                acc.acc(&proof.p.native.poly, proof.p.native.commitment);
             }
 
             acc.acc(
                 &s_prime.native.registry_wx0_poly,
-                s_prime.native.registry_wx0_blind,
                 s_prime.native.registry_wx0_commitment,
             );
             acc.acc(
                 &s_prime.native.registry_wx1_poly,
-                s_prime.native.registry_wx1_blind,
                 s_prime.native.registry_wx1_commitment,
             );
             acc.acc(
                 &inner_error.native.registry_wy_poly,
-                inner_error.native.registry_wy_blind,
                 inner_error.native.registry_wy_commitment,
             );
-            acc.acc(&ab.native.a_poly, ab.native.a_blind, ab.native.a_commitment);
-            acc.acc(&ab.native.b_poly, ab.native.b_blind, ab.native.b_commitment);
+            acc.acc(&ab.native.a_poly, ab.native.a_commitment);
+            acc.acc(&ab.native.b_poly, ab.native.b_commitment);
             acc.acc(
                 &query.native.registry_xy_poly,
-                query.native.registry_xy_blind,
                 query.native.registry_xy_commitment,
             );
         }
@@ -151,11 +131,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             let witness =
                 PointsWitness::<C::HostCurve, NUM_ENDOSCALING_POINTS>::new(beta_endo, &points);
 
-            let endoscalar_rx = <EndoscalarStage as StageExt<C::ScalarField, R>>::rx(beta_endo)?;
+            let endoscalar_rx = <EndoscalarStage as StageExt<C::ScalarField, R>>::rx(
+                C::ScalarField::random(&mut *rng),
+                beta_endo,
+            )?;
             let points_rx = <PointsStage<C::HostCurve, NUM_ENDOSCALING_POINTS> as StageExt<
                 C::ScalarField,
                 R,
-            >>::rx(&witness)?;
+            >>::rx(C::ScalarField::random(&mut *rng), &witness)?;
 
             // Create rx polynomials for each endoscaling step circuit
             let num_steps = NumStepsLen::<NUM_ENDOSCALING_POINTS>::len();
@@ -174,6 +157,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     &step_trace,
                     crate::internal::nested::InternalCircuitIndex::EndoscalingStep(step as u32)
                         .circuit_index(),
+                    &mut *rng,
                 )?;
                 step_rxs.push(step_rx);
             }
@@ -194,7 +178,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         Ok(proof::P {
             native: proof::NativeP {
                 poly,
-                blind,
                 commitment,
                 v,
             },
