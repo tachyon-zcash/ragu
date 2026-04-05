@@ -15,7 +15,7 @@ use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use ff::Field;
-use ragu_pasta::{Fp, Pasta};
+use ragu_pasta::Fp;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
