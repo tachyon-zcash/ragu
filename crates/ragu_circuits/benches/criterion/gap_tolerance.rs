@@ -93,7 +93,6 @@ fn bench_msm_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("gap_tolerance/msm_scaling");
     let generators = Pasta::host_generators(Pasta::baked());
     let mut rng = StdRng::seed_from_u64(42);
-    let blind = Fp::random(&mut rng);
 
     let n = ProductionRank::num_coeffs();
 
