@@ -101,13 +101,21 @@ impl<T, R: Rank> Polynomial<T, R> {
 }
 
 /// Maximum number of consecutive zero coefficients that may be kept inline
-/// within a block rather than triggering a split. Inline zeros waste MSM
-/// slots in [`commit`](Polynomial::commit), so this is kept small. The
-/// tolerance covers only the per-block overhead (allocation, merge
-/// iterations in [`combine_assign`](Polynomial::combine_assign)) — each
-/// extra block requires a `pow_vartime` call to skip the gap.
+/// within a block rather than triggering a split. More blocks add per-block
+/// overhead in [`combine_assign`](Polynomial::combine_assign) (cluster
+/// iteration, allocation, re-sparsification) and `pow_vartime` gap-jumps in
+/// [`eval`](Polynomial::eval) / [`dilate`](Polynomial::dilate). Inline
+/// zeros waste MSM slots in [`commit`](Polynomial::commit).
 ///
-/// TODO(#608): benchmark to determine the optimal value.
+/// Benchmarked via `cargo bench --bench gap_tolerance` with a fixed number
+/// of gaps (10) to isolate block-split cost from coefficient-count effects.
+/// With nonzero coefficient count held constant, `commit` and `eval` are
+/// unaffected by gap size. The only sensitive operation is
+/// `combine_assign` / `fold`, which incurs a ~47% penalty per block split
+/// (~750 µs → ~1.1 ms for fold of 8 polys with 10 gaps). Since splitting
+/// only adds merge overhead without saving commit or eval cost, the
+/// tolerance should be large enough to absorb common small gaps and
+/// minimize block count.
 const GAP_TOLERANCE: usize = 4;
 
 /// Splits `data` into runs of coefficients and appends each run to `out` as

@@ -53,3 +53,8 @@ harness = false
 name = "trace_criterion"
 path = "benches/criterion/trace.rs"
 harness = false
+
+[[bench]]
+name = "gap_tolerance"
+path = "benches/criterion/gap_tolerance.rs"
+harness = false
