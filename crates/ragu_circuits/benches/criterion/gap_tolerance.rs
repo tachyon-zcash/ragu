@@ -99,10 +99,12 @@ fn bench_msm_scaling(c: &mut Criterion) {
 
     // Fully nonzero baseline coefficients.
     let all_nonzero: Vec<Fp> = (0..n)
-        .map(|_| loop {
-            let v = Fp::random(&mut rng);
-            if !bool::from(v.is_zero()) {
-                break v;
+        .map(|_| {
+            loop {
+                let v = Fp::random(&mut rng);
+                if !bool::from(v.is_zero()) {
+                    break v;
+                }
             }
         })
         .collect();
