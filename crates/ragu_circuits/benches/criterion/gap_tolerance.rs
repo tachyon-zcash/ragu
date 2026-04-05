@@ -15,7 +15,7 @@ use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use ff::Field;
-use ragu_pasta::Fp;
+use ragu_pasta::{Fp, Pasta};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
@@ -78,9 +78,59 @@ fn bench_pow_vs_dilate(c: &mut Criterion) {
     group.finish();
 }
 
+// MSM scaling: commit cost as a function of total stored coefficients
+//
+// Builds polynomials with a single large gap in the middle (always >
+// GAP_TOLERANCE so it splits into two blocks). The gap size determines how
+// many coefficients are excluded from the MSM. Sweeps from 0 excluded
+// (fully dense, 8192 elements in MSM) up to 4096 excluded (half the
+// polynomial is a gap).
+fn bench_msm_scaling(c: &mut Criterion) {
+    use ragu_arithmetic::Cycle;
+    use ragu_circuits::polynomials::{ProductionRank, Rank, sparse};
+    use ragu_pasta::Pasta;
+
+    let mut group = c.benchmark_group("gap_tolerance/msm_scaling");
+    let generators = Pasta::host_generators(Pasta::baked());
+    let mut rng = StdRng::seed_from_u64(42);
+    let blind = Fp::random(&mut rng);
+
+    let n = ProductionRank::num_coeffs();
+
+    // Fully nonzero baseline coefficients.
+    let all_nonzero: Vec<Fp> = (0..n)
+        .map(|_| loop {
+            let v = Fp::random(&mut rng);
+            if !bool::from(v.is_zero()) {
+                break v;
+            }
+        })
+        .collect();
+
+    for excluded in [0, 10, 50, 200, 500, 1000, 2000, 4096] {
+        let half = (n - excluded) / 2;
+        let mut coeffs = Vec::with_capacity(n);
+        coeffs.extend_from_slice(&all_nonzero[..half]);
+        if excluded > 0 {
+            coeffs.extend(core::iter::repeat_n(Fp::ZERO, excluded));
+        }
+        coeffs.extend_from_slice(&all_nonzero[half..half + (n - half - excluded)]);
+        assert_eq!(coeffs.len(), n);
+        let poly = sparse::Polynomial::<Fp, ProductionRank>::from_coeffs(coeffs);
+
+        let msm_size = if excluded > 4 { n - excluded } else { n };
+        group.bench_function(format!("{msm_size}_in_msm"), |b| {
+            b.iter(|| black_box(poly.commit_to_affine(generators, blind)));
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_pow_vs_horner,
     bench_pow_vs_dilate,
+    bench_msm_scaling,
 );
 criterion_main!(benches);
