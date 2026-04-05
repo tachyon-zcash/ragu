@@ -122,7 +122,7 @@ fn bench_msm_scaling(c: &mut Criterion) {
 
         let msm_size = if excluded > 4 { n - excluded } else { n };
         group.bench_function(format!("{msm_size}_in_msm"), |b| {
-            b.iter(|| black_box(poly.commit_to_affine(generators, blind)));
+            b.iter(|| black_box(poly.commit_to_affine(generators)));
         });
     }
 
