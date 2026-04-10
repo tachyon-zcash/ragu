@@ -114,12 +114,10 @@ coefficient for $z^0$, where the combined check yields
 $$
 c_0 d_0 + \revdot{\v{r}}{\v{s}} = \dot{\v{k}}{\v{y^{4n}}}.
 $$
-Meanwhile, the $z^{4n - 1}$ coefficient gives
-$$
-\v{d}_0 \v{c}_0 = 0
-$$
-and substituting into the $z^0$ coefficient gives
+Meanwhile, the $z^{4n - 1}$ term independently enforces $d_0 c_0 = 0$.
+Thus, the $z^0$ coefficient equation above simplifies to
 $\revdot{\v{r}}{\v{s}} = \dot{\v{k}}{\v{y^{4n}}}$, which is exactly the
-constraint check. In any case, Ragu defines $\v{s}_0 = 0$ for all circuits (the
-$d_0$ wire does not participate in any constraints), so this boundary condition
-is only theoretical.
+constraint check. In any case, Ragu defines
+$\v{s}_0 = \sum_j y^j\cdot \v{s}_{j,0} = 0$
+for all circuits (the $d_0$ wire does not participate in any constraints),
+so this boundary condition is only theoretical.

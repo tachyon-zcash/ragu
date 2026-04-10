@@ -61,6 +61,8 @@ wiring polynomials, they must contain the $\kappa$ constraint.
 
 These polynomials are exclusively used in revdots of the form
 $\revdot{\v{r}}{\v{s}} = 0$.
+Revdot checks against a shared bonding polynomial can be batched using a
+challenge $z$: $\revdot{\sum_i z^i \v{r}_i}{\v{s}} = 0$.
 
 ### Masking Polynomials
 
@@ -68,28 +70,43 @@ Masking polynomials are bonding polynomials that are used to enforce that
 partial trace polynomials (stages) only contain assignments at designated
 positions.
 
-We could naively define the simplest possible masking polynomial $\sum_i
-(XY)^i$, since this could be used to enforce a (partial) trace contains no wire
-assignments, and we could define all masking polynomials as a difference between
-this global mask and a sparse polynomial. However, we must satisfy $s(X, 0) = 0$
-for bonding polynomials.
-
-Thus, we could define the global mask
-
+We start with a masking polynomial that enforces the trace polynomial to be the
+zero polynomial (i.e. all wire assignments are zeroes):
 
 $$
-s_\text{global}(X, Y) = \sum_{i=0}^{4n - 1} (XY)^i - \left((XY)^{2n} + 1\right)\left((XY)^{2n-1} + 1\right)
+s_{all}(X, Y) = \sum_i X^i Y^{\sigma(i)}
 $$
 
-which enforces that every wire _except_ the four wires of the SYSTEM gate
-(gate 0) are zero. The SYSTEM gate wires are unconstrained by the mask:
-$b_0$ carries the constant $1$ (the `ONE` wire), $d_0$ carries an arbitrary
-blinding factor $\alpha$, and $a_0$, $c_0$ are zero but left unconstrained.
+where $\sigma$ is a permutation. The resulting wiring layout matrix is a
+_permutation matrix_ where exactly one entry of each row and each columns is $1$
+while the rest is all zeroes. Subsequently,
+$\revdot{\v{r}}{\v{s}} = \sum_i \rv{r}_i \cdot y^{\sigma(i)} = 0$
+enforces $\v{r} = \v{0}$.
+To allow active sub-regions of the trace, we simply drop $X^i Y^{\sigma(i)}$
+terms with the corresponding $X^i$ from the mask. This zeroes out the rows
+of the permutation matrix, leaving those trace positions unconstrained with any
+possible wire assignments. For example, unmasking/activating $\v{b}_{1\ldots 5}$
+region requires $s_{all} -\sum_{i\in [2n+1, 2n+5]} X^i Y^{\sigma(i)}$.
+
+The simplest permutation is $\sigma(i) = i$ which renders a masking polynomial
+$\sum_i (XY)^i$ and the wiring matrix as the anti-diagonal permutation matrix.
+All masking polynomials must satisfy $s(X, 0) = 0$ which leaves the four wires of
+the SYSTEM gate (gate 0) unconstrained. Furthermore, like any wiring polynomial,
+the registry key $\kappa$ needs to be injected in the last (reserved) constraint.
+Thus, we could define a **global mask polynomial**
+
+$$
+\begin{aligned}
+s_\text{global}(X, Y)
+&= \sum_{i=0}^{4n - 1} (XY)^i - \sum_{j\in\{0, 2n-1, 2n, 4n-1 \}} (XY)^j &+ \kappa\cdot(XY)^{4n-1} \\
+&= \sum_{i=0}^{4n - 1} (XY)^i - \left((XY)^{2n} + 1\right)\left((XY)^{2n-1} + 1\right) &+ \kappa\cdot(XY)^{4n-1}
+\end{aligned}
+$$
 
 Given $g = \text{skip\_gates}$ (the starting active gate index) and
 $m = \text{num\_gates}$ (the number of active gates in the stage), we can define
 a specific stage polynomial's masking polynomial as $s_\text{global}$ subtracted
-by
+by a **notch polynomial**
 
 $$
 \sum\limits_{i=0}^{m - 1} \left( (XY)^{g + i} + (XY)^{2n - 1 - g - i} + (XY)^{2n + g + i} + (XY)^{4n - 1 - g - i} \right)
