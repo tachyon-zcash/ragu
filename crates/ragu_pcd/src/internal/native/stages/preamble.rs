@@ -15,6 +15,7 @@ use ragu_core::{
 };
 use ragu_primitives::{
     Boolean, Element, GadgetExt,
+    allocator::Allocator,
     consistent::Consistent,
     vec::{CollectFixed, ConstLen, FixedVec},
 };
@@ -136,12 +137,6 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         self.output_header.write(dr, &mut ky)?;
         ky.finish_ky(dr)
     }
-
-    /// Returns true if this child proof is a trivial proof (output header suffix == 1).
-    pub fn is_trivial(&self, dr: &mut D) -> Result<Boolean<'dr, D>> {
-        let suffix = &self.output_header[HEADER_SIZE - 1];
-        suffix.is_equal(dr, &Element::one())
-    }
 }
 
 impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize>
@@ -189,6 +184,72 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         })
     }
 
+    /// Allocate [`ProofInputs`] reusing core wires from the preamble [`Stage`].
+    ///
+    /// Only the headers (grandchild headers and output header prefix) are newly
+    /// allocated via `allocator`; `circuit_id`, `unified`, and the output
+    /// header's last element (suffix) come from `core`. This avoids duplicating
+    /// the core allocations done by the stage.
+    ///
+    /// Pass a pairing allocator (e.g. [`Standard`]) to keep the header
+    /// allocation cost at one gate per two wires.
+    ///
+    /// [`Standard`]: ragu_primitives::allocator::Standard
+    pub fn alloc_reusing_core<R: Rank, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        proof: DriverValue<D, &Proof<C, R>>,
+        output_header: DriverValue<D, &FixedVec<D::F, ConstLen<HEADER_SIZE>>>,
+        core: &CoreInputs<'dr, D, C>,
+    ) -> Result<Self> {
+        fn alloc_header<'dr, D: Driver<'dr>, A: Allocator<'dr, D>, const N: usize>(
+            dr: &mut D,
+            allocator: &mut A,
+            data: DriverValue<D, &[D::F]>,
+        ) -> Result<FixedVec<Element<'dr, D>, ConstLen<N>>> {
+            D::try_just(|| {
+                if data.as_ref().take().len() != N {
+                    return Err(Error::MalformedEncoding(
+                        "Header data length does not match HEADER_SIZE".into(),
+                    ));
+                }
+
+                Ok(())
+            })?;
+
+            (0..N)
+                .map(|i| Element::alloc(dr, allocator, data.as_ref().map(|d| d[i])))
+                .try_collect_fixed()
+        }
+
+        let children = ChildHeaders {
+            left: alloc_header(dr, allocator, proof.as_ref().map(|p| p.left_header()))?,
+            right: alloc_header(dr, allocator, proof.as_ref().map(|p| p.right_header()))?,
+        };
+
+        // Allocate the first HEADER_SIZE - 1 elements of the output header.
+        // The last element reuses `core.output_suffix` so that the shared-stage
+        // wire is the same wire hashes_1's public instance serialization
+        // exposes — no extra enforce_equal needed.
+        let mut elems: Vec<Element<'dr, D>> = Vec::with_capacity(HEADER_SIZE);
+        for i in 0..HEADER_SIZE - 1 {
+            elems.push(Element::alloc(
+                dr,
+                allocator,
+                output_header.as_ref().map(|h| h[i]),
+            )?);
+        }
+        elems.push(core.output_suffix.clone());
+        let output_header: HeaderVec<'dr, D, HEADER_SIZE> = FixedVec::try_from(elems)?;
+
+        Ok(ProofInputs {
+            children,
+            output_header,
+            circuit_id: core.circuit_id.clone(),
+            unified: core.unified.clone(),
+        })
+    }
+
     /// Allocate ProofInputs from a proof reference and some unprocessed header
     /// data.
     pub fn alloc_for_verify<R: Rank, H: Header<C::CircuitField>>(
@@ -216,21 +277,68 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     }
 }
 
+/// Core inputs from a single child proof allocated by the preamble [`Stage`].
+///
+/// Holds the data shared across multiple circuits: the child's circuit ID, its
+/// unified instance, and the output header's last element (the trivial-proof
+/// indicator). The full output header and grandchild headers are allocated
+/// on-demand by [`hashes_1`] only, since no other circuit reads them.
+///
+/// [`hashes_1`]: super::super::circuits::hashes_1
+#[derive(Gadget, Consistent)]
+pub struct CoreInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
+    #[ragu(gadget)]
+    pub circuit_id: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub unified: unified::Output<'dr, D, C>,
+    /// Last element of the child's output header. Used by [`outer_collapse`] to
+    /// detect the base case (trivial proof). Kept in the shared stage so
+    /// [`hashes_1`] and [`outer_collapse`] see the same wire.
+    ///
+    /// [`outer_collapse`]: super::super::circuits::outer_collapse
+    /// [`hashes_1`]: super::super::circuits::hashes_1
+    #[ragu(gadget)]
+    pub output_suffix: Element<'dr, D>,
+}
+
+impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle> CoreInputs<'dr, D, C> {
+    /// Returns true if this child proof is a trivial proof (output header suffix == 1).
+    pub fn is_trivial(&self, dr: &mut D) -> Result<Boolean<'dr, D>> {
+        self.output_suffix.is_equal(dr, &Element::one())
+    }
+
+    /// Allocate [`CoreInputs`] from a proof reference and the suffix element.
+    fn alloc<R: Rank>(
+        dr: &mut D,
+        proof: DriverValue<D, &Proof<C, R>>,
+        output_suffix: DriverValue<D, C::CircuitField>,
+    ) -> Result<Self> {
+        let allocator = &mut ();
+        Ok(CoreInputs {
+            circuit_id: Element::alloc(
+                dr,
+                allocator,
+                proof.as_ref().map(|p| p.circuit_id().omega_j()),
+            )?,
+            unified: unified::Output::alloc_from_proof(dr, allocator, proof)?,
+            output_suffix: Element::alloc(dr, allocator, output_suffix)?,
+        })
+    }
+}
+
 /// Prover-internal output of the native preamble stage.
 ///
 /// This is stage communication data, not part of the circuit's public instance.
 /// The verifier never sees these values directly.
 #[derive(Gadget, Consistent)]
-pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize> {
+pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     #[ragu(gadget)]
-    pub left: ProofInputs<'dr, D, C, HEADER_SIZE>,
+    pub left: CoreInputs<'dr, D, C>,
     #[ragu(gadget)]
-    pub right: ProofInputs<'dr, D, C, HEADER_SIZE>,
+    pub right: CoreInputs<'dr, D, C>,
 }
 
-impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>
-    Output<'dr, D, C, HEADER_SIZE>
-{
+impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
     /// Returns true if both child proofs are trivial proofs.
     pub fn is_base_case(&self, dr: &mut D) -> Result<Boolean<'dr, D>> {
         let left_is_trivial = self.left.is_trivial(dr)?;
@@ -249,11 +357,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
 {
     type Parent = ();
     type Witness<'source> = &'source Witness<'source, C, R, HEADER_SIZE>;
-    type OutputKind = Kind![C::CircuitField; Output<'_, _, C, HEADER_SIZE>];
+    type OutputKind = Kind![C::CircuitField; Output<'_, _, C>];
 
     fn values() -> usize {
-        // 2 proofs * (3 headers * HEADER_SIZE + 1 circuit_id + unified instance wires)
-        2 * (3 * HEADER_SIZE + 1 + unified::NUM_WIRES)
+        // 2 proofs * (1 circuit_id + unified instance wires + 1 output_suffix)
+        2 * (1 + unified::NUM_WIRES + 1)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -264,16 +372,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     where
         Self: 'dr,
     {
-        let left = ProofInputs::alloc(
+        let left = CoreInputs::alloc(
             dr,
             witness.as_ref().map(|w| w.left.proof),
-            witness.as_ref().map(|w| &w.left.output_header),
+            witness.as_ref().map(|w| w.left.output_header[HEADER_SIZE - 1]),
         )?;
 
-        let right = ProofInputs::alloc(
+        let right = CoreInputs::alloc(
             dr,
             witness.as_ref().map(|w| w.right.proof),
-            witness.as_ref().map(|w| &w.right.output_header),
+            witness.as_ref().map(|w| w.right.output_header[HEADER_SIZE - 1]),
         )?;
 
         Ok(Output { left, right })
