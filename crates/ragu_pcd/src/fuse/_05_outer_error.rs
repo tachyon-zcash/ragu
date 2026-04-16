@@ -10,7 +10,7 @@ use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::{Rank, sparse},
-    staging::{Stage as StageTrait, StageExt},
+    staging::StageExt,
 };
 use ragu_core::{
     Result,
@@ -76,22 +76,33 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 let (preamble_witness, inner_error_terms, y, mu, nu) = witness.cast();
                 let allocator = &mut ();
 
-                let preamble = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::default()
-                    .witness(dr, preamble_witness.as_ref().map(|w| *w))?;
+                // Allocate full proof inputs directly (not via the preamble
+                // stage, which only allocates core data). We need full headers
+                // here to compute `application_ky` and `unified_bridge_ky`.
+                let left_inputs = native::stages::preamble::ProofInputs::<_, C, HEADER_SIZE>::alloc(
+                    dr,
+                    preamble_witness.as_ref().map(|w| w.left.proof),
+                    preamble_witness.as_ref().map(|w| &w.left.output_header),
+                )?;
+                let right_inputs = native::stages::preamble::ProofInputs::<_, C, HEADER_SIZE>::alloc(
+                    dr,
+                    preamble_witness.as_ref().map(|w| w.right.proof),
+                    preamble_witness.as_ref().map(|w| &w.right.output_header),
+                )?;
 
                 let y = Element::alloc(dr, allocator, y)?;
                 let (left_unified_ky, left_unified_bridge_ky) =
-                    preamble.left.unified_ky_values(dr, &y)?;
+                    left_inputs.unified_ky_values(dr, &y)?;
                 let (right_unified_ky, right_unified_bridge_ky) =
-                    preamble.right.unified_ky_values(dr, &y)?;
+                    right_inputs.unified_ky_values(dr, &y)?;
 
                 let left_ky = native::stages::outer_error::ChildKyOutputs {
-                    application: preamble.left.application_ky(dr, &y)?,
+                    application: left_inputs.application_ky(dr, &y)?,
                     unified: left_unified_ky,
                     unified_bridge: left_unified_bridge_ky,
                 };
                 let right_ky = native::stages::outer_error::ChildKyOutputs {
-                    application: preamble.right.application_ky(dr, &y)?,
+                    application: right_inputs.application_ky(dr, &y)?,
                     unified: right_unified_ky,
                     unified_bridge: right_unified_bridge_ky,
                 };
@@ -102,8 +113,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 // Build k(y) values in claim order.
                 let ky_source = native::claims::TwoProofKySource::new(
                     dr,
-                    preamble.left.unified.c.clone(),
-                    preamble.right.unified.c.clone(),
+                    left_inputs.unified.c.clone(),
+                    right_inputs.unified.c.clone(),
                     &left_ky,
                     &right_ky,
                 );

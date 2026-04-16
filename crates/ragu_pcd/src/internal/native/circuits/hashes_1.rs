@@ -231,6 +231,32 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             .enforce_root_of_unity(dr, self.log2_circuits)?;
 
         let allocator = &mut Standard::new();
+
+        // Allocate full proof inputs (with grandchild headers and output header
+        // prefix) in this circuit's body — no other circuit reads header data,
+        // so these wires live outside the shared preamble stage. The output
+        // header's last element reuses the stage's `output_suffix` wire, so
+        // outer_collapse's base-case check sees the same value this circuit
+        // serializes into its public instance.
+        let left_inputs = native_preamble::ProofInputs::alloc_reusing_core(
+            dr,
+            allocator,
+            witness.as_ref().map(|w| w.preamble_witness.left.proof),
+            witness
+                .as_ref()
+                .map(|w| &w.preamble_witness.left.output_header),
+            &preamble.left,
+        )?;
+        let right_inputs = native_preamble::ProofInputs::alloc_reusing_core(
+            dr,
+            allocator,
+            witness.as_ref().map(|w| w.preamble_witness.right.proof),
+            witness
+                .as_ref()
+                .map(|w| &w.preamble_witness.right.output_header),
+            &preamble.right,
+        )?;
+
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
         // Create a transcript for all challenge derivations
@@ -259,19 +285,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         unified_output.y.provide(y.clone());
         unified_output.z.provide(z);
 
-        // Compute k(y) values from preamble and enforce equality with staged
-        // values.
+        // Compute k(y) values from proof inputs and enforce equality with
+        // staged values.
         {
-            let left_application_ky = preamble.left.application_ky(dr, &y)?;
-            let right_application_ky = preamble.right.application_ky(dr, &y)?;
+            let left_application_ky = left_inputs.application_ky(dr, &y)?;
+            let right_application_ky = right_inputs.application_ky(dr, &y)?;
 
             left_application_ky.enforce_equal(dr, &outer_error.left.application)?;
             right_application_ky.enforce_equal(dr, &outer_error.right.application)?;
 
-            let (left_unified_ky, left_unified_bridge_ky) =
-                preamble.left.unified_ky_values(dr, &y)?;
+            let (left_unified_ky, left_unified_bridge_ky) = left_inputs.unified_ky_values(dr, &y)?;
             let (right_unified_ky, right_unified_bridge_ky) =
-                preamble.right.unified_ky_values(dr, &y)?;
+                right_inputs.unified_ky_values(dr, &y)?;
 
             left_unified_ky.enforce_equal(dr, &outer_error.left.unified)?;
             right_unified_ky.enforce_equal(dr, &outer_error.right.unified)?;
@@ -294,13 +319,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
                 .enforce_equal(dr, &outer_error.sponge_state)?;
         }
 
-        // Output headers from preamble + unified instance. Verification with
-        // `unified_bridge_ky` ensures preamble headers match ApplicationProof
+        // Output headers + unified instance. Verification with
+        // `unified_bridge_ky` ensures proof-input headers match ApplicationProof
         // headers.
         let (unified, updated) = unified_output.finish_no_suffix(dr, allocator)?;
         let output = Output {
-            left_header: preamble.left.output_header,
-            right_header: preamble.right.output_header,
+            left_header: left_inputs.output_header,
+            right_header: right_inputs.output_header,
             unified,
         };
 

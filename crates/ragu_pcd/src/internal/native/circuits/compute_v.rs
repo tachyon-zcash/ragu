@@ -281,14 +281,14 @@ struct Denominators<'dr, D: Driver<'dr>> {
 }
 
 impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
-    fn new<C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>(
+    fn new<C: Cycle<CircuitField = D::F>>(
         dr: &mut D,
         u: &Element<'dr, D>,
         w: &Element<'dr, D>,
         x: &Element<'dr, D>,
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
-        preamble: &native_preamble::Output<'dr, D, C, HEADER_SIZE>,
+        preamble: &native_preamble::Output<'dr, D, C>,
     ) -> Result<Self>
     where
         D::F: ff::PrimeField,
@@ -561,10 +561,10 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
 /// [`compute_f`]: crate::Application::compute_f
 /// [$\alpha$]: unified::Output::alpha
 #[rustfmt::skip]
-fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>(
+fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>>(
     eval: &'a native_eval::Output<'dr, D>,
     query: &'a native_query::Output<'dr, D>,
-    preamble: &'a native_preamble::Output<'dr, D, C, HEADER_SIZE>,
+    preamble: &'a native_preamble::Output<'dr, D, C>,
     d: &'a Denominators<'dr, D>,
     computed_ax: &'a Element<'dr, D>,
     computed_bx: &'a Element<'dr, D>,
