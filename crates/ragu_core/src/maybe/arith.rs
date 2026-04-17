@@ -121,39 +121,64 @@ mod tests {
     }
 
     #[test]
-    fn always_add() { check_add::<Always<()>>(); }
+    fn always_add() {
+        check_add::<Always<()>>();
+    }
 
     #[test]
-    fn always_sub() { check_sub::<Always<()>>(); }
+    fn always_sub() {
+        check_sub::<Always<()>>();
+    }
 
     #[test]
-    fn always_mul() { check_mul::<Always<()>>(); }
+    fn always_mul() {
+        check_mul::<Always<()>>();
+    }
 
     #[test]
-    fn always_neg() { check_neg::<Always<()>>(); }
+    fn always_neg() {
+        check_neg::<Always<()>>();
+    }
 
     #[test]
-    fn empty_add() { check_add::<Empty>(); }
+    fn empty_add() {
+        check_add::<Empty>();
+    }
 
     #[test]
-    fn empty_sub() { check_sub::<Empty>(); }
+    fn empty_sub() {
+        check_sub::<Empty>();
+    }
 
     #[test]
-    fn empty_mul() { check_mul::<Empty>(); }
+    fn empty_mul() {
+        check_mul::<Empty>();
+    }
 
     #[test]
-    fn empty_neg() { check_neg::<Empty>(); }
+    fn empty_neg() {
+        check_neg::<Empty>();
+    }
 
     #[test]
     fn empty_closures_not_called() {
         use core::cell::Cell;
         let called = Cell::new(false);
-        let a = <Empty as Maybe<u64>>::just(|| { called.set(true); 1 });
-        let b = <Empty as Maybe<u64>>::just(|| { called.set(true); 2 });
+        let a = <Empty as Maybe<u64>>::just(|| {
+            called.set(true);
+            1
+        });
+        let b = <Empty as Maybe<u64>>::just(|| {
+            called.set(true);
+            2
+        });
         let _ = MaybeArith::<u64>::maybe_add(&a, &b);
         let _ = MaybeArith::<u64>::maybe_sub(&a, &b);
         let _ = MaybeArith::<u64>::maybe_mul(&a, &b);
-        let c = <Empty as Maybe<i64>>::just(|| { called.set(true); 1 });
+        let c = <Empty as Maybe<i64>>::just(|| {
+            called.set(true);
+            1
+        });
         let _ = MaybeArith::<i64>::maybe_neg(&c);
         assert!(!called.get());
     }
