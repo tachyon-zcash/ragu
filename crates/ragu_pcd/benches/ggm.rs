@@ -1,17 +1,3 @@
-//! Gungraun (instrumented) benchmarks for the GGM fixtures.
-//!
-//! Each `#[library_benchmark]` measures one `app.seed` or `app.fuse`
-//! call (or one full tree walk for `walk`). All PCD precomputation is
-//! done in the corresponding `setup_*` function in [`ggm_setup`].
-//!
-//! Targets, grouped as `ggm`:
-//! * `seed` — one `GgmSeed` seed call.
-//! * `step` — one `GgmStep<DEPTH>` fuse.
-//! * `walk` — full tree descent from a seeded `MasterHeader` to a
-//!   depth-`DEPTH` `DelegationHeader`: one `GgmFirstStep` plus
-//!   `DEPTH - 1` `GgmStep` fuses. Excludes the leaf step.
-//! * `leaf` — one `GgmLeaf<DEPTH>` fuse.
-
 #![allow(clippy::type_complexity)]
 
 mod ggm_setup;
@@ -19,20 +5,24 @@ mod ggm_setup;
 use std::hint::black_box;
 
 use ggm_setup::{
-    App, DEPTH, NoteFields, setup_leaf, setup_seed, setup_step, setup_walk, walk_measured,
+    App, GGM_CHUNK_SIZE, GGM_DEPTH, NoteFields, setup_blind, setup_delegate, setup_final,
+    setup_node_step, setup_seed, setup_walk, walk_measured,
 };
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::ProductionRank;
-use ragu_pasta::Pasta;
+use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::Pcd;
-use ragu_testing::pcd::ggm::{DelegationHeader, GgmLeaf, GgmSeed, GgmStep, MasterHeader};
+use ragu_testing::pcd::ggm::{
+    GgmBlindStep, GgmDelegateHeader, GgmDelegateStep, GgmMasterHeader, GgmMasterSeed, GgmNodeStep,
+    GgmNullifierStep, GgmPrivateHeader,
+};
 use rand::rngs::StdRng;
 
 #[library_benchmark(setup = setup_seed)]
 #[bench::seed()]
 fn seed(
-    (app, poseidon, mut rng, note_fields): (
+    (app, poseidon_params, mut rng, note_fields): (
         App,
         &'static <Pasta as Cycle>::CircuitPoseidon,
         StdRng,
@@ -41,33 +31,29 @@ fn seed(
 ) {
     black_box(app.seed(
         &mut rng,
-        GgmSeed::<Pasta> {
-            poseidon_params: poseidon,
-        },
+        GgmMasterSeed::<Pasta> { poseidon_params },
         note_fields,
     ))
     .unwrap();
 }
 
-#[library_benchmark(setup = setup_step)]
+#[library_benchmark(setup = setup_node_step)]
 #[bench::step()]
 fn step(
-    (app, poseidon, mut rng, pcd, trivial): (
+    (app, poseidon_params, mut rng, node_pcd, trivial_pcd): (
         App,
         &'static <Pasta as Cycle>::CircuitPoseidon,
         StdRng,
-        Pcd<Pasta, ProductionRank, DelegationHeader>,
+        Pcd<Pasta, ProductionRank, GgmPrivateHeader>,
         Pcd<Pasta, ProductionRank, ()>,
     ),
 ) {
     black_box(app.fuse(
         &mut rng,
-        GgmStep::<Pasta, DEPTH> {
-            poseidon_params: poseidon,
-        },
-        false,
-        pcd,
-        trivial,
+        GgmNodeStep::<Pasta, GGM_CHUNK_SIZE, GGM_DEPTH> { poseidon_params },
+        0u8,
+        node_pcd,
+        trivial_pcd,
     ))
     .unwrap();
 }
@@ -79,29 +65,81 @@ fn walk(
         App,
         &'static <Pasta as Cycle>::CircuitPoseidon,
         StdRng,
-        Pcd<Pasta, ProductionRank, MasterHeader>,
+        Pcd<Pasta, ProductionRank, GgmMasterHeader>,
     ),
 ) {
-    black_box(walk_measured(&app, poseidon, &mut rng, master));
+    black_box(walk_measured::<GGM_CHUNK_SIZE, GGM_DEPTH>(
+        &app, poseidon, &mut rng, master,
+    ));
 }
 
-#[library_benchmark(setup = setup_leaf)]
-#[bench::leaf()]
-fn leaf(
-    (app, _poseidon, mut rng, pcd, trivial): (
+#[library_benchmark(setup = setup_blind)]
+#[bench::blind()]
+fn blind(
+    (app, poseidon_params, mut rng, node_pcd, trivial_pcd, trap): (
         App,
         &'static <Pasta as Cycle>::CircuitPoseidon,
         StdRng,
-        Pcd<Pasta, ProductionRank, DelegationHeader>,
+        Pcd<Pasta, ProductionRank, GgmPrivateHeader>,
+        Pcd<Pasta, ProductionRank, ()>,
+        Fp,
+    ),
+) {
+    black_box(app.fuse(
+        &mut rng,
+        GgmBlindStep::<Pasta> { poseidon_params },
+        trap,
+        node_pcd,
+        trivial_pcd,
+    ))
+    .unwrap();
+}
+
+#[library_benchmark(setup = setup_delegate)]
+#[bench::delegate()]
+fn delegate(
+    (app, poseidon_params, mut rng, delegate_pcd, trivial_pcd): (
+        App,
+        &'static <Pasta as Cycle>::CircuitPoseidon,
+        StdRng,
+        Pcd<Pasta, ProductionRank, GgmDelegateHeader>,
         Pcd<Pasta, ProductionRank, ()>,
     ),
 ) {
-    black_box(app.fuse(&mut rng, GgmLeaf::<DEPTH>, (), pcd, trivial)).unwrap();
+    black_box(app.fuse(
+        &mut rng,
+        GgmDelegateStep::<Pasta, GGM_CHUNK_SIZE, GGM_DEPTH> { poseidon_params },
+        0u8,
+        delegate_pcd,
+        trivial_pcd,
+    ))
+    .unwrap();
+}
+
+#[library_benchmark(setup = setup_final)]
+#[bench::nullifier()]
+fn nullifier(
+    (app, poseidon_params, mut rng, delegate_pcd, trivial_pcd): (
+        App,
+        &'static <Pasta as Cycle>::CircuitPoseidon,
+        StdRng,
+        Pcd<Pasta, ProductionRank, GgmDelegateHeader>,
+        Pcd<Pasta, ProductionRank, ()>,
+    ),
+) {
+    black_box(app.fuse(
+        &mut rng,
+        GgmNullifierStep::<Pasta, GGM_DEPTH> { poseidon_params },
+        (),
+        delegate_pcd,
+        trivial_pcd,
+    ))
+    .unwrap();
 }
 
 library_benchmark_group!(
     name = ggm;
-    benchmarks = seed, step, walk, leaf
+    benchmarks = seed, step, walk, blind, delegate, nullifier
 );
 
 main!(library_benchmark_groups = ggm);

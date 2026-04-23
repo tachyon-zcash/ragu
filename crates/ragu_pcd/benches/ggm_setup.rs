@@ -1,11 +1,4 @@
-//! Setup functions for the GGM gungraun benches.
-//!
-//! Each `setup_ggm_*` function returns a tuple ready to feed into a
-//! `#[library_benchmark]` in [`benches/ggm.rs`]. All PCD precomputation
-//! (building the `Application`, seeding a `MasterHeader`, advancing to
-//! the depth a given bench needs) happens here so the measured region
-//! inside each library benchmark is exactly one `app.seed` / `app.fuse`
-//! (or one full tree walk for the `walk` bench).
+//! Setup functions for GGM benches.
 
 #![allow(clippy::type_complexity)]
 
@@ -14,48 +7,40 @@ use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::{Application, ApplicationBuilder, Pcd};
+pub use ragu_testing::pcd::ggm::{GGM_CHUNK_SIZE, GGM_DEPTH, HEADER_SIZE};
 use ragu_testing::pcd::ggm::{
-    DelegationHeader, GgmFirstStep, GgmLeaf, GgmSeed, GgmStep, MasterHeader,
+    GgmBlindStep, GgmDelegateHeader, GgmDelegateStep, GgmMasterHeader, GgmMasterSeed,
+    GgmMasterStep, GgmNodeStep, GgmNullifierStep, GgmPrivateHeader,
 };
 use rand::{SeedableRng, rngs::StdRng};
 
-/// Tight to the widest GGM header: DelegationHeader carries 4 field
-/// elements, and the slot at HEADER_SIZE-1 is reserved for the suffix
-/// tag.
-pub const HEADER_SIZE: usize = 5;
-/// GGM tree depth used throughout the GGM benches.
-pub const DEPTH: u8 = 6;
-
-/// The concrete `Application` type used by all GGM benches.
 pub type App = Application<'static, Pasta, ProductionRank, HEADER_SIZE>;
 
-/// Note-field tuple fed into `GgmSeed`, matching `GgmSeed::Witness`:
-/// `(nk, pk, value, psi, rcm, trap)`.
-pub type NoteFields = (Fp, Fp, Fp, Fp, Fp, Fp);
+/// (nk, pk, value, psi, rcm)
+pub type NoteFields = (Fp, Fp, Fp, Fp, Fp);
 
-fn build_app() -> (App, &'static <Pasta as Cycle>::CircuitPoseidon) {
+fn build_app<const CHUNK_SIZE: u8, const DEPTH: u8>()
+-> (App, &'static <Pasta as Cycle>::CircuitPoseidon) {
     let pasta = Pasta::baked();
-    let poseidon = Pasta::circuit_poseidon(pasta);
+    let poseidon_params = Pasta::circuit_poseidon(pasta);
 
     let app = ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
-        .register(GgmSeed::<Pasta> {
-            poseidon_params: poseidon,
-        })
+        .register(GgmMasterSeed::<Pasta> { poseidon_params })
         .unwrap()
-        .register(GgmFirstStep::<Pasta> {
-            poseidon_params: poseidon,
-        })
+        .register(GgmMasterStep::<Pasta, CHUNK_SIZE> { poseidon_params })
         .unwrap()
-        .register(GgmStep::<Pasta, DEPTH> {
-            poseidon_params: poseidon,
-        })
+        .register(GgmNodeStep::<Pasta, CHUNK_SIZE, DEPTH> { poseidon_params })
         .unwrap()
-        .register(GgmLeaf::<DEPTH>)
+        .register(GgmBlindStep::<Pasta> { poseidon_params })
+        .unwrap()
+        .register(GgmDelegateStep::<Pasta, CHUNK_SIZE, DEPTH> { poseidon_params })
+        .unwrap()
+        .register(GgmNullifierStep::<Pasta, DEPTH> { poseidon_params })
         .unwrap()
         .finalize(pasta)
         .unwrap();
 
-    (app, poseidon)
+    (app, poseidon_params)
 }
 
 fn sample_note_fields(rng: &mut StdRng) -> NoteFields {
@@ -65,70 +50,86 @@ fn sample_note_fields(rng: &mut StdRng) -> NoteFields {
         Fp::from(100_000_000u64),
         Fp::random(&mut *rng),
         Fp::random(&mut *rng),
-        Fp::random(&mut *rng),
     )
 }
 
 fn seed_master(
     app: &App,
-    poseidon: &<Pasta as Cycle>::CircuitPoseidon,
+    poseidon_params: &<Pasta as Cycle>::CircuitPoseidon,
     rng: &mut StdRng,
-) -> Pcd<Pasta, ProductionRank, MasterHeader> {
+) -> Pcd<Pasta, ProductionRank, GgmMasterHeader> {
     let note_fields = sample_note_fields(rng);
-    app.seed(
-        rng,
-        GgmSeed::<Pasta> {
-            poseidon_params: poseidon,
-        },
-        note_fields,
-    )
-    .unwrap()
-    .0
+    app.seed(rng, GgmMasterSeed::<Pasta> { poseidon_params }, note_fields)
+        .unwrap()
+        .0
 }
 
-fn first_step(
+fn master_step<const CHUNK_SIZE: u8>(
     app: &App,
-    poseidon: &<Pasta as Cycle>::CircuitPoseidon,
+    poseidon_params: &<Pasta as Cycle>::CircuitPoseidon,
     rng: &mut StdRng,
-    master: Pcd<Pasta, ProductionRank, MasterHeader>,
-) -> Pcd<Pasta, ProductionRank, DelegationHeader> {
-    let trivial = app.seeded_trivial_pcd(rng);
+    master: Pcd<Pasta, ProductionRank, GgmMasterHeader>,
+) -> Pcd<Pasta, ProductionRank, GgmPrivateHeader> {
+    let trivial_pcd = app.seeded_trivial_pcd(rng);
     app.fuse(
         rng,
-        GgmFirstStep::<Pasta> {
-            poseidon_params: poseidon,
-        },
-        false,
+        GgmMasterStep::<Pasta, CHUNK_SIZE> { poseidon_params },
+        0u8,
         master,
-        trivial,
+        trivial_pcd,
     )
     .unwrap()
     .0
 }
 
-fn advance_levels(
+fn node_step<const CHUNK_SIZE: u8, const DEPTH: u8>(
+    app: &App,
+    poseidon_params: &<Pasta as Cycle>::CircuitPoseidon,
+    rng: &mut StdRng,
+    node_pcd: Pcd<Pasta, ProductionRank, GgmPrivateHeader>,
+) -> Pcd<Pasta, ProductionRank, GgmPrivateHeader> {
+    let trivial_pcd = app.seeded_trivial_pcd(rng);
+    app.fuse(
+        rng,
+        GgmNodeStep::<Pasta, CHUNK_SIZE, DEPTH> { poseidon_params },
+        0u8,
+        node_pcd,
+        trivial_pcd,
+    )
+    .unwrap()
+    .0
+}
+
+fn blind_step(
+    app: &App,
+    poseidon_params: &<Pasta as Cycle>::CircuitPoseidon,
+    rng: &mut StdRng,
+    node_pcd: Pcd<Pasta, ProductionRank, GgmPrivateHeader>,
+    trap: Fp,
+) -> Pcd<Pasta, ProductionRank, GgmDelegateHeader> {
+    let trivial_pcd = app.seeded_trivial_pcd(rng);
+    app.fuse(
+        rng,
+        GgmBlindStep::<Pasta> { poseidon_params },
+        trap,
+        node_pcd,
+        trivial_pcd,
+    )
+    .unwrap()
+    .0
+}
+
+pub fn walk_measured<const CHUNK_SIZE: u8, const DEPTH: u8>(
     app: &App,
     poseidon: &<Pasta as Cycle>::CircuitPoseidon,
     rng: &mut StdRng,
-    mut pcd: Pcd<Pasta, ProductionRank, DelegationHeader>,
-    levels: u8,
-) -> Pcd<Pasta, ProductionRank, DelegationHeader> {
-    for _ in 0..levels {
-        let trivial = app.seeded_trivial_pcd(rng);
-        let (next, _) = app
-            .fuse(
-                rng,
-                GgmStep::<Pasta, DEPTH> {
-                    poseidon_params: poseidon,
-                },
-                false,
-                pcd,
-                trivial,
-            )
-            .unwrap();
-        pcd = next;
+    master: Pcd<Pasta, ProductionRank, GgmMasterHeader>,
+) -> Pcd<Pasta, ProductionRank, GgmPrivateHeader> {
+    let mut node_pcd = master_step::<CHUNK_SIZE>(app, poseidon, rng, master);
+    for _ in 1..DEPTH {
+        node_pcd = node_step::<CHUNK_SIZE, DEPTH>(app, poseidon, rng, node_pcd);
     }
-    pcd
+    node_pcd
 }
 
 pub fn setup_seed() -> (
@@ -137,63 +138,92 @@ pub fn setup_seed() -> (
     StdRng,
     NoteFields,
 ) {
-    let (app, poseidon) = build_app();
+    let (app, poseidon) = build_app::<GGM_CHUNK_SIZE, GGM_DEPTH>();
     let mut rng = StdRng::seed_from_u64(1234);
     let note_fields = sample_note_fields(&mut rng);
     (app, poseidon, rng, note_fields)
 }
 
-pub fn setup_step() -> (
+pub fn setup_node_step() -> (
     App,
     &'static <Pasta as Cycle>::CircuitPoseidon,
     StdRng,
-    Pcd<Pasta, ProductionRank, DelegationHeader>,
+    Pcd<Pasta, ProductionRank, GgmPrivateHeader>,
     Pcd<Pasta, ProductionRank, ()>,
 ) {
-    let (app, poseidon) = build_app();
+    let (app, poseidon) = build_app::<GGM_CHUNK_SIZE, GGM_DEPTH>();
     let mut rng = StdRng::seed_from_u64(1234);
     let master = seed_master(&app, poseidon, &mut rng);
-    let depth_1 = first_step(&app, poseidon, &mut rng, master);
-    let trivial = app.seeded_trivial_pcd(&mut rng);
-    (app, poseidon, rng, depth_1, trivial)
+    let depth_1 = master_step::<GGM_CHUNK_SIZE>(&app, poseidon, &mut rng, master);
+    let trivial_pcd = app.seeded_trivial_pcd(&mut rng);
+    (app, poseidon, rng, depth_1, trivial_pcd)
 }
 
 pub fn setup_walk() -> (
     App,
     &'static <Pasta as Cycle>::CircuitPoseidon,
     StdRng,
-    Pcd<Pasta, ProductionRank, MasterHeader>,
+    Pcd<Pasta, ProductionRank, GgmMasterHeader>,
 ) {
-    let (app, poseidon) = build_app();
+    let (app, poseidon) = build_app::<GGM_CHUNK_SIZE, GGM_DEPTH>();
     let mut rng = StdRng::seed_from_u64(1234);
     let master = seed_master(&app, poseidon, &mut rng);
     (app, poseidon, rng, master)
 }
 
-pub fn setup_leaf() -> (
+pub fn setup_blind() -> (
     App,
     &'static <Pasta as Cycle>::CircuitPoseidon,
     StdRng,
-    Pcd<Pasta, ProductionRank, DelegationHeader>,
+    Pcd<Pasta, ProductionRank, GgmPrivateHeader>,
     Pcd<Pasta, ProductionRank, ()>,
+    Fp,
 ) {
-    let (app, poseidon) = build_app();
+    let (app, poseidon) = build_app::<GGM_CHUNK_SIZE, GGM_DEPTH>();
     let mut rng = StdRng::seed_from_u64(1234);
     let master = seed_master(&app, poseidon, &mut rng);
-    let depth_1 = first_step(&app, poseidon, &mut rng, master);
-    let depth_last = advance_levels(&app, poseidon, &mut rng, depth_1, DEPTH - 1);
-    let trivial = app.seeded_trivial_pcd(&mut rng);
-    (app, poseidon, rng, depth_last, trivial)
+    let mut node_pcd = master_step::<GGM_CHUNK_SIZE>(&app, poseidon, &mut rng, master);
+    for _ in 1..GGM_DEPTH {
+        node_pcd = node_step::<GGM_CHUNK_SIZE, GGM_DEPTH>(&app, poseidon, &mut rng, node_pcd);
+    }
+    let trivial_pcd = app.seeded_trivial_pcd(&mut rng);
+    let trap = Fp::random(&mut rng);
+    (app, poseidon, rng, node_pcd, trivial_pcd, trap)
 }
 
-/// Measured region of the `walk` bench: `first_step` + `DEPTH - 1`
-/// inner steps.
-pub fn walk_measured(
-    app: &App,
-    poseidon: &<Pasta as Cycle>::CircuitPoseidon,
-    rng: &mut StdRng,
-    master: Pcd<Pasta, ProductionRank, MasterHeader>,
-) -> Pcd<Pasta, ProductionRank, DelegationHeader> {
-    let depth_1 = first_step(app, poseidon, rng, master);
-    advance_levels(app, poseidon, rng, depth_1, DEPTH - 1)
+pub fn setup_delegate() -> (
+    App,
+    &'static <Pasta as Cycle>::CircuitPoseidon,
+    StdRng,
+    Pcd<Pasta, ProductionRank, GgmDelegateHeader>,
+    Pcd<Pasta, ProductionRank, ()>,
+) {
+    let (app, poseidon) = build_app::<GGM_CHUNK_SIZE, GGM_DEPTH>();
+    let mut rng = StdRng::seed_from_u64(1234);
+    let master = seed_master(&app, poseidon, &mut rng);
+    let node_pcd = master_step::<GGM_CHUNK_SIZE>(&app, poseidon, &mut rng, master);
+    let trap = Fp::random(&mut rng);
+    let delegate_pcd = blind_step(&app, poseidon, &mut rng, node_pcd, trap);
+    let trivial_pcd = app.seeded_trivial_pcd(&mut rng);
+    (app, poseidon, rng, delegate_pcd, trivial_pcd)
+}
+
+pub fn setup_final() -> (
+    App,
+    &'static <Pasta as Cycle>::CircuitPoseidon,
+    StdRng,
+    Pcd<Pasta, ProductionRank, GgmDelegateHeader>,
+    Pcd<Pasta, ProductionRank, ()>,
+) {
+    let (app, poseidon) = build_app::<GGM_CHUNK_SIZE, GGM_DEPTH>();
+    let mut rng = StdRng::seed_from_u64(1234);
+    let master = seed_master(&app, poseidon, &mut rng);
+    let mut node_pcd = master_step::<GGM_CHUNK_SIZE>(&app, poseidon, &mut rng, master);
+    for _ in 1..GGM_DEPTH {
+        node_pcd = node_step::<GGM_CHUNK_SIZE, GGM_DEPTH>(&app, poseidon, &mut rng, node_pcd);
+    }
+    let trap = Fp::random(&mut rng);
+    let delegate_pcd = blind_step(&app, poseidon, &mut rng, node_pcd, trap);
+    let trivial_pcd = app.seeded_trivial_pcd(&mut rng);
+    (app, poseidon, rng, delegate_pcd, trivial_pcd)
 }
