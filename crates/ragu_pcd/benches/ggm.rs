@@ -5,8 +5,8 @@ mod ggm_setup;
 use std::hint::black_box;
 
 use ggm_setup::{
-    App, GGM_CHUNK_SIZE, GGM_DEPTH, NoteFields, setup_blind, setup_delegate, setup_final,
-    setup_node_step, setup_seed, setup_walk, walk_measured,
+    App, NoteFields, setup_blind, setup_delegate, setup_final, setup_node_step, setup_seed,
+    setup_walk, walk_measured,
 };
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use ragu_arithmetic::Cycle;
@@ -50,7 +50,7 @@ fn step(
 ) {
     black_box(app.fuse(
         &mut rng,
-        GgmNodeStep::<Pasta, GGM_CHUNK_SIZE, GGM_DEPTH> { poseidon_params },
+        GgmNodeStep::<Pasta> { poseidon_params },
         0u8,
         node_pcd,
         trivial_pcd,
@@ -68,9 +68,7 @@ fn walk(
         Pcd<Pasta, ProductionRank, GgmMasterHeader>,
     ),
 ) {
-    black_box(walk_measured::<GGM_CHUNK_SIZE, GGM_DEPTH>(
-        &app, poseidon, &mut rng, master,
-    ));
+    black_box(walk_measured(&app, poseidon, &mut rng, master));
 }
 
 #[library_benchmark(setup = setup_blind)]
@@ -108,7 +106,7 @@ fn delegate(
 ) {
     black_box(app.fuse(
         &mut rng,
-        GgmDelegateStep::<Pasta, GGM_CHUNK_SIZE, GGM_DEPTH> { poseidon_params },
+        GgmDelegateStep::<Pasta> { poseidon_params },
         0u8,
         delegate_pcd,
         trivial_pcd,
@@ -129,7 +127,7 @@ fn nullifier(
 ) {
     black_box(app.fuse(
         &mut rng,
-        GgmNullifierStep::<Pasta, GGM_DEPTH> { poseidon_params },
+        GgmNullifierStep::<Pasta> { poseidon_params },
         (),
         delegate_pcd,
         trivial_pcd,

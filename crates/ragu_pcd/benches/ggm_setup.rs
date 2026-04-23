@@ -7,7 +7,7 @@ use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::{Application, ApplicationBuilder, Pcd};
-pub use ragu_testing::pcd::ggm::{GGM_CHUNK_SIZE, GGM_DEPTH, HEADER_SIZE};
+pub use ragu_testing::pcd::ggm::{GGM_DEPTH, HEADER_SIZE};
 use ragu_testing::pcd::ggm::{
     GgmBlindStep, GgmDelegateHeader, GgmDelegateStep, GgmMasterHeader, GgmMasterSeed,
     GgmMasterStep, GgmNodeStep, GgmNullifierStep, GgmPrivateHeader,
@@ -19,23 +19,22 @@ pub type App = Application<'static, Pasta, ProductionRank, HEADER_SIZE>;
 /// (nk, pk, value, psi, rcm)
 pub type NoteFields = (Fp, Fp, Fp, Fp, Fp);
 
-fn build_app<const CHUNK_SIZE: u8, const DEPTH: u8>()
--> (App, &'static <Pasta as Cycle>::CircuitPoseidon) {
+fn build_app() -> (App, &'static <Pasta as Cycle>::CircuitPoseidon) {
     let pasta = Pasta::baked();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
 
     let app = ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
         .register(GgmMasterSeed::<Pasta> { poseidon_params })
         .unwrap()
-        .register(GgmMasterStep::<Pasta, CHUNK_SIZE> { poseidon_params })
+        .register(GgmMasterStep::<Pasta> { poseidon_params })
         .unwrap()
-        .register(GgmNodeStep::<Pasta, CHUNK_SIZE, DEPTH> { poseidon_params })
+        .register(GgmNodeStep::<Pasta> { poseidon_params })
         .unwrap()
         .register(GgmBlindStep::<Pasta> { poseidon_params })
         .unwrap()
-        .register(GgmDelegateStep::<Pasta, CHUNK_SIZE, DEPTH> { poseidon_params })
+        .register(GgmDelegateStep::<Pasta> { poseidon_params })
         .unwrap()
-        .register(GgmNullifierStep::<Pasta, DEPTH> { poseidon_params })
+        .register(GgmNullifierStep::<Pasta> { poseidon_params })
         .unwrap()
         .finalize(pasta)
         .unwrap();
@@ -64,7 +63,7 @@ fn seed_master(
         .0
 }
 
-fn master_step<const CHUNK_SIZE: u8>(
+fn master_step(
     app: &App,
     poseidon_params: &<Pasta as Cycle>::CircuitPoseidon,
     rng: &mut StdRng,
@@ -73,7 +72,7 @@ fn master_step<const CHUNK_SIZE: u8>(
     let trivial_pcd = app.seeded_trivial_pcd(rng);
     app.fuse(
         rng,
-        GgmMasterStep::<Pasta, CHUNK_SIZE> { poseidon_params },
+        GgmMasterStep::<Pasta> { poseidon_params },
         0u8,
         master_pcd,
         trivial_pcd,
@@ -82,7 +81,7 @@ fn master_step<const CHUNK_SIZE: u8>(
     .0
 }
 
-fn node_step<const CHUNK_SIZE: u8, const DEPTH: u8>(
+fn node_step(
     app: &App,
     poseidon_params: &<Pasta as Cycle>::CircuitPoseidon,
     rng: &mut StdRng,
@@ -91,7 +90,7 @@ fn node_step<const CHUNK_SIZE: u8, const DEPTH: u8>(
     let trivial_pcd = app.seeded_trivial_pcd(rng);
     app.fuse(
         rng,
-        GgmNodeStep::<Pasta, CHUNK_SIZE, DEPTH> { poseidon_params },
+        GgmNodeStep::<Pasta> { poseidon_params },
         0u8,
         node_pcd,
         trivial_pcd,
@@ -119,15 +118,15 @@ fn blind_step(
     .0
 }
 
-pub fn walk_measured<const CHUNK_SIZE: u8, const DEPTH: u8>(
+pub fn walk_measured(
     app: &App,
     poseidon: &<Pasta as Cycle>::CircuitPoseidon,
     rng: &mut StdRng,
     master_pcd: Pcd<Pasta, ProductionRank, GgmMasterHeader>,
 ) -> Pcd<Pasta, ProductionRank, GgmPrivateHeader> {
-    let mut node_pcd = master_step::<CHUNK_SIZE>(app, poseidon, rng, master_pcd);
-    for _ in 1..DEPTH {
-        node_pcd = node_step::<CHUNK_SIZE, DEPTH>(app, poseidon, rng, node_pcd);
+    let mut node_pcd = master_step(app, poseidon, rng, master_pcd);
+    for _ in 1..GGM_DEPTH {
+        node_pcd = node_step(app, poseidon, rng, node_pcd);
     }
     node_pcd
 }
@@ -138,7 +137,7 @@ pub fn setup_seed() -> (
     StdRng,
     NoteFields,
 ) {
-    let (app, poseidon) = build_app::<GGM_CHUNK_SIZE, GGM_DEPTH>();
+    let (app, poseidon) = build_app();
     let mut rng = StdRng::seed_from_u64(1234);
     let note_fields = sample_note_fields(&mut rng);
     (app, poseidon, rng, note_fields)
@@ -151,10 +150,10 @@ pub fn setup_node_step() -> (
     Pcd<Pasta, ProductionRank, GgmPrivateHeader>,
     Pcd<Pasta, ProductionRank, ()>,
 ) {
-    let (app, poseidon) = build_app::<GGM_CHUNK_SIZE, GGM_DEPTH>();
+    let (app, poseidon) = build_app();
     let mut rng = StdRng::seed_from_u64(1234);
     let master_pcd = seed_master(&app, poseidon, &mut rng);
-    let node_pcd = master_step::<GGM_CHUNK_SIZE>(&app, poseidon, &mut rng, master_pcd);
+    let node_pcd = master_step(&app, poseidon, &mut rng, master_pcd);
     let trivial_pcd = app.seeded_trivial_pcd(&mut rng);
     (app, poseidon, rng, node_pcd, trivial_pcd)
 }
@@ -165,7 +164,7 @@ pub fn setup_walk() -> (
     StdRng,
     Pcd<Pasta, ProductionRank, GgmMasterHeader>,
 ) {
-    let (app, poseidon) = build_app::<GGM_CHUNK_SIZE, GGM_DEPTH>();
+    let (app, poseidon) = build_app();
     let mut rng = StdRng::seed_from_u64(1234);
     let master = seed_master(&app, poseidon, &mut rng);
     (app, poseidon, rng, master)
@@ -179,12 +178,12 @@ pub fn setup_blind() -> (
     Pcd<Pasta, ProductionRank, ()>,
     Fp,
 ) {
-    let (app, poseidon) = build_app::<GGM_CHUNK_SIZE, GGM_DEPTH>();
+    let (app, poseidon) = build_app();
     let mut rng = StdRng::seed_from_u64(1234);
     let master = seed_master(&app, poseidon, &mut rng);
-    let mut node_pcd = master_step::<GGM_CHUNK_SIZE>(&app, poseidon, &mut rng, master);
+    let mut node_pcd = master_step(&app, poseidon, &mut rng, master);
     for _ in 1..GGM_DEPTH {
-        node_pcd = node_step::<GGM_CHUNK_SIZE, GGM_DEPTH>(&app, poseidon, &mut rng, node_pcd);
+        node_pcd = node_step(&app, poseidon, &mut rng, node_pcd);
     }
     let trivial_pcd = app.seeded_trivial_pcd(&mut rng);
     let trap = Fp::random(&mut rng);
@@ -198,10 +197,10 @@ pub fn setup_delegate() -> (
     Pcd<Pasta, ProductionRank, GgmDelegateHeader>,
     Pcd<Pasta, ProductionRank, ()>,
 ) {
-    let (app, poseidon) = build_app::<GGM_CHUNK_SIZE, GGM_DEPTH>();
+    let (app, poseidon) = build_app();
     let mut rng = StdRng::seed_from_u64(1234);
     let master = seed_master(&app, poseidon, &mut rng);
-    let node_pcd = master_step::<GGM_CHUNK_SIZE>(&app, poseidon, &mut rng, master);
+    let node_pcd = master_step(&app, poseidon, &mut rng, master);
     let trap = Fp::random(&mut rng);
     let delegate_pcd = blind_step(&app, poseidon, &mut rng, node_pcd, trap);
     let trivial_pcd = app.seeded_trivial_pcd(&mut rng);
@@ -215,12 +214,12 @@ pub fn setup_final() -> (
     Pcd<Pasta, ProductionRank, GgmDelegateHeader>,
     Pcd<Pasta, ProductionRank, ()>,
 ) {
-    let (app, poseidon) = build_app::<GGM_CHUNK_SIZE, GGM_DEPTH>();
+    let (app, poseidon) = build_app();
     let mut rng = StdRng::seed_from_u64(1234);
     let master = seed_master(&app, poseidon, &mut rng);
-    let mut node_pcd = master_step::<GGM_CHUNK_SIZE>(&app, poseidon, &mut rng, master);
+    let mut node_pcd = master_step(&app, poseidon, &mut rng, master);
     for _ in 1..GGM_DEPTH {
-        node_pcd = node_step::<GGM_CHUNK_SIZE, GGM_DEPTH>(&app, poseidon, &mut rng, node_pcd);
+        node_pcd = node_step(&app, poseidon, &mut rng, node_pcd);
     }
     let trap = Fp::random(&mut rng);
     let delegate_pcd = blind_step(&app, poseidon, &mut rng, node_pcd, trap);

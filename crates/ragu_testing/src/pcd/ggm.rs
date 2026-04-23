@@ -41,7 +41,7 @@ pub fn tag<F: PrimeField>(t: &[u8; 16]) -> F {
     F::from_u128(u128::from_le_bytes(*t))
 }
 
-fn alloc_chunk<'dr, D, A, const CHUNK_SIZE: u8>(
+fn alloc_chunk<'dr, D, A>(
     dr: &mut D,
     allocator: &mut A,
     witness: DriverValue<D, u8>,
@@ -52,7 +52,7 @@ where
     A: Allocator<'dr, D>,
 {
     let mut acc = Element::zero(dr);
-    for i in 0..CHUNK_SIZE {
+    for i in 0..GGM_CHUNK_SIZE {
         let bit_w = witness.as_ref().map(move |c| (*c >> i) & 1 != 0);
         let bit = Boolean::alloc(dr, allocator, bit_w)?;
         let scale = D::F::from(1u64 << i);
@@ -265,12 +265,12 @@ where
 
 /// First pre-blind descent: `GgmMasterHeader` → `GgmPrivateHeader` at
 /// depth 1.
-pub struct GgmMasterStep<'params, C: Cycle, const CHUNK_SIZE: u8> {
+pub struct GgmMasterStep<'params, C: Cycle> {
     /// Poseidon parameters used for the tree-step sponge.
     pub poseidon_params: &'params C::CircuitPoseidon,
 }
 
-impl<C: Cycle, const CHUNK_SIZE: u8> Step<C> for GgmMasterStep<'_, C, CHUNK_SIZE>
+impl<C: Cycle> Step<C> for GgmMasterStep<'_, C>
 where
     C::CircuitField: PrimeField,
 {
@@ -302,7 +302,7 @@ where
         let allocator = &mut Standard::new();
         let left = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, allocator, left)?;
         let right = Encoded::from_gadget(());
-        let chunk = alloc_chunk::<D, _, CHUNK_SIZE>(dr, allocator, witness)?;
+        let chunk = alloc_chunk::<D, _>(dr, allocator, witness)?;
 
         let (mk, cm) = left.as_gadget();
 
@@ -341,13 +341,12 @@ where
 
 /// Recursive pre-blind descent: `GgmPrivateHeader` → `GgmPrivateHeader`.
 /// Asserts `depth < DEPTH` via `(depth - DEPTH).invert(dr)?`.
-pub struct GgmNodeStep<'params, C: Cycle, const CHUNK_SIZE: u8, const DEPTH: u8> {
+pub struct GgmNodeStep<'params, C: Cycle> {
     /// Poseidon parameters used for the tree-step sponge.
     pub poseidon_params: &'params C::CircuitPoseidon,
 }
 
-impl<C: Cycle, const CHUNK_SIZE: u8, const DEPTH: u8> Step<C>
-    for GgmNodeStep<'_, C, CHUNK_SIZE, DEPTH>
+impl<C: Cycle> Step<C> for GgmNodeStep<'_, C>
 where
     C::CircuitField: PrimeField,
 {
@@ -379,13 +378,13 @@ where
         let allocator = &mut Standard::new();
         let left = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, allocator, left)?;
         let right = Encoded::from_gadget(());
-        let chunk = alloc_chunk::<D, _, CHUNK_SIZE>(dr, allocator, witness)?;
+        let chunk = alloc_chunk::<D, _>(dr, allocator, witness)?;
 
         let (prev_node, (prev_depth, (prev_index, (mk, cm)))) = left.as_gadget();
 
         // Assert depth < DEPTH via depth != DEPTH (combined with the
         // chain's depth+1 invariant, this is equivalent given depth ≥ 1).
-        let depth_constant = Element::constant(dr, C::CircuitField::from(DEPTH as u64));
+        let depth_constant = Element::constant(dr, C::CircuitField::from(GGM_DEPTH as u64));
         let diff = prev_depth.sub(dr, &depth_constant);
         let _ = diff.invert(dr)?;
 
@@ -401,7 +400,7 @@ where
 
         let one = Element::one();
         let depth = prev_depth.add(dr, &one);
-        let k = C::CircuitField::from(1u64 << CHUNK_SIZE);
+        let k = C::CircuitField::from(1u64 << GGM_CHUNK_SIZE);
         let index = prev_index.scale(dr, Coeff::Arbitrary(k)).add(dr, &chunk);
         let mk_out = mk.clone();
         let cm_out = cm.clone();
@@ -500,13 +499,12 @@ where
 /// Recursive post-blind descent: `GgmDelegateHeader` →
 /// `GgmDelegateHeader`. Same GGM hash as `GgmNodeStep`; `delegation_id`
 /// passes through. Asserts `depth < DEPTH`.
-pub struct GgmDelegateStep<'params, C: Cycle, const CHUNK_SIZE: u8, const DEPTH: u8> {
+pub struct GgmDelegateStep<'params, C: Cycle> {
     /// Poseidon parameters used for the tree-step sponge.
     pub poseidon_params: &'params C::CircuitPoseidon,
 }
 
-impl<C: Cycle, const CHUNK_SIZE: u8, const DEPTH: u8> Step<C>
-    for GgmDelegateStep<'_, C, CHUNK_SIZE, DEPTH>
+impl<C: Cycle> Step<C> for GgmDelegateStep<'_, C>
 where
     C::CircuitField: PrimeField,
 {
@@ -538,11 +536,11 @@ where
         let allocator = &mut Standard::new();
         let left = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, allocator, left)?;
         let right = Encoded::from_gadget(());
-        let chunk = alloc_chunk::<D, _, CHUNK_SIZE>(dr, allocator, witness)?;
+        let chunk = alloc_chunk::<D, _>(dr, allocator, witness)?;
 
         let (prev_node, (prev_depth, (prev_index, delegation_id))) = left.as_gadget();
 
-        let depth_constant = Element::constant(dr, C::CircuitField::from(DEPTH as u64));
+        let depth_constant = Element::constant(dr, C::CircuitField::from(GGM_DEPTH as u64));
         let diff = prev_depth.sub(dr, &depth_constant);
         let _ = diff.invert(dr)?;
 
@@ -558,7 +556,7 @@ where
 
         let one = Element::one();
         let depth = prev_depth.add(dr, &one);
-        let k = C::CircuitField::from(1u64 << CHUNK_SIZE);
+        let k = C::CircuitField::from(1u64 << GGM_CHUNK_SIZE);
         let index = prev_index.scale(dr, Coeff::Arbitrary(k)).add(dr, &chunk);
         let did_out = delegation_id.clone();
 
@@ -579,12 +577,12 @@ where
 /// Terminal step: asserts `depth == DEPTH`, derives
 /// `nullifier = Poseidon(NF, leaf_node)`, and re-emits
 /// `(nullifier, epoch=index, delegation_id)`.
-pub struct GgmNullifierStep<'params, C: Cycle, const DEPTH: u8> {
+pub struct GgmNullifierStep<'params, C: Cycle> {
     /// Poseidon parameters used for the final-value sponge.
     pub poseidon_params: &'params C::CircuitPoseidon,
 }
 
-impl<C: Cycle, const DEPTH: u8> Step<C> for GgmNullifierStep<'_, C, DEPTH>
+impl<C: Cycle> Step<C> for GgmNullifierStep<'_, C>
 where
     C::CircuitField: PrimeField,
 {
@@ -620,7 +618,7 @@ where
         let (node, (depth, (index, delegation_id))) = left.as_gadget();
 
         // Assert depth == DEPTH.
-        let expected_depth = Element::constant(dr, C::CircuitField::from(DEPTH as u64));
+        let expected_depth = Element::constant(dr, C::CircuitField::from(GGM_DEPTH as u64));
         let diff = depth.sub(dr, &expected_depth);
         diff.enforce_zero(dr)?;
 
@@ -659,7 +657,7 @@ pub type SeedWitness<C> = (
 );
 
 /// Native Poseidon walk, mirroring the in-circuit steps.
-pub fn native_ggm<C: Cycle, const CHUNK_SIZE: u8, const DEPTH: u8>(
+pub fn native_ggm<C: Cycle>(
     poseidon_params: &C::CircuitPoseidon,
     seed_witness: SeedWitness<C>,
     trap: C::CircuitField,
@@ -715,10 +713,10 @@ where
     };
 
     // Walk the GGM tree MSB-first, CHUNK_SIZE bits at a time.
-    let chunk_mask: u32 = (1u32 << CHUNK_SIZE) - 1;
+    let chunk_mask: u32 = (1u32 << GGM_CHUNK_SIZE) - 1;
     let mut node = mk;
-    for i in 0..DEPTH {
-        let shift = CHUNK_SIZE * (DEPTH - 1 - i);
+    for i in 0..GGM_DEPTH {
+        let shift = GGM_CHUNK_SIZE * (GGM_DEPTH - 1 - i);
         let chunk = (epoch >> shift) & chunk_mask;
         let chunk_e = Element::alloc(dr, allocator, just(C::CircuitField::from(u64::from(chunk))))?;
 

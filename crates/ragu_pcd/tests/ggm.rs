@@ -5,9 +5,9 @@ use ragu_core::Result;
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::{Application, ApplicationBuilder, Pcd};
 use ragu_testing::pcd::ggm::{
-    GGM_ARITY, GGM_CHUNK_SIZE, GGM_DEPTH, GGM_MAX, GgmBlindStep, GgmDelegateHeader,
-    GgmDelegateStep, GgmIndex, GgmMasterHeader, GgmMasterSeed, GgmMasterStep, GgmNodeStep,
-    GgmNullifierHeader, GgmNullifierStep, GgmPrivateHeader, HEADER_SIZE, native_ggm,
+    GGM_ARITY, GGM_DEPTH, GGM_MAX, GgmBlindStep, GgmDelegateHeader, GgmDelegateStep, GgmIndex,
+    GgmMasterHeader, GgmMasterSeed, GgmMasterStep, GgmNodeStep, GgmNullifierHeader,
+    GgmNullifierStep, GgmPrivateHeader, HEADER_SIZE, native_ggm,
 };
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -31,24 +31,22 @@ impl Note {
     }
 }
 
-fn build_app<const CHUNK_SIZE: u8, const DEPTH: u8>(
-    pasta: &'static <Pasta as Cycle>::Params,
-) -> Result<App<'static>> {
+fn build_app(pasta: &'static <Pasta as Cycle>::Params) -> Result<App<'static>> {
     let poseidon_params = Pasta::circuit_poseidon(pasta);
     ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
         .register(GgmMasterSeed::<Pasta> { poseidon_params })?
-        .register(GgmMasterStep::<Pasta, CHUNK_SIZE> { poseidon_params })?
-        .register(GgmNodeStep::<Pasta, CHUNK_SIZE, DEPTH> { poseidon_params })?
+        .register(GgmMasterStep::<Pasta> { poseidon_params })?
+        .register(GgmNodeStep::<Pasta> { poseidon_params })?
         .register(GgmBlindStep::<Pasta> { poseidon_params })?
-        .register(GgmDelegateStep::<Pasta, CHUNK_SIZE, DEPTH> { poseidon_params })?
-        .register(GgmNullifierStep::<Pasta, DEPTH> { poseidon_params })?
+        .register(GgmDelegateStep::<Pasta> { poseidon_params })?
+        .register(GgmNullifierStep::<Pasta> { poseidon_params })?
         .finalize(pasta)
 }
 
 /// Extract the `level`-th MSB-first base-`ARITY` digit of `epoch`
-fn chunk_at<const ARITY: u8, const DEPTH: u8>(epoch: GgmIndex, level: u8) -> u8 {
-    let place = (ARITY as GgmIndex).pow(u32::from(DEPTH - 1 - level));
-    ((epoch / place) % ARITY as GgmIndex) as u8
+fn chunk_at(epoch: GgmIndex, level: u8) -> u8 {
+    let place = (GGM_ARITY as u16).pow(u32::from(GGM_DEPTH - 1 - level));
+    ((epoch / place) % GGM_ARITY as u16) as u8
 }
 
 fn seed(
@@ -66,7 +64,7 @@ fn seed(
     Ok(master)
 }
 
-fn descend_pre_blind<const ARITY: u8, const CHUNK_SIZE: u8, const DEPTH: u8>(
+fn descend_pre_blind(
     app: &App<'_>,
     rng: &mut StdRng,
     poseidon_params: &<Pasta as Cycle>::CircuitPoseidon,
@@ -75,15 +73,15 @@ fn descend_pre_blind<const ARITY: u8, const CHUNK_SIZE: u8, const DEPTH: u8>(
     depth_to: u8,
 ) -> Result<Pcd<Pasta, ProductionRank, GgmPrivateHeader>> {
     assert!(
-        (1..=DEPTH).contains(&depth_to),
-        "depth_to {depth_to} must be in [1, {DEPTH}]",
+        (1..=GGM_DEPTH).contains(&depth_to),
+        "depth_to {depth_to} must be in [1, {GGM_DEPTH}]",
     );
 
     let trivial_pcd = app.seeded_trivial_pcd(rng);
     let (mut node_pcd, _) = app.fuse(
         rng,
-        GgmMasterStep::<Pasta, CHUNK_SIZE> { poseidon_params },
-        chunk_at::<ARITY, DEPTH>(epoch, 0),
+        GgmMasterStep::<Pasta> { poseidon_params },
+        chunk_at(epoch, 0),
         master_pcd,
         trivial_pcd,
     )?;
@@ -92,8 +90,8 @@ fn descend_pre_blind<const ARITY: u8, const CHUNK_SIZE: u8, const DEPTH: u8>(
         let trivial_pcd = app.seeded_trivial_pcd(rng);
         let (next, _) = app.fuse(
             rng,
-            GgmNodeStep::<Pasta, CHUNK_SIZE, DEPTH> { poseidon_params },
-            chunk_at::<ARITY, DEPTH>(epoch, level),
+            GgmNodeStep::<Pasta> { poseidon_params },
+            chunk_at(epoch, level),
             node_pcd,
             trivial_pcd,
         )?;
@@ -120,7 +118,7 @@ fn blind(
     Ok(out)
 }
 
-fn descend_post_blind<const ARITY: u8, const CHUNK_SIZE: u8, const DEPTH: u8>(
+fn descend_post_blind(
     app: &App<'_>,
     rng: &mut StdRng,
     poseidon_params: &<Pasta as Cycle>::CircuitPoseidon,
@@ -128,12 +126,12 @@ fn descend_post_blind<const ARITY: u8, const CHUNK_SIZE: u8, const DEPTH: u8>(
     epoch: GgmIndex,
     depth_from: u8,
 ) -> Result<Pcd<Pasta, ProductionRank, GgmDelegateHeader>> {
-    for level in depth_from..DEPTH {
+    for level in depth_from..GGM_DEPTH {
         let trivial_pcd = app.seeded_trivial_pcd(rng);
         let (next, _) = app.fuse(
             rng,
-            GgmDelegateStep::<Pasta, CHUNK_SIZE, DEPTH> { poseidon_params },
-            chunk_at::<ARITY, DEPTH>(epoch, level),
+            GgmDelegateStep::<Pasta> { poseidon_params },
+            chunk_at(epoch, level),
             delegate_pcd,
             trivial_pcd,
         )?;
@@ -142,7 +140,7 @@ fn descend_post_blind<const ARITY: u8, const CHUNK_SIZE: u8, const DEPTH: u8>(
     Ok(delegate_pcd)
 }
 
-fn finish<const DEPTH: u8>(
+fn finish(
     app: &App<'_>,
     rng: &mut StdRng,
     poseidon_params: &<Pasta as Cycle>::CircuitPoseidon,
@@ -151,7 +149,7 @@ fn finish<const DEPTH: u8>(
     let trivial_pcd = app.seeded_trivial_pcd(rng);
     let (out, _) = app.fuse(
         rng,
-        GgmNullifierStep::<Pasta, DEPTH> { poseidon_params },
+        GgmNullifierStep::<Pasta> { poseidon_params },
         (),
         delegate_pcd,
         trivial_pcd,
@@ -159,7 +157,7 @@ fn finish<const DEPTH: u8>(
     Ok(out)
 }
 
-fn blind_at_leaf<const ARITY: u8, const CHUNK_SIZE: u8, const DEPTH: u8>(
+fn blind_at_leaf(
     app: &App<'_>,
     rng: &mut StdRng,
     poseidon_params: &<Pasta as Cycle>::CircuitPoseidon,
@@ -167,26 +165,19 @@ fn blind_at_leaf<const ARITY: u8, const CHUNK_SIZE: u8, const DEPTH: u8>(
     epoch: GgmIndex,
     trap: Fp,
 ) -> Result<Pcd<Pasta, ProductionRank, GgmNullifierHeader>> {
-    let node_pcd = descend_pre_blind::<ARITY, CHUNK_SIZE, DEPTH>(
-        app,
-        rng,
-        poseidon_params,
-        master_pcd,
-        epoch,
-        DEPTH,
-    )?;
+    let node_pcd = descend_pre_blind(app, rng, poseidon_params, master_pcd, epoch, GGM_DEPTH)?;
     let delegate = blind(app, rng, poseidon_params, node_pcd, trap)?;
-    finish::<DEPTH>(app, rng, poseidon_params, delegate)
+    finish(app, rng, poseidon_params, delegate)
 }
 
-fn expected<const CHUNK_SIZE: u8, const DEPTH: u8>(
+fn expected(
     poseidon_params: &<Pasta as Cycle>::CircuitPoseidon,
     nk: Fp,
     note: &Note,
     trap: Fp,
     epoch: GgmIndex,
 ) -> Result<(Fp, Fp, Fp)> {
-    native_ggm::<Pasta, CHUNK_SIZE, DEPTH>(
+    native_ggm::<Pasta>(
         poseidon_params,
         (nk, note.pk, note.value, note.psi, note.rcm),
         trap,
@@ -198,7 +189,7 @@ fn expected<const CHUNK_SIZE: u8, const DEPTH: u8>(
 fn epoch_distinctness() -> Result<()> {
     let pasta = Pasta::baked();
     let poseidon = Pasta::circuit_poseidon(pasta);
-    let app = build_app::<GGM_CHUNK_SIZE, GGM_DEPTH>(pasta)?;
+    let app = build_app(pasta)?;
 
     let mut rng = StdRng::seed_from_u64(1234);
     let nk = Fp::random(&mut rng);
@@ -213,17 +204,8 @@ fn epoch_distinctness() -> Result<()> {
     let epoch_b: GgmIndex = GGM_MAX;
     assert_ne!(epoch_a, epoch_b);
 
-    let leaf_a = blind_at_leaf::<GGM_ARITY, GGM_CHUNK_SIZE, GGM_DEPTH>(
-        &app,
-        &mut rng,
-        poseidon,
-        master.clone(),
-        epoch_a,
-        trap,
-    )?;
-    let leaf_b = blind_at_leaf::<GGM_ARITY, GGM_CHUNK_SIZE, GGM_DEPTH>(
-        &app, &mut rng, poseidon, master, epoch_b, trap,
-    )?;
+    let leaf_a = blind_at_leaf(&app, &mut rng, poseidon, master.clone(), epoch_a, trap)?;
+    let leaf_b = blind_at_leaf(&app, &mut rng, poseidon, master, epoch_b, trap)?;
 
     assert!(app.verify(&leaf_a, &mut rng)?);
     assert!(app.verify(&leaf_b, &mut rng)?);
@@ -233,12 +215,12 @@ fn epoch_distinctness() -> Result<()> {
 
     assert_eq!(
         (nf_a, ep_a, did_a),
-        expected::<GGM_CHUNK_SIZE, GGM_DEPTH>(poseidon, nk, &note, trap, epoch_a)?,
+        expected(poseidon, nk, &note, trap, epoch_a)?,
         "leaf A disagrees with native walk",
     );
     assert_eq!(
         (nf_b, ep_b, did_b),
-        expected::<GGM_CHUNK_SIZE, GGM_DEPTH>(poseidon, nk, &note, trap, epoch_b)?,
+        expected(poseidon, nk, &note, trap, epoch_b)?,
         "leaf B disagrees with native walk",
     );
 
@@ -260,7 +242,7 @@ fn epoch_distinctness() -> Result<()> {
 fn note_distinctness() -> Result<()> {
     let pasta = Pasta::baked();
     let poseidon = Pasta::circuit_poseidon(pasta);
-    let app = build_app::<GGM_CHUNK_SIZE, GGM_DEPTH>(pasta)?;
+    let app = build_app(pasta)?;
 
     let mut rng = StdRng::seed_from_u64(4321);
     // Same nk, two distinct notes, two distinct trapdoors.
@@ -275,12 +257,8 @@ fn note_distinctness() -> Result<()> {
 
     let epoch: GgmIndex = 0b0101_0101_0101;
 
-    let leaf_a = blind_at_leaf::<GGM_ARITY, GGM_CHUNK_SIZE, GGM_DEPTH>(
-        &app, &mut rng, poseidon, master_a, epoch, trap_a,
-    )?;
-    let leaf_b = blind_at_leaf::<GGM_ARITY, GGM_CHUNK_SIZE, GGM_DEPTH>(
-        &app, &mut rng, poseidon, master_b, epoch, trap_b,
-    )?;
+    let leaf_a = blind_at_leaf(&app, &mut rng, poseidon, master_a, epoch, trap_a)?;
+    let leaf_b = blind_at_leaf(&app, &mut rng, poseidon, master_b, epoch, trap_b)?;
 
     assert!(app.verify(&leaf_a, &mut rng)?);
     assert!(app.verify(&leaf_b, &mut rng)?);
@@ -290,11 +268,11 @@ fn note_distinctness() -> Result<()> {
 
     assert_eq!(
         (nf_a, ep_a, did_a),
-        expected::<GGM_CHUNK_SIZE, GGM_DEPTH>(poseidon, nk, &note_a, trap_a, epoch)?,
+        expected(poseidon, nk, &note_a, trap_a, epoch)?,
     );
     assert_eq!(
         (nf_b, ep_b, did_b),
-        expected::<GGM_CHUNK_SIZE, GGM_DEPTH>(poseidon, nk, &note_b, trap_b, epoch)?,
+        expected(poseidon, nk, &note_b, trap_b, epoch)?,
     );
 
     assert_eq!(ep_a, Fp::from(u64::from(epoch)));
@@ -315,7 +293,7 @@ fn note_distinctness() -> Result<()> {
 fn blind_distinctness() -> Result<()> {
     let pasta = Pasta::baked();
     let poseidon = Pasta::circuit_poseidon(pasta);
-    let app = build_app::<GGM_CHUNK_SIZE, GGM_DEPTH>(pasta)?;
+    let app = build_app(pasta)?;
 
     let mut rng = StdRng::seed_from_u64(9001);
     let nk = Fp::random(&mut rng);
@@ -327,18 +305,16 @@ fn blind_distinctness() -> Result<()> {
     let epoch: GgmIndex = 0b1011_0010_1101;
 
     let master = seed(&app, &mut rng, poseidon, nk, &note)?;
-    let node_pcd = descend_pre_blind::<GGM_ARITY, GGM_CHUNK_SIZE, GGM_DEPTH>(
-        &app, &mut rng, poseidon, master, epoch, GGM_DEPTH,
-    )?;
+    let node_pcd = descend_pre_blind(&app, &mut rng, poseidon, master, epoch, GGM_DEPTH)?;
 
     // Two independent blind+finish with different trapdoors.
     let leaf_a = {
         let delegate = blind(&app, &mut rng, poseidon, node_pcd.clone(), trap_a)?;
-        finish::<GGM_DEPTH>(&app, &mut rng, poseidon, delegate)?
+        finish(&app, &mut rng, poseidon, delegate)?
     };
     let leaf_b = {
         let delegate = blind(&app, &mut rng, poseidon, node_pcd, trap_b)?;
-        finish::<GGM_DEPTH>(&app, &mut rng, poseidon, delegate)?
+        finish(&app, &mut rng, poseidon, delegate)?
     };
 
     assert!(app.verify(&leaf_a, &mut rng)?);
@@ -363,7 +339,7 @@ fn blind_distinctness() -> Result<()> {
 fn blind_path_equivalence() -> Result<()> {
     let pasta = Pasta::baked();
     let poseidon = Pasta::circuit_poseidon(pasta);
-    let app = build_app::<GGM_CHUNK_SIZE, GGM_DEPTH>(pasta)?;
+    let app = build_app(pasta)?;
 
     let mut rng = StdRng::seed_from_u64(7777);
     let nk = Fp::random(&mut rng);
@@ -374,25 +350,14 @@ fn blind_path_equivalence() -> Result<()> {
     let master = seed(&app, &mut rng, poseidon, nk, &note)?;
 
     // Path A: blind at leaf.
-    let leaf_a = blind_at_leaf::<GGM_ARITY, GGM_CHUNK_SIZE, GGM_DEPTH>(
-        &app,
-        &mut rng,
-        poseidon,
-        master.clone(),
-        epoch,
-        trap,
-    )?;
+    let leaf_a = blind_at_leaf(&app, &mut rng, poseidon, master.clone(), epoch, trap)?;
 
     // Path B: blind at mid-depth, continue via GgmDelegateStep.
     let b = GGM_DEPTH / 2;
-    let node_pcd = descend_pre_blind::<GGM_ARITY, GGM_CHUNK_SIZE, GGM_DEPTH>(
-        &app, &mut rng, poseidon, master, epoch, b,
-    )?;
+    let node_pcd = descend_pre_blind(&app, &mut rng, poseidon, master, epoch, b)?;
     let delegate = blind(&app, &mut rng, poseidon, node_pcd, trap)?;
-    let delegate = descend_post_blind::<GGM_ARITY, GGM_CHUNK_SIZE, GGM_DEPTH>(
-        &app, &mut rng, poseidon, delegate, epoch, b,
-    )?;
-    let leaf_b = finish::<GGM_DEPTH>(&app, &mut rng, poseidon, delegate)?;
+    let delegate = descend_post_blind(&app, &mut rng, poseidon, delegate, epoch, b)?;
+    let leaf_b = finish(&app, &mut rng, poseidon, delegate)?;
 
     assert!(app.verify(&leaf_a, &mut rng)?);
     assert!(app.verify(&leaf_b, &mut rng)?);
