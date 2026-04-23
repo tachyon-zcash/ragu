@@ -68,14 +68,14 @@ fn master_step<const CHUNK_SIZE: u8>(
     app: &App,
     poseidon_params: &<Pasta as Cycle>::CircuitPoseidon,
     rng: &mut StdRng,
-    master: Pcd<Pasta, ProductionRank, GgmMasterHeader>,
+    master_pcd: Pcd<Pasta, ProductionRank, GgmMasterHeader>,
 ) -> Pcd<Pasta, ProductionRank, GgmPrivateHeader> {
     let trivial_pcd = app.seeded_trivial_pcd(rng);
     app.fuse(
         rng,
         GgmMasterStep::<Pasta, CHUNK_SIZE> { poseidon_params },
         0u8,
-        master,
+        master_pcd,
         trivial_pcd,
     )
     .unwrap()
@@ -123,9 +123,9 @@ pub fn walk_measured<const CHUNK_SIZE: u8, const DEPTH: u8>(
     app: &App,
     poseidon: &<Pasta as Cycle>::CircuitPoseidon,
     rng: &mut StdRng,
-    master: Pcd<Pasta, ProductionRank, GgmMasterHeader>,
+    master_pcd: Pcd<Pasta, ProductionRank, GgmMasterHeader>,
 ) -> Pcd<Pasta, ProductionRank, GgmPrivateHeader> {
-    let mut node_pcd = master_step::<CHUNK_SIZE>(app, poseidon, rng, master);
+    let mut node_pcd = master_step::<CHUNK_SIZE>(app, poseidon, rng, master_pcd);
     for _ in 1..DEPTH {
         node_pcd = node_step::<CHUNK_SIZE, DEPTH>(app, poseidon, rng, node_pcd);
     }
@@ -153,10 +153,10 @@ pub fn setup_node_step() -> (
 ) {
     let (app, poseidon) = build_app::<GGM_CHUNK_SIZE, GGM_DEPTH>();
     let mut rng = StdRng::seed_from_u64(1234);
-    let master = seed_master(&app, poseidon, &mut rng);
-    let depth_1 = master_step::<GGM_CHUNK_SIZE>(&app, poseidon, &mut rng, master);
+    let master_pcd = seed_master(&app, poseidon, &mut rng);
+    let node_pcd = master_step::<GGM_CHUNK_SIZE>(&app, poseidon, &mut rng, master_pcd);
     let trivial_pcd = app.seeded_trivial_pcd(&mut rng);
-    (app, poseidon, rng, depth_1, trivial_pcd)
+    (app, poseidon, rng, node_pcd, trivial_pcd)
 }
 
 pub fn setup_walk() -> (

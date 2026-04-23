@@ -70,7 +70,7 @@ fn descend_pre_blind<const ARITY: u8, const CHUNK_SIZE: u8, const DEPTH: u8>(
     app: &App<'_>,
     rng: &mut StdRng,
     poseidon_params: &<Pasta as Cycle>::CircuitPoseidon,
-    master: Pcd<Pasta, ProductionRank, GgmMasterHeader>,
+    master_pcd: Pcd<Pasta, ProductionRank, GgmMasterHeader>,
     epoch: GgmIndex,
     depth_to: u8,
 ) -> Result<Pcd<Pasta, ProductionRank, GgmPrivateHeader>> {
@@ -84,7 +84,7 @@ fn descend_pre_blind<const ARITY: u8, const CHUNK_SIZE: u8, const DEPTH: u8>(
         rng,
         GgmMasterStep::<Pasta, CHUNK_SIZE> { poseidon_params },
         chunk_at::<ARITY, DEPTH>(epoch, 0),
-        master,
+        master_pcd,
         trivial_pcd,
     )?;
 
@@ -163,7 +163,7 @@ fn blind_at_leaf<const ARITY: u8, const CHUNK_SIZE: u8, const DEPTH: u8>(
     app: &App<'_>,
     rng: &mut StdRng,
     poseidon_params: &<Pasta as Cycle>::CircuitPoseidon,
-    master: Pcd<Pasta, ProductionRank, GgmMasterHeader>,
+    master_pcd: Pcd<Pasta, ProductionRank, GgmMasterHeader>,
     epoch: GgmIndex,
     trap: Fp,
 ) -> Result<Pcd<Pasta, ProductionRank, GgmNullifierHeader>> {
@@ -171,7 +171,7 @@ fn blind_at_leaf<const ARITY: u8, const CHUNK_SIZE: u8, const DEPTH: u8>(
         app,
         rng,
         poseidon_params,
-        master,
+        master_pcd,
         epoch,
         DEPTH,
     )?;
