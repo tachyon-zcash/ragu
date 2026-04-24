@@ -6,10 +6,9 @@ use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::Pcd;
-pub use ragu_testing::pcd::ggm::fixtures::walk_measured;
+pub use ragu_testing::pcd::ggm::{GgmSeed, fixtures::walk_measured};
 
 pub type App = ragu_testing::pcd::ggm::fixtures::App<Pasta>;
-pub type NoteFields = ragu_testing::pcd::ggm::fixtures::NoteFields<Pasta>;
 
 fn params() -> (
     &'static <Pasta as Cycle>::Params,
@@ -24,7 +23,7 @@ pub fn setup_seed() -> (
     App,
     &'static <Pasta as Cycle>::CircuitPoseidon,
     rand::rngs::StdRng,
-    NoteFields,
+    GgmSeed<Fp>,
 ) {
     let (params, poseidon) = params();
     ragu_testing::pcd::ggm::fixtures::setup_seed::<Pasta>(params, poseidon)

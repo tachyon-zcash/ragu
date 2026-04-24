@@ -8,7 +8,7 @@ use ragu_arithmetic::{Coeff, Cycle};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue, emulator::Emulator},
-    gadgets::{Bound, Kind},
+    gadgets::{Bound, Gadget, Kind},
     maybe::{Always, Maybe, MaybeKind},
 };
 use ragu_pcd::{
@@ -18,6 +18,7 @@ use ragu_pcd::{
 use ragu_primitives::{
     Boolean, Element,
     allocator::{Allocator, Standard},
+    io::Write,
     poseidon::Sponge,
 };
 
@@ -39,30 +40,24 @@ pub mod fixtures {
     use super::*;
 
     pub type App<C> = Application<'static, C, ProductionRank, HEADER_SIZE>;
-    /// (nk, pk, value, psi, rcm)
-    pub type NoteFields<C> = (
-        <C as Cycle>::CircuitField,
-        <C as Cycle>::CircuitField,
-        <C as Cycle>::CircuitField,
-        <C as Cycle>::CircuitField,
-        <C as Cycle>::CircuitField,
-    );
 
     pub fn seeded_rng() -> StdRng {
         StdRng::seed_from_u64(1234)
     }
 
-    pub fn sample_note_fields<C: Cycle>(rng: &mut StdRng) -> NoteFields<C>
+    pub fn sample_seed<C: Cycle>(rng: &mut StdRng) -> GgmSeed<<C as Cycle>::CircuitField>
     where
         C::CircuitField: Field,
     {
-        (
-            <C as Cycle>::CircuitField::random(&mut *rng),
-            <C as Cycle>::CircuitField::random(&mut *rng),
-            <C as Cycle>::CircuitField::from(100_000_000u64),
-            <C as Cycle>::CircuitField::random(&mut *rng),
-            <C as Cycle>::CircuitField::random(&mut *rng),
-        )
+        GgmSeed {
+            nk: <C as Cycle>::CircuitField::random(&mut *rng),
+            note: GgmNote {
+                pk: <C as Cycle>::CircuitField::random(&mut *rng),
+                value: <C as Cycle>::CircuitField::from(100_000_000u64),
+                psi: <C as Cycle>::CircuitField::random(&mut *rng),
+                rcm: <C as Cycle>::CircuitField::random(&mut *rng),
+            },
+        }
     }
 
     pub fn build_app<C: Cycle>(
@@ -95,12 +90,12 @@ pub mod fixtures {
         app: &App<C>,
         poseidon_params: &<C as Cycle>::CircuitPoseidon,
         rng: &mut StdRng,
-        fields: NoteFields<C>,
+        seed: GgmSeed<<C as Cycle>::CircuitField>,
     ) -> Pcd<C, ProductionRank, GgmMasterHeader>
     where
         C::CircuitField: PrimeField,
     {
-        app.seed(rng, GgmMasterSeed::<C> { poseidon_params }, fields)
+        app.seed(rng, GgmMasterSeed::<C> { poseidon_params }, seed)
             .unwrap()
             .0
     }
@@ -237,15 +232,15 @@ pub mod fixtures {
         App<C>,
         &'static <C as Cycle>::CircuitPoseidon,
         StdRng,
-        NoteFields<C>,
+        GgmSeed<<C as Cycle>::CircuitField>,
     )
     where
         C::CircuitField: PrimeField,
     {
         let (app, poseidon) = build_app(params, poseidon);
         let mut rng = seeded_rng();
-        let note_fields = sample_note_fields::<C>(&mut rng);
-        (app, poseidon, rng, note_fields)
+        let seed = sample_seed::<C>(&mut rng);
+        (app, poseidon, rng, seed)
     }
 
     pub fn setup_node_step<C: Cycle>(
@@ -263,8 +258,8 @@ pub mod fixtures {
     {
         let (app, poseidon) = build_app(params, poseidon);
         let mut rng = seeded_rng();
-        let note_fields = sample_note_fields::<C>(&mut rng);
-        let master_pcd = seed_master(&app, poseidon, &mut rng, note_fields);
+        let seed = sample_seed::<C>(&mut rng);
+        let master_pcd = seed_master(&app, poseidon, &mut rng, seed);
         let node_pcd = master_step(&app, poseidon, &mut rng, master_pcd, 0);
         let trivial_pcd = app.seeded_trivial_pcd(&mut rng);
         (app, poseidon, rng, node_pcd, trivial_pcd)
@@ -284,8 +279,8 @@ pub mod fixtures {
     {
         let (app, poseidon) = build_app(params, poseidon);
         let mut rng = seeded_rng();
-        let note_fields = sample_note_fields::<C>(&mut rng);
-        let master = seed_master(&app, poseidon, &mut rng, note_fields);
+        let seed = sample_seed::<C>(&mut rng);
+        let master = seed_master(&app, poseidon, &mut rng, seed);
         (app, poseidon, rng, master)
     }
 
@@ -305,8 +300,8 @@ pub mod fixtures {
     {
         let (app, poseidon) = build_app(params, poseidon);
         let mut rng = seeded_rng();
-        let note_fields = sample_note_fields::<C>(&mut rng);
-        let master = seed_master(&app, poseidon, &mut rng, note_fields);
+        let seed = sample_seed::<C>(&mut rng);
+        let master = seed_master(&app, poseidon, &mut rng, seed);
         let mut node_pcd = master_step(&app, poseidon, &mut rng, master, 0);
         for _ in 1..GGM_DEPTH {
             node_pcd = node_step(&app, poseidon, &mut rng, node_pcd, 0);
@@ -331,8 +326,8 @@ pub mod fixtures {
     {
         let (app, poseidon) = build_app(params, poseidon);
         let mut rng = seeded_rng();
-        let note_fields = sample_note_fields::<C>(&mut rng);
-        let master = seed_master(&app, poseidon, &mut rng, note_fields);
+        let seed = sample_seed::<C>(&mut rng);
+        let master = seed_master(&app, poseidon, &mut rng, seed);
         let node_pcd = master_step(&app, poseidon, &mut rng, master, 0);
         let trap = <C as Cycle>::CircuitField::random(&mut rng);
         let delegate_pcd = blind_step(&app, poseidon, &mut rng, node_pcd, trap);
@@ -355,8 +350,8 @@ pub mod fixtures {
     {
         let (app, poseidon) = build_app(params, poseidon);
         let mut rng = seeded_rng();
-        let note_fields = sample_note_fields::<C>(&mut rng);
-        let master = seed_master(&app, poseidon, &mut rng, note_fields);
+        let seed = sample_seed::<C>(&mut rng);
+        let master = seed_master(&app, poseidon, &mut rng, seed);
         let mut node_pcd = master_step(&app, poseidon, &mut rng, master, 0);
         for _ in 1..GGM_DEPTH {
             node_pcd = node_step(&app, poseidon, &mut rng, node_pcd, 0);
@@ -401,26 +396,76 @@ where
     Ok(acc)
 }
 
+/// Note fields carried into [`GgmMasterSeed`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GgmNote<F> {
+    pub pk: F,
+    pub value: F,
+    pub psi: F,
+    pub rcm: F,
+}
+
+/// Host-side witness for [`GgmMasterSeed`]: a note paired with the viewer's
+/// nullifier key `nk`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GgmSeed<F> {
+    pub nk: F,
+    pub note: GgmNote<F>,
+}
+
+/// Host-side data for [`GgmMasterHeader`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GgmMasterData<F> {
+    pub mk: F,
+    pub cm: F,
+}
+
+/// In-circuit gadget for [`GgmMasterHeader`].
+#[derive(Gadget, Write)]
+pub struct GgmMaster<'dr, D: Driver<'dr>> {
+    pub mk: Element<'dr, D>,
+    pub cm: Element<'dr, D>,
+}
+
 /// Pre-blind, pre-descent: carries `(mk, cm)`. Produced by
 /// `GgmMasterSeed`.
 pub struct GgmMasterHeader;
 
 impl<F: PrimeField> Header<F> for GgmMasterHeader {
     const SUFFIX: Suffix = Suffix::new(10);
-    type Data = (F, F);
-    type Output = Kind![F; (Element<'_, _>, Element<'_, _>)];
+    type Data = GgmMasterData<F>;
+    type Output = Kind![F; GgmMaster<'_, _>];
 
     fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        let (mk, cm) = witness.cast();
-        Ok((
-            Element::alloc(dr, allocator, mk)?,
-            Element::alloc(dr, allocator, cm)?,
-        ))
+        Ok(GgmMaster {
+            mk: Element::alloc(dr, allocator, witness.as_ref().map(|d| d.mk))?,
+            cm: Element::alloc(dr, allocator, witness.as_ref().map(|d| d.cm))?,
+        })
     }
+}
+
+/// Host-side data for [`GgmPrivateHeader`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GgmPrivateData<F> {
+    pub node: F,
+    pub depth: F,
+    pub index: F,
+    pub mk: F,
+    pub cm: F,
+}
+
+/// In-circuit gadget for [`GgmPrivateHeader`].
+#[derive(Gadget, Write)]
+pub struct GgmPrivate<'dr, D: Driver<'dr>> {
+    pub node: Element<'dr, D>,
+    pub depth: Element<'dr, D>,
+    pub index: Element<'dr, D>,
+    pub mk: Element<'dr, D>,
+    pub cm: Element<'dr, D>,
 }
 
 /// Pre-blind, descending: carries `(node, depth, index, mk, cm)`.
@@ -429,41 +474,40 @@ pub struct GgmPrivateHeader;
 
 impl<F: PrimeField> Header<F> for GgmPrivateHeader {
     const SUFFIX: Suffix = Suffix::new(11);
-    type Data = (F, F, F, F, F);
-    type Output = Kind![
-        F;
-        (
-            Element<'_, _>,
-            (
-                Element<'_, _>,
-                (
-                    Element<'_, _>,
-                    (Element<'_, _>, Element<'_, _>),
-                ),
-            ),
-        )
-    ];
+    type Data = GgmPrivateData<F>;
+    type Output = Kind![F; GgmPrivate<'_, _>];
 
     fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        let (node, depth, index, mk, cm) = witness.cast();
-        Ok((
-            Element::alloc(dr, allocator, node)?,
-            (
-                Element::alloc(dr, allocator, depth)?,
-                (
-                    Element::alloc(dr, allocator, index)?,
-                    (
-                        Element::alloc(dr, allocator, mk)?,
-                        Element::alloc(dr, allocator, cm)?,
-                    ),
-                ),
-            ),
-        ))
+        Ok(GgmPrivate {
+            node: Element::alloc(dr, allocator, witness.as_ref().map(|d| d.node))?,
+            depth: Element::alloc(dr, allocator, witness.as_ref().map(|d| d.depth))?,
+            index: Element::alloc(dr, allocator, witness.as_ref().map(|d| d.index))?,
+            mk: Element::alloc(dr, allocator, witness.as_ref().map(|d| d.mk))?,
+            cm: Element::alloc(dr, allocator, witness.as_ref().map(|d| d.cm))?,
+        })
     }
+}
+
+/// Host-side data for [`GgmDelegateHeader`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GgmDelegateData<F> {
+    pub node: F,
+    pub depth: F,
+    pub index: F,
+    pub delegation_id: F,
+}
+
+/// In-circuit gadget for [`GgmDelegateHeader`].
+#[derive(Gadget, Write)]
+pub struct GgmDelegate<'dr, D: Driver<'dr>> {
+    pub node: Element<'dr, D>,
+    pub depth: Element<'dr, D>,
+    pub index: Element<'dr, D>,
+    pub delegation_id: Element<'dr, D>,
 }
 
 /// Post-blind: carries `(node, depth, index, delegation_id)`. Produced
@@ -472,26 +516,41 @@ pub struct GgmDelegateHeader;
 
 impl<F: PrimeField> Header<F> for GgmDelegateHeader {
     const SUFFIX: Suffix = Suffix::new(12);
-    type Data = (F, F, F, F);
-    type Output = Kind![F; (Element<'_, _>, (Element<'_, _>, (Element<'_, _>, Element<'_, _>)))];
+    type Data = GgmDelegateData<F>;
+    type Output = Kind![F; GgmDelegate<'_, _>];
 
     fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        let (node, depth, index, did) = witness.cast();
-        Ok((
-            Element::alloc(dr, allocator, node)?,
-            (
-                Element::alloc(dr, allocator, depth)?,
-                (
-                    Element::alloc(dr, allocator, index)?,
-                    Element::alloc(dr, allocator, did)?,
-                ),
-            ),
-        ))
+        Ok(GgmDelegate {
+            node: Element::alloc(dr, allocator, witness.as_ref().map(|d| d.node))?,
+            depth: Element::alloc(dr, allocator, witness.as_ref().map(|d| d.depth))?,
+            index: Element::alloc(dr, allocator, witness.as_ref().map(|d| d.index))?,
+            delegation_id: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|d| d.delegation_id),
+            )?,
+        })
     }
+}
+
+/// Host-side data for [`GgmNullifierHeader`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GgmNullifierData<F> {
+    pub nullifier: F,
+    pub epoch: F,
+    pub delegation_id: F,
+}
+
+/// In-circuit gadget for [`GgmNullifierHeader`].
+#[derive(Gadget, Write)]
+pub struct GgmNullifier<'dr, D: Driver<'dr>> {
+    pub nullifier: Element<'dr, D>,
+    pub epoch: Element<'dr, D>,
+    pub delegation_id: Element<'dr, D>,
 }
 
 /// Terminal: carries `(nullifier, epoch, delegation_id)`.
@@ -499,22 +558,23 @@ pub struct GgmNullifierHeader;
 
 impl<F: PrimeField> Header<F> for GgmNullifierHeader {
     const SUFFIX: Suffix = Suffix::new(13);
-    type Data = (F, F, F);
-    type Output = Kind![F; (Element<'_, _>, (Element<'_, _>, Element<'_, _>))];
+    type Data = GgmNullifierData<F>;
+    type Output = Kind![F; GgmNullifier<'_, _>];
 
     fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        let (fv, ep, did) = witness.cast();
-        Ok((
-            Element::alloc(dr, allocator, fv)?,
-            (
-                Element::alloc(dr, allocator, ep)?,
-                Element::alloc(dr, allocator, did)?,
-            ),
-        ))
+        Ok(GgmNullifier {
+            nullifier: Element::alloc(dr, allocator, witness.as_ref().map(|d| d.nullifier))?,
+            epoch: Element::alloc(dr, allocator, witness.as_ref().map(|d| d.epoch))?,
+            delegation_id: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|d| d.delegation_id),
+            )?,
+        })
     }
 }
 
@@ -530,13 +590,7 @@ where
     C::CircuitField: PrimeField,
 {
     const INDEX: Index = Index::new(0);
-    type Witness<'source> = (
-        C::CircuitField, // nk
-        C::CircuitField, // pk
-        C::CircuitField, // value
-        C::CircuitField, // psi
-        C::CircuitField, // rcm
-    );
+    type Witness<'source> = GgmSeed<C::CircuitField>;
     type Aux<'source> = ();
     type Left = ();
     type Right = ();
@@ -561,7 +615,20 @@ where
         Self: 'dr,
     {
         let allocator = &mut Standard::new();
-        let (nk, pk, value, psi, rcm) = witness.cast();
+        let (nk, pk, value, psi, rcm) = witness
+            .map(
+                |GgmSeed {
+                     nk,
+                     note:
+                         GgmNote {
+                             pk,
+                             value,
+                             psi,
+                             rcm,
+                         },
+                 }| (nk, pk, value, psi, rcm),
+            )
+            .cast();
         let nk = Element::alloc(dr, allocator, nk)?;
         let pk = Element::alloc(dr, allocator, pk)?;
         let value = Element::alloc(dr, allocator, value)?;
@@ -590,10 +657,11 @@ where
             sp.squeeze(dr)?
         };
 
-        let mk_v = mk.value().map(|v| *v);
-        let cm_v = cm.value().map(|v| *v);
-        let output_data = mk_v.and_then(move |m| cm_v.map(move |c| (m, c)));
-        let output = Encoded::from_gadget((mk, cm));
+        let output_data = D::just(|| GgmMasterData {
+            mk: *mk.value().take(),
+            cm: *cm.value().take(),
+        });
+        let output = Encoded::from_gadget(GgmMaster { mk, cm });
 
         Ok((
             (Encoded::from_gadget(()), Encoded::from_gadget(()), output),
@@ -644,7 +712,7 @@ where
         let right = Encoded::from_gadget(());
         let chunk = alloc_chunk::<D, _>(dr, allocator, witness)?;
 
-        let (mk, cm) = left.as_gadget();
+        let GgmMaster { mk, cm } = left.as_gadget();
 
         // node = Poseidon(GGM, mk, chunk).
         let node = {
@@ -658,22 +726,24 @@ where
 
         let depth = Element::constant(dr, C::CircuitField::ONE);
         let index = chunk;
-        let mk_out = mk.clone();
-        let cm_out = cm.clone();
+        let mk = mk.clone();
+        let cm = cm.clone();
 
-        let node_v = node.value().map(|v| *v);
-        let depth_v = depth.value().map(|v| *v);
-        let index_v = index.value().map(|v| *v);
-        let mk_v = mk_out.value().map(|v| *v);
-        let cm_v = cm_out.value().map(|v| *v);
-        let output_data = node_v.and_then(move |n| {
-            depth_v.and_then(move |d| {
-                index_v
-                    .and_then(move |i| mk_v.and_then(move |m| cm_v.map(move |c| (n, d, i, m, c))))
-            })
+        let output_data = D::just(|| GgmPrivateData {
+            node: *node.value().take(),
+            depth: *depth.value().take(),
+            index: *index.value().take(),
+            mk: *mk.value().take(),
+            cm: *cm.value().take(),
         });
 
-        let output = Encoded::from_gadget((node, (depth, (index, (mk_out, cm_out)))));
+        let output = Encoded::from_gadget(GgmPrivate {
+            node,
+            depth,
+            index,
+            mk,
+            cm,
+        });
 
         Ok(((left, right, output), output_data, D::unit()))
     }
@@ -720,7 +790,13 @@ where
         let right = Encoded::from_gadget(());
         let chunk = alloc_chunk::<D, _>(dr, allocator, witness)?;
 
-        let (prev_node, (prev_depth, (prev_index, (mk, cm)))) = left.as_gadget();
+        let GgmPrivate {
+            node: prev_node,
+            depth: prev_depth,
+            index: prev_index,
+            mk,
+            cm,
+        } = left.as_gadget();
 
         // Assert depth < DEPTH via depth != DEPTH (combined with the
         // chain's depth+1 invariant, this is equivalent given depth ≥ 1).
@@ -742,22 +818,24 @@ where
         let depth = prev_depth.add(dr, &one);
         let k = C::CircuitField::from(1u64 << GGM_CHUNK_SIZE);
         let index = prev_index.scale(dr, Coeff::Arbitrary(k)).add(dr, &chunk);
-        let mk_out = mk.clone();
-        let cm_out = cm.clone();
+        let mk = mk.clone();
+        let cm = cm.clone();
 
-        let node_v = node.value().map(|v| *v);
-        let depth_v = depth.value().map(|v| *v);
-        let index_v = index.value().map(|v| *v);
-        let mk_v = mk_out.value().map(|v| *v);
-        let cm_v = cm_out.value().map(|v| *v);
-        let output_data = node_v.and_then(move |n| {
-            depth_v.and_then(move |d| {
-                index_v
-                    .and_then(move |i| mk_v.and_then(move |m| cm_v.map(move |c| (n, d, i, m, c))))
-            })
+        let output_data = D::just(|| GgmPrivateData {
+            node: *node.value().take(),
+            depth: *depth.value().take(),
+            index: *index.value().take(),
+            mk: *mk.value().take(),
+            cm: *cm.value().take(),
         });
 
-        let output = Encoded::from_gadget((node, (depth, (index, (mk_out, cm_out)))));
+        let output = Encoded::from_gadget(GgmPrivate {
+            node,
+            depth,
+            index,
+            mk,
+            cm,
+        });
 
         Ok(((left, right, output), output_data, D::unit()))
     }
@@ -805,7 +883,13 @@ where
         let right = Encoded::from_gadget(());
         let trap = Element::alloc(dr, allocator, witness)?;
 
-        let (node, (depth, (index, (mk, cm)))) = left.as_gadget();
+        let GgmPrivate {
+            node,
+            depth,
+            index,
+            mk,
+            cm,
+        } = left.as_gadget();
 
         // delegation_id = Poseidon(ID, mk, cm, trap).
         let delegation_id = {
@@ -818,19 +902,23 @@ where
             sp.squeeze(dr)?
         };
 
-        let node_out = node.clone();
-        let depth_out = depth.clone();
-        let index_out = index.clone();
+        let node = node.clone();
+        let depth = depth.clone();
+        let index = index.clone();
 
-        let node_v = node_out.value().map(|v| *v);
-        let depth_v = depth_out.value().map(|v| *v);
-        let index_v = index_out.value().map(|v| *v);
-        let did_v = delegation_id.value().map(|v| *v);
-        let output_data = node_v.and_then(move |n| {
-            depth_v.and_then(move |d| index_v.and_then(move |i| did_v.map(move |x| (n, d, i, x))))
+        let output_data = D::just(|| GgmDelegateData {
+            node: *node.value().take(),
+            depth: *depth.value().take(),
+            index: *index.value().take(),
+            delegation_id: *delegation_id.value().take(),
         });
 
-        let output = Encoded::from_gadget((node_out, (depth_out, (index_out, delegation_id))));
+        let output = Encoded::from_gadget(GgmDelegate {
+            node,
+            depth,
+            index,
+            delegation_id,
+        });
 
         Ok(((left, right, output), output_data, D::unit()))
     }
@@ -878,7 +966,12 @@ where
         let right = Encoded::from_gadget(());
         let chunk = alloc_chunk::<D, _>(dr, allocator, witness)?;
 
-        let (prev_node, (prev_depth, (prev_index, delegation_id))) = left.as_gadget();
+        let GgmDelegate {
+            node: prev_node,
+            depth: prev_depth,
+            index: prev_index,
+            delegation_id,
+        } = left.as_gadget();
 
         let depth_constant = Element::constant(dr, C::CircuitField::from(GGM_DEPTH as u64));
         let diff = prev_depth.sub(dr, &depth_constant);
@@ -898,17 +991,21 @@ where
         let depth = prev_depth.add(dr, &one);
         let k = C::CircuitField::from(1u64 << GGM_CHUNK_SIZE);
         let index = prev_index.scale(dr, Coeff::Arbitrary(k)).add(dr, &chunk);
-        let did_out = delegation_id.clone();
+        let delegation_id = delegation_id.clone();
 
-        let node_v = node.value().map(|v| *v);
-        let depth_v = depth.value().map(|v| *v);
-        let index_v = index.value().map(|v| *v);
-        let did_v = did_out.value().map(|v| *v);
-        let output_data = node_v.and_then(move |n| {
-            depth_v.and_then(move |d| index_v.and_then(move |i| did_v.map(move |x| (n, d, i, x))))
+        let output_data = D::just(|| GgmDelegateData {
+            node: *node.value().take(),
+            depth: *depth.value().take(),
+            index: *index.value().take(),
+            delegation_id: *delegation_id.value().take(),
         });
 
-        let output = Encoded::from_gadget((node, (depth, (index, did_out))));
+        let output = Encoded::from_gadget(GgmDelegate {
+            node,
+            depth,
+            index,
+            delegation_id,
+        });
 
         Ok(((left, right, output), output_data, D::unit()))
     }
@@ -955,7 +1052,12 @@ where
         let left = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, allocator, left)?;
         let right = Encoded::from_gadget(());
 
-        let (node, (depth, (index, delegation_id))) = left.as_gadget();
+        let GgmDelegate {
+            node,
+            depth,
+            index,
+            delegation_id,
+        } = left.as_gadget();
 
         // Assert depth == DEPTH.
         let expected_depth = Element::constant(dr, C::CircuitField::from(GGM_DEPTH as u64));
@@ -972,41 +1074,44 @@ where
         };
 
         let epoch = index.clone();
-        let did = delegation_id.clone();
+        let delegation_id = delegation_id.clone();
 
-        let nf_v = nullifier.value().map(|v| *v);
-        let ep_v = epoch.value().map(|v| *v);
-        let did_v = did.value().map(|v| *v);
-        let output_data =
-            nf_v.and_then(move |n| ep_v.and_then(move |e| did_v.map(move |x| (n, e, x))));
+        let output_data = D::just(|| GgmNullifierData {
+            nullifier: *nullifier.value().take(),
+            epoch: *epoch.value().take(),
+            delegation_id: *delegation_id.value().take(),
+        });
 
-        let output = Encoded::from_gadget((nullifier, (epoch, did)));
+        let output = Encoded::from_gadget(GgmNullifier {
+            nullifier,
+            epoch,
+            delegation_id,
+        });
 
         Ok(((left, right, output), output_data, D::unit()))
     }
 }
 
-/// Five-tuple `(nk, pk, value, psi, rcm)` matching
-/// [`GgmMasterSeed::Witness`].
-pub type SeedWitness<C> = (
-    <C as Cycle>::CircuitField,
-    <C as Cycle>::CircuitField,
-    <C as Cycle>::CircuitField,
-    <C as Cycle>::CircuitField,
-    <C as Cycle>::CircuitField,
-);
-
 /// Native Poseidon walk, mirroring the in-circuit steps.
 pub fn native_ggm<C: Cycle>(
     poseidon_params: &C::CircuitPoseidon,
-    seed_witness: SeedWitness<C>,
+    seed: GgmSeed<C::CircuitField>,
     trap: C::CircuitField,
     epoch: u32,
-) -> Result<(C::CircuitField, C::CircuitField, C::CircuitField)>
+) -> Result<GgmNullifierData<C::CircuitField>>
 where
     C::CircuitField: PrimeField,
 {
-    let (nk, pk, value, psi, rcm) = seed_witness;
+    let GgmSeed {
+        nk,
+        note:
+            GgmNote {
+                pk,
+                value,
+                psi,
+                rcm,
+            },
+    } = seed;
     let mut dr = Emulator::execute();
     let allocator = &mut Standard::new();
     let dr = &mut dr;
@@ -1077,8 +1182,9 @@ where
         sp.squeeze(dr)?
     };
 
-    let nf = *nullifier.value().take();
-    let epoch_f = C::CircuitField::from(u64::from(epoch));
-    let did_f = *delegation_id.value().take();
-    Ok((nf, epoch_f, did_f))
+    Ok(GgmNullifierData {
+        nullifier: *nullifier.value().take(),
+        epoch: C::CircuitField::from(u64::from(epoch)),
+        delegation_id: *delegation_id.value().take(),
+    })
 }

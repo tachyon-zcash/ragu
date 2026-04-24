@@ -5,7 +5,7 @@ mod ggm_setup;
 use std::hint::black_box;
 
 use ggm_setup::{
-    App, NoteFields, setup_blind, setup_delegate, setup_final, setup_node_step, setup_seed,
+    App, GgmSeed, setup_blind, setup_delegate, setup_final, setup_node_step, setup_seed,
     setup_walk, walk_measured,
 };
 use gungraun::{library_benchmark, library_benchmark_group, main};
@@ -22,19 +22,14 @@ use rand::rngs::StdRng;
 #[library_benchmark(setup = setup_seed)]
 #[bench::seed()]
 fn seed(
-    (app, poseidon_params, mut rng, note_fields): (
+    (app, poseidon_params, mut rng, seed): (
         App,
         &'static <Pasta as Cycle>::CircuitPoseidon,
         StdRng,
-        NoteFields,
+        GgmSeed<Fp>,
     ),
 ) {
-    black_box(app.seed(
-        &mut rng,
-        GgmMasterSeed::<Pasta> { poseidon_params },
-        note_fields,
-    ))
-    .unwrap();
+    black_box(app.seed(&mut rng, GgmMasterSeed::<Pasta> { poseidon_params }, seed)).unwrap();
 }
 
 #[library_benchmark(setup = setup_node_step)]

@@ -14,13 +14,9 @@ fn ggm_seed(c: &mut Criterion) {
                 let poseidon = Pasta::circuit_poseidon(params);
                 fixtures::setup_seed::<Pasta>(params, poseidon)
             },
-            |(app, poseidon_params, mut rng, note_fields)| {
-                app.seed(
-                    &mut rng,
-                    GgmMasterSeed::<Pasta> { poseidon_params },
-                    note_fields,
-                )
-                .unwrap()
+            |(app, poseidon_params, mut rng, seed)| {
+                app.seed(&mut rng, GgmMasterSeed::<Pasta> { poseidon_params }, seed)
+                    .unwrap()
             },
             criterion::BatchSize::PerIteration,
         );

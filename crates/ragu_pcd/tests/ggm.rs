@@ -5,8 +5,8 @@ use ragu_core::Result;
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::Pcd;
 use ragu_testing::pcd::ggm::{
-    GGM_ARITY, GGM_DEPTH, GGM_MAX, GgmDelegateHeader, GgmIndex, GgmMasterHeader,
-    GgmNullifierHeader, GgmPrivateHeader, fixtures, native_ggm,
+    GGM_ARITY, GGM_DEPTH, GGM_MAX, GgmDelegateHeader, GgmIndex, GgmMasterHeader, GgmNote,
+    GgmNullifierData, GgmNullifierHeader, GgmPrivateHeader, GgmSeed, fixtures, native_ggm,
 };
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -56,7 +56,15 @@ fn seed(
         app,
         poseidon_params,
         rng,
-        (nk, note.pk, note.value, note.psi, note.rcm),
+        GgmSeed {
+            nk,
+            note: GgmNote {
+                pk: note.pk,
+                value: note.value,
+                psi: note.psi,
+                rcm: note.rcm,
+            },
+        },
     ))
 }
 
@@ -151,10 +159,18 @@ fn expected(
     note: &Note,
     trap: Fp,
     epoch: GgmIndex,
-) -> Result<(Fp, Fp, Fp)> {
+) -> Result<GgmNullifierData<Fp>> {
     native_ggm::<Pasta>(
         poseidon_params,
-        (nk, note.pk, note.value, note.psi, note.rcm),
+        GgmSeed {
+            nk,
+            note: GgmNote {
+                pk: note.pk,
+                value: note.value,
+                psi: note.psi,
+                rcm: note.rcm,
+            },
+        },
         trap,
         u32::from(epoch),
     )
@@ -184,16 +200,24 @@ fn ggm_epoch_distinctness() -> Result<()> {
     assert!(app.verify(&leaf_a, &mut rng)?);
     assert!(app.verify(&leaf_b, &mut rng)?);
 
-    let (nf_a, ep_a, did_a) = *leaf_a.data();
-    let (nf_b, ep_b, did_b) = *leaf_b.data();
+    let GgmNullifierData {
+        nullifier: nf_a,
+        epoch: ep_a,
+        delegation_id: did_a,
+    } = *leaf_a.data();
+    let GgmNullifierData {
+        nullifier: nf_b,
+        epoch: ep_b,
+        delegation_id: did_b,
+    } = *leaf_b.data();
 
     assert_eq!(
-        (nf_a, ep_a, did_a),
+        *leaf_a.data(),
         expected(poseidon, nk, &note, trap, epoch_a)?,
         "leaf A disagrees with native walk",
     );
     assert_eq!(
-        (nf_b, ep_b, did_b),
+        *leaf_b.data(),
         expected(poseidon, nk, &note, trap, epoch_b)?,
         "leaf B disagrees with native walk",
     );
@@ -236,15 +260,23 @@ fn ggm_note_distinctness() -> Result<()> {
     assert!(app.verify(&leaf_a, &mut rng)?);
     assert!(app.verify(&leaf_b, &mut rng)?);
 
-    let (nf_a, ep_a, did_a) = *leaf_a.data();
-    let (nf_b, ep_b, did_b) = *leaf_b.data();
+    let GgmNullifierData {
+        nullifier: nf_a,
+        epoch: ep_a,
+        delegation_id: did_a,
+    } = *leaf_a.data();
+    let GgmNullifierData {
+        nullifier: nf_b,
+        epoch: ep_b,
+        delegation_id: did_b,
+    } = *leaf_b.data();
 
     assert_eq!(
-        (nf_a, ep_a, did_a),
+        *leaf_a.data(),
         expected(poseidon, nk, &note_a, trap_a, epoch)?,
     );
     assert_eq!(
-        (nf_b, ep_b, did_b),
+        *leaf_b.data(),
         expected(poseidon, nk, &note_b, trap_b, epoch)?,
     );
 
@@ -292,8 +324,16 @@ fn ggm_blind_distinctness() -> Result<()> {
     assert!(app.verify(&leaf_a, &mut rng)?);
     assert!(app.verify(&leaf_b, &mut rng)?);
 
-    let (nf_a, _, did_a) = *leaf_a.data();
-    let (nf_b, _, did_b) = *leaf_b.data();
+    let GgmNullifierData {
+        nullifier: nf_a,
+        delegation_id: did_a,
+        ..
+    } = *leaf_a.data();
+    let GgmNullifierData {
+        nullifier: nf_b,
+        delegation_id: did_b,
+        ..
+    } = *leaf_b.data();
 
     assert_eq!(
         nf_a, nf_b,
