@@ -1,6 +1,8 @@
 //! GGM (Goldreich–Goldwasser–Micali) PRF tree derivation example with
 //! late-delegation blinding.
 
+#![allow(clippy::type_complexity)]
+
 use ff::{Field, PrimeField};
 use ragu_arithmetic::{Coeff, Cycle};
 use ragu_core::{
@@ -27,6 +29,344 @@ pub const GGM_CHUNK_SIZE: u8 = GGM_ARITY.ilog2() as u8;
 
 pub type GgmIndex = u16;
 pub const GGM_MAX: GgmIndex = (GGM_ARITY as u16).pow(GGM_DEPTH as u32) - 1;
+
+/// Shared helpers for benches/tests to build and walk the GGM app.
+pub mod fixtures {
+    use ragu_circuits::polynomials::ProductionRank;
+    use ragu_pcd::{Application, ApplicationBuilder, Pcd};
+    use rand::{SeedableRng, rngs::StdRng};
+
+    use super::*;
+
+    pub type App<C> = Application<'static, C, ProductionRank, HEADER_SIZE>;
+    /// (nk, pk, value, psi, rcm)
+    pub type NoteFields<C> = (
+        <C as Cycle>::CircuitField,
+        <C as Cycle>::CircuitField,
+        <C as Cycle>::CircuitField,
+        <C as Cycle>::CircuitField,
+        <C as Cycle>::CircuitField,
+    );
+
+    pub fn seeded_rng() -> StdRng {
+        StdRng::seed_from_u64(1234)
+    }
+
+    pub fn sample_note_fields<C: Cycle>(rng: &mut StdRng) -> NoteFields<C>
+    where
+        C::CircuitField: Field,
+    {
+        (
+            <C as Cycle>::CircuitField::random(&mut *rng),
+            <C as Cycle>::CircuitField::random(&mut *rng),
+            <C as Cycle>::CircuitField::from(100_000_000u64),
+            <C as Cycle>::CircuitField::random(&mut *rng),
+            <C as Cycle>::CircuitField::random(&mut *rng),
+        )
+    }
+
+    pub fn build_app<C: Cycle>(
+        params: &'static C::Params,
+        poseidon_params: &'static C::CircuitPoseidon,
+    ) -> (App<C>, &'static C::CircuitPoseidon)
+    where
+        C::CircuitField: PrimeField,
+    {
+        let app = ApplicationBuilder::<C, ProductionRank, HEADER_SIZE>::new()
+            .register(GgmMasterSeed::<C> { poseidon_params })
+            .unwrap()
+            .register(GgmMasterStep::<C> { poseidon_params })
+            .unwrap()
+            .register(GgmNodeStep::<C> { poseidon_params })
+            .unwrap()
+            .register(GgmBlindStep::<C> { poseidon_params })
+            .unwrap()
+            .register(GgmDelegateStep::<C> { poseidon_params })
+            .unwrap()
+            .register(GgmNullifierStep::<C> { poseidon_params })
+            .unwrap()
+            .finalize(params)
+            .unwrap();
+
+        (app, poseidon_params)
+    }
+
+    pub fn seed_master<C: Cycle>(
+        app: &App<C>,
+        poseidon_params: &<C as Cycle>::CircuitPoseidon,
+        rng: &mut StdRng,
+        fields: NoteFields<C>,
+    ) -> Pcd<C, ProductionRank, GgmMasterHeader>
+    where
+        C::CircuitField: PrimeField,
+    {
+        app.seed(rng, GgmMasterSeed::<C> { poseidon_params }, fields)
+            .unwrap()
+            .0
+    }
+
+    pub fn master_step<C: Cycle>(
+        app: &App<C>,
+        poseidon_params: &<C as Cycle>::CircuitPoseidon,
+        rng: &mut StdRng,
+        master_pcd: Pcd<C, ProductionRank, GgmMasterHeader>,
+        chunk: u8,
+    ) -> Pcd<C, ProductionRank, GgmPrivateHeader>
+    where
+        C::CircuitField: PrimeField,
+    {
+        let trivial_pcd = app.seeded_trivial_pcd(rng);
+        app.fuse(
+            rng,
+            GgmMasterStep::<C> { poseidon_params },
+            chunk,
+            master_pcd,
+            trivial_pcd,
+        )
+        .unwrap()
+        .0
+    }
+
+    pub fn node_step<C: Cycle>(
+        app: &App<C>,
+        poseidon_params: &<C as Cycle>::CircuitPoseidon,
+        rng: &mut StdRng,
+        node_pcd: Pcd<C, ProductionRank, GgmPrivateHeader>,
+        chunk: u8,
+    ) -> Pcd<C, ProductionRank, GgmPrivateHeader>
+    where
+        C::CircuitField: PrimeField,
+    {
+        let trivial_pcd = app.seeded_trivial_pcd(rng);
+        app.fuse(
+            rng,
+            GgmNodeStep::<C> { poseidon_params },
+            chunk,
+            node_pcd,
+            trivial_pcd,
+        )
+        .unwrap()
+        .0
+    }
+
+    pub fn blind_step<C: Cycle>(
+        app: &App<C>,
+        poseidon_params: &<C as Cycle>::CircuitPoseidon,
+        rng: &mut StdRng,
+        node_pcd: Pcd<C, ProductionRank, GgmPrivateHeader>,
+        trap: C::CircuitField,
+    ) -> Pcd<C, ProductionRank, GgmDelegateHeader>
+    where
+        C::CircuitField: PrimeField,
+    {
+        let trivial_pcd = app.seeded_trivial_pcd(rng);
+        app.fuse(
+            rng,
+            GgmBlindStep::<C> { poseidon_params },
+            trap,
+            node_pcd,
+            trivial_pcd,
+        )
+        .unwrap()
+        .0
+    }
+
+    pub fn delegate_step<C: Cycle>(
+        app: &App<C>,
+        poseidon_params: &<C as Cycle>::CircuitPoseidon,
+        rng: &mut StdRng,
+        delegate_pcd: Pcd<C, ProductionRank, GgmDelegateHeader>,
+        chunk: u8,
+    ) -> Pcd<C, ProductionRank, GgmDelegateHeader>
+    where
+        C::CircuitField: PrimeField,
+    {
+        let trivial_pcd = app.seeded_trivial_pcd(rng);
+        app.fuse(
+            rng,
+            GgmDelegateStep::<C> { poseidon_params },
+            chunk,
+            delegate_pcd,
+            trivial_pcd,
+        )
+        .unwrap()
+        .0
+    }
+
+    pub fn nullifier_step<C: Cycle>(
+        app: &App<C>,
+        poseidon_params: &<C as Cycle>::CircuitPoseidon,
+        rng: &mut StdRng,
+        delegate_pcd: Pcd<C, ProductionRank, GgmDelegateHeader>,
+    ) -> Pcd<C, ProductionRank, GgmNullifierHeader>
+    where
+        C::CircuitField: PrimeField,
+    {
+        let trivial_pcd = app.seeded_trivial_pcd(rng);
+        app.fuse(
+            rng,
+            GgmNullifierStep::<C> { poseidon_params },
+            (),
+            delegate_pcd,
+            trivial_pcd,
+        )
+        .unwrap()
+        .0
+    }
+
+    pub fn walk_measured<C: Cycle>(
+        app: &App<C>,
+        poseidon: &<C as Cycle>::CircuitPoseidon,
+        rng: &mut StdRng,
+        master_pcd: Pcd<C, ProductionRank, GgmMasterHeader>,
+    ) -> Pcd<C, ProductionRank, GgmPrivateHeader>
+    where
+        C::CircuitField: PrimeField,
+    {
+        let mut node_pcd = master_step(app, poseidon, rng, master_pcd, 0);
+        for _ in 1..GGM_DEPTH {
+            node_pcd = node_step(app, poseidon, rng, node_pcd, 0);
+        }
+        node_pcd
+    }
+
+    pub fn setup_seed<C: Cycle>(
+        params: &'static C::Params,
+        poseidon: &'static C::CircuitPoseidon,
+    ) -> (
+        App<C>,
+        &'static <C as Cycle>::CircuitPoseidon,
+        StdRng,
+        NoteFields<C>,
+    )
+    where
+        C::CircuitField: PrimeField,
+    {
+        let (app, poseidon) = build_app(params, poseidon);
+        let mut rng = seeded_rng();
+        let note_fields = sample_note_fields::<C>(&mut rng);
+        (app, poseidon, rng, note_fields)
+    }
+
+    pub fn setup_node_step<C: Cycle>(
+        params: &'static C::Params,
+        poseidon: &'static C::CircuitPoseidon,
+    ) -> (
+        App<C>,
+        &'static <C as Cycle>::CircuitPoseidon,
+        StdRng,
+        Pcd<C, ProductionRank, GgmPrivateHeader>,
+        Pcd<C, ProductionRank, ()>,
+    )
+    where
+        C::CircuitField: PrimeField,
+    {
+        let (app, poseidon) = build_app(params, poseidon);
+        let mut rng = seeded_rng();
+        let note_fields = sample_note_fields::<C>(&mut rng);
+        let master_pcd = seed_master(&app, poseidon, &mut rng, note_fields);
+        let node_pcd = master_step(&app, poseidon, &mut rng, master_pcd, 0);
+        let trivial_pcd = app.seeded_trivial_pcd(&mut rng);
+        (app, poseidon, rng, node_pcd, trivial_pcd)
+    }
+
+    pub fn setup_walk<C: Cycle>(
+        params: &'static C::Params,
+        poseidon: &'static C::CircuitPoseidon,
+    ) -> (
+        App<C>,
+        &'static <C as Cycle>::CircuitPoseidon,
+        StdRng,
+        Pcd<C, ProductionRank, GgmMasterHeader>,
+    )
+    where
+        C::CircuitField: PrimeField,
+    {
+        let (app, poseidon) = build_app(params, poseidon);
+        let mut rng = seeded_rng();
+        let note_fields = sample_note_fields::<C>(&mut rng);
+        let master = seed_master(&app, poseidon, &mut rng, note_fields);
+        (app, poseidon, rng, master)
+    }
+
+    pub fn setup_blind<C: Cycle>(
+        params: &'static C::Params,
+        poseidon: &'static C::CircuitPoseidon,
+    ) -> (
+        App<C>,
+        &'static <C as Cycle>::CircuitPoseidon,
+        StdRng,
+        Pcd<C, ProductionRank, GgmPrivateHeader>,
+        Pcd<C, ProductionRank, ()>,
+        <C as Cycle>::CircuitField,
+    )
+    where
+        C::CircuitField: PrimeField,
+    {
+        let (app, poseidon) = build_app(params, poseidon);
+        let mut rng = seeded_rng();
+        let note_fields = sample_note_fields::<C>(&mut rng);
+        let master = seed_master(&app, poseidon, &mut rng, note_fields);
+        let mut node_pcd = master_step(&app, poseidon, &mut rng, master, 0);
+        for _ in 1..GGM_DEPTH {
+            node_pcd = node_step(&app, poseidon, &mut rng, node_pcd, 0);
+        }
+        let trivial_pcd = app.seeded_trivial_pcd(&mut rng);
+        let trap = <C as Cycle>::CircuitField::random(&mut rng);
+        (app, poseidon, rng, node_pcd, trivial_pcd, trap)
+    }
+
+    pub fn setup_delegate<C: Cycle>(
+        params: &'static C::Params,
+        poseidon: &'static C::CircuitPoseidon,
+    ) -> (
+        App<C>,
+        &'static <C as Cycle>::CircuitPoseidon,
+        StdRng,
+        Pcd<C, ProductionRank, GgmDelegateHeader>,
+        Pcd<C, ProductionRank, ()>,
+    )
+    where
+        C::CircuitField: PrimeField,
+    {
+        let (app, poseidon) = build_app(params, poseidon);
+        let mut rng = seeded_rng();
+        let note_fields = sample_note_fields::<C>(&mut rng);
+        let master = seed_master(&app, poseidon, &mut rng, note_fields);
+        let node_pcd = master_step(&app, poseidon, &mut rng, master, 0);
+        let trap = <C as Cycle>::CircuitField::random(&mut rng);
+        let delegate_pcd = blind_step(&app, poseidon, &mut rng, node_pcd, trap);
+        let trivial_pcd = app.seeded_trivial_pcd(&mut rng);
+        (app, poseidon, rng, delegate_pcd, trivial_pcd)
+    }
+
+    pub fn setup_final<C: Cycle>(
+        params: &'static C::Params,
+        poseidon: &'static C::CircuitPoseidon,
+    ) -> (
+        App<C>,
+        &'static <C as Cycle>::CircuitPoseidon,
+        StdRng,
+        Pcd<C, ProductionRank, GgmDelegateHeader>,
+        Pcd<C, ProductionRank, ()>,
+    )
+    where
+        C::CircuitField: PrimeField,
+    {
+        let (app, poseidon) = build_app(params, poseidon);
+        let mut rng = seeded_rng();
+        let note_fields = sample_note_fields::<C>(&mut rng);
+        let master = seed_master(&app, poseidon, &mut rng, note_fields);
+        let mut node_pcd = master_step(&app, poseidon, &mut rng, master, 0);
+        for _ in 1..GGM_DEPTH {
+            node_pcd = node_step(&app, poseidon, &mut rng, node_pcd, 0);
+        }
+        let trap = <C as Cycle>::CircuitField::random(&mut rng);
+        let delegate_pcd = blind_step(&app, poseidon, &mut rng, node_pcd, trap);
+        let trivial_pcd = app.seeded_trivial_pcd(&mut rng);
+        (app, poseidon, rng, delegate_pcd, trivial_pcd)
+    }
+}
 
 pub mod domain {
     pub const CM: &[u8; 16] = b"EXAMPLEGgmCommit";

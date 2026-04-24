@@ -3,15 +3,23 @@ use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::Result;
 use ragu_pasta::{Fp, Pasta};
-use ragu_pcd::{Application, ApplicationBuilder, Pcd};
+use ragu_pcd::Pcd;
 use ragu_testing::pcd::ggm::{
-    GGM_ARITY, GGM_DEPTH, GGM_MAX, GgmBlindStep, GgmDelegateHeader, GgmDelegateStep, GgmIndex,
-    GgmMasterHeader, GgmMasterSeed, GgmMasterStep, GgmNodeStep, GgmNullifierHeader,
-    GgmNullifierStep, GgmPrivateHeader, HEADER_SIZE, native_ggm,
+    GGM_ARITY, GGM_DEPTH, GGM_MAX, GgmDelegateHeader, GgmIndex, GgmMasterHeader,
+    GgmNullifierHeader, GgmPrivateHeader, fixtures, native_ggm,
 };
 use rand::{SeedableRng, rngs::StdRng};
 
-type App<'p> = Application<'p, Pasta, ProductionRank, HEADER_SIZE>;
+type App = fixtures::App<Pasta>;
+
+fn pasta_params() -> (
+    &'static <Pasta as Cycle>::Params,
+    &'static <Pasta as Cycle>::CircuitPoseidon,
+) {
+    let params = Pasta::baked();
+    let poseidon = Pasta::circuit_poseidon(params);
+    (params, poseidon)
+}
 
 struct Note {
     pk: Fp,
@@ -31,18 +39,6 @@ impl Note {
     }
 }
 
-fn build_app(pasta: &'static <Pasta as Cycle>::Params) -> Result<App<'static>> {
-    let poseidon_params = Pasta::circuit_poseidon(pasta);
-    ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
-        .register(GgmMasterSeed::<Pasta> { poseidon_params })?
-        .register(GgmMasterStep::<Pasta> { poseidon_params })?
-        .register(GgmNodeStep::<Pasta> { poseidon_params })?
-        .register(GgmBlindStep::<Pasta> { poseidon_params })?
-        .register(GgmDelegateStep::<Pasta> { poseidon_params })?
-        .register(GgmNullifierStep::<Pasta> { poseidon_params })?
-        .finalize(pasta)
-}
-
 /// Extract the `level`-th MSB-first base-`ARITY` digit of `epoch`
 fn chunk_at(epoch: GgmIndex, level: u8) -> u8 {
     let place = (GGM_ARITY as u16).pow(u32::from(GGM_DEPTH - 1 - level));
@@ -50,22 +46,22 @@ fn chunk_at(epoch: GgmIndex, level: u8) -> u8 {
 }
 
 fn seed(
-    app: &App<'_>,
+    app: &App,
     rng: &mut StdRng,
     poseidon_params: &<Pasta as Cycle>::CircuitPoseidon,
     nk: Fp,
     note: &Note,
 ) -> Result<Pcd<Pasta, ProductionRank, GgmMasterHeader>> {
-    let (master, _) = app.seed(
+    Ok(fixtures::seed_master(
+        app,
+        poseidon_params,
         rng,
-        GgmMasterSeed::<Pasta> { poseidon_params },
         (nk, note.pk, note.value, note.psi, note.rcm),
-    )?;
-    Ok(master)
+    ))
 }
 
 fn descend_pre_blind(
-    app: &App<'_>,
+    app: &App,
     rng: &mut StdRng,
     poseidon_params: &<Pasta as Cycle>::CircuitPoseidon,
     master_pcd: Pcd<Pasta, ProductionRank, GgmMasterHeader>,
@@ -77,49 +73,33 @@ fn descend_pre_blind(
         "depth_to {depth_to} must be in [1, {GGM_DEPTH}]",
     );
 
-    let trivial_pcd = app.seeded_trivial_pcd(rng);
-    let (mut node_pcd, _) = app.fuse(
-        rng,
-        GgmMasterStep::<Pasta> { poseidon_params },
-        chunk_at(epoch, 0),
-        master_pcd,
-        trivial_pcd,
-    )?;
+    let mut node_pcd =
+        fixtures::master_step(app, poseidon_params, rng, master_pcd, chunk_at(epoch, 0));
 
     for level in 1..depth_to {
-        let trivial_pcd = app.seeded_trivial_pcd(rng);
-        let (next, _) = app.fuse(
-            rng,
-            GgmNodeStep::<Pasta> { poseidon_params },
-            chunk_at(epoch, level),
-            node_pcd,
-            trivial_pcd,
-        )?;
-        node_pcd = next;
+        node_pcd = fixtures::node_step(app, poseidon_params, rng, node_pcd, chunk_at(epoch, level));
     }
     Ok(node_pcd)
 }
 
 fn blind(
-    app: &App<'_>,
+    app: &App,
     rng: &mut StdRng,
     poseidon_params: &<Pasta as Cycle>::CircuitPoseidon,
     node_pcd: Pcd<Pasta, ProductionRank, GgmPrivateHeader>,
     trap: Fp,
 ) -> Result<Pcd<Pasta, ProductionRank, GgmDelegateHeader>> {
-    let trivial_pcd = app.seeded_trivial_pcd(rng);
-    let (out, _) = app.fuse(
+    Ok(fixtures::blind_step(
+        app,
+        poseidon_params,
         rng,
-        GgmBlindStep::<Pasta> { poseidon_params },
-        trap,
         node_pcd,
-        trivial_pcd,
-    )?;
-    Ok(out)
+        trap,
+    ))
 }
 
 fn descend_post_blind(
-    app: &App<'_>,
+    app: &App,
     rng: &mut StdRng,
     poseidon_params: &<Pasta as Cycle>::CircuitPoseidon,
     mut delegate_pcd: Pcd<Pasta, ProductionRank, GgmDelegateHeader>,
@@ -127,38 +107,33 @@ fn descend_post_blind(
     depth_from: u8,
 ) -> Result<Pcd<Pasta, ProductionRank, GgmDelegateHeader>> {
     for level in depth_from..GGM_DEPTH {
-        let trivial_pcd = app.seeded_trivial_pcd(rng);
-        let (next, _) = app.fuse(
+        delegate_pcd = fixtures::delegate_step(
+            app,
+            poseidon_params,
             rng,
-            GgmDelegateStep::<Pasta> { poseidon_params },
-            chunk_at(epoch, level),
             delegate_pcd,
-            trivial_pcd,
-        )?;
-        delegate_pcd = next;
+            chunk_at(epoch, level),
+        );
     }
     Ok(delegate_pcd)
 }
 
 fn finish(
-    app: &App<'_>,
+    app: &App,
     rng: &mut StdRng,
     poseidon_params: &<Pasta as Cycle>::CircuitPoseidon,
     delegate_pcd: Pcd<Pasta, ProductionRank, GgmDelegateHeader>,
 ) -> Result<Pcd<Pasta, ProductionRank, GgmNullifierHeader>> {
-    let trivial_pcd = app.seeded_trivial_pcd(rng);
-    let (out, _) = app.fuse(
+    Ok(fixtures::nullifier_step(
+        app,
+        poseidon_params,
         rng,
-        GgmNullifierStep::<Pasta> { poseidon_params },
-        (),
         delegate_pcd,
-        trivial_pcd,
-    )?;
-    Ok(out)
+    ))
 }
 
 fn blind_at_leaf(
-    app: &App<'_>,
+    app: &App,
     rng: &mut StdRng,
     poseidon_params: &<Pasta as Cycle>::CircuitPoseidon,
     master_pcd: Pcd<Pasta, ProductionRank, GgmMasterHeader>,
@@ -186,10 +161,9 @@ fn expected(
 }
 
 #[test]
-fn epoch_distinctness() -> Result<()> {
-    let pasta = Pasta::baked();
-    let poseidon = Pasta::circuit_poseidon(pasta);
-    let app = build_app(pasta)?;
+fn ggm_epoch_distinctness() -> Result<()> {
+    let (params, poseidon) = pasta_params();
+    let (app, poseidon) = fixtures::build_app::<Pasta>(params, poseidon);
 
     let mut rng = StdRng::seed_from_u64(1234);
     let nk = Fp::random(&mut rng);
@@ -239,10 +213,9 @@ fn epoch_distinctness() -> Result<()> {
 }
 
 #[test]
-fn note_distinctness() -> Result<()> {
-    let pasta = Pasta::baked();
-    let poseidon = Pasta::circuit_poseidon(pasta);
-    let app = build_app(pasta)?;
+fn ggm_note_distinctness() -> Result<()> {
+    let (params, poseidon) = pasta_params();
+    let (app, poseidon) = fixtures::build_app::<Pasta>(params, poseidon);
 
     let mut rng = StdRng::seed_from_u64(4321);
     // Same nk, two distinct notes, two distinct trapdoors.
@@ -290,10 +263,9 @@ fn note_distinctness() -> Result<()> {
 }
 
 #[test]
-fn blind_distinctness() -> Result<()> {
-    let pasta = Pasta::baked();
-    let poseidon = Pasta::circuit_poseidon(pasta);
-    let app = build_app(pasta)?;
+fn ggm_blind_distinctness() -> Result<()> {
+    let (params, poseidon) = pasta_params();
+    let (app, poseidon) = fixtures::build_app::<Pasta>(params, poseidon);
 
     let mut rng = StdRng::seed_from_u64(9001);
     let nk = Fp::random(&mut rng);
@@ -336,10 +308,9 @@ fn blind_distinctness() -> Result<()> {
 }
 
 #[test]
-fn blind_path_equivalence() -> Result<()> {
-    let pasta = Pasta::baked();
-    let poseidon = Pasta::circuit_poseidon(pasta);
-    let app = build_app(pasta)?;
+fn ggm_blind_path_equivalence() -> Result<()> {
+    let (params, poseidon) = pasta_params();
+    let (app, poseidon) = fixtures::build_app::<Pasta>(params, poseidon);
 
     let mut rng = StdRng::seed_from_u64(7777);
     let nk = Fp::random(&mut rng);
