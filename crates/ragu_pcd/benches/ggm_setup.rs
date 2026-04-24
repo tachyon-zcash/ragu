@@ -6,7 +6,9 @@ use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::Pcd;
-pub use ragu_testing::pcd::ggm::{GgmSeed, fixtures::walk_measured};
+pub use ragu_testing::pcd::ggm::{
+    DelegationTrapdoorWitness, NoteWitness, NullifierKeyWitness, fixtures::walk_measured,
+};
 
 pub type App = ragu_testing::pcd::ggm::fixtures::App<Pasta>;
 
@@ -23,7 +25,7 @@ pub fn setup_seed() -> (
     App,
     &'static <Pasta as Cycle>::CircuitPoseidon,
     rand::rngs::StdRng,
-    GgmSeed<Fp>,
+    (NullifierKeyWitness<Fp>, NoteWitness<Fp>),
 ) {
     let (params, poseidon) = params();
     ragu_testing::pcd::ggm::fixtures::setup_seed::<Pasta>(params, poseidon)
@@ -56,7 +58,7 @@ pub fn setup_blind() -> (
     rand::rngs::StdRng,
     Pcd<Pasta, ProductionRank, ragu_testing::pcd::ggm::GgmPrivateHeader>,
     Pcd<Pasta, ProductionRank, ()>,
-    Fp,
+    DelegationTrapdoorWitness<Fp>,
 ) {
     let (params, poseidon) = params();
     ragu_testing::pcd::ggm::fixtures::setup_blind::<Pasta>(params, poseidon)

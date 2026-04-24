@@ -5,8 +5,9 @@ use ragu_core::Result;
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::Pcd;
 use ragu_testing::pcd::ggm::{
-    GGM_ARITY, GGM_DEPTH, GGM_MAX, GgmDelegateHeader, GgmIndex, GgmMasterHeader, GgmNote,
-    GgmNullifierData, GgmNullifierHeader, GgmPrivateHeader, GgmSeed, fixtures, native_ggm,
+    DelegationIdWitness, DelegationTrapdoorWitness, EpochIndexWitness, GGM_ARITY, GGM_DEPTH,
+    GGM_MAX, GgmDelegateHeader, GgmIndex, GgmMasterHeader, GgmNullifierHeader, GgmPrivateHeader,
+    NoteWitness, NullifierKeyWitness, NullifierWitness, fixtures, native_ggm,
 };
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -37,6 +38,15 @@ impl Note {
             rcm: Fp::random(&mut *rng),
         }
     }
+
+    fn to_witness(&self) -> NoteWitness<Fp> {
+        NoteWitness {
+            pk: self.pk,
+            value: self.value,
+            psi: self.psi,
+            rcm: self.rcm,
+        }
+    }
 }
 
 /// Extract the `level`-th MSB-first base-`ARITY` digit of `epoch`
@@ -56,15 +66,7 @@ fn seed(
         app,
         poseidon_params,
         rng,
-        GgmSeed {
-            nk,
-            note: GgmNote {
-                pk: note.pk,
-                value: note.value,
-                psi: note.psi,
-                rcm: note.rcm,
-            },
-        },
+        (NullifierKeyWitness(nk), note.to_witness()),
     ))
 }
 
@@ -102,7 +104,7 @@ fn blind(
         poseidon_params,
         rng,
         node_pcd,
-        trap,
+        DelegationTrapdoorWitness(trap),
     ))
 }
 
@@ -159,19 +161,16 @@ fn expected(
     note: &Note,
     trap: Fp,
     epoch: GgmIndex,
-) -> Result<GgmNullifierData<Fp>> {
+) -> Result<(
+    NullifierWitness<Fp>,
+    EpochIndexWitness<Fp>,
+    DelegationIdWitness<Fp>,
+)> {
     native_ggm::<Pasta>(
         poseidon_params,
-        GgmSeed {
-            nk,
-            note: GgmNote {
-                pk: note.pk,
-                value: note.value,
-                psi: note.psi,
-                rcm: note.rcm,
-            },
-        },
-        trap,
+        NullifierKeyWitness(nk),
+        note.to_witness(),
+        DelegationTrapdoorWitness(trap),
         u32::from(epoch),
     )
 }
@@ -200,16 +199,8 @@ fn ggm_epoch_distinctness() -> Result<()> {
     assert!(app.verify(&leaf_a, &mut rng)?);
     assert!(app.verify(&leaf_b, &mut rng)?);
 
-    let GgmNullifierData {
-        nullifier: nf_a,
-        epoch: ep_a,
-        delegation_id: did_a,
-    } = *leaf_a.data();
-    let GgmNullifierData {
-        nullifier: nf_b,
-        epoch: ep_b,
-        delegation_id: did_b,
-    } = *leaf_b.data();
+    let (nf_a, ep_a, did_a) = *leaf_a.data();
+    let (nf_b, ep_b, did_b) = *leaf_b.data();
 
     assert_eq!(
         *leaf_a.data(),
@@ -223,13 +214,13 @@ fn ggm_epoch_distinctness() -> Result<()> {
     );
 
     assert_eq!(
-        did_a, did_b,
+        did_a.0, did_b.0,
         "same note + trap must yield same delegation_id"
     );
-    assert_eq!(ep_a, Fp::from(u64::from(epoch_a)));
-    assert_eq!(ep_b, Fp::from(u64::from(epoch_b)));
+    assert_eq!(ep_a.0, Fp::from(u64::from(epoch_a)));
+    assert_eq!(ep_b.0, Fp::from(u64::from(epoch_b)));
     assert_ne!(
-        nf_a, nf_b,
+        nf_a.0, nf_b.0,
         "distinct epochs on the same note must produce distinct nullifiers",
     );
 
@@ -260,16 +251,8 @@ fn ggm_note_distinctness() -> Result<()> {
     assert!(app.verify(&leaf_a, &mut rng)?);
     assert!(app.verify(&leaf_b, &mut rng)?);
 
-    let GgmNullifierData {
-        nullifier: nf_a,
-        epoch: ep_a,
-        delegation_id: did_a,
-    } = *leaf_a.data();
-    let GgmNullifierData {
-        nullifier: nf_b,
-        epoch: ep_b,
-        delegation_id: did_b,
-    } = *leaf_b.data();
+    let (nf_a, ep_a, did_a) = *leaf_a.data();
+    let (nf_b, ep_b, did_b) = *leaf_b.data();
 
     assert_eq!(
         *leaf_a.data(),
@@ -280,14 +263,14 @@ fn ggm_note_distinctness() -> Result<()> {
         expected(poseidon, nk, &note_b, trap_b, epoch)?,
     );
 
-    assert_eq!(ep_a, Fp::from(u64::from(epoch)));
-    assert_eq!(ep_a, ep_b);
+    assert_eq!(ep_a.0, Fp::from(u64::from(epoch)));
+    assert_eq!(ep_a.0, ep_b.0);
     assert_ne!(
-        did_a, did_b,
+        did_a.0, did_b.0,
         "distinct notes must yield distinct delegation_ids"
     );
     assert_ne!(
-        nf_a, nf_b,
+        nf_a.0, nf_b.0,
         "distinct notes at the same epoch must produce distinct nullifiers",
     );
 
@@ -324,23 +307,15 @@ fn ggm_blind_distinctness() -> Result<()> {
     assert!(app.verify(&leaf_a, &mut rng)?);
     assert!(app.verify(&leaf_b, &mut rng)?);
 
-    let GgmNullifierData {
-        nullifier: nf_a,
-        delegation_id: did_a,
-        ..
-    } = *leaf_a.data();
-    let GgmNullifierData {
-        nullifier: nf_b,
-        delegation_id: did_b,
-        ..
-    } = *leaf_b.data();
+    let (nf_a, _, did_a) = *leaf_a.data();
+    let (nf_b, _, did_b) = *leaf_b.data();
 
     assert_eq!(
-        nf_a, nf_b,
+        nf_a.0, nf_b.0,
         "same GGM leaf must produce the same nullifier regardless of trap",
     );
     assert_ne!(
-        did_a, did_b,
+        did_a.0, did_b.0,
         "distinct traps must yield distinct delegation_ids",
     );
 

@@ -5,8 +5,8 @@ mod ggm_setup;
 use std::hint::black_box;
 
 use ggm_setup::{
-    App, GgmSeed, setup_blind, setup_delegate, setup_final, setup_node_step, setup_seed,
-    setup_walk, walk_measured,
+    App, setup_blind, setup_delegate, setup_final, setup_node_step, setup_seed, setup_walk,
+    walk_measured,
 };
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use ragu_arithmetic::Cycle;
@@ -14,8 +14,9 @@ use ragu_circuits::polynomials::ProductionRank;
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::Pcd;
 use ragu_testing::pcd::ggm::{
-    GgmBlindStep, GgmDelegateHeader, GgmDelegateStep, GgmMasterHeader, GgmMasterSeed, GgmNodeStep,
-    GgmNullifierStep, GgmPrivateHeader,
+    DelegationTrapdoorWitness, GgmBlindStep, GgmDelegateHeader, GgmDelegateStep, GgmMasterHeader,
+    GgmMasterSeed, GgmNodeStep, GgmNullifierStep, GgmPrivateHeader, NoteWitness,
+    NullifierKeyWitness,
 };
 use rand::rngs::StdRng;
 
@@ -26,7 +27,7 @@ fn seed(
         App,
         &'static <Pasta as Cycle>::CircuitPoseidon,
         StdRng,
-        GgmSeed<Fp>,
+        (NullifierKeyWitness<Fp>, NoteWitness<Fp>),
     ),
 ) {
     black_box(app.seed(&mut rng, GgmMasterSeed::<Pasta> { poseidon_params }, seed)).unwrap();
@@ -75,7 +76,7 @@ fn blind(
         StdRng,
         Pcd<Pasta, ProductionRank, GgmPrivateHeader>,
         Pcd<Pasta, ProductionRank, ()>,
-        Fp,
+        DelegationTrapdoorWitness<Fp>,
     ),
 ) {
     black_box(app.fuse(
