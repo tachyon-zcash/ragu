@@ -56,17 +56,8 @@ name = "pcd"
 harness = false
 
 [[bench]]
-name = "ggm"
-harness = false
-
-[[bench]]
 name = "fuse_criterion"
 path = "benches/criterion/fuse.rs"
-harness = false
-
-[[bench]]
-name = "ggm_criterion"
-path = "benches/criterion/ggm.rs"
 harness = false
 
 [[bench]]

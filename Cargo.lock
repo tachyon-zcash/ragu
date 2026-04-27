@@ -847,10 +847,13 @@ dependencies = [
 name = "ragu_testing"
 version = "0.0.0"
 dependencies = [
+ "criterion",
  "ff",
+ "gungraun",
  "ragu_arithmetic",
  "ragu_circuits",
  "ragu_core",
+ "ragu_pasta",
  "ragu_pcd",
  "ragu_primitives",
  "rand 0.10.0",

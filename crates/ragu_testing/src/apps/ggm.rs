@@ -1,6 +1,3 @@
-//! GGM (Goldreich–Goldwasser–Micali) PRF tree derivation example with
-//! late-delegation blinding.
-
 #![allow(clippy::type_complexity)]
 
 use ff::{Field, PrimeField};

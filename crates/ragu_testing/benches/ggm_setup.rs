@@ -6,11 +6,11 @@ use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::Pcd;
-pub use ragu_testing::pcd::ggm::{
+pub use ragu_testing::apps::ggm::{
     DelegationTrapdoorWitness, NoteWitness, NullifierKeyWitness, fixtures::walk_measured,
 };
 
-pub type App = ragu_testing::pcd::ggm::fixtures::App<Pasta>;
+pub type App = ragu_testing::apps::ggm::fixtures::App<Pasta>;
 
 fn params() -> (
     &'static <Pasta as Cycle>::Params,
@@ -28,60 +28,60 @@ pub fn setup_seed() -> (
     (NullifierKeyWitness<Fp>, NoteWitness<Fp>),
 ) {
     let (params, poseidon) = params();
-    ragu_testing::pcd::ggm::fixtures::setup_seed::<Pasta>(params, poseidon)
+    ragu_testing::apps::ggm::fixtures::setup_seed::<Pasta>(params, poseidon)
 }
 
 pub fn setup_node_step() -> (
     App,
     &'static <Pasta as Cycle>::CircuitPoseidon,
     rand::rngs::StdRng,
-    Pcd<Pasta, ProductionRank, ragu_testing::pcd::ggm::GgmPrivateHeader>,
+    Pcd<Pasta, ProductionRank, ragu_testing::apps::ggm::GgmPrivateHeader>,
     Pcd<Pasta, ProductionRank, ()>,
 ) {
     let (params, poseidon) = params();
-    ragu_testing::pcd::ggm::fixtures::setup_node_step::<Pasta>(params, poseidon)
+    ragu_testing::apps::ggm::fixtures::setup_node_step::<Pasta>(params, poseidon)
 }
 
 pub fn setup_walk() -> (
     App,
     &'static <Pasta as Cycle>::CircuitPoseidon,
     rand::rngs::StdRng,
-    Pcd<Pasta, ProductionRank, ragu_testing::pcd::ggm::GgmMasterHeader>,
+    Pcd<Pasta, ProductionRank, ragu_testing::apps::ggm::GgmMasterHeader>,
 ) {
     let (params, poseidon) = params();
-    ragu_testing::pcd::ggm::fixtures::setup_walk::<Pasta>(params, poseidon)
+    ragu_testing::apps::ggm::fixtures::setup_walk::<Pasta>(params, poseidon)
 }
 
 pub fn setup_blind() -> (
     App,
     &'static <Pasta as Cycle>::CircuitPoseidon,
     rand::rngs::StdRng,
-    Pcd<Pasta, ProductionRank, ragu_testing::pcd::ggm::GgmPrivateHeader>,
+    Pcd<Pasta, ProductionRank, ragu_testing::apps::ggm::GgmPrivateHeader>,
     Pcd<Pasta, ProductionRank, ()>,
     DelegationTrapdoorWitness<Fp>,
 ) {
     let (params, poseidon) = params();
-    ragu_testing::pcd::ggm::fixtures::setup_blind::<Pasta>(params, poseidon)
+    ragu_testing::apps::ggm::fixtures::setup_blind::<Pasta>(params, poseidon)
 }
 
 pub fn setup_delegate() -> (
     App,
     &'static <Pasta as Cycle>::CircuitPoseidon,
     rand::rngs::StdRng,
-    Pcd<Pasta, ProductionRank, ragu_testing::pcd::ggm::GgmDelegateHeader>,
+    Pcd<Pasta, ProductionRank, ragu_testing::apps::ggm::GgmDelegateHeader>,
     Pcd<Pasta, ProductionRank, ()>,
 ) {
     let (params, poseidon) = params();
-    ragu_testing::pcd::ggm::fixtures::setup_delegate::<Pasta>(params, poseidon)
+    ragu_testing::apps::ggm::fixtures::setup_delegate::<Pasta>(params, poseidon)
 }
 
 pub fn setup_final() -> (
     App,
     &'static <Pasta as Cycle>::CircuitPoseidon,
     rand::rngs::StdRng,
-    Pcd<Pasta, ProductionRank, ragu_testing::pcd::ggm::GgmDelegateHeader>,
+    Pcd<Pasta, ProductionRank, ragu_testing::apps::ggm::GgmDelegateHeader>,
     Pcd<Pasta, ProductionRank, ()>,
 ) {
     let (params, poseidon) = params();
-    ragu_testing::pcd::ggm::fixtures::setup_final::<Pasta>(params, poseidon)
+    ragu_testing::apps::ggm::fixtures::setup_final::<Pasta>(params, poseidon)
 }

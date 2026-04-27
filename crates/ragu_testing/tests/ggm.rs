@@ -4,7 +4,7 @@ use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::Result;
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::Pcd;
-use ragu_testing::pcd::ggm::{
+use ragu_testing::apps::ggm::{
     DelegationIdWitness, DelegationTrapdoorWitness, EpochIndexWitness, GGM_ARITY, GGM_DEPTH,
     GGM_MAX, GgmDelegateHeader, GgmIndex, GgmMasterHeader, GgmNullifierHeader, GgmPrivateHeader,
     NoteWitness, NullifierKeyWitness, NullifierWitness, fixtures, native_ggm,

@@ -13,7 +13,7 @@ use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::Pcd;
-use ragu_testing::pcd::ggm::{
+use ragu_testing::apps::ggm::{
     DelegationTrapdoorWitness, GgmBlindStep, GgmDelegateHeader, GgmDelegateStep, GgmMasterHeader,
     GgmMasterSeed, GgmNodeStep, GgmNullifierStep, GgmPrivateHeader, NoteWitness,
     NullifierKeyWitness,

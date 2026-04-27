@@ -38,3 +38,17 @@ ragu_pcd = { path = "../ragu_pcd", version = "0.0.0" }
 ragu_primitives = { path = "../ragu_primitives", version = "0.0.0" }
 ff = { workspace = true }
 rand = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+gungraun = { workspace = true }
+ragu_pasta = { path = "../ragu_pasta", version = "0.0.0", features = ["baked"] }
+
+[[bench]]
+name = "ggm"
+harness = false
+
+[[bench]]
+name = "ggm_criterion"
+path = "benches/criterion/ggm.rs"
+harness = false

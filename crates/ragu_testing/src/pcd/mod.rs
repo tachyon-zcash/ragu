@@ -2,5 +2,4 @@
 //!
 //! This module provides reusable Header and Step implementations for benchmarks.
 
-pub mod ggm;
 pub mod nontrivial;

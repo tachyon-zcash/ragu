@@ -1,7 +1,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use ragu_arithmetic::Cycle;
 use ragu_pasta::Pasta;
-use ragu_testing::pcd::ggm::{
+use ragu_testing::apps::ggm::{
     GgmBlindStep, GgmDelegateStep, GgmMasterSeed, GgmNodeStep, GgmNullifierStep,
     fixtures::{self, walk_measured},
 };
