@@ -510,9 +510,7 @@ where
         let nk = NullifierKeyGadget {
             inner: Element::alloc(dr, allocator, nk_w.map(|w| w.0))?,
         };
-        let (pk_w, v_w, psi_w, rcm_w) = note_w
-            .map(|w| (w.pk, w.value, w.psi, w.rcm))
-            .cast();
+        let (pk_w, v_w, psi_w, rcm_w) = note_w.map(|w| (w.pk, w.value, w.psi, w.rcm)).cast();
         let note = NoteGadget {
             pk: Element::alloc(dr, allocator, pk_w)?,
             value: Element::alloc(dr, allocator, v_w)?,
@@ -591,11 +589,7 @@ where
             )
         });
         let output = Encoded::from_gadget((prefix, (mk.clone(), cm.clone())));
-        Ok((
-            (left, right, output),
-            output_data,
-            D::unit(),
-        ))
+        Ok(((left, right, output), output_data, D::unit()))
     }
 }
 
@@ -652,11 +646,7 @@ where
             )
         });
         let output = Encoded::from_gadget((next, (mk.clone(), cm.clone())));
-        Ok((
-            (left, right, output),
-            output_data,
-            D::unit(),
-        ))
+        Ok(((left, right, output), output_data, D::unit()))
     }
 }
 
@@ -714,11 +704,7 @@ where
             )
         });
         let output = Encoded::from_gadget((prefix.clone(), did));
-        Ok((
-            (left, right, output),
-            output_data,
-            D::unit(),
-        ))
+        Ok(((left, right, output), output_data, D::unit()))
     }
 }
 
@@ -774,11 +760,7 @@ where
             )
         });
         let output = Encoded::from_gadget((next, did.clone()));
-        Ok((
-            (left, right, output),
-            output_data,
-            D::unit(),
-        ))
+        Ok(((left, right, output), output_data, D::unit()))
     }
 }
 
@@ -833,11 +815,7 @@ where
             )
         });
         let output = Encoded::from_gadget((nullifier, (epoch, did.clone())));
-        Ok((
-            (left, right, output),
-            output_data,
-            D::unit(),
-        ))
+        Ok(((left, right, output), output_data, D::unit()))
     }
 }
 
