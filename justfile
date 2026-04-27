@@ -47,8 +47,8 @@ book COMMAND: _book_setup
 test *ARGS:
   cargo test --workspace --all-features {{ARGS}}
 
-# run benchmarks (auto-detects platform)
-bench *ARGS:
+# run gungraun benchmarks (auto-detects platform); pass --bench <name> to run a subset
+bench *ARGS="--bench arithmetic --bench circuits --bench ggm --bench pcd --bench primitives":
     @just _bench_{{os()}} {{ARGS}}
 
 _bench_macos *ARGS:
@@ -69,7 +69,7 @@ _bench_macos *ARGS:
     docker attach --no-stdin $container
 
 _bench_linux *ARGS: _gungraun_setup
-    cargo bench --workspace --all-features --bench arithmetic --bench circuits --bench pcd --bench primitives {{ARGS}}
+    cargo bench --workspace --all-features {{ARGS}}
 
 # generate flamegraph in target/*.svg
 flamegraph PACKAGE GROUP TARGET *ARGS:
