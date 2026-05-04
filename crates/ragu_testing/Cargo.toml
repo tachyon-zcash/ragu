@@ -42,13 +42,15 @@ rand = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 gungraun = { workspace = true }
+proptest = { workspace = true }
 ragu_pasta = { path = "../ragu_pasta", version = "0.0.0", features = ["baked"] }
 
 [[bench]]
 name = "ggm"
+path = "benches/ggm/gungraun.rs"
 harness = false
 
 [[bench]]
 name = "ggm_criterion"
-path = "benches/criterion/ggm.rs"
+path = "benches/ggm/criterion.rs"
 harness = false

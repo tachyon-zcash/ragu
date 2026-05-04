@@ -850,6 +850,7 @@ dependencies = [
  "criterion",
  "ff",
  "gungraun",
+ "proptest",
  "ragu_arithmetic",
  "ragu_circuits",
  "ragu_core",
