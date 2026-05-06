@@ -40,7 +40,7 @@ pub type App<C> = Application<'static, C, ProductionRank, HEADER_SIZE>;
 /// Mock `pk` derivation: `Poseidon(domain::PK, nk)`. Real Zcash binds `ak` too;
 /// this example uses `nk` alone since the GGM circuit doesn't constrain `pk`.
 pub fn derive_pk<C: Cycle>(
-    poseidon: &<C as Cycle>::CircuitPoseidon,
+    poseidon: &'static <C as Cycle>::CircuitPoseidon,
     nk: NullifierKeyWitness<<C as Cycle>::CircuitField>,
 ) -> <C as Cycle>::CircuitField
 where
@@ -62,7 +62,7 @@ where
 /// Native note commitment: `Poseidon(domain::CM, rcm, pk, value, psi)`,
 /// matching `NoteGadget::commit` and `native_ggm`'s commit absorption order.
 pub fn commit_note<C: Cycle>(
-    poseidon: &<C as Cycle>::CircuitPoseidon,
+    poseidon: &'static <C as Cycle>::CircuitPoseidon,
     note: &NoteWitness<<C as Cycle>::CircuitField>,
 ) -> NoteCommitmentWitness<<C as Cycle>::CircuitField>
 where
@@ -92,7 +92,7 @@ where
 /// Pull one mock note's witnesses from `rng`, given the canonical `nk`.
 pub fn sample_note<C: Cycle>(
     rng: &mut StdRng,
-    poseidon: &<C as Cycle>::CircuitPoseidon,
+    poseidon: &'static <C as Cycle>::CircuitPoseidon,
     nk: NullifierKeyWitness<<C as Cycle>::CircuitField>,
 ) -> NoteWitness<<C as Cycle>::CircuitField>
 where
@@ -144,7 +144,7 @@ where
 /// Seed the master PCD and return `(master_pcd, commitment)`.
 pub fn seed_master<C: Cycle>(
     app: &App<C>,
-    poseidon_params: &<C as Cycle>::CircuitPoseidon,
+    poseidon_params: &'static <C as Cycle>::CircuitPoseidon,
     rng: &mut StdRng,
     seed: (
         NullifierKeyWitness<<C as Cycle>::CircuitField>,
@@ -167,7 +167,7 @@ where
 
 pub fn master_step<C: Cycle>(
     app: &App<C>,
-    poseidon_params: &<C as Cycle>::CircuitPoseidon,
+    poseidon_params: &'static <C as Cycle>::CircuitPoseidon,
     rng: &mut StdRng,
     master_pcd: Pcd<C, ProductionRank, GgmMasterHeader>,
     chunk: ChunkWitness,
@@ -189,7 +189,7 @@ where
 
 pub fn node_step<C: Cycle>(
     app: &App<C>,
-    poseidon_params: &<C as Cycle>::CircuitPoseidon,
+    poseidon_params: &'static <C as Cycle>::CircuitPoseidon,
     rng: &mut StdRng,
     node_pcd: Pcd<C, ProductionRank, GgmPrivateHeader>,
     chunk: ChunkWitness,
@@ -211,7 +211,7 @@ where
 
 pub fn blind_step<C: Cycle>(
     app: &App<C>,
-    poseidon_params: &<C as Cycle>::CircuitPoseidon,
+    poseidon_params: &'static <C as Cycle>::CircuitPoseidon,
     rng: &mut StdRng,
     node_pcd: Pcd<C, ProductionRank, GgmPrivateHeader>,
     trap: DelegationTrapdoorWitness<C::CircuitField>,
@@ -233,7 +233,7 @@ where
 
 pub fn delegate_step<C: Cycle>(
     app: &App<C>,
-    poseidon_params: &<C as Cycle>::CircuitPoseidon,
+    poseidon_params: &'static <C as Cycle>::CircuitPoseidon,
     rng: &mut StdRng,
     delegate_pcd: Pcd<C, ProductionRank, GgmDelegateHeader>,
     chunk: ChunkWitness,
@@ -255,7 +255,7 @@ where
 
 pub fn nullifier_step<C: Cycle>(
     app: &App<C>,
-    poseidon_params: &<C as Cycle>::CircuitPoseidon,
+    poseidon_params: &'static <C as Cycle>::CircuitPoseidon,
     rng: &mut StdRng,
     delegate_pcd: Pcd<C, ProductionRank, GgmDelegateHeader>,
 ) -> Pcd<C, ProductionRank, GgmNullifierHeader>
@@ -348,7 +348,7 @@ where
 pub fn ensure_master<C: Cycle>(
     cell: &CacheCell<C>,
     app: &App<C>,
-    poseidon: &<C as Cycle>::CircuitPoseidon,
+    poseidon: &'static <C as Cycle>::CircuitPoseidon,
     rng: &mut StdRng,
     nk: NullifierKeyWitness<<C as Cycle>::CircuitField>,
     note: NoteWitness<<C as Cycle>::CircuitField>,
@@ -374,7 +374,7 @@ where
 pub fn ensure_node<C: Cycle>(
     cell: &CacheCell<C>,
     app: &App<C>,
-    poseidon: &<C as Cycle>::CircuitPoseidon,
+    poseidon: &'static <C as Cycle>::CircuitPoseidon,
     rng: &mut StdRng,
     nk: NullifierKeyWitness<<C as Cycle>::CircuitField>,
     note: NoteWitness<<C as Cycle>::CircuitField>,
@@ -430,7 +430,7 @@ where
 pub fn ensure_delegate<C: Cycle>(
     cell: &CacheCell<C>,
     app: &App<C>,
-    poseidon: &<C as Cycle>::CircuitPoseidon,
+    poseidon: &'static <C as Cycle>::CircuitPoseidon,
     rng: &mut StdRng,
     nk: NullifierKeyWitness<<C as Cycle>::CircuitField>,
     note: NoteWitness<<C as Cycle>::CircuitField>,
@@ -466,7 +466,7 @@ where
 pub fn ensure_nullifier<C: Cycle>(
     cell: &CacheCell<C>,
     app: &App<C>,
-    poseidon: &<C as Cycle>::CircuitPoseidon,
+    poseidon: &'static <C as Cycle>::CircuitPoseidon,
     rng: &mut StdRng,
     nk: NullifierKeyWitness<<C as Cycle>::CircuitField>,
     note: NoteWitness<<C as Cycle>::CircuitField>,

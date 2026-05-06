@@ -1,7 +1,7 @@
 #![allow(clippy::type_complexity)]
 
 use ff::{Field, PrimeField};
-use ragu_arithmetic::{Cycle, PoseidonPermutation};
+use ragu_arithmetic::Cycle;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue, emulator::Emulator},
@@ -16,7 +16,6 @@ use ragu_primitives::{
     Boolean, Element,
     allocator::{Allocator, Standard},
     io::Write,
-    multipack,
     poseidon::Sponge,
 };
 
@@ -174,166 +173,9 @@ where
     Ok(ChunkGadget { bits })
 }
 
-impl<'dr, D: Driver<'dr>> NoteGadget<'dr, D>
-where
-    D::F: PrimeField,
-{
-    /// `cm = Poseidon(CM, rcm, pk, value, psi)`.
-    pub fn commit<P: PoseidonPermutation<D::F>>(
-        &self,
-        dr: &mut D,
-        params: &'dr P,
-    ) -> Result<NoteCommitmentGadget<'dr, D>> {
-        let inner = {
-            let t = Element::constant(dr, tag::<D::F>(domain::CM));
-            let mut sp = Sponge::new(dr, params);
-            sp.absorb(dr, &t)?;
-            sp.absorb(dr, &self.rcm)?;
-            sp.absorb(dr, &self.pk)?;
-            sp.absorb(dr, &self.value)?;
-            sp.absorb(dr, &self.psi)?;
-            sp.squeeze(dr)?
-        };
+mod routines;
 
-        Ok(NoteCommitmentGadget { inner })
-    }
-}
-
-impl<'dr, D: Driver<'dr>> NullifierKeyGadget<'dr, D>
-where
-    D::F: PrimeField,
-{
-    /// `mk = Poseidon(MK, psi, nk)`. `psi` comes from the committed Note.
-    pub fn derive_mk<P: PoseidonPermutation<D::F>>(
-        &self,
-        dr: &mut D,
-        note: &NoteGadget<'dr, D>,
-        params: &'dr P,
-    ) -> Result<MasterKeyGadget<'dr, D>> {
-        let t = Element::constant(dr, tag::<D::F>(domain::MK));
-        let mut sp = Sponge::new(dr, params);
-        sp.absorb(dr, &t)?;
-        sp.absorb(dr, &note.psi)?;
-        sp.absorb(dr, &self.inner)?;
-        Ok(MasterKeyGadget {
-            inner: sp.squeeze(dr)?,
-        })
-    }
-}
-
-impl<'dr, D: Driver<'dr>> MasterKeyGadget<'dr, D>
-where
-    D::F: PrimeField,
-{
-    /// First tree descent: `prefix = Poseidon(TN, mk, chunk_bits...)`.
-    pub fn derive_prefix<P: PoseidonPermutation<D::F>>(
-        &self,
-        dr: &mut D,
-        chunk: &ChunkGadget<'dr, D>,
-        params: &'dr P,
-    ) -> Result<PrefixKeyGadget<'dr, D>> {
-        let chunk_digit = multipack(dr, &chunk.bits)?
-            .into_iter()
-            .next()
-            .expect("multipack returns one element for a non-empty slice");
-        let t = Element::constant(dr, tag::<D::F>(domain::TN));
-        let mut sp = Sponge::new(dr, params);
-        sp.absorb(dr, &t)?;
-        sp.absorb(dr, &self.inner)?;
-        for bit in &chunk.bits {
-            sp.absorb(dr, &bit.element())?;
-        }
-        Ok(PrefixKeyGadget {
-            depth: Element::one(),
-            index: chunk_digit,
-            inner: sp.squeeze(dr)?,
-        })
-    }
-
-    /// Delegation transition: `delegation_id = Poseidon(ID, mk, cm, trap)`.
-    pub fn blind<P: PoseidonPermutation<D::F>>(
-        &self,
-        dr: &mut D,
-        cm: &NoteCommitmentGadget<'dr, D>,
-        trap: &DelegationTrapdoorGadget<'dr, D>,
-        params: &'dr P,
-    ) -> Result<DelegationIdGadget<'dr, D>> {
-        let inner = {
-            let t = Element::constant(dr, tag::<D::F>(domain::ID));
-            let mut sp = Sponge::new(dr, params);
-            sp.absorb(dr, &t)?;
-            sp.absorb(dr, &self.inner)?;
-            sp.absorb(dr, &cm.inner)?;
-            sp.absorb(dr, &trap.inner)?;
-            sp.squeeze(dr)?
-        };
-
-        Ok(DelegationIdGadget { inner })
-    }
-}
-
-impl<'dr, D: Driver<'dr>> PrefixKeyGadget<'dr, D>
-where
-    D::F: PrimeField,
-{
-    /// Recursive descent: `next = Poseidon(TN, self, chunk_bits...)`.
-    pub fn derive_next<P: PoseidonPermutation<D::F>>(
-        &self,
-        dr: &mut D,
-        chunk: &ChunkGadget<'dr, D>,
-        params: &'dr P,
-    ) -> Result<PrefixKeyGadget<'dr, D>> {
-        let depth = self.depth.add(dr, &Element::one());
-
-        let chunk_digit = multipack(dr, &chunk.bits)?
-            .into_iter()
-            .next()
-            .expect("multipack returns one element for a non-empty slice");
-
-        let index = {
-            let arity = Element::constant(dr, D::F::from(GGM_ARITY as u64));
-            let scale_index = self.index.mul(dr, &arity)?;
-            scale_index.add(dr, &chunk_digit)
-        };
-
-        let inner = {
-            let t = Element::constant(dr, tag::<D::F>(domain::TN));
-            let mut sp = Sponge::new(dr, params);
-            sp.absorb(dr, &t)?;
-            sp.absorb(dr, &self.inner)?;
-            for bit in &chunk.bits {
-                sp.absorb(dr, &bit.element())?;
-            }
-            sp.squeeze(dr)?
-        };
-
-        Ok(PrefixKeyGadget {
-            depth,
-            index,
-            inner,
-        })
-    }
-
-    /// Terminal: `nullifier = Poseidon(NF, self)`.
-    pub fn derive_nullifier<P: PoseidonPermutation<D::F>>(
-        &self,
-        dr: &mut D,
-        params: &'dr P,
-    ) -> Result<NullifierGadget<'dr, D>> {
-        let max_depth = Element::constant(dr, D::F::from(GGM_DEPTH as u64));
-        self.depth.enforce_equal(dr, &max_depth)?;
-
-        let inner = {
-            let t = Element::constant(dr, tag::<D::F>(domain::NF));
-            let mut sp = Sponge::new(dr, params);
-            sp.absorb(dr, &t)?;
-            sp.absorb(dr, &self.inner)?;
-            sp.squeeze(dr)?
-        };
-
-        Ok(NullifierGadget { inner })
-    }
-}
+use routines::{Blind, DeriveMk, DeriveNext, DeriveNullifier, DerivePrefix, NoteCommit};
 
 pub struct GgmMasterHeader;
 
@@ -346,7 +188,10 @@ impl<F: PrimeField> Header<F> for GgmMasterHeader {
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
-    ) -> Result<Bound<'dr, D, Self::Output>> {
+    ) -> Result<Bound<'dr, D, Self::Output>>
+    where
+        Self: 'dr,
+    {
         let (mk, cm) = witness.cast();
         let mk_f = mk.map(|m| m.0);
         let cm_f = cm.map(|c| c.0);
@@ -380,7 +225,10 @@ impl<F: PrimeField> Header<F> for GgmPrivateHeader {
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
-    ) -> Result<Bound<'dr, D, Self::Output>> {
+    ) -> Result<Bound<'dr, D, Self::Output>>
+    where
+        Self: 'dr,
+    {
         let (prefix_w, mk_w, cm_w) = witness.cast();
         let (depth_w, index_w, inner_w) = prefix_w
             .map(|w| {
@@ -421,7 +269,10 @@ impl<F: PrimeField> Header<F> for GgmDelegateHeader {
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
-    ) -> Result<Bound<'dr, D, Self::Output>> {
+    ) -> Result<Bound<'dr, D, Self::Output>>
+    where
+        Self: 'dr,
+    {
         let (prefix_w, did_w) = witness.cast();
         let (depth_w, index_w, inner_w) = prefix_w
             .map(|w| {
@@ -464,7 +315,10 @@ impl<F: PrimeField> Header<F> for GgmNullifierHeader {
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
-    ) -> Result<Bound<'dr, D, Self::Output>> {
+    ) -> Result<Bound<'dr, D, Self::Output>>
+    where
+        Self: 'dr,
+    {
         let (nf_w, ep_w, did_w) = witness.cast();
         Ok((
             NullifierGadget {
@@ -482,11 +336,11 @@ impl<F: PrimeField> Header<F> for GgmNullifierHeader {
     }
 }
 
-pub struct GgmMasterSeed<'params, C: Cycle> {
-    pub poseidon_params: &'params C::CircuitPoseidon,
+pub struct GgmMasterSeed<C: Cycle> {
+    pub poseidon_params: &'static C::CircuitPoseidon,
 }
 
-impl<C: Cycle> Step<C> for GgmMasterSeed<'_, C>
+impl<C: Cycle> Step<C> for GgmMasterSeed<C>
 where
     C::CircuitField: PrimeField,
 {
@@ -532,8 +386,11 @@ where
             rcm: Element::alloc(dr, allocator, rcm_w)?,
         };
 
-        let cm = note.commit(dr, self.poseidon_params)?;
-        let mk = nk.derive_mk(dr, &note, self.poseidon_params)?;
+        let cm = dr.routine(NoteCommit::from(self.poseidon_params), note.clone())?;
+        let mk = dr.routine(
+            DeriveMk::from(self.poseidon_params),
+            (nk.clone(), note.clone()),
+        )?;
 
         let output_data = D::just(|| {
             (
@@ -550,11 +407,11 @@ where
     }
 }
 
-pub struct GgmMasterStep<'params, C: Cycle> {
-    pub poseidon_params: &'params C::CircuitPoseidon,
+pub struct GgmMasterStep<C: Cycle> {
+    pub poseidon_params: &'static C::CircuitPoseidon,
 }
 
-impl<C: Cycle> Step<C> for GgmMasterStep<'_, C>
+impl<C: Cycle> Step<C> for GgmMasterStep<C>
 where
     C::CircuitField: PrimeField,
 {
@@ -589,7 +446,10 @@ where
         let chunk = alloc_chunk(dr, allocator, witness)?;
 
         let (mk, cm) = left.as_gadget();
-        let prefix = mk.derive_prefix(dr, &chunk, self.poseidon_params)?;
+        let prefix = dr.routine(
+            DerivePrefix::from(self.poseidon_params),
+            (mk.clone(), chunk),
+        )?;
 
         let output_data = D::just(|| {
             (
@@ -607,11 +467,11 @@ where
     }
 }
 
-pub struct GgmNodeStep<'params, C: Cycle> {
-    pub poseidon_params: &'params C::CircuitPoseidon,
+pub struct GgmNodeStep<C: Cycle> {
+    pub poseidon_params: &'static C::CircuitPoseidon,
 }
 
-impl<C: Cycle> Step<C> for GgmNodeStep<'_, C>
+impl<C: Cycle> Step<C> for GgmNodeStep<C>
 where
     C::CircuitField: PrimeField,
 {
@@ -646,7 +506,10 @@ where
         let chunk = alloc_chunk(dr, allocator, witness)?;
 
         let (prefix, (mk, cm)) = left.as_gadget();
-        let next = prefix.derive_next(dr, &chunk, self.poseidon_params)?;
+        let next = dr.routine(
+            DeriveNext::from(self.poseidon_params),
+            (prefix.clone(), chunk),
+        )?;
 
         let output_data = D::just(|| {
             (
@@ -664,11 +527,11 @@ where
     }
 }
 
-pub struct GgmBlindStep<'params, C: Cycle> {
-    pub poseidon_params: &'params C::CircuitPoseidon,
+pub struct GgmBlindStep<C: Cycle> {
+    pub poseidon_params: &'static C::CircuitPoseidon,
 }
 
-impl<C: Cycle> Step<C> for GgmBlindStep<'_, C>
+impl<C: Cycle> Step<C> for GgmBlindStep<C>
 where
     C::CircuitField: PrimeField,
 {
@@ -705,7 +568,10 @@ where
         };
 
         let (prefix, (mk, cm)) = left.as_gadget();
-        let did = mk.blind(dr, cm, &trap, self.poseidon_params)?;
+        let did = dr.routine(
+            Blind::from(self.poseidon_params),
+            (mk.clone(), (cm.clone(), trap)),
+        )?;
 
         let output_data = D::just(|| {
             (
@@ -722,11 +588,11 @@ where
     }
 }
 
-pub struct GgmDelegateStep<'params, C: Cycle> {
-    pub poseidon_params: &'params C::CircuitPoseidon,
+pub struct GgmDelegateStep<C: Cycle> {
+    pub poseidon_params: &'static C::CircuitPoseidon,
 }
 
-impl<C: Cycle> Step<C> for GgmDelegateStep<'_, C>
+impl<C: Cycle> Step<C> for GgmDelegateStep<C>
 where
     C::CircuitField: PrimeField,
 {
@@ -761,7 +627,10 @@ where
         let chunk = alloc_chunk(dr, allocator, witness)?;
 
         let (prefix, did) = left.as_gadget();
-        let next = prefix.derive_next(dr, &chunk, self.poseidon_params)?;
+        let next = dr.routine(
+            DeriveNext::from(self.poseidon_params),
+            (prefix.clone(), chunk),
+        )?;
 
         let output_data = D::just(|| {
             (
@@ -778,11 +647,11 @@ where
     }
 }
 
-pub struct GgmNullifierStep<'params, C: Cycle> {
-    pub poseidon_params: &'params C::CircuitPoseidon,
+pub struct GgmNullifierStep<C: Cycle> {
+    pub poseidon_params: &'static C::CircuitPoseidon,
 }
 
-impl<C: Cycle> Step<C> for GgmNullifierStep<'_, C>
+impl<C: Cycle> Step<C> for GgmNullifierStep<C>
 where
     C::CircuitField: PrimeField,
 {
@@ -816,7 +685,10 @@ where
         let right = Encoded::from_gadget(());
 
         let (prefix, did) = left.as_gadget();
-        let nullifier = prefix.derive_nullifier(dr, self.poseidon_params)?;
+        let nullifier = dr.routine(
+            DeriveNullifier::from(self.poseidon_params),
+            prefix.clone(),
+        )?;
         let epoch = EpochIndexGadget {
             inner: prefix.index.clone(),
         };
