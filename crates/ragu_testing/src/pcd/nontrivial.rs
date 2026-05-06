@@ -18,26 +18,10 @@ use ragu_primitives::{
     poseidon::Sponge,
 };
 
-pub struct LeafNode;
+pub struct Node;
 
-impl<F: Field> Header<F> for LeafNode {
+impl<F: Field> Header<F> for Node {
     const SUFFIX: Suffix = Suffix::new(0);
-    type Data = F;
-    type Output = Kind![F; Element<'_, _>];
-
-    fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
-        dr: &mut D,
-        allocator: &mut A,
-        witness: DriverValue<D, Self::Data>,
-    ) -> Result<Bound<'dr, D, Self::Output>> {
-        Element::alloc(dr, allocator, witness)
-    }
-}
-
-pub struct InternalNode;
-
-impl<F: Field> Header<F> for InternalNode {
-    const SUFFIX: Suffix = Suffix::new(1);
     type Data = F;
     type Output = Kind![F; Element<'_, _>];
 
@@ -58,9 +42,9 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
     const INDEX: Index = Index::new(1);
     type Witness<'source> = ();
     type Aux<'source> = ();
-    type Left = LeafNode;
-    type Right = LeafNode;
-    type Output = InternalNode;
+    type Left = Node;
+    type Right = Node;
+    type Output = Node;
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
@@ -95,17 +79,17 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
     }
 }
 
-pub struct WitnessLeaf<'params, C: Cycle> {
+pub struct InitNode<'params, C:Cycle> {
     pub poseidon_params: &'params C::CircuitPoseidon,
 }
 
-impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
+impl<C: Cycle> Step<C> for InitNode<'_, C> {
     const INDEX: Index = Index::new(0);
     type Witness<'source> = C::CircuitField;
     type Aux<'source> = ();
     type Left = ();
     type Right = ();
-    type Output = LeafNode;
+    type Output = Node;
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
@@ -143,4 +127,5 @@ impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
             D::unit(),
         ))
     }
+
 }

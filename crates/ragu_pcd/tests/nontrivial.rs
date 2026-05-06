@@ -3,14 +3,14 @@ use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::Result;
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::ApplicationBuilder;
-use ragu_testing::pcd::nontrivial::{Hash2, WitnessLeaf};
+use ragu_testing::pcd::nontrivial::{Hash2, InitNode};
 use rand::{SeedableRng, rngs::StdRng};
 
 #[test]
 fn various_merging_operations() -> Result<()> {
     let pasta = Pasta::baked();
     let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
-        .register(WitnessLeaf {
+        .register(InitNode {
             poseidon_params: Pasta::circuit_poseidon(pasta),
         })?
         .register(Hash2 {
@@ -22,7 +22,7 @@ fn various_merging_operations() -> Result<()> {
 
     let (leaf1, _) = app.seed(
         &mut rng,
-        WitnessLeaf {
+        InitNode {
             poseidon_params: Pasta::circuit_poseidon(pasta),
         },
         Fp::from(42u64),
@@ -31,7 +31,7 @@ fn various_merging_operations() -> Result<()> {
 
     let (leaf2, _) = app.seed(
         &mut rng,
-        WitnessLeaf {
+        InitNode {
             poseidon_params: Pasta::circuit_poseidon(pasta),
         },
         Fp::from(42u64),

@@ -19,7 +19,7 @@ use setup::{
 #[bench::register()]
 fn register(
     (leaf, hash): (
-        nontrivial::WitnessLeaf<'static, Pasta>,
+        nontrivial::InitNode<'static, Pasta>,
         nontrivial::Hash2<'static, Pasta>,
     ),
 ) {
@@ -59,7 +59,7 @@ fn seed(
 ) {
     black_box(app.seed(
         &mut rng,
-        nontrivial::WitnessLeaf { poseidon_params },
+        nontrivial::InitNode { poseidon_params },
         Fp::from(42u64),
     ))
     .unwrap();
@@ -70,8 +70,8 @@ fn seed(
 fn fuse(
     (app, leaf1, leaf2, poseidon_params, mut rng): (
         Application<'static, Pasta, ProductionRank, 4>,
-        Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
-        Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
+        Pcd<Pasta, ProductionRank, nontrivial::Node>,
+        Pcd<Pasta, ProductionRank, nontrivial::Node>,
         &'static <Pasta as Cycle>::CircuitPoseidon,
         StdRng,
     ),
@@ -96,7 +96,7 @@ library_benchmark_group!(
 fn verify_leaf(
     (app, leaf, mut rng): (
         Application<'static, Pasta, ProductionRank, 4>,
-        Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
+        Pcd<Pasta, ProductionRank, nontrivial::Node>,
         StdRng,
     ),
 ) {
@@ -108,7 +108,7 @@ fn verify_leaf(
 fn verify_node(
     (app, node, mut rng): (
         Application<'static, Pasta, ProductionRank, 4>,
-        Pcd<Pasta, ProductionRank, nontrivial::InternalNode>,
+        Pcd<Pasta, ProductionRank, nontrivial::Node>,
         StdRng,
     ),
 ) {
@@ -120,7 +120,7 @@ fn verify_node(
 fn rerandomize(
     (app, node, mut rng): (
         Application<'static, Pasta, ProductionRank, 4>,
-        Pcd<Pasta, ProductionRank, nontrivial::InternalNode>,
+        Pcd<Pasta, ProductionRank, nontrivial::Node>,
         StdRng,
     ),
 ) {

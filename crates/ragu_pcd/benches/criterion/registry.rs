@@ -14,7 +14,7 @@ fn registry_bench(c: &mut Criterion) {
     // Time finalize separately: build the ApplicationBuilder, then bench only finalize.
     let make_builder = || {
         ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
-            .register(nontrivial::WitnessLeaf { poseidon_params })
+            .register(nontrivial::InitNode { poseidon_params })
             .unwrap()
             .register(nontrivial::Hash2 { poseidon_params })
             .unwrap()

@@ -11,7 +11,7 @@ fn fuse_bench(c: &mut Criterion) {
     let poseidon_params = Pasta::circuit_poseidon(pasta);
 
     let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
-        .register(nontrivial::WitnessLeaf { poseidon_params })
+        .register(nontrivial::InitNode { poseidon_params })
         .unwrap()
         .register(nontrivial::Hash2 { poseidon_params })
         .unwrap()
@@ -23,7 +23,7 @@ fn fuse_bench(c: &mut Criterion) {
     let (leaf1, _) = app
         .seed(
             &mut rng,
-            nontrivial::WitnessLeaf { poseidon_params },
+            nontrivial::InitNode { poseidon_params },
             Fp::from(1u64),
         )
         .unwrap();
@@ -31,7 +31,7 @@ fn fuse_bench(c: &mut Criterion) {
     let (leaf2, _) = app
         .seed(
             &mut rng,
-            nontrivial::WitnessLeaf { poseidon_params },
+            nontrivial::InitNode { poseidon_params },
             Fp::from(2u64),
         )
         .unwrap();
