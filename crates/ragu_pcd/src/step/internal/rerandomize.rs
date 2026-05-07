@@ -16,7 +16,7 @@ use ragu_core::{
 use ragu_primitives::allocator::Standard;
 
 use super::super::{Encoded, Index, Step};
-use crate::Header;
+use crate::{Header, poly_query::PolyQuery};
 pub(crate) use crate::step::InternalStepIndex::Rerandomize as INTERNAL_ID;
 
 pub(crate) struct Rerandomize<H> {
@@ -41,9 +41,10 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
     type Right = ();
     type Output = H;
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
+    fn witness<'dr, 'source: 'dr, D, Q, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
+        _pq: &mut Q,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, H::Data>,
         right: DriverValue<D, ()>,
@@ -55,7 +56,11 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         ),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
-    )> {
+    )>
+    where
+        D: Driver<'dr, F = C::CircuitField>,
+        Q: PolyQuery<'dr, D, C::NestedCurve>,
+    {
         let allocator = &mut Standard::new();
         // Use uniform encoding for left to ensure circuit uniformity across header types
         let left_encoded = Encoded::new_uniform(dr, allocator, left.clone())?;

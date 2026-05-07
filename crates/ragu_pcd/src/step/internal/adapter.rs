@@ -15,7 +15,7 @@ use ragu_primitives::{
 };
 
 use super::super::Step;
-use crate::Header;
+use crate::{Header, poly_query::NoPolyQuery};
 
 /// Represents triple a length determined at compile time.
 pub struct TripleConstLen<const N: usize>;
@@ -81,9 +81,9 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
     {
         let (left, right, witness) = witness.cast();
 
-        let ((left, right, output), output_data, step_aux) = self
-            .step
-            .witness::<_, HEADER_SIZE>(dr, witness, left, right)?;
+        let ((left, right, output), output_data, step_aux) =
+            self.step
+                .witness::<_, _, HEADER_SIZE>(dr, &mut NoPolyQuery, witness, left, right)?;
 
         let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
         left.write(dr, &mut elements)?;
@@ -158,9 +158,10 @@ mod tests {
         type Right = TestHeader;
         type Output = TestHeader;
 
-        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
+        fn witness<'dr, 'source: 'dr, D, Q, const HS: usize>(
             &self,
             dr: &mut D,
+            _pq: &mut Q,
             _: DriverValue<D, ()>,
             left: DriverValue<D, Fp>,
             right: DriverValue<D, Fp>,
@@ -172,7 +173,11 @@ mod tests {
             ),
             DriverValue<D, Fp>,
             DriverValue<D, ()>,
-        )> {
+        )>
+        where
+            D: Driver<'dr, F = Fp>,
+            Q: crate::poly_query::PolyQuery<'dr, D, <Pasta as ragu_arithmetic::Cycle>::NestedCurve>,
+        {
             let allocator = &mut Standard::new();
             // Allocate elements for left and right
             let left_elem = Element::alloc(dr, allocator, left)?;
