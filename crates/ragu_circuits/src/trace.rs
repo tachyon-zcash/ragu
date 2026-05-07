@@ -160,7 +160,11 @@ struct TraceScope {
 }
 
 /// Driver that records multiplication gates into trace segments.
-struct Evaluator<'scope, 'env, F: Field> {
+///
+/// Constructed and driven by [`eval`] / [`eval_with_witness_fn`]; callers
+/// receive `&mut Evaluator` inside the closure passed to
+/// [`eval_with_witness_fn`].
+pub struct Evaluator<'scope, 'env, F: Field> {
     /// Trace segments produced by this evaluator's routine scope.
     segments: Vec<AnnotatedSegment<F>>,
     /// Rayon scope for spawning Known-predicted routine evaluations.
@@ -369,19 +373,40 @@ pub fn eval<'witness, F: Field, C: Circuit<F>>(
     circuit: &C,
     witness: C::Witness<'witness>,
 ) -> Result<WithAux<Trace<F>, C::Aux<'witness>>> {
+    eval_with_witness_fn(|evaluator| {
+        let cw = circuit.witness(evaluator, Always::maybe_just(|| witness))?;
+        cw.output.write(evaluator, &mut ())?;
+        Ok(cw.aux.take())
+    })
+}
+
+/// Like [`eval`], but instead of synthesizing a [`Circuit`] directly, the
+/// caller supplies a closure that drives a freshly constructed [`Evaluator`].
+///
+/// The closure must call into whatever produces the gate trace (typically a
+/// [`Circuit::witness`] implementation, but it can also be a hand-written
+/// witness routine that needs to thread additional state alongside the
+/// driver) and return the auxiliary data to surface in the resulting
+/// [`WithAux`].
+///
+/// `'env` is the lifetime of any borrows the closure captures. Inside the
+/// closure, callers should extract any [`DriverValue`] auxiliary data (e.g.
+/// via [`Maybe::take`](ragu_core::maybe::Maybe::take)) before returning, so
+/// the returned `Aux` doesn't depend on the evaluator's internal lifetime.
+pub fn eval_with_witness_fn<'env, F, Aux>(
+    witness_fn: impl FnOnce(&mut Evaluator<'_, 'env, F>) -> Result<Aux> + Send + 'env,
+) -> Result<WithAux<Trace<F>, Aux>>
+where
+    F: Field + 'env,
+    Aux: Send,
+{
     #[cfg(feature = "multicore")]
     {
         let (tx, rx) = mpsc::channel();
 
-        let (mut segments, aux) = maybe_rayon::scope(|s| {
+        let (mut segments, aux) = maybe_rayon::scope::<'env, _, _>(|s| {
             let mut evaluator = Evaluator::new(Vec::new(), s, tx);
-
-            let aux = {
-                let cw = circuit.witness(&mut evaluator, Always::maybe_just(|| witness))?;
-                cw.output.write(&mut evaluator, &mut ())?;
-                cw.aux.take()
-            };
-
+            let aux = witness_fn(&mut evaluator)?;
             Ok((evaluator.segments, aux))
         })?;
 
@@ -395,15 +420,9 @@ pub fn eval<'witness, F: Field, C: Circuit<F>>(
 
     #[cfg(not(feature = "multicore"))]
     {
-        let (segments, aux) = maybe_rayon::scope(|s| {
+        let (segments, aux) = maybe_rayon::scope::<'env, _, _>(|s| {
             let mut evaluator = Evaluator::new(Vec::new(), s);
-
-            let aux = {
-                let cw = circuit.witness(&mut evaluator, Always::maybe_just(|| witness))?;
-                cw.output.write(&mut evaluator, &mut ())?;
-                cw.aux.take()
-            };
-
+            let aux = witness_fn(&mut evaluator)?;
             let mut segments = evaluator.segments;
             segments.extend(evaluator.deferred);
             Ok((segments, aux))

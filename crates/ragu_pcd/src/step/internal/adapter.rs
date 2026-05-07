@@ -1,13 +1,17 @@
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use ragu_arithmetic::Cycle;
-use ragu_circuits::{Circuit, WithAux, polynomials::Rank};
+use ragu_arithmetic::{Cycle, CurveAffine};
+use ragu_circuits::{
+    Circuit, WithAux,
+    polynomials::Rank,
+    trace::{Evaluator, Trace, eval_with_witness_fn},
+};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Kind},
-    maybe::Maybe,
+    maybe::{Always, Maybe, MaybeKind},
 };
 use ragu_primitives::{
     Element,
@@ -15,7 +19,10 @@ use ragu_primitives::{
 };
 
 use super::super::Step;
-use crate::{Header, poly_query::NoPolyQuery};
+use crate::{
+    Header,
+    poly_query::{NoPolyQuery, PolyQuery},
+};
 
 /// Represents triple a length determined at compile time.
 pub struct TripleConstLen<const N: usize>;
@@ -37,6 +44,68 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Adapter<C, S, R, H
             step,
             _marker: PhantomData,
         }
+    }
+
+    /// Computes the trace for this adapter using the supplied [`PolyQuery`]
+    /// implementation, which is forwarded to [`Step::witness`].
+    ///
+    /// This bypasses [`Circuit::witness`] (which always uses
+    /// [`NoPolyQuery`] internally for shape extraction) and is the entry
+    /// point used at fuse-time to drive a `Step` that needs polynomial-
+    /// query verification.
+    pub(crate) fn trace_with_pq<'witness, Q>(
+        &self,
+        witness: <Self as Circuit<C::CircuitField>>::Witness<'witness>,
+        pq: &mut Q,
+    ) -> Result<
+        WithAux<
+            Trace<C::CircuitField>,
+            <Self as Circuit<C::CircuitField>>::Aux<'witness>,
+        >,
+    >
+    where
+        Q: for<'scope, 'env> PolyQuery<
+                'env,
+                Evaluator<'scope, 'env, C::CircuitField>,
+                <C as Cycle>::NestedCurve,
+            > + Send,
+        S: Send + Sync,
+        S::Witness<'witness>: Send,
+        S::Aux<'witness>: Send,
+        <S::Output as Header<C::CircuitField>>::Data: Send,
+        <S::Left as Header<C::CircuitField>>::Data: Send,
+        <S::Right as Header<C::CircuitField>>::Data: Send,
+        <C::NestedCurve as CurveAffine>::Base: Send,
+    {
+        eval_with_witness_fn(move |evaluator| {
+            let dv_witness = Always::<()>::maybe_just(|| witness);
+            let (left, right, step_witness) = dv_witness.cast();
+
+            let ((left_enc, right_enc, output_enc), output_data, step_aux) = self
+                .step
+                .witness::<_, _, HEADER_SIZE>(evaluator, pq, step_witness, left, right)?;
+
+            let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
+            left_enc.write(evaluator, &mut elements)?;
+            right_enc.write(evaluator, &mut elements)?;
+            output_enc.write(evaluator, &mut elements)?;
+
+            let left_header = elements[0..HEADER_SIZE]
+                .iter()
+                .map(|e| *e.value().take())
+                .collect_fixed()?;
+
+            let right_header = elements[HEADER_SIZE..HEADER_SIZE * 2]
+                .iter()
+                .map(|e| *e.value().take())
+                .collect_fixed()?;
+
+            Ok((
+                (left_header, right_header),
+                output_data.take(),
+                step_aux.take(),
+            ))
+        })
     }
 }
 
