@@ -9,7 +9,7 @@ use ragu_pasta::Pasta;
 use ragu_pcd::{
     ApplicationBuilder,
     header::{Header, Suffix},
-    poly_query::PolyQueryClaims,
+    poly_query::PolyQueryClaim,
     step::{Encoded, Index, Step},
 };
 use ragu_primitives::allocator::{Allocator, Standard};
@@ -72,7 +72,6 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step0 {
     fn witness<'dr, 'source: 'dr, D, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -84,6 +83,7 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step0 {
         ),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
+        Vec<PolyQueryClaim<'dr, D, C::NestedCurve>>,
     )>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -93,7 +93,7 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step0 {
         let right = Encoded::new(dr, allocator, right)?;
         let output = Encoded::from_gadget(());
 
-        Ok(((left, right, output), D::unit(), D::unit()))
+        Ok(((left, right, output), D::unit(), D::unit(), Vec::new()))
     }
 }
 
@@ -109,7 +109,6 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step1 {
     fn witness<'dr, 'source: 'dr, D, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -121,6 +120,7 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step1 {
         ),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
+        Vec<PolyQueryClaim<'dr, D, C::NestedCurve>>,
     )>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -130,7 +130,7 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step1 {
         let right = Encoded::new(dr, allocator, right)?;
         let output = Encoded::from_gadget(());
 
-        Ok(((left, right, output), D::unit(), D::unit()))
+        Ok(((left, right, output), D::unit(), D::unit(), Vec::new()))
     }
 }
 
@@ -146,7 +146,6 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step1Dup {
     fn witness<'dr, 'source: 'dr, D, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -158,6 +157,7 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step1Dup {
         ),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
+        Vec<PolyQueryClaim<'dr, D, C::NestedCurve>>,
     )>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -167,7 +167,7 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step1Dup {
         let right = Encoded::new(dr, allocator, right)?;
         let output = Encoded::from_gadget(());
 
-        Ok(((left, right, output), D::unit(), D::unit()))
+        Ok(((left, right, output), D::unit(), D::unit(), Vec::new()))
     }
 }
 

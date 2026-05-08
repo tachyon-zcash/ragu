@@ -3,6 +3,8 @@
 //! Used in rerandomization to create a properly-structured trivial proof that
 //! can be folded with a valid proof without causing C value mismatches.
 
+use alloc::vec::Vec;
+
 use ragu_arithmetic::Cycle;
 use ragu_core::{
     Result,
@@ -11,7 +13,7 @@ use ragu_core::{
 use ragu_primitives::allocator::Standard;
 
 use super::super::{Encoded, Index, Step};
-use crate::{Header, poly_query::PolyQueryClaims};
+use crate::{Header, poly_query::PolyQueryClaim};
 pub(crate) use crate::step::InternalStepIndex::Trivial as INTERNAL_ID;
 
 pub(crate) struct Trivial;
@@ -35,7 +37,6 @@ impl<C: Cycle> Step<C> for Trivial {
     fn witness<'dr, 'source: 'dr, D, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -47,6 +48,7 @@ impl<C: Cycle> Step<C> for Trivial {
         ),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
+        Vec<PolyQueryClaim<'dr, D, C::NestedCurve>>,
     )>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -56,6 +58,6 @@ impl<C: Cycle> Step<C> for Trivial {
         let right = Encoded::new(dr, allocator, right)?;
         let output = Encoded::from_gadget(());
 
-        Ok(((left, right, output), D::unit(), D::unit()))
+        Ok(((left, right, output), D::unit(), D::unit(), Vec::new()))
     }
 }

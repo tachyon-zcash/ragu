@@ -11,7 +11,7 @@ use ragu_core::{
 };
 use ragu_pcd::{
     header::{Header, Suffix},
-    poly_query::PolyQueryClaims,
+    poly_query::PolyQueryClaim,
     step::{Encoded, Index, Step},
 };
 use ragu_primitives::{
@@ -57,7 +57,6 @@ impl<C: Cycle> Step<C> for OpenAndHash<'_, C> {
     fn witness<'dr, 'source: 'dr, D, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, C::CircuitField>,
         _right: DriverValue<D, ()>,
@@ -69,6 +68,7 @@ impl<C: Cycle> Step<C> for OpenAndHash<'_, C> {
         ),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
+        Vec<PolyQueryClaim<'dr, D, C::NestedCurve>>,
     )>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -93,12 +93,11 @@ impl<C: Cycle> Step<C> for OpenAndHash<'_, C> {
         let output_data = output.value().map(|v| *v);
         let output_encoded = Encoded::from_gadget(output);
 
-        pq.enforce_polynomial_query(dr, com, x, y)?;
-
         Ok((
             (left, Encoded::from_gadget(()), output_encoded),
             output_data,
             D::unit(),
+            vec![PolyQueryClaim { com, x, y }],
         ))
     }
 }

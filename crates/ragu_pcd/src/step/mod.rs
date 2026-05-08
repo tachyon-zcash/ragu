@@ -3,6 +3,8 @@
 mod encoder;
 pub(crate) mod internal;
 
+use alloc::vec::Vec;
+
 pub use encoder::Encoded;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::registry::CircuitIndex;
@@ -12,7 +14,7 @@ use ragu_core::{
 };
 
 use super::header::Header;
-use crate::{internal::native::InternalCircuitIndex, poly_query::PolyQueryClaims};
+use crate::{internal::native::InternalCircuitIndex, poly_query::PolyQueryClaim};
 
 #[derive(Copy, Clone)]
 #[repr(usize)]
@@ -172,14 +174,12 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     /// Returns the encoded headers (left, right, output), the data to be
     /// carried in the resulting PCD, and any auxiliary witness data.
     ///
-    /// `pq` is a [`PolyQueryClaims`] sink that steps may use to record
-    /// polynomial-commitment opening claims via
-    /// [`PolyQueryClaims::enforce_polynomial_query`]. Steps that don't need
-    /// polynomial-query verification ignore the parameter.
+    /// The fourth return slot is a `Vec` of [`PolyQueryClaim`]s — one for each
+    /// polynomial-commitment opening this step asserts. Steps that don't need
+    /// polynomial-query verification return an empty `Vec`.
     fn witness<'dr, 'source: 'dr, D, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data>,
         right: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data>,
@@ -191,6 +191,7 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
         ),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
+        Vec<PolyQueryClaim<'dr, D, C::NestedCurve>>,
     )>
     where
         D: Driver<'dr, F = C::CircuitField>,

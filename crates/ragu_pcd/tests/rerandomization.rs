@@ -11,7 +11,7 @@ use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::{
     ApplicationBuilder,
     header::{Header, Suffix},
-    poly_query::PolyQueryClaims,
+    poly_query::PolyQueryClaim,
     step::{Encoded, Index, Step},
 };
 use ragu_primitives::{
@@ -64,7 +64,6 @@ impl Step<Pasta> for StepWithData {
     fn witness<'dr, 'source: 'dr, D, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _pq: &mut PolyQueryClaims<'dr, D, <Pasta as Cycle>::NestedCurve>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -76,6 +75,7 @@ impl Step<Pasta> for StepWithData {
         ),
         DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
+        Vec<PolyQueryClaim<'dr, D, <Pasta as Cycle>::NestedCurve>>,
     )>
     where
         D: Driver<'dr, F = Fp>,
@@ -84,7 +84,7 @@ impl Step<Pasta> for StepWithData {
         let left = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
         let output = Encoded::new(dr, allocator, witness.clone())?;
-        Ok(((left, right, output), witness, D::unit()))
+        Ok(((left, right, output), witness, D::unit(), Vec::new()))
     }
 }
 
@@ -100,7 +100,6 @@ impl<C: Cycle> Step<C> for Step0 {
     fn witness<'dr, 'source: 'dr, D, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -112,6 +111,7 @@ impl<C: Cycle> Step<C> for Step0 {
         ),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
+        Vec<PolyQueryClaim<'dr, D, C::NestedCurve>>,
     )>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -120,7 +120,7 @@ impl<C: Cycle> Step<C> for Step0 {
         let left = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
         let output = Encoded::from_gadget(());
-        Ok(((left, right, output), D::unit(), D::unit()))
+        Ok(((left, right, output), D::unit(), D::unit(), Vec::new()))
     }
 }
 
@@ -135,7 +135,6 @@ impl<C: Cycle> Step<C> for Step1 {
     fn witness<'dr, 'source: 'dr, D, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -147,6 +146,7 @@ impl<C: Cycle> Step<C> for Step1 {
         ),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
+        Vec<PolyQueryClaim<'dr, D, C::NestedCurve>>,
     )>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -155,7 +155,7 @@ impl<C: Cycle> Step<C> for Step1 {
         let left = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
         let output = Encoded::from_gadget(());
-        Ok(((left, right, output), D::unit(), D::unit()))
+        Ok(((left, right, output), D::unit(), D::unit(), Vec::new()))
     }
 }
 

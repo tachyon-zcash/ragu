@@ -10,7 +10,7 @@ use ragu_core::{
 };
 use ragu_pcd::{
     header::{Header, Suffix},
-    poly_query::PolyQueryClaims,
+    poly_query::PolyQueryClaim,
     step::{Encoded, Index, Step},
 };
 use ragu_primitives::{
@@ -66,7 +66,6 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
     fn witness<'dr, 'source: 'dr, D, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, C::CircuitField>,
         right: DriverValue<D, C::CircuitField>,
@@ -78,6 +77,7 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
         ),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
+        Vec<PolyQueryClaim<'dr, D, C::NestedCurve>>,
     )>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -94,7 +94,7 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
         let output_data = output.value().map(|v| *v);
         let output = Encoded::from_gadget(output);
 
-        Ok(((left, right, output), output_data, D::unit()))
+        Ok(((left, right, output), output_data, D::unit(), Vec::new()))
     }
 }
 
@@ -113,7 +113,6 @@ impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
     fn witness<'dr, 'source: 'dr, D, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
         witness: DriverValue<D, Self::Witness<'source>>,
         _left: DriverValue<D, ()>,
         _right: DriverValue<D, ()>,
@@ -125,6 +124,7 @@ impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
         ),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
+        Vec<PolyQueryClaim<'dr, D, C::NestedCurve>>,
     )>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -146,6 +146,7 @@ impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
             ),
             leaf_data,
             D::unit(),
+            Vec::new(),
         ))
     }
 }

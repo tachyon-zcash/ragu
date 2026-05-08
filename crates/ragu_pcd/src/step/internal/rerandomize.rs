@@ -5,6 +5,7 @@
 //! this rerandomization step synthesizes the same circuit no matter what the
 //! left header is, we use a _uniform_ encoding of the left header.
 
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use ragu_arithmetic::Cycle;
@@ -16,7 +17,7 @@ use ragu_core::{
 use ragu_primitives::allocator::Standard;
 
 use super::super::{Encoded, Index, Step};
-use crate::{Header, poly_query::PolyQueryClaims};
+use crate::{Header, poly_query::PolyQueryClaim};
 pub(crate) use crate::step::InternalStepIndex::Rerandomize as INTERNAL_ID;
 
 pub(crate) struct Rerandomize<H> {
@@ -44,7 +45,6 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
     fn witness<'dr, 'source: 'dr, D, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, H::Data>,
         right: DriverValue<D, ()>,
@@ -56,6 +56,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         ),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
+        Vec<PolyQueryClaim<'dr, D, C::NestedCurve>>,
     )>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -76,7 +77,12 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         // Rank, both of which are not in scope here.
 
         // Return left's data as the output data - this preserves it!
-        Ok(((left_encoded.clone(), right, left_encoded), left, D::unit()))
+        Ok((
+            (left_encoded.clone(), right, left_encoded),
+            left,
+            D::unit(),
+            Vec::new(),
+        ))
     }
 }
 
