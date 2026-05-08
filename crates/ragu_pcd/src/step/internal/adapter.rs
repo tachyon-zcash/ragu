@@ -81,9 +81,9 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
     {
         let (left, right, witness) = witness.cast();
 
-        let ((left, right, output), output_data, step_aux, _claims) =
-            self.step
-                .witness::<_, HEADER_SIZE>(dr, witness, left, right)?;
+        let ((left, right, output), output_data, step_aux, _claims) = self
+            .step
+            .witness::<_, HEADER_SIZE>(dr, witness, left, right)?;
         // Shape extraction discards any returned claims.
 
         let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
@@ -173,7 +173,13 @@ mod tests {
             ),
             DriverValue<D, Fp>,
             DriverValue<D, ()>,
-            Vec<crate::poly_query::PolyQueryClaim<'dr, D, <Pasta as ragu_arithmetic::Cycle>::NestedCurve>>,
+            Vec<
+                crate::poly_query::PolyQueryClaim<
+                    'dr,
+                    D,
+                    <Pasta as ragu_arithmetic::Cycle>::NestedCurve,
+                >,
+            >,
         )>
         where
             D: Driver<'dr, F = Fp>,
