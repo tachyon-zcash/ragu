@@ -11,7 +11,7 @@ use ragu_core::{
 };
 use ragu_pcd::{
     header::{Header, Suffix},
-    poly_query::PolyQuery,
+    poly_query::PolyQueryClaims,
     step::{Encoded, Index, Step},
 };
 use ragu_primitives::{
@@ -54,10 +54,10 @@ impl<C: Cycle> Step<C> for OpenAndHash<'_, C> {
     type Right = ();
     type Output = HashedOpening;
 
-    fn witness<'dr, 'source: 'dr, D, Q, const HEADER_SIZE: usize>(
+    fn witness<'dr, 'source: 'dr, D, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        pq: &mut Q,
+        pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, C::CircuitField>,
         _right: DriverValue<D, ()>,
@@ -72,7 +72,6 @@ impl<C: Cycle> Step<C> for OpenAndHash<'_, C> {
     )>
     where
         D: Driver<'dr, F = C::CircuitField>,
-        Q: PolyQuery<'dr, D, C::NestedCurve>,
         Self: 'dr,
     {
         let allocator = &mut Standard::new();

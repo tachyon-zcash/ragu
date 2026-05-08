@@ -10,7 +10,7 @@ use ragu_core::{
 };
 use ragu_pcd::{
     header::{Header, Suffix},
-    poly_query::PolyQuery,
+    poly_query::PolyQueryClaims,
     step::{Encoded, Index, Step},
 };
 use ragu_primitives::{
@@ -63,10 +63,10 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
     type Right = LeafNode;
     type Output = InternalNode;
 
-    fn witness<'dr, 'source: 'dr, D, Q, const HEADER_SIZE: usize>(
+    fn witness<'dr, 'source: 'dr, D, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _pq: &mut Q,
+        _pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, C::CircuitField>,
         right: DriverValue<D, C::CircuitField>,
@@ -81,7 +81,6 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
     )>
     where
         D: Driver<'dr, F = C::CircuitField>,
-        Q: PolyQuery<'dr, D, C::NestedCurve>,
         Self: 'dr,
     {
         let allocator = &mut Standard::new();
@@ -111,10 +110,10 @@ impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
     type Right = ();
     type Output = LeafNode;
 
-    fn witness<'dr, 'source: 'dr, D, Q, const HEADER_SIZE: usize>(
+    fn witness<'dr, 'source: 'dr, D, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _pq: &mut Q,
+        _pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
         witness: DriverValue<D, Self::Witness<'source>>,
         _left: DriverValue<D, ()>,
         _right: DriverValue<D, ()>,
@@ -129,7 +128,6 @@ impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
     )>
     where
         D: Driver<'dr, F = C::CircuitField>,
-        Q: PolyQuery<'dr, D, C::NestedCurve>,
         Self: 'dr,
     {
         let allocator = &mut Standard::new();

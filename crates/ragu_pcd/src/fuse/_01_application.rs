@@ -11,7 +11,6 @@ use rand::CryptoRng;
 
 use crate::{
     Application, Header, Pcd, Proof,
-    poly_query::NoPolyQuery,
     proof::ProofBuilder,
     step::{Step, internal::adapter::Adapter},
 };
@@ -33,12 +32,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     )> {
         let (left_proof, left_data) = left.into_parts();
         let (right_proof, right_data) = right.into_parts();
-        // TODO: replace `NoPolyQuery` with a real `PolyQuery` impl once
-        // fuse-time polynomial-query verification is wired up. Until then,
-        // any `Step` that calls `pq.enforce_polynomial_query(...)` will
-        // surface an `Initialization` error here.
         let (trace, aux) = Adapter::<C, S, R, HEADER_SIZE>::new(step)
-            .trace_with_pq((left_data, right_data, witness), &mut NoPolyQuery)?
+            .trace_with_pq((left_data, right_data, witness))?
             .into_parts();
         let rx = self.native_registry.assemble(
             &trace,
