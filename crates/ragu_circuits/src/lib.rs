@@ -28,7 +28,7 @@ pub mod polynomials;
 mod raw;
 pub mod registry;
 pub mod staging;
-pub mod trace;
+mod trace;
 mod trivial;
 mod wiring;
 

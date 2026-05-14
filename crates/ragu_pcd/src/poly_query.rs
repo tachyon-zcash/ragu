@@ -1,30 +1,43 @@
 //! Polynomial-query claim collection for [`Step`](crate::step::Step) impls.
 //!
-//! A `Step::witness` impl receives a `pq: &mut PolyQueryClaims<...>` parameter
-//! alongside its driver. Steps that need to verify a polynomial-commitment
-//! opening — i.e. that the polynomial committed to by `com` evaluates to `y` at
-//! point `x` — call `pq.enforce_polynomial_query(dr, com, x, y)`. The framework
-//! collects the resulting claims; later, fuse-time code processes them.
+//! A step that needs to verify a polynomial-commitment opening — i.e. that
+//! the polynomial committed to by `com` evaluates to `y` at point `x` —
+//! constructs a [`PolyQueryClaims`] inside its `witness()` implementation,
+//! records each opening via [`PolyQueryClaims::enforce_polynomial_query`],
+//! and surfaces the recorded claims through its [`Step::Aux`] by returning
+//! [`PolyQueryClaims::into_inner`]. Later fuse-time code consumes the claims
+//! through the same `Aux` channel.
 //!
-//! Steps that don't need polynomial-query verification simply ignore the
-//! parameter.
+//! [`Step::Aux`]: crate::step::Step::Aux
 
 use alloc::vec::Vec;
 
 use ragu_arithmetic::CurveAffine;
-use ragu_core::{Result, drivers::Driver};
+use ragu_core::{
+    Result,
+    drivers::{Driver, DriverValue},
+    maybe::Maybe,
+};
 use ragu_primitives::{Element, Point};
 
-/// Records polynomial-commitment opening claims raised by a [`Step::witness`]
-/// invocation so that later code (e.g. in `fuse(...)`) can process them.
+/// Builder that records polynomial-commitment opening claims as plain
+/// `(com, x, y)` value triples for inclusion in a step's [`Aux`].
+///
+/// Wires aren't carried out of `witness()`, so the recorded claim values are
+/// extracted up-front and accumulated into a single `DriverValue` that the
+/// step returns via [`into_inner`](Self::into_inner).
+///
+/// [`Aux`]: crate::step::Step::Aux
 pub struct PolyQueryClaims<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
-    claims: Vec<(Point<'dr, D, C>, Element<'dr, D>, Element<'dr, D>)>,
+    claims: DriverValue<D, Vec<(C, D::F, D::F)>>,
 }
 
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> PolyQueryClaims<'dr, D, C> {
     /// Creates a new, empty claim collector.
     pub fn new() -> Self {
-        Self { claims: Vec::new() }
+        Self {
+            claims: D::just(Vec::new),
+        }
     }
 
     /// Records a claim that the polynomial committed to by `com` evaluates to
@@ -36,12 +49,26 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> PolyQueryClaims<'dr, D, C
         x: Element<'dr, D>,
         y: Element<'dr, D>,
     ) -> Result<()> {
-        self.claims.push((com, x, y));
+        let triple = D::try_just(|| {
+            Ok((
+                com.value().take(),
+                *x.value().take(),
+                *y.value().take(),
+            ))
+        })?;
+        let current = core::mem::replace(&mut self.claims, D::just(Vec::new));
+        self.claims = current.and_then(|mut v| {
+            triple.map(|t| {
+                v.push(t);
+                v
+            })
+        });
         Ok(())
     }
 
-    /// Consumes the collector and returns the recorded claims.
-    pub fn into_inner(self) -> Vec<(Point<'dr, D, C>, Element<'dr, D>, Element<'dr, D>)> {
+    /// Consumes the builder and returns the accumulated claim values, suitable
+    /// for inclusion in a step's `Aux`.
+    pub fn into_inner(self) -> DriverValue<D, Vec<(C, D::F, D::F)>> {
         self.claims
     }
 }

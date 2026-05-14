@@ -49,15 +49,14 @@ pub struct OpenAndHashWitness<C: CurveAffine> {
 impl<C: Cycle> Step<C> for OpenAndHash<'_, C> {
     const INDEX: Index = Index::new(0);
     type Witness<'source> = OpenAndHashWitness<C::NestedCurve>;
-    type Aux<'source> = ();
+    type Aux<'source> = Vec<(C::NestedCurve, C::CircuitField, C::CircuitField)>;
     type Left = HashedOpening;
     type Right = ();
     type Output = HashedOpening;
 
-    fn witness<'dr, 'source: 'dr, D, const HEADER_SIZE: usize>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, C::CircuitField>,
         _right: DriverValue<D, ()>,
@@ -71,7 +70,6 @@ impl<C: Cycle> Step<C> for OpenAndHash<'_, C> {
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
-        D: Driver<'dr, F = C::CircuitField>,
         Self: 'dr,
     {
         let allocator = &mut Standard::new();
@@ -93,12 +91,13 @@ impl<C: Cycle> Step<C> for OpenAndHash<'_, C> {
         let output_data = output.value().map(|v| *v);
         let output_encoded = Encoded::from_gadget(output);
 
+        let mut pq = PolyQueryClaims::new();
         pq.enforce_polynomial_query(dr, com, x, y)?;
 
         Ok((
             (left, Encoded::from_gadget(()), output_encoded),
             output_data,
-            D::unit(),
+            pq.into_inner(),
         ))
     }
 }

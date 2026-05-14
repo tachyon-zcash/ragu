@@ -2,16 +2,12 @@ use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use ragu_arithmetic::Cycle;
-use ragu_circuits::{
-    Circuit, WithAux,
-    polynomials::Rank,
-    trace::{Trace, eval_with_witness_fn},
-};
+use ragu_circuits::{Circuit, WithAux, polynomials::Rank};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Kind},
-    maybe::{Always, Maybe, MaybeKind},
+    maybe::Maybe,
 };
 use ragu_primitives::{
     Element,
@@ -19,7 +15,7 @@ use ragu_primitives::{
 };
 
 use super::super::Step;
-use crate::{Header, poly_query::PolyQueryClaims};
+use crate::Header;
 
 /// Represents triple a length determined at compile time.
 pub struct TripleConstLen<const N: usize>;
@@ -41,65 +37,6 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Adapter<C, S, R, H
             step,
             _marker: PhantomData,
         }
-    }
-
-    /// Computes the trace for this adapter, collecting any polynomial-query
-    /// claims raised by [`Step::witness`] into a [`PolyQueryClaims`] sink that
-    /// is constructed internally.
-    ///
-    /// This bypasses [`Circuit::witness`] and is the entry point used at
-    /// fuse-time to drive a `Step` that may record polynomial-query claims.
-    pub(crate) fn trace_with_pq<'witness>(
-        &self,
-        witness: <Self as Circuit<C::CircuitField>>::Witness<'witness>,
-    ) -> Result<
-        WithAux<
-            Trace<C::CircuitField>,
-            <Self as Circuit<C::CircuitField>>::Aux<'witness>,
-        >,
-    >
-    where
-        S: Send + Sync,
-        S::Witness<'witness>: Send,
-        S::Aux<'witness>: Send,
-        <S::Output as Header<C::CircuitField>>::Data: Send,
-        <S::Left as Header<C::CircuitField>>::Data: Send,
-        <S::Right as Header<C::CircuitField>>::Data: Send,
-    {
-        eval_with_witness_fn(move |evaluator| {
-            let mut pq = PolyQueryClaims::new();
-            let dv_witness = Always::<()>::maybe_just(|| witness);
-            let (left, right, step_witness) = dv_witness.cast();
-
-            let ((left_enc, right_enc, output_enc), output_data, step_aux) = self
-                .step
-                .witness::<_, HEADER_SIZE>(evaluator, &mut pq, step_witness, left, right)?;
-
-            // Collected claims are dropped here; later fuse-time code will
-            // extract them before returning from this closure.
-            let _ = pq.into_inner();
-
-            let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
-            left_enc.write(evaluator, &mut elements)?;
-            right_enc.write(evaluator, &mut elements)?;
-            output_enc.write(evaluator, &mut elements)?;
-
-            let left_header = elements[0..HEADER_SIZE]
-                .iter()
-                .map(|e| *e.value().take())
-                .collect_fixed()?;
-
-            let right_header = elements[HEADER_SIZE..HEADER_SIZE * 2]
-                .iter()
-                .map(|e| *e.value().take())
-                .collect_fixed()?;
-
-            Ok((
-                (left_header, right_header),
-                output_data.take(),
-                step_aux.take(),
-            ))
-        })
     }
 }
 
@@ -144,12 +81,9 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
     {
         let (left, right, witness) = witness.cast();
 
-        let mut pq = PolyQueryClaims::new();
-        let ((left, right, output), output_data, step_aux) =
-            self.step
-                .witness::<_, HEADER_SIZE>(dr, &mut pq, witness, left, right)?;
-        // Shape extraction discards any recorded claims.
-        let _ = pq.into_inner();
+        let ((left, right, output), output_data, step_aux) = self
+            .step
+            .witness::<_, HEADER_SIZE>(dr, witness, left, right)?;
 
         let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
         left.write(dr, &mut elements)?;
@@ -224,10 +158,9 @@ mod tests {
         type Right = TestHeader;
         type Output = TestHeader;
 
-        fn witness<'dr, 'source: 'dr, D, const HS: usize>(
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
             &self,
             dr: &mut D,
-            _pq: &mut PolyQueryClaims<'dr, D, <Pasta as ragu_arithmetic::Cycle>::NestedCurve>,
             _: DriverValue<D, ()>,
             left: DriverValue<D, Fp>,
             right: DriverValue<D, Fp>,
@@ -239,10 +172,7 @@ mod tests {
             ),
             DriverValue<D, Fp>,
             DriverValue<D, ()>,
-        )>
-        where
-            D: Driver<'dr, F = Fp>,
-        {
+        )> {
             let allocator = &mut Standard::new();
             // Allocate elements for left and right
             let left_elem = Element::alloc(dr, allocator, left)?;
