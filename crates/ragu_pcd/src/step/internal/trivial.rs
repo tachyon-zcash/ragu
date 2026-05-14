@@ -11,7 +11,7 @@ use ragu_core::{
 use ragu_primitives::allocator::Standard;
 
 use super::super::{Encoded, Index, Step};
-use crate::Header;
+use crate::{Header, poly_query::PolyQueryClaims};
 pub(crate) use crate::step::InternalStepIndex::Trivial as INTERNAL_ID;
 
 pub(crate) struct Trivial;
@@ -35,6 +35,7 @@ impl<C: Cycle> Step<C> for Trivial {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
+        _pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,

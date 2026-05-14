@@ -1,14 +1,13 @@
 //! Polynomial-query claim collection for [`Step`](crate::step::Step) impls.
 //!
-//! A step that needs to verify a polynomial-commitment opening — i.e. that
-//! the polynomial committed to by `com` evaluates to `y` at point `x` —
-//! constructs a [`PolyQueryClaims`] inside its `witness()` implementation,
-//! records each opening via [`PolyQueryClaims::enforce_polynomial_query`],
-//! and surfaces the recorded claims through its [`Step::Aux`] by returning
-//! [`PolyQueryClaims::into_inner`]. Later fuse-time code consumes the claims
-//! through the same `Aux` channel.
-//!
-//! [`Step::Aux`]: crate::step::Step::Aux
+//! A `Step::witness` impl receives a `pq: &mut PolyQueryClaims<...>`
+//! parameter alongside its driver. Steps that need to verify a
+//! polynomial-commitment opening — i.e. that the polynomial committed to by
+//! `com` evaluates to `y` at point `x` — call
+//! `pq.enforce_polynomial_query(dr, com, x, y)`. The framework collects the
+//! resulting claims through the adapter's `Aux` for later fuse-time
+//! processing. Steps that don't need polynomial-query verification simply
+//! ignore the parameter.
 
 use alloc::vec::Vec;
 
@@ -20,14 +19,14 @@ use ragu_core::{
 };
 use ragu_primitives::{Element, Point};
 
-/// Builder that records polynomial-commitment opening claims as plain
-/// `(com, x, y)` value triples for inclusion in a step's [`Aux`].
+/// Sink for polynomial-commitment opening claims raised by a
+/// [`Step::witness`](crate::step::Step::witness) invocation.
 ///
-/// Wires aren't carried out of `witness()`, so the recorded claim values are
-/// extracted up-front and accumulated into a single `DriverValue` that the
-/// step returns via [`into_inner`](Self::into_inner).
-///
-/// [`Aux`]: crate::step::Step::Aux
+/// Wires aren't carried out of `witness()`, so each recorded claim's
+/// `(com, x, y)` values are extracted up-front and accumulated into a single
+/// `DriverValue`. The framework's adapter constructs this sink, passes it to
+/// the step, then surfaces [`into_inner`](Self::into_inner) through its
+/// `Aux` for later fuse-time processing.
 pub struct PolyQueryClaims<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     claims: DriverValue<D, Vec<(C, D::F, D::F)>>,
 }
@@ -66,8 +65,7 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> PolyQueryClaims<'dr, D, C
         Ok(())
     }
 
-    /// Consumes the builder and returns the accumulated claim values, suitable
-    /// for inclusion in a step's `Aux`.
+    /// Consumes the sink and returns the accumulated claim values.
     pub fn into_inner(self) -> DriverValue<D, Vec<(C, D::F, D::F)>> {
         self.claims
     }

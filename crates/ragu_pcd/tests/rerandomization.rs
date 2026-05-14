@@ -11,6 +11,7 @@ use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::{
     ApplicationBuilder,
     header::{Header, Suffix},
+    poly_query::PolyQueryClaims,
     step::{Encoded, Index, Step},
 };
 use ragu_primitives::{
@@ -63,6 +64,7 @@ impl Step<Pasta> for StepWithData {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
+        _pq: &mut PolyQueryClaims<'dr, D, <Pasta as Cycle>::NestedCurve>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -95,6 +97,7 @@ impl<C: Cycle> Step<C> for Step0 {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
+        _pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -126,6 +129,7 @@ impl<C: Cycle> Step<C> for Step1 {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
+        _pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,

@@ -10,6 +10,7 @@ use ragu_core::{
 };
 use ragu_pcd::{
     header::{Header, Suffix},
+    poly_query::PolyQueryClaims,
     step::{Encoded, Index, Step},
 };
 use ragu_primitives::{
@@ -65,6 +66,7 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
+        _pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, C::CircuitField>,
         right: DriverValue<D, C::CircuitField>,
@@ -110,6 +112,7 @@ impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
+        _pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
         witness: DriverValue<D, Self::Witness<'source>>,
         _left: DriverValue<D, ()>,
         _right: DriverValue<D, ()>,

@@ -12,7 +12,7 @@ use ragu_core::{
 };
 
 use super::header::Header;
-use crate::internal::native::InternalCircuitIndex;
+use crate::{internal::native::InternalCircuitIndex, poly_query::PolyQueryClaims};
 
 #[derive(Copy, Clone)]
 #[repr(usize)]
@@ -170,13 +170,18 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     /// The main synthesis method that checks the validity of this merging step.
     ///
     /// Returns the encoded headers (left, right, output), the data to be
-    /// carried in the resulting PCD, and any auxiliary witness data. Steps
-    /// that need to record polynomial-commitment opening claims can build
-    /// them with [`PolyQueryClaims`](crate::poly_query::PolyQueryClaims) and
-    /// surface them through `Self::Aux`.
+    /// carried in the resulting PCD, and any auxiliary witness data.
+    ///
+    /// `pq` is a [`PolyQueryClaims`] sink that steps may use to record
+    /// polynomial-commitment opening claims via
+    /// [`PolyQueryClaims::enforce_polynomial_query`]. Steps that don't need
+    /// polynomial-query verification simply ignore the parameter. The
+    /// framework collects the resulting claims through the adapter's `Aux`
+    /// for later fuse-time processing.
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
+        pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data>,
         right: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data>,

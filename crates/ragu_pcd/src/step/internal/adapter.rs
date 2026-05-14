@@ -15,7 +15,7 @@ use ragu_primitives::{
 };
 
 use super::super::Step;
-use crate::Header;
+use crate::{Header, poly_query::PolyQueryClaims};
 
 /// Represents triple a length determined at compile time.
 pub struct TripleConstLen<const N: usize>;
@@ -61,6 +61,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         ),
         <S::Output as Header<C::CircuitField>>::Data,
         S::Aux<'source>,
+        Vec<(C::NestedCurve, C::CircuitField, C::CircuitField)>,
     );
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -81,9 +82,11 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
     {
         let (left, right, witness) = witness.cast();
 
+        let mut pq = PolyQueryClaims::new();
         let ((left, right, output), output_data, step_aux) = self
             .step
-            .witness::<_, HEADER_SIZE>(dr, witness, left, right)?;
+            .witness::<_, HEADER_SIZE>(dr, &mut pq, witness, left, right)?;
+        let claims = pq.into_inner();
 
         let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
         left.write(dr, &mut elements)?;
@@ -105,6 +108,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
                 (left_header, right_header),
                 output_data.take(),
                 step_aux.take(),
+                claims.take(),
             ))
         })?;
 
@@ -161,6 +165,7 @@ mod tests {
         fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
             &self,
             dr: &mut D,
+            _pq: &mut PolyQueryClaims<'dr, D, <Pasta as ragu_arithmetic::Cycle>::NestedCurve>,
             _: DriverValue<D, ()>,
             left: DriverValue<D, Fp>,
             right: DriverValue<D, Fp>,
@@ -227,7 +232,7 @@ mod tests {
             .expect("witness should succeed")
             .into_aux();
 
-        let ((left_header, right_header), output_data, _step_aux) = aux.take();
+        let ((left_header, right_header), output_data, _step_aux, _claims) = aux.take();
 
         // Left header should start with 10
         assert_eq!(left_header[0], Fp::from(10u64));
