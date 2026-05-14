@@ -48,13 +48,8 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> PolyQueryClaims<'dr, D, C
         x: Element<'dr, D>,
         y: Element<'dr, D>,
     ) -> Result<()> {
-        let triple = D::try_just(|| {
-            Ok((
-                com.value().take(),
-                *x.value().take(),
-                *y.value().take(),
-            ))
-        })?;
+        let triple =
+            D::try_just(|| Ok((com.value().take(), *x.value().take(), *y.value().take())))?;
         let current = core::mem::replace(&mut self.claims, D::just(Vec::new));
         self.claims = current.and_then(|mut v| {
             triple.map(|t| {

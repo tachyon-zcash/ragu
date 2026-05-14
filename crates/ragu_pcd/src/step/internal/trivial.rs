@@ -11,8 +11,8 @@ use ragu_core::{
 use ragu_primitives::allocator::Standard;
 
 use super::super::{Encoded, Index, Step};
-use crate::{Header, poly_query::PolyQueryClaims};
 pub(crate) use crate::step::InternalStepIndex::Trivial as INTERNAL_ID;
+use crate::{Header, poly_query::PolyQueryClaims};
 
 pub(crate) struct Trivial;
 
