@@ -24,8 +24,7 @@ use ragu_core::{
 };
 use ragu_pcd::{
     header::{Header, Suffix},
-    poly_query::PolyQueryClaims,
-    step::{Encoded, Index, Step},
+    step::{Encoded, HasPolyQuery, Index, PolyCx, Step},
 };
 use ragu_primitives::{
     Element, GadgetExt, Point,
@@ -98,10 +97,21 @@ impl<C: Cycle, R: Rank> Step<C> for OpenAndHash<'_, C, R> {
     type Right = ();
     type Output = HashedOpening<R>;
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
+    type Context<'a, 'dr, D>
+        = PolyCx<'a, 'dr, D, C::NestedCurve>
+    where
+        'dr: 'a,
+        D: Driver<'dr, F = C::CircuitField> + 'a;
+
+    fn witness<
+        'a,
+        'dr,
+        'source: 'dr,
+        D: Driver<'dr, F = C::CircuitField>,
+        const HEADER_SIZE: usize,
+    >(
         &self,
-        dr: &mut D,
-        pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
+        cx: &mut PolyCx<'a, 'dr, D, C::NestedCurve>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, HashedOpeningData<C::CircuitField, R>>,
         _right: DriverValue<D, ()>,
@@ -115,8 +125,10 @@ impl<C: Cycle, R: Rank> Step<C> for OpenAndHash<'_, C, R> {
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
+        'dr: 'a,
         Self: 'dr,
     {
+        let (dr, pq) = cx.split_pq();
         let allocator = &mut Standard::new();
         let left_encoded = Encoded::new(dr, allocator, left)?;
 

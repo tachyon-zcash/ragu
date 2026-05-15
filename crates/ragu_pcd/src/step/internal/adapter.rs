@@ -83,9 +83,11 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         let (left, right, witness) = witness.cast();
 
         let mut pq = PolyQueryClaims::new();
-        let ((left, right, output), output_data, step_aux) = self
-            .step
-            .witness::<_, HEADER_SIZE>(dr, &mut pq, witness, left, right)?;
+        let ((left, right, output), output_data, step_aux) = {
+            let mut cx = S::make_cx(dr, &mut pq);
+            self.step
+                .witness::<_, HEADER_SIZE>(&mut cx, witness, left, right)?
+        };
         let claims = pq.into_inner();
 
         let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
@@ -130,7 +132,7 @@ mod tests {
     use super::*;
     use crate::{
         header::{Header, Suffix},
-        step::{Encoded, Index, Step},
+        step::{BasicCx, Cx, Encoded, Index, Step},
     };
 
     type TestR = TestRank;
@@ -162,10 +164,15 @@ mod tests {
         type Right = TestHeader;
         type Output = TestHeader;
 
-        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
+        type Context<'a, 'dr, D>
+            = BasicCx<'a, D>
+        where
+            'dr: 'a,
+            D: Driver<'dr, F = Fp> + 'a;
+
+        fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
             &self,
-            dr: &mut D,
-            _pq: &mut PolyQueryClaims<'dr, D, <Pasta as ragu_arithmetic::Cycle>::NestedCurve>,
+            cx: &mut BasicCx<'a, D>,
             _: DriverValue<D, ()>,
             left: DriverValue<D, Fp>,
             right: DriverValue<D, Fp>,
@@ -177,7 +184,11 @@ mod tests {
             ),
             DriverValue<D, Fp>,
             DriverValue<D, ()>,
-        )> {
+        )>
+        where
+            'dr: 'a,
+        {
+            let dr = cx.driver();
             let allocator = &mut Standard::new();
             // Allocate elements for left and right
             let left_elem = Element::alloc(dr, allocator, left)?;
