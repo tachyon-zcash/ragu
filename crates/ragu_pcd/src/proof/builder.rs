@@ -19,7 +19,7 @@ use ragu_circuits::{
 use ragu_core::Result;
 
 use super::{Cached, Proof};
-use crate::internal::nested;
+use crate::{internal::nested, poly_query::PolyQueryClaim};
 
 /// Produces `pub(crate) fn $name(&mut self, v: $ty)` that sets an `Option`
 /// field, panicking on double-set.
@@ -303,6 +303,17 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     // Children's stage rx (for copying circuit claims)
     child_left_stage_rx: Option<super::ChildStageRx<C::ScalarField, R>>,
     child_right_stage_rx: Option<super::ChildStageRx<C::ScalarField, R>>,
+
+    /// Per-step polynomial-query claims raised by the user's
+    /// [`Step::witness`](crate::step::Step::witness) via
+    /// [`PolyQueryClaims::enforce_polynomial_query`](crate::poly_query::PolyQueryClaims::enforce_polynomial_query).
+    ///
+    /// Each claim contributes one $(\bar{C}_i, x_i, y_i, p_i(X))$ tuple to
+    /// the [PCS aggregation] over the step's $(P, u, v)$. Defaults to an empty
+    /// vec — steps that don't open polynomials leave it untouched.
+    ///
+    /// [PCS aggregation]: https://tachyon.z.cash/ragu/protocol/core/accumulation/pcs.html#pcs-aggregation
+    application_claims: Vec<PolyQueryClaim<C::CircuitField, C::NestedCurve>>,
 }
 
 impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
@@ -380,6 +391,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             bridge_eval_commitment: OnceCell::new(),
             child_left_stage_rx: None,
             child_right_stage_rx: None,
+            application_claims: Vec::new(),
         }
     }
 
@@ -624,6 +636,27 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         child_right_stage_rx,
         super::ChildStageRx<C::ScalarField, R>
     );
+
+    /// Sets the per-step polynomial-query claims for this fuse step. May only
+    /// be called once.
+    pub(crate) fn set_application_claims(
+        &mut self,
+        claims: Vec<PolyQueryClaim<C::CircuitField, C::NestedCurve>>,
+    ) {
+        assert!(
+            self.application_claims.is_empty(),
+            "double-set: application_claims"
+        );
+        self.application_claims = claims;
+    }
+
+    /// Returns a slice of the per-step polynomial-query claims. Empty when
+    /// the user's `Step::witness` raised no claims.
+    pub(crate) fn application_claims(
+        &self,
+    ) -> &[PolyQueryClaim<C::CircuitField, C::NestedCurve>] {
+        &self.application_claims
+    }
 
     getter!(w, w, C::CircuitField);
     getter!(y, y, C::CircuitField);

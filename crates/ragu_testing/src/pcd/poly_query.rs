@@ -11,6 +11,7 @@
 //! digest. The commitment-and-opening claim view of the polynomial is
 //! enforced via [`PolyQueryClaims::enforce_polynomial_query`].
 
+use std::vec::Vec;
 use core::marker::PhantomData;
 
 use ff::Field;
@@ -124,6 +125,9 @@ impl<C: Cycle, R: Rank> Step<C> for OpenAndHash<'_, C, R> {
         let x_witness = witness.as_ref().map(|w| w.x);
         let y_witness = witness.as_ref().map(|w| w.y);
         let polynomial_witness = witness.map(|w| w.polynomial);
+        let coefficients_witness = polynomial_witness
+            .as_ref()
+            .map(|p| p.iter_coeffs().collect::<Vec<_>>());
 
         let com = Point::alloc(dr, com_witness)?;
         let x = Element::alloc(dr, allocator, x_witness)?;
@@ -136,7 +140,7 @@ impl<C: Cycle, R: Rank> Step<C> for OpenAndHash<'_, C, R> {
         let output_hash = output.value().map(|v| *v);
         let output_encoded = Encoded::from_gadget(output);
 
-        pq.enforce_polynomial_query(dr, com, x, y)?;
+        pq.enforce_polynomial_query(dr, com, x, y, coefficients_witness)?;
 
         let output_data = output_hash.and_then(|hash| {
             polynomial_witness.map(|polynomial| HashedOpeningData { hash, polynomial })

@@ -41,12 +41,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             &mut *rng,
         )?;
 
-        let ((left_header, right_header), output_data, step_aux, _claims) = aux;
+        let ((left_header, right_header), output_data, step_aux, claims) = aux;
 
         builder.set_circuit_id(S::INDEX.circuit_index(self.num_application_steps)?);
         builder.set_left_header(left_header.into_inner());
         builder.set_right_header(right_header.into_inner());
         builder.set_native_application_rx(rx);
+        builder.set_application_claims(claims);
 
         Ok((left_proof, right_proof, output_data, step_aux))
     }

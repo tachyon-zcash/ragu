@@ -15,7 +15,10 @@ use ragu_primitives::{
 };
 
 use super::super::Step;
-use crate::{Header, poly_query::PolyQueryClaims};
+use crate::{
+    Header,
+    poly_query::{PolyQueryClaim, PolyQueryClaims},
+};
 
 /// Represents triple a length determined at compile time.
 pub struct TripleConstLen<const N: usize>;
@@ -61,7 +64,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         ),
         <S::Output as Header<C::CircuitField>>::Data,
         S::Aux<'source>,
-        Vec<(C::NestedCurve, C::CircuitField, C::CircuitField)>,
+        Vec<PolyQueryClaim<C::CircuitField, C::NestedCurve>>,
     );
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
