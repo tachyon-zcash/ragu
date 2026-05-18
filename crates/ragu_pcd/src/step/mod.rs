@@ -1,10 +1,8 @@
 //! Merging operations defined for the proof-carrying data computational graph.
 
-pub mod context;
 mod encoder;
 pub(crate) mod internal;
 
-pub use context::{BasicCx, Cx, HasPolyQuery, MakeCx, PolyCx};
 pub use encoder::Encoded;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::registry::CircuitIndex;
@@ -169,54 +167,21 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     /// used to pipeline witness data to future steps.
     type Aux<'source>: Send;
 
-    /// The execution context this step receives in [`witness`](Self::witness).
-    ///
-    /// Pick [`BasicCx`] for steps that only need the driver, or
-    /// [`PolyCx`] for steps that record polynomial-commitment opening
-    /// claims via [`HasPolyQuery::split_pq`]. Custom context types must
-    /// implement [`Cx`] (and optionally [`HasPolyQuery`]) plus
-    /// [`MakeCx`].
-    type Context<'a, 'dr, D>: Cx<'dr, D = D> + MakeCx<'a, 'dr, D, C::NestedCurve>
-    where
-        'dr: 'a,
-        D: Driver<'dr, F = C::CircuitField> + 'a;
-
-    /// Construct this step's context from the framework-supplied driver
-    /// and poly-query sink. The default implementation delegates to
-    /// `Self::Context`'s [`MakeCx`] impl and rarely needs overriding.
-    fn make_cx<'a, 'dr, D: Driver<'dr, F = C::CircuitField>>(
-        dr: &'a mut D,
-        pq: &'a mut PolyQueryClaims<'dr, D, C::NestedCurve>,
-    ) -> Self::Context<'a, 'dr, D>
-    where
-        'dr: 'a,
-    {
-        <Self::Context<'a, 'dr, D> as MakeCx<'a, 'dr, D, C::NestedCurve>>::make(dr, pq)
-    }
-
     /// The main synthesis method that checks the validity of this merging step.
     ///
     /// Returns the encoded headers (left, right, output), the data to be
     /// carried in the resulting PCD, and any auxiliary witness data.
     ///
-    /// `cx` is the step's [`Context`](Self::Context). Use
-    /// [`Cx::driver`] to access the driver. Steps with
-    /// `Context = PolyCx<..>` (or any `HasPolyQuery` context) additionally
-    /// call [`HasPolyQuery::split_pq`] to get the driver and a
-    /// [`PolyQueryClaims`] sink, and pass them to
-    /// [`PolyQueryClaims::enforce_polynomial_query`] to record a
-    /// polynomial-commitment opening claim. The framework collects the
-    /// resulting claims through the adapter's `Aux` for later fuse-time
-    /// processing.
-    fn witness<
-        'a,
-        'dr,
-        'source: 'dr,
-        D: Driver<'dr, F = C::CircuitField>,
-        const HEADER_SIZE: usize,
-    >(
+    /// `pq` is a [`PolyQueryClaims`] sink that steps may use to record
+    /// polynomial-commitment opening claims via
+    /// [`PolyQueryClaims::enforce_polynomial_query`]. Steps that don't need
+    /// polynomial-query verification simply ignore the parameter. The
+    /// framework collects the resulting claims through the adapter's `Aux`
+    /// for later fuse-time processing.
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        cx: &mut Self::Context<'a, 'dr, D>,
+        dr: &mut D,
+        pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data>,
         right: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data>,
@@ -230,6 +195,5 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
-        'dr: 'a,
         Self: 'dr;
 }
