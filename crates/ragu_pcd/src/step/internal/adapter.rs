@@ -26,6 +26,20 @@ impl<const N: usize> Len for TripleConstLen<N> {
     }
 }
 
+/// Auxiliary data produced by [`Adapter::witness`]: the two input headers, the
+/// output data carried by the resulting PCD, the inner step's own aux, and the
+/// polynomial-query claims raised by the step (surfaced for later fuse-time
+/// processing — see [`PolyQueryClaims`]).
+pub(crate) struct AdapterAux<'source, C: Cycle, S: Step<C>, const HEADER_SIZE: usize> {
+    pub left_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
+    pub right_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
+    pub output_data: <S::Output as Header<C::CircuitField>>::Data,
+    pub step_aux: S::Aux<'source>,
+    // TODO: surface these for fuse-time polynomial-query verification.
+    #[allow(dead_code)]
+    pub claims: Vec<(C::NestedCurve, C::CircuitField, C::CircuitField)>,
+}
+
 pub(crate) struct Adapter<C, S, R, const HEADER_SIZE: usize> {
     step: S,
     _marker: PhantomData<(C, R)>,
@@ -54,15 +68,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         S::Witness<'source>,
     );
     type Output = Kind![C::CircuitField; FixedVec<Element<'_, _>, TripleConstLen<HEADER_SIZE>>];
-    type Aux<'source> = (
-        (
-            FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
-            FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
-        ),
-        <S::Output as Header<C::CircuitField>>::Data,
-        S::Aux<'source>,
-        Vec<(C::NestedCurve, C::CircuitField, C::CircuitField)>,
-    );
+    type Aux<'source> = AdapterAux<'source, C, S, HEADER_SIZE>;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
@@ -104,12 +110,13 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
                 .map(|e| *e.value().take())
                 .collect_fixed()?;
 
-            Ok((
-                (left_header, right_header),
-                output_data.take(),
-                step_aux.take(),
-                claims.take(),
-            ))
+            Ok(AdapterAux {
+                left_header,
+                right_header,
+                output_data: output_data.take(),
+                step_aux: step_aux.take(),
+                claims: claims.take(),
+            })
         })?;
 
         Ok(WithAux::new(FixedVec::try_from(elements)?, adapter_aux))
@@ -232,7 +239,13 @@ mod tests {
             .expect("witness should succeed")
             .into_aux();
 
-        let ((left_header, right_header), output_data, _step_aux, _claims) = aux.take();
+        let AdapterAux {
+            left_header,
+            right_header,
+            output_data,
+            step_aux: _,
+            claims: _,
+        } = aux.take();
 
         // Left header should start with 10
         assert_eq!(left_header[0], Fp::from(10u64));
