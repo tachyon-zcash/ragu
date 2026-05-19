@@ -29,6 +29,7 @@ mod fuse;
 pub mod fuzz_utils;
 pub mod header;
 mod internal;
+pub mod multiset;
 pub mod poly_query;
 mod proof;
 pub mod step;

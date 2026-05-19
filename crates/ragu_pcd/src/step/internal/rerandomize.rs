@@ -15,9 +15,9 @@ use ragu_core::{
 };
 use ragu_primitives::allocator::Standard;
 
-use super::super::{Encoded, Index, Step};
+use super::super::{Encoded, Index, Step, StepCtx};
 pub(crate) use crate::step::InternalStepIndex::Rerandomize as INTERNAL_ID;
-use crate::{Header, poly_query::PolyQueryClaims};
+use crate::Header;
 
 pub(crate) struct Rerandomize<H> {
     _marker: PhantomData<H>,
@@ -43,8 +43,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
-        _pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
+        ctx: &mut StepCtx<'_, 'dr, D, C::NestedCurve>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, H::Data>,
         right: DriverValue<D, ()>,
@@ -59,9 +58,9 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
     )> {
         let allocator = &mut Standard::new();
         // Use uniform encoding for left to ensure circuit uniformity across header types
-        let left_encoded = Encoded::new_uniform(dr, allocator, left.clone())?;
+        let left_encoded = Encoded::new_uniform(ctx.dr, allocator, left.clone())?;
         // Use standard encoding for right (trivial header)
-        let right = Encoded::new(dr, allocator, right)?;
+        let right = Encoded::new(ctx.dr, allocator, right)?;
 
         // TODO(ebfull): It's possible that the witness for this step needs to
         // be populated with some random data, for actual re-randomization

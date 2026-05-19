@@ -1,8 +1,10 @@
 //! Merging operations defined for the proof-carrying data computational graph.
 
+mod ctx;
 mod encoder;
 pub(crate) mod internal;
 
+pub use ctx::StepCtx;
 pub use encoder::Encoded;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::registry::CircuitIndex;
@@ -12,7 +14,7 @@ use ragu_core::{
 };
 
 use super::header::Header;
-use crate::{internal::native::InternalCircuitIndex, poly_query::PolyQueryClaims};
+use crate::internal::native::InternalCircuitIndex;
 
 #[derive(Copy, Clone)]
 #[repr(usize)]
@@ -172,16 +174,15 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     /// Returns the encoded headers (left, right, output), the data to be
     /// carried in the resulting PCD, and any auxiliary witness data.
     ///
-    /// `pq` is a [`PolyQueryClaims`] sink that steps may use to record
-    /// polynomial-commitment opening claims via
-    /// [`PolyQueryClaims::enforce_polynomial_query`]. Steps that don't need
-    /// polynomial-query verification simply ignore the parameter. The
-    /// framework collects the resulting claims through the adapter's `Aux`
-    /// for later fuse-time processing.
+    /// `ctx` bundles the underlying [`Driver`] with the framework-side hooks a
+    /// step body may invoke — currently a [`PolyQueryClaims`] sink reached via
+    /// [`StepCtx::enforce_poly_query`]. Steps that don't need any framework
+    /// hooks simply use `ctx.dr` and ignore the rest.
+    ///
+    /// [`PolyQueryClaims`]: crate::poly_query::PolyQueryClaims
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
-        pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
+        ctx: &mut StepCtx<'_, 'dr, D, C::NestedCurve>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data>,
         right: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data>,

@@ -24,8 +24,7 @@ use ragu_core::{
 };
 use ragu_pcd::{
     header::{Header, Suffix},
-    poly_query::PolyQueryClaims,
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Step, StepCtx},
 };
 use ragu_primitives::{
     Element, GadgetExt, Point,
@@ -100,8 +99,7 @@ impl<C: Cycle, R: Rank> Step<C> for OpenAndHash<'_, C, R> {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
-        pq: &mut PolyQueryClaims<'dr, D, C::NestedCurve>,
+        ctx: &mut StepCtx<'_, 'dr, D, C::NestedCurve>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, HashedOpeningData<C::CircuitField, R>>,
         _right: DriverValue<D, ()>,
@@ -118,25 +116,25 @@ impl<C: Cycle, R: Rank> Step<C> for OpenAndHash<'_, C, R> {
         Self: 'dr,
     {
         let allocator = &mut Standard::new();
-        let left_encoded = Encoded::new(dr, allocator, left)?;
+        let left_encoded = Encoded::new(ctx.dr, allocator, left)?;
 
         let com_witness = witness.as_ref().map(|w| w.com);
         let x_witness = witness.as_ref().map(|w| w.x);
         let y_witness = witness.as_ref().map(|w| w.y);
         let polynomial_witness = witness.map(|w| w.polynomial);
 
-        let com = Point::alloc(dr, com_witness)?;
-        let x = Element::alloc(dr, allocator, x_witness)?;
-        let y = Element::alloc(dr, allocator, y_witness)?;
+        let com = Point::alloc(ctx.dr, com_witness)?;
+        let x = Element::alloc(ctx.dr, allocator, x_witness)?;
+        let y = Element::alloc(ctx.dr, allocator, y_witness)?;
 
-        let mut sponge = Sponge::new(dr, self.poseidon_params);
-        sponge.absorb(dr, left_encoded.as_gadget())?;
-        com.write(dr, &mut sponge)?;
-        let output = sponge.squeeze(dr)?;
+        let mut sponge = Sponge::new(ctx.dr, self.poseidon_params);
+        sponge.absorb(ctx.dr, left_encoded.as_gadget())?;
+        com.write(ctx.dr, &mut sponge)?;
+        let output = sponge.squeeze(ctx.dr)?;
         let output_hash = output.value().map(|v| *v);
         let output_encoded = Encoded::from_gadget(output);
 
-        pq.enforce_polynomial_query(dr, com, x, y)?;
+        ctx.enforce_poly_query(com, x, y)?;
 
         let output_data = output_hash.and_then(|hash| {
             polynomial_witness.map(|polynomial| HashedOpeningData { hash, polynomial })
