@@ -811,6 +811,12 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
 
             child_left_stage_rx: take!(child_left_stage_rx),
             child_right_stage_rx: take!(child_right_stage_rx),
+
+            application_claims: self
+                .application_claims
+                .iter()
+                .map(|c| (c.com, c.x, c.y))
+                .collect(),
         })
     }
 }

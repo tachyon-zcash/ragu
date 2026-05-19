@@ -227,6 +227,22 @@ pub struct Proof<C: Cycle, R: Rank> {
     // Children's stage rx polynomials (for copying circuit claims)
     pub(crate) child_left_stage_rx: ChildStageRx<C::ScalarField, R>,
     pub(crate) child_right_stage_rx: ChildStageRx<C::ScalarField, R>,
+
+    /// Per-step polynomial-query claim **instances** — the
+    /// $(\bar{C}_i, x_i, y_i)$ tuples the prover declared via
+    /// [`PolyQueryClaims::enforce_polynomial_query`](crate::poly_query::PolyQueryClaims::enforce_polynomial_query)
+    /// at the fuse that produced this proof. Polynomial coefficients are
+    /// witness-only and are not persisted here — they were folded into
+    /// [`native_p_poly`](Self::native_p_poly) as part of the PCS aggregation.
+    ///
+    /// These instances are public-input data; a verifier (or the next
+    /// recursion step's merge circuit) needs them to check that the
+    /// prover's alpha/beta-batching matches the declared claims. Currently
+    /// stored but not yet consumed — Phase 7 merge-circuit work will
+    /// thread them into `compute_v`'s `poly_queries` iterator and the
+    /// nested endoscaling chain.
+    pub(crate) application_claims:
+        alloc::vec::Vec<(C::NestedCurve, C::CircuitField, C::CircuitField)>,
 }
 
 impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
@@ -315,6 +331,15 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 
     pub(crate) fn right_header(&self) -> &[C::CircuitField] {
         &self.right_header
+    }
+
+    /// Returns the per-step polynomial-query claim instances $(C_i, x_i, y_i)$
+    /// declared at the fuse step that produced this proof. Empty when the
+    /// step's `NUM_POLY_QUERIES` is `0`.
+    pub(crate) fn application_claims(
+        &self,
+    ) -> &[(C::NestedCurve, C::CircuitField, C::CircuitField)] {
+        &self.application_claims
     }
 
     pub(crate) fn native_registry_xy_poly(&self) -> &sparse::Polynomial<C::CircuitField, R> {
