@@ -151,6 +151,31 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     /// a unique index.
     const INDEX: Index;
 
+    /// Number of polynomial-query opening claims this step raises via
+    /// [`PolyQueryClaims::enforce_polynomial_query`].
+    ///
+    /// Defaults to `0`. Steps that open polynomial commitments — i.e. those
+    /// that call
+    /// [`PolyQueryClaims::enforce_polynomial_query`](crate::poly_query::PolyQueryClaims::enforce_polynomial_query)
+    /// during [`witness`](Self::witness) — must override this with the exact
+    /// number of claims they raise per invocation.
+    ///
+    /// The framework uses this value to size the per-step contribution to
+    /// the fuse pipeline's $(P, u, v)$ accumulator. The adapter asserts at
+    /// runtime that the actual claim count matches this declared value.
+    ///
+    /// ## Future direction
+    ///
+    /// This is currently a runtime contract enforced via assertion. Once
+    /// `feature(generic_const_exprs)` stabilizes (or the Step API is
+    /// refactored to take this as a const generic), it will become a
+    /// compile-time const generic threaded through
+    /// [`Adapter`](crate::step::internal::adapter) and the internal merge
+    /// circuits so the fixed-arity endoscaling chain, eval/query stage
+    /// witnesses, and `compute_v` poly-query iterator can size themselves
+    /// at type level.
+    const NUM_POLY_QUERIES: usize = 0;
+
     /// The witness data needed to construct a proof for this step.
     type Witness<'source>: Send;
 

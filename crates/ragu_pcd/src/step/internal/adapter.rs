@@ -91,6 +91,22 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
             .witness::<_, HEADER_SIZE>(dr, &mut pq, witness, left, right)?;
         let claims = pq.into_inner();
 
+        // Runtime check of the per-step claim count contract. This is a
+        // stable-Rust stand-in for what will become a compile-time
+        // const-generic relationship between `S::NUM_POLY_QUERIES` and the
+        // internal merge circuits' fixed-arity poly-query slots once
+        // `generic_const_exprs` lands (or the Step API is refactored).
+        let claims = claims.map(|v| {
+            assert_eq!(
+                v.len(),
+                S::NUM_POLY_QUERIES,
+                "Step::NUM_POLY_QUERIES ({}) does not match number of claims actually raised ({})",
+                S::NUM_POLY_QUERIES,
+                v.len(),
+            );
+            v
+        });
+
         let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
         left.write(dr, &mut elements)?;
         right.write(dr, &mut elements)?;

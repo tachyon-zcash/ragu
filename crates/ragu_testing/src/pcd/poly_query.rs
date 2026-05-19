@@ -93,6 +93,8 @@ pub struct OpenAndHashWitness<C: CurveAffine, R: Rank> {
 
 impl<C: Cycle, R: Rank> Step<C> for OpenAndHash<'_, C, R> {
     const INDEX: Index = Index::new(0);
+    const NUM_POLY_QUERIES: usize = 1;
+
     type Witness<'source> = OpenAndHashWitness<C::NestedCurve, R>;
     type Aux<'source> = ();
     type Left = HashedOpening<R>;
