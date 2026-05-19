@@ -115,6 +115,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             idx.circuit_index().omega_j()
         };
 
+        // Application-step polynomial-query claim polynomials. These must
+        // outlive `iters` since `factor_iter` borrows from their coefficients.
+        let claim_polys: Vec<sparse::Polynomial<C::CircuitField, R>> = builder
+            .application_claims()
+            .iter()
+            .map(|claim| sparse::Polynomial::from_coeffs(claim.coefficients.clone()))
+            .collect();
+
         // This must exactly match the ordering of the `poly_queries` function
         // in the `compute_v` circuit.
         let mut iters: Vec<_> = vec![
@@ -164,6 +172,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 builder.native_registry_xy_poly().iter_coeffs(),
                 omega_j(id),
             ));
+        }
+
+        // Application-step polynomial-query claims raised via
+        // `PolyQueryClaims::enforce_polynomial_query`. Each contributes one
+        // q_i(X) = (p_i(X) - y_i)/(X - x_i) entry. `factor_iter` performs the
+        // synthetic division and silently drops the remainder, so we do not
+        // need to subtract y_i from the constant term explicitly — if the
+        // claim is honest, p_i(x_i) = y_i and the remainder vanishes.
+        for (claim, poly) in builder
+            .application_claims()
+            .iter()
+            .zip(claim_polys.iter())
+        {
+            iters.push(factor_iter(poly.iter_coeffs(), claim.x));
         }
 
         let mut coeffs = Vec::with_capacity(R::num_coeffs());

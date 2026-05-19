@@ -114,6 +114,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 builder.native_registry_xy_poly(),
                 builder.native_registry_xy_commitment(),
             );
+
+            // Application-step polynomial-query claims. The framework
+            // recomputes the HostCurve commitment from the claim's
+            // coefficients — the user-supplied `claim.com` is a
+            // (typically NestedCurve) handle the application may have
+            // hashed in-circuit; the soundness binding between `com` and
+            // `coefficients` is established by the merge circuit's
+            // `compute_v`, not here.
+            for claim in builder.application_claims() {
+                let poly: sparse::Polynomial<C::CircuitField, R> =
+                    sparse::Polynomial::from_coeffs(claim.coefficients.clone());
+                let commitment = poly.commit_to_affine(C::host_generators(self.params));
+                acc.acc(&poly, commitment);
+            }
         }
 
         // Build the PointsStage input vector ([f.commitment, commitments..])
