@@ -382,6 +382,122 @@ pub fn poly_with_roots<F: PrimeField>(roots: &[F]) -> Vec<F> {
     polys.into_iter().next().unwrap()
 }
 
+/// Multiplies two polynomials via FFT-based convolution.
+///
+/// Returns the dense coefficient vector of `a · b`, of length
+/// `a.len() + b.len() - 1`. Returns an empty `Vec` if either input is
+/// empty (the zero polynomial).
+///
+/// Inputs are treated as ascending-degree dense coefficient vectors. The
+/// caller is responsible for trimming leading-degree zeros if a tight output
+/// length matters; with non-zero leading coefficients in each input, the
+/// output's last coefficient is also non-zero.
+///
+/// Runs in `O(n log n)` where `n = (a.len() + b.len() - 1).next_power_of_two()`.
+pub fn poly_mul<F: PrimeField>(a: &[F], b: &[F]) -> Vec<F> {
+    if a.is_empty() || b.is_empty() {
+        return Vec::new();
+    }
+    if a.len() == 1 && b.len() == 1 {
+        return vec![a[0] * b[0]];
+    }
+
+    let new_len = a.len() + b.len() - 1;
+    let domain_size = new_len.next_power_of_two();
+    let domain = Domain::<F>::new(domain_size.ilog2());
+    let n = domain.n();
+
+    let mut buf_a = vec![F::ZERO; n];
+    let mut buf_b = vec![F::ZERO; n];
+    buf_a[..a.len()].copy_from_slice(a);
+    buf_b[..b.len()].copy_from_slice(b);
+
+    domain.fft(&mut buf_a);
+    domain.fft(&mut buf_b);
+
+    for i in 0..n {
+        buf_a[i] *= buf_b[i];
+    }
+
+    domain.ifft(&mut buf_a);
+    buf_a.truncate(new_len);
+    buf_a
+}
+
+#[cfg(test)]
+mod poly_mul_tests {
+    use ff::Field;
+    use pasta_curves::Fp as F;
+    use proptest::prelude::*;
+
+    use super::*;
+
+    fn schoolbook(a: &[F], b: &[F]) -> Vec<F> {
+        if a.is_empty() || b.is_empty() {
+            return Vec::new();
+        }
+        let mut out = vec![F::ZERO; a.len() + b.len() - 1];
+        for (i, ai) in a.iter().enumerate() {
+            for (j, bj) in b.iter().enumerate() {
+                out[i + j] += *ai * *bj;
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn empty_inputs_return_empty() {
+        let empty: Vec<F> = vec![];
+        let p = vec![F::ONE, F::from(2)];
+        assert_eq!(poly_mul(&empty, &p), Vec::<F>::new());
+        assert_eq!(poly_mul(&p, &empty), Vec::<F>::new());
+        assert_eq!(poly_mul(&empty, &empty), Vec::<F>::new());
+    }
+
+    #[test]
+    fn scalar_times_scalar_skips_fft() {
+        let a = vec![F::from(3)];
+        let b = vec![F::from(5)];
+        assert_eq!(poly_mul(&a, &b), vec![F::from(15)]);
+    }
+
+    #[test]
+    fn known_small_product() {
+        // (1 + 2x)(3 + 4x) = 3 + 10x + 8x^2
+        let a = vec![F::ONE, F::from(2)];
+        let b = vec![F::from(3), F::from(4)];
+        assert_eq!(poly_mul(&a, &b), vec![F::from(3), F::from(10), F::from(8)]);
+    }
+
+    #[test]
+    fn matches_poly_with_roots() {
+        // (x - 1)(x - 2) = 2 - 3x + x^2
+        let a = vec![-F::ONE, F::ONE];
+        let b = vec![-F::from(2), F::ONE];
+        assert_eq!(poly_mul(&a, &b), poly_with_roots(&[F::ONE, F::from(2)]));
+    }
+
+    fn arb_poly(max_len: usize) -> impl Strategy<Value = Vec<F>> {
+        (0..=max_len).prop_flat_map(|len| {
+            prop::collection::vec(any::<u64>().prop_map(F::from), len)
+        })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+
+        #[test]
+        fn proptest_matches_schoolbook(a in arb_poly(32), b in arb_poly(32)) {
+            prop_assert_eq!(poly_mul(&a, &b), schoolbook(&a, &b));
+        }
+
+        #[test]
+        fn proptest_commutative(a in arb_poly(32), b in arb_poly(32)) {
+            prop_assert_eq!(poly_mul(&a, &b), poly_mul(&b, &a));
+        }
+    }
+}
+
 #[cfg(test)]
 mod poly_with_roots_tests {
     use ff::Field;

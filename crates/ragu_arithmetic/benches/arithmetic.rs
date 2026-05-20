@@ -4,7 +4,7 @@ use std::hint::black_box;
 
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use pasta_curves::{EpAffine, Fp, Fq};
-use ragu_arithmetic::{Domain, dot, eval, factor, geosum, mul, poly_with_roots};
+use ragu_arithmetic::{Domain, dot, eval, factor, geosum, mul, poly_mul, poly_with_roots};
 use setup::{f, setup_domain_ell, setup_domain_fft, setup_rng, setup_with_rng, vec_affine, vec_f};
 
 #[library_benchmark(setup = setup_rng)]
@@ -54,6 +54,17 @@ fn with_roots((roots,): (Vec<Fp>,)) {
 
 #[library_benchmark(setup = setup_rng)]
 #[benches::with_setup(
+    ((vec_f::< 64, Fp>, vec_f::< 64, Fp>)),
+    ((vec_f::< 256, Fp>, vec_f::< 256, Fp>)),
+    ((vec_f::< 1024, Fp>, vec_f::< 1024, Fp>)),
+    ((vec_f::< 4096, Fp>, vec_f::< 4096, Fp>)),
+)]
+fn mul_polys((a, b): (Vec<Fp>, Vec<Fp>)) {
+    black_box(poly_mul(&a, &b));
+}
+
+#[library_benchmark(setup = setup_rng)]
+#[benches::with_setup(
     ((vec_f::< 256, Fp>, f)),
     ((vec_f::< 4096, Fp>, f)),
     ((vec_f::< 65536, Fp>, f)),
@@ -73,7 +84,7 @@ fn poly_factor((coeffs, x): (Vec<Fp>, Fp)) {
 
 library_benchmark_group!(
     name = poly_ops;
-    benchmarks = with_roots, poly_eval, poly_factor
+    benchmarks = with_roots, mul_polys, poly_eval, poly_factor
 );
 
 #[library_benchmark(setup = setup_rng)]
