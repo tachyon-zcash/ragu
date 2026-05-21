@@ -154,13 +154,13 @@ jobs:
       - name: Cache fuzz target directory
         uses: actions/cache@v5
         with:
-          path: crates/ragu_testing/fuzz/target
-          key: ${{ runner.os }}-fuzz-target-${{ hashFiles('crates/ragu_testing/fuzz/Cargo.toml') }}-${{ hashFiles('crates/ragu_testing/fuzz/fuzz_targets/**/*.rs') }}
+          path: qa/fuzz/target
+          key: ${{ runner.os }}-fuzz-target-${{ hashFiles('qa/fuzz/Cargo.toml') }}-${{ hashFiles('qa/fuzz/fuzz_targets/**/*.rs') }}-${{ hashFiles('qa/fuzz/bin/**/*.rs') }}
           restore-keys: |
             ${{ runner.os }}-fuzz-target-
 
       - name: cargo check fuzz harness
-        working-directory: crates/ragu_testing/fuzz
+        working-directory: qa/fuzz
         run: cargo +${{ steps.toolchain.outputs.name }} check --bins
 
   docs:

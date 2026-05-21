@@ -318,6 +318,121 @@ pub fn geosum<F: Field>(mut r: F, mut m: usize) -> F {
     sum
 }
 
+/// Writes $c(X) = a(X) \cdot b(X)$ into `out` via FFT.
+///
+/// If either input is empty, `out` is cleared and the function returns.
+/// Otherwise `out.len()` becomes `a.len() + b.len() - 1` on return, with
+/// capacity left at `≥ 2 · next_power_of_two(a.len() + b.len() - 1)` (the
+/// function uses the upper half of the buffer as FFT scratch); one-shot
+/// callers that care about the slack should `shrink_to_fit` before handing
+/// the buffer to consumers.
+///
+/// # Panics
+///
+/// Panics if the required FFT domain size exceeds the field's 2-adicity,
+/// i.e., if `(a.len() + b.len() - 1).next_power_of_two().ilog2() > F::S`.
+pub fn poly_mul<F: PrimeField>(a: &[F], b: &[F], out: &mut Vec<F>) {
+    out.clear();
+
+    if a.is_empty() || b.is_empty() {
+        return;
+    }
+
+    let result_len = a.len() + b.len() - 1;
+    let n = result_len.next_power_of_two();
+    // TODO(cnode): instantiate Domain{...} in-line instead of using new(...),
+    // which loops `F::S - k` times to derive the generator via halvings.
+    let domain = Domain::new(n.ilog2());
+
+    // Lay out both evaluation forms back-to-back in `out`: lower half will
+    // carry FFT(a), upper half will carry FFT(b). The `resize` zero-fills,
+    // so the zero-padding tail of each half is in place before we write
+    // the inputs.
+    out.resize(2 * n, F::ZERO);
+    out[..a.len()].copy_from_slice(a);
+    domain.fft(&mut out[..n]);
+
+    out[n..n + b.len()].copy_from_slice(b);
+    domain.fft(&mut out[n..]);
+
+    let (lo, hi) = out.split_at_mut(n);
+    for (l, h) in lo.iter_mut().zip(hi.iter()) {
+        *l *= h;
+    }
+
+    domain.ifft(&mut out[..n]);
+    out.truncate(result_len);
+}
+
+/// Decomposes the product $a(X) \cdot b(X)$ into coefficient vectors
+/// $(p, q)$ whose constant term $p(0)$ equals the *reverse dot product*
+/// $\mathrm{revdot}(\mathbf{a}, \mathbf{b}) = \sum\_{i=0}^{n-1} a\_i b\_{n-1-i}$.
+///
+/// This is the polynomial-decomposition step in the protocol's reduction
+/// from a revdot claim to a polynomial query; see the
+/// [book](https://tachyon.z.cash/ragu/protocol/prelim/structured_vectors.html#reduction-to-polynomial-queries)
+/// for how the protocol consumes it.
+///
+/// Equal length is required: the identity is parameterized by a single $n$
+/// where $|\mathbf{a}| = |\mathbf{b}| = n$. With $c = a \cdot b$ of length
+/// $2n - 1$, $p$ is the reverse of the lower $n$ coefficients of $c$ and
+/// $q$ is the upper $n - 1$ coefficients, so
+///
+/// $$ a(X) \cdot b(X) = X^{n-1} p(X^{-1}) + X^n q(X). $$
+///
+/// $p(0) = c\_{n-1}$ holds by construction of $p$, and the further
+/// identification $c\_{n-1} = \mathrm{revdot}(\mathbf{a}, \mathbf{b})$
+/// holds because $|\mathbf{a}| = |\mathbf{b}| = n$.
+///
+/// # Output lengths
+///
+/// When $n \geq 1$:
+/// - `p.len() == n`
+/// - `q.len() == n - 1` (empty when $n = 1$)
+///
+/// `q` is the raw upper half of $c$ with no leading-zero trimming. In
+/// particular, for $n \geq 2$, `q.last()` (the highest-degree coefficient
+/// of `q` viewed as a polynomial) may be `F::ZERO`.
+///
+/// When both inputs are empty, both vectors are returned empty.
+///
+/// # Panics
+///
+/// Panics if `a` and `b` have different lengths. Also inherits the FFT
+/// domain-size panic from [`poly_mul`].
+pub fn decomp_product_poly<F: PrimeField>(a: &[F], b: &[F]) -> (Vec<F>, Vec<F>) {
+    assert_eq!(
+        a.len(),
+        b.len(),
+        "decomp_product_poly requires equal-length vectors"
+    );
+
+    if a.is_empty() {
+        return (vec![], vec![]);
+    }
+
+    // `c` has length `2n - 1`; split off the upper `n - 1` coefficients into
+    // `q`, then reverse the remaining lower `n` coefficients in place to
+    // form `p`.
+    let n = a.len();
+    let mut c = Vec::new();
+    poly_mul(a, b, &mut c);
+    assert_eq!(
+        c.len(),
+        2 * n - 1,
+        "internal invariant: poly_mul should produce a vector of length 2n - 1"
+    );
+
+    let q = c.split_off(n);
+    c.reverse();
+    // `poly_mul` resized `out` to `2 · next_power_of_two(2n - 1)` (the upper
+    // half was used as scratch for `FFT(b)`) and then truncated to `2n - 1`,
+    // leaving slack in `c`'s capacity. `split_off` preserves that capacity,
+    // so shrink before returning so `p` doesn't carry it.
+    c.shrink_to_fit();
+    (c, q)
+}
+
 /// Computes the lowest degree monic polynomial
 ///
 /// $$
@@ -333,40 +448,19 @@ pub fn poly_with_roots<F: PrimeField>(roots: &[F]) -> Vec<F> {
     }
 
     let mut polys: Vec<Vec<F>> = roots.iter().map(|&root| vec![-root, F::ONE]).collect();
-
-    let max_domain_size = (roots.len() + 1).next_power_of_two();
-    let mut scratch1 = vec![F::ZERO; max_domain_size];
-    let mut scratch2 = vec![F::ZERO; max_domain_size];
+    // `poly_mul` uses `out` itself as scratch and grows it to twice the FFT
+    // domain size; pre-allocate for the largest multiply we'll do.
+    let max_n = (roots.len() + 1).next_power_of_two();
+    let mut out = Vec::with_capacity(2 * max_n);
 
     while polys.len() > 1 {
         let pairs = polys.len() / 2;
         let has_odd = polys.len() % 2 == 1;
 
         for i in 0..pairs {
-            let poly1_len = polys[2 * i].len();
-            let poly2_len = polys[2 * i + 1].len();
-            let new_degree = (poly1_len - 1) + (poly2_len - 1);
-            let domain_size = (new_degree + 1).next_power_of_two();
-            // TODO(cnode): instantiate Domain{...} in-line instead of using new(...) which performs a loop
-            let domain = Domain::new(domain_size.ilog2());
-            let n = domain.n();
-
-            scratch1[..poly1_len].copy_from_slice(&polys[2 * i]);
-            scratch1[poly1_len..n].fill(F::ZERO);
-            domain.fft(&mut scratch1[..n]);
-
-            scratch2[..poly2_len].copy_from_slice(&polys[2 * i + 1]);
-            scratch2[poly2_len..n].fill(F::ZERO);
-            domain.fft(&mut scratch2[..n]);
-
-            for j in 0..n {
-                scratch1[j] *= scratch2[j];
-            }
-
-            domain.ifft(&mut scratch1[..n]);
-
+            poly_mul(&polys[2 * i], &polys[2 * i + 1], &mut out);
             polys[i].clear();
-            polys[i].extend_from_slice(&scratch1[..new_degree + 1]);
+            polys[i].extend_from_slice(&out);
         }
 
         if has_odd {
@@ -451,6 +545,7 @@ fn test_poly_with_roots() {
 
 #[cfg(test)]
 mod proptests {
+    use ff::{Field, PrimeField};
     use pasta_curves::Fp as F;
     use proptest::prelude::*;
 
@@ -459,6 +554,63 @@ mod proptests {
     fn arb_fe() -> impl Strategy<Value = F> {
         (any::<u64>(), any::<u64>())
             .prop_map(|(a, b)| F::from(a) + F::from(b) * F::MULTIPLICATIVE_GENERATOR)
+    }
+
+    /// Random nonzero field element. With probability `1/10` each, returns
+    /// `F::ONE` or `-F::ONE`, exercising boundary points that uniformly
+    /// random elements would essentially never reach.
+    fn arb_fe_nonzero() -> impl Strategy<Value = F> {
+        prop_oneof![
+            8 => arb_fe().prop_filter("nonzero", |x| !bool::from(x.is_zero())),
+            1 => Just(F::ONE),
+            1 => Just(-F::ONE),
+        ]
+    }
+
+    /// Like `arb_fe`, but returns `F::ZERO` with probability `1/10`, so
+    /// vectors built from this strategy exercise sparse polynomials and
+    /// the case where the highest-degree coefficient is zero.
+    fn arb_fe_with_zeros() -> impl Strategy<Value = F> {
+        prop_oneof![
+            9 => arb_fe(),
+            1 => Just(F::ZERO),
+        ]
+    }
+
+    /// Draws two vectors of independently random field elements with a
+    /// common random length in `1..=32`. Coefficients occasionally land
+    /// on zero, exercising sparse polynomials and the case where the
+    /// highest-degree coefficient is zero — relevant to the no-trim
+    /// contract on `decomp_product_poly`'s `q`.
+    fn arb_equal_length_pair() -> impl Strategy<Value = (Vec<F>, Vec<F>)> {
+        (1usize..=32).prop_flat_map(|n| {
+            (
+                proptest::collection::vec(arb_fe_with_zeros(), n..=n),
+                proptest::collection::vec(arb_fe_with_zeros(), n..=n),
+            )
+        })
+    }
+
+    /// Checks the [`decomp_product_poly`] identity
+    /// $a(x) \cdot b(x) = x^{n-1} p(x^{-1}) + x^n q(x)$ from precomputed
+    /// evaluations at $x$. Centralizing the exponents in one helper makes
+    /// the identity explicit and easy to mirror in any future verifier
+    /// implementation.
+    ///
+    /// Requires `n >= 1` — the helper computes `n - 1` as a `usize`, which
+    /// would underflow for `n == 0`. The body asserts this precondition.
+    fn check_decomp_identity<F: PrimeField>(
+        a_at_x: F,
+        b_at_x: F,
+        p_at_x_inv: F,
+        q_at_x: F,
+        x: F,
+        n: usize,
+    ) -> bool {
+        assert!(n >= 1, "check_decomp_identity requires n >= 1");
+        let x_pow_n_minus_1 = x.pow_vartime([(n - 1) as u64]);
+        let x_pow_n = x_pow_n_minus_1 * x;
+        a_at_x * b_at_x == x_pow_n_minus_1 * p_at_x_inv + x_pow_n * q_at_x
     }
 
     proptest! {
@@ -495,12 +647,100 @@ mod proptests {
             }
             prop_assert_eq!(geosum(r, m), naive);
         }
+
+        #[test]
+        fn poly_mul_convolution(
+            a in proptest::collection::vec(arb_fe(), 1..32),
+            b in proptest::collection::vec(arb_fe(), 1..32),
+        ) {
+            let mut c = Vec::new();
+            poly_mul(&a, &b, &mut c);
+            prop_assert_eq!(c.len(), a.len() + b.len() - 1);
+
+            let mut expected = vec![F::ZERO; a.len() + b.len() - 1];
+            for (i, &ai) in a.iter().enumerate() {
+                for (j, &bj) in b.iter().enumerate() {
+                    expected[i + j] += ai * bj;
+                }
+            }
+            prop_assert_eq!(c, expected);
+        }
+
+        #[test]
+        fn decomp_product_poly_identity(
+            (a, b) in arb_equal_length_pair(),
+            x in arb_fe_nonzero(),
+        ) {
+            let n = a.len();
+            let (p, q) = decomp_product_poly(&a, &b);
+            prop_assert_eq!(p.len(), n);
+            prop_assert_eq!(q.len(), n - 1);
+
+            let x_inv = x.invert().unwrap();
+            prop_assert!(check_decomp_identity(
+                eval(&a, x),
+                eval(&b, x),
+                eval(&p, x_inv),
+                eval(&q, x),
+                x,
+                n,
+            ));
+
+            let revdot: F = a.iter().zip(b.iter().rev()).map(|(&x, &y)| x * y).sum();
+            prop_assert_eq!(p[0], revdot);
+        }
+    }
+
+    #[test]
+    fn decomp_product_poly_n_eq_1() {
+        let a = vec![F::from(7)];
+        let b = vec![F::from(11)];
+        let (p, q) = decomp_product_poly(&a, &b);
+        assert_eq!(p, vec![F::from(77)]);
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn decomp_product_poly_empty() {
+        let (p, q) = decomp_product_poly::<F>(&[], &[]);
+        assert!(p.is_empty());
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "decomp_product_poly requires equal-length vectors")]
+    fn decomp_product_poly_length_mismatch() {
+        let a = vec![F::ONE, F::ONE];
+        let b = vec![F::ONE];
+        let _ = decomp_product_poly(&a, &b);
+    }
+
+    #[test]
+    fn poly_mul_empty() {
+        let mut out = Vec::<F>::new();
+        poly_mul::<F>(&[], &[F::ONE], &mut out);
+        assert!(out.is_empty());
+        poly_mul::<F>(&[F::ONE], &[], &mut out);
+        assert!(out.is_empty());
+        poly_mul::<F>(&[], &[], &mut out);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn poly_mul_by_one() {
+        let a = vec![F::from(2), F::from(3), F::from(5)];
+        let one = vec![F::ONE];
+        let mut out = Vec::new();
+        poly_mul(&a, &one, &mut out);
+        assert_eq!(out, a);
+        poly_mul(&one, &a, &mut out);
+        assert_eq!(out, a);
     }
 }
 
 #[test]
 fn test_mul() {
-    use pasta_curves::group::{Curve, prime::PrimeCurveAffine};
+    use pasta_curves::group::{Curve, CurveAffine};
 
     let mut coeffs = vec![];
     for i in 0..1000 {

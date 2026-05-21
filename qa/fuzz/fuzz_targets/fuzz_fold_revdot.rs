@@ -47,6 +47,12 @@ fn build_poly(lens: &[u8; 4], coeffs: &mut impl Iterator<Item = Fp>) -> Polynomi
 }
 
 fuzz_target!(|input: Input| {
+    // DEBUG_INPUT=1 prints the parsed Arbitrary input and exits — useful for
+    // triaging crash artifacts. See README.md "DEBUG_INPUT env var" section.
+    if std::env::var("DEBUG_INPUT").is_ok() {
+        eprintln!("{:#?}", input);
+        return;
+    }
     let count = ((input.count as usize) % 8).max(1);
     if input.coeffs.len() < count * 8 {
         return;

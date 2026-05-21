@@ -17,9 +17,11 @@
 //!
 //! The [`StageBuilder`] uses a two-phase protocol:
 //!
-//! 1. **Wire reservation** — Call [`add_stage`](StageBuilder::add_stage) for
-//!    each stage polynomial. This reserves non-overlapping wire positions
-//!    without computing values yet, ensuring all provers agree on wire layout.
+//! 1. **Wire reservation** — Call [`configure_stage`](StageBuilder::configure_stage)
+//!    (or [`add_stage`](StageBuilder::add_stage) for stages implementing
+//!    [`Default`]) for each stage polynomial. This reserves non-overlapping
+//!    wire positions without computing values yet, ensuring all provers agree
+//!    on wire layout.
 //!
 //! 2. **Witness computation** — Call [`finish`](StageBuilder::finish) to get
 //!    the driver, then populate each stage via [`StageGuard::enforced`] or
@@ -36,7 +38,14 @@
 //! See the `compute_v` module in `ragu_pcd` crate for a real-world multi-stage
 //! circuit, or the [staging chapter] in the book.
 //!
-//! [staging chapter]: https://tachyon.z.cash/ragu/protocol/extensions/staging
+//! See the parent module's [gadget invariants] section for what
+//! [`Stage::witness`] does and doesn't guarantee about the wires inside the
+//! gadget it returns, and how [`StageGuard::enforced`]/[`unenforced`] differ
+//! in how they treat those wires.
+//!
+//! [staging chapter]: https://tachyon.z.cash/ragu/implementation/staging
+//! [gadget invariants]: super#gadget-invariants
+//! [`unenforced`]: StageGuard::unenforced
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -124,12 +133,14 @@ pub struct StageGuard<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R>> {
 }
 
 impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R> + 'dr> StageGuard<'dr, D, R, S> {
-    /// Inject stage wires and enforce internal consistency constraints.
+    /// Inject pre-allocated stage wires into the gadget produced by
+    /// [`Stage::witness`], then provide the guarantee that the gadget is
+    /// [`Consistent`] by calling
+    /// [`enforce_consistent`](Consistent::enforce_consistent) on the real
+    /// driver.
     ///
-    /// Runs the stage's witness method on a wireless emulator, substitutes
-    /// the pre-allocated stage wires, then calls `enforce_consistent()` on
-    /// the result to enforce internal constraints (e.g., curve equations
-    /// for Points).
+    /// See the parent module's [gadget invariants](super#gadget-invariants)
+    /// section for what this guarantee does and does not cover.
     pub fn enforced<'source: 'dr>(
         self,
         dr: &mut D,
@@ -159,11 +170,13 @@ impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R> + 'dr> StageGuard<'dr, D, R
         computed_gadget.map(&mut injector)
     }
 
-    /// Injects stage wires without enforcing constraints.
+    /// Inject pre-allocated stage wires into the gadget produced by
+    /// [`Stage::witness`] without any further guarantee about the wires.
     ///
-    /// Runs the stage's witness method on a wireless emulator (not on the
-    /// underlying driver), then substitutes the pre-allocated stage wires
-    /// into the resulting gadget.
+    /// Takes the prover at their word, or relies on a different
+    /// [`enforced`](Self::enforced) call to check the gadget's invariants.
+    /// See the parent module's [gadget invariants](super#gadget-invariants)
+    /// section.
     pub fn unenforced<'source: 'dr>(
         self,
         _dr: &mut D,

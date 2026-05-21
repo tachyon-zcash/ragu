@@ -238,7 +238,7 @@ mod tests {
     use core::marker::PhantomData;
 
     use ff::Field;
-    use group::{Curve, prime::PrimeCurveAffine};
+    use group::{Curve, CurveAffine as _};
     use proptest::prelude::*;
     use ragu_arithmetic::{CurveAffine, Cycle, FixedGenerators, Uendo};
     use ragu_core::{
@@ -670,12 +670,24 @@ mod tests {
     #[derive(Default)]
     struct ConstrainedStage;
 
-    #[derive(Gadget, Consistent, Write)]
+    #[derive(Gadget, Write)]
     struct TwoElements<'dr, #[ragu(driver)] D: Driver<'dr>> {
         #[ragu(gadget)]
         a: Element<'dr, D>,
         #[ragu(gadget)]
         b: Element<'dr, D>,
+    }
+
+    // Hand-written because the derive only re-emits each field's own
+    // invariants, dropping the cross-field `a == b` constraint that
+    // `ConstrainedStage::witness` imposes.
+    impl<'dr, D: Driver<'dr>> Consistent<'dr, D> for TwoElements<'dr, D> {
+        fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
+            self.a.enforce_consistent(dr)?;
+            self.b.enforce_consistent(dr)?;
+            dr.enforce_zero(|lc| lc.add(self.a.wire()).sub(self.b.wire()))?;
+            Ok(())
+        }
     }
 
     impl Stage<Fp, R> for ConstrainedStage {

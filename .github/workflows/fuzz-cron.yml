@@ -1,0 +1,178 @@
+name: Continuous fuzzing
+
+# Runs every fuzz target for a bounded budget on a scheduled cadence.
+# Unlike the per-PR `fuzz harness check (nightly)` job in `rust.yml` (which
+# only `cargo check`s for bitrot), this workflow actually exercises libFuzzer
+# against each target, accumulates a corpus across runs, and surfaces any
+# crash as a failed job + uploaded artifact.
+
+on:
+  # Twice-weekly: Sundays and Wednesdays at 00:00 UTC. Spreading the runs
+  # gives libFuzzer fresh mutation randomness on each fire (while still
+  # accumulating the corpus across runs via cache), which empirically
+  # outperforms single long runs for shallow-bug discovery. Catches
+  # regressions ~3 days faster than once-weekly.
+  schedule:
+    - cron: '0 0 * * 0'
+    - cron: '0 0 * * 3'
+  # Ad-hoc trigger from the Actions tab.
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Seconds per target (default 18000 = 5 hours)'
+        required: false
+        default: '18000'
+      use_dict:
+        description: 'Pass -dict=dict.txt to libFuzzer'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: fuzz ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    # GitHub-hosted runners have a 6-hour (360-minute) hard ceiling per
+    # job. Setting timeout-minutes to that maximum gives the 5-hour
+    # fuzz budget ~1 hour of headroom for build, cache restore, and
+    # cargo-fuzz install. Manual dispatches that pass `duration`
+    # higher than 18000 will hit the hard ceiling and be killed.
+    timeout-minutes: 360
+    strategy:
+      # Each target is independent; let the others continue if one finds a
+      # bug. Crashes surface via uploaded artifacts, not by cascading
+      # cancellations.
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_element_ops
+          - fuzz_witness_coverage
+          - fuzz_soundness_cheat
+          - fuzz_driver_metamorphic
+          - fuzz_algebraic_identities
+          - fuzz_element_assertions
+          - fuzz_multipack
+          - fuzz_point_identities
+          - fuzz_consistent
+          - fuzz_io_roundtrip
+          - fuzz_poseidon_sponge
+          - fuzz_poseidon_differential
+          - fuzz_endoscalar
+          - fuzz_revdot
+          - fuzz_fold_revdot
+          - fuzz_sxy_agreement
+          - fuzz_verify_reject
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned nightly toolchain
+        id: toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-04-11
+
+      - name: Cache fuzz build artifacts
+        uses: actions/cache@v5
+        with:
+          path: qa/fuzz/target
+          key: ${{ runner.os }}-fuzz-cron-target-${{ hashFiles('qa/fuzz/Cargo.toml') }}-${{ hashFiles('qa/fuzz/fuzz_targets/**/*.rs') }}-${{ hashFiles('qa/fuzz/bin/**/*.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-fuzz-cron-target-
+
+      # Per-target corpus: each run extends the corpus for its target, then
+      # uploads the new state via the actions/cache "always-save" semantics
+      # (key includes the run id, so every run produces a fresh cache entry;
+      # restore-keys then pulls the most recent prior entry on the next run).
+      - name: Restore fuzz corpus
+        uses: actions/cache@v5
+        with:
+          path: qa/fuzz/corpus/${{ matrix.target }}
+          key: ${{ runner.os }}-fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-fuzz-corpus-${{ matrix.target }}-
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Run fuzz target
+        working-directory: qa/fuzz
+        env:
+          DURATION: ${{ github.event.inputs.duration || '18000' }}
+          USE_DICT: ${{ github.event.inputs.use_dict || 'false' }}
+        run: |
+          set -euo pipefail
+          DICT_FLAG=""
+          if [ "$USE_DICT" = "true" ]; then
+            # Regenerate dict.txt in case the constants drifted since the
+            # last manual regeneration.
+            cargo +${{ steps.toolchain.outputs.name }} run --release --bin extract_dict > dict.txt
+            DICT_FLAG="-dict=dict.txt"
+          fi
+          # Tee output so we can extract stats after the run regardless
+          # of whether the fuzz target crashed.
+          cargo +${{ steps.toolchain.outputs.name }} fuzz run --fuzz-dir . "${{ matrix.target }}" -- \
+            $DICT_FLAG \
+            -max_len=1024 \
+            -max_total_time="$DURATION" 2>&1 | tee fuzz-run.log
+
+      - name: Extract run stats
+        # Run even if the fuzz step crashed — we want stats artifacts
+        # uploaded for every scheduled run, success or failure.
+        if: always()
+        working-directory: qa/fuzz
+        env:
+          DURATION: ${{ github.event.inputs.duration || '18000' }}
+          USE_DICT: ${{ github.event.inputs.use_dict || 'false' }}
+        run: |
+          STATS="fuzz-stats-${{ matrix.target }}.txt"
+          {
+            echo "Target:   ${{ matrix.target }}"
+            echo "Run:      ${{ github.run_id }} (${{ github.event_name }})"
+            echo "Duration: ${DURATION}s"
+            echo "Dict:     ${USE_DICT}"
+            echo ""
+            echo "=== Early NEW coverage events (up to 20) ==="
+            grep -E "^#[0-9]+\s+NEW" fuzz-run.log | head -20 || true
+            echo ""
+            echo "=== Early REDUCE / corpus-shrink events (up to 10) ==="
+            # REDUCE dominates when the corpus is already well-explored.
+            grep -E "^#[0-9]+\s+REDUCE" fuzz-run.log | head -10 || true
+            echo ""
+            echo "=== Final state (last 20 lines) ==="
+            tail -20 fuzz-run.log
+          } > "$STATS" 2>/dev/null || true
+
+          # Mirror the summary to the GitHub Actions job summary panel so
+          # it's visible without downloading the artifact.
+          {
+            echo "## fuzz_${{ matrix.target }}"
+            echo ""
+            echo '```'
+            tail -10 fuzz-run.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Upload run stats
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stats-${{ matrix.target }}
+          path: qa/fuzz/fuzz-stats-${{ matrix.target }}.txt
+          # Stats are tiny; keep them longer than crashes so we have a
+          # historical record across the 30-day crash-artifact window.
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Upload crash artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crashes-${{ matrix.target }}
+          path: qa/fuzz/artifacts/${{ matrix.target }}/
+          retention-days: 30
+          # Don't fail the workflow if there are no artifacts (rare race:
+          # libFuzzer aborted before writing the crash file).
+          if-no-files-found: warn

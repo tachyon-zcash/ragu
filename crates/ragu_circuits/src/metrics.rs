@@ -194,8 +194,6 @@ pub struct CircuitMetrics {
     pub(crate) num_gates: usize,
 
     /// The degree of the instance polynomial $k(Y)$.
-    // TODO(ebfull): not sure if we'll need this later
-    #[allow(dead_code)]
     pub(crate) degree_ky: usize,
 
     /// Per-segment constraint records in DFS synthesis order.

@@ -3,21 +3,23 @@
 //!
 //! ## Design
 //!
-//! Gadgets are abstract data types that contain wires and witness data. By
-//! definition, all gadgets are polymorphic over [drivers](crate::drivers).
-//! Gadgets use the type system to encode information about wire assignments and
-//! the constraints that have previously been placed on them. Gadgets that
-//! satisfy the requisite API contracts can implement the [`Gadget`] trait so
-//! that drivers can manipulate them and their wires for optimization purposes
-//! without affecting their semantics.
+//! Gadgets are types that encapsulate wires and witness data used to compute
+//! assignments. Because the underlying types are defined by drivers, gadget
+//! types are necessarily parameterized by a [`Driver`]. As with all circuit
+//! code, gadgets must synthesize deterministically independently of the
+//! concrete driver.
 //!
-//! There are two main traits that gadgets implement: the [`Gadget`] trait is
-//! implemented for gadgets instantiated over a driver, and the [`GadgetKind`]
-//! trait is implemented to help relate gadgets instantiated over different
-//! drivers. The requirements for implementing these traits are strict, but the
-//! traits can be [automatically derived](derive@Gadget) in most cases. Further,
-//! not all gadgets need to implement these traits if they are not intended to
-//! be used with [routines](crate::routines).
+//! Witness types are driver-defined and their contents can only be extracted
+//! by the driver, so no gadget can convey invariants about witness data.
+//! In contrast, while wire types are also opaque handles defined by the driver,
+//! gadgets *can* convey invariants about the constraints placed over their
+//! wires.
+//!
+//! The [`Gadget`] trait is implemented for gadgets instantiated over a driver;
+//! the [`GadgetKind`] trait relates gadgets instantiated over different drivers.
+//! Both can be [automatically derived](derive@Gadget) in most cases. Gadgets
+//! that are not used with [routines](crate::routines) need not implement these
+//! traits.
 //!
 //! See the *Gadgets* chapter in the [book] for design motivation,
 //! composition examples, and the derive macro walkthrough.
@@ -33,26 +35,18 @@
 //!
 //! #### Fungibility
 //!
-//! Gadgets must be _fungible_: a gadget's behavior during circuit synthesis
-//! must be fully determined by its type, not by any particular instance's
-//! state. This ensures deterministic synthesis and allows drivers to substitute
-//! or transform gadgets without affecting circuit behavior.
+//! [`Gadget`] is a trait for gadgets with a stricter property called
+//! **fungibility**: for any two instances `a` and `b` of the same concrete
+//! gadget type, substituting all of `a`'s wires into `b` must yield an
+//! instance indistinguishable in all subsequent synthesis from `a`, carrying
+//! identical invariants over their wires.
 //!
-//! From this principle, three consequences follow:
-//!
-//! 1. **No dynamic-length collections.** The number of wires must be
-//!    type-determined. Use `FixedVec` with a compile-time `Len` bound instead
-//!    of `Vec`.
-//!
-//! 2. **No enum discriminants.** Which variant is active constitutes instance
-//!    state that affects synthesis.
-//!
-//! 3. **No non-witness runtime state.** Any runtime data must be _stable_
-//!    (identical across all instances of that type).
-//!
-//! Wires are fungible by definition, and witness data cannot affect synthesis,
-//! so gadgets containing only these (plus `PhantomData` and nested gadgets)
-//! automatically satisfy fungibility. The derive macro enforces this.
+//! One of the direct consequences of fungibility is that a [`Gadget`] impl
+//! must always contain the same number of wires in every instance, and
+//! cannot carry any additional state that would influence synthesis
+//! behavior. It also means that gadgets usually cannot be `enum`s.
+//! Fortunately, most gadgets only contain wires, witness data and other
+//! gadgets. These simple gadgets always qualify as fungible by definition.
 //!
 //! #### Transformations between Drivers
 //!
@@ -100,18 +94,20 @@ use super::{
 /// the common pattern of accessing `<K as GadgetKind<F>>::Rebind<'dr, D>`.
 pub type Bound<'dr, D, K> = <K as GadgetKind<<D as Driver<'dr>>::F>>::Rebind<'dr, D>;
 
-/// An abstract data type (parameterized by a [`Driver`] type) which
-/// encapsulates wires allocated by the driver along with any corresponding
-/// witness information.
+/// A type that encapsulates wires allocated by a [`Driver`] along with any
+/// corresponding witness data, and satisfies **fungibility**.
+///
+/// See the [module docs](self) for the wire/witness asymmetry.
 ///
 /// ## Fungibility
 ///
-/// Gadgets must be _fungible_: a gadget's behavior during circuit synthesis
-/// must be fully determined by its type, not by any particular instance's
-/// state. Wires are fungible by definition, and witness data cannot affect
-/// synthesis, so gadgets containing only these automatically satisfy this
-/// requirement. This precludes enum discriminants, dynamic-length collections,
-/// and non-stable runtime state.
+/// For any two instances `a` and `b` of the same concrete gadget type,
+/// substituting all of `a`'s wires into `b` must yield an instance
+/// indistinguishable in all subsequent synthesis from `a`, carrying identical
+/// invariants over their wires. This precludes dynamic-length collections,
+/// enum discriminants, and any other instance state that affects synthesis.
+/// Wires are fungible by definition, and witness data cannot affect synthesis,
+/// so gadgets containing only these automatically satisfy this requirement.
 ///
 /// ## Implementations
 ///

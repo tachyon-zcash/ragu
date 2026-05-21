@@ -23,6 +23,14 @@
 //! initial proofs that don't yet carry meaningful revdot claims. The constraint
 //! is enforced only when [`is_base_case`] returns false.
 //!
+//! ### $k(y)$ consistency
+//!
+//! This circuit also enforces that the $k(y)$ (instance polynomial evaluations)
+//! for the child proofs, witnessed in the [`outer_error`] stage, are consistent
+//! with the headers and unified instance data from the [`preamble`] stage. The
+//! $y$ challenge is derived in [`hashes_1`][super::hashes_1] and read from the
+//! unified instance here.
+//!
 //! ## Staging
 //!
 //! This circuit uses [`outer_error`] as its final stage, which inherits in the
@@ -57,7 +65,7 @@ use ragu_circuits::{
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::Bound,
+    gadgets::{Bound, Gadget},
     maybe::Maybe,
 };
 use ragu_primitives::allocator::Standard;
@@ -102,13 +110,15 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     /// (unenforced).
     ///
     /// Provides access to [`is_base_case`](super::super::stages::preamble::Output::is_base_case)
-    /// for conditional constraint enforcement.
+    /// for conditional constraint enforcement, and the child headers used to
+    /// compute $k(y)$ evaluations.
     pub preamble_witness: &'a preamble::Witness<'a, C, R, HEADER_SIZE>,
 
     /// Witness for the [`outer_error`] stage
     /// (unenforced).
     ///
-    /// Provides layer 2 error terms and collapsed values from layer 1.
+    /// Provides layer 2 error terms, collapsed values from layer 1, and the
+    /// witnessed $k(y)$ values verified for consistency by this circuit.
     pub outer_error_witness: &'a outer_error::Witness<C, FP>,
 }
 
@@ -152,6 +162,29 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 
         let allocator = &mut Standard::new();
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
+
+        // Compute k(y) values from preamble and enforce equality with staged
+        // values witnessed in outer_error. The y challenge is derived in
+        // hashes_1 and read (not received) here, since hashes_1 owns coverage.
+        {
+            let y = unified_output.y.read(dr, allocator)?;
+
+            let left_application_ky = preamble.left.application_ky(dr, &y)?;
+            let right_application_ky = preamble.right.application_ky(dr, &y)?;
+
+            left_application_ky.enforce_equal(dr, &outer_error.left.application)?;
+            right_application_ky.enforce_equal(dr, &outer_error.right.application)?;
+
+            let (left_unified_ky, left_unified_bridge_ky) =
+                preamble.left.unified_ky_values(dr, &y)?;
+            let (right_unified_ky, right_unified_bridge_ky) =
+                preamble.right.unified_ky_values(dr, &y)?;
+
+            left_unified_ky.enforce_equal(dr, &outer_error.left.unified)?;
+            right_unified_ky.enforce_equal(dr, &outer_error.right.unified)?;
+            left_unified_bridge_ky.enforce_equal(dr, &outer_error.left.unified_bridge)?;
+            right_unified_bridge_ky.enforce_equal(dr, &outer_error.right.unified_bridge)?;
+        }
 
         // Get layer 2 folding challenges. These are distinct from the layer 1
         // challenges (mu, nu) used in inner_collapse.

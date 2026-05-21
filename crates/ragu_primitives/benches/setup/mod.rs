@@ -1,5 +1,5 @@
 use ff::Field;
-use group::prime::PrimeCurveAffine;
+use group::CurveAffine;
 use ragu_arithmetic::{Cycle, Uendo};
 use ragu_core::{
     drivers::{

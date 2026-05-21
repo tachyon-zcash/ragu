@@ -216,7 +216,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Consistent<'dr, D> for Po
 
 #[test]
 fn test_point_alloc() -> Result<()> {
-    use group::prime::PrimeCurveAffine;
+    use group::CurveAffine;
 
     type F = ragu_pasta::Fp;
     type C = ragu_pasta::EpAffine;
@@ -238,7 +238,7 @@ fn test_point_alloc() -> Result<()> {
 
 #[test]
 fn test_point_double() -> Result<()> {
-    use group::{Group, prime::PrimeCurveAffine};
+    use group::{CurveAffine, Group};
 
     type F = ragu_pasta::Fp;
     type C = ragu_pasta::EpAffine;
@@ -272,7 +272,7 @@ fn test_point_double() -> Result<()> {
 fn test_add_incomplete() -> Result<()> {
     use alloc::vec;
 
-    use group::{Group, prime::PrimeCurveAffine};
+    use group::{CurveAffine, Group};
     use ragu_arithmetic::CurveExt;
 
     type F = ragu_pasta::Fp;
@@ -323,7 +323,7 @@ fn test_add_incomplete() -> Result<()> {
 fn test_double_and_add_incomplete() -> Result<()> {
     use alloc::{vec, vec::Vec};
 
-    use group::{Group, prime::PrimeCurveAffine};
+    use group::{CurveAffine, Group};
     use ragu_arithmetic::CurveExt;
 
     type F = ragu_pasta::Fp;

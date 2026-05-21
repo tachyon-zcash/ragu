@@ -216,6 +216,102 @@ Clean has plenty of length-polymorphic circuits. Don't claim "Clean can't expres
 
 The Lean formalization should represent the Rust circuit in its **full generality**, regardless of extraction limits.
 
+## Use Clean's loop combinators, not recursive helpers
+
+The single repeated review note across PR #710: **never** write a recursive helper function (`squareIter`, `hornerStep`, `for_step`, …) to express an iteration. Clean ships five loop combinators with `circuit_norm`-tagged simp lemmas (`Circuit.forEach`, `Circuit.map`, `Circuit.mapFinRange`, `Circuit.foldl`, `Circuit.foldlRange`); use those. See [Clean's loop combinators reference](https://deepwiki.com/Verified-zkEVM/clean/2.5-circuit-loops-and-iteration) for the full menu.
+
+**Why this matters.** Recursive helpers force you to write your own length / consistency / soundness / completeness lemmas by induction. The combinators bring those lemmas with them, tagged into `circuit_norm`, so `circuit_proof_start` collapses the loop machinery automatically and leaves you with a goal that looks like plain Lean math (a `Fin.foldl` equation, a per-iteration recurrence on `env.get` values).
+
+**The reviewer principle (Gregor, PR #710 Slack thread):** *"clean users are not supposed to have to call simplification lemmas explicitly. `circuit_proof_start` is supposed to yield a nice simplified version of the statement, after which your agent can just reason about normal lean/mathlib instead of our library."* If you find yourself manually invoking `simp [foldlRange.output_eq, Circuit.FoldlM.foldlAcc, …]` to make progress, that's a smell — either pick a different combinator or restructure the gadget so the auto-simp path applies.
+
+### Pick `foldl` over `foldlRange` when both work
+
+`Circuit.foldl xs init body` requires `ConstantOutput` on the body — the body's *symbolic* output must be invariant under (acc, element). When this holds, `foldl.output_eq` fires under `circuit_norm` and the proof environment is clean. `Circuit.foldlRange` doesn't require `ConstantOutput`, but its corresponding lemma leaves `Circuit.FoldlM.foldlAcc` unexpanded, forcing manual induction.
+
+**Default to `foldl`.** Reach for `foldlRange` only when the body genuinely produces an index-dependent output that can't be restructured.
+
+### Handle `Inhabited (Fin 0)` with an outer rcases
+
+`Circuit.foldl (.finRange k)` requires `[Inhabited (Fin k)]`, which fails when `k = 0`. The fix is the same shape every time: split the polymorphic parameter at the boundary and handle the empty case structurally.
+
+```lean
+def main : (k : ℕ) → Var Inputs (F p) → Circuit (F p) (...)
+  | 0, input => /- structural empty case, no loop -/
+  | k + 1, input => do
+    let result ← Circuit.foldl (.finRange (k + 1)) init body
+    /- continue -/
+```
+
+`EnforceRootOfUnity` in `qa/lean/Ragu/Circuits/Element/EnforceRootOfUnity.lean` is the canonical worked example (k=0 → `assertZero (input - 1)`, k+1 → `Circuit.foldl (.finRange (k+1)) input fun x _ => Mul.circuit ⟨x, x⟩`).
+
+### Restructure the body to make `ConstantOutput` hold
+
+If a naïve translation produces a body like
+```lean
+fun acc i => do
+  let scaled ← Mul.circuit ⟨acc, s⟩
+  pure (scaled + xs[i + 1])   -- output depends on i → ConstantOutput FAILS
+```
+the post-Mul addition makes the body output index-dependent and `Circuit.foldl`'s `_const_out` autotactic fails to synthesize. **Don't fall back to `foldlRange`** — restructure.
+
+The trick is to make the body's *last action* a subcircuit call whose output is a fresh wire (constant). For an `acc * s + xs[i+1]` Horner step:
+
+1. Do the first Horner step (`xs[0] * s`) as an *explicit* `Mul.circuit ⟨xs[0], s⟩` **outside** the foldl. Its output wire becomes the foldl's `init`.
+2. The foldl body is `fun acc i => Mul.circuit ⟨acc + xs[i+1], s⟩` — the index-dependent addition is now *inside* the Mul's input expression, and the body's output is just the fresh Mul wire (`var ⟨offset + 2⟩`), trivially `ConstantOutput`.
+3. After the foldl, add the trailing `xs[n]` via a free expression.
+
+`Fold` in `qa/lean/Ragu/Circuits/Element/Fold.lean` is the worked example (4-way rcases: 0, 1, 2, n+3 — the extra cases handle `Fin 0`/`Fin 1` boundaries cleanly). The autogen extractor sees the same `Mul`-per-Horner-step structure as a recursive-helper translation, so this restructure remains byte-for-byte compatible with the autogen instance proofs.
+
+### Sidestep `field (F p)` HPow synthesis in helper lemmas
+
+After `circuit_proof_start`, the loop's per-iteration witness is typed as `input : field (F p)` (where `field := id`). Lean's typeclass elaborator doesn't always unfold the `field` abbrev when synthesizing instances like `HPow (field (F p)) ℕ (F p)`, so writing `have wire_eq : ... = input ^ (2 ^ (i + 1)) := …` directly inside the proof fails with a typeclass synthesis error.
+
+**Workaround:** extract the inductive lemma as a `private` declaration parameterized over an explicit `env : Environment (F p)` and `x_val : F p`:
+
+```lean
+private lemma wire_value_eq_pow (k : ℕ) (env : Environment (F p))
+    (x_val : F p) (i₀ : ℕ)
+    (h0 : env.get (i₀ + 2) = x_val * x_val)
+    (hk : ∀ i, i + 1 < k + 1 → …) :
+    ∀ i, i ≤ k → env.get (i₀ + i * 3 + 2) = x_val ^ (2 ^ (i + 1)) := …
+
+theorem soundness (k : ℕ) : Soundness … := by
+  circuit_proof_start [Mul.circuit, …]
+  …
+  have wire_k := wire_value_eq_pow k env input i₀ h0 hk k (le_refl k)
+  …
+```
+
+Lean unifies `input : field (F p)` with the lemma's `x_val : F p` parameter cleanly at the call site (`field (F p)` *is* `F p` definitionally via `abbrev`), so the inner proof sees an honest `F p` and HPow synthesis works. Both `EnforceRootOfUnity.wire_value_eq_pow` and `Fold.wire_value_eq_horner` follow this pattern.
+
+A related warning to expect: `automatically included section variable(s) unused — [Fact (Nat.Prime p)]`. The helper does pure ring/field arithmetic, no primality. Suppress with `omit [Fact p.Prime] in` immediately before the lemma declaration (line-comment any docstring out — `omit` doesn't bind through `/-- … -/`).
+
+### Autogen instance proofs for `Circuit.foldl`
+
+When `main` uses `Circuit.foldl`, the `same_constraints` proof in the corresponding `qa/lean/Ragu/Instances/<Module>/<Gadget>.lean` file needs to unfold the foldl iteratively to byte-match the autogen's flat op list. The recipe:
+
+```lean
+same_constraints := by
+  intro input
+  simp [Core.Statements.FlatOperation.eraseCompute, List.map,
+    Operations.toFlat, circuit_norm,
+    FormalCircuit.isGeneralFormalCircuit,   -- or FormalAssertion.… for assertion-shaped gadgets
+    GeneralFormalCircuit.toWithHint,
+    GeneralFormalCircuit.WithHint.toSubcircuit, FormalCircuit.toSubcircuit,
+    deserializeInput, exportedOperations,
+    Circuits.Element.<Gadget>.circuit,
+    Circuits.Element.<Gadget>.elaborated,
+    Circuits.Element.<Gadget>.main,
+    Circuit.foldl, Vector.foldlM_toList,
+    Vector.finRange, Vector.ofFn, Vector.toList,
+    List.foldlM, List.foldlM_cons,
+    Circuits.Element.<Sub>.circuit, Circuits.Element.<Sub>.main]
+  constructor
+same_output := by intro input; rfl
+```
+
+The key unfolds: `Circuit.foldl` → `Vector.foldlM` → `Vector.foldlM_toList` → `List.foldlM_cons` (peels one iteration at a time until the list is exhausted). Lake's linter will flag any of `Vector.cast`, `List.foldlM_nil`, `Vector.finRange` etc. as unused if a particular gadget's shape doesn't need them — trim the list per the lint. CI treats those linter warnings as errors.
+
 ## Watch for false justifications
 
 Reviewers flag explanatory comments that aren't actually true (literal review verdict: "lie"). If a doc comment claims "Clean doesn't support X" or "this requires dependent types we don't expose", verify against the Clean codebase before writing it — those claims tend to be wrong.
@@ -269,5 +365,6 @@ Steps 1–2 can swap. Sub-gadgets stop after step 5.
 - [tachyon-zcash/ragu#642](https://github.com/tachyon-zcash/ragu/pull/642) — clean integration foundation. Trust-model artifact map (r3102920311); input/output struct shape is part of the trusted spec, wire order is not (r3105702381, r3115790860 — `assertLt` shadowed-bug example, composition-as-mitigation side note); per-gadget extension workflow distilled from the 102-commit history (artifact set, sub-gadget carve-out per Tal's approval comment, framework co-evolution via upstream Clean PRs).
 - [tachyon-zcash/ragu#672](https://github.com/tachyon-zcash/ragu/pull/672) — mitschabaude review (initial extraction)
 - [tachyon-zcash/ragu#674](https://github.com/tachyon-zcash/ragu/pull/674) — mitschabaude review (Boolean gadget). Verdict: "agents missed the compositionality of clean and wrote specs that just repeat the math equations instead of translating them into higher-level programming statements." Threads: r3138867768, r3138904103, r3138963958, r3138965755, r3138972958, r3138991793, r3139002146, r3139003436, r3139007420, r3139012715.
+- [tachyon-zcash/ragu#710](https://github.com/tachyon-zcash/ragu/pull/710) — mitschabaude review (`EnforceRootOfUnity`, `Fold` polymorphism). Top-level note: "clean has a couple of loop constructs with simp support in `circuit_proof_start` / `circuit_norm`. We use these whenever we need a loop: `Circuit.forEach`, `Circuit.map`, `Circuit.mapFinRange`, `Circuit.foldl`, `Circuit.foldlRange`." Inline suggestions r3265194082, r3265194093. Slack follow-up clarified the principle: "use foldl which behaves well" (not "make foldlRange behave better"); "clean users are not supposed to have to call simplification lemmas explicitly." Worked examples in `qa/lean/Ragu/Circuits/Element/{EnforceRootOfUnity,Fold}.lean`.
 
 <!-- Append new lessons below this line as they emerge from review feedback. -->

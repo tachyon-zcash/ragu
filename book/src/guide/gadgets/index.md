@@ -1,16 +1,21 @@
 # Gadgets
 
-Circuit code operates on wires and witness data, but working directly with them
-leaves invariants implicit and spread across call sites. The structural units
-that bundle these primitives and their constraints into self-contained types are
-called **gadgets**.
+Circuit code operates on wires, but working directly with them leaves invariants
+implicit and spread across call sites. Gadgets are types that encapsulate wires
+and the [witness data](../drivers/witness.md) used to compute their assignments.
+Because the underlying types ([`Wire`], [`DriverValue`]) are defined by drivers,
+gadget types are necessarily parameterized by a [`Driver`][driver-trait]. As
+with all circuit code, gadgets must synthesize *deterministically*,
+independently of the concrete driver.
+
+Since witness types are driver-defined and their contents can only be extracted
+by the driver, no gadget can convey invariants about witness information. In
+contrast, while [`Wire`] types are also opaque handles defined by the driver,
+gadgets *can* convey invariants about the constraints placed over their wires.
 
 As an example, one of the simplest gadgets is the [`Boolean`][boolean-gadget]
 gadget which internally represents a wire that is constrained to be $0$ or $1$
-together with the witness information (a `bool`) that describes its assignment.
-Wires always take the form of an associated type `D::Wire` based on the
-[driver](../drivers/index.md) `D`, and so the `Boolean` gadget could be
-represented by the Rust structure:
+together with the witness data (a `bool`) that describes its assignment:
 
 ```rust
 pub struct Boolean<'dr, D: Driver<'dr>> {
@@ -40,39 +45,35 @@ This gadget is a _compositional_ gadget: it contains another gadget (a
 
 ## [`Gadget`][gadget-trait] trait {#fungibility}
 
-The [`Gadget`][gadget-trait] trait captures the structural guarantees that
-drivers rely on to [convert](conversion.md) gadgets between driver contexts
-and optimize circuit synthesis. All implementations must satisfy the following
-requirements:
+[`Gadget`][gadget-trait] is a trait for gadgets with a stricter property called
+**fungibility**: for any two instances `a` and `b` of the same concrete gadget
+type, substituting all of `a`’s wires into `b` must yield an instance
+indistinguishable in all subsequent synthesis from `a`, carrying identical
+invariants over their wires.
 
-* **They must be fungible.** A gadget's behavior during circuit synthesis must
-  be fully determined by its type, not by any particular instance's state.
-    * Among the consequences of this principle:
-        1. Gadgets cannot contain dynamic-length collections (use
-           [`FixedVec`][fixedvec-gadget] with a static [`Len`][len-trait]
-           bound instead).
-        2. Gadgets generally cannot be `enum`s (discriminants are instance
-           state).
-        3. Any non-witness runtime data must be _stable_ (identical across all
-           instances).
-    * Wires are fungible by definition, and witness data cannot affect
-      synthesis, so gadgets containing only these automatically satisfy
-      fungibility.
-* **They must be thread-safe.** In particular, as described in the
-  [documentation][gadget-thread-guarantees], everything within a gadget that is
-  not a `D::Wire` should implement `Send`, so that when `D::Wire: Send` the
-  entire gadget can cross thread boundaries safely. Because gadgets usually do
-  not contain anything besides wires and witness data (which must be `Send` by
-  the definition of [`Maybe<T: Send>`][maybe-trait]), this property almost
-  always holds.
-* **They must be `'static`.** Specifically, when the driver's lifetime `'dr` is
-  the static lifetime `'static` the gadget itself must be `'static`. This
-  property is guaranteed by the Rust type system, and so gadget implementations
-  do not need to carefully reason about it. In practice, any references a gadget
-  contains must be `'static`.
-* **They must be `Clone`.** All gadgets should be cloneable. This is commonly
-  necessary anyway, but drivers may need to clone gadgets generically when
-  performing various transformations.
+One of the direct consequences of fungibility is that a [`Gadget`][gadget-trait]
+impl must always contain the same number of wires in every instance, and cannot
+carry any additional state that would influence synthesis behavior. For example,
+`Gadget`s usually cannot be `enum`s, and you must use `[G; N]` or
+[`FixedVec`][fixedvec-gadget] for length-typed collections.
+
+Fungibility permits drivers to [manipulate gadgets](conversion.md) for
+optimization and analysis without disturbing the gadget's API contract.
+Fortunately, most gadgets only contain wires, witness data and other gadgets,
+and so they easily satisfy fungibility; [`Gadget`][gadget-trait] can be [automatically
+derived](#automatic-derivation) for nearly all gadgets.
+
+### Thread Safety
+
+[`Gadget`][gadget-trait]s must also be thread-safe, as described in the
+[documentation][gadget-thread-guarantees]: everything within a gadget that is
+not a `D::Wire` should implement `Send`, so that when `D::Wire: Send` the entire
+gadget can cross thread boundaries safely. This almost always holds because
+gadgets usually contain only wires and witness data (which must be `Send` by
+the definition of [`Maybe<T: Send>`][maybe-trait]).
+
+When the driver's lifetime `'dr` is `'static`, the Rust type system also
+guarantees that the gadget itself is `'static`.
 
 ### `num_wires`
 
@@ -122,3 +123,5 @@ is only needed for clarity.
 [gadget-thread-guarantees]: ragu_core::gadgets::GadgetKind#safety
 [maybe-trait]: ragu_core::maybe::Maybe
 [num-wires-method]: ragu_core::gadgets::Gadget::num_wires
+[`Wire`]: ragu_core::drivers::Driver::Wire
+[`DriverValue`]: ragu_core::drivers::DriverValue

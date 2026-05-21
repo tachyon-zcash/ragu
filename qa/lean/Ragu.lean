@@ -10,8 +10,10 @@ import Ragu.Instances.Element.Square
 import Ragu.Instances.Element.Alloc
 import Ragu.Instances.Element.AllocSquare
 import Ragu.Instances.Element.DivNonzero
-import Ragu.Instances.Element.Fold
-import Ragu.Instances.Element.EnforceRootOfUnity
+import Ragu.Instances.Element.FoldN3
+import Ragu.Instances.Element.FoldN7
+import Ragu.Instances.Element.EnforceRootOfUnityK2
+import Ragu.Instances.Element.EnforceRootOfUnityK5
 import Ragu.Instances.Element.EnforceZero
 import Ragu.Instances.Element.Invert
 import Ragu.Instances.Element.InvertWith

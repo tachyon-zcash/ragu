@@ -64,3 +64,7 @@ def output (circuit : Circuit F α) (offset : ℕ) : α := (circuit offset).1
 def localLength (circuit : Circuit F α) (offset := 0) : ℕ :=
   Operations.localLength (circuit offset).2
 ```
+
+## Iteration: use Clean's loop combinators
+
+For any iterative circuit body, use one of Clean's built-in loop combinators — `Circuit.forEach`, `Circuit.map`, `Circuit.mapFinRange`, `Circuit.foldl`, `Circuit.foldlRange` — rather than writing a custom recursive helper. The combinators carry `circuit_norm`-tagged simp lemmas so that `circuit_proof_start` collapses the loop machinery for free, leaving you with goals expressed in plain Lean/Mathlib terms. See [Clean's loop combinators reference](https://deepwiki.com/Verified-zkEVM/clean/2.5-circuit-loops-and-iteration) for the menu and semantics. `EnforceRootOfUnity` and `Fold` in the Ragu repository (`qa/lean/Ragu/Circuits/Element/`) are worked examples of the `Circuit.foldl (.finRange (k + 1))` pattern, including the standard rcases for the `Fin 0`-not-`Inhabited` boundary.

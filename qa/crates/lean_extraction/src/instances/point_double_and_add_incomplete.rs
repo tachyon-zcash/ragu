@@ -1,4 +1,4 @@
-use group::prime::PrimeCurveAffine;
+use group::CurveAffine;
 use ragu_pasta::{EpAffine, Fp};
 use ragu_primitives::Point;
 

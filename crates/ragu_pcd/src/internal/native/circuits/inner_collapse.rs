@@ -26,7 +26,7 @@
 //! - Child [$c$] values from the [`preamble`] (representing the children's
 //!   final revdot claims).
 //! - Application and unified $k(y)$ evaluations from [`outer_error`] (computed and
-//!   verified in [`hashes_1`]).
+//!   verified in [`outer_collapse`]).
 //!
 //! ## Staging
 //!
@@ -49,7 +49,6 @@
 //! [`inner_error`]: super::super::stages::inner_error
 //! [`outer_error`]: super::super::stages::outer_error
 //! [`preamble`]: super::super::stages::preamble
-//! [`hashes_1`]: super::hashes_1
 //! [`ClaimFolder::fold_inner`]: fold_revdot::ClaimFolder::fold_inner
 //! [`TwoProofKySource`]: crate::internal::native::claims::TwoProofKySource
 

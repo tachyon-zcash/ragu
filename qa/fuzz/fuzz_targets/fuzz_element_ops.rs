@@ -16,15 +16,23 @@ use ragu_core::maybe::Maybe;
 use ragu_primitives::{Boolean, Element, Simulator, allocator::Standard};
 
 fn special_value(idx: u8) -> Fp {
-    match idx % 8 {
+    match idx % 16 {
         0 => Fp::ZERO,
         1 => Fp::ONE,
-        2 => -Fp::ONE,                          // p - 1
-        3 => Fp::TWO_INV,                        // (p + 1) / 2
-        4 => Fp::ROOT_OF_UNITY,                  // 2-adic root of unity
-        5 => Fp::MULTIPLICATIVE_GENERATOR,       // smallest generator
-        6 => Fp::ROOT_OF_UNITY.square(),          // another root of unity
-        _ => Fp::from(u64::MAX),                   // large value near 2^64
+        2 => -Fp::ONE,                                // p - 1
+        3 => -Fp::from(2),                            // p - 2
+        4 => Fp::TWO_INV,                             // (p + 1) / 2
+        5 => Fp::from(2),
+        6 => Fp::from(3),
+        7 => Fp::from(7),
+        8 => Fp::ROOT_OF_UNITY,                       // 2-adic primitive root
+        9 => Fp::ROOT_OF_UNITY.square(),              // (S-1)-adic primitive root
+        10 => Fp::ROOT_OF_UNITY.pow_vartime([4u64]),  // (S-2)-adic primitive root
+        11 => Fp::MULTIPLICATIVE_GENERATOR,           // smallest generator
+        12 => Fp::MULTIPLICATIVE_GENERATOR.square(),
+        13 => Fp::from(1u64 << 32),                   // 2^32 boundary
+        14 => Fp::from(1u64 << 48),                   // 2^48 boundary
+        _ => Fp::from(u64::MAX),                      // large value near 2^64
     }
 }
 
@@ -44,6 +52,11 @@ enum Op {
     AllocConst(u64),
     AllocSpecial(u8),
     AllocSquare(u64),
+    /// Allocate an `Element` whose value is the 32-byte chunk interpreted
+    /// as a canonical `Fp` (via `Fp::from_repr`). Lets libFuzzer's
+    /// dictionary entries land directly in the witness without going
+    /// through the `Arbitrary` `u64`-seed reinterpretation.
+    AllocRaw([u8; 32]),
     BoolAlloc(bool),
     BoolNot(u8),
     BoolAnd(u8, u8),
@@ -62,6 +75,12 @@ struct Input {
 }
 
 fuzz_target!(|input: Input| {
+    // DEBUG_INPUT=1 prints the parsed Arbitrary input and exits — useful for
+    // triaging crash artifacts. See README.md "DEBUG_INPUT env var" section.
+    if std::env::var("DEBUG_INPUT").is_ok() {
+        eprintln!("{:#?}", input);
+        return;
+    }
     if input.ops.is_empty() || input.ops.len() > 48 {
         return;
     }
@@ -169,6 +188,16 @@ fuzz_target!(|input: Input| {
                     let v = special_value(idx);
                     let r = Element::alloc(dr, allocator, witness.as_ref().map(|_| v))?;
                     elems.push(r);
+                }
+                Op::AllocRaw(bytes) => {
+                    let v: Option<Fp> = Fp::from_repr(bytes).into();
+                    if let Some(fp) = v {
+                        if let Ok(r) =
+                            Element::alloc(dr, allocator, witness.as_ref().map(|_| fp))
+                        {
+                            elems.push(r);
+                        }
+                    }
                 }
                 Op::AllocSquare(v) => {
                     if let Ok((root, sq)) = Element::alloc_square(

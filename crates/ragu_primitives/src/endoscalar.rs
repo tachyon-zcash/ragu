@@ -252,7 +252,7 @@ pub fn extract_endoscalar<F: PrimeField + WithSmallOrderMulGroup<3>>(value: F) -
 #[cfg(test)]
 mod tests {
     use ff::{Field, PrimeField, WithSmallOrderMulGroup};
-    use group::{Group, prime::PrimeCurveAffine};
+    use group::{CurveAffine as _, Group};
     use ragu_arithmetic::{CurveAffine, CurveExt, Uendo};
     use ragu_core::Result;
     use ragu_pasta::{EpAffine, Fp};
@@ -299,7 +299,7 @@ mod tests {
     #[test]
     #[allow(clippy::useless_conversion)]
     fn test_endoscaling_consistency() {
-        use group::prime::PrimeCurveAffine;
+        use group::CurveAffine as _;
         use ragu_pasta::{EpAffine, Fq};
 
         let p = EpAffine::generator();

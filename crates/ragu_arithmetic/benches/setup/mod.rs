@@ -1,5 +1,5 @@
 use ff::Field;
-use pasta_curves::{EpAffine, Fp, Fq, group::prime::PrimeCurveAffine};
+use pasta_curves::{EpAffine, Fp, Fq, group::CurveAffine};
 use ragu_arithmetic::Domain;
 use rand::{SeedableRng, rngs::StdRng};
 

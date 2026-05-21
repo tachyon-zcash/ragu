@@ -23,12 +23,9 @@
 //! the [`outer_error`][super::super::stages::outer_error] stage and verified here to
 //! enable resumption in `hashes_2`.
 //!
-//! ### $k(y)$ evaluations
-//!
-//! This circuit also is responsible for using the derived $y$ value to compute
-//! the $k(y)$ (instance polynomial evaluations) for the child proofs. These
-//! are witnessed in the [`outer_error`][super::super::stages::outer_error] stage and
-//! enforced to be consistent by this circuit.
+//! The $k(y)$ (instance polynomial) consistency checks against the witnessed
+//! values in the [`outer_error`][super::super::stages::outer_error] stage are
+//! performed in [`outer_collapse`][super::outer_collapse].
 //!
 //! ### Valid circuit IDs
 //!
@@ -161,7 +158,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Para
 /// Witness data for the first hash circuit.
 ///
 /// Combines the unified instance with stage witnesses needed to perform the
-/// Fiat-Shamir derivations and $k(y)$ consistency checks.
+/// Fiat-Shamir derivations and transcript-state verification.
 pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
     /// The unified instance containing expected challenge values and
     /// accumulated coverage from prior circuits.
@@ -170,14 +167,15 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     /// Witness for the [`preamble`](super::super::stages::preamble) stage
     /// (unenforced).
     ///
-    /// Provides output headers and data for computing $k(y)$ evaluations.
+    /// Provides output headers (included in this circuit's instance) and
+    /// circuit IDs for the root-of-unity check.
     pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
 
     /// Witness for the [`outer_error`](super::super::stages::outer_error) stage
     /// (unenforced).
     ///
-    /// Provides the saved sponge state and pre-computed $k(y)$ values for
-    /// consistency verification.
+    /// Provides the saved sponge state used to verify resumption into
+    /// [`hashes_2`](super::hashes_2).
     pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
 }
 
@@ -256,28 +254,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             let z = transcript.challenge(dr)?;
             (y, z)
         };
-        unified_output.y.provide(y.clone());
+        unified_output.y.provide(y);
         unified_output.z.provide(z);
-
-        // Compute k(y) values from preamble and enforce equality with staged
-        // values.
-        {
-            let left_application_ky = preamble.left.application_ky(dr, &y)?;
-            let right_application_ky = preamble.right.application_ky(dr, &y)?;
-
-            left_application_ky.enforce_equal(dr, &outer_error.left.application)?;
-            right_application_ky.enforce_equal(dr, &outer_error.right.application)?;
-
-            let (left_unified_ky, left_unified_bridge_ky) =
-                preamble.left.unified_ky_values(dr, &y)?;
-            let (right_unified_ky, right_unified_bridge_ky) =
-                preamble.right.unified_ky_values(dr, &y)?;
-
-            left_unified_ky.enforce_equal(dr, &outer_error.left.unified)?;
-            right_unified_ky.enforce_equal(dr, &outer_error.right.unified)?;
-            left_unified_bridge_ky.enforce_equal(dr, &outer_error.left.unified_bridge)?;
-            right_unified_bridge_ky.enforce_equal(dr, &outer_error.right.unified_bridge)?;
-        }
 
         // Absorb bridge_inner_error_commitment and verify saved transcript state
         {

@@ -1,5 +1,5 @@
 use ragu_arithmetic::CurveExt;
-use group::{Curve, prime::PrimeCurveAffine};
+use group::{Curve, CurveAffine};
 use pasta_curves::{
     EpAffine,
     EqAffine,

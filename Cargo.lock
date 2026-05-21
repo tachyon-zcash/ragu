@@ -4,8 +4,9 @@ version = 4
 
 [[package]]
 name = "addchain"
-version = "0.2.0"
-source = "git+https://github.com/ebfull/addchain?rev=da4099a81bc29c895f3ca0ebcaae21c860494c12#da4099a81bc29c895f3ca0ebcaae21c860494c12"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5665045de74fda906c0abfaec40cf2551f88c34dccea869f3fe950dde7209764"
 dependencies = [
  "num-bigint",
  "num-integer",
@@ -382,7 +383,7 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 [[package]]
 name = "ff"
 version = "0.14.0-pre.0"
-source = "git+https://github.com/ebfull/ff?branch=release-0.14.0-with-rand-0.10#f4ca7c23e6ea693b13aba0c690ad7c43852c561c"
+source = "git+https://github.com/zkcrypto/ff?rev=bdd74a3f75c4c378d69e954944a61bb0930532a0#bdd74a3f75c4c378d69e954944a61bb0930532a0"
 dependencies = [
  "bitvec",
  "ff_derive",
@@ -393,7 +394,7 @@ dependencies = [
 [[package]]
 name = "ff_derive"
 version = "0.14.0-pre.0"
-source = "git+https://github.com/ebfull/ff?branch=release-0.14.0-with-rand-0.10#f4ca7c23e6ea693b13aba0c690ad7c43852c561c"
+source = "git+https://github.com/zkcrypto/ff?rev=bdd74a3f75c4c378d69e954944a61bb0930532a0#bdd74a3f75c4c378d69e954944a61bb0930532a0"
 dependencies = [
  "addchain",
  "num-bigint",
@@ -451,7 +452,7 @@ dependencies = [
 [[package]]
 name = "group"
 version = "0.14.0-pre.0"
-source = "git+https://github.com/ebfull/group?branch=release-0.14.0-with-rand-0.10#5f5c693275598d7885827e153c21ff99c60e18f3"
+source = "git+https://github.com/zkcrypto/group?rev=326b36b0c43dcb1507b89017323f43a57c3bffd8#326b36b0c43dcb1507b89017323f43a57c3bffd8"
 dependencies = [
  "ff",
  "rand_core 0.10.0",
@@ -694,7 +695,7 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 [[package]]
 name = "pasta_curves"
 version = "0.5.1"
-source = "git+https://github.com/ebfull/pasta_curves?branch=ff-0.14-with-rand-0.10-and-deferred#66b3b687dedcdbed18ff2bf71bd1fc31aeefaa11"
+source = "git+https://github.com/ebfull/pasta_curves?rev=4f9da85aeebc650a57610501d50d036454dcdc48#4f9da85aeebc650a57610501d50d036454dcdc48"
 dependencies = [
  "blake2b_simd",
  "ff",

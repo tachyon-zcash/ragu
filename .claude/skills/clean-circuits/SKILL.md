@@ -113,6 +113,32 @@ def main (input : Var Inputs F) : Circuit F (Var Outputs F) := do
   ...
 ```
 
+### Loop combinators (`Clean/Circuit/Loops.lean`)
+
+Clean ships five loop combinators with `circuit_norm`-tagged simp lemmas. **Use these for any iteration**; don't write recursive helper functions (`fooStep` / `barIter` patterns) — they require manual induction proofs and bypass the auto-simp path that `circuit_proof_start` is designed around.
+
+| Combinator | Signature (sketch) | Use when |
+|---|---|---|
+| `Circuit.forEach xs body` | `Vector α m → (α → Circuit F Unit)` | Constraint-only iteration; body emits constraints, no accumulator. |
+| `Circuit.map xs body` | `Vector α m → (α → Circuit F β) → Circuit F (Vector β m)` | Element-wise transform; per-iter output collected into a Vector. |
+| `Circuit.mapFinRange m body` | `(Fin m → Circuit F β) → Circuit F (Vector β m)` | Like `map` but iterates over `Fin m` indices directly. |
+| `Circuit.foldl xs init body` | `Vector α m → β → (β → α → Circuit F β) → Circuit F β` | Accumulating fold; threads `β` through iterations. |
+| `Circuit.foldlRange m init body` | `(Fin m → ...)` | Like `foldl` but iterates over `Fin m` instead of an element vector. |
+
+**Typeclass requirements.** All of `foldl`, `foldlRange`, `mapFinRange` require `[Inhabited β]`; `foldl` additionally requires `[Inhabited α]` for the element type. `Fin k` has no `Inhabited` instance when `k = 0` — so a polymorphic gadget using `Circuit.foldl (.finRange k)` typically rcases `k` to handle the `k = 0` case separately, then invokes the foldl in the `k+1` branch where `Fin (k+1)` IS `Inhabited`.
+
+**`ConstantOutput` requirement (foldl only).** `Circuit.foldl` carries a default-tactic argument
+```lean
+(_const_out : ConstantOutput (fun (s, a) => body s a) := by simp only [circuit_norm]; intros; rfl)
+```
+which asserts the body's *symbolic output* is invariant under (acc, element). This is what unlocks `foldl.output_eq` in `circuit_norm` — the foldl collapses to a single body application at the last index, cleanly threadable through `circuit_proof_start`. If your body returns a fresh wire (`Mul.circuit` output is `var ⟨offset + 2⟩`), `ConstantOutput` holds trivially. If it returns `wire + xs[i+1]` (index-dependent), `ConstantOutput` fails and `Circuit.foldl` won't elaborate.
+
+**`foldlRange` lacks `ConstantOutput`.** Its corresponding `foldlRange.output_eq` leaves `Circuit.FoldlM.foldlAcc` unexpanded — proofs work but require manual induction over the foldl. Prefer `foldl` when the body's output happens to be acc/index-independent (often achievable by restructuring: pull the index-dependent addition *outside* the loop, or push it into the *input* of a subcircuit so its output is just a fresh wire).
+
+### Auto-simp philosophy
+
+The intended UX (per mitschabaude): `circuit_proof_start` yields a goal that looks like *normal Lean/Mathlib math* — the circuit-specific machinery (loop combinators, subcircuit calls, witness/assert offsets) has already been collapsed by `circuit_norm`. Users then reason with `induction`, `ring`, `simp`, mathlib lemmas, etc. If you find yourself invoking circuit-specific simp lemmas explicitly (e.g., `simp [foldlRange.output_eq, Circuit.FoldlM.foldlAcc]`), you're off the happy path — either pick a different combinator (one whose lemmas already fire under `circuit_norm`) or restructure the gadget so the auto-simp path applies.
+
 ## Proof Patterns
 
 ### Starting a Proof

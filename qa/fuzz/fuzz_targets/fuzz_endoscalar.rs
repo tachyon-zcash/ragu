@@ -15,7 +15,7 @@ use ff::Field;
 use ff::PrimeField;
 use ff::WithSmallOrderMulGroup;
 use group::{Curve, Group};
-use group::prime::PrimeCurveAffine;
+use group::CurveAffine as _;
 use pasta_curves::arithmetic::CurveAffine;
 use libfuzzer_sys::fuzz_target;
 use pasta_curves::Fp;
@@ -76,6 +76,12 @@ struct Input {
 }
 
 fuzz_target!(|input: Input| {
+    // DEBUG_INPUT=1 prints the parsed Arbitrary input and exits — useful for
+    // triaging crash artifacts. See README.md "DEBUG_INPUT env var" section.
+    if std::env::var("DEBUG_INPUT").is_ok() {
+        eprintln!("{:#?}", input);
+        return;
+    }
     if input.point_ops.len() > 16 {
         return;
     }

@@ -51,6 +51,11 @@ where
     /// [`Driver::mul`]) and [`Driver::constant`] are rejected after
     /// finalization.
     ///
+    /// The circuit must declare `Output = ()`. Non-empty output would
+    /// be serialized into output-binding constraints by the standard
+    /// synthesis path, contributing to $k(Y)$ and violating the bonding
+    /// invariant that $k(Y) \equiv 0$. This is enforced at the type level.
+    ///
     /// The `ONE`-wire contribution is stripped so that the constant term in $Y$
     /// is zero, as required of a bonding polynomial.
     ///
@@ -63,6 +68,7 @@ where
     pub fn into_bonding_object<'a>(self) -> Result<BondingObject<'a, F, R>>
     where
         Self: 'a,
+        S: MultiStageCircuit<F, R, Output = ()>,
     {
         // Validate: run synthesis with a driver that rejects ONE usage
         // and — after the stage builder finalizes — mul/gate.
@@ -74,6 +80,15 @@ where
         if let Some(msg) = validator.error {
             return Err(ragu_core::Error::InvalidWitness(msg.into()));
         }
+
+        // Defensive cross-check on the type-level invariant: `Output = ()` and
+        // `Write<F> for ()` together guarantee no output-binding constraints
+        // are emitted, so the instance polynomial $k(Y)$ has degree zero.
+        let metrics = crate::metrics::eval(&self)?;
+        assert_eq!(
+            metrics.degree_ky, 0,
+            "bonding circuit must have empty instance polynomial",
+        );
 
         // Build the WiringObject via the standard pipeline.
         let inner = into_wiring_object::<_, _, R>(self)?;

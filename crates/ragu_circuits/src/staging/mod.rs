@@ -114,6 +114,34 @@
 //!
 //! Assuming stages are well-formed, they can be combined by merely adding them
 //! together with the final staging polynomial, producing the desired $r(X)$.
+//!
+//! ## Gadget invariants
+//!
+//! Even if gadgets are fungible, any driver that modifies the wires of a
+//! gadget risks breaking one of their invariants. [`Stage::witness`] only
+//! guarantees to produce a gadget with the correct shape, but the prover
+//! could lie and produce one that does not satisfy the invariants.
+//! [`unenforced`](StageGuard::unenforced) takes the prover at their word,
+//! or possibly relies on a different [`enforced`](StageGuard::enforced)
+//! call to check it. [`enforced`](StageGuard::enforced) provides only the
+//! guarantee that the gadget is
+//! [`Consistent`](ragu_primitives::consistent::Consistent), which is only
+//! implemented for gadgets that are capable of emitting constraints to
+//! re-express all of their invariants.
+//!
+//! When called through [`StageBuilder`] (wire reservation and witness
+//! computation), `Stage::witness` runs on a wireless emulator where
+//! `gate`, `add`, and `enforce_zero` are all no-ops, so anything the
+//! body writes to the supplied driver is discarded. During polynomial
+//! extraction in [`StageExt::rx`], `Stage::witness` instead runs on a
+//! wired emulator where `gate` and `add` execute to collect values;
+//! `enforce_zero` is still a no-op, so any constraints the body emits
+//! are still discarded.
+//!
+//! For the book-length version of this story, see the
+//! [staging implementation chapter].
+//!
+//! [staging implementation chapter]: https://tachyon.z.cash/ragu/implementation/staging
 
 pub(crate) mod bonding;
 mod builder;
@@ -142,7 +170,12 @@ use crate::{
     polynomials::{Rank, sparse},
 };
 
-/// Represents a partial trace component for a multi-stage circuit.
+/// A partial trace component for a multi-stage circuit, producing a gadget of
+/// type [`OutputKind`](Self::OutputKind) over the wires it commits to.
+///
+/// See the module-level [gadget invariants](self#gadget-invariants) section
+/// for what `Stage` and its consumers do and do not guarantee about the
+/// wires inside the produced gadget.
 pub trait Stage<F: Field, R: Rank> {
     /// The parent stage for this stage. This is set to `()` for the base stage.
     type Parent: Stage<F, R>;
@@ -161,7 +194,17 @@ pub trait Stage<F: Field, R: Rank> {
     /// Returns the number of values that are allocated in this stage.
     fn values() -> usize;
 
-    /// Computes the witness for this stage.
+    /// Produce the stage's [`OutputKind`](Self::OutputKind) gadget and the
+    /// wire values it commits to.
+    ///
+    /// Guarantees only the shape of the returned gadget — see the
+    /// module-level [gadget invariants](self#gadget-invariants) section.
+    /// The framework invokes this method only on stub drivers: a
+    /// wireless emulator inside [`StageBuilder`] (where `gate`, `add`,
+    /// and `enforce_zero` are all no-ops) or a wired emulator inside
+    /// [`StageExt::rx`] (where `gate` and `add` execute to collect
+    /// values, but `enforce_zero` remains a no-op). Either way, any
+    /// constraints the body emits via `enforce_zero` are discarded.
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: &mut D,

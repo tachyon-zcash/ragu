@@ -19,7 +19,7 @@
 use alloc::vec;
 
 use ff::{Field, WithSmallOrderMulGroup};
-use pasta_curves::group::{Curve, WnafBase, WnafScalar, prime::PrimeCurveAffine};
+use pasta_curves::group::{Curve, WnafBase, WnafScalar};
 use ragu_arithmetic::{CurveAffine, Uendo};
 use ragu_circuits::{
     WithAux,
@@ -107,7 +107,7 @@ pub struct PointsWitness<C: CurveAffine, const NUM_POINTS: usize> {
     pub interstitials: FixedVec<C, NumStepsLen<NUM_POINTS>>,
 }
 
-impl<C: CurveAffine + PrimeCurveAffine, const NUM_POINTS: usize> PointsWitness<C, NUM_POINTS>
+impl<C: CurveAffine, const NUM_POINTS: usize> PointsWitness<C, NUM_POINTS>
 where
     C::Scalar: WithSmallOrderMulGroup<3>,
 {
@@ -328,7 +328,7 @@ mod tests {
     use alloc::vec::Vec;
 
     use ff::Field;
-    use pasta_curves::group::{Curve, Group, prime::PrimeCurveAffine};
+    use pasta_curves::group::{Curve, CurveAffine as _, Group};
     use ragu_arithmetic::Uendo;
     use ragu_circuits::{
         CircuitExt,

@@ -112,13 +112,9 @@ Specific anti-patterns to avoid:
 
 ## Synced Content
 
-Some content appears in both the README and the book, delimited by
-`<!-- BEGIN SYNC -->` / `<!-- END SYNC -->` HTML comments. The canonical
-pairs are:
-
-| README section | Book page |
-|---------------|-----------|
-| `## Requirements` | `book/src/guide/requirements.md` |
+When content is shared between the README and the book, it is
+delimited by `<!-- BEGIN SYNC -->` / `<!-- END SYNC -->` HTML comments.
+There are currently no synced pairs.
 
 When reviewing changes inside a synced block, verify that the
 corresponding file contains identical content. Flag any drift as

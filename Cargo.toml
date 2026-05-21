@@ -78,36 +78,23 @@ blake2b_simd = "1.0"
 maybe-rayon = { version = "0.1.1", default-features = false }
 criterion = { version = "0.5", default-features = false }
 
-# NOTE: `crates/ragu_testing/fuzz/Cargo.toml` is its own workspace root
+# NOTE: `qa/fuzz/Cargo.toml` is its own workspace root
 # (cargo-fuzz convention) and `[patch.crates-io]` does not propagate into
 # nested workspaces. If you add, remove, or change any patch below, mirror
 # the change in that file or fuzz builds will resolve different versions
 # than the rest of the workspace.
 [patch.crates-io]
-# `ebfull/addchain` branch `bump-num-bigint` is a replica of
-# https://github.com/str4d/addchain/pull/3
-# that updates `addchain` to use `num_bigint 0.4`
-addchain = { git = "https://github.com/ebfull/addchain", rev = "da4099a81bc29c895f3ca0ebcaae21c860494c12" }
+# `zkcrypto/ff` branch `release-0.14.0` HEAD as of 2026-05-21.
+# Speculative release branch for ff 0.14.0
+ff = { git = "https://github.com/zkcrypto/ff", rev = "bdd74a3f75c4c378d69e954944a61bb0930532a0" }
 
-# `ebfull/ff` branch `release-0.14.0-with-rand-0.10` is a fork of
-# https://github.com/zkcrypto/ff/pull/130
-# which updates `ff` to bump `num-bigint` and `syn`
-# then merges https://github.com/zkcrypto/ff/pull/149
-# dependencies to align with our local usage in `ragu_macros`
-ff = { git = "https://github.com/ebfull/ff", branch = "release-0.14.0-with-rand-0.10" }
+# `zkcrypto/group` branch `release-0.14.0` HEAD as of 2026-05-21.
+# Speculative release branch for group 0.14.0
+group = { git = "https://github.com/zkcrypto/group", rev = "326b36b0c43dcb1507b89017323f43a57c3bffd8" }
 
-# `ebfull/group` branch `release-0.14.0-with-rand-0.10` is a fork of
-# https://github.com/zkcrypto/group/pull/63
-# which updates `group` to bump `ff` to `0.14` (as well as other
-# changes, including bumping to `rand 0.9`)
-# then merges https://github.com/zkcrypto/group/pull/71
-group = { git = "https://github.com/ebfull/group", branch = "release-0.14.0-with-rand-0.10" }
-
-# `ebfull/pasta_curves` branch `ff-0.14-with-rand-0.10` is a replica of
-# https://github.com/zcash/pasta_curves/pull/86
-# that updates `pasta_curves` to use `ff`/`group` `0.14.0-pre.0`
-# then bumps to `rand 0.9`.
-#
-# We then merge in deferred reduction support from `zcash/pasta_curves`
-# into `ff-0.14-with-rand-0.10-and-deferred`.
-pasta_curves = { git = "https://github.com/ebfull/pasta_curves", branch = "ff-0.14-with-rand-0.10-and-deferred" }
+# `ebfull/pasta_curves` branch `ff-0.14-for-ragu` HEAD as of 2026-05-21.
+# Stacks on the prior `ff-0.14-with-rand-0.10-and-deferred-redux` work
+# (ff/group 0.14.0-pre.0, rand 0.10, deferred reduction, try_random rename)
+# and adds adaptation for the new `CurveAffine` API from upstream `group`
+# release-0.14.0 (PR #48).
+pasta_curves = { git = "https://github.com/ebfull/pasta_curves", rev = "4f9da85aeebc650a57610501d50d036454dcdc48" }

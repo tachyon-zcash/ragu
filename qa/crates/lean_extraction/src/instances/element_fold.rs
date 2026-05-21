@@ -7,27 +7,49 @@ use crate::{
     instance::{CircuitInstance, WireCollector, WireDeserializer},
 };
 
-pub struct ElementFoldInstance;
+pub struct ElementFoldInstanceN3;
 
-impl CircuitInstance for ElementFoldInstance {
+impl CircuitInstance for ElementFoldInstanceN3 {
     type Field = Fp;
 
     fn circuit(dr: &mut ExtractionDriver<Fp>) -> ragu_core::Result<Vec<Expr<Fp>>> {
-        // Length 3: representative of the variadic `Element::fold`. The
-        // scale factor is itself an input wire (not a compile-time parameter).
-        let input_wires_0 = dr.alloc_input_wires(1);
-        let input_wires_1 = dr.alloc_input_wires(1);
-        let input_wires_2 = dr.alloc_input_wires(1);
-        let scale_wires = dr.alloc_input_wires(1);
-
-        let element_template = Element::constant(dr, Fp::zero());
-        let x0 = WireDeserializer::new(input_wires_0).into_gadget(&element_template)?;
-        let x1 = WireDeserializer::new(input_wires_1).into_gadget(&element_template)?;
-        let x2 = WireDeserializer::new(input_wires_2).into_gadget(&element_template)?;
-        let scale = WireDeserializer::new(scale_wires).into_gadget(&element_template)?;
-
-        let result = Element::fold(dr, [&x0, &x1, &x2], &scale)?;
-
-        WireCollector::collect_from(&result)
+        // n = 3: smallest non-trivial Horner shape (one element gives a no-op,
+        // two elements is one Mul). The polymorphic Lean reimpl is universal
+        // in `n`; this instance pins it to n=3 for byte-equality against the
+        // extracted trace. See N7/N19 for production-shape instances.
+        fold_at_length::<3>(dr)
     }
+}
+
+pub struct ElementFoldInstanceN7;
+
+impl CircuitInstance for ElementFoldInstanceN7 {
+    type Field = Fp;
+
+    fn circuit(dr: &mut ExtractionDriver<Fp>) -> ragu_core::Result<Vec<Expr<Fp>>> {
+        // n = 7: matches `RevdotParameters::GroupSize` in
+        // `crates/ragu_pcd/src/internal/native/mod.rs`. This is the inner-fold
+        // length used by `fold_revdot.rs::fold_two_layer` for each chunk of
+        // group sources.
+        fold_at_length::<7>(dr)
+    }
+}
+
+fn fold_at_length<const N: usize>(
+    dr: &mut ExtractionDriver<Fp>,
+) -> ragu_core::Result<Vec<Expr<Fp>>> {
+    let element_template = Element::constant(dr, Fp::zero());
+
+    let mut xs = Vec::with_capacity(N);
+    for _ in 0..N {
+        let input_wires = dr.alloc_input_wires(1);
+        let x = WireDeserializer::new(input_wires).into_gadget(&element_template)?;
+        xs.push(x);
+    }
+    let scale_wires = dr.alloc_input_wires(1);
+    let scale = WireDeserializer::new(scale_wires).into_gadget(&element_template)?;
+
+    let result = Element::fold(dr, xs.iter(), &scale)?;
+
+    WireCollector::collect_from(&result)
 }

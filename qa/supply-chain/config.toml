@@ -29,9 +29,6 @@ url = "https://raw.githubusercontent.com/zcash/rust-ecosystem/main/supply-chain/
 ours = "crypto-reviewed"
 theirs = "crypto-reviewed"
 
-[policy.addchain]
-audit-as-crates-io = true
-
 [policy.ff]
 audit-as-crates-io = true
 
@@ -49,10 +46,6 @@ audit-as-crates-io = true
 
 [policy.ragu_testing]
 audit-as-crates-io = true
-
-[[exemptions.addchain]]
-version = "0.2.0@git:da4099a81bc29c895f3ca0ebcaae21c860494c12"
-criteria = "safe-to-deploy"
 
 [[exemptions.bincode]]
 version = "1.3.3"

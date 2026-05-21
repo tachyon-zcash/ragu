@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use ff::Field;
-use pasta_curves::{EpAffine, Fq, group::prime::PrimeCurveAffine};
+use pasta_curves::{EpAffine, Fq, group::CurveAffine};
 use ragu_arithmetic::mul;
 use rand::{SeedableRng, rngs::StdRng};
 
