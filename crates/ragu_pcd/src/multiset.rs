@@ -15,11 +15,10 @@
 //!
 //! [`Step::witness`]: crate::step::Step::witness
 
-use alloc::vec;
 use alloc::vec::Vec;
 
-use ff::Field;
-use ragu_arithmetic::{CurveAffine, PoseidonPermutation};
+use ff::PrimeField;
+use ragu_arithmetic::{CurveAffine, PoseidonPermutation, poly_mul};
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{
     Result,
@@ -84,9 +83,8 @@ where
     ///
     /// # Rank
     ///
-    /// `R` must be wide enough to hold the product. The naive helper used to
-    /// build the product polynomial will panic via
-    /// [`sparse::Polynomial::from_coeffs`] if the result exceeds
+    /// `R` must be wide enough to hold the product:
+    /// [`sparse::Polynomial::from_coeffs`] will panic if the result exceeds
     /// `R::num_coeffs()`. Choosing the right `R` is the caller's
     /// responsibility.
     pub fn merge<P: PoseidonPermutation<D::F>>(
@@ -95,13 +93,19 @@ where
         ctx: &mut StepCtx<'_, 'dr, D, C>,
         sponge: &mut Sponge<'dr, D, P>,
         product_com_witness: DriverValue<D, C>,
-    ) -> Result<Self> {
-        // 1. Compute the product polynomial natively (prover-only).
-        let product_poly = self.polynomial.clone().and_then(|a| {
-            other
-                .polynomial
-                .clone()
-                .map(|b| product_poly_naive::<D::F, R>(&a, &b))
+    ) -> Result<Self>
+    where
+        D::F: PrimeField,
+    {
+        // 1. Compute the product polynomial via FFT (prover-only).
+        let product = self.polynomial.clone().and_then(|a| {
+            other.polynomial.clone().map(|b| {
+                let a_coeffs: Vec<D::F> = a.iter_coeffs().collect();
+                let b_coeffs: Vec<D::F> = b.iter_coeffs().collect();
+                let mut out = Vec::new();
+                poly_mul(&a_coeffs, &b_coeffs, &mut out);
+                sparse::Polynomial::from_coeffs(out)
+            })
         });
 
         // 2. Allocate the in-circuit commitment to the product.
@@ -122,7 +126,7 @@ where
         let alloc = &mut Standard::new();
         let y_a = Element::alloc(ctx.dr, alloc, eval_at(self.polynomial.clone()))?;
         let y_b = Element::alloc(ctx.dr, alloc, eval_at(other.polynomial.clone()))?;
-        let y_prod = Element::alloc(ctx.dr, alloc, eval_at(product_poly.clone()))?;
+        let y_prod = Element::alloc(ctx.dr, alloc, eval_at(product.clone()))?;
 
         // 5. Surface three poly-query claims for fuse-time verification.
         ctx.enforce_poly_query(self.commitment, z.clone(), y_a.clone())?;
@@ -133,29 +137,6 @@ where
         let computed = y_a.mul(ctx.dr, &y_b)?;
         y_prod.enforce_equal(ctx.dr, &computed)?;
 
-        Ok(Self::new(product_com, product_poly))
+        Ok(Self::new(product_com, product))
     }
-}
-
-/// Naive O(n·m) polynomial product. Illustration-grade; real callers should
-/// swap in an FFT-based multiplier and reuse it across merges.
-fn product_poly_naive<F: Field, R: Rank>(
-    a: &sparse::Polynomial<F, R>,
-    b: &sparse::Polynomial<F, R>,
-) -> sparse::Polynomial<F, R> {
-    let a_coeffs: Vec<F> = a.iter_coeffs().collect();
-    let b_coeffs: Vec<F> = b.iter_coeffs().collect();
-    let mut out = vec![F::ZERO; a_coeffs.len() + b_coeffs.len()];
-    for (i, ai) in a_coeffs.iter().enumerate() {
-        if bool::from(ai.is_zero()) {
-            continue;
-        }
-        for (j, bj) in b_coeffs.iter().enumerate() {
-            out[i + j] += *ai * *bj;
-        }
-    }
-    while matches!(out.last(), Some(v) if bool::from(v.is_zero())) {
-        out.pop();
-    }
-    sparse::Polynomial::from_coeffs(out)
 }
