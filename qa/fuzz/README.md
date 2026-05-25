@@ -1,6 +1,6 @@
 # `ragu_testing-fuzz`
 
-cargo-fuzz harness for the Ragu project. 20 fuzz targets + 1 auxiliary
+cargo-fuzz harness for the Ragu project. 21 fuzz targets + 1 auxiliary
 dictionary-extractor tool. Standalone workspace (the `[workspace]` table in
 `Cargo.toml` makes this crate its own root) so nightly + libfuzzer flags
 don't leak into the rest of the repo.
@@ -34,7 +34,7 @@ cargo +nightly fuzz run fuzz_element_ops -- -max_total_time=60
 ### Vec\<Op\>-style instruction-vector targets
 
 Generate random `Vec<Op>` sequences of `Element`/`Boolean` gadget calls.
-All four share an essentially identical `Op` enum and dispatch — see the
+All five share an essentially identical `Op` enum and dispatch — see the
 "why duplicated" note at the bottom.
 
 | Target | What it catches |
@@ -42,6 +42,7 @@ All four share an essentially identical `Op` enum and dispatch — see the
 | `fuzz_element_ops` | Completeness — random gadget compositions must not crash and must produce internally-consistent witnesses. The substrate. |
 | `fuzz_witness_coverage` | Same as `fuzz_element_ops` plus a post-run witness-state hash spread across coverage branches. Biases the fuzzer toward distinct internal witness states. Opt-in POC (~28% throughput cost). |
 | `fuzz_witness_cheat` | Mid-stream replaces an element on the stack with a fresh allocation of a different value, then uses a patcher pass to repair downstream-created witness slots when local equations are solvable. Compares the patched cheat against the honest run after excluding directly patched support slots. Signals should still be validated against a real circuit/output boundary because the final stack is a proxy oracle. |
+| `fuzz_circuit_patcher` | Runs the same patcher policy through a fuzz-local dummy `Circuit` and compares a selected public output element. Keeps the circuit-boundary experiment in `qa/fuzz` without production driver hooks. |
 | `fuzz_driver_metamorphic` | Differential — runs the same `Vec<Op>` through both `Simulator` and `Emulator<Wired<Fp>>`; wire values must match. Tests the model-vs-real-driver invariant. |
 
 ### Gadget-API property and identity targets
@@ -156,16 +157,17 @@ Two workflows in `.github/workflows/`:
 
 ## Why several targets duplicate the same `Op` enum
 
-The four `Vec<Op>`-style targets (`fuzz_element_ops`,
+The five `Vec<Op>`-style targets (`fuzz_element_ops`,
 `fuzz_witness_coverage`, `fuzz_witness_cheat`,
-`fuzz_driver_metamorphic`) each have a copy of the same `Op` enum and
-dispatch — roughly 200 lines of mechanical duplication per file.
+`fuzz_circuit_patcher`, `fuzz_driver_metamorphic`) each have a copy of
+the same `Op` enum and dispatch — roughly 200 lines of mechanical
+duplication per file.
 
 This is mostly deliberate. cargo-fuzz expects `[[bin]]`-style fuzz
 targets, so the hot dispatch loops stay local to each target. The
-exception is `src/patcher.rs`, a small pure helper used by
-`fuzz_witness_cheat` so the downstream repair policy can have ordinary
-unit tests without pulling libFuzzer into the test harness.
+exception is `src/patcher.rs`, a small pure helper used by the patcher
+targets so the downstream repair policy can have ordinary unit tests
+without pulling libFuzzer into the test harness.
 
 ## Patch table
 

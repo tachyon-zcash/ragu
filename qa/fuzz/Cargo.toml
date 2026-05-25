@@ -150,6 +150,15 @@ test = false
 doc = false
 bench = false
 
+# Fuzz-local dummy Circuit patcher oracle: same op-stream patcher policy as
+# fuzz_witness_cheat, but checked at a selected circuit public output.
+[[bin]]
+name = "fuzz_circuit_patcher"
+path = "fuzz_targets/fuzz_circuit_patcher.rs"
+test = false
+doc = false
+bench = false
+
 # Driver-vs-driver metamorphic: same Vec<Op> through Simulator and
 # Emulator<Wired>. Both should produce identical wire values; disagreement is
 # a model-vs-real driver divergence.

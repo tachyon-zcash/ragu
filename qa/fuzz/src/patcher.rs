@@ -56,6 +56,14 @@ impl PatchPlan {
                 .filter(|exclude| !**exclude)
                 .count()
     }
+
+    pub fn observable_elem_indices(&self) -> Vec<usize> {
+        self.exclude_elems
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, exclude)| (!exclude).then_some(idx))
+            .collect()
+    }
 }
 
 pub fn observable_fingerprint(
@@ -656,5 +664,19 @@ mod tests {
         let ops = [PatchOp::Square(0)];
 
         assert_eq!(build_patch_plan(&seeds, &ops, 0, 0, Fp::from(2)), None);
+    }
+
+    #[test]
+    fn reports_observable_element_slots() {
+        let plan = PatchPlan {
+            final_elems: vec![Fp::from(1), Fp::from(2), Fp::from(3)],
+            final_bools: vec![true],
+            exclude_elems: vec![true, false, false],
+            exclude_bools: vec![false],
+            replacements: Vec::new(),
+            repaired_ops: 0,
+        };
+
+        assert_eq!(plan.observable_elem_indices(), vec![1, 2]);
     }
 }
