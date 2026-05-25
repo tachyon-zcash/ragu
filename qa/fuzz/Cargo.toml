@@ -125,6 +125,15 @@ test = false
 doc = false
 bench = false
 
+# Floor planner: real circuit segment layouts preserve root pinning, segment
+# sizes, and non-overlap across routine-heavy topologies.
+[[bin]]
+name = "fuzz_floor_planner"
+path = "fuzz_targets/fuzz_floor_planner.rs"
+test = false
+doc = false
+bench = false
+
 # Poseidon differential: circuit sponge vs native reference implementation
 [[bin]]
 name = "fuzz_poseidon_differential"

@@ -40,7 +40,13 @@
 
 use alloc::vec::Vec;
 
-use super::metrics::SegmentRecord;
+use ff::FromUniformBytes;
+use ragu_core::Result;
+
+use super::{
+    Circuit,
+    metrics::{self, SegmentRecord},
+};
 
 /// A segment's placement in a constraint system.
 ///
@@ -62,6 +68,7 @@ use super::metrics::SegmentRecord;
 /// the current implementation does not.
 ///
 /// [`Routine`]: ragu_core::routines::Routine
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ConstraintSegment {
     /// Gate index where this segment's gates begin.
     pub(crate) gate_start: usize,
@@ -71,6 +78,28 @@ pub struct ConstraintSegment {
     pub(crate) num_gates: usize,
     /// Number of constraints in this segment.
     pub(crate) num_constraints: usize,
+}
+
+impl ConstraintSegment {
+    /// Returns the first gate index assigned to this segment.
+    pub fn gate_start(&self) -> usize {
+        self.gate_start
+    }
+
+    /// Returns the first Y-power constraint index assigned to this segment.
+    pub fn constraint_start(&self) -> usize {
+        self.constraint_start
+    }
+
+    /// Returns the number of gates assigned to this segment.
+    pub fn num_gates(&self) -> usize {
+        self.num_gates
+    }
+
+    /// Returns the number of constraints assigned to this segment.
+    pub fn num_constraints(&self) -> usize {
+        self.num_constraints
+    }
 }
 
 /// Computes a floor plan from per-segment constraint records.
@@ -100,4 +129,33 @@ pub fn floor_plan(segment_records: &[SegmentRecord]) -> Vec<ConstraintSegment> {
     );
 
     result
+}
+
+/// Computes a floor plan directly from a circuit implementation.
+///
+/// This is the public entry point for tooling that wants to exercise the
+/// planner over real circuit topologies without going through
+/// [`RegistryBuilder`](crate::registry::RegistryBuilder). It first runs the
+/// same metrics pass that registry construction uses, then delegates to
+/// [`floor_plan`] with the collected segment records.
+pub fn floor_plan_for<F, C>(circuit: &C) -> Result<Vec<ConstraintSegment>>
+where
+    F: FromUniformBytes<64>,
+    C: Circuit<F>,
+{
+    let segment_records = segment_records_for::<F, C>(circuit)?;
+    Ok(floor_plan(&segment_records))
+}
+
+/// Collects the segment records that feed the floor planner for a circuit.
+///
+/// The returned records are in DFS synthesis order. This is primarily useful
+/// for fuzzing and diagnostics that need to compare a planned layout against
+/// the segment sizes observed by the metrics pass.
+pub fn segment_records_for<F, C>(circuit: &C) -> Result<Vec<SegmentRecord>>
+where
+    F: FromUniformBytes<64>,
+    C: Circuit<F>,
+{
+    Ok(metrics::eval(circuit)?.segments)
 }

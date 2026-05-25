@@ -1,6 +1,6 @@
 # `ragu_testing-fuzz`
 
-cargo-fuzz harness for the Ragu project. 20 fuzz targets + 1 auxiliary
+cargo-fuzz harness for the Ragu project. 21 fuzz targets + 1 auxiliary
 dictionary-extractor tool. Standalone workspace (the `[workspace]` table in
 `Cargo.toml` makes this crate its own root) so nightly + libfuzzer flags
 don't leak into the rest of the repo.
@@ -65,6 +65,7 @@ All four share an essentially identical `Op` enum and dispatch — see the
 | `fuzz_revdot` | Reverse-dot-product primitive. |
 | `fuzz_fold_revdot` | RevDot folding. |
 | `fuzz_sxy_agreement` | `s(X, Y)` registry consistency. Caught `Key::new(0)` divide-by-zero. |
+| `fuzz_floor_planner` | Floor-plan structural invariants over real circuit topologies: root pinning, segment-size preservation, and non-overlap across routine-heavy layouts. |
 
 ### Verifier robustness
 
@@ -147,10 +148,16 @@ Two workflows in `.github/workflows/`:
   and `bin/**/*.rs`.
 
 - **`fuzz-cron.yml`** runs every target via matrix-parallel for 5 hours
-  each, weekly on Sundays at 00:00 UTC. Corpus persists across runs via
-  `actions/cache`. Crashes upload as workflow artifacts with 30-day
-  retention. Manual trigger via the Actions tab `workflow_dispatch`
-  with override knobs for `duration` and `use_dict`.
+  each, twice weekly on Sundays and Wednesdays at 00:00 UTC. Corpus
+  persists across runs via `actions/cache`. Crashes upload as workflow
+  artifacts with 30-day retention. Manual trigger via the Actions tab
+  `workflow_dispatch` with override knobs for `duration` and `use_dict`.
+
+The local `fuzz.sh` helper and the scheduled workflow both derive their
+target list from `Cargo.toml` via `list-targets.sh`. This keeps new
+`fuzz_*` bins in the local runner and continuous fuzzing without a
+second hand-maintained target list, while excluding auxiliary bins such
+as `extract_dict`.
 
 ## Why several targets duplicate the same `Op` enum
 

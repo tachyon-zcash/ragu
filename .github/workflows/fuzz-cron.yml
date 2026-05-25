@@ -32,8 +32,26 @@ permissions:
   contents: read
 
 jobs:
+  targets:
+    name: enumerate fuzz targets
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.targets.outputs.targets }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: List fuzz targets
+        id: targets
+        run: |
+          set -euo pipefail
+          targets_json="$(qa/fuzz/list-targets.sh | awk 'BEGIN { printf "[" } { printf "%s\"%s\"", sep, $0; sep = "," } END { print "]" }')"
+          echo "targets=${targets_json}" >> "$GITHUB_OUTPUT"
+
   fuzz:
     name: fuzz ${{ matrix.target }}
+    needs: targets
     runs-on: ubuntu-latest
     # GitHub-hosted runners have a 6-hour (360-minute) hard ceiling per
     # job. Setting timeout-minutes to that maximum gives the 5-hour
@@ -47,24 +65,7 @@ jobs:
       # cancellations.
       fail-fast: false
       matrix:
-        target:
-          - fuzz_element_ops
-          - fuzz_witness_coverage
-          - fuzz_witness_cheat
-          - fuzz_driver_metamorphic
-          - fuzz_algebraic_identities
-          - fuzz_element_assertions
-          - fuzz_multipack
-          - fuzz_point_identities
-          - fuzz_consistent
-          - fuzz_io_roundtrip
-          - fuzz_poseidon_sponge
-          - fuzz_poseidon_differential
-          - fuzz_endoscalar
-          - fuzz_revdot
-          - fuzz_fold_revdot
-          - fuzz_sxy_agreement
-          - fuzz_verify_reject
+        target: ${{ fromJSON(needs.targets.outputs.targets) }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:

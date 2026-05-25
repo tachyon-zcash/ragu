@@ -92,28 +92,10 @@ if [[ -n "$ASAN" ]]; then
   SAN_FLAG=""
 fi
 
-TARGETS=(
-  fuzz_poseidon_sponge
-  fuzz_endoscalar
-  fuzz_element_ops
-  fuzz_circuit_witness
-  fuzz_circuit_revdot_identity
-  fuzz_staging
-  fuzz_revdot
-  fuzz_fold_revdot
-  fuzz_sxy_agreement
-  fuzz_poseidon_differential
-  fuzz_verify_reject
-  fuzz_witness_cheat
-  fuzz_driver_metamorphic
-  fuzz_witness_coverage
-  fuzz_algebraic_identities
-  fuzz_element_assertions
-  fuzz_multipack
-  fuzz_point_identities
-  fuzz_consistent
-  fuzz_io_roundtrip
-)
+TARGETS=()
+while IFS= read -r target; do
+  TARGETS+=("$target")
+done < <(./list-targets.sh)
 
 run_target() {
   local target="$1"
