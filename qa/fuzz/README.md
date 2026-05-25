@@ -41,7 +41,7 @@ All four share an essentially identical `Op` enum and dispatch — see the
 |---|---|
 | `fuzz_element_ops` | Completeness — random gadget compositions must not crash and must produce internally-consistent witnesses. The substrate. |
 | `fuzz_witness_coverage` | Same as `fuzz_element_ops` plus a post-run witness-state hash spread across coverage branches. Biases the fuzzer toward distinct internal witness states. Opt-in POC (~28% throughput cost). |
-| `fuzz_witness_cheat` | Mid-stream replaces an element on the stack with a fresh allocation of a different value, then compares fingerprints against the honest run. Currently functions as a Simulator-robustness fuzzer (the soundness assertion is structurally tautological today); becomes a true under-constrained-gadget oracle once the patcher technique lands. The mutation scaffolding is in place. |
+| `fuzz_witness_cheat` | Mid-stream replaces an element on the stack with a fresh allocation of a different value, then uses a patcher pass to repair downstream-created witness slots when local equations are solvable. Compares the patched cheat against the honest run after excluding directly patched support slots. Signals should still be validated against a real circuit/output boundary because the final stack is a proxy oracle. |
 | `fuzz_driver_metamorphic` | Differential — runs the same `Vec<Op>` through both `Simulator` and `Emulator<Wired<Fp>>`; wire values must match. Tests the model-vs-real-driver invariant. |
 
 ### Gadget-API property and identity targets
@@ -133,9 +133,11 @@ TRIAGE_CHEAT=1 cargo +nightly fuzz run fuzz_witness_cheat \
   artifacts/fuzz_witness_cheat/crash-abc123
 ```
 
-If the count is 0, the soundness signal is probably a dead-cheat false
-positive. If it's high, the cheat propagated but downstream constraints
-were insensitive to it — that's the real bug class.
+If the count is 0, the input is a dead cheat and should normally be
+discarded. If it's high, the patcher may have found a path where the
+cheat propagated and was repaired into the same observable fingerprint.
+Treat that as a candidate under-constrained-gadget signal until it is
+validated against the real public outputs for the circuit under test.
 
 ## CI
 
@@ -159,12 +161,11 @@ The four `Vec<Op>`-style targets (`fuzz_element_ops`,
 `fuzz_driver_metamorphic`) each have a copy of the same `Op` enum and
 dispatch — roughly 200 lines of mechanical duplication per file.
 
-This is deliberate. cargo-fuzz expects `[[bin]]`-style fuzz targets, and
-sharing a `src/lib.rs` between fuzz targets adds friction with the
-cargo-fuzz workflow and the patch-table mirroring this crate already
-needs. The duplication is annotated in each file (`Identical dispatch
-logic to fuzz_element_ops and fuzz_witness_cheat`) so future edits
-propagate the same change everywhere.
+This is mostly deliberate. cargo-fuzz expects `[[bin]]`-style fuzz
+targets, so the hot dispatch loops stay local to each target. The
+exception is `src/patcher.rs`, a small pure helper used by
+`fuzz_witness_cheat` so the downstream repair policy can have ordinary
+unit tests without pulling libFuzzer into the test harness.
 
 ## Patch table
 

@@ -141,9 +141,8 @@ test = false
 doc = false
 bench = false
 
-# Mid-stream witness cheating: honest vs cheat paths through the Simulator.
-# Currently a Simulator-robustness fuzzer; intended as a soundness oracle once
-# the patcher work lands (see issue tracking the patcher technique).
+# Mid-stream witness cheating: honest vs unpatched/patched cheat paths through
+# the Simulator, with downstream witness-slot repair for soundness signals.
 [[bin]]
 name = "fuzz_witness_cheat"
 path = "fuzz_targets/fuzz_witness_cheat.rs"

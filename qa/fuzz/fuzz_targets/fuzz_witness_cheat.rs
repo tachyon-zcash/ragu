@@ -1,42 +1,33 @@
 //! Mid-stream witness cheating fuzz target.
 //!
-//! Runs the same instruction stream twice through the `Simulator`: an
-//! honest path and a cheat path that, at a fuzzer-chosen point, replaces
-//! one element on the stack with a fresh allocation whose value differs
-//! from the honest one. After both runs complete, the final element and
-//! boolean values are compared.
+//! Runs the same instruction stream through the `Simulator` three ways:
+//! an honest path, an unpatched cheat path, and a patched cheat path. At
+//! a fuzzer-chosen point the cheat paths replace one element on the stack
+//! with a fresh allocation whose value differs from the honest one. The
+//! patcher then walks the remaining op stream and tries to repair only
+//! downstream-created witness slots so later constraints can keep holding.
 //!
-//! # Current effective behavior
+//! # Effective behavior
 //!
-//! As implemented, this target functions primarily as a Simulator
-//! robustness fuzzer rather than a soundness oracle. The cheated slot is
-//! included in the comparison fingerprint, and the cheat value is filtered
-//! to differ from the original, so `honest != cheat` is tautologically
-//! true regardless of whether downstream constraints actually catch the
-//! cheat. The signals the target reliably surfaces today are panics, OOB
-//! indexing, and arithmetic faults in the gadget API when fed adversarial
-//! inputs — not under-constrained gadgets.
+//! The target first requires the ordinary cheated execution to be accepted
+//! by `Simulator`, preserving the original robustness coverage. It then
+//! replays the cheat with a patch plan that:
 //!
-//! # Intended behavior (post-patcher)
+//! 1. records the op-stream dataflow over field values;
+//! 2. refuses to repair unrelated pre-existing inputs;
+//! 3. repairs downstream-created element slots when a local equation can
+//!    be solved; and
+//! 4. excludes the directly patched support slots from the final
+//!    fingerprint.
 //!
-//! Becoming a true under-constrained-gadget oracle requires two changes,
-//! both tracked in the patcher follow-up issue:
+//! A signal fires when the patched cheat is accepted and the observable
+//! fingerprint matches the honest run. This is intentionally conservative:
+//! the final stack is still only a proxy for public outputs, so crash
+//! artifacts should be triaged as "under-constrained gadget or insufficient
+//! oracle" until validated against the real circuit/output boundary.
 //!
-//! 1. A patcher pass that, after the cheat is injected, walks the
-//!    recorded constraint graph forward from the cheated slot and adjusts
-//!    other downstream witness slots so the constraint system stays
-//!    satisfied. Without this, the cheat is either rejected by the first
-//!    downstream constraint that compares it against a honest-derived
-//!    value, or it propagates only through gates that self-satisfy
-//!    (`c = a*b` recomputed from the cheat).
-//!
-//! 2. Excluding the cheated slot from the comparison fingerprint, so the
-//!    `honest != cheat` check reflects downstream observable behavior
-//!    rather than the cheat injection itself.
-//!
-//! With both in place, the assertion becomes: "the Simulator accepted two
-//! genuinely different witnesses producing the same observable behavior"
-//! — the canonical under-constrained-gadget signal.
+//! The patcher is scoped to this fuzz target's `Vec<Op>` abstraction. It
+//! is not yet a general Ragu constraint-graph driver for full circuits.
 //!
 //! # Why this is the witness-mutation pattern, adapted to Ragu
 //!
@@ -60,6 +51,7 @@ use pasta_curves::Fp;
 use ragu_arithmetic::Coeff;
 use ragu_core::maybe::Maybe;
 use ragu_primitives::{Boolean, Element, Simulator, allocator::Standard};
+use ragu_testing_fuzz::patcher::{PatchOp, PatchPlan, build_patch_plan};
 
 fn special_value(idx: u8) -> Fp {
     match idx % 16 {
@@ -79,6 +71,37 @@ fn special_value(idx: u8) -> Fp {
         13 => Fp::from(1u64 << 32),
         14 => Fp::from(1u64 << 48),
         _ => Fp::from(u64::MAX),
+    }
+}
+
+fn cheat_value(cheat: CheatFlavor) -> Fp {
+    match cheat {
+        CheatFlavor::Alloc(v) | CheatFlavor::Constant(v) => Fp::from(v),
+        CheatFlavor::Special(idx) => special_value(idx),
+    }
+}
+
+fn patch_op(op: &Op) -> PatchOp {
+    match *op {
+        Op::Add(a, b) => PatchOp::Add(a, b),
+        Op::Sub(a, b) => PatchOp::Sub(a, b),
+        Op::Mul(a, b) => PatchOp::Mul(a, b),
+        Op::Square(a) => PatchOp::Square(a),
+        Op::Double(a) => PatchOp::Double(a),
+        Op::Negate(a) => PatchOp::Negate(a),
+        Op::Invert(a) => PatchOp::Invert(a),
+        Op::IsZero(a) => PatchOp::IsZero(a),
+        Op::DivNonzero(a, b) => PatchOp::DivNonzero(a, b),
+        Op::Scale(a, c) => PatchOp::Scale(a, Fp::from(c)),
+        Op::Fold(a, b, s) => PatchOp::Fold(a, b, Fp::from(s)),
+        Op::AllocConst(v) => PatchOp::AllocConst(Fp::from(v)),
+        Op::AllocSpecial(idx) => PatchOp::AllocWitness(special_value(idx)),
+        Op::AllocSquare(v) => PatchOp::AllocSquare(Fp::from(v)),
+        Op::AllocRaw(bytes) => PatchOp::AllocRaw(Fp::from_repr(bytes).into()),
+        Op::BoolAlloc(v) => PatchOp::BoolAlloc(v),
+        Op::BoolNot(a) => PatchOp::BoolNot(a),
+        Op::BoolAnd(a, b) => PatchOp::BoolAnd(a, b),
+        Op::ConditionalSelect(cond, a, b) => PatchOp::ConditionalSelect(cond, a, b),
     }
 }
 
@@ -164,7 +187,12 @@ fn build_seeds(input: &Input) -> Vec<Fp> {
 /// but the chosen cheat value coincided with the slot's existing value
 /// (a degenerate input that would produce a false-positive fingerprint
 /// match).
-fn run_path(input: &Input, fes: &[Fp], apply_cheat: bool) -> Option<Fingerprint> {
+fn run_path(
+    input: &Input,
+    fes: &[Fp],
+    apply_cheat: bool,
+    patch_plan: Option<&PatchPlan>,
+) -> Option<Fingerprint> {
     let mut snapshot: Option<Fingerprint> = None;
     let mut cheat_noop = false;
 
@@ -194,11 +222,7 @@ fn run_path(input: &Input, fes: &[Fp], apply_cheat: bool) -> Option<Fingerprint>
             if apply_cheat && i == input.cheat_at as usize && !elems.is_empty() {
                 let target = (input.target_idx as usize) % elems.len().min(64);
                 let original_val: Fp = *elems[target].value().take();
-                let cheat_val = match input.cheat {
-                    CheatFlavor::Alloc(v) => Fp::from(v),
-                    CheatFlavor::Constant(v) => Fp::from(v),
-                    CheatFlavor::Special(idx) => special_value(idx),
-                };
+                let cheat_val = cheat_value(input.cheat);
                 if original_val == cheat_val {
                     // No actual cheat — the chosen replacement value
                     // happens to equal what was already there. Fingerprints
@@ -208,14 +232,21 @@ fn run_path(input: &Input, fes: &[Fp], apply_cheat: bool) -> Option<Fingerprint>
                     return Ok(());
                 }
                 let cheated = match input.cheat {
-                    CheatFlavor::Alloc(_) | CheatFlavor::Special(_) => Element::alloc(
-                        dr,
-                        allocator,
-                        witness.as_ref().map(|_| cheat_val),
-                    )?,
+                    CheatFlavor::Alloc(_) | CheatFlavor::Special(_) => {
+                        Element::alloc(dr, allocator, witness.as_ref().map(|_| cheat_val))?
+                    }
                     CheatFlavor::Constant(_) => Element::constant(dr, cheat_val),
                 };
                 elems[target] = cheated;
+            }
+
+            if let Some(plan) = patch_plan {
+                for &(slot, value) in plan.replacements.get(i).into_iter().flatten() {
+                    if slot < elems.len() {
+                        elems[slot] =
+                            Element::alloc(dr, allocator, witness.as_ref().map(|_| value))?;
+                    }
+                }
             }
 
             let elen = elems.len();
@@ -282,11 +313,8 @@ fn run_path(input: &Input, fes: &[Fp], apply_cheat: bool) -> Option<Fingerprint>
                 }
                 Op::Fold(a, b, s) => {
                     let (a, b) = (a as usize % elen, b as usize % elen);
-                    let scale = Element::alloc(
-                        dr,
-                        allocator,
-                        witness.as_ref().map(|_| Fp::from(s)),
-                    )?;
+                    let scale =
+                        Element::alloc(dr, allocator, witness.as_ref().map(|_| Fp::from(s)))?;
                     if let Ok(r) = Element::fold(dr, [&elems[a], &elems[b]], &scale) {
                         elems.push(r);
                     }
@@ -303,28 +331,21 @@ fn run_path(input: &Input, fes: &[Fp], apply_cheat: bool) -> Option<Fingerprint>
                 Op::AllocRaw(bytes) => {
                     let v: Option<Fp> = Fp::from_repr(bytes).into();
                     if let Some(fp) = v {
-                        if let Ok(r) =
-                            Element::alloc(dr, allocator, witness.as_ref().map(|_| fp))
-                        {
+                        if let Ok(r) = Element::alloc(dr, allocator, witness.as_ref().map(|_| fp)) {
                             elems.push(r);
                         }
                     }
                 }
                 Op::AllocSquare(v) => {
-                    if let Ok((root, sq)) = Element::alloc_square(
-                        dr,
-                        witness.as_ref().map(|_| Fp::from(v)),
-                    ) {
+                    if let Ok((root, sq)) =
+                        Element::alloc_square(dr, witness.as_ref().map(|_| Fp::from(v)))
+                    {
                         elems.push(root);
                         elems.push(sq);
                     }
                 }
                 Op::BoolAlloc(v) => {
-                    if let Ok(b) = Boolean::alloc(
-                        dr,
-                        allocator,
-                        witness.as_ref().map(|_| v),
-                    ) {
+                    if let Ok(b) = Boolean::alloc(dr, allocator, witness.as_ref().map(|_| v)) {
                         bools.push(b);
                     }
                 }
@@ -347,9 +368,7 @@ fn run_path(input: &Input, fes: &[Fp], apply_cheat: bool) -> Option<Fingerprint>
                     if blen > 0 {
                         let cond = cond as usize % blen;
                         let (a, b) = (a as usize % elen, b as usize % elen);
-                        if let Ok(r) = bools[cond].conditional_select(
-                            dr, &elems[a], &elems[b],
-                        ) {
+                        if let Ok(r) = bools[cond].conditional_select(dr, &elems[a], &elems[b]) {
                             elems.push(r);
                         }
                     }
@@ -428,11 +447,18 @@ fn op_reads_target(op: &Op, target: usize, elens: usize) -> bool {
     }
     let resolves = |a: u8| (a as usize) % elens == target;
     match op {
-        Op::Add(a, b) | Op::Sub(a, b) | Op::Mul(a, b) | Op::DivNonzero(a, b)
+        Op::Add(a, b)
+        | Op::Sub(a, b)
+        | Op::Mul(a, b)
+        | Op::DivNonzero(a, b)
         | Op::Fold(a, b, _) => resolves(*a) || resolves(*b),
         Op::ConditionalSelect(_, a, b) => resolves(*a) || resolves(*b),
-        Op::Scale(a, _) | Op::Square(a) | Op::Double(a) | Op::Negate(a)
-        | Op::Invert(a) | Op::IsZero(a) => resolves(*a),
+        Op::Scale(a, _)
+        | Op::Square(a)
+        | Op::Double(a)
+        | Op::Negate(a)
+        | Op::Invert(a)
+        | Op::IsZero(a) => resolves(*a),
         _ => false,
     }
 }
@@ -617,28 +643,73 @@ fuzz_target!(|input: Input| {
     }
 
     let fes = build_seeds(&input);
+    let patch_ops: Vec<PatchOp> = input.ops.iter().map(patch_op).collect();
+    let patch_plan = match build_patch_plan(
+        &fes,
+        &patch_ops,
+        input.cheat_at as usize,
+        input.target_idx,
+        cheat_value(input.cheat),
+    ) {
+        Some(plan) if plan.repaired_ops > 0 && plan.observable_len() > 0 => plan,
+        _ => return,
+    };
 
-    let honest = match run_path(&input, &fes, false) {
+    let honest = match run_path(&input, &fes, false, None) {
         Some(f) => f,
         None => return,
     };
-    let cheated = match run_path(&input, &fes, true) {
+    let unpatched_cheat = match run_path(&input, &fes, true, None) {
         Some(f) => f,
         None => return,
     };
+    let patched = match run_path(&input, &fes, true, Some(&patch_plan)) {
+        Some(f) => f,
+        None => return,
+    };
+    if patched != patch_plan.final_fingerprint() {
+        return;
+    }
 
-    // Soundness signal: cheat path accepted by Simulator AND its final
-    // state is observationally identical to the honest run.
+    if honest.0.len() != patch_plan.exclude_elems.len()
+        || honest.1.len() != patch_plan.exclude_bools.len()
+        || patched.0.len() != patch_plan.exclude_elems.len()
+        || patched.1.len() != patch_plan.exclude_bools.len()
+    {
+        return;
+    }
+
+    let honest_observable = patch_plan.observable_fingerprint(&honest);
+    let patched_observable = patch_plan.observable_fingerprint(&patched);
+
+    // Soundness signal: the normal cheat path is accepted by Simulator,
+    // the patcher found at least one downstream repair, and the patched
+    // invalid witness remains observationally identical to the honest
+    // witness after excluding directly patched support slots.
     assert!(
-        honest != cheated,
+        honest_observable != patched_observable,
         "soundness signal: cheat at op[{}] target {} flavor {:?} \
-         did not perturb the final state; \
-         every downstream constraint and observation was insensitive to \
-         the swap. Suspect an under-constrained gadget. \
+         accepted after {} downstream patch repair(s); \
+         observable fingerprint matched the honest run after excluding \
+         {} patched element slot(s) and {} patched boolean slot(s). \
+         Unpatched cheat changed final state: {}. \
+         Suspect an under-constrained gadget or an insufficient oracle. \
          Input: {:?}",
         input.cheat_at,
         input.target_idx,
         input.cheat,
+        patch_plan.repaired_ops,
+        patch_plan
+            .exclude_elems
+            .iter()
+            .filter(|exclude| **exclude)
+            .count(),
+        patch_plan
+            .exclude_bools
+            .iter()
+            .filter(|exclude| **exclude)
+            .count(),
+        honest != unpatched_cheat,
         input,
     );
 });
