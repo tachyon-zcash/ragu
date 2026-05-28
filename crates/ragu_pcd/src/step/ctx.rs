@@ -1,23 +1,20 @@
 //! Context object threaded through [`Step::witness`](super::Step::witness).
 //!
 //! Bundles the framework-side state — the [`Driver`] and the
-//! [`PolyQueryClaims`] sink — so that reusable sub-components called from a
-//! step body can take a single `&mut StepCtx` rather than juggling individual
-//! arguments. New framework hooks added in the future (e.g. transcript
-//! threading) belong on this type as well.
+//! [`FrameworkHooks`] container — so that reusable sub-components called from
+//! a step body can take a single `&mut StepCtx` rather than juggling
+//! individual arguments. New framework hooks added in the future (e.g.
+//! transcript threading) belong on [`FrameworkHooks`] as well.
 
 use ragu_arithmetic::{CurveAffine, PoseidonPermutation};
 use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::{Element, Point, poseidon::Sponge};
 
-use crate::poly_query::PolyQueryClaims;
+use crate::framework_hooks::FrameworkHooks;
 
 /// Framework-side state threaded through [`Step::witness`](super::Step::witness).
-///
-/// `dr` is exposed directly because callers routinely need it for allocator
-/// calls and gadget construction. The poly-query claim sink is exposed via
-/// [`enforce_poly_query`](Self::enforce_poly_query) so the framework can keep
-/// the underlying claim representation flexible.
+/// The poly-query claim sink is exposed via
+/// [`enforce_poly_query`](Self::enforce_poly_query)
 pub struct StepCtx<'a, 'dr, D, C>
 where
     D: Driver<'dr>,
@@ -26,7 +23,7 @@ where
     /// The underlying driver. Components called from a step body use this for
     /// allocation and constraint emission.
     pub dr: &'a mut D,
-    pq: &'a mut PolyQueryClaims<'dr, D, C>,
+    hooks: &'a mut FrameworkHooks<'dr, D, C>,
 }
 
 impl<'a, 'dr, D, C> StepCtx<'a, 'dr, D, C>
@@ -34,11 +31,11 @@ where
     D: Driver<'dr>,
     C: CurveAffine<Base = D::F>,
 {
-    pub(crate) fn new(dr: &'a mut D, pq: &'a mut PolyQueryClaims<'dr, D, C>) -> Self {
-        Self { dr, pq }
+    pub(crate) fn new(dr: &'a mut D, hooks: &'a mut FrameworkHooks<'dr, D, C>) -> Self {
+        Self { dr, hooks }
     }
 
-    /// Records a poly-query claim: the polynomial committed to by `com`
+    /// Records a poly-query claim: the polynomial committed to by `com` (a nested curve point)
     /// evaluates to `y` at the point `x`. The framework collects these via the
     /// adapter's `Aux` for later fuse-time verification.
     pub fn enforce_poly_query(
@@ -47,16 +44,14 @@ where
         x: Element<'dr, D>,
         y: Element<'dr, D>,
     ) -> Result<()> {
-        self.pq.enforce_polynomial_query(self.dr, com, x, y)
+        self.hooks.enforce_polynomial_query(self.dr, com, x, y)
     }
 
     /// Squeezes a challenge field element from `sponge` using this context's
     /// driver. Callers are responsible for having absorbed every value the
     /// challenge needs to be bound to before calling this.
     ///
-    /// The sponge is passed in explicitly rather than carried on `StepCtx`:
-    /// transcript threading at the adapter level is intentional follow-up work,
-    /// not part of this slice.
+    /// For now, the sponge is passed in explicitly rather than carried on `StepCtx`
     pub fn derive_challenge<P: PoseidonPermutation<D::F>>(
         &mut self,
         sponge: &mut Sponge<'dr, D, P>,

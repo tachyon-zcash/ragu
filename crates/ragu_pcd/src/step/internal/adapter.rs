@@ -15,7 +15,10 @@ use ragu_primitives::{
 };
 
 use super::super::{Step, StepCtx};
-use crate::{Header, poly_query::PolyQueryClaims};
+use crate::{
+    Header,
+    framework_hooks::{FrameworkHookOutputs, FrameworkHooks},
+};
 
 /// Represents triple a length determined at compile time.
 pub struct TripleConstLen<const N: usize>;
@@ -29,7 +32,7 @@ impl<const N: usize> Len for TripleConstLen<N> {
 /// Auxiliary data produced by [`Adapter::witness`]: the two input headers, the
 /// output data carried by the resulting PCD, the inner step's own aux, and the
 /// polynomial-query claims raised by the step (surfaced for later fuse-time
-/// processing — see [`PolyQueryClaims`]).
+/// processing — see [`FrameworkHooks`]).
 pub(crate) struct AdapterAux<'source, C: Cycle, S: Step<C>, const HEADER_SIZE: usize> {
     pub left_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
     pub right_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
@@ -88,13 +91,15 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
     {
         let (left, right, witness) = witness.cast();
 
-        let mut pq = PolyQueryClaims::new();
+        let mut hooks = FrameworkHooks::new();
         let ((left, right, output), output_data, step_aux) = {
-            let mut ctx = StepCtx::new(dr, &mut pq);
+            let mut ctx = StepCtx::new(dr, &mut hooks);
             self.step
                 .witness::<_, HEADER_SIZE>(&mut ctx, witness, left, right)?
         };
-        let claims = pq.into_inner();
+        let FrameworkHookOutputs {
+            poly_query_claims: claims,
+        } = hooks.into_outputs();
 
         let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
         left.write(dr, &mut elements)?;
@@ -173,7 +178,8 @@ mod tests {
 
         fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
             &self,
-            ctx: &mut StepCtx<'_, 'dr, D, <Pasta as ragu_arithmetic::Cycle>::NestedCurve>,
+            ctx: &mut StepCtx<'_, 'dr, D, 
+                <Pasta as ragu_arithmetic::Cycle>::NestedCurve>, // the type for user-supplied polynomial commitments
             _: DriverValue<D, ()>,
             left: DriverValue<D, Fp>,
             right: DriverValue<D, Fp>,

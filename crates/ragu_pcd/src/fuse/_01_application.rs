@@ -49,6 +49,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             right_header,
             output_data,
             step_aux,
+            // TODO: process the application poly queries
             claims: _,
         } = aux;
 

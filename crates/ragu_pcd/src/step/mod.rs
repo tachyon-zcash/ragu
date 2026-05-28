@@ -174,12 +174,12 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     /// Returns the encoded headers (left, right, output), the data to be
     /// carried in the resulting PCD, and any auxiliary witness data.
     ///
-    /// `ctx` bundles the underlying [`Driver`] with the framework-side hooks a
-    /// step body may invoke — currently a [`PolyQueryClaims`] sink reached via
+    /// `ctx` bundles the underlying [`Driver`] with the framework hooks
+    ///  — currently a [`FrameworkHooks`] poly-query claim sink reached via
     /// [`StepCtx::enforce_poly_query`]. Steps that don't need any framework
     /// hooks simply use `ctx.dr` and ignore the rest.
     ///
-    /// [`PolyQueryClaims`]: crate::poly_query::PolyQueryClaims
+    /// [`FrameworkHooks`]: crate::framework_hooks::FrameworkHooks
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         ctx: &mut StepCtx<'_, 'dr, D, C::NestedCurve>,

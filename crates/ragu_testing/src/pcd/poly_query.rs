@@ -9,7 +9,9 @@
 //! `application_data` produced for the resulting `Pcd`. It is **not**
 //! exposed to the circuit — `Header::encode` only allocates the hash
 //! digest. The commitment-and-opening claim view of the polynomial is
-//! enforced via [`PolyQueryClaims::enforce_polynomial_query`].
+//! enforced via [`FrameworkHooks::enforce_polynomial_query`].
+//!
+//! [`FrameworkHooks::enforce_polynomial_query`]: ragu_pcd::framework_hooks::FrameworkHooks::enforce_polynomial_query
 
 use core::marker::PhantomData;
 

@@ -13,9 +13,7 @@
 //! and [`StepCtx::enforce_poly_query`] to surface the three opening claims for
 //! later fuse-time verification.
 //!
-//! [`Step::witness`]: crate::step::Step::witness
-
-use alloc::vec::Vec;
+//! [`Step::witness`]: ragu_pcd::step::Step::witness
 
 use ff::PrimeField;
 use ragu_arithmetic::{CurveAffine, PoseidonPermutation, poly_mul};
@@ -26,15 +24,14 @@ use ragu_core::{
     gadgets::Gadget,
     maybe::Maybe,
 };
+use ragu_pcd::step::StepCtx;
 use ragu_primitives::{Element, GadgetExt, Point, allocator::Standard, poseidon::Sponge};
-
-use crate::step::StepCtx;
 
 /// A polynomial paired with an in-circuit commitment to it.
 ///
 /// `polynomial` is prover-only data threaded through a [`DriverValue`];
 /// `commitment` is a real in-circuit gadget. See the [module
-/// docs](crate::multiset) for merge semantics.
+/// docs](self) for merge semantics.
 pub struct Multiset<'dr, D, C, R>
 where
     D: Driver<'dr>,
