@@ -24,14 +24,12 @@ use ragu_primitives::{Element, Point};
 /// Container for framework-side state threaded through a
 /// [`Step::witness`](crate::step::Step::witness) invocation.
 ///
-/// Currently holds only the polynomial-commitment opening-claim sink. Wires
-/// aren't carried out of `witness()`, so each recorded claim's `(com, x, y)`
-/// values are extracted up-front and accumulated into a single `DriverValue`.
+/// Currently holds only the polynomial-commitment opening-claim sink.
 /// The framework's adapter constructs this, passes it to the step, then
 /// surfaces [`into_outputs`](Self::into_outputs) through its `Aux` for later
 /// fuse-time processing.
 pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
-    poly_query_claims: DriverValue<D, Vec<(C, D::F, D::F)>>,
+    poly_query_claims: Vec<DriverValue<D, (C, D::F, D::F)>>,
 }
 
 /// Aggregate of every hook's accumulated output, returned by
@@ -47,7 +45,7 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
     /// Creates a new, empty hook container.
     pub fn new() -> Self {
         Self {
-            poly_query_claims: D::just(Vec::new),
+            poly_query_claims: Vec::new(),
         }
     }
 
@@ -62,21 +60,24 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
     ) -> Result<()> {
         let triple =
             D::try_just(|| Ok((com.value().take(), *x.value().take(), *y.value().take())))?;
-        let current = core::mem::replace(&mut self.poly_query_claims, D::just(Vec::new));
-        self.poly_query_claims = current.and_then(|mut v| {
-            triple.map(|t| {
-                v.push(t);
-                v
-            })
-        });
+        self.poly_query_claims.push(triple);
         Ok(())
     }
 
     /// Consumes the container and returns every hook's accumulated output.
     pub fn into_outputs(self) -> FrameworkHookOutputs<'dr, D, C> {
-        FrameworkHookOutputs {
-            poly_query_claims: self.poly_query_claims,
-        }
+        let poly_query_claims =
+            self.poly_query_claims
+                .into_iter()
+                .fold(D::just(Vec::new), |acc, triple| {
+                    acc.and_then(|mut v| {
+                        triple.map(|t| {
+                            v.push(t);
+                            v
+                        })
+                    })
+                });
+        FrameworkHookOutputs { poly_query_claims }
     }
 }
 
