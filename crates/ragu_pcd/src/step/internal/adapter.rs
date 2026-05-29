@@ -41,6 +41,10 @@ pub(crate) struct AdapterAux<'source, C: Cycle, S: Step<C>, const HEADER_SIZE: u
     // TODO: surface these for fuse-time polynomial-query verification.
     #[allow(dead_code)]
     pub claims: Vec<(C::NestedCurve, C::CircuitField, C::CircuitField)>,
+    // TODO: carry the stages induced by `derive_challenge`
+    // (`FrameworkHookOutputs::derived_challenges`) here so fuse can reserve each
+    // slice, commit to its partial trace, hash the commitment for `challenge_x`,
+    // and resolve the derived outputs.
 }
 
 pub(crate) struct Adapter<C, S, R, const HEADER_SIZE: usize> {
@@ -99,8 +103,9 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         };
         let FrameworkHookOutputs {
             poly_query_claims: claims,
-            // Derived-challenge tracking is captured but not yet consumed by
-            // fuse(); see future framework work.
+            // TODO: thread the induced stages into `AdapterAux` (like `claims`)
+            // so fuse can build each `derive_challenge` partial trace. Dropped
+            // for now; see the `AdapterAux` TODO and `FrameworkHooks`.
             derived_challenges: _,
         } = hooks.into_outputs();
 
