@@ -99,6 +99,9 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         };
         let FrameworkHookOutputs {
             poly_query_claims: claims,
+            // Derived-challenge tracking is captured but not yet consumed by
+            // fuse(); see future framework work.
+            derived_challenges: _,
         } = hooks.into_outputs();
 
         let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
