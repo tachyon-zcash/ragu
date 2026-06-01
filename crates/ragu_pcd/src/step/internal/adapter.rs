@@ -43,7 +43,7 @@ pub(crate) struct AdapterAux<'source, C: Cycle, S: Step<C>, const HEADER_SIZE: u
     pub claims: Vec<(C::NestedCurve, C::CircuitField, C::CircuitField)>,
     // TODO: carry the stages induced by `derive_challenge`
     // (`FrameworkHookOutputs::derived_challenges`) here so fuse can reserve each
-    // slice, commit to its partial trace, hash the commitment for `challenge_x`,
+    // slice, commit to its partial trace, hash the commitment for the challenge,
     // and resolve the derived outputs.
 }
 

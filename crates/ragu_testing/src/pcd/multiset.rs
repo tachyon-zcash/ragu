@@ -3,20 +3,21 @@
 //! A [`Multiset`] pairs a (prover-only) polynomial with an (in-circuit)
 //! commitment to it. [`Multiset::merge`] consumes two multisets and produces a
 //! third whose polynomial is the product of the inputs, with the equality
-//! `(a · b)(z) = a(z) · b(z)` enforced at a transcript-derived challenge `z`.
+//! `(a · b)(z) = a(z) · b(z)` enforced at a framework-derived challenge `z`.
 //! Verifier-side confidence comes from Schwartz–Zippel: if `z` is sampled
 //! after the prover commits to all three polynomials, equality at `z` implies
 //! equality everywhere except on a negligible-probability bad set.
 //!
-//! Built on top of [`StepCtx`]: the merge uses
-//! [`StepCtx::derive_challenge`] to sample `z` from a caller-supplied sponge
-//! and [`StepCtx::enforce_poly_query`] to surface the three opening claims for
-//! later fuse-time verification.
+//! Built on top of [`StepCtx`]: the merge uses [`StepCtx::derive_challenge`] to
+//! obtain `z` — the framework binds the challenge to the three commitments by
+//! committing to them and hashing the commitment, so the `Multiset` never
+//! instantiates a sponge — and [`StepCtx::enforce_poly_query`] to surface the
+//! three opening claims for later fuse-time verification.
 //!
 //! [`Step::witness`]: ragu_pcd::step::Step::witness
 
 use ff::PrimeField;
-use ragu_arithmetic::{CurveAffine, PoseidonPermutation, poly_mul};
+use ragu_arithmetic::{CurveAffine, poly_mul};
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{
     Result,
@@ -25,7 +26,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_pcd::step::StepCtx;
-use ragu_primitives::{Element, GadgetExt, Point, allocator::Standard, poseidon::Sponge};
+use ragu_primitives::{Element, Point, allocator::Standard};
 
 /// A polynomial paired with an in-circuit commitment to it.
 ///
@@ -66,13 +67,12 @@ where
 
     /// Merges two multisets. The result carries the product polynomial and a
     /// prover-supplied commitment to it. Three opening claims are recorded —
-    /// one per input plus the product — at a transcript-derived challenge,
+    /// one per input plus the product — at a framework-derived challenge,
     /// and `y_prod = y_a · y_b` is enforced in-circuit.
     ///
-    /// The caller is responsible for keeping `sponge`'s state aligned with
-    /// the surrounding protocol: anything the challenge must be bound to
-    /// should already have been absorbed before `merge` is called. `merge`
-    /// itself absorbs the three commitments before squeezing.
+    /// The challenge `z` comes from [`StepCtx::derive_challenge`]: the framework
+    /// binds it to the three commitments (committing to them and hashing the
+    /// commitment), so this method never instantiates or reasons about a sponge.
     ///
     /// `product_com_witness` is the prover-supplied commitment to the product
     /// polynomial; the Schwartz–Zippel check installed below is what ties it
@@ -84,11 +84,10 @@ where
     /// [`sparse::Polynomial::from_coeffs`] will panic if the result exceeds
     /// `R::num_coeffs()`. Choosing the right `R` is the caller's
     /// responsibility.
-    pub fn merge<P: PoseidonPermutation<D::F>>(
+    pub fn merge(
         self,
         other: Self,
         ctx: &mut StepCtx<'_, 'dr, D, C>,
-        sponge: &mut Sponge<'dr, D, P>,
         product_com_witness: DriverValue<D, C>,
     ) -> Result<Self>
     where
@@ -108,11 +107,15 @@ where
         // 2. Allocate the in-circuit commitment to the product.
         let product_com = Point::alloc(ctx.dr, product_com_witness)?;
 
-        // 3. Bind all three commitments into the sponge, then derive z.
-        self.commitment.write(ctx.dr, sponge)?;
-        other.commitment.write(ctx.dr, sponge)?;
-        product_com.write(ctx.dr, sponge)?;
-        let z = ctx.derive_challenge(sponge)?;
+        // 3. Derive z, bound to all three commitments. Ragu commits to the
+        //    bundled points and hashes that commitment to produce the
+        //    challenge — the Multiset never touches a sponge. We only need the
+        //    challenge here, so the returned binding commitment is discarded.
+        let (_, z) = ctx.derive_challenge([
+            self.commitment.clone(),
+            other.commitment.clone(),
+            product_com.clone(),
+        ])?;
 
         // 4. Allocate the three evaluations at z; prover-side values flow
         //    through the polynomial DriverValues.
