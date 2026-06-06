@@ -16,8 +16,8 @@ use ragu_core::{
 use ragu_primitives::allocator::Standard;
 
 use super::super::{Encoded, Index, Step, StepCtx};
-pub(crate) use crate::step::InternalStepIndex::Rerandomize as INTERNAL_ID;
 use crate::Header;
+pub(crate) use crate::step::InternalStepIndex::Rerandomize as INTERNAL_ID;
 
 pub(crate) struct Rerandomize<H> {
     _marker: PhantomData<H>,

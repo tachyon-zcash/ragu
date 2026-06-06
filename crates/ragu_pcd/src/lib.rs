@@ -24,12 +24,12 @@ extern crate alloc;
 #[cfg(any(feature = "std", test))]
 extern crate std;
 
+pub mod framework_hooks;
 mod fuse;
 #[cfg(feature = "unstable-fuzzing")]
 pub mod fuzz_utils;
 pub mod header;
 mod internal;
-pub mod framework_hooks;
 mod proof;
 pub mod step;
 mod verify;

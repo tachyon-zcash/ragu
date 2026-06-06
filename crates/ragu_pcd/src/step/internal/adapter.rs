@@ -178,8 +178,7 @@ mod tests {
 
         fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
             &self,
-            ctx: &mut StepCtx<'_, 'dr, D, 
-                <Pasta as ragu_arithmetic::Cycle>::NestedCurve>, // the type for user-supplied polynomial commitments
+            ctx: &mut StepCtx<'_, 'dr, D, <Pasta as ragu_arithmetic::Cycle>::NestedCurve>, // the type for user-supplied polynomial commitments
             _: DriverValue<D, ()>,
             left: DriverValue<D, Fp>,
             right: DriverValue<D, Fp>,
