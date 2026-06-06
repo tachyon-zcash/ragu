@@ -43,20 +43,23 @@ use ragu_primitives::{Element, Point};
 /// polynomial `a(X)`, which `fuse()` commits to independently. The succinct
 /// commitment is hashed to derive the challenge.
 ///
-/// This records only the *shape* of the induced stage. The actual derivation —
+/// This records the induced stage's wire slice. The remaining derivation —
 /// committing the slice, hashing the commitment in-circuit (à la the
 /// `internal/native/circuits/hashes_1.rs` circuit), and resolving the derived
 /// outputs — is future framework work.
-pub struct InducedStage {
+pub struct InducedStage<'dr, D: Driver<'dr>> {
     /// Width of this stage's trace slice (the gadget's wire count), used by the
     /// discovery pass to reserve the partial-trace layout — the same quantity
     /// the staging builder derives via [`Gadget::num_wires`].
     pub num_wires: usize,
-    // TODO: capture the gadget's actual wire handles (via a `WireMap`
-    // collector) so fuse can commit to exactly this slice, not just its width.
+    /// The gadget's actual wire handles, in canonical traversal order, captured
+    /// via [`Gadget::collect_wires`]. This pins down *exactly* which wires
+    /// `fuse()` commits to for this stage, rather than just how many. Always
+    /// `wires.len() == num_wires`.
+    pub wires: Vec<D::Wire>,
     // TODO: hold the deferred output handles — the nested-curve commitment
     // `point` and the derived challenge — that fuse resolves once the stage is
-    // committed. Adding these will parameterize this struct by `<'dr, D, C>`,
+    // committed. Adding these will further parameterize this struct by `C`,
     // matching [`FrameworkHooks`].
 }
 
@@ -73,7 +76,7 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// Stages induced by [`FrameworkHooks::derive_challenge`] calls — one per
     /// call under the simple model. Tracked here so `fuse()` can reserve each
     /// slice, commit to its partial trace, and resolve the derived values.
-    derived_challenges: Vec<InducedStage>,
+    derived_challenges: Vec<InducedStage<'dr, D>>,
 }
 
 /// Aggregate of every hook's accumulated output, returned by
@@ -85,7 +88,7 @@ pub struct FrameworkHookOutputs<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>
     pub poly_query_claims: DriverValue<D, Vec<(C, D::F, D::F)>>,
     /// Stages induced by [`FrameworkHooks::derive_challenge`] calls, in call
     /// order. `fuse()` consumes these to build the per-call partial traces.
-    pub derived_challenges: Vec<InducedStage>,
+    pub derived_challenges: Vec<InducedStage<'dr, D>>,
 }
 
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C> {
@@ -128,14 +131,15 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
         _dr: &mut D,
         gadget: G,
     ) -> Result<(Point<'dr, D, C>, Element<'dr, D>)> {
-        // Record the induced stage's width now — that's what the discovery pass
-        // needs to reserve the partial-trace slice.
-        let num_wires = gadget.num_wires()?;
-        self.derived_challenges.push(InducedStage { num_wires });
+        // Capture the gadget's actual wire handles now — fuse commits to
+        // exactly this slice, and the discovery pass uses its width to reserve
+        // the partial-trace layout.
+        let wires = gadget.collect_wires()?;
+        self.derived_challenges.push(InducedStage {
+            num_wires: wires.len(),
+            wires,
+        });
 
-        // TODO: capture the gadget's actual wire handles (via a `WireMap`
-        // collector) and store them on the recorded `InducedStage`, so fuse
-        // commits to exactly this slice rather than just knowing its width.
         // TODO: allocate the two outputs — the nested-curve commitment `point`
         // and the derived challenge — against deferred witnesses, store their
         // handles on the recorded `InducedStage`, and return them. This needs

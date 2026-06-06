@@ -82,6 +82,8 @@
 
 mod foreign;
 
+use alloc::vec::Vec;
+
 use ff::Field;
 
 use super::{
@@ -165,6 +167,47 @@ pub trait Gadget<'dr, D: Driver<'dr>>: Clone {
         };
         self.map(&mut counter)?;
         Ok(counter.count)
+    }
+
+    /// Collects this gadget's wire handles, in canonical traversal order.
+    ///
+    /// This is the wire-handle analogue of [`num_wires`](Self::num_wires):
+    /// rather than merely counting, it clones each [`D::Wire`](Driver::Wire)
+    /// into a `Vec` as the gadget is traversed. The traversal order is
+    /// deterministic and instance-independent (it follows from
+    /// [fungibility](Gadget#fungibility)), and the returned length always
+    /// equals [`num_wires`](Self::num_wires).
+    ///
+    /// This generalizes
+    /// [`Emulator::wires`](crate::drivers::emulator::Emulator::wires), which
+    /// captures wire *values* for the extractor emulator, to the opaque wire
+    /// handles of any [`Driver`]. It is the building block for capturing
+    /// exactly which wires a gadget commits to (e.g. the slice a challenge is
+    /// derived from).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying [`GadgetKind::map_gadget`] fails.
+    fn collect_wires(&self) -> Result<Vec<D::Wire>> {
+        struct WireCollector<Src: DriverTypes> {
+            wires: Vec<Src::ImplWire>,
+        }
+
+        impl<F: Field, Src: DriverTypes<ImplField = F, ImplWire: Clone>> WireMap<F>
+            for WireCollector<Src>
+        {
+            type Src = Src;
+            type Dst = core::marker::PhantomData<F>;
+
+            fn convert_wire(&mut self, wire: &Src::ImplWire) -> Result<()> {
+                self.wires.push(wire.clone());
+                Ok(())
+            }
+        }
+
+        let mut collector = WireCollector::<D> { wires: Vec::new() };
+        self.map(&mut collector)?;
+        Ok(collector.wires)
     }
 }
 
