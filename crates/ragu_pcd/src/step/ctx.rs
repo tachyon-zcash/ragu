@@ -4,13 +4,12 @@
 //! [`FrameworkHooks`] container — so that reusable sub-components called from
 //! a step body can take a single `&mut StepCtx` rather than juggling
 //! individual arguments. The poly-query claim sink is exposed via
-//! [`enforce_poly_query`](StepCtx::enforce_poly_query) and the challenge hook
-//! via [`derive_challenge`](StepCtx::derive_challenge). New framework hooks
+//! [`enforce_poly_query`](StepCtx::enforce_poly_query). New framework hooks
 //! added in the future (e.g. transcript threading) belong on [`FrameworkHooks`]
 //! as well.
 
 use ragu_arithmetic::CurveAffine;
-use ragu_core::{Result, drivers::Driver, gadgets::Gadget};
+use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::{Element, Point};
 
 use crate::framework_hooks::FrameworkHooks;
@@ -48,17 +47,5 @@ where
         y: Element<'dr, D>,
     ) -> Result<()> {
         self.hooks.enforce_polynomial_query(self.dr, com, x, y)
-    }
-
-    /// Derives a challenge from `gadget`. Returns a nested-curve `point` (a
-    /// Pedersen commitment to the gadget's wires) and the derived challenge as
-    /// an `Element` (the Poseidon hash of that point). The framework performs
-    /// the real derivation outside the circuit — the caller never instantiates
-    /// or reasons about a sponge.
-    pub fn derive_challenge<G: Gadget<'dr, D>>(
-        &mut self,
-        gadget: G,
-    ) -> Result<(Point<'dr, D, C>, Element<'dr, D>)> {
-        self.hooks.derive_challenge(self.dr, gadget)
     }
 }
