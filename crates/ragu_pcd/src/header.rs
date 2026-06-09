@@ -38,7 +38,18 @@ pub struct Suffix {
 
 impl Suffix {
     /// Creates a new application-defined [`Header`] suffix.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `value` is large enough that adding the internal suffix
+    /// offset would overflow `usize`, which would alias reserved internal
+    /// suffixes.
     pub const fn new(value: usize) -> Self {
+        assert!(
+            value <= usize::MAX - NUM_INTERNAL_SUFFIXES as usize,
+            "application suffix too large; would alias internal suffixes",
+        );
+
         Suffix {
             suffix: HeaderSuffix::Application(value),
         }
@@ -73,6 +84,19 @@ fn test_suffix_map() {
     assert_eq!(Suffix::internal(1).get(), 1);
     assert_eq!(Suffix::new(0).get(), 2);
     assert_eq!(Suffix::new(1).get(), 3);
+}
+
+#[test]
+fn test_suffix_max_application_value() {
+    let max = usize::MAX - NUM_INTERNAL_SUFFIXES as usize;
+    let suffix = Suffix::new(max);
+    assert_eq!(suffix.get(), usize::MAX as u64);
+}
+
+#[test]
+#[should_panic(expected = "would alias internal suffixes")]
+fn test_suffix_wrapping_panics() {
+    let _ = Suffix::new(usize::MAX - NUM_INTERNAL_SUFFIXES as usize + 1);
 }
 
 /// Headers are succinct representations of data, essentially used as public
