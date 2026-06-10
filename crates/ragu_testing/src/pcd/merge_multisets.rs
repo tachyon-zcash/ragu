@@ -133,9 +133,10 @@ impl<C: Cycle, R: Rank> Step<C> for MergeMultisets<C, R> {
         // Output the merged multiset: its commitment is exposed to the circuit,
         // its polynomial rides along as data.
         let output_data = merged.commitment.value().and_then(|commitment| {
-            merged
-                .polynomial
-                .map(|polynomial| MultisetData { commitment, polynomial })
+            merged.polynomial.map(|polynomial| MultisetData {
+                commitment,
+                polynomial,
+            })
         });
         let output_encoded = Encoded::from_gadget(merged.commitment);
 
@@ -144,5 +145,39 @@ impl<C: Cycle, R: Rank> Step<C> for MergeMultisets<C, R> {
             output_data,
             D::unit(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ragu_circuits::polynomials::ProductionRank;
+    use ragu_pasta::Pasta;
+    use ragu_pcd::ApplicationBuilder;
+
+    use super::*;
+
+    type R = ProductionRank;
+    const HEADER_SIZE: usize = 4;
+
+    /// Registering a step that derives a challenge exercises the full
+    /// registration-time staging path: the dry run discovers the induced
+    /// stage layout, the corresponding well-formedness masks are registered,
+    /// and the step circuit synthesizes (reservation + binding + deferred
+    /// output allocation) through keygen.
+    #[test]
+    fn registration_discovers_induced_stage_and_registers_masks() {
+        let pasta = Pasta::baked();
+
+        let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
+            .register(MergeMultisets::<Pasta, R>::new())
+            .expect("registration should succeed")
+            .finalize(pasta)
+            .expect("finalization should succeed");
+
+        // `MergeMultisets` calls `derive_challenge` once with three `Point`s
+        // (6 wires), inducing one stage. The registry therefore holds the 13
+        // internal circuits, 2 internal steps, 1 application step, plus 2
+        // application masks (the stage mask and the final mask).
+        assert_eq!(app.native_registry().num_circuits(), 13 + 2 + 1 + 2);
     }
 }

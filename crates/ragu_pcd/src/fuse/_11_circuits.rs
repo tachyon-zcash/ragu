@@ -52,7 +52,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             native::RevdotParameters,
         >::new(
             self.params,
-            total_circuit_counts(self.num_application_steps).1,
+            total_circuit_counts(self.num_application_steps, self.num_application_masks).1,
         )
         .trace(native::circuits::hashes_1::Witness {
             unified,

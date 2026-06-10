@@ -145,6 +145,7 @@
 
 pub(crate) mod bonding;
 mod builder;
+mod induced;
 pub(crate) mod mask;
 mod rx_driver;
 
@@ -152,6 +153,7 @@ use alloc::boxed::Box;
 
 pub use builder::{StageBuilder, StageGuard};
 use ff::Field;
+pub use induced::InducedStages;
 use ragu_arithmetic::Coeff;
 use ragu_core::{
     Result,
@@ -396,33 +398,13 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
             dr.wires(&out)?
         };
 
-        if values.len() > Self::values() {
-            return Err(ragu_core::Error::GateBoundExceeded {
-                limit: Self::num_gates(),
-            });
-        }
-
-        let mut dr = RxDriver::<F, R>::with_capacity(Self::skip_gates() + Self::num_gates());
-        let mut allocator = Standard::default();
-
-        // SYSTEM gate: alpha at a[0], 0 at d[0].
-        allocator.alloc(&mut dr, || Ok(Coeff::Arbitrary(alpha)))?;
-        allocator.alloc(&mut dr, || Ok(Coeff::Zero))?;
-
-        // Skip gates 1..skip_gates: two zero allocs each.
-        for _ in 0..(2 * (Self::skip_gates() - 1)) {
-            allocator.alloc(&mut dr, || Ok(Coeff::Zero))?;
-        }
-
-        // Data values, padded with zeros to fill all stage slots.
-        for value in &values {
-            allocator.alloc(&mut dr, || Ok(Coeff::Arbitrary(*value)))?;
-        }
-        for _ in values.len()..Self::values() {
-            allocator.alloc(&mut dr, || Ok(Coeff::Zero))?;
-        }
-
-        Ok(dr.build())
+        build_stage_rx(
+            alpha,
+            Self::skip_gates(),
+            Self::num_gates(),
+            Self::values(),
+            &values,
+        )
     }
 
     /// Compute the (partial) $r(X)$ polynomial for this stage, using a
@@ -477,3 +459,46 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
 }
 
 impl<F: Field, R: Rank, S: Stage<F, R>> StageExt<F, R> for S {}
+
+/// Builds a (partial) stage trace polynomial from raw slot values.
+///
+/// Shared between the typed path ([`StageExt::rx_configured`], where the
+/// geometry comes from the [`Stage`] associated functions) and the value-level
+/// path ([`InducedStages::rx`], where it comes from a layout discovered at
+/// registration time).
+///
+/// `num_slots` is the stage's declared slot count; `values` may be shorter and
+/// is zero-padded to fill the remaining slots.
+fn build_stage_rx<F: Field, R: Rank>(
+    alpha: F,
+    skip_gates: usize,
+    num_gates: usize,
+    num_slots: usize,
+    values: &[F],
+) -> Result<sparse::Polynomial<F, R>> {
+    if values.len() > num_slots {
+        return Err(ragu_core::Error::GateBoundExceeded { limit: num_gates });
+    }
+
+    let mut dr = RxDriver::<F, R>::with_capacity(skip_gates + num_gates);
+    let mut allocator = Standard::default();
+
+    // SYSTEM gate: alpha at a[0], 0 at d[0].
+    allocator.alloc(&mut dr, || Ok(Coeff::Arbitrary(alpha)))?;
+    allocator.alloc(&mut dr, || Ok(Coeff::Zero))?;
+
+    // Skip gates 1..skip_gates: two zero allocs each.
+    for _ in 0..(2 * (skip_gates - 1)) {
+        allocator.alloc(&mut dr, || Ok(Coeff::Zero))?;
+    }
+
+    // Data values, padded with zeros to fill all stage slots.
+    for value in values {
+        allocator.alloc(&mut dr, || Ok(Coeff::Arbitrary(*value)))?;
+    }
+    for _ in values.len()..num_slots {
+        allocator.alloc(&mut dr, || Ok(Coeff::Zero))?;
+    }
+
+    Ok(dr.build())
+}

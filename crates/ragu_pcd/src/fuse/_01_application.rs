@@ -35,7 +35,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     )> {
         let (left_proof, left_data) = left.into_parts();
         let (right_proof, right_data) = right.into_parts();
-        let (trace, aux) = Adapter::<C, S, R, HEADER_SIZE>::new(step)
+        let (trace, aux) = Adapter::<C, S, R, HEADER_SIZE>::new(step)?
             .trace((left_data, right_data, witness))?
             .into_parts();
         let rx = self.native_registry.assemble(

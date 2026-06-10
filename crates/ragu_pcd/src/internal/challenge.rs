@@ -57,11 +57,7 @@ where
 mod tests {
     use ragu_arithmetic::Cycle;
     use ragu_circuits::polynomials::{TestRank, sparse};
-    use ragu_core::{
-        Result,
-        drivers::emulator::Emulator,
-        maybe::Maybe,
-    };
+    use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
     use ragu_pasta::Pasta;
 
     use super::*;
@@ -88,10 +84,13 @@ mod tests {
 
         let run = || -> Result<(Nested, Circuit)> {
             let mut dr = Emulator::execute();
-            let mut transcript =
-                Transcript::new(&mut dr, C::circuit_poseidon(&params), RAGU_TAG)?;
-            let (commitment, challenge) =
-                commit_and_challenge::<_, Nested, _, R>(&mut dr, &mut transcript, generators, &poly)?;
+            let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(&params), RAGU_TAG)?;
+            let (commitment, challenge) = commit_and_challenge::<_, Nested, _, R>(
+                &mut dr,
+                &mut transcript,
+                generators,
+                &poly,
+            )?;
             Ok((commitment, *challenge.value().take()))
         };
 
@@ -117,10 +116,13 @@ mod tests {
 
         let challenge_for = |poly: &sparse::Polynomial<Scalar, R>| -> Result<Circuit> {
             let mut dr = Emulator::execute();
-            let mut transcript =
-                Transcript::new(&mut dr, C::circuit_poseidon(&params), RAGU_TAG)?;
-            let (_, challenge) =
-                commit_and_challenge::<_, Nested, _, R>(&mut dr, &mut transcript, generators, poly)?;
+            let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(&params), RAGU_TAG)?;
+            let (_, challenge) = commit_and_challenge::<_, Nested, _, R>(
+                &mut dr,
+                &mut transcript,
+                generators,
+                poly,
+            )?;
             Ok(*challenge.value().take())
         };
 

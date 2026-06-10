@@ -193,9 +193,7 @@ pub trait Gadget<'dr, D: Driver<'dr>>: Clone {
             wires: Vec<Src::ImplWire>,
         }
 
-        impl<F: Field, Src: DriverTypes<ImplField = F, ImplWire: Clone>> WireMap<F>
-            for WireCollector<Src>
-        {
+        impl<F: Field, Src: DriverTypes<ImplField = F, ImplWire: Clone>> WireMap<F> for WireCollector<Src> {
             type Src = Src;
             type Dst = core::marker::PhantomData<F>;
 

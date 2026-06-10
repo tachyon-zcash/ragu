@@ -16,8 +16,8 @@ use ragu_core::{
 use ragu_primitives::allocator::Standard;
 
 use super::super::{Encoded, Index, Step, StepCtx};
-pub(crate) use crate::step::InternalStepIndex::Rerandomize as INTERNAL_ID;
 use crate::Header;
+pub(crate) use crate::step::InternalStepIndex::Rerandomize as INTERNAL_ID;
 
 pub(crate) struct Rerandomize<H> {
     _marker: PhantomData<H>,
@@ -126,12 +126,15 @@ fn test_rerandomize_consistency() {
         }
     }
 
-    let circuit_single = super::adapter::Adapter::<Pasta, Rerandomize<Single>, R, HEADER_SIZE>::new(
-        Rerandomize::new(),
-    );
+    let circuit_single =
+        super::adapter::Adapter::<Pasta, Rerandomize<Single>, R, HEADER_SIZE>::new(
+            Rerandomize::new(),
+        )
+        .unwrap();
     let circuit_pair = super::adapter::Adapter::<Pasta, Rerandomize<Pair>, R, HEADER_SIZE>::new(
         Rerandomize::new(),
-    );
+    )
+    .unwrap();
 
     let mut builder: TestRegistryBuilder<'_, _, R> = TestRegistryBuilder::new();
     let single_h = builder.register_circuit(circuit_single).unwrap();
