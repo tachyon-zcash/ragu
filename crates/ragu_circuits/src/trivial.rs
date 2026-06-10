@@ -3,7 +3,7 @@
 //! Provides an implementation of [`Circuit`] for the unit type `()`,
 //! which creates zero constraints. Useful for testing and placeholders.
 
-use ff::Field;
+use ragu_arithmetic::ff::Field;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},

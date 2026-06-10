@@ -1,5 +1,4 @@
-use ff::Field;
-use ragu_arithmetic::geosum;
+use ragu_arithmetic::{ff::Field, geosum};
 use ragu_core::Result;
 
 use crate::{
@@ -237,10 +236,13 @@ impl<F: Field, R: Rank> WiringObject<F, R> for StageMask<R> {
 mod tests {
     use core::marker::PhantomData;
 
-    use ff::Field;
-    use group::{Curve, CurveAffine as _};
     use proptest::prelude::*;
-    use ragu_arithmetic::{CurveAffine, Cycle, FixedGenerators, Uendo};
+    use ragu_arithmetic::{
+        CurveAffine, Cycle, FixedGenerators,
+        ff::Field,
+        group::{Curve, CurveAffine as _},
+        rand::RngExt,
+    };
     use ragu_core::{
         Result,
         drivers::{Driver, DriverValue, LinearExpression, emulator::Emulator},
@@ -250,7 +252,6 @@ mod tests {
     };
     use ragu_pasta::{EpAffine, EqAffine, Fp, Fq, Pasta};
     use ragu_primitives::{Element, Endoscalar, Point, consistent::Consistent, io::Write};
-    use rand::RngExt;
 
     use super::{
         super::{Stage, StageExt},
@@ -402,10 +403,10 @@ mod tests {
             type Parent = ();
 
             fn values() -> usize {
-                Uendo::BITS as usize
+                u128::BITS as usize
             }
 
-            type Witness<'source> = Uendo;
+            type Witness<'source> = u128;
             type OutputKind = Endoscalar<'static, core::marker::PhantomData<Fp>>;
 
             fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
@@ -448,10 +449,10 @@ mod tests {
             }
         }
 
-        let endoscalar_a: Uendo = rand::rng().random();
-        let endoscalar_b: Uendo = rand::rng().random();
-        let p1 = (EpAffine::generator() * Fq::random(&mut rand::rng())).into();
-        let p2 = (EpAffine::generator() * Fq::random(&mut rand::rng())).into();
+        let endoscalar_a: u128 = ragu_arithmetic::rand::rng().random();
+        let endoscalar_b: u128 = ragu_arithmetic::rand::rng().random();
+        let p1 = (EpAffine::generator() * Fq::random(&mut ragu_arithmetic::rand::rng())).into();
+        let p2 = (EpAffine::generator() * Fq::random(&mut ragu_arithmetic::rand::rng())).into();
 
         let rx1_a = MyStage1::rx(Fp::ZERO, endoscalar_a)?;
         let rx1_b = MyStage1::rx(Fp::ZERO, endoscalar_b)?;
@@ -460,8 +461,8 @@ mod tests {
         let circ1 = MyStage1::mask()?.into_inner();
         let circ2 = MyStage2::mask()?.into_inner();
 
-        let z = Fp::random(&mut rand::rng());
-        let y = Fp::random(&mut rand::rng());
+        let z = Fp::random(&mut ragu_arithmetic::rand::rng());
+        let y = Fp::random(&mut ragu_arithmetic::rand::rng());
 
         // sy() now returns -notch; add global_project to recover the full mask.
         let full_sy = |circ: &dyn WiringObject<Fp, R>, y| {
@@ -497,8 +498,8 @@ mod tests {
     fn test_skip_gates_one() {
         let stage_mask = StageMask::<R>::new(1, 5).unwrap();
 
-        let x = Fp::random(&mut rand::rng());
-        let y = Fp::random(&mut rand::rng());
+        let x = Fp::random(&mut ragu_arithmetic::rand::rng());
+        let y = Fp::random(&mut ragu_arithmetic::rand::rng());
 
         // All three return -notch (the global term is factored out by Registry).
         let sxy = stage_mask.sxy(x, y, &[]);
@@ -519,8 +520,8 @@ mod tests {
     fn test_stage_mask_all_gates() {
         // Edge case: skip = 1, num = R::n() - 1, reserved = 0.
         let stage = StageMask::<R>::new(1, R::n() - 1).unwrap();
-        let x = Fp::random(&mut rand::rng());
-        let y = Fp::random(&mut rand::rng());
+        let x = Fp::random(&mut ragu_arithmetic::rand::rng());
+        let y = Fp::random(&mut ragu_arithmetic::rand::rng());
 
         let generic = mask_wiring_object(stage.clone());
         let plan = floor_planner::floor_plan(generic.segment_records());
@@ -563,8 +564,8 @@ mod tests {
         // When reserved = 0, all gates except the SYSTEM gate are active.
         let stage = StageMask::<R>::new(1, R::n() - 1).expect("valid stage mask");
 
-        let x = Fp::random(&mut rand::rng());
-        let y = Fp::random(&mut rand::rng());
+        let x = Fp::random(&mut ragu_arithmetic::rand::rng());
+        let y = Fp::random(&mut ragu_arithmetic::rand::rng());
 
         // All three return -notch (the global term is factored out by Registry).
         let sxy = stage.sxy(x, y, &[]);
@@ -630,8 +631,8 @@ mod tests {
                 Ok(())
             };
 
-            let x = Fp::random(&mut rand::rng());
-            let y = Fp::random(&mut rand::rng());
+            let x = Fp::random(&mut ragu_arithmetic::rand::rng());
+            let y = Fp::random(&mut ragu_arithmetic::rand::rng());
             check(x, y)?;
             check(Fp::ZERO, y)?;
             check(x, Fp::ZERO)?;
@@ -647,12 +648,12 @@ mod tests {
             let mask_a = StageMask::<R>::new(1, split - 1).unwrap();
             let mask_b = StageMask::<R>::new(split, R::n() - split).unwrap();
 
-            let p = Fp::random(&mut rand::rng());
-            let x = Fp::random(&mut rand::rng());
-            let y = Fp::random(&mut rand::rng());
+            let p = Fp::random(&mut ragu_arithmetic::rand::rng());
+            let x = Fp::random(&mut ragu_arithmetic::rand::rng());
+            let y = Fp::random(&mut ragu_arithmetic::rand::rng());
 
             // Polynomial-level: (-notch_a(p) + -notch_b(p)).eval(q) == -global_project(p).eval(q)
-            let q = Fp::random(&mut rand::rng());
+            let q = Fp::random(&mut ragu_arithmetic::rand::rng());
             let mut sum_poly = mask_a.notch_project(p);
             sum_poly += &mask_b.notch_project(p);
             let mut neg_global = super::global_project::<Fp, R>(p);
@@ -742,7 +743,7 @@ mod tests {
         let stage_mask = ConstrainedStage::mask::<'_>().unwrap().into_inner();
 
         // sy() returns -notch; add global_project to recover the full mask.
-        let y = Fp::random(&mut rand::rng());
+        let y = Fp::random(&mut ragu_arithmetic::rand::rng());
         let mut sy = super::global_project::<Fp, R>(y);
         sy += &stage_mask.sy(y, &[]);
 
@@ -847,8 +848,8 @@ mod tests {
             "MulOnlyRoutine should have 0 constraints"
         );
 
-        let x = Fp::random(&mut rand::rng());
-        let y = Fp::random(&mut rand::rng());
+        let x = Fp::random(&mut ragu_arithmetic::rand::rng());
+        let y = Fp::random(&mut ragu_arithmetic::rand::rng());
 
         // None of these must panic — previously sy would underflow on `- 1`.
         let sxy = circuit.sxy(x, y, &floor_plan);

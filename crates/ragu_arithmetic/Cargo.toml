@@ -17,11 +17,24 @@ keywords = []
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "katex-header.html"]
-all-features = true
+no-default-features = true
+features = ["alloc", "modern-deps"]
 
 [features]
 alloc = []
-default = ["alloc"]
+default = ["alloc", "modern-deps"]
+legacy-deps = [
+  "dep:ff_legacy",
+  "dep:group_legacy",
+  "dep:pasta_curves_legacy",
+  "dep:rand_legacy",
+]
+modern-deps = [
+  "dep:ff_modern",
+  "dep:group_modern",
+  "dep:pasta_curves_modern",
+  "dep:rand_modern",
+]
 multicore = ["maybe-rayon/threads", "std"]
 std = []
 
@@ -29,10 +42,15 @@ std = []
 bench = false
 
 [dependencies]
-ff = { workspace = true }
-pasta_curves = { workspace = true }
+ff_modern = { workspace = true, optional = true }
+group_modern = { workspace = true, optional = true }
+pasta_curves_modern = { workspace = true, optional = true }
+rand_modern = { workspace = true, optional = true }
+ff_legacy = { workspace = true, optional = true }
+group_legacy = { workspace = true, optional = true }
+pasta_curves_legacy = { workspace = true, optional = true }
+rand_legacy = { workspace = true, optional = true }
 ragu_macros = { path = "../ragu_macros", version = "0.0.0" }
-rand = { workspace = true }
 maybe-rayon = { workspace = true }
 
 [dev-dependencies]

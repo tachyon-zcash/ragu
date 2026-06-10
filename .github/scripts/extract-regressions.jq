@@ -4,7 +4,7 @@
 # Args: --argjson threshold <number> (e.g., 1.5 for 150% of baseline)
 # Output: sorted by ratio descending: `{name: string, current: number, baseline: number, ratio: number}[]`
 #
-# This is used by `bench-alert.yml` to identify benchmarks that regressed beyond the threshold.
+# This is used by `bench.yml` to identify benchmarks that regressed beyond the threshold.
 # Only the Ir (instruction count) metric is compared; other metrics (L1hits, LLhits, etc.) are ignored.
 #
 # Gungraun summary schema reference: https://github.com/gungraun/gungraun/raw/refs/heads/main/gungraun-runner/schemas/summary.v6.schema.json

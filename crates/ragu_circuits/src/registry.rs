@@ -18,8 +18,10 @@
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec::Vec};
 
 use blake2b_simd::Params;
-use ff::{Field, FromUniformBytes, PrimeField};
-use ragu_arithmetic::{Domain, bitreverse};
+use ragu_arithmetic::{
+    Domain, bitreverse,
+    ff::{Field, FromUniformBytes, PrimeField},
+};
 use ragu_core::{Error, Result};
 
 use crate::{
@@ -379,7 +381,7 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
         &self,
         trace: &crate::trace::Trace<F>,
         circuit: CircuitIndex,
-        rng: &mut impl rand::CryptoRng,
+        rng: &mut impl ragu_arithmetic::CryptoRngCore,
     ) -> Result<sparse::Polynomial<F, R>> {
         self.assemble_with_alpha(trace, circuit, F::random(rng))
     }
@@ -719,8 +721,10 @@ impl<F: FromUniformBytes<64>, R: Rank> Registry<'_, F, R> {
 mod tests {
     use alloc::collections::{BTreeSet, btree_map::BTreeMap};
 
-    use ff::{Field, PrimeField};
-    use ragu_arithmetic::{Domain, bitreverse};
+    use ragu_arithmetic::{
+        Domain, bitreverse,
+        ff::{Field, PrimeField},
+    };
     use ragu_core::Result;
     use ragu_pasta::Fp;
 
@@ -764,9 +768,9 @@ mod tests {
             .register_circuit(SquareCircuit { times: 19 })?
             .finalize()?;
 
-        let w = Fp::random(&mut rand::rng());
-        let x = Fp::random(&mut rand::rng());
-        let y = Fp::random(&mut rand::rng());
+        let w = Fp::random(&mut ragu_arithmetic::rand::rng());
+        let x = Fp::random(&mut ragu_arithmetic::rand::rng());
+        let y = Fp::random(&mut ragu_arithmetic::rand::rng());
 
         let xy_poly = registry.xy(x, y);
         let wy_poly = registry.wy(w, y);
@@ -805,10 +809,10 @@ mod tests {
             .register_circuit(SquareCircuit { times: 11 })?
             .finalize()?;
 
-        let w = Fp::random(&mut rand::rng());
-        let x = Fp::random(&mut rand::rng());
-        let y = Fp::random(&mut rand::rng());
-        let eval_point = Fp::random(&mut rand::rng());
+        let w = Fp::random(&mut ragu_arithmetic::rand::rng());
+        let x = Fp::random(&mut ragu_arithmetic::rand::rng());
+        let y = Fp::random(&mut ragu_arithmetic::rand::rng());
+        let eval_point = Fp::random(&mut ragu_arithmetic::rand::rng());
 
         let registry_at_w = registry.at(w);
 
@@ -986,9 +990,9 @@ mod tests {
             let expected_domain_size = num_circuits.next_power_of_two();
             assert_eq!(registry.domain.n(), expected_domain_size);
 
-            let w = Fp::random(&mut rand::rng());
-            let x = Fp::random(&mut rand::rng());
-            let y = Fp::random(&mut rand::rng());
+            let w = Fp::random(&mut ragu_arithmetic::rand::rng());
+            let x = Fp::random(&mut ragu_arithmetic::rand::rng());
+            let y = Fp::random(&mut ragu_arithmetic::rand::rng());
 
             let wxy = registry.wxy(w, x, y);
             let xy = registry.xy(x, y);
@@ -1126,9 +1130,9 @@ mod tests {
         assert_eq!(registry.num_circuits(), 5);
 
         // Verify evaluation consistency
-        let w = Fp::random(&mut rand::rng());
-        let x = Fp::random(&mut rand::rng());
-        let y = Fp::random(&mut rand::rng());
+        let w = Fp::random(&mut ragu_arithmetic::rand::rng());
+        let x = Fp::random(&mut ragu_arithmetic::rand::rng());
+        let y = Fp::random(&mut ragu_arithmetic::rand::rng());
 
         let wxy = registry.wxy(w, x, y);
         let xy = registry.xy(x, y);

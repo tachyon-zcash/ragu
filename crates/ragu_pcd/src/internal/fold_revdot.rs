@@ -6,8 +6,7 @@
 
 use core::{borrow::Borrow, iter, marker::PhantomData};
 
-use ff::Field;
-use ragu_arithmetic::DeferredField;
+use ragu_arithmetic::{DeferredField, ff::Field};
 use ragu_circuits::{
     horner::Horner,
     polynomials::{Rank, sparse},
@@ -292,12 +291,11 @@ pub fn fold_two_layer<'dr, D: Driver<'dr>, P: Parameters>(
 mod tests {
     use alloc::{vec, vec::Vec};
 
-    use ff::Field;
+    use ragu_arithmetic::{ff::Field, rand::SeedableRng};
     use ragu_circuits::polynomials::{TestRank, sparse};
     use ragu_core::{drivers::emulator::Emulator, maybe::Maybe};
     use ragu_pasta::Fp;
     use ragu_primitives::{Simulator, allocator::Standard, vec::CollectFixed};
-    use rand::SeedableRng;
 
     use super::*;
     use crate::internal::native::RevdotParameters;
@@ -315,7 +313,7 @@ mod tests {
         type P = TestParams<3, 3>;
 
         let n = <P as Parameters>::NumGroups::len();
-        let mut rng = rand::rng();
+        let mut rng = ragu_arithmetic::rand::rng();
 
         // Create N random polynomial pairs
         let lhs: Vec<sparse::Polynomial<Fp, TestRank>> = (0..n)
@@ -382,7 +380,7 @@ mod tests {
         let n = <P as Parameters>::NumGroups::len();
 
         fn verify(count: usize, m: usize, n: usize) -> Result<()> {
-            let mut rng = rand::rng();
+            let mut rng = ragu_arithmetic::rand::rng();
 
             // Create `count` random polynomial pairs
             let lhs: Vec<sparse::Polynomial<Fp, TestRank>> = (0..count)
@@ -455,12 +453,14 @@ mod tests {
     fn test_fold_products_constraints() -> Result<()> {
         fn measure<P: Parameters>() -> Result<usize> {
             let sim = Simulator::simulate((), |dr, _| {
-                let mu = Element::constant(dr, Fp::random(&mut rand::rng()));
-                let nu = Element::constant(dr, Fp::random(&mut rand::rng()));
-                let error_terms =
-                    FixedVec::from_fn(|_| Element::constant(dr, Fp::random(&mut rand::rng())));
-                let ky_values =
-                    FixedVec::from_fn(|_| Element::constant(dr, Fp::random(&mut rand::rng())));
+                let mu = Element::constant(dr, Fp::random(&mut ragu_arithmetic::rand::rng()));
+                let nu = Element::constant(dr, Fp::random(&mut ragu_arithmetic::rand::rng()));
+                let error_terms = FixedVec::from_fn(|_| {
+                    Element::constant(dr, Fp::random(&mut ragu_arithmetic::rand::rng()))
+                });
+                let ky_values = FixedVec::from_fn(|_| {
+                    Element::constant(dr, Fp::random(&mut ragu_arithmetic::rand::rng()))
+                });
 
                 let fold_products = ClaimFolder::new(dr, &mu, &nu)?;
                 fold_products.fold_outer::<P>(dr, &error_terms, &ky_values)?;
@@ -483,7 +483,7 @@ mod tests {
     fn test_multireduce() -> Result<()> {
         /// Verify two-layer folding correctness with actual polynomials.
         fn verify<P: Parameters>() -> Result<()> {
-            let mut rng = rand::rng();
+            let mut rng = ragu_arithmetic::rand::rng();
             let n = P::NumGroups::len();
             let m = P::GroupSize::len();
             let count = n * m;
@@ -608,7 +608,7 @@ mod tests {
         /// Verify fold_two_layer on evaluations matches evaluating folded polynomials
         /// for both lhs and rhs polynomial sets with their respective scale factors.
         fn verify<P: Parameters>(count: usize) -> Result<()> {
-            let mut rng = rand::rng();
+            let mut rng = ragu_arithmetic::rand::rng();
 
             // Create `count` random polynomial pairs (up to m*n)
             let lhs: Vec<sparse::Polynomial<Fp, TestRank>> = (0..count)
@@ -740,7 +740,8 @@ mod tests {
     #[test]
     fn test_cost_formulas() -> Result<()> {
         fn verify<const M: usize, const N: usize>() -> Result<()> {
-            let rng = rand::rngs::StdRng::from_rng(&mut rand::rng());
+            let rng =
+                ragu_arithmetic::rand::rngs::StdRng::from_rng(&mut ragu_arithmetic::rand::rng());
             let sim = Simulator::simulate(rng, |dr, mut rng| {
                 let allocator = &mut Standard::new();
                 let mu = Element::alloc(dr, allocator, rng.as_mut().map(Fp::random))?;
@@ -848,7 +849,7 @@ mod tests {
 
     #[test]
     fn test_error_term_ordering() {
-        let mut rng = rand::rng();
+        let mut rng = ragu_arithmetic::rand::rng();
 
         // Create 3 distinct polynomial pairs
         let a: Vec<sparse::Polynomial<Fp, TestRank>> = (0..3)
@@ -878,12 +879,15 @@ mod tests {
         // Verify layer 1 constraint count formula: 2M^2 + 1 per group
         fn measure_m<const M: usize>() -> Result<usize> {
             let sim = Simulator::simulate((), |dr, _| {
-                let mu = Element::constant(dr, Fp::random(&mut rand::rng()));
-                let nu = Element::constant(dr, Fp::random(&mut rand::rng()));
+                let mu = Element::constant(dr, Fp::random(&mut ragu_arithmetic::rand::rng()));
+                let nu = Element::constant(dr, Fp::random(&mut ragu_arithmetic::rand::rng()));
                 let error_terms: FixedVec<_, NumErrorTerms<ConstLen<M>>> =
-                    FixedVec::from_fn(|_| Element::constant(dr, Fp::random(&mut rand::rng())));
-                let ky_values: FixedVec<_, ConstLen<M>> =
-                    FixedVec::from_fn(|_| Element::constant(dr, Fp::random(&mut rand::rng())));
+                    FixedVec::from_fn(|_| {
+                        Element::constant(dr, Fp::random(&mut ragu_arithmetic::rand::rng()))
+                    });
+                let ky_values: FixedVec<_, ConstLen<M>> = FixedVec::from_fn(|_| {
+                    Element::constant(dr, Fp::random(&mut ragu_arithmetic::rand::rng()))
+                });
 
                 let fold_products = ClaimFolder::new(dr, &mu, &nu)?;
                 fold_products.fold_inner::<TestParams<1, M>>(dr, &error_terms, &ky_values)?;
@@ -905,7 +909,7 @@ mod tests {
     fn test_native_parameters_correctness() -> Result<()> {
         // Test with actual RevdotParameters (M=6, N=18)
 
-        let mut rng = rand::rng();
+        let mut rng = ragu_arithmetic::rand::rng();
         let m = <RevdotParameters as Parameters>::GroupSize::len();
         let _n = <RevdotParameters as Parameters>::NumGroups::len();
 

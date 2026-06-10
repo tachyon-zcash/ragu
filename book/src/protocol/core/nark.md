@@ -254,7 +254,7 @@ The NARK proof splits into instance and witness parts:
 $\pi_{\mathsf{NARK}}:=(\pi.\inst,\pi.\wit)$.
 The instance part is succinct:
 
-$$\pi.\inst=(K,\bar{R},\bar{A},\bar{B}, c, evals, P, u, v)$$
+$$\pi.\inst=(K,\bar{R}, S, \bar{A},\bar{B}, c, evals, P, u, v)$$
 
 The witness part has linear size (hence NARK, not SNARK):
 

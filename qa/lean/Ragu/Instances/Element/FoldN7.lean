@@ -2,8 +2,6 @@ import Ragu.Circuits.Element.Fold
 import Ragu.Instances.Autogen.Element.FoldN7
 import Ragu.Core
 
-set_option maxHeartbeats 1000000
-
 namespace Ragu.Instances.Element.FoldN7
 open Ragu.Instances.Autogen.Element.FoldN7
 

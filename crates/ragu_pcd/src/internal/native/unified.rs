@@ -600,13 +600,14 @@ mod tests {
         );
     }
 
-    type Dr = Emulator<ragu_core::drivers::emulator::Wireless<Empty, pasta_curves::Fp>>;
+    type Dr =
+        Emulator<ragu_core::drivers::emulator::Wireless<Empty, ragu_arithmetic::pasta_curves::Fp>>;
     type Sl = Slot<
         'static,
         Dr,
         ragu_primitives::allocator::Standard<()>,
         Element<'static, Dr>,
-        pasta_curves::Fp,
+        ragu_arithmetic::pasta_curves::Fp,
     >;
 
     /// Helper: creates two independent element slots and a fresh emulator.

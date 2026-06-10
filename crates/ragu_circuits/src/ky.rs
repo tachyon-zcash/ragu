@@ -4,7 +4,7 @@
 //! particular [`Circuit`], arranging it into the low-degree coefficient vector
 //! for the circuit's $k(Y)$ instance polynomial.
 
-use ff::Field;
+use ragu_arithmetic::ff::Field;
 use ragu_core::{
     Result,
     drivers::emulator::Emulator,
@@ -38,7 +38,7 @@ mod tests {
     fn test_ky() {
         let circuit = SquareCircuit { times: 10 };
         let instance: Fp = Fp::from(3);
-        let y = Fp::random(&mut rand::rng());
+        let y = Fp::random(&mut ragu_arithmetic::rand::rng());
 
         // k(Y) = 1 + 3Y for this circuit, so k(y) = 1 + 3y.
         let expected = Fp::ONE + Fp::from(3) * y;

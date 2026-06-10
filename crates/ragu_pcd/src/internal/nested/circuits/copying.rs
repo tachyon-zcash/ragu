@@ -22,9 +22,10 @@ use ragu_circuits::{
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Bound, Gadget},
+    gadgets::Bound,
     maybe::Maybe,
 };
+use ragu_primitives::GadgetExt as _;
 
 use crate::internal::{
     Side,

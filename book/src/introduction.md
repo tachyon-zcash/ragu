@@ -22,8 +22,7 @@ circuit arithmetizations.
 
 * This book documents [working with Ragu](guide/getting_started.md), the
   [protocol's design](protocol/index.md), and
-  [implementation details](implementation/arch.md) for those contributing to
-  Ragu's development.
+  [implementation details](implementation/arch.md).
 * The official Ragu source code repository is
   [available on GitHub](https://github.com/tachyon-zcash/ragu).
 * [Crate documentation](https://docs.rs/ragu) is available for official Ragu

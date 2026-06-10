@@ -1,5 +1,6 @@
 pub mod consistent;
 pub mod gadget;
+pub mod gadgetequals;
 pub mod gadgetwrite;
 
 use proc_macro2::Span;

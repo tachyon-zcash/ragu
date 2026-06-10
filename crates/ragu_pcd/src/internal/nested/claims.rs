@@ -11,7 +11,7 @@
 
 use alloc::borrow::Cow;
 
-use ff::PrimeField;
+use ragu_arithmetic::ff::PrimeField;
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::Result;
 

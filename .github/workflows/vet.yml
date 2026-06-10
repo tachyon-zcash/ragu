@@ -1,0 +1,71 @@
+name: Supply chain
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Audit on a weekly cadence so new RustSec advisories published against
+  # already-pinned deps surface even without a lockfile change.
+  schedule:
+    - cron: '0 6 * * 1'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  vet:
+    name: cargo vet
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # cargo-vet only reads manifests; it doesn't compile our crates. Bypass
+    # the workspace's rust-toolchain.toml (which pins 1.90.0 + clippy) so we
+    # use the runner's preinstalled stable and avoid rustup component-install
+    # conflicts when cargo runs inside the workspace.
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Cache cargo-vet binary
+        id: cache-vet
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.cargo/bin/cargo-vet
+          key: ${{ runner.os }}-cargo-vet-bin-0.10.2
+
+      - name: Install cargo-vet
+        if: steps.cache-vet.outputs.cache-hit != 'true'
+        run: cargo install --locked cargo-vet@0.10.2
+
+      - name: Run cargo vet
+        run: cargo vet --locked --store-path ./qa/supply-chain/
+
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Cache cargo-audit binary
+        id: cache-audit
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: ${{ runner.os }}-cargo-audit-bin-0.22.1
+
+      - name: Install cargo-audit
+        if: steps.cache-audit.outputs.cache-hit != 'true'
+        run: cargo install --locked cargo-audit@0.22.1
+
+      - name: Run cargo audit
+        run: cargo audit

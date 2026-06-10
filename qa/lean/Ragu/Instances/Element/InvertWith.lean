@@ -32,16 +32,9 @@ def formal_instance : Core.Statements.FormalInstance where
       Circuits.Element.InvertWith.elaborated,
       Circuits.Element.InvertWith.main,
       Circuits.Core.Mul.main]
-    repeat (constructor; rfl)
-    constructor
+    refine ⟨?_, ?_, ?_⟩ <;> rfl
   same_output := by
     intro input
-    simp [circuit_norm,
-      GeneralFormalCircuit.WithHint.toSubcircuit,
-      deserializeInput, serializeOutput,
-      Circuits.Element.InvertWith.circuit,
-      Circuits.Element.InvertWith.elaborated,
-      Circuits.Element.InvertWith.main,
-      Circuits.Core.Mul.main]
+    rfl
 
 end Ragu.Instances.Element.InvertWith

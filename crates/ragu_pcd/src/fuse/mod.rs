@@ -17,12 +17,10 @@ mod _11_circuits;
 pub(crate) mod claims;
 
 use claims::FuseProofSource;
-use ff::Field;
-use ragu_arithmetic::Cycle;
+use ragu_arithmetic::{CryptoRngCore, Cycle, ff::Field};
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{GadgetExt, Point, vec::CollectFixed};
-use rand::CryptoRng;
 
 use crate::{
     Application, Pcd, RAGU_TAG, internal::transcript::Transcript, proof::ProofBuilder, step::Step,
@@ -68,7 +66,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     ///   [`Step::Left`] header.
     /// * `right`: the right [`Pcd`] to fuse in this step; must correspond to
     ///   the [`Step::Right`] header.
-    pub fn fuse<'source, RNG: CryptoRng, S: Step<C>>(
+    pub fn fuse<'source, RNG: CryptoRngCore, S: Step<C>>(
         &self,
         rng: &mut RNG,
         step: S,

@@ -4,25 +4,23 @@
 
 use core::marker::PhantomData;
 
-use ff::Field;
-use ragu_arithmetic::geosum;
+use ragu_arithmetic::{ff::Field, geosum};
 use ragu_core::{
-    Error, Result,
+    Result,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Kind},
     maybe::Maybe,
     routines::{Prediction, Routine},
 };
-use ragu_primitives::Element;
+use ragu_primitives::{Element, Invertible};
 
 use super::Rank;
 
 /// [`Routine`] evaluating $t(x, z)$ at rank `R`.
 ///
-/// Requires $x, z \neq 0$. The auxiliary witness carries the inversions
-/// $(x^{-1}, z^{-1})$ from [`Routine::predict`] into [`Routine::execute`], so
-/// those witnesses are produced once rather than re-derived at circuit
-/// allocation time.
+/// Takes $x$ and $z$ as [`Invertible`]s so the inversion is performed by the
+/// caller, where $x^{-1}$ and $z^{-1}$ can be shared with other code that needs
+/// them.
 #[derive(Clone)]
 pub struct Evaluate<R> {
     _marker: PhantomData<R>,
@@ -44,40 +42,35 @@ impl<R: Rank> Evaluate<R> {
 }
 
 impl<F: Field, R: Rank> Routine<F> for Evaluate<R> {
-    type Input = Kind![F; (Element<'_, _>, Element<'_, _>)];
+    type Input = Kind![F; (Invertible<'_, _>, Invertible<'_, _>)];
     type Output = Kind![F; Element<'_, _>];
-    type Aux<'dr> = (F, F);
+    type Aux<'dr> = ();
 
     fn execute<'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: &mut D,
         input: Bound<'dr, D, Self::Input>,
-        aux: DriverValue<D, Self::Aux<'dr>>,
+        _aux: DriverValue<D, Self::Aux<'dr>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        let x = input.0;
-        let z = input.1;
+        let (x, z) = input;
 
-        let mut xn = x.clone();
+        let mut xn = x.element().clone();
         for _ in 0..R::log2_n() {
             xn = xn.square(dr)?;
         }
         let x2n = xn.square(dr)?;
         let x4n = x2n.square(dr)?;
-        let mut zn = z.clone();
+        let mut zn = z.element().clone();
         for _ in 0..R::log2_n() {
             zn = zn.square(dr)?;
         }
         let z2n = zn.square(dr)?;
 
-        let (x_inv_val, z_inv_val) = aux.cast();
-        let x_inv = x.invert_with(dr, x_inv_val)?;
-        let z_inv = z.invert_with(dr, z_inv_val)?;
-
-        let x4n_minus_1 = x4n.mul(dr, &x_inv)?;
-        let mut l = x4n_minus_1.mul(dr, &z2n)?;
+        let x4n_minus_1 = x4n.mul(dr, x.inverse())?;
+        let mut l = x4n_minus_1.mul(dr, &z2n)?.into_inner();
         let mut r = l.clone();
-        let mut xz_step = x_inv.mul(dr, &z)?;
-        let mut xzinv_step = x_inv.mul(dr, &z_inv)?;
+        let mut xz_step = x.inverse().mul(dr, z.element())?;
+        let mut xzinv_step = x.inverse().mul(dr, z.inverse())?;
         for _ in 0..R::log2_n() {
             let l_mul = l.mul(dr, &xz_step)?;
             l = l.add(dr, &l_mul);
@@ -86,7 +79,7 @@ impl<F: Field, R: Rank> Routine<F> for Evaluate<R> {
             xz_step = xz_step.square(dr)?;
             xzinv_step = xzinv_step.square(dr)?;
         }
-        let r_zinv = r.mul(dr, &z_inv)?;
+        let r_zinv = r.mul(dr, z.inverse())?;
         let sum = l.add(dr, &r_zinv);
         Ok(sum.negate(dr))
     }
@@ -98,29 +91,14 @@ impl<F: Field, R: Rank> Routine<F> for Evaluate<R> {
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
         let n = 1u64 << R::log2_n();
 
-        let aux = D::try_just(|| {
-            let x = *input.0.value().take();
-            let z = *input.1.value().take();
-
-            let x_inv = x
-                .invert()
-                .into_option()
-                .ok_or_else(|| Error::InvalidWitness("division by zero".into()))?;
-            let z_inv = z
-                .invert()
-                .into_option()
-                .ok_or_else(|| Error::InvalidWitness("division by zero".into()))?;
-
-            Ok((x_inv, z_inv))
-        })?;
-
         let output = Element::alloc(
             dr,
             &mut (),
-            D::try_just(|| {
-                let x = *input.0.value().take();
-                let z = *input.1.value().take();
-                let (x_inv, z_inv) = *aux.snag();
+            D::just(|| {
+                let x = *input.0.element().value().take();
+                let z = *input.1.element().value().take();
+                let x_inv = *input.0.inverse().value().take();
+                let z_inv = *input.1.inverse().value().take();
 
                 // Splitting $(z^{2n - 1 - i} + z^{2n + i})$ gives two geometric
                 // sums sharing the prefactor $l_0 = x^{4n - 1} z^{2n}$; the
@@ -129,18 +107,18 @@ impl<F: Field, R: Rank> Routine<F> for Evaluate<R> {
                 let l = l0 * geosum(x_inv * z, n as usize);
                 let r = l0 * geosum(x_inv * z_inv, n as usize);
 
-                Ok(-(l + r * z_inv))
-            })?,
+                -(l + r * z_inv)
+            }),
         )?;
 
-        Ok(Prediction::Known(output, aux))
+        Ok(Prediction::Known(output, D::unit()))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use ragu_pasta::Fp;
-    use ragu_primitives::{Simulator, allocator::Standard};
+    use ragu_primitives::Simulator;
 
     use super::*;
     use crate::polynomials::ProductionRank;
@@ -150,20 +128,19 @@ mod tests {
         // ProductionRank (R<13>) has log2_n = 11
         type TestRank = ProductionRank;
 
-        let x = Fp::random(&mut rand::rng());
-        let z = Fp::random(&mut rand::rng());
+        let x = Fp::random(&mut ragu_arithmetic::rand::rng());
+        let z = Fp::random(&mut ragu_arithmetic::rand::rng());
         let evaluator = Evaluate::<TestRank>::new();
 
         Simulator::simulate((x, z), |dr, witness| {
             let (x, z) = witness.cast();
-            let allocator = &mut Standard::new();
-            let x = Element::alloc(dr, allocator, x)?;
-            let z = Element::alloc(dr, allocator, z)?;
+            let x = Invertible::alloc(dr, x)?;
+            let z = Invertible::alloc(dr, z)?;
 
             dr.reset();
             dr.routine(evaluator.clone(), (x, z))?;
-            assert_eq!(dr.num_gates(), 76);
-            assert_eq!(dr.num_constraints(), 152);
+            assert_eq!(dr.num_gates(), 74);
+            assert_eq!(dr.num_constraints(), 148);
 
             Ok(())
         })?;

@@ -1,4 +1,4 @@
-use ff::Field;
+use ragu_arithmetic::ff::Field;
 
 use super::Coeff;
 

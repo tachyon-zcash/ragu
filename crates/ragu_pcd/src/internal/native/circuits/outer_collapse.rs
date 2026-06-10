@@ -65,10 +65,10 @@ use ragu_circuits::{
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Bound, Gadget},
+    gadgets::Bound,
     maybe::Maybe,
 };
-use ragu_primitives::allocator::Standard;
+use ragu_primitives::{GadgetExt as _, allocator::Standard};
 
 use super::super::{
     stages::{outer_error, preamble},

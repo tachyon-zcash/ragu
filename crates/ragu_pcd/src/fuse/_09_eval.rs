@@ -4,18 +4,16 @@
 //! of every element that was also queried in the `query` stage. The evaluation
 //! $f(u)$ is derived from the aforementioned evaluations.
 
-use ff::Field;
-use ragu_arithmetic::Cycle;
+use ragu_arithmetic::{CryptoRngCore, Cycle, ff::Field};
 use ragu_circuits::{polynomials::Rank, staging::StageExt};
 use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::Element;
-use rand::CryptoRng;
 
 use super::{NativeSPrime, RegistryWy};
 use crate::{Application, Proof, internal::native, proof::ProofBuilder};
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
-    pub(super) fn compute_eval<'dr, D, RNG: CryptoRng>(
+    pub(super) fn compute_eval<'dr, D, RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
         u: &Element<'dr, D>,

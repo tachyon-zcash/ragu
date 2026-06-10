@@ -1,0 +1,22 @@
+name: Rust nightly setup
+description: Install the project-pinned nightly Rust toolchain via dtolnay/rust-toolchain
+inputs:
+  components:
+    description: Optional Rust components to install (comma-separated)
+    required: false
+    default: ""
+outputs:
+  toolchain:
+    description: Rustup name of the installed nightly toolchain; route to RUSTUP_TOOLCHAIN at the call site
+    value: ${{ steps.toolchain.outputs.name }}
+runs:
+  using: composite
+  steps:
+    # Sole source of truth for the pinned nightly date. Audit this composite
+    # and `rust-setup/action.yml` together when rotating the dtolnay SHA.
+    - name: Install pinned nightly toolchain
+      id: toolchain
+      uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ 2026-05-23
+      with:
+        toolchain: nightly-2026-04-11
+        components: ${{ inputs.components }}

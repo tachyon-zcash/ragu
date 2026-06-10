@@ -1,7 +1,9 @@
-use ff::Field;
-use pasta_curves::{EpAffine, Fp, Fq, group::CurveAffine};
-use ragu_arithmetic::Domain;
-use rand::{SeedableRng, rngs::StdRng};
+use ragu_arithmetic::{
+    Domain,
+    ff::Field,
+    pasta_curves::{EpAffine, Fp, Fq, group::CurveAffine},
+    rand::{SeedableRng, rngs::StdRng},
+};
 
 pub trait SetupRng<Out> {
     fn setup(self, rng: &mut StdRng) -> Out;

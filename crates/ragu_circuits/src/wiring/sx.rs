@@ -76,8 +76,7 @@
 
 use alloc::{vec, vec::Vec};
 
-use ff::Field;
-use ragu_arithmetic::Coeff;
+use ragu_arithmetic::{Coeff, ff::Field};
 use ragu_core::{
     Error, Result,
     drivers::{DirectSum, Driver, DriverTypes, emulator::Emulator},
@@ -277,10 +276,12 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
 
         // Jump to this routine's absolute position in the polynomial;
         // see "Polynomial Encoding and Scope Jumps" in the `s` module doc.
+        let x_pow = self.x.pow_vartime([seg.gate_start as u64]);
+        let x_inv_pow = self.x_inv.pow_vartime([seg.gate_start as u64]);
         let init_scope = SxScope {
-            current_a_x: self.base_a_x * self.x.pow_vartime([seg.gate_start as u64]),
-            current_b_x: self.base_b_x * self.x_inv.pow_vartime([seg.gate_start as u64]),
-            current_c_x: self.base_c_x * self.x_inv.pow_vartime([seg.gate_start as u64]),
+            current_a_x: self.base_a_x * x_pow,
+            current_b_x: self.base_b_x * x_inv_pow,
+            current_c_x: self.base_c_x * x_inv_pow,
             gates: seg.gate_start,
             constraints: seg.constraint_start,
         };

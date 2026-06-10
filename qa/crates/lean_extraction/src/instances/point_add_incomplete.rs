@@ -1,6 +1,6 @@
 use group::CurveAffine;
 use ragu_pasta::{EpAffine, Fp};
-use ragu_primitives::{Element, Point};
+use ragu_primitives::{NonzeroBank, Point};
 
 use crate::{
     driver::ExtractionDriver,
@@ -16,7 +16,6 @@ impl CircuitInstance for PointAddIncompleteInstance {
     fn circuit(dr: &mut ExtractionDriver<Fp>) -> ragu_core::Result<Vec<Expr<Fp>>> {
         let input_wires_1 = dr.alloc_input_wires(2);
         let input_wires_2 = dr.alloc_input_wires(2);
-        let nonzero_input = dr.alloc_input_wires(1);
 
         // Reuse a constant point as a structural template, then substitute the
         // raw input wires into its `[x, y]` gadget fields.
@@ -24,14 +23,10 @@ impl CircuitInstance for PointAddIncompleteInstance {
         let p1 = WireDeserializer::new(input_wires_1).into_gadget(&point_template)?;
         let p2 = WireDeserializer::new(input_wires_2).into_gadget(&point_template)?;
 
-        let element_template = Element::constant(dr, Fp::zero());
-        let mut nonzero = WireDeserializer::new(nonzero_input).into_gadget(&element_template)?;
+        // `NonzeroBank::scope` discharges `x2 ≠ x1` in-circuit, so the trace is
+        // self-contained: callers don't need to feed a running-product wire.
+        let p3 = NonzeroBank::scope(dr, |dr, bank| p1.add_incomplete(dr, &p2, bank))?;
 
-        let p3 = p1.add_incomplete(dr, &p2, Some(&mut nonzero))?;
-
-        let mut point_serialized = WireCollector::collect_from(&p3)?;
-        let mut nonzero_serialized = WireCollector::collect_from(&nonzero)?;
-        point_serialized.append(&mut nonzero_serialized);
-        Ok(point_serialized)
+        WireCollector::collect_from(&p3)
     }
 }

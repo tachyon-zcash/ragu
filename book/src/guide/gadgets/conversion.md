@@ -4,12 +4,11 @@ Ragu often needs to substitute wires in a gadget, inspect its internal layout,
 or move it from one [driver](../drivers/index.md) context to another. All of
 these operations rely on a single visitor pattern.
 
-Gadgets enable this with a provided [`map_gadget`][map-gadget-method] method
+Gadgets enable this with a provided [`map_gadget`][map-gadget-contract] method
 that traverses the gadget's own fields with the assistance of a (possibly
 stateful) transformation. This produces a new gadget parameterized by a
 different concrete driver, and [fungibility](index.md#fungibility) guarantees
-that the result is a valid gadget of the same kind, with structure and semantics
-preserved.
+that the result has the same structure and semantics.
 
 ## [`WireMap`][wiremap-trait] {#wiremap}
 
@@ -31,16 +30,16 @@ pub trait WireMap<F: Field> {
 ```
 
 The only type-level constraint is that source and destination drivers share the
-same field `F`. [`GadgetKind::map_gadget`][map-gadget-method] performs the
+same field `F`. [`GadgetKind::map_gadget`][map-gadget-contract] performs the
 actual traversal, walking the gadget's fields and dispatching each one according
-to its kind. `Wire` fields go through [`convert_wire`][convert-wire],
+to its role. `Wire` fields go through [`convert_wire`][convert-wire],
 `DriverValue` fields are reconstructed via [`Maybe::just`][maybe-just]
 (preserving or discarding witness data according to the destination driver's
 [`MaybeKind`][maybekind-trait]), and nested gadget fields recurse.
 
 ```admonish tip
 The [`Gadget::map`][gadget-map] method is a convenience proxy for
-[`map_gadget`][map-gadget-method]. [`WireMap`][wiremap-trait] also provides a
+[`map_gadget`][map-gadget-contract]. [`WireMap`][wiremap-trait] also provides a
 [`remap`][remap-method] shorthand for wire maps that implement [`Default`].
 ```
 
@@ -121,7 +120,7 @@ conversion from the caller's driver to that emulator automatically.
 [clonewires-type]: ragu_core::convert::CloneWires
 [stripwires-type]: ragu_core::convert::StripWires
 [remap-method]: ragu_core::convert::WireMap::remap
-[map-gadget-method]: ragu_core::gadgets::GadgetKind::map_gadget
+[map-gadget-contract]: gadgetkind.md#map-gadget
 [gadget-map]: ragu_core::gadgets::Gadget::map
 [num-wires-method]: ragu_core::gadgets::Gadget::num_wires
 [maybe-just]: ragu_core::maybe::Maybe::just

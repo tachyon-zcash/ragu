@@ -47,9 +47,15 @@ This gadget is a _compositional_ gadget: it contains another gadget (a
 
 [`Gadget`][gadget-trait] is a trait for gadgets with a stricter property called
 **fungibility**: for any two instances `a` and `b` of the same concrete gadget
-type, substituting all of `a`’s wires into `b` must yield an instance
-indistinguishable in all subsequent synthesis from `a`, carrying identical
-invariants over their wires.
+type, substituting `a`'s corresponding wire assignments for `b`'s must yield an
+instance indistinguishable in all subsequent synthesis from `a`, carrying
+identical invariants over those wires.
+
+The correspondence between wires is defined by the gadget's
+[canonical traversal][canonical-traversal]: the order in which the gadget visits
+its wire fields when it is converted between drivers. This order must be the
+same for every instance of the same concrete gadget type, and is what makes
+wire counting, wire substitution, and gadget equality well-defined.
 
 One of the direct consequences of fungibility is that a [`Gadget`][gadget-trait]
 impl must always contain the same number of wires in every instance, and cannot
@@ -60,8 +66,8 @@ carry any additional state that would influence synthesis behavior. For example,
 Fungibility permits drivers to [manipulate gadgets](conversion.md) for
 optimization and analysis without disturbing the gadget's API contract.
 Fortunately, most gadgets only contain wires, witness data and other gadgets,
-and so they easily satisfy fungibility; [`Gadget`][gadget-trait] can be [automatically
-derived](#automatic-derivation) for nearly all gadgets.
+and so they easily satisfy fungibility; [`Gadget`][gadget-trait] can be
+[automatically derived](#automatic-derivation) for nearly all gadgets.
 
 ### Thread Safety
 
@@ -119,6 +125,7 @@ is only needed for clarity.
 [element-gadget]: ragu_primitives::Element
 [gadget-trait]: ragu_core::gadgets::Gadget
 [gadgetkind-trait]: ragu_core::gadgets::GadgetKind
+[canonical-traversal]: gadgetkind.md#map-gadget
 [driver-trait]: ragu_core::drivers::Driver
 [gadget-thread-guarantees]: ragu_core::gadgets::GadgetKind#safety
 [maybe-trait]: ragu_core::maybe::Maybe

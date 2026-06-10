@@ -7,12 +7,10 @@
 //! This phase of the fuse operation is also used to commit to the $m(w, X, y)$
 //! restriction.
 
-use ff::Field;
-use ragu_arithmetic::Cycle;
+use ragu_arithmetic::{CryptoRngCore, Cycle, ff::Field};
 use ragu_circuits::{polynomials::Rank, registry::RegistryAt, staging::StageExt};
 use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::Element;
-use rand::CryptoRng;
 
 use super::{
     RegistryWy,
@@ -25,7 +23,7 @@ use crate::{
 };
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
-    pub(super) fn inner_error_terms<'dr, 'rx, D, RNG: CryptoRng>(
+    pub(super) fn inner_error_terms<'dr, 'rx, D, RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
         native_registry: &RegistryAt<'_, C::CircuitField, R>,
@@ -47,7 +45,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         Ok((inner_error_witness, claims_builder, registry_wy))
     }
 
-    fn compute_bridge_inner_error<RNG: CryptoRng>(
+    fn compute_bridge_inner_error<RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
         registry_wy: &RegistryWy<C, R>,
@@ -65,7 +63,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         Ok(())
     }
 
-    fn compute_native_inner_error<'dr, 'rx, D, RNG: CryptoRng>(
+    fn compute_native_inner_error<'dr, 'rx, D, RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
         native_registry: &RegistryAt<'_, C::CircuitField, R>,

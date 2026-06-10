@@ -63,10 +63,10 @@ use ragu_circuits::{
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Bound, Gadget},
+    gadgets::Bound,
     maybe::Maybe,
 };
-use ragu_primitives::{allocator::Standard, vec::FixedVec};
+use ragu_primitives::{GadgetExt as _, allocator::Standard, vec::FixedVec};
 
 use super::super::{
     claims::{TwoProofKySource, ky_values},

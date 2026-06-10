@@ -10,6 +10,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   changes:
     name: detect changes
@@ -20,10 +23,11 @@ jobs:
     outputs:
       fv: ${{ steps.filter.outputs.fv }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
-      - uses: dorny/paths-filter@v3
+          persist-credentials: false
+      - uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
         id: filter
         with:
           filters: |
@@ -42,7 +46,9 @@ jobs:
     if: needs.changes.outputs.fv == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Setup Rust
         uses: ./.github/actions/rust-setup
@@ -52,12 +58,28 @@ jobs:
       - name: Check exported Lean files are up to date
         run: cargo run --locked -p lean_extraction -- check
 
-      - name: Build Lean project
-        uses: leanprover/lean-action@v1
+      # We install elan + invoke `lake` directly instead of using
+      # `leanprover/lean-action`: that composite transitively references
+      # `actions/cache/{restore,save}@v5` (unpinned tags), which the org's
+      # required-full-SHA-pinning policy rejects at job setup.
+      - name: Cache Lake build artifacts
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          auto-config: false
-          build: true
-          build-args: "--wfail"
-          test: false
-          lint: false
-          lake-package-directory: qa/lean
+          path: qa/lean/.lake
+          key: lake-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('qa/lean/lean-toolchain') }}-${{ hashFiles('qa/lean/lake-manifest.json') }}-${{ github.sha }}
+          restore-keys: |
+            lake-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('qa/lean/lean-toolchain') }}-${{ hashFiles('qa/lean/lake-manifest.json') }}-
+            lake-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('qa/lean/lean-toolchain') }}-
+
+      - name: Install elan (Lean toolchain manager)
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Build Lean project
+        shell: bash
+        working-directory: qa/lean
+        run: lake build --wfail

@@ -36,8 +36,10 @@
 use alloc::vec::Vec;
 use core::any::TypeId;
 
-use ff::{FromUniformBytes, PrimeField};
-use ragu_arithmetic::Coeff;
+use ragu_arithmetic::{
+    Coeff,
+    ff::{FromUniformBytes, PrimeField},
+};
 use ragu_core::{
     Result,
     convert::WireMap,

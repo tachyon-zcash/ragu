@@ -10,15 +10,13 @@
 
 use alloc::{vec, vec::Vec};
 
-use ff::Field;
-use ragu_arithmetic::Cycle;
+use ragu_arithmetic::{CryptoRngCore, Cycle, ff::Field};
 use ragu_circuits::{
     polynomials::{Rank, sparse},
     staging::StageExt,
 };
 use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::Element;
-use rand::CryptoRng;
 
 use super::{NativeF, NativeSPrime, RegistryWy};
 use crate::{
@@ -32,7 +30,7 @@ use crate::{
 };
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
-    pub(super) fn compute_f<'dr, D, RNG: CryptoRng>(
+    pub(super) fn compute_f<'dr, D, RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
         w: &Element<'dr, D>,
@@ -69,7 +67,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// [`ProofBuilder`] retain the native copy that derives it, since the `f`
     /// polynomial is not retained after the fuse step and so does not appear in
     /// the proof.
-    fn compute_bridge_f<RNG: CryptoRng>(
+    fn compute_bridge_f<RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
         native: &NativeF<C, R>,

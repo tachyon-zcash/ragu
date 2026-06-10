@@ -12,23 +12,20 @@
 
 ## Resources
 
-* [The Ragu Book](https://tachyon.z.cash/ragu/) provides high-level documentation about Ragu, how it can be used, how it is designed, and how to contribute. The source code for the book lives in this repository in the [`book`](https://github.com/tachyon-zcash/ragu/tree/main/book) subdirectory.
+* [The Ragu Book](https://tachyon.z.cash/ragu/) provides high-level documentation for working with Ragu, the protocol's design, and implementation details. The source code for the book lives in this repository in the [`book`](https://github.com/tachyon-zcash/ragu/tree/main/book) subdirectory.
 * [Crate documentation](https://docs.rs/ragu) is available for official Ragu crate releases.
 * Unofficial (internal) library documentation is [continually rendered](https://tachyon.z.cash/ragu/internal/ragu/) from the `main` branch. This is primarily for developers of Ragu.
 
 ## Requirements
 
-* The minimum supported [Rust](https://rust-lang.org/) version is currently
-  **1.90.0**.
-* Ragu requires minimal dependencies and currently strives to avoid using
-  dependencies that are not already used in
-  [Zebra](https://github.com/ZcashFoundation/zebra).
-* Ragu's library crates are `no_std`-compatible and only need a global
-  allocator; the default `multicore` feature uses [maybe-rayon] and pulls
-  in `std`. See the [book](https://tachyon.z.cash/ragu/guide/requirements.html#no-std)
-  for details.
+* The minimum supported [Rust](https://rust-lang.org/) version is currently **1.90.0**.
+* Ragu requires minimal dependencies and currently strives to avoid using dependencies that are not already used in [Zebra](https://github.com/ZcashFoundation/zebra).
+* Ragu's library crates are [`no_std`]-compatible and only need a global allocator; the default `multicore` crate feature uses [`maybe-rayon`] and pulls in `std`. See the [book][book-no-std] for details.
 
-[maybe-rayon]: https://crates.io/crates/maybe-rayon
+[Zebra]: https://github.com/ZcashFoundation/zebra
+[`no_std`]: https://doc.rust-lang.org/reference/names/preludes.html#the-no_std-attribute
+[`maybe-rayon`]: https://crates.io/crates/maybe-rayon
+[book-no-std]: https://tachyon.z.cash/ragu/guide/requirements.html#no-std
 
 ## License
 

@@ -2,15 +2,13 @@
 
 use core::iter::once;
 
-use ff::Field;
-use ragu_arithmetic::Cycle;
+use ragu_arithmetic::{CryptoRngCore, Cycle, ff::Field};
 use ragu_circuits::{
     polynomials::{Rank, sparse},
     registry::CircuitIndex,
 };
 use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::Element;
-use rand::CryptoRng;
 
 use crate::{
     Application, Pcd, Proof,
@@ -29,7 +27,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// any check fails (e.g., invalid circuit ID, header size mismatch,
     /// corrupted commitments or evaluations), or `Err` if an internal
     /// computation error occurs.
-    pub fn verify<RNG: CryptoRng, H: Header<C::CircuitField>>(
+    pub fn verify<RNG: CryptoRngCore, H: Header<C::CircuitField>>(
         &self,
         pcd: &Pcd<C, R, H>,
         mut rng: RNG,
@@ -239,10 +237,12 @@ mod nested {
 
 #[cfg(test)]
 mod tests {
-    use ff::Field;
+    use ragu_arithmetic::{
+        ff::Field,
+        rand::{SeedableRng, rngs::StdRng},
+    };
     use ragu_circuits::{polynomials::ProductionRank, registry::CircuitIndex};
     use ragu_pasta::Pasta;
-    use rand::{SeedableRng, rngs::StdRng};
 
     use super::*;
     use crate::ApplicationBuilder;

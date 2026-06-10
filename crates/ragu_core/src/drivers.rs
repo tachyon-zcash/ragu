@@ -50,9 +50,8 @@ pub mod emulator;
 mod linexp;
 mod phantom;
 
-use ff::Field;
 pub use linexp::{DirectSum, LinearExpression};
-use ragu_arithmetic::Coeff;
+use ragu_arithmetic::{Coeff, ff::Field};
 
 use crate::{
     Result,

@@ -1,6 +1,6 @@
 //! Compositional gadget that appends an extra element during serialization.
 
-use ff::Field;
+use ragu_arithmetic::ff::Field;
 use ragu_core::{
     Result,
     drivers::Driver,
@@ -8,7 +8,8 @@ use ragu_core::{
 };
 
 use crate::{
-    Element,
+    Element, GadgetExt,
+    comparison::GadgetEquals,
     consistent::Consistent,
     io::{Buffer, Write},
 };
@@ -39,6 +40,21 @@ impl<F: Field, K: GadgetKind<F> + Write<F>> Write<F> for Kind![F; @WithSuffix<'_
     ) -> Result<()> {
         K::write_gadget(&this.inner, dr, buf)?;
         buf.write(dr, &this.suffix)
+    }
+}
+
+impl<F: Field, K: GadgetEquals<F>> GadgetEquals<F> for Kind![F; @WithSuffix<'_, _, K>] {
+    fn enforce_equal_gadget<
+        'dr,
+        D1: Driver<'dr, F = F>,
+        D2: Driver<'dr, F = F, Wire = <D1 as Driver<'dr>>::Wire>,
+    >(
+        dr: &mut D1,
+        a: &Bound<'dr, D2, Self>,
+        b: &Bound<'dr, D2, Self>,
+    ) -> Result<()> {
+        K::enforce_equal_gadget(dr, &a.inner, &b.inner)?;
+        a.suffix.enforce_equal(dr, &b.suffix)
     }
 }
 

@@ -12,13 +12,18 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   # Enforce use of Bound<'dr, D, K> alias instead of verbose GadgetKind::Rebind patterns
   bound-alias:
     name: bound alias check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
       - name: Check for verbose GadgetKind::Rebind patterns
         run: |
           # Check for UFCS patterns like <K as GadgetKind<...>>::Rebind

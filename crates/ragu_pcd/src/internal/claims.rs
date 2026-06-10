@@ -19,7 +19,7 @@
 use alloc::{borrow::Cow, vec::Vec};
 use core::borrow::Borrow;
 
-use ff::{Field, PrimeField};
+use ragu_arithmetic::ff::{Field, PrimeField};
 use ragu_circuits::{
     polynomials::{Rank, sparse},
     registry::{CircuitIndex, Registry},

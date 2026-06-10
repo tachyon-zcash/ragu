@@ -7,12 +7,13 @@ use syn::{
 
 use crate::{
     helpers::{GenericDriver, attr_is},
-    path_resolution::{RaguCorePath, RaguPrimitivesPath},
+    path_resolution::{RaguArithmeticPath, RaguCorePath, RaguPrimitivesPath},
     substitution::replace_driver_field_in_generic_param,
 };
 
 pub fn derive(
     input: DeriveInput,
+    ragu_arithmetic_path: RaguArithmeticPath,
     ragu_core_path: RaguCorePath,
     ragu_primitives_path: RaguPrimitivesPath,
 ) -> Result<TokenStream> {
@@ -105,7 +106,7 @@ pub fn derive(
         for param in &mut params {
             replace_driver_field_in_generic_param(param, &driver.ident, &driverfield_ident);
         }
-        params.push(parse_quote!( #driverfield_ident: ::ff::Field ));
+        params.push(parse_quote!( #driverfield_ident: #ragu_arithmetic_path::ff::Field ));
 
         parse_quote!( < #( #params ),* >)
     };
@@ -157,13 +158,19 @@ fn test_gadget_serialize_derive() {
         }
     };
 
-    let result = derive(input, RaguCorePath::default(), RaguPrimitivesPath::default()).unwrap();
+    let result = derive(
+        input,
+        RaguArithmeticPath::default(),
+        RaguCorePath::default(),
+        RaguPrimitivesPath::default(),
+    )
+    .unwrap();
 
     assert_eq!(
         result.to_string(),
         quote!(
             #[automatically_derived]
-            impl<C: CurveAffine, const N: usize, DriverField: ::ff::Field> ::ragu_primitives::io::Write<DriverField>
+            impl<C: CurveAffine, const N: usize, DriverField: ::ragu_arithmetic::ff::Field> ::ragu_primitives::io::Write<DriverField>
                 for MyGadget<'static, ::core::marker::PhantomData< DriverField >, C, N>
             {
                 fn write_gadget<'my_dr, MyD: ::ragu_core::drivers::Driver<'my_dr, F = DriverField>, B: ::ragu_primitives::io::Buffer<'my_dr, MyD> >(

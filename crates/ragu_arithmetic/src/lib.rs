@@ -70,40 +70,78 @@
 
 #[cfg(not(feature = "alloc"))]
 compile_error!("`ragu_arithmetic` requires the `alloc` feature to be enabled.");
+#[cfg(all(feature = "modern-deps", feature = "legacy-deps"))]
+compile_error!("`modern-deps` and `legacy-deps` are mutually exclusive.");
+#[cfg(not(any(feature = "modern-deps", feature = "legacy-deps")))]
+compile_error!("`ragu_arithmetic` requires either `modern-deps` or `legacy-deps`.");
 extern crate alloc;
 
 mod coeff;
+mod deferred;
 mod domain;
 mod fft;
 mod multicore;
-mod uendo;
 mod util;
 
+/// The selected `ff` crate.
+#[cfg(feature = "legacy-deps")]
+pub extern crate ff_legacy as ff;
+/// The selected `ff` crate.
+#[cfg(feature = "modern-deps")]
+pub extern crate ff_modern as ff;
+/// The selected `group` crate.
+#[cfg(feature = "legacy-deps")]
+pub extern crate group_legacy as group;
+/// The selected `group` crate.
+#[cfg(feature = "modern-deps")]
+pub extern crate group_modern as group;
+/// The selected `pasta_curves` crate.
+#[cfg(feature = "legacy-deps")]
+pub extern crate pasta_curves_legacy as pasta_curves;
+/// The selected `pasta_curves` crate.
+#[cfg(feature = "modern-deps")]
+pub extern crate pasta_curves_modern as pasta_curves;
+/// The selected `rand` crate.
+#[cfg(feature = "legacy-deps")]
+pub extern crate rand_legacy as rand;
+/// The selected `rand` crate.
+#[cfg(feature = "modern-deps")]
+pub extern crate rand_modern as rand;
+
 pub use coeff::Coeff;
+pub use deferred::DeferredField;
 pub use domain::Domain;
-use ff::{Field, FromUniformBytes, WithSmallOrderMulGroup};
 pub use fft::{Ring, bitreverse};
-pub use pasta_curves::{
-    arithmetic::{Coordinates, CurveAffine, CurveExt},
-    deferred::DeferredField,
-};
 /// Converts a 256-bit integer literal into the little endian `[u64; 4]`
-/// representation that e.g. [`Fp::from_raw`](pasta_curves::Fp::from_raw) or
-/// [`Fp::pow`](pasta_curves::Fp::pow) need as input. This makes constants
-/// slightly more readable, but is not intended for use in other contexts.
+/// representation that e.g. [`Fp::from_raw`](crate::pasta_curves::Fp::from_raw) or
+/// [`Fp::pow`](crate::pasta_curves::Fp::pow) need as input. This makes constants
+/// more readable, but is not intended for use in other contexts.
 pub use ragu_macros::repr256;
-/// TODO(ebfull): Use this if we need to increase the bit size of endoscalars.
-///
-/// The `uendo` module is a speculative implementation. We may need a
-/// flexible-width challenge space larger than 128 bits due to birthday bound /
-/// adversary advantage concerns. `Uendo` is a drop-in replacement for `u128`
-/// that's generic over bit length, in case the security proof demands something
-/// like 134-bit challenges. This may end up being removed if 128 bits suffices.
-pub use u128 as Uendo;
 pub use util::{
     batch_to_affine, decomp_product_poly, dot, eval, factor, factor_iter, geosum, low_u64, mul,
     poly_mul, poly_with_roots,
 };
+
+use crate::ff::{Field, FromUniformBytes, WithSmallOrderMulGroup};
+pub use crate::pasta_curves::arithmetic::{Coordinates, CurveAffine, CurveExt};
+
+/// A random number generator suitable for cryptographic field sampling,
+/// blanket-implemented for any [`CryptoRng`](crate::rand::CryptoRng) that is also
+/// an [`Rng`](crate::rand::Rng).
+#[cfg(feature = "modern-deps")]
+pub trait CryptoRngCore: crate::rand::CryptoRng + crate::rand::Rng {}
+
+#[cfg(feature = "modern-deps")]
+impl<RNG: crate::rand::CryptoRng + crate::rand::Rng + ?Sized> CryptoRngCore for RNG {}
+
+/// A random number generator suitable for cryptographic field sampling,
+/// blanket-implemented for any [`CryptoRng`](crate::rand::CryptoRng) that is also
+/// an [`RngCore`](crate::rand::RngCore).
+#[cfg(feature = "legacy-deps")]
+pub trait CryptoRngCore: crate::rand::CryptoRng + crate::rand::RngCore {}
+
+#[cfg(feature = "legacy-deps")]
+impl<RNG: crate::rand::CryptoRng + crate::rand::RngCore + ?Sized> CryptoRngCore for RNG {}
 
 /// Represents a "cycle" of elliptic curves where the scalar field of one curve
 /// is the base field of the other, and vice-versa.

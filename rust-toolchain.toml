@@ -4,6 +4,5 @@ components = ["clippy"]
 
 # Bumping MSRV
 # * update `toolchain.channel` key in `rust-toolchain.toml` (this file)
-# * update toolchain in `.github/actions/rust-setup/action.yml`
 # * update `book/src/guide/requirements.md`
 # * update `workspace.package.rust-version` key in root `Cargo.toml`

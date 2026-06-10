@@ -46,8 +46,7 @@
 use alloc::{vec, vec::Vec};
 use core::marker::PhantomData;
 
-use ff::Field;
-use ragu_arithmetic::Cycle;
+use ragu_arithmetic::{Cycle, ff::Field};
 use ragu_circuits::{
     WithAux,
     horner::Horner,
@@ -176,6 +175,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
         let x = unified_output.x.read(dr, allocator)?;
 
         // Compute t(xz), the vanishing polynomial evaluated at xz.
+        let x = x.enforce_invertible(dr)?;
+        let z = z.enforce_invertible(dr)?;
         let txz = dr.routine(Evaluate::<R>::new(), (x.clone(), z.clone()))?;
 
         // Verify v: compute the expected value and constrain it to match the
@@ -197,7 +198,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
                 compute_axbx::<_, RevdotParameters>(
                     dr,
                     &query,
-                    &z,
+                    z.element(),
                     &txz,
                     &mu_inv,
                     &mu_prime_inv,
@@ -212,7 +213,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
             let fu = {
                 let alpha = unified_output.alpha.read(dr, allocator)?;
                 let u = unified_output.u.read(dr, allocator)?;
-                let denominators = Denominators::new(dr, &u, &w, &x, &y, &z, &preamble)?;
+                let denominators =
+                    Denominators::new(dr, &u, &w, x.element(), &y, z.element(), &preamble)?;
                 let mut horner = Horner::new(&alpha);
                 for (pu, v, denominator) in poly_queries(
                     &eval,
@@ -291,7 +293,7 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
         preamble: &native_preamble::Output<'dr, D, C, HEADER_SIZE>,
     ) -> Result<Self>
     where
-        D::F: ff::PrimeField,
+        D::F: ragu_arithmetic::ff::PrimeField,
     {
         let xz = x.mul(dr, z)?;
 
@@ -635,7 +637,7 @@ struct Inverter<'dr, D: Driver<'dr>> {
     differences: Vec<Element<'dr, D>>,
 }
 
-impl<'dr, D: Driver<'dr, F: ff::PrimeField>> Inverter<'dr, D> {
+impl<'dr, D: Driver<'dr, F: ragu_arithmetic::ff::PrimeField>> Inverter<'dr, D> {
     /// Creates a batch inverter with the provided base [`Element`].
     ///
     /// The base represents a fixed evaluation point (e.g., $u$ or $y$
@@ -704,7 +706,10 @@ impl<'dr, D: Driver<'dr, F: ff::PrimeField>> Inverter<'dr, D> {
                 .collect::<Vec<_>>();
 
             let mut scratch = vec![D::F::ZERO; differences.len()];
-            ff::BatchInverter::invert_with_external_scratch(&mut differences, &mut scratch);
+            ragu_arithmetic::ff::BatchInverter::invert_with_external_scratch(
+                &mut differences,
+                &mut scratch,
+            );
 
             differences.into_iter()
         });

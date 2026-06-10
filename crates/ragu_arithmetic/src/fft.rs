@@ -1,6 +1,7 @@
-use ff::{Field, PrimeField};
-
-use crate::multicore;
+use crate::{
+    ff::{Field, PrimeField},
+    multicore,
+};
 
 /// A ring that can be used for FFTs.
 pub trait Ring {
@@ -159,10 +160,8 @@ fn log2_floor(num: usize) -> u32 {
 mod tests {
     use alloc::{vec, vec::Vec};
 
-    use pasta_curves::Fp;
-
     use super::*;
-    use crate::domain::Domain;
+    use crate::{domain::Domain, pasta_curves::Fp};
 
     fn naive_dft<F: PrimeField>(input: &[F], omega: F) -> Vec<F> {
         let n = input.len();

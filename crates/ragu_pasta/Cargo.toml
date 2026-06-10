@@ -17,27 +17,24 @@ keywords = []
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "katex-header.html"]
-all-features = true
+no-default-features = true
+features = ["alloc", "baked", "modern-deps"]
 
 [features]
 alloc = []
-default = ["alloc"]
+default = ["alloc", "modern-deps"]
+legacy-deps = ["ragu_arithmetic/legacy-deps"]
+modern-deps = ["ragu_arithmetic/modern-deps"]
 baked = ["lazy_static"]
 std = []
 
 [build-dependencies]
-ragu_arithmetic = { path = "../ragu_arithmetic", version = "0.0.0" }
-ff = { workspace = true }
-group = { workspace = true }
-pasta_curves = { workspace = true }
+ragu_arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", default-features = false, features = ["alloc"] }
 
 [lib]
 bench = false
 
 [dependencies]
-ragu_arithmetic = { path = "../ragu_arithmetic", version = "0.0.0" }
-ff = { workspace = true }
-group = { workspace = true }
-pasta_curves = { workspace = true }
+ragu_arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", default-features = false, features = ["alloc"] }
 
 lazy_static = { workspace = true, optional = true }

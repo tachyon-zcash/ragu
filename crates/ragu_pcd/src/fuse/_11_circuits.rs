@@ -1,7 +1,6 @@
-use ragu_arithmetic::Cycle;
+use ragu_arithmetic::{CryptoRngCore, Cycle};
 use ragu_circuits::{CircuitExt, polynomials::Rank};
 use ragu_core::Result;
-use rand::CryptoRng;
 
 use crate::{
     Application,
@@ -10,7 +9,7 @@ use crate::{
 };
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
-    pub(super) fn compute_internal_circuits<RNG: CryptoRng>(
+    pub(super) fn compute_internal_circuits<RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
         preamble_witness: &native::stages::preamble::Witness<'_, C, R, HEADER_SIZE>,

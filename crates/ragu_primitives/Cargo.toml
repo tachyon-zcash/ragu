@@ -23,26 +23,29 @@ keywords = []
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "katex-header.html"]
-all-features = true
+no-default-features = true
+features = ["alloc", "modern-deps"]
 
 [features]
 alloc = []
-default = ["alloc"]
+default = ["alloc", "modern-deps"]
+legacy-deps = ["ragu_arithmetic/legacy-deps", "ragu_core/legacy-deps"]
+modern-deps = ["ragu_arithmetic/modern-deps", "ragu_core/modern-deps"]
 std = []
 
 [lib]
 bench = false
 
 [dependencies]
-ragu_arithmetic = { path = "../ragu_arithmetic", version = "0.0.0" }
-ff = { workspace = true }
-ragu_core = { path = "../ragu_core", version = "0.0.0" }
+ragu_arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", default-features = false, features = ["alloc"] }
+ragu_core = { path = "../ragu_core", version = "0.0.0", default-features = false, features = ["alloc"] }
 thiserror = "2.0.12"
 
 # Needed for the `Write` derive macro.
 ragu_macros = { path = "../ragu_macros", version = "0.0.0" }
 
 [dev-dependencies]
+ff = { workspace = true }
 rand = { workspace = true }
 group = { workspace = true }
 ragu_pasta = { path = "../ragu_pasta", version = "0.0.0", features = ["baked"] }

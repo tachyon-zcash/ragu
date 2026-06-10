@@ -1,9 +1,13 @@
-//! Resolving paths for `ragu_core` and `ragu_primitives`.
+//! Resolving paths for `ragu_arithmetic`, `ragu_core`, and `ragu_primitives`.
 //!
 //! If the end-user invoking the procedural macro is using the `ragu` crate and
 //! not importing `ragu_core`, we need to identify the path inside `ragu` that
 //! corresponds to where `ragu_core` traits are re-exported. Also, the end-user
 //! might have renamed the crates, so we must use `proc-macro-crate`.
+//!
+//! Only `ragu_core` and `ragu_primitives` support that `ragu` umbrella-crate
+//! fallback. `ragu_arithmetic` must be present as a direct dependency of the
+//! caller, possibly renamed; its resolution does not fall back to `ragu`.
 
 use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::Span;
@@ -11,10 +15,19 @@ use quote::{ToTokens, format_ident};
 use syn::{Error, Ident, Path, Result, parse_quote};
 
 #[derive(Clone)]
+pub struct RaguArithmeticPath(Path);
+
+#[derive(Clone)]
 pub struct RaguCorePath(Path);
 
 #[derive(Clone)]
 pub struct RaguPrimitivesPath(Path);
+
+impl ToTokens for RaguArithmeticPath {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        self.0.to_tokens(tokens)
+    }
+}
 
 impl ToTokens for RaguCorePath {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
@@ -28,6 +41,12 @@ impl ToTokens for RaguPrimitivesPath {
     }
 }
 
+impl Default for RaguArithmeticPath {
+    fn default() -> Self {
+        Self(parse_quote! { ::ragu_arithmetic })
+    }
+}
+
 impl Default for RaguCorePath {
     fn default() -> Self {
         Self(parse_quote! { ::ragu_core })
@@ -38,6 +57,22 @@ impl Default for RaguPrimitivesPath {
     fn default() -> Self {
         Self(parse_quote! { ::ragu_primitives })
     }
+}
+
+fn ragu_arithmetic_path() -> Result<Path> {
+    Ok(match crate_name("ragu_arithmetic") {
+        Ok(FoundCrate::Itself) => parse_quote! { ::ragu_arithmetic },
+        Ok(FoundCrate::Name(name)) => {
+            let name: Ident = format_ident!("{}", name);
+            parse_quote! { ::#name }
+        }
+        Err(_) => {
+            return Err(Error::new(
+                Span::call_site(),
+                "Failed to find ragu_arithmetic crate. Ensure it is included in your Cargo.toml.",
+            ));
+        }
+    })
 }
 
 fn ragu_core_path() -> Result<Path> {
@@ -76,6 +111,12 @@ fn ragu_primitives_path() -> Result<Path> {
             ));
         }
     })
+}
+
+impl RaguArithmeticPath {
+    pub fn resolve() -> Result<Self> {
+        ragu_arithmetic_path().map(Self)
+    }
 }
 
 impl RaguCorePath {

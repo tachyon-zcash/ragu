@@ -39,13 +39,12 @@ use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 use header::Header;
 pub use proof::{Pcd, Proof};
-use ragu_arithmetic::Cycle;
+use ragu_arithmetic::{CryptoRngCore, Cycle};
 use ragu_circuits::{
     polynomials::Rank,
     registry::{Registry, RegistryBuilder},
 };
 use ragu_core::{Error, Result};
-use rand::CryptoRng;
 use step::{Step, internal::adapter::Adapter};
 
 /// Domain separation tag for Ragu PCD protocol.
@@ -246,7 +245,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// This is the entry point for creating leaf nodes in a PCD tree.
     /// Internally creates minimal trivial proofs with `()` headers and fuses
     /// them with the provided step to produce a valid proof.
-    pub fn seed<'source, RNG: CryptoRng, S: Step<C, Left = (), Right = ()>>(
+    pub fn seed<'source, RNG: CryptoRngCore, S: Step<C, Left = (), Right = ()>>(
         &self,
         rng: &mut RNG,
         step: S,
@@ -263,7 +262,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     ///
     /// The proof is lazily created on first use and cached; subsequent calls
     /// return the same (non-random) proof.
-    fn seeded_trivial_pcd<RNG: CryptoRng>(&self, rng: &mut RNG) -> Pcd<C, R, ()> {
+    fn seeded_trivial_pcd<RNG: CryptoRngCore>(&self, rng: &mut RNG) -> Pcd<C, R, ()> {
         self.seeded_trivial
             .get_or_init(|| {
                 self.seed(rng, step::internal::trivial::Trivial::new(), ())
@@ -283,7 +282,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// is valid for the same [`Header`] but reveals nothing else about the
     /// original proof. As a result, [`Application::verify`] should produce the
     /// same result on the provided `pcd` as it would the output of this method.
-    pub fn rerandomize<RNG: CryptoRng, H: Header<C::CircuitField>>(
+    pub fn rerandomize<RNG: CryptoRngCore, H: Header<C::CircuitField>>(
         &self,
         pcd: Pcd<C, R, H>,
         rng: &mut RNG,

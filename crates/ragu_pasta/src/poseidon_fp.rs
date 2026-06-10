@@ -1,5 +1,5 @@
 /// Poseidon permutation parameters for Pallas's base field
-/// ([`Fp`](pasta_curves::Fp), the [`CircuitField`](ragu_arithmetic::Cycle::CircuitField)
+/// ([`Fp`](ragu_arithmetic::pasta_curves::Fp), the [`CircuitField`](ragu_arithmetic::Cycle::CircuitField)
 /// in the Pasta cycle).
 ///
 /// Constants generated using the [Hades/Poseidon reference
@@ -8,22 +8,22 @@
 /// 8 full rounds, and 56 partial rounds.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct PoseidonFp;
-impl ragu_arithmetic::PoseidonPermutation<pasta_curves::Fp> for PoseidonFp {
+impl ragu_arithmetic::PoseidonPermutation<ragu_arithmetic::pasta_curves::Fp> for PoseidonFp {
     const T: usize = 5;
     const RATE: usize = 4;
     const FULL_ROUNDS: usize = 8;
     const PARTIAL_ROUNDS: usize = 56;
     const ALPHA: isize = 5;
 
-    fn round_constants(&self) -> impl Iterator<Item = &[pasta_curves::Fp]> {
+    fn round_constants(&self) -> impl Iterator<Item = &[ragu_arithmetic::pasta_curves::Fp]> {
         ROUND_CONSTANTS.iter().copied()
     }
-    fn mds_matrix(&self) -> impl ExactSizeIterator<Item = &[pasta_curves::Fp]> {
+    fn mds_matrix(&self) -> impl ExactSizeIterator<Item = &[ragu_arithmetic::pasta_curves::Fp]> {
         MDS_MATRIX.iter().copied()
     }
 }
 
-const ROUND_CONSTANTS: &[&[pasta_curves::Fp]] = &[
+const ROUND_CONSTANTS: &[&[ragu_arithmetic::pasta_curves::Fp]] = &[
     &[
         fp!(0x2c44402b93c5ac82bc8bb58e947fca107e865d85b1cb0f1f32f0c05cdaf439f8),
         fp!(0x023eb54d53e89505d0c9258bee0de17bb0a11e451b48d22d88549e05e2018403),
@@ -473,7 +473,7 @@ const ROUND_CONSTANTS: &[&[pasta_curves::Fp]] = &[
         fp!(0x03de34a7d5476efdedbadbc3888aaabe655e3a2ef1b9808d445abafb6b223a14),
     ],
 ];
-const MDS_MATRIX: &[&[pasta_curves::Fp]] = &[
+const MDS_MATRIX: &[&[ragu_arithmetic::pasta_curves::Fp]] = &[
     &[
         fp!(0x0e4b3540d4d73fa420f1851a6740eddbd600c9ab0ad8d5b4dcf64f04ffb374c6),
         fp!(0x3fe7ecb7e78834870cdce4b908a2fb807b03af17cded80294c0c030880410ed4),

@@ -27,20 +27,71 @@ runs:
     - name: Install additional packages
       if: runner.os == 'Linux' && inputs.apt-packages
       shell: bash
+      env:
+        APT_PACKAGES: ${{ inputs.apt-packages }}
       run: |
         sudo apt-get update
-        sudo apt-get install -y ${{ inputs.apt-packages }}
+        # word-splitting is intentional: callers pass a space-separated list
+        # shellcheck disable=SC2086
+        sudo apt-get install -y $APT_PACKAGES
 
-    - name: Install Rust toolchain (from rust-toolchain.toml)
-      uses: dtolnay/rust-toolchain@1.90.0
+    # Read channel/components/targets from rust-toolchain.toml and merge with
+    # the composite's own inputs. dtolnay's master action does not read
+    # rust-toolchain.toml itself (only the version-named branches do, via
+    # a hardcoded `env: toolchain:` in their own action.yml), so we extract
+    # the channel here and pass it explicitly. Audit this composite and
+    # `rust-nightly-setup/action.yml` together when rotating the dtolnay SHA.
+    - name: Read rust-toolchain.toml
+      id: toolchain-config
+      shell: bash
+      env:
+        EXTRA_COMPONENTS: ${{ inputs.components }}
+        EXTRA_TARGETS: ${{ inputs.targets }}
+      run: |
+        python3 - <<'PY'
+        import os
+        import sys
+        import tomllib
+
+        with open("rust-toolchain.toml", "rb") as f:
+            cfg = tomllib.load(f).get("toolchain", {})
+
+        channel = cfg.get("channel")
+        if not channel:
+            print("::error file=rust-toolchain.toml::missing toolchain.channel", file=sys.stderr)
+            sys.exit(1)
+
+        def merge(file_vals, env_var):
+            extra = os.environ.get(env_var, "").split(",")
+            seen = set()
+            out = []
+            for raw in list(file_vals or []) + extra:
+                v = raw.strip()
+                if v and v not in seen:
+                    seen.add(v)
+                    out.append(v)
+            return ",".join(out)
+
+        components = merge(cfg.get("components"), "EXTRA_COMPONENTS")
+        targets = merge(cfg.get("targets"), "EXTRA_TARGETS")
+
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8", newline="\n") as out:
+            out.write(f"channel={channel}\n")
+            out.write(f"components={components}\n")
+            out.write(f"targets={targets}\n")
+        PY
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ 2026-05-23
       with:
-        components: ${{ inputs.components }}
-        targets: ${{ inputs.targets }}
+        toolchain: ${{ steps.toolchain-config.outputs.channel }}
+        components: ${{ steps.toolchain-config.outputs.components }}
+        targets: ${{ steps.toolchain-config.outputs.targets }}
 
     # Cache cargo registry and git separately (shared across all jobs)
     - name: Cache cargo registry
       id: registry-cache
-      uses: actions/cache@v5
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
         path: |
           ~/.cargo/registry/index
@@ -53,7 +104,7 @@ runs:
     # Cache target directory (job-specific due to different build configurations)
     # Includes source file hash to avoid stale incremental compilation artifacts
     - name: Cache target directory
-      uses: actions/cache@v5
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
         path: target
         key: ${{ runner.os }}-target-${{ inputs.targets }}-${{ inputs.cache-suffix }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('crates/**/src/**/*.rs') }}
@@ -79,7 +130,7 @@ runs:
 
     - name: Install cargo tools
       if: inputs.cargo-tools != ''
-      uses: taiki-e/install-action@v2
+      uses: taiki-e/install-action@6c1f7cf125e42770ff087ea443901b487cc5471a # v2.79.5
       with:
         tool: ${{ inputs.cargo-tools }}
 

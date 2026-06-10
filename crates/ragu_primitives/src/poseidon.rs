@@ -7,8 +7,7 @@
 use alloc::{vec, vec::Vec};
 use core::{marker::PhantomData, panic};
 
-use ff::Field;
-use ragu_arithmetic::Coeff;
+use ragu_arithmetic::{Coeff, ff::Field};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
@@ -18,6 +17,7 @@ use ragu_core::{
 
 use crate::{
     Element,
+    comparison::GadgetEquals,
     consistent::Consistent,
     io::{Buffer, Write},
     multiadd,
@@ -280,7 +280,7 @@ impl<'dr, D: Driver<'dr>, P: ragu_arithmetic::PoseidonPermutation<D::F>> Sponge<
 /// of the sponge. It can be used to save and resume sponge progress via
 /// [`Sponge::save_state`] and [`Sponge::resume`], or passed to
 /// `Transcript::resume_from_state`.
-#[derive(Gadget, Write, Consistent)]
+#[derive(Gadget, Write, Consistent, GadgetEquals)]
 pub struct SpongeState<'dr, D: Driver<'dr>, P: ragu_arithmetic::PoseidonPermutation<D::F>> {
     #[ragu(gadget)]
     values: FixedVec<Element<'dr, D>, PoseidonStateLen<D::F, P>>,

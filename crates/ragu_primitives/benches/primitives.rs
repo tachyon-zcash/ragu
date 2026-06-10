@@ -6,7 +6,9 @@ use std::hint::black_box;
 
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use ragu_pasta::{EpAffine, Fp, PoseidonFp};
-use ragu_primitives::{Boolean, Element, Endoscalar, Point, multiadd, multipack, poseidon::Sponge};
+use ragu_primitives::{
+    Boolean, Element, Endoscalar, NonzeroBank, Point, multiadd, multipack, poseidon::Sponge,
+};
 use setup::{
     BenchEmu, alloc_bools, alloc_coeffs, alloc_elem, alloc_elems, alloc_endo, alloc_point,
     alloc_sponge, setup_emu,
@@ -76,7 +78,10 @@ fn point_add_incomplete(
         ),
     ),
 ) {
-    black_box(p1.add_incomplete(&mut emu, &p2, None)).unwrap();
+    black_box(NonzeroBank::scope(&mut emu, |emu, bank| {
+        p1.add_incomplete(emu, &p2, bank)
+    }))
+    .unwrap();
 }
 
 #[library_benchmark(setup = setup_emu)]
@@ -90,7 +95,10 @@ fn point_double_and_add_incomplete(
         ),
     ),
 ) {
-    black_box(p1.double_and_add_incomplete(&mut emu, &p2)).unwrap();
+    black_box(NonzeroBank::scope(&mut emu, |emu, bank| {
+        p1.double_and_add_incomplete(emu, &p2, bank)
+    }))
+    .unwrap();
 }
 
 #[library_benchmark(setup = setup_emu)]

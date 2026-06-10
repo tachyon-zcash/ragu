@@ -2,6 +2,9 @@ name: Run debug tests
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1 # backtraces on panic
@@ -10,14 +13,16 @@ jobs:
   test-debug:
     name: test debug (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    continue-on-error: true 
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
       - name: Setup Rust
         uses: ./.github/actions/rust-setup
       - name: Run debug tests
-        run: cargo test --all --locked --all-features --verbose
+        run: cargo test --all --locked --verbose

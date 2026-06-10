@@ -13,15 +13,15 @@ build_release *ARGS:
 _nightly := "nightly-2026-04-11"
 
 lint: _typos_setup _book_setup
-  cargo clippy --workspace --lib --tests --benches --all-features -- -D warnings
+  cargo clippy --workspace --lib --tests --benches -- -D warnings
   cargo +{{_nightly}} fmt --all -- --config-path rustfmt.nightly.toml --check
   typos
   mdbook build ./book
 
 fix: _typos_setup
   cargo +{{_nightly}} fmt --all -- --config-path rustfmt.nightly.toml
-  cargo fix --allow-dirty --allow-staged --all-features
-  cargo clippy --fix --allow-dirty --allow-staged --all-features
+  cargo fix --allow-dirty --allow-staged
+  cargo clippy --fix --allow-dirty --allow-staged
   typos -w
 
 _install_binstall:
@@ -45,15 +45,20 @@ book COMMAND: _book_setup
 
 # run all tests
 test *ARGS:
-  cargo test --workspace --all-features {{ARGS}}
+  cargo test --workspace {{ARGS}}
+
+# check the temporary legacy dependency surface for external consumers
+check_legacy *ARGS:
+  cargo check -p ragu_arithmetic -p ragu_pasta -p ragu_core -p ragu_primitives -p ragu_circuits -p ragu_pcd --lib --no-default-features --features "alloc legacy-deps" {{ARGS}}
+  cargo check -p ragu --lib --no-default-features --features legacy-deps {{ARGS}}
 
 # run quicker proptests used for routine local/CI coverage
 proptests_fast *ARGS:
-  PROPTEST_CASES="${PROPTEST_CASES:-64}" cargo test --release -p ragu_arithmetic -p ragu_core --all-features proptest {{ARGS}}
+  PROPTEST_CASES="${PROPTEST_CASES:-64}" cargo test --release -p ragu_arithmetic -p ragu_core proptest {{ARGS}}
 
 # run slower proptests with higher default case counts
 proptests_heavy *ARGS:
-  PROPTEST_CASES="${PROPTEST_CASES:-256}" cargo test --release -p ragu_circuits --all-features proptest {{ARGS}}
+  PROPTEST_CASES="${PROPTEST_CASES:-256}" cargo test --release -p ragu_circuits proptest {{ARGS}}
 
 # run benchmarks (auto-detects platform)
 bench *ARGS:
@@ -77,7 +82,7 @@ _bench_macos *ARGS:
     docker attach --no-stdin $container
 
 _bench_linux *ARGS: _gungraun_setup
-    cargo bench --workspace --all-features --bench arithmetic --bench circuits --bench pcd --bench primitives {{ARGS}}
+    cargo bench --workspace --bench arithmetic --bench circuits --bench pcd --bench primitives {{ARGS}}
 
 # generate flamegraph in target/*.svg
 flamegraph PACKAGE GROUP TARGET *ARGS:
@@ -131,11 +136,13 @@ ci_local: _book_setup
   @echo "Running formatting check..."
   cargo +{{_nightly}} fmt --all -- --config-path rustfmt.nightly.toml --check
   @echo "Running clippy..."
-  cargo clippy --workspace --lib --tests --benches --locked --all-features -- -D warnings
+  cargo clippy --workspace --lib --tests --benches --locked -- -D warnings
   @echo "Running tests..."
-  cargo test --release --all --locked --all-features
+  cargo test --release --all --locked
+  @echo "Checking legacy dependency surface..."
+  @just check_legacy --locked
   @echo "Building benchmarks and examples..."
-  cargo build --benches --examples --all-features
+  cargo build --benches --examples
   @echo "Checking documentation..."
   RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all --locked --document-private-items
   @echo "Building book..."

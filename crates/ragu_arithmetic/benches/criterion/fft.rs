@@ -1,8 +1,10 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use ff::Field;
-use pasta_curves::Fp;
-use ragu_arithmetic::Domain;
-use rand::{SeedableRng, rngs::StdRng};
+use ragu_arithmetic::{
+    Domain,
+    ff::Field,
+    pasta_curves::Fp,
+    rand::{SeedableRng, rngs::StdRng},
+};
 
 fn fft_bench(c: &mut Criterion) {
     let mut group = c.benchmark_group("fft");

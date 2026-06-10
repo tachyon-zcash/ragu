@@ -7,8 +7,7 @@ use std::{
     path::Path,
 };
 
-use ff::PrimeField;
-use pasta_curves::arithmetic::CurveAffine;
+use ragu_arithmetic::{ff::PrimeField, pasta_curves::arithmetic::CurveAffine};
 
 mod common {
     include!("pasta_common.rs");

@@ -39,6 +39,8 @@ use ragu_primitives::{
     allocator::Standard, consistent::Consistent,
 };
 
+use std::sync::LazyLock;
+
 fn parse_fp(bytes: [u8; 32]) -> Fp {
     Option::<Fp>::from(Fp::from_repr(bytes)).unwrap_or_else(|| {
         Fp::from(u64::from_le_bytes([
@@ -47,12 +49,28 @@ fn parse_fp(bytes: [u8; 32]) -> Fp {
     })
 }
 
-fn point_from_seed(seed: u64) -> EpAffine {
-    if seed == 0 {
-        EpAffine::generator()
-    } else {
-        (EpAffine::generator() * Fq::from(seed)).to_affine()
+/// Precomputed table of non-identity Pallas points.
+///
+/// Replacing per-input `EpAffine::generator() * Fq::from(seed)` with a
+/// 32-point modular lookup. The Consistent trait tests check
+/// `(x, y)` is on the curve regardless of which specific point — point
+/// diversity beyond a handful adds no constraint-system coverage but
+/// burns ~50µs/scalar-mul per input. At ~143µs/iter pre-change, removing
+/// the two scalar muls is the dominant cost on this target.
+const POINT_TABLE_LEN: usize = 32;
+static POINT_TABLE: LazyLock<[EpAffine; POINT_TABLE_LEN]> = LazyLock::new(|| {
+    let mut points = [EpAffine::generator(); POINT_TABLE_LEN];
+    for (i, p) in points.iter_mut().enumerate() {
+        // Skip seed=0 → generator already in slot 0.
+        if i > 0 {
+            *p = (EpAffine::generator() * Fq::from(i as u64)).to_affine();
+        }
     }
+    points
+});
+
+fn point_from_seed(seed: u64) -> EpAffine {
+    POINT_TABLE[(seed as usize) % POINT_TABLE_LEN]
 }
 
 #[derive(Arbitrary, Debug)]

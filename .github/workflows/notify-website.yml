@@ -5,13 +5,16 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   dispatch:
     runs-on: ubuntu-latest
     if: github.repository == 'tachyon-zcash/ragu'
     steps:
       - name: Trigger repository_dispatch in website
-        uses: peter-evans/repository-dispatch@v3
+        uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # v3.0.0
         with:
           token: ${{ secrets.REPO_DISPATCH_TOKEN }}
           repository: tachyon-zcash/website

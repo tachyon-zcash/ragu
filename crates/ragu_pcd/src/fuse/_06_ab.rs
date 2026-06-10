@@ -29,8 +29,7 @@
 
 use alloc::vec::Vec;
 
-use ff::Field;
-use ragu_arithmetic::Cycle;
+use ragu_arithmetic::{Cycle, ff::Field};
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::{Element, vec::FixedVec};

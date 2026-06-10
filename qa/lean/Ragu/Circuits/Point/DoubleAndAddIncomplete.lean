@@ -1,250 +1,244 @@
 import Clean.Circuit
 import Clean.Utils.Primes
 import Mathlib.Tactic.LinearCombination
+import Ragu.Circuits.Element.Divide
+import Ragu.Circuits.Element.EnforceNonzero
 import Ragu.Circuits.Element.Mul
 import Ragu.Circuits.Element.Square
-import Ragu.Circuits.Element.DivNonzero
 import Ragu.Circuits.Point.Spec
 
 namespace Ragu.Circuits.Point.DoubleAndAddIncomplete
 variable {p : ℕ} [Fact p.Prime]
 
+/-- Two input points, plus a prover-side inverse hint for the bank's
+final product (`(x_q - x_p) · (x_p - x_r)`) that the trailing
+`enforce_nonzero` discharges. -/
 structure Inputs (F : Type) where
   P1 : Spec.Point F  -- the point to be doubled (Rust's `self`)
   P2 : Spec.Point F  -- the point to be added once (Rust's `other`)
-deriving ProvableStruct
+  inverse : UnconstrainedDep field F
+deriving CircuitType
 
-/-- `Point::double_and_add_incomplete(other)` computes `2·P1 + P2` via the
-zcash optimization that avoids materializing `P1 + P2` explicitly:
+/-- `Point::double_and_add_incomplete(other)` wrapped in
+`NonzeroBank::scope`. Computes `2·P1 + P2` via the zcash trick:
 
-- λ₁ = (y₂ - y₁) / (x₂ - x₁) — slope through P1 and P2.
-- x_r = λ₁² - x₁ - x₂ — x-coord of P1 + P2.
-- λ₂ = 2y₁ / (x₁ - x_r) - λ₁ — slope through (P1 + P2) and P1 (derived).
-- x_s = λ₂² - x_r - x₁.
-- y_s = λ₂ (x₁ - x_s) - y₁.
+  - λ₁ = (y₂ - y₁) / (x₂ - x₁) — slope through P1 and P2 (divide #1).
+  - x_r = λ₁² - x₁ - x₂ — x-coord of P1 + P2.
+  - λ₂ = 2y₁ / (x₁ - x_r) - λ₁ — slope through (P1 + P2) and P1
+    (divide #2).
+  - x_s = λ₂² - x_r - x₁; y_s = λ₂ (x₁ - x_s) - y₁.
 
-Result: (x_s, y_s) = 2·P1 + P2. Two DivNonzero subcircuits
-+ two Square subcircuits + one Mul subcircuit = 15 wires. -/
+  The bank folds in two factors `(x₂ - x₁)` and `(x₁ - x_r)`; the
+  discharge at scope end proves their product is nonzero, which (since
+  `F p` is a field) implies each is individually nonzero. -/
 def main (input : Var Inputs (F p)) : Circuit (F p) (Var Spec.Point (F p)) := do
-  let ⟨⟨x1, y1⟩, ⟨x2, y2⟩⟩ := input
+  let ⟨⟨x_p, y_p⟩, ⟨x_q, y_q⟩, inverse⟩ := input
 
-  -- λ₁ = (y₂ - y₁) / (x₂ - x₁)
-  let lambda_1 ← Element.DivNonzero.circuit ⟨y2 - y1, x2 - x1⟩
+  -- fold 1: running product = 1 · (x_q - x_p)
+  let bank_prod_1 ← Element.Mul.circuit ⟨1, x_q - x_p⟩
 
-  -- x_r = λ₁² - x₁ - x₂
+  -- λ₁ = (y_q - y_p) / (x_q - x_p)
+  let lambda_1 ← Element.Divide.circuit ⟨y_q - y_p, x_q - x_p⟩
+
+  -- x_r = λ₁² - x_p - x_q
   let lambda_1_sq ← Element.Square.circuit lambda_1
-  let x_r := lambda_1_sq - x1 - x2
+  let x_r := lambda_1_sq - x_p - x_q
 
-  -- λ₂ = 2y₁ / (x₁ - x_r) - λ₁
-  let lambda_2_half ← Element.DivNonzero.circuit ⟨y1 + y1, x1 - x_r⟩
+  -- fold 2: running product = bank_prod_1 · (x_p - x_r)
+  let bank_prod_2 ← Element.Mul.circuit ⟨bank_prod_1, x_p - x_r⟩
+
+  -- λ₂_half = 2 y_p / (x_p - x_r)
+  let lambda_2_half ← Element.Divide.circuit ⟨y_p + y_p, x_p - x_r⟩
   let lambda_2 := lambda_2_half - lambda_1
 
-  -- x_s = λ₂² - x_r - x₁
+  -- x_s = λ₂² - x_r - x_p
   let lambda_2_sq ← Element.Square.circuit lambda_2
-  let x_s := lambda_2_sq - x_r - x1
+  let x_s := lambda_2_sq - x_r - x_p
 
-  -- y_s = λ₂ (x₁ - x_s) - y₁
-  let lambda_2_x_diff ← Element.Mul.circuit ⟨lambda_2, x1 - x_s⟩
-  let y_s := lambda_2_x_diff - y1
+  -- y_s = λ₂ (x_p - x_s) - y_p
+  let y_term ← Element.Mul.circuit ⟨lambda_2, x_p - x_s⟩
+  let y_s := y_term - y_p
+
+  -- scope-end discharge: bank_prod_2 ≠ 0
+  let _ ← Element.EnforceNonzero.circuit { input := bank_prod_2, inverse }
 
   return ⟨x_s, y_s⟩
 
-/-- Verifier-side assumptions: both inputs are on curve and the first slope is
-well-defined. -/
+/-- Verifier-side assumptions: both inputs on curve. The discharge
+forces both `x_q ≠ x_p` and `x_p ≠ x_r`. -/
 def Assumptions (curveParams : Spec.CurveParams p)
-    (input : Inputs (F p)) (_data : ProverData (F p)) :=
+    (input : Value Inputs (F p)) (_data : ProverData (F p)) :=
+  input.P1.isOnCurve curveParams ∧
+  input.P2.isOnCurve curveParams
+
+/-- Prover-side: the bank's running product
+`(x_q - x_p) · (x_p - x_r)` must be invertible. Equivalently, both
+non-degeneracy conditions hold. -/
+def ProverAssumptions (curveParams : Spec.CurveParams p)
+    (input : ProverValue Inputs (F p)) (_data : ProverData (F p))
+    (_hint : ProverHint (F p)) :=
+  let p1x : F p := input.P1.x
+  let p2x : F p := input.P2.x
+  let p1y : F p := input.P1.y
+  let p2y : F p := input.P2.y
+  let inverse : F p := input.inverse
   input.P1.isOnCurve curveParams ∧
   input.P2.isOnCurve curveParams ∧
-  input.P1.x ≠ input.P2.x
+  ∃ lambda_1 x_r,
+    (p2x - p1x) * lambda_1 = p2y - p1y ∧
+    x_r = lambda_1 ^ 2 - p1x - p2x ∧
+    ((p2x - p1x) * (p1x - x_r)) * inverse = 1
 
-/-- Completeness needs the two intermediate non-degeneracies:
-`x₁ ≠ x₂` (for the first slope) and
-`x₁ ≠ x_r` (for the second slope, after computing the midpoint
-x-coordinate). -/
-def ProverAssumptions (curveParams : Spec.CurveParams p)
-    (input : Inputs (F p)) (data : ProverData (F p)) (_hint : ProverHint (F p)) :=
-  Assumptions curveParams input data ∧
-  ∃ r, input.P1.add_incomplete input.P2 = some r ∧ r.x ≠ input.P1.x
-
-/-- The output is `2·P1 + P2` under the curve-membership preconditions and
-the two non-degeneracy assumptions. Stated via `add_incomplete` twice:
-`r = P1 + P2`, then `s = r + P1 = 2P1 + P2`. -/
-def Spec (curveParams : Spec.CurveParams p) (input : Inputs (F p))
-    (output : Spec.Point (F p)) (_data : ProverData (F p)) :=
+/-- Spec: the output is `2·P1 + P2`, stated via two affine additions
+(`P1 + P2 = r`, then `r + P1 = output`), both of which are forced by
+the discharge to be well-defined. -/
+def Spec (curveParams : Spec.CurveParams p)
+    (input : Value Inputs (F p)) (output : Value Spec.Point (F p))
+    (_data : ProverData (F p)) :=
   ∃ r, input.P1.add_incomplete input.P2 = some r ∧
-    (r.x ≠ input.P1.x →
-      r.add_incomplete input.P1 = some output ∧
-      output.isOnCurve curveParams)
+    r.add_incomplete input.P1 = some output ∧
+    output.isOnCurve curveParams
 
-instance elaborated : ElaboratedCircuit (F p) Inputs Spec.Point where
+instance elaborated :
+    ElaboratedCircuit (F p) Inputs Spec.Point where
   main
-  localLength _ := 15
+  -- fold1 (3) + divide1 (3) + square1 (3) + fold2 (3) + divide2 (3)
+  -- + square2 (3) + mul_for_y (3) + discharge (3) = 24
+  localLength _ := 24
 
-set_option maxHeartbeats 800000 in
-theorem soundness (curveParams : Spec.CurveParams p)
-    : GeneralFormalCircuit.Soundness (F p) elaborated
-        (Assumptions curveParams) (Spec curveParams) := by
-  circuit_proof_start [
+theorem soundness (curveParams : Spec.CurveParams p) :
+    GeneralFormalCircuit.WithHint.Soundness (F p) elaborated
+      (Assumptions curveParams) (Spec curveParams) := by
+  circuit_proof_start [Element.Mul.circuit, Element.Mul.Assumptions, Element.Mul.Spec,
+    Element.Divide.circuit, Element.Divide.Assumptions, Element.Divide.Spec,
     Element.Square.circuit, Element.Square.Assumptions, Element.Square.Spec,
-    Element.DivNonzero.circuit, Element.DivNonzero.Assumptions, Element.DivNonzero.Spec,
-    Element.Mul.circuit, Element.Mul.Assumptions, Element.Mul.Spec
-  ]
-  simp only [neg_add_rev, neg_neg] at h_holds ⊢
-  obtain ⟨c1, c2, c3, c4, c5⟩ := h_holds
-  obtain ⟨h_P1_mem, h_P2_mem, h_xne⟩ := h_assumptions
-  -- Specialize c1 using `x₁ ≠ x₂` (equivalent to `x₂ + -x₁ ≠ 0`).
-  have h_xne' : ¬input_P2_x + -input_P1_x = 0 := by
-    intro h; rw [add_neg_eq_zero] at h; exact h_xne h.symm
-  specialize c1 (Or.inl h_xne')
-  -- Rewrite Sq₁ via c1, c2: eval(Sq₁) = ((y2-y1)/(x2-x1))^2.
-  rw [c1] at c2
-  let rOpt := (⟨input_P1_x, input_P1_y⟩ : Spec.Point (F p)).add_incomplete ⟨input_P2_x, input_P2_y⟩
-  rcases h_rOpt : rOpt with _ | r
-  · simp [rOpt, Spec.Point.add_incomplete, h_xne] at h_rOpt
-  refine ⟨r, h_rOpt, ?_⟩
-  simp only [rOpt, Spec.Point.add_incomplete, if_neg h_xne, Option.some.injEq] at h_rOpt
-  subst r
-  intro h_rx_ne
-  have h_rx_ne :
-      ((input_P2_y - input_P1_y) / (input_P2_x - input_P1_x)) ^ 2 -
-          input_P1_x - input_P2_x ≠ input_P1_x := h_rx_ne
-  simp only [Spec.Point.add_incomplete, if_neg h_rx_ne, Option.some.injEq]
-  -- The remaining branch is the non-degenerate second add.
-  -- c3's premise: `x₁ - r.x ≠ 0 ∨ 2y₁ ≠ 0`. We discharge the disjunction
-  -- with the left disjunct, deriving `x₁ - r.x ≠ 0` from h_rx_ne (plus the
-  -- c2 rewrite bridging Sq₁ to λ₁²).
-  specialize c3 (Or.inl (by
-    intro h
-    rw [c2] at h
-    apply h_rx_ne
-    -- Bridge `+ -x` to `- x` in the quotient inside h.
-    have hh : ((input_P2_y + -input_P1_y) / (input_P2_x + -input_P1_x))^2 =
-              ((input_P2_y - input_P1_y) / (input_P2_x - input_P1_x))^2 := by
-      congr 1
-      all_goals ring
-    rw [hh] at h
-    -- h : x1 + (x2 + (x1 + -q)) = 0, i.e., 2 x1 + x2 - q = 0, so q = 2 x1 + x2.
-    -- Goal: q - x1 - x2 = x1. Algebraically: q - x1 - x2 = 2x1 + x2 - x1 - x2 = x1.
-    have hq : ((input_P2_y - input_P1_y) / (input_P2_x - input_P1_x))^2 =
-              input_P1_x + input_P2_x + input_P1_x := by
-      linear_combination -h
-    linear_combination hq))
-  rw [c2] at c3
-  rw [c1] at c4
-  rw [c1, c2] at c5
-  -- Obtain membership of the intermediate sum r = P1 + P2.
-  have h_r_mem :=
-    Lemmas.add_incomplete_preserves_membership
-      ⟨input_P1_x, input_P1_y⟩ ⟨input_P2_x, input_P2_y⟩ curveParams h_xne h_P1_mem h_P2_mem
-  simp only [Spec.Point.add_incomplete, if_neg h_xne] at h_r_mem
-  -- Name r := P1 + P2.
-  set r : Spec.Point (F p) :=
-    ⟨((input_P2_y - input_P1_y) / (input_P2_x - input_P1_x)) ^ 2 - input_P1_x - input_P2_x,
-     ((input_P2_y - input_P1_y) / (input_P2_x - input_P1_x)) *
-       (input_P1_x -
-         (((input_P2_y - input_P1_y) / (input_P2_x - input_P1_x)) ^ 2 - input_P1_x - input_P2_x)) -
-       input_P1_y⟩ with hr_def
-  change r.isOnCurve curveParams at h_r_mem
-  have h_rx_ne_P1 : r.x ≠ input_P1_x := h_rx_ne
-  -- Obtain membership of s := r + P1.
-  have h_s_mem :=
-    Lemmas.add_incomplete_preserves_membership
-      r ⟨input_P1_x, input_P1_y⟩ curveParams h_rx_ne_P1 h_r_mem h_P1_mem
-  simp only [Spec.Point.add_incomplete, if_neg h_rx_ne_P1] at h_s_mem
-  -- Name s := r + P1.
-  set s : Spec.Point (F p) :=
-    ⟨((input_P1_y - r.y) / (input_P1_x - r.x)) ^ 2 - r.x - input_P1_x,
-     ((input_P1_y - r.y) / (input_P1_x - r.x)) *
-       (r.x - (((input_P1_y - r.y) / (input_P1_x - r.x)) ^ 2 - r.x - input_P1_x)) - r.y⟩ with hs_def
-  change s.isOnCurve curveParams at h_s_mem
-  -- Prove the two coordinate equalities individually, then assemble.
-  have h_x :
-      env.get (i₀ + 3 + 3 + 3 + 2) +
-        (input_P2_x + (input_P1_x + -env.get (i₀ + 3 + 2))) + -input_P1_x = s.x := by
-    simp only [hs_def, hr_def]; rw [c4, c3, c2]
-    have e1 : input_P2_y + -input_P1_y = input_P2_y - input_P1_y := by ring
-    have e2 : input_P2_x + -input_P1_x = input_P2_x - input_P1_x := by ring
-    rw [e1, e2]
-    -- `ring` in Lean's Mathlib handles division in fields, but here the nested
-    -- quotient with a variable denominator trips it up. Extract the
-    -- denominator `D` (which we know is nonzero by h_rx_ne / h_rx_ne_P1) and
-    -- use `field_simp` to clear it.
-    set L : F p := (input_P2_y - input_P1_y) / (input_P2_x - input_P1_x) with hL
-    have hD : input_P1_x - (L ^ 2 - input_P1_x - input_P2_x) ≠ 0 := by
-      intro heq
-      apply h_rx_ne
-      linear_combination -heq
-    have hD' : input_P1_x + (input_P2_x + (input_P1_x + -L ^ 2)) ≠ 0 := by
-      intro heq
-      apply hD
-      linear_combination heq
-    field_simp
-    ring
-  have h_y :
-      env.get (i₀ + 3 + 3 + 3 + 3 + 2) + -input_P1_y = s.y := by
-    simp only [hs_def, hr_def]
-    rw [c5, c4, c3]
-    -- Same divisional ring issue as in h_x; bridge `+-` form and apply field_simp.
-    have e1 : input_P2_y + -input_P1_y = input_P2_y - input_P1_y := by ring
-    have e2 : input_P2_x + -input_P1_x = input_P2_x - input_P1_x := by ring
-    rw [e1, e2]
-    set L : F p := (input_P2_y - input_P1_y) / (input_P2_x - input_P1_x) with hL
-    have hD : input_P1_x - (L ^ 2 - input_P1_x - input_P2_x) ≠ 0 := by
-      intro heq
-      apply h_rx_ne
-      linear_combination -heq
-    have hD' : input_P1_x + (input_P2_x + (input_P1_x + -L ^ 2)) ≠ 0 := by
-      intro heq
-      apply hD
-      linear_combination heq
-    field_simp
-    ring
-  refine ⟨?_, ?_⟩
-  · -- Output point = s
-    rw [show s = ⟨s.x, s.y⟩ from rfl]
-    exact (Spec.Point.mk.injEq _ _ _ _ |>.mpr ⟨h_x, h_y⟩).symm
-  · -- Output.isOnCurve
-    show Spec.Point.isOnCurve ⟨_, _⟩ curveParams
-    simp only [Spec.Point.isOnCurve]
-    rw [h_x, h_y]
-    have := h_s_mem
-    simp only [Spec.Point.isOnCurve] at this
-    exact this
+    Element.EnforceNonzero.circuit, Element.EnforceNonzero.Spec]
+  obtain ⟨h_P1_eq, h_P2_eq, _⟩ := h_input
+  obtain ⟨h_curve1, h_curve2⟩ := h_assumptions
+  obtain ⟨h_bank1, h_div1, h_sq1, h_bank2, h_div2, h_sq2, h_yterm, _, h_nz⟩ := h_holds
+  rw [← h_P1_eq] at h_curve1
+  rw [← h_P2_eq] at h_curve2
+  rw [← h_P1_eq, ← h_P2_eq]
+  set x_p := Expression.eval env input_var.1.x
+  set y_p := Expression.eval env input_var.1.y
+  set x_q := Expression.eval env input_var.2.x
+  set y_q := Expression.eval env input_var.2.y
+  -- bank_prod_2 = (x_q - x_p) · (x_p - x_r), and discharge says it ≠ 0
+  rw [h_bank1] at h_bank2
+  rw [h_bank2] at h_nz
+  have h_xqxp_ne : x_q + -x_p ≠ 0 := fun h => h_nz (by rw [h, zero_mul])
+  have h_xpxr_ne : x_p + -(env.get (i₀ + 3 + 3 + 2) + -x_p + -x_q) ≠ 0 :=
+    fun h => h_nz (by rw [h, mul_zero])
+  have h_lam1 : env.get (i₀ + 3) = (y_q + -y_p) / (x_q + -x_p) := h_div1 (Or.inl h_xqxp_ne)
+  have h_lam2half :
+      env.get (i₀ + 3 + 3 + 3 + 3) =
+        (y_p + y_p) / (x_p + -(env.get (i₀ + 3 + 3 + 2) + -x_p + -x_q)) :=
+    h_div2 (Or.inl h_xpxr_ne)
+  have h_x_ne : x_p ≠ x_q := fun h => h_xqxp_ne (by rw [h]; ring)
+  have h_r_ne_xp : (env.get (i₀ + 3 + 3 + 2) + -x_p + -x_q) ≠ x_p :=
+    fun h => h_xpxr_ne (by rw [h]; ring)
+  have h_diff_ne : x_p - (env.get (i₀ + 3 + 3 + 2) + -x_p + -x_q) ≠ 0 := by
+    rw [sub_eq_add_neg]; exact h_xpxr_ne
+  have h_lam2_mul :
+      env.get (i₀ + 3 + 3 + 3 + 3) * (x_p - (env.get (i₀ + 3 + 3 + 2) + -x_p + -x_q)) = y_p + y_p := by
+    rw [sub_eq_add_neg, h_lam2half, div_mul_cancel₀ _ h_xpxr_ne]
+  have h_slope :
+      (y_p - (env.get (i₀ + 3) *
+            (x_p - (env.get (i₀ + 3 + 3 + 2) + -x_p + -x_q)) - y_p)) /
+          (x_p - (env.get (i₀ + 3 + 3 + 2) + -x_p + -x_q)) =
+        env.get (i₀ + 3 + 3 + 3 + 3) - env.get (i₀ + 3) := by
+    rw [show y_p - (env.get (i₀ + 3) *
+                (x_p - (env.get (i₀ + 3 + 3 + 2) + -x_p + -x_q)) - y_p) =
+            y_p + y_p - env.get (i₀ + 3) *
+                (x_p - (env.get (i₀ + 3 + 3 + 2) + -x_p + -x_q)) by ring]
+    rw [← h_lam2_mul,
+        show env.get (i₀ + 3 + 3 + 3 + 3) *
+              (x_p - (env.get (i₀ + 3 + 3 + 2) + -x_p + -x_q)) -
+            env.get (i₀ + 3) * (x_p - (env.get (i₀ + 3 + 3 + 2) + -x_p + -x_q)) =
+          (env.get (i₀ + 3 + 3 + 3 + 3) - env.get (i₀ + 3)) *
+            (x_p - (env.get (i₀ + 3 + 3 + 2) + -x_p + -x_q)) by ring]
+    exact mul_div_cancel_right₀ _ h_diff_ne
+  -- The intermediate point r = P1 + P2.
+  have h_add_eq1 :
+      ({ x := x_p, y := y_p } : Spec.Point (F p)).add_incomplete { x := x_q, y := y_q } =
+        some { x := env.get (i₀ + 3 + 3 + 2) + -x_p + -x_q,
+               y := env.get (i₀ + 3) *
+                      (x_p - (env.get (i₀ + 3 + 3 + 2) + -x_p + -x_q)) - y_p } := by
+    simp only [Spec.Point.add_incomplete, if_neg h_x_ne, Option.some.injEq, Spec.Point.mk.injEq]
+    refine ⟨?_, ?_⟩
+    · rw [h_sq1, h_lam1]; ring
+    · rw [h_sq1, h_lam1]; ring
+  have h_add_eq2 :
+      ({ x := env.get (i₀ + 3 + 3 + 2) + -x_p + -x_q,
+         y := env.get (i₀ + 3) *
+                (x_p - (env.get (i₀ + 3 + 3 + 2) + -x_p + -x_q)) - y_p } :
+            Spec.Point (F p)).add_incomplete { x := x_p, y := y_p } =
+        some { x := env.get (i₀ + 3 + 3 + 3 + 3 + 3 + 2) +
+                      -(env.get (i₀ + 3 + 3 + 2) + -x_p + -x_q) + -x_p,
+               y := env.get (i₀ + 3 + 3 + 3 + 3 + 3 + 3 + 2) + -y_p } := by
+    simp only [Spec.Point.add_incomplete, if_neg h_r_ne_xp, Option.some.injEq, Spec.Point.mk.injEq]
+    refine ⟨?_, ?_⟩
+    · rw [h_slope, h_sq2]; ring
+    · rw [h_slope, h_yterm, h_sq2]
+      linear_combination (-h_lam2_mul)
+  refine ⟨_, h_add_eq1, h_add_eq2, ?_⟩
+  have h_r_curve := by
+    simpa [h_add_eq1] using Lemmas.add_incomplete_preserves_membership
+      { x := x_p, y := y_p } { x := x_q, y := y_q } curveParams h_x_ne h_curve1 h_curve2
+  simpa [h_add_eq2] using Lemmas.add_incomplete_preserves_membership
+    { x := env.get (i₀ + 3 + 3 + 2) + -x_p + -x_q,
+      y := env.get (i₀ + 3) *
+            (x_p - (env.get (i₀ + 3 + 3 + 2) + -x_p + -x_q)) - y_p }
+    { x := x_p, y := y_p } curveParams h_r_ne_xp h_r_curve h_curve1
 
-set_option maxHeartbeats 800000 in
-theorem completeness (curveParams : Spec.CurveParams p)
-    : GeneralFormalCircuit.Completeness (F p) elaborated
-        (ProverAssumptions curveParams) (fun _ _ _ => True) := by
-  circuit_proof_start [
-    Element.Square.circuit, Element.Square.Assumptions,
-    Element.DivNonzero.circuit,
-    Element.Mul.circuit, Element.Mul.Assumptions
-  ]
-  simp only [Element.DivNonzero.Spec] at h_env
-  obtain ⟨⟨_, _, h_xne⟩, r, h_add, h_a2⟩ := h_assumptions
-  simp only [Spec.Point.add_incomplete, if_neg h_xne, Option.some.injEq, sub_eq_add_neg] at h_add
-  subst r
-  obtain ⟨h_div1_spec, h_sq1_spec, _⟩ := h_env
-  have h_a1 : input_P2_x + -input_P1_x ≠ 0 := by
+theorem completeness (curveParams : Spec.CurveParams p) :
+    GeneralFormalCircuit.WithHint.Completeness (F p) elaborated
+      (ProverAssumptions curveParams) (fun _ _ _ => True) := by
+  circuit_proof_start [Element.Mul.circuit, Element.Mul.Assumptions, Element.Mul.Spec,
+    Element.Divide.circuit, Element.Divide.ProverAssumptions, Element.Divide.Spec,
+    Element.Square.circuit, Element.Square.Assumptions, Element.Square.Spec,
+    Element.EnforceNonzero.circuit, Element.EnforceNonzero.ProverAssumptions]
+  obtain ⟨h_P1_eq, h_P2_eq, _⟩ := h_input
+  obtain ⟨_, _, lambda_1, x_r, h_lam, h_xr, h_invasm⟩ := h_assumptions
+  obtain ⟨h_bank1_env, h_div1_env, h_sq1_env, h_bank2_env, _, _, _, _⟩ := h_env
+  set x_p := Expression.eval env.toEnvironment input_var.1.x
+  set y_p := Expression.eval env.toEnvironment input_var.1.y
+  set x_q := Expression.eval env.toEnvironment input_var.2.x
+  set y_q := Expression.eval env.toEnvironment input_var.2.y
+  have h_P1x : input_P1.x = x_p := by rw [← h_P1_eq]
+  have h_P1y : input_P1.y = y_p := by rw [← h_P1_eq]
+  have h_P2x : input_P2.x = x_q := by rw [← h_P2_eq]
+  have h_P2y : input_P2.y = y_q := by rw [← h_P2_eq]
+  simp only [h_P1x, h_P1y, h_P2x, h_P2y] at h_lam h_xr h_invasm
+  -- Discharge denominator nonzero for the first divide.
+  have h_xqxp_ne : x_q + -x_p ≠ 0 := by
     intro h
-    rw [add_neg_eq_zero] at h
-    exact h_xne h.symm
-  have h_prem : input_P2_x + -input_P1_x ≠ 0 ∨ input_P2_y + -input_P1_y ≠ 0 :=
-    Or.inl h_a1
-  have h_div1 := h_div1_spec h_a1
-  have h_div1_eq := h_div1 h_prem
-  simp only [Element.Square.Spec] at h_sq1_spec
-  -- Goal: first DivNonzero assumption and second DivNonzero assumption at env x_r.
-  -- First conjunct follows from `x₁ ≠ x₂`; second needs the env-level
-  -- `Square(lambda_1)` → `lambda_1^2` → `((y2-y1)/(x2-x1))^2` rewrite chain.
-  rw [h_sq1_spec, h_div1_eq]
-  exact ⟨h_a1, by
+    have h_sub : x_q - x_p = 0 := by rw [sub_eq_add_neg]; exact h
+    rw [h_sub, zero_mul, zero_mul] at h_invasm
+    exact zero_ne_one h_invasm
+  -- Pin the circuit's λ₁ wire to the witnessed lambda_1.
+  have h_circ_lam : env.get (i₀ + 3) = lambda_1 := by
+    rw [h_div1_env h_xqxp_ne (Or.inl h_xqxp_ne), div_eq_iff h_xqxp_ne]
+    linear_combination -h_lam
+  -- env.get (i₀+8) + -x_p + -x_q = x_r.
+  have h_xr_env : env.get (i₀ + 3 + 3 + 2) + -x_p + -x_q = x_r := by
+    rw [h_sq1_env, h_circ_lam, h_xr]; ring
+  -- Discharge denominator nonzero for the second divide.
+  have h_xpr_ne : x_p + -(env.get (i₀ + 3 + 3 + 2) + -x_p + -x_q) ≠ 0 := by
+    rw [h_xr_env]
     intro h
-    rw [add_neg_eq_zero] at h
-    exact h_a2 h.symm⟩
+    have h_pr : x_p - x_r = 0 := by rw [sub_eq_add_neg]; exact h
+    rw [h_pr, mul_zero, zero_mul] at h_invasm
+    exact zero_ne_one h_invasm
+  refine ⟨h_xqxp_ne, h_xpr_ne, ?_⟩
+  -- Discharge the EnforceNonzero gate.
+  rw [h_bank2_env, h_bank1_env, h_xr_env]
+  rw [show (x_q + -x_p) = x_q - x_p from (sub_eq_add_neg _ _).symm,
+      show x_p + -x_r = x_p - x_r from (sub_eq_add_neg _ _).symm]
+  exact h_invasm
 
 def circuit (curveParams : Spec.CurveParams p) :
-    GeneralFormalCircuit (F p) Inputs Spec.Point where
+    GeneralFormalCircuit.WithHint (F p) Inputs Spec.Point where
   elaborated
   Assumptions := Assumptions curveParams
   Spec := Spec curveParams

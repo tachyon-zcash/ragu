@@ -8,8 +8,7 @@
 //! — the same "commit a stage, hash its commitment" pattern already spelled out
 //! inline in the fuse stages (see [`crate::fuse`]).
 
-use ff::PrimeField;
-use ragu_arithmetic::{CurveAffine, FixedGenerators, PoseidonPermutation};
+use ragu_arithmetic::{CurveAffine, FixedGenerators, PoseidonPermutation, ff::PrimeField};
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::{Element, GadgetExt, Point};

@@ -9,8 +9,7 @@ use alloc::{vec, vec::Vec};
 #[cfg(feature = "multicore")]
 use std::sync::mpsc;
 
-use ff::Field;
-use ragu_arithmetic::Coeff;
+use ragu_arithmetic::{Coeff, ff::Field};
 use ragu_core::{
     Error, Result,
     convert::{CloneWires, StripWires, WireMap},
@@ -443,7 +442,7 @@ mod tests {
         element: Element<'dr, D>,
     }
 
-    impl<F: ff::Field> ragu_primitives::io::Write<F> for Kind![F; @MulOnWrite<'_, _>] {
+    impl<F: ragu_arithmetic::ff::Field> ragu_primitives::io::Write<F> for Kind![F; @MulOnWrite<'_, _>] {
         fn write_gadget<'dr, D: Driver<'dr, F = F>, B: ragu_primitives::io::Buffer<'dr, D>>(
             _this: &MulOnWrite<'dr, D>,
             dr: &mut D,

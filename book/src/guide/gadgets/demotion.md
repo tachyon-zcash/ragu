@@ -40,9 +40,9 @@ demand.
 Each bit is allocated, immediately demoted, and stored:
 
 ```rust,ignore
-let bits = (0..Uendo::BITS as usize)
+let bits = (0..u128::BITS as usize)
     .map(|i| {
-        let bit_value = value.as_ref().map(|v| (*v >> i) & 1.into() == 1.into());
+        let bit_value = value.as_ref().map(|v| (*v >> i) & 1u128 == 1u128);
         let bit = Boolean::alloc(dr, &mut (), bit_value)?;
         bit.demote()
     })
@@ -56,7 +56,7 @@ corresponding bit extracted from the stored `u128`:
 ```rust,ignore
 pub fn bits(&self) -> impl Iterator<Item = Boolean<'dr, D>> {
     let mut bits = self.value.as_ref().map(|v| {
-        (0..(Uendo::BITS as usize)).map(move |i| (*v >> i) & 1.into() == 1.into())
+        (0..(u128::BITS as usize)).map(move |i| (*v >> i) & 1u128 == 1u128)
     });
 
     self.bits.iter().map(move |demoted_bit| {

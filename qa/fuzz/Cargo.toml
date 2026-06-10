@@ -26,9 +26,12 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
-ff = { version = "0.14.0-pre.0", default-features = false }
-group = { version = "0.14.0-pre.0", default-features = false }
-pasta_curves = "0.5.1"
+# This workspace cannot inherit repo-root [workspace.dependencies]. Fuzzing is
+# intentionally modern-only, so keep these direct ff/group/pasta_curves/rand
+# entries in sync with the repo-root modern dependency set.
+ff = { version = "0.14", default-features = false }
+group = { version = "0.14", default-features = false }
+pasta_curves = { git = "https://github.com/ebfull/pasta_curves", rev = "5a84fc0d13f738f54c43fb1f9e28ecf1d358dcf5", features = ["deferred"] }
 ragu_testing = { path = "../../crates/ragu_testing" }
 ragu_arithmetic = { path = "../../crates/ragu_arithmetic" }
 ragu_primitives = { path = "../../crates/ragu_primitives" }
@@ -37,14 +40,6 @@ ragu_core = { path = "../../crates/ragu_core" }
 ragu_circuits = { path = "../../crates/ragu_circuits" }
 ragu_pcd = { path = "../../crates/ragu_pcd", features = ["unstable-fuzzing"] }
 rand = "0.10"
-
-# Mirror of the repo-root `[patch.crates-io]`. Patches don't propagate into
-# nested workspaces, so the same overrides must be repeated here to keep
-# fuzz builds resolving the same forks the rest of the workspace uses.
-[patch.crates-io]
-ff = { git = "https://github.com/zkcrypto/ff", rev = "bdd74a3f75c4c378d69e954944a61bb0930532a0" }
-group = { git = "https://github.com/zkcrypto/group", rev = "326b36b0c43dcb1507b89017323f43a57c3bffd8" }
-pasta_curves = { git = "https://github.com/ebfull/pasta_curves", rev = "4f9da85aeebc650a57610501d50d036454dcdc48" }
 
 # Poseidon sponge: absorb/squeeze mode transitions + save/resume consistency
 [[bin]]
@@ -66,6 +61,39 @@ bench = false
 [[bin]]
 name = "fuzz_element_ops"
 path = "fuzz_targets/fuzz_element_ops.rs"
+test = false
+doc = false
+bench = false
+
+# Circuit::witness pipeline: synthesis output matches native spec, trace
+# pipeline agrees with Simulator on accept/reject, Registry::assemble_with_alpha
+# leaks alpha into exactly one coefficient position.
+[[bin]]
+name = "fuzz_circuit_witness"
+path = "fuzz_targets/fuzz_circuit_witness.rs"
+test = false
+doc = false
+bench = false
+
+# Algebraic identity bridging witness and constraint sides: for satisfying
+# witnesses, r.revdot(r + r.dilate(z) + s(X,y) + t(X,z)) must equal
+# circuit.ky(instance, y). Catches witness-pipeline regressions that would
+# pass the cheaper checks in fuzz_circuit_witness.
+[[bin]]
+name = "fuzz_circuit_revdot_identity"
+path = "fuzz_targets/fuzz_circuit_revdot_identity.rs"
+test = false
+doc = false
+bench = false
+
+# Staging pipeline (issue #709 Layer 4): the same revdot identity as
+# fuzz_circuit_revdot_identity, but applied to MultiStage-as-Circuit
+# instances. Exercises StageBuilder wire reservation, StageGuard wire
+# injection, MultiStage::witness adapter, and skip_gates recursion that
+# the non-staged targets bypass.
+[[bin]]
+name = "fuzz_staging"
+path = "fuzz_targets/fuzz_staging.rs"
 test = false
 doc = false
 bench = false
@@ -110,11 +138,12 @@ test = false
 doc = false
 bench = false
 
-# Soundness via mid-stream witness cheating: honest vs cheat paths through the
-# Simulator. Matching final fingerprints under a cheat is a soundness signal.
+# Mid-stream witness cheating: honest vs cheat paths through the Simulator.
+# Currently a Simulator-robustness fuzzer; intended as a soundness oracle once
+# the patcher work lands (see issue tracking the patcher technique).
 [[bin]]
-name = "fuzz_soundness_cheat"
-path = "fuzz_targets/fuzz_soundness_cheat.rs"
+name = "fuzz_witness_cheat"
+path = "fuzz_targets/fuzz_witness_cheat.rs"
 test = false
 doc = false
 bench = false

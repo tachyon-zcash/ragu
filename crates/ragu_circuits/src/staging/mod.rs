@@ -70,7 +70,7 @@
 //! let mask_handle = builder.register_bonding(MyStage::mask()?);
 //! let registry = builder.finalize()?;
 //!
-//! let y = Fp::random(&mut rand::rng());
+//! let y = Fp::random(&mut ragu_arithmetic::rand::rng());
 //! assert_eq!(a.revdot(&registry.y(mask_handle, y)), Fp::ZERO);
 //! ```
 //!
@@ -82,7 +82,7 @@
 //! let b = MyStage::rx(alpha_b, my_stage_witness)?;
 //!
 //! // Sample random challenge z after committing to `a` and `b`
-//! let z = Fp::random(&mut rand::rng());
+//! let z = Fp::random(&mut ragu_arithmetic::rand::rng());
 //!
 //! let mut combined = a.clone();
 //! combined.scale(z);
@@ -91,7 +91,7 @@
 //! let mask_handle = builder.register_bonding(MyStage::mask()?);
 //! let registry = builder.finalize()?;
 //!
-//! let y = Fp::random(&mut rand::rng());
+//! let y = Fp::random(&mut ragu_arithmetic::rand::rng());
 //! assert_eq!(combined.revdot(&registry.y(mask_handle, y)), Fp::ZERO);
 //! ```
 //!
@@ -152,9 +152,8 @@ mod rx_driver;
 use alloc::boxed::Box;
 
 pub use builder::{StageBuilder, StageGuard};
-use ff::Field;
 pub use induced::InducedStages;
-use ragu_arithmetic::Coeff;
+use ragu_arithmetic::{Coeff, ff::Field};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue, emulator::Emulator},

@@ -9,7 +9,7 @@ use super::*;
 use crate::*;
 pub type R = ragu_circuits::polynomials::ProductionRank;
 
-use ff::PrimeField;
+use ragu_arithmetic::ff::PrimeField;
 use ragu_circuits::polynomials::Rank;
 use ragu_core::{
     drivers::emulator::{Emulator, Wireless},
@@ -197,7 +197,7 @@ fn test_native_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fp!(0x170e23fd3b4c2e35138a4225efeea3a8aacb95bcc1c26afc100b480ab3c61bc5);
+    let expected = fp!(0x31e1786b198ad8953d0ec1699a2d1c7ed26d312a7c8c67099cb5a517259e54e3);
 
     assert_eq!(
         app.native_registry.digest(),
@@ -221,7 +221,7 @@ fn test_nested_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fq!(0x365aa077b79c2efef31d6c52310f1657af02af846493e6c192e844b93f82d1c4);
+    let expected = fq!(0x2f4bf855b80a694facbe9a2c26ee8d1dae9e15bb7b7eba54ca53f5c166e1d150);
 
     assert_eq!(
         app.nested_registry.digest(),
@@ -237,7 +237,7 @@ fn print_registry_digests() {
     use alloc::{format, string::String, vec::Vec};
     use std::println;
 
-    use ff::PrimeField;
+    use ragu_arithmetic::ff::PrimeField;
 
     let pasta = Pasta::baked();
 

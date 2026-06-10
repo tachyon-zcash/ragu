@@ -50,8 +50,13 @@ fn naive_eval(coeffs: impl DoubleEndedIterator<Item = Fp>, z: Fp) -> Fp {
     coeffs.rev().fold(Fp::ZERO, |acc, c| acc * z + c)
 }
 
-fn naive_revdot(a: &[Fp], b: &[Fp]) -> Fp {
-    a.iter().zip(b.iter().rev()).map(|(x, y)| *x * *y).sum()
+/// Naive revdot over arbitrary iterators. Takes iterators directly so the
+/// caller doesn't have to materialize an intermediate `Vec<Fp>` per input.
+fn naive_revdot_iter(
+    a: impl Iterator<Item = Fp>,
+    b: impl DoubleEndedIterator<Item = Fp>,
+) -> Fp {
+    a.zip(b.rev()).map(|(x, y)| x * y).sum()
 }
 
 fuzz_target!(|input: Input| {
@@ -72,9 +77,7 @@ fuzz_target!(|input: Input| {
 
     // 1. Revdot agreement
     let sparse_revdot = p1.revdot(&p2);
-    let u1: Vec<Fp> = p1.iter_coeffs().collect();
-    let u2: Vec<Fp> = p2.iter_coeffs().collect();
-    let dense_revdot = naive_revdot(&u1, &u2);
+    let dense_revdot = naive_revdot_iter(p1.iter_coeffs(), p2.iter_coeffs());
 
     assert_eq!(
         sparse_revdot, dense_revdot,

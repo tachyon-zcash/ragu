@@ -3,7 +3,7 @@ import Clean.Utils.Primes
 import Ragu.Circuits.Element.AllocSquare
 import Ragu.Circuits.Element.Mul
 import Ragu.Circuits.Element.Square
-import Ragu.Circuits.Element.DivNonzero
+import Ragu.Circuits.Element.Divide
 import Ragu.Circuits.Point.Spec
 
 namespace Ragu.Circuits.Point.Double
@@ -16,7 +16,7 @@ def main (input : Var Spec.Point (F p)) : Circuit (F p) (Var Spec.Point (F p)) :
   let double_y := y + y
   let x2 ← Element.Square.circuit x
   let x2_scaled := (3 : F p) * x2
-  let delta ← Element.DivNonzero.circuit { x := x2_scaled, y := double_y }
+  let delta ← Element.Divide.circuit { x := x2_scaled, y := double_y }
 
   -- x3 = delta^2 - 2x
   let double_x := x + x
@@ -46,47 +46,38 @@ instance elaborated :
 
 theorem soundness (curveParams : Spec.CurveParams p) :
     Soundness (F p) elaborated (Assumptions curveParams) (Spec curveParams) := by
-  circuit_proof_start [
-    Element.Square.circuit, Element.Square.Assumptions, Element.Square.Spec,
-    Element.DivNonzero.circuit, Element.DivNonzero.Assumptions, Element.DivNonzero.Spec,
-    Element.Mul.circuit, Element.Mul.Assumptions, Element.Mul.Spec
-  ]
-  obtain ⟨c1, c2, c3, c4⟩ := h_holds
-  obtain ⟨h_membership, h_order⟩ := h_assumptions
-
-  have hy : input_y ≠ 0 := h_order ⟨input_x, input_y⟩ h_membership
-  have h2y_ne : input_y + input_y ≠ 0 := by
-    rw [← two_mul]; exact mul_ne_zero (NeZero.ne 2) hy
-
-  -- Chain subcircuit specs through hypotheses (like AddIncomplete soundness)
-  have h_delta := c2 (Or.inl h2y_ne)
-  rw [c1] at h_delta
-  rw [h_delta] at c3 c4
-  rw [c3] at c4
-  simp only [Spec.Point.double, if_neg hy]
-
-  -- Substitute simplified subcircuit outputs into goal
-  constructor
-  · simp only [Option.some.injEq, Spec.Point.mk.injEq]
-    rw [c3, c4]
-    constructor <;> ring_nf
-  · have h_d := Lemmas.double_preserves_membership ⟨input_x, input_y⟩ curveParams h_membership h_order
-    simp only [Spec.Point.double, if_neg hy] at h_d
-    simp only [Spec.Point.isOnCurve] at h_d ⊢
-    rw [c3, c4]
-    ring_nf at ⊢ h_d
-    exact h_d
+  circuit_proof_start [Element.Square.circuit, Element.Square.Assumptions, Element.Square.Spec,
+    Element.Divide.circuit, Element.Divide.Assumptions, Element.Divide.Spec,
+    Element.Mul.circuit, Element.Mul.Assumptions, Element.Mul.Spec]
+  obtain ⟨h_curve, h_no_order2⟩ := h_assumptions
+  have hy_ne : input_y ≠ 0 := h_no_order2 ⟨input_x, input_y⟩ h_curve
+  have h_2y_eq : input_y + input_y = 2 * input_y := (two_mul _).symm
+  have h_2y_ne : input_y + input_y ≠ 0 := h_2y_eq ▸ mul_ne_zero (NeZero.ne 2) hy_ne
+  obtain ⟨h_x2, h_div, h_delta_sq, h_y_term⟩ := h_holds
+  have h_delta : env.get (i₀ + 3) = 3 * input_x ^ 2 / (input_y + input_y) := by
+    rw [h_div (Or.inl h_2y_ne), h_x2]
+  have h_double_eq :
+      (Spec.Point.mk input_x input_y).double =
+        some ⟨env.get (i₀ + 3 + 3 + 2) + -(input_x + input_x),
+              env.get (i₀ + 3 + 3 + 3 + 2) + -input_y⟩ := by
+    simp only [Spec.Point.double, hy_ne, if_false, Option.some.injEq,
+      Spec.Point.mk.injEq]
+    refine ⟨?_, ?_⟩
+    · rw [h_delta_sq, h_delta, h_2y_eq]; ring
+    · rw [h_y_term, h_delta_sq, h_delta, h_2y_eq]; ring
+  refine ⟨h_double_eq, ?_⟩
+  simpa [h_double_eq] using
+    Lemmas.double_preserves_membership ⟨input_x, input_y⟩ curveParams h_curve h_no_order2
 
 theorem completeness (curveParams : Spec.CurveParams p) :
     Completeness (F p) elaborated (Assumptions curveParams) := by
-  circuit_proof_start [
-    Element.Square.circuit, Element.Square.Assumptions,
-    Element.DivNonzero.circuit,
-    Element.Mul.circuit, Element.Mul.Assumptions
-  ]
-  rw [← two_mul]
-  exact mul_ne_zero (NeZero.ne 2)
-    (h_assumptions.2 ⟨input_x, input_y⟩ h_assumptions.1)
+  circuit_proof_start [Element.Square.circuit, Element.Square.Assumptions,
+    Element.Divide.circuit, Element.Divide.ProverAssumptions,
+    Element.Mul.circuit, Element.Mul.Assumptions]
+  obtain ⟨h_curve, h_no_order2⟩ := h_assumptions
+  have hy_ne : input_y ≠ 0 := h_no_order2 ⟨input_x, input_y⟩ h_curve
+  rw [(two_mul input_y).symm]
+  exact mul_ne_zero (NeZero.ne 2) hy_ne
 
 def circuit (curveParams : Spec.CurveParams p) : FormalCircuit (F p) Spec.Point Spec.Point where
   elaborated

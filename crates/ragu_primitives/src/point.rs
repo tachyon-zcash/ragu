@@ -1,15 +1,12 @@
 //! Elliptic curve point gadget for in-circuit curve operations.
 //!
 //! Provides the [`Point`] type representing an affine curve point with
-//! constrained coordinates for in-circuit elliptic curve arithmetic.
-//!
-//! This module only supports curves with `a = 0` in the short Weierstrass form,
-//! specifically curves of the form `y^2 = x^3 + b`.
+//! constrained coordinates for in-circuit elliptic curve arithmetic. See
+//! [`Point`] for the full list of supported curve assumptions.
 
 use core::marker::PhantomData;
 
-use ff::WithSmallOrderMulGroup;
-use ragu_arithmetic::{Coeff, CurveAffine};
+use ragu_arithmetic::{Coeff, CurveAffine, ff::WithSmallOrderMulGroup};
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue, LinearExpression},
@@ -17,23 +14,37 @@ use ragu_core::{
     maybe::Maybe,
 };
 
-use crate::{Boolean, Element, consistent::Consistent, io::Write};
+use crate::{
+    Boolean, Element, Nonzero, NonzeroBank, comparison::GadgetEquals, consistent::Consistent,
+    io::Write,
+};
 
 /// Represents an affine point on a curve defined over the circuit's field.
-#[derive(Gadget, Write)]
+///
+/// ## Supported Curves
+///
+/// This implementation assumes that the points are on a short Weierstrass curve
+/// $y^2 = x^3 + b$ where $b$ is a non-square in $\mathbb{F}$, and there are no
+/// points of order $2$. Furthermore, the field $\mathbb{F}$ must have a
+/// nontrivial cube root of unity $\zeta$ used for an endomorphism optimization.
+/// These assumptions are satisfied by the Pasta curves.
+///
+/// As a result, the $x$ and $y$ coordinates are nonzero for every affine point.
+#[derive(Gadget, Write, GadgetEquals)]
 pub struct Point<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     #[ragu(gadget)]
-    x: Element<'dr, D>,
+    x: Nonzero<'dr, D>,
     #[ragu(gadget)]
-    y: Element<'dr, D>,
+    y: Nonzero<'dr, D>,
     #[ragu(phantom)]
     _marker: PhantomData<C>,
 }
 
 impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
-    /// Creates a new `Point` from the given coordinates without checking
-    /// that the provided $x, y$ are on the curve.
-    fn new_unchecked(x: Element<'dr, D>, y: Element<'dr, D>) -> Self {
+    /// Creates a new `Point` from the given coordinates without checking that
+    /// the provided $x, y$ satisfy the curve equation. The caller is
+    /// responsible for ensuring this.
+    fn new_unchecked(x: Nonzero<'dr, D>, y: Nonzero<'dr, D>) -> Self {
         Point {
             x,
             y,
@@ -65,7 +76,10 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
                 .sub(y2.wire())
         })?;
 
-        Ok(Point::new_unchecked(x, y))
+        Ok(Point::new_unchecked(
+            Nonzero::new_unchecked(x),
+            Nonzero::new_unchecked(y),
+        ))
     }
 
     /// Obtain a constant point in the circuit. Fails if the point is the
@@ -75,7 +89,10 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
             let x = Element::constant(dr, *coordinates.x());
             let y = Element::constant(dr, *coordinates.y());
 
-            Ok(Point::new_unchecked(x, y))
+            Ok(Point::new_unchecked(
+                Nonzero::new_unchecked(x),
+                Nonzero::new_unchecked(y),
+            ))
         } else {
             Err(Error::InvalidWitness(
                 "point at infinity cannot be witnessed".into(),
@@ -94,8 +111,8 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
 
     /// Applies the endomorphism to this point.
     pub fn endo(&self, dr: &mut D) -> Self {
-        let x = self.x.scale(dr, Coeff::Arbitrary(C::Base::ZETA));
-        Point::new_unchecked(x, self.y.clone())
+        let endo_x = self.x.scale(dr, Coeff::Arbitrary(C::Base::ZETA));
+        Point::new_unchecked(Nonzero::new_unchecked(endo_x), self.y.clone())
     }
 
     /// Negates this point.
@@ -111,14 +128,20 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
     pub fn conditional_endo(&self, dr: &mut D, condition: &Boolean<'dr, D>) -> Result<Self> {
         let endo_x = self.x.scale(dr, Coeff::Arbitrary(D::F::ZETA));
         let x = condition.conditional_select(dr, &self.x, &endo_x)?;
-        Ok(Point::new_unchecked(x, self.y.clone()))
+        Ok(Point::new_unchecked(
+            Nonzero::new_unchecked(x),
+            self.y.clone(),
+        ))
     }
 
     /// Apply the negation map iff the provided condition is true.
     pub fn conditional_negate(&self, dr: &mut D, condition: &Boolean<'dr, D>) -> Result<Self> {
         let neg_y = self.y.negate(dr);
         let y = condition.conditional_select(dr, &self.y, &neg_y)?;
-        Ok(Point::new_unchecked(self.x.clone(), y))
+        Ok(Point::new_unchecked(
+            self.x.clone(),
+            Nonzero::new_unchecked(y),
+        ))
     }
 
     /// Doubles this point. Ragu does not support curves with points of order
@@ -130,7 +153,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
             .x
             .square(dr)?
             .scale(dr, Coeff::Arbitrary(D::F::from(3)))
-            .div_nonzero(dr, &double_y)?;
+            .divide(dr, &double_y)?;
 
         // x3 = delta^2 - 2x
         let double_x = self.x.double(dr);
@@ -140,28 +163,27 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
         let x_sub_x3 = self.x.sub(dr, &x3);
         let y3 = delta.mul(dr, &x_sub_x3)?.sub(dr, &self.y);
 
-        Ok(Point::new_unchecked(x3, y3))
+        Ok(Point::new_unchecked(
+            Nonzero::new_unchecked(x3),
+            Nonzero::new_unchecked(y3),
+        ))
     }
 
-    /// Adds two points. The two points must have different x-coordinates.
+    /// Computes `self + other` via incomplete affine addition.
     ///
-    /// If you cannot guarantee `x_0 != x_1` up front, pass `Some(acc)` via
-    /// `nonzero`. On each call, `*acc` is multiplied by `x_1 - x_0`. After
-    /// processing a batch of additions, [invert](Element::invert) `*acc` once;
-    /// inversion succeeds iff every `x_1 - x_0 != 0`, thereby certifying that
-    /// all pairs had distinct x-coordinates.
+    /// This method works only when `self` and `other` have distinct
+    /// x-coordinates. The provided `bank` is used to discharge this condition
+    /// on behalf of the caller.
     pub fn add_incomplete(
         &self,
         dr: &mut D,
         other: &Self,
-        nonzero: Option<&mut Element<'dr, D>>,
+        bank: &mut NonzeroBank<'dr, D>,
     ) -> Result<Self> {
         // delta = (y1 - y0) / (x1 - x0)
         let tmp = other.x.sub(dr, &self.x);
-        if let Some(nonzero) = nonzero {
-            *nonzero = nonzero.mul(dr, &tmp)?;
-        }
-        let delta = other.y.sub(dr, &self.y).div_nonzero(dr, &tmp)?;
+        let tmp = bank.fold(dr, tmp)?;
+        let delta = other.y.sub(dr, &self.y).divide(dr, &tmp)?;
 
         // x3 = delta^2 - x0 - x1
         let x3 = delta.square(dr)?.sub(dr, &self.x).sub(dr, &other.x);
@@ -170,28 +192,38 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
         let tmp = self.x.sub(dr, &x3);
         let y3 = delta.mul(dr, &tmp)?.sub(dr, &self.y);
 
-        Ok(Point {
-            x: x3,
-            y: y3,
-            _marker: PhantomData,
-        })
+        Ok(Point::new_unchecked(
+            Nonzero::new_unchecked(x3),
+            Nonzero::new_unchecked(y3),
+        ))
     }
 
-    /// Computes $\[2\] Q + P$. **The caller must ensure that $P$ and $Q$ do not
-    /// have the same x-coordinate and that the result is not the identity.**
-    pub fn double_and_add_incomplete(&self, dr: &mut D, other: &Self) -> Result<Self> {
+    /// Computes $\[2\] Q + P$ using the standard $(Q + P) + Q$
+    /// [trick](https://github.com/zcash/zcash/issues/3924).
+    ///
+    /// This method only works when `self` and `other` have distinct
+    /// x-coordinates, and the result is not the identity. The provided `bank`
+    /// is used to discharge both of these conditions on behalf of the caller.
+    pub fn double_and_add_incomplete(
+        &self,
+        dr: &mut D,
+        other: &Self,
+        bank: &mut NonzeroBank<'dr, D>,
+    ) -> Result<Self> {
         // See <https://github.com/zcash/zcash/issues/3924> for an explanation.
 
         // lambda_1 = (y_q - y_p)/(x_q - x_p)
         let tmp = other.x.sub(dr, &self.x);
-        let lambda_1 = other.y.sub(dr, &self.y).div_nonzero(dr, &tmp)?;
+        let tmp = bank.fold(dr, tmp)?;
+        let lambda_1 = other.y.sub(dr, &self.y).divide(dr, &tmp)?;
 
         // x_r = lambda_1^2 - x_p - x_q
         let x_r = lambda_1.square(dr)?.sub(dr, &self.x).sub(dr, &other.x);
 
         // lambda_2 = 2 y_p /(x_p - x_r) - lambda_1
         let tmp = self.x.sub(dr, &x_r);
-        let lambda_2 = self.y.double(dr).div_nonzero(dr, &tmp)?.sub(dr, &lambda_1);
+        let tmp = bank.fold(dr, tmp)?;
+        let lambda_2 = self.y.double(dr).divide(dr, &tmp)?.sub(dr, &lambda_1);
 
         // x_s = lambda_2^2 - x_r - x_p
         let x_s = lambda_2.square(dr)?.sub(dr, &x_r).sub(dr, &self.x);
@@ -200,23 +232,22 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
         let tmp = self.x.sub(dr, &x_s);
         let y_s = lambda_2.mul(dr, &tmp)?.sub(dr, &self.y);
 
-        Ok(Point {
-            x: x_s,
-            y: y_s,
-            _marker: PhantomData,
-        })
+        Ok(Point::new_unchecked(
+            Nonzero::new_unchecked(x_s),
+            Nonzero::new_unchecked(y_s),
+        ))
     }
 }
 
 impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Consistent<'dr, D> for Point<'dr, D, C> {
     fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
-        Self::alloc(dr, self.value())?.enforce_equal(dr, self)
+        Self::alloc(dr, self.value())?.enforce_conservative_equal(dr, self)
     }
 }
 
 #[test]
 fn test_point_alloc() -> Result<()> {
-    use group::CurveAffine;
+    use ragu_arithmetic::group::CurveAffine;
 
     type F = ragu_pasta::Fp;
     type C = ragu_pasta::EpAffine;
@@ -238,7 +269,7 @@ fn test_point_alloc() -> Result<()> {
 
 #[test]
 fn test_point_double() -> Result<()> {
-    use group::{CurveAffine, Group};
+    use ragu_arithmetic::group::{CurveAffine, Group};
 
     type F = ragu_pasta::Fp;
     type C = ragu_pasta::EpAffine;
@@ -272,8 +303,10 @@ fn test_point_double() -> Result<()> {
 fn test_add_incomplete() -> Result<()> {
     use alloc::vec;
 
-    use group::{CurveAffine, Group};
-    use ragu_arithmetic::CurveExt;
+    use ragu_arithmetic::{
+        CurveExt,
+        group::{CurveAffine, Group},
+    };
 
     type F = ragu_pasta::Fp;
     type C = ragu_pasta::EpAffine;
@@ -298,7 +331,8 @@ fn test_add_incomplete() -> Result<()> {
                 let p_gadget = Point::alloc(dr, p.clone())?;
                 let q_gadget = Point::alloc(dr, q.clone())?;
                 dr.reset();
-                let r_gadget = p_gadget.add_incomplete(dr, &q_gadget, None)?;
+                let mut bank = NonzeroBank::new_unchecked();
+                let r_gadget = p_gadget.add_incomplete(dr, &q_gadget, &mut bank)?;
                 let expected = p.take().to_curve() + q.take().to_curve();
                 let expected_affine =
                     C::from_xy(*r_gadget.x.value().take(), *r_gadget.y.value().take()).unwrap();
@@ -323,8 +357,10 @@ fn test_add_incomplete() -> Result<()> {
 fn test_double_and_add_incomplete() -> Result<()> {
     use alloc::{vec, vec::Vec};
 
-    use group::{CurveAffine, Group};
-    use ragu_arithmetic::CurveExt;
+    use ragu_arithmetic::{
+        CurveExt,
+        group::{CurveAffine, Group},
+    };
 
     type F = ragu_pasta::Fp;
     type C = ragu_pasta::EpAffine;
@@ -350,7 +386,8 @@ fn test_double_and_add_incomplete() -> Result<()> {
                 let p_gadget = Point::alloc(dr, p.clone())?;
                 let q_gadget = Point::alloc(dr, q.clone())?;
                 dr.reset();
-                let r_gadget = p_gadget.double_and_add_incomplete(dr, &q_gadget)?;
+                let mut bank = NonzeroBank::new_unchecked();
+                let r_gadget = p_gadget.double_and_add_incomplete(dr, &q_gadget, &mut bank)?;
                 let expected = p.take().to_curve().double() + q.take().to_curve();
                 let expected_affine =
                     C::from_xy(*r_gadget.x.value().take(), *r_gadget.y.value().take()).unwrap();

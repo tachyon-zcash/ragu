@@ -43,11 +43,9 @@
 //! - Bugs in the trace-polynomial assembly, constraint polynomial emission
 //!   (`WiringObject`), or downstream prover/verifier components.
 //! - Soundness gaps in the constraint system itself
-//!   (`fuzz_soundness_cheat`'s lane).
+//!   (`fuzz_witness_cheat`'s lane).
 
 #![no_main]
-
-use core::cell::RefCell;
 
 use arbitrary::Arbitrary;
 use ff::Field;
@@ -96,7 +94,7 @@ enum Op {
     Negate(u8),
     Invert(u8),
     IsZero(u8),
-    DivNonzero(u8, u8),
+    Divide(u8, u8),
     Scale(u8, u64),
     Fold(u8, u8, u64),
     AllocConst(u64),
@@ -144,7 +142,7 @@ fn build_seeds(input: &Input) -> Vec<Fp> {
 ///
 /// Runs the input's `Vec<Op>` against the supplied driver and witness,
 /// returning the final stack snapshot. Identical dispatch logic to
-/// `fuzz_element_ops` and `fuzz_soundness_cheat`, so the same gadget
+/// `fuzz_element_ops` and `fuzz_witness_cheat`, so the same gadget
 /// API surface is exercised in all three targets.
 fn run_ops<'dr, D>(
     dr: &mut D,
@@ -219,9 +217,11 @@ where
                     bools.push(b);
                 }
             }
-            Op::DivNonzero(a, b) => {
+            Op::Divide(a, b) => {
                 let (a, b) = (a as usize % elen, b as usize % elen);
-                if let Ok(r) = elems[a].div_nonzero(dr, &elems[b]) {
+                if let Ok(b_nz) = elems[b].clone().enforce_nonzero(dr)
+                    && let Ok(r) = elems[a].divide(dr, &b_nz)
+                {
                     elems.push(r);
                 }
             }
@@ -314,31 +314,31 @@ where
 /// Run the program through `Simulator`, capturing the final fingerprint
 /// on success.
 fn run_simulator(input: &Input, fes: &[Fp]) -> Option<Fingerprint> {
-    let snapshot: RefCell<Option<Fingerprint>> = RefCell::new(None);
+    let mut snapshot: Option<Fingerprint> = None;
     let sim = Simulator::<Fp>::simulate(fes.to_vec(), |dr, witness| {
         let fp = run_ops(dr, &witness, input, fes)?;
-        *snapshot.borrow_mut() = Some(fp);
+        snapshot = Some(fp);
         Ok(())
     });
     if sim.is_err() {
         return None;
     }
-    snapshot.into_inner()
+    snapshot
 }
 
 /// Run the program through `Emulator<Wired<Fp>>`, capturing the final
 /// fingerprint on success.
 fn run_emulator(input: &Input, fes: &[Fp]) -> Option<Fingerprint> {
-    let snapshot: RefCell<Option<Fingerprint>> = RefCell::new(None);
+    let mut snapshot: Option<Fingerprint> = None;
     let result = Emulator::<Wired<Fp>>::emulate_wired(fes.to_vec(), |dr, witness| {
         let fp = run_ops(dr, &witness, input, fes)?;
-        *snapshot.borrow_mut() = Some(fp);
+        snapshot = Some(fp);
         Ok(())
     });
     if result.is_err() {
         return None;
     }
-    snapshot.into_inner()
+    snapshot
 }
 
 fuzz_target!(|input: Input| {

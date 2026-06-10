@@ -4,10 +4,9 @@
 //! the step witness. This sets the application fields on the [`ProofBuilder`]
 //! and returns the child proofs along with the output data from the step circuit.
 
-use ragu_arithmetic::Cycle;
+use ragu_arithmetic::{CryptoRngCore, Cycle};
 use ragu_circuits::{CircuitExt, polynomials::Rank};
 use ragu_core::Result;
-use rand::CryptoRng;
 
 use crate::{
     Application, Header, Pcd, Proof,
@@ -19,7 +18,7 @@ use crate::{
 };
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
-    pub(super) fn compute_application_proof<'source, RNG: CryptoRng, S: Step<C>>(
+    pub(super) fn compute_application_proof<'source, RNG: CryptoRngCore, S: Step<C>>(
         &self,
         rng: &mut RNG,
         step: S,

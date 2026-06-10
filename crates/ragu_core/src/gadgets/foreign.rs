@@ -3,13 +3,13 @@
 use alloc::{boxed::Box, vec::Vec};
 use core::marker::PhantomData;
 
-use ff::Field;
+use ragu_arithmetic::ff::Field;
 
 use crate::{
     Result,
     convert::WireMap,
     drivers::Driver,
-    gadgets::{Bound, Gadget, GadgetKind},
+    gadgets::{Bound, Gadget, GadgetKind, WireEqualizer},
 };
 
 mod unit_impl {
@@ -35,12 +35,12 @@ mod unit_impl {
             Ok(())
         }
 
-        fn enforce_equal_gadget<
+        fn enforce_conservative_equal_gadget<
             'dr,
             D1: Driver<'dr, F = F>,
             D2: Driver<'dr, F = F, Wire = <D1 as Driver<'dr>>::Wire>,
         >(
-            _: &mut D1,
+            _: &mut WireEqualizer<'_, 'dr, D1>,
             _: &Bound<'dr, D2, Self>,
             _: &Bound<'dr, D2, Self>,
         ) -> Result<()> {
@@ -82,17 +82,17 @@ mod array_impl {
                 .unwrap_or_else(|_| unreachable!("Vec had exactly N elements")))
         }
 
-        fn enforce_equal_gadget<
+        fn enforce_conservative_equal_gadget<
             'dr,
             D1: Driver<'dr, F = F>,
             D2: Driver<'dr, F = F, Wire = <D1 as Driver<'dr>>::Wire>,
         >(
-            dr: &mut D1,
+            eq: &mut WireEqualizer<'_, 'dr, D1>,
             a: &Bound<'dr, D2, Self>,
             b: &Bound<'dr, D2, Self>,
         ) -> Result<()> {
             for (a, b) in a.iter().zip(b.iter()) {
-                G::enforce_equal_gadget(dr, a, b)?;
+                G::enforce_conservative_equal_gadget(eq, a, b)?;
             }
             Ok(())
         }
@@ -126,17 +126,17 @@ mod pair_impl {
             Ok((G1::map_gadget(&this.0, wm)?, G2::map_gadget(&this.1, wm)?))
         }
 
-        fn enforce_equal_gadget<
+        fn enforce_conservative_equal_gadget<
             'dr,
             D1: Driver<'dr, F = F>,
             D2: Driver<'dr, F = F, Wire = <D1 as Driver<'dr>>::Wire>,
         >(
-            dr: &mut D1,
+            eq: &mut WireEqualizer<'_, 'dr, D1>,
             a: &Bound<'dr, D2, Self>,
             b: &Bound<'dr, D2, Self>,
         ) -> Result<()> {
-            G1::enforce_equal_gadget(dr, &a.0, &b.0)?;
-            G2::enforce_equal_gadget(dr, &a.1, &b.1)?;
+            G1::enforce_conservative_equal_gadget(eq, &a.0, &b.0)?;
+            G2::enforce_conservative_equal_gadget(eq, &a.1, &b.1)?;
             Ok(())
         }
     }
@@ -167,16 +167,16 @@ mod box_impl {
             Ok(Box::new(G::map_gadget(this, wm)?))
         }
 
-        fn enforce_equal_gadget<
+        fn enforce_conservative_equal_gadget<
             'dr,
             D1: Driver<'dr, F = F>,
             D2: Driver<'dr, F = F, Wire = <D1 as Driver<'dr>>::Wire>,
         >(
-            dr: &mut D1,
+            eq: &mut WireEqualizer<'_, 'dr, D1>,
             a: &Bound<'dr, D2, Self>,
             b: &Bound<'dr, D2, Self>,
         ) -> Result<()> {
-            G::enforce_equal_gadget(dr, a, b)
+            G::enforce_conservative_equal_gadget(eq, a, b)
         }
     }
 }

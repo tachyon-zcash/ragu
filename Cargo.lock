@@ -382,8 +382,20 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
 name = "ff"
-version = "0.14.0-pre.0"
-source = "git+https://github.com/zkcrypto/ff?rev=bdd74a3f75c4c378d69e954944a61bb0930532a0#bdd74a3f75c4c378d69e954944a61bb0930532a0"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0b50bfb653653f9ca9095b427bed08ab8d75a137839d9ad64eb11810d5b6393"
+dependencies = [
+ "bitvec",
+ "rand_core 0.6.4",
+ "subtle",
+]
+
+[[package]]
+name = "ff"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1f686ab92a9fb0eaf188f6c6c87b89490baa6fdb0db4544ba4dc47f7942489f"
 dependencies = [
  "bitvec",
  "ff_derive",
@@ -393,8 +405,9 @@ dependencies = [
 
 [[package]]
 name = "ff_derive"
-version = "0.14.0-pre.0"
-source = "git+https://github.com/zkcrypto/ff?rev=bdd74a3f75c4c378d69e954944a61bb0930532a0#bdd74a3f75c4c378d69e954944a61bb0930532a0"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "241afe8c15ffa21933eaefe8a563af36fd9fc98a3e8a044e8f7db52eb1fae3d8"
 dependencies = [
  "addchain",
  "num-bigint",
@@ -425,6 +438,17 @@ checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 
 [[package]]
 name = "getrandom"
+version = "0.2.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "wasi",
+]
+
+[[package]]
+name = "getrandom"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
@@ -451,10 +475,22 @@ dependencies = [
 
 [[package]]
 name = "group"
-version = "0.14.0-pre.0"
-source = "git+https://github.com/zkcrypto/group?rev=326b36b0c43dcb1507b89017323f43a57c3bffd8#326b36b0c43dcb1507b89017323f43a57c3bffd8"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0f9ef7462f7c099f518d754361858f86d8a07af53ba9af0fe635bbccb151a63"
 dependencies = [
- "ff",
+ "ff 0.13.1",
+ "rand_core 0.6.4",
+ "subtle",
+]
+
+[[package]]
+name = "group"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fd1a1c7a5206c5b7a3f5a0d7ccd3ff85d0c8f5133d62a02680255b0004af5f4"
+dependencies = [
+ "ff 0.14.0",
  "rand_core 0.10.0",
  "subtle",
 ]
@@ -598,8 +634,8 @@ name = "lean_extraction"
 version = "0.0.0"
 dependencies = [
  "clap",
- "ff",
- "group",
+ "ff 0.14.0",
+ "group 0.14.0",
  "ragu_arithmetic",
  "ragu_core",
  "ragu_pasta",
@@ -695,13 +731,28 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 [[package]]
 name = "pasta_curves"
 version = "0.5.1"
-source = "git+https://github.com/ebfull/pasta_curves?rev=4f9da85aeebc650a57610501d50d036454dcdc48#4f9da85aeebc650a57610501d50d036454dcdc48"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3e57598f73cc7e1b2ac63c79c517b31a0877cd7c402cdcaa311b5208de7a095"
 dependencies = [
  "blake2b_simd",
- "ff",
- "group",
+ "ff 0.13.1",
+ "group 0.13.0",
  "lazy_static",
- "rand 0.10.0",
+ "rand 0.8.6",
+ "static_assertions",
+ "subtle",
+]
+
+[[package]]
+name = "pasta_curves"
+version = "0.5.1"
+source = "git+https://github.com/ebfull/pasta_curves?rev=5a84fc0d13f738f54c43fb1f9e28ecf1d358dcf5#5a84fc0d13f738f54c43fb1f9e28ecf1d358dcf5"
+dependencies = [
+ "blake2b_simd",
+ "ff 0.14.0",
+ "group 0.14.0",
+ "lazy_static",
+ "rand 0.10.1",
  "static_assertions",
  "subtle",
 ]
@@ -767,16 +818,16 @@ dependencies = [
 
 [[package]]
 name = "proptest"
-version = "1.10.0"
+version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37566cb3fdacef14c0737f9546df7cfeadbfbc9fef10991038bf5015d0c80532"
+checksum = "4b45fcc2344c680f5025fe57779faef368840d0bd1f42f216291f0dc4ace4744"
 dependencies = [
  "bit-set",
  "bit-vec",
  "bitflags",
  "num-traits",
- "rand 0.9.2",
- "rand_chacha",
+ "rand 0.9.4",
+ "rand_chacha 0.9.0",
  "rand_xorshift",
  "regex-syntax",
  "rusty-fork",
@@ -815,11 +866,17 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 name = "ragu"
 version = "0.0.0"
 dependencies = [
+ "blake2b_simd",
+ "ff 0.13.1",
+ "lazy_static",
+ "pasta_curves 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "ragu_arithmetic",
  "ragu_circuits",
  "ragu_core",
  "ragu_pcd",
  "ragu_primitives",
+ "rand 0.8.6",
+ "rand_core 0.6.4",
 ]
 
 [[package]]
@@ -827,14 +884,19 @@ name = "ragu_arithmetic"
 version = "0.0.0"
 dependencies = [
  "criterion",
- "ff",
+ "ff 0.13.1",
+ "ff 0.14.0",
+ "group 0.13.0",
+ "group 0.14.0",
  "gungraun",
  "maybe-rayon",
- "pasta_curves",
+ "pasta_curves 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "pasta_curves 0.5.1 (git+https://github.com/ebfull/pasta_curves?rev=5a84fc0d13f738f54c43fb1f9e28ecf1d358dcf5)",
  "proptest",
  "ragu_macros",
  "ragu_testing",
- "rand 0.10.0",
+ "rand 0.10.1",
+ "rand 0.8.6",
 ]
 
 [[package]]
@@ -843,32 +905,32 @@ version = "0.0.0"
 dependencies = [
  "blake2b_simd",
  "criterion",
- "ff",
- "group",
+ "ff 0.14.0",
+ "group 0.14.0",
  "gungraun",
  "maybe-rayon",
- "pasta_curves",
+ "pasta_curves 0.5.1 (git+https://github.com/ebfull/pasta_curves?rev=5a84fc0d13f738f54c43fb1f9e28ecf1d358dcf5)",
  "proptest",
  "ragu_arithmetic",
  "ragu_core",
  "ragu_pasta",
  "ragu_primitives",
  "ragu_testing",
- "rand 0.10.0",
+ "rand 0.10.1",
 ]
 
 [[package]]
 name = "ragu_core"
 version = "0.0.0"
 dependencies = [
- "ff",
- "group",
+ "ff 0.14.0",
+ "group 0.14.0",
  "proptest",
  "ragu_arithmetic",
  "ragu_macros",
  "ragu_pasta",
  "ragu_testing",
- "rand 0.10.0",
+ "rand 0.10.1",
  "thiserror",
 ]
 
@@ -895,10 +957,7 @@ dependencies = [
 name = "ragu_pasta"
 version = "0.0.0"
 dependencies = [
- "ff",
- "group",
  "lazy_static",
- "pasta_curves",
  "ragu_arithmetic",
 ]
 
@@ -907,10 +966,10 @@ name = "ragu_pcd"
 version = "0.0.0"
 dependencies = [
  "criterion",
- "ff",
+ "ff 0.14.0",
  "gungraun",
  "maybe-rayon",
- "pasta_curves",
+ "pasta_curves 0.5.1 (git+https://github.com/ebfull/pasta_curves?rev=5a84fc0d13f738f54c43fb1f9e28ecf1d358dcf5)",
  "proptest",
  "ragu_arithmetic",
  "ragu_circuits",
@@ -918,15 +977,15 @@ dependencies = [
  "ragu_pasta",
  "ragu_primitives",
  "ragu_testing",
- "rand 0.10.0",
+ "rand 0.10.1",
 ]
 
 [[package]]
 name = "ragu_primitives"
 version = "0.0.0"
 dependencies = [
- "ff",
- "group",
+ "ff 0.14.0",
+ "group 0.14.0",
  "gungraun",
  "proptest",
  "ragu_arithmetic",
@@ -934,7 +993,7 @@ dependencies = [
  "ragu_macros",
  "ragu_pasta",
  "ragu_testing",
- "rand 0.10.0",
+ "rand 0.10.1",
  "thiserror",
 ]
 
@@ -942,7 +1001,7 @@ dependencies = [
 name = "ragu_testing"
 version = "0.0.0"
 dependencies = [
- "ff",
+ "ff 0.14.0",
  "proptest",
  "ragu_arithmetic",
  "ragu_circuits",
@@ -950,28 +1009,49 @@ dependencies = [
  "ragu_pasta",
  "ragu_pcd",
  "ragu_primitives",
- "rand 0.10.0",
+ "rand 0.10.1",
 ]
 
 [[package]]
 name = "rand"
-version = "0.9.2"
+version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6db2770f06117d490610c7488547d543617b21bfa07796d7a12f6f1bd53850d1"
+checksum = "5ca0ecfa931c29007047d1bc58e623ab12e5590e8c7cc53200d5202b69266d8a"
 dependencies = [
- "rand_chacha",
+ "libc",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+]
+
+[[package]]
+name = "rand"
+version = "0.9.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44c5af06bb1b7d3216d91932aed5265164bf384dc89cd6ba05cf59a35f5f76ea"
+dependencies = [
+ "rand_chacha 0.9.0",
  "rand_core 0.9.5",
 ]
 
 [[package]]
 name = "rand"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc266eb313df6c5c09c1c7b1fbe2510961e5bcd3add930c1e31f7ed9da0feff8"
+checksum = "d2e8e8bcc7961af1fdac401278c6a831614941f6164ee3bf4ce61b7edb162207"
 dependencies = [
  "chacha20",
  "getrandom 0.4.1",
  "rand_core 0.10.0",
+]
+
+[[package]]
+name = "rand_chacha"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88"
+dependencies = [
+ "ppv-lite86",
+ "rand_core 0.6.4",
 ]
 
 [[package]]
@@ -982,6 +1062,15 @@ checksum = "d3022b5f1df60f26e1ffddd6c66e8aa15de382ae63b3a0c1bfc0e4d3e3f325cb"
 dependencies = [
  "ppv-lite86",
  "rand_core 0.9.5",
+]
+
+[[package]]
+name = "rand_core"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
+dependencies = [
+ "getrandom 0.2.17",
 ]
 
 [[package]]
@@ -1307,6 +1396,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasi"
+version = "0.11.1+wasi-snapshot-preview1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
+
+[[package]]
 name = "wasip2"
 version = "1.0.2+wasi-0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1490,18 +1585,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.38"
+version = "0.8.48"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57cf3aa6855b23711ee9852dfc97dfaa51c45feaba5b645d0c777414d494a961"
+checksum = "eed437bf9d6692032087e337407a86f04cd8d6a16a37199ed57949d415bd68e9"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.38"
+version = "0.8.48"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a616990af1a287837c4fe6596ad77ef57948f787e46ce28e166facc0cc1cb75"
+checksum = "70e3cd084b1788766f53af483dd21f93881ff30d7320490ec3ef7526d203bad4"
 dependencies = [
  "proc-macro2",
  "quote",

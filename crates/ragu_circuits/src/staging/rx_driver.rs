@@ -1,7 +1,6 @@
 //! [`Driver`] that records gate placements into a [`sparse::View`].
 
-use ff::Field;
-use ragu_arithmetic::Coeff;
+use ragu_arithmetic::{Coeff, ff::Field};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverTypes},

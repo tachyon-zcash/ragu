@@ -12,6 +12,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
 jobs:
   # Detect which files changed to conditionally run jobs
   changes:
@@ -24,10 +27,11 @@ jobs:
       rust: ${{ steps.filter.outputs.rust }}
       book: ${{ steps.filter.outputs.book }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
-      - uses: dorny/paths-filter@v3
+          persist-credentials: false
+      - uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
         id: filter
         with:
           filters: |
@@ -47,17 +51,20 @@ jobs:
     if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Install pinned nightly rustfmt
-        id: toolchain
-        uses: dtolnay/rust-toolchain@master
+        id: nightly
+        uses: ./.github/actions/rust-nightly-setup
         with:
-          toolchain: nightly-2026-04-11
           components: rustfmt
 
       - name: Check formatting
-        run: cargo +${{ steps.toolchain.outputs.name }} fmt --all -- --config-path rustfmt.nightly.toml --check
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.nightly.outputs.toolchain }}
+        run: cargo fmt --all -- --config-path rustfmt.nightly.toml --check
 
   clippy:
     name: clippy
@@ -65,13 +72,56 @@ jobs:
     if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
       - name: Setup Rust
         uses: ./.github/actions/rust-setup
         with:
           components: clippy
       - name: Run clippy
-        run: cargo clippy --workspace --lib --tests --benches --locked --all-features -- -D warnings
+        run: cargo clippy --workspace --lib --tests --benches --locked -- -D warnings
+
+  legacy-check:
+    name: legacy dependency check
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Setup Rust
+        uses: ./.github/actions/rust-setup
+        with:
+          cache-suffix: legacy-deps
+      - name: Check runtime crates with legacy dependencies
+        run: cargo check -p ragu_arithmetic -p ragu_pasta -p ragu_core -p ragu_primitives -p ragu_circuits -p ragu_pcd --lib --locked --no-default-features --features "alloc legacy-deps"
+      - name: Check root crate with legacy dependencies
+        run: cargo check -p ragu --lib --locked --no-default-features --features legacy-deps
+
+  # The `mock` feature is off by default and requires the legacy crypto stack
+  # (it is incompatible with the default `modern-deps`, enforced by a
+  # compile_error in src/lib.rs). It therefore gets its own job rather than
+  # sharing the modern-stack `clippy`/`test` runs.
+  mock:
+    name: mock (legacy stack)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Setup Rust
+        uses: ./.github/actions/rust-setup
+        with:
+          components: clippy
+          cache-suffix: mock
+      - name: Run clippy (mock)
+        run: cargo clippy -p ragu --no-default-features --features "mock legacy-deps" --lib --tests --locked -- -D warnings
+      - name: Run tests (mock)
+        run: cargo test --release -p ragu --no-default-features --features "mock legacy-deps" --locked
 
   proptests-fast:
     name: proptests (fast)
@@ -79,13 +129,15 @@ jobs:
     if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
       - name: Setup Rust
         uses: ./.github/actions/rust-setup
         with:
           cache-suffix: proptests-fast
       - name: Run fast proptests
-        run: cargo test --release -p ragu_arithmetic -p ragu_core --locked --all-features proptest
+        run: cargo test --release -p ragu_arithmetic -p ragu_core --locked proptest
         env:
           PROPTEST_CASES: "64"
 
@@ -99,13 +151,15 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
       - name: Setup Rust
         uses: ./.github/actions/rust-setup
         with:
           cache-suffix: release
       - name: Run tests
-        run: cargo test --release --all --locked --all-features
+        run: cargo test --release --all --locked
 
   test-32-bit:
     name: test (i686-unknown-linux-gnu)
@@ -113,7 +167,9 @@ jobs:
     if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
       - name: Setup Rust
         uses: ./.github/actions/rust-setup
         with:
@@ -121,7 +177,7 @@ jobs:
           apt-packages: gcc-multilib
           cache-suffix: release
       - name: Run 32-bit tests
-        run: cargo test --release --all --locked --all-features --target i686-unknown-linux-gnu
+        run: cargo test --release --all --locked --target i686-unknown-linux-gnu
 
   bitrot:
     name: bitrot check
@@ -129,13 +185,15 @@ jobs:
     if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
       - name: Setup Rust
         uses: ./.github/actions/rust-setup
         with:
-          cache-suffix: all-features
+          cache-suffix: default-features
       - name: Build benchmarks and examples
-        run: cargo build --benches --examples --all-features
+        run: cargo build --benches --examples
 
   fuzz-check:
     name: fuzz harness check (nightly)
@@ -143,16 +201,16 @@ jobs:
     if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Install pinned nightly toolchain
-        id: toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2026-04-11
+        id: nightly
+        uses: ./.github/actions/rust-nightly-setup
 
       - name: Cache fuzz target directory
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: qa/fuzz/target
           key: ${{ runner.os }}-fuzz-target-${{ hashFiles('qa/fuzz/Cargo.toml') }}-${{ hashFiles('qa/fuzz/fuzz_targets/**/*.rs') }}-${{ hashFiles('qa/fuzz/bin/**/*.rs') }}
@@ -161,7 +219,9 @@ jobs:
 
       - name: cargo check fuzz harness
         working-directory: qa/fuzz
-        run: cargo +${{ steps.toolchain.outputs.name }} check --bins
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.nightly.outputs.toolchain }}
+        run: cargo check --bins
 
   docs:
     name: docs
@@ -169,7 +229,9 @@ jobs:
     if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
       - name: Setup Rust
         uses: ./.github/actions/rust-setup
         with:
@@ -185,12 +247,47 @@ jobs:
     if: needs.changes.outputs.book == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
       - name: Setup Rust
         uses: ./.github/actions/rust-setup
       - name: Install mdbook and plugins
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@6c1f7cf125e42770ff087ea443901b487cc5471a # v2.79.5
         with:
           tool: mdbook@0.4.52,mdbook-katex@0.9.4,mdbook-mermaid@0.16.2,mdbook-admonish@1.20.0
       - name: Build book
         run: mdbook build ./book
+
+  # Aggregate gate: a single, stable required status check. It always runs —
+  # even on non-Rust PRs where every job below is skipped — and fails only if a
+  # needed job actually failed or was cancelled (skipped counts as success).
+  # Require THIS in the ruleset instead of the individual job names: a skipped
+  # matrix job (`test`) reports the un-expanded name `test (${{ matrix.os }})`,
+  # so `test (ubuntu-latest)` etc. never report and block lean-/docs-only PRs.
+  ci-required:
+    name: ci-required
+    if: always()
+    needs:
+      - changes
+      - fmt
+      - clippy
+      - mock
+      - proptests-fast
+      - test
+      - test-32-bit
+      - bitrot
+      - docs
+      - book
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any required job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        # Pass the expansion through `env` rather than interpolating `${{ }}`
+        # directly into `run:`, which zizmor's template-injection audit flags.
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          echo "A required job failed or was cancelled:"
+          echo "$NEEDS_JSON"
+          exit 1

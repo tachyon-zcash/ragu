@@ -3,8 +3,7 @@
 //! Provides a [`Simulator`] driver that fully executes circuit synthesis,
 //! tracking constraint counts and enforcing constraint satisfaction.
 
-use ff::Field;
-use ragu_arithmetic::Coeff;
+use ragu_arithmetic::{Coeff, ff::Field};
 use ragu_core::{
     Error, Result,
     drivers::{DirectSum, Driver, DriverTypes, emulator::Emulator},

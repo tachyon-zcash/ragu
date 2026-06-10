@@ -25,7 +25,7 @@
 
 use core::marker::PhantomData;
 
-use ff::Field;
+use ragu_arithmetic::ff::Field;
 
 use crate::{
     Result,
@@ -148,8 +148,7 @@ impl<F: Field, D: DriverTypes<ImplField = F>> WireMap<F> for StripWires<D> {
 
 #[cfg(test)]
 mod tests {
-    use ff::Field;
-    use ragu_arithmetic::Coeff;
+    use ragu_arithmetic::{Coeff, ff::Field};
     use ragu_pasta::Fp;
 
     use crate::{
@@ -159,7 +158,7 @@ mod tests {
             Driver,
             emulator::{Emulator, Wired, Wireless},
         },
-        gadgets::{Bound, Gadget, GadgetKind},
+        gadgets::{Bound, Gadget, GadgetKind, WireEqualizer},
         maybe::Always,
     };
 
@@ -205,17 +204,17 @@ mod tests {
             })
         }
 
-        fn enforce_equal_gadget<
+        fn enforce_conservative_equal_gadget<
             'dr,
             D1: Driver<'dr, F = FieldType>,
             D2: Driver<'dr, F = FieldType, Wire = <D1 as Driver<'dr>>::Wire>,
         >(
-            dr: &mut D1,
+            eq: &mut WireEqualizer<'_, 'dr, D1>,
             a: &Bound<'dr, D2, Self>,
             b: &Bound<'dr, D2, Self>,
         ) -> Result<()> {
-            dr.enforce_equal(&a.a, &b.a)?;
-            dr.enforce_equal(&a.b, &b.b)?;
+            eq.enforce_conservative_equal(&a.a, &b.a)?;
+            eq.enforce_conservative_equal(&a.b, &b.b)?;
             Ok(())
         }
     }
@@ -260,16 +259,16 @@ mod tests {
             })
         }
 
-        fn enforce_equal_gadget<
+        fn enforce_conservative_equal_gadget<
             'dr,
             D1: Driver<'dr, F = FieldType>,
             D2: Driver<'dr, F = FieldType, Wire = <D1 as Driver<'dr>>::Wire>,
         >(
-            dr: &mut D1,
+            eq: &mut WireEqualizer<'_, 'dr, D1>,
             a: &Bound<'dr, D2, Self>,
             b: &Bound<'dr, D2, Self>,
         ) -> Result<()> {
-            dr.enforce_equal(&a.w, &b.w)?;
+            eq.enforce_conservative_equal(&a.w, &b.w)?;
             Ok(())
         }
     }

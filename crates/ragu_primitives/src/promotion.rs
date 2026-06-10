@@ -3,13 +3,12 @@
 
 use core::ops::Deref;
 
-use ff::Field;
-use ragu_arithmetic::Coeff;
+use ragu_arithmetic::{Coeff, ff::Field};
 use ragu_core::{
     Result,
     convert::{CloneWires, WireMap},
     drivers::{Driver, DriverTypes, DriverValue},
-    gadgets::{Bound, Gadget, GadgetKind},
+    gadgets::{Bound, Gadget, GadgetKind, WireEqualizer},
     maybe::Empty,
 };
 
@@ -175,15 +174,15 @@ unsafe impl<F: Field, G: GadgetKind<F>> GadgetKind<F> for DemotedKind<F, G> {
         })
     }
 
-    fn enforce_equal_gadget<
+    fn enforce_conservative_equal_gadget<
         'dr,
         D1: Driver<'dr, F = F>,
         D2: Driver<'dr, F = F, Wire = <D1 as Driver<'dr>>::Wire>,
     >(
-        dr: &mut D1,
+        eq: &mut WireEqualizer<'_, 'dr, D1>,
         a: &Bound<'dr, D2, Self>,
         b: &Bound<'dr, D2, Self>,
     ) -> Result<()> {
-        G::enforce_equal_gadget(dr, &a.gadget, &b.gadget)
+        G::enforce_conservative_equal_gadget(eq, &a.gadget, &b.gadget)
     }
 }

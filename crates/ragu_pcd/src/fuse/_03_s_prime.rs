@@ -3,17 +3,15 @@
 //! This sets the s-prime fields on the [`ProofBuilder`], which commits to the
 //! $m(w, x_i, Y)$ polynomials for the $i$th child proof's $x$ challenge.
 
-use ff::Field;
-use ragu_arithmetic::Cycle;
+use ragu_arithmetic::{CryptoRngCore, Cycle, ff::Field};
 use ragu_circuits::{polynomials::Rank, registry::RegistryAt, staging::StageExt};
 use ragu_core::Result;
-use rand::CryptoRng;
 
 use super::NativeSPrime;
 use crate::{Application, Proof, internal::nested, proof::ProofBuilder};
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
-    pub(super) fn compute_s_prime<RNG: CryptoRng>(
+    pub(super) fn compute_s_prime<RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
         native_registry: &RegistryAt<'_, C::CircuitField, R>,
@@ -26,7 +24,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         Ok(native)
     }
 
-    fn compute_bridge_s_prime<RNG: CryptoRng>(
+    fn compute_bridge_s_prime<RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
         native: &NativeSPrime<C, R>,

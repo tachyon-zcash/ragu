@@ -19,15 +19,16 @@ use core::{
     ops::{Deref, DerefMut},
 };
 
-use ff::Field;
+use ragu_arithmetic::ff::Field;
 use ragu_core::{
     Error, Result,
     convert::WireMap,
     drivers::Driver,
-    gadgets::{Bound, Gadget, GadgetKind},
+    gadgets::{Bound, Gadget, GadgetKind, WireEqualizer},
 };
 
 use crate::{
+    comparison::GadgetEquals,
     consistent::Consistent,
     io::{Buffer, Write},
 };
@@ -180,6 +181,23 @@ impl<F: Field, G: Write<F>, L: Len> Write<F> for FixedVec<PhantomData<G>, L> {
     }
 }
 
+impl<F: Field, G: GadgetEquals<F>, L: Len> GadgetEquals<F> for FixedVec<PhantomData<G>, L> {
+    fn enforce_equal_gadget<
+        'dr,
+        D1: Driver<'dr, F = F>,
+        D2: Driver<'dr, F = F, Wire = <D1 as Driver<'dr>>::Wire>,
+    >(
+        dr: &mut D1,
+        a: &Bound<'dr, D2, Self>,
+        b: &Bound<'dr, D2, Self>,
+    ) -> Result<()> {
+        for (a, b) in a.iter().zip(b.iter()) {
+            G::enforce_equal_gadget(dr, a, b)?;
+        }
+        Ok(())
+    }
+}
+
 impl<T, L: Len> Deref for FixedVec<T, L> {
     type Target = [T];
 
@@ -254,17 +272,17 @@ unsafe impl<F: Field, G: GadgetKind<F>, L: Len> GadgetKind<F> for FixedVec<Phant
             .try_collect_fixed()
     }
 
-    fn enforce_equal_gadget<
+    fn enforce_conservative_equal_gadget<
         'dr,
         D1: Driver<'dr, F = F>,
         D2: Driver<'dr, F = F, Wire = <D1 as Driver<'dr>>::Wire>,
     >(
-        dr: &mut D1,
+        eq: &mut WireEqualizer<'_, 'dr, D1>,
         a: &Bound<'dr, D2, Self>,
         b: &Bound<'dr, D2, Self>,
     ) -> Result<()> {
         for (a, b) in a.iter().zip(b.iter()) {
-            G::enforce_equal_gadget(dr, a, b)?;
+            G::enforce_conservative_equal_gadget(eq, a, b)?;
         }
         Ok(())
     }

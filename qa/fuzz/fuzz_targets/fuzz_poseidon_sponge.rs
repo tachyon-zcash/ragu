@@ -8,7 +8,6 @@
 #![no_main]
 
 use arbitrary::Arbitrary;
-use core::cell::Cell;
 use ff::{Field, PrimeField};
 use libfuzzer_sys::fuzz_target;
 use pasta_curves::Fp;
@@ -71,12 +70,15 @@ fn absorb_values(ops: &[Op]) -> Vec<Fp> {
 }
 
 fn run_sponge(ops: &[Op], values: &[Fp]) -> Fp {
-    let output = Cell::new(Fp::ZERO);
-    let got_output = Cell::new(false);
+    let mut output = Fp::ZERO;
+    let mut got_output = false;
+    // Pasta::baked() returns a &'static, but recomputing the address each
+    // call is wasteful; hoist outside the closure so we touch the static
+    // exactly once per run_sponge.
+    let params = Pasta::baked();
 
     let result = Simulator::<Fp>::simulate(values.to_vec(), |dr, witness| {
         let allocator = &mut Standard::new();
-        let params = Pasta::baked();
         let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
             dr,
             Pasta::circuit_poseidon(params),
@@ -101,24 +103,24 @@ fn run_sponge(ops: &[Op], values: &[Fp]) -> Fp {
                         continue;
                     }
                     let squeezed = sponge.squeeze(dr)?;
-                    if !got_output.get() {
-                        output.set(*squeezed.value().take());
-                        got_output.set(true);
+                    if !got_output {
+                        output = *squeezed.value().take();
+                        got_output = true;
                     }
                 }
             }
         }
 
-        if !got_output.get() {
+        if !got_output {
             let squeezed = sponge.squeeze(dr)?;
-            output.set(*squeezed.value().take());
+            output = *squeezed.value().take();
         }
 
         Ok(())
     });
 
     assert!(result.is_ok(), "sponge failed: {:?}", result.err());
-    output.get()
+    output
 }
 
 fuzz_target!(|input: Input| {
@@ -147,12 +149,12 @@ fuzz_target!(|input: Input| {
     // Save/resume equivalence: absorb all values, save, resume, squeeze
     // must equal absorb all values then squeeze directly.
     if input.test_save_resume && values.len() >= 1 {
-        let direct_output = Cell::new(Fp::ZERO);
-        let resume_output = Cell::new(Fp::ZERO);
+        let mut direct_output = Fp::ZERO;
+        let mut resume_output = Fp::ZERO;
+        let params = Pasta::baked();
 
         let result = Simulator::<Fp>::simulate(values.clone(), |dr, witness| {
             let allocator = &mut Standard::new();
-            let params = Pasta::baked();
             let elems: Vec<Element<'_, _>> = (0..values.len())
                 .map(|i| Element::alloc(dr, allocator, witness.as_ref().map(|v| v[i])))
                 .collect::<Result<_, _>>()?;
@@ -166,7 +168,7 @@ fuzz_target!(|input: Input| {
                 sponge1.absorb(dr, elem)?;
             }
             let squeezed = sponge1.squeeze(dr)?;
-            direct_output.set(*squeezed.value().take());
+            direct_output = *squeezed.value().take();
 
             // Save/resume path: absorb all → save → resume → squeeze
             let mut sponge2 = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
@@ -179,15 +181,15 @@ fuzz_target!(|input: Input| {
             let state = sponge2.save_state(dr).expect("save should succeed after absorb");
             let mut resumed = Sponge::resume(state, Pasta::circuit_poseidon(params));
             let squeezed = resumed.squeeze(dr)?;
-            resume_output.set(*squeezed.value().take());
+            resume_output = *squeezed.value().take();
 
             Ok(())
         });
 
         assert!(result.is_ok(), "save/resume failed: {:?}", result.err());
         assert_eq!(
-            direct_output.get(),
-            resume_output.get(),
+            direct_output,
+            resume_output,
             "save/resume produced different output than direct squeeze"
         );
     }

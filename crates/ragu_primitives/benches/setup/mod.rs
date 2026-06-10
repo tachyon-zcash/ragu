@@ -1,6 +1,6 @@
 use ff::Field;
 use group::CurveAffine;
-use ragu_arithmetic::{Cycle, Uendo};
+use ragu_arithmetic::Cycle;
 use ragu_core::{
     drivers::{
         Driver,
@@ -66,7 +66,7 @@ pub fn alloc_point(emu: &mut BenchEmu, rng: &mut StdRng) -> Point<'static, Bench
 }
 
 pub fn alloc_endo(emu: &mut BenchEmu, rng: &mut StdRng) -> Endoscalar<'static, BenchEmu> {
-    let u: Uendo = rng.random();
+    let u: u128 = rng.random();
     Endoscalar::alloc(emu, BenchEmu::just(|| u)).unwrap()
 }
 

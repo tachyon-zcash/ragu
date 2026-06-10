@@ -12,3 +12,5 @@ The build is run with `--wfail`, so Lean warnings (and in particular `sorry`s) a
 > [!WARNING]
 > Concretely, the Lean build step checks everything imported by the top-level library file `fv/lean/Ragu.lean`.
 > The Lean build step will not notice files that are not imported.
+
+Independent, hand-written Lean checks should be imported through `Ragu.Contrib`, not through the Rust extraction exporter.

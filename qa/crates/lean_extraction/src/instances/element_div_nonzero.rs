@@ -20,7 +20,9 @@ impl CircuitInstance for ElementDivNonzeroInstance {
         let x = WireDeserializer::new(input_wires_x).into_gadget(&element_template)?;
         let y = WireDeserializer::new(input_wires_y).into_gadget(&element_template)?;
 
-        let quotient = x.div_nonzero(dr, &y)?;
+        // Discharge `y ≠ 0` in-circuit so the extracted trace is self-contained.
+        let y_nonzero = y.enforce_nonzero(dr)?;
+        let quotient = x.divide(dr, &y_nonzero)?;
 
         WireCollector::collect_from(&quotient)
     }

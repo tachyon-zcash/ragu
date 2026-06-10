@@ -36,8 +36,7 @@
 //! Transcripts of protocols with different interaction sequences are
 //! domain-separated by protocol tags during construction [`Transcript::new`].
 
-use ff::PrimeField;
-use ragu_arithmetic::PoseidonPermutation;
+use ragu_arithmetic::{PoseidonPermutation, ff::PrimeField};
 use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::{
     Element,
@@ -184,9 +183,8 @@ impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> Buffer<'dr, D> for Trans
 mod tests {
     use alloc::vec::Vec;
 
-    use ff::Field;
     use proptest::prelude::*;
-    use ragu_arithmetic::Cycle;
+    use ragu_arithmetic::{Cycle, ff::Field};
     use ragu_core::maybe::Maybe;
     use ragu_pasta::{Fp, Pasta};
     use ragu_primitives::{GadgetExt, Simulator};

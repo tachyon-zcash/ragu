@@ -1,6 +1,6 @@
 use group::CurveAffine;
 use ragu_pasta::{EpAffine, Fp};
-use ragu_primitives::Point;
+use ragu_primitives::{NonzeroBank, Point};
 
 use crate::{
     driver::ExtractionDriver,
@@ -24,8 +24,11 @@ impl CircuitInstance for PointDoubleAndAddIncompleteInstance {
         // Computes 2·self + other via the standard zcash trick: one div_nonzero
         // for λ₁ = (y_Q - y_P)/(x_Q - x_P), one square for λ₁², one div_nonzero
         // for (2y_P)/(x_P - x_r), one square for λ₂², one mul for
-        // λ₂·(x_P - x_s). Five gate-emitting subcircuits total.
-        let result = self_p.double_and_add_incomplete(dr, &other)?;
+        // λ₂·(x_P - x_s). Five gate-emitting subcircuits total. The bank's
+        // scope discharges both `x_P ≠ x_Q` and `x_P ≠ x_r` in-circuit.
+        let result = NonzeroBank::scope(dr, |dr, bank| {
+            self_p.double_and_add_incomplete(dr, &other, bank)
+        })?;
 
         WireCollector::collect_from(&result)
     }

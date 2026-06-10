@@ -35,6 +35,23 @@ What belongs in the book vs. rustdoc.
   the book is not meant to be a comprehensive API reference. Do not expand
   book snippets to include items just for completeness.
 
+## Describe behavior, not prohibitions the type already prevents
+
+- Do not warn against something the type already makes impossible. If the
+  signature, an argument type, or a wrapper leaves no way to misuse an item,
+  drop the "must not" wording and say what the item does. The only thing left
+  for the implementer to get right is the operation itself.
+- Describe the operation rather than listing forbidden steps. "Writes each
+  field in declaration order" is better than "must write every field and may do
+  nothing else."
+- When a type exists to enforce a rule, the type already states the rule.
+  Document the one operation it allows; do not repeat the guarantee as a duty
+  the implementer still owes. Restating it makes an already-intricate API look
+  harder than it is.
+- This sharpens the per-surface "API Contracts" rule (state the contract, not
+  the fallout of breaking it). That rule is about contracts the caller must
+  satisfy; a contract the type satisfies for them needs no prose at all.
+
 ## Don't write the same thing twice
 
 - For any given topic, decide which components belong on which surface. The
@@ -58,6 +75,30 @@ What belongs in the book vs. rustdoc.
   orientation to a module's concepts. If the existing prose is already
   concise, it is not "duplication" — it is the rustdoc doing its job for
   readers who never open the book.
+
+## Same topic, different register on each surface
+
+- Write a shared topic differently on each surface. The book speaks to the
+  reader and the path they are meant to take, with enough motivation to justify
+  it. Rustdoc speaks to whoever landed on an item and wants to know what it
+  does: local, exact, and complete for that item.
+- Decide what goes in the book by whether it is on the reader's path, not by
+  whether it is merely true. Implementer-only obligations, internal fallbacks,
+  and routes a typical reader should never take all fail that test — keep them
+  in rustdoc. A path the reader should not take is best left out of the guide,
+  or reduced to a one-line pointer to the recommended approach.
+- Rustdoc may name such a fallback, say why it exists, and point to the
+  preferred alternative; the reader is already at the item and should learn it
+  is not the default choice. The guide stays quiet, since it never sent the
+  reader there.
+- Put the reason something exists next to whatever needs it — often a different
+  type or trait than the one being described — and keep that as its only home.
+  Elsewhere, summarize and link rather than repeat.
+- Show users a finished abstraction. Do not describe internal in-between states
+  — an invariant that lapses for a moment, or a value in a temporary invalid
+  form — that the framework fixes before anyone can observe them. Do not
+  explain a function by the cleanup it does behind the scenes. Tell the reader
+  what holds, not how it is kept holding.
 
 ## Code changes; the book should not become redundant
 

@@ -7,7 +7,7 @@ use syn::{
 
 use crate::{
     helpers::{GenericDriver, attr_is},
-    path_resolution::RaguCorePath,
+    path_resolution::{RaguArithmeticPath, RaguCorePath},
     substitution::replace_driver_field_in_generic_param,
 };
 
@@ -56,7 +56,11 @@ impl GenericDriver {
     }
 }
 
-pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenStream> {
+pub fn derive(
+    input: DeriveInput,
+    ragu_arithmetic_path: RaguArithmeticPath,
+    ragu_core_path: RaguCorePath,
+) -> Result<TokenStream> {
     let DeriveInput {
         ident: struct_ident,
         generics,
@@ -181,12 +185,8 @@ pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenS
     };
 
     let equality_calls = fields.iter().filter_map(|(id, ty)| match ty {
-        FieldType::Wire => {
-            Some(quote! { #ragu_core_path::drivers::Driver::enforce_equal(dr, &a.#id, &b.#id)? })
-        }
-        FieldType::Gadget => {
-            Some(quote! { #ragu_core_path::gadgets::Gadget::enforce_equal(&a.#id, dr, &b.#id)? })
-        }
+        FieldType::Wire => Some(quote! { eq.enforce_conservative_equal(&a.#id, &b.#id)? }),
+        FieldType::Gadget => Some(quote! { eq.enforce_conservative_equal_gadget(&a.#id, &b.#id)? }),
         _ => None,
     });
 
@@ -217,7 +217,7 @@ pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenS
         for param in &mut params {
             replace_driver_field_in_generic_param(param, &driver.ident, &driverfield_ident);
         }
-        params.push(parse_quote!( #driverfield_ident: ::ff::Field ));
+        params.push(parse_quote!( #driverfield_ident: #ragu_arithmetic_path::ff::Field ));
 
         parse_quote!( < #( #params ),* >)
     };
@@ -269,8 +269,8 @@ pub fn derive(input: DeriveInput, ragu_core_path: RaguCorePath) -> Result<TokenS
                     })
                 }
 
-                fn enforce_equal_gadget<#driver_lifetime, D1: #ragu_core_path::drivers::Driver<#driver_lifetime, F = #driverfield_ident>, D2: #ragu_core_path::drivers::Driver<#driver_lifetime, F = #driverfield_ident, Wire = <D1 as #ragu_core_path::drivers::Driver<#driver_lifetime>>::Wire>>(
-                    dr: &mut D1,
+                fn enforce_conservative_equal_gadget<#driver_lifetime, D1: #ragu_core_path::drivers::Driver<#driver_lifetime, F = #driverfield_ident>, D2: #ragu_core_path::drivers::Driver<#driver_lifetime, F = #driverfield_ident, Wire = <D1 as #ragu_core_path::drivers::Driver<#driver_lifetime>>::Wire>>(
+                    eq: &mut #ragu_core_path::gadgets::WireEqualizer<'_, #driver_lifetime, D1>,
                     a: &#ragu_core_path::gadgets::Bound<#driver_lifetime, D2, Self>,
                     b: &#ragu_core_path::gadgets::Bound<#driver_lifetime, D2, Self>,
                 ) -> #ragu_core_path::Result<()> {
@@ -301,7 +301,12 @@ fn test_fail_enum() {
     };
 
     assert!(
-        derive(input, RaguCorePath::default()).is_err(),
+        derive(
+            input,
+            RaguArithmeticPath::default(),
+            RaguCorePath::default()
+        )
+        .is_err(),
         "Expected error for enum usage"
     );
 }
@@ -321,7 +326,12 @@ fn test_fail_where_clause() {
     };
 
     assert!(
-        derive(input, RaguCorePath::default()).is_err(),
+        derive(
+            input,
+            RaguArithmeticPath::default(),
+            RaguCorePath::default()
+        )
+        .is_err(),
         "Expected error for where clause"
     );
 }
@@ -340,7 +350,12 @@ fn test_fail_multi_annotations() {
     };
 
     assert!(
-        derive(input, RaguCorePath::default()).is_err(),
+        derive(
+            input,
+            RaguArithmeticPath::default(),
+            RaguCorePath::default()
+        )
+        .is_err(),
         "Expected error for multiple annotations on field"
     );
 }
@@ -357,7 +372,12 @@ fn test_fail_unnamed_struct() {
     };
 
     assert!(
-        derive(input, RaguCorePath::default()).is_err(),
+        derive(
+            input,
+            RaguArithmeticPath::default(),
+            RaguCorePath::default()
+        )
+        .is_err(),
         "Expected error for unnamed struct fields"
     );
 }
@@ -377,7 +397,7 @@ fn test_gadget_derive_boolean_customdriver() {
         }
     };
 
-    let result = derive(input, RaguCorePath::default()).unwrap();
+    let result = derive(input, RaguArithmeticPath::default(), RaguCorePath::default()).unwrap();
 
     assert_eq!(
         result.to_string(),
@@ -402,7 +422,7 @@ fn test_gadget_derive_boolean_customdriver() {
                     Boolean<'static, ::core::marker::PhantomData< <MyD as ::ragu_core::drivers::Driver<'my_dr> >::F> >;
             }
             #[automatically_derived]
-            unsafe impl<DriverField: ::ff::Field> ::ragu_core::gadgets::GadgetKind<DriverField>
+            unsafe impl<DriverField: ::ragu_arithmetic::ff::Field> ::ragu_core::gadgets::GadgetKind<DriverField>
                 for Boolean<'static, ::core::marker::PhantomData<DriverField> >
             {
                 type Rebind<'my_dr, MyD: ::ragu_core::drivers::Driver<'my_dr, F = DriverField>> =
@@ -429,7 +449,7 @@ fn test_gadget_derive_boolean_customdriver() {
                     })
                 }
 
-                fn enforce_equal_gadget<
+                fn enforce_conservative_equal_gadget<
                     'my_dr,
                     D1: ::ragu_core::drivers::Driver<'my_dr, F = DriverField>,
                     D2: ::ragu_core::drivers::Driver<
@@ -437,11 +457,11 @@ fn test_gadget_derive_boolean_customdriver() {
                             F = DriverField,
                             Wire = <D1 as ::ragu_core::drivers::Driver<'my_dr>>::Wire>>
                 (
-                    dr: &mut D1,
+                    eq: &mut ::ragu_core::gadgets::WireEqualizer<'_, 'my_dr, D1>,
                     a: &::ragu_core::gadgets::Bound<'my_dr, D2, Self>,
                     b: &::ragu_core::gadgets::Bound<'my_dr, D2, Self>,
                 ) -> ::ragu_core::Result<()> {
-                    ::ragu_core::drivers::Driver::enforce_equal(dr, &a.wire, &b.wire)?;
+                    eq.enforce_conservative_equal(&a.wire, &b.wire)?;
                     Ok(())
                 }
             }
@@ -468,7 +488,7 @@ fn test_gadget_derive() {
         }
     };
 
-    let result = derive(input, RaguCorePath::default()).unwrap();
+    let result = derive(input, RaguArithmeticPath::default(), RaguCorePath::default()).unwrap();
 
     assert_eq!(
         result.to_string(),
@@ -494,7 +514,7 @@ fn test_gadget_derive() {
             }
 
             #[automatically_derived]
-            unsafe impl<C: Blah<DriverField>, const N: usize, DriverField: ::ff::Field> ::ragu_core::gadgets::GadgetKind<DriverField>
+            unsafe impl<C: Blah<DriverField>, const N: usize, DriverField: ::ragu_arithmetic::ff::Field> ::ragu_core::gadgets::GadgetKind<DriverField>
                 for MyGadget<'static, ::core::marker::PhantomData< DriverField >, C, N>
             {
                 type Rebind<'mydr, MyD: ::ragu_core::drivers::Driver<'mydr, F = DriverField>> = MyGadget<'mydr, MyD, C, N>;
@@ -522,7 +542,7 @@ fn test_gadget_derive() {
                     })
                 }
 
-                fn enforce_equal_gadget<
+                fn enforce_conservative_equal_gadget<
                     'mydr,
                     D1: ::ragu_core::drivers::Driver<'mydr, F = DriverField>,
                     D2: ::ragu_core::drivers::Driver<
@@ -530,12 +550,12 @@ fn test_gadget_derive() {
                             F = DriverField,
                             Wire = <D1 as ::ragu_core::drivers::Driver<'mydr>>::Wire>>
                 (
-                    dr: &mut D1,
+                    eq: &mut ::ragu_core::gadgets::WireEqualizer<'_, 'mydr, D1>,
                     a: &::ragu_core::gadgets::Bound<'mydr, D2, Self>,
                     b: &::ragu_core::gadgets::Bound<'mydr, D2, Self>,
                 ) -> ::ragu_core::Result<()> {
-                    ::ragu_core::drivers::Driver::enforce_equal(dr, &a.wire_field, &b.wire_field)?;
-                    ::ragu_core::gadgets::Gadget::enforce_equal(&a.map_field, dr, &b.map_field)?;
+                    eq.enforce_conservative_equal(&a.wire_field, &b.wire_field)?;
+                    eq.enforce_conservative_equal_gadget(&a.map_field, &b.map_field)?;
                     Ok(())
                 }
             }
@@ -566,7 +586,7 @@ fn test_gadget_derive_default_gadget() {
         }
     };
 
-    let result = derive(input, RaguCorePath::default()).unwrap();
+    let result = derive(input, RaguArithmeticPath::default(), RaguCorePath::default()).unwrap();
 
     // Verify both field_a (no annotation) and field_b (explicit annotation) are treated as gadgets
     let result_str = result.to_string();
@@ -575,12 +595,18 @@ fn test_gadget_derive_default_gadget() {
     assert!(result_str.contains("Gadget :: map (& this . field_a"), "missing Gadget::map for field_a");
     assert!(result_str.contains("Gadget :: map (& this . field_b"), "missing Gadget::map for field_b");
 
-    // Both should call Gadget::enforce_equal
-    assert!(result_str.contains("Gadget :: enforce_equal (& a . field_a"), "missing enforce_equal for field_a");
-    assert!(result_str.contains("Gadget :: enforce_equal (& a . field_b"), "missing enforce_equal for field_b");
+    // Both should recurse via WireEqualizer::enforce_conservative_equal_gadget
+    assert!(
+        result_str.contains("eq . enforce_conservative_equal_gadget (& a . field_a"),
+        "missing enforce_conservative_equal_gadget for field_a"
+    );
+    assert!(
+        result_str.contains("eq . enforce_conservative_equal_gadget (& a . field_b"),
+        "missing enforce_conservative_equal_gadget for field_b"
+    );
 
-    // Wire should use Driver::enforce_equal
-    assert!(result_str.contains("Driver :: enforce_equal (dr , & a . wire_field"), "missing Driver::enforce_equal for wire_field");
+    // Wire should use the WireEqualizer adapter
+    assert!(result_str.contains("eq . enforce_conservative_equal (& a . wire_field"), "missing eq.enforce_conservative_equal for wire_field");
 
     // Wire should use WireMap::convert_wire
     assert!(result_str.contains("WireMap :: convert_wire (wm , & this . wire_field"), "missing WireMap::convert_wire");

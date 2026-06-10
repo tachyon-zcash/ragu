@@ -1,7 +1,7 @@
 use alloc::{vec, vec::Vec};
 
-use ff::Field;
 use proptest::prelude::*;
+use ragu_arithmetic::ff::Field;
 use ragu_pasta::Fp;
 
 use super::{Polynomial, View};
@@ -480,7 +480,7 @@ proptest! {
     fn sub_self_is_zero(poly in arb_any_poly()) {
         let mut result = poly.clone();
         result.sub_assign(&poly);
-        let x = Fp::random(&mut rand::rng());
+        let x = Fp::random(&mut ragu_arithmetic::rand::rng());
         prop_assert_eq!(result.eval(x), Fp::ZERO, "sub_assign(self) should yield zero");
     }
 
@@ -490,7 +490,7 @@ proptest! {
         negated.negate();
         let mut result = poly;
         result.add_assign(&negated);
-        let x = Fp::random(&mut rand::rng());
+        let x = Fp::random(&mut ragu_arithmetic::rand::rng());
         prop_assert_eq!(result.eval(x), Fp::ZERO, "add_assign(-self) should yield zero");
     }
 }
@@ -544,7 +544,9 @@ fn single_coefficient_at_degree_boundaries() {
 fn only_a_wire_data() {
     let n = R::n();
     let mut view = View::<_, R, _>::trace();
-    let a_vals: Vec<Fp> = (0..n).map(|_| Fp::random(&mut rand::rng())).collect();
+    let a_vals: Vec<Fp> = (0..n)
+        .map(|_| Fp::random(&mut ragu_arithmetic::rand::rng()))
+        .collect();
     view.a = a_vals.clone();
     let poly = view.build();
 
@@ -554,7 +556,7 @@ fn only_a_wire_data() {
     for (i, val) in a_vals.iter().enumerate() {
         expected[2 * n - 1 - i] = *val;
     }
-    let x = Fp::random(&mut rand::rng());
+    let x = Fp::random(&mut ragu_arithmetic::rand::rng());
     assert_eq!(poly.eval(x), ragu_arithmetic::eval(&expected, x));
 }
 
@@ -562,7 +564,9 @@ fn only_a_wire_data() {
 fn only_d_wire_data() {
     let n = R::n();
     let mut view = View::<_, R, _>::trace();
-    let d_vals: Vec<Fp> = (0..n).map(|_| Fp::random(&mut rand::rng())).collect();
+    let d_vals: Vec<Fp> = (0..n)
+        .map(|_| Fp::random(&mut ragu_arithmetic::rand::rng()))
+        .collect();
     view.d = d_vals.clone();
     let poly = view.build();
 
@@ -571,7 +575,7 @@ fn only_d_wire_data() {
     for (i, val) in d_vals.iter().enumerate() {
         expected[4 * n - 1 - i] = *val;
     }
-    let x = Fp::random(&mut rand::rng());
+    let x = Fp::random(&mut ragu_arithmetic::rand::rng());
     assert_eq!(poly.eval(x), ragu_arithmetic::eval(&expected, x));
 }
 
@@ -584,14 +588,14 @@ fn alloc_optimization_pattern() {
     for i in 0..n {
         if i % 10 == 0 {
             // Alloc gate: a is non-zero, b=c=0, d is non-zero.
-            view.a.push(Fp::random(&mut rand::rng()));
+            view.a.push(Fp::random(&mut ragu_arithmetic::rand::rng()));
             view.b.push(Fp::ZERO);
             view.c.push(Fp::ZERO);
-            view.d.push(Fp::random(&mut rand::rng()));
+            view.d.push(Fp::random(&mut ragu_arithmetic::rand::rng()));
         } else {
             // Mul gate: a,b,c non-zero, d=0.
-            let a = Fp::random(&mut rand::rng());
-            let b = Fp::random(&mut rand::rng());
+            let a = Fp::random(&mut ragu_arithmetic::rand::rng());
+            let b = Fp::random(&mut ragu_arithmetic::rand::rng());
             view.a.push(a);
             view.b.push(b);
             view.c.push(a * b);
@@ -602,7 +606,7 @@ fn alloc_optimization_pattern() {
 
     // Verify eval consistency.
     let dense = poly.to_dense();
-    let x = Fp::random(&mut rand::rng());
+    let x = Fp::random(&mut ragu_arithmetic::rand::rng());
     assert_eq!(poly.eval(x), ragu_arithmetic::eval(&dense, x));
 
     // The d-wire region should be sparse (few non-zero entries).
@@ -672,8 +676,8 @@ fn iter_coeffs_fully_drain_both_ends() {
 fn product_identity() {
     let mut view = View::<_, R, _>::trace();
     for _ in 0..R::n() {
-        let a = Fp::random(&mut rand::rng());
-        let b = Fp::random(&mut rand::rng());
+        let a = Fp::random(&mut ragu_arithmetic::rand::rng());
+        let b = Fp::random(&mut ragu_arithmetic::rand::rng());
         view.a.push(a);
         view.b.push(b);
         view.c.push(a * b);
@@ -681,7 +685,7 @@ fn product_identity() {
     let rx = view.build();
 
     let mut rzx = rx.clone();
-    let z = Fp::random(&mut rand::rng());
+    let z = Fp::random(&mut ragu_arithmetic::rand::rng());
     rzx.dilate(z);
     rzx.add_assign(&R::tz::<Fp>(z));
 
@@ -692,7 +696,7 @@ fn product_identity() {
 /// followed by IFFT, equals the polynomial of diagonal revdot products.
 #[test]
 fn ring_convolution() {
-    let rand_poly = || Polynomial::<Fp, R>::random(&mut rand::rng());
+    let rand_poly = || Polynomial::<Fp, R>::random(&mut ragu_arithmetic::rand::rng());
 
     let little = ragu_arithmetic::Domain::<Fp>::new(2);
     let big = ragu_arithmetic::Domain::<Fp>::new(3);
@@ -723,7 +727,7 @@ fn ring_convolution() {
 
     big.ifft(&mut big_c);
 
-    let x = Fp::random(&mut rand::rng());
+    let x = Fp::random(&mut ragu_arithmetic::rand::rng());
 
     let mut cur = Fp::ONE;
     let mut a = Polynomial::<Fp, R>::new();

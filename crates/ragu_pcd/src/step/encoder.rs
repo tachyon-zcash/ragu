@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use ff::PrimeField;
+use ragu_arithmetic::ff::PrimeField;
 use ragu_core::{
     Result,
     drivers::{

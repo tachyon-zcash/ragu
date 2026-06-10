@@ -21,8 +21,10 @@
 
 use alloc::boxed::Box;
 
-use ff::{Field, FromUniformBytes};
-use ragu_arithmetic::Coeff;
+use ragu_arithmetic::{
+    Coeff,
+    ff::{Field, FromUniformBytes},
+};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverTypes, LinearExpression},
@@ -269,7 +271,7 @@ impl<F: Field, R: Rank> WiringObject<F, R> for Stripped<'_, F, R> {
 mod tests {
     use core::marker::PhantomData;
 
-    use ff::Field;
+    use ragu_arithmetic::ff::Field;
     use ragu_core::{
         drivers::DriverValue,
         gadgets::{Bound, Gadget},
@@ -590,8 +592,8 @@ mod tests {
         let obj = bonding_obj();
         let floor_plan = floor_planner::floor_plan(obj.segment_records());
 
-        let x = Fp::random(&mut rand::rng());
-        let y = Fp::random(&mut rand::rng());
+        let x = Fp::random(&mut ragu_arithmetic::rand::rng());
+        let y = Fp::random(&mut ragu_arithmetic::rand::rng());
 
         // s(0, y) = 0: no constraint on d_0 wires.
         assert_eq!(obj.sxy(Fp::ZERO, y, &floor_plan), Fp::ZERO);
@@ -605,8 +607,8 @@ mod tests {
         let obj = bonding_obj();
         let floor_plan = floor_planner::floor_plan(obj.segment_records());
 
-        let x = Fp::random(&mut rand::rng());
-        let y = Fp::random(&mut rand::rng());
+        let x = Fp::random(&mut ragu_arithmetic::rand::rng());
+        let y = Fp::random(&mut ragu_arithmetic::rand::rng());
 
         let sxy = obj.sxy(x, y, &floor_plan);
         assert_eq!(sxy, obj.sx(x, &floor_plan).eval(y));
@@ -638,11 +640,11 @@ mod tests {
         let obj = bonding_obj();
         let floor_plan = floor_planner::floor_plan(obj.segment_records());
 
-        let y = Fp::random(&mut rand::rng());
+        let y = Fp::random(&mut ragu_arithmetic::rand::rng());
         let sy = obj.sy(y, &floor_plan);
 
-        let v = Fp::random(&mut rand::rng());
-        let w = Fp::random(&mut rand::rng());
+        let v = Fp::random(&mut ragu_arithmetic::rand::rng());
+        let w = Fp::random(&mut ragu_arithmetic::rand::rng());
 
         let rx_equal = build_trace(&[(v, v)]);
         assert_eq!(rx_equal.revdot(&sy), Fp::ZERO);
@@ -660,8 +662,8 @@ mod tests {
             .unwrap()
             .into_inner();
         let floor_plan = floor_planner::floor_plan(obj.segment_records());
-        let x = Fp::random(&mut rand::rng());
-        let y = Fp::random(&mut rand::rng());
+        let x = Fp::random(&mut ragu_arithmetic::rand::rng());
+        let y = Fp::random(&mut ragu_arithmetic::rand::rng());
 
         assert_eq!(obj.sxy(Fp::ZERO, y, &floor_plan), Fp::ZERO);
         assert_eq!(obj.sxy(x, Fp::ZERO, &floor_plan), Fp::ZERO);
@@ -670,7 +672,10 @@ mod tests {
         assert_eq!(sxy, obj.sx(x, &floor_plan).eval(y));
         assert_eq!(sxy, obj.sy(y, &floor_plan).eval(x));
 
-        let rx = build_trace(&[(Fp::random(&mut rand::rng()), Fp::random(&mut rand::rng()))]);
+        let rx = build_trace(&[(
+            Fp::random(&mut ragu_arithmetic::rand::rng()),
+            Fp::random(&mut ragu_arithmetic::rand::rng()),
+        )]);
         assert_eq!(rx.revdot(&obj.sy(y, &floor_plan)), Fp::ZERO);
     }
 }

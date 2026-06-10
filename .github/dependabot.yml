@@ -1,0 +1,61 @@
+version: 2
+updates:
+  # GitHub Actions used by .github/workflows/** and .github/actions/**.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    # Cooldown delays adoption of fresh releases — the window when a
+    # compromised dependency is most likely to slip through. See:
+    # https://astral.sh/blog/open-source-security-at-astral#dependency-security
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+    groups:
+      actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - dependencies
+      - ci
+
+  # Main Cargo workspace (crates/** and qa/crates/lean_extraction).
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+    groups:
+      cargo:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "deps"
+    labels:
+      - dependencies
+      - rust
+
+  # Separate Cargo workspace for fuzz harnesses (qa/fuzz/) — pins
+  # nightly-only deps like libfuzzer-sys and arbitrary that the main
+  # workspace doesn't touch.
+  - package-ecosystem: cargo
+    directory: /qa/fuzz
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+    groups:
+      cargo-fuzz:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "deps(fuzz)"
+    labels:
+      - dependencies
+      - rust
+      - fuzz

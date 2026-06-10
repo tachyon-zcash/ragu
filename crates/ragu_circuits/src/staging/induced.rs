@@ -33,7 +33,7 @@
 
 use alloc::{boxed::Box, vec::Vec};
 
-use ff::Field;
+use ragu_arithmetic::ff::Field;
 use ragu_core::Result;
 
 use super::mask::StageMask;
@@ -163,7 +163,7 @@ impl InducedStages {
 mod tests {
     use core::marker::PhantomData;
 
-    use ff::Field;
+    use ragu_arithmetic::ff::Field;
     use ragu_core::{
         drivers::{Driver, DriverValue},
         gadgets::{Bound, Gadget},

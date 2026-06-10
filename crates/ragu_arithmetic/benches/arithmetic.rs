@@ -3,8 +3,11 @@ mod setup;
 use std::hint::black_box;
 
 use gungraun::{library_benchmark, library_benchmark_group, main};
-use pasta_curves::{EpAffine, Fp, Fq};
-use ragu_arithmetic::{Domain, dot, eval, factor, geosum, mul, poly_with_roots};
+use ragu_arithmetic::{
+    Domain, dot, eval, factor, geosum, mul,
+    pasta_curves::{EpAffine, Fp, Fq},
+    poly_with_roots,
+};
 use setup::{f, setup_domain_ell, setup_domain_fft, setup_rng, setup_with_rng, vec_affine, vec_f};
 
 #[library_benchmark(setup = setup_rng)]

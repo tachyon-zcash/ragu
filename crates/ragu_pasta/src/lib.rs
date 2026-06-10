@@ -43,9 +43,9 @@ mod poseidon_fp;
 mod poseidon_fq;
 
 pub use common::{PallasGenerators, PastaParams, VestaGenerators};
-pub use pasta_curves::{Ep, EpAffine, Eq, EqAffine, Fp, Fq};
 pub use poseidon_fp::PoseidonFp;
 pub use poseidon_fq::PoseidonFq;
+pub use ragu_arithmetic::pasta_curves::{Ep, EpAffine, Eq, EqAffine, Fp, Fq};
 use ragu_arithmetic::{Cycle, FixedGenerators};
 
 /// Zero-sized marker type for the [Pasta
@@ -59,10 +59,10 @@ use ragu_arithmetic::{Cycle, FixedGenerators};
 pub struct Pasta;
 
 impl Cycle for Pasta {
-    type CircuitField = pasta_curves::Fp;
-    type ScalarField = pasta_curves::Fq;
-    type NestedCurve = pasta_curves::EpAffine;
-    type HostCurve = pasta_curves::EqAffine;
+    type CircuitField = ragu_arithmetic::pasta_curves::Fp;
+    type ScalarField = ragu_arithmetic::pasta_curves::Fq;
+    type NestedCurve = ragu_arithmetic::pasta_curves::EpAffine;
+    type HostCurve = ragu_arithmetic::pasta_curves::EqAffine;
 
     type HostGenerators = VestaGenerators;
     type NestedGenerators = PallasGenerators;
@@ -93,22 +93,22 @@ impl Cycle for Pasta {
     }
 }
 
-impl FixedGenerators<pasta_curves::EpAffine> for PallasGenerators {
-    fn g(&self) -> &[pasta_curves::EpAffine] {
+impl FixedGenerators<ragu_arithmetic::pasta_curves::EpAffine> for PallasGenerators {
+    fn g(&self) -> &[ragu_arithmetic::pasta_curves::EpAffine] {
         &self.g
     }
 
-    fn h(&self) -> &pasta_curves::EpAffine {
+    fn h(&self) -> &ragu_arithmetic::pasta_curves::EpAffine {
         &self.h
     }
 }
 
-impl FixedGenerators<pasta_curves::EqAffine> for VestaGenerators {
-    fn g(&self) -> &[pasta_curves::EqAffine] {
+impl FixedGenerators<ragu_arithmetic::pasta_curves::EqAffine> for VestaGenerators {
+    fn g(&self) -> &[ragu_arithmetic::pasta_curves::EqAffine] {
         &self.g
     }
 
-    fn h(&self) -> &pasta_curves::EqAffine {
+    fn h(&self) -> &ragu_arithmetic::pasta_curves::EqAffine {
         &self.h
     }
 }
@@ -117,9 +117,8 @@ impl FixedGenerators<pasta_curves::EqAffine> for VestaGenerators {
 mod baked {
     use alloc::vec::Vec;
 
-    use ff::PrimeField;
     use lazy_static::lazy_static;
-    use pasta_curves::arithmetic::CurveAffine;
+    use ragu_arithmetic::{ff::PrimeField, pasta_curves::arithmetic::CurveAffine};
 
     use super::{PallasGenerators, Pasta, PastaParams, VestaGenerators};
 

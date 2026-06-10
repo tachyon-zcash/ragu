@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use ff::{Field, PrimeField};
+use ragu_arithmetic::ff::{Field, PrimeField};
 use ragu_core::{
     Result,
     drivers::Driver,

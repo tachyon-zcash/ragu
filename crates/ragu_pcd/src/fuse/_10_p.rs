@@ -14,8 +14,7 @@
 use alloc::vec::Vec;
 use core::ops::AddAssign;
 
-use ff::Field;
-use ragu_arithmetic::Cycle;
+use ragu_arithmetic::{Cycle, ff::Field};
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::{Element, extract_endoscalar, lift_endoscalar};
@@ -49,7 +48,7 @@ impl<C: Cycle, R: Rank> Accumulator<'_, C, R> {
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
-    pub(super) fn compute_p<'dr, D, RNG: rand::CryptoRng>(
+    pub(super) fn compute_p<'dr, D, RNG: ragu_arithmetic::CryptoRngCore>(
         &self,
         rng: &mut RNG,
         pre_beta: &Element<'dr, D>,

@@ -14,8 +14,8 @@
 
 mod pipe;
 
-use ff::Field;
 pub use pipe::Pipe;
+use ragu_arithmetic::ff::Field;
 use ragu_core::{
     Result,
     drivers::Driver,

@@ -62,8 +62,7 @@
 use alloc::{vec, vec::Vec};
 use core::cell::{RefCell, RefMut};
 
-use ff::Field;
-use ragu_arithmetic::Coeff;
+use ragu_arithmetic::{Coeff, ff::Field};
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverTypes, LinearExpression, emulator::Emulator},

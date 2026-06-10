@@ -1,12 +1,14 @@
 use alloc::{boxed::Box, vec, vec::Vec};
 
-use ff::{Field, PrimeField};
-use pasta_curves::{
-    arithmetic::CurveAffine,
-    group::{Curve, Group},
+use crate::{
+    domain::Domain,
+    ff::{Field, PrimeField},
+    multicore::*,
+    pasta_curves::{
+        arithmetic::CurveAffine,
+        group::{Curve, Group},
+    },
 };
-
-use crate::{domain::Domain, multicore::*};
 
 /// Returns the low 64 bits of a [`PrimeField`] element's canonical
 /// little-endian representation.
@@ -478,12 +480,11 @@ pub fn poly_with_roots<F: PrimeField>(roots: &[F]) -> Vec<F> {
 
 #[cfg(test)]
 mod poly_with_roots_tests {
-    use ff::Field;
-    use pasta_curves::Fp as F;
     use proptest::prelude::*;
     use ragu_testing::strategies;
 
     use super::*;
+    use crate::{ff::Field, pasta_curves::Fp as F};
 
     fn check(roots: &[F]) -> Result<(), TestCaseError> {
         let poly = poly_with_roots(roots);
@@ -523,7 +524,7 @@ mod poly_with_roots_tests {
 
 #[test]
 fn test_poly_with_roots() {
-    use pasta_curves::Fp as F;
+    use crate::pasta_curves::Fp as F;
 
     let roots = vec![F::from(1), F::from(2), F::from(3)];
     let poly = poly_with_roots(&roots);
@@ -545,11 +546,13 @@ fn test_poly_with_roots() {
 
 #[cfg(test)]
 mod proptests {
-    use ff::{Field, PrimeField};
-    use pasta_curves::Fp as F;
     use proptest::prelude::*;
 
     use super::*;
+    use crate::{
+        ff::{Field, PrimeField},
+        pasta_curves::Fp as F,
+    };
 
     fn arb_fe() -> impl Strategy<Value = F> {
         (any::<u64>(), any::<u64>())
@@ -740,31 +743,34 @@ mod proptests {
 
 #[test]
 fn test_mul() {
-    use pasta_curves::group::{Curve, CurveAffine};
+    use crate::pasta_curves::group::{Curve, CurveAffine};
 
     let mut coeffs = vec![];
     for i in 0..1000 {
-        coeffs.push(pasta_curves::Fp::from(i) * pasta_curves::Fp::MULTIPLICATIVE_GENERATOR);
+        coeffs.push(
+            crate::pasta_curves::Fp::from(i) * crate::pasta_curves::Fp::MULTIPLICATIVE_GENERATOR,
+        );
     }
 
     let mut bases = vec![];
     for i in 0..1000 {
-        bases.push((pasta_curves::EqAffine::generator() * pasta_curves::Fp::from(i)).to_affine());
+        bases.push(
+            (crate::pasta_curves::EqAffine::generator() * crate::pasta_curves::Fp::from(i))
+                .to_affine(),
+        );
     }
 
-    let expected = coeffs
-        .iter()
-        .zip(bases.iter())
-        .fold(pasta_curves::Eq::identity(), |acc, (scalar, point)| {
-            acc + point * scalar
-        });
+    let expected = coeffs.iter().zip(bases.iter()).fold(
+        crate::pasta_curves::Eq::identity(),
+        |acc, (scalar, point)| acc + point * scalar,
+    );
 
     assert_eq!(mul(coeffs.iter(), bases.iter()), expected);
 }
 
 #[test]
 fn test_dot() {
-    use pasta_curves::Fp as F;
+    use crate::pasta_curves::Fp as F;
 
     let powers = [
         F::ONE,
@@ -783,7 +789,7 @@ fn test_dot() {
 
 #[test]
 fn test_factor() {
-    use pasta_curves::Fp as F;
+    use crate::pasta_curves::Fp as F;
 
     let poly = vec![
         F::DELTA,
@@ -803,7 +809,7 @@ fn test_factor() {
 
 #[test]
 fn test_geosum() {
-    use pasta_curves::Fp as F;
+    use crate::pasta_curves::Fp as F;
 
     fn geosum_slow<F: Field>(r: F, m: usize) -> F {
         let mut sum = F::ZERO;
@@ -825,8 +831,7 @@ fn test_geosum() {
 
 #[test]
 fn test_batched_quotient_streaming() {
-    use ff::Field;
-    use pasta_curves::Fp as F;
+    use crate::{ff::Field, pasta_curves::Fp as F};
 
     let polys: Vec<Vec<F>> = vec![
         vec![F::from(1), F::from(2), F::from(3), F::from(4)],

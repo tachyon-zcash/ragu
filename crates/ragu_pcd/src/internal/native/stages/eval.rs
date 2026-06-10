@@ -18,8 +18,7 @@
 
 use core::marker::PhantomData;
 
-use ff::PrimeField;
-use ragu_arithmetic::Cycle;
+use ragu_arithmetic::{Cycle, ff::PrimeField};
 use ragu_circuits::{polynomials::Rank, staging};
 use ragu_core::{
     Result,

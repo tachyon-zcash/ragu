@@ -26,7 +26,7 @@
 //! - double == add self:     `Element::double(a) == a + a`
 //! - square == mul self:     `Element::square(a) == a * a`
 //! - distributivity:         `a * (b + 1) == a * b + a`
-//! - div_nonzero round-trip: `(a / b) * b == a` (when `b != 0`)
+//! - divide round-trip:      `(a / b) * b == a` (when `b != 0`)
 //! - scale identities:       `scale(a, 1) == a`, `scale(a, 0) == 0`,
 //!                           `scale(a, 2) == double(a)`
 //! - alloc_square:           `let (r, s) = alloc_square(a*a); r*r == s`
@@ -261,14 +261,15 @@ fuzz_target!(|input: Input| {
             b_val,
         );
 
-        // div_nonzero round-trip: (a / b) * b == a, when b != 0
+        // divide round-trip: (a / b) * b == a, when b != 0
         if b_val != Fp::ZERO {
-            let a_over_b = a.div_nonzero(dr, &b)?;
+            let b_nz = b.clone().enforce_nonzero(dr)?;
+            let a_over_b = a.divide(dr, &b_nz)?;
             let recovered = a_over_b.mul(dr, &b)?;
             assert_eq!(
                 *recovered.value().take(),
                 a_val,
-                "div_nonzero round-trip failed: (a / b) * b != a, a={:?} b={:?}",
+                "divide round-trip failed: (a / b) * b != a, a={:?} b={:?}",
                 a_val,
                 b_val,
             );

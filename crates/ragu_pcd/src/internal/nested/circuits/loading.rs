@@ -26,10 +26,10 @@ use ragu_circuits::{
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Bound, Gadget},
+    gadgets::Bound,
     maybe::Maybe,
 };
-use ragu_primitives::Point;
+use ragu_primitives::{GadgetExt as _, Point};
 
 use crate::internal::{
     endoscalar::{EndoscalarStage, Points, PointsStage},

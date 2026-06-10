@@ -3,7 +3,7 @@
 mod identity;
 mod segment_order;
 
-use ff::Field;
+use ragu_arithmetic::ff::Field;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue, LinearExpression},
@@ -56,8 +56,8 @@ impl Circuit<Fp> for SquareCircuit {
 }
 
 fn consistency_checks<R: Rank>(obj: &dyn WiringObject<Fp, R>) {
-    let x = Fp::random(&mut rand::rng());
-    let y = Fp::random(&mut rand::rng());
+    let x = Fp::random(&mut ragu_arithmetic::rand::rng());
+    let y = Fp::random(&mut ragu_arithmetic::rand::rng());
     let plan = floor_planner::floor_plan(obj.segment_records());
 
     let sxy_eval = obj.sxy(x, y, &plan);
@@ -155,8 +155,8 @@ fn test_simple_circuit() {
 
     consistency_checks::<MyRank>(&*obj);
 
-    let y = Fp::random(&mut rand::rng());
-    let z = Fp::random(&mut rand::rng());
+    let y = Fp::random(&mut ragu_arithmetic::rand::rng());
+    let z = Fp::random(&mut ragu_arithmetic::rand::rng());
 
     let a = assignment.clone();
     let mut b = assignment.clone();

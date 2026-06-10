@@ -6,8 +6,7 @@
 //! the $k(Y)$ evaluations for the child proofs, as well as the temporary sponge
 //! state used to split the hashing operations across two circuits.
 
-use ff::Field;
-use ragu_arithmetic::Cycle;
+use ragu_arithmetic::{CryptoRngCore, Cycle, ff::Field};
 use ragu_circuits::{
     polynomials::{Rank, sparse},
     staging::{Stage as StageTrait, StageExt},
@@ -18,7 +17,6 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{Element, vec::FixedVec};
-use rand::CryptoRng;
 
 use super::claims::{FoldKey, FuseBuilder, TrackedPoly};
 use crate::{
@@ -33,7 +31,7 @@ use crate::{
 type NativeNumGroups = <native::RevdotParameters as fold_revdot::Parameters>::NumGroups;
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
-    pub(super) fn outer_error_terms<'dr, 'rx, D, RNG: CryptoRng>(
+    pub(super) fn outer_error_terms<'dr, 'rx, D, RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
         preamble_witness: &native::stages::preamble::Witness<'_, C, R, HEADER_SIZE>,
@@ -153,7 +151,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         Ok((outer_error_witness, a, b))
     }
 
-    fn compute_native_outer_error<RNG: CryptoRng>(
+    fn compute_native_outer_error<RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
         outer_error_witness: &native::stages::outer_error::Witness<C, native::RevdotParameters>,

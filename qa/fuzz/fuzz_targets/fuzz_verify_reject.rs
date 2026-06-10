@@ -12,7 +12,7 @@ use libfuzzer_sys::fuzz_target;
 use pasta_curves::Fp;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_pasta::Pasta;
-use ragu_pcd::{ApplicationBuilder, fuzz_utils::Corruption};
+use ragu_pcd::{ApplicationBuilder, Proof, fuzz_utils::Corruption};
 use rand::{SeedableRng, rngs::StdRng};
 
 use std::sync::LazyLock;
@@ -21,10 +21,18 @@ type C = Pasta;
 type R = ProductionRank;
 const HEADER_SIZE: usize = 4;
 
-/// Wrapper to satisfy `Sync` for `Application` (which contains `OnceCell`).
-/// Safe because libfuzzer is single-threaded.
+/// Wrapper to satisfy `Sync` for `Application` (which contains a
+/// `OnceCell` field — `seeded_trivial` — for memoizing the trivial-proof
+/// fixture, breaking auto-`Sync`).
 struct SyncApp(ragu_pcd::Application<'static, C, R, HEADER_SIZE>);
-// SAFETY: libfuzzer runs the fuzz target on a single thread.
+// SAFETY: this fuzz body invokes `Application` exclusively through
+// `app.test_trivial_proof()` (which only reads from the application,
+// initializing `seeded_trivial` on the first call and reading it
+// thereafter) and `verify(&proof)` (which takes `&Application` and never
+// touches `seeded_trivial`). libfuzzer drives `fuzz_target!` on a single
+// thread, so even the `OnceCell` initialization on the very first call
+// is uncontended. If this target ever grows to spawn worker threads or
+// to mutate `Application` state, the assumption must be revisited.
 unsafe impl Sync for SyncApp {}
 
 static APP: LazyLock<SyncApp> = LazyLock::new(|| {
@@ -35,6 +43,14 @@ static APP: LazyLock<SyncApp> = LazyLock::new(|| {
             .expect("failed to create application"),
     )
 });
+
+/// Cached trivial proof. Building one runs the full endoscaling pipeline
+/// (hundreds of ms per call), but the result is deterministic from
+/// `&APP.0`. Cloning the cached value is ~10000x faster than rebuilding,
+/// so per-input work clones, corrupts, and verifies — turning the
+/// fuzz_verify_reject hot path into clone + corrupt + verify rather than
+/// build + corrupt + verify.
+static TRIVIAL_PROOF: LazyLock<Proof<C, R>> = LazyLock::new(|| APP.0.test_trivial_proof());
 
 #[derive(Arbitrary, Debug)]
 enum FuzzCorruption {
@@ -64,7 +80,7 @@ fuzz_target!(|input: Input| {
     }
     let app = &APP.0;
 
-    let mut proof = app.test_trivial_proof();
+    let mut proof = TRIVIAL_PROOF.clone();
 
     let corruption = match input.corruption {
         FuzzCorruption::PBlind(v) => Corruption::PBlind(Fp::from(v)),

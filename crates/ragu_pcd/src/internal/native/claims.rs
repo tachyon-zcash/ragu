@@ -13,7 +13,7 @@
 use alloc::borrow::Cow;
 use core::iter::{once, repeat_n};
 
-use ff::PrimeField;
+use ragu_arithmetic::ff::PrimeField;
 use ragu_circuits::{
     polynomials::{Rank, sparse},
     registry::CircuitIndex,

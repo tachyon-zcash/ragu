@@ -40,15 +40,34 @@ use pasta_curves::Fp;
 use pasta_curves::arithmetic::CurveAffine;
 use ragu_core::maybe::Maybe;
 use ragu_pasta::{EpAffine, Fq};
-use ragu_primitives::{Boolean, Point, Simulator, allocator::Standard};
+use ragu_primitives::{Boolean, NonzeroBank, Point, Simulator, allocator::Standard};
 
-/// Get a non-trivial curve point by multiplying generator by a scalar.
-fn point_from_seed(seed: u64) -> EpAffine {
-    if seed == 0 {
-        EpAffine::generator()
-    } else {
-        (EpAffine::generator() * Fq::from(seed)).to_affine()
+use std::sync::LazyLock;
+
+/// Precomputed table of non-identity Pallas points.
+///
+/// Replaces per-input `EpAffine::generator() * Fq::from(seed)` (~50µs
+/// each) with a 64-point modular lookup. The point-identity tests
+/// (negate involution, endo cube, conditional_*, add commutativity,
+/// double-and-add) exercise *algebraic gadget paths*, not point-shape
+/// coverage — 64 distinct on-curve points is enough to hit every gadget
+/// branch the test probes. The pair (`p_seed`, `q_seed`) still controls
+/// whether `p` and `q` collide on x (skipped via existing distinctness
+/// guard) and whether `2P` and `Q` collide on x (existing skip guard).
+const POINT_TABLE_LEN: usize = 64;
+static POINT_TABLE: LazyLock<[EpAffine; POINT_TABLE_LEN]> = LazyLock::new(|| {
+    let mut points = [EpAffine::generator(); POINT_TABLE_LEN];
+    for (i, p) in points.iter_mut().enumerate() {
+        if i > 0 {
+            *p = (EpAffine::generator() * Fq::from(i as u64)).to_affine();
+        }
     }
+    points
+});
+
+/// Get a non-trivial curve point from a fuzzer-supplied seed.
+fn point_from_seed(seed: u64) -> EpAffine {
+    POINT_TABLE[(seed as usize) % POINT_TABLE_LEN]
 }
 
 /// Native negation of an EpAffine point.
@@ -184,8 +203,8 @@ fuzz_target!(|input: Input| {
 
         // add_incomplete commutativity: P + Q == Q + P, both equal native sum
         let expected_sum = native_add(p, q);
-        let sum_pq = p_pt.add_incomplete(dr, &q_pt, None)?;
-        let sum_qp = q_pt.add_incomplete(dr, &p_pt, None)?;
+        let sum_pq = NonzeroBank::scope(dr, |dr, bank| p_pt.add_incomplete(dr, &q_pt, bank))?;
+        let sum_qp = NonzeroBank::scope(dr, |dr, bank| q_pt.add_incomplete(dr, &p_pt, bank))?;
         assert_eq!(
             sum_pq.value().take(),
             expected_sum,
@@ -203,10 +222,12 @@ fuzz_target!(|input: Input| {
 
         // double_and_add_incomplete: P.dna(Q) computes 2*P + Q.
         // Skip when 2*P and Q share an x-coordinate (would make the
-        // inner add_incomplete's div_nonzero fail).
+        // inner add_incomplete's divide fail).
         let q_x = *q_coords.x();
         if p_doubled_x != q_x {
-            let dna = p_pt.double_and_add_incomplete(dr, &q_pt)?;
+            let dna = NonzeroBank::scope(dr, |dr, bank| {
+                p_pt.double_and_add_incomplete(dr, &q_pt, bank)
+            })?;
             let expected_dna = native_add(p_doubled, q);
             assert_eq!(
                 dna.value().take(),
@@ -218,7 +239,9 @@ fuzz_target!(|input: Input| {
 
             // Also verify it matches the slower equivalent:
             //   P.double().add_incomplete(Q) == P.dna(Q)
-            let slow_path = p_pt.double(dr)?.add_incomplete(dr, &q_pt, None)?;
+            let slow_path = NonzeroBank::scope(dr, |dr, bank| {
+                p_pt.double(dr)?.add_incomplete(dr, &q_pt, bank)
+            })?;
             assert_eq!(
                 slow_path.value().take(),
                 dna.value().take(),

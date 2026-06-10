@@ -22,9 +22,11 @@ use pasta_curves::Fp;
 use ragu_core::maybe::Maybe;
 use ragu_pasta::{EpAffine, Fq};
 use ragu_primitives::{
-    Boolean, Element, Endoscalar, Point, Simulator, allocator::Standard, extract_endoscalar,
-    lift_endoscalar,
+    Boolean, Element, Endoscalar, NonzeroBank, Point, Simulator, allocator::Standard,
+    extract_endoscalar, lift_endoscalar,
 };
+
+use std::sync::LazyLock;
 
 /// Edge-case field elements that trigger boundary conditions.
 fn special_scalar(idx: u8) -> Fp {
@@ -42,14 +44,30 @@ fn special_scalar(idx: u8) -> Fp {
     }
 }
 
-/// Get a non-trivial curve point by multiplying generator by a scalar.
-fn point_from_seed(seed: u64) -> EpAffine {
-    if seed == 0 {
-        // Use generator directly (seed=0 would give identity)
-        EpAffine::generator()
-    } else {
-        (EpAffine::generator() * Fq::from(seed)).to_affine()
+/// Precomputed table of non-identity Pallas points.
+///
+/// The native scalar mul `EpAffine::generator() * Fq::from(seed)` runs
+/// twice per input (for `p` and `p2`), ~50µs each. Endo/group_scale
+/// gadget paths are point-shape independent — they exercise the same
+/// window pattern for any on-curve point — so collapsing the u64 seed
+/// space onto a 64-point table doesn't lose meaningful coverage. The
+/// dominant native cost on this target is the third scalar mul
+/// `(p * expected_scalar).to_affine()` over a 256-bit Fq, which we
+/// cannot precompute (depends on the fuzzer-chosen scalar).
+const POINT_TABLE_LEN: usize = 64;
+static POINT_TABLE: LazyLock<[EpAffine; POINT_TABLE_LEN]> = LazyLock::new(|| {
+    let mut points = [EpAffine::generator(); POINT_TABLE_LEN];
+    for (i, p) in points.iter_mut().enumerate() {
+        if i > 0 {
+            *p = (EpAffine::generator() * Fq::from(i as u64)).to_affine();
+        }
     }
+    points
+});
+
+/// Get a non-trivial curve point from a fuzzer-supplied seed.
+fn point_from_seed(seed: u64) -> EpAffine {
+    POINT_TABLE[(seed as usize) % POINT_TABLE_LEN]
 }
 
 #[derive(Arbitrary, Debug, Clone, Copy)]
@@ -219,7 +237,7 @@ fuzz_target!(|input: Input| {
         let p2_coords = p2.coordinates().unwrap();
         if p_coords.x() != p2_coords.x() {
             let p_again = Point::<'_, _, EpAffine>::constant(dr, p)?;
-            let sum = p_again.add_incomplete(dr, &q, None)?;
+            let sum = NonzeroBank::scope(dr, |dr, bank| p_again.add_incomplete(dr, &q, bank))?;
             let expected_sum: EpAffine = (p.to_curve() + p2.to_curve()).to_affine();
             assert_eq!(
                 sum.value().take(),

@@ -23,6 +23,7 @@ use crate::instances::{
     element_alloc::ElementAllocInstance,
     element_alloc_square::ElementAllocSquareInstance,
     element_div_nonzero::ElementDivNonzeroInstance,
+    element_enforce_nonzero::ElementEnforceNonzeroInstance,
     element_enforce_root_of_unity::{
         ElementEnforceRootOfUnityInstanceK2, ElementEnforceRootOfUnityInstanceK5,
     },
@@ -34,6 +35,7 @@ use crate::instances::{
     element_is_zero::ElementIsZeroInstance,
     element_mul::ElementMulInstance,
     element_square::ElementSquareInstance,
+    nonzero_bank_scope::NonzeroBankScopeInstanceK2,
     point_add_incomplete::PointAddIncompleteInstance,
     point_alloc::{PointAllocInstanceFp, PointAllocInstanceFq},
     point_conditional_endo::PointConditionalEndoInstance,
@@ -146,6 +148,16 @@ static EXPORT_TARGETS: &[ExportTarget] = &[
         generated_file: generated_file_instance::<ElementInvertWithInstance>,
     },
     ExportTarget {
+        name: "Ragu.Instances.Autogen.Element.EnforceNonzero",
+        export: export_instance::<ElementEnforceNonzeroInstance>,
+        generated_file: generated_file_instance::<ElementEnforceNonzeroInstance>,
+    },
+    ExportTarget {
+        name: "Ragu.Instances.Autogen.NonzeroBank.ScopeK2",
+        export: export_instance::<NonzeroBankScopeInstanceK2>,
+        generated_file: generated_file_instance::<NonzeroBankScopeInstanceK2>,
+    },
+    ExportTarget {
         name: "Ragu.Instances.Autogen.Element.IsEqual",
         export: export_instance::<ElementIsEqualInstance>,
         generated_file: generated_file_instance::<ElementIsEqualInstance>,
@@ -229,11 +241,12 @@ fn generated_file_instance<I: CircuitInstance>(
     I::generated_file(module_name, autogen_root)
 }
 
-fn generated_ragu_root(autogen_root: &Path) -> (PathBuf, String) {
-    let path = autogen_root.join("Ragu.lean");
+fn generated_instances_root(autogen_root: &Path) -> (PathBuf, String) {
+    let path = autogen_root.join("Ragu/Instances.lean");
     let mut contents = EXPORT_TARGETS
         .iter()
-        .map(|target| format!("import {}", target.root_import_name()))
+        .map(|target| target.root_import_name())
+        .map(|name| format!("import {name}"))
         .collect::<Vec<_>>()
         .join("\n");
     contents.push('\n');
@@ -246,9 +259,9 @@ fn export_all(autogen_root: &Path) -> std::io::Result<()> {
         println!("wrote {} to {}", target.name, path.display());
     }
 
-    let (path, contents) = generated_ragu_root(autogen_root);
+    let (path, contents) = generated_instances_root(autogen_root);
     fs::write(&path, contents)?;
-    println!("wrote Ragu to {}", path.display());
+    println!("wrote Ragu.Instances to {}", path.display());
 
     Ok(())
 }
@@ -285,8 +298,8 @@ fn check_all(autogen_root: &Path) -> std::io::Result<bool> {
         check_file(target.name, path, expected, &mut mismatches)?;
     }
 
-    let (path, expected) = generated_ragu_root(autogen_root);
-    check_file("Ragu", path, expected, &mut mismatches)?;
+    let (path, expected) = generated_instances_root(autogen_root);
+    check_file("Ragu.Instances", path, expected, &mut mismatches)?;
 
     if mismatches > 0 {
         eprintln!(

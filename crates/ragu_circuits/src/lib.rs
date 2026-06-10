@@ -40,8 +40,8 @@ mod tests;
 
 use alloc::boxed::Box;
 
-use ff::{Field, FromUniformBytes};
 use polynomials::{Rank, sparse};
+use ragu_arithmetic::ff::{Field, FromUniformBytes};
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue},

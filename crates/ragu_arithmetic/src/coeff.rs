@@ -1,6 +1,6 @@
 use core::ops::{Add, Mul};
 
-use ff::Field;
+use crate::ff::Field;
 
 /// Represents a field element (typically a coefficient) that may have a special
 /// value. By representing these cases explicitly, `Coeff` maintains context
@@ -118,9 +118,10 @@ impl<F: Field> Add for Coeff<F> {
 
 #[cfg(test)]
 mod proptests {
-    use pasta_curves::Fp as F;
     use proptest::prelude::*;
     use ragu_testing::strategies;
+
+    use crate::pasta_curves::Fp as F;
 
     proptest! {
         #[test]
@@ -141,7 +142,7 @@ mod proptests {
 
         #[test]
         fn proptest_coeff_is_zero(coeff in strategies::coeff::<F>()) {
-            use ff::Field;
+            use crate::ff::Field;
             prop_assert_eq!(coeff.is_zero(), bool::from(coeff.value().is_zero()));
         }
     }

@@ -1,14 +1,14 @@
 # Endoscalars
 
 Introduced in the [Halo protocol](https://eprint.iacr.org/2019/1021), an
-_endoscalar_ $\endo{s}\in\{0,1\}^\lambda$ (where $\lambda$ is 128 bits)
+_endoscalar_ $\endo{s}\in\{0,1\}^\lambda$ (where $\lambda = 128$)
 is a small binary string used to perform scalar multiplication on curves with
 an efficient endomorphism (such as both Pasta curves).
 The endoscalar space is smaller than both $\F_p$ and $\F_q$, allowing it to
 serve as a _cross-circuit scalar_ that can be efficiently mapped to both
-target fields. In `ragu`, the endoscalar type is `Uendo` (currently `u128`),
-wrapped by the `Endoscalar` circuit gadget. The bit width may increase in
-the future if security bounds require it.
+target fields. In `ragu`, the endoscalar type is `u128`, wrapped by the
+`Endoscalar` circuit gadget.
+
 Endoscalars must support the following operations:
 
 - $\mathsf{extract}(s\in\F)\rightarrow \endo{s}$: deterministically extract a

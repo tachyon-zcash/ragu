@@ -1,6 +1,6 @@
 ---
 name: fv-review
-description: Explicitly invoked only. Lessons learned from porting Ragu Rust circuits to Clean Lean formal verification reimpls — when not to formalize an empty circuit, picking FormalCircuit vs FormalAssertion vs GeneralFormalCircuit, mirroring Rust delegation, length polymorphism, naming conventions. Distilled from PR review feedback (mitschabaude et al.) and refined over time. Do NOT auto-trigger on general formal verification, Lean, or Ragu questions; only invoke when the user explicitly types `/fv-review` or asks by name.
+description: Explicitly invoked only. Lessons learned from porting Ragu Rust circuits to Clean Lean formal verification reimpls — when not to formalize an empty circuit, picking FormalCircuit vs FormalAssertion vs GeneralFormalCircuit, mirroring Rust delegation, length polymorphism, naming conventions, and reading proof failures (stuck goals, hypotheses you're forced to add) as under-constraint / undocumented-precondition bug signals. Distilled from PR review feedback (mitschabaude et al.) and refined over time. Do NOT auto-trigger on general formal verification, Lean, or Ragu questions; only invoke when the user explicitly types `/fv-review` or asks by name.
 ---
 
 # Ragu Formal Verification: Lessons Learned
@@ -359,6 +359,7 @@ Steps 1–2 can swap. Sub-gadgets stop after step 5.
 9. **Use plain names** (`circuit`, `Spec`, `soundness`) — no `General*` prefix.
 10. **Run `lake build` after each commit**; audit specs for correctness.
 11. **Before claiming a Clean limitation, grep the Clean codebase** — most "limits" are mistaken.
+12. **If `soundness` only closes after adding an input hypothesis, stop and classify it** — legitimate caller obligation (→ `Assumptions`, and confirm the caller actually guarantees it) or missing constraint (→ add it; the gadget was under-constrained)? Don't bury a discovered precondition in `Assumptions` just to turn the proof green. If the proof *wedges* instead, prove the negation before concluding "bug." See "Formalizing is an under-constraint audit."
 
 ## Sources
 
@@ -366,5 +367,42 @@ Steps 1–2 can swap. Sub-gadgets stop after step 5.
 - [tachyon-zcash/ragu#672](https://github.com/tachyon-zcash/ragu/pull/672) — mitschabaude review (initial extraction)
 - [tachyon-zcash/ragu#674](https://github.com/tachyon-zcash/ragu/pull/674) — mitschabaude review (Boolean gadget). Verdict: "agents missed the compositionality of clean and wrote specs that just repeat the math equations instead of translating them into higher-level programming statements." Threads: r3138867768, r3138904103, r3138963958, r3138965755, r3138972958, r3138991793, r3139002146, r3139003436, r3139007420, r3139012715.
 - [tachyon-zcash/ragu#710](https://github.com/tachyon-zcash/ragu/pull/710) — mitschabaude review (`EnforceRootOfUnity`, `Fold` polymorphism). Top-level note: "clean has a couple of loop constructs with simp support in `circuit_proof_start` / `circuit_norm`. We use these whenever we need a loop: `Circuit.forEach`, `Circuit.map`, `Circuit.mapFinRange`, `Circuit.foldl`, `Circuit.foldlRange`." Inline suggestions r3265194082, r3265194093. Slack follow-up clarified the principle: "use foldl which behaves well" (not "make foldlRange behave better"); "clean users are not supposed to have to call simplification lemmas explicitly." Worked examples in `qa/lean/Ragu/Circuits/Element/{EnforceRootOfUnity,Fold}.lean`.
+- [tachyon-zcash/ragu#761](https://github.com/tachyon-zcash/ragu/pull/761) — endoscalar `Endoscalar::extract` under-constraint, surfaced by formalization (demonstration spike, not merged). The per-bit QR-branch constraint is satisfied by *both* bit values at `elem + i = 0`, leaving the bit forgeable. Reading proof failures as bug signals: unconditional soundness wedges at `⊢ False` (`ExtractStuckDemo`), the negation is provable (`extract_unsound` — `elem=0, bit=0, sqrt=0` satisfies every constraint but the bit should be `1`), and conditional soundness surfaces the precondition `elem + i ≠ 0` (`extract_sound_of_shifted_ne_zero`) — true in Ragu only because `elem` is a Fiat-Shamir hash, so sound in usage but unsound in isolation. Spike: `qa/lean/Ragu/Contrib/ExtractSoundnessSpike.lean`.
 
 <!-- Append new lessons below this line as they emerge from review feedback. -->
+
+## Formalizing is an under-constraint audit — read proof failures as bug signals
+
+Proving a gadget's `soundness` doubles as an adversarial-prover audit: it asks *can a witness satisfy every constraint yet violate the `Spec`?* — which is the soundness question. So **how the proof behaves is itself a finding.** Trying to prove `soundness` with no extra input hypotheses has three outcomes, each meaningful:
+
+| Outcome | Meaning | Action |
+|---|---|---|
+| Closes | Gadget is sound as specified. | Done. |
+| Closes **only after you add a hypothesis** on the input | You've surfaced a precondition the gadget *silently relies on*. | Classify it (below) — do **not** reflexively bury it in `Assumptions` to go green. |
+| **Wedges** at a goal you can't honestly close | Strong smell of an under-constraint — but a *lead*, not a verdict (could equally be a missing lemma or a mis-stated spec). | Read the stuck goal: it names the missing fact. Turn that fact into a witness and **prove the negation**. |
+
+**A stuck goal is a lead; a proven negation is the conviction.** Failure-to-prove ≠ disproof — the same trap as "the constraint *exists*" ≠ "the constraint *suffices*." Don't let "I couldn't close it" masquerade as "it's broken," and **never `sorry` past the wedge** — the open hole *is* the finding, and `#print axioms` will expose a `sorryAx` if you try. To *convict*, exhibit a concrete assignment that satisfies every constraint but violates the `Spec` (the circuit is satisfiable yet admits a forged witness it should reject). Build that counterexample from exactly the fact the stuck goal said was missing.
+
+**Name the three statements — keep them distinct:**
+- *Unconditional soundness* — the spec holds for **all** inputs, no added hypothesis. This is what you attempt first. If the gadget is under-constrained the statement is **false**, so the proof can only wedge — you hit a stuck goal *precisely because* you're trying to prove a false statement (which is why you must never `sorry` it shut).
+- *Its negation* — some input satisfies every constraint yet violates the spec. Proving this is the **verdict** that convicts the under-constraint.
+- *Conditional soundness* — the spec holds **given** an explicit input precondition (an `Assumptions` antecedent). This statement is **true**, and proving it names the precondition that rescues the gadget.
+
+A clean audit of a suspect gadget therefore yields a *pair*: the negation (convicts the gap) **and** conditional soundness (names the precondition) — together saying "under-constrained in isolation, sound under this assumption." That pair is then the constraint-vs-document decision below.
+
+**The fix is one of two shapes, and the proof tells you which:**
+- **Add a constraint** — close the goal *from inside the circuit*. The gadget was genuinely under-constrained; the new constraint pins the witness, and unconditional soundness then proves with no hypothesis.
+- **Add a hypothesis** — the gadget legitimately assumes a caller precondition. Promote it to `Assumptions` (see "Specs are unconditional; caller obligations live in `Assumptions`") **and** verify the caller actually guarantees it. A precondition that holds only "in practice" (e.g. because the input is a hash output) is sound *in usage* but unsound *in isolation* — it must become an explicit, justified assumption, never a silent one.
+
+**The danger move** is adding an input antecedent purely to make a stuck proof go green, without asking whether it should instead be a *constraint*. That silently converts a soundness bug into an unstated precondition — exactly the bug class this lesson guards against. An antecedent you were *forced* to add is a *discovered* obligation; classify it, don't paper over it. This is the bug-finding face of the `Assumptions` lessons.
+
+**Rust-side hygiene first.** These gaps hide because gadget preconditions are often undocumented. Before formalizing, write down each gadget's `Spec` and the assumptions it makes on its inputs (relates to [#759](https://github.com/tachyon-zcash/ragu/issues/759)). An honest, up-front `Spec` / `Assumptions` means the Lean proof either *confirms* it or *surfaces* the gap — instead of the agent inventing a hypothesis to close the proof and thereby hiding the bug.
+
+**Make sure the proof actually runs in CI.** A `.lean` that no aggregator imports (and that the lib's globs don't cover) is silently skipped by `lake build` — the proof exists but nothing checks it, and a non-compiling file can sit green. PR #763 switches `qa/lean/lakefile.lean` to `globs := #[\`Ragu.*]` so every module under `Ragu/` is built; regardless, confirm a new reimpl is actually reached by the build before trusting that CI gates it.
+
+**Worked example — `Endoscalar::extract` ([PR #761](https://github.com/tachyon-zcash/ragu/pull/761)).** The per-bit QR-branch constraint `sqrt² = bit·(elem+i) + (1−bit)·((elem+i)·g)` is satisfied by *both* bit values when `elem + i = 0` (both branches collapse to `0 = 0`), so the extracted bit is under-constrained — a malicious prover can forge it.
+- Unconditional soundness is **unprovable** — wedges at `⊢ False` (`ExtractStuckDemo`).
+- The **negation is provable** (`extract_unsound`): `elem = 0, bit = 0, sqrt = 0` satisfies every constraint, yet `IsSquare 0` holds so the honest bit is `1`. Circuit satisfiable; forged witness admitted.
+- **Conditional** soundness holds once `elem + i ≠ 0` is assumed (`extract_sound_of_shifted_ne_zero`) — the surfaced precondition.
+
+The precondition is true in Ragu *only* because `elem` is a Fiat-Shamir hash (landing on one of the 128 bad points is negligible), so it isn't exploitable in the live circuits — but the primitive is unsound in isolation. The honest fix **adds the missing constraint** (a conditional inverse forcing `elem + i ≠ 0` when `bit = 0`), rather than leaving the precondition implicit.

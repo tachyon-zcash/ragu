@@ -1,6 +1,6 @@
 use ragu_arithmetic::CurveExt;
-use group::{Curve, CurveAffine};
-use pasta_curves::{
+use ragu_arithmetic::group::Curve;
+use ragu_arithmetic::pasta_curves::{
     EpAffine,
     EqAffine,
     Ep,
@@ -44,7 +44,8 @@ fn params_for_curve<C: CurveExt>(n: usize) -> (Vec<C::AffineExt>, C::AffineExt) 
         }
         g
     };
-    let mut g = vec![C::AffineExt::identity(); n];
+    // Placeholder values; every slot is overwritten by `batch_normalize` below.
+    let mut g = vec![C::AffineExt::default(); n];
     Curve::batch_normalize(&g_projective[..], &mut g);
 
     let h: C::AffineExt = C::hash_to_curve(DOMAIN_PREFIX)(&[1]).into();

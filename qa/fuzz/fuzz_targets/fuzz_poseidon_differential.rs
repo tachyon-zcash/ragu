@@ -10,7 +10,6 @@
 #![no_main]
 
 use arbitrary::Arbitrary;
-use core::cell::Cell;
 use ff::{Field, PrimeField};
 use libfuzzer_sys::fuzz_target;
 use pasta_curves::Fp;
@@ -43,6 +42,9 @@ fn special_value(idx: u8) -> Fp {
 
 struct NativeSponge<'a, P> {
     state: Vec<Fp>,
+    /// Scratch buffer reused across MDS rounds; sized to `P::T` once at
+    /// construction time so `permute()` doesn't allocate per round.
+    scratch: Vec<Fp>,
     buf: Vec<Fp>,
     squeezable: Vec<Fp>,
     absorbing: bool,
@@ -53,6 +55,7 @@ impl<'a, P: PoseidonPermutation<Fp>> NativeSponge<'a, P> {
     fn new(params: &'a P) -> Self {
         NativeSponge {
             state: vec![Fp::ZERO; P::T],
+            scratch: vec![Fp::ZERO; P::T],
             buf: Vec::new(),
             squeezable: Vec::new(),
             absorbing: true,
@@ -84,14 +87,18 @@ impl<'a, P: PoseidonPermutation<Fp>> NativeSponge<'a, P> {
                 *s = s4 * *s; // s^5
             }
 
-            // MDS
-            let mut new_state = vec![Fp::ZERO; t];
+            // MDS — multiply state through MDS matrix into scratch buffer,
+            // then swap into state. Avoids the per-round Vec allocation a
+            // naive `vec![Fp::ZERO; t]` would do.
+            for s in self.scratch[..t].iter_mut() {
+                *s = Fp::ZERO;
+            }
             for (row_idx, row) in self.params.mds_matrix().enumerate() {
                 for (col_idx, coeff) in row.iter().enumerate() {
-                    new_state[row_idx] += *coeff * self.state[col_idx];
+                    self.scratch[row_idx] += *coeff * self.state[col_idx];
                 }
             }
-            self.state = new_state;
+            core::mem::swap(&mut self.state, &mut self.scratch);
         }
     }
 
@@ -220,9 +227,7 @@ fuzz_target!(|input: Input| {
 
     // --- Circuit sponge via Simulator ---
     let absorb_values: Vec<Fp> = input.ops.iter().filter_map(op_value).collect();
-    let circuit_squeezes: Vec<Cell<Fp>> = (0..native_squeezes.len())
-        .map(|_| Cell::new(Fp::ZERO))
-        .collect();
+    let mut circuit_squeezes: Vec<Fp> = vec![Fp::ZERO; native_squeezes.len()];
 
     let result = Simulator::<Fp>::simulate(absorb_values.clone(), |dr, witness| {
         let allocator = &mut Standard::new();
@@ -249,7 +254,7 @@ fuzz_target!(|input: Input| {
                         continue;
                     }
                     let squeezed = sponge.squeeze(dr)?;
-                    circuit_squeezes[squeeze_idx].set(*squeezed.value().take());
+                    circuit_squeezes[squeeze_idx] = *squeezed.value().take();
                     squeeze_idx += 1;
                 }
             }
@@ -257,7 +262,7 @@ fuzz_target!(|input: Input| {
 
         if squeeze_idx == 0 {
             let squeezed = sponge.squeeze(dr)?;
-            circuit_squeezes[0].set(*squeezed.value().take());
+            circuit_squeezes[0] = *squeezed.value().take();
         }
 
         Ok(())
@@ -265,12 +270,12 @@ fuzz_target!(|input: Input| {
 
     assert!(result.is_ok(), "circuit sponge failed: {:?}", result.err());
 
-    for (i, (native_val, circuit_cell)) in
+    for (i, (native_val, circuit_val)) in
         native_squeezes.iter().zip(circuit_squeezes.iter()).enumerate()
     {
         assert_eq!(
-            *native_val,
-            circuit_cell.get(),
+            native_val,
+            circuit_val,
             "squeeze {i} mismatch: native vs circuit"
         );
     }

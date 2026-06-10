@@ -16,8 +16,7 @@
 
 use core::marker::PhantomData;
 
-use ff::PrimeField;
-use ragu_arithmetic::Cycle;
+use ragu_arithmetic::{Cycle, ff::PrimeField};
 use ragu_circuits::{
     polynomials::{Rank, sparse},
     staging,
@@ -25,7 +24,7 @@ use ragu_circuits::{
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Bound, Gadget, Kind},
+    gadgets::{Bound, Gadget, Kind, WireEqualizer},
     maybe::Maybe,
 };
 use ragu_primitives::{Element, allocator::Allocator};
@@ -109,7 +108,7 @@ impl<'dr, D: Driver<'dr>> Gadget<'dr, D> for InternalCircuitValues<Element<'dr, 
 
 // SAFETY: `Element` is `Send` when `D::Wire: Send`, and `InternalCircuitValues`
 // is a plain product of `Element`s, so the same implication holds.
-unsafe impl<F: ff::Field> ragu_core::gadgets::GadgetKind<F>
+unsafe impl<F: ragu_arithmetic::ff::Field> ragu_core::gadgets::GadgetKind<F>
     for InternalCircuitValues<Element<'static, PhantomData<F>>>
 {
     type Rebind<'dr, D: Driver<'dr, F = F>> = InternalCircuitValues<Element<'dr, D>>;
@@ -125,17 +124,17 @@ unsafe impl<F: ff::Field> ragu_core::gadgets::GadgetKind<F>
         InternalCircuitValues::try_from_fn(|id| this.get(id).map(wm))
     }
 
-    fn enforce_equal_gadget<
+    fn enforce_conservative_equal_gadget<
         'dr,
         D1: Driver<'dr, F = F>,
         D2: Driver<'dr, F = F, Wire = <D1 as Driver<'dr>>::Wire>,
     >(
-        dr: &mut D1,
+        eq: &mut WireEqualizer<'_, 'dr, D1>,
         a: &InternalCircuitValues<Element<'dr, D2>>,
         b: &InternalCircuitValues<Element<'dr, D2>>,
     ) -> Result<()> {
         for &id in &InternalCircuitIndex::ALL {
-            a.get(id).enforce_equal(dr, b.get(id))?;
+            eq.enforce_conservative_equal_gadget(a.get(id), b.get(id))?;
         }
         Ok(())
     }
@@ -147,7 +146,7 @@ impl<'dr, D: Driver<'dr>> Gadget<'dr, D> for RxValues<Element<'dr, D>> {
 
 // SAFETY: `Element` is `Send` when `D::Wire: Send`, and `RxValues`
 // is a plain product of `Element`s, so the same implication holds.
-unsafe impl<F: ff::Field> ragu_core::gadgets::GadgetKind<F>
+unsafe impl<F: ragu_arithmetic::ff::Field> ragu_core::gadgets::GadgetKind<F>
     for RxValues<Element<'static, PhantomData<F>>>
 {
     type Rebind<'dr, D: Driver<'dr, F = F>> = RxValues<Element<'dr, D>>;
@@ -163,23 +162,25 @@ unsafe impl<F: ff::Field> ragu_core::gadgets::GadgetKind<F>
         RxValues::try_from_fn(|id| this.get(id).map(wm))
     }
 
-    fn enforce_equal_gadget<
+    fn enforce_conservative_equal_gadget<
         'dr,
         D1: Driver<'dr, F = F>,
         D2: Driver<'dr, F = F, Wire = <D1 as Driver<'dr>>::Wire>,
     >(
-        dr: &mut D1,
+        eq: &mut WireEqualizer<'_, 'dr, D1>,
         a: &RxValues<Element<'dr, D2>>,
         b: &RxValues<Element<'dr, D2>>,
     ) -> Result<()> {
         for &id in &RxIndex::ALL {
-            a.get(id).enforce_equal(dr, b.get(id))?;
+            eq.enforce_conservative_equal_gadget(a.get(id), b.get(id))?;
         }
         Ok(())
     }
 }
 
-impl<F: ff::Field> ragu_primitives::io::Write<F> for RxValues<Element<'static, PhantomData<F>>> {
+impl<F: ragu_arithmetic::ff::Field> ragu_primitives::io::Write<F>
+    for RxValues<Element<'static, PhantomData<F>>>
+{
     fn write_gadget<'dr, D: Driver<'dr, F = F>, B: ragu_primitives::io::Buffer<'dr, D>>(
         this: &Bound<'dr, D, Self>,
         dr: &mut D,

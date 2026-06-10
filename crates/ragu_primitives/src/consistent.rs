@@ -18,8 +18,10 @@ use ragu_core::{Result, drivers::Driver, gadgets::Gadget};
 /// gadgets without witness data cannot implement the trait.
 ///
 /// Most impls allocate a fresh `Self` and constrain it equal to the existing
-/// wires. There is no blanket impl, since gadgets do not share a uniform
-/// constructor signature.
+/// wires. That equality uses the conservative
+/// [`Gadget::enforce_conservative_equal`] check because consistency is the
+/// infrastructure path that re-establishes gadget invariants. There is no
+/// blanket impl, since gadgets do not share a uniform constructor signature.
 ///
 /// The [`Consistent`](derive@Consistent) macro can derive composites by
 /// delegating to each `#[ragu(gadget)]` field, but it only re-emits each

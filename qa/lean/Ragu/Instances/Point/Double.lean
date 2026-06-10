@@ -11,7 +11,6 @@ def deserializeInput (input : Vector (Expression (F p)) 2) : Var Circuits.Point.
 def serializeOutput (output : Var Circuits.Point.Spec.Point (F p)) : Vector (Expression (F p)) 2 :=
   #v[ output.x, output.y ]
 
-set_option maxHeartbeats 800000 in
 def formal_instance : Core.Statements.FormalInstance where
   p
   exportedOperations
@@ -25,28 +24,27 @@ def formal_instance : Core.Statements.FormalInstance where
   same_constraints := by
     intro input
     simp [Core.Statements.FlatOperation.eraseCompute, List.map,
-      Operations.toFlat, circuit_norm, GeneralFormalCircuit.toSubcircuit, GeneralFormalCircuit.toWithHint,
-      GeneralFormalCircuit.WithHint.toSubcircuit, FormalCircuit.toSubcircuit,
+      Operations.toFlat, circuit_norm,
       FormalCircuit.isGeneralFormalCircuit,
+      GeneralFormalCircuit.toWithHint,
+      GeneralFormalCircuit.WithHint.toSubcircuit, FormalCircuit.toSubcircuit,
+      GeneralFormalCircuit.toSubcircuit,
       deserializeInput, exportedOperations,
-      Circuits.Point.Double.circuit, Circuits.Point.Double.elaborated, Circuits.Point.Double.main,
-      Circuits.Element.Square.circuit, Circuits.Element.Square.elaborated, Circuits.Element.Square.main,
-      Circuits.Element.DivNonzero.circuit, Circuits.Element.DivNonzero.elaborated,
-      Circuits.Element.DivNonzero.main,
-      Circuits.Element.Mul.circuit, Circuits.Element.Mul.elaborated, Circuits.Element.Mul.main,
+      Circuits.Point.Double.circuit,
+      Circuits.Point.Double.elaborated,
+      Circuits.Point.Double.main,
+      Circuits.Element.Square.circuit,
+      Circuits.Element.Square.elaborated,
+      Circuits.Element.Square.main,
+      Circuits.Element.Divide.circuit,
+      Circuits.Element.Divide.elaborated,
+      Circuits.Element.Divide.main,
+      Circuits.Element.Mul.circuit,
+      Circuits.Element.Mul.elaborated,
+      Circuits.Element.Mul.main,
       Circuits.Core.Mul.main]
-    repeat (constructor; rfl)
-    constructor
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> rfl
   same_output := by
-    intro input;
-    simp [circuit_norm, GeneralFormalCircuit.toSubcircuit, GeneralFormalCircuit.toWithHint,
-      GeneralFormalCircuit.WithHint.toSubcircuit, FormalCircuit.toSubcircuit,
-      FormalCircuit.isGeneralFormalCircuit,
-      deserializeInput, serializeOutput,
-      Circuits.Point.Double.circuit, Circuits.Point.Double.elaborated, Circuits.Point.Double.main,
-      Circuits.Element.Square.circuit, Circuits.Element.Square.elaborated, Circuits.Element.Square.main,
-      Circuits.Element.DivNonzero.circuit, Circuits.Element.DivNonzero.elaborated,
-      Circuits.Element.DivNonzero.main,
-      Circuits.Element.Mul.circuit, Circuits.Element.Mul.elaborated, Circuits.Element.Mul.main]
-    constructor <;> rfl
+    intro input
+    rfl
 end Ragu.Instances.Point.Double

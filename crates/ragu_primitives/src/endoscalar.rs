@@ -15,8 +15,10 @@
 
 use alloc::vec::Vec;
 
-use ff::{Field, PrimeField, WithSmallOrderMulGroup};
-use ragu_arithmetic::{Coeff, CurveAffine, Uendo};
+use ragu_arithmetic::{
+    Coeff, CurveAffine,
+    ff::{Field, PrimeField, WithSmallOrderMulGroup},
+};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue, LinearExpression, emulator::Emulator},
@@ -25,7 +27,7 @@ use ragu_core::{
 };
 
 use crate::{
-    Boolean, Element, Point,
+    Boolean, Element, NonzeroBank, Point,
     promotion::Demoted,
     vec::{CollectFixed, ConstLen, FixedVec},
 };
@@ -35,26 +37,22 @@ use crate::{
 pub struct Endoscalar<'dr, D: Driver<'dr>> {
     /// The bits of this endoscalar in little-endian order.
     #[ragu(gadget)]
-    bits: FixedVec<Demoted<'dr, D, Boolean<'dr, D>>, ConstLen<{ Uendo::BITS as usize }>>,
+    bits: FixedVec<Demoted<'dr, D, Boolean<'dr, D>>, ConstLen<{ u128::BITS as usize }>>,
 
     /// The represented endoscalar witness value in compact representation.
     #[ragu(value)]
-    value: DriverValue<D, Uendo>,
+    value: DriverValue<D, u128>,
 }
 
 impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
-    /// Allocate an endoscalar with the provided `Uendo` value.
-    pub fn alloc(dr: &mut D, value: DriverValue<D, Uendo>) -> Result<Self> {
-        // Convert the provided Uendo into a little-endian representation of its
-        // bits.
-        let bits = (0..Uendo::BITS as usize)
+    /// Allocate an endoscalar with the provided witness value.
+    pub fn alloc(dr: &mut D, value: DriverValue<D, u128>) -> Result<Self> {
+        let bits = (0..u128::BITS as usize)
             .map(|i| {
                 let bit = Boolean::alloc(
                     dr,
                     &mut (),
-                    value
-                        .as_ref()
-                        .map(|v| (*v >> i) & Uendo::from(1u64) == Uendo::from(1u64)),
+                    value.as_ref().map(|v| (*v >> i) & 1u128 == 1u128),
                 )?;
                 Demoted::new(&bit)
             })
@@ -65,10 +63,10 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
 
     /// Returns an iterator over the bits in this endoscalar, little endian order.
     pub fn bits(&self) -> impl Iterator<Item = Boolean<'dr, D>> {
-        let mut bits = self.value.as_ref().map(|v| {
-            (0..(Uendo::BITS as usize))
-                .map(move |i| (*v >> i) & Uendo::from(1u64) == Uendo::from(1u64))
-        });
+        let mut bits = self
+            .value
+            .as_ref()
+            .map(|v| (0..(u128::BITS as usize)).map(move |i| (*v >> i) & 1u128 == 1u128));
 
         self.bits.iter().map(move |demoted_bit| {
             demoted_bit.promote(bits.as_mut().map(|bits| bits.next().unwrap()))
@@ -76,6 +74,17 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
     }
 
     /// Extracts an endoscalar from a random element in the field.
+    ///
+    /// # Soundness
+    ///
+    /// A single extracted bit is under-constrained at the exceptional inputs
+    /// `elem = -i` (`0 <= i < 128`), where `elem + i == 0`: both quadratic-residue
+    /// branches are then zero, which is a square, so a malicious prover can flip
+    /// that bit. This is unreachable when `elem` is a transcript-derived challenge
+    /// (forcing `elem = -i` requires grinding ~`|F| / 128` hashes). [#765] tracks
+    /// the canonical bit-decomposition that closes the gap.
+    ///
+    /// [#765]: https://github.com/tachyon-zcash/ragu/issues/765
     pub fn extract<A: crate::allocator::Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -84,8 +93,8 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
     where
         D::F: WithSmallOrderMulGroup<3>,
     {
-        let mut bits = Vec::with_capacity(Uendo::BITS as usize);
-        let mut value = D::just(|| Uendo::from(0u64));
+        let mut bits = Vec::with_capacity(u128::BITS as usize);
+        let mut value = D::just(|| 0u128);
         let mut constant = D::F::ZERO;
 
         let mut coeff_0 = D::F::ZERO;
@@ -93,7 +102,7 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
         let coeff_2 = D::F::MULTIPLICATIVE_GENERATOR;
         let coeff_3 = D::F::ONE - D::F::MULTIPLICATIVE_GENERATOR;
 
-        for i in 0..(Uendo::BITS as usize) {
+        for i in 0..(u128::BITS as usize) {
             let (sqrt, bit) = D::try_just(|| {
                 let value = *elem.value().take() + constant;
 
@@ -111,7 +120,7 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
 
             value.as_mut().map(|v| {
                 if *bit.snag() {
-                    *v |= Uendo::from(1u64) << i
+                    *v |= 1u128 << i
                 }
             });
 
@@ -152,23 +161,41 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
     }
 
     /// Scale a point by the endoscalar.
+    ///
+    /// Endoscalars in this library are $2n = 128$ bits long, and this algorithm
+    /// is proven to be injective for all prime fields of size greater than
+    /// $4(2^n - 1)^2$, which is comfortably safe for the Pasta fields because
+    /// they are larger than $1361129467683753853705924477137396432900$. See
+    /// `qa/lean/Ragu/Contrib/EndoscalarProof.lean`.
     pub fn group_scale<C: CurveAffine<Base = D::F>>(
         &self,
         dr: &mut D,
         p: &Point<'dr, D, C>,
     ) -> Result<Point<'dr, D, C>> {
-        let mut acc = p.endo(dr).add_incomplete(dr, p, None)?.double(dr)?;
+        // Soundness: every `add_incomplete` and `double_and_add_incomplete`
+        // call below requires `x_1 != x_0`. Appendix C of the Halo paper
+        // (<https://eprint.iacr.org/2019/1021>) proves no such collision occurs
+        // for endoscalars well beyond 128 bits on the Pasta curves Ragu uses,
+        // so the bank is created in unchecked mode.
+        //
+        // TODO(ebfull): The no-collision argument above is a property of the
+        // curve / endoscalar interaction that the `Cycle` API should attest to
+        // at compile time, so callers can verify it holds for their choice of
+        // curve rather than relying on this ad-hoc local justification.
+        let mut bank = NonzeroBank::new_unchecked();
+
+        let mut acc = p.endo(dr).add_incomplete(dr, p, &mut bank)?.double(dr)?;
         let mut bits = self.bits();
 
-        // Uendo::BITS is guaranteed to be even (enforced in ragu_arithmetic).
-        for _ in 0..(Uendo::BITS as usize / 2) {
+        // Each iteration consumes a pair of bits; u128::BITS is even.
+        for _ in 0..(u128::BITS as usize / 2) {
             let negate_bit = bits.next().unwrap();
             let endo_bit = bits.next().unwrap();
 
             let q = p
                 .conditional_negate(dr, &negate_bit)?
                 .conditional_endo(dr, &endo_bit)?;
-            acc = acc.double_and_add_incomplete(dr, &q)?;
+            acc = acc.double_and_add_incomplete(dr, &q, &mut bank)?;
         }
 
         Ok(acc)
@@ -189,8 +216,8 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
         let mut acc = Element::zero(dr);
         let mut bits = self.bits();
 
-        // Uendo::BITS is guaranteed to be even (enforced in ragu_arithmetic).
-        for _ in 0..(Uendo::BITS as usize / 2) {
+        // Each iteration consumes a pair of bits; u128::BITS is even.
+        for _ in 0..(u128::BITS as usize / 2) {
             let n = bits.next().unwrap();
             let e = bits.next().unwrap();
             let ne = n.and(dr, &e)?;
@@ -219,15 +246,15 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
 ///
 /// This implements [Algorithm 2, \[BGH19\]](https://eprint.iacr.org/2019/1021)
 /// and is the native counterpart to [`Endoscalar::lift`].
-pub fn lift_endoscalar<F: WithSmallOrderMulGroup<3>>(endo: Uendo) -> F {
+pub fn lift_endoscalar<F: WithSmallOrderMulGroup<3>>(endo: u128) -> F {
     let mut acc = (F::ZETA + F::ONE).double();
-    for i in 0..(Uendo::BITS as usize / 2) {
+    for i in 0..(u128::BITS as usize / 2) {
         let bits = endo >> (i << 1);
         let mut tmp = F::ONE;
-        if bits & Uendo::from(0b01u64) != Uendo::from(0u64) {
+        if bits & 0b01u128 != 0u128 {
             tmp = -tmp;
         }
-        if bits & Uendo::from(0b10u64) != Uendo::from(0u64) {
+        if bits & 0b10u128 != 0u128 {
             tmp *= F::ZETA;
         }
         acc = acc.double() + tmp;
@@ -240,7 +267,7 @@ pub fn lift_endoscalar<F: WithSmallOrderMulGroup<3>>(endo: Uendo) -> F {
 /// Given a random output of a secure algebraic hash function, this extracts
 /// `k` bits of "randomness" from the value by checking whether `value + i`
 /// is a quadratic residue for each bit position `i`.
-pub fn extract_endoscalar<F: PrimeField + WithSmallOrderMulGroup<3>>(value: F) -> Uendo {
+pub fn extract_endoscalar<F: PrimeField + WithSmallOrderMulGroup<3>>(value: F) -> u128 {
     Emulator::emulate_wireless(value, |dr, witness| {
         let elem = Element::alloc(dr, &mut (), witness)?;
         let endo = Endoscalar::extract(dr, &mut (), elem)?;
@@ -251,18 +278,20 @@ pub fn extract_endoscalar<F: PrimeField + WithSmallOrderMulGroup<3>>(value: F) -
 
 #[cfg(test)]
 mod tests {
-    use ff::{Field, PrimeField, WithSmallOrderMulGroup};
-    use group::{CurveAffine as _, Group};
-    use ragu_arithmetic::{CurveAffine, CurveExt, Uendo};
+    use ragu_arithmetic::{
+        CurveAffine, CurveExt,
+        ff::{Field, PrimeField, WithSmallOrderMulGroup},
+        group::{CurveAffine as _, Group},
+        rand::RngExt,
+    };
     use ragu_core::Result;
     use ragu_pasta::{EpAffine, Fp};
-    use rand::RngExt;
 
     use super::{Element, Endoscalar, Maybe, Point};
     use crate::{Simulator, allocator::Standard};
 
     pub struct EndoscalarTest {
-        pub value: Uendo,
+        pub value: u128,
     }
 
     impl EndoscalarTest {
@@ -270,12 +299,12 @@ mod tests {
         pub fn scale<C: CurveAffine>(&self, p: &C) -> C {
             let p = p.to_curve();
             let mut acc = (p.endo() + p).double();
-            for bits in (0..(Uendo::BITS as usize / 2)).map(|i| self.value >> (i << 1)) {
+            for bits in (0..(u128::BITS as usize / 2)).map(|i| self.value >> (i << 1)) {
                 let mut s = p;
-                if bits & Uendo::from(0b01u64) != Uendo::from(0u64) {
+                if bits & 0b01u128 != 0u128 {
                     s = -s;
                 }
-                if bits & Uendo::from(0b10u64) != Uendo::from(0u64) {
+                if bits & 0b10u128 != 0u128 {
                     s = s.endo();
                 }
 
@@ -299,12 +328,12 @@ mod tests {
     #[test]
     #[allow(clippy::useless_conversion)]
     fn test_endoscaling_consistency() {
-        use group::CurveAffine as _;
+        use ragu_arithmetic::group::CurveAffine as _;
         use ragu_pasta::{EpAffine, Fq};
 
         let p = EpAffine::generator();
         let e = EndoscalarTest {
-            value: Uendo::from(206786806484900909362154774549736492353u128),
+            value: 206786806484900909362154774549736492353u128,
         };
         let scaled = e.scale(&p);
         let expected: EpAffine = (p * e.lift::<Fq>()).into();
@@ -315,7 +344,7 @@ mod tests {
     #[test]
     fn test_extract() -> Result<()> {
         let p = EpAffine::generator();
-        let r = Fp::random(&mut rand::rng());
+        let r = Fp::random(&mut ragu_arithmetic::rand::rng());
         let extracted = extract(r).value;
 
         Simulator::<Fp>::simulate((r, extracted, p), |dr, witness| {
@@ -341,7 +370,7 @@ mod tests {
     #[test]
     fn test_endoscaling() -> Result<()> {
         let p = EpAffine::generator();
-        let r: Uendo = rand::rng().random();
+        let r: u128 = ragu_arithmetic::rand::rng().random();
         let expected = EndoscalarTest { value: r }.scale(&p);
 
         Simulator::simulate((p, r), |dr, witness| {
@@ -351,7 +380,7 @@ mod tests {
 
             dr.reset();
             assert_eq!(r.group_scale(dr, &p)?.value().take(), expected);
-            assert_eq!(dr.num_gates(), 7 * (1 + (Uendo::BITS as usize / 2)));
+            assert_eq!(dr.num_gates(), 7 * (1 + (u128::BITS as usize / 2)));
 
             Ok(())
         })?;
@@ -361,7 +390,7 @@ mod tests {
 
     #[test]
     fn test_endoscalar_lift() -> Result<()> {
-        let r: Uendo = rand::rng().random();
+        let r: u128 = ragu_arithmetic::rand::rng().random();
         let expected: Fp = EndoscalarTest { value: r }.lift();
 
         Simulator::<Fp>::simulate(r, |dr, witness| {

@@ -16,17 +16,15 @@
 //!
 //! [`Step::witness`]: ragu_pcd::step::Step::witness
 
-use ff::PrimeField;
-use ragu_arithmetic::{CurveAffine, poly_mul};
+use ragu_arithmetic::{CurveAffine, ff::PrimeField, poly_mul};
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::Gadget,
     maybe::Maybe,
 };
 use ragu_pcd::step::StepCtx;
-use ragu_primitives::{Element, Point, allocator::Standard};
+use ragu_primitives::{Element, GadgetExt, Point, allocator::Standard};
 
 /// A polynomial paired with an in-circuit commitment to it.
 ///
