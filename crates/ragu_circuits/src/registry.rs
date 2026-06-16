@@ -161,12 +161,6 @@ impl<'params, F: FromUniformBytes<64>, R: Rank> RegistryBuilder<'params, F, R> {
     }
 
     /// Registers an application-level bonding mask.
-    ///
-    /// Unlike [`register_bonding`](Self::register_bonding), these are placed
-    /// *after* the application steps in the finalized circuit ordering, so
-    /// registering a variable number of them (e.g. one stage mask per
-    /// challenge induced by an application step) does not shift the fixed
-    /// indices of internal circuits, internal steps, or application steps.
     pub fn register_application_mask(mut self, mask: BondingObject<'params, F, R>) -> Self {
         self.application_masks.push(mask.into_inner());
         self

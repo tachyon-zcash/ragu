@@ -67,6 +67,7 @@ use ragu_primitives::{Element, Point, allocator::Standard};
 /// committing the slice, hashing the commitment in-circuit (à la the
 /// `internal/native/circuits/hashes_1.rs` circuit), and resolving the derived
 /// outputs — is future framework work.
+/// TODO(c-node): is num_wires necessary? Could we just access the length of the Vec?
 pub struct InducedStage<'dr, D: Driver<'dr>> {
     /// Width of this stage's trace slice (the gadget's wire count) — the same
     /// quantity the registration-time discovery pass records in the
