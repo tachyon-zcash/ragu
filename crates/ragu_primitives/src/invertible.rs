@@ -18,6 +18,14 @@ use crate::{
 
 /// An [`Element`] that has been constrained nonzero in the constraint system.
 ///
+/// # Contract
+///
+/// A valid [`Nonzero`] carries an [`Element`] whose assignment cannot be zero in
+/// any satisfying circuit assignment. Public constructors and methods preserve
+/// this invariant. Internal unchecked constructors may only be used after the
+/// caller has already emitted equivalent constraints or has a structural
+/// argument that the element is nonzero.
+///
 /// See [`Element::enforce_nonzero`].
 ///
 /// [`Nonzero`] dereferences to the underlying [`Element`], so all of
@@ -31,7 +39,8 @@ impl<'dr, D: Driver<'dr>> Nonzero<'dr, D> {
     /// Wraps `element` without checking the nonzero invariant.
     ///
     /// The caller is responsible for having emitted constraints that prove
-    /// `element` is nonzero.
+    /// `element` is nonzero, or for relying on a structural argument that makes
+    /// zero impossible.
     pub(crate) fn new_unchecked(element: Element<'dr, D>) -> Self {
         Self { element }
     }
@@ -116,6 +125,12 @@ impl<'dr, D: Driver<'dr>> Consistent<'dr, D> for Nonzero<'dr, D> {
 /// [`inverse`](Self::inverse).
 ///
 /// Inversion is free, since the inverse is located within the gadget.
+///
+/// # Contract
+///
+/// A valid [`Invertible`] carries two [`Nonzero`] elements `x` and `x^{-1}` and
+/// constrains their product to `1`. This proves both that `x` is nonzero and
+/// that the stored inverse is canonical in any satisfying assignment.
 #[derive(Gadget)]
 pub struct Invertible<'dr, D: Driver<'dr>> {
     element: Nonzero<'dr, D>,
@@ -125,7 +140,10 @@ pub struct Invertible<'dr, D: Driver<'dr>> {
 impl<'dr, D: Driver<'dr>> Invertible<'dr, D> {
     /// Allocate an [`Invertible`] field element.
     ///
-    /// This will be unsatisfied (and fail to synthesize) if `value` is zero.
+    /// # Precondition
+    ///
+    /// `value` must be nonzero. A zero witness is rejected while computing the
+    /// inverse witness.
     ///
     /// Computing the inverse witness costs a field inversion. If the inverse is
     /// already known, prefer
@@ -145,8 +163,11 @@ impl<'dr, D: Driver<'dr>> Invertible<'dr, D> {
 
     /// Allocate an [`Invertible`] field element given its inverse as advice.
     ///
-    /// This will be unsatisfied if `value` is zero or if `inverse_value` is not
-    /// really its multiplicative inverse.
+    /// # Precondition
+    ///
+    /// `value` must be nonzero and `inverse_value` must be its multiplicative
+    /// inverse. If not, the emitted `value * inverse_value = 1` constraint is
+    /// unsatisfied.
     ///
     /// This costs one gate and one constraint.
     pub fn alloc_with_advice(
@@ -237,6 +258,8 @@ impl<F: Field> Write<F> for Kind![F; @Invertible<'_, _>] {
 /// Batches deferred nonzero proofs so several factors can share one final
 /// nonzero check.
 ///
+/// # Contract
+///
 /// Folding an element into the bank multiplies it into a running product and
 /// trusts it nonzero; when the scope closes, the product is constrained
 /// nonzero, retroactively validating every factor.
@@ -262,6 +285,9 @@ impl<'dr, D: Driver<'dr>> NonzeroBank<'dr, D> {
     /// Constructs a bank that asserts every fold is nonzero by external
     /// argument. No constraints are emitted by `fold` or by dropping the
     /// bank. Internal use only.
+    ///
+    /// Callers must have a structural proof that every folded element is
+    /// nonzero.
     pub(crate) fn new_unchecked() -> Self {
         Self { product: None }
     }
@@ -271,6 +297,9 @@ impl<'dr, D: Driver<'dr>> NonzeroBank<'dr, D> {
     /// In discharging mode, the nonzero proof is deferred until the enclosing
     /// [`scope`](Self::scope) succeeds. Errors from that scope must be
     /// propagated.
+    ///
+    /// In unchecked mode, this method emits no constraints; callers of the
+    /// unchecked constructor are responsible for the nonzero argument.
     ///
     /// This costs one gate and two constraints in discharging mode, and zero
     /// gates and zero constraints in unchecked mode.

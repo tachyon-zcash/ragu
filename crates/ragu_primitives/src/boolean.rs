@@ -28,8 +28,16 @@ use crate::{
     util::InternalMaybe,
 };
 
-/// Represents a wire that is constrained to be zero or one, along with its
-/// corresponding [`bool`] value.
+/// Represents a wire constrained to encode a [`bool`].
+///
+/// # Contract
+///
+/// A valid [`Boolean`] carries a wire whose assignment is either `0` or `1`,
+/// together with a witness value matching that assignment. All public
+/// constructors maintain this invariant. Internal promotion paths that rebuild a
+/// [`Boolean`] from an existing wire must only be used when the caller already
+/// knows that the wire was produced by, or remains equal to, a boolean
+/// constraint.
 #[derive(Gadget, GadgetEquals)]
 pub struct Boolean<'dr, D: Driver<'dr>> {
     /// The wire constrained to hold either `0` or `1` in the scalar field.
@@ -43,6 +51,11 @@ pub struct Boolean<'dr, D: Driver<'dr>> {
 
 impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
     /// Allocates a boolean with the provided witness value.
+    ///
+    /// # Contract
+    ///
+    /// The returned wire is constrained to be either `0` or `1` and to agree
+    /// with `value`.
     ///
     /// This costs one gate and two constraints.
     pub fn alloc<A: crate::allocator::Allocator<'dr, D>>(
@@ -68,6 +81,11 @@ impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
     }
 
     /// Computes the NOT of this boolean. This is "free" in the circuit model.
+    ///
+    /// # Contract
+    ///
+    /// The input must already satisfy the [`Boolean`] invariant. The returned
+    /// value is boolean because its wire is the affine expression `1 - self`.
     pub fn not(&self, dr: &mut D) -> Self {
         // The wire w is transformed into 1 - w, its logical NOT.
         let wire = dr.add(|lc| lc.add(&D::ONE).sub(self.wire()));
@@ -75,8 +93,14 @@ impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
         Boolean { wire, value }
     }
 
-    /// Computes the AND of two booleans. This costs one gate and two
-    /// constraints.
+    /// Computes the AND of two booleans.
+    ///
+    /// # Contract
+    ///
+    /// Both inputs must already satisfy the [`Boolean`] invariant. The returned
+    /// wire is then constrained to equal their product, which is again boolean.
+    ///
+    /// This costs one gate and two constraints.
     pub fn and(&self, dr: &mut D, other: &Self) -> Result<Self> {
         let result = D::just(|| self.value.snag() & other.value.snag());
         let (a, b, c) = dr.mul(|| {
@@ -98,6 +122,12 @@ impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
     /// Selects between two elements based on this boolean's value.
     /// Returns `a` when false, `b` when true.
     ///
+    /// # Contract
+    ///
+    /// `self` must already satisfy the [`Boolean`] invariant. If it does, the
+    /// returned element is constrained to `a + self * (b - a)`, which equals
+    /// `a` for `false` and `b` for `true`.
+    ///
     /// This costs one gate and two constraints.
     pub fn conditional_select(
         &self,
@@ -113,6 +143,12 @@ impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
 
     /// Conditionally enforces that two elements are equal.
     /// When this boolean is true, enforces `a == b`; when false, no constraint.
+    ///
+    /// # Contract
+    ///
+    /// `self` must already satisfy the [`Boolean`] invariant. Under that
+    /// precondition, the emitted constraint is equivalent to
+    /// `self * (a - b) = 0`.
     ///
     /// This costs one gate and three constraints.
     pub fn conditional_enforce_equal(
@@ -157,6 +193,10 @@ impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
     }
 
     /// Converts this boolean into an [`Element`].
+    ///
+    /// The returned element carries the same wire and witness value, represented
+    /// as `0` or `1` in the field. It relies on this [`Boolean`]'s existing
+    /// boolean constraint; no new constraint is emitted.
     pub fn element(&self) -> Element<'dr, D> {
         Element::promote(self.wire.clone(), self.value().fe())
     }
@@ -165,6 +205,12 @@ impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
 /// Returns a boolean indicating whether the element is zero.
 ///
 /// Uses the standard inverse trick for zero checking in arithmetic circuits.
+///
+/// # Contract
+///
+/// The returned [`Boolean`] is constrained to be `1` exactly when `x = 0`, and
+/// `0` exactly when `x != 0`. The auxiliary inverse witness is unconstrained
+/// when `x = 0` and must be `x^{-1}` when `x != 0`.
 pub(crate) fn is_zero<'dr, D: Driver<'dr>>(
     dr: &mut D,
     allocator: &mut impl Allocator<'dr, D>,
@@ -235,6 +281,9 @@ impl<F: Field> Promotion<F> for Kind![F; @Boolean<'_, _>] {
         demoted: &Demoted<'dr, D, Boolean<'dr, D>>,
         witness: DriverValue<D, bool>,
     ) -> Boolean<'dr, D> {
+        // Soundness: a demoted Boolean carries a wire that was already
+        // constrained by the original Boolean gadget. Promotion only restores
+        // the erased witness value.
         Boolean {
             wire: demoted.wire.clone(),
             value: witness,
@@ -245,6 +294,12 @@ impl<F: Field> Promotion<F> for Kind![F; @Boolean<'_, _>] {
 /// Packs boolean slices into field elements using little-endian bit order.
 ///
 /// The first bit in each chunk is the least significant bit.
+///
+/// # Contract
+///
+/// Every input must already satisfy the [`Boolean`] invariant. The returned
+/// elements are linear combinations of those boolean wires; this function does
+/// not re-enforce booleanity.
 pub fn multipack<'dr, D: Driver<'dr, F: ragu_arithmetic::ff::PrimeField>>(
     dr: &mut D,
     bits: &[Boolean<'dr, D>],

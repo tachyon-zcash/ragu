@@ -41,9 +41,11 @@ pub struct Point<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
 }
 
 impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
-    /// Creates a new `Point` from the given coordinates without checking that
-    /// the provided $x, y$ satisfy the curve equation. The caller is
-    /// responsible for ensuring this.
+    /// Creates a new `Point` from the given coordinates without checking the
+    /// curve equation.
+    ///
+    /// The caller is responsible for ensuring that `x` and `y` are nonzero and
+    /// satisfy the supported curve equation documented on [`Point`].
     fn new_unchecked(x: Nonzero<'dr, D>, y: Nonzero<'dr, D>) -> Self {
         Point {
             x,
@@ -56,7 +58,9 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
     /// point is at infinity.
     ///
     /// This method uses [`Element::alloc_square`] to allocate coordinates and
-    /// then enforces the curve equation.
+    /// then enforces the supported curve equation documented on [`Point`].
+    /// Under those curve assumptions, every affine point has nonzero
+    /// coordinates.
     pub fn alloc(dr: &mut D, p: DriverValue<D, C>) -> Result<Self> {
         let coordinates = D::try_just(|| {
             let coordinates = p.take().coordinates().into_option();
@@ -84,6 +88,9 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
 
     /// Obtain a constant point in the circuit. Fails if the point is the
     /// identity.
+    ///
+    /// The supported curve assumptions documented on [`Point`] imply that every
+    /// non-identity affine point has nonzero coordinates.
     pub fn constant(dr: &mut D, p: C) -> Result<Self> {
         if let Some(coordinates) = p.coordinates().into_option() {
             let x = Element::constant(dr, *coordinates.x());
@@ -101,6 +108,11 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
     }
 
     /// Returns the point represented by this gadget.
+    ///
+    /// This relies on the [`Point`] invariant that its coordinates satisfy the
+    /// supported curve equation. Public constructors enforce this; internal
+    /// unchecked constructors must only be used when the caller has already
+    /// established it.
     pub fn value(&self) -> DriverValue<D, C> {
         D::just(|| {
             let x = *self.x.value().take();
@@ -110,6 +122,9 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
     }
 
     /// Applies the endomorphism to this point.
+    ///
+    /// This relies on the nontrivial cube root of unity required by the
+    /// supported curve assumptions documented on [`Point`].
     pub fn endo(&self, dr: &mut D) -> Self {
         let endo_x = self.x.scale(dr, Coeff::Arbitrary(C::Base::ZETA));
         Point::new_unchecked(Nonzero::new_unchecked(endo_x), self.y.clone())
@@ -125,6 +140,9 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
     }
 
     /// Apply the endomorphism iff the provided condition is true.
+    ///
+    /// The `condition` argument is a [`Boolean`], so its bitness is enforced by
+    /// the boolean gadget invariant.
     pub fn conditional_endo(&self, dr: &mut D, condition: &Boolean<'dr, D>) -> Result<Self> {
         let endo_x = self.x.scale(dr, Coeff::Arbitrary(D::F::ZETA));
         let x = condition.conditional_select(dr, &self.x, &endo_x)?;
@@ -135,6 +153,9 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
     }
 
     /// Apply the negation map iff the provided condition is true.
+    ///
+    /// The `condition` argument is a [`Boolean`], so its bitness is enforced by
+    /// the boolean gadget invariant.
     pub fn conditional_negate(&self, dr: &mut D, condition: &Boolean<'dr, D>) -> Result<Self> {
         let neg_y = self.y.negate(dr);
         let y = condition.conditional_select(dr, &self.y, &neg_y)?;
@@ -144,8 +165,13 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
         ))
     }
 
-    /// Doubles this point. Ragu does not support curves with points of order
-    /// two, and thus all affine points have affine doubles.
+    /// Doubles this point.
+    ///
+    /// # Precondition
+    ///
+    /// This relies on the supported curve assumptions documented on [`Point`]:
+    /// Ragu does not support curves with points of order two, so every affine
+    /// point has nonzero `y` coordinate and therefore an affine double.
     pub fn double(&self, dr: &mut D) -> Result<Self> {
         // delta = 3x^2 / 2y
         let double_y = self.y.double(dr);
