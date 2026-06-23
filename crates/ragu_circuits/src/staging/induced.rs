@@ -5,18 +5,13 @@
 //! [`MultiStageCircuit`](super::MultiStageCircuit)) pins a circuit's stage
 //! hierarchy in the type system: the `Parent` chain and the `values()` /
 //! `num_gates()` / `skip_gates()` associated functions determine the partial
-//! trace layout statically. Some multi-stage circuits cannot name their stages
-//! as types, however — e.g. a framework that synthesizes one stage per
-//! `derive_challenge` call made by an application-defined witness body. There
-//! the *number* of stages and their widths are only fixed per circuit, not per
-//! Rust type.
+//! trace layout statically. 
 //!
-//! Because circuit structure must be witness-independent, such a layout is
-//! still deterministic: it can be discovered by dry-running the witness body
-//! once (with an [`Empty`](ragu_core::maybe::Empty) witness) and recording the
-//! width of each induced stage in call order. [`InducedStages`] holds that
-//! discovered layout and mirrors the typed geometry at the value level:
-//!
+//! However, some multistage circuit layouts cannot be known at compile time; notably, [`Step`](ragu_pcd::step::Step) circuits
+//! that use the [`derive_challenge`](ragu_pcd::framework_hooks::FrameworkHooks::derive_challenge) framework hook.
+//! [`InducedStages`](crate::staging::induced::InducedStages) mirror [`Stage`](super::Stage) chains, 
+//! but their layouts can be determined at registry time, instead of Rust compile time.
+//! 
 //! * [`skip_gates`](InducedStages::skip_gates) / [`num_gates`](InducedStages::num_gates)
 //!   mirror [`Stage::skip_gates`](super::Stage::skip_gates) and
 //!   [`StageExt::num_gates`](super::StageExt::num_gates) — the fold over the
@@ -27,9 +22,6 @@
 //! * [`rx`](InducedStages::rx) mirrors
 //!   [`StageExt::rx_configured`](super::StageExt::rx_configured), taking the
 //!   stage's slot values directly instead of re-running a typed witness.
-//!
-//! Stages tile contiguous whole-gate ranges starting immediately after the
-//! SYSTEM gate (gate 0), exactly like a typed stage chain rooted at `()`.
 
 use alloc::{boxed::Box, vec::Vec};
 
@@ -54,6 +46,7 @@ pub struct InducedStages {
 
 impl InducedStages {
     /// Creates a layout from the wire width of each stage, in stage order.
+    /// (does not count the final stage, which is left as implicit)
     pub fn new(widths: Vec<usize>) -> Self {
         Self { widths }
     }
@@ -225,6 +218,34 @@ mod tests {
         }
     }
 
+    /// Geometry-only twin of the second induced stage (width 3), chained onto
+    /// [`TypedFour`] as its parent. Only its static geometry
+    /// (`values` / `Parent`) is exercised, so the witness machinery is stubbed
+    /// out like the base `()` stage.
+    #[derive(Default)]
+    struct TypedThree;
+
+    impl Stage<Fp, R> for TypedThree {
+        type Parent = TypedFour;
+        type Witness<'source> = ();
+        type OutputKind = ();
+
+        fn values() -> usize {
+            3
+        }
+
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            _: &mut D,
+            _: DriverValue<D, Self::Witness<'source>>,
+        ) -> Result<Bound<'dr, D, Self::OutputKind>>
+        where
+            Self: 'dr,
+        {
+            Ok(())
+        }
+    }
+
     #[test]
     fn geometry_matches_typed_stages() {
         let layout = InducedStages::new(alloc::vec![4, 3]);
@@ -239,10 +260,21 @@ mod tests {
             <TypedFour as StageExt<Fp, R>>::num_gates()
         );
 
-        // Second stage: width 3 occupies 2 gates after the first stage's 2.
-        assert_eq!(layout.skip_gates(1), 3);
-        assert_eq!(layout.num_gates(1), 2);
-        assert_eq!(layout.final_skip_gates(), 5);
+        // Second stage: width 3, chained onto the first.
+        assert_eq!(
+            layout.skip_gates(1),
+            <TypedThree as Stage<Fp, R>>::skip_gates()
+        );
+        assert_eq!(
+            layout.num_gates(1),
+            <TypedThree as StageExt<Fp, R>>::num_gates()
+        );
+        // The final trace starts right after the last stage.
+        assert_eq!(
+            layout.final_skip_gates(),
+            <TypedThree as Stage<Fp, R>>::skip_gates()
+                + <TypedThree as StageExt<Fp, R>>::num_gates()
+        );
     }
 
     #[test]
