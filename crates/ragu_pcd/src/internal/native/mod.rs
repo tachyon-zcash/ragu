@@ -37,6 +37,7 @@ pub mod circuits {
 }
 
 pub mod claims;
+pub mod derived;
 pub mod unified;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

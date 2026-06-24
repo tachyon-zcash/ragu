@@ -406,8 +406,10 @@ impl<'dr, D: Driver<'dr>, A, T: Clone, W: Copy + Send + Sync> Slot<'dr, D, A, T,
     /// Consumes the slot and returns the stored value (allocating if
     /// needed) along with the coverage flag.
     ///
-    /// Used during finalization to build the [`Output`] gadget.
-    fn take(self, dr: &mut D, allocator: &mut A) -> Result<(T, bool)> {
+    /// Used during finalization to build the [`Output`] gadget. Visible to the
+    /// sibling [`derived`](super::derived) module, which reuses [`Slot`] for the
+    /// variable-length derived-challenge carrier.
+    pub(super) fn take(self, dr: &mut D, allocator: &mut A) -> Result<(T, bool)> {
         let value = self
             .value
             .map(Result::Ok)

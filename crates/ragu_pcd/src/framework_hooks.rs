@@ -63,12 +63,13 @@ use ragu_primitives::{Element, Point, allocator::Standard};
 /// polynomial `a(X)`, which `fuse()` commits to independently. The succinct
 /// commitment is hashed to derive the challenge.
 ///
-/// This records the induced stage's wire slice. The remaining derivation —
-/// committing the slice, hashing the commitment in-circuit (à la the
+/// This records the induced stage's wire slice along with the deferred output
+/// handles returned to the step body. The remaining derivation — committing the
+/// slice, hashing the commitment in-circuit (à la the
 /// `internal/native/circuits/hashes_1.rs` circuit), and resolving the derived
-/// outputs — is future framework work.
+/// outputs' *values* — is future framework work.
 /// TODO(c-node): is num_wires necessary? Could we just access the length of the Vec?
-pub struct InducedStage<'dr, D: Driver<'dr>> {
+pub struct InducedStage<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// Width of this stage's trace slice (the gadget's wire count) — the same
     /// quantity the registration-time discovery pass records in the
     /// [`InducedStages`](ragu_circuits::staging::InducedStages) layout, and
@@ -80,10 +81,15 @@ pub struct InducedStage<'dr, D: Driver<'dr>> {
     /// slice that `fuse()` commits to carries exactly these values. Always
     /// `wires.len() == num_wires`.
     pub wires: Vec<D::Wire>,
-    // TODO: hold the deferred output handles — the nested-curve commitment
-    // `point` and the derived challenge — that fuse resolves once the stage is
-    // committed. Adding these will further parameterize this struct by `C`,
-    // matching [`FrameworkHooks`].
+    /// The deferred nested-curve commitment handle handed back to the step body
+    /// — a Pedersen commitment to this stage's wires. Its *wires* exist now (so
+    /// the framework's `DerivedChallengeOutput` carrier can be assembled from
+    /// these handles), but its *value* is resolved by fuse; see
+    /// [`derive_challenge`](FrameworkHooks::derive_challenge).
+    pub point: Point<'dr, D, C>,
+    /// The deferred challenge handle handed back to the step body — the Poseidon
+    /// hash of [`point`](Self::point). Wire-only until fuse resolves its value.
+    pub challenge: Element<'dr, D>,
 }
 
 /// Container for framework-side state threaded through a
@@ -99,7 +105,7 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// Stages induced by [`FrameworkHooks::derive_challenge`] calls — one per
     /// call under the simple model. Tracked here so `fuse()` can commit to each
     /// partial trace and resolve the derived values.
-    derived_challenges: Vec<InducedStage<'dr, D>>,
+    derived_challenges: Vec<InducedStage<'dr, D, C>>,
     /// The reserved stage regions, one per induced stage in the layout
     /// discovered at registration time, in stage order. `None` in discovery
     /// mode (see the [module documentation](self)).
@@ -114,8 +120,11 @@ pub struct FrameworkHookOutputs<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>
     /// [`FrameworkHooks::enforce_polynomial_query`].
     pub poly_query_claims: DriverValue<D, Vec<(C, D::F, D::F)>>,
     /// Stages induced by [`FrameworkHooks::derive_challenge`] calls, in call
-    /// order. `fuse()` consumes these to build the per-call partial traces.
-    pub derived_challenges: Vec<InducedStage<'dr, D>>,
+    /// order. Each carries the gadget's wire slice plus the deferred `point` /
+    /// `challenge` handles. `fuse()` consumes these to build the per-call
+    /// partial traces, and the framework's `DerivedChallengeOutput` carrier is
+    /// assembled directly from the handles (via its `from_stages` constructor).
+    pub derived_challenges: Vec<InducedStage<'dr, D, C>>,
 }
 
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C> {
@@ -219,19 +228,15 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
             }
         }
 
-        self.derived_challenges.push(InducedStage {
-            num_wires: wires.len(),
-            wires,
-        });
-
         // Allocate the two deferred outputs — the nested-curve commitment
         // `point` and the derived challenge. Their wires exist now (so the
-        // step body can compute over them and fuse can later constrain them
-        // via the in-circuit hash of the stage commitment, à la
-        // `internal/native/circuits/hashes_1.rs`), but resolving their
-        // *values* is future framework work: the value closures only run on
-        // value-carrying drivers, so structure-only passes (registration,
-        // discovery, metrics) complete while proving still hits the todo.
+        // step body can compute over them, the carrier can be assembled from
+        // them, and fuse can later constrain them via the in-circuit hash of
+        // the stage commitment, à la `internal/native/circuits/hashes_1.rs`),
+        // but resolving their *values* is future framework work: the value
+        // closures only run on value-carrying drivers, so structure-only passes
+        // (registration, discovery, metrics) complete while proving still hits
+        // the todo.
         let point_value: DriverValue<D, C> =
             D::just(|| todo!("resolve the deferred stage commitment in fuse"));
         let point = Point::alloc(dr, point_value)?;
@@ -239,6 +244,16 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
         let challenge_value: DriverValue<D, D::F> =
             D::just(|| todo!("resolve the deferred challenge in fuse"));
         let challenge = Element::alloc(dr, &mut Standard::new(), challenge_value)?;
+
+        // Record the induced stage together with the deferred handles, so the
+        // carrier [`DerivedChallengeOutput`] can be built from them downstream.
+        // The step body keeps its own clones (returned below).
+        self.derived_challenges.push(InducedStage {
+            num_wires: wires.len(),
+            wires,
+            point: point.clone(),
+            challenge: challenge.clone(),
+        });
 
         Ok((point, challenge))
     }
@@ -258,8 +273,9 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
                 });
         FrameworkHookOutputs {
             poly_query_claims,
-            // Induced stages carry no witness values yet (the deferred outputs
-            // are resolved by fuse), so they pass through unchanged.
+            // Induced stages carry wire handles (the gadget slice and the
+            // deferred point/challenge), but no resolved witness *values* yet
+            // — those are resolved by fuse — so they pass through unchanged.
             derived_challenges: self.derived_challenges,
         }
     }
@@ -268,5 +284,45 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> Default for FrameworkHooks<'dr, D, C> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ragu_arithmetic::Cycle;
+    use ragu_core::{drivers::emulator::Emulator, maybe::Empty};
+    use ragu_pasta::Pasta;
+    use ragu_primitives::allocator::Standard;
+
+    use super::*;
+    use crate::internal::native::derived::DerivedChallengeOutput;
+
+    type NestedCurve = <Pasta as Cycle>::NestedCurve;
+
+    /// A `derive_challenge` call retains the deferred `point`/`challenge`
+    /// handles on the recorded stage, and those handles assemble into a carrier
+    /// pair. Runs on a counting driver, so the deferred values' `todo!()` never
+    /// fires.
+    #[test]
+    fn derive_challenge_retains_handles_for_carrier() {
+        let mut dr = Emulator::counter();
+        let allocator = &mut Standard::new();
+        let mut hooks = FrameworkHooks::<_, NestedCurve>::new();
+
+        let a = Element::alloc(&mut dr, allocator, Empty).expect("alloc a");
+        let b = Element::alloc(&mut dr, allocator, Empty).expect("alloc b");
+        // Two-element gadget -> one induced stage of width 2.
+        let (_point, _challenge) = hooks
+            .derive_challenge(&mut dr, (a, b))
+            .expect("derive_challenge");
+
+        let outputs = hooks.into_outputs();
+        assert_eq!(outputs.derived_challenges.len(), 1);
+        assert_eq!(outputs.derived_challenges[0].num_wires, 2);
+
+        // The retained handles propagate into the carrier.
+        let carrier = DerivedChallengeOutput::from_stages(outputs.derived_challenges);
+        assert_eq!(carrier.len(), 1);
+        assert_eq!(carrier.pairs().len(), 1);
     }
 }

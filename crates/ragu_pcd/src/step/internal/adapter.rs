@@ -22,6 +22,7 @@ use super::super::{Step, StepCtx};
 use crate::{
     Header,
     framework_hooks::{FrameworkHookOutputs, FrameworkHooks},
+    internal::native::derived::DerivedChallengeOutput,
 };
 
 /// Represents triple a length determined at compile time.
@@ -77,12 +78,18 @@ pub(crate) struct AdapterAux<'source, C: Cycle, S: Step<C>, const HEADER_SIZE: u
     // TODO: surface these for fuse-time polynomial-query verification.
     #[allow(dead_code)]
     pub claims: Vec<(C::NestedCurve, C::CircuitField, C::CircuitField)>,
-    // Note: the stages induced by `derive_challenge` do not travel here. Their
-    // geometry is deterministic ([`Adapter::induced_stages`]), and the binding
-    // constraints emitted during synthesis tie each reserved head-of-trace
-    // region to its gadget's wires, so fuse can carve each stage's slice out
-    // of the trace positionally. Committing those slices and resolving the
-    // deferred (point, challenge) outputs is future fuse-side work.
+    // Note: the stages induced by `derive_challenge` do not travel here as
+    // resolved values — `AdapterAux` is value-extracted via `D::try_just`, and
+    // the stages' deferred `(point, challenge)` handles are gadget wires bound
+    // to `'dr`, which value extraction cannot carry. Their geometry is
+    // deterministic ([`Adapter::induced_stages`]), and the binding constraints
+    // emitted during synthesis tie each reserved head-of-trace region to its
+    // gadget's wires, so fuse can carve each stage's slice out of the trace
+    // positionally. The handles themselves are retained on
+    // [`FrameworkHookOutputs::derived_challenges`] and assembled into the
+    // [`DerivedChallengeOutput`](crate::internal::native::derived) carrier while
+    // `'dr` is still live (see [`Adapter::witness`]). Committing those slices
+    // and resolving the deferred values is future fuse-side work.
 }
 
 pub(crate) struct Adapter<C, S, R, const HEADER_SIZE: usize> {
@@ -190,6 +197,17 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
                     .into(),
             ));
         }
+
+        // Assemble the verifier-visible carrier from the deferred handles the
+        // hook retained, while `'dr` is still live (the handles are gadget
+        // wires that cannot ride through the value-extracted `AdapterAux`). The
+        // carrier has no downstream consumer yet — resolving its values and the
+        // consuming recursion circuit are future fuse-side work — so it is
+        // dropped here; building it is the propagation path from the
+        // application witness into the structure.
+        let derived_output = DerivedChallengeOutput::from_stages(derived_challenges);
+        debug_assert_eq!(derived_output.len(), self.induced.len());
+        drop(derived_output);
 
         let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
         left.write(dr, &mut elements)?;
