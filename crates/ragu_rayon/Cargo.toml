@@ -1,0 +1,26 @@
+[package]
+name = "ragu_rayon"
+version.workspace = true
+authors.workspace = true
+description = """
+Parallelism facade for the Ragu project: re-exports `rayon` when the `threads`
+feature is enabled, or provides an API-compatible, `no_std`-friendly
+single-threaded fallback when it is not.
+"""
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+categories = ["concurrency", "no-std"]
+keywords = []
+
+[features]
+default = ["threads"]
+threads = ["dep:rayon"]
+
+[lib]
+bench = false
+
+[dependencies]
+cfg-if = "1.0"
+rayon = { version = "1.0", optional = true }

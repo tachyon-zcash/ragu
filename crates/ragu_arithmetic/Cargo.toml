@@ -35,7 +35,7 @@ modern-deps = [
   "dep:pasta_curves_modern",
   "dep:rand_modern",
 ]
-multicore = ["maybe-rayon/threads", "std"]
+multicore = ["ragu_rayon/threads", "std"]
 std = []
 
 [lib]
@@ -51,7 +51,7 @@ group_legacy = { workspace = true, optional = true }
 pasta_curves_legacy = { workspace = true, optional = true }
 rand_legacy = { workspace = true, optional = true }
 ragu_macros = { path = "../ragu_macros", version = "0.0.0" }
-maybe-rayon = { workspace = true }
+ragu_rayon = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

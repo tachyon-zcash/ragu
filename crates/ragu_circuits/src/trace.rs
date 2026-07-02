@@ -163,7 +163,7 @@ struct Evaluator<'scope, 'env, F: Field> {
     /// Trace segments produced by this evaluator's routine scope.
     segments: Vec<AnnotatedSegment<F>>,
     /// Rayon scope for spawning Known-predicted routine evaluations.
-    scope: &'scope maybe_rayon::Scope<'env>,
+    scope: &'scope ragu_rayon::Scope<'env>,
     /// Channel for sending completed segments back to the root collector.
     #[cfg(feature = "multicore")]
     tx: mpsc::Sender<Result<Vec<AnnotatedSegment<F>>>>,
@@ -178,7 +178,7 @@ impl<'scope, 'env, F: Field> Evaluator<'scope, 'env, F> {
     #[cfg(feature = "multicore")]
     fn new(
         prefix: Vec<usize>,
-        scope: &'scope maybe_rayon::Scope<'env>,
+        scope: &'scope ragu_rayon::Scope<'env>,
         tx: mpsc::Sender<Result<Vec<AnnotatedSegment<F>>>>,
     ) -> Self {
         Self {
@@ -194,7 +194,7 @@ impl<'scope, 'env, F: Field> Evaluator<'scope, 'env, F> {
     }
 
     #[cfg(not(feature = "multicore"))]
-    fn new(prefix: Vec<usize>, scope: &'scope maybe_rayon::Scope<'env>) -> Self {
+    fn new(prefix: Vec<usize>, scope: &'scope ragu_rayon::Scope<'env>) -> Self {
         Self {
             segments: vec![AnnotatedSegment::new(&prefix)],
             scope,
@@ -372,7 +372,7 @@ pub fn eval<'witness, F: Field, C: Circuit<F>>(
     {
         let (tx, rx) = mpsc::channel();
 
-        let (mut segments, aux) = maybe_rayon::scope(|s| {
+        let (mut segments, aux) = ragu_rayon::scope(|s| {
             let mut evaluator = Evaluator::new(Vec::new(), s, tx);
 
             let aux = {
@@ -394,7 +394,7 @@ pub fn eval<'witness, F: Field, C: Circuit<F>>(
 
     #[cfg(not(feature = "multicore"))]
     {
-        let (segments, aux) = maybe_rayon::scope(|s| {
+        let (segments, aux) = ragu_rayon::scope(|s| {
             let mut evaluator = Evaluator::new(Vec::new(), s);
 
             let aux = {

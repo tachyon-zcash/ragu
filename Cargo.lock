@@ -667,16 +667,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
-name = "maybe-rayon"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ea1f30cedd69f0a2954655f7188c6a834246d2bcf1e315e2ac40c4b24dc9519"
-dependencies = [
- "cfg-if",
- "rayon",
-]
-
-[[package]]
 name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -889,11 +879,11 @@ dependencies = [
  "group 0.13.0",
  "group 0.14.0",
  "gungraun",
- "maybe-rayon",
  "pasta_curves 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "pasta_curves 0.5.1 (git+https://github.com/ebfull/pasta_curves?rev=5a84fc0d13f738f54c43fb1f9e28ecf1d358dcf5)",
  "proptest",
  "ragu_macros",
+ "ragu_rayon",
  "ragu_testing",
  "rand 0.10.1",
  "rand 0.8.6",
@@ -908,13 +898,13 @@ dependencies = [
  "ff 0.14.0",
  "group 0.14.0",
  "gungraun",
- "maybe-rayon",
  "pasta_curves 0.5.1 (git+https://github.com/ebfull/pasta_curves?rev=5a84fc0d13f738f54c43fb1f9e28ecf1d358dcf5)",
  "proptest",
  "ragu_arithmetic",
  "ragu_core",
  "ragu_pasta",
  "ragu_primitives",
+ "ragu_rayon",
  "ragu_testing",
  "rand 0.10.1",
 ]
@@ -968,7 +958,6 @@ dependencies = [
  "criterion",
  "ff 0.14.0",
  "gungraun",
- "maybe-rayon",
  "pasta_curves 0.5.1 (git+https://github.com/ebfull/pasta_curves?rev=5a84fc0d13f738f54c43fb1f9e28ecf1d358dcf5)",
  "proptest",
  "ragu_arithmetic",
@@ -976,6 +965,7 @@ dependencies = [
  "ragu_core",
  "ragu_pasta",
  "ragu_primitives",
+ "ragu_rayon",
  "ragu_testing",
  "rand 0.10.1",
 ]
@@ -995,6 +985,14 @@ dependencies = [
  "ragu_testing",
  "rand 0.10.1",
  "thiserror",
+]
+
+[[package]]
+name = "ragu_rayon"
+version = "0.0.0"
+dependencies = [
+ "cfg-if",
+ "rayon",
 ]
 
 [[package]]

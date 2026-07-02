@@ -33,7 +33,7 @@ modern-deps = [
   "ragu_core/modern-deps",
   "ragu_primitives/modern-deps",
 ]
-multicore = ["maybe-rayon/threads", "ragu_arithmetic/multicore", "std"]
+multicore = ["ragu_rayon/threads", "ragu_arithmetic/multicore", "std"]
 std = []
 
 [lib]
@@ -44,7 +44,7 @@ ragu_arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", default-feat
 blake2b_simd = { workspace = true }
 ragu_core = { path = "../ragu_core", version = "0.0.0", default-features = false, features = ["alloc"] }
 ragu_primitives = { path = "../ragu_primitives", version = "0.0.0", default-features = false, features = ["alloc"] }
-maybe-rayon = { workspace = true }
+ragu_rayon = { workspace = true }
 
 [dev-dependencies]
 ff = { workspace = true }

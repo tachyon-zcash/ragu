@@ -284,7 +284,7 @@ where
         sum
     }
 
-    // Compute each window's bucket sum in parallel (or sequentially via maybe-rayon facade).
+    // Compute each window's bucket sum in parallel (or sequentially via the ragu_rayon facade).
     let bases_iter = bases.into_iter();
     let window_sums: Vec<C::Curve> = (0..segments)
         .into_par_iter()

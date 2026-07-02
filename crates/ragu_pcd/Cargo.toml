@@ -41,7 +41,7 @@ modern-deps = [
   "ragu_core/modern-deps",
   "ragu_primitives/modern-deps",
 ]
-multicore = ["maybe-rayon/threads", "ragu_arithmetic/multicore", "ragu_circuits/multicore", "std"]
+multicore = ["ragu_rayon/threads", "ragu_arithmetic/multicore", "ragu_circuits/multicore", "std"]
 std = []
 # Exposes the `fuzz_utils` module, which provides proof-corruption helpers
 # used by external fuzz harnesses. Not part of the stable public API.
@@ -52,7 +52,7 @@ bench = false
 
 [dependencies]
 ragu_arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", default-features = false, features = ["alloc"] }
-maybe-rayon = { workspace = true }
+ragu_rayon = { workspace = true }
 ragu_circuits = { path = "../ragu_circuits", version = "0.0.0", default-features = false, features = ["alloc"] }
 ragu_core = { path = "../ragu_core", version = "0.0.0", default-features = false, features = ["alloc"] }
 ragu_primitives = { path = "../ragu_primitives", version = "0.0.0", default-features = false, features = ["alloc"] }

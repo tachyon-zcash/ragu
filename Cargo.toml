@@ -89,6 +89,7 @@ members = [
   "crates/ragu_pasta",
   "crates/ragu_primitives",
   "crates/ragu_pcd",
+  "crates/ragu_rayon",
   "crates/ragu_testing",
   "qa/crates/lean_extraction",
 ]
@@ -128,5 +129,5 @@ lazy_static = "1.5.0"
 proptest = "1.11.0"
 gungraun = "0.17.0"
 blake2b_simd = "1.0"
-maybe-rayon = { version = "0.1.1", default-features = false }
+ragu_rayon = { path = "crates/ragu_rayon", version = "0.0.0", default-features = false }
 criterion = { version = "0.5", default-features = false }
