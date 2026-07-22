@@ -209,7 +209,12 @@ fn sweep_distinct_headers() -> Result<()> {
     std::println!("\n[distinct headers, iters={ITERS}]");
     std::println!(
         "{:>8}{:>8}{:>10}{:>6}{:>11}{:>11}",
-        "levels", "nodes", "circuits", "log2", "avg(ms)", "per-node"
+        "levels",
+        "nodes",
+        "circuits",
+        "log2",
+        "avg(ms)",
+        "per-node"
     );
 
     sweep!(pasta, 1; 0 => 1);

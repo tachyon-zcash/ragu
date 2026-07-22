@@ -252,7 +252,12 @@ fn sweep_distinct_steps() -> Result<()> {
     std::println!("\n[shared header, iters={ITERS}]");
     std::println!(
         "{:>8}{:>8}{:>10}{:>6}{:>11}{:>11}",
-        "steps", "nodes", "circuits", "log2", "avg(ms)", "per-node"
+        "steps",
+        "nodes",
+        "circuits",
+        "log2",
+        "avg(ms)",
+        "per-node"
     );
 
     sweep!(pasta, 1; 0);
