@@ -260,7 +260,14 @@ fn sweep_num_steps() -> Result<()> {
     std::println!(
         "\n(registered 3 steps -> {total} circuits, log2 {log2}, fixed across sweep; iters={ITERS})"
     );
-    std::println!("{:>10}{:>10}{:>11}{:>11}{:>11}", "depth", "nodes", "min(ms)", "avg(ms)", "per-node");
+    std::println!(
+        "{:>10}{:>10}{:>11}{:>11}{:>11}",
+        "depth",
+        "nodes",
+        "min(ms)",
+        "avg(ms)",
+        "per-node"
+    );
 
     measure(&app, 1)?;
     measure(&app, 2)?;

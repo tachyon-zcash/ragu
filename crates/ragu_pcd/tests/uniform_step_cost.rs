@@ -505,7 +505,14 @@ fn sweep_point<
     ];
 
     std::println!("\n[iters={iters}]");
-    std::println!("{:<10}{:>10}{:>10}{:>11}{:>11}", "step", "gates", "constr", "min(ms)", "avg(ms)");
+    std::println!(
+        "{:<10}{:>10}{:>10}{:>11}{:>11}",
+        "step",
+        "gates",
+        "constr",
+        "min(ms)",
+        "avg(ms)"
+    );
     for (name, (gates, constraints), (min, mean)) in rows {
         std::println!("{name:<10}{gates:>10}{constraints:>10}{min:>11.1}{mean:>11.1}");
     }

@@ -222,7 +222,10 @@ fn summarize(times: &[Duration]) -> (f64, f64) {
 }
 
 /// The fixed measured work: seed two leaves and fuse them (3 proofs).
-fn build_used(app: &Application<'_, Pasta, ProductionRank, HEADER_SIZE>, rng: &mut StdRng) -> Result<()> {
+fn build_used(
+    app: &Application<'_, Pasta, ProductionRank, HEADER_SIZE>,
+    rng: &mut StdRng,
+) -> Result<()> {
     let v = Fp::from(7u64);
     let a = app.seed(rng, Leaf, v)?.0;
     let b = app.seed(rng, Leaf, v)?.0;
@@ -262,7 +265,14 @@ fn measure(
 fn sweep_distinct_steps() -> Result<()> {
     let pasta = Pasta::baked();
     std::println!("\n[shared header, iters={ITERS}]");
-    std::println!("{:>10}{:>10}{:>10}{:>11}{:>11}", "fillers", "circuits", "log2", "min(ms)", "avg(ms)");
+    std::println!(
+        "{:>10}{:>10}{:>10}{:>11}{:>11}",
+        "fillers",
+        "circuits",
+        "log2",
+        "min(ms)",
+        "avg(ms)"
+    );
 
     measure(&app_with_fillers!(pasta), 0)?;
     measure(&app_with_fillers!(pasta, 0, 1, 2, 3, 4, 5, 6, 7), 8)?;
