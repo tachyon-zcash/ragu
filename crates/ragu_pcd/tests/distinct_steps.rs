@@ -1,16 +1,14 @@
-//! Investigation B: does registering many *distinct step types that share one
-//! header* raise per-proof cost (cases 2/3 of the complexity gradient)?
+//! Investigation B: does *executing* many distinct step types that share one
+//! header raise per-node proving cost?
 //!
-//! A fixed, tiny "used" tree (seed two leaves -> one fuse, 3 proofs) is proved in
-//! every configuration. On top of it, `N` distinct `Filler<const I>` seed steps
-//! are registered but never executed — they only grow the registry. Crucially,
-//! every filler outputs the *same* shared header, so `N` varies the number of
-//! distinct step circuits while the header count stays at one.
-//!
-//! Compare against `distinct_headers.rs` (identical, except each filler gets its
-//! own header) at equal `N`: same circuit count, so the difference isolates the
-//! marginal cost of header multiplicity. Here we measure the step-circuit axis
-//! alone.
+//! Builds a left-leaning chain: a seed leaf, then at each level a distinct
+//! `Filler<const I>` seed is folded into the accumulator via a shared `Fuse`
+//! (everything on a single self-chaining header). Every registered filler is
+//! actually executed. Sweeping the chain length N grows both the executed node
+//! count and the number of distinct step circuits, so we report **per-node**
+//! time: if it stays flat, distinct step *types* cost nothing beyond the node
+//! itself. Compare with `distinct_headers.rs` (each filler carries its own
+//! header) to isolate header multiplicity.
 //!
 //! Run with (serialized so the timings don't contend):
 //!   cargo test --features multicore -p ragu_pcd --release --test distinct_steps \
@@ -40,31 +38,15 @@ use rand::{SeedableRng, rngs::StdRng};
 
 const HEADER_SIZE: usize = 4;
 const WARMUP: usize = 1;
-const ITERS: usize = 3;
+const ITERS: usize = 2;
 
-// --- Headers -------------------------------------------------------------
+// --- One shared, self-chaining header ------------------------------------
 
-/// Leaf / used-fuse header (plain). The used tree is homogeneous in it.
-struct LeafHeader;
-/// The single shared header every filler outputs (plain).
-struct FillerHeader;
+/// Every node (leaf, filler, fuse output) carries this one header.
+struct NodeHeader;
 
-impl<F: Field> Header<F> for LeafHeader {
+impl<F: Field> Header<F> for NodeHeader {
     const SUFFIX: Suffix = Suffix::new(0);
-    type Data = F;
-    type Output = Kind![F; Element<'_, _>];
-
-    fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
-        dr: &mut D,
-        allocator: &mut A,
-        witness: DriverValue<D, Self::Data>,
-    ) -> Result<Bound<'dr, D, Self::Output>> {
-        Element::alloc(dr, allocator, witness)
-    }
-}
-
-impl<F: Field> Header<F> for FillerHeader {
-    const SUFFIX: Suffix = Suffix::new(2);
     type Data = F;
     type Output = Kind![F; Element<'_, _>];
 
@@ -79,7 +61,7 @@ impl<F: Field> Header<F> for FillerHeader {
 
 // --- Steps ---------------------------------------------------------------
 
-/// Plain seed leaf (one allocation).
+/// Seed leaf anchoring the chain.
 struct Leaf;
 
 impl Step<Pasta> for Leaf {
@@ -88,7 +70,7 @@ impl Step<Pasta> for Leaf {
     type Aux<'source> = ();
     type Left = ();
     type Right = ();
-    type Output = LeafHeader;
+    type Output = NodeHeader;
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
@@ -120,16 +102,16 @@ impl Step<Pasta> for Leaf {
     }
 }
 
-/// The one fuse actually executed by the measured tree (minimal, self-chaining).
-struct UsedFuse;
+/// Shared fuse that folds a filler into the accumulator (minimal, self-chaining).
+struct Fuse;
 
-impl Step<Pasta> for UsedFuse {
+impl Step<Pasta> for Fuse {
     const INDEX: Index = Index::new(1);
     type Witness<'source> = ();
     type Aux<'source> = ();
-    type Left = LeafHeader;
-    type Right = LeafHeader;
-    type Output = LeafHeader;
+    type Left = NodeHeader;
+    type Right = NodeHeader;
+    type Output = NodeHeader;
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
@@ -160,8 +142,9 @@ impl Step<Pasta> for UsedFuse {
     }
 }
 
-/// Registered-but-unused filler seed step, `INDEX = I + 2`. All fillers share
-/// `FillerHeader`, so `N` fillers add `N` distinct circuits but one header.
+/// A distinct seed step per `I` (`INDEX = I + 2`), all sharing `NodeHeader`.
+/// Each one folded into the chain is executed, so N of them = N distinct step
+/// circuits with one header.
 struct Filler<const I: usize>;
 
 impl<const I: usize> Step<Pasta> for Filler<I> {
@@ -170,7 +153,7 @@ impl<const I: usize> Step<Pasta> for Filler<I> {
     type Aux<'source> = ();
     type Left = ();
     type Right = ();
-    type Output = FillerHeader;
+    type Output = NodeHeader;
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
@@ -202,87 +185,79 @@ impl<const I: usize> Step<Pasta> for Filler<I> {
     }
 }
 
-/// Build an application with `Leaf` + `UsedFuse` plus the listed fillers, then
-/// finalize. Requires the enclosing fn to return `Result`.
-macro_rules! app_with_fillers {
-    ($pasta:expr $(, $i:literal)* $(,)?) => {{
-        #[allow(unused_mut)]
-        let mut b = ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
-            .register(Leaf)?
-            .register(UsedFuse)?;
-        $( b = b.register(Filler::<$i>)?; )*
-        b.finalize($pasta)?
-    }};
-}
-
 fn summarize(times: &[Duration]) -> (f64, f64) {
     let min = times.iter().min().unwrap().as_secs_f64() * 1e3;
     let mean = times.iter().map(|d| d.as_secs_f64()).sum::<f64>() / times.len() as f64 * 1e3;
     (min, mean)
 }
 
-/// The fixed measured work: seed two leaves and fuse them (3 proofs).
-fn build_used(
-    app: &Application<'_, Pasta, ProductionRank, HEADER_SIZE>,
-    rng: &mut StdRng,
-) -> Result<()> {
-    let v = Fp::from(7u64);
-    let a = app.seed(rng, Leaf, v)?.0;
-    let b = app.seed(rng, Leaf, v)?.0;
-    let _ = app.fuse(rng, UsedFuse, (), a, b)?.0;
-    Ok(())
-}
-
-/// Time the fixed tree in `app` and print `N` (registered fillers), total
-/// circuits, `log2`, and min/mean time.
+/// Time `build` (which proves a chain that folds in `n` distinct fillers →
+/// `2n + 1` nodes) and print `n`, node count, total circuits, `log2`, and
+/// total / per-node time.
 fn measure(
     app: &Application<'_, Pasta, ProductionRank, HEADER_SIZE>,
-    n_fillers: usize,
+    n: usize,
+    build: impl Fn(&Application<'_, Pasta, ProductionRank, HEADER_SIZE>, &mut StdRng) -> Result<()>,
 ) -> Result<()> {
+    let nodes = 2 * n + 1;
     let total = app.native_registry().num_circuits();
     let log2 = total.next_power_of_two().trailing_zeros();
 
     let mut rng = StdRng::seed_from_u64(1234);
     for _ in 0..WARMUP {
-        build_used(app, &mut rng)?;
+        build(app, &mut rng)?;
     }
 
     let mut t = Vec::new();
     for _ in 0..ITERS {
         let start = Instant::now();
-        build_used(app, &mut rng)?;
+        build(app, &mut rng)?;
         t.push(start.elapsed());
     }
 
-    let (min, mean) = summarize(&t);
-    std::println!("{n_fillers:>10}{total:>10}{log2:>10}{min:>11.1}{mean:>11.1}");
+    let (_min, mean) = summarize(&t);
+    let per_node = mean / nodes as f64;
+    std::println!("{n:>8}{nodes:>8}{total:>10}{log2:>6}{mean:>11.1}{per_node:>11.1}");
     Ok(())
 }
 
-/// Sweep the number of distinct registered filler steps (shared header). Totals
-/// are `N + 17` circuits, so `N = 16` crosses `log2` 5 -> 6 (32 -> 33).
+/// One sweep point: register `Leaf` + `Fuse` + the listed distinct fillers, then
+/// prove a chain that folds each filler in once. Both lists are the same literals.
+macro_rules! sweep {
+    ($pasta:expr, $n:expr $(; $i:literal)*) => {{
+        #[allow(unused_mut)]
+        let mut b = ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
+            .register(Leaf)?
+            .register(Fuse)?;
+        $( b = b.register(Filler::<$i>)?; )*
+        let app = b.finalize($pasta)?;
+        measure(&app, $n, |app, rng| {
+            let v = Fp::from(7u64);
+            let mut acc = app.seed(rng, Leaf, v)?.0;
+            $(
+                let f = app.seed(rng, Filler::<$i>, v)?.0;
+                acc = app.fuse(rng, Fuse, (), acc, f)?.0;
+            )*
+            let _ = acc;
+            Ok(())
+        })?;
+    }};
+}
+
+/// Sweep the number of distinct fuse-fed step types actually executed in the
+/// chain. `total circuits = N + 17`, so N = 16 crosses the `log2` 5 → 6 boundary.
 #[test]
 fn sweep_distinct_steps() -> Result<()> {
     let pasta = Pasta::baked();
     std::println!("\n[shared header, iters={ITERS}]");
     std::println!(
-        "{:>10}{:>10}{:>10}{:>11}{:>11}",
-        "fillers",
-        "circuits",
-        "log2",
-        "min(ms)",
-        "avg(ms)"
+        "{:>8}{:>8}{:>10}{:>6}{:>11}{:>11}",
+        "steps", "nodes", "circuits", "log2", "avg(ms)", "per-node"
     );
 
-    measure(&app_with_fillers!(pasta), 0)?;
-    measure(&app_with_fillers!(pasta, 0, 1, 2, 3, 4, 5, 6, 7), 8)?;
-    measure(
-        &app_with_fillers!(pasta, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14),
-        15,
-    )?;
-    measure(
-        &app_with_fillers!(pasta, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15),
-        16,
-    )?;
+    sweep!(pasta, 1; 0);
+    sweep!(pasta, 4; 0; 1; 2; 3);
+    sweep!(pasta, 8; 0; 1; 2; 3; 4; 5; 6; 7);
+    sweep!(pasta, 16; 0; 1; 2; 3; 4; 5; 6; 7; 8; 9; 10; 11; 12; 13; 14; 15);
     Ok(())
 }
