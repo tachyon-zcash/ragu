@@ -95,7 +95,15 @@ jobs:
             ${{ runner.os }}-fuzz-corpus-${{ matrix.target }}-
 
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz
+        # Build cargo-fuzz with the same pinned nightly the targets run on.
+        # Without this the step falls back to the repo's pinned stable from
+        # rust-toolchain.toml, which cargo-fuzz's dependency tree no longer
+        # supports. Routed through env for the same reason as the run step
+        # below. `--locked` keeps the install reproducible, matching the
+        # cargo-vet and cargo-audit installs in vet.yml.
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.nightly.outputs.toolchain }}
+        run: cargo install --locked cargo-fuzz
 
       - name: Run fuzz target
         working-directory: qa/fuzz
