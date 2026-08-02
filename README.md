@@ -21,11 +21,14 @@
 * The minimum supported [Rust](https://rust-lang.org/) version is currently **1.90.0**.
 * Ragu requires minimal dependencies and currently strives to avoid using dependencies that are not already used in [Zebra](https://github.com/ZcashFoundation/zebra).
 * Ragu's library crates are [`no_std`]-compatible and only need a global allocator; the default `multicore` crate feature uses [`maybe-rayon`] and pulls in `std`. See the [book][book-no-std] for details.
+* Circuits are defined at compile time and are built into your binary. Ragu does not support serializing circuits or verifying keys to disk, the same limitation [halo2] has. See the [book][book-compile-time] for details.
 
 [Zebra]: https://github.com/ZcashFoundation/zebra
+[halo2]: https://github.com/zcash/halo2
 [`no_std`]: https://doc.rust-lang.org/reference/names/preludes.html#the-no_std-attribute
 [`maybe-rayon`]: https://crates.io/crates/maybe-rayon
 [book-no-std]: https://tachyon.z.cash/ragu/guide/requirements.html#no-std
+[book-compile-time]: https://tachyon.z.cash/ragu/guide/requirements.html#compile-time-circuits
 
 ## License
 
