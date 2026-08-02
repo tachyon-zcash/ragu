@@ -43,10 +43,10 @@
 //! [$\mu'$]: unified::Output::mu_prime
 //! [$\nu'$]: unified::Output::nu_prime
 
-use alloc::{vec, vec::Vec};
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use ragu_arithmetic::{Cycle, ff::Field};
+use ragu_arithmetic::Cycle;
 use ragu_circuits::{
     WithAux,
     horner::Horner,
@@ -689,34 +689,12 @@ impl<'dr, D: Driver<'dr, F: ragu_arithmetic::ff::PrimeField>> Inverter<'dr, D> {
     /// Performs batch inversion on all accumulated differences.
     ///
     /// Consumes the inverter and returns a vector of inverted [`Element`]s.
-    /// Each difference [`Element`] is inverted using [`Element::invert_with`]
-    /// with the batch-inverted field value as advice.
     ///
-    /// During proving, this function batch inverts the accumulated field values
-    /// using Montgomery's trick and uses them as advice for constraint
-    /// generation. During verification, the field values are not available, but
-    /// the inversion constraints are still enforced through the [`Element`]
-    /// wiring.
+    /// Delegates to [`Element::batch_invert`], so during proving the
+    /// differences are inverted with a single field inversion via Montgomery's
+    /// trick. During verification, the field values are not available, but the
+    /// inversion constraints are still enforced through the [`Element`] wiring.
     fn invert(self, dr: &mut D) -> Result<Vec<Element<'dr, D>>> {
-        let mut advice = D::just(|| {
-            let mut differences = self
-                .differences
-                .iter()
-                .map(|diff| **diff.value().snag())
-                .collect::<Vec<_>>();
-
-            let mut scratch = vec![D::F::ZERO; differences.len()];
-            ragu_arithmetic::ff::BatchInverter::invert_with_external_scratch(
-                &mut differences,
-                &mut scratch,
-            );
-
-            differences.into_iter()
-        });
-
-        self.differences
-            .into_iter()
-            .map(|e| e.invert_with(dr, advice.as_mut().map(|e| e.next().unwrap())))
-            .collect()
+        Element::batch_invert(dr, &self.differences)
     }
 }

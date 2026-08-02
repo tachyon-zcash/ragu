@@ -303,6 +303,48 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
             .map(|inv| inv.into_inverse().into_inner())
     }
 
+    /// Returns the multiplicative inverses of `elements`.
+    ///
+    /// Equivalent to calling [`Self::invert`] on each element, but during
+    /// proving the witness values are obtained with Montgomery's trick, which
+    /// needs a single field inversion for the whole batch instead of one per
+    /// element. The batch-inverted values are then supplied to
+    /// [`Self::invert_with`] as advice.
+    ///
+    /// During verification the field values are unavailable, but the inversion
+    /// constraints are still emitted for every element.
+    ///
+    /// This does not change the circuit: as with [`Self::invert`], each element
+    /// costs one gate and two constraints. Only the prover's witness
+    /// computation gets cheaper.
+    ///
+    /// This will be unsatisfied (and fail to synthesize) if any element is
+    /// zero. Zero elements are left as zero by the batch inversion, so the
+    /// per-element constraint rejects them exactly as [`Self::invert`] would.
+    pub fn batch_invert(dr: &mut D, elements: &[Self]) -> Result<Vec<Self>> {
+        let mut advice = D::just(|| {
+            let mut values = elements
+                .iter()
+                .map(|element| **element.value().snag())
+                .collect::<Vec<_>>();
+
+            let mut scratch = alloc::vec![D::F::ZERO; values.len()];
+            ragu_arithmetic::ff::BatchInverter::invert_with_external_scratch(
+                &mut values,
+                &mut scratch,
+            );
+
+            values.into_iter()
+        });
+
+        elements
+            .iter()
+            .map(|element| {
+                element.invert_with(dr, advice.as_mut().map(|values| values.next().unwrap()))
+            })
+            .collect()
+    }
+
     /// Divides this element by `divisor` and returns the quotient.
     ///
     /// This costs one gate and two constraints.
@@ -687,6 +729,58 @@ mod tests {
 
         inv(F::from(4578u64))?;
         assert!(inv(F::ZERO).is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_batch_invert() -> Result<()> {
+        type F = ragu_pasta::Fp;
+        type Simulator = crate::Simulator<F>;
+
+        let batch = |values: &[F]| {
+            let count = values.len();
+            let sim = Simulator::simulate((), |dr, _| {
+                let allocator = &mut Standard::new();
+                let elements = values
+                    .iter()
+                    .map(|value| {
+                        let value = *value;
+                        Element::alloc(dr, allocator, Simulator::just(move || value))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                dr.reset();
+
+                let inverses = Element::batch_invert(dr, &elements)?;
+                assert_eq!(inverses.len(), count);
+
+                for (element, inverse) in elements.iter().zip(inverses.iter()) {
+                    assert_eq!(
+                        *inverse.value().take(),
+                        element.value().take().invert().unwrap()
+                    );
+                }
+
+                Ok(())
+            })?;
+
+            // Batching changes only how the prover computes the witness, so the
+            // circuit is the same as calling `invert` once per element.
+            assert_eq!(sim.num_gates(), count);
+            assert_eq!(sim.num_constraints(), 2 * count);
+            Ok(())
+        };
+
+        batch(&[F::from(4578u64)])?;
+        batch(&[F::from(3u64), F::from(372u64), F::from(4578u64), F::ONE])?;
+
+        // An empty batch imposes nothing.
+        batch(&[])?;
+
+        // A zero anywhere in the batch is left as zero by Montgomery's trick,
+        // so the per-element constraint rejects it just as `invert` would.
+        assert!(batch(&[F::ZERO]).is_err());
+        assert!(batch(&[F::from(3u64), F::ZERO, F::from(7u64)]).is_err());
 
         Ok(())
     }
