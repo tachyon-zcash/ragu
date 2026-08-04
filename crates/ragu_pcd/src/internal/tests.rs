@@ -46,11 +46,11 @@ pub const HEADER_SIZE: usize = 105;
 // steps are present.
 const NUM_APP_STEPS: usize = 6000;
 
-fn dummy_app<'params, const HDR: usize, const POLYS: usize>(
+fn dummy_app<'params, const HDR: usize, const POLYS: usize, const CLAIMS: usize>(
     pasta: &'params <Pasta as ragu_arithmetic::Cycle>::Params,
     steps: usize,
-) -> crate::Application<'params, Pasta, R, HDR, AppHooks<POLYS>> {
-    ApplicationBuilder::<Pasta, R, HDR, AppHooks<POLYS>>::new(pasta)
+) -> crate::Application<'params, Pasta, R, HDR, AppHooks<POLYS, CLAIMS>> {
+    ApplicationBuilder::<Pasta, R, HDR, AppHooks<POLYS, CLAIMS>>::new(pasta)
         .register_dummy_circuits(steps)
         .unwrap()
         .finalize()
@@ -86,7 +86,7 @@ macro_rules! check_constraints {
 fn test_internal_circuit_constraint_counts() {
     let pasta = Pasta::baked();
 
-    let app = dummy_app::<HEADER_SIZE, 0>(pasta, NUM_APP_STEPS);
+    let app = dummy_app::<HEADER_SIZE, 0, 0>(pasta, NUM_APP_STEPS);
 
     check_constraints!(app, Hashes1Circuit,       mul = 1451, lin = 2068);
     check_constraints!(app, Hashes2Circuit,       mul = 1999, lin = 2951);
@@ -106,7 +106,7 @@ mod pinned_chain {
         internal::native::{RevdotParameters, stages},
     };
 
-    type J = AppHooks<8>;
+    type J = AppHooks<8, 1>;
 
     pub type Preamble = stages::preamble::Stage<Pasta, R, HEADER_SIZE, J>;
     pub type OuterError = stages::outer_error::Stage<Pasta, R, HEADER_SIZE, J, RevdotParameters>;
@@ -127,11 +127,11 @@ fn test_internal_stage_parameters() {
         }};
     }
 
-    check_stage!(pinned_chain::Preamble,    skip =   1, num = 361);
-    check_stage!(pinned_chain::OuterError,  skip = 362, num = 186);
-    check_stage!(pinned_chain::InnerError,  skip = 548, num = 399);
-    check_stage!(pinned_chain::Query,       skip = 362, num =  23);
-    check_stage!(pinned_chain::Eval,        skip = 385, num =  26);
+    check_stage!(pinned_chain::Preamble,    skip =   1, num = 365);
+    check_stage!(pinned_chain::OuterError,  skip = 366, num = 186);
+    check_stage!(pinned_chain::InnerError,  skip = 552, num = 399);
+    check_stage!(pinned_chain::Query,       skip = 366, num =  23);
+    check_stage!(pinned_chain::Eval,        skip = 389, num =  26);
 }
 
 /// Helper test to print current constraint counts in copy-pasteable format.
@@ -143,7 +143,7 @@ fn print_internal_circuit_constraint_counts() {
 
     let pasta = Pasta::baked();
 
-    let app = dummy_app::<HEADER_SIZE, 0>(pasta, NUM_APP_STEPS);
+    let app = dummy_app::<HEADER_SIZE, 0, 0>(pasta, NUM_APP_STEPS);
 
     let variants = [
         ("Hashes1Circuit", InternalCircuitIndex::Hashes1Circuit),
@@ -206,7 +206,7 @@ fn print_internal_stage_parameters() {
 fn test_native_registry_digest() {
     let pasta = Pasta::baked();
 
-    let app = dummy_app::<HEADER_SIZE, 0>(pasta, NUM_APP_STEPS);
+    let app = dummy_app::<HEADER_SIZE, 0, 0>(pasta, NUM_APP_STEPS);
 
     let expected = fp!(0x31e1786b198ad8953d0ec1699a2d1c7ed26d312a7c8c67099cb5a517259e54e3);
 
@@ -226,7 +226,7 @@ fn test_native_registry_digest() {
 fn test_nested_registry_digest() {
     let pasta = Pasta::baked();
 
-    let app = dummy_app::<HEADER_SIZE, 0>(pasta, NUM_APP_STEPS);
+    let app = dummy_app::<HEADER_SIZE, 0, 0>(pasta, NUM_APP_STEPS);
 
     let expected = fq!(0x2f4bf855b80a694facbe9a2c26ee8d1dae9e15bb7b7eba54ca53f5c166e1d150);
 
@@ -248,7 +248,7 @@ fn print_registry_digests() {
 
     let pasta = Pasta::baked();
 
-    let app = dummy_app::<HEADER_SIZE, 0>(pasta, NUM_APP_STEPS);
+    let app = dummy_app::<HEADER_SIZE, 0, 0>(pasta, NUM_APP_STEPS);
 
     let native_digest = app.native_registry.digest();
     let nested_digest = app.nested_registry.digest();

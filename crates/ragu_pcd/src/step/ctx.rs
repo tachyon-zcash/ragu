@@ -6,6 +6,7 @@ use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
 };
+use ragu_primitives::Element;
 
 use crate::{framework_hooks::FrameworkHooks, poly_commitment::PolyHandle};
 
@@ -54,7 +55,9 @@ where
     }
 
     /// Evaluates the polynomial behind `handle` at `x`, as a prover-only
-    /// value. It synthesizes nothing and proves nothing.
+    /// value. It synthesizes nothing and proves nothing: allocate the result
+    /// and claim it with [`enforce_poly_query`](Self::enforce_poly_query),
+    /// which is what binds it.
     ///
     /// # Errors
     ///
@@ -66,5 +69,18 @@ where
         x: DriverValue<D, C::CircuitField>,
     ) -> Result<DriverValue<D, C::CircuitField>> {
         self.hooks.evaluate(handle, x)
+    }
+
+    /// Records a poly-query: the polynomial behind `handle` evaluates to `y` at
+    /// `x`. The **parent** fuse enforces it, or
+    /// [`Application::verify`](crate::Application::verify) for a proof that is
+    /// never fused. A repeat opening costs one poly-query and no polynomial.
+    pub fn enforce_poly_query(
+        &mut self,
+        handle: &PolyHandle<'dr, D, C>,
+        x: Element<'dr, D>,
+        y: Element<'dr, D>,
+    ) -> Result<()> {
+        self.hooks.enforce_poly_query(handle, x, y)
     }
 }

@@ -119,6 +119,9 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         for poly in hooks.witnessed_polys() {
             poly.write(dr, &mut elements)?;
         }
+        for query in hooks.poly_queries() {
+            query.write(dr, &mut elements)?;
+        }
 
         // Read every hook's wires back out as values for the fuse.
         let framework = hooks.into_values()?;

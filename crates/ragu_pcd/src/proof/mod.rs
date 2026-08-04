@@ -14,7 +14,7 @@ pub(crate) mod builder;
 use alloc::{vec, vec::Vec};
 
 pub(crate) use builder::ProofBuilder;
-use ragu_arithmetic::{Cycle, FixedGenerators as _, ff::Field};
+use ragu_arithmetic::{CurveAffine, Cycle, FixedGenerators as _, ff::Field};
 use ragu_circuits::{
     CircuitExt,
     polynomials::{Rank, sparse},
@@ -130,6 +130,23 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 }
 
+/// A polynomial-opening claim $p(x) = y$, identifying the polynomial by its
+/// commitment.
+///
+/// The commitment is the host-curve point itself: a `Proof` is plain data with
+/// no circuit to answer to, so nothing here needs the handle the native circuit
+/// cannot avoid. `Curve::ScalarExt` is the circuit field, which is why one
+/// parameter fixes all three fields.
+#[derive(Clone, Copy, Debug)]
+pub struct PolyQuery<Curve: CurveAffine> {
+    /// The opened polynomial's commitment.
+    pub com: Curve,
+    /// The opening point.
+    pub x: Curve::ScalarExt,
+    /// The claimed evaluation $p(x) = y$.
+    pub y: Curve::ScalarExt,
+}
+
 /// Represents a recursive proof for the correctness of some computation.
 ///
 /// All fields are flat (no nested component structs). Polynomial fields are
@@ -231,6 +248,12 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) child_left_stage_rx: ChildStageRx<C::ScalarField, R>,
     pub(crate) child_right_stage_rx: ChildStageRx<C::ScalarField, R>,
 
+    /// Padded to the application's layout, and bound to $k(Y)$. Crate-visible
+    /// because [`fuzz_utils`](crate::fuzz_utils) corrupts it in place; readers
+    /// go through
+    /// [`application_poly_queries`](Self::application_poly_queries).
+    pub(crate) application_poly_queries: Vec<PolyQuery<C::HostCurve>>,
+
     /// The step's witnessed polynomials, carried for one fuse level.
     witness_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
     /// [`witness_polys`](Self::witness_polys)' commitments, in the same order.
@@ -325,11 +348,16 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         &self.right_header
     }
 
+    pub(crate) fn application_poly_queries(&self) -> &[PolyQuery<C::HostCurve>] {
+        &self.application_poly_queries
+    }
+
     /// Whether the hook lists are the ones `layout` declares. `Proof` is not
     /// parameterized by the hook configuration, so this invariant is checked
     /// where a proof is *consumed* — at the fuse and at the root.
     pub(crate) fn has_shape(&self, layout: &HookLayout) -> bool {
-        self.witness_polys.len() == layout.witness_polys
+        self.application_poly_queries.len() == layout.poly_queries
+            && self.witness_polys.len() == layout.witness_polys
     }
 
     pub(crate) fn witness_polys(&self) -> &[sparse::Polynomial<C::CircuitField, R>] {
@@ -570,14 +598,25 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         builder.set_left_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
         builder.set_right_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
 
-        // A trivial proof witnesses nothing itself: every position holds the
-        // application's padding polynomial.
+        // A trivial proof raises no poly-queries: every position holds the
+        // application's padding query, mirroring the adapter's padding (every
+        // query opens the first polynomial).
         // The padding polynomial is the constant 1, so its commitment is g[0]
         // — which is what the builder derives for every padded polynomial.
         let padding_com = C::host_generators(self.params).g()[0];
         builder.set_application_polys(
             J::PolyWitnesses::range()
                 .map(|_| sparse::Polynomial::from_coeffs(vec![C::CircuitField::ONE]))
+                .collect(),
+        );
+        builder.set_application_poly_queries(
+            J::PolyQueries::range()
+                .map(|_| PolyQuery {
+                    com: padding_com,
+                    // The constant polynomial 1 evaluates to 1 everywhere.
+                    x: C::CircuitField::ZERO,
+                    y: C::CircuitField::ONE,
+                })
                 .collect(),
         );
 

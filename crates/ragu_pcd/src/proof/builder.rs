@@ -18,7 +18,7 @@ use ragu_circuits::{
 use ragu_core::Result;
 use ragu_primitives::vec::FixedVec;
 
-use super::{Cached, Proof};
+use super::{Cached, PolyQuery, Proof};
 use crate::{framework_hooks::HookConfig, internal::nested};
 
 /// Produces `pub(crate) fn $name(&mut self, v: $ty)` that sets an `Option`
@@ -309,6 +309,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, J: HookConfig> {
     // held plainly, as are the commitments derived from them; `pad_to_layout`
     // is what fills them to the layout, and `Proof::has_shape` reports a
     // mismatch where a proof is consumed.
+    application_poly_queries: Option<Vec<PolyQuery<C::HostCurve>>>,
     witness_polys: Option<Vec<sparse::Polynomial<C::CircuitField, R>>>,
     /// Derived from [`witness_polys`](Self::witness_polys) on first access,
     /// like every other commitment cache here.
@@ -391,6 +392,7 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig> ProofBuilder<'params, C, R, J> {
             bridge_eval_commitment: OnceCell::new(),
             child_left_stage_rx: None,
             child_right_stage_rx: None,
+            application_poly_queries: None,
             witness_polys: None,
             witness_poly_commitments: OnceCell::new(),
             _marker: PhantomData,
@@ -652,6 +654,12 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig> ProofBuilder<'params, C, R, J> {
     );
 
     setter!(
+        set_application_poly_queries,
+        application_poly_queries,
+        Vec<PolyQuery<C::HostCurve>>
+    );
+
+    setter!(
         set_application_polys,
         witness_polys,
         Vec<sparse::Polynomial<C::CircuitField, R>>
@@ -822,6 +830,7 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig> ProofBuilder<'params, C, R, J> {
             // `Proof` is not parameterized by `J`, so the fixed-length lists
             // become plain ones here; `Proof::has_shape` is where their length
             // is checked again, at the boundaries that consume a proof.
+            application_poly_queries: take!(application_poly_queries).into_iter().collect(),
             witness_polys: take!(witness_polys).into_iter().collect(),
         })
     }

@@ -4,8 +4,9 @@
 //! the step witness. This sets the application fields on the [`ProofBuilder`]
 //! and returns the child proofs along with the output data from the step circuit.
 //!
-//! This is where the hooks' coefficient vectors become polynomials at the
-//! application's rank, that being the first place the rank is in scope.
+//! Nothing about a poly-query is re-checked here. This is where the hooks'
+//! coefficient vectors become polynomials at the application's rank, that being
+//! the first place the rank is in scope.
 
 use ragu_arithmetic::{CryptoRngCore, Cycle};
 use ragu_circuits::{
@@ -57,9 +58,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
             right_header,
             output_data,
             step_aux,
-            framework: FrameworkAux {
-                witness_polys: witnessed,
-            },
+            framework:
+                FrameworkAux {
+                    witness_polys: witnessed,
+                    poly_queries,
+                },
         } = aux;
 
         let witness_polys = witnessed
@@ -73,6 +76,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
 
         builder.set_native_application_rx(rx);
         builder.set_application_polys(witness_polys);
+        builder.set_application_poly_queries(poly_queries);
 
         Ok((left_proof, right_proof, output_data, step_aux))
     }

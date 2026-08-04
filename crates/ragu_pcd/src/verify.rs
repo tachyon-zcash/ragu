@@ -19,6 +19,7 @@ use crate::{
         native::{claims as native_claims, stages::preamble::ProofInputs},
         nested::claims as nested_claims,
     },
+    proof::PolyQuery,
 };
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
@@ -139,11 +140,28 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
             poly_eval == expected
         };
 
+        // A root proof's own claims are not yet folded; check them natively.
+        // Rejects a query whose commitment is no carried polynomial's, or
+        // whose evaluation disagrees with that polynomial. The commitments are
+        // the ones the builder derived from these very polynomials, so
+        // resolving one is finding the polynomial evaluated here.
+        let poly_query_claims =
+            pcd.proof()
+                .application_poly_queries()
+                .iter()
+                .all(|&PolyQuery { com, x, y }| {
+                    pcd.proof()
+                        .witness_poly_commitments()
+                        .zip(pcd.proof().witness_polys())
+                        .find(|(derived, _)| *derived == com)
+                        .is_some_and(|(_, poly)| poly.eval(x) == y)
+                });
+
         // TODO: Add checks for registry_wx0_poly, registry_wx1_poly, and registry_wy_poly.
         // - registry_wx0/wx1: need child proof x challenges (x₀, x₁) which "disappear" in preamble
         // - registry_wy: interstitial value that will be elided later
 
-        Ok(native_revdot_claims && nested_revdot_claims && registry_xy_claim)
+        Ok(native_revdot_claims && nested_revdot_claims && registry_xy_claim && poly_query_claims)
     }
 }
 

@@ -24,6 +24,7 @@ use crate::{
     Proof,
     framework_hooks::HookConfig,
     header::Header,
+    instance,
     internal::native::unified,
     poly_commitment::{self, PolyHandle},
     step::internal::padded,
@@ -97,6 +98,10 @@ pub struct ProofInputs<
     /// Output header of this child proof.
     #[ragu(gadget)]
     pub output_header: HeaderVec<'dr, D, HEADER_SIZE>,
+    /// The child's poly-queries; positions it left unused hold the canonical
+    /// padding query.
+    #[ragu(gadget)]
+    pub poly_queries: FixedVec<instance::PolyQuery<'dr, D, C>, J::PolyQueries>,
     /// The child's witnessed polynomials; positions it left unused hold the
     /// canonical padding polynomial.
     #[ragu(gadget)]
@@ -152,6 +157,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         self.children.right.write(dr, &mut ky)?;
         self.output_header.write(dr, &mut ky)?;
         self.witness_polys.write(dr, &mut ky)?;
+        self.poly_queries.write(dr, &mut ky)?;
         ky.finish_ky(dr)
     }
 
@@ -177,6 +183,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         output_header: DriverValue<D, &FixedVec<D::F, ConstLen<HEADER_SIZE>>>,
     ) -> Result<Self> {
         let num_polys = J::PolyWitnesses::len();
+        let num_queries = J::PolyQueries::len();
 
         // A child proof reaching the fuse has not passed through `verify`, so
         // this is its own boundary. `alloc` has no verdict to return, hence
@@ -229,6 +236,22 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                             )
                         })?,
                     )
+                })
+                .try_collect_fixed()?,
+            poly_queries: (0..num_queries)
+                .map(|i| {
+                    let claim = proof.as_ref().map(|p| p.application_poly_queries()[i]);
+                    // The one cast a `Proof` cannot avoid: it records the
+                    // commitment, and the native circuit can only hold wires.
+                    let com = {
+                        let point = claim.as_ref().map(|c| c.com);
+                        D::try_just(move || poly_commitment::handle::<C>(point.take()))?
+                    };
+                    Ok(instance::PolyQuery {
+                        com: PolyHandle::alloc(dr, com)?,
+                        x: Element::alloc(dr, allocator, claim.as_ref().map(|c| c.x))?,
+                        y: Element::alloc(dr, allocator, claim.as_ref().map(|c| c.y))?,
+                    })
                 })
                 .try_collect_fixed()?,
             circuit_id: Element::alloc(
@@ -300,8 +323,8 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usiz
     }
 }
 
-/// The root of the native stage chain. Per child: three headers, the
-/// polynomial region, the circuit id, and the unified wires.
+/// The root of the native stage chain. Per child: three headers, the poly and
+/// poly-query regions, the circuit id, and the unified wires.
 pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig> {
     _marker: PhantomData<(C, R, J)>,
 }
@@ -365,7 +388,7 @@ mod tests {
     #[test]
     fn stage_values_matches_wire_count() {
         fn check<const POLYS: usize>() {
-            assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }, AppHooks<POLYS>>::default());
+            assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }, AppHooks<POLYS, 1>>::default());
         }
         check::<0>();
         check::<1>();

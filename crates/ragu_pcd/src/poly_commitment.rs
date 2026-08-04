@@ -74,6 +74,10 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> PolyHandle<'dr, D, C> {
         })
     }
 
+    pub(crate) fn wires(&self) -> [Element<'dr, D>; HANDLE_WIRES] {
+        self.handle.clone()
+    }
+
     pub(crate) fn value(&self) -> DriverValue<D, [D::F; HANDLE_WIRES]> {
         let limbs: [_; HANDLE_WIRES] = array::from_fn(|i| self.handle[i].value());
         D::just(move || limbs.map(|limb| *limb.take()))

@@ -34,6 +34,7 @@ pub mod circuits {
     pub mod hashes_2;
     pub mod inner_collapse;
     pub mod outer_collapse;
+    pub mod poly_query;
 }
 
 pub mod claims;

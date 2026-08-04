@@ -15,7 +15,7 @@ use ragu_circuits::{
     polynomials::{Rank, sparse},
     staging::StageExt,
 };
-use ragu_core::{Result, drivers::Driver, maybe::Maybe};
+use ragu_core::{Error, Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::Element;
 
 use super::{NativeF, NativeSPrime, RegistryWy};
@@ -165,6 +165,25 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
                 builder.native_registry_xy_poly().iter_coeffs(),
                 omega_j(id),
             ));
+        }
+
+        // Child poly-queries: the quotient (p_i(X) - y_i)/(X - x_i) per
+        // child poly-query, against the polynomial the query's commitment
+        // identifies (`compute_v` resolves the same one via its one-hot).
+        // Must remain the trailing block, matching `poly_queries`.
+        for proof in [left, right] {
+            for query in proof.application_poly_queries() {
+                let (_, poly) = proof
+                    .witness_poly_commitments()
+                    .zip(proof.witness_polys())
+                    .find(|(com, _)| *com == query.com)
+                    .ok_or_else(|| {
+                        Error::InvalidWitness(
+                            "poly-query names a commitment that is not in the instance".into(),
+                        )
+                    })?;
+                iters.push(factor_iter(poly.iter_coeffs(), query.x));
+            }
         }
 
         let mut coeffs = Vec::with_capacity(R::num_coeffs());

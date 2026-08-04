@@ -30,6 +30,11 @@ pub enum Corruption<F> {
     LeftHeaderLen(usize),
     /// Resize `right_header` to the given length.
     RightHeaderLen(usize),
+    /// Perturb the claimed evaluation `y` of the poly-query at the given index.
+    QueryY(usize, F),
+    /// Negate the commitment of the query at the given index, so it is a
+    /// valid point that commits to no carried polynomial.
+    QueryCom(usize),
 }
 
 impl<C: Cycle, R: Rank> Proof<C, R> {
@@ -60,6 +65,13 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             }
             Corruption::RightHeaderLen(len) => {
                 self.right_header.resize(len, C::CircuitField::ZERO);
+            }
+            Corruption::QueryY(index, v) => {
+                self.application_poly_queries[index].y += v;
+            }
+            Corruption::QueryCom(index) => {
+                let query = &mut self.application_poly_queries[index];
+                query.com = -query.com;
             }
         }
     }
