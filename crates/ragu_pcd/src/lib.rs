@@ -54,27 +54,21 @@ pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
+    params: &'params C::Params,
     num_application_steps: usize,
     header_map: BTreeMap<header::Suffix, TypeId>,
     _marker: PhantomData<[(); HEADER_SIZE]>,
-}
-
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Default
-    for ApplicationBuilder<'_, C, R, HEADER_SIZE>
-{
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     ApplicationBuilder<'params, C, R, HEADER_SIZE>
 {
     /// Create an empty [`ApplicationBuilder`] for proof-carrying data.
-    pub fn new() -> Self {
+    pub fn new(params: &'params C::Params) -> Self {
         ApplicationBuilder {
             native_registry: RegistryBuilder::new(),
             nested_registry: RegistryBuilder::new(),
+            params,
             num_application_steps: 0,
             header_map: BTreeMap::new(),
             _marker: PhantomData,
@@ -127,10 +121,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     ///
     /// Returns an error if internal circuit registration or registry
     /// finalization fails.
-    pub fn finalize(
-        mut self,
-        params: &'params C::Params,
-    ) -> Result<Application<'params, C, R, HEADER_SIZE>> {
+    pub fn finalize(mut self) -> Result<Application<'params, C, R, HEADER_SIZE>> {
+        let params = self.params;
         // Build the native registry:
         // 1. Application circuits (already registered)
         // 2. Internal circuits and masks

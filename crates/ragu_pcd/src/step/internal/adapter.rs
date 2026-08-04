@@ -14,7 +14,7 @@ use ragu_primitives::{
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
-use super::super::Step;
+use super::super::{Step, StepCtx};
 use crate::Header;
 
 /// Represents triple a length determined at compile time.
@@ -81,9 +81,11 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
     {
         let (left, right, witness) = witness.cast();
 
-        let ((left, right, output), output_data, step_aux) = self
-            .step
-            .witness::<_, HEADER_SIZE>(dr, witness, left, right)?;
+        let ((left, right, output), output_data, step_aux) = {
+            let mut ctx = StepCtx::<'_, '_, _, C>::new(dr);
+            self.step
+                .witness::<_, HEADER_SIZE>(&mut ctx, witness, left, right)?
+        };
 
         let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
         left.write(dr, &mut elements)?;
@@ -160,7 +162,7 @@ mod tests {
 
         fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
             &self,
-            dr: &mut D,
+            ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
             _: DriverValue<D, ()>,
             left: DriverValue<D, Fp>,
             right: DriverValue<D, Fp>,
@@ -173,6 +175,7 @@ mod tests {
             DriverValue<D, Fp>,
             DriverValue<D, ()>,
         )> {
+            let dr = &mut *ctx.dr;
             let allocator = &mut Standard::new();
             // Allocate elements for left and right
             let left_elem = Element::alloc(dr, allocator, left)?;

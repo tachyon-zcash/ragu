@@ -522,16 +522,9 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     );
 
     /// Returns the derived alpha for a cached bridge, as a distinct power of
-    /// `bridge_alpha`.
+    /// `bridge_alpha` (see [`bridge_alpha_exponent`]).
     fn bridge_alpha_power(&self, idx: nested::RxIndex) -> C::ScalarField {
-        let n = match idx {
-            nested::RxIndex::BridgeOuterError => 1,
-            nested::RxIndex::BridgeAB => 2,
-            nested::RxIndex::BridgeQuery => 3,
-            nested::RxIndex::BridgeEval => 4,
-            _ => panic!("not a cached bridge: {idx:?}"),
-        };
-        self.bridge_alpha.pow_vartime([n])
+        self.bridge_alpha.pow_vartime([bridge_alpha_exponent(idx)])
     }
 
     cached_bridge!(
@@ -778,5 +771,40 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             child_left_stage_rx: take!(child_left_stage_rx),
             child_right_stage_rx: take!(child_right_stage_rx),
         })
+    }
+}
+
+/// The exponent of `bridge_alpha` for a blinded bridge stage; the single
+/// ordering keeps all blinds distinct. Panics on stages blinded with an
+/// in-circuit challenge (`preamble`, `s_prime`, `inner_error`, `f`).
+fn bridge_alpha_exponent(idx: nested::RxIndex) -> u64 {
+    match idx {
+        nested::RxIndex::BridgeOuterError => 1,
+        nested::RxIndex::BridgeAB => 2,
+        nested::RxIndex::BridgeQuery => 3,
+        nested::RxIndex::BridgeEval => 4,
+        _ => panic!("not blinded from bridge_alpha: {idx:?}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pins the `bridge_alpha` exponent series: no registry digest covers
+    /// these prover-side blinds, so a collision would otherwise be silent.
+    #[test]
+    fn bridge_alpha_exponents_are_the_expected_series() {
+        assert_eq!(bridge_alpha_exponent(nested::RxIndex::BridgeOuterError), 1);
+        assert_eq!(bridge_alpha_exponent(nested::RxIndex::BridgeAB), 2);
+        assert_eq!(bridge_alpha_exponent(nested::RxIndex::BridgeQuery), 3);
+        assert_eq!(bridge_alpha_exponent(nested::RxIndex::BridgeEval), 4);
+    }
+
+    /// Bridges blinded with an in-circuit challenge are not on this series.
+    #[test]
+    #[should_panic(expected = "not blinded from bridge_alpha")]
+    fn unblinded_bridges_are_rejected() {
+        bridge_alpha_exponent(nested::RxIndex::BridgeF);
     }
 }

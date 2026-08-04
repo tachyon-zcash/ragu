@@ -10,7 +10,7 @@ use ragu_core::{
 };
 use ragu_pcd::{
     header::{Header, Suffix},
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Step, StepCtx},
 };
 use ragu_primitives::{
     Element,
@@ -64,7 +64,7 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, C::CircuitField>,
         right: DriverValue<D, C::CircuitField>,
@@ -80,6 +80,7 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
     where
         Self: 'dr,
     {
+        let dr = &mut *ctx.dr;
         let allocator = &mut Standard::new();
         let left = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
@@ -109,7 +110,7 @@ impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
         witness: DriverValue<D, Self::Witness<'source>>,
         _left: DriverValue<D, ()>,
         _right: DriverValue<D, ()>,
@@ -125,6 +126,7 @@ impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
     where
         Self: 'dr,
     {
+        let dr = &mut *ctx.dr;
         let allocator = &mut Standard::new();
         let leaf = Element::alloc(dr, allocator, witness)?;
         let mut sponge = Sponge::new(dr, self.poseidon_params);
