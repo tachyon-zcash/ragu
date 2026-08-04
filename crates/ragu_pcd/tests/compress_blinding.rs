@@ -14,8 +14,8 @@ use crate::{ApplicationBuilder, ipa::IpaCycle};
 
 #[test]
 fn rejects_recompressed_blinded_trace_commitments() {
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
-        .finalize(crate::pasta::baked())
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new(crate::pasta::baked())
+        .finalize()
         .unwrap();
     let honest = app.bootstrap_pcd();
     let mut rng = StdRng::seed_from_u64(0x462);

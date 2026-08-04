@@ -36,7 +36,7 @@ use crate::{
         Side, native,
         nested::{self, stages::challenges},
     },
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Step, StepCtx},
 };
 
 /// Preserve ordinary unit headers through successive fuses.
@@ -53,7 +53,7 @@ impl Step<C> for UnitStep {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
         _: DriverValue<D, ()>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -69,6 +69,7 @@ impl Step<C> for UnitStep {
     where
         Self: 'dr,
     {
+        let dr = &mut *ctx.dr;
         let allocator = &mut Standard::new();
         Ok((
             (
@@ -700,10 +701,10 @@ fn check_guards(
 #[test]
 #[ignore = "recursion regression suite: run by the scheduled heavy-tests workflow"]
 fn noncanonical_unit_children_reject_through_two_generations() {
-    let app = ApplicationBuilder::<C, R, HEADER_SIZE>::new()
+    let app = ApplicationBuilder::<C, R, HEADER_SIZE>::new(crate::pasta::baked())
         .register(UnitStep)
         .expect("register unit step")
-        .finalize(crate::pasta::baked())
+        .finalize()
         .expect("build unit application");
     let mut rng = StdRng::seed_from_u64(873003);
     let honest = app.bootstrap_pcd();

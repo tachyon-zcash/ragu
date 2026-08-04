@@ -31,7 +31,7 @@ use crate::{
     header::{Header, Suffix},
     internal::{native, nested},
     proof::recursive_propagation_tests::support::{self, Cache},
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Step, StepCtx},
 };
 
 type TestR = ProductionRank;
@@ -69,7 +69,7 @@ impl Step<Pasta> for Seed {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -85,6 +85,7 @@ impl Step<Pasta> for Seed {
     where
         Self: 'dr,
     {
+        let dr = &mut *ctx.dr;
         let allocator = &mut Standard::new();
         Ok((
             (
@@ -99,10 +100,10 @@ impl Step<Pasta> for Seed {
 }
 
 fn app() -> App {
-    ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
+    ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new(crate::pasta::baked())
         .register(Seed)
         .expect("register seed step")
-        .finalize(crate::pasta::baked())
+        .finalize()
         .expect("failed to create test application")
 }
 

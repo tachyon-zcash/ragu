@@ -33,8 +33,8 @@ const HEADER_SIZE: usize = 4;
 const TAG: &[u8] = b"ragu-test-batch";
 
 fn create_test_app() -> Application<'static, Pasta, TestR, HEADER_SIZE> {
-    ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
-        .finalize(crate::pasta::baked())
+    ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new(crate::pasta::baked())
+        .finalize()
         .expect("failed to create test application")
 }
 

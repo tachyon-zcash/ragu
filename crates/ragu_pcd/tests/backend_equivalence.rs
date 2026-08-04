@@ -27,7 +27,7 @@ use crate::{
         revdot::{Reduction, fold::Fold},
     },
     ipa::{CycleTranscript, IPA_TAG, IpaTranscript},
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Step, StepCtx},
 };
 
 static TRACKING_MSM_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -146,7 +146,7 @@ impl Step<Pasta> for UnitStep {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -159,6 +159,7 @@ impl Step<Pasta> for UnitStep {
         DriverValue<D, ()>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
+        let dr = &mut *ctx.dr;
         let allocator = &mut Standard::new();
         let left = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
@@ -180,28 +181,28 @@ struct Apps {
 impl Apps {
     fn build(dummy_circuits: usize) -> Self {
         let pasta = ragu_pcd::pasta::baked();
-        let reference = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
+        let reference = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new(pasta)
             .register(UnitStep)
             .unwrap()
             .register_dummy_circuits(dummy_circuits)
             .unwrap()
-            .finalize(pasta)
+            .finalize()
             .unwrap();
-        let accelerated = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
+        let accelerated = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new(pasta)
             .with_backend::<AcceleratedBackend>()
             .register(UnitStep)
             .unwrap()
             .register_dummy_circuits(dummy_circuits)
             .unwrap()
-            .finalize(pasta)
+            .finalize()
             .unwrap();
-        let prover = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
+        let prover = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new(pasta)
             .with_backend::<AcceleratedProver>()
             .register(UnitStep)
             .unwrap()
             .register_dummy_circuits(dummy_circuits)
             .unwrap()
-            .finalize(pasta)
+            .finalize()
             .unwrap();
         Self {
             reference,
@@ -724,14 +725,16 @@ fn check_compressed_pcd_equivalence(
 
 #[test]
 fn selected_backend_dispatch_reaches_protocol_phases() {
-    let app = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
-        .with_backend::<TrackingBackend>()
-        .register(UnitStep)
-        .unwrap()
-        .register_dummy_circuits(0)
-        .unwrap()
-        .finalize(ragu_pcd::pasta::baked())
-        .unwrap();
+    let app = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new(
+        ragu_pcd::pasta::baked(),
+    )
+    .with_backend::<TrackingBackend>()
+    .register(UnitStep)
+    .unwrap()
+    .register_dummy_circuits(0)
+    .unwrap()
+    .finalize()
+    .unwrap();
     let mut rng = StdRng::seed_from_u64(0);
     let (left, _) = app.seed(&mut rng, UnitStep, ()).unwrap();
     let (right, _) = app.seed(&mut rng, UnitStep, ()).unwrap();

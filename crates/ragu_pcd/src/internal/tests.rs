@@ -51,6 +51,17 @@ pub const HEADER_SIZE: usize = 103;
 // placeholder steps.
 const NUM_APP_STEPS: usize = 6000;
 
+fn dummy_app<'params, const HDR: usize>(
+    pasta: &'params <Pasta as ragu_core::Cycle>::Params,
+    steps: usize,
+) -> crate::Application<'params, Pasta, R, HDR> {
+    ApplicationBuilder::<Pasta, R, HDR>::new(pasta)
+        .register_dummy_circuits(steps)
+        .unwrap()
+        .finalize()
+        .unwrap()
+}
+
 type Preamble = preamble::Stage<Pasta, R, HEADER_SIZE>;
 type OuterError = outer_error::Stage<Pasta, R, HEADER_SIZE, RevdotParameters>;
 type InnerError = inner_error::Stage<Pasta, R, HEADER_SIZE, RevdotParameters>;
@@ -532,8 +543,8 @@ fn test_non_step_slots_reject_application_instances() {
     use rand::{Rng, SeedableRng, rngs::StdRng};
     use udon::field::Field;
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
-        .finalize(crate::pasta::baked())
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new(crate::pasta::baked())
+        .finalize()
         .unwrap();
     let registry = &app.native_registry;
     let x = Fp::random(|bytes| StdRng::seed_from_u64(0).fill_bytes(bytes));
@@ -565,9 +576,9 @@ fn supplied_tags_reach_both_registries() -> Result<()> {
     let tags = RegistryTags::<Pasta>::from_beacon(&[0x42; 32], &[0x24; 20]);
     let native = tags.native.value();
     let nested = tags.nested.value();
-    let app = ApplicationBuilder::<Pasta, R, 4>::new()
+    let app = ApplicationBuilder::<Pasta, R, 4>::new(crate::pasta::baked())
         .with_registry_tags(tags)
-        .finalize(crate::pasta::baked())?;
+        .finalize()?;
     assert_eq!(app.native_registry.tag(), native);
     assert_eq!(app.nested_registry.tag(), nested);
     Ok(())
@@ -578,11 +589,7 @@ fn supplied_tags_reach_both_registries() -> Result<()> {
 fn test_native_registry_tag() {
     let pasta = crate::pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
-        .register_dummy_circuits(NUM_APP_STEPS)
-        .unwrap()
-        .finalize(pasta)
-        .unwrap();
+    let app = dummy_app::<HEADER_SIZE>(pasta, NUM_APP_STEPS);
 
     let expected = Fp::new(udon::fp_hex!(
         "0x247e382a1523800d0fc7bccd9b0e1e57eecd7a9758c4b7537f4ed76f5f54fe43"
@@ -600,11 +607,7 @@ fn test_native_registry_tag() {
 fn test_nested_registry_tag() {
     let pasta = crate::pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
-        .register_dummy_circuits(NUM_APP_STEPS)
-        .unwrap()
-        .finalize(pasta)
-        .unwrap();
+    let app = dummy_app::<HEADER_SIZE>(pasta, NUM_APP_STEPS);
 
     let expected = Fq::new(udon::fq_hex!(
         "0x009ad8ef87fe4e7dc6e51df8807db0f783f39978e29787ab3e00a28c15d2bdbd"
@@ -626,11 +629,7 @@ fn print_registry_tags() {
 
     let pasta = crate::pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
-        .register_dummy_circuits(NUM_APP_STEPS)
-        .unwrap()
-        .finalize(pasta)
-        .unwrap();
+    let app = dummy_app::<HEADER_SIZE>(pasta, NUM_APP_STEPS);
 
     let native_tag = app.native_registry.tag();
     let nested_tag = app.nested_registry.tag();

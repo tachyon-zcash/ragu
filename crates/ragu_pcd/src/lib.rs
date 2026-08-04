@@ -115,27 +115,21 @@ pub struct ApplicationBuilder<
 > {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
+    params: &'params C::Params,
     num_application_steps: usize,
     header_map: BTreeMap<header::Suffix, TypeId>,
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
-}
-
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend> Default
-    for ApplicationBuilder<'_, C, R, HEADER_SIZE, B>
-{
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     ApplicationBuilder<'params, C, R, HEADER_SIZE, B>
 {
     /// Create an empty [`ApplicationBuilder`] for proof-carrying data.
-    pub fn new() -> Self {
+    pub fn new(params: &'params C::Params) -> Self {
         ApplicationBuilder {
             native_registry: RegistryBuilder::new(),
             nested_registry: RegistryBuilder::new(),
+            params,
             num_application_steps: 0,
             header_map: BTreeMap::new(),
             _marker: PhantomData,
@@ -146,7 +140,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     ///
     /// The caller's setup procedure must satisfy the
     /// [sampling requirement](Tag#sampling-requirement) for the complete
-    /// application, including the public parameters supplied to [`Self::finalize`].
+    /// application, including the public parameters supplied to [`Self::new`].
     /// This method stores the final values without validating their origin.
     /// Production callers must not use a test key.
     pub fn with_registry_tags(mut self, tags: RegistryTags<C>) -> Self {
@@ -168,6 +162,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         ApplicationBuilder {
             native_registry: self.native_registry,
             nested_registry: self.nested_registry,
+            params: self.params,
             num_application_steps: self.num_application_steps,
             header_map: self.header_map,
             _marker: PhantomData,
@@ -241,10 +236,9 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     ///
     /// Returns an error if internal circuit registration, registry
     /// finalization, or the bootstrap fuse fails.
-    pub fn finalize(
-        mut self,
-        params: &'params C::Params,
-    ) -> Result<Application<'params, C, R, HEADER_SIZE, B>> {
+    pub fn finalize(mut self) -> Result<Application<'params, C, R, HEADER_SIZE, B>> {
+        let params = self.params;
+
         // Build the native registry:
         // 1. Application circuits (already registered)
         // 2. Internal circuits and masks
