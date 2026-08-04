@@ -374,7 +374,7 @@ pub struct Slot<'dr, D: Driver<'dr>, A, T, W: Send> {
     _marker: core::marker::PhantomData<&'dr ()>,
 }
 
-impl<'dr, D: Driver<'dr>, A, T: Clone, W: Copy + Send + Sync> Slot<'dr, D, A, T, W> {
+impl<'dr, D: Driver<'dr>, A, T: Clone, W: Clone + Send + Sync> Slot<'dr, D, A, T, W> {
     /// Creates a new slot with a pre-extracted instance value and allocation function.
     pub(crate) fn new(
         instance: DriverValue<D, W>,
@@ -402,7 +402,7 @@ impl<'dr, D: Driver<'dr>, A, T: Clone, W: Copy + Send + Sync> Slot<'dr, D, A, T,
     /// `receive`).
     pub fn read(&mut self, dr: &mut D, allocator: &mut A) -> Result<T> {
         assert!(self.value.is_none(), "Slot::read: slot already filled");
-        let value = (self.alloc)(dr, allocator, self.instance.as_ref().map(|w| *w))?;
+        let value = (self.alloc)(dr, allocator, self.instance.as_ref().map(|w| w.clone()))?;
         self.value = Some(value.clone());
         Ok(value)
     }
@@ -438,7 +438,7 @@ impl<'dr, D: Driver<'dr>, A, T: Clone, W: Copy + Send + Sync> Slot<'dr, D, A, T,
     /// Panics if the slot has already been filled.
     pub fn receive(&mut self, dr: &mut D, allocator: &mut A) -> Result<T> {
         assert!(self.value.is_none(), "Slot::receive: slot already filled");
-        let value = (self.alloc)(dr, allocator, self.instance.as_ref().map(|w| *w))?;
+        let value = (self.alloc)(dr, allocator, self.instance.as_ref().map(|w| w.clone()))?;
         self.value = Some(value.clone());
         self.was_set = true;
         Ok(value)
@@ -449,10 +449,9 @@ impl<'dr, D: Driver<'dr>, A, T: Clone, W: Copy + Send + Sync> Slot<'dr, D, A, T,
     ///
     /// Used during finalization to build the [`Output`] gadget.
     pub(crate) fn take(self, dr: &mut D, allocator: &mut A) -> Result<(T, bool)> {
-        let value = self
-            .value
-            .map(Result::Ok)
-            .unwrap_or_else(|| (self.alloc)(dr, allocator, self.instance.as_ref().map(|w| *w)))?;
+        let value = self.value.map(Result::Ok).unwrap_or_else(|| {
+            (self.alloc)(dr, allocator, self.instance.as_ref().map(|w| w.clone()))
+        })?;
         Ok((value, self.was_set))
     }
 }

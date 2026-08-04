@@ -16,9 +16,10 @@ use ragu_circuits::{
     staging::StageExt,
 };
 use ragu_core::{Cycle, Result};
+use ragu_primitives::vec::{FixedVec, Len};
 
 use super::{Cached, Proof};
-use crate::internal::nested;
+use crate::{framework_hooks::HookConfig, internal::nested};
 
 /// Produces `pub(crate) fn $name(&mut self, v: $ty)` that sets an `Option`
 /// field, panicking on double-set.
@@ -183,7 +184,7 @@ macro_rules! cached_bridge {
             if let Some(rx) = self.$rx.get() {
                 return Ok(rx);
             }
-            let rx = nested::stages::$stage::Stage::<C::HostCurve, R>::rx(
+            let rx = nested::stages::$stage::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
                 self.bridge_alpha_power($idx),
                 &nested::stages::$stage::Witness {
                     $($wit_field: self.$getter()),*
@@ -208,9 +209,9 @@ macro_rules! cached_bridge {
 /// Native commitment caches are computed lazily from polynomials on first
 /// access. Special commitments (`a`, `b`, `p`) must be provided explicitly
 /// because they are computed via non-standard techniques.
-pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
+pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, J: HookConfig, B: Backend> {
     params: &'params C::Params,
-    _backend: PhantomData<B>,
+    _marker: PhantomData<(J, B)>,
 
     /// Shared alpha source for the cached `ab` bridge commitment.
     bridge_alpha: C::ScalarField,
@@ -354,15 +355,25 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
 
     // Cached bridge commitment cache (lazily computed from its cached rx)
     bridge_ab_commitment: OnceCell<C::NestedCurve>,
+
+    // The application's hook regions; `Option` says whether one has been set
+    // yet. A wrong-length list is just an invalid proof, so the polynomials are
+    // held plainly, as are the commitments derived from them; `pad_to_layout`
+    // is what fills them to the layout, and `Proof::has_shape` reports a
+    // mismatch where a proof is consumed.
+    witness_polys: Option<Vec<sparse::Polynomial<C::CircuitField, R>>>,
+    /// Derived from [`witness_polys`](Self::witness_polys) on first access,
+    /// like every other commitment cache here.
+    witness_poly_commitments: OnceCell<Vec<C::HostCurve>>,
 }
 
-impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
+impl<'params, C: Cycle, R: Rank, J: HookConfig, B: Backend> ProofBuilder<'params, C, R, J, B> {
     /// Create a new empty builder with the given `bridge_alpha` source for
     /// deriving cached bridge polynomial alphas.
     pub(crate) fn new(params: &'params C::Params, bridge_alpha: C::ScalarField) -> Self {
         Self {
             params,
-            _backend: PhantomData,
+            _marker: PhantomData,
             bridge_alpha,
             circuit_id: None,
             left_header: None,
@@ -467,6 +478,8 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             native_points_f_commitment: OnceCell::new(),
             native_points_walk_commitment: OnceCell::new(),
             bridge_ab_commitment: OnceCell::new(),
+            witness_polys: None,
+            witness_poly_commitments: OnceCell::new(),
         }
     }
 
@@ -772,6 +785,38 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         }
     );
 
+    /// Lazily commits every witnessed polynomial and caches the result — the
+    /// plural counterpart of [`lazy_commitment!`]. The cache is a plain list,
+    /// as `Proof` takes it; the declared length is restored here, for the one
+    /// stage witness that wants it.
+    pub(crate) fn witness_poly_commitments(&self) -> FixedVec<C::HostCurve, J::PolyWitnesses> {
+        let commitments = self.witness_poly_commitment_list();
+        assert_eq!(
+            commitments.len(),
+            J::PolyWitnesses::len(),
+            "witness_polys is not the layout's length"
+        );
+        FixedVec::from_fn(|index| commitments[index])
+    }
+
+    fn witness_poly_commitment_list(&self) -> &[C::HostCurve] {
+        self.witness_poly_commitments.get_or_init(|| {
+            let host_gen = C::host_generators(self.params);
+            self.witness_polys
+                .as_ref()
+                .expect("witness_polys not set before deriving their commitments")
+                .iter()
+                .map(|poly| B::sparse_commit_to_affine(poly, host_gen))
+                .collect()
+        })
+    }
+
+    setter!(
+        set_application_polys,
+        witness_polys,
+        Vec<sparse::Polynomial<C::CircuitField, R>>
+    );
+
     setter!(
         set_nested_endoscaling_step_rxs,
         nested_endoscaling_step_rxs,
@@ -1006,6 +1051,7 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         self.native_points_ab_commitment();
         self.native_points_f_commitment();
         self.native_points_walk_commitment();
+        self.witness_poly_commitment_list();
 
         // Force lazy evaluation of the cached bridge commitment.
         self.bridge_ab_commitment()?;
@@ -1172,6 +1218,9 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             native_points_ab_commitment: cached!(native_points_ab_commitment),
             native_points_f_commitment: cached!(native_points_f_commitment),
             native_points_walk_commitment: cached!(native_points_walk_commitment),
+
+            witness_poly_commitments: cached!(witness_poly_commitments),
+            witness_polys: take!(witness_polys),
         })
     }
 }

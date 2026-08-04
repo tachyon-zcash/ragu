@@ -26,11 +26,12 @@ use ragu_core::{
     gadgets::{Bound, Gadget, Kind, WireEqualizer},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, allocator::Allocator};
+use ragu_primitives::{Element, allocator::Allocator, vec::Len};
 use udon::field::Field;
 
 use crate::{
     Proof,
+    framework_hooks::HookConfig,
     internal::native::{
         InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, RxValues,
     },
@@ -58,8 +59,10 @@ pub struct ChildEvaluationsWitness<F> {
 }
 
 impl<F: Field> ChildEvaluationsWitness<F> {
-    /// Creates a child evaluations witness from a proof evaluated at the given points.
+    /// Creates a child evaluations witness from a proof evaluated at the given
+    /// points, for an application witnessing `polys` polynomials per step.
     pub fn from_proof<C: Cycle<CircuitField = F>, R: Rank, B: ragu_backend::Backend>(
+        polys: usize,
         proof: &Proof<C, R>,
         w: F,
         x: F,
@@ -68,7 +71,7 @@ impl<F: Field> ChildEvaluationsWitness<F> {
         registry_wy: &sparse::Polynomial<F, R>,
     ) -> Self {
         ChildEvaluationsWitness {
-            rx: RxValues::from_fn(|id| B::sparse_eval(&proof[id], xz)),
+            rx: RxValues::from_fn(polys, |id| B::sparse_eval(&proof[id], xz)),
             a_poly_at_xz: B::sparse_eval(&proof[RxComponent::AbA], xz),
             b_poly_at_x: B::sparse_eval(&proof[RxComponent::AbB], x),
             child_registry_xy_at_current_w: B::sparse_eval(proof.native_registry_xy_poly(), w),
@@ -94,13 +97,14 @@ pub struct Witness<C: Cycle> {
 }
 
 /// Allocate [`InternalCircuitValues`] of [`Element`]s from pre-computed witness
-/// values.
+/// values, for an application witnessing `polys` polynomials per step.
 pub fn alloc_fixed_registry<'dr, D: Driver<'dr>, A: Allocator<'dr, D>>(
     dr: &mut D,
     allocator: &mut A,
+    polys: usize,
     witness: DriverValue<D, &InternalCircuitValues<D::F>>,
 ) -> Result<InternalCircuitValues<Element<'dr, D>>> {
-    InternalCircuitValues::try_from_fn(|id| {
+    InternalCircuitValues::try_from_fn(polys, |id| {
         Element::alloc(dr, allocator, witness.as_ref().map(|w| *w.get(id)))
     })
 }
@@ -124,7 +128,9 @@ unsafe impl<F: Field> ragu_core::gadgets::GadgetKind<F>
         this: &InternalCircuitValues<Element<'src, WM::Src>>,
         wm: &mut WM,
     ) -> Result<InternalCircuitValues<Element<'dst, WM::Dst>>> {
-        InternalCircuitValues::try_from_fn(|id| this.get(id).map(wm))
+        InternalCircuitValues::try_from_fn_with_steps(this.num_endoscaling_steps(), |id| {
+            this.get(id).map(wm)
+        })
     }
 
     fn enforce_conservative_equal_gadget<
@@ -136,7 +142,8 @@ unsafe impl<F: Field> ragu_core::gadgets::GadgetKind<F>
         a: &InternalCircuitValues<Element<'dr, D2>>,
         b: &InternalCircuitValues<Element<'dr, D2>>,
     ) -> Result<()> {
-        for &id in &InternalCircuitIndex::ALL {
+        assert_eq!(a.num_endoscaling_steps(), b.num_endoscaling_steps());
+        for id in a.ids() {
             eq.enforce_conservative_equal_gadget(a.get(id), b.get(id))?;
         }
         Ok(())
@@ -162,7 +169,7 @@ unsafe impl<F: Field> ragu_core::gadgets::GadgetKind<F>
         this: &RxValues<Element<'src, WM::Src>>,
         wm: &mut WM,
     ) -> Result<RxValues<Element<'dst, WM::Dst>>> {
-        RxValues::try_from_fn(|id| this.get(id).map(wm))
+        RxValues::try_from_fn_with_steps(this.endoscaling_steps.len(), |id| this.get(id).map(wm))
     }
 
     fn enforce_conservative_equal_gadget<
@@ -174,7 +181,8 @@ unsafe impl<F: Field> ragu_core::gadgets::GadgetKind<F>
         a: &RxValues<Element<'dr, D2>>,
         b: &RxValues<Element<'dr, D2>>,
     ) -> Result<()> {
-        for &id in &RxIndex::ALL {
+        assert_eq!(a.endoscaling_steps.len(), b.endoscaling_steps.len());
+        for id in a.ids() {
             eq.enforce_conservative_equal_gadget(a.get(id), b.get(id))?;
         }
         Ok(())
@@ -187,7 +195,7 @@ impl<F: Field> ragu_primitives::io::Write<F> for RxValues<Element<'static, Phant
         dr: &mut D,
         buf: &mut B,
     ) -> Result<()> {
-        for &id in &RxIndex::ALL {
+        for id in this.ids() {
             buf.write(dr, this.get(id))?;
         }
         Ok(())
@@ -223,13 +231,15 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
 }
 
 impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
-    /// Allocates child evaluations from pre-computed witness input values.
+    /// Allocates child evaluations from pre-computed witness input values,
+    /// for an application witnessing `polys` polynomials per step.
     pub fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
+        polys: usize,
         witness: DriverValue<D, &ChildEvaluationsWitness<D::F>>,
     ) -> Result<Self> {
-        let rx = RxValues::try_from_fn(|id| {
+        let rx = RxValues::try_from_fn(polys, |id| {
             Element::alloc(dr, allocator, witness.as_ref().map(|w| *w.rx.get(id)))
         })?;
         Ok(ChildEvaluations {
@@ -276,23 +286,36 @@ pub struct Output<'dr, D: Driver<'dr>> {
     pub right: ChildEvaluations<'dr, D>,
 }
 
-/// The query stage of the fuse witness.
-#[derive(Default)]
-pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
-    _marker: PhantomData<(C, R)>,
+/// The query stage of the fuse witness. Its width depends on a layout only
+/// through the walks it sizes.
+pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig> {
+    _marker: PhantomData<(C, R, J)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
-    for Stage<C, R, HEADER_SIZE>
+impl<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig> Default for Stage<C, R, HEADER_SIZE, J> {
+    fn default() -> Self {
+        Stage {
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig> staging::Stage<C::CircuitField, R>
+    for Stage<C, R, HEADER_SIZE, J>
 {
-    type Parent = super::preamble::Stage<C, R, HEADER_SIZE>;
+    type Parent = super::preamble::Stage<C, R, HEADER_SIZE, J>;
     type Witness<'source> = &'source Witness<C>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
     fn values() -> usize {
-        // InternalCircuitIndex::NUM + registry_wxy (1) + 2 * ChildEvaluations
-        // (rx + 5 each)
-        InternalCircuitIndex::NUM + 1 + 2 * (RxIndex::NUM + 5)
+        // One fixed-registry evaluation per internal circuit, plus
+        // `registry_wxy`, plus each child's `ChildEvaluations`: one evaluation
+        // per rx component, then `a_poly_at_xz`, `b_poly_at_x`,
+        // `child_registry_xy_at_current_w`,
+        // `current_registry_xy_at_child_circuit_id` and
+        // `current_registry_wy_at_child_x`.
+        let polys = J::PolyWitnesses::len();
+        InternalCircuitIndex::num(polys) + 1 + 2 * (RxIndex::num(polys) + 5)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -304,11 +327,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
         Self: 'dr,
     {
         let allocator = &mut ();
-        let fixed_registry =
-            alloc_fixed_registry(dr, allocator, witness.as_ref().map(|w| &w.fixed_registry))?;
+        let polys = J::PolyWitnesses::len();
+        let fixed_registry = alloc_fixed_registry(
+            dr,
+            allocator,
+            polys,
+            witness.as_ref().map(|w| &w.fixed_registry),
+        )?;
         let registry_wxy = Element::alloc(dr, allocator, witness.as_ref().map(|w| w.registry_wxy))?;
-        let left = ChildEvaluations::alloc(dr, allocator, witness.as_ref().map(|w| &w.left))?;
-        let right = ChildEvaluations::alloc(dr, allocator, witness.as_ref().map(|w| &w.right))?;
+        let left =
+            ChildEvaluations::alloc(dr, allocator, polys, witness.as_ref().map(|w| &w.left))?;
+        let right =
+            ChildEvaluations::alloc(dr, allocator, polys, witness.as_ref().map(|w| &w.right))?;
         Ok(Output {
             fixed_registry,
             registry_wxy,
@@ -323,10 +353,19 @@ mod tests {
     use ragu_core::pasta::Pasta;
 
     use super::*;
-    use crate::internal::tests::{HEADER_SIZE, R, assert_stage_values};
+    use crate::{
+        AppHooks,
+        internal::tests::{HEADER_SIZE, R, assert_stage_values},
+    };
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }>::default());
+        fn check<const POLYS: usize>() {
+            assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }, AppHooks<POLYS>>::default());
+        }
+        check::<0>();
+        check::<1>();
+        check::<4>();
+        check::<8>();
     }
 }

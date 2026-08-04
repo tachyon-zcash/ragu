@@ -152,20 +152,29 @@ mod tests {
             }
         }
 
-        let circuit_single =
-            super::super::adapter::Adapter::<Pasta, Rerandomize<Single>, R, HEADER_SIZE>::new(
-                Rerandomize::new(),
-            );
-        let circuit_pair =
-            super::super::adapter::Adapter::<Pasta, Rerandomize<Pair>, R, HEADER_SIZE>::new(
-                Rerandomize::new(),
-            );
+        let circuit_single = super::super::adapter::Adapter::<
+            Pasta,
+            Rerandomize<Single>,
+            R,
+            HEADER_SIZE,
+            crate::NoHooks,
+        >::new(Rerandomize::new(), crate::pasta::baked());
+        let circuit_pair = super::super::adapter::Adapter::<
+            Pasta,
+            Rerandomize<Pair>,
+            R,
+            HEADER_SIZE,
+            crate::NoHooks,
+        >::new(Rerandomize::new(), crate::pasta::baked());
 
         // `Rerandomize<()>` is the instantiation `finalize` actually registers.
-        let circuit_unit =
-            super::super::adapter::Adapter::<Pasta, Rerandomize<()>, R, HEADER_SIZE>::new(
-                Rerandomize::new(),
-            );
+        let circuit_unit = super::super::adapter::Adapter::<
+            Pasta,
+            Rerandomize<()>,
+            R,
+            HEADER_SIZE,
+            crate::NoHooks,
+        >::new(Rerandomize::new(), crate::pasta::baked());
 
         // A frozen twin of `Rerandomize`, written from primitives: one uniform
         // wire set shared by the left input and output, plus the standard unit
@@ -207,8 +216,13 @@ mod tests {
                 ))
             }
         }
-        let circuit_twin =
-            super::super::adapter::Adapter::<Pasta, UnitRight, R, HEADER_SIZE>::new(UnitRight);
+        let circuit_twin = super::super::adapter::Adapter::<
+            Pasta,
+            UnitRight,
+            R,
+            HEADER_SIZE,
+            crate::NoHooks,
+        >::new(UnitRight, crate::pasta::baked());
 
         let mut builder: TestRegistryBuilder<'_, _, R> = TestRegistryBuilder::new();
         let single_h = builder.register_circuit(circuit_single).unwrap();

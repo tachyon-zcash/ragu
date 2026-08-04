@@ -4,7 +4,7 @@ use ragu_core::{
     Cycle,
     pasta::{Fp, Pasta},
 };
-use ragu_pcd::{Application, ApplicationBuilder, Pcd};
+use ragu_pcd::{Application, ApplicationBuilder, NoHooks, Pcd};
 use ragu_testing::pcd::nontrivial;
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -82,7 +82,7 @@ pub fn setup_fuse() -> (
 /// Mirrors [`setup_fuse`], but selects the accelerated backend so the tracked
 /// baselines isolate the cost of the overridden operations.
 pub fn setup_fuse_accelerated() -> (
-    Application<'static, Pasta, ProductionRank, 4, AcceleratedBackend>,
+    Application<'static, Pasta, ProductionRank, 4, NoHooks, AcceleratedBackend>,
     Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
     Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
     &'static <Pasta as Cycle>::CircuitPoseidon,

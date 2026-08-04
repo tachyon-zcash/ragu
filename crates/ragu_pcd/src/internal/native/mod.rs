@@ -2,7 +2,7 @@
 //!
 //! Besides the circuits that verify the native fold and batch, the native
 //! side walks the nested batch's commitments: the endoscaling steps of
-//! [`circuits::endoscaling_step`] fold the [`NUM_ENDOSCALING_POINTS`]
+//! [`circuits::endoscaling_step`] fold the [`num_endoscaling_points`]
 //! nested-curve points of [`stages::points`] into $P_n$ by Horner's rule
 //! under $\beta$'s endoscalar, which [`circuits::bind_endoscalar`] ties to
 //! `pre_beta`. The points are committed in stages the transcript absorbs
@@ -15,6 +15,9 @@
 //! the unified instance. [`circuits::bind_beta`] holds the children's walked
 //! points against the children's unified instances.
 
+use alloc::vec::Vec;
+use core::marker::PhantomData;
+
 pub use circuits::bind_challenges::NUM_BINDERS;
 use ragu_circuits::{
     polynomials::Rank,
@@ -22,35 +25,68 @@ use ragu_circuits::{
     staging::StageExt,
 };
 use ragu_core::{Cycle, Result};
-use ragu_primitives::vec::ConstLen;
+use ragu_primitives::vec::{ConstLen, Len};
 
 use crate::{
+    framework_hooks::HookConfig,
     internal::{endoscalar, fold_revdot::Parameters, nested},
     step,
 };
 
-/// The nested-curve points the native endoscaling walks into $P_n$: the
-/// nested batch's commitments, in [`nested::pcs::Batch::evaluated`] order
-/// after $f_n$'s.
-pub const NUM_ENDOSCALING_POINTS: usize = nested::pcs::NUM_BATCHED_POINTS;
+/// The nested-curve points the native endoscaling walks into $P_n$ for an
+/// application witnessing `polys` polynomials per step: the nested batch's
+/// commitments, in [`nested::pcs::Batch::evaluated`] order after $f_n$'s.
+pub const fn num_endoscaling_points(polys: usize) -> usize {
+    nested::pcs::num_batched_points(polys)
+}
 
 /// The endoscalings a native step performs: what fits a step beside the
 /// stages it reserves.
 pub const ENDOSCALINGS_PER_STEP: usize = 4;
 
-/// The number of native endoscaling steps.
+/// The number of native endoscaling steps for an application witnessing
+/// `polys` polynomials per step.
 ///
-/// Pinned rather than derived: each side's step polynomials are opened by
-/// the other side's batch, so the two step counts determine each other's
-/// batch sizes, and one of them has to be fixed to break the cycle. The
-/// assertion below checks the pin is the fixed point, so a change to either
-/// batch that moves it fails to build here.
-pub const NUM_ENDOSCALING_STEPS: usize = 25;
+/// Each side's step polynomials are opened by the other side's batch, so the
+/// two step counts determine each other's batch sizes. This is the least
+/// native count consistent with both, found by iterating from one step: the
+/// count the nested batch it implies needs. The iteration is monotone and a
+/// step absorbs four points while adding one to the far side's batch, so it
+/// settles within a few rounds; at zero polynomials it is the 25 the walk
+/// was first pinned at.
+pub const fn num_endoscaling_steps(polys: usize) -> usize {
+    let mut steps = 1;
+    let mut rounds = 0;
+    loop {
+        let next = endoscalar::num_steps::<ENDOSCALINGS_PER_STEP>(
+            nested::pcs::num_batched_points_at(polys, steps),
+        );
+        if next == steps {
+            return steps;
+        }
+        steps = next;
+        rounds += 1;
+        assert!(rounds < 64, "the walks' step counts do not settle");
+    }
+}
 
-const _: () = assert!(
-    endoscalar::num_steps::<ENDOSCALINGS_PER_STEP>(NUM_ENDOSCALING_POINTS) == NUM_ENDOSCALING_STEPS,
-    "NUM_ENDOSCALING_STEPS is not the number of steps over the nested batch; re-pin it"
-);
+/// [`num_endoscaling_steps`] at the type level, for a poly count `L`.
+pub struct StepsLen<L: Len>(PhantomData<L>);
+
+impl<L: Len> Len for StepsLen<L> {
+    fn len() -> usize {
+        num_endoscaling_steps(L::len())
+    }
+}
+
+/// [`num_endoscaling_points`] at the type level, for a poly count `L`.
+pub struct PointsLen<L: Len>(PhantomData<L>);
+
+impl<L: Len> Len for PointsLen<L> {
+    fn len() -> usize {
+        num_endoscaling_points(L::len())
+    }
+}
 
 /// Default parameters for native revdot folding
 #[derive(Clone, Copy, Default)]
@@ -125,77 +161,70 @@ pub enum InternalCircuitIndex {
 }
 
 /// Compute the total circuit count and log2 domain size from the number of
-/// application-defined steps.
-pub const fn total_circuit_counts(num_application_steps: usize) -> (usize, u32) {
+/// application-defined steps and the polynomials each witnesses.
+pub const fn total_circuit_counts(num_application_steps: usize, polys: usize) -> (usize, u32) {
     let total_circuits =
-        num_application_steps + step::NUM_INTERNAL_STEPS + InternalCircuitIndex::NUM;
+        num_application_steps + step::NUM_INTERNAL_STEPS + InternalCircuitIndex::num(polys);
     let log2_circuits = total_circuits.next_power_of_two().trailing_zeros();
     (total_circuits, log2_circuits)
 }
 
 impl InternalCircuitIndex {
-    /// The number of internal circuits registered by [`register_all`],
-    /// equal to the number of variants in [`InternalCircuitIndex`].
-    pub const NUM: usize = 22 + NUM_BINDERS + NUM_ENDOSCALING_STEPS;
+    /// The number of internal circuits registered by [`register_all`] for an
+    /// application witnessing `polys` polynomials per step: one per entry of
+    /// [`all`](Self::all).
+    pub const fn num(polys: usize) -> usize {
+        22 + NUM_BINDERS + num_endoscaling_steps(polys)
+    }
 
     /// All variants in canonical iteration order.
     ///
     /// This order must match the registry finalization concatenation order
     /// in [`RegistryBuilder::finalize()`](ragu_circuits::registry::RegistryBuilder::finalize)
     /// (circuits before masks), since [`circuit_index()`](Self::circuit_index)
-    /// derives indices from position in this array.
-    pub const ALL: [Self; Self::NUM] = super::const_fns::unwrap_all(Self::all_slots());
-
-    const fn all_slots() -> [Option<Self>; Self::NUM] {
-        use super::const_fns::push;
-
-        let mut slots = [None; Self::NUM];
-        let mut c = 0;
-        push(&mut slots, &mut c, Self::Hashes1Circuit);
-        push(&mut slots, &mut c, Self::Hashes2Circuit);
-        push(&mut slots, &mut c, Self::InnerCollapseCircuit);
-        push(&mut slots, &mut c, Self::OuterCollapseCircuit);
-        push(&mut slots, &mut c, Self::ComputeVCircuit);
-        {
-            let mut k = 0;
-            while k < NUM_BINDERS {
-                push(&mut slots, &mut c, Self::BindChallengesCircuit(k as u32));
-                k += 1;
-            }
-        }
-        push(&mut slots, &mut c, Self::BindBetaCircuit);
-        push(&mut slots, &mut c, Self::BindEndoscalarCircuit);
-        {
-            let mut step = 0;
-            while step < NUM_ENDOSCALING_STEPS {
-                push(&mut slots, &mut c, Self::EndoscalingStep(step as u32));
-                step += 1;
-            }
-        }
-        push(&mut slots, &mut c, Self::PreambleStage);
-        push(&mut slots, &mut c, Self::InnerErrorStage);
-        push(&mut slots, &mut c, Self::OuterErrorStage);
-        push(&mut slots, &mut c, Self::QueryStage);
-        push(&mut slots, &mut c, Self::EvalStage);
-        push(&mut slots, &mut c, Self::PointsBindingStage);
-        push(&mut slots, &mut c, Self::PointsChildrenStage);
-        push(&mut slots, &mut c, Self::PointsRegistryWxStage);
-        push(&mut slots, &mut c, Self::PointsAbStage);
-        push(&mut slots, &mut c, Self::PointsFStage);
-        push(&mut slots, &mut c, Self::PointsWalkStage);
-        push(&mut slots, &mut c, Self::InnerErrorFinalStaged);
-        push(&mut slots, &mut c, Self::OuterErrorFinalStaged);
-        push(&mut slots, &mut c, Self::EvalFinalStaged);
-        push(&mut slots, &mut c, Self::PointsWalkFinalStaged);
-        assert!(c == Self::NUM);
-        slots
+    /// derives indices from position in this list.
+    pub fn all(polys: usize) -> impl Iterator<Item = Self> + Clone {
+        Self::all_with_steps(num_endoscaling_steps(polys))
     }
 
-    pub fn circuit_index(self) -> CircuitIndex {
-        let pos = Self::ALL
-            .iter()
-            .position(|&v| v == self)
-            .expect("every variant appears in ALL");
+    /// [`all`](Self::all) for a native walk of `steps` steps.
+    pub fn all_with_steps(steps: usize) -> impl Iterator<Item = Self> + Clone {
+        [
+            Self::Hashes1Circuit,
+            Self::Hashes2Circuit,
+            Self::InnerCollapseCircuit,
+            Self::OuterCollapseCircuit,
+            Self::ComputeVCircuit,
+        ]
+        .into_iter()
+        .chain((0..NUM_BINDERS as u32).map(Self::BindChallengesCircuit))
+        .chain([Self::BindBetaCircuit, Self::BindEndoscalarCircuit])
+        .chain((0..steps as u32).map(Self::EndoscalingStep))
+        .chain([
+            Self::PreambleStage,
+            Self::InnerErrorStage,
+            Self::OuterErrorStage,
+            Self::QueryStage,
+            Self::EvalStage,
+            Self::PointsBindingStage,
+            Self::PointsChildrenStage,
+            Self::PointsRegistryWxStage,
+            Self::PointsAbStage,
+            Self::PointsFStage,
+            Self::PointsWalkStage,
+            Self::InnerErrorFinalStaged,
+            Self::OuterErrorFinalStaged,
+            Self::EvalFinalStaged,
+            Self::PointsWalkFinalStaged,
+        ])
+    }
+
+    /// Convert to a [`CircuitIndex`] for registry lookup, in the registry of
+    /// an application witnessing `polys` polynomials per step.
+    pub fn circuit_index(self, polys: usize) -> CircuitIndex {
+        let pos = Self::all(polys)
+            .position(|v| v == self)
+            .expect("every variant appears in `all`");
         CircuitIndex::from_u32(pos as u32)
     }
 }
@@ -216,7 +245,8 @@ pub struct InternalCircuitValues<T> {
     pub bind_challenges_circuits: [T; NUM_BINDERS],
     pub bind_beta_circuit: T,
     pub bind_endoscalar_circuit: T,
-    pub endoscaling_step_circuits: [T; NUM_ENDOSCALING_STEPS],
+    /// One per endoscaling step, so as many as the layout's walk takes.
+    pub endoscaling_step_circuits: Vec<T>,
     pub preamble_stage: T,
     pub inner_error_stage: T,
     pub outer_error_stage: T,
@@ -266,10 +296,22 @@ impl<T> InternalCircuitValues<T> {
         }
     }
 
-    /// Construct from a closure called once per variant in [`ALL`](InternalCircuitIndex::ALL)
+    /// The number of endoscaling steps these values cover.
+    pub fn num_endoscaling_steps(&self) -> usize {
+        self.endoscaling_step_circuits.len()
+    }
+
+    /// The variants these values cover, in [`all`](InternalCircuitIndex::all)
     /// order.
-    pub fn from_fn(mut f: impl FnMut(InternalCircuitIndex) -> T) -> Self {
-        match Self::try_from_fn(|id| Ok::<_, core::convert::Infallible>(f(id))) {
+    pub fn ids(&self) -> impl Iterator<Item = InternalCircuitIndex> + Clone {
+        InternalCircuitIndex::all_with_steps(self.num_endoscaling_steps())
+    }
+
+    /// Construct from a closure called once per variant in
+    /// [`all`](InternalCircuitIndex::all) order, for an application
+    /// witnessing `polys` polynomials per step.
+    pub fn from_fn(polys: usize, mut f: impl FnMut(InternalCircuitIndex) -> T) -> Self {
+        match Self::try_from_fn(polys, |id| Ok::<_, core::convert::Infallible>(f(id))) {
             Ok(v) => v,
             Err(e) => match e {},
         }
@@ -277,8 +319,18 @@ impl<T> InternalCircuitValues<T> {
 
     /// Fallible construction from a closure called once per variant.
     ///
-    /// The closure is called in [`ALL`](InternalCircuitIndex::ALL) order.
+    /// The closure is called in [`all`](InternalCircuitIndex::all) order.
     pub fn try_from_fn<E>(
+        polys: usize,
+        f: impl FnMut(InternalCircuitIndex) -> core::result::Result<T, E>,
+    ) -> core::result::Result<Self, E> {
+        Self::try_from_fn_with_steps(num_endoscaling_steps(polys), f)
+    }
+
+    /// [`try_from_fn`](Self::try_from_fn) for a walk of `steps` endoscaling
+    /// steps, as an existing set of values carries it.
+    pub fn try_from_fn_with_steps<E>(
+        steps: usize,
         mut f: impl FnMut(InternalCircuitIndex) -> core::result::Result<T, E>,
     ) -> core::result::Result<Self, E> {
         use InternalCircuitIndex::*;
@@ -297,13 +349,9 @@ impl<T> InternalCircuitValues<T> {
             },
             bind_beta_circuit: f(BindBetaCircuit)?,
             bind_endoscalar_circuit: f(BindEndoscalarCircuit)?,
-            endoscaling_step_circuits: {
-                let mut out = [(); NUM_ENDOSCALING_STEPS].map(|()| None);
-                for (step, slot) in out.iter_mut().enumerate() {
-                    *slot = Some(f(EndoscalingStep(step as u32))?);
-                }
-                out.map(|slot| slot.expect("filled"))
-            },
+            endoscaling_step_circuits: (0..steps as u32)
+                .map(|step| f(EndoscalingStep(step)))
+                .collect::<core::result::Result<_, E>>()?,
             preamble_stage: f(PreambleStage)?,
             inner_error_stage: f(InnerErrorStage)?,
             outer_error_stage: f(OuterErrorStage)?,
@@ -365,55 +413,82 @@ pub enum RxIndex {
 }
 
 impl RxIndex {
-    /// The number of rx polynomial components.
-    pub const NUM: usize = 19 + NUM_BINDERS + NUM_ENDOSCALING_STEPS;
+    /// The number of rx polynomial components a proof of an application
+    /// witnessing `polys` polynomials per step carries.
+    pub const fn num(polys: usize) -> usize {
+        Self::num_with_steps(num_endoscaling_steps(polys))
+    }
+
+    /// [`num`](Self::num) for a native walk of `steps` steps.
+    pub const fn num_with_steps(steps: usize) -> usize {
+        19 + NUM_BINDERS + steps
+    }
 
     /// All variants in canonical order.
     ///
     /// This order matches the evaluation order in `poly_queries` (compute_v.rs)
     /// and `_08_f.rs`, and drives the `Write` impl for `RxValues`.
-    pub const ALL: [Self; Self::NUM] = super::const_fns::unwrap_all(Self::all_slots());
+    pub fn all(polys: usize) -> impl Iterator<Item = Self> + Clone {
+        Self::all_with_steps(num_endoscaling_steps(polys))
+    }
 
-    const fn all_slots() -> [Option<Self>; Self::NUM] {
-        use super::const_fns::push;
+    /// [`all`](Self::all) for a native walk of `steps` steps.
+    pub fn all_with_steps(steps: usize) -> impl Iterator<Item = Self> + Clone {
+        (0..Self::num_with_steps(steps)).map(move |i| Self::nth(steps, i))
+    }
 
-        let mut slots = [None; Self::NUM];
-        let mut c = 0;
-        push(&mut slots, &mut c, Self::Application);
-        push(&mut slots, &mut c, Self::Hashes1);
-        push(&mut slots, &mut c, Self::Hashes2);
-        push(&mut slots, &mut c, Self::InnerCollapse);
-        push(&mut slots, &mut c, Self::OuterCollapse);
-        push(&mut slots, &mut c, Self::ComputeV);
-        {
-            let mut k = 0;
-            while k < NUM_BINDERS {
-                push(&mut slots, &mut c, Self::BindChallenges(k as u32));
-                k += 1;
-            }
+    /// The `i`-th variant of [`all_with_steps`](Self::all_with_steps), which
+    /// is defined through this: the one statement of the canonical order.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `i` is not below [`num_with_steps`](Self::num_with_steps).
+    pub const fn nth(steps: usize, i: usize) -> Self {
+        const HEAD: [RxIndex; 6] = [
+            RxIndex::Application,
+            RxIndex::Hashes1,
+            RxIndex::Hashes2,
+            RxIndex::InnerCollapse,
+            RxIndex::OuterCollapse,
+            RxIndex::ComputeV,
+        ];
+        const TAIL: [RxIndex; 11] = [
+            RxIndex::Preamble,
+            RxIndex::InnerError,
+            RxIndex::OuterError,
+            RxIndex::Query,
+            RxIndex::Eval,
+            RxIndex::PointsBinding,
+            RxIndex::PointsChildren,
+            RxIndex::PointsRegistryWx,
+            RxIndex::PointsAb,
+            RxIndex::PointsF,
+            RxIndex::PointsWalk,
+        ];
+        let binders = HEAD.len();
+        let bind_beta = binders + NUM_BINDERS;
+        let walk = bind_beta + 2;
+        let tail = walk + steps;
+        if i < binders {
+            HEAD[i]
+        } else if i < bind_beta {
+            Self::BindChallenges((i - binders) as u32)
+        } else if i == bind_beta {
+            Self::BindBeta
+        } else if i == bind_beta + 1 {
+            Self::BindEndoscalar
+        } else if i < tail {
+            Self::EndoscalingStep((i - walk) as u32)
+        } else {
+            TAIL[i - tail]
         }
-        push(&mut slots, &mut c, Self::BindBeta);
-        push(&mut slots, &mut c, Self::BindEndoscalar);
-        {
-            let mut step = 0;
-            while step < NUM_ENDOSCALING_STEPS {
-                push(&mut slots, &mut c, Self::EndoscalingStep(step as u32));
-                step += 1;
-            }
-        }
-        push(&mut slots, &mut c, Self::Preamble);
-        push(&mut slots, &mut c, Self::InnerError);
-        push(&mut slots, &mut c, Self::OuterError);
-        push(&mut slots, &mut c, Self::Query);
-        push(&mut slots, &mut c, Self::Eval);
-        push(&mut slots, &mut c, Self::PointsBinding);
-        push(&mut slots, &mut c, Self::PointsChildren);
-        push(&mut slots, &mut c, Self::PointsRegistryWx);
-        push(&mut slots, &mut c, Self::PointsAb);
-        push(&mut slots, &mut c, Self::PointsF);
-        push(&mut slots, &mut c, Self::PointsWalk);
-        assert!(c == Self::NUM);
-        slots
+    }
+
+    /// The position of `self` in [`all`](Self::all).
+    pub fn position(self, polys: usize) -> usize {
+        Self::all(polys)
+            .position(|v| v == self)
+            .expect("every variant appears in `all`")
     }
 }
 
@@ -433,7 +508,8 @@ pub struct RxValues<T> {
     pub bind_challenges: [T; NUM_BINDERS],
     pub bind_beta: T,
     pub bind_endoscalar: T,
-    pub endoscaling_steps: [T; NUM_ENDOSCALING_STEPS],
+    /// One per endoscaling step, so as many as the layout's walk takes.
+    pub endoscaling_steps: Vec<T>,
     pub preamble: T,
     pub inner_error: T,
     pub outer_error: T,
@@ -476,9 +552,16 @@ impl<T> RxValues<T> {
         }
     }
 
-    /// Construct from a closure called once per variant in [`ALL`](RxIndex::ALL) order.
-    pub fn from_fn(mut f: impl FnMut(RxIndex) -> T) -> Self {
-        match Self::try_from_fn(|id| Ok::<_, core::convert::Infallible>(f(id))) {
+    /// The variants these values cover, in [`all`](RxIndex::all) order.
+    pub fn ids(&self) -> impl Iterator<Item = RxIndex> + Clone {
+        RxIndex::all_with_steps(self.endoscaling_steps.len())
+    }
+
+    /// Construct from a closure called once per variant in
+    /// [`all`](RxIndex::all) order, for an application witnessing `polys`
+    /// polynomials per step.
+    pub fn from_fn(polys: usize, mut f: impl FnMut(RxIndex) -> T) -> Self {
+        match Self::try_from_fn(polys, |id| Ok::<_, core::convert::Infallible>(f(id))) {
             Ok(v) => v,
             Err(e) => match e {},
         }
@@ -486,8 +569,18 @@ impl<T> RxValues<T> {
 
     /// Fallible construction from a closure called once per variant.
     ///
-    /// The closure is called in [`ALL`](RxIndex::ALL) order.
+    /// The closure is called in [`all`](RxIndex::all) order.
     pub fn try_from_fn<E>(
+        polys: usize,
+        f: impl FnMut(RxIndex) -> core::result::Result<T, E>,
+    ) -> core::result::Result<Self, E> {
+        Self::try_from_fn_with_steps(num_endoscaling_steps(polys), f)
+    }
+
+    /// [`try_from_fn`](Self::try_from_fn) for a walk of `steps` endoscaling
+    /// steps, as an existing set of values carries it.
+    pub fn try_from_fn_with_steps<E>(
+        steps: usize,
         mut f: impl FnMut(RxIndex) -> core::result::Result<T, E>,
     ) -> core::result::Result<Self, E> {
         use RxIndex::*;
@@ -507,13 +600,9 @@ impl<T> RxValues<T> {
             },
             bind_beta: f(BindBeta)?,
             bind_endoscalar: f(BindEndoscalar)?,
-            endoscaling_steps: {
-                let mut out = [(); NUM_ENDOSCALING_STEPS].map(|()| None);
-                for (step, slot) in out.iter_mut().enumerate() {
-                    *slot = Some(f(EndoscalingStep(step as u32))?);
-                }
-                out.map(|slot| slot.expect("filled"))
-            },
+            endoscaling_steps: (0..steps as u32)
+                .map(|step| f(EndoscalingStep(step)))
+                .collect::<core::result::Result<_, E>>()?,
             preamble: f(Preamble)?,
             inner_error: f(InnerError)?,
             outer_error: f(OuterError)?,
@@ -548,7 +637,7 @@ pub enum RxComponent {
 /// These queries are consumed by both the prover-side `compute_f` path and the
 /// `compute_v` circuit. Keeping this prefix in one ordered list prevents the
 /// two implementations from drifting independently; the dynamic suffixes are
-/// still driven by [`RxIndex::ALL`] and [`InternalCircuitIndex::ALL`].
+/// still driven by [`RxIndex::all`] and [`InternalCircuitIndex::all`].
 pub(crate) enum StaticFQuery {
     /// Left child proof $p(u)=v$ check.
     LeftP,
@@ -620,51 +709,57 @@ pub(crate) const STATIC_F_QUERIES: [StaticFQuery; 20] = [
 ///
 /// Does not register internal steps (rerandomize, bootstrap); those are
 /// registered by the caller after this function returns.
-pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
+pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>(
     mut registry: RegistryBuilder<'params, C::CircuitField, R>,
     params: &'params C::Params,
     log2_circuits: u32,
 ) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
     let initial_internal_circuits = registry.num_internal_circuits();
+    let polys = J::PolyWitnesses::len();
 
-    for &id in &InternalCircuitIndex::ALL {
+    for id in InternalCircuitIndex::all(polys) {
         use InternalCircuitIndex::*;
         registry = match id {
             PreambleStage => {
-                registry.register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)
+                registry.register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE, J>::mask()?)
             }
             InnerErrorStage => registry.register_bonding(stages::inner_error::Stage::<
                 C,
                 R,
                 HEADER_SIZE,
+                J,
                 RevdotParameters,
             >::mask()?),
             OuterErrorStage => registry.register_bonding(stages::outer_error::Stage::<
                 C,
                 R,
                 HEADER_SIZE,
+                J,
                 RevdotParameters,
             >::mask()?),
             QueryStage => {
-                registry.register_bonding(stages::query::Stage::<C, R, HEADER_SIZE>::mask()?)
+                registry.register_bonding(stages::query::Stage::<C, R, HEADER_SIZE, J>::mask()?)
             }
             EvalStage => {
-                registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::mask()?)
+                registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE, J>::mask()?)
             }
             InnerErrorFinalStaged => registry.register_bonding(stages::inner_error::Stage::<
                 C,
                 R,
                 HEADER_SIZE,
+                J,
                 RevdotParameters,
             >::final_mask()?),
             OuterErrorFinalStaged => registry.register_bonding(stages::outer_error::Stage::<
                 C,
                 R,
                 HEADER_SIZE,
+                J,
                 RevdotParameters,
             >::final_mask()?),
             EvalFinalStaged => {
-                registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::final_mask()?)
+                registry
+                    .register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE, J>::final_mask()?)
             }
             PointsBindingStage => {
                 registry.register_bonding(
@@ -676,45 +771,45 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
             }
             PointsChildrenStage => registry.register_bonding(<stages::points::ChildrenStage<
                 C::NestedCurve,
+                J::PolyWitnesses,
             > as StageExt<C::CircuitField, R>>::mask(
             )?),
             PointsRegistryWxStage => registry.register_bonding(<stages::points::RegistryWxStage<
                 C::NestedCurve,
+                J::PolyWitnesses,
             > as StageExt<C::CircuitField, R>>::mask(
             )?),
-            PointsAbStage => {
-                registry.register_bonding(<stages::points::AbStage<C::NestedCurve> as StageExt<
-                    C::CircuitField,
-                    R,
-                >>::mask()?)
-            }
-            PointsFStage => {
-                registry.register_bonding(<stages::points::FStage<C::NestedCurve> as StageExt<
-                    C::CircuitField,
-                    R,
-                >>::mask()?)
-            }
+            PointsAbStage => registry.register_bonding(<stages::points::AbStage<
+                C::NestedCurve,
+                J::PolyWitnesses,
+            > as StageExt<C::CircuitField, R>>::mask(
+            )?),
+            PointsFStage => registry.register_bonding(<stages::points::FStage<
+                C::NestedCurve,
+                J::PolyWitnesses,
+            > as StageExt<C::CircuitField, R>>::mask(
+            )?),
             PointsWalkStage => registry.register_bonding(<stages::points::WalkStage<
                 C::NestedCurve,
+                J::PolyWitnesses,
             > as StageExt<C::CircuitField, R>>::mask(
             )?),
-            PointsWalkFinalStaged => {
-                registry
-                    .register_bonding(<stages::points::WalkStage<C::NestedCurve> as StageExt<
-                    C::CircuitField,
-                    R,
-                >>::final_mask()?)
-            }
+            PointsWalkFinalStaged => registry.register_bonding(<stages::points::WalkStage<
+                C::NestedCurve,
+                J::PolyWitnesses,
+            > as StageExt<C::CircuitField, R>>::final_mask(
+            )?),
             BindEndoscalarCircuit => registry
-                .register_internal_circuit(circuits::bind_endoscalar::Circuit::<C, R>::new())?,
+                .register_internal_circuit(circuits::bind_endoscalar::Circuit::<C, R, J>::new())?,
             EndoscalingStep(step) => registry.register_internal_circuit(
-                circuits::endoscaling_step::Circuit::<C, R>::new(step as usize),
+                circuits::endoscaling_step::Circuit::<C, R, J>::new(step as usize),
             )?,
             Hashes1Circuit => {
                 registry.register_internal_circuit(circuits::hashes_1::Circuit::<
                     C,
                     R,
                     HEADER_SIZE,
+                    J,
                     RevdotParameters,
                 >::new(params, log2_circuits))?
             }
@@ -722,6 +817,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
                 C,
                 R,
                 HEADER_SIZE,
+                J,
                 RevdotParameters,
             >::new(params))?,
             InnerCollapseCircuit => {
@@ -729,6 +825,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
                     C,
                     R,
                     HEADER_SIZE,
+                    J,
                     RevdotParameters,
                 >::new())?
             }
@@ -737,6 +834,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
                     C,
                     R,
                     HEADER_SIZE,
+                    J,
                     RevdotParameters,
                 >::new())?
             }
@@ -745,10 +843,11 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
                     C,
                     R,
                     HEADER_SIZE,
+                    J,
                 >::new())?
             }
             BindChallengesCircuit(k) => {
-                crate::with_binder!(k, C, R, HEADER_SIZE, params, |circuit| {
+                crate::with_binder!(k, C, R, HEADER_SIZE, J, params, |circuit| {
                     registry.register_internal_circuit(circuit)?
                 })
             }
@@ -757,6 +856,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
                     C,
                     R,
                     HEADER_SIZE,
+                    J,
                     RevdotParameters,
                 >::new(params))?
             }
@@ -765,7 +865,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
 
     assert_eq!(
         registry.num_internal_circuits(),
-        initial_internal_circuits + InternalCircuitIndex::NUM,
+        initial_internal_circuits + InternalCircuitIndex::num(polys),
         "internal circuit count mismatch"
     );
 

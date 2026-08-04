@@ -15,8 +15,13 @@ use crate::{
 /// the selected backend `B`, as [`Application::verify`] does.
 type Verifier<B> = <B as SelectableBackend>::Verifier;
 
-impl<C: IpaCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<
+    C: IpaCycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    J: crate::framework_hooks::HookConfig,
+    B: SelectableBackend,
+> Application<'_, C, R, HEADER_SIZE, J, B>
 {
     /// Verifies some [`CompressedPcd`] for the provided [`Header`].
     ///
@@ -28,10 +33,16 @@ impl<C: IpaCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// commitments go through the sealed [`SelectableBackend::Verifier`] of
     /// the selected backend, as in [`verify`](Self::verify). This also applies
     /// to transcript bridges, batch commitment combinations, and IPA MSMs.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an application whose steps witness polynomials, as
+    /// [`compress`](Self::compress) does.
     pub fn verify_compressed<H: Header<C::CircuitField>>(
         &self,
         pcd: &CompressedPcd<C, H>,
     ) -> Result<bool> {
+        super::refuse_hooks::<J>()?;
         // These checks report malformed proof messages and unusable
         // transcript challenges as InvalidWitness. Translate only those
         // proof-dependent failures: header encoding and static circuit

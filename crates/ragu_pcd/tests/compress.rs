@@ -37,7 +37,7 @@ use crate::{
 type TestR = ProductionRank;
 const HEADER_SIZE: usize = 4;
 type App = Application<'static, Pasta, TestR, HEADER_SIZE>;
-type NativeEval = native::stages::eval::Stage<Pasta, TestR, HEADER_SIZE>;
+type NativeEval = native::stages::eval::Stage<Pasta, TestR, HEADER_SIZE, crate::NoHooks>;
 
 /// A header carrying one field element.
 struct Value;

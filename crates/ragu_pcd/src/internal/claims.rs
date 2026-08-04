@@ -90,6 +90,9 @@ pub struct Builder<'m, 'rx, A, F: Field, R: Rank, B: Backend> {
     pub a: Vec<A>,
     /// The accumulated `b` polynomials for revdot claims.
     pub b: Vec<Cow<'rx, sparse::Polynomial<F, R>>>,
+    /// The polynomial count its registry was built with — what a claim
+    /// resolves its internal circuit's index from.
+    pub witness_polys: usize,
     backend: PhantomData<B>,
 }
 
@@ -97,8 +100,9 @@ impl<'m, 'rx, A, F: Field, R: Rank, B: Backend> Builder<'m, 'rx, A, F, R, B>
 where
     A: Borrow<sparse::Polynomial<F, R>>,
 {
-    /// Create a new claim builder.
-    pub fn new(registry: &'m Registry<'m, F, R>, y: F, z: F) -> Self {
+    /// Create a new claim builder over the registry of an application
+    /// witnessing `witness_polys` polynomials per step.
+    pub fn new(registry: &'m Registry<'m, F, R>, y: F, z: F, witness_polys: usize) -> Self {
         Self {
             registry,
             y,
@@ -106,6 +110,7 @@ where
             tz: R::tz(z),
             a: Vec::new(),
             b: Vec::new(),
+            witness_polys,
             backend: PhantomData,
         }
     }

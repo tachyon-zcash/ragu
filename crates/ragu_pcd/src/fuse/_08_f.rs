@@ -24,7 +24,7 @@ use ragu_circuits::{
     staging::StageExt,
 };
 use ragu_core::{Cycle, Result, drivers::Driver, maybe::Maybe};
-use ragu_primitives::Element;
+use ragu_primitives::{Element, vec::Len};
 use rand::CryptoRng;
 use udon::field::Field;
 
@@ -39,8 +39,13 @@ use crate::{
     proof::ProofBuilder,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    J: crate::framework_hooks::HookConfig,
+    B: crate::SelectableBackend,
+> Application<'_, C, R, HEADER_SIZE, J, B>
 {
     pub(super) fn compute_f<'dr, D, RNG: CryptoRng>(
         &self,
@@ -54,7 +59,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         registry_wy: &RegistryWy<C, R>,
         nested_s_prime: &NestedSPrime<C, R>,
         nested_registry_wy: &NestedRegistryWy<C, R>,
-        builder: &mut ProofBuilder<'_, C, R, B>,
+        builder: &mut ProofBuilder<'_, C, R, J, B>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
     ) -> Result<(NativeF<C, R>, NestedF<C, R>)>
@@ -97,9 +102,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         &self,
         rng: &mut RNG,
         native: &NativeF<C, R>,
-        builder: &mut ProofBuilder<'_, C, R, B>,
+        builder: &mut ProofBuilder<'_, C, R, J, B>,
     ) -> Result<()> {
-        let bridge_rx = nested::stages::f::Stage::<C::HostCurve, R>::rx(
+        let bridge_rx = nested::stages::f::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
             &nested::stages::f::Witness {
                 native_f: native.commitment,
@@ -121,7 +126,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         alpha: &Element<'dr, D>,
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
-        builder: &ProofBuilder<'_, C, R, B>,
+        builder: &ProofBuilder<'_, C, R, J, B>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
     ) -> Result<NativeF<C, R>>
@@ -137,8 +142,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let xz = x * z;
         let alpha = *alpha.value().take();
 
+        let polys = J::PolyWitnesses::len();
         let omega_j = |idx: native::InternalCircuitIndex| -> C::CircuitField {
-            idx.circuit_index().omega_j()
+            idx.circuit_index(polys).omega_j()
         };
 
         let mut iters: Vec<_> = STATIC_F_QUERIES
@@ -209,13 +215,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         // Per-rx evaluations at xz only. The same r_i(xz) values feed
         // into both A(xz) (undilated) and B(x) (Z-dilated).
         for proof in [left, right] {
-            for &id in &RxIndex::ALL {
+            for id in RxIndex::all(polys) {
                 iters.push(divide_linear_rev(proof[id].iter_coeffs(), xz));
             }
         }
 
         // m(\omega^j, x, y) evaluations for each internal index j
-        for &id in &native::InternalCircuitIndex::ALL {
+        for id in native::InternalCircuitIndex::all(polys) {
             iters.push(divide_linear_rev(
                 builder.native_registry_xy_poly().iter_coeffs(),
                 omega_j(id),

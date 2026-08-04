@@ -251,7 +251,7 @@ impl<'m, 'rx, F: Field, R: Rank, B: ragu_backend::Backend>
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = Atom<'rx, FoldKey, F, R>>,
     ) {
-        self.circuit_impl(id.circuit_index(), TrackedPoly::sum(rxs));
+        self.circuit_impl(id.circuit_index(self.witness_polys), TrackedPoly::sum(rxs));
     }
 
     fn grouped_bonding_claim(
@@ -260,7 +260,7 @@ impl<'m, 'rx, F: Field, R: Rank, B: ragu_backend::Backend>
         groups: impl Iterator<Item = impl Iterator<Item = Atom<'rx, FoldKey, F, R>>>,
     ) -> Result<()> {
         let folded = fold_revdot::fold(groups.map(TrackedPoly::sum), self.z);
-        self.bonding_impl(id.circuit_index(), folded);
+        self.bonding_impl(id.circuit_index(self.witness_polys), folded);
         Ok(())
     }
 }

@@ -93,7 +93,7 @@ mod registry {
 
     /// Exercise the ordinary size and both sides of a registry-domain expansion.
     fn extra_steps() -> impl Strategy<Value = usize> {
-        let base = crate::internal::native::total_circuit_counts(3).0;
+        let base = crate::internal::native::total_circuit_counts(3, 0).0;
         let boundary = (base + 1).next_power_of_two();
         let gap = boundary - base;
         proptest::sample::select(vec![0, gap - 1, gap, gap + 1])
@@ -235,7 +235,7 @@ mod registry {
             PointsWalkFinalStaged,
         ]
         .into_iter()
-        .map(InternalCircuitIndex::circuit_index)
+        .map(|id| id.circuit_index(0))
         .collect()
     }
 
@@ -450,26 +450,32 @@ mod stages {
         assert!(app.verify(&sibling, inputs.verifier_rng())?);
         let (native_wires, nested_wires) = match mutation {
             Mutation::Bits(_) => (
-                stage_wire_indices::<_, R, WalkStage<EpAffine>>(|stage| {
-                    wires_of(&stage.endoscalar)
-                })?,
+                stage_wire_indices::<_, R, WalkStage<EpAffine, ragu_primitives::vec::ConstLen<0>>>(
+                    |stage| wires_of(&stage.endoscalar),
+                )?,
                 stage_wire_indices::<Fq, R, EndoscalarStage>(|stage| wires_of(&stage))?,
             ),
             Mutation::Point(_) => (
-                stage_wire_indices::<_, R, WalkStage<EpAffine>>(|stage| {
-                    wires_of(&stage.interstitials)
-                })?,
-                stage_wire_indices::<_, R, nested::PointsStage<EqAffine>>(|stage| {
-                    wires_of(&stage.interstitials)
-                })?,
+                stage_wire_indices::<_, R, WalkStage<EpAffine, ragu_primitives::vec::ConstLen<0>>>(
+                    |stage| wires_of(&stage.interstitials),
+                )?,
+                stage_wire_indices::<
+                    _,
+                    R,
+                    nested::PointsStage<EqAffine, ragu_primitives::vec::ConstLen<0>>,
+                >(|stage| wires_of(&stage.interstitials))?,
             ),
         };
         // Each walk's endpoint, the last interstitial, is its field's P.
-        let native_endpoint = stage_wire_indices::<_, R, nested::PointsStage<EqAffine>>(|stage| {
-            wires_of(stage.interstitials.last().unwrap())
-        })?;
+        let native_endpoint = stage_wire_indices::<
+            _,
+            R,
+            nested::PointsStage<EqAffine, ragu_primitives::vec::ConstLen<0>>,
+        >(|stage| wires_of(stage.interstitials.last().unwrap()))?;
         let nested_endpoint =
-            stage_wire_indices::<_, R, WalkStage<EpAffine>>(|stage| wires_of(stage.p()))?;
+            stage_wire_indices::<_, R, WalkStage<EpAffine, ragu_primitives::vec::ConstLen<0>>>(
+                |stage| wires_of(stage.p()),
+            )?;
 
         for (native, nested) in [(false, false), (true, false), (false, true), (true, true)] {
             let (mut changed, data) = honest.clone().into_parts();
@@ -541,7 +547,9 @@ mod stages {
                 support::coordinates(honest.proof().native_p_commitment()),
                 "{mutation:?}: the nested walk must still end at the committed P"
             );
-            assert!(crate::verify::nested_points_match(&changed)?);
+            assert!(crate::verify::nested_points_match::<_, _, crate::NoHooks>(
+                &changed
+            )?);
             let child = changed.carry::<Value>(data);
             let expected = !native && !nested;
             assert_eq!(
