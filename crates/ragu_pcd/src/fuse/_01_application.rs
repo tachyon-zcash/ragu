@@ -6,8 +6,9 @@
 //! application fields on the [`ProofBuilder`] and returns the child proofs
 //! along with the output data from the step circuit.
 //!
-//! This is where the hooks' coefficient vectors become polynomials at the
-//! application's rank, that being the first place the rank is in scope.
+//! Nothing about a poly-query is re-checked here. This is where the hooks'
+//! coefficient vectors become polynomials at the application's rank, that being
+//! the first place the rank is in scope.
 
 use ragu_circuits::{
     CircuitExt,
@@ -63,9 +64,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, B: crate::Selec
             output_data,
             step_aux,
             shared,
-            framework: FrameworkAux {
-                witness_polys: witnessed,
-            },
+            framework:
+                FrameworkAux {
+                    witness_polys: witnessed,
+                    poly_queries,
+                },
         } = aux;
         if shared.len() != self.hook_layout().stage_len(S::Shared::num_values()?)
             || shared.len() > stage_size
@@ -96,6 +99,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, B: crate::Selec
         builder.set_native_application_rx(rx);
         builder.set_native_application_stage_rx(stage_rx);
         builder.set_application_polys(witness_polys);
+        builder.set_application_poly_queries(poly_queries);
 
         Ok((left_proof, right_proof, output_data, step_aux))
     }

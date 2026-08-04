@@ -18,7 +18,7 @@ use ragu_circuits::{
 use ragu_core::{Cycle, Result};
 use ragu_primitives::vec::{FixedVec, Len};
 
-use super::{Cached, Proof};
+use super::{Cached, PolyQuery, Proof};
 use crate::{framework_hooks::HookConfig, internal::nested};
 
 /// Produces `pub(crate) fn $name(&mut self, v: $ty)` that sets an `Option`
@@ -363,6 +363,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, J: HookConfig, B: Bac
     // held plainly, as are the commitments derived from them; `pad_to_layout`
     // is what fills them to the layout, and `Proof::has_shape` reports a
     // mismatch where a proof is consumed.
+    application_poly_queries: Option<Vec<PolyQuery<C::HostCurve>>>,
     witness_polys: Option<Vec<sparse::Polynomial<C::CircuitField, R>>>,
     /// Derived from [`witness_polys`](Self::witness_polys) on first access,
     /// like every other commitment cache here.
@@ -482,6 +483,7 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig, B: Backend> ProofBuilder<'params
             native_points_f_commitment: OnceCell::new(),
             native_points_walk_commitment: OnceCell::new(),
             bridge_ab_commitment: OnceCell::new(),
+            application_poly_queries: None,
             witness_polys: None,
             witness_poly_commitments: OnceCell::new(),
         }
@@ -821,6 +823,12 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig, B: Backend> ProofBuilder<'params
                 .collect()
         })
     }
+
+    setter!(
+        set_application_poly_queries,
+        application_poly_queries,
+        Vec<PolyQuery<C::HostCurve>>
+    );
 
     setter!(
         set_application_polys,
@@ -1234,6 +1242,7 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig, B: Backend> ProofBuilder<'params
             native_points_walk_commitment: cached!(native_points_walk_commitment),
 
             witness_poly_commitments: cached!(witness_poly_commitments),
+            application_poly_queries: take!(application_poly_queries),
             witness_polys: take!(witness_polys),
         })
     }

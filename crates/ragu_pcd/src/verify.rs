@@ -63,6 +63,7 @@ use crate::{
         },
         transcript::Transcript,
     },
+    proof::PolyQuery,
 };
 
 /// The backend whose kernels [`Application::verify`] consults for the selected
@@ -399,6 +400,27 @@ impl<
             native && nested
         };
 
+        // A root proof's own poly-queries are not yet folded; check them
+        // natively. Rejects a query whose commitment is no carried
+        // polynomial's, or whose evaluation disagrees with that polynomial.
+        // `commitments_claim` holds the carried commitments to these very
+        // polynomials, so resolving one is finding the polynomial evaluated
+        // here.
+        let poly_query_claims = {
+            let proof = pcd.proof();
+            proof
+                .application_poly_queries()
+                .iter()
+                .all(|&PolyQuery { com, x, y }| {
+                    proof
+                        .witness_poly_commitments()
+                        .iter()
+                        .zip(proof.witness_polys())
+                        .find(|&(derived, _)| *derived == com)
+                        .is_some_and(|(_, poly)| Verifier::<B>::sparse_eval(poly, x) == y)
+                })
+        };
+
         Ok(native_revdot_claims
             && nested_revdot_claims
             && registry_xy_claim
@@ -408,7 +430,8 @@ impl<
             && nested_points_claim
             && transcript_claim
             && ab_bridge_claim
-            && mesh_claim)
+            && mesh_claim
+            && poly_query_claims)
     }
 
     /// The native mesh claim: see [`verify`](Self::verify).

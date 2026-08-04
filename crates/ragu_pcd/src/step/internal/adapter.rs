@@ -220,6 +220,9 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         for poly in hooks.witnessed_polys() {
             poly.write(dr, &mut staged)?;
         }
+        for query in hooks.poly_queries() {
+            query.write(dr, &mut staged)?;
+        }
         if staged.len() != hook_len {
             return Err(Error::Initialization(
                 "the hooks' wires do not fit the application's hook layout".into(),

@@ -127,6 +127,23 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<C, R, H> {
     }
 }
 
+/// A polynomial-opening claim $p(x) = y$, identifying the polynomial by its
+/// commitment.
+///
+/// The commitment is the host-curve point itself: a `Proof` is plain data with
+/// no circuit to answer to, so nothing here needs the handle the native circuit
+/// cannot avoid. `Curve::Scalar` is the circuit field, which is why one
+/// parameter fixes all three fields.
+#[derive(Clone, Copy, Debug)]
+pub struct PolyQuery<Curve: udon::curve::Affine> {
+    /// The opened polynomial's commitment.
+    pub com: Curve,
+    /// The opening point.
+    pub x: Curve::Scalar,
+    /// The claimed evaluation $p(x) = y$.
+    pub y: Curve::Scalar,
+}
+
 /// The Horner fold of `polys` under `beta`, the first weighted highest: the
 /// batch polynomial whose commitment the endoscaling walk over the
 /// polynomials' commitments computes.
@@ -331,6 +348,10 @@ pub struct Proof<C: Cycle, R: Rank> {
 
     // Bridge commitment (cached, derived from the cached bridge rx)
     bridge_ab_commitment: Cached<C::NestedCurve>,
+
+    /// Padded to the application's layout, and bound to $k(Y)$. Readers go
+    /// through [`application_poly_queries`](Self::application_poly_queries).
+    pub(crate) application_poly_queries: Vec<PolyQuery<C::HostCurve>>,
 
     /// The step's witnessed polynomials, carried for one fuse level.
     pub(crate) witness_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
@@ -557,20 +578,25 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         &self.right_header
     }
 
+    pub(crate) fn application_poly_queries(&self) -> &[PolyQuery<C::HostCurve>] {
+        &self.application_poly_queries
+    }
+
     /// Whether the hook lists are the ones `layout` declares, and the
     /// application stage's hook region carries them. `Proof` is not
     /// parameterized by the hook configuration, so this invariant is checked
     /// where a proof is *consumed*: at the fuse and at the root.
     pub(crate) fn has_shape(&self, layout: &HookLayout) -> bool {
-        self.witness_polys.len() == layout.witness_polys
+        self.application_poly_queries.len() == layout.poly_queries
+            && self.witness_polys.len() == layout.witness_polys
             && self.witness_poly_commitments.0.len() == layout.witness_polys
             && self.stage_carries_hooks(layout)
     }
 
     /// Whether the hook region of the application stage holds the handles of
-    /// the carried commitments, in the order the adapter staged them. The
-    /// fuse reads the points off the stage, so a proof whose stage and
-    /// carried commitments disagree is malformed.
+    /// the carried commitments and the carried poly-queries, in the order the
+    /// adapter staged them. The fuse reads the points off the stage, so a
+    /// proof whose stage and carried hook lists disagree is malformed.
     fn stage_carries_hooks(&self, layout: &HookLayout) -> bool {
         let stage = StageReader::<C::CircuitField, R>::new(&self.native_application_stage_rx);
         let mut expected = Vec::with_capacity(layout.poly_query_instance_len());
@@ -579,6 +605,14 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 Ok(limbs) => expected.extend(limbs),
                 Err(_) => return false,
             }
+        }
+        for query in self.application_poly_queries() {
+            match poly_commitment::handle::<C>(query.com) {
+                Ok(limbs) => expected.extend(limbs),
+                Err(_) => return false,
+            }
+            expected.push(query.x);
+            expected.push(query.y);
         }
         expected.len() == layout.poly_query_instance_len()
             && expected
@@ -1126,6 +1160,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, B: crate::Selec
         let padding_com =
             B::sparse_commit_to_affine(&padding_poly, C::host_generators(self.params));
         builder.set_application_polys(vec![padding_poly.clone(); polys]);
+        // Nor does it raise poly-queries: every position holds the padding
+        // query, which opens the first polynomial at zero, as the adapter's
+        // padding does. The constant 1 evaluates to 1 everywhere.
+        builder.set_application_poly_queries(vec![
+            PolyQuery {
+                com: padding_com,
+                x: C::CircuitField::ZERO,
+                y: C::CircuitField::ONE,
+            };
+            J::PolyQueries::len()
+        ]);
 
         // Native rx polynomials (all trivial ones)
         builder.set_native_application_rx(ones_host.clone());

@@ -62,15 +62,18 @@ use ragu_primitives::{
     Element, Endoscalar, EndoscalarChallenge, GadgetExt, allocator::Standard, vec::Len,
 };
 
-use super::super::{
-    InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, STATIC_F_QUERIES,
-    StaticFQuery,
-    claims::{self, Processor},
-    stages::{
-        eval as native_eval, preamble as native_preamble,
-        query::{self as native_query, ChildEvaluations},
+use super::{
+    super::{
+        InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, STATIC_F_QUERIES,
+        StaticFQuery,
+        claims::{self, Processor},
+        stages::{
+            eval as native_eval, preamble as native_preamble,
+            query::{self as native_query, ChildEvaluations},
+        },
+        unified::{self, OutputBuilder},
     },
-    unified::{self, OutputBuilder},
+    poly_query,
 };
 use crate::{
     framework_hooks::HookConfig,
@@ -236,6 +239,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
                     z.element(),
                     &preamble,
                 )?;
+                let selected = poly_query::select_evaluations(dr, allocator, eval, &preamble)?;
+
                 let mut horner = Horner::new(&alpha);
                 for (pu, v, denominator) in poly_queries(
                     eval,
@@ -244,6 +249,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
                     &denominators,
                     &computed_ax,
                     &computed_bx,
+                    &selected,
                 ) {
                     pu.sub(dr, v).mul(dr, denominator)?.write(dr, &mut horner)?;
                 }
@@ -276,6 +282,7 @@ struct ChildDenominators<'dr, D: Driver<'dr>> {
     y: Element<'dr, D>,
     x: Element<'dr, D>,
     circuit_id: Element<'dr, D>,
+    poly_queries: Vec<Element<'dr, D>>,
 }
 
 /// Denominators for current step challenge points.
@@ -330,6 +337,18 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
         let challenges_x = inverter.add(dr, x)?;
         let challenges_y = inverter.add(dr, y)?;
         let challenges_xz = inverter.add(dr, &xz)?;
+        let left_queries = preamble
+            .left
+            .poly_queries
+            .iter()
+            .map(|query| inverter.add(dr, &query.x))
+            .collect::<Result<Vec<_>>>()?;
+        let right_queries = preamble
+            .right
+            .poly_queries
+            .iter()
+            .map(|query| inverter.add(dr, &query.x))
+            .collect::<Result<Vec<_>>>()?;
 
         let circuit_indices = InternalCircuitValues::try_from_fn(polys, |id| {
             inverter.add_circuit(dr, id.circuit_index(polys))
@@ -343,12 +362,14 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
                 y: inverted[left_y].clone(),
                 x: inverted[left_x].clone(),
                 circuit_id: inverted[left_circuit_id].clone(),
+                poly_queries: left_queries.iter().map(|&i| inverted[i].clone()).collect(),
             },
             right: ChildDenominators {
                 u: inverted[right_u].clone(),
                 y: inverted[right_y].clone(),
                 x: inverted[right_x].clone(),
                 circuit_id: inverted[right_circuit_id].clone(),
+                poly_queries: right_queries.iter().map(|&i| inverted[i].clone()).collect(),
             },
             challenges: ChallengeDenominators {
                 w: inverted[challenges_w].clone(),
@@ -582,6 +603,7 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
 ///    recomputation (undilated) and $B(x)$ ($Z$-dilated).
 /// 6. **Internal circuit registry evaluations** - $m(\omega^j, x, y)$ for each
 ///    internal index
+/// 7. **Child poly-queries** — $p_i(u) = y_i$ at $x_i$ per child query
 ///
 /// The static query prefix is defined by [`STATIC_F_QUERIES`] and consumed by
 /// both this circuit and the prover's [`compute_f`] path. The ordering affects
@@ -603,6 +625,7 @@ fn poly_queries<
     d: &'a Denominators<'dr, D>,
     computed_ax: &'a Element<'dr, D>,
     computed_bx: &'a Element<'dr, D>,
+    selected: &'a [Vec<Element<'dr, D>>; 2],
 ) -> impl Iterator<Item = (&'a Element<'dr, D>, &'a Element<'dr, D>, &'a Element<'dr, D>)> {
     STATIC_F_QUERIES.into_iter().map(move |query_id| match query_id {
         StaticFQuery::LeftP => (&eval.left.p_poly, &preamble.left.unified.v, &d.left.u),
@@ -690,4 +713,10 @@ fn poly_queries<
     .chain(InternalCircuitIndex::all(J::PolyWitnesses::len()).map(move |id| {
         (&eval.registry_xy, query.fixed_registry.get(id), d.internal.get(id))
     }))
+    // Child poly-queries, trailing block matching `compute_f`.
+    .chain([(&selected[0], &preamble.left, &d.left), (&selected[1], &preamble.right, &d.right)]
+        .into_iter()
+        .flat_map(move |(child_selected, child_preamble, child_d)|
+            (0..child_preamble.poly_queries.len()).map(move |i|
+                (&child_selected[i], &child_preamble.poly_queries[i].y, &child_d.poly_queries[i]))))
 }
