@@ -62,7 +62,7 @@ pub trait Step<C: Cycle> {
     type Output: Header;
 
     // Simplified signature - actual API includes driver and encoder abstractions
-    fn witness(&self, dr, witness, left, right) -> Result<(
+    fn witness(&self, ctx, witness, left, right) -> Result<(
         (HeaderGadget<Left>, HeaderGadget<Right>, HeaderGadget<Output>),
         SharedGadget, OutputData, Aux,
     )>;

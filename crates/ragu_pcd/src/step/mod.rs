@@ -60,15 +60,20 @@ impl Index {
     /// internal masks, internal steps, then application steps.
     ///
     /// Pass the known number of application steps to validate and compute the
-    /// final index of this step. Returns an error if an application step index
-    /// exceeds the number of registered steps.
-    pub(crate) fn circuit_index(&self, num_application_steps: usize) -> Result<CircuitIndex> {
+    /// final index of this step, and the polynomials the application's steps
+    /// witness, which fix how many internal circuits precede it. Returns an
+    /// error if an application step index exceeds the number of registered
+    /// steps.
+    pub(crate) fn circuit_index(
+        &self,
+        num_application_steps: usize,
+        polys: usize,
+    ) -> Result<CircuitIndex> {
+        let internal_circuits = InternalCircuitIndex::num(polys);
         match self.index {
             StepIndex::Internal(i) => {
                 // Internal steps come after internal circuits
-                Ok(CircuitIndex::from_u32(
-                    InternalCircuitIndex::NUM as u32 + i as u32,
-                ))
+                Ok(CircuitIndex::from_u32(internal_circuits as u32 + i as u32))
             }
             StepIndex::Application(i) => {
                 if i >= num_application_steps {
@@ -78,7 +83,7 @@ impl Index {
                 }
 
                 Ok(CircuitIndex::new(
-                    NUM_INTERNAL_STEPS + InternalCircuitIndex::NUM + i,
+                    NUM_INTERNAL_STEPS + internal_circuits + i,
                 ))
             }
         }
@@ -191,29 +196,38 @@ mod tests {
     #[test]
     fn test_index_map() -> Result<()> {
         let num_application_steps = 10;
-        let app_offset = NUM_INTERNAL_STEPS + InternalCircuitIndex::NUM;
+        for polys in [0, 4] {
+            let internal = InternalCircuitIndex::num(polys);
+            let app_offset = NUM_INTERNAL_STEPS + internal;
 
-        // Internal steps come after internal circuits
-        assert_eq!(
-            Index::internal(InternalStepIndex::Rerandomize).circuit_index(num_application_steps)?,
-            CircuitIndex::new(InternalCircuitIndex::NUM)
-        );
-        assert_eq!(
-            Index::internal(InternalStepIndex::Bootstrap).circuit_index(num_application_steps)?,
-            CircuitIndex::new(InternalCircuitIndex::NUM + 1)
-        );
+            // Internal steps come after internal circuits
+            assert_eq!(
+                Index::internal(InternalStepIndex::Rerandomize)
+                    .circuit_index(num_application_steps, polys)?,
+                CircuitIndex::new(internal)
+            );
+            assert_eq!(
+                Index::internal(InternalStepIndex::Bootstrap)
+                    .circuit_index(num_application_steps, polys)?,
+                CircuitIndex::new(internal + 1)
+            );
 
-        // Application steps occupy indices (InternalCircuitIndex::NUM + NUM_INTERNAL_STEPS)..
-        assert_eq!(
-            Index::new(0).circuit_index(num_application_steps)?,
-            CircuitIndex::new(app_offset)
-        );
-        assert_eq!(
-            Index::new(1).circuit_index(num_application_steps)?,
-            CircuitIndex::new(app_offset + 1)
-        );
+            // Application steps occupy indices (internal + NUM_INTERNAL_STEPS)..
+            assert_eq!(
+                Index::new(0).circuit_index(num_application_steps, polys)?,
+                CircuitIndex::new(app_offset)
+            );
+            assert_eq!(
+                Index::new(1).circuit_index(num_application_steps, polys)?,
+                CircuitIndex::new(app_offset + 1)
+            );
+            assert!(
+                Index::new(10)
+                    .circuit_index(num_application_steps, polys)
+                    .is_err()
+            );
+        }
         Index::new(999).assert_index(999)?;
-        assert!(Index::new(10).circuit_index(num_application_steps).is_err());
 
         Ok(())
     }

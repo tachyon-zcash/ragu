@@ -125,7 +125,8 @@ const RNG_FINGERPRINT_WORDS: usize = 4;
 const MAX_DUMMY_CIRCUITS: usize = 3;
 const MAX_CORRUPTED_HEADER_LEN: usize = TEST_HEADER_SIZE * 2;
 
-type TestApplication<'params, B> = Application<'params, Pasta, ProductionRank, TEST_HEADER_SIZE, B>;
+type TestApplication<'params, B> =
+    Application<'params, Pasta, ProductionRank, TEST_HEADER_SIZE, crate::NoHooks, B>;
 type TestPcd = Pcd<Pasta, ProductionRank, ()>;
 type TestCompressedPcd = CompressedPcd<Pasta, ()>;
 type RngFingerprint = [u64; RNG_FINGERPRINT_WORDS];
@@ -1132,7 +1133,16 @@ mod proof_equivalence {
                 bridge_ab_commitment: _,
                 bridge_query_commitment: _,
                 bridge_eval_commitment: _,
+                witness_polys: _,
+                witness_poly_commitments: _,
             } = self;
+
+            // The proofs' hook layout, which fixes how many endoscaling
+            // steps each walk takes.
+            let polys = self.witness_polys.len();
+            if polys != other.witness_polys.len() {
+                return Some("witnessed polynomial count");
+            }
 
             if self.bridge_alpha != other.bridge_alpha {
                 return Some("bridge alpha");
@@ -1144,11 +1154,17 @@ mod proof_equivalence {
                 return Some("headers");
             }
 
-            if native::RxIndex::ALL
-                .into_iter()
-                .any(|index| !polynomial_eq(&self[index], &other[index]))
+            if native::RxIndex::all(polys).any(|index| !polynomial_eq(&self[index], &other[index]))
             {
                 return Some("native rx polynomials");
+            }
+            if self
+                .witness_polys
+                .iter()
+                .zip(&other.witness_polys)
+                .any(|(a, b)| !polynomial_eq(a, b))
+            {
+                return Some("witnessed polynomials");
             }
             if !polynomial_eq(&self.native_a_poly, &other.native_a_poly)
                 || !polynomial_eq(&self.native_b_poly, &other.native_b_poly)
@@ -1162,9 +1178,7 @@ mod proof_equivalence {
             {
                 return Some("native protocol polynomials");
             }
-            if nested::RxIndex::ALL
-                .into_iter()
-                .any(|index| !polynomial_eq(&self[index], &other[index]))
+            if nested::RxIndex::all(polys).any(|index| !polynomial_eq(&self[index], &other[index]))
             {
                 return Some("nested polynomials");
             }
@@ -1209,11 +1223,13 @@ mod proof_equivalence {
                 return Some("challenges");
             }
 
-            if native::RxIndex::ALL
-                .into_iter()
+            if native::RxIndex::all(polys)
                 .any(|index| self.native_rx_commitment(index) != other.native_rx_commitment(index))
             {
                 return Some("native rx commitments");
+            }
+            if self.witness_poly_commitments() != other.witness_poly_commitments() {
+                return Some("witnessed polynomial commitments");
             }
             if self.native_commitment(native::RxComponent::AbA)
                 != other.native_commitment(native::RxComponent::AbA)

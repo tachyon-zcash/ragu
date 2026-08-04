@@ -24,6 +24,7 @@ use ragu_core::{Error, Result};
 use udon::{curve::Affine, field::Field};
 
 use self::fold::{Derived, Fold};
+use super::POLYS;
 use crate::internal::{native, nested};
 
 pub(crate) mod claims;
@@ -75,11 +76,7 @@ pub(crate) struct Reduction<C: Affine> {
 pub(crate) fn native_components() -> impl Iterator<Item = native::RxComponent> {
     [native::RxComponent::AbA, native::RxComponent::AbB]
         .into_iter()
-        .chain(
-            native::RxIndex::ALL
-                .into_iter()
-                .map(native::RxComponent::Rx),
-        )
+        .chain(native::RxIndex::all(POLYS).map(native::RxComponent::Rx))
 }
 
 /// The position of a native component in [`native_components`].
@@ -87,12 +84,7 @@ pub(crate) fn native_position(component: native::RxComponent) -> usize {
     match component {
         native::RxComponent::AbA => 0,
         native::RxComponent::AbB => 1,
-        native::RxComponent::Rx(index) => {
-            2 + native::RxIndex::ALL
-                .iter()
-                .position(|&listed| listed == index)
-                .expect("every native index is listed")
-        }
+        native::RxComponent::Rx(index) => 2 + index.position(POLYS),
     }
 }
 
@@ -101,11 +93,7 @@ pub(crate) fn native_position(component: native::RxComponent) -> usize {
 pub(crate) fn nested_components() -> impl Iterator<Item = nested::RxComponent> {
     [nested::RxComponent::AbA, nested::RxComponent::AbB]
         .into_iter()
-        .chain(
-            nested::RxIndex::ALL
-                .into_iter()
-                .map(nested::RxComponent::Rx),
-        )
+        .chain(nested::RxIndex::all(POLYS).map(nested::RxComponent::Rx))
 }
 
 /// The position of a nested component in [`nested_components`].
@@ -113,12 +101,7 @@ pub(crate) fn nested_position(component: nested::RxComponent) -> usize {
     match component {
         nested::RxComponent::AbA => 0,
         nested::RxComponent::AbB => 1,
-        nested::RxComponent::Rx(index) => {
-            2 + nested::RxIndex::ALL
-                .iter()
-                .position(|&listed| listed == index)
-                .expect("every nested index is listed")
-        }
+        nested::RxComponent::Rx(index) => 2 + index.position(POLYS),
     }
 }
 

@@ -30,8 +30,13 @@ use crate::{
     proof::ProofBuilder,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    J: crate::framework_hooks::HookConfig,
+    B: crate::SelectableBackend,
+> Application<'_, C, R, HEADER_SIZE, J, B>
 {
     pub(super) fn compute_eval(
         &self,
@@ -42,10 +47,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         registry_wy: &RegistryWy<C, R>,
         nested_s_prime: &NestedSPrime<C, R>,
         nested_registry_wy: &NestedRegistryWy<C, R>,
-        builder: &ProofBuilder<'_, C, R, B>,
+        builder: &ProofBuilder<'_, C, R, J, B>,
     ) -> Result<(
-        native::stages::eval::Witness<C>,
-        nested::stages::eval::Evaluations<C::ScalarField>,
+        native::stages::eval::Witness<C, J::PolyWitnesses>,
+        nested::stages::eval::Evaluations<C::ScalarField, J::PolyWitnesses>,
         nested::stages::challenges::Witness<C::ScalarField>,
     )> {
         // The binding partials over the lifts of the challenges squeezed so
@@ -62,7 +67,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             builder.right_header(),
             C::ScalarField::ZERO,
         );
-        let partials = native::stages::eval::BindingPartials::compute::<C, R, B>(
+        let partials = native::stages::eval::BindingPartials::compute::<C, R, B, J::PolyWitnesses>(
             self.params,
             &nested_challenges,
         );
@@ -97,8 +102,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         );
 
         let native = native::stages::eval::Witness {
-            left: left_witness,
-            right: right_witness,
+            left: left_witness?,
+            right: right_witness?,
             current,
             partials,
         };
@@ -137,24 +142,26 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     pub(super) fn sample_eval_commitment<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        eval_witness: &native::stages::eval::Witness<C>,
-        nested_eval: &nested::stages::eval::Evaluations<C::ScalarField>,
+        eval_witness: &native::stages::eval::Witness<C, J::PolyWitnesses>,
+        nested_eval: &nested::stages::eval::Evaluations<C::ScalarField, J::PolyWitnesses>,
+        builder: &ProofBuilder<'_, C, R, J, B>,
     ) -> Result<(
         sparse::Polynomial<C::CircuitField, R>,
         sparse::Polynomial<C::ScalarField, R>,
         C::NestedCurve,
     )> {
-        let eval_rx = native::stages::eval::Stage::<C, R, HEADER_SIZE>::rx(
+        let eval_rx = native::stages::eval::Stage::<C, R, HEADER_SIZE, J>::rx(
             C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
             eval_witness,
         )?;
         let native_eval_commitment =
             B::sparse_commit_to_affine(&eval_rx, C::host_generators(self.params));
 
-        let bridge_rx = nested::stages::eval::Stage::<C::HostCurve, R>::rx(
+        let bridge_rx = nested::stages::eval::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
             &nested::stages::eval::Witness {
                 native_eval: native_eval_commitment,
+                witness_polys: builder.witness_poly_commitments(),
                 nested: nested_eval.clone(),
             },
         )?;

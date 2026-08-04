@@ -33,7 +33,7 @@ pub trait Step<C: Cycle> {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data>,
         right: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data>,
@@ -49,6 +49,10 @@ pub trait Step<C: Cycle> {
     )>;
 }
 ```
+
+`ctx` bundles the driver, as `ctx.dr`, with the framework hooks described
+under [Polynomial hooks](#polynomial-hooks). A step that uses no hook reads
+`ctx.dr` and nothing else.
 
 Let's break down what each part means.
 
@@ -228,11 +232,12 @@ impl Step<Pasta> for MyStep {
 
     fn witness<'dr, 'source: 'dr, D, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, LeftData>,
         right: DriverValue<D, RightData>,
     ) -> Result<...> {
+        let dr = &mut *ctx.dr;
         // Allocate or compute these values in this circuit's normal logic.
         let input = ...;
         let intermediate_state = ...;
@@ -250,14 +255,34 @@ witness-only fields. The step still constrains the staged values itself:
 staging only makes a binding commitment to them available to the proof
 system.
 
-Every proof carries one application stage, sized by the largest `Shared`
-gadget registered in the application and constructed during `finalize`.
-Each step circuit, including the internal bootstrap and rerandomization
-steps, reserves `ceil(n / 2)` gates for a stage of `n` elements, so an
-application whose steps all declare `Shared = ()` reserves nothing.
-Recursive and terminal verification hold the stage to its block and the
-step's own polynomial out of it, including for proofs built outside the Rust
-API.
+Every proof carries one application stage, sized by the hook layout's region
+plus the largest `Shared` gadget registered in the application, and
+constructed during `finalize`. Each step circuit, including the internal
+bootstrap and rerandomization steps, reserves `ceil(n / 2)` gates for a
+stage of `n` elements, so an application whose steps all declare
+`Shared = ()` under `NoHooks` reserves nothing. Recursive and terminal
+verification hold the stage to its block and the step's own polynomial out
+of it, including for proofs built outside the Rust API.
+
+### Polynomial hooks
+
+A step can hand the framework a polynomial to commit, and open it. The
+application declares how many of each a step may use, as `AppHooks<POLYS,
+QUERIES>` on its `ApplicationBuilder`; one layout serves every step, and
+steps that use less are padded up.
+
+```rust
+let handle = ctx.witness_polynomial(polynomial)?;   // a PolyHandle: two elements
+let y = Element::alloc(ctx.dr, allocator, ctx.evaluate(&handle, x.value())?)?;
+ctx.enforce_poly_query(&handle, x, y)?;              // claims p(x) = y
+```
+
+The handle is the commitment's encoding, which the step can absorb into a
+hash or carry in a header. The framework stages the handles and the query
+wires in the hook region of the application stage, ahead of the step's own
+`Shared` gadget, and the fuse that consumes the proof discharges each query
+against the polynomial its commitment names. A proof that is never fused has
+its queries checked by `verify`.
 
 ### Pattern 3: Stateful Steps
 

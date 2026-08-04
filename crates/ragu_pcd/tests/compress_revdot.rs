@@ -106,7 +106,7 @@ fn check_openings<F, C>(
 fn native_targets(pcd: &Pcd<Pasta, TestR, ()>, y: Fp) -> NativeKy<Fp> {
     NativeKy {
         c: Some(pcd.proof().native_c()),
-        ..ky::native_ky::<Pasta, TestR, (), HEADER_SIZE>(pcd, y).unwrap()
+        ..ky::native_ky::<Pasta, TestR, (), HEADER_SIZE, crate::NoHooks>(pcd, y).unwrap()
     }
 }
 
@@ -259,7 +259,7 @@ fn nested_reduction_verifies() {
 
     let targets = NestedKy {
         c: proof.nested_c(),
-        unified: ky::nested_ky(proof, y).unwrap(),
+        unified: ky::nested_ky::<_, _, ragu_primitives::vec::ConstLen<0>>(proof, y).unwrap(),
     };
     let commitment = |component| match component {
         nested::RxComponent::AbA => proof.nested_a_commitment(),
@@ -328,17 +328,14 @@ fn point_restriction_matches_the_materialized_one() {
     let circuit_id = app.bootstrap_pcd().proof().circuit_id();
     check(
         &app.native_registry,
-        native::InternalCircuitIndex::ALL
-            .iter()
-            .map(|id| id.circuit_index())
+        native::InternalCircuitIndex::all(0)
+            .map(|id| id.circuit_index(0))
             .chain([circuit_id]),
         &mut rng,
     );
     check(
         &app.nested_registry,
-        nested::InternalCircuitIndex::ALL
-            .iter()
-            .map(|id| id.circuit_index()),
+        nested::InternalCircuitIndex::all(0).map(|id| id.circuit_index(0)),
         &mut rng,
     );
 }

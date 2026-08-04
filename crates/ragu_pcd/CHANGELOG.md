@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added polynomial hooks: `StepCtx::witness_polynomial` commits a polynomial
+  and hands the step a `PolyHandle`, `StepCtx::evaluate` evaluates it, and
+  `StepCtx::enforce_poly_query` claims an opening the consuming fuse (or
+  `verify`, for a root proof) discharges. The application declares its hook
+  layout as `AppHooks<POLYS, QUERIES>`; the handles and query wires occupy a
+  framework region of the application stage ahead of the step's `Shared`
+  gadget, and the proof carries the witnessed polynomials for one fuse level.
 - Added `Step::Shared`, the gadget a step stages: Ragu derives its layout,
   binds every wire of the returned gadget to the proof's application stage,
   and commits that stage once per proof beside the step's own polynomial.
@@ -27,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `Step::witness` takes a `StepCtx` in place of the bare driver, which it
+  exposes as `ctx.dr` beside the hooks.
 - `Step` declares a `Shared` gadget type and returns that gadget from
   `witness`. Steps that stage nothing declare `Shared = ()` and return `()`.
 - Every proof carries an application stage sized by the largest registered

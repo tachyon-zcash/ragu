@@ -55,7 +55,11 @@ use ragu_core::{
     gadgets::Bound,
     maybe::Maybe,
 };
-use ragu_primitives::{Element, GadgetExt, allocator::Standard, vec::FixedVec};
+use ragu_primitives::{
+    Element, GadgetExt,
+    allocator::Standard,
+    vec::{FixedVec, Len},
+};
 use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
 use super::common;
@@ -73,11 +77,11 @@ use crate::internal::{
 };
 
 /// Circuit computing the nested batch evaluation $v_n$.
-pub struct Circuit<C: Affine, R: Rank> {
-    _marker: PhantomData<(C, R)>,
+pub struct Circuit<C: Affine, R: Rank, L: Len> {
+    _marker: PhantomData<(C, R, L)>,
 }
 
-impl<C: Affine, R: Rank> Circuit<C, R> {
+impl<C: Affine, R: Rank, L: Len> Circuit<C, R, L> {
     pub fn new() -> Self {
         Self {
             _marker: PhantomData,
@@ -85,11 +89,11 @@ impl<C: Affine, R: Rank> Circuit<C, R> {
     }
 }
 
-impl<C: Affine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
-    type Last = stages::challenges::Stage<C, R>;
+impl<C: Affine, R: Rank, L: Len> MultiStageCircuit<C::Base, R> for Circuit<C, R, L> {
+    type Last = stages::challenges::Stage<C, R, L>;
     type Instance<'source> = &'source unified::Instance<C>;
-    type Witness<'source> = common::Witness<'source, C>;
-    type Output = unified::OutputKind<C>;
+    type Witness<'source> = common::Witness<'source, C, L>;
+    type Output = unified::OutputKind<C, L>;
     type Aux<'source> = unified::Instance<C>;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -136,18 +140,18 @@ impl<C: Affine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
             };
             let mut processor =
                 EvaluationProcessor::new(dr, z.element(), &txz, &query.fixed_registry);
-            claims::build(&source, &mut processor)?;
+            claims::build(&source, &mut processor, L::len())?;
             let (ax, bx) = processor.build();
             (
-                fold_two_layer::<_, RevdotParameters>(dr, &ax, &mu_inv, &mu_prime_inv)?,
-                fold_two_layer::<_, RevdotParameters>(dr, &bx, &mu_nu, &mu_prime_nu_prime)?,
+                fold_two_layer::<_, RevdotParameters<L>>(dr, &ax, &mu_inv, &mu_prime_inv)?,
+                fold_two_layer::<_, RevdotParameters<L>>(dr, &bx, &mu_nu, &mu_prime_nu_prime)?,
             )
         };
 
         // f_n(u_n), from the quotients of every opening.
         let fu = {
             let u = lift(challenges::U);
-            let denominators = Denominators::new(
+            let denominators = Denominators::<D, L>::new(
                 dr,
                 u,
                 lift(challenges::W),
@@ -207,16 +211,16 @@ struct ChallengeDenominators<'dr, D: Driver<'dr>> {
 }
 
 /// The inverted denominators of every opening, batch-inverted once.
-struct Denominators<'dr, D: Driver<'dr>> {
+struct Denominators<'dr, D: Driver<'dr>, L: Len> {
     left: ChildDenominators<'dr, D>,
     right: ChildDenominators<'dr, D>,
     challenges: ChallengeDenominators<'dr, D>,
     /// One per nested internal circuit, at its $\omega^j$, in
-    /// [`InternalCircuitIndex::ALL`] order.
-    internal: FixedVec<Element<'dr, D>, InternalLen>,
+    /// [`InternalCircuitIndex::all`] order.
+    internal: FixedVec<Element<'dr, D>, InternalLen<L>>,
 }
 
-impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
+impl<'dr, D: Driver<'dr>, L: Len> Denominators<'dr, D, L> {
     fn new<C: Affine<Base = D::F>>(
         dr: &mut D,
         u: &Element<'dr, D>,
@@ -224,7 +228,7 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
         x: &Element<'dr, D>,
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
-        preamble: &nested_preamble::Output<'dr, D, C>,
+        preamble: &nested_preamble::Output<'dr, D, C, L>,
     ) -> Result<Self>
     where
         D::F: Field,
@@ -234,7 +238,7 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
         let mut inverter = Inverter::with_base(u.clone());
         let child = |inverter: &mut Inverter<'dr, D>,
                      dr: &mut D,
-                     child: &nested_preamble::ChildOutput<'dr, D, C>| {
+                     child: &nested_preamble::ChildOutput<'dr, D, C, L>| {
             Ok::<_, ragu_core::Error>((
                 inverter.add(dr, &child.nested.u)?,
                 inverter.add(dr, &child.nested.y)?,
@@ -249,9 +253,8 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
             inverter.add(dr, y)?,
             inverter.add(dr, &xz)?,
         );
-        let internal = InternalCircuitIndex::ALL
-            .iter()
-            .map(|id| inverter.add_circuit(dr, id.circuit_index()))
+        let internal = InternalCircuitIndex::all(L::len())
+            .map(|id| inverter.add_circuit(dr, id.circuit_index(L::len())))
             .collect::<Result<Vec<_>>>()?;
 
         let inverted = inverter.invert(dr)?;
@@ -281,12 +284,12 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
 
 /// The children's claim evaluations, as a claim [`Source`] in the order
 /// [`build`](claims::build) fixes.
-struct EvaluationSource<'a, 'dr, D: Driver<'dr>> {
-    left: &'a query::ChildEvaluations<'dr, D>,
-    right: &'a query::ChildEvaluations<'dr, D>,
+struct EvaluationSource<'a, 'dr, D: Driver<'dr>, L: Len> {
+    left: &'a query::ChildEvaluations<'dr, D, L>,
+    right: &'a query::ChildEvaluations<'dr, D, L>,
 }
 
-impl<'a, 'dr, D: Driver<'dr>> Source for EvaluationSource<'a, 'dr, D> {
+impl<'a, 'dr, D: Driver<'dr>, L: Len> Source for EvaluationSource<'a, 'dr, D, L> {
     type RxComponent = RxComponent;
     type Rx = &'a Element<'dr, D>;
     type AppCircuitId = ();
@@ -296,8 +299,8 @@ impl<'a, 'dr, D: Driver<'dr>> Source for EvaluationSource<'a, 'dr, D> {
             RxComponent::AbA => (&self.left.a_poly_at_xz, &self.right.a_poly_at_xz),
             RxComponent::AbB => (&self.left.b_poly_at_x, &self.right.b_poly_at_x),
             RxComponent::Rx(idx) => (
-                &self.left.rx[idx.position()],
-                &self.right.rx[idx.position()],
+                &self.left.rx[idx.position(L::len())],
+                &self.right.rx[idx.position(L::len())],
             ),
         };
         [left, right].into_iter()
@@ -313,21 +316,21 @@ impl<'a, 'dr, D: Driver<'dr>> Source for EvaluationSource<'a, 'dr, D> {
 /// $r_i(x_n z_n)$ and `bx` adds $s_y$ and $t(x_n z_n)$; for a bonding claim
 /// `ax` takes the $z_n$-fold of the group sums and `bx` is $s_y$ alone; a
 /// raw claim contributes its own evaluations.
-struct EvaluationProcessor<'a, 'dr, D: Driver<'dr>> {
+struct EvaluationProcessor<'a, 'dr, D: Driver<'dr>, L: Len> {
     dr: &'a mut D,
     z: &'a Element<'dr, D>,
     txz: &'a Element<'dr, D>,
-    fixed_registry: &'a FixedVec<Element<'dr, D>, InternalLen>,
+    fixed_registry: &'a FixedVec<Element<'dr, D>, InternalLen<L>>,
     ax: Vec<Element<'dr, D>>,
     bx: Vec<Element<'dr, D>>,
 }
 
-impl<'a, 'dr, D: Driver<'dr>> EvaluationProcessor<'a, 'dr, D> {
+impl<'a, 'dr, D: Driver<'dr>, L: Len> EvaluationProcessor<'a, 'dr, D, L> {
     fn new(
         dr: &'a mut D,
         z: &'a Element<'dr, D>,
         txz: &'a Element<'dr, D>,
-        fixed_registry: &'a FixedVec<Element<'dr, D>, InternalLen>,
+        fixed_registry: &'a FixedVec<Element<'dr, D>, InternalLen<L>>,
     ) -> Self {
         Self {
             dr,
@@ -342,7 +345,7 @@ impl<'a, 'dr, D: Driver<'dr>> EvaluationProcessor<'a, 'dr, D> {
     /// The registry's $m_n(\omega^j, x_n, y_n)$ for circuit `id`, from the
     /// query stage.
     fn sy(&self, id: InternalCircuitIndex) -> &'a Element<'dr, D> {
-        &self.fixed_registry[usize::from(id.circuit_index())]
+        &self.fixed_registry[usize::from(id.circuit_index(L::len()))]
     }
 
     fn build(self) -> (Vec<Element<'dr, D>>, Vec<Element<'dr, D>>) {
@@ -350,7 +353,9 @@ impl<'a, 'dr, D: Driver<'dr>> EvaluationProcessor<'a, 'dr, D> {
     }
 }
 
-impl<'a, 'dr, D: Driver<'dr>> Processor<&'a Element<'dr, D>> for EvaluationProcessor<'a, 'dr, D> {
+impl<'a, 'dr, D: Driver<'dr>, L: Len> Processor<&'a Element<'dr, D>>
+    for EvaluationProcessor<'a, 'dr, D, L>
+{
     fn raw_claim(&mut self, a: &'a Element<'dr, D>, b: &'a Element<'dr, D>) {
         self.ax.push(a.clone());
         self.bx.push(b.clone());
@@ -385,11 +390,11 @@ impl<'a, 'dr, D: Driver<'dr>> Processor<&'a Element<'dr, D>> for EvaluationProce
 /// the static prefix, each child's rx polynomials at $x_n z_n$, then the
 /// current `registry_xy` at each internal circuit's $\omega^j$.
 #[rustfmt::skip]
-fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
-    eval: &'a nested_eval::EvaluationsOutput<'dr, D>,
-    query: &'a query::EvaluationsOutput<'dr, D>,
-    preamble: &'a nested_preamble::Output<'dr, D, C>,
-    d: &'a Denominators<'dr, D>,
+fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, L: Len>(
+    eval: &'a nested_eval::EvaluationsOutput<'dr, D, L>,
+    query: &'a query::EvaluationsOutput<'dr, D, L>,
+    preamble: &'a nested_preamble::Output<'dr, D, C, L>,
+    d: &'a Denominators<'dr, D, L>,
     computed_ax: &'a Element<'dr, D>,
     computed_bx: &'a Element<'dr, D>,
 ) -> impl Iterator<Item = (&'a Element<'dr, D>, &'a Element<'dr, D>, &'a Element<'dr, D>)> {
@@ -445,13 +450,13 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
         StaticFQuery::CurrentAAtXz => (&eval.a_poly, computed_ax, &d.challenges.xz),
         StaticFQuery::CurrentBAtX => (&eval.b_poly, computed_bx, &d.challenges.x),
     })
-    // Each child's rx polynomials at x_n z_n, in RxIndex::ALL order.
+    // Each child's rx polynomials at x_n z_n, in RxIndex::all order.
     .chain([(&eval.left, &query.left), (&eval.right, &query.right)]
         .into_iter()
         .flat_map(move |(eval, query)|
-            (0..RxIndex::NUM).map(move |i| (&eval.rx[i], &query.rx[i], &d.challenges.xz))))
+            (0..RxIndex::num(L::len())).map(move |i| (&eval.rx[i], &query.rx[i], &d.challenges.xz))))
     // The current registry_xy at each internal circuit's omega^j.
-    .chain((0..InternalCircuitIndex::NUM).map(move |j| {
+    .chain((0..InternalCircuitIndex::num(L::len())).map(move |j| {
         (&eval.registry_xy, &query.fixed_registry[j], &d.internal[j])
     }))
 }

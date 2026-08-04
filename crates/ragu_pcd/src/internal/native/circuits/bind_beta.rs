@@ -73,7 +73,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Endoscalar, EndoscalarChallenge, GadgetExt, NonzeroBank, Point, allocator::Standard,
+    Endoscalar, EndoscalarChallenge, GadgetExt, NonzeroBank, Point, allocator::Standard, vec::Len,
 };
 
 use super::super::{
@@ -82,12 +82,15 @@ use super::super::{
     },
     unified::{self, OutputBuilder},
 };
-use crate::internal::{fold_revdot, nested};
+use crate::{
+    framework_hooks::HookConfig,
+    internal::{fold_revdot, nested},
+};
 
-/// The nested-curve generator index the challenge stage commits the lift of
-/// `pre_beta` with.
-pub fn generator_index<C: Cycle, R: Rank>() -> usize {
-    <nested::stages::challenges::Stage<C::HostCurve, R> as StageExt<C::ScalarField, R>>::generator_index_for_a(
+/// The nested-curve generator index the challenge stage of an application
+/// whose poly count is `L` commits the lift of `pre_beta` with.
+pub fn generator_index<C: Cycle, R: Rank, L: Len>() -> usize {
+    <nested::stages::challenges::Stage<C::HostCurve, R, L> as StageExt<C::ScalarField, R>>::generator_index_for_a(
         nested::stages::challenges::BETA_INDEX,
     )
 }
@@ -97,13 +100,19 @@ pub fn generator_index<C: Cycle, R: Rank>() -> usize {
 /// See the [module-level documentation] for details.
 ///
 /// [module-level documentation]: self
-pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP> {
+pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, J, FP> {
     params: &'params C::Params,
-    _marker: PhantomData<(R, FP)>,
+    _marker: PhantomData<(R, J, FP)>,
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    Circuit<'params, C, R, HEADER_SIZE, FP>
+impl<
+    'params,
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    J: HookConfig,
+    FP: fold_revdot::Parameters,
+> Circuit<'params, C, R, HEADER_SIZE, J, FP>
 {
     /// Creates a new multi-stage circuit.
     ///
@@ -131,10 +140,10 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, FP>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, FP: fold_revdot::Parameters>
+    MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, J, FP>
 {
-    type Last = native_outer_error::Stage<C, R, HEADER_SIZE, FP>;
+    type Last = native_outer_error::Stage<C, R, HEADER_SIZE, J, FP>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
@@ -162,9 +171,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     {
         let (binding, builder) = builder.add_stage::<BindingStage<C::NestedCurve>>()?;
         let (preamble, builder) =
-            builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
+            builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE, J>>()?;
         let (outer_error, builder) =
-            builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
+            builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, J, FP>>()?;
         let dr = builder.finish();
 
         let binding = binding.unenforced(dr, witness.as_ref().map(|w| w.binding))?;
@@ -174,7 +183,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let allocator = &mut Standard::new();
         let unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
-        let generator = C::nested_generators(self.params).g()[generator_index::<C, R>()];
+        let generator =
+            C::nested_generators(self.params).g()[generator_index::<C, R, J::PolyWitnesses>()];
         for (child, bound) in [
             (&preamble.left, &binding.left),
             (&preamble.right, &binding.right),

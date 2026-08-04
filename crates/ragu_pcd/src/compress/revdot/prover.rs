@@ -11,6 +11,7 @@ use ragu_circuits::{
 use ragu_core::{Cycle, FixedGenerators, Result};
 use udon::{curve::Affine, field::Field, polynomial::evaluate_iter};
 
+use super::super::POLYS;
 use super::{
     Openings, Reduction,
     fold::{self, Derived, Fold, Layout, Weights, squeeze_pair},
@@ -393,8 +394,8 @@ pub(crate) fn reduce_native<C: Cycle, R: Rank, B: Backend>(
     masked: &[Masked<native::RxComponent, C::CircuitField>],
     transcript: &mut impl IpaTranscript<C::HostCurve>,
 ) -> Result<(Reduction<C::HostCurve>, Witness<C::HostCurve, R>)> {
-    let mut builder = Builder::<_, C::CircuitField, R, B>::new(registry, y, z);
-    native::claims::build(&NativePolys(proof), &mut builder)?;
+    let mut builder = Builder::<_, C::CircuitField, R, B>::new(registry, y, z, POLYS);
+    native::claims::build(&NativePolys(proof), &mut builder, POLYS)?;
     let claims: Vec<_> = builder
         .a
         .into_iter()
@@ -424,8 +425,8 @@ pub(crate) fn reduce_nested<C: Cycle, R: Rank, B: Backend>(
     masked: &[Masked<nested::RxComponent, C::ScalarField>],
     transcript: &mut impl IpaTranscript<C::NestedCurve>,
 ) -> Result<(Reduction<C::NestedCurve>, Witness<C::NestedCurve, R>)> {
-    let mut builder = Builder::<_, C::ScalarField, R, B>::new(registry, y, z);
-    nested::claims::build(&NestedPolys(proof), &mut builder)?;
+    let mut builder = Builder::<_, C::ScalarField, R, B>::new(registry, y, z, POLYS);
+    nested::claims::build(&NestedPolys(proof), &mut builder, POLYS)?;
     let claims: Vec<_> = builder
         .a
         .into_iter()

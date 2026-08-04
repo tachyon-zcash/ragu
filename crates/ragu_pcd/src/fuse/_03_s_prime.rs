@@ -17,8 +17,13 @@ use udon::{curve::Affine, field::Field};
 use super::{NativeSPrime, NestedSPrime};
 use crate::{Application, Proof, internal::nested, proof::ProofBuilder};
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    J: crate::framework_hooks::HookConfig,
+    B: crate::SelectableBackend,
+> Application<'_, C, R, HEADER_SIZE, J, B>
 {
     pub(super) fn compute_s_prime<RNG: CryptoRng>(
         &self,
@@ -27,7 +32,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         nested_registry: &RegistryAt<'_, C::ScalarField, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R, B>,
+        builder: &mut ProofBuilder<'_, C, R, J, B>,
     ) -> Result<(NativeSPrime<C, R>, NestedSPrime<C, R>)> {
         let native = self.compute_native_s_prime(native_registry, left, right)?;
         let nested = self.compute_nested_s_prime(nested_registry, left, right)?;
@@ -45,9 +50,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         &self,
         rng: &mut RNG,
         native: &NativeSPrime<C, R>,
-        builder: &mut ProofBuilder<'_, C, R, B>,
+        builder: &mut ProofBuilder<'_, C, R, J, B>,
     ) -> Result<()> {
-        let bridge_rx = nested::stages::s_prime::Stage::<C::HostCurve, R>::rx(
+        let bridge_rx = nested::stages::s_prime::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
             &nested::stages::s_prime::Witness {
                 registry_wx0: native.registry_wx0_commitment,

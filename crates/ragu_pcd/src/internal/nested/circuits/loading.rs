@@ -22,7 +22,7 @@ use ragu_core::{
     gadgets::Bound,
     maybe::Maybe,
 };
-use ragu_primitives::{GadgetExt as _, Point};
+use ragu_primitives::{GadgetExt as _, Point, vec::Len};
 use udon::curve::EndomorphismAffine as Affine;
 
 use crate::internal::{
@@ -33,13 +33,13 @@ use crate::internal::{
 
 /// A cursor over [`PointsStage`] inputs that enforces equality against
 /// corresponding bridge stage elements.
-struct Walker<'pts, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
-    points: &'pts Points<'dr, D, C>,
+struct Walker<'pts, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, L: Len> {
+    points: &'pts Points<'dr, D, C, L>,
     index: usize,
 }
 
-impl<'pts, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Walker<'pts, 'dr, D, C> {
-    fn new(points: &'pts Points<'dr, D, C>) -> Self {
+impl<'pts, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, L: Len> Walker<'pts, 'dr, D, C, L> {
+    fn new(points: &'pts Points<'dr, D, C, L>) -> Self {
         Self { points, index: 0 }
     }
 
@@ -61,11 +61,11 @@ impl<'pts, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Walker<'pts, 'dr, D, C> 
 }
 
 /// Loading circuit that loads the entire nested stage hierarchy.
-pub struct Circuit<C: Affine, R: Rank> {
-    _marker: PhantomData<(C, R)>,
+pub struct Circuit<C: Affine, R: Rank, L: Len> {
+    _marker: PhantomData<(C, R, L)>,
 }
 
-impl<C: Affine, R: Rank> Circuit<C, R> {
+impl<C: Affine, R: Rank, L: Len> Circuit<C, R, L> {
     pub fn new() -> Self {
         Self {
             _marker: PhantomData,
@@ -73,8 +73,8 @@ impl<C: Affine, R: Rank> Circuit<C, R> {
     }
 }
 
-impl<C: Affine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
-    type Last = stages::eval::Stage<C, R>;
+impl<C: Affine, R: Rank, L: Len> MultiStageCircuit<C::Base, R> for Circuit<C, R, L> {
+    type Last = stages::eval::Stage<C, R, L>;
     type Instance<'source> = ();
     type Witness<'source> = ();
     type Output = ();
@@ -94,15 +94,15 @@ impl<C: Affine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         _witness: DriverValue<D, ()>,
     ) -> Result<WithAux<Bound<'dr, D, ()>, DriverValue<D, ()>>> {
         let dr = dr.skip_stage::<EndoscalarStage>()?;
-        let (points_guard, dr) = dr.add_stage::<PointsStage<C>>()?;
-        let (preamble_guard, dr) = dr.add_stage::<stages::preamble::Stage<C, R>>()?;
-        let (s_prime_guard, dr) = dr.add_stage::<stages::s_prime::Stage<C, R>>()?;
-        let (inner_error_guard, dr) = dr.add_stage::<stages::inner_error::Stage<C, R>>()?;
-        let dr = dr.skip_stage::<stages::outer_error::Stage<C, R>>()?;
-        let (ab_guard, dr) = dr.add_stage::<stages::ab::Stage<C, R>>()?;
-        let (query_guard, dr) = dr.add_stage::<stages::query::Stage<C, R>>()?;
-        let (f_guard, dr) = dr.add_stage::<stages::f::Stage<C, R>>()?;
-        let dr = dr.skip_stage::<stages::eval::Stage<C, R>>()?;
+        let (points_guard, dr) = dr.add_stage::<PointsStage<C, L>>()?;
+        let (preamble_guard, dr) = dr.add_stage::<stages::preamble::Stage<C, R, L>>()?;
+        let (s_prime_guard, dr) = dr.add_stage::<stages::s_prime::Stage<C, R, L>>()?;
+        let (inner_error_guard, dr) = dr.add_stage::<stages::inner_error::Stage<C, R, L>>()?;
+        let dr = dr.skip_stage::<stages::outer_error::Stage<C, R, L>>()?;
+        let (ab_guard, dr) = dr.add_stage::<stages::ab::Stage<C, R, L>>()?;
+        let (query_guard, dr) = dr.add_stage::<stages::query::Stage<C, R, L>>()?;
+        let (f_guard, dr) = dr.add_stage::<stages::f::Stage<C, R, L>>()?;
+        let dr = dr.skip_stage::<stages::eval::Stage<C, R, L>>()?;
         let dr = dr.finish();
 
         // Load stage gadgets. Witness values are never accessed — the circuit
@@ -125,13 +125,16 @@ impl<C: Affine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         let mut walker = Walker::new(&points);
 
         for child in [&preamble.left, &preamble.right] {
-            for &id in &RxIndex::ALL {
+            for id in RxIndex::all(L::len()) {
                 walker.enforce_equal(dr, &child[id])?;
             }
             walker.enforce_equal(dr, &child.stashed_ab_a)?;
             walker.enforce_equal(dr, &child.stashed_ab_b)?;
             walker.enforce_equal(dr, &child.stashed_registry_xy)?;
             walker.enforce_equal(dr, &child.stashed_p)?;
+            for stashed_witness_poly in child.stashed_witness_polys.iter() {
+                walker.enforce_equal(dr, stashed_witness_poly)?;
+            }
         }
 
         walker.enforce_equal(dr, &s_prime.registry_wx0)?;
