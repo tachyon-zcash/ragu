@@ -7,7 +7,7 @@
 //! native commitments already on the builder.
 
 use alloc::vec::Vec;
-use core::cell::OnceCell;
+use core::{cell::OnceCell, marker::PhantomData};
 
 use ragu_arithmetic::{Cycle, ff::Field};
 use ragu_circuits::{
@@ -16,9 +16,10 @@ use ragu_circuits::{
     staging::StageExt,
 };
 use ragu_core::Result;
+use ragu_primitives::vec::FixedVec;
 
 use super::{Cached, Proof};
-use crate::internal::nested;
+use crate::{framework_hooks::HookConfig, internal::nested};
 
 /// Produces `pub(crate) fn $name(&mut self, v: $ty)` that sets an `Option`
 /// field, panicking on double-set.
@@ -181,7 +182,7 @@ macro_rules! cached_bridge {
             if let Some(rx) = self.$rx.get() {
                 return Ok(rx);
             }
-            let rx = nested::stages::$stage::Stage::<C::HostCurve, R>::rx(
+            let rx = nested::stages::$stage::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
                 self.bridge_alpha_power($idx),
                 &nested::stages::$stage::Witness {
                     $($wit_field: self.$getter()),*
@@ -206,7 +207,7 @@ macro_rules! cached_bridge {
 /// Native commitment caches are computed lazily from polynomials on first
 /// access. Special commitments (`a`, `b`, `p`) must be provided explicitly
 /// because they are computed via non-standard techniques.
-pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
+pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, J: HookConfig> {
     params: &'params C::Params,
 
     /// Shared alpha source for the four cached bridge commitments.
@@ -302,9 +303,20 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     // Children's stage rx (for copying circuit claims)
     child_left_stage_rx: Option<super::ChildStageRx<C::ScalarField, R>>,
     child_right_stage_rx: Option<super::ChildStageRx<C::ScalarField, R>>,
+
+    // The application's hook regions; `Option` says whether one has been set
+    // yet. A wrong-length list is just an invalid proof, so the polynomials are
+    // held plainly, as are the commitments derived from them; `pad_to_layout`
+    // is what fills them to the layout, and `Proof::has_shape` reports a
+    // mismatch where a proof is consumed.
+    witness_polys: Option<Vec<sparse::Polynomial<C::CircuitField, R>>>,
+    /// Derived from [`witness_polys`](Self::witness_polys) on first access,
+    /// like every other commitment cache here.
+    witness_poly_commitments: OnceCell<Vec<C::HostCurve>>,
+    _marker: PhantomData<J>,
 }
 
-impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
+impl<'params, C: Cycle, R: Rank, J: HookConfig> ProofBuilder<'params, C, R, J> {
     /// Create a new empty builder with the given `bridge_alpha` source for
     /// deriving cached bridge polynomial alphas.
     pub(crate) fn new(params: &'params C::Params, bridge_alpha: C::ScalarField) -> Self {
@@ -379,6 +391,9 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             bridge_eval_commitment: OnceCell::new(),
             child_left_stage_rx: None,
             child_right_stage_rx: None,
+            witness_polys: None,
+            witness_poly_commitments: OnceCell::new(),
+            _marker: PhantomData,
         }
     }
 
@@ -556,8 +571,27 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         bridge_eval_commitment,
         nested::RxIndex::BridgeEval,
         eval,
-        { native_eval: native_eval_commitment() }
+        { native_eval: native_eval_commitment(), witness_polys: witness_poly_commitments() }
     );
+
+    /// Lazily commits every witnessed polynomial and caches the result — the
+    /// plural counterpart of [`lazy_commitment!`]. The cache is a plain list,
+    /// as `Proof` takes it; the declared length is restored here, for the one
+    /// stage witness that wants it.
+    pub(crate) fn witness_poly_commitments(&self) -> FixedVec<C::HostCurve, J::PolyWitnesses> {
+        let commitments = self.witness_poly_commitments.get_or_init(|| {
+            let host_gen = C::host_generators(self.params);
+            let polys = self
+                .witness_polys
+                .as_ref()
+                .expect("witness_polys not set before deriving their commitments");
+            polys
+                .iter()
+                .map(|poly| poly.commit_to_affine(host_gen))
+                .collect()
+        });
+        FixedVec::from_fn(|index| commitments[index])
+    }
 
     setter!(
         set_nested_endoscaling_step_rxs,
@@ -617,6 +651,12 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         super::ChildStageRx<C::ScalarField, R>
     );
 
+    setter!(
+        set_application_polys,
+        witness_polys,
+        Vec<sparse::Polynomial<C::CircuitField, R>>
+    );
+
     getter!(w, w, C::CircuitField);
     getter!(y, y, C::CircuitField);
     getter!(z, z, C::CircuitField);
@@ -668,6 +708,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         self.nested_endoscaling_step_commitments();
         self.nested_endoscalar_commitment();
         self.nested_points_commitment();
+        self.witness_poly_commitments();
 
         macro_rules! take {
             ($field:ident) => {
@@ -767,9 +808,21 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             native_inner_collapse_commitment: cached!(native_inner_collapse_commitment),
             native_outer_collapse_commitment: cached!(native_outer_collapse_commitment),
             native_compute_v_commitment: cached!(native_compute_v_commitment),
+            witness_poly_commitments: self
+                .witness_poly_commitments
+                .take()
+                .expect("witness_poly_commitments not set")
+                .into_iter()
+                .map(Cached)
+                .collect(),
 
             child_left_stage_rx: take!(child_left_stage_rx),
             child_right_stage_rx: take!(child_right_stage_rx),
+
+            // `Proof` is not parameterized by `J`, so the fixed-length lists
+            // become plain ones here; `Proof::has_shape` is where their length
+            // is checked again, at the boundaries that consume a proof.
+            witness_polys: take!(witness_polys).into_iter().collect(),
         })
     }
 }

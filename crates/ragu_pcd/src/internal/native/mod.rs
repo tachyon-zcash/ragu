@@ -9,7 +9,7 @@ use ragu_circuits::{
 use ragu_core::Result;
 use ragu_primitives::vec::ConstLen;
 
-use crate::{internal::fold_revdot::Parameters, step};
+use crate::{framework_hooks::HookConfig, internal::fold_revdot::Parameters, step};
 
 /// Default parameters for native revdot folding
 #[derive(Clone, Copy, Default)]
@@ -326,7 +326,7 @@ pub enum RxComponent {
 ///
 /// Does not register internal steps (rerandomize, trivial); those are
 /// registered by the caller after this function returns.
-pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
+pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>(
     mut registry: RegistryBuilder<'params, C::CircuitField, R>,
     params: &'params C::Params,
     log2_circuits: u32,
@@ -337,46 +337,52 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
         use InternalCircuitIndex::*;
         registry = match id {
             PreambleStage => {
-                registry.register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)
+                registry.register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE, J>::mask()?)
             }
             InnerErrorStage => registry.register_bonding(stages::inner_error::Stage::<
                 C,
                 R,
                 HEADER_SIZE,
+                J,
                 RevdotParameters,
             >::mask()?),
             OuterErrorStage => registry.register_bonding(stages::outer_error::Stage::<
                 C,
                 R,
                 HEADER_SIZE,
+                J,
                 RevdotParameters,
             >::mask()?),
             QueryStage => {
-                registry.register_bonding(stages::query::Stage::<C, R, HEADER_SIZE>::mask()?)
+                registry.register_bonding(stages::query::Stage::<C, R, HEADER_SIZE, J>::mask()?)
             }
             EvalStage => {
-                registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::mask()?)
+                registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE, J>::mask()?)
             }
             InnerErrorFinalStaged => registry.register_bonding(stages::inner_error::Stage::<
                 C,
                 R,
                 HEADER_SIZE,
+                J,
                 RevdotParameters,
             >::final_mask()?),
             OuterErrorFinalStaged => registry.register_bonding(stages::outer_error::Stage::<
                 C,
                 R,
                 HEADER_SIZE,
+                J,
                 RevdotParameters,
             >::final_mask()?),
             EvalFinalStaged => {
-                registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::final_mask()?)
+                registry
+                    .register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE, J>::final_mask()?)
             }
             Hashes1Circuit => {
                 registry.register_internal_circuit(circuits::hashes_1::Circuit::<
                     C,
                     R,
                     HEADER_SIZE,
+                    J,
                     RevdotParameters,
                 >::new(params, log2_circuits))?
             }
@@ -384,6 +390,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
                 C,
                 R,
                 HEADER_SIZE,
+                J,
                 RevdotParameters,
             >::new(params))?,
             InnerCollapseCircuit => {
@@ -391,6 +398,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
                     C,
                     R,
                     HEADER_SIZE,
+                    J,
                     RevdotParameters,
                 >::new())?
             }
@@ -399,6 +407,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
                     C,
                     R,
                     HEADER_SIZE,
+                    J,
                     RevdotParameters,
                 >::new())?
             }
@@ -407,6 +416,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
                     C,
                     R,
                     HEADER_SIZE,
+                    J,
                 >::new())?
             }
         };

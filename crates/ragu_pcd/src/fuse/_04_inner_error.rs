@@ -18,11 +18,14 @@ use super::{
 };
 use crate::{
     Application,
+    framework_hooks::HookConfig,
     internal::{claims, fold_revdot, native, nested},
     proof::ProofBuilder,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
+    Application<'_, C, R, HEADER_SIZE, J>
+{
     pub(super) fn inner_error_terms<'dr, 'rx, D, RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
@@ -30,7 +33,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
         source: &FuseProofSource<'rx, C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, J>,
     ) -> Result<(
         native::stages::inner_error::Witness<C, native::RevdotParameters>,
         FuseBuilder<'_, 'rx, C::CircuitField, R>,
@@ -49,15 +52,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         &self,
         rng: &mut RNG,
         registry_wy: &RegistryWy<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, J>,
     ) -> Result<()> {
-        let bridge_rx = nested::stages::inner_error::Stage::<C::HostCurve, R>::rx(
-            C::ScalarField::random(&mut *rng),
-            &nested::stages::inner_error::Witness {
-                native_inner_error: builder.native_inner_error_commitment(),
-                registry_wy: registry_wy.commitment,
-            },
-        )?;
+        let bridge_rx =
+            nested::stages::inner_error::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
+                C::ScalarField::random(&mut *rng),
+                &nested::stages::inner_error::Witness {
+                    native_inner_error: builder.native_inner_error_commitment(),
+                    registry_wy: registry_wy.commitment,
+                },
+            )?;
         let bridge_commitment = bridge_rx.commit_to_affine(C::nested_generators(self.params));
         builder.set_bridge_inner_error_rx(bridge_rx, bridge_commitment);
         Ok(())
@@ -70,7 +74,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
         source: &FuseProofSource<'rx, C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, J>,
     ) -> Result<(
         native::stages::inner_error::Witness<C, native::RevdotParameters>,
         FuseBuilder<'_, 'rx, C::CircuitField, R>,
@@ -82,7 +86,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let y = *y.value().take();
         let z = *z.value().take();
 
-        let mut claims_builder = claims::Builder::new(&self.native_registry, y, z);
+        let mut claims_builder = claims::Builder::new(
+            &self.native_registry,
+            y,
+            z,
+            self.hook_layout().witness_polys,
+        );
         native::claims::build(source, &mut claims_builder)?;
 
         let inner_error_witness =
@@ -92,11 +101,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     &claims_builder.b,
                 ),
             };
-        let native_rx =
-            native::stages::inner_error::Stage::<C, R, HEADER_SIZE, native::RevdotParameters>::rx(
-                C::CircuitField::random(&mut *rng),
-                &inner_error_witness,
-            )?;
+        let native_rx = native::stages::inner_error::Stage::<
+            C,
+            R,
+            HEADER_SIZE,
+            J,
+            native::RevdotParameters,
+        >::rx(C::CircuitField::random(&mut *rng), &inner_error_witness)?;
 
         builder.set_native_inner_error_rx(native_rx);
 

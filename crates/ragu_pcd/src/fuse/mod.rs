@@ -23,7 +23,8 @@ use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{GadgetExt, Point, vec::CollectFixed};
 
 use crate::{
-    Application, Pcd, RAGU_TAG, internal::transcript::Transcript, proof::ProofBuilder, step::Step,
+    Application, Pcd, RAGU_TAG, framework_hooks::HookConfig, internal::transcript::Transcript,
+    proof::ProofBuilder, step::Step,
 };
 
 /// Ephemeral native-field data for $f(X)$, used only during the fuse step.
@@ -46,7 +47,9 @@ struct NativeSPrime<C: Cycle, R: Rank> {
     registry_wx1_commitment: C::HostCurve,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
+    Application<'_, C, R, HEADER_SIZE, J>
+{
     /// Fuse two [`Pcd`] into one using a provided [`Step`].
     ///
     /// The provided `step` must have been previously registered with this

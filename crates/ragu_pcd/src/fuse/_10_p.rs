@@ -22,9 +22,10 @@ use ragu_primitives::{Element, extract_endoscalar, lift_endoscalar};
 use super::{NativeF, NativeSPrime, RegistryWy};
 use crate::{
     Application, Proof,
+    framework_hooks::HookConfig,
     internal::{
         native::{RxComponent, RxIndex},
-        nested::NUM_ENDOSCALING_POINTS,
+        nested::num_endoscaling_points,
     },
     proof::ProofBuilder,
 };
@@ -47,7 +48,9 @@ impl<C: Cycle, R: Rank> Accumulator<'_, C, R> {
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
+    Application<'_, C, R, HEADER_SIZE, J>
+{
     pub(super) fn compute_p<'dr, D, RNG: ragu_arithmetic::CryptoRngCore>(
         &self,
         rng: &mut RNG,
@@ -57,7 +60,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
         f: &NativeF<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, J>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -86,6 +89,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             };
 
             for proof in [left, right] {
+                // `RxIndex::ALL` is the one order the eval stage's `Write`
+                // impl, `loading`'s point walk, and this accumulation follow.
                 for &id in &RxIndex::ALL {
                     acc.acc(&proof[id], proof.native_rx_commitment(id));
                 }
@@ -102,6 +107,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     proof.native_registry_xy_commitment(),
                 );
                 acc.acc(proof.native_p_poly(), proof.native_p_commitment());
+                for (poly, commitment) in proof
+                    .witness_polys()
+                    .iter()
+                    .zip(proof.witness_poly_commitments())
+                {
+                    acc.acc(poly, commitment);
+                }
             }
 
             acc.acc(&s_prime.registry_wx0_poly, s_prime.registry_wx0_commitment);
@@ -119,7 +131,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // and delegate to the shared endoscaling helper, which also
         // sets `nested_endoscalar_rx`, `nested_points_rx`, and
         // `nested_endoscaling_step_rxs` on the builder.
-        let mut points = Vec::with_capacity(NUM_ENDOSCALING_POINTS);
+        let mut points =
+            Vec::with_capacity(num_endoscaling_points(self.hook_layout().witness_polys));
         points.push(f.commitment);
         points.extend_from_slice(&commitments);
 

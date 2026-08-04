@@ -12,6 +12,7 @@ use ragu_primitives::Element;
 
 use crate::{
     Application, Pcd, Proof,
+    framework_hooks::HookConfig,
     header::Header,
     internal::{
         claims,
@@ -20,7 +21,9 @@ use crate::{
     },
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
+    Application<'_, C, R, HEADER_SIZE, J>
+{
     /// Verifies some [`Pcd`] for the provided [`Header`].
     ///
     /// Returns `Ok(true)` if all verification checks pass, `Ok(false)` if
@@ -55,13 +58,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             return Ok(false);
         }
 
+        // Reject wrong hook-list lengths up front, so a malformed proof yields
+        // `Ok(false)` rather than `Err` from the pipeline below — the same
+        // reasoning as the header lengths above.
+        let hook_layout = self.hook_layout();
+        if !pcd.proof().has_shape(&hook_layout) {
+            return Ok(false);
+        }
+
         // Compute unified k(y), unified_bridge k(y), and application k(y).
         let (unified_ky, unified_bridge_ky, application_ky) =
             Emulator::emulate_wireless((pcd.proof(), pcd.data().clone(), y), |dr, witness| {
                 let (proof, data, y) = witness.cast();
                 let y = Element::alloc(dr, &mut (), y)?;
                 let proof_inputs =
-                    ProofInputs::<_, C, HEADER_SIZE>::alloc_for_verify::<R, H>(dr, proof, data)?;
+                    ProofInputs::<_, C, HEADER_SIZE, J>::alloc_for_verify::<R, H>(dr, proof, data)?;
 
                 let (unified_ky, unified_bridge_ky) = proof_inputs.unified_ky_values(dr, &y)?;
                 let unified_ky = *unified_ky.value().take();
@@ -73,7 +84,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Build a and b polynomials for each revdot claim.
         let source = native::SingleProofSource { proof: pcd.proof() };
-        let mut builder = claims::Builder::new(&self.native_registry, y, z);
+        let mut builder =
+            claims::Builder::new(&self.native_registry, y, z, hook_layout.witness_polys);
         native_claims::build(&source, &mut builder)?;
 
         // Check all native revdot claims.
@@ -99,12 +111,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             let nested_source = nested::SingleProofSource { proof: pcd.proof() };
             let y_nested = C::ScalarField::random(&mut rng);
             let z_nested = C::ScalarField::random(&mut rng);
-            let mut nested_builder =
-                claims::Builder::new(&self.nested_registry, y_nested, z_nested);
-            nested_claims::build(&nested_source, &mut nested_builder)?;
+            let mut nested_builder = claims::Builder::new(
+                &self.nested_registry,
+                y_nested,
+                z_nested,
+                hook_layout.witness_polys,
+            );
+            nested_claims::build(
+                &nested_source,
+                &mut nested_builder,
+                hook_layout.witness_polys,
+            )?;
 
             let ky_source = nested::SingleProofKySource::<C::ScalarField>::new();
-            nested::ky_values(&ky_source)
+            nested::ky_values(&ky_source, hook_layout.witness_polys)
                 .zip(nested_builder.a.iter().zip(nested_builder.b.iter()))
                 .all(|(ky, (a, b))| a.revdot(b) == ky)
         };

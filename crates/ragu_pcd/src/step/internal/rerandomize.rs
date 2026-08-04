@@ -89,10 +89,14 @@ fn test_rerandomize_consistency() {
     use ragu_primitives::{Element, allocator::Allocator};
     use ragu_testing::registry::TestRegistryBuilder;
 
-    use crate::header::{Header, Suffix};
+    use crate::{
+        NoHooks,
+        header::{Header, Suffix},
+    };
 
     const HEADER_SIZE: usize = 4;
-    type R = polynomials::TestRank;
+    // `TestRank` (n = 32) is too small for the per-polynomial bridge stages.
+    type R = polynomials::ProductionRank;
 
     struct Single;
     impl Header<Fp> for Single {
@@ -126,12 +130,16 @@ fn test_rerandomize_consistency() {
         }
     }
 
-    let circuit_single = super::adapter::Adapter::<Pasta, Rerandomize<Single>, R, HEADER_SIZE>::new(
-        Rerandomize::new(),
-    );
-    let circuit_pair = super::adapter::Adapter::<Pasta, Rerandomize<Pair>, R, HEADER_SIZE>::new(
-        Rerandomize::new(),
-    );
+    let circuit_single =
+        super::adapter::Adapter::<Pasta, Rerandomize<Single>, R, HEADER_SIZE, NoHooks>::new(
+            Rerandomize::new(),
+            Pasta::baked(),
+        );
+    let circuit_pair =
+        super::adapter::Adapter::<Pasta, Rerandomize<Pair>, R, HEADER_SIZE, NoHooks>::new(
+            Rerandomize::new(),
+            Pasta::baked(),
+        );
 
     let mut builder: TestRegistryBuilder<'_, _, R> = TestRegistryBuilder::new();
     let single_h = builder.register_circuit(circuit_single).unwrap();

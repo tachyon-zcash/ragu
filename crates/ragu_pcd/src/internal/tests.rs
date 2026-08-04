@@ -1,8 +1,5 @@
-use native::{
-    InternalCircuitIndex, InternalCircuitValues, RevdotParameters, RxIndex, RxValues,
-    stages::{eval, inner_error, outer_error, preamble, query},
-};
-use ragu_circuits::staging::{Stage, StageExt};
+use native::{InternalCircuitIndex, InternalCircuitValues, RxIndex, RxValues};
+use ragu_circuits::staging::Stage;
 use ragu_pasta::{Pasta, fp, fq};
 
 use super::*;
@@ -17,6 +14,7 @@ use ragu_core::{
     maybe::Empty,
 };
 
+/// A stage allocates exactly `Stage::values()` wires.
 pub fn assert_stage_values<F, R, S>(stage: &S)
 where
     F: PrimeField,
@@ -26,12 +24,13 @@ where
         Gadget<'dr, Emulator<Wireless<Empty, F>>>,
 {
     let mut emulator = Emulator::counter();
-    let output = stage
+    let num_wires = stage
         .witness(&mut emulator, Empty)
-        .expect("allocation should succeed");
-
+        .expect("allocation should succeed")
+        .num_wires()
+        .expect("wire counting should succeed");
     assert_eq!(
-        output.num_wires().expect("wire counting should succeed"),
+        num_wires,
         S::values(),
         "Stage::values() does not match actual wire count"
     );
@@ -47,76 +46,92 @@ pub const HEADER_SIZE: usize = 105;
 // steps are present.
 const NUM_APP_STEPS: usize = 6000;
 
-fn dummy_app<'params, const HDR: usize>(
+fn dummy_app<'params, const HDR: usize, const POLYS: usize>(
     pasta: &'params <Pasta as ragu_arithmetic::Cycle>::Params,
     steps: usize,
-) -> crate::Application<'params, Pasta, R, HDR> {
-    ApplicationBuilder::<Pasta, R, HDR>::new(pasta)
+) -> crate::Application<'params, Pasta, R, HDR, AppHooks<POLYS>> {
+    ApplicationBuilder::<Pasta, R, HDR, AppHooks<POLYS>>::new(pasta)
         .register_dummy_circuits(steps)
         .unwrap()
         .finalize()
         .unwrap()
 }
 
-type Preamble = preamble::Stage<Pasta, R, HEADER_SIZE>;
-type OuterError = outer_error::Stage<Pasta, R, HEADER_SIZE, RevdotParameters>;
-type InnerError = inner_error::Stage<Pasta, R, HEADER_SIZE, RevdotParameters>;
-type Query = query::Stage<Pasta, R, HEADER_SIZE>;
-type Eval = eval::Stage<Pasta, R, HEADER_SIZE>;
+macro_rules! check_constraints {
+    ($app:expr, $variant:ident, mul = $mul:expr, lin = $lin:expr) => {{
+        let circuit_index = InternalCircuitIndex::$variant.circuit_index();
+        let (actual_gates, actual_constraints) =
+            $app.native_registry.constraint_counts(circuit_index);
+        assert_eq!(
+            actual_gates,
+            $mul,
+            "{}: gates: expected {}, got {}",
+            stringify!($variant),
+            $mul,
+            actual_gates
+        );
+        assert_eq!(
+            actual_constraints,
+            $lin,
+            "{}: constraints: expected {}, got {}",
+            stringify!($variant),
+            $lin,
+            actual_constraints
+        );
+    }};
+}
 
 #[rustfmt::skip]
 #[test]
 fn test_internal_circuit_constraint_counts() {
     let pasta = Pasta::baked();
 
-    let app = dummy_app::<HEADER_SIZE>(pasta, NUM_APP_STEPS);
+    let app = dummy_app::<HEADER_SIZE, 0>(pasta, NUM_APP_STEPS);
 
-    macro_rules! check_constraints {
-        ($variant:ident, mul = $mul:expr, lin = $lin:expr) => {{
-            let circuit_index = InternalCircuitIndex::$variant.circuit_index();
-            let (actual_gates, actual_constraints) =
-                app.native_registry.constraint_counts(circuit_index);
-            assert_eq!(
-                actual_gates,
-                $mul,
-                "{}: gates: expected {}, got {}",
-                stringify!($variant),
-                $mul,
-                actual_gates
-            );
-            assert_eq!(
-                actual_constraints,
-                $lin,
-                "{}: constraints: expected {}, got {}",
-                stringify!($variant),
-                $lin,
-                actual_constraints
-            );
-        }};
-    }
+    check_constraints!(app, Hashes1Circuit,       mul = 1451, lin = 2068);
+    check_constraints!(app, Hashes2Circuit,       mul = 1999, lin = 2951);
+    check_constraints!(app, InnerCollapseCircuit, mul = 1876, lin = 1918);
+    check_constraints!(app, OuterCollapseCircuit, mul = 2043, lin = 3042);
+    check_constraints!(app, ComputeVCircuit,      mul = 1255, lin = 1773);
+}
 
-    check_constraints!(Hashes1Circuit,        mul = 1451, lin = 2068);
-    check_constraints!(Hashes2Circuit,        mul = 1999, lin = 2951);
-    check_constraints!(InnerCollapseCircuit,  mul = 1876, lin = 1918);
-    check_constraints!(OuterCollapseCircuit,  mul = 2043, lin = 3042);
-    check_constraints!(ComputeVCircuit,       mul = 1255, lin = 1773);
+/// The stage types `test_internal_stage_parameters` pins, at eight
+/// polynomials.
+mod pinned_chain {
+    use ragu_pasta::Pasta;
+
+    use super::{HEADER_SIZE, R};
+    use crate::{
+        AppHooks,
+        internal::native::{RevdotParameters, stages},
+    };
+
+    type J = AppHooks<8>;
+
+    pub type Preamble = stages::preamble::Stage<Pasta, R, HEADER_SIZE, J>;
+    pub type OuterError = stages::outer_error::Stage<Pasta, R, HEADER_SIZE, J, RevdotParameters>;
+    pub type InnerError = stages::inner_error::Stage<Pasta, R, HEADER_SIZE, J, RevdotParameters>;
+    pub type Query = stages::query::Stage<Pasta, R, HEADER_SIZE, J>;
+    pub type Eval = stages::eval::Stage<Pasta, R, HEADER_SIZE, J>;
 }
 
 #[rustfmt::skip]
 #[test]
 fn test_internal_stage_parameters() {
+    use ragu_circuits::staging::{Stage as _, StageExt as _};
+
     macro_rules! check_stage {
-        ($Stage:ty, skip = $skip:expr, num = $num:expr) => {{
-            assert_eq!(<$Stage>::skip_gates(), $skip, "{}: skip", stringify!($Stage));
-            assert_eq!(<$Stage as StageExt<_, _>>::num_gates(), $num, "{}: num", stringify!($Stage));
+        ($stage:ty, skip = $skip:expr, num = $num:expr) => {{
+            assert_eq!(<$stage>::skip_gates(), $skip, "{}: skip", stringify!($stage));
+            assert_eq!(<$stage>::num_gates(), $num, "{}: num", stringify!($stage));
         }};
     }
 
-    check_stage!(Preamble, skip =   1, num = 345);
-    check_stage!(OuterError,  skip = 346, num = 186);
-    check_stage!(InnerError,  skip = 532, num = 399);
-    check_stage!(Query,   skip = 346, num =  23);
-    check_stage!(Eval,    skip = 369, num =  18);
+    check_stage!(pinned_chain::Preamble,    skip =   1, num = 361);
+    check_stage!(pinned_chain::OuterError,  skip = 362, num = 186);
+    check_stage!(pinned_chain::InnerError,  skip = 548, num = 399);
+    check_stage!(pinned_chain::Query,       skip = 362, num =  23);
+    check_stage!(pinned_chain::Eval,        skip = 385, num =  26);
 }
 
 /// Helper test to print current constraint counts in copy-pasteable format.
@@ -128,7 +143,7 @@ fn print_internal_circuit_constraint_counts() {
 
     let pasta = Pasta::baked();
 
-    let app = dummy_app::<HEADER_SIZE>(pasta, NUM_APP_STEPS);
+    let app = dummy_app::<HEADER_SIZE, 0>(pasta, NUM_APP_STEPS);
 
     let variants = [
         ("Hashes1Circuit", InternalCircuitIndex::Hashes1Circuit),
@@ -149,7 +164,7 @@ fn print_internal_circuit_constraint_counts() {
         let circuit_index = variant.circuit_index();
         let (mul, lin) = app.native_registry.constraint_counts(circuit_index);
         println!(
-            "        check_constraints!({:<24} mul = {:<4}, lin = {});",
+            "    check_constraints!(app, {:<22} mul = {:>4}, lin = {:>4});",
             format!("{},", name),
             mul,
             lin
@@ -161,28 +176,25 @@ fn print_internal_circuit_constraint_counts() {
 /// Run with: `cargo test -p ragu_pcd --release print_internal_stage -- --nocapture`
 #[test]
 fn print_internal_stage_parameters() {
-    use alloc::format;
     use std::println;
 
-    macro_rules! print_stage {
-        ($Stage:ty) => {{
-            let skip = <$Stage>::skip_gates();
-            let num = <$Stage as StageExt<_, _>>::num_gates();
-            println!(
-                "        check_stage!({:<8} skip = {:>3}, num = {:>3});",
-                format!("{},", stringify!($Stage)),
-                skip,
-                num
-            );
-        }};
+    use ragu_circuits::staging::StageExt as _;
+
+    fn line<S: ragu_circuits::staging::Stage<ragu_pasta::Fp, R>>(name: &str) {
+        println!(
+            "    check_stage!(pinned_chain::{:<12} skip = {:>3}, num = {:>3});",
+            alloc::format!("{name},"),
+            S::skip_gates(),
+            S::num_gates()
+        );
     }
 
     println!("\n// Copy-paste the following into test_internal_stage_parameters:");
-    print_stage!(Preamble);
-    print_stage!(OuterError);
-    print_stage!(InnerError);
-    print_stage!(Query);
-    print_stage!(Eval);
+    line::<pinned_chain::Preamble>("Preamble");
+    line::<pinned_chain::OuterError>("OuterError");
+    line::<pinned_chain::InnerError>("InnerError");
+    line::<pinned_chain::Query>("Query");
+    line::<pinned_chain::Eval>("Eval");
 }
 
 /// Verifies the native registry digest matches the expected value.
@@ -194,7 +206,7 @@ fn print_internal_stage_parameters() {
 fn test_native_registry_digest() {
     let pasta = Pasta::baked();
 
-    let app = dummy_app::<HEADER_SIZE>(pasta, NUM_APP_STEPS);
+    let app = dummy_app::<HEADER_SIZE, 0>(pasta, NUM_APP_STEPS);
 
     let expected = fp!(0x31e1786b198ad8953d0ec1699a2d1c7ed26d312a7c8c67099cb5a517259e54e3);
 
@@ -214,7 +226,7 @@ fn test_native_registry_digest() {
 fn test_nested_registry_digest() {
     let pasta = Pasta::baked();
 
-    let app = dummy_app::<HEADER_SIZE>(pasta, NUM_APP_STEPS);
+    let app = dummy_app::<HEADER_SIZE, 0>(pasta, NUM_APP_STEPS);
 
     let expected = fq!(0x2f4bf855b80a694facbe9a2c26ee8d1dae9e15bb7b7eba54ca53f5c166e1d150);
 
@@ -236,7 +248,7 @@ fn print_registry_digests() {
 
     let pasta = Pasta::baked();
 
-    let app = dummy_app::<HEADER_SIZE>(pasta, NUM_APP_STEPS);
+    let app = dummy_app::<HEADER_SIZE, 0>(pasta, NUM_APP_STEPS);
 
     let native_digest = app.native_registry.digest();
     let nested_digest = app.nested_registry.digest();

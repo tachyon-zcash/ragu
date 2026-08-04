@@ -13,6 +13,8 @@
 //! [`ChildWitness`]: stages::preamble::ChildWitness
 //! [`PointsStage`]: crate::internal::endoscalar::PointsStage
 
+use core::marker::PhantomData;
+
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::Rank,
@@ -20,28 +22,48 @@ use ragu_circuits::{
     staging::{MultiStage, StageExt},
 };
 use ragu_core::Result;
+use ragu_primitives::vec::Len;
 
 pub mod circuits {
     pub mod copying;
     pub mod loading;
 }
 
-use crate::internal::{Side, endoscalar};
+use crate::internal::{
+    Side, endoscalar,
+    native::{RxIndex as NativeRxIndex, stages::eval::CURRENT_STEP_COMPONENTS},
+};
 
-/// Number of curve points accumulated during `compute_p` for nested field
-/// endoscaling verification.
-///
-/// This is the sum of per-child commitment components (for both proofs),
-/// current-step stage proof components, and the `f.commitment` base
-/// polynomial. See `_10_p` for the canonical accumulation order.
-///
-/// The endoscaling circuits process these points across
-/// [`NUM_ENDOSCALING_STEPS`] steps.
-pub const NUM_ENDOSCALING_POINTS: usize = 37;
+/// One child's block in the `_10_p` commitment walk: its native rx
+/// commitments, four extras (`ab_a`, `ab_b`, `registry_xy`, `p`), and one
+/// stashed commitment per witnessed polynomial. Shared with the nested
+/// preamble and the native eval stage, so the accumulation, stash, and `v`
+/// fold orders cannot drift apart.
+pub const fn child_endoscaling_points(polys: usize) -> usize {
+    NativeRxIndex::NUM + 4 + polys
+}
 
-/// Number of endoscaling steps, derived from [`NUM_ENDOSCALING_POINTS`] via
-/// [`endoscalar::num_steps`].
-const NUM_ENDOSCALING_STEPS: usize = endoscalar::num_steps(NUM_ENDOSCALING_POINTS);
+/// Number of curve points accumulated during `compute_p`: the `f.commitment`
+/// base point, one block per child ([`child_endoscaling_points`]), and the
+/// current step's stage components. See `_10_p` for the accumulation order.
+pub const fn num_endoscaling_points(polys: usize) -> usize {
+    // The leading point is `f.commitment`'s base point.
+    1 + 2 * child_endoscaling_points(polys) + CURRENT_STEP_COMPONENTS
+}
+
+/// The number of endoscaling step circuits a fuse runs.
+pub const fn num_endoscaling_steps(polys: usize) -> usize {
+    endoscalar::num_steps(num_endoscaling_points(polys))
+}
+
+/// [`num_endoscaling_points`] at the type level, for a poly count `L`.
+pub struct EndoscalingPoints<L: Len>(PhantomData<L>);
+
+impl<L: Len> Len for EndoscalingPoints<L> {
+    fn len() -> usize {
+        num_endoscaling_points(L::len())
+    }
+}
 
 /// Index of internal nested circuits registered into the registry.
 ///
@@ -79,57 +101,43 @@ pub enum InternalCircuitIndex {
 }
 
 impl InternalCircuitIndex {
-    /// The number of internal circuits registered by [`register_all`],
-    /// equal to the number of entries in [`InternalCircuitIndex::ALL`].
-    pub const NUM: usize = NUM_ENDOSCALING_STEPS + 14;
-
     /// All variants in canonical iteration order.
     ///
     /// This order must match the registry finalization concatenation order
     /// in [`RegistryBuilder::finalize()`](ragu_circuits::registry::RegistryBuilder::finalize)
     /// (circuits before masks), since [`circuit_index()`](Self::circuit_index)
-    /// derives indices from position in this array.
-    pub const ALL: [Self; Self::NUM] = super::const_fns::unwrap_all(Self::all_slots());
-
-    const fn all_slots() -> [Option<Self>; Self::NUM] {
-        use super::const_fns::push;
-
-        let mut slots = [None; Self::NUM];
-        let mut c = 0;
-        {
-            let mut step = 0;
-            while step < NUM_ENDOSCALING_STEPS {
-                push(&mut slots, &mut c, Self::EndoscalingStep(step as u32));
-                step += 1;
-            }
-        }
-        push(&mut slots, &mut c, Self::EndoscalarStage);
-        push(&mut slots, &mut c, Self::PointsStage);
-        push(&mut slots, &mut c, Self::PointsFinalStaged);
-        push(&mut slots, &mut c, Self::BridgePreamble);
-        push(&mut slots, &mut c, Self::BridgeSPrime);
-        push(&mut slots, &mut c, Self::BridgeInnerError);
-        push(&mut slots, &mut c, Self::BridgeOuterError);
-        push(&mut slots, &mut c, Self::BridgeAB);
-        push(&mut slots, &mut c, Self::BridgeQuery);
-        push(&mut slots, &mut c, Self::BridgeF);
-        push(&mut slots, &mut c, Self::BridgeEval);
-        push(&mut slots, &mut c, Self::Loading);
-        push(&mut slots, &mut c, Self::Copying(Side::Left));
-        push(&mut slots, &mut c, Self::Copying(Side::Right));
-        assert!(c == Self::NUM);
-        slots
+    /// derives indices from position in this list.
+    pub fn all(polys: usize) -> impl Iterator<Item = Self> {
+        (0..num_endoscaling_steps(polys))
+            .map(|step| Self::EndoscalingStep(step as u32))
+            .chain([
+                Self::EndoscalarStage,
+                Self::PointsStage,
+                Self::PointsFinalStaged,
+                Self::BridgePreamble,
+                Self::BridgeSPrime,
+                Self::BridgeInnerError,
+                Self::BridgeOuterError,
+                Self::BridgeAB,
+                Self::BridgeQuery,
+                Self::BridgeF,
+                Self::BridgeEval,
+            ])
+            .chain([
+                Self::Loading,
+                Self::Copying(Side::Left),
+                Self::Copying(Side::Right),
+            ])
     }
 
     /// Convert to a [`CircuitIndex`] for registry lookup.
     ///
     /// Circuit indices follow the `RegistryBuilder::finalize()` concatenation
     /// order: internal circuits first, then internal masks.
-    pub fn circuit_index(self) -> CircuitIndex {
-        let pos = Self::ALL
-            .iter()
-            .position(|&v| v == self)
-            .expect("every variant appears in ALL");
+    pub fn circuit_index(self, polys: usize) -> CircuitIndex {
+        let pos = Self::all(polys)
+            .position(|v| v == self)
+            .expect("every variant appears in `all`");
         CircuitIndex::new(pos)
     }
 }
@@ -153,24 +161,6 @@ pub enum ChildBridgeKind {
     Query,
     /// Child proof's `BridgeEval` rx polynomial.
     Eval,
-}
-
-impl ChildBridgeKind {
-    /// All kinds in the canonical slot order.
-    ///
-    /// This constant is the source of truth for the relative order of
-    /// `RxIndex::ChildBridge(kind, side)` entries in [`RxIndex::ALL`]
-    /// (see [`RxIndex::all_slots`]), and is therefore pinned by
-    /// `test_nested_registry_digest` — re-ordering these variants
-    /// changes the nested registry digest.
-    pub const ALL: [Self; 6] = [
-        Self::SPrime,
-        Self::InnerError,
-        Self::OuterError,
-        Self::AB,
-        Self::Query,
-        Self::Eval,
-    ];
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -204,55 +194,6 @@ pub enum RxIndex {
     ChildBridge(ChildBridgeKind, Side),
 }
 
-impl RxIndex {
-    /// The number of rx components in the nested field,
-    /// equal to the number of entries in [`RxIndex::ALL`].
-    pub const NUM: usize = NUM_ENDOSCALING_STEPS + 24;
-
-    /// All variants in canonical order (circuits, then stages).
-    ///
-    /// Must maintain the same ordering convention as
-    /// [`native::RxIndex::ALL`](super::native::RxIndex::ALL).
-    pub const ALL: [Self; Self::NUM] = super::const_fns::unwrap_all(Self::all_slots());
-
-    const fn all_slots() -> [Option<Self>; Self::NUM] {
-        use super::const_fns::push;
-
-        let mut slots = [None; Self::NUM];
-        let mut c = 0;
-        {
-            let mut step = 0;
-            while step < NUM_ENDOSCALING_STEPS {
-                push(&mut slots, &mut c, Self::EndoscalingStep(step as u32));
-                step += 1;
-            }
-        }
-        push(&mut slots, &mut c, Self::EndoscalarStage);
-        push(&mut slots, &mut c, Self::PointsStage);
-        push(&mut slots, &mut c, Self::BridgePreamble);
-        push(&mut slots, &mut c, Self::BridgeSPrime);
-        push(&mut slots, &mut c, Self::BridgeInnerError);
-        push(&mut slots, &mut c, Self::BridgeOuterError);
-        push(&mut slots, &mut c, Self::BridgeAB);
-        push(&mut slots, &mut c, Self::BridgeQuery);
-        push(&mut slots, &mut c, Self::BridgeF);
-        push(&mut slots, &mut c, Self::BridgeEval);
-        push(&mut slots, &mut c, Self::ChildPointsStage(Side::Left));
-        push(&mut slots, &mut c, Self::ChildPointsStage(Side::Right));
-        {
-            let mut i = 0;
-            while i < ChildBridgeKind::ALL.len() {
-                let kind = ChildBridgeKind::ALL[i];
-                push(&mut slots, &mut c, Self::ChildBridge(kind, Side::Left));
-                push(&mut slots, &mut c, Self::ChildBridge(kind, Side::Right));
-                i += 1;
-            }
-        }
-        assert!(c == Self::NUM);
-        slots
-    }
-}
-
 pub mod claims;
 
 pub mod stages {
@@ -270,69 +211,62 @@ pub mod stages {
 ///
 /// Circuits are registered as internal to ensure they occupy prefix indices
 /// before application steps.
-pub fn register_all<'params, C: Cycle, R: Rank>(
+pub fn register_all<'params, C: Cycle, R: Rank, L: Len>(
     mut registry: RegistryBuilder<'params, C::ScalarField, R>,
 ) -> Result<RegistryBuilder<'params, C::ScalarField, R>> {
-    let initial_internal_circuits = registry.num_internal_circuits();
-
     // Circuits first, then masks — matching RegistryBuilder::finalize()
     // concatenation order and InternalCircuitIndex::circuit_index().
-    for &id in &InternalCircuitIndex::ALL {
+    for id in InternalCircuitIndex::all(L::len()) {
         use InternalCircuitIndex::*;
         registry = match id {
             EndoscalingStep(step) => {
                 let step_circuit =
-                    endoscalar::EndoscalingStep::<C::HostCurve, R, NUM_ENDOSCALING_POINTS>::new(
+                    endoscalar::EndoscalingStep::<C::HostCurve, R, EndoscalingPoints<L>>::new(
                         step as usize,
                     );
-                let staged = MultiStage::new(step_circuit);
-                registry.register_internal_circuit(staged)?
+                registry.register_internal_circuit(MultiStage::new(step_circuit))?
             }
             EndoscalarStage => registry.register_bonding(endoscalar::EndoscalarStage::mask()?),
-            PointsStage => registry.register_bonding(endoscalar::PointsStage::<
-                C::HostCurve,
-                NUM_ENDOSCALING_POINTS,
-            >::mask()?),
-            PointsFinalStaged => registry.register_bonding(endoscalar::PointsStage::<
-                C::HostCurve,
-                NUM_ENDOSCALING_POINTS,
-            >::final_mask()?),
+            PointsStage => registry
+                .register_bonding(
+                    endoscalar::PointsStage::<C::HostCurve, EndoscalingPoints<L>>::mask()?,
+                ),
+            PointsFinalStaged => registry
+                .register_bonding(
+                    endoscalar::PointsStage::<C::HostCurve, EndoscalingPoints<L>>::final_mask()?,
+                ),
             BridgePreamble => {
-                registry.register_bonding(stages::preamble::Stage::<C::HostCurve, R>::mask()?)
+                registry.register_bonding(stages::preamble::Stage::<C::HostCurve, R, L>::mask()?)
             }
             BridgeSPrime => {
-                registry.register_bonding(stages::s_prime::Stage::<C::HostCurve, R>::mask()?)
+                registry.register_bonding(stages::s_prime::Stage::<C::HostCurve, R, L>::mask()?)
             }
             BridgeInnerError => {
-                registry.register_bonding(stages::inner_error::Stage::<C::HostCurve, R>::mask()?)
+                registry.register_bonding(stages::inner_error::Stage::<C::HostCurve, R, L>::mask()?)
             }
             BridgeOuterError => {
-                registry.register_bonding(stages::outer_error::Stage::<C::HostCurve, R>::mask()?)
+                registry.register_bonding(stages::outer_error::Stage::<C::HostCurve, R, L>::mask()?)
             }
-            BridgeAB => registry.register_bonding(stages::ab::Stage::<C::HostCurve, R>::mask()?),
+            BridgeAB => registry.register_bonding(stages::ab::Stage::<C::HostCurve, R, L>::mask()?),
             BridgeQuery => {
-                registry.register_bonding(stages::query::Stage::<C::HostCurve, R>::mask()?)
+                registry.register_bonding(stages::query::Stage::<C::HostCurve, R, L>::mask()?)
             }
-            BridgeF => registry.register_bonding(stages::f::Stage::<C::HostCurve, R>::mask()?),
+            BridgeF => registry.register_bonding(stages::f::Stage::<C::HostCurve, R, L>::mask()?),
             BridgeEval => {
-                registry.register_bonding(stages::eval::Stage::<C::HostCurve, R>::mask()?)
+                registry.register_bonding(stages::eval::Stage::<C::HostCurve, R, L>::mask()?)
             }
             Loading => {
-                let circuit = circuits::loading::Circuit::<C::HostCurve, R>::new();
+                let circuit = circuits::loading::Circuit::<C::HostCurve, R, L>::new();
                 registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)
             }
+            // A copying circuit walks a child, but children expose the same
+            // layout, so the same `L` serves here.
             Copying(side) => {
-                let circuit = circuits::copying::Circuit::<C::HostCurve, R>::new(side);
+                let circuit = circuits::copying::Circuit::<C::HostCurve, R, L>::new(side);
                 registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)
             }
         };
     }
-
-    assert_eq!(
-        registry.num_internal_circuits(),
-        initial_internal_circuits + InternalCircuitIndex::NUM,
-        "internal circuit count mismatch"
-    );
 
     Ok(registry)
 }

@@ -10,7 +10,7 @@ use ragu_core::{
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{Point, io::Write};
+use ragu_primitives::{Point, io::Write, vec::Len};
 
 /// Number of curve points in this stage.
 const NUM: usize = 2;
@@ -33,13 +33,20 @@ pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     pub registry_xy: Point<'dr, D, C>,
 }
 
-#[derive(Default)]
-pub struct Stage<C: CurveAffine, R> {
-    _marker: PhantomData<(C, R)>,
+pub struct Stage<C: CurveAffine, R, L> {
+    _marker: PhantomData<(C, R, L)>,
 }
 
-impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R> {
-    type Parent = super::ab::Stage<C, R>;
+impl<C: CurveAffine, R, L> Default for Stage<C, R, L> {
+    fn default() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<C: CurveAffine, R: Rank, L: Len> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R, L> {
+    type Parent = super::ab::Stage<C, R, L>;
     type Witness<'source> = &'source Witness<C>;
     type OutputKind = Kind![C::Base; Output<'_, _, C>];
 
@@ -65,12 +72,13 @@ impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stag
 #[cfg(test)]
 mod tests {
     use ragu_pasta::EqAffine;
+    use ragu_primitives::vec::ConstLen;
 
     use super::*;
     use crate::internal::tests::{R, assert_stage_values};
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<EqAffine, R>::default());
+        assert_stage_values(&Stage::<EqAffine, R, ConstLen<4>>::default());
     }
 }

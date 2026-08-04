@@ -9,18 +9,24 @@ use ragu_core::Result;
 
 use crate::{
     Application, Proof,
+    framework_hooks::HookConfig,
     internal::{native, nested},
     proof::ProofBuilder,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
+    Application<'params, C, R, HEADER_SIZE, J>
+{
     pub(super) fn compute_preamble<'a, RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
-    ) -> Result<native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>> {
+        builder: &mut ProofBuilder<'_, C, R, J>,
+    ) -> Result<native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>>
+    where
+        'params: 'a,
+    {
         let preamble_witness = self.compute_native_preamble(rng, left, right, builder)?;
         self.compute_bridge_preamble(rng, left, right, builder)?;
         Ok(preamble_witness)
@@ -31,8 +37,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         rng: &mut RNG,
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
-    ) -> Result<native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>> {
+        builder: &mut ProofBuilder<'_, C, R, J>,
+    ) -> Result<native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>>
+    where
+        'params: 'a,
+    {
         let preamble_witness = native::stages::preamble::Witness::new(
             left,
             right,
@@ -40,7 +49,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             builder.right_header(),
         )?;
 
-        let rx = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::rx(
+        let rx = native::stages::preamble::Stage::<C, R, HEADER_SIZE, J>::rx(
             C::CircuitField::random(&mut *rng),
             &preamble_witness,
         )?;
@@ -55,15 +64,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         rng: &mut RNG,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, J>,
     ) -> Result<()> {
-        let bridge_rx = nested::stages::preamble::Stage::<C::HostCurve, R>::rx(
+        let witness = nested::stages::preamble::Witness {
+            native_preamble: builder.native_preamble_commitment(),
+            left: nested::stages::preamble::ChildWitness::from_proof(left)?,
+            right: nested::stages::preamble::ChildWitness::from_proof(right)?,
+        };
+        let bridge_rx = nested::stages::preamble::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
             C::ScalarField::random(&mut *rng),
-            &nested::stages::preamble::Witness {
-                native_preamble: builder.native_preamble_commitment(),
-                left: nested::stages::preamble::ChildWitness::from_proof(left),
-                right: nested::stages::preamble::ChildWitness::from_proof(right),
-            },
+            &witness,
         )?;
         let bridge_commitment = bridge_rx.commit_to_affine(C::nested_generators(self.params));
         builder.set_bridge_preamble_rx(bridge_rx, bridge_commitment);

@@ -74,7 +74,7 @@ use super::super::{
     stages::{outer_error, preamble},
     unified::{self, OutputBuilder},
 };
-use crate::internal::fold_revdot;
+use crate::{framework_hooks::HookConfig, internal::fold_revdot};
 
 /// Circuit that verifies layer 2 of the two-layer revdot reduction.
 ///
@@ -82,12 +82,18 @@ use crate::internal::fold_revdot;
 /// performed by this circuit.
 ///
 /// [module-level documentation]: self
-pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
-    _marker: PhantomData<(C, R, FP)>,
+pub struct Circuit<
+    C: Cycle,
+    R,
+    const HEADER_SIZE: usize,
+    J: HookConfig,
+    FP: fold_revdot::Parameters,
+> {
+    _marker: PhantomData<(C, R, J, FP)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    Circuit<C, R, HEADER_SIZE, FP>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, FP: fold_revdot::Parameters>
+    Circuit<C, R, HEADER_SIZE, J, FP>
 {
     /// Creates a new multi-stage circuit for layer 2 revdot verification.
     pub fn new() -> MultiStage<C::CircuitField, R, Self> {
@@ -122,10 +128,10 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     pub outer_error_witness: &'a outer_error::Witness<C, FP>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    MultiStageCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, FP>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, FP: fold_revdot::Parameters>
+    MultiStageCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, J, FP>
 {
-    type Last = outer_error::Stage<C, R, HEADER_SIZE, FP>;
+    type Last = outer_error::Stage<C, R, HEADER_SIZE, J, FP>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
@@ -151,9 +157,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     where
         Self: 'dr,
     {
-        let (preamble, builder) = builder.add_stage::<preamble::Stage<C, R, HEADER_SIZE>>()?;
+        let (preamble, builder) = builder.add_stage::<preamble::Stage<C, R, HEADER_SIZE, J>>()?;
         let (outer_error, builder) =
-            builder.add_stage::<outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
+            builder.add_stage::<outer_error::Stage<C, R, HEADER_SIZE, J, FP>>()?;
         let dr = builder.finish();
 
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;

@@ -10,38 +10,59 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element,
+    Element, GadgetExt,
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
 use super::super::{Step, StepCtx};
-use crate::Header;
+use crate::{
+    Header,
+    framework_hooks::{FrameworkAux, FrameworkHooks, HookConfig},
+};
 
-/// Represents triple a length determined at compile time.
-pub struct TripleConstLen<const N: usize>;
+/// Three headers plus the hooks' instance regions.
+pub struct AdapterLen<const HEADER_SIZE: usize, J: HookConfig>(PhantomData<J>);
 
-impl<const N: usize> Len for TripleConstLen<N> {
+impl<const HEADER_SIZE: usize, J: HookConfig> Len for AdapterLen<HEADER_SIZE, J> {
     fn len() -> usize {
-        N * 3
+        HEADER_SIZE * 3 + J::layout().poly_query_instance_len()
     }
 }
 
-pub(crate) struct Adapter<C, S, R, const HEADER_SIZE: usize> {
-    step: S,
-    _marker: PhantomData<(C, R)>,
+/// Auxiliary data produced by [`Adapter::witness`]: the input headers, the
+/// output data, the inner step's own aux, and the framework hooks' outputs.
+pub(crate) struct AdapterAux<'source, C: Cycle, S: Step<C>, const HEADER_SIZE: usize> {
+    pub left_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
+    pub right_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
+    pub output_data: <S::Output as Header<C::CircuitField>>::Data,
+    pub step_aux: S::Aux<'source>,
+    /// Every framework hook's output; see [`FrameworkAux`].
+    pub framework: FrameworkAux<C>,
 }
 
-impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Adapter<C, S, R, HEADER_SIZE> {
-    pub fn new(step: S) -> Self {
+pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usize, J: HookConfig> {
+    step: S,
+    /// Held for the hooks; a [`Step`] never sees these.
+    params: &'params C::Params,
+    _marker: PhantomData<(C, R, J)>,
+}
+
+impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
+    Adapter<'params, C, S, R, HEADER_SIZE, J>
+{
+    /// Wraps `step`; the layout comes from `J`. A step that asks for more than
+    /// it allows overruns [`AdapterLen`], which is what refuses it.
+    pub fn new(step: S, params: &'params C::Params) -> Self {
         Adapter {
             step,
+            params,
             _marker: PhantomData,
         }
     }
 }
 
-impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::CircuitField>
-    for Adapter<C, S, R, HEADER_SIZE>
+impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
+    Circuit<C::CircuitField> for Adapter<'_, C, S, R, HEADER_SIZE, J>
 {
     type Instance<'source> = (
         FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
@@ -53,15 +74,14 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         <S::Right as Header<C::CircuitField>>::Data,
         S::Witness<'source>,
     );
-    type Output = Kind![C::CircuitField; FixedVec<Element<'_, _>, TripleConstLen<HEADER_SIZE>>];
-    type Aux<'source> = (
-        (
-            FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
-            FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
-        ),
-        <S::Output as Header<C::CircuitField>>::Data,
-        S::Aux<'source>,
-    );
+    type Output = Kind![
+        C::CircuitField;
+        FixedVec<
+            Element<'_, _>,
+            AdapterLen<HEADER_SIZE, J>,
+        >
+    ];
+    type Aux<'source> = AdapterAux<'source, C, S, HEADER_SIZE>;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
@@ -81,16 +101,27 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
     {
         let (left, right, witness) = witness.cast();
 
+        let mut hooks = FrameworkHooks::new(J::layout(), self.params);
         let ((left, right, output), output_data, step_aux) = {
-            let mut ctx = StepCtx::<'_, '_, _, C>::new(dr);
+            let mut ctx = StepCtx::<'_, '_, _, C>::new(dr, &mut hooks);
             self.step
                 .witness::<_, HEADER_SIZE>(&mut ctx, witness, left, right)?
         };
+        // Fill what the body left over, through the same hooks it used.
+        hooks.pad_to_layout::<R>(dr)?;
 
-        let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
+        let mut elements = Vec::with_capacity(AdapterLen::<HEADER_SIZE, J>::len());
         left.write(dr, &mut elements)?;
         right.write(dr, &mut elements)?;
         output.write(dr, &mut elements)?;
+        // Same types `ProofInputs::application_ky` folds into k(Y), so neither
+        // side spells the order out.
+        for poly in hooks.witnessed_polys() {
+            poly.write(dr, &mut elements)?;
+        }
+
+        // Read every hook's wires back out as values for the fuse.
+        let framework = hooks.into_values()?;
 
         let adapter_aux = D::try_just(|| {
             let left_header = elements[0..HEADER_SIZE]
@@ -103,11 +134,13 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
                 .map(|e| *e.value().take())
                 .collect_fixed()?;
 
-            Ok((
-                (left_header, right_header),
-                output_data.take(),
-                step_aux.take(),
-            ))
+            Ok(AdapterAux {
+                left_header,
+                right_header,
+                output_data: output_data.take(),
+                step_aux: step_aux.take(),
+                framework: framework.take(),
+            })
         })?;
 
         Ok(WithAux::new(FixedVec::try_from(elements)?, adapter_aux))
@@ -116,7 +149,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
 
 #[cfg(test)]
 mod tests {
-    use ragu_circuits::polynomials::TestRank;
+    use ragu_circuits::Circuit;
     use ragu_core::{
         drivers::emulator::Emulator,
         gadgets::{Bound, Kind},
@@ -127,11 +160,14 @@ mod tests {
 
     use super::*;
     use crate::{
+        NoHooks,
         header::{Header, Suffix},
         step::{Encoded, Index, Step},
     };
 
-    type TestR = TestRank;
+    // The per-polynomial bridge stages need a rank fitting
+    // `skip_gates + num_gates` (~177); `TestRank` (n = 32) is too small.
+    type TestR = ragu_circuits::polynomials::ProductionRank;
     const HEADER_SIZE: usize = 4;
 
     struct TestHeader;
@@ -194,35 +230,12 @@ mod tests {
     }
 
     #[test]
-    fn triple_const_len_returns_3n() {
-        assert_eq!(TripleConstLen::<1>::len(), 3);
-        assert_eq!(TripleConstLen::<4>::len(), 12);
-        assert_eq!(TripleConstLen::<10>::len(), 30);
-    }
-
-    #[test]
-    fn adapter_witness_produces_correct_output_size() {
-        let mut dr = Emulator::execute();
-        let dr = &mut dr;
-
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep);
-        let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
-
-        let output = adapter
-            .witness(dr, witness)
-            .expect("witness should succeed")
-            .into_output();
-
-        // Output should have 3 * HEADER_SIZE elements (left + right + output headers)
-        assert_eq!(output.len(), HEADER_SIZE * 3);
-    }
-
-    #[test]
     fn adapter_witness_extracts_aux_correctly() {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep);
+        let adapter =
+            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE, NoHooks>::new(TestStep, Pasta::baked());
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
         let aux = adapter
@@ -230,7 +243,13 @@ mod tests {
             .expect("witness should succeed")
             .into_aux();
 
-        let ((left_header, right_header), output_data, _step_aux) = aux.take();
+        let AdapterAux {
+            left_header,
+            right_header,
+            output_data,
+            step_aux: _,
+            framework: _,
+        } = aux.take();
 
         // Left header should start with 10
         assert_eq!(left_header[0], Fp::from(10u64));

@@ -9,6 +9,14 @@
 //! - [`step::Step`] — the trait that defines computation nodes (transitions).
 //! - [`header::Header`] — the trait that defines succinct state representations.
 //! - [`Proof`] / [`Pcd`] — the proof and proof-carrying-data structures.
+//!
+//! # The hook layout is declared per application
+//!
+//! How many polynomials a step may witness is a parameter of
+//! [`ApplicationBuilder`]. It is declared rather than folded from the
+//! registered steps because handing a circuit to the registry freezes its
+//! shape, which a maximum over steps would not settle until the last one
+//! arrives. One layout serves every step; steps that use less are padded up.
 
 #![no_std]
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -24,11 +32,13 @@ extern crate alloc;
 #[cfg(any(feature = "std", test))]
 extern crate std;
 
+mod framework_hooks;
 mod fuse;
 #[cfg(feature = "unstable-fuzzing")]
 pub mod fuzz_utils;
 pub mod header;
 mod internal;
+mod poly_commitment;
 mod proof;
 pub mod step;
 mod verify;
@@ -36,34 +46,68 @@ mod verify;
 use alloc::collections::BTreeMap;
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
+pub use framework_hooks::{HookConfig, HookLayout};
 use header::Header;
+pub use poly_commitment::{HANDLE_WIRES, PolyHandle};
 pub use proof::{Pcd, Proof};
 use ragu_arithmetic::{CryptoRngCore, Cycle};
 use ragu_circuits::{
-    polynomials::Rank,
+    polynomials::{Rank, sparse},
     registry::{Registry, RegistryBuilder},
 };
 use ragu_core::{Error, Result};
+use ragu_primitives::vec::ConstLen;
 use step::{Step, internal::adapter::Adapter};
 
 /// Domain separation tag for Ragu PCD protocol.
 // FIXME: choose a permanent domain separation tag before release.
 pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 
+/// The usual way to write an application's [`HookLayout`]:
+///
+/// ```rust
+/// use ragu_circuits::polynomials::ProductionRank;
+/// use ragu_pasta::Pasta;
+/// use ragu_pcd::{AppHooks, Application};
+///
+/// type MyApp<'params> = Application<'params, Pasta, ProductionRank, 4, AppHooks<3>>;
+/// ```
+pub struct AppHooks<const POLYS: usize>;
+
+/// Convenience alias for an application that does not use hooks.
+pub type NoHooks = AppHooks<0>;
+
+impl<const POLYS: usize> HookConfig for AppHooks<POLYS> {
+    type PolyWitnesses = ConstLen<POLYS>;
+}
+
 /// Builder for an [`Application`] for proof-carrying data.
-pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+///
+/// `HEADER_SIZE` is the width of one encoded header and `J` the hook layout —
+/// usually written inline as [`AppHooks`]. Together they are an application
+/// circuit's instance width: three headers plus what [`HookLayout`] prices.
+pub struct ApplicationBuilder<
+    'params,
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    J: HookConfig = NoHooks,
+> {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
     params: &'params C::Params,
     num_application_steps: usize,
     header_map: BTreeMap<header::Suffix, TypeId>,
-    _marker: PhantomData<[(); HEADER_SIZE]>,
+    _marker: PhantomData<(J, [(); HEADER_SIZE])>,
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
-    ApplicationBuilder<'params, C, R, HEADER_SIZE>
+impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
+    ApplicationBuilder<'params, C, R, HEADER_SIZE, J>
 {
     /// Create an empty [`ApplicationBuilder`] for proof-carrying data.
+    ///
+    /// The cycle parameters are held from here on: committing a witnessed
+    /// polynomial is the framework's work, so a [`Step`] never sees them.
     pub fn new(params: &'params C::Params) -> Self {
         ApplicationBuilder {
             native_registry: RegistryBuilder::new(),
@@ -91,9 +135,11 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         self.prevent_duplicate_suffixes::<S::Left>()?;
         self.prevent_duplicate_suffixes::<S::Right>()?;
 
+        // Building the adapter needs no cycle parameters, so registration
+        // happens here, before `finalize` supplies them.
         self.native_registry =
             self.native_registry
-                .register_circuit(Adapter::<C, S, R, HEADER_SIZE>::new(step))?;
+                .register_circuit(Adapter::<C, S, R, HEADER_SIZE, J>::new(step, self.params))?;
         self.num_application_steps += 1;
 
         Ok(self)
@@ -121,7 +167,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     ///
     /// Returns an error if internal circuit registration or registry
     /// finalization fails.
-    pub fn finalize(mut self) -> Result<Application<'params, C, R, HEADER_SIZE>> {
+    pub fn finalize(mut self) -> Result<Application<'params, C, R, HEADER_SIZE, J>> {
         let params = self.params;
         // Build the native registry:
         // 1. Application circuits (already registered)
@@ -131,7 +177,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             internal::native::total_circuit_counts(self.num_application_steps);
 
         // First, register internal circuits and masks
-        self.native_registry = internal::native::register_all::<C, R, HEADER_SIZE>(
+        self.native_registry = internal::native::register_all::<C, R, HEADER_SIZE, J>(
             self.native_registry,
             params,
             log2_circuits,
@@ -139,15 +185,19 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
 
         // Then, register internal steps
         self.native_registry =
-            self.native_registry
-                .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
+            self.native_registry.register_internal_step(
+                Adapter::<C, _, R, HEADER_SIZE, J>::new(
                     step::internal::rerandomize::Rerandomize::<()>::new(),
-                ))?;
+                    params,
+                ),
+            )?;
         self.native_registry =
-            self.native_registry
-                .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
+            self.native_registry.register_internal_step(
+                Adapter::<C, _, R, HEADER_SIZE, J>::new(
                     step::internal::trivial::Trivial::new(),
-                ))?;
+                    params,
+                ),
+            )?;
 
         assert_eq!(
             self.native_registry.log2_circuits(),
@@ -161,7 +211,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         );
 
         // Register nested internal circuits (no application steps, no headers).
-        self.nested_registry = internal::nested::register_all::<C, R>(self.nested_registry)?;
+        self.nested_registry =
+            internal::nested::register_all::<C, R, J::PolyWitnesses>(self.nested_registry)?;
 
         Ok(Application {
             native_registry: self.native_registry.finalize()?,
@@ -192,17 +243,29 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
 }
 
 /// The recursion context that is used to create and verify proof-carrying data.
-pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+pub struct Application<
+    'params,
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    J: HookConfig = NoHooks,
+> {
     native_registry: Registry<'params, C::CircuitField, R>,
     nested_registry: Registry<'params, C::ScalarField, R>,
     params: &'params C::Params,
     num_application_steps: usize,
     /// Cached seeded trivial proof for rerandomization.
     seeded_trivial: OnceCell<Proof<C, R>>,
-    _marker: PhantomData<[(); HEADER_SIZE]>,
+    _marker: PhantomData<(J, [(); HEADER_SIZE])>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
+    Application<'_, C, R, HEADER_SIZE, J>
+{
+    pub(crate) fn hook_layout(&self) -> HookLayout {
+        J::layout()
+    }
+
     /// Seed a new computation by running a step with trivial inputs.
     ///
     /// This is the entry point for creating leaf nodes in a PCD tree.
@@ -269,5 +332,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// Returns a reference to the native [`Registry`].
     pub fn native_registry(&self) -> &Registry<'_, C::CircuitField, R> {
         &self.native_registry
+    }
+
+    /// Commits a polynomial and returns the handle
+    /// [`StepCtx::witness_polynomial`](step::StepCtx::witness_polynomial)
+    /// would produce for it.
+    ///
+    /// For callers outside the circuit — checking a carried header against a
+    /// polynomial they already have. A step is handed its handles.
+    pub fn commit_polynomial<R2: Rank>(
+        &self,
+        polynomial: &sparse::Polynomial<C::CircuitField, R2>,
+    ) -> Result<[C::CircuitField; HANDLE_WIRES]> {
+        poly_commitment::handle::<C>(polynomial.commit_to_affine(C::host_generators(self.params)))
     }
 }

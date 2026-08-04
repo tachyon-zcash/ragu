@@ -59,7 +59,7 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx sparse::Polynomial<F, R>>
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
     ) {
-        let circuit_id = id.circuit_index();
+        let circuit_id = id.circuit_index(self.witness_polys);
         let rx = sum_polynomials(rxs);
         self.circuit_impl(circuit_id, rx);
     }
@@ -69,7 +69,7 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx sparse::Polynomial<F, R>>
         id: InternalCircuitIndex,
         groups: impl Iterator<Item = impl Iterator<Item = &'rx sparse::Polynomial<F, R>>>,
     ) -> Result<()> {
-        let circuit_id = id.circuit_index();
+        let circuit_id = id.circuit_index(self.witness_polys);
         let folded = self.fold_bonding_groups(groups);
         self.bonding_impl(circuit_id, folded);
         Ok(())
@@ -86,12 +86,12 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx sparse::Polynomial<F, R>>
 ///    and all `Bridge*` variants
 ///
 /// This ordering must match the ky_elements ordering from [`ky_values`].
-pub fn build<S, P>(source: &S, processor: &mut P) -> Result<()>
+pub fn build<S, P>(source: &S, processor: &mut P, polys: usize) -> Result<()>
 where
     S: Source<RxComponent = RxIndex>,
     P: Processor<S::Rx>,
 {
-    for &id in &InternalCircuitIndex::ALL {
+    for id in InternalCircuitIndex::all(polys) {
         use InternalCircuitIndex::*;
         match id {
             EndoscalingStep(step) => {
@@ -110,7 +110,7 @@ where
                 processor.bonding_claim(id, source.rx(RxIndex::PointsStage))?;
             }
             PointsFinalStaged => {
-                let num_steps = super::NUM_ENDOSCALING_STEPS;
+                let num_steps = super::num_endoscaling_steps(polys);
                 let final_rxs = (0..num_steps)
                     .flat_map(|step| source.rx(RxIndex::EndoscalingStep(step as u32)));
                 processor.bonding_claim(id, final_rxs)?;
@@ -140,6 +140,9 @@ where
                 processor.bonding_claim(id, source.rx(RxIndex::BridgeEval))?;
             }
             Loading => {
+                // Every stage the circuit configures must be supplied here:
+                // the claim checks the *sum* of these rxs, so a missing stage
+                // makes its constraints vacuous over zero wires.
                 let groups = source
                     .rx(RxIndex::PointsStage)
                     .zip(source.rx(RxIndex::BridgePreamble))
@@ -154,6 +157,7 @@ where
                 processor.grouped_bonding_claim(id, groups)?;
             }
             Copying(side) => {
+                // As in `Loading`: every configured stage must be supplied.
                 let groups = source
                     .rx(RxIndex::ChildPointsStage(side))
                     .zip(source.rx(RxIndex::BridgePreamble))
@@ -191,8 +195,8 @@ pub trait KySource {
 /// Returns:
 /// - `num_steps` ones (for EndoscalingStep circuit checks, single-proof verification)
 /// - Infinite zeros (for stage checks)
-pub fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
-    let num_steps = super::NUM_ENDOSCALING_STEPS;
+pub fn ky_values<S: KySource>(source: &S, polys: usize) -> impl Iterator<Item = S::Ky> {
+    let num_steps = super::num_endoscaling_steps(polys);
 
     // Circuit checks: k(y) = 1 (for single-proof, num_circuit_claims = num_steps)
     core::iter::repeat_n(source.one(), num_steps)
