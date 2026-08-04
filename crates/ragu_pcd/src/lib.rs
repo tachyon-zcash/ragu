@@ -17,8 +17,8 @@
 //!
 //! # The hook layout is declared per application
 //!
-//! How many polynomials a step may witness is a parameter of
-//! [`ApplicationBuilder`]. It is declared rather than folded from the
+//! How many polynomials a step may witness, and how many openings it may
+//! enforce, are parameters of [`ApplicationBuilder`]. They are declared rather than folded from the
 //! registered steps because handing a circuit to the registry freezes its
 //! shape, which a maximum over steps would not settle until the last one
 //! arrives. One layout serves every step; steps that use less are padded up.
@@ -46,6 +46,7 @@ mod fuse;
 // here.
 pub mod fuzzing;
 pub mod header;
+pub(crate) mod instance;
 mod internal;
 pub mod ipa;
 mod multicore;
@@ -125,15 +126,16 @@ impl<C: Cycle> RegistryTags<C> {
 /// use ragu_core::pasta::Pasta;
 /// use ragu_pcd::{AppHooks, Application};
 ///
-/// type MyApp<'params> = Application<'params, Pasta, ProductionRank, 4, AppHooks<3>>;
+/// type MyApp<'params> = Application<'params, Pasta, ProductionRank, 4, AppHooks<3, 3>>;
 /// ```
-pub struct AppHooks<const POLYS: usize>;
+pub struct AppHooks<const POLYS: usize, const QUERIES: usize>;
 
 /// Convenience alias for an application that does not use hooks.
-pub type NoHooks = AppHooks<0>;
+pub type NoHooks = AppHooks<0, 0>;
 
-impl<const POLYS: usize> HookConfig for AppHooks<POLYS> {
+impl<const POLYS: usize, const QUERIES: usize> HookConfig for AppHooks<POLYS, QUERIES> {
     type PolyWitnesses = ConstLen<POLYS>;
+    type PolyQueries = ConstLen<QUERIES>;
 }
 
 /// Builder for an [`Application`] for proof-carrying data.

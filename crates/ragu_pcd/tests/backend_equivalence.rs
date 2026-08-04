@@ -1131,6 +1131,7 @@ mod proof_equivalence {
                 bridge_ab_commitment: _,
                 bridge_query_commitment: _,
                 bridge_eval_commitment: _,
+                application_poly_queries: _,
                 witness_polys: _,
                 witness_poly_commitments: _,
             } = self;
@@ -1228,6 +1229,15 @@ mod proof_equivalence {
             }
             if self.witness_poly_commitments() != other.witness_poly_commitments() {
                 return Some("witnessed polynomial commitments");
+            }
+            if self.application_poly_queries.len() != other.application_poly_queries.len()
+                || self
+                    .application_poly_queries
+                    .iter()
+                    .zip(&other.application_poly_queries)
+                    .any(|(a, b)| a.com != b.com || a.x != b.x || a.y != b.y)
+            {
+                return Some("poly-queries");
             }
             if self.native_commitment(native::RxComponent::AbA)
                 != other.native_commitment(native::RxComponent::AbA)

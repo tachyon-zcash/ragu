@@ -454,6 +454,7 @@ impl<C: Cycle> Instance<C> {
                     right_header: &self.right_header,
                     output_header,
                     witness_polys: &[],
+                    poly_queries: &[],
                     circuit_id: self.circuit_id,
                     unified: &unified,
                 },

@@ -335,9 +335,9 @@ fn test_internal_stage_parameters() {
     check_stage!(PointsWalk,       skip = 100, num =  89);
 }
 
-/// The stage chain at eight witnessed polynomials, where every hook-dependent
-/// width is visible: the preamble's handles, the eval stage's evaluations, and
-/// the walks the extra points lengthen.
+/// The stage chain at eight witnessed polynomials and one poly-query, where
+/// every hook-dependent width is visible: the preamble's hook regions, the eval
+/// stage's evaluations, and the walks the extra points lengthen.
 mod hooked_chain {
     use super::{HEADER_SIZE, NestedCurve, R};
     use crate::{
@@ -345,7 +345,7 @@ mod hooked_chain {
         internal::native::{RevdotParameters, stages},
     };
 
-    type J = AppHooks<8>;
+    type J = AppHooks<8, 1>;
     type L = <J as HookConfig>::PolyWitnesses;
 
     pub type Preamble = stages::preamble::Stage<ragu_core::pasta::Pasta, R, HEADER_SIZE, J>;
@@ -369,11 +369,11 @@ fn test_hooked_stage_parameters() {
         }};
     }
 
-    check_stage!(hooked_chain::Preamble,       skip =  27, num = 365);
-    check_stage!(hooked_chain::OuterError,     skip = 392, num = 186);
-    check_stage!(hooked_chain::InnerError,     skip = 578, num = 399);
-    check_stage!(hooked_chain::Query,          skip = 392, num =  84);
-    check_stage!(hooked_chain::Eval,           skip = 476, num =  70);
+    check_stage!(hooked_chain::Preamble,       skip =  27, num = 369);
+    check_stage!(hooked_chain::OuterError,     skip = 396, num = 186);
+    check_stage!(hooked_chain::InnerError,     skip = 582, num = 399);
+    check_stage!(hooked_chain::Query,          skip = 396, num =  84);
+    check_stage!(hooked_chain::Eval,           skip = 480, num =  70);
     check_stage!(hooked_chain::PointsChildren, skip =  27, num =  76);
     check_stage!(hooked_chain::PointsWalk,     skip = 110, num =  91);
 }
