@@ -36,7 +36,7 @@ use crate::{
         Side, native,
         nested::{self, stages::challenges},
     },
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Step, StepCtx},
 };
 
 /// Preserve ordinary unit headers through successive fuses.
@@ -54,7 +54,7 @@ impl Step<C> for UnitStep {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
         _: DriverValue<D, ()>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -71,6 +71,7 @@ impl Step<C> for UnitStep {
     where
         Self: 'dr,
     {
+        let dr = &mut *ctx.dr;
         let allocator = &mut Standard::new();
         Ok((
             (

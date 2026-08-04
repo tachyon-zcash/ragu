@@ -27,7 +27,7 @@ use crate::{
         revdot::{Reduction, fold::Fold},
     },
     ipa::{CycleTranscript, IPA_TAG, IpaTranscript},
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Step, StepCtx},
 };
 
 static TRACKING_MSM_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -147,7 +147,7 @@ impl Step<Pasta> for UnitStep {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -161,6 +161,7 @@ impl Step<Pasta> for UnitStep {
         DriverValue<D, ()>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
+        let dr = &mut *ctx.dr;
         let allocator = &mut Standard::new();
         let left = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;

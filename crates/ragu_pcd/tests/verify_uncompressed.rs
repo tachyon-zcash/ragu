@@ -13,7 +13,7 @@ use udon::field::Field;
 use super::*;
 use crate::{
     ApplicationBuilder,
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Step, StepCtx},
 };
 
 type TestR = ProductionRank;
@@ -61,7 +61,7 @@ impl Step<Pasta> for UnitSeed {
         const HS: usize,
     >(
         &self,
-        _: &mut D,
+        _: &mut StepCtx<'_, 'dr, D, Pasta>,
         _: DriverValue<D, Self::Witness<'source>>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -111,7 +111,7 @@ impl Step<Pasta> for UnitStep {
         const HS: usize,
     >(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -131,8 +131,8 @@ impl Step<Pasta> for UnitStep {
         let allocator = &mut Standard::new();
         Ok((
             (
-                Encoded::new(dr, allocator, left)?,
-                Encoded::new(dr, allocator, right)?,
+                Encoded::new(ctx.dr, allocator, left)?,
+                Encoded::new(ctx.dr, allocator, right)?,
                 Encoded::from_gadget(()),
             ),
             (),

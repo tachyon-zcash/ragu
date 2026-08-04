@@ -142,14 +142,21 @@ fn beta_fold<F: Field, R: Rank>(
 }
 
 /// The blinding of a cached bridge polynomial, as a distinct power of the
-/// proof's `bridge_alpha`; shared by the builder that derives the bridge and
-/// the verifier that rederives it.
+/// proof's `bridge_alpha` (see [`bridge_alpha_exponent`]); shared by the
+/// builder that derives the bridge and the verifier that rederives it.
 pub(crate) fn bridge_alpha_power<F: Field>(bridge_alpha: F, idx: nested::RxIndex) -> F {
-    let n = match idx {
+    bridge_alpha.pow_u64(bridge_alpha_exponent(idx))
+}
+
+/// The exponent of `bridge_alpha` for a cached bridge stage; the single
+/// ordering keeps all blinds distinct. Panics on the bridges that carry
+/// prover-chosen data, which are blinded at random instead (every bridge but
+/// `ab`).
+fn bridge_alpha_exponent(idx: nested::RxIndex) -> u64 {
+    match idx {
         nested::RxIndex::BridgeAB => 2,
-        _ => panic!("not a cached bridge: {idx:?}"),
-    };
-    bridge_alpha.pow_u64(n)
+        _ => panic!("not blinded from bridge_alpha: {idx:?}"),
+    }
 }
 
 /// Represents a recursive proof for the correctness of some computation.
@@ -1374,5 +1381,24 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 
         // Commitments are computed lazily by the builder from the polynomials.
         builder.build().expect("dummy proof construction failed")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pins the `bridge_alpha` exponent series: no registry tag covers these
+    /// prover-side blinds, so a collision would otherwise be silent.
+    #[test]
+    fn bridge_alpha_exponents_are_the_expected_series() {
+        assert_eq!(bridge_alpha_exponent(nested::RxIndex::BridgeAB), 2);
+    }
+
+    /// Bridges blinded at random are not on this series.
+    #[test]
+    #[should_panic(expected = "not blinded from bridge_alpha")]
+    fn unblinded_bridges_are_rejected() {
+        bridge_alpha_exponent(nested::RxIndex::BridgeF);
     }
 }

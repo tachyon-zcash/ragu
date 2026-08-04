@@ -51,7 +51,7 @@ pub(crate) mod support {
                 stages::{eval as nested_eval, preamble},
             },
         },
-        step::{Encoded, Index, Step},
+        step::{Encoded, Index, Step, StepCtx},
     };
 
     pub(crate) type App = Application<'static, C, R, HEADER_SIZE>;
@@ -94,7 +94,7 @@ pub(crate) mod support {
 
         fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
             &self,
-            dr: &mut D,
+            ctx: &mut StepCtx<'_, 'dr, D, C>,
             witness: DriverValue<D, Fp>,
             left: DriverValue<D, L::Data>,
             right: DriverValue<D, H::Data>,
@@ -111,6 +111,7 @@ pub(crate) mod support {
         where
             Self: 'dr,
         {
+            let dr = &mut *ctx.dr;
             let allocator = &mut Standard::new();
             let left = Encoded::new(dr, allocator, left)?;
             let right = Encoded::new(dr, allocator, right)?;

@@ -10,7 +10,7 @@ use ragu_core::pasta::{Fp, Fq, Pasta};
 
 use super::*;
 use crate::{
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Step, StepCtx},
     *,
 };
 pub type R = ragu_circuits::polynomials::ProductionRank;
@@ -44,7 +44,7 @@ impl<const INDEX: usize, const SIZE: usize> Step<Pasta> for SharedInputs<INDEX, 
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
         witness: DriverValue<D, Self::Witness<'source>>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -58,6 +58,7 @@ impl<const INDEX: usize, const SIZE: usize> Step<Pasta> for SharedInputs<INDEX, 
         DriverValue<D, ()>,
         DriverValue<D, ()>,
     )> {
+        let dr = &mut *ctx.dr;
         let shared = (0..SIZE)
             .map(|i| {
                 let input = Element::alloc(dr, &mut (), witness.as_ref().map(|w| w[i]))?;
