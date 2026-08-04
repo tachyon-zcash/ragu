@@ -36,7 +36,7 @@ mod registry {
     use crate::{
         ApplicationBuilder, RegistryTags,
         internal::native::InternalCircuitIndex,
-        step::{Encoded, Index, Step},
+        step::{Encoded, Index, Step, StepCtx},
     };
 
     /// A registered circuit fixes this value, independently of prover witnesses.
@@ -53,7 +53,7 @@ mod registry {
 
         fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
             &self,
-            dr: &mut D,
+            ctx: &mut StepCtx<'_, 'dr, D, C>,
             _: DriverValue<D, ()>,
             left: DriverValue<D, ()>,
             right: DriverValue<D, ()>,
@@ -70,6 +70,7 @@ mod registry {
         where
             Self: 'dr,
         {
+            let dr = &mut *ctx.dr;
             let allocator = &mut Standard::new();
             let left = Encoded::new(dr, allocator, left)?;
             let right = Encoded::new(dr, allocator, right)?;

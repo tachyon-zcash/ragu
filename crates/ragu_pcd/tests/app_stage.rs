@@ -21,7 +21,7 @@ use crate::{
     Application, ApplicationBuilder, Pcd,
     header::{Header, Suffix},
     internal::{native::RxIndex, tests::SharedInputs},
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Step, StepCtx},
 };
 
 type R = ProductionRank;
@@ -43,7 +43,7 @@ impl Step<Pasta> for Unit {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
-        _: &mut D,
+        _: &mut StepCtx<'_, 'dr, D, Pasta>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -105,7 +105,7 @@ impl Step<Pasta> for Square {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
         witness: DriverValue<D, Self::Witness<'source>>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -119,6 +119,7 @@ impl Step<Pasta> for Square {
         DriverValue<D, Fp>,
         DriverValue<D, ()>,
     )> {
+        let dr = &mut *ctx.dr;
         let (x, n) = witness.cast();
         let n = Element::alloc(dr, &mut (), n)?;
         let x = Element::alloc(dr, &mut (), x)?;
@@ -152,7 +153,7 @@ impl Step<Pasta> for Carry {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
         _: DriverValue<D, ()>,
         left: DriverValue<D, Fp>,
         right: DriverValue<D, Fp>,
@@ -166,6 +167,7 @@ impl Step<Pasta> for Carry {
         DriverValue<D, Fp>,
         DriverValue<D, ()>,
     )> {
+        let dr = &mut *ctx.dr;
         let value = left.clone();
         let left = Encoded::new(dr, &mut (), left)?;
         let right = Encoded::new(dr, &mut (), right)?;

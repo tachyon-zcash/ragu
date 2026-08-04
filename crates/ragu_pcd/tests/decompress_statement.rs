@@ -32,7 +32,7 @@ use crate::{
         testing::{Decompressing, StatementContext},
     },
     proof::recursive_propagation_tests::support::Value,
-    step::{Encoded, Index, Step, internal::decompress::Decompress},
+    step::{Encoded, Index, Step, StepCtx, internal::decompress::Decompress},
 };
 
 const HEADER_SIZE: usize = 4;
@@ -55,7 +55,7 @@ impl Step<C> for Consume {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
         _: DriverValue<D, ()>,
         left: DriverValue<D, Fp>,
         right: DriverValue<D, ()>,
@@ -72,6 +72,7 @@ impl Step<C> for Consume {
     where
         Self: 'dr,
     {
+        let dr = &mut *ctx.dr;
         let allocator = &mut Allocator::new();
         let left = Element::alloc(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;

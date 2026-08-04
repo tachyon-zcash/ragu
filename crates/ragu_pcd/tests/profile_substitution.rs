@@ -23,7 +23,7 @@ use crate::{
     compress::instance::Instance,
     ipa::IpaCycle,
     profile::{Aggregator, Profile, Profiled, ProfiledCycle, Shape, Standard, testing::Proving},
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Step, StepCtx},
 };
 
 const HEADER_SIZE: usize = 4;
@@ -240,7 +240,7 @@ impl<Cy: Cycle<CircuitField = Fp>> Step<Cy> for Seed {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, Cy>,
         witness: DriverValue<D, Fp>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -257,6 +257,7 @@ impl<Cy: Cycle<CircuitField = Fp>> Step<Cy> for Seed {
     where
         Self: 'dr,
     {
+        let dr = &mut *ctx.dr;
         let value = Element::alloc(dr, &mut Allocator::new(), witness.clone())?;
         if let Some(expected) = self.expected {
             let expected = Element::constant(dr, expected);
@@ -289,7 +290,7 @@ impl<Cy: Cycle<CircuitField = Fp>> Step<Cy> for Sum {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, Cy>,
         _: DriverValue<D, ()>,
         left: DriverValue<D, Fp>,
         right: DriverValue<D, Fp>,
@@ -306,6 +307,7 @@ impl<Cy: Cycle<CircuitField = Fp>> Step<Cy> for Sum {
     where
         Self: 'dr,
     {
+        let dr = &mut *ctx.dr;
         let allocator = &mut Allocator::new();
         let left = Element::alloc(dr, allocator, left)?;
         let right = Element::alloc(dr, allocator, right)?;

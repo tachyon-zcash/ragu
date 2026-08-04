@@ -1012,7 +1012,7 @@ pub(crate) mod testing {
     use super::*;
     use crate::{
         internal::ky,
-        step::{Encoded, Index, Step},
+        step::{Encoded, Index, Step, StepCtx},
     };
 
     /// A step with unit headers and no witness.
@@ -1034,7 +1034,7 @@ pub(crate) mod testing {
             const HEADER_SIZE: usize,
         >(
             &self,
-            dr: &mut D,
+            ctx: &mut StepCtx<'_, 'dr, D, C>,
             _: DriverValue<D, ()>,
             left: DriverValue<D, ()>,
             right: DriverValue<D, ()>,
@@ -1048,6 +1048,7 @@ pub(crate) mod testing {
             DriverValue<D, ()>,
             DriverValue<D, ()>,
         )> {
+            let dr = &mut *ctx.dr;
             let allocator = &mut allocator::Standard::new();
             let left = Encoded::new(dr, allocator, left)?;
             let right = Encoded::new(dr, allocator, right)?;

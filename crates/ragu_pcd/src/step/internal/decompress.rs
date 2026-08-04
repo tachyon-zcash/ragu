@@ -52,7 +52,7 @@ use ragu_core::{
 };
 use ragu_primitives::allocator::Standard;
 
-use super::super::{Encoded, Index, Step};
+use super::super::{Encoded, Index, Step, StepCtx};
 use crate::Header;
 pub(crate) use crate::step::InternalStepIndex::Decompress as INTERNAL_ID;
 
@@ -82,7 +82,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -96,6 +96,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
+        let dr = &mut *ctx.dr;
         let allocator = &mut Standard::new();
         let left = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
@@ -199,7 +200,7 @@ mod tests {
             type Output = ();
             fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
                 &self,
-                dr: &mut D,
+                ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
                 witness: DriverValue<D, ()>,
                 left: DriverValue<D, ()>,
                 right: DriverValue<D, ()>,
@@ -213,6 +214,7 @@ mod tests {
                 DriverValue<D, ()>,
                 DriverValue<D, ()>,
             )> {
+                let dr = &mut *ctx.dr;
                 let allocator = &mut ragu_primitives::allocator::Standard::new();
                 let left = Encoded::<'dr, D, (), HS>::new(dr, allocator, left)?;
                 let right = Encoded::<'dr, D, (), HS>::new(dr, allocator, right)?;

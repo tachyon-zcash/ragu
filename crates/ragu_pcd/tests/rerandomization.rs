@@ -9,7 +9,7 @@ use ragu_core::{
 use ragu_pcd::{
     ApplicationBuilder,
     header::{Header, Suffix},
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Step, StepCtx},
 };
 use ragu_primitives::{
     Element,
@@ -62,7 +62,7 @@ impl Step<Pasta> for StepWithData {
     type Output = HeaderWithData;
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -76,6 +76,7 @@ impl Step<Pasta> for StepWithData {
         DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
+        let dr = &mut *ctx.dr;
         let allocator = &mut Standard::new();
         let left = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
@@ -96,7 +97,7 @@ impl<C: Cycle> Step<C> for Step0 {
     type Output = HeaderA;
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -110,6 +111,7 @@ impl<C: Cycle> Step<C> for Step0 {
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
+        let dr = &mut *ctx.dr;
         let allocator = &mut Standard::new();
         let left = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
@@ -129,7 +131,7 @@ impl<C: Cycle> Step<C> for Step1 {
     type Output = HeaderA;
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -143,6 +145,7 @@ impl<C: Cycle> Step<C> for Step1 {
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
+        let dr = &mut *ctx.dr;
         let allocator = &mut Standard::new();
         let left = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
