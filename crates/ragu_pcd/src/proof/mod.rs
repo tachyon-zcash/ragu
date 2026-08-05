@@ -249,7 +249,8 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) child_right_stage_rx: ChildStageRx<C::ScalarField, R>,
 
     /// Padded to the application's layout, and bound to $k(Y)$. Crate-visible
-    /// because [`fuzz_utils`](crate::fuzz_utils) corrupts it in place; readers
+    /// because `fuzz_utils` corrupts it in place — unlinked, as that module
+    /// only exists under `unstable-fuzzing`; readers
     /// go through
     /// [`application_poly_queries`](Self::application_poly_queries).
     pub(crate) application_poly_queries: Vec<PolyQuery<C::HostCurve>>,

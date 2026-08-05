@@ -1,6 +1,6 @@
 //! Framework-side state behind the hooks a step reaches through
 //! [`StepCtx`](crate::step::StepCtx); the wire forms live in
-//! [`instance`](crate::instance).
+//! [`instance`].
 //!
 //! Nothing a hook produces is enforced here. It lands in the application
 //! circuit's instance, padded to the [`HookLayout`], and the parent fuse — or

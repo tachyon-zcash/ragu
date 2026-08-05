@@ -127,3 +127,102 @@ fn select_evaluation<'dr, D: Driver<'dr>, A: Allocator<'dr, D>>(
 
     Ok(selected)
 }
+
+#[cfg(test)]
+mod tests {
+    use core::cell::Cell;
+
+    use ragu_arithmetic::ff::Field;
+    use ragu_core::Error;
+    use ragu_pasta::Fp;
+    use ragu_primitives::{Simulator, allocator::Standard};
+
+    use super::*;
+
+    fn handle_of(tag: u64) -> [Fp; HANDLE_WIRES] {
+        [Fp::from(tag), Fp::from(tag + 1_000)]
+    }
+
+    /// Distinct per handle, so the selection is readable off the result.
+    fn evaluation_of(j: usize) -> Fp {
+        Fp::from(100 + j as u64)
+    }
+
+    /// The selected evaluation, or `Err(InvalidWitness)` when a constraint is
+    /// unsatisfied — which `Simulator` reports and `Emulator` does not.
+    fn select(handles: &[[Fp; HANDLE_WIRES]], com: [Fp; HANDLE_WIRES]) -> Result<Fp> {
+        let selected = Cell::new(Fp::ZERO);
+        let handles = handles.to_vec();
+        Simulator::simulate((), |dr, _| {
+            let allocator = &mut Standard::new();
+            let evaluations: Vec<_> = (0..handles.len())
+                .map(|j| Element::constant(dr, evaluation_of(j)))
+                .collect();
+            let handle_elements: Vec<[Element<'_, _>; HANDLE_WIRES]> = handles
+                .iter()
+                .map(|handle| handle.map(|limb| Element::constant(dr, limb)))
+                .collect();
+            let com = com.map(|limb| Element::constant(dr, limb));
+
+            let out = select_evaluation(dr, allocator, &evaluations, &handle_elements, &com)?;
+            selected.set(*out.value().take());
+            Ok(())
+        })?;
+        Ok(selected.get())
+    }
+
+    /// The selection must be unsatisfied. Matched on the variant, because a
+    /// setup mistake also yields `Err`.
+    fn refuses(handles: &[[Fp; HANDLE_WIRES]], com: [Fp; HANDLE_WIRES]) {
+        match select(handles, com) {
+            Err(Error::InvalidWitness(_)) => {}
+            other => panic!("expected an unsatisfied constraint, got {other:?}"),
+        }
+    }
+
+    /// Every position, not just the first and last.
+    #[test]
+    fn a_commitment_selects_its_own_polynomials_evaluation() -> Result<()> {
+        let handles = [handle_of(7), handle_of(8), handle_of(9)];
+        for (j, handle) in handles.iter().enumerate() {
+            assert_eq!(
+                select(&handles, *handle)?,
+                evaluation_of(j),
+                "the commitment at position {j} must select position {j}'s evaluation"
+            );
+        }
+        Ok(())
+    }
+
+    /// Fail-closed: no match sets no bit, and sum-to-one refuses that. Isolated
+    /// here because `compute_f` rejects an unresolvable commitment on
+    /// prover-side bookkeeping, ahead of the circuit.
+    #[test]
+    fn a_commitment_matching_no_handle_is_refused() {
+        refuses(&[handle_of(7), handle_of(8)], handle_of(9));
+    }
+
+    /// Padded slots all commit to `g[0]`, so equal handles are routine. Exactly
+    /// one bit is set; under binding, equal commitments denote equal
+    /// polynomials, so the earliest match is as good as any.
+    #[test]
+    fn duplicate_handles_still_resolve() -> Result<()> {
+        let shared = handle_of(7);
+        let handles = [shared, shared, handle_of(9)];
+        assert_eq!(
+            select(&handles, shared)?,
+            evaluation_of(0),
+            "a first-match one-hot sets exactly one bit, the earliest"
+        );
+        assert_eq!(select(&handles, handle_of(9))?, evaluation_of(2));
+        Ok(())
+    }
+
+    /// The equality is per limb, so a handle cannot be half-matched.
+    #[test]
+    fn a_commitment_matching_one_limb_only_is_refused() {
+        let [lo, _] = handle_of(7);
+        let [_, hi] = handle_of(8);
+        refuses(&[handle_of(7), handle_of(8)], [lo, hi]);
+    }
+}
