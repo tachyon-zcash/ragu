@@ -60,7 +60,9 @@ impl<'pts, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, L: Len> Walker<'pts, 'dr
     }
 }
 
-/// Loading circuit that loads the entire nested stage hierarchy.
+/// Loading circuit that loads the entire nested stage hierarchy. `L` is the
+/// application's poly count as a [`Len`] — the
+/// only shape this circuit needs.
 pub struct Circuit<C: Affine, R: Rank, L: Len> {
     _marker: PhantomData<(C, R, L)>,
 }
