@@ -35,7 +35,7 @@ use crate::internal::{
 
 /// Copying circuit that relates the current preamble to a child's stages.
 /// `L` is the application's poly count as a
-/// [`Len`](ragu_primitives::vec::Len); a child exposes the same shape.
+/// [`Len`]; a child exposes the same shape.
 pub struct Circuit<C: CurveAffine, R: Rank, L: Len> {
     side: Side,
     _marker: PhantomData<(C, R, L)>,

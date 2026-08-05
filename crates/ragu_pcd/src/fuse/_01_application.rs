@@ -57,10 +57,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
             right_header,
             output_data,
             step_aux,
-            framework:
-                FrameworkAux {
-                    witness_polys: witnessed,
-                },
+            framework: FrameworkAux {
+                witness_polys: witnessed,
+            },
         } = aux;
 
         let witness_polys = witnessed

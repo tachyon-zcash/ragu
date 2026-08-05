@@ -214,6 +214,8 @@ pub mod stages {
 pub fn register_all<'params, C: Cycle, R: Rank, L: Len>(
     mut registry: RegistryBuilder<'params, C::ScalarField, R>,
 ) -> Result<RegistryBuilder<'params, C::ScalarField, R>> {
+    let initial_internal_circuits = registry.num_internal_circuits();
+
     // Circuits first, then masks — matching RegistryBuilder::finalize()
     // concatenation order and InternalCircuitIndex::circuit_index().
     for id in InternalCircuitIndex::all(L::len()) {
@@ -267,6 +269,14 @@ pub fn register_all<'params, C: Cycle, R: Rank, L: Len>(
             }
         };
     }
+
+    // `circuit_index` scans the same `all` list, so the two agree by
+    // construction; this checks that the registry took one slot per entry.
+    assert_eq!(
+        registry.num_internal_circuits(),
+        initial_internal_circuits + InternalCircuitIndex::all(L::len()).count(),
+        "internal circuit count mismatch"
+    );
 
     Ok(registry)
 }

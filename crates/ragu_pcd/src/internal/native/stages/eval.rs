@@ -307,9 +307,7 @@ mod tests {
     #[test]
     fn stage_values_matches_wire_count() {
         fn check<const POLYS: usize>() {
-            assert_stage_values(
-                &Stage::<Pasta, R, { HEADER_SIZE }, AppHooks<POLYS>>::default(),
-            );
+            assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }, AppHooks<POLYS>>::default());
         }
         check::<0>();
         check::<1>();

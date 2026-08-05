@@ -67,7 +67,7 @@ impl<'pts, 'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> Walker<'pts
 }
 
 /// Loading circuit that loads the entire nested stage hierarchy. `L` is the
-/// application's poly count as a [`Len`](ragu_primitives::vec::Len) — the
+/// application's poly count as a [`Len`] — the
 /// only shape this circuit needs.
 pub struct Circuit<C: CurveAffine, R: Rank, L: Len> {
     _marker: PhantomData<(C, R, L)>,

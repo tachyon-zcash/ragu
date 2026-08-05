@@ -36,8 +36,12 @@ where
     /// wires the step can open, absorb, or carry in a header.
     ///
     /// The framework commits it; the commitment is a host-curve point the
-    /// native circuit cannot hold, so a step never handles one. The
-    /// polynomial's own rank need not be the application's.
+    /// native circuit cannot hold, so a step never handles one.
+    ///
+    /// The polynomial's own rank may be smaller than the application's: the
+    /// coefficients are re-wrapped at the application's rank, and the commitment
+    /// survives because both place coefficient $i$ against generator $i$. A
+    /// larger rank panics during proving.
     ///
     /// No commitment is refused for its value; a step that witnesses more
     /// polynomials than its layout allows is refused when the instance is
