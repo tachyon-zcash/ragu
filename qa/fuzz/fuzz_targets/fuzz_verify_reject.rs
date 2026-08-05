@@ -38,8 +38,8 @@ unsafe impl Sync for SyncApp {}
 static APP: LazyLock<SyncApp> = LazyLock::new(|| {
     let pasta = Pasta::baked();
     SyncApp(
-        ApplicationBuilder::<C, R, HEADER_SIZE>::new()
-            .finalize(pasta)
+        ApplicationBuilder::<C, R, HEADER_SIZE>::new(pasta)
+            .finalize()
             .expect("failed to create application"),
     )
 });
