@@ -12,7 +12,7 @@
 //!   stages holding the walk's inputs, the native stages besides those whose
 //!   contents must be fixed before a challenge is squeezed (see
 //!   [`native::stages::points`](crate::internal::native::stages::points)),
-//!   then the commitments of the polynomials the step witnessed, which the
+//!   the native challenges stage, then the commitments of the polynomials the step witnessed, which the
 //!   parent accumulates.
 //!
 //! A parent witnesses all of these in its `preamble` bridge stage. Its
@@ -53,7 +53,7 @@ use crate::internal::native::unified::Slot;
 
 /// The host-curve commitments the instance exports from the step's stages,
 /// in [`Write`] order; the witnessed polynomials' follow them.
-pub const NUM_STAGE_EXPORTS: usize = 14;
+pub const NUM_STAGE_EXPORTS: usize = 15;
 
 /// The host-curve commitments the instance of an application witnessing
 /// `polys` polynomials per step exports, in [`Write`] order.

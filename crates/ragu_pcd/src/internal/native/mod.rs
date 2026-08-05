@@ -98,6 +98,7 @@ impl Parameters for RevdotParameters {
 }
 
 pub mod stages {
+    pub mod challenges;
     pub mod eval;
     pub mod inner_error;
     pub mod outer_error;
@@ -110,6 +111,7 @@ pub mod circuits {
     pub mod bind_beta;
     pub mod bind_challenges;
     pub mod bind_endoscalar;
+    pub mod challenge_binding;
     pub mod compute_v;
     pub mod endoscaling_step;
     pub mod hashes_1;
@@ -130,6 +132,9 @@ pub enum InternalCircuitIndex {
     InnerCollapseCircuit,
     OuterCollapseCircuit,
     ComputeVCircuit,
+    /// The derived-challenge binding circuit (see
+    /// [`challenge_binding`](circuits::challenge_binding)).
+    ChallengeBindingCircuit,
     /// Nested challenge binding circuit at the given index (see
     /// [`bind_challenges`](circuits::bind_challenges)).
     BindChallengesCircuit(u32),
@@ -148,6 +153,7 @@ pub enum InternalCircuitIndex {
     OuterErrorStage,
     QueryStage,
     EvalStage,
+    ChallengesStage,
     PointsBindingStage,
     PointsChildrenStage,
     PointsRegistryWxStage,
@@ -158,6 +164,7 @@ pub enum InternalCircuitIndex {
     InnerErrorFinalStaged,
     OuterErrorFinalStaged,
     EvalFinalStaged,
+    ChallengesFinalStaged,
     PointsWalkFinalStaged,
 }
 
@@ -175,7 +182,7 @@ impl InternalCircuitIndex {
     /// application witnessing `polys` polynomials per step: one per entry of
     /// [`all`](Self::all).
     pub const fn num(polys: usize) -> usize {
-        22 + NUM_BINDERS + num_endoscaling_steps(polys)
+        25 + NUM_BINDERS + num_endoscaling_steps(polys)
     }
 
     /// All variants in canonical iteration order.
@@ -196,6 +203,7 @@ impl InternalCircuitIndex {
             Self::InnerCollapseCircuit,
             Self::OuterCollapseCircuit,
             Self::ComputeVCircuit,
+            Self::ChallengeBindingCircuit,
         ]
         .into_iter()
         .chain((0..NUM_BINDERS as u32).map(Self::BindChallengesCircuit))
@@ -207,6 +215,7 @@ impl InternalCircuitIndex {
             Self::OuterErrorStage,
             Self::QueryStage,
             Self::EvalStage,
+            Self::ChallengesStage,
             Self::PointsBindingStage,
             Self::PointsChildrenStage,
             Self::PointsRegistryWxStage,
@@ -216,6 +225,7 @@ impl InternalCircuitIndex {
             Self::InnerErrorFinalStaged,
             Self::OuterErrorFinalStaged,
             Self::EvalFinalStaged,
+            Self::ChallengesFinalStaged,
             Self::PointsWalkFinalStaged,
         ])
     }
@@ -243,6 +253,7 @@ pub struct InternalCircuitValues<T> {
     pub inner_collapse_circuit: T,
     pub outer_collapse_circuit: T,
     pub compute_v_circuit: T,
+    pub challenge_binding_circuit: T,
     pub bind_challenges_circuits: [T; NUM_BINDERS],
     pub bind_beta_circuit: T,
     pub bind_endoscalar_circuit: T,
@@ -253,6 +264,7 @@ pub struct InternalCircuitValues<T> {
     pub outer_error_stage: T,
     pub query_stage: T,
     pub eval_stage: T,
+    pub challenges_stage: T,
     pub points_binding_stage: T,
     pub points_children_stage: T,
     pub points_registry_wx_stage: T,
@@ -262,6 +274,7 @@ pub struct InternalCircuitValues<T> {
     pub inner_error_final_staged: T,
     pub outer_error_final_staged: T,
     pub eval_final_staged: T,
+    pub challenges_final_staged: T,
     pub points_walk_final_staged: T,
 }
 
@@ -275,6 +288,7 @@ impl<T> InternalCircuitValues<T> {
             InnerCollapseCircuit => &self.inner_collapse_circuit,
             OuterCollapseCircuit => &self.outer_collapse_circuit,
             ComputeVCircuit => &self.compute_v_circuit,
+            ChallengeBindingCircuit => &self.challenge_binding_circuit,
             BindChallengesCircuit(k) => &self.bind_challenges_circuits[k as usize],
             BindBetaCircuit => &self.bind_beta_circuit,
             BindEndoscalarCircuit => &self.bind_endoscalar_circuit,
@@ -284,6 +298,7 @@ impl<T> InternalCircuitValues<T> {
             OuterErrorStage => &self.outer_error_stage,
             QueryStage => &self.query_stage,
             EvalStage => &self.eval_stage,
+            ChallengesStage => &self.challenges_stage,
             PointsBindingStage => &self.points_binding_stage,
             PointsChildrenStage => &self.points_children_stage,
             PointsRegistryWxStage => &self.points_registry_wx_stage,
@@ -293,6 +308,7 @@ impl<T> InternalCircuitValues<T> {
             InnerErrorFinalStaged => &self.inner_error_final_staged,
             OuterErrorFinalStaged => &self.outer_error_final_staged,
             EvalFinalStaged => &self.eval_final_staged,
+            ChallengesFinalStaged => &self.challenges_final_staged,
             PointsWalkFinalStaged => &self.points_walk_final_staged,
         }
     }
@@ -341,6 +357,7 @@ impl<T> InternalCircuitValues<T> {
             inner_collapse_circuit: f(InnerCollapseCircuit)?,
             outer_collapse_circuit: f(OuterCollapseCircuit)?,
             compute_v_circuit: f(ComputeVCircuit)?,
+            challenge_binding_circuit: f(ChallengeBindingCircuit)?,
             bind_challenges_circuits: {
                 let mut out = [(); NUM_BINDERS].map(|()| None);
                 for (k, slot) in out.iter_mut().enumerate() {
@@ -358,6 +375,7 @@ impl<T> InternalCircuitValues<T> {
             outer_error_stage: f(OuterErrorStage)?,
             query_stage: f(QueryStage)?,
             eval_stage: f(EvalStage)?,
+            challenges_stage: f(ChallengesStage)?,
             points_binding_stage: f(PointsBindingStage)?,
             points_children_stage: f(PointsChildrenStage)?,
             points_registry_wx_stage: f(PointsRegistryWxStage)?,
@@ -367,6 +385,7 @@ impl<T> InternalCircuitValues<T> {
             inner_error_final_staged: f(InnerErrorFinalStaged)?,
             outer_error_final_staged: f(OuterErrorFinalStaged)?,
             eval_final_staged: f(EvalFinalStaged)?,
+            challenges_final_staged: f(ChallengesFinalStaged)?,
             points_walk_final_staged: f(PointsWalkFinalStaged)?,
         })
     }
@@ -382,6 +401,8 @@ pub enum RxIndex {
     InnerCollapse,
     OuterCollapse,
     ComputeV,
+    /// The derived-challenge binding circuit's rx polynomial.
+    ChallengeBinding,
     /// A nested challenge binding circuit's rx polynomial.
     BindChallenges(u32),
     /// The nested beta binding circuit's rx polynomial.
@@ -396,6 +417,8 @@ pub enum RxIndex {
     OuterError,
     Query,
     Eval,
+    /// The derived-challenge stage (see [`challenges`](stages::challenges)).
+    Challenges,
     /// The points stage holding the children's commitments that must match
     /// their native unified instances (see [`stages::points`]).
     PointsBinding,
@@ -422,7 +445,7 @@ impl RxIndex {
 
     /// [`num`](Self::num) for a native walk of `steps` steps.
     pub const fn num_with_steps(steps: usize) -> usize {
-        19 + NUM_BINDERS + steps
+        21 + NUM_BINDERS + steps
     }
 
     /// All variants in canonical order.
@@ -445,20 +468,22 @@ impl RxIndex {
     ///
     /// Panics if `i` is not below [`num_with_steps`](Self::num_with_steps).
     pub const fn nth(steps: usize, i: usize) -> Self {
-        const HEAD: [RxIndex; 6] = [
+        const HEAD: [RxIndex; 7] = [
             RxIndex::Application,
             RxIndex::Hashes1,
             RxIndex::Hashes2,
             RxIndex::InnerCollapse,
             RxIndex::OuterCollapse,
             RxIndex::ComputeV,
+            RxIndex::ChallengeBinding,
         ];
-        const TAIL: [RxIndex; 11] = [
+        const TAIL: [RxIndex; 12] = [
             RxIndex::Preamble,
             RxIndex::InnerError,
             RxIndex::OuterError,
             RxIndex::Query,
             RxIndex::Eval,
+            RxIndex::Challenges,
             RxIndex::PointsBinding,
             RxIndex::PointsChildren,
             RxIndex::PointsRegistryWx,
@@ -506,6 +531,7 @@ pub struct RxValues<T> {
     pub inner_collapse: T,
     pub outer_collapse: T,
     pub compute_v: T,
+    pub challenge_binding: T,
     pub bind_challenges: [T; NUM_BINDERS],
     pub bind_beta: T,
     pub bind_endoscalar: T,
@@ -516,6 +542,7 @@ pub struct RxValues<T> {
     pub outer_error: T,
     pub query: T,
     pub eval: T,
+    pub challenges: T,
     pub points_binding: T,
     pub points_children: T,
     pub points_registry_wx: T,
@@ -535,6 +562,7 @@ impl<T> RxValues<T> {
             InnerCollapse => &self.inner_collapse,
             OuterCollapse => &self.outer_collapse,
             ComputeV => &self.compute_v,
+            ChallengeBinding => &self.challenge_binding,
             BindChallenges(k) => &self.bind_challenges[k as usize],
             BindBeta => &self.bind_beta,
             BindEndoscalar => &self.bind_endoscalar,
@@ -544,6 +572,7 @@ impl<T> RxValues<T> {
             OuterError => &self.outer_error,
             Query => &self.query,
             Eval => &self.eval,
+            Challenges => &self.challenges,
             PointsBinding => &self.points_binding,
             PointsChildren => &self.points_children,
             PointsRegistryWx => &self.points_registry_wx,
@@ -592,6 +621,7 @@ impl<T> RxValues<T> {
             inner_collapse: f(InnerCollapse)?,
             outer_collapse: f(OuterCollapse)?,
             compute_v: f(ComputeV)?,
+            challenge_binding: f(ChallengeBinding)?,
             bind_challenges: {
                 let mut out = [(); NUM_BINDERS].map(|()| None);
                 for (k, slot) in out.iter_mut().enumerate() {
@@ -609,6 +639,7 @@ impl<T> RxValues<T> {
             outer_error: f(OuterError)?,
             query: f(Query)?,
             eval: f(Eval)?,
+            challenges: f(Challenges)?,
             points_binding: f(PointsBinding)?,
             points_children: f(PointsChildren)?,
             points_registry_wx: f(PointsRegistryWx)?,
@@ -744,6 +775,13 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: Hoo
             EvalStage => {
                 registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE, J>::mask()?)
             }
+            ChallengesStage => registry.register_bonding(stages::challenges::Stage::<
+                C,
+                R,
+                HEADER_SIZE,
+                J,
+                RevdotParameters,
+            >::mask()?),
             InnerErrorFinalStaged => registry.register_bonding(stages::inner_error::Stage::<
                 C,
                 R,
@@ -762,6 +800,13 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: Hoo
                 registry
                     .register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE, J>::final_mask()?)
             }
+            ChallengesFinalStaged => registry.register_bonding(stages::challenges::Stage::<
+                C,
+                R,
+                HEADER_SIZE,
+                J,
+                RevdotParameters,
+            >::final_mask()?),
             PointsBindingStage => {
                 registry.register_bonding(
                     <stages::points::BindingStage<C::NestedCurve> as StageExt<
@@ -846,6 +891,14 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: Hoo
                     HEADER_SIZE,
                     J,
                 >::new())?
+            }
+            ChallengeBindingCircuit => {
+                registry.register_internal_circuit(circuits::challenge_binding::Circuit::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                    J,
+                >::new(params))?
             }
             BindChallengesCircuit(k) => {
                 crate::with_binder!(k, C, R, HEADER_SIZE, J, params, |circuit| {

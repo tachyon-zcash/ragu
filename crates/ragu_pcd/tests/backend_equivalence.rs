@@ -1132,6 +1132,11 @@ mod proof_equivalence {
                 bridge_query_commitment: _,
                 bridge_eval_commitment: _,
                 application_poly_queries: _,
+                application_challenges: _,
+                native_challenge_binding_rx: _,
+                native_challenges_rx: _,
+                native_challenge_binding_commitment: _,
+                native_challenges_commitment: _,
                 witness_polys: _,
                 witness_poly_commitments: _,
             } = self;
@@ -1238,6 +1243,15 @@ mod proof_equivalence {
                     .any(|(a, b)| a.com != b.com || a.x != b.x || a.y != b.y)
             {
                 return Some("poly-queries");
+            }
+            if self.application_challenges.len() != other.application_challenges.len()
+                || self
+                    .application_challenges
+                    .iter()
+                    .zip(&other.application_challenges)
+                    .any(|(a, b)| a.inputs != b.inputs || a.challenge != b.challenge)
+            {
+                return Some("derived challenges");
             }
             if self.native_commitment(native::RxComponent::AbA)
                 != other.native_commitment(native::RxComponent::AbA)

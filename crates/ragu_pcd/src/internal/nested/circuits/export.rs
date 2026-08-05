@@ -134,6 +134,7 @@ impl<C: Affine, R: Rank, L: Len> MultiStageCircuit<C::Base, R> for Circuit<C, R,
             &stages.s_prime.native_points_registry_wx,
             &stages.ab.native_points_ab,
             &stages.f.native_points_f,
+            &stages.preamble.native_challenges,
         ];
         // Then the commitments of the polynomials this step witnessed, which
         // the eval stage holds and a parent accumulates.

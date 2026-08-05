@@ -1212,6 +1212,7 @@ impl<
                         builder.native_points_registry_wx_commitment(),
                         builder.native_points_ab_commitment(),
                         builder.native_points_f_commitment(),
+                        builder.native_challenges_commitment(),
                     ]
                     .into_iter()
                     .chain(builder.witness_poly_commitments().iter().copied())

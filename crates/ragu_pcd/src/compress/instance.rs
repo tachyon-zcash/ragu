@@ -430,6 +430,7 @@ impl<C: Cycle> Instance<C> {
                 self.native_commitment(Rx(PointsRegistryWx)),
                 self.native_commitment(Rx(PointsAb)),
                 self.native_commitment(Rx(PointsF)),
+                self.native_commitment(Rx(Challenges)),
             ]
             .to_vec(),
             coverage: Default::default(),
@@ -455,6 +456,7 @@ impl<C: Cycle> Instance<C> {
                     output_header,
                     witness_polys: &[],
                     poly_queries: &[],
+                    challenges: &[],
                     circuit_id: self.circuit_id,
                     unified: &unified,
                 },

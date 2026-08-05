@@ -132,6 +132,10 @@ pub enum NativeRx {
     OuterCollapse,
     /// The `compute_v` circuit's rx polynomial.
     ComputeV,
+    /// The `challenge_binding` circuit's rx polynomial.
+    ChallengeBinding,
+    /// The derived-challenges stage's rx polynomial.
+    Challenges,
     /// A `bind_challenges` circuit's rx polynomial.
     BindChallenges(u32),
     /// The `bind_beta` circuit's rx polynomial.
@@ -199,6 +203,8 @@ impl NativeRx {
             I::InnerCollapse => Self::InnerCollapse,
             I::OuterCollapse => Self::OuterCollapse,
             I::ComputeV => Self::ComputeV,
+            I::ChallengeBinding => Self::ChallengeBinding,
+            I::Challenges => Self::Challenges,
             I::BindChallenges(k) => Self::BindChallenges(k),
             I::BindBeta => Self::BindBeta,
             I::BindEndoscalar => Self::BindEndoscalar,

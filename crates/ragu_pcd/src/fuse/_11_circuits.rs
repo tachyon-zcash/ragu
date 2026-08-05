@@ -169,6 +169,19 @@ impl<
             &mut *rng,
         )?;
 
+        let (challenge_binding_trace, unified) =
+            native::circuits::challenge_binding::Circuit::<C, R, HEADER_SIZE, J>::new(self.params)
+                .trace(native::circuits::challenge_binding::Witness {
+                    unified,
+                    preamble_witness,
+                })?
+                .into_parts();
+        let challenge_binding_rx = self.native_registry.assemble(
+            &challenge_binding_trace,
+            native::InternalCircuitIndex::ChallengeBindingCircuit.circuit_index(polys),
+            &mut *rng,
+        )?;
+
         // Native circuits binding the nested challenge stage's claimed commitment.
         let mut unified = unified;
         let mut bind_challenges_rxs = Vec::with_capacity(native::NUM_BINDERS);
@@ -241,6 +254,7 @@ impl<
         unified.assert_complete();
 
         builder.set_native_compute_v_rx(compute_v_rx);
+        builder.set_native_challenge_binding_rx(challenge_binding_rx);
         builder.set_native_bind_challenges_rxs(bind_challenges_rxs);
         builder.set_native_bind_beta_rx(bind_beta_rx);
         builder.set_native_bind_endoscalar_rx(bind_endoscalar_rx);
@@ -299,6 +313,7 @@ impl<
                 builder.native_points_registry_wx_commitment(),
                 builder.native_points_ab_commitment(),
                 builder.native_points_f_commitment(),
+                builder.native_challenges_commitment(),
             ]
             .into_iter()
             .chain(builder.witness_poly_commitments().iter().copied())

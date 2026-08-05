@@ -64,6 +64,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, B: crate::Selec
                 FrameworkAux {
                     witness_polys: witnessed,
                     poly_queries,
+                    challenges,
                 },
         } = aux;
 
@@ -79,6 +80,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, B: crate::Selec
         builder.set_native_application_rx(rx);
         builder.set_application_polys(witness_polys);
         builder.set_application_poly_queries(poly_queries);
+        builder.set_application_challenges(challenges);
 
         Ok((left_proof, right_proof, output_data, step_aux))
     }

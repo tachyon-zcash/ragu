@@ -28,11 +28,12 @@ use crate::{
 
 /// Number of curve points in this stage for an application witnessing
 /// `polys` polynomials per step: the native preamble's commitment and those
-/// of the two native points stages committed before $w$, then for each child
+/// of the native challenges stage and the two native points stages committed
+/// before $w$, then for each child
 /// every native rx commitment, its $a$, $b$, `registry_xy` and $P$, and its
 /// witnessed polynomials' commitments.
 pub const fn num_points(polys: usize) -> usize {
-    3 + 2 * child_endoscaling_points(polys)
+    4 + 2 * child_endoscaling_points(polys)
 }
 
 /// Witness data for a single child proof in the preamble bridge stage.
@@ -59,6 +60,8 @@ pub struct ChildWitness<C: Affine, L: Len> {
     pub outer_collapse: C,
     /// Commitment from the child's compute_v circuit.
     pub compute_v: C,
+    /// Commitment from the child's derived-challenge binding circuit.
+    pub challenge_binding: C,
     /// Commitments from the child's nested challenge binding circuits.
     pub bind_challenges: [C; NUM_BINDERS],
     /// Commitment from the child's nested beta binding circuit.
@@ -98,6 +101,8 @@ pub struct ChildWitness<C: Affine, L: Len> {
     pub stashed_points_ab: C,
     /// Stashed commitment from the child's native `f` points stage.
     pub stashed_points_f: C,
+    /// Stashed commitment from the child's native challenges stage.
+    pub stashed_challenges: C,
     /// Stashed witness-poly commitments from the child, which `_10_p`
     /// accumulates after the child's $P$.
     pub stashed_witness_polys: FixedVec<C, L>,
@@ -119,6 +124,7 @@ impl<C: Affine, L: Len> Clone for ChildWitness<C, L> {
             inner_collapse: self.inner_collapse,
             outer_collapse: self.outer_collapse,
             compute_v: self.compute_v,
+            challenge_binding: self.challenge_binding,
             bind_challenges: self.bind_challenges,
             bind_beta: self.bind_beta,
             bind_endoscalar: self.bind_endoscalar,
@@ -138,6 +144,7 @@ impl<C: Affine, L: Len> Clone for ChildWitness<C, L> {
             stashed_points_registry_wx: self.stashed_points_registry_wx,
             stashed_points_ab: self.stashed_points_ab,
             stashed_points_f: self.stashed_points_f,
+            stashed_challenges: self.stashed_challenges,
             stashed_witness_polys: self.stashed_witness_polys.clone(),
             nested: self.nested,
         }
@@ -173,6 +180,7 @@ impl<C: Affine, L: Len> ChildWitness<C, L> {
             inner_collapse: proof.native_rx_commitment(RxIndex::InnerCollapse),
             outer_collapse: proof.native_rx_commitment(RxIndex::OuterCollapse),
             compute_v: proof.native_rx_commitment(RxIndex::ComputeV),
+            challenge_binding: proof.native_rx_commitment(RxIndex::ChallengeBinding),
             bind_challenges: core::array::from_fn(|k| {
                 proof.native_rx_commitment(RxIndex::BindChallenges(k as u32))
             }),
@@ -196,6 +204,7 @@ impl<C: Affine, L: Len> ChildWitness<C, L> {
             stashed_points_registry_wx: proof.native_rx_commitment(RxIndex::PointsRegistryWx),
             stashed_points_ab: proof.native_rx_commitment(RxIndex::PointsAb),
             stashed_points_f: proof.native_rx_commitment(RxIndex::PointsF),
+            stashed_challenges: proof.native_rx_commitment(RxIndex::Challenges),
             stashed_witness_polys: FixedVec::try_from(proof.witness_poly_commitments().to_vec())?,
             nested: NestedValues {
                 c: instance.c,
@@ -218,6 +227,9 @@ pub struct Witness<C: Affine, L: Len> {
     /// Commitment of the native points children stage, fixed here before
     /// $w$ is squeezed.
     pub native_points_children: C,
+    /// Commitment of the native challenges stage, fixed here before $w$ is
+    /// squeezed.
+    pub native_challenges: C,
     /// Witness data from the left child proof.
     pub left: ChildWitness<C, L>,
     /// Witness data from the right child proof.
@@ -246,6 +258,9 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, L: Len> {
     /// Point commitment from the child's compute_v circuit.
     #[ragu(gadget)]
     pub compute_v: Point<'dr, D, C>,
+    /// Point commitment from the child's derived-challenge binding circuit.
+    #[ragu(gadget)]
+    pub challenge_binding: Point<'dr, D, C>,
     /// Point commitments from the child's nested challenge binding circuits.
     #[ragu(gadget)]
     pub bind_challenges: FixedVec<Point<'dr, D, C>, ConstLen<NUM_BINDERS>>,
@@ -304,6 +319,9 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, L: Len> {
     /// Stashed commitment from the child's native `f` points stage.
     #[ragu(gadget)]
     pub stashed_points_f: Point<'dr, D, C>,
+    /// Stashed commitment from the child's native challenges stage.
+    #[ragu(gadget)]
+    pub stashed_challenges: Point<'dr, D, C>,
     /// Stashed witness-poly commitments from the child, after the named
     /// points — the order `_10_p` accumulates and the child exports.
     #[ragu(gadget)]
@@ -355,6 +373,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, L: Len> ChildOutput<'dr, D, C,
                     self.stashed_points_registry_wx.clone(),
                     self.stashed_points_ab.clone(),
                     self.stashed_points_f.clone(),
+                    self.stashed_challenges.clone(),
                 ]
                 .into_iter()
                 .chain(self.stashed_witness_polys.iter().cloned())
@@ -379,6 +398,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, L: Len> core::ops::Index<RxInd
             InnerCollapse => &self.inner_collapse,
             OuterCollapse => &self.outer_collapse,
             ComputeV => &self.compute_v,
+            ChallengeBinding => &self.challenge_binding,
             BindChallenges(k) => &self.bind_challenges[k as usize],
             BindBeta => &self.bind_beta,
             BindEndoscalar => &self.bind_endoscalar,
@@ -388,6 +408,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, L: Len> core::ops::Index<RxInd
             OuterError => &self.stashed_outer_error,
             Query => &self.stashed_query,
             Eval => &self.stashed_eval,
+            Challenges => &self.stashed_challenges,
             PointsBinding => &self.stashed_points_binding,
             PointsChildren => &self.stashed_points_children,
             PointsRegistryWx => &self.stashed_points_registry_wx,
@@ -407,6 +428,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, L: Len> ChildOutput<'dr, D, C,
             inner_collapse: Point::alloc(dr, witness.as_ref().map(|w| w.inner_collapse))?,
             outer_collapse: Point::alloc(dr, witness.as_ref().map(|w| w.outer_collapse))?,
             compute_v: Point::alloc(dr, witness.as_ref().map(|w| w.compute_v))?,
+            challenge_binding: Point::alloc(dr, witness.as_ref().map(|w| w.challenge_binding))?,
             bind_challenges: FixedVec::try_from_fn(|k| {
                 Point::alloc(dr, witness.as_ref().map(|w| w.bind_challenges[k]))
             })?,
@@ -439,6 +461,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, L: Len> ChildOutput<'dr, D, C,
             )?,
             stashed_points_ab: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_points_ab))?,
             stashed_points_f: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_points_f))?,
+            stashed_challenges: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_challenges))?,
             stashed_witness_polys: FixedVec::try_from_fn(|i| {
                 Point::alloc(dr, witness.as_ref().map(|w| w.stashed_witness_polys[i]))
             })?,
@@ -472,6 +495,9 @@ pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, L: Len> {
     /// Point commitment from the native points children stage.
     #[ragu(gadget)]
     pub native_points_children: Point<'dr, D, C>,
+    /// Point commitment from the native challenges stage.
+    #[ragu(gadget)]
+    pub native_challenges: Point<'dr, D, C>,
     /// Output gadget for the left child proof.
     #[ragu(gadget)]
     pub left: ChildOutput<'dr, D, C, L>,
@@ -520,6 +546,7 @@ impl<C: Affine, R: Rank, L: Len> ragu_circuits::staging::Stage<C::Base, R> for S
                 dr,
                 witness.as_ref().map(|w| w.native_points_children),
             )?,
+            native_challenges: Point::alloc(dr, witness.as_ref().map(|w| w.native_challenges))?,
             left: ChildOutput::alloc(dr, witness.as_ref().map(|w| &w.left))?,
             right: ChildOutput::alloc(dr, witness.as_ref().map(|w| &w.right))?,
         })

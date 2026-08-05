@@ -54,6 +54,7 @@ use crate::{
     framework_hooks::HookConfig,
     header::Header,
     internal::{
+        challenge::challenge_of,
         claims, ky,
         native::{self as native_internal, RxComponent, claims as native_claims},
         nested::{
@@ -406,6 +407,13 @@ impl<
         // `commitments_claim` holds the carried commitments to these very
         // polynomials, so resolving one is finding the polynomial evaluated
         // here.
+        // Rejects a derived challenge that does not re-derive from its
+        // recorded inputs (a root proof's challenges are not yet bound).
+        let derived_challenges = pcd.proof().application_challenges().iter().all(|carried| {
+            challenge_of::<C>(self.params, &carried.inputs)
+                .is_ok_and(|derived| derived == carried.challenge)
+        });
+
         let poly_query_claims = {
             let proof = pcd.proof();
             proof
@@ -431,7 +439,8 @@ impl<
             && transcript_claim
             && ab_bridge_claim
             && mesh_claim
-            && poly_query_claims)
+            && poly_query_claims
+            && derived_challenges)
     }
 
     /// The native mesh claim: see [`verify`](Self::verify).

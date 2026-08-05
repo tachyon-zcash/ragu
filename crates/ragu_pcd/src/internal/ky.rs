@@ -17,12 +17,20 @@ use udon::field::Field;
 use super::{
     native::{
         self,
-        stages::preamble::{ProofInputs, encode_output_header},
+        stages::{
+            challenges::{alloc_challenges, alloc_derived},
+            preamble::{ProofInputs, encode_output_header},
+        },
         unified as native_unified,
     },
     nested::{self, unified as nested_unified},
 };
-use crate::{Pcd, Proof, framework_hooks::HookConfig, header::Header, proof::PolyQuery};
+use crate::{
+    Pcd, Proof,
+    framework_hooks::HookConfig,
+    header::Header,
+    proof::{DerivedChallenge, PolyQuery},
+};
 
 /// The targets of one proof's native revdot claims at one $y$.
 ///
@@ -120,11 +128,16 @@ pub fn native_ky<
     Emulator::emulate_wireless((pcd.proof(), pcd.data().clone(), y), |dr, witness| {
         let (proof, data, y) = witness.cast();
         let y = Element::alloc(dr, &mut (), y)?;
-        let proof_inputs =
-            ProofInputs::<_, C, HEADER_SIZE, J>::alloc_for_verify::<R, H>(dr, proof, data)?;
+        let proof_inputs = ProofInputs::<_, C, HEADER_SIZE, J>::alloc_for_verify::<R, H>(
+            dr,
+            Maybe::clone(&proof),
+            data,
+        )?;
+        // Allocated through the same helper the challenge stage uses.
+        let challenges = alloc_challenges::<_, C, R, J>(dr, proof)?;
 
         let (unified, unified_bridge) = proof_inputs.unified_ky_values(dr, &y)?;
-        let application = proof_inputs.application_ky(dr, &y)?;
+        let application = proof_inputs.application_ky(dr, &y, &challenges)?;
         Ok(NativeKy {
             c: None,
             unified: *unified.value().take(),
@@ -176,6 +189,8 @@ pub struct NativeParts<'a, C: Cycle> {
     pub witness_polys: &'a [C::HostCurve],
     /// The step's poly-queries.
     pub poly_queries: &'a [PolyQuery<C::HostCurve>],
+    /// The step's derived challenges.
+    pub challenges: &'a [DerivedChallenge<C::CircuitField>],
     pub circuit_id: CircuitIndex,
     pub unified: &'a native_unified::Instance<C>,
 }
@@ -199,9 +214,10 @@ pub fn native_ky_of<C: Cycle, const HEADER_SIZE: usize, J: HookConfig>(
             parts.as_ref().map(|p| p.circuit_id.omega_j()),
             parts.as_ref().map(|p| p.unified),
         )?;
+        let challenges = alloc_derived::<_, J>(dr, parts.as_ref().map(|p| p.challenges))?;
 
         let (unified, unified_bridge) = proof_inputs.unified_ky_values(dr, &y)?;
-        let application = proof_inputs.application_ky(dr, &y)?;
+        let application = proof_inputs.application_ky(dr, &y, &challenges)?;
         Ok(NativeKy {
             c: None,
             unified: *unified.value().take(),

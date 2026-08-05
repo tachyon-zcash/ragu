@@ -18,7 +18,7 @@ use ragu_circuits::{
 use ragu_core::{Cycle, Result};
 use ragu_primitives::vec::{FixedVec, Len};
 
-use super::{Cached, PolyQuery, Proof};
+use super::{Cached, DerivedChallenge, PolyQuery, Proof};
 use crate::{framework_hooks::HookConfig, internal::nested};
 
 /// Produces `pub(crate) fn $name(&mut self, v: $ty)` that sets an `Option`
@@ -237,6 +237,8 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, J: HookConfig, B: Bac
     native_inner_collapse_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_outer_collapse_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_compute_v_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_challenge_binding_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_challenges_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_bind_challenges_rxs: Option<Vec<sparse::Polynomial<C::CircuitField, R>>>,
     native_bind_beta_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_bind_endoscalar_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
@@ -342,6 +344,8 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, J: HookConfig, B: Bac
     native_inner_collapse_commitment: OnceCell<C::HostCurve>,
     native_outer_collapse_commitment: OnceCell<C::HostCurve>,
     native_compute_v_commitment: OnceCell<C::HostCurve>,
+    native_challenge_binding_commitment: OnceCell<C::HostCurve>,
+    native_challenges_commitment: OnceCell<C::HostCurve>,
     native_bind_challenges_commitments: OnceCell<Vec<C::HostCurve>>,
     native_bind_beta_commitment: OnceCell<C::HostCurve>,
     native_bind_endoscalar_commitment: OnceCell<C::HostCurve>,
@@ -362,6 +366,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, J: HookConfig, B: Bac
     // is what fills them to the layout, and `Proof::has_shape` reports a
     // mismatch where a proof is consumed.
     application_poly_queries: Option<Vec<PolyQuery<C::HostCurve>>>,
+    application_challenges: Option<Vec<DerivedChallenge<C::CircuitField>>>,
     witness_polys: Option<Vec<sparse::Polynomial<C::CircuitField, R>>>,
     /// Derived from [`witness_polys`](Self::witness_polys) on first access,
     /// like every other commitment cache here.
@@ -394,6 +399,8 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig, B: Backend> ProofBuilder<'params
             native_inner_collapse_rx: None,
             native_outer_collapse_rx: None,
             native_compute_v_rx: None,
+            native_challenge_binding_rx: None,
+            native_challenges_rx: None,
             native_bind_challenges_rxs: None,
             native_bind_beta_rx: None,
             native_bind_endoscalar_rx: None,
@@ -468,6 +475,8 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig, B: Backend> ProofBuilder<'params
             native_inner_collapse_commitment: OnceCell::new(),
             native_outer_collapse_commitment: OnceCell::new(),
             native_compute_v_commitment: OnceCell::new(),
+            native_challenge_binding_commitment: OnceCell::new(),
+            native_challenges_commitment: OnceCell::new(),
             native_bind_challenges_commitments: OnceCell::new(),
             native_bind_beta_commitment: OnceCell::new(),
             native_bind_endoscalar_commitment: OnceCell::new(),
@@ -480,6 +489,7 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig, B: Backend> ProofBuilder<'params
             native_points_walk_commitment: OnceCell::new(),
             bridge_ab_commitment: OnceCell::new(),
             application_poly_queries: None,
+            application_challenges: None,
             witness_polys: None,
             witness_poly_commitments: OnceCell::new(),
         }
@@ -509,6 +519,8 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig, B: Backend> ProofBuilder<'params
     native_setter!(set_native_inner_collapse_rx, native_inner_collapse_rx);
     native_setter!(set_native_outer_collapse_rx, native_outer_collapse_rx);
     native_setter!(set_native_compute_v_rx, native_compute_v_rx);
+    native_setter!(set_native_challenge_binding_rx, native_challenge_binding_rx);
+    native_setter!(set_native_challenges_rx, native_challenges_rx);
     setter!(
         set_native_bind_challenges_rxs,
         native_bind_challenges_rxs,
@@ -706,6 +718,18 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig, B: Backend> ProofBuilder<'params
         native_compute_v_commitment,
         native_compute_v_rx
     );
+    lazy_commitment!(
+        native,
+        native_challenge_binding_commitment,
+        native_challenge_binding_commitment,
+        native_challenge_binding_rx
+    );
+    lazy_commitment!(
+        native,
+        native_challenges_commitment,
+        native_challenges_commitment,
+        native_challenges_rx
+    );
 
     explicit_commitment_getter!(native_a_commitment, native_a_commitment, set_native_a_poly);
     explicit_commitment_getter!(native_b_commitment, native_b_commitment, set_native_b_poly);
@@ -812,6 +836,12 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig, B: Backend> ProofBuilder<'params
                 .collect()
         })
     }
+
+    setter!(
+        set_application_challenges,
+        application_challenges,
+        Vec<DerivedChallenge<C::CircuitField>>
+    );
 
     setter!(
         set_application_poly_queries,
@@ -1049,6 +1079,8 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig, B: Backend> ProofBuilder<'params
         self.native_inner_collapse_commitment();
         self.native_outer_collapse_commitment();
         self.native_compute_v_commitment();
+        self.native_challenge_binding_commitment();
+        self.native_challenges_commitment();
         self.native_bind_challenges_commitments();
         self.native_bind_beta_commitment();
         self.native_bind_endoscalar_commitment();
@@ -1117,6 +1149,8 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig, B: Backend> ProofBuilder<'params
             native_inner_collapse_rx: take!(native_inner_collapse_rx),
             native_outer_collapse_rx: take!(native_outer_collapse_rx),
             native_compute_v_rx: take!(native_compute_v_rx),
+            native_challenge_binding_rx: take!(native_challenge_binding_rx),
+            native_challenges_rx: take!(native_challenges_rx),
             native_bind_challenges_rxs: take!(native_bind_challenges_rxs),
             native_bind_beta_rx: take!(native_bind_beta_rx),
             native_bind_endoscalar_rx: take!(native_bind_endoscalar_rx),
@@ -1204,6 +1238,8 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig, B: Backend> ProofBuilder<'params
             native_inner_collapse_commitment: cached!(native_inner_collapse_commitment),
             native_outer_collapse_commitment: cached!(native_outer_collapse_commitment),
             native_compute_v_commitment: cached!(native_compute_v_commitment),
+            native_challenge_binding_commitment: cached!(native_challenge_binding_commitment),
+            native_challenges_commitment: cached!(native_challenges_commitment),
             native_bind_challenges_commitments: self
                 .native_bind_challenges_commitments
                 .take()
@@ -1229,6 +1265,7 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig, B: Backend> ProofBuilder<'params
 
             witness_poly_commitments: cached!(witness_poly_commitments),
             application_poly_queries: take!(application_poly_queries),
+            application_challenges: take!(application_challenges),
             witness_polys: take!(witness_polys),
         })
     }

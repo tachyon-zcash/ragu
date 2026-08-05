@@ -67,6 +67,22 @@ impl<
 
         builder.set_native_preamble_rx(rx);
 
+        // The derived challenges are their own stage, below `outer_error`, and
+        // take the same witness the preamble does — they are a different
+        // region of the same children's instances, not different data. The
+        // preamble bridge carries its commitment, so it is fixed before $w$.
+        let challenges_rx = native::stages::challenges::Stage::<
+            C,
+            R,
+            HEADER_SIZE,
+            J,
+            native::RevdotParameters,
+        >::rx(
+            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
+            &preamble_witness,
+        )?;
+        builder.set_native_challenges_rx(challenges_rx);
+
         Ok(preamble_witness)
     }
 
@@ -81,6 +97,7 @@ impl<
             native_preamble: builder.native_preamble_commitment(),
             native_points_binding: builder.native_points_binding_commitment(),
             native_points_children: builder.native_points_children_commitment(),
+            native_challenges: builder.native_challenges_commitment(),
             left: nested::stages::preamble::ChildWitness::from_proof(left)?,
             right: nested::stages::preamble::ChildWitness::from_proof(right)?,
         };

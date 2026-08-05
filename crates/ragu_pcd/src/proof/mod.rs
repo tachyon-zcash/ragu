@@ -57,17 +57,18 @@ use ragu_circuits::{
     registry::CircuitIndex,
     staging::{MultiStage, StageExt},
 };
-use ragu_core::{Cycle, Result};
+use ragu_core::{Cycle, FixedGenerators as _, Result};
 use ragu_primitives::{
     extract_endoscalar, lift_endoscalar,
     vec::{FixedVec, Len},
 };
-use udon::field::Field;
+use udon::{curve::Affine as _, field::Field};
 
 use crate::{
     framework_hooks::{HookConfig, HookLayout},
     header::Header,
     internal::{
+        challenge::challenge_of,
         endoscalar::EndoscalarStage,
         native::{
             self, RxComponent, RxIndex,
@@ -138,6 +139,17 @@ pub struct PolyQuery<Curve: udon::curve::Affine> {
     pub y: Curve::Scalar,
 }
 
+/// A derived Fiat–Shamir challenge as a proof carries it. Its wire form is
+/// [`instance::Challenge`](crate::instance::Challenge).
+#[derive(Clone, Debug)]
+pub struct DerivedChallenge<F> {
+    /// What the derivation absorbed: `challenge_width` elements,
+    /// sentinel-padded.
+    pub inputs: Vec<F>,
+    /// The challenge, hashed from [`inputs`](Self::inputs).
+    pub challenge: F,
+}
+
 /// The Horner fold of `polys` under `beta`, the first weighted highest: the
 /// batch polynomial whose commitment the endoscaling walk over the
 /// polynomials' commitments computes.
@@ -206,6 +218,9 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) native_inner_collapse_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_outer_collapse_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_compute_v_rx: sparse::Polynomial<C::CircuitField, R>,
+    pub(crate) native_challenge_binding_rx: sparse::Polynomial<C::CircuitField, R>,
+    /// The derived-challenge stage's rx, below `outer_error`.
+    pub(crate) native_challenges_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_bind_challenges_rxs: Vec<sparse::Polynomial<C::CircuitField, R>>,
     pub(crate) native_bind_beta_rx: sparse::Polynomial<C::CircuitField, R>,
     // The native endoscaling walk over the nested batch's commitments: the
@@ -316,6 +331,8 @@ pub struct Proof<C: Cycle, R: Rank> {
     native_inner_collapse_commitment: Cached<C::HostCurve>,
     native_outer_collapse_commitment: Cached<C::HostCurve>,
     native_compute_v_commitment: Cached<C::HostCurve>,
+    native_challenge_binding_commitment: Cached<C::HostCurve>,
+    native_challenges_commitment: Cached<C::HostCurve>,
     native_bind_challenges_commitments: Vec<Cached<C::HostCurve>>,
     native_bind_beta_commitment: Cached<C::HostCurve>,
     native_bind_endoscalar_commitment: Cached<C::HostCurve>,
@@ -342,6 +359,9 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// Padded to the application's layout, and bound to $k(Y)$. Readers go
     /// through [`application_poly_queries`](Self::application_poly_queries).
     pub(crate) application_poly_queries: Vec<PolyQuery<C::HostCurve>>,
+    /// Crate-visible for the same reason as
+    /// [`application_poly_queries`](Self::application_poly_queries).
+    pub(crate) application_challenges: Vec<DerivedChallenge<C::CircuitField>>,
 
     /// The step's witnessed polynomials, carried for one fuse level.
     pub(crate) witness_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
@@ -365,6 +385,8 @@ impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
             InnerCollapse => &self.native_inner_collapse_rx,
             OuterCollapse => &self.native_outer_collapse_rx,
             ComputeV => &self.native_compute_v_rx,
+            ChallengeBinding => &self.native_challenge_binding_rx,
+            Challenges => &self.native_challenges_rx,
             BindChallenges(k) => &self.native_bind_challenges_rxs[k as usize],
             BindBeta => &self.native_bind_beta_rx,
             BindEndoscalar => &self.native_bind_endoscalar_rx,
@@ -530,6 +552,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 self.native_rx_commitment(RxIndex::PointsRegistryWx),
                 self.native_rx_commitment(RxIndex::PointsAb),
                 self.native_rx_commitment(RxIndex::PointsF),
+                self.native_rx_commitment(RxIndex::Challenges),
             ]
             .into_iter()
             .chain(self.witness_poly_commitments().iter().copied())
@@ -578,6 +601,15 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         self.application_poly_queries.len() == layout.poly_queries
             && self.witness_polys.len() == layout.witness_polys
             && self.witness_poly_commitments.0.len() == layout.witness_polys
+            && self.application_challenges.len() == layout.challenge_calls
+            && self
+                .application_challenges
+                .iter()
+                .all(|derived| derived.inputs.len() == layout.challenge_width)
+    }
+
+    pub(crate) fn application_challenges(&self) -> &[DerivedChallenge<C::CircuitField>] {
+        &self.application_challenges
     }
 
     pub(crate) fn witness_polys(&self) -> &[sparse::Polynomial<C::CircuitField, R>] {
@@ -656,6 +688,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             InnerCollapse => self.native_inner_collapse_commitment.0,
             OuterCollapse => self.native_outer_collapse_commitment.0,
             ComputeV => self.native_compute_v_commitment.0,
+            ChallengeBinding => self.native_challenge_binding_commitment.0,
+            Challenges => self.native_challenges_commitment.0,
             BindChallenges(k) => self.native_bind_challenges_commitments[k as usize].0,
             BindBeta => self.native_bind_beta_commitment.0,
             BindEndoscalar => self.native_bind_endoscalar_commitment.0,
@@ -1129,6 +1163,25 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, B: crate::Selec
             };
             J::PolyQueries::len()
         ]);
+        // No challenges derived: every position holds the all-sentinel inputs
+        // the adapter's own padding would have pinned, and their honest
+        // challenge.
+        let challenge_inputs = vec![
+            C::nested_generators(self.params).g()[0]
+                .coordinates()
+                .expect("a fixed generator is not the identity")
+                .0;
+            self.hook_layout().challenge_width
+        ];
+        let padded_challenge = challenge_of::<C>(self.params, &challenge_inputs)
+            .expect("the challenge sponge runs on this application's own parameters");
+        builder.set_application_challenges(vec![
+            DerivedChallenge {
+                inputs: challenge_inputs,
+                challenge: padded_challenge,
+            };
+            J::ChallengeDerivations::len()
+        ]);
 
         // Native rx polynomials (all trivial ones)
         builder.set_native_application_rx(ones_host.clone());
@@ -1161,6 +1214,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, B: crate::Selec
         builder.set_native_inner_collapse_rx(ones_host.clone());
         builder.set_native_outer_collapse_rx(ones_host.clone());
         builder.set_native_compute_v_rx(ones_host.clone());
+        builder.set_native_challenge_binding_rx(ones_host.clone());
+        builder.set_native_challenges_rx(ones_host.clone());
         builder.set_native_bind_challenges_rxs(vec![ones_host.clone(); native::NUM_BINDERS]);
         builder.set_native_bind_beta_rx(ones_host.clone());
         builder.set_native_bind_endoscalar_rx(ones_host.clone());
@@ -1401,6 +1456,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, B: crate::Selec
                 inner_collapse: host_commitment,
                 outer_collapse: host_commitment,
                 compute_v: host_commitment,
+                challenge_binding: host_commitment,
                 bind_challenges: [host_commitment; native::NUM_BINDERS],
                 bind_beta: host_commitment,
                 bind_endoscalar: host_commitment,
@@ -1420,6 +1476,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, B: crate::Selec
                 stashed_points_registry_wx: host_commitment,
                 stashed_points_ab: host_commitment,
                 stashed_points_f: host_commitment,
+                stashed_challenges: host_commitment,
                 stashed_witness_polys: FixedVec::from_fn(|_| padding_com),
                 // What a parent will read off this proof as its nested
                 // instance scalars: a trivial "child" is this proof itself.
@@ -1437,6 +1494,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, B: crate::Selec
                     native_preamble: host_commitment,
                     native_points_binding: builder.native_points_binding_commitment(),
                     native_points_children: builder.native_points_children_commitment(),
+                    native_challenges: builder.native_challenges_commitment(),
                     left: trivial_child_witness.clone(),
                     right: trivial_child_witness,
                 },

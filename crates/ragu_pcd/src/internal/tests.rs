@@ -70,6 +70,8 @@ type OuterError = outer_error::Stage<Pasta, R, HEADER_SIZE, NoHooks, RevdotParam
 type InnerError = inner_error::Stage<Pasta, R, HEADER_SIZE, NoHooks, RevdotParameters>;
 type Query = query::Stage<Pasta, R, HEADER_SIZE, NoHooks>;
 type Eval = eval::Stage<Pasta, R, HEADER_SIZE, NoHooks>;
+type Challenges =
+    native::stages::challenges::Stage<Pasta, R, HEADER_SIZE, NoHooks, RevdotParameters>;
 type NestedCurve = <Pasta as ragu_core::Cycle>::NestedCurve;
 type PointsBinding = native::stages::points::BindingStage<NestedCurve>;
 type PointsChildren = native::stages::points::ChildrenStage<NestedCurve, P0>;
@@ -131,6 +133,14 @@ fn try_internal_circuit_counts(variant: InternalCircuitIndex) -> Result<(usize, 
             HEADER_SIZE,
             NoHooks,
         >::new()),
+        InternalCircuitIndex::ChallengeBindingCircuit => {
+            counts(native::circuits::challenge_binding::Circuit::<
+                Pasta,
+                R,
+                HEADER_SIZE,
+                NoHooks,
+            >::new(pasta))
+        }
         InternalCircuitIndex::BindChallengesCircuit(k) => {
             crate::with_binder!(k, Pasta, R, HEADER_SIZE, NoHooks, pasta, |circuit| counts(
                 circuit
@@ -209,6 +219,14 @@ fn internal_circuit_counts(variant: InternalCircuitIndex) -> (usize, usize) {
                 HEADER_SIZE,
                 NoHooks,
             >::new())
+        }
+        InternalCircuitIndex::ChallengeBindingCircuit => {
+            synthesis_counts(native::circuits::challenge_binding::Circuit::<
+                Pasta,
+                R,
+                HEADER_SIZE,
+                NoHooks,
+            >::new(pasta))
         }
         InternalCircuitIndex::BindChallengesCircuit(k) => {
             let pasta = crate::pasta::baked();
@@ -295,21 +313,20 @@ fn test_internal_circuit_constraint_counts() {
     check_constraints!(Hashes2Circuit,              mul = 2044, lin = 2986);
     check_constraints!(InnerCollapseCircuit,        mul = 1921, lin = 1953);
     check_constraints!(OuterCollapseCircuit,        mul = 1592, lin = 2081);
-    check_constraints!(ComputeVCircuit,             mul = 1834, lin = 2687);
-    check_constraints!(BindChallengesCircuit(0),    mul = 1980, lin = 2956);
-    check_constraints!(BindChallengesCircuit(1),    mul = 1985, lin = 2966);
-    check_constraints!(BindChallengesCircuit(2),    mul = 1985, lin = 2966);
-    check_constraints!(BindChallengesCircuit(3),    mul = 1985, lin = 2966);
-    check_constraints!(BindChallengesCircuit(4),    mul = 1996, lin = 2988);
+    check_constraints!(ComputeVCircuit,             mul = 1862, lin = 2733);
+    check_constraints!(ChallengeBindingCircuit,     mul = 608,  lin = 106);
+    check_constraints!(BindChallengesCircuit(0),    mul = 1985, lin = 2956);
+    check_constraints!(BindChallengesCircuit(1),    mul = 1990, lin = 2966);
+    check_constraints!(BindChallengesCircuit(2),    mul = 1990, lin = 2966);
+    check_constraints!(BindChallengesCircuit(3),    mul = 1990, lin = 2966);
+    check_constraints!(BindChallengesCircuit(4),    mul = 2001, lin = 2988);
     check_constraints!(BindBetaCircuit,             mul = 2029, lin = 3016);
-    check_constraints!(BindEndoscalarCircuit,       mul = 780,  lin = 1444);
-    // Every native endoscaling step but the last walks four points and lays
-    // out the same; the last walks the two that remain.
-    let last = native::num_endoscaling_steps(0) as u32 - 1;
-    for step in 0..last {
-        check_constraints!(EndoscalingStep(step),   mul = 2026, lin = 3678);
+    check_constraints!(BindEndoscalarCircuit,       mul = 788,  lin = 1458);
+    // The nested batch has one point more than a multiple of four, so every
+    // native endoscaling step walks four points and lays out the same.
+    for step in 0..native::num_endoscaling_steps(0) as u32 {
+        check_constraints!(EndoscalingStep(step),   mul = 2028, lin = 3678);
     }
-    check_constraints!(EndoscalingStep(last),       mul = 1108, lin = 1842);
 }
 
 #[rustfmt::skip]
@@ -326,18 +343,20 @@ fn test_internal_stage_parameters() {
     check_stage!(Preamble,         skip =  27, num = 349);
     check_stage!(OuterError,       skip = 376, num = 186);
     check_stage!(InnerError,       skip = 562, num = 399);
-    check_stage!(Query,            skip = 376, num =  81);
-    check_stage!(Eval,             skip = 457, num =  60);
-    check_stage!(PointsChildren,   skip =  27, num =  66);
-    check_stage!(PointsRegistryWx, skip =  93, num =   2);
-    check_stage!(PointsAb,         skip =  95, num =   3);
-    check_stage!(PointsF,          skip =  98, num =   2);
-    check_stage!(PointsWalk,       skip = 100, num =  89);
+    check_stage!(Query,            skip = 376, num =  84);
+    check_stage!(Eval,             skip = 460, num =  62);
+    check_stage!(Challenges,       skip = 562, num =   0);
+    check_stage!(PointsChildren,   skip =  27, num =  68);
+    check_stage!(PointsRegistryWx, skip =  95, num =   2);
+    check_stage!(PointsAb,         skip =  97, num =   3);
+    check_stage!(PointsF,          skip = 100, num =   2);
+    check_stage!(PointsWalk,       skip = 102, num =  89);
 }
 
-/// The stage chain at eight witnessed polynomials and one poly-query, where
-/// every hook-dependent width is visible: the preamble's hook regions, the eval
-/// stage's evaluations, and the walks the extra points lengthen.
+/// The stage chain at eight witnessed polynomials, one poly-query and one
+/// two-wide derived challenge, where every hook-dependent width is visible:
+/// the preamble's hook regions, the challenges stage, the eval stage's
+/// evaluations, and the walks the extra points lengthen.
 mod hooked_chain {
     use super::{HEADER_SIZE, NestedCurve, R};
     use crate::{
@@ -345,7 +364,7 @@ mod hooked_chain {
         internal::native::{RevdotParameters, stages},
     };
 
-    type J = AppHooks<8, 1>;
+    type J = AppHooks<8, 1, 1, 2>;
     type L = <J as HookConfig>::PolyWitnesses;
 
     pub type Preamble = stages::preamble::Stage<ragu_core::pasta::Pasta, R, HEADER_SIZE, J>;
@@ -355,6 +374,8 @@ mod hooked_chain {
         stages::inner_error::Stage<ragu_core::pasta::Pasta, R, HEADER_SIZE, J, RevdotParameters>;
     pub type Query = stages::query::Stage<ragu_core::pasta::Pasta, R, HEADER_SIZE, J>;
     pub type Eval = stages::eval::Stage<ragu_core::pasta::Pasta, R, HEADER_SIZE, J>;
+    pub type Challenges =
+        stages::challenges::Stage<ragu_core::pasta::Pasta, R, HEADER_SIZE, J, RevdotParameters>;
     pub type PointsChildren = stages::points::ChildrenStage<NestedCurve, L>;
     pub type PointsWalk = stages::points::WalkStage<NestedCurve, L>;
 }
@@ -372,10 +393,11 @@ fn test_hooked_stage_parameters() {
     check_stage!(hooked_chain::Preamble,       skip =  27, num = 369);
     check_stage!(hooked_chain::OuterError,     skip = 396, num = 186);
     check_stage!(hooked_chain::InnerError,     skip = 582, num = 399);
-    check_stage!(hooked_chain::Query,          skip = 396, num =  84);
-    check_stage!(hooked_chain::Eval,           skip = 480, num =  70);
-    check_stage!(hooked_chain::PointsChildren, skip =  27, num =  76);
-    check_stage!(hooked_chain::PointsWalk,     skip = 110, num =  91);
+    check_stage!(hooked_chain::Query,          skip = 396, num =  89);
+    check_stage!(hooked_chain::Eval,           skip = 485, num =  73);
+    check_stage!(hooked_chain::Challenges,     skip = 582, num =   3);
+    check_stage!(hooked_chain::PointsChildren, skip =  27, num =  80);
+    check_stage!(hooked_chain::PointsWalk,     skip = 114, num =  92);
 }
 
 /// Helper test to print current constraint counts in copy-pasteable format.
@@ -393,6 +415,7 @@ fn print_internal_circuit_constraint_counts() {
                 | InternalCircuitIndex::OuterErrorStage
                 | InternalCircuitIndex::QueryStage
                 | InternalCircuitIndex::EvalStage
+                | InternalCircuitIndex::ChallengesStage
                 | InternalCircuitIndex::PointsBindingStage
                 | InternalCircuitIndex::PointsChildrenStage
                 | InternalCircuitIndex::PointsRegistryWxStage
@@ -402,6 +425,7 @@ fn print_internal_circuit_constraint_counts() {
                 | InternalCircuitIndex::InnerErrorFinalStaged
                 | InternalCircuitIndex::OuterErrorFinalStaged
                 | InternalCircuitIndex::EvalFinalStaged
+                | InternalCircuitIndex::ChallengesFinalStaged
                 | InternalCircuitIndex::PointsWalkFinalStaged
         )
     });
@@ -447,6 +471,7 @@ fn print_internal_stage_parameters() {
     print_stage!(InnerError);
     print_stage!(Query);
     print_stage!(Eval);
+    print_stage!(Challenges);
     print_stage!(PointsChildren);
     print_stage!(PointsRegistryWx);
     print_stage!(PointsAb);
@@ -459,6 +484,7 @@ fn print_internal_stage_parameters() {
     print_stage!(hooked_chain::InnerError);
     print_stage!(hooked_chain::Query);
     print_stage!(hooked_chain::Eval);
+    print_stage!(hooked_chain::Challenges);
     print_stage!(hooked_chain::PointsChildren);
     print_stage!(hooked_chain::PointsWalk);
 }
@@ -538,12 +564,12 @@ fn test_nested_circuit_constraint_counts() {
     );
     let mut expected = alloc::vec::Vec::new();
     for step in 0..steps {
-        expected.push((nested::InternalCircuitIndex::EndoscalingStep(step as u32), (2043, 3677)));
+        expected.push((nested::InternalCircuitIndex::EndoscalingStep(step as u32), (2048, 3677)));
     }
-    expected.push((nested::InternalCircuitIndex::Export,   (1384, 1506)));
-    expected.push((nested::InternalCircuitIndex::Collapse, (1624, 1701)));
-    expected.push((nested::InternalCircuitIndex::ComputeV, (1661, 1763)));
-    expected.push((nested::InternalCircuitIndex::Loading,  (776,  227)));
+    expected.push((nested::InternalCircuitIndex::Export,   (1415, 1550)));
+    expected.push((nested::InternalCircuitIndex::Collapse, (1644, 1716)));
+    expected.push((nested::InternalCircuitIndex::ComputeV, (1688, 1792)));
+    expected.push((nested::InternalCircuitIndex::Loading,  (789,  235)));
 
     let actual: alloc::vec::Vec<_> = nested_circuits()
         .map(|variant| (variant, nested_circuit_counts(variant)))
@@ -565,16 +591,16 @@ fn test_nested_stage_parameters() {
     }
 
     check_stage!(endoscalar::EndoscalarStage,                          skip =   1, num =  64);
-    check_stage!(nested::PointsStage<EqAffine, P0>,                        skip =  65, num = 141);
-    check_stage!(stages::preamble::Stage<EqAffine, R, P0>,                 skip = 206, num = 114);
-    check_stage!(stages::s_prime::Stage<EqAffine, R, P0>,                  skip = 320, num =   3);
-    check_stage!(stages::inner_error::Stage<EqAffine, R, P0>,              skip = 323, num = 254);
-    check_stage!(stages::outer_error::Stage<EqAffine, R, P0>,              skip = 577, num =  73);
-    check_stage!(stages::ab::Stage<EqAffine, R, P0>,                       skip = 650, num =   3);
-    check_stage!(stages::query::Stage<EqAffine, R, P0>,                    skip = 653, num =  71);
-    check_stage!(stages::f::Stage<EqAffine, R, P0>,                        skip = 724, num =   2);
-    check_stage!(stages::eval::Stage<EqAffine, R, P0>,                     skip = 726, num =  50);
-    check_stage!(stages::challenges::Stage<EqAffine, R, P0>,               skip = 776, num =  12);
+    check_stage!(nested::PointsStage<EqAffine, P0>,                        skip =  65, num = 146);
+    check_stage!(stages::preamble::Stage<EqAffine, R, P0>,                 skip = 211, num = 119);
+    check_stage!(stages::s_prime::Stage<EqAffine, R, P0>,                  skip = 330, num =   3);
+    check_stage!(stages::inner_error::Stage<EqAffine, R, P0>,              skip = 333, num = 254);
+    check_stage!(stages::outer_error::Stage<EqAffine, R, P0>,              skip = 587, num =  73);
+    check_stage!(stages::ab::Stage<EqAffine, R, P0>,                       skip = 660, num =   3);
+    check_stage!(stages::query::Stage<EqAffine, R, P0>,                    skip = 663, num =  73);
+    check_stage!(stages::f::Stage<EqAffine, R, P0>,                        skip = 736, num =   2);
+    check_stage!(stages::eval::Stage<EqAffine, R, P0>,                     skip = 738, num =  51);
+    check_stage!(stages::challenges::Stage<EqAffine, R, P0>,               skip = 789, num =  12);
 }
 
 /// Helper test to print the nested circuits' current counts and the nested

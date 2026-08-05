@@ -18,7 +18,9 @@
 //!   curve scalar multiplication
 //! - [`transcript`] — Fiat–Shamir transcript wrapper over a Poseidon
 //!   sponge, with domain separation
+//! - [`challenge`] — native challenge derivation and its padding constants
 
+pub mod challenge;
 pub mod claims;
 pub mod endoscalar;
 pub mod fold_revdot;
