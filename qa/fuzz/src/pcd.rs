@@ -90,7 +90,7 @@ pub fn merge2() -> Merge2<'static, C> {
 /// that can be built over the application: one step seeds leaves only, two
 /// reach a fuse of leaves, three reach a fuse of those.
 pub fn nontrivial_app(steps: usize) -> SyncApp {
-    let mut builder = ApplicationBuilder::<C, R, HEADER_SIZE>::new()
+    let mut builder = ApplicationBuilder::<C, R, HEADER_SIZE>::new(ragu_pcd::pasta::baked())
         .register(witness_leaf())
         .expect("registering the seeding step must succeed");
     if steps >= 2 {
@@ -105,7 +105,7 @@ pub fn nontrivial_app(steps: usize) -> SyncApp {
     }
     SyncApp(
         builder
-            .finalize(ragu_pcd::pasta::baked())
+            .finalize()
             .expect("the nontrivial application must build"),
     )
 }
