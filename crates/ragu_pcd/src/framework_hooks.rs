@@ -281,14 +281,19 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     ) -> Result<Element<'dr, D>> {
         // Positions the caller left empty take a fixed sentinel, so that a
         // derivation absorbs the same count however few elements it was given.
+        //
+        // The sentinel is a `constant`, not an `alloc`: the parent enforces only
+        // `challenge == Hash(inputs)` over the inputs the instance carries, so
+        // every input the caller did not pin must be pinned by this circuit
+        // instead. `step::internal::padded` pins the header suffix the same way,
+        // in this same instance region.
         let sentinel = *C::nested_generators(self.params).g()[0]
             .coordinates()
             .expect("a fixed generator is not the identity")
             .x();
-        let allocator = &mut Standard::new();
         let mut witnessed = inputs.to_vec();
         while witnessed.len() < self.hook_layout.challenge_width {
-            witnessed.push(Element::alloc(dr, allocator, D::just(|| sentinel))?);
+            witnessed.push(Element::constant(dr, sentinel));
         }
 
         // Hashed from the wires the instance pins, so the two cannot diverge.
@@ -297,7 +302,9 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
             challenge_of::<C>(self.params, &absorbed)
         })?;
 
-        let challenge = Element::alloc(dr, allocator, derived)?;
+        // The challenge is a witness; the parent's `challenge_binding` circuit
+        // pins it to the inputs.
+        let challenge = Element::alloc(dr, &mut Standard::new(), derived)?;
         self.challenge_pairs.push(ChallengeWires {
             inputs: witnessed,
             challenge: challenge.clone(),
@@ -343,6 +350,64 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
             self.derive_challenge(dr, &[])?;
         }
 
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ragu_pasta::{Fp, Pasta};
+    use ragu_primitives::Simulator;
+
+    use super::*;
+
+    /// Gates spent on one derivation the caller wrote `written` elements into,
+    /// padded out to `width`.
+    fn gates(written: usize, width: usize) -> Result<usize> {
+        let layout = HookLayout {
+            challenge_calls: 1,
+            challenge_width: width,
+            witness_polys: 0,
+            poly_queries: 0,
+        };
+        let sim = Simulator::<Fp>::simulate((), |dr, _| {
+            let mut hooks = FrameworkHooks::<_, Pasta>::new(layout, Pasta::baked());
+            let allocator = &mut Standard::new();
+            let inputs: Vec<_> = (0..written)
+                .map(|i| {
+                    Element::alloc(
+                        dr,
+                        allocator,
+                        Simulator::<Fp>::just(|| Fp::from(i as u64 + 1)),
+                    )
+                })
+                .collect::<Result<_>>()?;
+            hooks.derive_challenge(dr, &inputs)?;
+            Ok(())
+        })?;
+        Ok(sim.num_gates())
+    }
+
+    /// Padded input positions are constants, so a derivation costs only what the
+    /// caller wrote, at any width.
+    ///
+    /// Pinned here because it is invisible downstream: a proof whose padding is
+    /// witnessed rather than constant is internally consistent, so only the wire
+    /// count distinguishes the two.
+    #[test]
+    fn padding_challenge_inputs_costs_no_wires() -> Result<()> {
+        // `written = 2` is the partially filled case, which a step reaches
+        // whenever a sibling step in its application absorbs more than it does.
+        for written in [0, 2] {
+            let baseline = gates(written, written)?;
+            for width in [written + 1, 8, 32, 64] {
+                assert_eq!(
+                    gates(written, width)?,
+                    baseline,
+                    "padding {written} inputs out to width {width} allocated wires"
+                );
+            }
+        }
         Ok(())
     }
 }

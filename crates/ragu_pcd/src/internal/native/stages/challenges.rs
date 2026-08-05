@@ -1,7 +1,8 @@
 //! The derived challenges, a stage of their own rather than a region of
 //! [`preamble`](super::preamble): their only readers (`outer_collapse` and
-//! `challenge_binding`) are both on the error branch, where the commitments
-//! and poly-queries have readers on both.
+//! `challenge_binding`) both stage through
+//! [`outer_error`](super::outer_error), where the commitments and poly-queries
+//! have readers through [`query`](super::query) too.
 
 use core::marker::PhantomData;
 
