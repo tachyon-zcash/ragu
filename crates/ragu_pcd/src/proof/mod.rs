@@ -64,7 +64,18 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
     }
 
     /// Returns a reference to the recursive proof.
+    ///
+    /// Reading the proof's parts is white-box, so the wider visibility rides
+    /// `unstable-fuzzing`.
+    #[cfg(not(feature = "unstable-fuzzing"))]
     pub(crate) fn proof(&self) -> &Proof<C, R> {
+        &self.proof
+    }
+
+    /// Returns a reference to the recursive proof; see the definition this
+    /// feature replaces.
+    #[cfg(feature = "unstable-fuzzing")]
+    pub fn proof(&self) -> &Proof<C, R> {
         &self.proof
     }
 
