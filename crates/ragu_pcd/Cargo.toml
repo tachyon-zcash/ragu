@@ -121,6 +121,3 @@ name = "multi_poly"
 [[test]]
 name = "poly_query"
 
-[[test]]
-name = "recursive_hooks"
-required-features = ["unstable-fuzzing"]

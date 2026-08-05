@@ -356,8 +356,9 @@ pub struct Proof<C: Cycle, R: Rank> {
     // Bridge commitment (cached, derived from the cached bridge rx)
     bridge_ab_commitment: Cached<C::NestedCurve>,
 
-    /// Padded to the application's layout, and bound to $k(Y)$. Readers go
-    /// through [`application_poly_queries`](Self::application_poly_queries).
+    /// Padded to the application's layout, and bound to $k(Y)$. Crate-visible
+    /// because the crate's own tests fabricate one in place; readers go through
+    /// [`application_poly_queries`](Self::application_poly_queries).
     pub(crate) application_poly_queries: Vec<PolyQuery<C::HostCurve>>,
     /// Crate-visible for the same reason as
     /// [`application_poly_queries`](Self::application_poly_queries).
@@ -365,7 +366,8 @@ pub struct Proof<C: Cycle, R: Rank> {
 
     /// The step's witnessed polynomials, carried for one fuse level.
     pub(crate) witness_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
-    /// [`witness_polys`](Self::witness_polys)' commitments, in the same order.
+    /// [`witness_polys`](Self::witness_polys)' commitments, in the same order,
+    /// and indexed in lockstep with them.
     witness_poly_commitments: Cached<Vec<C::HostCurve>>,
 }
 
