@@ -58,11 +58,13 @@ impl<F: Field, R: Rank> Header<F> for HashedOpening<R> {
     }
 }
 
-/// Witness for [`CommitAndOpen`]: the polynomial to witness and, optionally, a
-/// dishonest evaluation (`claimed_y`) to claim in place of the honest one.
+/// Witness for [`CommitAndOpen`]: the polynomial to witness, and an opening
+/// `(x, y)` to claim for it. A `y` that is not `polynomial.eval(x)` makes the
+/// step dishonest.
 pub struct CommitAndOpenWitness<C: Cycle, R: Rank> {
     pub polynomial: sparse::Polynomial<C::CircuitField, R>,
-    pub claimed_y: Option<C::CircuitField>,
+    pub x: C::CircuitField,
+    pub y: C::CircuitField,
 }
 
 /// A seedable leaf: witnesses a committed polynomial, derives a challenge
@@ -111,25 +113,22 @@ impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
     {
         let allocator = &mut Standard::new();
 
-        let claimed_y = witness.as_ref().map(|w| w.claimed_y);
+        let x_witness = witness.as_ref().map(|w| w.x);
+        let y_witness = witness.as_ref().map(|w| w.y);
         let polynomial = witness.map(|w| w.polynomial);
         let handle = ctx.witness_polynomial(polynomial.as_ref().map(|p| p.clone()))?;
 
+        // No caller can know where the derived challenge lands, so this opening
+        // is always honest.
         let z = ctx.derive_challenge(&handle)?;
+        let at_z_value = ctx.evaluate(&handle, z.value().map(|z| *z))?;
+        let at_z = Element::alloc(ctx.dr, allocator, at_z_value)?;
+        ctx.enforce_poly_query(&handle, z, at_z)?;
 
-        // A dishonest override, if provided, takes the honest evaluation's
-        // place so fuse-time rejection can be tested.
-        let y_value = ctx
-            .evaluate(&handle, z.value().map(|z| *z))?
-            .and_then(|honest| claimed_y.map(|claimed| claimed.unwrap_or(honest)));
-        let y = Element::alloc(ctx.dr, allocator, y_value)?;
-
-        ctx.enforce_poly_query(&handle, z, y)?;
-
-        let zero = Element::alloc(ctx.dr, allocator, D::just(|| C::CircuitField::ZERO))?;
-        let at_zero_value = ctx.evaluate(&handle, D::just(|| C::CircuitField::ZERO))?;
-        let at_zero = Element::alloc(ctx.dr, allocator, at_zero_value)?;
-        ctx.enforce_poly_query(&handle, zero, at_zero)?;
+        // The same handle again, so this spends a query slot, not a polynomial.
+        let x = Element::alloc(ctx.dr, allocator, x_witness)?;
+        let y = Element::alloc(ctx.dr, allocator, y_witness)?;
+        ctx.enforce_poly_query(&handle, x, y)?;
 
         let mut sponge = Sponge::new(ctx.dr, C::circuit_poseidon(self.params));
         handle.write(ctx.dr, &mut sponge)?;
@@ -238,29 +237,23 @@ impl<C: Cycle, R: Rank> Step<C> for OpenAndHash<'_, C, R> {
 /// The header size [`CommitAndOpen`] and [`OpenAndHash`] are exercised at.
 pub const HEADER_SIZE: usize = 4;
 
-/// An [`Application`] at the fixtures' layout.
-pub type OpenApp<'params, C, R> =
-    Application<'params, C, R, HEADER_SIZE, AppHooks<1, 2, 1, HANDLE_WIRES>>;
+/// The fixtures' hook layout: one polynomial, two queries against it, and one
+/// challenge derived from a handle.
+pub type PolyQueryHooks = AppHooks<1, 2, 1, HANDLE_WIRES>;
 
-/// An [`ApplicationBuilder`] at the fixtures' layout.
-pub type OpenAppBuilder<'params, C, R> =
-    ApplicationBuilder<'params, C, R, HEADER_SIZE, AppHooks<1, 2, 1, HANDLE_WIRES>>;
+/// An [`Application`] at the fixtures' layout.
+pub type PolyQueryApp<'params, C, R> = Application<'params, C, R, HEADER_SIZE, PolyQueryHooks>;
 
 /// A polynomial from small integer coefficients.
 pub fn poly<F: PrimeField, R: Rank>(coeffs: &[u64]) -> sparse::Polynomial<F, R> {
     sparse::Polynomial::from_coeffs(coeffs.iter().map(|c| F::from(*c)).collect())
 }
 
-/// Both fixtures registered but not finalized, so callers can reach
-/// builder-only knobs. Callers needing none want [`open_app`].
-pub fn open_app_builder<C: Cycle, R: Rank>(params: &C::Params) -> Result<OpenAppBuilder<'_, C, R>> {
-    OpenAppBuilder::<C, R>::new(params)
-        .register(CommitAndOpen::<C, R>::new(params))?
-        .register(OpenAndHash::<C, R>::new(C::circuit_poseidon(params)))
-}
-
 /// Both fixtures registered and finalized: the application every poly-query
 /// test proves through.
-pub fn open_app<C: Cycle, R: Rank>(params: &C::Params) -> Result<OpenApp<'_, C, R>> {
-    open_app_builder::<C, R>(params)?.finalize()
+pub fn poly_query_app<C: Cycle, R: Rank>(params: &C::Params) -> Result<PolyQueryApp<'_, C, R>> {
+    ApplicationBuilder::<C, R, HEADER_SIZE, PolyQueryHooks>::new(params)
+        .register(CommitAndOpen::<C, R>::new(params))?
+        .register(OpenAndHash::<C, R>::new(C::circuit_poseidon(params)))?
+        .finalize()
 }

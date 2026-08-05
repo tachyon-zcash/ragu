@@ -43,6 +43,8 @@ mod internal;
 mod poly_commitment;
 mod proof;
 pub mod step;
+#[cfg(test)]
+mod tests;
 mod verify;
 
 use alloc::collections::BTreeMap;

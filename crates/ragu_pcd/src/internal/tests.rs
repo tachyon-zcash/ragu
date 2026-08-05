@@ -365,9 +365,12 @@ fn test_nonzero_layout_registry_digests() {
     // Covers the hook regions: the handle instance wires, the eval stage's
     // per-polynomial evaluations, `compute_v`'s one-hot resolution, and the
     // domain tag `challenge_binding` absorbs ahead of each derivation.
+    //
+    // Includes a challenge derivation's sentinel padding, which is constant
+    // rather than allocated; the zero-layout digest has no derivation to cover.
     assert_eq!(
         app.native_registry.digest(),
-        fp!(0x3ee0d3d29e816312bcd0e85b415620d020128c3edfd958de2310754ae923add5),
+        fp!(0x13d763cc15fbb0b77fe5ea621f8ca490a058cdea94008374e0606fbdd08eebe0),
         "Native registry digest changed unexpectedly at a nonzero layout!"
     );
     // Covers the nested side: stashed witness-poly commitments, the eval

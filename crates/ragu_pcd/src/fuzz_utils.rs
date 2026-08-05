@@ -6,7 +6,7 @@ use ragu_circuits::{
     registry::CircuitIndex,
 };
 
-use crate::{Application, Proof, framework_hooks::HookConfig};
+use crate::{Application, Proof};
 
 /// Targeted corruption of a single proof field.
 ///
@@ -30,13 +30,6 @@ pub enum Corruption<F> {
     LeftHeaderLen(usize),
     /// Resize `right_header` to the given length.
     RightHeaderLen(usize),
-    /// Perturb the claimed evaluation `y` of the poly-query at the given index.
-    QueryY(usize, F),
-    /// Negate the commitment of the query at the given index, so it is a
-    /// valid point that commits to no carried polynomial.
-    QueryCom(usize),
-    /// Perturb the derived challenge at the given index (the challenge-grinding shape).
-    ChallengeValue(usize, F),
 }
 
 impl<C: Cycle, R: Rank> Proof<C, R> {
@@ -68,23 +61,11 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             Corruption::RightHeaderLen(len) => {
                 self.right_header.resize(len, C::CircuitField::ZERO);
             }
-            Corruption::QueryY(index, v) => {
-                self.application_poly_queries[index].y += v;
-            }
-            Corruption::QueryCom(index) => {
-                let query = &mut self.application_poly_queries[index];
-                query.com = -query.com;
-            }
-            Corruption::ChallengeValue(index, v) => {
-                self.application_challenges[index].challenge += v;
-            }
         }
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
-    Application<'_, C, R, HEADER_SIZE, J>
-{
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     /// Create a trivial (all-zero) proof for testing.
     pub fn test_trivial_proof(&self) -> Proof<C, R> {
         self.trivial_proof()

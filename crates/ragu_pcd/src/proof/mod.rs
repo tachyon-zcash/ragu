@@ -64,18 +64,7 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
     }
 
     /// Returns a reference to the recursive proof.
-    ///
-    /// Reading the proof's parts is white-box, so the wider visibility rides
-    /// `unstable-fuzzing`.
-    #[cfg(not(feature = "unstable-fuzzing"))]
     pub(crate) fn proof(&self) -> &Proof<C, R> {
-        &self.proof
-    }
-
-    /// Returns a reference to the recursive proof; see the definition this
-    /// feature replaces.
-    #[cfg(feature = "unstable-fuzzing")]
-    pub fn proof(&self) -> &Proof<C, R> {
         &self.proof
     }
 
@@ -276,9 +265,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) child_right_stage_rx: ChildStageRx<C::ScalarField, R>,
 
     /// Padded to the application's layout, and bound to $k(Y)$. Crate-visible
-    /// because `fuzz_utils` corrupts it in place — unlinked, as that module
-    /// only exists under `unstable-fuzzing`; readers
-    /// go through
+    /// because the crate's own tests fabricate one in place; readers go through
     /// [`application_poly_queries`](Self::application_poly_queries).
     pub(crate) application_poly_queries: Vec<PolyQuery<C::HostCurve>>,
     /// Crate-visible for the same reason as
@@ -287,7 +274,8 @@ pub struct Proof<C: Cycle, R: Rank> {
 
     /// The step's witnessed polynomials, carried for one fuse level.
     witness_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
-    /// [`witness_polys`](Self::witness_polys)' commitments, in the same order.
+    /// [`witness_polys`](Self::witness_polys)' commitments, in the same order,
+    /// and indexed in lockstep with them.
     witness_poly_commitments: Vec<Cached<C::HostCurve>>,
 }
 

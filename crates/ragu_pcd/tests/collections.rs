@@ -118,40 +118,63 @@ fn seeded_singletons_fuse_into_their_merge() -> Result<()> {
 /// A parent whose witnessed contributing set is not the one its child's header
 /// carries cannot produce a verifying proof. Assembly does not check trace
 /// satisfaction, so rejection at fuse or at verify are both in-contract.
+///
+/// Merges the same two children honestly first, as the control.
 #[test]
 fn a_parent_cannot_merge_a_substituted_set() -> Result<()> {
     let pasta = Pasta::baked();
     let app = collections_app::<Pasta, R>(pasta)?;
     let mut rng = StdRng::seed_from_u64(2718);
 
-    let left_poly = set_polynomial::<Fp, R>(&[Fp::from(3u64)]);
-    let (left, ()) = app.seed(
+    let three = set_polynomial::<Fp, R>(&[Fp::from(3u64)]);
+    let seven = set_polynomial::<Fp, R>(&[Fp::from(7u64)]);
+
+    let seed_pair = |rng: &mut StdRng| -> Result<_> {
+        let (left, ()) = app.seed(
+            &mut *rng,
+            SeedSet::new(),
+            SeedSetWitness {
+                polynomial: three.clone(),
+            },
+        )?;
+        let (right, ()) = app.seed(
+            &mut *rng,
+            SeedSet::new(),
+            SeedSetWitness {
+                polynomial: seven.clone(),
+            },
+        )?;
+        Ok((left, right))
+    };
+
+    let (left, right) = seed_pair(&mut rng)?;
+    let (honest, ()) = app.fuse(
         &mut rng,
-        SeedSet::new(),
-        SeedSetWitness {
-            polynomial: left_poly,
+        MergeSets::new(),
+        MergeSetsWitness {
+            product: merged_polynomial(&three, &seven),
+            a: three.clone(),
+            b: seven.clone(),
         },
+        left,
+        right,
     )?;
-    let right_poly = set_polynomial(&[Fp::from(7u64)]);
-    let (right, ()) = app.seed(
-        &mut rng,
-        SeedSet::new(),
-        SeedSetWitness {
-            polynomial: right_poly,
-        },
-    )?;
+    assert!(
+        app.verify(&honest, &mut rng)?,
+        "the honest merge of these children must verify"
+    );
 
     // Product computed honestly *for the substitute*: every claim is
     // internally consistent, so only the header tie can reject it.
+    let (left, right) = seed_pair(&mut rng)?;
     let substitute = set_polynomial::<Fp, R>(&[Fp::from(11u64)]);
-    let b = set_polynomial::<Fp, R>(&[Fp::from(7u64)]);
     let result = app.fuse(
         &mut rng,
         MergeSets::new(),
         MergeSetsWitness {
-            product: merged_polynomial(&substitute, &b),
+            product: merged_polynomial(&substitute, &seven),
             a: substitute,
-            b,
+            b: seven,
         },
         left,
         right,
@@ -537,6 +560,9 @@ fn print_concat_characterization() -> Result<()> {
     assert!(app.verify(&out, &mut *rng.borrow_mut())?);
     println!("final verify at size 32  | {:>9.2?}", t.elapsed());
 
+    // `#[ignore]`d, so this runs only on request;
+    // `seeded_singletons_fuse_into_their_concatenation` asserts order per member
+    // in CI, over a balanced tree. Thirty-two leaves add scale, not a property.
     let expected: Vec<Fp> = (1..=32u64).map(Fp::from).collect();
     assert_eq!(out.data().members, expected, "order preserved end to end");
 
