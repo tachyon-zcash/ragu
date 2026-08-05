@@ -67,10 +67,11 @@ impl<
 
         builder.set_native_preamble_rx(rx);
 
-        // The derived challenges are their own stage, below `outer_error`, and
-        // take the same witness the preamble does — they are a different
-        // region of the same children's instances, not different data. The
-        // preamble bridge carries its commitment, so it is fixed before $w$.
+        // The derived challenges are their own stage, the last one after
+        // `native::stages::outer_error`, and take the same witness the preamble
+        // does — they are a different region of the same children's instances,
+        // not different data. The preamble bridge carries its commitment, so it
+        // is fixed before $w$.
         let challenges_rx = native::stages::challenges::Stage::<
             C,
             R,
