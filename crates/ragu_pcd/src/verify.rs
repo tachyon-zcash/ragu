@@ -12,15 +12,23 @@ use ragu_primitives::Element;
 
 use crate::{
     Application, Pcd, Proof,
+    framework_hooks::HookConfig,
     header::Header,
     internal::{
+        challenge::challenge_of,
         claims,
-        native::{claims as native_claims, stages::preamble::ProofInputs},
+        native::{
+            claims as native_claims,
+            stages::{challenges::alloc_challenges, preamble::ProofInputs},
+        },
         nested::claims as nested_claims,
     },
+    proof::PolyQuery,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
+    Application<'_, C, R, HEADER_SIZE, J>
+{
     /// Verifies some [`Pcd`] for the provided [`Header`].
     ///
     /// Returns `Ok(true)` if all verification checks pass, `Ok(false)` if
@@ -55,25 +63,42 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             return Ok(false);
         }
 
+        // Reject wrong hook-list lengths up front, so a malformed proof yields
+        // `Ok(false)` rather than `Err` from the pipeline below — the same
+        // reasoning as the header lengths above.
+        let hook_layout = self.hook_layout();
+        if !pcd.proof().has_shape(&hook_layout) {
+            return Ok(false);
+        }
+
         // Compute unified k(y), unified_bridge k(y), and application k(y).
         let (unified_ky, unified_bridge_ky, application_ky) =
             Emulator::emulate_wireless((pcd.proof(), pcd.data().clone(), y), |dr, witness| {
                 let (proof, data, y) = witness.cast();
                 let y = Element::alloc(dr, &mut (), y)?;
-                let proof_inputs =
-                    ProofInputs::<_, C, HEADER_SIZE>::alloc_for_verify::<R, H>(dr, proof, data)?;
+                let proof_inputs = ProofInputs::<_, C, HEADER_SIZE, J>::alloc_for_verify::<R, H>(
+                    dr,
+                    Maybe::clone(&proof),
+                    data,
+                )?;
+                // Allocated through the same helper the challenge stage uses.
+                let challenges = alloc_challenges::<_, C, R, J>(dr, proof)?;
 
                 let (unified_ky, unified_bridge_ky) = proof_inputs.unified_ky_values(dr, &y)?;
                 let unified_ky = *unified_ky.value().take();
                 let unified_bridge_ky = *unified_bridge_ky.value().take();
-                let application_ky = *proof_inputs.application_ky(dr, &y)?.value().take();
+                let application_ky = *proof_inputs
+                    .application_ky(dr, &y, &challenges)?
+                    .value()
+                    .take();
 
                 Ok((unified_ky, unified_bridge_ky, application_ky))
             })?;
 
         // Build a and b polynomials for each revdot claim.
         let source = native::SingleProofSource { proof: pcd.proof() };
-        let mut builder = claims::Builder::new(&self.native_registry, y, z);
+        let mut builder =
+            claims::Builder::new(&self.native_registry, y, z, hook_layout.witness_polys);
         native_claims::build(&source, &mut builder)?;
 
         // Check all native revdot claims.
@@ -99,12 +124,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             let nested_source = nested::SingleProofSource { proof: pcd.proof() };
             let y_nested = C::ScalarField::random(&mut rng);
             let z_nested = C::ScalarField::random(&mut rng);
-            let mut nested_builder =
-                claims::Builder::new(&self.nested_registry, y_nested, z_nested);
-            nested_claims::build(&nested_source, &mut nested_builder)?;
+            let mut nested_builder = claims::Builder::new(
+                &self.nested_registry,
+                y_nested,
+                z_nested,
+                hook_layout.witness_polys,
+            );
+            nested_claims::build(
+                &nested_source,
+                &mut nested_builder,
+                hook_layout.witness_polys,
+            )?;
 
             let ky_source = nested::SingleProofKySource::<C::ScalarField>::new();
-            nested::ky_values(&ky_source)
+            nested::ky_values(&ky_source, hook_layout.witness_polys)
                 .zip(nested_builder.a.iter().zip(nested_builder.b.iter()))
                 .all(|(ky, (a, b))| a.revdot(b) == ky)
         };
@@ -119,11 +152,39 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             poly_eval == expected
         };
 
+        // A root proof's own claims are not yet folded; check them natively.
+        // Rejects a query whose commitment is no carried polynomial's, or
+        // whose evaluation disagrees with that polynomial. The commitments are
+        // the ones the builder derived from these very polynomials, so
+        // resolving one is finding the polynomial evaluated here.
+        let poly_query_claims =
+            pcd.proof()
+                .application_poly_queries()
+                .iter()
+                .all(|&PolyQuery { com, x, y }| {
+                    pcd.proof()
+                        .witness_poly_commitments()
+                        .zip(pcd.proof().witness_polys())
+                        .find(|(derived, _)| *derived == com)
+                        .is_some_and(|(_, poly)| poly.eval(x) == y)
+                });
+
+        // Rejects a derived challenge that does not re-derive from its
+        // recorded inputs (a root proof's challenges are not yet bound).
+        let derived_challenges = pcd.proof().application_challenges().iter().all(|carried| {
+            challenge_of::<C>(self.params, &carried.inputs)
+                .is_ok_and(|derived| derived == carried.challenge)
+        });
+
         // TODO: Add checks for registry_wx0_poly, registry_wx1_poly, and registry_wy_poly.
         // - registry_wx0/wx1: need child proof x challenges (x₀, x₁) which "disappear" in preamble
         // - registry_wy: interstitial value that will be elided later
 
-        Ok(native_revdot_claims && nested_revdot_claims && registry_xy_claim)
+        Ok(native_revdot_claims
+            && nested_revdot_claims
+            && registry_xy_claim
+            && poly_query_claims
+            && derived_challenges)
     }
 }
 
@@ -252,8 +313,8 @@ mod tests {
 
     fn create_test_app() -> crate::Application<'static, Pasta, TestR, HEADER_SIZE> {
         let pasta = Pasta::baked();
-        ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
-            .finalize(pasta)
+        ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new(pasta)
+            .finalize()
             .expect("failed to create test application")
     }
 

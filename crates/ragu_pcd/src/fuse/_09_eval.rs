@@ -10,9 +10,13 @@ use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::Element;
 
 use super::{NativeSPrime, RegistryWy};
-use crate::{Application, Proof, internal::native, proof::ProofBuilder};
+use crate::{
+    Application, Proof, framework_hooks::HookConfig, internal::native, proof::ProofBuilder,
+};
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
+    Application<'_, C, R, HEADER_SIZE, J>
+{
     pub(super) fn compute_eval<'dr, D, RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
@@ -21,16 +25,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         right: &Proof<C, R>,
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
-    ) -> Result<native::stages::eval::Witness<C::CircuitField>>
+        builder: &mut ProofBuilder<'_, C, R, J>,
+    ) -> Result<native::stages::eval::Witness<C::CircuitField, J::PolyWitnesses>>
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
         let u = *u.value().take();
 
         let eval_witness = native::stages::eval::Witness {
-            left: native::stages::eval::ChildEvaluationsWitness::from_proof(left, u),
-            right: native::stages::eval::ChildEvaluationsWitness::from_proof(right, u),
+            left: native::stages::eval::ChildEvaluationsWitness::from_proof(left, u)?,
+            right: native::stages::eval::ChildEvaluationsWitness::from_proof(right, u)?,
             current: native::stages::eval::CurrentStepWitness {
                 // TODO: the registry evaluations here could _theoretically_ be more
                 // efficient if they're computed simultaneously with assistance
@@ -44,7 +48,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 registry_xy: builder.native_registry_xy_poly().eval(u),
             },
         };
-        let rx = native::stages::eval::Stage::<C, R, HEADER_SIZE>::rx(
+        let rx = native::stages::eval::Stage::<C, R, HEADER_SIZE, J>::rx(
             C::CircuitField::random(&mut *rng),
             &eval_witness,
         )?;

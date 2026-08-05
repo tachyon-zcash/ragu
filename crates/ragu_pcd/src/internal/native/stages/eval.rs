@@ -26,16 +26,25 @@ use ragu_core::{
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, allocator::Allocator, io::Write};
+use ragu_primitives::{
+    Element,
+    allocator::Allocator,
+    io::Write,
+    vec::{CollectFixed, FixedVec, Len},
+};
 
 use crate::{
     Proof,
-    internal::native::{RxComponent, RxValues},
+    framework_hooks::HookConfig,
+    internal::{
+        native::{RxComponent, RxValues},
+        nested::child_endoscaling_points,
+    },
 };
 
 /// Polynomial evaluations at $u$ (from the parent fuse operation) for a child
 /// proof. Supplied by the prover to construct the `eval` stage witness.
-pub struct ChildEvaluationsWitness<F> {
+pub struct ChildEvaluationsWitness<F, L: Len> {
     /// All of the child proof's Rx components are evaluated at $u$.
     pub rx: RxValues<F>,
 
@@ -56,20 +65,36 @@ pub struct ChildEvaluationsWitness<F> {
     /// This polynomial is queried only to insert the claim about $p(X)$ from
     /// the child proof into the accumulator for the fuse step.
     pub p_poly: F,
+
+    /// The child proof's witnessed polynomials, each evaluated at $u$.
+    pub witness_poly_evals: FixedVec<F, L>,
 }
 
-impl<F: PrimeField> ChildEvaluationsWitness<F> {
+impl<F: PrimeField, L: Len> ChildEvaluationsWitness<F, L> {
     /// Create child evaluations witness from a proof evaluated at point u.
-    pub fn from_proof<C: Cycle<CircuitField = F>, R: Rank>(proof: &Proof<C, R>, u: F) -> Self {
-        ChildEvaluationsWitness {
+    pub fn from_proof<C: Cycle<CircuitField = F>, R: Rank>(
+        proof: &Proof<C, R>,
+        u: F,
+    ) -> Result<Self> {
+        Ok(ChildEvaluationsWitness {
             rx: RxValues::from_fn(|id| proof[id].eval(u)),
             a_poly: proof[RxComponent::AbA].eval(u),
             b_poly: proof[RxComponent::AbB].eval(u),
             registry_xy_poly: proof.native_registry_xy_poly().eval(u),
             p_poly: proof.native_p_poly().eval(u),
-        }
+            witness_poly_evals: proof
+                .witness_polys()
+                .iter()
+                .map(|p| p.eval(u))
+                .collect_fixed()?,
+        })
     }
 }
+
+/// The number of components the current fuse step contributes to an
+/// accumulation — one per field of [`CurrentStepWitness`]. This stage's width
+/// and the nested side's endoscaling-point count are both built from it.
+pub const CURRENT_STEP_COMPONENTS: usize = 6;
 
 /// Pre-computed polynomial evaluations at $u$ for the current step.
 pub struct CurrentStepWitness<F> {
@@ -107,12 +132,12 @@ pub struct CurrentStepWitness<F> {
 }
 
 /// Witness for the eval stage.
-pub struct Witness<F> {
+pub struct Witness<F, L: Len> {
     /// Left proof's evaluations at $u$.
-    pub left: ChildEvaluationsWitness<F>,
+    pub left: ChildEvaluationsWitness<F, L>,
 
     /// Right proof's evaluations at $u$.
-    pub right: ChildEvaluationsWitness<F>,
+    pub right: ChildEvaluationsWitness<F, L>,
 
     /// Current fuse step's evaluations at $u$.
     pub current: CurrentStepWitness<F>,
@@ -126,7 +151,7 @@ pub struct Witness<F> {
 /// of the coefficients for the weighted sum with $\beta$ via
 /// [`Horner`](ragu_circuits::horner::Horner) evaluation.
 #[derive(Gadget, Write)]
-pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
+pub struct ChildEvaluations<'dr, D: Driver<'dr>, J: HookConfig> {
     #[ragu(gadget)]
     pub rx: RxValues<Element<'dr, D>>,
     #[ragu(gadget)]
@@ -137,14 +162,18 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
     pub registry_xy_poly: Element<'dr, D>,
     #[ragu(gadget)]
     pub p_poly: Element<'dr, D>,
+    /// The child's witnessed-polynomial evaluations at $u$
+    /// (the [`Write`] order must match the `_10_p` accumulation order).
+    #[ragu(gadget)]
+    pub witness_poly_evals: FixedVec<Element<'dr, D>, J::PolyWitnesses>,
 }
 
-impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
+impl<'dr, D: Driver<'dr>, J: HookConfig> ChildEvaluations<'dr, D, J> {
     /// Allocate child evaluations from pre-computed witness values.
     pub fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
-        witness: DriverValue<D, &ChildEvaluationsWitness<D::F>>,
+        witness: DriverValue<D, &ChildEvaluationsWitness<D::F, J::PolyWitnesses>>,
     ) -> Result<Self> {
         let rx = RxValues::try_from_fn(|id| {
             Element::alloc(dr, allocator, witness.as_ref().map(|w| *w.rx.get(id)))
@@ -159,6 +188,15 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
                 witness.as_ref().map(|w| w.registry_xy_poly),
             )?,
             p_poly: Element::alloc(dr, allocator, witness.as_ref().map(|w| w.p_poly))?,
+            witness_poly_evals: J::PolyWitnesses::range()
+                .map(|i| {
+                    Element::alloc(
+                        dr,
+                        allocator,
+                        witness.as_ref().map(|w| w.witness_poly_evals[i]),
+                    )
+                })
+                .try_collect_fixed()?,
         })
     }
 }
@@ -167,11 +205,11 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
 ///
 /// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>> {
+pub struct Output<'dr, D: Driver<'dr>, J: HookConfig> {
     #[ragu(gadget)]
-    pub left: ChildEvaluations<'dr, D>,
+    pub left: ChildEvaluations<'dr, D, J>,
     #[ragu(gadget)]
-    pub right: ChildEvaluations<'dr, D>,
+    pub right: ChildEvaluations<'dr, D, J>,
     #[ragu(gadget)]
     pub registry_wx0: Element<'dr, D>,
     #[ragu(gadget)]
@@ -187,21 +225,27 @@ pub struct Output<'dr, D: Driver<'dr>> {
 }
 
 /// The eval stage of the fuse witness.
-#[derive(Default)]
-pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
-    _marker: PhantomData<(C, R)>,
+pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig> {
+    _marker: PhantomData<(C, R, J)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
-    for Stage<C, R, HEADER_SIZE>
+impl<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig> Default for Stage<C, R, HEADER_SIZE, J> {
+    fn default() -> Self {
+        Stage {
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig> staging::Stage<C::CircuitField, R>
+    for Stage<C, R, HEADER_SIZE, J>
 {
-    type Parent = super::query::Stage<C, R, HEADER_SIZE>;
-    type Witness<'source> = &'source Witness<C::CircuitField>;
-    type OutputKind = Kind![C::CircuitField; Output<'_, _>];
+    type Parent = super::query::Stage<C, R, HEADER_SIZE, J>;
+    type Witness<'source> = &'source Witness<C::CircuitField, J::PolyWitnesses>;
+    type OutputKind = Kind![C::CircuitField; Output<'_, _, J>];
 
     fn values() -> usize {
-        // 2 * ChildEvaluations (15 each) + current step elements (6)
-        2 * 15 + 6
+        2 * child_endoscaling_points(J::PolyWitnesses::len()) + CURRENT_STEP_COMPONENTS
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -255,10 +299,21 @@ mod tests {
     use ragu_pasta::Pasta;
 
     use super::*;
-    use crate::internal::tests::{HEADER_SIZE, R, assert_stage_values};
+    use crate::{
+        AppHooks,
+        internal::tests::{HEADER_SIZE, R, assert_stage_values},
+    };
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }>::default());
+        fn check<const POLYS: usize>() {
+            assert_stage_values(
+                &Stage::<Pasta, R, { HEADER_SIZE }, AppHooks<POLYS, 1, 0, 0>>::default(),
+            );
+        }
+        check::<0>();
+        check::<1>();
+        check::<4>();
+        check::<8>();
     }
 }

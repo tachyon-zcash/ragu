@@ -18,8 +18,10 @@
 //!   curve scalar multiplication
 //! - [`transcript`] — Fiat–Shamir transcript wrapper over a Poseidon
 //!   sponge, with domain separation
+//! - [`challenge`] — native challenge derivation and its padding constants
 //! - [`const_fns`] — compile-time helper functions for array construction
 
+pub mod challenge;
 pub mod claims;
 pub mod const_fns;
 pub mod endoscalar;

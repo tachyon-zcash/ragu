@@ -14,9 +14,13 @@ use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::Element;
 
 use super::RegistryWy;
-use crate::{Application, Proof, internal::native, proof::ProofBuilder};
+use crate::{
+    Application, Proof, framework_hooks::HookConfig, internal::native, proof::ProofBuilder,
+};
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
+    Application<'_, C, R, HEADER_SIZE, J>
+{
     pub(super) fn compute_query<'dr, D, RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
@@ -27,7 +31,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         registry_wy: &RegistryWy<C, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, J>,
     ) -> Result<native::stages::query::Witness<C>>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -64,7 +68,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             ),
         };
 
-        let rx = native::stages::query::Stage::<C, R, HEADER_SIZE>::rx(
+        let rx = native::stages::query::Stage::<C, R, HEADER_SIZE, J>::rx(
             C::CircuitField::random(&mut *rng),
             &query_witness,
         )?;

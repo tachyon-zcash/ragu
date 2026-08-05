@@ -24,7 +24,7 @@ fn register(
     ),
 ) {
     black_box(
-        ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+        ApplicationBuilder::<Pasta, ProductionRank, 4>::new(Pasta::baked())
             .register(leaf)
             .unwrap()
             .register(hash)
@@ -35,12 +35,12 @@ fn register(
 #[library_benchmark(setup = setup_finalize)]
 #[bench::finalize()]
 fn finalize(
-    (app, pasta): (
+    (app, _pasta): (
         ApplicationBuilder<'static, Pasta, ProductionRank, 4>,
         &'static <Pasta as Cycle>::Params,
     ),
 ) {
-    black_box(app.finalize(pasta)).unwrap();
+    black_box(app.finalize()).unwrap();
 }
 
 library_benchmark_group!(

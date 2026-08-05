@@ -1,8 +1,10 @@
 //! Merging operations defined for the proof-carrying data computational graph.
 
+mod ctx;
 mod encoder;
 pub(crate) mod internal;
 
+pub use ctx::StepCtx;
 pub use encoder::Encoded;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::registry::CircuitIndex;
@@ -171,9 +173,12 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     ///
     /// Returns the encoded headers (left, right, output), the data to be
     /// carried in the resulting PCD, and any auxiliary witness data.
+    ///
+    /// `ctx` bundles the underlying [`Driver`] with the framework hooks;
+    /// hook-free steps just use `ctx.dr`.
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data>,
         right: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data>,

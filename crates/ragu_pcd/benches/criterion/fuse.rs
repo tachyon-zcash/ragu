@@ -10,12 +10,12 @@ fn fuse_bench(c: &mut Criterion) {
     let pasta = Pasta::baked();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
 
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new(pasta)
         .register(nontrivial::WitnessLeaf { poseidon_params })
         .unwrap()
         .register(nontrivial::Hash2 { poseidon_params })
         .unwrap()
-        .finalize(pasta)
+        .finalize()
         .unwrap();
 
     let mut rng = StdRng::seed_from_u64(1234);

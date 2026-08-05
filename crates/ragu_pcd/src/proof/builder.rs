@@ -7,7 +7,7 @@
 //! native commitments already on the builder.
 
 use alloc::vec::Vec;
-use core::cell::OnceCell;
+use core::{cell::OnceCell, marker::PhantomData};
 
 use ragu_arithmetic::{Cycle, ff::Field};
 use ragu_circuits::{
@@ -16,9 +16,10 @@ use ragu_circuits::{
     staging::StageExt,
 };
 use ragu_core::Result;
+use ragu_primitives::vec::FixedVec;
 
-use super::{Cached, Proof};
-use crate::internal::nested;
+use super::{Cached, DerivedChallenge, PolyQuery, Proof};
+use crate::{framework_hooks::HookConfig, internal::nested};
 
 /// Produces `pub(crate) fn $name(&mut self, v: $ty)` that sets an `Option`
 /// field, panicking on double-set.
@@ -181,7 +182,7 @@ macro_rules! cached_bridge {
             if let Some(rx) = self.$rx.get() {
                 return Ok(rx);
             }
-            let rx = nested::stages::$stage::Stage::<C::HostCurve, R>::rx(
+            let rx = nested::stages::$stage::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
                 self.bridge_alpha_power($idx),
                 &nested::stages::$stage::Witness {
                     $($wit_field: self.$getter()),*
@@ -206,7 +207,7 @@ macro_rules! cached_bridge {
 /// Native commitment caches are computed lazily from polynomials on first
 /// access. Special commitments (`a`, `b`, `p`) must be provided explicitly
 /// because they are computed via non-standard techniques.
-pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
+pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, J: HookConfig> {
     params: &'params C::Params,
 
     /// Shared alpha source for the four cached bridge commitments.
@@ -227,12 +228,14 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     native_query_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_registry_xy_poly: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_eval_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_challenges_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_p_poly: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_hashes_1_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_hashes_2_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_inner_collapse_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_outer_collapse_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_compute_v_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_challenge_binding_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
 
     // Bridge rx polynomials + commitments (set together by caller)
     bridge_preamble_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
@@ -286,12 +289,14 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     native_query_commitment: OnceCell<C::HostCurve>,
     native_registry_xy_commitment: OnceCell<C::HostCurve>,
     native_eval_commitment: OnceCell<C::HostCurve>,
+    native_challenges_commitment: OnceCell<C::HostCurve>,
     native_p_commitment: OnceCell<C::HostCurve>,
     native_hashes_1_commitment: OnceCell<C::HostCurve>,
     native_hashes_2_commitment: OnceCell<C::HostCurve>,
     native_inner_collapse_commitment: OnceCell<C::HostCurve>,
     native_outer_collapse_commitment: OnceCell<C::HostCurve>,
     native_compute_v_commitment: OnceCell<C::HostCurve>,
+    native_challenge_binding_commitment: OnceCell<C::HostCurve>,
 
     // Cached bridge commitment caches (lazily computed from their cached rxs)
     bridge_outer_error_commitment: OnceCell<C::NestedCurve>,
@@ -302,9 +307,22 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     // Children's stage rx (for copying circuit claims)
     child_left_stage_rx: Option<super::ChildStageRx<C::ScalarField, R>>,
     child_right_stage_rx: Option<super::ChildStageRx<C::ScalarField, R>>,
+
+    // The application's hook regions; `Option` says whether one has been set
+    // yet. A wrong-length list is just an invalid proof, so the polynomials are
+    // held plainly, as are the commitments derived from them; `pad_to_layout`
+    // is what fills them to the layout, and `Proof::has_shape` reports a
+    // mismatch where a proof is consumed.
+    application_challenges: Option<Vec<DerivedChallenge<C::CircuitField>>>,
+    application_poly_queries: Option<Vec<PolyQuery<C::HostCurve>>>,
+    witness_polys: Option<Vec<sparse::Polynomial<C::CircuitField, R>>>,
+    /// Derived from [`witness_polys`](Self::witness_polys) on first access,
+    /// like every other commitment cache here.
+    witness_poly_commitments: OnceCell<Vec<C::HostCurve>>,
+    _marker: PhantomData<J>,
 }
 
-impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
+impl<'params, C: Cycle, R: Rank, J: HookConfig> ProofBuilder<'params, C, R, J> {
     /// Create a new empty builder with the given `bridge_alpha` source for
     /// deriving cached bridge polynomial alphas.
     pub(crate) fn new(params: &'params C::Params, bridge_alpha: C::ScalarField) -> Self {
@@ -323,12 +341,14 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             native_query_rx: None,
             native_registry_xy_poly: None,
             native_eval_rx: None,
+            native_challenges_rx: None,
             native_p_poly: None,
             native_hashes_1_rx: None,
             native_hashes_2_rx: None,
             native_inner_collapse_rx: None,
             native_outer_collapse_rx: None,
             native_compute_v_rx: None,
+            native_challenge_binding_rx: None,
             bridge_preamble_rx: None,
             bridge_preamble_commitment: None,
             bridge_s_prime_rx: None,
@@ -367,18 +387,25 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             native_query_commitment: OnceCell::new(),
             native_registry_xy_commitment: OnceCell::new(),
             native_eval_commitment: OnceCell::new(),
+            native_challenges_commitment: OnceCell::new(),
             native_p_commitment: OnceCell::new(),
             native_hashes_1_commitment: OnceCell::new(),
             native_hashes_2_commitment: OnceCell::new(),
             native_inner_collapse_commitment: OnceCell::new(),
             native_outer_collapse_commitment: OnceCell::new(),
             native_compute_v_commitment: OnceCell::new(),
+            native_challenge_binding_commitment: OnceCell::new(),
             bridge_outer_error_commitment: OnceCell::new(),
             bridge_ab_commitment: OnceCell::new(),
             bridge_query_commitment: OnceCell::new(),
             bridge_eval_commitment: OnceCell::new(),
             child_left_stage_rx: None,
             child_right_stage_rx: None,
+            application_poly_queries: None,
+            application_challenges: None,
+            witness_polys: None,
+            witness_poly_commitments: OnceCell::new(),
+            _marker: PhantomData,
         }
     }
 
@@ -401,11 +428,13 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     native_setter!(set_native_query_rx, native_query_rx);
     native_setter!(set_native_registry_xy_poly, native_registry_xy_poly);
     native_setter!(set_native_eval_rx, native_eval_rx);
+    native_setter!(set_native_challenges_rx, native_challenges_rx);
     native_setter!(set_native_hashes_1_rx, native_hashes_1_rx);
     native_setter!(set_native_hashes_2_rx, native_hashes_2_rx);
     native_setter!(set_native_inner_collapse_rx, native_inner_collapse_rx);
     native_setter!(set_native_outer_collapse_rx, native_outer_collapse_rx);
     native_setter!(set_native_compute_v_rx, native_compute_v_rx);
+    native_setter!(set_native_challenge_binding_rx, native_challenge_binding_rx);
 
     native_poly_with_commitment_setter!(set_native_a_poly, native_a_poly, native_a_commitment);
     native_poly_with_commitment_setter!(set_native_b_poly, native_b_poly, native_b_commitment);
@@ -463,6 +492,12 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     );
     lazy_commitment!(
         native,
+        native_challenges_commitment,
+        native_challenges_commitment,
+        native_challenges_rx
+    );
+    lazy_commitment!(
+        native,
         native_hashes_1_commitment,
         native_hashes_1_commitment,
         native_hashes_1_rx
@@ -490,6 +525,12 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         native_compute_v_commitment,
         native_compute_v_commitment,
         native_compute_v_rx
+    );
+    lazy_commitment!(
+        native,
+        native_challenge_binding_commitment,
+        native_challenge_binding_commitment,
+        native_challenge_binding_rx
     );
 
     explicit_commitment_getter!(native_a_commitment, native_a_commitment, set_native_a_poly);
@@ -522,16 +563,9 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     );
 
     /// Returns the derived alpha for a cached bridge, as a distinct power of
-    /// `bridge_alpha`.
+    /// `bridge_alpha` (see [`bridge_alpha_exponent`]).
     fn bridge_alpha_power(&self, idx: nested::RxIndex) -> C::ScalarField {
-        let n = match idx {
-            nested::RxIndex::BridgeOuterError => 1,
-            nested::RxIndex::BridgeAB => 2,
-            nested::RxIndex::BridgeQuery => 3,
-            nested::RxIndex::BridgeEval => 4,
-            _ => panic!("not a cached bridge: {idx:?}"),
-        };
-        self.bridge_alpha.pow_vartime([n])
+        self.bridge_alpha.pow_vartime([bridge_alpha_exponent(idx)])
     }
 
     cached_bridge!(
@@ -563,8 +597,27 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         bridge_eval_commitment,
         nested::RxIndex::BridgeEval,
         eval,
-        { native_eval: native_eval_commitment() }
+        { native_eval: native_eval_commitment(), witness_polys: witness_poly_commitments() }
     );
+
+    /// Lazily commits every witnessed polynomial and caches the result — the
+    /// plural counterpart of [`lazy_commitment!`]. The cache is a plain list,
+    /// as `Proof` takes it; the declared length is restored here, for the one
+    /// stage witness that wants it.
+    pub(crate) fn witness_poly_commitments(&self) -> FixedVec<C::HostCurve, J::PolyWitnesses> {
+        let commitments = self.witness_poly_commitments.get_or_init(|| {
+            let host_gen = C::host_generators(self.params);
+            let polys = self
+                .witness_polys
+                .as_ref()
+                .expect("witness_polys not set before deriving their commitments");
+            polys
+                .iter()
+                .map(|poly| poly.commit_to_affine(host_gen))
+                .collect()
+        });
+        FixedVec::from_fn(|index| commitments[index])
+    }
 
     setter!(
         set_nested_endoscaling_step_rxs,
@@ -624,6 +677,24 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         super::ChildStageRx<C::ScalarField, R>
     );
 
+    setter!(
+        set_application_challenges,
+        application_challenges,
+        Vec<DerivedChallenge<C::CircuitField>>
+    );
+
+    setter!(
+        set_application_poly_queries,
+        application_poly_queries,
+        Vec<PolyQuery<C::HostCurve>>
+    );
+
+    setter!(
+        set_application_polys,
+        witness_polys,
+        Vec<sparse::Polynomial<C::CircuitField, R>>
+    );
+
     getter!(w, w, C::CircuitField);
     getter!(y, y, C::CircuitField);
     getter!(z, z, C::CircuitField);
@@ -659,11 +730,13 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         self.native_query_commitment();
         self.native_registry_xy_commitment();
         self.native_eval_commitment();
+        self.native_challenges_commitment();
         self.native_hashes_1_commitment();
         self.native_hashes_2_commitment();
         self.native_inner_collapse_commitment();
         self.native_outer_collapse_commitment();
         self.native_compute_v_commitment();
+        self.native_challenge_binding_commitment();
 
         // Force lazy evaluation of cached bridge commitments.
         self.bridge_outer_error_commitment()?;
@@ -675,6 +748,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         self.nested_endoscaling_step_commitments();
         self.nested_endoscalar_commitment();
         self.nested_points_commitment();
+        self.witness_poly_commitments();
 
         macro_rules! take {
             ($field:ident) => {
@@ -708,12 +782,14 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             native_query_rx: take!(native_query_rx),
             native_registry_xy_poly: take!(native_registry_xy_poly),
             native_eval_rx: take!(native_eval_rx),
+            native_challenges_rx: take!(native_challenges_rx),
             native_p_poly: take!(native_p_poly),
             native_hashes_1_rx: take!(native_hashes_1_rx),
             native_hashes_2_rx: take!(native_hashes_2_rx),
             native_inner_collapse_rx: take!(native_inner_collapse_rx),
             native_outer_collapse_rx: take!(native_outer_collapse_rx),
             native_compute_v_rx: take!(native_compute_v_rx),
+            native_challenge_binding_rx: take!(native_challenge_binding_rx),
 
             bridge_preamble_rx: take!(bridge_preamble_rx),
             bridge_preamble_commitment: take!(bridge_preamble_commitment),
@@ -768,15 +844,66 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             native_query_commitment: cached!(native_query_commitment),
             native_registry_xy_commitment: cached!(native_registry_xy_commitment),
             native_eval_commitment: cached!(native_eval_commitment),
+            native_challenges_commitment: cached!(native_challenges_commitment),
             native_p_commitment: cached!(native_p_commitment),
             native_hashes_1_commitment: cached!(native_hashes_1_commitment),
             native_hashes_2_commitment: cached!(native_hashes_2_commitment),
             native_inner_collapse_commitment: cached!(native_inner_collapse_commitment),
             native_outer_collapse_commitment: cached!(native_outer_collapse_commitment),
             native_compute_v_commitment: cached!(native_compute_v_commitment),
+            native_challenge_binding_commitment: cached!(native_challenge_binding_commitment),
+            witness_poly_commitments: self
+                .witness_poly_commitments
+                .take()
+                .expect("witness_poly_commitments not set")
+                .into_iter()
+                .map(Cached)
+                .collect(),
 
             child_left_stage_rx: take!(child_left_stage_rx),
             child_right_stage_rx: take!(child_right_stage_rx),
+
+            // `Proof` is not parameterized by `J`, so the fixed-length lists
+            // become plain ones here; `Proof::has_shape` is where their length
+            // is checked again, at the boundaries that consume a proof.
+            application_challenges: take!(application_challenges).into_iter().collect(),
+            application_poly_queries: take!(application_poly_queries).into_iter().collect(),
+            witness_polys: take!(witness_polys).into_iter().collect(),
         })
+    }
+}
+
+/// The exponent of `bridge_alpha` for a blinded bridge stage; the single
+/// ordering keeps all blinds distinct. Panics on stages blinded with an
+/// in-circuit challenge (`preamble`, `s_prime`, `inner_error`, `f`).
+fn bridge_alpha_exponent(idx: nested::RxIndex) -> u64 {
+    match idx {
+        nested::RxIndex::BridgeOuterError => 1,
+        nested::RxIndex::BridgeAB => 2,
+        nested::RxIndex::BridgeQuery => 3,
+        nested::RxIndex::BridgeEval => 4,
+        _ => panic!("not blinded from bridge_alpha: {idx:?}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pins the `bridge_alpha` exponent series: no registry digest covers
+    /// these prover-side blinds, so a collision would otherwise be silent.
+    #[test]
+    fn bridge_alpha_exponents_are_the_expected_series() {
+        assert_eq!(bridge_alpha_exponent(nested::RxIndex::BridgeOuterError), 1);
+        assert_eq!(bridge_alpha_exponent(nested::RxIndex::BridgeAB), 2);
+        assert_eq!(bridge_alpha_exponent(nested::RxIndex::BridgeQuery), 3);
+        assert_eq!(bridge_alpha_exponent(nested::RxIndex::BridgeEval), 4);
+    }
+
+    /// Bridges blinded with an in-circuit challenge are not on this series.
+    #[test]
+    #[should_panic(expected = "not blinded from bridge_alpha")]
+    fn unblinded_bridges_are_rejected() {
+        bridge_alpha_exponent(nested::RxIndex::BridgeF);
     }
 }

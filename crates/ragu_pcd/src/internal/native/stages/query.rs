@@ -31,6 +31,7 @@ use ragu_primitives::{Element, allocator::Allocator};
 
 use crate::{
     Proof,
+    framework_hooks::HookConfig,
     internal::native::{
         InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, RxValues,
     },
@@ -275,22 +276,35 @@ pub struct Output<'dr, D: Driver<'dr>> {
     pub right: ChildEvaluations<'dr, D>,
 }
 
-/// The query stage of the fuse witness.
-#[derive(Default)]
-pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
-    _marker: PhantomData<(C, R)>,
+/// The query stage of the fuse witness. Shape-free: its width does not depend
+/// on a step's hook counts.
+pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig> {
+    _marker: PhantomData<(C, R, J)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
-    for Stage<C, R, HEADER_SIZE>
+impl<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig> Default for Stage<C, R, HEADER_SIZE, J> {
+    fn default() -> Self {
+        Stage {
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig> staging::Stage<C::CircuitField, R>
+    for Stage<C, R, HEADER_SIZE, J>
 {
-    type Parent = super::preamble::Stage<C, R, HEADER_SIZE>;
+    type Parent = super::preamble::Stage<C, R, HEADER_SIZE, J>;
     type Witness<'source> = &'source Witness<C>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
     fn values() -> usize {
-        // InternalCircuitIndex::NUM + registry_wxy (1) + 2 * ChildEvaluations (16 each)
-        InternalCircuitIndex::NUM + 1 + 2 * 16
+        // One fixed-registry evaluation per internal circuit, plus
+        // `registry_wxy`, plus each child's `ChildEvaluations`: one evaluation
+        // per rx component, then `a_poly_at_xz`, `b_poly_at_x`,
+        // `child_registry_xy_at_current_w`,
+        // `current_registry_xy_at_child_circuit_id` and
+        // `current_registry_wy_at_child_x`.
+        InternalCircuitIndex::NUM + 1 + 2 * (RxIndex::NUM + 5)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -321,10 +335,13 @@ mod tests {
     use ragu_pasta::Pasta;
 
     use super::*;
-    use crate::internal::tests::{HEADER_SIZE, R, assert_stage_values};
+    use crate::{
+        AppHooks,
+        internal::tests::{HEADER_SIZE, R, assert_stage_values},
+    };
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }>::default());
+        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }, AppHooks<1, 1, 0, 0>>::default());
     }
 }

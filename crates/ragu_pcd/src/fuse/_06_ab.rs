@@ -37,13 +37,16 @@ use ragu_primitives::{Element, vec::FixedVec};
 use super::claims::{FoldKey, FuseProofSource, TrackedPoly};
 use crate::{
     Application,
+    framework_hooks::HookConfig,
     internal::{fold_revdot, native},
     proof::ProofBuilder,
 };
 
 type NativeNumGroups = <native::RevdotParameters as fold_revdot::Parameters>::NumGroups;
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
+    Application<'_, C, R, HEADER_SIZE, J>
+{
     pub(super) fn compute_ab<'dr, D>(
         &self,
         a: FixedVec<TrackedPoly<'_, FoldKey, C::CircuitField, R>, NativeNumGroups>,
@@ -51,7 +54,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         source: &FuseProofSource<'_, C, R>,
         mu_prime: &Element<'dr, D>,
         nu_prime: &Element<'dr, D>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, J>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -68,7 +71,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         source: &FuseProofSource<'_, C, R>,
         mu_prime: &Element<'dr, D>,
         nu_prime: &Element<'dr, D>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, J>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,

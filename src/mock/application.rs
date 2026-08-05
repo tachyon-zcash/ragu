@@ -1,38 +1,108 @@
 //! Mock PCD application — mirrors `ragu_pcd::Application`.
 
 use alloc::{collections::BTreeMap, vec::Vec};
-use core::any::TypeId;
+use core::{any::TypeId, fmt, marker::PhantomData};
 
 use ragu_arithmetic::CryptoRngCore;
 use ragu_core::{Error, Result};
+use ragu_pasta::Fp;
 
 use crate::{
     ctx::StepCtx,
+    framework_hooks::{FrameworkHooks, HookConfig, NoHooks},
     header::{Header, Suffix},
-    hooks::FrameworkHooks,
+    poly_commitment::{self, HANDLE_WIRES},
+    polynomial::Polynomial,
     proof::{self, PROOF_SIZE_COMPRESSED, Pcd, Proof},
     step::Step,
 };
 
 /// Mocks `ragu_pcd::ApplicationBuilder`.
-#[derive(Clone, Debug, Default)]
-pub struct ApplicationBuilder {
+///
+/// `J` declares the application's per-step hook budget, as in real ragu
+/// (where it is the trailing generic after `C`, `R`, and `HEADER_SIZE`).
+pub struct ApplicationBuilder<J: HookConfig = NoHooks> {
     num_application_steps: usize,
     header_map: BTreeMap<Suffix, TypeId>,
+    _hooks: PhantomData<J>,
 }
 
 /// Mocks `ragu_pcd::Application`.
-#[derive(Clone, Debug)]
-pub struct Application {
+pub struct Application<J: HookConfig = NoHooks> {
     num_application_steps: usize,
+    _hooks: PhantomData<J>,
+}
+
+// Hand-written rather than derived: a derive would bound `J` itself, and the
+// hook marker types deliberately implement nothing.
+impl<J: HookConfig> Clone for ApplicationBuilder<J> {
+    fn clone(&self) -> Self {
+        Self {
+            num_application_steps: self.num_application_steps,
+            header_map: self.header_map.clone(),
+            _hooks: PhantomData,
+        }
+    }
+}
+
+impl<J: HookConfig> fmt::Debug for ApplicationBuilder<J> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ApplicationBuilder")
+            .field("num_application_steps", &self.num_application_steps)
+            .field("header_map", &self.header_map)
+            .finish()
+    }
+}
+
+impl<J: HookConfig> Clone for Application<J> {
+    fn clone(&self) -> Self {
+        Self {
+            num_application_steps: self.num_application_steps,
+            _hooks: PhantomData,
+        }
+    }
+}
+
+impl<J: HookConfig> fmt::Debug for Application<J> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Application")
+            .field("num_application_steps", &self.num_application_steps)
+            .finish()
+    }
 }
 
 impl ApplicationBuilder {
+    /// A builder for an application with no hook budget ([`NoHooks`]).
+    ///
+    /// Real ragu's `new` takes the cycle params (moved there from `finalize`);
+    /// the mock has no params object, so `new` stays argless. Real ragu also
+    /// needs no [`with_hooks`](ApplicationBuilder::with_hooks) split: its
+    /// other generics force a turbofish where a trailing hook config may be
+    /// named, while the mock's only generic is the hook config — which cannot
+    /// guide inference from a bare `new()` call.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_hooks()
+    }
+}
+
+impl Default for ApplicationBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<J: HookConfig> ApplicationBuilder<J> {
+    /// A builder for an application with the hook budget `J`, e.g.
+    /// `ApplicationBuilder::<AppHooks<1, 2, 1, HANDLE_WIRES>>::with_hooks()`.
+    /// See [`new`](ApplicationBuilder::new) for why this is a separate
+    /// constructor.
+    #[must_use]
+    pub fn with_hooks() -> Self {
         Self {
             num_application_steps: 0,
             header_map: BTreeMap::new(),
+            _hooks: PhantomData,
         }
     }
 
@@ -50,9 +120,17 @@ impl ApplicationBuilder {
         Ok(self)
     }
 
-    pub fn finalize(self) -> Result<Application> {
+    pub fn finalize(self) -> Result<Application<J>> {
+        let layout = J::layout();
+        if layout.challenge_calls > 0 && layout.challenge_width == 0 {
+            return Err(Error::Initialization(
+                "a challenge layout with derivations needs a nonzero width: one absorbing no inputs would bind nothing"
+                    .into(),
+            ));
+        }
         Ok(Application {
             num_application_steps: self.num_application_steps,
+            _hooks: PhantomData,
         })
     }
 
@@ -72,7 +150,7 @@ impl ApplicationBuilder {
     }
 }
 
-impl Application {
+impl<J: HookConfig> Application<J> {
     /// Delegates to [`fuse`](Self::fuse) with trivial PCDs.
     pub fn seed<'source, RNG: CryptoRngCore, S: Step<Left = (), Right = ()>>(
         &self,
@@ -96,20 +174,30 @@ impl Application {
         let left_proof = left.proof;
         let right_proof = right.proof;
 
-        let mut hooks = FrameworkHooks::new();
+        let mut hooks = FrameworkHooks::new(J::layout());
         let mut ctx = StepCtx::new(&mut hooks);
         let (output_data, aux) = step.witness(&mut ctx, witness, left.data, right.data)?;
 
-        // TODO just like the real crate :D
-        let _claims = hooks.into_outputs();
+        // Instance assembly, mock style: pad what the body left unused up to
+        // the layout, refuse over-use, and fold the hook transcript into the
+        // witness hash — from where the binding hash covers it, so tampering
+        // surfaces through the existing binding check. The mock does not carry
+        // queries or polynomials in the serialized proof and `verify` is
+        // structurally unchanged: a dishonest evaluation is already rejected
+        // here, and mock proofs only exist through this API or through
+        // binding-checked deserialization, so real `verify`'s poly-query and
+        // challenge rejection paths have no observable mock equivalent.
+        hooks.pad_to_layout()?;
+        let transcript = hooks.into_transcript()?;
 
         let encoded = S::Output::encode(&output_data);
 
         let left_bytes = left_proof.serialize();
         let right_bytes = right_proof.serialize();
-        let mut witness_data = Vec::with_capacity(2 * PROOF_SIZE_COMPRESSED);
+        let mut witness_data = Vec::with_capacity(2 * PROOF_SIZE_COMPRESSED + transcript.len());
         witness_data.extend_from_slice(left_bytes.as_ref());
         witness_data.extend_from_slice(right_bytes.as_ref());
+        witness_data.extend_from_slice(&transcript);
 
         let proof_value = Proof::new(S::Output::SUFFIX, S::INDEX, &encoded, &witness_data);
         Ok((proof_value.carry::<S::Output>(output_data), aux))
@@ -144,5 +232,14 @@ impl Application {
             proof: pcd.proof.rerandomize(),
             data: pcd.data,
         })
+    }
+
+    /// The handle wires
+    /// [`StepCtx::witness_polynomial`](crate::ctx::StepCtx::witness_polynomial)
+    /// would produce for `polynomial` — for callers outside a step checking a
+    /// header-carried handle against a polynomial they hold. Mirrors
+    /// `ragu_pcd::Application::commit_polynomial`.
+    pub fn commit_polynomial(&self, polynomial: &Polynomial) -> Result<[Fp; HANDLE_WIRES]> {
+        poly_commitment::handle(polynomial.commit())
     }
 }

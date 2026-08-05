@@ -13,7 +13,7 @@ fn registry_bench(c: &mut Criterion) {
 
     // Time finalize separately: build the ApplicationBuilder, then bench only finalize.
     let make_builder = || {
-        ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+        ApplicationBuilder::<Pasta, ProductionRank, 4>::new(pasta)
             .register(nontrivial::WitnessLeaf { poseidon_params })
             .unwrap()
             .register(nontrivial::Hash2 { poseidon_params })
@@ -23,13 +23,13 @@ fn registry_bench(c: &mut Criterion) {
     c.bench_function("registry::finalize", |b| {
         b.iter_batched(
             make_builder,
-            |builder| builder.finalize(pasta).unwrap(),
+            |builder| builder.finalize().unwrap(),
             criterion::BatchSize::PerIteration,
         );
     });
 
     // Build the finalized app once for evaluation benchmarks.
-    let app = make_builder().finalize(pasta).unwrap();
+    let app = make_builder().finalize().unwrap();
     let registry = app.native_registry();
 
     // Use deterministic "random" field elements.

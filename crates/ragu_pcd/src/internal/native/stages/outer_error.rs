@@ -19,7 +19,10 @@ use ragu_primitives::{
     vec::{CollectFixed, FixedVec, Len},
 };
 
-use crate::internal::fold_revdot::{self, NumErrorTerms};
+use crate::{
+    framework_hooks::HookConfig,
+    internal::fold_revdot::{self, NumErrorTerms},
+};
 
 /// $k(Y)$ evaluation values for a single child proof.
 pub struct ChildKyValues<F> {
@@ -104,15 +107,25 @@ pub struct Output<
 }
 
 /// The outer error stage (layer 2) of the fuse witness.
-#[derive(Default)]
-pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
-    _marker: PhantomData<(C, R, FP)>,
+pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig, FP: fold_revdot::Parameters>
+{
+    _marker: PhantomData<(C, R, J, FP)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, FP>
+impl<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig, FP: fold_revdot::Parameters> Default
+    for Stage<C, R, HEADER_SIZE, J, FP>
 {
-    type Parent = super::preamble::Stage<C, R, HEADER_SIZE>;
+    fn default() -> Self {
+        Stage {
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, FP: fold_revdot::Parameters>
+    staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, J, FP>
+{
+    type Parent = super::preamble::Stage<C, R, HEADER_SIZE, J>;
     type Witness<'source> = &'source Witness<C, FP>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _, FP, C::CircuitPoseidon>];
 
@@ -188,13 +201,22 @@ mod tests {
     use ragu_pasta::Pasta;
 
     use super::*;
-    use crate::internal::{
-        native::RevdotParameters,
-        tests::{HEADER_SIZE, R, assert_stage_values},
+    use crate::{
+        AppHooks,
+        internal::{
+            native::RevdotParameters,
+            tests::{HEADER_SIZE, R, assert_stage_values},
+        },
     };
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }, RevdotParameters>::default());
+        assert_stage_values(&Stage::<
+            Pasta,
+            R,
+            { HEADER_SIZE },
+            AppHooks<1, 1, 0, 0>,
+            RevdotParameters,
+        >::default());
     }
 }
