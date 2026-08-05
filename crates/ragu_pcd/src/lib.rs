@@ -12,8 +12,9 @@
 //!
 //! # The hook layout is declared per application
 //!
-//! How many polynomials a step may witness, and how many openings it may
-//! enforce, are parameters of [`ApplicationBuilder`]. They are declared rather than folded from the
+//! How many polynomials a step may witness, how many openings it may enforce,
+//! and how many challenges it may derive (and how wide) are parameters of
+//! [`ApplicationBuilder`]. They are declared rather than folded from the
 //! registered steps because handing a circuit to the registry freezes its
 //! shape, which a maximum over steps would not settle until the last one
 //! arrives. One layout serves every step; steps that use less are padded up.
@@ -57,7 +58,7 @@ use ragu_circuits::{
     registry::{Registry, RegistryBuilder},
 };
 use ragu_core::{Error, Result};
-use ragu_primitives::vec::ConstLen;
+use ragu_primitives::vec::{ConstLen, Len};
 use step::{Step, internal::adapter::Adapter};
 
 /// Domain separation tag for Ragu PCD protocol.
@@ -71,16 +72,29 @@ pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 /// use ragu_pasta::Pasta;
 /// use ragu_pcd::{AppHooks, Application};
 ///
-/// type MyApp<'params> = Application<'params, Pasta, ProductionRank, 4, AppHooks<3, 3>>;
+/// type MyApp<'params> = Application<'params, Pasta, ProductionRank, 4, AppHooks<3, 3, 1, 6>>;
 /// ```
-pub struct AppHooks<const POLYS: usize, const QUERIES: usize>;
+pub struct AppHooks<
+    const POLYS: usize,
+    const QUERIES: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+>;
 
 /// Convenience alias for an application that does not use hooks.
-pub type NoHooks = AppHooks<0, 0>;
+pub type NoHooks = AppHooks<0, 0, 0, 0>;
 
-impl<const POLYS: usize, const QUERIES: usize> HookConfig for AppHooks<POLYS, QUERIES> {
+impl<
+    const POLYS: usize,
+    const QUERIES: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> HookConfig for AppHooks<POLYS, QUERIES, CHALLENGES, CHALLENGE_WIDTH>
+{
     type PolyWitnesses = ConstLen<POLYS>;
     type PolyQueries = ConstLen<QUERIES>;
+    type ChallengeDerivations = ConstLen<CHALLENGES>;
+    type ChallengeWidth = ConstLen<CHALLENGE_WIDTH>;
 }
 
 /// Builder for an [`Application`] for proof-carrying data.
@@ -109,7 +123,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     /// Create an empty [`ApplicationBuilder`] for proof-carrying data.
     ///
     /// The cycle parameters are held from here on: committing a witnessed
-    /// polynomial is the framework's work, so a [`Step`] never sees them.
+    /// polynomial and hashing a derived challenge are the framework's work, so
+    /// a [`Step`] never sees them.
     pub fn new(params: &'params C::Params) -> Self {
         ApplicationBuilder {
             native_registry: RegistryBuilder::new(),
@@ -170,7 +185,19 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     /// Returns an error if internal circuit registration or registry
     /// finalization fails.
     pub fn finalize(mut self) -> Result<Application<'params, C, R, HEADER_SIZE, J>> {
+        // A derivation that absorbs nothing hashes the same constant in every
+        // proof, so it binds nothing and cannot be what an author meant. The
+        // sponge would produce one — the domain tag alone is enough to squeeze
+        // from — which is exactly why the refusal has to be written down.
+        if J::ChallengeDerivations::len() > 0 && J::ChallengeWidth::len() == 0 {
+            return Err(Error::Initialization(
+                "a challenge layout with derivations needs a nonzero width: one absorbing no inputs would bind nothing"
+                    .into(),
+            ));
+        }
+
         let params = self.params;
+
         // Build the native registry:
         // 1. Application circuits (already registered)
         // 2. Internal circuits and masks

@@ -56,6 +56,18 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
 
         builder.set_native_preamble_rx(rx);
 
+        // The derived challenges are their own stage, last on the error branch,
+        // and take the same witness the preamble does — they are a different
+        // region of the same children's instances, not different data.
+        let challenges_rx = native::stages::challenges::Stage::<
+            C,
+            R,
+            HEADER_SIZE,
+            J,
+            native::RevdotParameters,
+        >::rx(C::CircuitField::random(&mut *rng), &preamble_witness)?;
+        builder.set_native_challenges_rx(challenges_rx);
+
         Ok(preamble_witness)
     }
 

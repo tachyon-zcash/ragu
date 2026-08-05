@@ -15,8 +15,12 @@ use crate::{
     framework_hooks::HookConfig,
     header::Header,
     internal::{
+        challenge::challenge_of,
         claims,
-        native::{claims as native_claims, stages::preamble::ProofInputs},
+        native::{
+            claims as native_claims,
+            stages::{challenges::alloc_challenges, preamble::ProofInputs},
+        },
         nested::claims as nested_claims,
     },
     proof::PolyQuery,
@@ -72,13 +76,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
             Emulator::emulate_wireless((pcd.proof(), pcd.data().clone(), y), |dr, witness| {
                 let (proof, data, y) = witness.cast();
                 let y = Element::alloc(dr, &mut (), y)?;
-                let proof_inputs =
-                    ProofInputs::<_, C, HEADER_SIZE, J>::alloc_for_verify::<R, H>(dr, proof, data)?;
+                let proof_inputs = ProofInputs::<_, C, HEADER_SIZE, J>::alloc_for_verify::<R, H>(
+                    dr,
+                    Maybe::clone(&proof),
+                    data,
+                )?;
+                // Allocated through the same helper the challenge stage uses.
+                let challenges = alloc_challenges::<_, C, R, J>(dr, proof)?;
 
                 let (unified_ky, unified_bridge_ky) = proof_inputs.unified_ky_values(dr, &y)?;
                 let unified_ky = *unified_ky.value().take();
                 let unified_bridge_ky = *unified_bridge_ky.value().take();
-                let application_ky = *proof_inputs.application_ky(dr, &y)?.value().take();
+                let application_ky = *proof_inputs
+                    .application_ky(dr, &y, &challenges)?
+                    .value()
+                    .take();
 
                 Ok((unified_ky, unified_bridge_ky, application_ky))
             })?;
@@ -157,11 +169,22 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
                         .is_some_and(|(_, poly)| poly.eval(x) == y)
                 });
 
+        // Rejects a derived challenge that does not re-derive from its
+        // recorded inputs (a root proof's challenges are not yet bound).
+        let derived_challenges = pcd.proof().application_challenges().iter().all(|carried| {
+            challenge_of::<C>(self.params, &carried.inputs)
+                .is_ok_and(|derived| derived == carried.challenge)
+        });
+
         // TODO: Add checks for registry_wx0_poly, registry_wx1_poly, and registry_wy_poly.
         // - registry_wx0/wx1: need child proof x challenges (x₀, x₁) which "disappear" in preamble
         // - registry_wy: interstitial value that will be elided later
 
-        Ok(native_revdot_claims && nested_revdot_claims && registry_xy_claim && poly_query_claims)
+        Ok(native_revdot_claims
+            && nested_revdot_claims
+            && registry_xy_claim
+            && poly_query_claims
+            && derived_challenges)
     }
 }
 

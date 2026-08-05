@@ -35,6 +35,8 @@ pub enum Corruption<F> {
     /// Negate the commitment of the query at the given index, so it is a
     /// valid point that commits to no carried polynomial.
     QueryCom(usize),
+    /// Perturb the derived challenge at the given index (the challenge-grinding shape).
+    ChallengeValue(usize, F),
 }
 
 impl<C: Cycle, R: Rank> Proof<C, R> {
@@ -72,6 +74,9 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             Corruption::QueryCom(index) => {
                 let query = &mut self.application_poly_queries[index];
                 query.com = -query.com;
+            }
+            Corruption::ChallengeValue(index, v) => {
+                self.application_challenges[index].challenge += v;
             }
         }
     }

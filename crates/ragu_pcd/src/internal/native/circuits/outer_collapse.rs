@@ -71,7 +71,7 @@ use ragu_core::{
 use ragu_primitives::{GadgetExt as _, allocator::Standard};
 
 use super::super::{
-    stages::{outer_error, preamble},
+    stages::{challenges, outer_error, preamble},
     unified::{self, OutputBuilder},
 };
 use crate::{framework_hooks::HookConfig, internal::fold_revdot};
@@ -131,7 +131,9 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, FP: fold_revdot::Parameters>
     MultiStageCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, J, FP>
 {
-    type Last = outer_error::Stage<C, R, HEADER_SIZE, J, FP>;
+    /// This circuit folds a child's *whole* instance into $k(Y)$, derived
+    /// challenges included, so it reaches the chain's last stage.
+    type Last = challenges::Stage<C, R, HEADER_SIZE, J, FP>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
@@ -160,11 +162,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, FP: fold_revdot
         let (preamble, builder) = builder.add_stage::<preamble::Stage<C, R, HEADER_SIZE, J>>()?;
         let (outer_error, builder) =
             builder.add_stage::<outer_error::Stage<C, R, HEADER_SIZE, J, FP>>()?;
+        let (challenges, builder) =
+            builder.add_stage::<challenges::Stage<C, R, HEADER_SIZE, J, FP>>()?;
         let dr = builder.finish();
 
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
         let outer_error =
             outer_error.unenforced(dr, witness.as_ref().map(|w| w.outer_error_witness))?;
+        let challenges = challenges.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
 
         let allocator = &mut Standard::new();
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
@@ -175,8 +180,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, FP: fold_revdot
         {
             let y = unified_output.y.read(dr, allocator)?;
 
-            let left_application_ky = preamble.left.application_ky(dr, &y)?;
-            let right_application_ky = preamble.right.application_ky(dr, &y)?;
+            let left_application_ky = preamble.left.application_ky(dr, &y, &challenges.left)?;
+            let right_application_ky = preamble.right.application_ky(dr, &y, &challenges.right)?;
 
             left_application_ky.enforce_equal(dr, &outer_error.left.application)?;
             right_application_ky.enforce_equal(dr, &outer_error.right.application)?;

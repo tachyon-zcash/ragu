@@ -9,9 +9,9 @@
 
 use ragu_arithmetic::Cycle;
 use ragu_core::{drivers::Driver, gadgets::Gadget};
-use ragu_primitives::{Element, consistent::Consistent, io::Write};
+use ragu_primitives::{Element, consistent::Consistent, io::Write, vec::FixedVec};
 
-use crate::poly_commitment::PolyHandle;
+use crate::{framework_hooks::HookConfig, poly_commitment::PolyHandle};
 
 /// An opening claim $p(x) = y$ as the instance carries it.
 #[derive(Gadget, Write, Consistent)]
@@ -23,4 +23,16 @@ pub(crate) struct PolyQuery<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> 
     pub x: Element<'dr, D>,
     #[ragu(gadget)]
     pub y: Element<'dr, D>,
+}
+
+/// A derived Fiat–Shamir challenge as the instance carries it: what it
+/// absorbed, and what it hashed to.
+#[derive(Gadget, Write, Consistent)]
+pub(crate) struct Challenge<'dr, D: Driver<'dr>, J: HookConfig> {
+    /// Positions the caller left empty hold the sentinel; the parent absorbs a
+    /// fixed number per challenge, so it must see them all.
+    #[ragu(gadget)]
+    pub inputs: FixedVec<Element<'dr, D>, J::ChallengeWidth>,
+    #[ragu(gadget)]
+    pub challenge: Element<'dr, D>,
 }

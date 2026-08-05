@@ -27,7 +27,8 @@ use crate::internal::claims::{Builder, Source, sum_polynomials};
 /// Number of circuits using unified $k(y)$ in [`build`].
 ///
 /// These circuits use [`unified::InternalOutputKind`]:
-/// [`hashes_2`], [`inner_collapse`], [`outer_collapse`], [`compute_v`].
+/// [`hashes_2`], [`inner_collapse`], [`outer_collapse`], [`compute_v`],
+/// [`challenge_binding`].
 ///
 /// Note: [`hashes_1`] separately uses `unified_bridge_ky` because its public
 /// inputs include child proof headers (see [`hashes_1::Output`]).
@@ -38,8 +39,9 @@ use crate::internal::claims::{Builder, Source, sum_polynomials};
 /// [`inner_collapse`]: crate::internal::native::circuits::inner_collapse
 /// [`outer_collapse`]: crate::internal::native::circuits::outer_collapse
 /// [`compute_v`]: crate::internal::native::circuits::compute_v
+/// [`challenge_binding`]: crate::internal::native::circuits::challenge_binding
 /// [`unified::InternalOutputKind`]: crate::internal::native::unified::InternalOutputKind
-const NUM_UNIFIED_CIRCUITS: usize = 4;
+const NUM_UNIFIED_CIRCUITS: usize = 5;
 
 /// Trait that processes claim values into accumulated outputs.
 ///
@@ -194,14 +196,15 @@ where
                 }
             }
 
-            // outer_collapse: OuterCollapse + Preamble + OuterError
+            // outer_collapse: OuterCollapse + Preamble + OuterError + Challenges
             OuterCollapseCircuit => {
-                for ((fc, pre), en) in source
+                for (((fc, pre), en), ch) in source
                     .rx(Rx(OuterCollapse))
                     .zip(source.rx(Rx(Preamble)))
                     .zip(source.rx(Rx(OuterError)))
+                    .zip(source.rx(Rx(Challenges)))
                 {
-                    processor.internal_circuit_claim(id, [fc, pre, en].into_iter());
+                    processor.internal_circuit_claim(id, [fc, pre, en, ch].into_iter());
                 }
             }
 
@@ -214,6 +217,19 @@ where
                     .zip(source.rx(Rx(Eval)))
                 {
                     processor.internal_circuit_claim(id, [cv, pre, q, e].into_iter());
+                }
+            }
+
+            // challenge_binding: ChallengeBinding + Preamble + OuterError +
+            // Challenges (the trace spans the skipped `outer_error` stage)
+            ChallengeBindingCircuit => {
+                for (((cb, pre), en), ch) in source
+                    .rx(Rx(ChallengeBinding))
+                    .zip(source.rx(Rx(Preamble)))
+                    .zip(source.rx(Rx(OuterError)))
+                    .zip(source.rx(Rx(Challenges)))
+                {
+                    processor.internal_circuit_claim(id, [cb, pre, en, ch].into_iter());
                 }
             }
 
@@ -234,21 +250,27 @@ where
                 processor.bonding_claim(id, source.rx(Rx(Eval)))?;
             }
 
-            // Final stage bonding claims
+            ChallengesStage => {
+                processor.bonding_claim(id, source.rx(Rx(Challenges)))?;
+            }
+
             InnerErrorFinalStaged => {
                 processor.bonding_claim(id, source.rx(Rx(InnerCollapse)))?;
             }
             OuterErrorFinalStaged => {
-                processor.bonding_claim(
-                    id,
-                    source
-                        .rx(Rx(Hashes1))
-                        .chain(source.rx(Rx(Hashes2)))
-                        .chain(source.rx(Rx(OuterCollapse))),
-                )?;
+                processor
+                    .bonding_claim(id, source.rx(Rx(Hashes1)).chain(source.rx(Rx(Hashes2))))?;
             }
             EvalFinalStaged => {
                 processor.bonding_claim(id, source.rx(Rx(ComputeV)))?;
+            }
+            ChallengesFinalStaged => {
+                processor.bonding_claim(
+                    id,
+                    source
+                        .rx(Rx(ChallengeBinding))
+                        .chain(source.rx(Rx(OuterCollapse))),
+                )?;
             }
         }
     }

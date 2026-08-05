@@ -215,7 +215,7 @@ mod tests {
             Pasta,
             R,
             { HEADER_SIZE },
-            AppHooks<1, 1>,
+            AppHooks<1, 1, 0, 0>,
             RevdotParameters,
         >::default());
     }

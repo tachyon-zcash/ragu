@@ -32,6 +32,10 @@ use crate::{
 
 type HeaderVec<'dr, D, const HEADER_SIZE: usize> = FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>;
 
+/// One child's derived challenges.
+pub type ChallengeVec<'dr, D, J> =
+    FixedVec<instance::Challenge<'dr, D, J>, <J as HookConfig>::ChallengeDerivations>;
+
 /// Witness data for a single child proof in the preamble stage.
 pub struct ChildWitness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     /// Output header for this child proof.
@@ -150,14 +154,21 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
 
     /// Binds the child's hook wires to its committed application rx. The
     /// adapter writes these same types into the instance, so the layout below
-    /// is the layout it wrote.
-    pub fn application_ky(&self, dr: &mut D, y: &Element<'dr, D>) -> Result<Element<'dr, D>> {
+    /// is the layout it wrote. `challenges` is an argument because those live
+    /// in the [`challenges`](super::challenges) stage.
+    pub fn application_ky(
+        &self,
+        dr: &mut D,
+        y: &Element<'dr, D>,
+        challenges: &ChallengeVec<'dr, D, J>,
+    ) -> Result<Element<'dr, D>> {
         let mut ky = Horner::new(y);
         self.children.left.write(dr, &mut ky)?;
         self.children.right.write(dr, &mut ky)?;
         self.output_header.write(dr, &mut ky)?;
         self.witness_polys.write(dr, &mut ky)?;
         self.poly_queries.write(dr, &mut ky)?;
+        challenges.write(dr, &mut ky)?;
         ky.finish_ky(dr)
     }
 
@@ -324,7 +335,8 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usiz
 }
 
 /// The root of the native stage chain. Per child: three headers, the poly and
-/// poly-query regions, the circuit id, and the unified wires.
+/// poly-query regions, the circuit id, and the unified wires. Derived
+/// challenges are their own stage ([`challenges`](super::challenges)).
 pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig> {
     _marker: PhantomData<(C, R, J)>,
 }
@@ -388,7 +400,9 @@ mod tests {
     #[test]
     fn stage_values_matches_wire_count() {
         fn check<const POLYS: usize>() {
-            assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }, AppHooks<POLYS, 1>>::default());
+            assert_stage_values(
+                &Stage::<Pasta, R, { HEADER_SIZE }, AppHooks<POLYS, 1, 0, 0>>::default(),
+            );
         }
         check::<0>();
         check::<1>();

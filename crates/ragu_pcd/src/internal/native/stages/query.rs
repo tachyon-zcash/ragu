@@ -342,6 +342,6 @@ mod tests {
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }, AppHooks<1, 1>>::default());
+        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }, AppHooks<1, 1, 0, 0>>::default());
     }
 }

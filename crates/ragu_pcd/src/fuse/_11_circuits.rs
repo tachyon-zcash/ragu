@@ -141,6 +141,19 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
             &mut *rng,
         )?;
 
+        let (challenge_binding_trace, unified) =
+            native::circuits::challenge_binding::Circuit::<C, R, HEADER_SIZE, J>::new(self.params)
+                .trace(native::circuits::challenge_binding::Witness {
+                    unified,
+                    preamble_witness,
+                })?
+                .into_parts();
+        let challenge_binding_rx = self.native_registry.assemble(
+            &challenge_binding_trace,
+            native::InternalCircuitIndex::ChallengeBindingCircuit.circuit_index(),
+            &mut *rng,
+        )?;
+
         // Cross-circuit coverage validation (prover-time development assertion,
         // not a verifier check): all internal recursion circuits together must
         // cover every slot exactly once. Overlap is caught eagerly by finish();
@@ -152,6 +165,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         builder.set_native_inner_collapse_rx(inner_collapse_rx);
         builder.set_native_outer_collapse_rx(outer_collapse_rx);
         builder.set_native_compute_v_rx(compute_v_rx);
+        builder.set_native_challenge_binding_rx(challenge_binding_rx);
 
         Ok(())
     }

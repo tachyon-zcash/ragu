@@ -1,12 +1,15 @@
 //! The context object threaded through [`Step::witness`](super::Step::witness).
 
+use alloc::vec::Vec;
+
 use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
+    gadgets::Gadget,
 };
-use ragu_primitives::Element;
+use ragu_primitives::{Element, GadgetExt as _, io::Write};
 
 use crate::{framework_hooks::FrameworkHooks, poly_commitment::PolyHandle};
 
@@ -82,5 +85,26 @@ where
         y: Element<'dr, D>,
     ) -> Result<()> {
         self.hooks.enforce_poly_query(handle, x, y)
+    }
+
+    /// Derives a Fiat–Shamir challenge `Hash(inputs)` from `input`, absorbed as
+    /// the elements its [`Write`] emits: at most
+    /// [`HookLayout::challenge_width`] of them, empty positions taking a fixed
+    /// sentinel.
+    ///
+    /// [`HookLayout::challenge_width`]: crate::HookLayout::challenge_width
+    ///
+    /// **The caller's obligation**: the framework binds the challenge to these
+    /// elements, not the elements to anything. Every element the gadget writes
+    /// must be one this step has pinned — a freely witnessed input lets the
+    /// prover grind the challenge.
+    pub fn derive_challenge<G>(&mut self, input: &G) -> Result<Element<'dr, D>>
+    where
+        G: Gadget<'dr, D>,
+        G::Kind: Write<D::F>,
+    {
+        let mut inputs = Vec::new();
+        input.write(self.dr, &mut inputs)?;
+        self.hooks.derive_challenge(self.dr, &inputs)
     }
 }

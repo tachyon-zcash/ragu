@@ -56,6 +56,8 @@ pub struct ChildWitness<C: CurveAffine, L: Len> {
     pub outer_collapse: C,
     /// Commitment from the child's compute_v circuit.
     pub compute_v: C,
+    /// Commitment from the child's challenge binding circuit.
+    pub challenge_binding: C,
 
     /// Stashed commitment from the child's preamble bridge stage.
     pub stashed_preamble: C,
@@ -67,6 +69,8 @@ pub struct ChildWitness<C: CurveAffine, L: Len> {
     pub stashed_query: C,
     /// Stashed commitment from the child's eval bridge stage.
     pub stashed_eval: C,
+    /// Stashed commitment from the child's challenges stage.
+    pub stashed_challenges: C,
     /// Stashed `a` commitment from the child's AB bridge stage.
     pub stashed_ab_a: C,
     /// Stashed `b` commitment from the child's AB bridge stage.
@@ -89,11 +93,13 @@ impl<C: CurveAffine, L: Len> Clone for ChildWitness<C, L> {
             inner_collapse: self.inner_collapse,
             outer_collapse: self.outer_collapse,
             compute_v: self.compute_v,
+            challenge_binding: self.challenge_binding,
             stashed_preamble: self.stashed_preamble,
             stashed_inner_error: self.stashed_inner_error,
             stashed_outer_error: self.stashed_outer_error,
             stashed_query: self.stashed_query,
             stashed_eval: self.stashed_eval,
+            stashed_challenges: self.stashed_challenges,
             stashed_ab_a: self.stashed_ab_a,
             stashed_ab_b: self.stashed_ab_b,
             stashed_registry_xy: self.stashed_registry_xy,
@@ -114,11 +120,13 @@ impl<C: CurveAffine, L: Len> ChildWitness<C, L> {
             inner_collapse: proof.native_rx_commitment(RxIndex::InnerCollapse),
             outer_collapse: proof.native_rx_commitment(RxIndex::OuterCollapse),
             compute_v: proof.native_rx_commitment(RxIndex::ComputeV),
+            challenge_binding: proof.native_rx_commitment(RxIndex::ChallengeBinding),
             stashed_preamble: proof.native_rx_commitment(RxIndex::Preamble),
             stashed_inner_error: proof.native_rx_commitment(RxIndex::InnerError),
             stashed_outer_error: proof.native_rx_commitment(RxIndex::OuterError),
             stashed_query: proof.native_rx_commitment(RxIndex::Query),
             stashed_eval: proof.native_rx_commitment(RxIndex::Eval),
+            stashed_challenges: proof.native_rx_commitment(RxIndex::Challenges),
             stashed_ab_a: proof.native_commitment(RxComponent::AbA),
             stashed_ab_b: proof.native_commitment(RxComponent::AbB),
             stashed_registry_xy: proof.native_registry_xy_commitment(),
@@ -160,6 +168,9 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len>
     /// Point commitment from the child's compute_v circuit.
     #[ragu(gadget)]
     pub compute_v: Point<'dr, D, C>,
+    /// Point commitment from the child's challenge binding circuit.
+    #[ragu(gadget)]
+    pub challenge_binding: Point<'dr, D, C>,
 
     /// Stashed commitment from the child's preamble bridge stage.
     #[ragu(gadget)]
@@ -176,6 +187,9 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len>
     /// Stashed commitment from the child's eval bridge stage.
     #[ragu(gadget)]
     pub stashed_eval: Point<'dr, D, C>,
+    /// Stashed commitment from the child's challenges stage.
+    #[ragu(gadget)]
+    pub stashed_challenges: Point<'dr, D, C>,
     /// Stashed `a` commitment from the child's AB bridge stage.
     #[ragu(gadget)]
     pub stashed_ab_a: Point<'dr, D, C>,
@@ -208,11 +222,13 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> core::ops::Index<
             InnerCollapse => &self.inner_collapse,
             OuterCollapse => &self.outer_collapse,
             ComputeV => &self.compute_v,
+            ChallengeBinding => &self.challenge_binding,
             Preamble => &self.stashed_preamble,
             InnerError => &self.stashed_inner_error,
             OuterError => &self.stashed_outer_error,
             Query => &self.stashed_query,
             Eval => &self.stashed_eval,
+            Challenges => &self.stashed_challenges,
         }
     }
 }
@@ -227,11 +243,13 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> ChildOutput<'dr, 
             inner_collapse: Point::alloc(dr, witness.as_ref().map(|w| w.inner_collapse))?,
             outer_collapse: Point::alloc(dr, witness.as_ref().map(|w| w.outer_collapse))?,
             compute_v: Point::alloc(dr, witness.as_ref().map(|w| w.compute_v))?,
+            challenge_binding: Point::alloc(dr, witness.as_ref().map(|w| w.challenge_binding))?,
             stashed_preamble: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_preamble))?,
             stashed_inner_error: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_inner_error))?,
             stashed_outer_error: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_outer_error))?,
             stashed_query: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_query))?,
             stashed_eval: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_eval))?,
+            stashed_challenges: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_challenges))?,
             stashed_ab_a: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_ab_a))?,
             stashed_ab_b: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_ab_b))?,
             stashed_registry_xy: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_registry_xy))?,

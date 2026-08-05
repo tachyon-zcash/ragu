@@ -39,18 +39,24 @@ where
 // When changing HEADER_SIZE, update the constraint counts by running:
 //   cargo test -p ragu_pcd --release print_internal_circuit -- --nocapture
 // Then copy-paste the output into the check_constraints! calls in the test below.
-pub const HEADER_SIZE: usize = 105;
+pub const HEADER_SIZE: usize = 90;
 
 // Number of dummy application circuits to register before testing internal
 // circuits. This ensures the tests work correctly even when application
 // steps are present.
 const NUM_APP_STEPS: usize = 6000;
 
-fn dummy_app<'params, const HDR: usize, const POLYS: usize, const CLAIMS: usize>(
+fn dummy_app<
+    'params,
+    const HDR: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+>(
     pasta: &'params <Pasta as ragu_arithmetic::Cycle>::Params,
     steps: usize,
-) -> crate::Application<'params, Pasta, R, HDR, AppHooks<POLYS, CLAIMS>> {
-    ApplicationBuilder::<Pasta, R, HDR, AppHooks<POLYS, CLAIMS>>::new(pasta)
+) -> crate::Application<'params, Pasta, R, HDR, AppHooks<POLYS, CLAIMS, CHALLENGES, 2>> {
+    ApplicationBuilder::<Pasta, R, HDR, AppHooks<POLYS, CLAIMS, CHALLENGES, 2>>::new(pasta)
         .register_dummy_circuits(steps)
         .unwrap()
         .finalize()
@@ -86,13 +92,54 @@ macro_rules! check_constraints {
 fn test_internal_circuit_constraint_counts() {
     let pasta = Pasta::baked();
 
-    let app = dummy_app::<HEADER_SIZE, 0, 0>(pasta, NUM_APP_STEPS);
+    let app = dummy_app::<HEADER_SIZE, 0, 0, 0>(pasta, NUM_APP_STEPS);
 
-    check_constraints!(app, Hashes1Circuit,       mul = 1451, lin = 2068);
-    check_constraints!(app, Hashes2Circuit,       mul = 1999, lin = 2951);
-    check_constraints!(app, InnerCollapseCircuit, mul = 1876, lin = 1918);
-    check_constraints!(app, OuterCollapseCircuit, mul = 2043, lin = 3042);
-    check_constraints!(app, ComputeVCircuit,      mul = 1255, lin = 1773);
+    check_constraints!(app, Hashes1Circuit,          mul = 1406, lin = 2038);
+    check_constraints!(app, Hashes2Circuit,          mul = 1954, lin = 2951);
+    check_constraints!(app, InnerCollapseCircuit,    mul = 1831, lin = 1918);
+    check_constraints!(app, OuterCollapseCircuit,    mul = 1848, lin = 2742);
+    check_constraints!(app, ComputeVCircuit,         mul = 1239, lin = 1819);
+    // `ChallengeBinding`'s count includes `OuterError`'s 186 gates: it
+    // reaches the derived challenges on the branch below `OuterError`, and a
+    // circuit's trace spans every gate up to its last stage, so it pays for
+    // the stage it skips on the way.
+    check_constraints!(app, ChallengeBindingCircuit, mul =  518, lin =   71);
+}
+
+/// Prints the constraint counts the pin tests expect, for re-pinning.
+///
+/// Run with: `cargo test -p ragu_pcd print_internal_circuit_constraint -- --ignored --nocapture`
+#[test]
+#[ignore = "prints the pinned constraint counts; run explicitly"]
+fn print_internal_circuit_constraint_counts() {
+    use std::println;
+
+    let pasta = Pasta::baked();
+
+    let print = |registry: &ragu_circuits::registry::Registry<_, R>, test: &str| {
+        println!("\n// Copy-paste the following into {test}:");
+        for variant in [
+            InternalCircuitIndex::Hashes1Circuit,
+            InternalCircuitIndex::Hashes2Circuit,
+            InternalCircuitIndex::InnerCollapseCircuit,
+            InternalCircuitIndex::OuterCollapseCircuit,
+            InternalCircuitIndex::ComputeVCircuit,
+            InternalCircuitIndex::ChallengeBindingCircuit,
+        ] {
+            let (mul, lin) = registry.constraint_counts(variant.circuit_index());
+            println!(
+                "    check_constraints!(app, {:<24} mul = {:>4}, lin = {:>4});",
+                alloc::format!("{variant:?},"),
+                mul,
+                lin
+            );
+        }
+    };
+
+    print(
+        &dummy_app::<HEADER_SIZE, 0, 0, 0>(pasta, NUM_APP_STEPS).native_registry,
+        "test_internal_circuit_constraint_counts",
+    );
 }
 
 /// The stage types `test_internal_stage_parameters` pins, at eight
@@ -106,13 +153,14 @@ mod pinned_chain {
         internal::native::{RevdotParameters, stages},
     };
 
-    type J = AppHooks<8, 1>;
+    type J = AppHooks<8, 1, 1, 2>;
 
     pub type Preamble = stages::preamble::Stage<Pasta, R, HEADER_SIZE, J>;
     pub type OuterError = stages::outer_error::Stage<Pasta, R, HEADER_SIZE, J, RevdotParameters>;
     pub type InnerError = stages::inner_error::Stage<Pasta, R, HEADER_SIZE, J, RevdotParameters>;
     pub type Query = stages::query::Stage<Pasta, R, HEADER_SIZE, J>;
     pub type Eval = stages::eval::Stage<Pasta, R, HEADER_SIZE, J>;
+    pub type Challenges = stages::challenges::Stage<Pasta, R, HEADER_SIZE, J, RevdotParameters>;
 }
 
 #[rustfmt::skip]
@@ -127,49 +175,12 @@ fn test_internal_stage_parameters() {
         }};
     }
 
-    check_stage!(pinned_chain::Preamble,    skip =   1, num = 365);
-    check_stage!(pinned_chain::OuterError,  skip = 366, num = 186);
-    check_stage!(pinned_chain::InnerError,  skip = 552, num = 399);
-    check_stage!(pinned_chain::Query,       skip = 366, num =  23);
-    check_stage!(pinned_chain::Eval,        skip = 389, num =  26);
-}
-
-/// Helper test to print current constraint counts in copy-pasteable format.
-/// Run with: `cargo test -p ragu_pcd --release print_internal_circuit -- --nocapture`
-#[test]
-fn print_internal_circuit_constraint_counts() {
-    use alloc::format;
-    use std::println;
-
-    let pasta = Pasta::baked();
-
-    let app = dummy_app::<HEADER_SIZE, 0, 0>(pasta, NUM_APP_STEPS);
-
-    let variants = [
-        ("Hashes1Circuit", InternalCircuitIndex::Hashes1Circuit),
-        ("Hashes2Circuit", InternalCircuitIndex::Hashes2Circuit),
-        (
-            "InnerCollapseCircuit",
-            InternalCircuitIndex::InnerCollapseCircuit,
-        ),
-        (
-            "OuterCollapseCircuit",
-            InternalCircuitIndex::OuterCollapseCircuit,
-        ),
-        ("ComputeVCircuit", InternalCircuitIndex::ComputeVCircuit),
-    ];
-
-    println!("\n// Copy-paste the following into test_internal_circuit_constraint_counts:");
-    for (name, variant) in variants {
-        let circuit_index = variant.circuit_index();
-        let (mul, lin) = app.native_registry.constraint_counts(circuit_index);
-        println!(
-            "    check_constraints!(app, {:<22} mul = {:>4}, lin = {:>4});",
-            format!("{},", name),
-            mul,
-            lin
-        );
-    }
+    check_stage!(pinned_chain::Preamble,    skip =   1, num = 320);
+    check_stage!(pinned_chain::OuterError,  skip = 321, num = 186);
+    check_stage!(pinned_chain::InnerError,  skip = 507, num = 399);
+    check_stage!(pinned_chain::Query,       skip = 321, num =  27);
+    check_stage!(pinned_chain::Eval,        skip = 348, num =  28);
+    check_stage!(pinned_chain::Challenges,  skip = 507, num =   3);
 }
 
 /// Helper test to print current stage parameters in copy-pasteable format.
@@ -195,6 +206,7 @@ fn print_internal_stage_parameters() {
     line::<pinned_chain::InnerError>("InnerError");
     line::<pinned_chain::Query>("Query");
     line::<pinned_chain::Eval>("Eval");
+    line::<pinned_chain::Challenges>("Challenges");
 }
 
 /// Verifies the native registry digest matches the expected value.
@@ -206,9 +218,11 @@ fn print_internal_stage_parameters() {
 fn test_native_registry_digest() {
     let pasta = Pasta::baked();
 
-    let app = dummy_app::<HEADER_SIZE, 0, 0>(pasta, NUM_APP_STEPS);
+    let app = dummy_app::<HEADER_SIZE, 0, 0, 0>(pasta, NUM_APP_STEPS);
 
-    let expected = fp!(0x31e1786b198ad8953d0ec1699a2d1c7ed26d312a7c8c67099cb5a517259e54e3);
+    // At `POLYS = 0, CLAIMS = 0, CHALLENGES = 0` every hook-dependent width
+    // collapses.
+    let expected = fp!(0x2bb64a4adaa9e869d9187bec77ae9f8c8788703ca013ff9bae02b6fdbc02dec0);
 
     assert_eq!(
         app.native_registry.digest(),
@@ -217,18 +231,14 @@ fn test_native_registry_digest() {
     );
 }
 
-/// Verifies the nested registry digest matches the expected value.
-///
-/// This test ensures the wiring polynomial structure is mathematically
-/// equivalent to the reference implementation by comparing cryptographic
-/// digests.
+/// Pins the nested registry digest at the zero layout.
 #[test]
 fn test_nested_registry_digest() {
     let pasta = Pasta::baked();
 
-    let app = dummy_app::<HEADER_SIZE, 0, 0>(pasta, NUM_APP_STEPS);
+    let app = dummy_app::<HEADER_SIZE, 0, 0, 0>(pasta, NUM_APP_STEPS);
 
-    let expected = fq!(0x2f4bf855b80a694facbe9a2c26ee8d1dae9e15bb7b7eba54ca53f5c166e1d150);
+    let expected = fq!(0x06bb3145242fd72534249a81cf321e7e4608d2610f745aa4eafa42887528f9d9);
 
     assert_eq!(
         app.nested_registry.digest(),
@@ -241,48 +251,34 @@ fn test_nested_registry_digest() {
 /// Run with: `cargo test -p ragu_pcd --release print_registry_digests -- --nocapture`
 #[test]
 fn print_registry_digests() {
-    use alloc::{format, string::String, vec::Vec};
+    use alloc::{format, string::String};
     use std::println;
 
     use ragu_arithmetic::ff::PrimeField;
 
     let pasta = Pasta::baked();
 
-    let app = dummy_app::<HEADER_SIZE, 0, 0>(pasta, NUM_APP_STEPS);
+    // Big-endian hex, the `fp!`/`fq!` literal form.
+    fn hex<F: PrimeField>(digest: F) -> String {
+        digest
+            .to_repr()
+            .as_ref()
+            .iter()
+            .rev()
+            .map(|b| format!("{:02x}", b))
+            .collect()
+    }
 
-    let native_digest = app.native_registry.digest();
-    let nested_digest = app.nested_registry.digest();
-
-    // Convert to big-endian hex for repr256! format
-    let native_bytes: Vec<u8> = native_digest
-        .to_repr()
-        .as_ref()
-        .iter()
-        .rev()
-        .cloned()
-        .collect();
-    let nested_bytes: Vec<u8> = nested_digest
-        .to_repr()
-        .as_ref()
-        .iter()
-        .rev()
-        .cloned()
-        .collect();
+    let zero_layout = dummy_app::<HEADER_SIZE, 0, 0, 0>(pasta, NUM_APP_STEPS);
 
     println!("\n// Copy-paste the following into the registry digest tests:");
     println!(
-        "    let expected = fp!(0x{});",
-        native_bytes
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect::<String>()
+        "    // test_native_registry_digest\n    let expected = fp!(0x{});",
+        hex(zero_layout.native_registry.digest())
     );
     println!(
-        "    let expected = fq!(0x{});",
-        nested_bytes
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect::<String>()
+        "    // test_nested_registry_digest\n    let expected = fq!(0x{});",
+        hex(zero_layout.nested_registry.digest())
     );
 }
 

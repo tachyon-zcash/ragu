@@ -9,20 +9,42 @@
 
 use alloc::{vec, vec::Vec};
 
-use ragu_arithmetic::{Cycle, eval, ff::Field};
+use ragu_arithmetic::{CurveAffine, Cycle, FixedGenerators as _, eval, ff::Field};
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, allocator::Standard, vec::Len};
+use ragu_primitives::{
+    Element,
+    allocator::Standard,
+    vec::{CollectFixed, Len},
+};
 
 use crate::{
     instance,
+    internal::challenge::challenge_of,
     poly_commitment::{HANDLE_WIRES, PolyHandle},
-    proof::PolyQuery,
+    proof::{DerivedChallenge, PolyQuery},
 };
+
+/// A derived challenge before the width is known: a [`Step`](crate::step::Step)
+/// does not know which layout it will run under, so only the adapter can build
+/// an [`instance::Challenge`].
+pub(crate) struct ChallengeWires<'dr, D: Driver<'dr>> {
+    pub inputs: Vec<Element<'dr, D>>,
+    pub challenge: Element<'dr, D>,
+}
+
+impl<'dr, D: Driver<'dr>> ChallengeWires<'dr, D> {
+    pub(crate) fn sized<J: HookConfig>(&self) -> Result<instance::Challenge<'dr, D, J>> {
+        Ok(instance::Challenge {
+            inputs: self.inputs.iter().cloned().collect_fixed()?,
+            challenge: self.challenge.clone(),
+        })
+    }
+}
 
 /// A polynomial a step witnessed: the handle it was handed back, the commitment
 /// that handle encodes, and the coefficients the fuse folds. The commitment is
@@ -47,6 +69,7 @@ struct Queried<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
 pub(crate) struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     poly_queries: Vec<Queried<'dr, D, C>>,
     witnessed_polys: Vec<Witnessed<'dr, D, C>>,
+    challenge_pairs: Vec<ChallengeWires<'dr, D>>,
     hook_layout: HookLayout,
     params: &'dr C::Params,
 }
@@ -58,6 +81,7 @@ pub(crate) struct FrameworkAux<C: Cycle> {
     /// those from these.
     pub witness_polys: Vec<Vec<C::CircuitField>>,
     pub poly_queries: Vec<PolyQuery<C::HostCurve>>,
+    pub challenges: Vec<DerivedChallenge<C::CircuitField>>,
 }
 
 /// An application's [`HookLayout`] as type-level lengths on a marker type;
@@ -67,10 +91,17 @@ pub trait HookConfig: Send + Sync + 'static {
     type PolyWitnesses: Len;
     /// Polynomial queries enforced per step.
     type PolyQueries: Len;
+    /// Challenges derived per step.
+    type ChallengeDerivations: Len;
+    /// Input elements one challenge derivation may absorb. Zero only when
+    /// [`ChallengeDerivations`](Self::ChallengeDerivations) is zero.
+    type ChallengeWidth: Len;
 
     /// These lengths as the value the circuits are built from.
     fn layout() -> HookLayout {
         HookLayout {
+            challenge_calls: Self::ChallengeDerivations::len(),
+            challenge_width: Self::ChallengeWidth::len(),
             witness_polys: Self::PolyWitnesses::len(),
             poly_queries: Self::PolyQueries::len(),
         }
@@ -80,6 +111,11 @@ pub trait HookConfig: Send + Sync + 'static {
 /// A [`HookConfig`]'s lengths as a value.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HookLayout {
+    /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) calls.
+    pub challenge_calls: usize,
+    /// Input elements one challenge derivation absorbs; positions a caller
+    /// leaves empty take a fixed sentinel.
+    pub challenge_width: usize,
     /// [`witness_polynomial`](crate::step::StepCtx::witness_polynomial) calls.
     pub witness_polys: usize,
     /// [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) calls.
@@ -87,6 +123,11 @@ pub struct HookLayout {
 }
 
 impl HookLayout {
+    /// Instance elements the derived challenges occupy.
+    pub const fn challenge_instance_len(&self) -> usize {
+        self.challenge_calls * (self.challenge_width + 1)
+    }
+
     /// Instance elements the handles and poly-queries occupy.
     pub const fn poly_query_instance_len(&self) -> usize {
         self.witness_polys * HANDLE_WIRES + self.poly_queries * (HANDLE_WIRES + 2)
@@ -100,6 +141,10 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
 
     pub(crate) fn poly_queries(&self) -> impl Iterator<Item = &instance::PolyQuery<'dr, D, C>> {
         self.poly_queries.iter().map(|queried| &queried.wires)
+    }
+
+    pub(crate) fn challenge_pairs(&self) -> &[ChallengeWires<'dr, D>] {
+        &self.challenge_pairs
     }
 
     /// Reads each hook's wires back out as plain values, for the fuse.
@@ -121,6 +166,14 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
                         y: *q.wires.y.value().take(),
                     })
                     .collect(),
+                challenges: self
+                    .challenge_pairs
+                    .into_iter()
+                    .map(|pair| DerivedChallenge {
+                        inputs: pair.inputs.iter().map(|i| *i.value().take()).collect(),
+                        challenge: *pair.challenge.value().take(),
+                    })
+                    .collect(),
             })
         })
     }
@@ -129,6 +182,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         Self {
             poly_queries: Vec::new(),
             witnessed_polys: Vec::new(),
+            challenge_pairs: Vec::new(),
             hook_layout,
             params,
         }
@@ -220,6 +274,37 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         Ok(())
     }
 
+    pub(crate) fn derive_challenge(
+        &mut self,
+        dr: &mut D,
+        inputs: &[Element<'dr, D>],
+    ) -> Result<Element<'dr, D>> {
+        // Positions the caller left empty take a fixed sentinel, so that a
+        // derivation absorbs the same count however few elements it was given.
+        let sentinel = *C::nested_generators(self.params).g()[0]
+            .coordinates()
+            .expect("a fixed generator is not the identity")
+            .x();
+        let allocator = &mut Standard::new();
+        let mut witnessed = inputs.to_vec();
+        while witnessed.len() < self.hook_layout.challenge_width {
+            witnessed.push(Element::alloc(dr, allocator, D::just(|| sentinel))?);
+        }
+
+        // Hashed from the wires the instance pins, so the two cannot diverge.
+        let derived = D::try_just(|| {
+            let absorbed: Vec<_> = witnessed.iter().map(|e| *e.value().take()).collect();
+            challenge_of::<C>(self.params, &absorbed)
+        })?;
+
+        let challenge = Element::alloc(dr, allocator, derived)?;
+        self.challenge_pairs.push(ChallengeWires {
+            inputs: witnessed,
+            challenge: challenge.clone(),
+        });
+        Ok(challenge)
+    }
+
     /// Fills whatever the body left unused up to the [`HookLayout`]. The
     /// polynomials go first, because a padding query has to name one and the
     /// body may have witnessed none.
@@ -250,6 +335,12 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
             while self.poly_queries.len() < self.hook_layout.poly_queries {
                 self.enforce_poly_query(&handle, x.clone(), y.clone())?;
             }
+        }
+
+        // A derivation supplying nothing, which is what a padding challenge is:
+        // every input position takes the sentinel.
+        while self.challenge_pairs.len() < self.hook_layout.challenge_calls {
+            self.derive_challenge(dr, &[])?;
         }
 
         Ok(())
