@@ -560,6 +560,9 @@ pub enum Corruption<C: Cycle> {
     /// a valid point that commits to no carried polynomial; out of range is
     /// a no-op.
     QueryCom(usize),
+    /// Perturb the derived challenge at the given index, so it no longer
+    /// re-derives from its inputs; out of range is a no-op.
+    ChallengeValue(usize, C::CircuitField),
 }
 
 impl<C: Cycle> core::fmt::Debug for Corruption<C> {
@@ -613,6 +616,7 @@ impl<C: Cycle> core::fmt::Debug for Corruption<C> {
             }
             Corruption::QueryY(index, _) => write!(f, "QueryY({index})"),
             Corruption::QueryCom(index) => write!(f, "QueryCom({index})"),
+            Corruption::ChallengeValue(index, _) => write!(f, "ChallengeValue({index})"),
         }
     }
 }
@@ -860,6 +864,16 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 }
                 None => Binding::Unbound,
             },
+
+            Corruption::ChallengeValue(index, delta) => {
+                match self.application_challenges.get_mut(index) {
+                    Some(derived) if delta != C::CircuitField::ZERO => {
+                        derived.challenge += delta;
+                        Binding::MustReject
+                    }
+                    _ => Binding::Unbound,
+                }
+            }
         }
     }
 

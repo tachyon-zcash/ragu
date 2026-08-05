@@ -814,3 +814,94 @@ fn test_rx_index_all_exhaustive() {
         assert_eq!(all.len(), RxIndex::num(polys));
     }
 }
+
+/// Two applications identical but for the layout they declare: every internal
+/// circuit that reads the hook regions is strictly larger in the heavier one.
+/// The layout is the application's own declaration, not a framework constant.
+///
+/// The circuits are synthesized directly rather than read off a finalized
+/// registry, since a layout witnessing polynomials does not fit the step gate
+/// budget `ProductionRank` affords.
+mod layout_is_per_application {
+    use super::*;
+    use crate::framework_hooks::{HookConfig, HookLayout};
+
+    const HS: usize = 4;
+
+    type Heavy = AppHooks<2, 3, 1, HANDLE_WIRES>;
+
+    fn gates<J: HookConfig>(id: InternalCircuitIndex) -> usize {
+        let pasta = crate::pasta::baked();
+        let (_, log2_circuits) = native::total_circuit_counts(1, J::PolyWitnesses::len());
+        let counts = match id {
+            InternalCircuitIndex::Hashes1Circuit => {
+                synthesis_counts(native::circuits::hashes_1::Circuit::<
+                    Pasta,
+                    R,
+                    HS,
+                    J,
+                    RevdotParameters,
+                >::new(pasta, log2_circuits))
+            }
+            InternalCircuitIndex::OuterCollapseCircuit => {
+                synthesis_counts(native::circuits::outer_collapse::Circuit::<
+                    Pasta,
+                    R,
+                    HS,
+                    J,
+                    RevdotParameters,
+                >::new())
+            }
+            InternalCircuitIndex::ComputeVCircuit => {
+                synthesis_counts(native::circuits::compute_v::Circuit::<Pasta, R, HS, J>::new())
+            }
+            InternalCircuitIndex::ChallengeBindingCircuit => {
+                synthesis_counts(native::circuits::challenge_binding::Circuit::<
+                    Pasta,
+                    R,
+                    HS,
+                    J,
+                >::new(pasta))
+            }
+            _ => unreachable!("only the circuits that read the hook regions"),
+        };
+        counts.0
+    }
+
+    #[test]
+    fn a_light_application_pays_less_than_a_heavy_one() {
+        // The four numbers are distinct, so a `layout()` that crossed two axes
+        // fails here rather than downstream. The width is `HANDLE_WIRES`, what
+        // a challenge absorbing one handle takes.
+        assert_eq!(NoHooks::layout(), HookLayout::default());
+        assert_eq!(
+            Heavy::layout(),
+            HookLayout {
+                challenge_calls: 1,
+                challenge_width: HANDLE_WIRES,
+                witness_polys: 2,
+                poly_queries: 3,
+            }
+        );
+
+        for id in [
+            InternalCircuitIndex::Hashes1Circuit,
+            InternalCircuitIndex::OuterCollapseCircuit,
+            InternalCircuitIndex::ComputeVCircuit,
+            InternalCircuitIndex::ChallengeBindingCircuit,
+        ] {
+            assert!(
+                gates::<NoHooks>(id) < gates::<Heavy>(id),
+                "{id:?}: light {} is not smaller than heavy {}",
+                gates::<NoHooks>(id),
+                gates::<Heavy>(id),
+            );
+        }
+
+        // The *2 margin: a step that derives no challenge pays nothing to bind one.
+        assert!(
+            gates::<NoHooks>(InternalCircuitIndex::ChallengeBindingCircuit) * 2
+                < gates::<Heavy>(InternalCircuitIndex::ChallengeBindingCircuit),
+        );
+    }
+}
