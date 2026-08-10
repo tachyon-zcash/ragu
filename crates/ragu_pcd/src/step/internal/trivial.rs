@@ -10,7 +10,7 @@ use ragu_core::{
 };
 use ragu_primitives::allocator::Standard;
 
-use super::super::{Encoded, Index, Step};
+use super::super::{Encoded, Index, Step, StepCtx};
 use crate::Header;
 pub(crate) use crate::step::InternalStepIndex::Trivial as INTERNAL_ID;
 
@@ -34,7 +34,7 @@ impl<C: Cycle> Step<C> for Trivial {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, C::NestedCurve>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -48,8 +48,8 @@ impl<C: Cycle> Step<C> for Trivial {
         DriverValue<D, Self::Aux<'source>>,
     )> {
         let allocator = &mut Standard::new();
-        let left = Encoded::new(dr, allocator, left)?;
-        let right = Encoded::new(dr, allocator, right)?;
+        let left = Encoded::new(ctx.dr, allocator, left)?;
+        let right = Encoded::new(ctx.dr, allocator, right)?;
         let output = Encoded::from_gadget(());
 
         Ok(((left, right, output), D::unit(), D::unit()))

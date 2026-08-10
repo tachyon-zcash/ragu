@@ -11,7 +11,10 @@ use ragu_core::Result;
 use crate::{
     Application, Header, Pcd, Proof,
     proof::ProofBuilder,
-    step::{Step, internal::adapter::Adapter},
+    step::{
+        Step,
+        internal::adapter::{Adapter, AdapterAux},
+    },
 };
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
@@ -31,7 +34,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     )> {
         let (left_proof, left_data) = left.into_parts();
         let (right_proof, right_data) = right.into_parts();
-        let (trace, aux) = Adapter::<C, S, R, HEADER_SIZE>::new(step)
+        let (trace, aux) = Adapter::<C, S, R, HEADER_SIZE>::new(step)?
             .trace((left_data, right_data, witness))?
             .into_parts();
         let rx = self.native_registry.assemble(
@@ -40,7 +43,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             &mut *rng,
         )?;
 
-        let ((left_header, right_header), output_data, step_aux) = aux;
+        let AdapterAux {
+            left_header,
+            right_header,
+            output_data,
+            step_aux,
+            // TODO: process the application poly queries
+            claims: _,
+        } = aux;
 
         builder.set_circuit_id(S::INDEX.circuit_index(self.num_application_steps)?);
         builder.set_left_header(left_header.into_inner());

@@ -19,6 +19,7 @@ keywords = []
 rustdoc-args = ["--html-in-header", "katex-header.html"]
 no-default-features = true
 features = ["alloc", "modern-deps"]
+dependencies = { ragu_pcd = { path = "../ragu_pcd", version = "0.0.0" } }
 
 [features]
 alloc = []

@@ -9,7 +9,7 @@ use ragu_pasta::Pasta;
 use ragu_pcd::{
     ApplicationBuilder,
     header::{Header, Suffix},
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Step, StepCtx},
 };
 use ragu_primitives::allocator::{Allocator, Standard};
 
@@ -70,7 +70,7 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step0 {
     type Output = HSuffixA;
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, C::NestedCurve>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -84,8 +84,8 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step0 {
         DriverValue<D, Self::Aux<'source>>,
     )> {
         let allocator = &mut Standard::new();
-        let left = Encoded::new(dr, allocator, left)?;
-        let right = Encoded::new(dr, allocator, right)?;
+        let left = Encoded::new(ctx.dr, allocator, left)?;
+        let right = Encoded::new(ctx.dr, allocator, right)?;
         let output = Encoded::from_gadget(());
 
         Ok(((left, right, output), D::unit(), D::unit()))
@@ -103,7 +103,7 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step1 {
     type Output = HSuffixB;
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, C::NestedCurve>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -117,8 +117,8 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step1 {
         DriverValue<D, Self::Aux<'source>>,
     )> {
         let allocator = &mut Standard::new();
-        let left = Encoded::new(dr, allocator, left)?;
-        let right = Encoded::new(dr, allocator, right)?;
+        let left = Encoded::new(ctx.dr, allocator, left)?;
+        let right = Encoded::new(ctx.dr, allocator, right)?;
         let output = Encoded::from_gadget(());
 
         Ok(((left, right, output), D::unit(), D::unit()))
@@ -136,7 +136,7 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step1Dup {
     type Output = HSuffixAOther;
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, C::NestedCurve>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -150,8 +150,8 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step1Dup {
         DriverValue<D, Self::Aux<'source>>,
     )> {
         let allocator = &mut Standard::new();
-        let left = Encoded::new(dr, allocator, left)?;
-        let right = Encoded::new(dr, allocator, right)?;
+        let left = Encoded::new(ctx.dr, allocator, left)?;
+        let right = Encoded::new(ctx.dr, allocator, right)?;
         let output = Encoded::from_gadget(());
 
         Ok(((left, right, output), D::unit(), D::unit()))

@@ -24,6 +24,7 @@ extern crate alloc;
 #[cfg(any(feature = "std", test))]
 extern crate std;
 
+pub mod framework_hooks;
 mod fuse;
 #[cfg(feature = "unstable-fuzzing")]
 pub mod fuzz_utils;
@@ -55,6 +56,7 @@ pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usi
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
     num_application_steps: usize,
+    num_application_masks: usize,
     header_map: BTreeMap<header::Suffix, TypeId>,
     _marker: PhantomData<[(); HEADER_SIZE]>,
 }
@@ -76,6 +78,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             native_registry: RegistryBuilder::new(),
             nested_registry: RegistryBuilder::new(),
             num_application_steps: 0,
+            num_application_masks: 0,
             header_map: BTreeMap::new(),
             _marker: PhantomData,
         }
@@ -97,9 +100,31 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         self.prevent_duplicate_suffixes::<S::Left>()?;
         self.prevent_duplicate_suffixes::<S::Right>()?;
 
-        self.native_registry =
-            self.native_registry
-                .register_circuit(Adapter::<C, S, R, HEADER_SIZE>::new(step))?;
+        // Constructing the adapter discovers the stage layout induced by the
+        // step's `derive_challenge` calls (a dry run of the witness body).
+        let adapter = Adapter::<C, S, R, HEADER_SIZE>::new(step)?;
+
+        // Register the well-formedness masks for the induced stages, mirroring
+        // what the typed staging path does with `StageExt::{mask, final_mask}`:
+        // one mask per stage plus a final mask that forces the step's final
+        // trace to vanish on the stage regions. These are appended after all
+        // application steps in the registry ordering, so the fixed circuit
+        // indices are unaffected by their (per-application) count.
+        let induced = adapter.induced_stages().clone();
+        if !induced.is_empty() {
+            for stage in 0..induced.len() {
+                self.native_registry = self
+                    .native_registry
+                    .register_application_mask(induced.mask(stage)?);
+                self.num_application_masks += 1;
+            }
+            self.native_registry = self
+                .native_registry
+                .register_application_mask(induced.final_mask()?);
+            self.num_application_masks += 1;
+        }
+
+        self.native_registry = self.native_registry.register_circuit(adapter)?;
         self.num_application_steps += 1;
 
         Ok(self)
@@ -135,8 +160,10 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         // 1. Application circuits (already registered)
         // 2. Internal circuits and masks
         // 3. Internal steps
-        let (total_circuits, log2_circuits) =
-            internal::native::total_circuit_counts(self.num_application_steps);
+        let (total_circuits, log2_circuits) = internal::native::total_circuit_counts(
+            self.num_application_steps,
+            self.num_application_masks,
+        );
 
         // First, register internal circuits and masks
         self.native_registry = internal::native::register_all::<C, R, HEADER_SIZE>(
@@ -150,12 +177,12 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             self.native_registry
                 .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
                     step::internal::rerandomize::Rerandomize::<()>::new(),
-                ))?;
+                )?)?;
         self.native_registry =
             self.native_registry
                 .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
                     step::internal::trivial::Trivial::new(),
-                ))?;
+                )?)?;
 
         assert_eq!(
             self.native_registry.log2_circuits(),
@@ -176,6 +203,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             nested_registry: self.nested_registry.finalize()?,
             params,
             num_application_steps: self.num_application_steps,
+            num_application_masks: self.num_application_masks,
             seeded_trivial: OnceCell::new(),
             _marker: PhantomData,
         })
@@ -205,6 +233,7 @@ pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     nested_registry: Registry<'params, C::ScalarField, R>,
     params: &'params C::Params,
     num_application_steps: usize,
+    num_application_masks: usize,
     /// Cached seeded trivial proof for rerandomization.
     seeded_trivial: OnceCell<Proof<C, R>>,
     _marker: PhantomData<[(); HEADER_SIZE]>,

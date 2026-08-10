@@ -37,6 +37,7 @@ pub mod circuits {
 }
 
 pub mod claims;
+pub mod derived;
 pub mod unified;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,10 +61,17 @@ pub enum InternalCircuitIndex {
 }
 
 /// Compute the total circuit count and log2 domain size from the number of
-/// application-defined steps.
-pub const fn total_circuit_counts(num_application_steps: usize) -> (usize, u32) {
-    let total_circuits =
-        num_application_steps + step::NUM_INTERNAL_STEPS + InternalCircuitIndex::NUM;
+/// application-defined steps and the number of application-level stage masks
+/// (the per-step masks induced by `derive_challenge`, registered after the
+/// application steps).
+pub const fn total_circuit_counts(
+    num_application_steps: usize,
+    num_application_masks: usize,
+) -> (usize, u32) {
+    let total_circuits = num_application_steps
+        + num_application_masks
+        + step::NUM_INTERNAL_STEPS
+        + InternalCircuitIndex::NUM;
     let log2_circuits = total_circuits.next_power_of_two().trailing_zeros();
     (total_circuits, log2_circuits)
 }

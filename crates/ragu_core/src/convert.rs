@@ -319,6 +319,34 @@ mod tests {
     }
 
     #[test]
+    fn collect_wires_captures_handles_in_order() -> Result<()> {
+        let mut dr = Emulator::<Wired<F>>::extractor();
+        let (_, a, _) =
+            dr.mul(|| Ok((Coeff::Zero, Coeff::Arbitrary(F::from(100)), Coeff::Zero)))?;
+        let (_, b, _) =
+            dr.mul(|| Ok((Coeff::Zero, Coeff::Arbitrary(F::from(200)), Coeff::Zero)))?;
+        let gadget = TwoWires {
+            a,
+            b,
+            _marker: core::marker::PhantomData,
+        };
+
+        // On the extractor emulator a wire *is* its field value, so the
+        // collected handles are the assignment, in canonical traversal order.
+        let collected = gadget.collect_wires()?;
+        assert_eq!(collected, alloc::vec![F::from(100), F::from(200)]);
+
+        // The length must agree with `num_wires`...
+        assert_eq!(collected.len(), gadget.num_wires()?);
+
+        // ...and the result must match the existing `Emulator::wires` helper,
+        // which `collect_wires` generalizes to arbitrary drivers.
+        assert_eq!(collected, dr.wires(&gadget)?);
+
+        Ok(())
+    }
+
+    #[test]
     fn wiremap_partial_failure_leaves_dirty_state() -> Result<()> {
         struct FailOnEven {
             call_count: usize,

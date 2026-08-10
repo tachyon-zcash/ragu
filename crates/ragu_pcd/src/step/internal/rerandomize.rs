@@ -15,7 +15,7 @@ use ragu_core::{
 };
 use ragu_primitives::allocator::Standard;
 
-use super::super::{Encoded, Index, Step};
+use super::super::{Encoded, Index, Step, StepCtx};
 use crate::Header;
 pub(crate) use crate::step::InternalStepIndex::Rerandomize as INTERNAL_ID;
 
@@ -43,7 +43,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, C::NestedCurve>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, H::Data>,
         right: DriverValue<D, ()>,
@@ -58,9 +58,9 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
     )> {
         let allocator = &mut Standard::new();
         // Use uniform encoding for left to ensure circuit uniformity across header types
-        let left_encoded = Encoded::new_uniform(dr, allocator, left.clone())?;
+        let left_encoded = Encoded::new_uniform(ctx.dr, allocator, left.clone())?;
         // Use standard encoding for right (trivial header)
-        let right = Encoded::new(dr, allocator, right)?;
+        let right = Encoded::new(ctx.dr, allocator, right)?;
 
         // TODO(ebfull): It's possible that the witness for this step needs to
         // be populated with some random data, for actual re-randomization
@@ -126,12 +126,15 @@ fn test_rerandomize_consistency() {
         }
     }
 
-    let circuit_single = super::adapter::Adapter::<Pasta, Rerandomize<Single>, R, HEADER_SIZE>::new(
-        Rerandomize::new(),
-    );
+    let circuit_single =
+        super::adapter::Adapter::<Pasta, Rerandomize<Single>, R, HEADER_SIZE>::new(
+            Rerandomize::new(),
+        )
+        .unwrap();
     let circuit_pair = super::adapter::Adapter::<Pasta, Rerandomize<Pair>, R, HEADER_SIZE>::new(
         Rerandomize::new(),
-    );
+    )
+    .unwrap();
 
     let mut builder: TestRegistryBuilder<'_, _, R> = TestRegistryBuilder::new();
     let single_h = builder.register_circuit(circuit_single).unwrap();

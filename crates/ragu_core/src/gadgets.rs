@@ -83,6 +83,8 @@
 
 mod foreign;
 
+use alloc::vec::Vec;
+
 use ragu_arithmetic::ff::Field;
 
 use super::{
@@ -212,6 +214,31 @@ pub trait Gadget<'dr, D: Driver<'dr>>: Clone {
         };
         self.map(&mut counter)?;
         Ok(counter.count)
+    }
+
+    /// Collects this gadget's wire handles, in canonical traversal order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying [`GadgetKind::map_gadget`] fails.
+    fn collect_wires(&self) -> Result<Vec<D::Wire>> {
+        struct WireCollector<Src: DriverTypes> {
+            wires: Vec<Src::ImplWire>,
+        }
+
+        impl<F: Field, Src: DriverTypes<ImplField = F, ImplWire: Clone>> WireMap<F> for WireCollector<Src> {
+            type Src = Src;
+            type Dst = core::marker::PhantomData<F>;
+
+            fn convert_wire(&mut self, wire: &Src::ImplWire) -> Result<()> {
+                self.wires.push(wire.clone());
+                Ok(())
+            }
+        }
+
+        let mut collector = WireCollector::<D> { wires: Vec::new() };
+        self.map(&mut collector)?;
+        Ok(collector.wires)
     }
 }
 

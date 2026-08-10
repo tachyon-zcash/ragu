@@ -18,8 +18,11 @@
 //!   curve scalar multiplication
 //! - [`transcript`] — Fiat–Shamir transcript wrapper over a Poseidon
 //!   sponge, with domain separation
+//! - [`challenge`] — commit a polynomial and hash its commitment to derive a
+//!   Fiat–Shamir challenge
 //! - [`const_fns`] — compile-time helper functions for array construction
 
+pub mod challenge;
 pub mod claims;
 pub mod const_fns;
 pub mod endoscalar;
