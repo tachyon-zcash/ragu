@@ -237,6 +237,10 @@ mod nested {
 
 #[cfg(test)]
 mod tests {
+    // This crate is `no_std`; the test harness links `std`, so the fixture
+    // below has to name `OnceLock` explicitly.
+    use std::sync::OnceLock;
+
     use ragu_arithmetic::{
         FixedGenerators,
         ff::Field,
@@ -254,41 +258,68 @@ mod tests {
     type TestR = ProductionRank;
     const HEADER_SIZE: usize = 4;
 
-    fn create_test_app() -> crate::Application<'static, Pasta, TestR, HEADER_SIZE> {
+    type TestApp = crate::Application<'static, Pasta, TestR, HEADER_SIZE>;
+
+    /// Seed for the single honest proof that every test in this module starts
+    /// from.
+    const HONEST_SEED: u64 = 42;
+
+    /// Seed for the RNG that [`Application::verify`] draws its own $w$, $y$,
+    /// and $z$ from. Fixed so that any failure below is reproducible.
+    const VERIFY_SEED: u64 = 99999;
+
+    fn create_test_app() -> TestApp {
         let pasta = Pasta::baked();
         ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
             .finalize(pasta)
             .expect("failed to create test application")
     }
 
-    fn create_seeded_proof(
-        seed: u64,
-    ) -> (
-        crate::Application<'static, Pasta, TestR, HEADER_SIZE>,
-        Proof<Pasta, TestR>,
-    ) {
-        let app = create_test_app();
-        let mut rng = StdRng::seed_from_u64(seed);
-        let (pcd, _aux) = app
-            .seed(&mut rng, Trivial::new(), ())
-            .expect("seeded proof should not fail");
-        let (proof, _data) = pcd.into_parts();
-        (app, proof)
+    /// The one honest proof that every test in this module starts from.
+    ///
+    /// Seeding dominates the cost of this module — roughly 19s per proof in a
+    /// debug build, against 0.4s to build the application and 0.3s to verify —
+    /// so it happens once for the whole module and each test corrupts a clone.
+    /// The application stays per-test: it is cheap, and it holds a `OnceCell`,
+    /// so it is not `Sync` and could not live in a `static` anyway.
+    static HONEST_PROOF: OnceLock<Proof<Pasta, TestR>> = OnceLock::new();
+
+    /// Runs `f` against a fresh application and a fresh clone of the honest
+    /// proof, which the caller is free to corrupt.
+    fn with_honest<T>(f: impl FnOnce(&TestApp, Proof<Pasta, TestR>) -> T) -> T {
+        let proof = HONEST_PROOF
+            .get_or_init(|| {
+                let app = create_test_app();
+                let mut rng = StdRng::seed_from_u64(HONEST_SEED);
+                let (pcd, _aux) = app
+                    .seed(&mut rng, Trivial::new(), ())
+                    .expect("seeded proof should not fail");
+                let (proof, _data) = pcd.into_parts();
+                proof
+            })
+            .clone();
+
+        f(&create_test_app(), proof)
     }
 
+    /// Every other test in this module asserts that `verify` *rejects*, and all
+    /// of them would pass vacuously against a verifier that always returned
+    /// `false`. This is the only test pinning down the honest path, so the
+    /// rejection tests below are only meaningful for as long as it passes.
     #[test]
     fn verify_accepts_seeded_proof() {
-        let (app, proof) = create_seeded_proof(42);
-        let mut rng = StdRng::seed_from_u64(9999);
-        let pcd = proof.carry::<()>(());
-        let result = app.verify(&pcd, &mut rng).expect("verify should not error");
-        assert!(result, "a freshly seeded proof must be accepted");
+        with_honest(|app, proof| {
+            let mut rng = StdRng::seed_from_u64(VERIFY_SEED);
+            let pcd = proof.carry::<()>(());
+            let result = app.verify(&pcd, &mut rng).expect("verify should not error");
+            assert!(result, "a freshly seeded proof must be accepted");
+        })
     }
 
     #[test]
     fn verify_transcript_replay_challenges_match() {
         let pasta = Pasta::baked();
-        let (_app, proof) = create_seeded_proof(7);
+        let proof = with_honest(|_app, proof| proof);
 
         let dr = &mut Emulator::execute();
         let poseidon = Pasta::circuit_poseidon(pasta);
@@ -411,166 +442,206 @@ mod tests {
         assert_eq!(pre_beta, proof.pre_beta, "pre_beta mismatch");
     }
 
-    macro_rules! seeded_rejects {
-        ($test_name:ident, $seed:expr, |$proof:ident| $corrupt:expr) => {
+    /// Corrupts a single field of an otherwise honest proof and asserts that
+    /// the verifier rejects it.
+    macro_rules! rejects {
+        ($test_name:ident, |$proof:ident| $corrupt:expr) => {
             #[test]
             fn $test_name() {
-                let (app, mut $proof) = create_seeded_proof($seed);
-                $corrupt;
-                let mut rng = StdRng::seed_from_u64(99999);
-                let pcd = $proof.carry::<()>(());
-                let result = app.verify(&pcd, &mut rng).expect("verify should not error");
-                assert!(
-                    !result,
-                    concat!(stringify!($test_name), ": verifier must reject")
-                );
+                with_honest(|app, mut $proof| {
+                    $corrupt;
+                    let mut rng = StdRng::seed_from_u64(VERIFY_SEED);
+                    let pcd = $proof.carry::<()>(());
+                    let result = app.verify(&pcd, &mut rng).expect("verify should not error");
+                    assert!(
+                        !result,
+                        concat!(stringify!($test_name), ": verifier must reject")
+                    );
+                })
             }
         };
     }
 
-    seeded_rejects!(rejects_corrupt_w_challenge, 1, |proof| {
+    rejects!(rejects_corrupt_w_challenge, |proof| {
         proof.w = CF::random(&mut StdRng::seed_from_u64(777))
     });
 
-    seeded_rejects!(rejects_corrupt_y_challenge, 2, |proof| {
+    rejects!(rejects_corrupt_y_challenge, |proof| {
         proof.y = CF::random(&mut StdRng::seed_from_u64(778))
     });
 
-    seeded_rejects!(rejects_corrupt_z_challenge, 3, |proof| {
+    rejects!(rejects_corrupt_z_challenge, |proof| {
         proof.z = CF::random(&mut StdRng::seed_from_u64(779))
     });
 
-    seeded_rejects!(rejects_corrupt_mu_challenge, 4, |proof| {
+    rejects!(rejects_corrupt_mu_challenge, |proof| {
         proof.mu = CF::random(&mut StdRng::seed_from_u64(780))
     });
 
-    seeded_rejects!(rejects_corrupt_nu_challenge, 5, |proof| {
+    rejects!(rejects_corrupt_nu_challenge, |proof| {
         proof.nu = CF::random(&mut StdRng::seed_from_u64(781))
     });
 
-    seeded_rejects!(rejects_corrupt_mu_prime_challenge, 6, |proof| {
+    rejects!(rejects_corrupt_mu_prime_challenge, |proof| {
         proof.mu_prime = CF::random(&mut StdRng::seed_from_u64(782))
     });
 
-    seeded_rejects!(rejects_corrupt_nu_prime_challenge, 7, |proof| {
+    rejects!(rejects_corrupt_nu_prime_challenge, |proof| {
         proof.nu_prime = CF::random(&mut StdRng::seed_from_u64(783))
     });
 
-    seeded_rejects!(rejects_corrupt_x_challenge, 8, |proof| {
+    rejects!(rejects_corrupt_x_challenge, |proof| {
         proof.x = CF::random(&mut StdRng::seed_from_u64(784))
     });
 
-    seeded_rejects!(rejects_corrupt_alpha_challenge, 9, |proof| {
+    rejects!(rejects_corrupt_alpha_challenge, |proof| {
         proof.alpha = CF::random(&mut StdRng::seed_from_u64(785))
     });
 
-    seeded_rejects!(rejects_corrupt_u_challenge, 10, |proof| {
+    rejects!(rejects_corrupt_u_challenge, |proof| {
         proof.u = CF::random(&mut StdRng::seed_from_u64(786))
     });
 
-    seeded_rejects!(rejects_corrupt_pre_beta_challenge, 11, |proof| {
+    rejects!(rejects_corrupt_pre_beta_challenge, |proof| {
         proof.pre_beta = CF::random(&mut StdRng::seed_from_u64(787))
     });
 
-    seeded_rejects!(rejects_corrupt_preamble_bridge_commitment, 21, |proof| {
+    rejects!(rejects_corrupt_preamble_bridge_commitment, |proof| {
         proof.bridge_preamble_commitment = *Pasta::nested_generators(Pasta::baked()).h()
     });
 
-    seeded_rejects!(rejects_corrupt_s_prime_bridge_commitment, 22, |proof| {
+    rejects!(rejects_corrupt_s_prime_bridge_commitment, |proof| {
         proof.bridge_s_prime_commitment = *Pasta::nested_generators(Pasta::baked()).h()
     });
 
-    seeded_rejects!(rejects_corrupt_inner_error_bridge_commitment, 23, |proof| {
+    rejects!(rejects_corrupt_inner_error_bridge_commitment, |proof| {
         proof.bridge_inner_error_commitment = *Pasta::nested_generators(Pasta::baked()).h()
     });
 
-    seeded_rejects!(rejects_corrupt_f_bridge_commitment, 27, |proof| {
+    rejects!(rejects_corrupt_f_bridge_commitment, |proof| {
         proof.bridge_f_commitment = *Pasta::nested_generators(Pasta::baked()).h()
     });
 
-    seeded_rejects!(rejects_corrupt_preamble_native_rx, 29, |proof| {
+    // The four remaining bridge commitments — outer_error, ab, query, and eval
+    // — have no direct corruption test here, and cannot have one: they are
+    // `Cached` values, private to the `proof` module and immutable once
+    // constructed, derived from `bridge_alpha` and the native commitments. A
+    // dishonest prover therefore cannot desynchronize one of those caches from
+    // the data underneath it. What such a prover *can* choose is that data, so
+    // that is what the test below corrupts: `bridge_alpha` shifts all four
+    // derived bridge polynomials and their commitments at once.
+    //
+    // The verifier does not currently catch this. The nested revdot claims do
+    // cover the bridge rx polynomials (`RxIndex::Bridge*`), but they check each
+    // polynomial's internal consistency against the constant k(y) values in
+    // `nested::SingleProofKySource` — nothing pins `bridge_alpha` to the data
+    // actually committed to. This is the same gap as the missing
+    // `ab_commitment_claim` and `f_commitment_claim` binding checks.
+    //
+    // The test is kept, and asserts that the corruption is still *not* caught,
+    // so that the hole is visible in the suite rather than absent from it. When
+    // the binding checks land, this test fails and should be converted to a
+    // plain `rejects!`.
+    #[test]
+    fn corrupt_bridge_alpha_is_not_yet_caught() {
+        with_honest(|app, mut proof| {
+            proof.bridge_alpha =
+                <Pasta as Cycle>::ScalarField::random(&mut StdRng::seed_from_u64(788));
+
+            let mut rng = StdRng::seed_from_u64(VERIFY_SEED);
+            let pcd = proof.carry::<()>(());
+            let result = app.verify(&pcd, &mut rng).expect("verify should not error");
+            assert!(
+                result,
+                "the verifier now rejects a corrupted `bridge_alpha` — the binding \
+                 check has landed; convert this into a `rejects!` case"
+            );
+        })
+    }
+
+    rejects!(rejects_corrupt_preamble_native_rx, |proof| {
         proof.native_preamble_rx = sparse::Polynomial::new()
     });
 
-    seeded_rejects!(rejects_corrupt_inner_error_native_rx, 30, |proof| {
+    rejects!(rejects_corrupt_inner_error_native_rx, |proof| {
         proof.native_inner_error_rx = sparse::Polynomial::new()
     });
 
-    seeded_rejects!(rejects_corrupt_outer_error_native_rx, 31, |proof| {
+    rejects!(rejects_corrupt_outer_error_native_rx, |proof| {
         proof.native_outer_error_rx = sparse::Polynomial::new()
     });
 
-    seeded_rejects!(rejects_corrupt_query_native_rx, 32, |proof| {
+    rejects!(rejects_corrupt_query_native_rx, |proof| {
         proof.native_query_rx = sparse::Polynomial::new()
     });
 
-    seeded_rejects!(rejects_corrupt_eval_native_rx, 33, |proof| {
+    rejects!(rejects_corrupt_eval_native_rx, |proof| {
         proof.native_eval_rx = sparse::Polynomial::new()
     });
 
-    seeded_rejects!(rejects_corrupt_application_rx, 34, |proof| {
+    rejects!(rejects_corrupt_application_rx, |proof| {
         proof.native_application_rx = sparse::Polynomial::new()
     });
 
-    seeded_rejects!(rejects_corrupt_hashes_1_rx, 35, |proof| {
+    rejects!(rejects_corrupt_hashes_1_rx, |proof| {
         proof.native_hashes_1_rx = sparse::Polynomial::new()
     });
 
-    seeded_rejects!(rejects_corrupt_hashes_2_rx, 36, |proof| {
+    rejects!(rejects_corrupt_hashes_2_rx, |proof| {
         proof.native_hashes_2_rx = sparse::Polynomial::new()
     });
 
-    seeded_rejects!(rejects_corrupt_inner_collapse_rx, 37, |proof| {
+    rejects!(rejects_corrupt_inner_collapse_rx, |proof| {
         proof.native_inner_collapse_rx = sparse::Polynomial::new()
     });
 
-    seeded_rejects!(rejects_corrupt_outer_collapse_rx, 38, |proof| {
+    rejects!(rejects_corrupt_outer_collapse_rx, |proof| {
         proof.native_outer_collapse_rx = sparse::Polynomial::new()
     });
 
-    seeded_rejects!(rejects_corrupt_compute_v_rx, 39, |proof| {
+    rejects!(rejects_corrupt_compute_v_rx, |proof| {
         proof.native_compute_v_rx = sparse::Polynomial::new()
     });
 
-    seeded_rejects!(rejects_corrupt_registry_xy_poly, 40, |proof| {
+    rejects!(rejects_corrupt_registry_xy_poly, |proof| {
         proof.native_registry_xy_poly = sparse::Polynomial::new()
     });
 
-    seeded_rejects!(rejects_corrupt_p_poly, 41, |proof| {
+    rejects!(rejects_corrupt_p_poly, |proof| {
         proof.native_p_poly = sparse::Polynomial::new()
     });
 
-    seeded_rejects!(rejects_corrupt_nested_endoscalar_rx, 42, |proof| {
+    rejects!(rejects_corrupt_nested_endoscalar_rx, |proof| {
         proof.nested_endoscalar_rx = sparse::Polynomial::new()
     });
 
-    seeded_rejects!(rejects_corrupt_nested_points_rx, 43, |proof| {
+    rejects!(rejects_corrupt_nested_points_rx, |proof| {
         proof.nested_points_rx = sparse::Polynomial::new()
     });
 
     // Early-return guard tests (circuit_id and header size)
-    seeded_rejects!(rejects_corrupt_circuit_id, 50, |proof| {
+    rejects!(rejects_corrupt_circuit_id, |proof| {
         proof.circuit_id = CircuitIndex::new(9999)
     });
 
-    seeded_rejects!(rejects_corrupt_left_header_length, 51, |proof| {
+    rejects!(rejects_corrupt_left_header_length, |proof| {
         proof.left_header.push(CF::ZERO)
     });
 
-    seeded_rejects!(rejects_corrupt_right_header_length, 52, |proof| {
+    rejects!(rejects_corrupt_right_header_length, |proof| {
         proof.right_header.pop();
     });
 
     // native_a_poly and native_b_poly feed the revdot claim
-    seeded_rejects!(rejects_corrupt_native_a_poly, 53, |proof| {
+    rejects!(rejects_corrupt_native_a_poly, |proof| {
         proof.native_a_poly = sparse::Polynomial::new()
     });
 
-    seeded_rejects!(rejects_corrupt_native_b_poly, 54, |proof| {
+    rejects!(rejects_corrupt_native_b_poly, |proof| {
         proof.native_b_poly = sparse::Polynomial::new()
     });
 
-    seeded_rejects!(rejects_corrupt_nested_endoscaling_step_rxs, 59, |proof| {
+    rejects!(rejects_corrupt_nested_endoscaling_step_rxs, |proof| {
         proof.nested_endoscaling_step_rxs[0] = sparse::Polynomial::new()
     });
 
@@ -579,7 +650,7 @@ mod tests {
     #[test]
     fn verify_transcript_corrupt_commitment_shifts_challenges() {
         let pasta = Pasta::baked();
-        let (_app, mut proof) = create_seeded_proof(7);
+        let mut proof = with_honest(|_app, proof| proof);
 
         // Corrupt a bridge commitment that is absorbed early in the transcript.
         proof.bridge_preamble_commitment = *Pasta::nested_generators(pasta).h();
