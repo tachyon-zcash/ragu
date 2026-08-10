@@ -28,8 +28,20 @@ pub struct Suffix {
 }
 
 impl Suffix {
+    /// Creates a new application-defined [`Header`] suffix.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `value` is large enough that adding the internal suffix
+    /// offset would overflow `usize`, which would alias reserved internal
+    /// suffixes.
     #[must_use]
     pub const fn new(value: usize) -> Self {
+        assert!(
+            value <= usize::MAX - NUM_INTERNAL_SUFFIXES,
+            "application suffix too large; would alias internal suffixes",
+        );
+
         Self {
             suffix: HeaderSuffix::Application(value),
         }
@@ -59,6 +71,19 @@ impl Suffix {
         };
         u64::try_from(value_usize).expect("suffix value fits in u64")
     }
+}
+
+#[test]
+fn test_suffix_max_application_value() {
+    let max = usize::MAX - NUM_INTERNAL_SUFFIXES;
+    let suffix = Suffix::new(max);
+    assert_eq!(suffix.get(), usize::MAX as u64);
+}
+
+#[test]
+#[should_panic(expected = "would alias internal suffixes")]
+fn test_suffix_wrapping_panics() {
+    let _ = Suffix::new(usize::MAX - NUM_INTERNAL_SUFFIXES + 1);
 }
 
 /// Mirrors `ragu_pcd::Header`.
