@@ -1,6 +1,9 @@
 use ff::Field;
-use group::prime::PrimeCurveAffine;
-use ragu_app::{Bound, Cycle, Driver, DriverValue, Header, HeaderContent, Result, application};
+use group::CurveAffine;
+use ragu_app::{
+    Allocator, Bound, Cycle, Driver, DriverValue, Header, HeaderContent, Result, Standard,
+    application,
+};
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::{gadgets::Kind, maybe::Maybe};
 use ragu_pasta::{EpAffine, Fp, Pasta};
@@ -19,11 +22,12 @@ impl<F: Field> HeaderContent<F> for LeafNode {
     type Data = F;
     type Output = Kind![F; Element<'_, _>];
 
-    fn encode<'dr, D: Driver<'dr, F = F>>(
+    fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
         dr: &mut D,
+        allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        Element::alloc(dr, witness)
+        Element::alloc(dr, allocator, witness)
     }
 }
 
@@ -34,11 +38,12 @@ impl<F: Field> HeaderContent<F> for ExponentNode {
     type Data = F;
     type Output = Kind![F; Element<'_, _>];
 
-    fn encode<'dr, D: Driver<'dr, F = F>>(
+    fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
         dr: &mut D,
+        allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        Element::alloc(dr, witness)
+        Element::alloc(dr, allocator, witness)
     }
 }
 
@@ -49,8 +54,9 @@ impl HeaderContent<Fp> for ScaledPoint {
     type Data = EpAffine;
     type Output = Kind![Fp; Point<'_, _, EpAffine>];
 
-    fn encode<'dr, D: Driver<'dr, F = Fp>>(
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
+        _allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
         Point::alloc(dr, witness)
@@ -87,7 +93,7 @@ impl<C: Cycle> ragu_app::Step<C> for WitnessLeaf<'_, C> {
     where
         Self: 'dr,
     {
-        let leaf = Element::alloc(dr, witness)?;
+        let leaf = Element::alloc(dr, &mut Standard::new(), witness)?;
         let mut sponge = Sponge::new(dr, self.poseidon_params);
         sponge.absorb(dr, &leaf)?;
         let output = sponge.squeeze(dr)?;
@@ -157,7 +163,7 @@ impl ragu_app::Step<Pasta> for Endoscale {
         Self: 'dr,
     {
         // Extract endoscalar from the internal node's hash element.
-        let endo = Endoscalar::extract(dr, left.clone())?;
+        let endo = Endoscalar::extract(dr, &mut Standard::new(), left.clone())?;
 
         // Create a constant generator point on the nested curve.
         let point = Point::<D, EpAffine>::constant(dr, EpAffine::generator())?;

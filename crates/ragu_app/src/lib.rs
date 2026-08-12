@@ -29,13 +29,16 @@ pub use ragu_core::{
 };
 pub use ragu_macros::application;
 pub use ragu_pcd::header::Header;
-pub use ragu_primitives::io::Write;
+pub use ragu_primitives::{
+    allocator::{Allocator, Standard},
+    io::Write,
+};
 
 /// Re-exports used by `#[application]` generated code. Not public API.
 #[doc(hidden)]
 pub mod __macro_internal {
     pub use ::ff::Field;
-    pub use ::rand::CryptoRng;
+    pub use ragu_arithmetic::CryptoRngCore;
     pub use ragu_circuits::polynomials::Rank;
     pub use ragu_core::{
         Result,
@@ -47,6 +50,7 @@ pub mod __macro_internal {
         header::{Header, Suffix},
         step::{Encoded, Index, Step as PcdStep},
     };
+    pub use ragu_primitives::allocator::{Allocator, Standard};
 }
 
 /// Simplified header trait for application developers.
@@ -62,8 +66,12 @@ pub trait HeaderContent<F: Field>: Send + Sync + 'static {
     type Output: Write<F>;
 
     /// Encode some data into a gadget representing this header.
-    fn encode<'dr, D: Driver<'dr, F = F>>(
+    ///
+    /// Implementations should pass `allocator` through to all allocation
+    /// calls rather than substituting a different allocator.
+    fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
         dr: &mut D,
+        allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> Result<Bound<'dr, D, Self::Output>>;
 }

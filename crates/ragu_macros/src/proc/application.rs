@@ -353,8 +353,9 @@ fn generate_step_impls(
                 where
                     Self: 'dr,
                 {
-                    let left_enc = #prelude::Encoded::new(dr, left)?;
-                    let right_enc = #prelude::Encoded::new(dr, right)?;
+                    let allocator = &mut #prelude::Standard::new();
+                    let left_enc = #prelude::Encoded::new(dr, allocator, left)?;
+                    let right_enc = #prelude::Encoded::new(dr, allocator, right)?;
 
                     // Helper to propagate HEADER_SIZE to synthesize.
                     fn call_synthesize<'dr, __C2: #app::Cycle, __D2: #prelude::Driver<'dr, F = __C2::CircuitField>, __S2, const HS: usize>(
@@ -438,11 +439,12 @@ fn generate_header_impls(
                 type Data = <#header_ty as #app::HeaderContent<__F>>::Data;
                 type Output = <#header_ty as #app::HeaderContent<__F>>::Output;
 
-                fn encode<'dr, __D: #prelude::Driver<'dr, F = __F>>(
+                fn encode<'dr, __D: #prelude::Driver<'dr, F = __F>, __A: #prelude::Allocator<'dr, __D>>(
                     dr: &mut __D,
+                    allocator: &mut __A,
                     witness: #prelude::DriverValue<__D, Self::Data>,
                 ) -> #prelude::Result<#prelude::Bound<'dr, __D, Self::Output>> {
-                    <#header_ty as #app::HeaderContent<__F>>::encode(dr, witness)
+                    <#header_ty as #app::HeaderContent<__F>>::encode(dr, allocator, witness)
                 }
             }
         });
@@ -585,7 +587,7 @@ fn generate_wrapper(
             }
 
             /// Seed a new computation by running a step with trivial inputs.
-            #vis fn seed<'source, __RNG: #prelude::CryptoRng, __S: #prelude::PcdStep<#cycle, Left = (), Right = ()>>(
+            #vis fn seed<'source, __RNG: #prelude::CryptoRngCore, __S: #prelude::PcdStep<#cycle, Left = (), Right = ()>>(
                 &self,
                 rng: &mut __RNG,
                 step: __S,
@@ -595,7 +597,7 @@ fn generate_wrapper(
             }
 
             /// Fuse two pieces of proof-carrying data using a step.
-            #vis fn fuse<'source, __RNG: #prelude::CryptoRng, __S: #prelude::PcdStep<#cycle>>(
+            #vis fn fuse<'source, __RNG: #prelude::CryptoRngCore, __S: #prelude::PcdStep<#cycle>>(
                 &self,
                 rng: &mut __RNG,
                 step: __S,
@@ -607,7 +609,7 @@ fn generate_wrapper(
             }
 
             /// Verify proof-carrying data.
-            #vis fn verify<__RNG: #prelude::CryptoRng, __H: #prelude::Header<#cycle::CircuitField>>(
+            #vis fn verify<__RNG: #prelude::CryptoRngCore, __H: #prelude::Header<#cycle::CircuitField>>(
                 &self,
                 pcd: &#prelude::Pcd<#cycle, __R, __H>,
                 rng: __RNG,
@@ -616,7 +618,7 @@ fn generate_wrapper(
             }
 
             /// Rerandomize proof-carrying data.
-            #vis fn rerandomize<__RNG: #prelude::CryptoRng, __H: #prelude::Header<#cycle::CircuitField>>(
+            #vis fn rerandomize<__RNG: #prelude::CryptoRngCore, __H: #prelude::Header<#cycle::CircuitField>>(
                 &self,
                 pcd: #prelude::Pcd<#cycle, __R, __H>,
                 rng: &mut __RNG,
@@ -627,7 +629,7 @@ fn generate_wrapper(
             /// Returns a seeded trivial PCD with no header data, suitable
             /// as a placeholder input for steps that only use one of their
             /// two inputs.
-            #vis fn trivial_pcd<__RNG: #prelude::CryptoRng>(&self, rng: &mut __RNG) -> #prelude::Pcd<#cycle, __R, ()> {
+            #vis fn trivial_pcd<__RNG: #prelude::CryptoRngCore>(&self, rng: &mut __RNG) -> #prelude::Pcd<#cycle, __R, ()> {
                 self.inner.seeded_trivial_pcd(rng)
             }
         }
