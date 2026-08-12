@@ -1,11 +1,7 @@
-use ff::Field;
 use group::CurveAffine;
-use ragu_app::{
-    Allocator, Bound, Cycle, Driver, DriverValue, Header, HeaderContent, Result, Standard,
-    application,
-};
+use ragu_app::{Bound, Cycle, Driver, DriverValue, Header, Result, Standard, application, header};
 use ragu_circuits::polynomials::ProductionRank;
-use ragu_core::{gadgets::Kind, maybe::Maybe};
+use ragu_core::maybe::Maybe;
 use ragu_pasta::{EpAffine, Fp, Pasta};
 use ragu_primitives::{Element, Endoscalar, Point, poseidon::Sponge};
 use rand::SeedableRng;
@@ -16,52 +12,16 @@ use rand::rngs::StdRng;
 // ==========================================================================
 
 /// Header for a hashed leaf value.
+#[header(data = F, gadget = Element)]
 pub struct LeafNode;
 
-impl<F: Field> HeaderContent<F> for LeafNode {
-    type Data = F;
-    type Output = Kind![F; Element<'_, _>];
-
-    fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
-        dr: &mut D,
-        allocator: &mut A,
-        witness: DriverValue<D, Self::Data>,
-    ) -> Result<Bound<'dr, D, Self::Output>> {
-        Element::alloc(dr, allocator, witness)
-    }
-}
-
 /// Header for a hash node whose value serves as an endoscalar source.
+#[header(data = F, gadget = Element)]
 pub struct ExponentNode;
 
-impl<F: Field> HeaderContent<F> for ExponentNode {
-    type Data = F;
-    type Output = Kind![F; Element<'_, _>];
-
-    fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
-        dr: &mut D,
-        allocator: &mut A,
-        witness: DriverValue<D, Self::Data>,
-    ) -> Result<Bound<'dr, D, Self::Output>> {
-        Element::alloc(dr, allocator, witness)
-    }
-}
-
 /// Header carrying a scaled curve point.
+#[header(data = EpAffine, gadget = Point<EpAffine>, field = Fp, alloc = direct)]
 pub struct ScaledPoint;
-
-impl HeaderContent<Fp> for ScaledPoint {
-    type Data = EpAffine;
-    type Output = Kind![Fp; Point<'_, _, EpAffine>];
-
-    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
-        dr: &mut D,
-        _allocator: &mut A,
-        witness: DriverValue<D, Self::Data>,
-    ) -> Result<Bound<'dr, D, Self::Output>> {
-        Point::alloc(dr, witness)
-    }
-}
 
 // ==========================================================================
 // Steps

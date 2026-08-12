@@ -21,7 +21,7 @@ use proc_macro::TokenStream;
 #[cfg(test)]
 #[allow(unused_imports)]
 use ragu_arithmetic::repr256 as _;
-use syn::{DeriveInput, ItemEnum, LitInt, parse_macro_input};
+use syn::{DeriveInput, ItemEnum, ItemStruct, LitInt, parse_macro_input};
 
 // Documentation for the `repr256` macro is in `macro@ragu_arithmetic::repr256`.
 #[allow(missing_docs)]
@@ -140,18 +140,52 @@ use ragu_pcd as _;
 ///
 /// ```ignore
 /// #[application]
-/// pub enum MerkleTree<C: Cycle> {
-///     #[step(left = (), right = (), output = LeafNode)]
-///     WitnessLeaf(WitnessLeaf<'_, C>),
+/// pub enum MerkleTree<'params, C: Cycle> {
+///     #[step(output = LeafNode)]
+///     WitnessLeaf(WitnessLeaf<'params, C>),
 ///
-///     #[step(left = LeafNode, right = LeafNode, output = InternalNode)]
-///     Hash2(Hash2<'_, C>),
+///     #[step(output = InternalNode)]
+///     Hash2(Hash2<'params, C>),
 /// }
 /// ```
 #[proc_macro_attribute]
 pub fn application(_attr: TokenStream, input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as ItemEnum);
     macro_body(|| proc::application::evaluate(input))
+}
+
+/// Attribute macro for generating single-gadget `HeaderContent` implementations.
+///
+/// For headers where `encode()` allocates a single gadget directly from
+/// witness data, this macro generates the full `HeaderContent` implementation.
+///
+/// # Attributes
+///
+/// - `data`: The witness data type (required).
+/// - `gadget`: The gadget type to allocate (required).
+/// - `field`: The field type for a concrete impl (optional; when omitted,
+///   `data` is used as a generic field type parameter).
+/// - `alloc`: Set to `direct` when the gadget's `alloc` constructor takes no
+///   allocator (optional; by default the generated `encode()` passes its
+///   allocator through to `alloc`).
+///
+/// # Example
+///
+/// ```ignore
+/// // Generic: F is both the field type and the witness data type
+/// #[header(data = F, gadget = Element)]
+/// pub struct LeafNode;
+///
+/// // Concrete: data is a curve point, field is explicit, and Point::alloc
+/// // takes no allocator
+/// #[header(data = EpAffine, gadget = Point<EpAffine>, field = Fp, alloc = direct)]
+/// pub struct ScaledPoint;
+/// ```
+#[proc_macro_attribute]
+pub fn header(attr: TokenStream, input: TokenStream) -> TokenStream {
+    let attr = parse_macro_input!(attr as proc::header::HeaderAttr);
+    let input = parse_macro_input!(input as ItemStruct);
+    macro_body(|| proc::header::evaluate(attr, input))
 }
 
 #[cfg(test)]
