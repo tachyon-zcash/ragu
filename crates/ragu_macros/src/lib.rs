@@ -158,6 +158,29 @@ use ragu_pcd as _;
 /// Defaulted generic parameters must be trailing, so `cycle` requires
 /// `rank`, which in turn requires `header_size`.
 ///
+/// # Headers belong to one application
+///
+/// The macro writes the `Header` impl for every type named by
+/// `#[produces(...)]`, so a header type can be claimed by only one
+/// `#[application]` in a crate. Naming one from two applications produces a
+/// conflicting-implementation error (`E0119`) pointing at the generated impls
+/// rather than at the declarations; give each application its own header types,
+/// or move the shared one behind a single application that both depend on.
+///
+/// `()` cannot be produced at all: it is the framework's trivial header, whose
+/// suffix marks a proof as a recursion base case. A step that produces no
+/// meaningful state should declare its own empty header, which is assigned an
+/// ordinary suffix.
+///
+/// # Declaration order is significant
+///
+/// Suffixes are assigned to headers in order of first appearance across
+/// `#[produces(...)]`, and step indices follow variant order. Both are baked
+/// into the circuits, so reordering variants — or introducing a new header
+/// ahead of existing ones — renumbers them. Proofs are not portable across such
+/// a change, and today are not portable across builds at all, so this matters
+/// when proofs begin to be persisted or exchanged between peers.
+///
 /// # Example
 ///
 /// ```ignore

@@ -15,6 +15,11 @@
 //! uses one canonical spelling. The macro asserts that both names are the
 //! same Rust type.
 //!
+//! `#[produces(())]` is rejected: suffixes assigned here start past the range
+//! reserved for internal headers, and `()` is the internal trivial header whose
+//! suffix marks a proof as a recursion base case. Producing it from an
+//! application step would let a real circuit mint that marker.
+//!
 //! `#[application(cycle = ..., rank = ..., header_size = ...)]` optionally
 //! sets defaults for the generated wrapper's generic parameters, so the
 //! application type can be named without turbofish.
@@ -289,9 +294,39 @@ fn parse_produces_attr(variant: &Variant) -> Result<ProducesAttr> {
             produces = Some(attr.parse_args::<ProducesAttr>()?);
         }
     }
-    produces
-        .ok_or_else(|| Error::new_spanned(variant, "missing #[produces(...)] attribute on variant"))
+    let produces = produces.ok_or_else(|| {
+        Error::new_spanned(variant, "missing #[produces(...)] attribute on variant")
+    })?;
+
+    // `()` is the framework's trivial header. Its suffix is what marks a proof
+    // as a recursion base case, and in the base case the folded claim is left
+    // unconstrained. An application step producing `()` would mint that marker
+    // from a real circuit, so reject it and direct authors at an
+    // application-owned header, which is assigned an ordinary suffix.
+    if is_unit_type(&produces.output) {
+        return Err(Error::new_spanned(&produces.output, UNIT_OUTPUT_REJECTION));
+    }
+    if let Some(canonical) = &produces.canonical
+        && is_unit_type(canonical)
+    {
+        return Err(Error::new_spanned(canonical, UNIT_OUTPUT_REJECTION));
+    }
+
+    Ok(produces)
 }
+
+/// Diagnostic for `#[produces(())]`, which would let an application step emit
+/// the reserved trivial-header suffix.
+const UNIT_OUTPUT_REJECTION: &str = "`()` is the reserved trivial header and cannot be produced by \
+     an application step: its suffix marks a proof as a recursion base case, where the folded \
+     claim is left unconstrained. Declare an application-owned header instead, which carries no \
+     data but is assigned its own suffix:\n\n    \
+     struct Done;\n    \
+     impl<F: Field> HeaderContent<F> for Done {\n        \
+     type Data = ();\n        \
+     type Output = ();\n        \
+     fn encode(..) -> Result<Bound<'dr, D, Self::Output>> { Ok(()) }\n    \
+     }";
 
 /// Collect syntactically unique non-unit canonical header types, preserving
 /// first-appearance order (which determines suffix assignment).
@@ -715,6 +750,15 @@ fn generate_wrapper(
             #(#step_bounds,)*
         {
             /// Build the application by registering all steps.
+            ///
+            /// Registration fixes each step's circuit from the instance passed
+            /// here, including whatever configuration that instance carries.
+            /// The steps later handed to `seed` and `fuse` are separate
+            /// instances, and each must be configured identically to the one
+            /// registered here. A step that differs traces against a circuit it
+            /// no longer matches, which is not reported at that point: the call
+            /// succeeds and only a later `verify` of the resulting PCD fails,
+            /// by returning `Ok(false)`.
             #vis fn build(
                 params: &'params C::Params,
                 #(#build_params),*
@@ -726,6 +770,10 @@ fn generate_wrapper(
             }
 
             /// Seed a new computation by running a step with trivial inputs.
+            ///
+            /// `step` must be configured identically to the instance of the
+            /// same step registered by `build`; see that method for what a
+            /// mismatch costs.
             #vis fn seed<'source, __RNG: #prelude::CryptoRngCore, __S>(
                 &self,
                 rng: &mut __RNG,
@@ -740,6 +788,10 @@ fn generate_wrapper(
             }
 
             /// Fuse two pieces of proof-carrying data using a step.
+            ///
+            /// `step` must be configured identically to the instance of the
+            /// same step registered by `build`; see that method for what a
+            /// mismatch costs.
             #vis fn fuse<'source, __RNG: #prelude::CryptoRngCore, __S>(
                 &self,
                 rng: &mut __RNG,
@@ -851,6 +903,32 @@ mod tests {
             Ok(_) => panic!("expected a parse error"),
             Err(err) => err.to_string(),
         }
+    }
+
+    #[test]
+    fn produces_attr_rejects_the_reserved_trivial_header() {
+        // `()` carries the internal trivial suffix, which marks a proof as a
+        // recursion base case; an application step must not be able to emit it.
+        let variant: Variant = parse_quote! {
+            #[produces(())]
+            Sink
+        };
+        assert!(produces_err(&variant).contains("reserved trivial header"));
+
+        // The canonical spelling feeds suffix deduplication, so it is rejected
+        // on the same grounds.
+        let variant: Variant = parse_quote! {
+            #[produces(Done, canonical = ())]
+            Sink
+        };
+        assert!(produces_err(&variant).contains("reserved trivial header"));
+
+        // A header that merely encodes no data is fine: it gets its own suffix.
+        let variant: Variant = parse_quote! {
+            #[produces(Done)]
+            Sink
+        };
+        assert!(parse_produces_attr(&variant).is_ok());
     }
 
     #[test]

@@ -179,6 +179,35 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     ///
     /// Returns the output header gadget, the output data to carry in the
     /// resulting PCD, and any auxiliary witness data.
+    ///
+    /// # Agreement between the returned gadget and data
+    ///
+    /// The two returned outputs describe the same header through different
+    /// channels, and implementations must keep them in agreement: the gadget
+    /// must serialize to exactly what encoding the data would produce, as if by
+    /// [`Header::encode`] applied to the returned data.
+    ///
+    /// The gadget is what this proof commits to, while a parent step and
+    /// [`Application::verify`](crate::Application::verify) both re-encode the
+    /// carried data instead. Nothing checks the two against each other, so a
+    /// mismatch is not reported where it is introduced: the step succeeds, the
+    /// surrounding [`fuse`](crate::Application::fuse) succeeds, and only a later
+    /// verification of the resulting PCD fails, by returning `Ok(false)` rather
+    /// than an error naming this step.
+    ///
+    /// Deriving the returned data from the gadget, rather than recomputing it
+    /// alongside, keeps the two in step by construction:
+    ///
+    /// ```ignore
+    /// let output = sponge.squeeze(dr)?;
+    /// let output_data = output.value().map(|v| *v);
+    /// Ok((output, output_data, D::unit()))
+    /// ```
+    ///
+    /// A header whose `encode` is deliberately non-injective, such as one
+    /// mapping a Merkle tree to its root, must return data that encodes to the
+    /// gadget under that same mapping; see [`HeaderContent`] for which parts of
+    /// the data verification then authenticates.
     fn synthesize<'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
