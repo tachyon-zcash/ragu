@@ -1,9 +1,10 @@
 //! Implementation of the `#[application]` proc-macro.
 //!
 //! Parses an enum annotated with `#[application]` and generates:
+//! - `ragu_pcd::header::Header` impls with `const SUFFIX` values auto-assigned
+//!   from the first-appearance order of `#[produces(...)]` header types
 //! - `ragu_pcd::step::Step` impls (with `const INDEX`) bridging from `ragu_pcd::app::Step`
 //! - A wrapper struct with typed `build()`/`seed()`/`fuse()`/`verify()`/`rerandomize()`
-//! - Compile-time assertions for header suffix uniqueness
 //!
 //! The enum carries no generics: the macro supplies `<'params, C: Cycle>`
 //! itself. Each variant is a unit variant whose name is the step type,
@@ -42,6 +43,8 @@ impl Parse for ApplicationAttr {
         let mut cycle = None;
         let mut rank = None;
         let mut header_size = None;
+        let mut cycle_span = None;
+        let mut rank_span = None;
 
         while !input.is_empty() {
             let ident: Ident = input.parse()?;
@@ -55,6 +58,7 @@ impl Parse for ApplicationAttr {
                             "duplicate `cycle` key in #[application(...)]",
                         ));
                     }
+                    cycle_span = Some(ident.span());
                     cycle = Some(input.parse::<Type>()?);
                 }
                 "rank" => {
@@ -64,6 +68,7 @@ impl Parse for ApplicationAttr {
                             "duplicate `rank` key in #[application(...)]",
                         ));
                     }
+                    rank_span = Some(ident.span());
                     rank = Some(input.parse::<Type>()?);
                 }
                 "header_size" => {
@@ -91,15 +96,15 @@ impl Parse for ApplicationAttr {
 
         // The generated generics are ordered `C, __R, HEADER_SIZE`, and Rust
         // requires defaulted parameters to be trailing.
-        if cycle.is_some() && rank.is_none() {
+        if let (Some(span), None) = (cycle_span, &rank) {
             return Err(Error::new(
-                input.span(),
+                span,
                 "`cycle` default requires a `rank` default (defaults must be trailing)",
             ));
         }
-        if rank.is_some() && header_size.is_none() {
+        if let (Some(span), None) = (rank_span, &header_size) {
             return Err(Error::new(
-                input.span(),
+                span,
                 "`rank` default requires a `header_size` default (defaults must be trailing)",
             ));
         }
@@ -203,15 +208,20 @@ struct ParsedVariant {
 
 /// Extract the output header type from a variant's `#[produces(...)]` attribute.
 fn parse_produces_attr(variant: &Variant) -> Result<Type> {
+    let mut produces = None;
     for attr in &variant.attrs {
         if attr.path().is_ident("produces") {
-            return attr.parse_args::<Type>();
+            if produces.is_some() {
+                return Err(Error::new_spanned(
+                    attr,
+                    "duplicate #[produces(...)] attribute on variant",
+                ));
+            }
+            produces = Some(attr.parse_args::<Type>()?);
         }
     }
-    Err(Error::new_spanned(
-        variant,
-        "missing #[produces(...)] attribute on variant",
-    ))
+    produces
+        .ok_or_else(|| Error::new_spanned(variant, "missing #[produces(...)] attribute on variant"))
 }
 
 /// Collect unique non-unit header types from step `output` attributes,
@@ -619,5 +629,89 @@ fn generate_wrapper(
                 self.inner.seeded_trivial_pcd(rng)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use syn::parse_quote;
+
+    use super::*;
+
+    fn parse_attr(tokens: TokenStream) -> Result<ApplicationAttr> {
+        syn::parse2(tokens)
+    }
+
+    fn parse_attr_err(tokens: TokenStream) -> String {
+        match parse_attr(tokens) {
+            Ok(_) => panic!("expected a parse error"),
+            Err(err) => err.to_string(),
+        }
+    }
+
+    #[test]
+    fn attr_accepts_empty_and_full_defaults() {
+        let attr = parse_attr(quote!()).unwrap();
+        assert!(attr.cycle.is_none() && attr.rank.is_none() && attr.header_size.is_none());
+
+        let attr = parse_attr(quote!(
+            cycle = Pasta,
+            rank = ProductionRank,
+            header_size = 4
+        ))
+        .unwrap();
+        assert!(attr.cycle.is_some() && attr.rank.is_some() && attr.header_size.is_some());
+    }
+
+    #[test]
+    fn attr_accepts_trailing_subsets() {
+        assert!(parse_attr(quote!(header_size = 4)).is_ok());
+        assert!(parse_attr(quote!(rank = ProductionRank, header_size = 4)).is_ok());
+    }
+
+    #[test]
+    fn attr_rejects_non_trailing_defaults() {
+        let err = parse_attr_err(quote!(cycle = Pasta, header_size = 4));
+        assert!(err.contains("requires a `rank` default"));
+
+        let err = parse_attr_err(quote!(rank = ProductionRank));
+        assert!(err.contains("requires a `header_size` default"));
+    }
+
+    #[test]
+    fn attr_rejects_duplicate_and_unknown_keys() {
+        let err = parse_attr_err(quote!(header_size = 4, header_size = 8));
+        assert!(err.contains("duplicate `header_size` key"));
+
+        let err = parse_attr_err(quote!(size = 4));
+        assert!(err.contains("unknown attribute `size`"));
+    }
+
+    fn produces_err(variant: &Variant) -> String {
+        match parse_produces_attr(variant) {
+            Ok(_) => panic!("expected a parse error"),
+            Err(err) => err.to_string(),
+        }
+    }
+
+    #[test]
+    fn produces_attr_is_required_and_unique() {
+        let variant: Variant = parse_quote! {
+            #[produces(LeafNode)]
+            WitnessLeaf
+        };
+        assert!(parse_produces_attr(&variant).is_ok());
+
+        let variant: Variant = parse_quote!(WitnessLeaf);
+        let err = produces_err(&variant);
+        assert!(err.contains("missing #[produces(...)]"));
+
+        let variant: Variant = parse_quote! {
+            #[produces(LeafNode)]
+            #[produces(ExponentNode)]
+            WitnessLeaf
+        };
+        let err = produces_err(&variant);
+        assert!(err.contains("duplicate #[produces(...)]"));
     }
 }

@@ -253,3 +253,48 @@ fn extract_base_path(gadget_ty: &Type) -> Result<TokenStream> {
     }
     Ok(quote!(#path))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_attr(tokens: TokenStream) -> Result<HeaderAttr> {
+        syn::parse2(tokens)
+    }
+
+    fn parse_attr_err(tokens: TokenStream) -> String {
+        match parse_attr(tokens) {
+            Ok(_) => panic!("expected a parse error"),
+            Err(err) => err.to_string(),
+        }
+    }
+
+    #[test]
+    fn attr_requires_data_and_gadget() {
+        assert!(parse_attr(quote!(data = F, gadget = Element)).is_ok());
+
+        let err = parse_attr_err(quote!(gadget = Element));
+        assert!(err.contains("missing `data`"));
+
+        let err = parse_attr_err(quote!(data = F));
+        assert!(err.contains("missing `gadget`"));
+    }
+
+    #[test]
+    fn attr_rejects_duplicate_and_unknown_keys() {
+        let err = parse_attr_err(quote!(data = F, data = G, gadget = Element));
+        assert!(err.contains("duplicate `data` key"));
+
+        let err = parse_attr_err(quote!(data = F, gadget = Element, kind = X));
+        assert!(err.contains("unknown attribute `kind`"));
+    }
+
+    #[test]
+    fn attr_accepts_direct_alloc_mode_only() {
+        let attr = parse_attr(quote!(data = F, gadget = Element, alloc = direct)).unwrap();
+        assert!(attr.alloc_direct);
+
+        let err = parse_attr_err(quote!(data = F, gadget = Element, alloc = indirect));
+        assert!(err.contains("unknown `alloc` mode"));
+    }
+}

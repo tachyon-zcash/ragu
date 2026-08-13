@@ -10,6 +10,23 @@
 //!   from each [`Step`] impl
 //! - A wrapper struct with typed `build()`/`seed()`/`fuse()`/`verify()`/
 //!   `rerandomize()` methods
+//!
+//! # Future direction
+//!
+//! The [`Step`] trait, its associated types, and the `synthesize` scaffolding
+//! are an interim shape: they still expose more machinery than an application
+//! developer should have to care about. The intended long-term API is for
+//! steps to be plain annotated functions, with the macros inferring
+//! `Left`/`Right`/`Output` from the parameter and return types and
+//! `Witness`/`Aux` from what the function consumes and produces:
+//!
+//! ```ignore
+//! #[produces(LeafNode)]
+//! fn witness_leaf(dr, witness: F, _left: (), _right: ()) {
+//!     let leaf = Element::alloc(dr, allocator, witness)?;
+//!     Ok(sponge.absorb_and_squeeze(dr, &leaf)?)
+//! }
+//! ```
 
 pub use ragu_arithmetic::{Cycle, ff::Field};
 pub use ragu_circuits::polynomials::Rank;
