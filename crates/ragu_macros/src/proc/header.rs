@@ -91,10 +91,6 @@ pub fn evaluate(attr: HeaderAttr, item: ItemStruct) -> Result<TokenStream> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// Parsing
-// ---------------------------------------------------------------------------
-
 /// The parsed `#[header(...)]` attribute arguments.
 ///
 /// Required: `data` and `gadget`.
@@ -192,10 +188,6 @@ impl Parse for HeaderAttr {
         })
     }
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 /// Returns the inner [`syn::TypePath`], or an error if `ty` is not a path type.
 fn as_type_path(ty: &Type) -> Result<&syn::TypePath> {

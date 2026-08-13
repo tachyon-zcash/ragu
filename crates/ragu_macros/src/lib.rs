@@ -135,16 +135,21 @@ use ragu_pcd as _;
 /// `ragu_pcd::Step` impls (with `const INDEX`), and a wrapper struct
 /// with `build()`/`seed()`/`fuse()`/`verify()`/`rerandomize()` methods.
 ///
+/// The enum carries no generics — the macro supplies `<'params, C: Cycle>`
+/// itself. Each variant is a unit variant naming a step type (which must
+/// take `<'params, C: Cycle>` generics), annotated with
+/// `#[produces(OutputHeader)]`.
+///
 /// # Example
 ///
 /// ```ignore
 /// #[application]
-/// pub enum MerkleTree<'params, C: Cycle> {
-///     #[step(output = LeafNode)]
-///     WitnessLeaf(WitnessLeaf<'params, C>),
+/// pub enum MerkleTree {
+///     #[produces(LeafNode)]
+///     WitnessLeaf,
 ///
-///     #[step(output = InternalNode)]
-///     Hash2(Hash2<'params, C>),
+///     #[produces(InternalNode)]
+///     Hash2,
 /// }
 /// ```
 #[proc_macro_attribute]

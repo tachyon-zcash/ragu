@@ -1,3 +1,5 @@
+use core::marker::PhantomData;
+
 use group::CurveAffine;
 use ragu_app::{Bound, Cycle, Driver, DriverValue, Header, Result, Standard, application, header};
 use ragu_circuits::polynomials::ProductionRank;
@@ -5,10 +7,6 @@ use ragu_core::maybe::Maybe;
 use ragu_pasta::{EpAffine, Fp, Pasta};
 use ragu_primitives::{Element, Endoscalar, Point, poseidon::Sponge};
 use rand::{SeedableRng, rngs::StdRng};
-
-// ==========================================================================
-// Headers
-// ==========================================================================
 
 /// Header for a hashed leaf value.
 #[header(data = F, gadget = Element)]
@@ -21,10 +19,6 @@ pub struct ExponentNode;
 /// Header carrying a scaled curve point.
 #[header(data = EpAffine, gadget = Point<EpAffine>, field = Fp, alloc = direct)]
 pub struct ScaledPoint;
-
-// ==========================================================================
-// Steps
-// ==========================================================================
 
 /// Hash a witness field element to produce a leaf.
 pub struct WitnessLeaf<'params, C: Cycle> {
@@ -98,9 +92,9 @@ impl<C: Cycle> ragu_app::Step<C> for Hash2<'_, C> {
 
 /// Extract an endoscalar from the internal node hash and perform
 /// endoscalar group scaling on the generator point.
-pub struct Endoscale;
+pub struct Endoscale<'params, C: Cycle>(PhantomData<&'params C>);
 
-impl ragu_app::Step<Pasta> for Endoscale {
+impl ragu_app::Step<Pasta> for Endoscale<'_, Pasta> {
     type Witness = ();
     type Left = ExponentNode;
     type Right = ();
@@ -135,10 +129,6 @@ impl ragu_app::Step<Pasta> for Endoscale {
     }
 }
 
-// ==========================================================================
-// Application
-// ==========================================================================
-
 /// Example PCD application demonstrating a three-step pipeline:
 /// Poseidon hashing, Merkle-style merging, and endoscalar group scaling.
 ///
@@ -156,15 +146,15 @@ impl ragu_app::Step<Pasta> for Endoscale {
 ///           [ScaledPoint]
 /// ```
 #[application]
-pub enum ExampleApp<'params, C: Cycle> {
-    #[step(output = LeafNode)]
-    WitnessLeaf(WitnessLeaf<'params, C>),
+pub enum ExampleApp {
+    #[produces(LeafNode)]
+    WitnessLeaf,
 
-    #[step(output = ExponentNode)]
-    Hash2(Hash2<'params, C>),
+    #[produces(ExponentNode)]
+    Hash2,
 
-    #[step(output = ScaledPoint)]
-    Endoscale(Endoscale),
+    #[produces(ScaledPoint)]
+    Endoscale,
 }
 
 #[test]
@@ -180,7 +170,7 @@ fn example_pipeline() -> Result<()> {
         Hash2 {
             poseidon_params: poseidon,
         },
-        Endoscale,
+        Endoscale(PhantomData),
     )?;
 
     let mut rng = StdRng::seed_from_u64(5678);
@@ -218,7 +208,7 @@ fn example_pipeline() -> Result<()> {
 
     // Extract endoscalar from the hash and scale the generator.
     let trivial = app.trivial_pcd(&mut rng);
-    let (scaled, _) = app.fuse(&mut rng, Endoscale, (), internal, trivial)?;
+    let (scaled, _) = app.fuse(&mut rng, Endoscale(PhantomData), (), internal, trivial)?;
     assert!(app.verify(&scaled, &mut rng)?);
 
     Ok(())
