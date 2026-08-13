@@ -9,7 +9,8 @@
 //! - [`crate::step::Step`] impls with `const INDEX` and `Encoded` bridging
 //!   from each [`Step`] impl
 //! - A wrapper struct with typed `build()`/`seed()`/`fuse()`/`verify()`/
-//!   `rerandomize()` methods
+//!   `rerandomize()` methods, sealed to the application's declared steps and
+//!   headers
 //!
 //! # Future direction
 //!
@@ -125,6 +126,14 @@ pub mod __macro_internal {
 ///     }
 /// }
 /// ```
+///
+/// # Authenticated data
+///
+/// A PCD authenticates only the value represented by [`Self::Output`]. The
+/// mapping from [`Self::Data`] may intentionally be non-injective (for example,
+/// a full Merkle tree mapped to its root). Fields that `encode()` does not
+/// constrain into the output are accompanying witness data, not authenticated
+/// application state. Consumers must not treat those fields as proof-backed.
 pub trait HeaderContent<F: Field>: Send + Sync + 'static {
     /// The data needed to encode a header.
     type Data: Send + Clone;

@@ -10,6 +10,10 @@
 //! itself. Each variant is a unit variant whose name is the step type,
 //! which must take `<'params, C: Cycle>` generics, annotated with
 //! `#[produces(OutputHeader)]`.
+//! If the same header is named through a type alias or a different path, use
+//! `#[produces(OutputAlias, canonical = OutputHeader)]` so suffix assignment
+//! uses one canonical spelling. The macro asserts that both names are the
+//! same Rust type.
 //!
 //! `#[application(cycle = ..., rank = ..., header_size = ...)]` optionally
 //! sets defaults for the generated wrapper's generic parameters, so the
@@ -157,13 +161,20 @@ pub fn evaluate(attr: ApplicationAttr, input: ItemEnum) -> Result<TokenStream> {
                  with `<'params, C: Cycle>` generics",
             ));
         }
-        let output = parse_produces_attr(variant)?;
+        let produces = parse_produces_attr(variant)?;
+        let output = produces.output;
+        let (header, has_explicit_canonical) = match produces.canonical {
+            Some(canonical) => (canonical, true),
+            None => (output.clone(), false),
+        };
         let name = variant.ident.clone();
         let step_ty = quote!(#name<'params, C>);
         variants.push(ParsedVariant {
             name,
             step_ty,
             output,
+            header,
+            has_explicit_canonical,
             index,
         });
     }
@@ -175,16 +186,18 @@ pub fn evaluate(attr: ApplicationAttr, input: ItemEnum) -> Result<TokenStream> {
         ));
     }
 
-    // Collect unique headers for suffix/Header impl generation.
+    // Collect unique canonical headers for suffix/Header impl generation.
     let headers = collect_unique_headers(&variants);
     // All generated code references items through `ragu_pcd::app::__macro_internal`.
     let prelude = quote!(#app::__macro_internal);
 
     let header_impls = generate_header_impls(&headers, &app, &prelude);
+    let header_alias_assertions = generate_header_alias_assertions(&variants);
     let step_impls = generate_step_impls(&variants, &app, &prelude);
     let wrapper = generate_wrapper(vis, enum_ident, &attr, &variants, &headers, &app, &prelude);
 
     Ok(quote! {
+        #header_alias_assertions
         #header_impls
         #step_impls
         #wrapper
@@ -203,11 +216,67 @@ struct ParsedVariant {
     step_ty: TokenStream,
     /// The output header type from `#[produces(...)]`.
     output: Type,
+    /// The canonical spelling used to generate and deduplicate the `Header`
+    /// implementation. This is normally identical to `output`.
+    header: Type,
+    /// Whether `header` came from an explicit `canonical = ...` option and
+    /// therefore needs a generated semantic type-equality assertion.
+    has_explicit_canonical: bool,
     index: usize,
 }
 
-/// Extract the output header type from a variant's `#[produces(...)]` attribute.
-fn parse_produces_attr(variant: &Variant) -> Result<Type> {
+/// Parsed contents of `#[produces(Output[, canonical = CanonicalOutput])]`.
+struct ProducesAttr {
+    output: Type,
+    canonical: Option<Type>,
+}
+
+impl Parse for ProducesAttr {
+    fn parse(input: ParseStream<'_>) -> Result<Self> {
+        let output = input.parse::<Type>()?;
+
+        if input.is_empty() {
+            return Ok(Self {
+                output,
+                canonical: None,
+            });
+        }
+
+        input.parse::<Token![,]>()?;
+        if input.is_empty() {
+            return Ok(Self {
+                output,
+                canonical: None,
+            });
+        }
+
+        let option = input.parse::<Ident>()?;
+        if option != "canonical" {
+            return Err(Error::new(
+                option.span(),
+                "unknown #[produces(...)] option; expected `canonical`",
+            ));
+        }
+        input.parse::<Token![=]>()?;
+        let canonical = input.parse::<Type>()?;
+
+        if !input.is_empty() {
+            input.parse::<Token![,]>()?;
+        }
+        if !input.is_empty() {
+            return Err(input.error("unexpected tokens after `canonical` header type"));
+        }
+
+        Ok(Self {
+            output,
+            canonical: Some(canonical),
+        })
+    }
+}
+
+/// Extract the output header declaration from a variant's `#[produces(...)]`
+/// attribute.
+fn parse_produces_attr(variant: &Variant) -> Result<ProducesAttr> {
     let mut produces = None;
     for attr in &variant.attrs {
         if attr.path().is_ident("produces") {
@@ -217,20 +286,25 @@ fn parse_produces_attr(variant: &Variant) -> Result<Type> {
                     "duplicate #[produces(...)] attribute on variant",
                 ));
             }
-            produces = Some(attr.parse_args::<Type>()?);
+            produces = Some(attr.parse_args::<ProducesAttr>()?);
         }
     }
     produces
         .ok_or_else(|| Error::new_spanned(variant, "missing #[produces(...)] attribute on variant"))
 }
 
-/// Collect unique non-unit header types from step `output` attributes,
-/// preserving first-appearance order (which determines suffix assignment).
+/// Collect syntactically unique non-unit canonical header types, preserving
+/// first-appearance order (which determines suffix assignment).
+///
+/// Procedural macros cannot resolve aliases or decide whether two paths name
+/// the same Rust type. Callers express that relationship with the optional
+/// `canonical = ...` form, which makes `header` identical for deduplication and
+/// is checked by [`generate_header_alias_assertions`].
 fn collect_unique_headers(variants: &[ParsedVariant]) -> Vec<Type> {
     let mut seen = BTreeSet::new();
     let mut headers = Vec::new();
     for v in variants {
-        let ty = &v.output;
+        let ty = &v.header;
         if is_unit_type(ty) {
             continue;
         }
@@ -239,6 +313,31 @@ fn collect_unique_headers(variants: &[ParsedVariant]) -> Vec<Type> {
         }
     }
     headers
+}
+
+/// Assert that every explicit canonical header spelling denotes exactly the
+/// same Rust type as the output spelling.
+///
+/// A small identity function is enough to make rustc perform semantic type
+/// resolution (including aliases), which a proc macro cannot do from tokens.
+fn generate_header_alias_assertions(variants: &[ParsedVariant]) -> TokenStream {
+    let assertions = variants.iter().filter_map(|variant| {
+        if !variant.has_explicit_canonical {
+            return None;
+        }
+
+        let output = &variant.output;
+        let header = &variant.header;
+        Some(quote! {
+            const _: () = {
+                fn __ragu_assert_same_header_type(value: #output) -> #header {
+                    value
+                }
+            };
+        })
+    });
+
+    quote!(#(#assertions)*)
 }
 
 fn is_unit_type(ty: &Type) -> bool {
@@ -253,8 +352,9 @@ fn is_unit_type(ty: &Type) -> bool {
 /// user's `ragu_pcd::app::Step::synthesize` (which works with pre-encoded `&Bound`
 /// gadgets), then wraps the output via `Encoded::from_gadget`.
 ///
-/// Associated types (`Left`, `Right`, `Output`) are delegated to the
-/// `ragu_pcd::app::Step` trait — the macro doesn't need to know them.
+/// Associated input types are delegated to `ragu_pcd::app::Step`. The output
+/// is set to the type named by `#[produces(...)]`, and the where-clause requires
+/// it to equal `ragu_pcd::app::Step::Output`.
 ///
 /// # Example
 ///
@@ -263,7 +363,7 @@ fn is_unit_type(ty: &Type) -> bool {
 /// ```ignore
 /// impl<'params, C: Cycle> PcdStep<C> for Hash2<'params, C>
 /// where
-///     Hash2<'params, C>: ragu_pcd::app::Step<C>,
+///     Hash2<'params, C>: ragu_pcd::app::Step<C, Output = ExponentNode>,
 ///     <Hash2<'params, C> as ragu_pcd::app::Step<C>>::Left: Header<C::CircuitField>,
 ///     <Hash2<'params, C> as ragu_pcd::app::Step<C>>::Right: Header<C::CircuitField>,
 ///     <Hash2<'params, C> as ragu_pcd::app::Step<C>>::Output: Header<C::CircuitField>,
@@ -271,7 +371,7 @@ fn is_unit_type(ty: &Type) -> bool {
 ///     const INDEX: Index = Index::new(1);
 ///     type Left = <Hash2<'params, C> as ragu_pcd::app::Step<C>>::Left;
 ///     type Right = <Hash2<'params, C> as ragu_pcd::app::Step<C>>::Right;
-///     type Output = <Hash2<'params, C> as ragu_pcd::app::Step<C>>::Output;
+///     type Output = ExponentNode;
 ///     // ... witness() bridging impl
 /// }
 /// ```
@@ -284,22 +384,23 @@ fn generate_step_impls(
 
     for v in variants {
         let step_ty = &v.step_ty;
+        let output = &v.output;
         let index = v.index;
 
         impls.extend(quote! {
             impl<'params, C: #app::Cycle> #prelude::PcdStep<C> for #step_ty
             where
-                #step_ty: #app::Step<C>,
+                #step_ty: #app::Step<C, Output = #output>,
                 <#step_ty as #app::Step<C>>::Left: #prelude::Header<C::CircuitField>,
                 <#step_ty as #app::Step<C>>::Right: #prelude::Header<C::CircuitField>,
-                <#step_ty as #app::Step<C>>::Output: #prelude::Header<C::CircuitField>,
+                #output: #prelude::Header<C::CircuitField>,
             {
                 const INDEX: #prelude::Index = #prelude::Index::new(#index);
 
                 type Witness<'source> = <#step_ty as #app::Step<C>>::Witness;
                 type Left = <#step_ty as #app::Step<C>>::Left;
                 type Right = <#step_ty as #app::Step<C>>::Right;
-                type Output = <#step_ty as #app::Step<C>>::Output;
+                type Output = #output;
                 type Aux<'source> = <#step_ty as #app::Step<C>>::Aux;
 
                 fn witness<'dr, 'source: 'dr, __D: #prelude::Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
@@ -497,6 +598,34 @@ fn generate_wrapper(
     app: &RaguAppPath,
     prelude: &TokenStream,
 ) -> TokenStream {
+    // Private marker traits make the generated wrapper a closed application
+    // boundary. Downstream crates cannot implement these traits for a foreign
+    // step/header that happens to reuse the same INDEX/SUFFIX values.
+    let step_marker = format_ident!("__RaguApplicationStepFor{}", enum_ident);
+    let header_marker = format_ident!("__RaguApplicationHeaderFor{}", enum_ident);
+
+    let step_memberships: Vec<_> = variants
+        .iter()
+        .map(|variant| {
+            let step_ty = &variant.step_ty;
+            quote! {
+                impl<'params, C: #app::Cycle> #step_marker<C> for #step_ty {}
+            }
+        })
+        .collect();
+
+    let header_memberships: Vec<_> = headers
+        .iter()
+        .map(|header| {
+            quote! {
+                impl<__F: #prelude::Field> #header_marker<__F> for #header
+                where
+                    #header: #prelude::Header<__F>,
+                {}
+            }
+        })
+        .collect();
+
     // `build()` parameters: one per variant, snake_case name with the step type.
     // e.g. `WitnessLeaf` → `witness_leaf: WitnessLeaf<'params, C>`
     let build_params: Vec<_> = variants
@@ -556,16 +685,30 @@ fn generate_wrapper(
         .iter()
         .map(|v| {
             let step_ty = &v.step_ty;
-            quote!(#step_ty: #app::Step<C>)
+            let output = &v.output;
+            quote!(#step_ty: #app::Step<C, Output = #output>)
         })
         .collect();
 
     quote! {
+        // These deliberately remain private even when the application wrapper
+        // is public: they seal its generic methods to the declared membership.
+        #[doc(hidden)]
+        trait #step_marker<__C: #app::Cycle> {}
+
+        #[doc(hidden)]
+        trait #header_marker<__F: #prelude::Field> {}
+
+        #(#step_memberships)*
+        #(#header_memberships)*
+        impl<__F: #prelude::Field> #header_marker<__F> for () {}
+
         /// Generated application wrapper.
         #vis struct #enum_ident<#struct_gen> {
             inner: #prelude::Application<'params, C, __R, HEADER_SIZE>,
         }
 
+        #[allow(private_bounds)]
         impl<#impl_gen> #enum_ident<#struct_args>
         where
             #(#header_bounds,)*
@@ -583,42 +726,58 @@ fn generate_wrapper(
             }
 
             /// Seed a new computation by running a step with trivial inputs.
-            #vis fn seed<'source, __RNG: #prelude::CryptoRngCore, __S: #prelude::PcdStep<C, Left = (), Right = ()>>(
+            #vis fn seed<'source, __RNG: #prelude::CryptoRngCore, __S>(
                 &self,
                 rng: &mut __RNG,
                 step: __S,
                 witness: __S::Witness<'source>,
-            ) -> #prelude::Result<(#prelude::Pcd<C, __R, __S::Output>, __S::Aux<'source>)> {
+            ) -> #prelude::Result<(#prelude::Pcd<C, __R, __S::Output>, __S::Aux<'source>)>
+            where
+                __S: #prelude::PcdStep<C, Left = (), Right = ()> + #step_marker<C>,
+                __S::Output: #header_marker<C::CircuitField>,
+            {
                 self.inner.seed(rng, step, witness)
             }
 
             /// Fuse two pieces of proof-carrying data using a step.
-            #vis fn fuse<'source, __RNG: #prelude::CryptoRngCore, __S: #prelude::PcdStep<C>>(
+            #vis fn fuse<'source, __RNG: #prelude::CryptoRngCore, __S>(
                 &self,
                 rng: &mut __RNG,
                 step: __S,
                 witness: __S::Witness<'source>,
                 left: #prelude::Pcd<C, __R, __S::Left>,
                 right: #prelude::Pcd<C, __R, __S::Right>,
-            ) -> #prelude::Result<(#prelude::Pcd<C, __R, __S::Output>, __S::Aux<'source>)> {
+            ) -> #prelude::Result<(#prelude::Pcd<C, __R, __S::Output>, __S::Aux<'source>)>
+            where
+                __S: #prelude::PcdStep<C> + #step_marker<C>,
+                __S::Left: #header_marker<C::CircuitField>,
+                __S::Right: #header_marker<C::CircuitField>,
+                __S::Output: #header_marker<C::CircuitField>,
+            {
                 self.inner.fuse(rng, step, witness, left, right)
             }
 
             /// Verify proof-carrying data.
-            #vis fn verify<__RNG: #prelude::CryptoRngCore, __H: #prelude::Header<C::CircuitField>>(
+            #vis fn verify<__RNG: #prelude::CryptoRngCore, __H>(
                 &self,
                 pcd: &#prelude::Pcd<C, __R, __H>,
                 rng: __RNG,
-            ) -> #prelude::Result<bool> {
+            ) -> #prelude::Result<bool>
+            where
+                __H: #prelude::Header<C::CircuitField> + #header_marker<C::CircuitField>,
+            {
                 self.inner.verify(pcd, rng)
             }
 
             /// Rerandomize proof-carrying data.
-            #vis fn rerandomize<__RNG: #prelude::CryptoRngCore, __H: #prelude::Header<C::CircuitField>>(
+            #vis fn rerandomize<__RNG: #prelude::CryptoRngCore, __H>(
                 &self,
                 pcd: #prelude::Pcd<C, __R, __H>,
                 rng: &mut __RNG,
-            ) -> #prelude::Result<#prelude::Pcd<C, __R, __H>> {
+            ) -> #prelude::Result<#prelude::Pcd<C, __R, __H>>
+            where
+                __H: #prelude::Header<C::CircuitField> + #header_marker<C::CircuitField>,
+            {
                 self.inner.rerandomize(pcd, rng)
             }
 
@@ -700,7 +859,20 @@ mod tests {
             #[produces(LeafNode)]
             WitnessLeaf
         };
-        assert!(parse_produces_attr(&variant).is_ok());
+        let produces = parse_produces_attr(&variant).unwrap();
+        let output = &produces.output;
+        assert_eq!(quote!(#output).to_string(), "LeafNode");
+        assert!(produces.canonical.is_none());
+
+        let variant: Variant = parse_quote! {
+            #[produces(LeafAlias, canonical = crate::LeafNode)]
+            WitnessLeaf
+        };
+        let produces = parse_produces_attr(&variant).unwrap();
+        let output = &produces.output;
+        let canonical = produces.canonical.as_ref().unwrap();
+        assert_eq!(quote!(#output).to_string(), "LeafAlias");
+        assert_eq!(quote!(#canonical).to_string(), "crate :: LeafNode");
 
         let variant: Variant = parse_quote!(WitnessLeaf);
         let err = produces_err(&variant);
@@ -713,5 +885,110 @@ mod tests {
         };
         let err = produces_err(&variant);
         assert!(err.contains("duplicate #[produces(...)]"));
+
+        let variant: Variant = parse_quote! {
+            #[produces(LeafNode, alias = OtherLeaf)]
+            WitnessLeaf
+        };
+        let err = produces_err(&variant);
+        assert!(err.contains("expected `canonical`"));
+    }
+
+    fn parsed_variant(
+        name: &str,
+        output: Type,
+        header: Type,
+        has_explicit_canonical: bool,
+        index: usize,
+    ) -> ParsedVariant {
+        let name = Ident::new(name, proc_macro2::Span::call_site());
+        let step_ty = quote!(#name<'params, C>);
+        ParsedVariant {
+            name,
+            step_ty,
+            output,
+            header,
+            has_explicit_canonical,
+            index,
+        }
+    }
+
+    #[test]
+    fn canonical_header_spelling_deduplicates_aliases_and_is_asserted() {
+        let variants = vec![
+            parsed_variant(
+                "First",
+                parse_quote!(LeafAlias),
+                parse_quote!(LeafNode),
+                true,
+                0,
+            ),
+            parsed_variant(
+                "Second",
+                parse_quote!(LeafNode),
+                parse_quote!(LeafNode),
+                false,
+                1,
+            ),
+        ];
+
+        let headers = collect_unique_headers(&variants);
+        assert_eq!(headers.len(), 1);
+        let header = &headers[0];
+        assert_eq!(quote!(#header).to_string(), "LeafNode");
+
+        let assertions = generate_header_alias_assertions(&variants)
+            .to_string()
+            .replace(' ', "");
+        assert!(assertions.contains("fn__ragu_assert_same_header_type(value:LeafAlias)->LeafNode"));
+    }
+
+    #[test]
+    fn generated_wrapper_is_application_sealed_and_checks_output_type() {
+        let variants = vec![parsed_variant(
+            "WitnessLeaf",
+            parse_quote!(LeafNode),
+            parse_quote!(LeafNode),
+            false,
+            0,
+        )];
+        let headers = collect_unique_headers(&variants);
+        let app = RaguAppPath::default();
+        let prelude = quote!(::ragu_pcd::app::__macro_internal);
+
+        let steps = generate_step_impls(&variants, &app, &prelude)
+            .to_string()
+            .replace(' ', "");
+        assert!(steps.contains("Step<C,Output=LeafNode>"));
+        assert!(steps.contains("typeOutput=LeafNode;"));
+
+        let wrapper = generate_wrapper(
+            &parse_quote!(pub),
+            &parse_quote!(ExampleApp),
+            &parse_attr(quote!()).unwrap(),
+            &variants,
+            &headers,
+            &app,
+            &prelude,
+        )
+        .to_string()
+        .replace(' ', "");
+        assert!(wrapper.contains("trait__RaguApplicationStepForExampleApp"));
+        assert!(wrapper.contains("trait__RaguApplicationHeaderForExampleApp"));
+        assert!(
+            wrapper.contains("PcdStep<C,Left=(),Right=()>+__RaguApplicationStepForExampleApp<C>")
+        );
+        assert!(
+            wrapper.contains("__S::Left:__RaguApplicationHeaderForExampleApp<C::CircuitField>")
+        );
+        assert!(
+            wrapper.contains("__S::Right:__RaguApplicationHeaderForExampleApp<C::CircuitField>")
+        );
+        assert!(
+            wrapper.contains("__S::Output:__RaguApplicationHeaderForExampleApp<C::CircuitField>")
+        );
+        assert!(wrapper.contains(
+            "Header<C::CircuitField>+__RaguApplicationHeaderForExampleApp<C::CircuitField>"
+        ));
     }
 }

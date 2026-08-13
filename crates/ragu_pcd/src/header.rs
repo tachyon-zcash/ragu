@@ -38,7 +38,17 @@ pub struct Suffix {
 
 impl Suffix {
     /// Creates a new application-defined [`Header`] suffix.
+    ///
+    /// # Panics
+    ///
+    /// Panics if adding the reserved internal suffix range would overflow a
+    /// `usize` and alias an internal suffix.
     pub const fn new(value: usize) -> Self {
+        assert!(
+            value <= usize::MAX - NUM_INTERNAL_SUFFIXES as usize,
+            "application suffix too large; would alias internal suffixes"
+        );
+
         Suffix {
             suffix: HeaderSuffix::Application(value),
         }
@@ -75,9 +85,26 @@ fn test_suffix_map() {
     assert_eq!(Suffix::new(1).get(), 3);
 }
 
+#[test]
+fn test_suffix_max_application_value() {
+    let max_application = usize::MAX - NUM_INTERNAL_SUFFIXES as usize;
+    assert_eq!(Suffix::new(max_application).get(), usize::MAX as u64);
+}
+
+#[test]
+#[should_panic(expected = "would alias internal suffixes")]
+fn test_suffix_wrapping_panics() {
+    let _ = Suffix::new(usize::MAX - NUM_INTERNAL_SUFFIXES as usize + 1);
+}
+
 /// Headers are succinct representations of data, essentially used as public
 /// inputs to recursive proofs in order to represent the current state of the
 /// computation.
+///
+/// Verification authenticates the representation produced by [`Header::encode`],
+/// not necessarily every component of [`Header::Data`]. An implementation may
+/// be non-injective, but callers must then treat data discarded by `encode()` as
+/// unauthenticated witness data rather than proof-backed state.
 ///
 /// See the [Writing Circuits](https://tachyon.z.cash/ragu/guide/writing_circuits.html)
 /// guide for usage patterns and examples.

@@ -136,6 +136,9 @@ use ragu_pcd as _;
 /// itself. Each variant is a unit variant naming a step type (which must
 /// take `<'params, C: Cycle>` generics), annotated with
 /// `#[produces(OutputHeader)]`.
+/// The generated wrapper's proof methods are sealed to those declared steps
+/// and their headers, so a step or PCD from another application cannot be used
+/// merely because its numeric index or suffix collides.
 ///
 /// # Attributes
 ///
@@ -145,6 +148,12 @@ use ragu_pcd as _;
 /// - `cycle`: default for the `C: Cycle` parameter.
 /// - `rank`: default for the `__R: Rank` parameter.
 /// - `header_size`: default for the `const HEADER_SIZE: usize` parameter.
+///
+/// If repeated outputs name one header through aliases or different paths,
+/// choose one spelling with
+/// `#[produces(OutputAlias, canonical = CanonicalOutput)]`. The macro uses the
+/// canonical spelling for suffix deduplication and asks rustc to prove that it
+/// is exactly the same type as `OutputAlias`.
 ///
 /// Defaulted generic parameters must be trailing, so `cycle` requires
 /// `rank`, which in turn requires `header_size`.

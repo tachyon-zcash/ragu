@@ -14,6 +14,8 @@ use rand::{SeedableRng, rngs::StdRng};
 #[header(data = F, gadget = Element)]
 pub struct LeafNode;
 
+type LeafNodeAlias = LeafNode;
+
 /// Header for a hash node whose value serves as an endoscalar source.
 #[header(data = F, gadget = Element)]
 pub struct ExponentNode;
@@ -149,7 +151,8 @@ impl ragu_pcd::app::Step<Pasta> for Endoscale<'_, Pasta> {
 /// ```
 #[application(cycle = Pasta, rank = ProductionRank, header_size = 4)]
 pub enum ExampleApp {
-    #[produces(LeafNode)]
+    // Canonicalization lets alternate paths or aliases share one suffix.
+    #[produces(LeafNodeAlias, canonical = LeafNode)]
     WitnessLeaf,
 
     #[produces(ExponentNode)]
@@ -210,6 +213,7 @@ fn example_pipeline() -> Result<()> {
 
     // Extract endoscalar from the hash and scale the generator.
     let trivial = app.trivial_pcd(&mut rng);
+    assert!(app.verify(&trivial, &mut rng)?);
     let (scaled, _) = app.fuse(&mut rng, Endoscale(PhantomData), (), internal, trivial)?;
     assert!(app.verify(&scaled, &mut rng)?);
 

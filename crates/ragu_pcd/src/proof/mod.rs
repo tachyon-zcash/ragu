@@ -54,6 +54,10 @@ pub struct Pcd<C: Cycle, R: Rank, H: Header<C::CircuitField>> {
 
 impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
     /// Returns a reference to the data that the proof accompanies.
+    ///
+    /// Only the representation constrained by [`Header::encode`] is
+    /// authenticated. If the header encoding is non-injective, other
+    /// components of this data are not proof-backed.
     pub fn data(&self) -> &H::Data {
         &self.data
     }
@@ -505,9 +509,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
             .expect("NUM_ENDOSCALING_POINTS guarantees at least one interstitial"))
     }
 
-    /// Returns a trivial PCD with no header data, useful as a placeholder
-    /// input for steps that only use one of their two inputs.
-    pub fn trivial_pcd(&self) -> Pcd<C, R, ()> {
+    pub(crate) fn trivial_pcd(&self) -> Pcd<C, R, ()> {
         self.trivial_proof().carry(())
     }
 
