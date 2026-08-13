@@ -11,8 +11,7 @@
 //! - A wrapper struct with typed `build()`/`seed()`/`fuse()`/`verify()`/
 //!   `rerandomize()` methods
 
-pub use ff::Field;
-pub use ragu_arithmetic::Cycle;
+pub use ragu_arithmetic::{Cycle, ff::Field};
 pub use ragu_circuits::polynomials::Rank;
 pub use ragu_core::{
     Result,
@@ -31,8 +30,7 @@ pub use crate::header::Header;
 /// Not public API.
 #[doc(hidden)]
 pub mod __macro_internal {
-    pub use ::ff::Field;
-    pub use ragu_arithmetic::CryptoRngCore;
+    pub use ragu_arithmetic::{CryptoRngCore, ff::Field};
     pub use ragu_circuits::polynomials::Rank;
     pub use ragu_core::{
         Result,
