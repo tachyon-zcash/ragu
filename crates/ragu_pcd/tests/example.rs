@@ -2,7 +2,7 @@ use core::marker::PhantomData;
 
 use group::CurveAffine;
 use ragu_circuits::polynomials::ProductionRank;
-use ragu_core::maybe::Maybe;
+use ragu_core::{Error, maybe::Maybe};
 use ragu_pasta::{EpAffine, Fp, Pasta};
 use ragu_pcd::app::{
     Bound, Cycle, Driver, DriverValue, Header, Result, Standard, application, header,
@@ -160,6 +160,46 @@ pub enum ExampleApp {
 
     #[produces(ScaledPoint)]
     Endoscale,
+}
+
+#[test]
+fn zero_header_size_is_rejected() {
+    let pasta = Pasta::baked();
+    let poseidon = Pasta::circuit_poseidon(pasta);
+
+    let result: Result<ExampleApp<'_, Pasta, ProductionRank, 0>> = ExampleApp::build(
+        pasta,
+        WitnessLeaf {
+            poseidon_params: poseidon,
+        },
+        Hash2 {
+            poseidon_params: poseidon,
+        },
+        Endoscale(PhantomData),
+    );
+
+    assert!(matches!(result, Err(Error::Initialization(_))));
+}
+
+#[test]
+fn undersized_header_is_rejected() {
+    let pasta = Pasta::baked();
+    let poseidon = Pasta::circuit_poseidon(pasta);
+
+    // A one-element header has room only for the suffix, but LeafNode also
+    // encodes one field element.
+    let result: Result<ExampleApp<'_, Pasta, ProductionRank, 1>> = ExampleApp::build(
+        pasta,
+        WitnessLeaf {
+            poseidon_params: poseidon,
+        },
+        Hash2 {
+            poseidon_params: poseidon,
+        },
+        Endoscale(PhantomData),
+    );
+
+    assert!(matches!(result, Err(Error::MalformedEncoding(_))));
 }
 
 #[test]

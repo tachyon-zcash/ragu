@@ -51,7 +51,7 @@ pub mod __macro_internal {
     pub use ragu_arithmetic::{CryptoRngCore, ff::Field};
     pub use ragu_circuits::polynomials::Rank;
     pub use ragu_core::{
-        Result,
+        Error, Result,
         drivers::{Driver, DriverValue},
         gadgets::{Bound, Kind},
     };

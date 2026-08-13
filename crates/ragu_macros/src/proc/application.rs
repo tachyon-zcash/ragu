@@ -30,7 +30,7 @@ use heck::ToSnakeCase;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    Error, Expr, Fields, Ident, ItemEnum, Result, Token, Type, Variant, Visibility,
+    Attribute, Error, Expr, Fields, Ident, ItemEnum, Result, Token, Type, Variant, Visibility,
     parse::{Parse, ParseStream},
 };
 
@@ -142,6 +142,7 @@ impl Parse for ApplicationAttr {
 pub fn evaluate(attr: ApplicationAttr, input: ItemEnum) -> Result<TokenStream> {
     let app = RaguAppPath::resolve()?;
 
+    let attrs = &input.attrs;
     let vis = &input.vis;
     let enum_ident = &input.ident;
 
@@ -199,7 +200,9 @@ pub fn evaluate(attr: ApplicationAttr, input: ItemEnum) -> Result<TokenStream> {
     let header_impls = generate_header_impls(&headers, &app, &prelude);
     let header_alias_assertions = generate_header_alias_assertions(&variants);
     let step_impls = generate_step_impls(&variants, &app, &prelude);
-    let wrapper = generate_wrapper(vis, enum_ident, &attr, &variants, &headers, &app, &prelude);
+    let wrapper = generate_wrapper(
+        attrs, vis, enum_ident, &attr, &variants, &headers, &app, &prelude,
+    );
 
     Ok(quote! {
         #header_alias_assertions
@@ -353,8 +356,10 @@ fn collect_unique_headers(variants: &[ParsedVariant]) -> Vec<Type> {
 /// Assert that every explicit canonical header spelling denotes exactly the
 /// same Rust type as the output spelling.
 ///
-/// A small identity function is enough to make rustc perform semantic type
-/// resolution (including aliases), which a proc macro cannot do from tokens.
+/// A private trait with only the reflexive implementation makes rustc perform
+/// semantic type resolution (including aliases), which a proc macro cannot do
+/// from tokens. Unlike assignment or function-return coercion, this rejects
+/// distinct types connected by a coercion.
 fn generate_header_alias_assertions(variants: &[ParsedVariant]) -> TokenStream {
     let assertions = variants.iter().filter_map(|variant| {
         if !variant.has_explicit_canonical {
@@ -365,9 +370,15 @@ fn generate_header_alias_assertions(variants: &[ParsedVariant]) -> TokenStream {
         let header = &variant.header;
         Some(quote! {
             const _: () = {
-                fn __ragu_assert_same_header_type(value: #output) -> #header {
-                    value
-                }
+                trait __RaguSameHeaderType<__T> {}
+                impl<__T> __RaguSameHeaderType<__T> for __T {}
+
+                fn __ragu_assert_same_header_type<__Output, __Header>()
+                where
+                    __Output: __RaguSameHeaderType<__Header>,
+                {}
+
+                let _ = __ragu_assert_same_header_type::<#output, #header>;
             };
         })
     });
@@ -625,6 +636,7 @@ fn generate_header_impls(
 /// ```
 #[allow(clippy::too_many_arguments)]
 fn generate_wrapper(
+    attrs: &[Attribute],
     vis: &Visibility,
     enum_ident: &Ident,
     attr: &ApplicationAttr,
@@ -738,6 +750,7 @@ fn generate_wrapper(
         #(#header_memberships)*
         impl<__F: #prelude::Field> #header_marker<__F> for () {}
 
+        #(#attrs)*
         /// Generated application wrapper.
         #vis struct #enum_ident<#struct_gen> {
             inner: #prelude::Application<'params, C, __R, HEADER_SIZE>,
@@ -759,10 +772,20 @@ fn generate_wrapper(
             /// no longer matches, which is not reported at that point: the call
             /// succeeds and only a later `verify` of the resulting PCD fails,
             /// by returning `Ok(false)`.
+            ///
+            /// Returns an initialization error if `HEADER_SIZE` is zero, and
+            /// propagates registration errors such as a header encoding that
+            /// does not fit in the configured width.
             #vis fn build(
                 params: &'params C::Params,
                 #(#build_params),*
             ) -> #prelude::Result<Self> {
+                if HEADER_SIZE == 0 {
+                    return Err(#prelude::Error::Initialization(
+                        "HEADER_SIZE must be at least 1".into(),
+                    ));
+                }
+
                 let inner = #prelude::ApplicationBuilder::<C, __R, HEADER_SIZE>::new()
                     #(#register_calls)*
                     .finalize(params)?;
@@ -1018,7 +1041,9 @@ mod tests {
         let assertions = generate_header_alias_assertions(&variants)
             .to_string()
             .replace(' ', "");
-        assert!(assertions.contains("fn__ragu_assert_same_header_type(value:LeafAlias)->LeafNode"));
+        assert!(assertions.contains("trait__RaguSameHeaderType<__T>"));
+        assert!(assertions.contains("impl<__T>__RaguSameHeaderType<__T>for__T"));
+        assert!(assertions.contains("let_=__ragu_assert_same_header_type::<LeafAlias,LeafNode>;"));
     }
 
     #[test]
@@ -1033,6 +1058,7 @@ mod tests {
         let headers = collect_unique_headers(&variants);
         let app = RaguAppPath::default();
         let prelude = quote!(::ragu_pcd::app::__macro_internal);
+        let attrs = vec![parse_quote!(#[must_use])];
 
         let steps = generate_step_impls(&variants, &app, &prelude)
             .to_string()
@@ -1041,6 +1067,7 @@ mod tests {
         assert!(steps.contains("typeOutput=LeafNode;"));
 
         let wrapper = generate_wrapper(
+            &attrs,
             &parse_quote!(pub),
             &parse_quote!(ExampleApp),
             &parse_attr(quote!()).unwrap(),
@@ -1051,6 +1078,9 @@ mod tests {
         )
         .to_string()
         .replace(' ', "");
+        assert!(wrapper.contains("#[must_use]"));
+        assert!(wrapper.contains("ifHEADER_SIZE==0"));
+        assert!(wrapper.contains("Error::Initialization"));
         assert!(wrapper.contains("trait__RaguApplicationStepForExampleApp"));
         assert!(wrapper.contains("trait__RaguApplicationHeaderForExampleApp"));
         assert!(

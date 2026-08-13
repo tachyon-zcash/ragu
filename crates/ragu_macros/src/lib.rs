@@ -147,7 +147,8 @@ use ragu_pcd as _;
 ///
 /// - `cycle`: default for the `C: Cycle` parameter.
 /// - `rank`: default for the `__R: Rank` parameter.
-/// - `header_size`: default for the `const HEADER_SIZE: usize` parameter.
+/// - `header_size`: fixed encoded width for every header, including one suffix
+///   element. It must be at least 1 and large enough for every header encoding.
 ///
 /// If repeated outputs name one header through aliases or different paths,
 /// choose one spelling with
