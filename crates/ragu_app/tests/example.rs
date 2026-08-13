@@ -4,8 +4,7 @@ use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::maybe::Maybe;
 use ragu_pasta::{EpAffine, Fp, Pasta};
 use ragu_primitives::{Element, Endoscalar, Point, poseidon::Sponge};
-use rand::SeedableRng;
-use rand::rngs::StdRng;
+use rand::{SeedableRng, rngs::StdRng};
 
 // ==========================================================================
 // Headers

@@ -18,7 +18,10 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Error, Ident, ItemStruct, Result, Token, Type, parse::Parse, parse::ParseStream};
+use syn::{
+    Error, Ident, ItemStruct, Result, Token, Type,
+    parse::{Parse, ParseStream},
+};
 
 use crate::path_resolution::RaguAppPath;
 

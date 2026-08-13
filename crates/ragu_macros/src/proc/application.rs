@@ -12,7 +12,8 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
     Attribute, Error, Fields, GenericParam, Generics, Ident, ItemEnum, Result, Token, Type,
-    Variant, Visibility, parse::Parse, parse::ParseStream,
+    Variant, Visibility,
+    parse::{Parse, ParseStream},
 };
 
 use crate::path_resolution::RaguAppPath;

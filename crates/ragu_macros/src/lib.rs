@@ -125,7 +125,6 @@ pub fn derive_gadget_equals(input: TokenStream) -> TokenStream {
 #[cfg(test)]
 #[allow(unused_imports)]
 use ragu_app as _;
-
 #[cfg(test)]
 #[allow(unused_imports)]
 use ragu_pcd as _;
