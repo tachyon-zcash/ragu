@@ -149,7 +149,7 @@ impl ragu_pcd::app::Step<Pasta> for Endoscale<'_, Pasta> {
 ///                 |
 ///           [ScaledPoint]
 /// ```
-#[application(cycle = Pasta, rank = ProductionRank, header_size = 4)]
+#[application(cycle = Pasta, rank = ProductionRank, header_size = 3)]
 pub enum ExampleApp {
     // Canonicalization lets alternate paths or aliases share one suffix.
     #[produces(LeafNodeAlias, canonical = LeafNode)]
@@ -162,43 +162,71 @@ pub enum ExampleApp {
     Endoscale,
 }
 
+macro_rules! boundary_application {
+    ($module:ident, $header_size:expr) => {
+        #[allow(dead_code)]
+        mod $module {
+            use super::*;
+
+            #[header(data = F, gadget = Element)]
+            pub struct BoundaryHeader;
+
+            pub struct BoundaryStep<'params, C: Cycle>(PhantomData<&'params C>);
+
+            impl<C: Cycle> ragu_pcd::app::Step<C> for BoundaryStep<'_, C> {
+                type Witness = C::CircuitField;
+                type Left = ();
+                type Right = ();
+                type Output = BoundaryHeader;
+                type Aux = ();
+
+                fn synthesize<'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
+                    &self,
+                    dr: &mut D,
+                    witness: DriverValue<D, Self::Witness>,
+                    _left: &Bound<'dr, D, <Self::Left as Header<C::CircuitField>>::Output>,
+                    _right: &Bound<'dr, D, <Self::Right as Header<C::CircuitField>>::Output>,
+                ) -> Result<(
+                    Bound<'dr, D, <Self::Output as Header<C::CircuitField>>::Output>,
+                    DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
+                    DriverValue<D, Self::Aux>,
+                )>
+                where
+                    Self: 'dr,
+                {
+                    let output = Element::alloc(dr, &mut Standard::new(), witness)?;
+                    let output_data = output.value().map(|value| *value);
+                    Ok((output, output_data, D::unit()))
+                }
+            }
+
+            #[application(cycle = Pasta, rank = ProductionRank, header_size = $header_size)]
+            pub enum BoundaryApp {
+                #[produces(BoundaryHeader)]
+                BoundaryStep,
+            }
+
+            pub fn build() -> Result<BoundaryApp<'static, Pasta, ProductionRank>> {
+                BoundaryApp::build(Pasta::baked(), BoundaryStep(PhantomData))
+            }
+        }
+    };
+}
+
+boundary_application!(zero_header_size_app, 0);
+boundary_application!(undersized_header_app, 1);
+
 #[test]
 fn zero_header_size_is_rejected() {
-    let pasta = Pasta::baked();
-    let poseidon = Pasta::circuit_poseidon(pasta);
-
-    let result: Result<ExampleApp<'_, Pasta, ProductionRank, 0>> = ExampleApp::build(
-        pasta,
-        WitnessLeaf {
-            poseidon_params: poseidon,
-        },
-        Hash2 {
-            poseidon_params: poseidon,
-        },
-        Endoscale(PhantomData),
-    );
-
+    let result = zero_header_size_app::build();
     assert!(matches!(result, Err(Error::Initialization(_))));
 }
 
 #[test]
 fn undersized_header_is_rejected() {
-    let pasta = Pasta::baked();
-    let poseidon = Pasta::circuit_poseidon(pasta);
-
-    // A one-element header has room only for the suffix, but LeafNode also
-    // encodes one field element.
-    let result: Result<ExampleApp<'_, Pasta, ProductionRank, 1>> = ExampleApp::build(
-        pasta,
-        WitnessLeaf {
-            poseidon_params: poseidon,
-        },
-        Hash2 {
-            poseidon_params: poseidon,
-        },
-        Endoscale(PhantomData),
-    );
-
+    // A one-element header has room only for the suffix, but BoundaryHeader
+    // also encodes one field element.
+    let result = undersized_header_app::build();
     assert!(matches!(result, Err(Error::MalformedEncoding(_))));
 }
 

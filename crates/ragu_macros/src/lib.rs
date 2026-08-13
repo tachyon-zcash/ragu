@@ -142,13 +142,14 @@ use ragu_pcd as _;
 ///
 /// # Attributes
 ///
-/// Optional defaults for the generated wrapper's generic parameters, so
-/// applications can be used without turbofish:
+/// `header_size` fixes the application's encoded header width. Optional cycle
+/// and rank defaults let applications be used without turbofish:
 ///
+/// - `header_size` (required): fixed encoded width for every header, including
+///   one suffix element. It must be at least 1 and large enough for every
+///   header encoding.
 /// - `cycle`: default for the `C: Cycle` parameter.
 /// - `rank`: default for the `__R: Rank` parameter.
-/// - `header_size`: fixed encoded width for every header, including one suffix
-///   element. It must be at least 1 and large enough for every header encoding.
 ///
 /// If repeated outputs name one header through aliases or different paths,
 /// choose one spelling with
@@ -156,8 +157,7 @@ use ragu_pcd as _;
 /// canonical spelling for suffix deduplication and asks rustc to prove that it
 /// is exactly the same type as `OutputAlias`.
 ///
-/// Defaulted generic parameters must be trailing, so `cycle` requires
-/// `rank`, which in turn requires `header_size`.
+/// Defaulted generic parameters must be trailing, so `cycle` requires `rank`.
 ///
 /// # Headers belong to one application
 ///

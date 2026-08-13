@@ -20,9 +20,10 @@
 //! suffix marks a proof as a recursion base case. Producing it from an
 //! application step would let a real circuit mint that marker.
 //!
-//! `#[application(cycle = ..., rank = ..., header_size = ...)]` optionally
-//! sets defaults for the generated wrapper's generic parameters, so the
-//! application type can be named without turbofish.
+//! `#[application(header_size = ..., cycle = ..., rank = ...)]` fixes the
+//! application's header width and optionally sets defaults for the generated
+//! wrapper's cycle and rank parameters, so the application type can be named
+//! without turbofish.
 
 use std::collections::BTreeSet;
 
@@ -36,15 +37,16 @@ use syn::{
 
 use crate::path_resolution::RaguAppPath;
 
-/// The parsed `#[application(...)]` attribute arguments: optional defaults
-/// for the generated wrapper's generic parameters.
+/// The parsed `#[application(...)]` attribute arguments: a required fixed
+/// header width and optional defaults for the generated wrapper's cycle and
+/// rank parameters.
 ///
-/// Because defaulted generic parameters must be trailing, `cycle` requires
-/// `rank`, which in turn requires `header_size`.
+/// Because defaulted generic parameters must be trailing, `cycle` requires a
+/// `rank` default.
 pub struct ApplicationAttr {
     cycle: Option<Type>,
     rank: Option<Type>,
-    header_size: Option<Expr>,
+    header_size: Expr,
 }
 
 impl Parse for ApplicationAttr {
@@ -53,7 +55,7 @@ impl Parse for ApplicationAttr {
         let mut rank = None;
         let mut header_size = None;
         let mut cycle_span = None;
-        let mut rank_span = None;
+        let attr_span = input.span();
 
         while !input.is_empty() {
             let ident: Ident = input.parse()?;
@@ -77,7 +79,6 @@ impl Parse for ApplicationAttr {
                             "duplicate `rank` key in #[application(...)]",
                         ));
                     }
-                    rank_span = Some(ident.span());
                     rank = Some(input.parse::<Type>()?);
                 }
                 "header_size" => {
@@ -103,25 +104,23 @@ impl Parse for ApplicationAttr {
             let _ = input.parse::<Token![,]>();
         }
 
-        // The generated generics are ordered `C, __R, HEADER_SIZE`, and Rust
-        // requires defaulted parameters to be trailing.
+        // The generated generics are ordered `C, __R`, and Rust requires
+        // defaulted parameters to be trailing.
         if let (Some(span), None) = (cycle_span, &rank) {
             return Err(Error::new(
                 span,
                 "`cycle` default requires a `rank` default (defaults must be trailing)",
             ));
         }
-        if let (Some(span), None) = (rank_span, &header_size) {
-            return Err(Error::new(
-                span,
-                "`rank` default requires a `header_size` default (defaults must be trailing)",
-            ));
-        }
-
         Ok(ApplicationAttr {
             cycle,
             rank,
-            header_size,
+            header_size: header_size.ok_or_else(|| {
+                Error::new(
+                    attr_span,
+                    "missing required `header_size` in #[application(...)]",
+                )
+            })?,
         })
     }
 }
@@ -601,13 +600,11 @@ fn generate_header_impls(
 ///     'params,
 ///     C: Cycle = Pasta,
 ///     __R: Rank = ProductionRank,
-///     const HEADER_SIZE: usize = 4,
 /// > {
-///     inner: Application<'params, C, __R, HEADER_SIZE>,
+///     inner: Application<'params, C, __R, 4>,
 /// }
 ///
-/// impl<'params, C: Cycle, __R: Rank, const HEADER_SIZE: usize>
-///     ExampleApp<'params, C, __R, HEADER_SIZE>
+/// impl<'params, C: Cycle, __R: Rank> ExampleApp<'params, C, __R>
 /// where
 ///     // Header bounds — needed so non-generic headers (e.g. `ScaledPoint:
 ///     // Header<Fp>`) gate the impl to compatible cycles.
@@ -694,28 +691,24 @@ fn generate_wrapper(
         .collect();
 
     // Struct/impl generics: the macro-supplied `'params, C: Cycle` plus
-    // `__R: Rank, const HEADER_SIZE: usize`. The struct declaration carries
-    // any defaults from `#[application(...)]`; impls repeat the generics
-    // without them (defaults are not permitted in impl generics).
+    // `__R: Rank`. The struct declaration carries any cycle/rank defaults from
+    // `#[application(...)]`; impls repeat the generics without them (defaults
+    // are not permitted in impl generics). `header_size` is intentionally
+    // fixed by the application definition rather than exposed as a generic.
     let cycle_default = attr
         .cycle
         .as_ref()
         .map(|t| quote!(= #t))
         .unwrap_or_default();
     let rank_default = attr.rank.as_ref().map(|t| quote!(= #t)).unwrap_or_default();
-    let header_size_default = attr
-        .header_size
-        .as_ref()
-        .map(|e| quote!(= #e))
-        .unwrap_or_default();
+    let header_size = &attr.header_size;
     let struct_gen = quote!(
         'params,
         C: #app::Cycle #cycle_default,
-        __R: #prelude::Rank #rank_default,
-        const HEADER_SIZE: usize #header_size_default
+        __R: #prelude::Rank #rank_default
     );
-    let impl_gen = quote!('params, C: #app::Cycle, __R: #prelude::Rank, const HEADER_SIZE: usize);
-    let struct_args = quote!('params, C, __R, HEADER_SIZE);
+    let impl_gen = quote!('params, C: #app::Cycle, __R: #prelude::Rank);
+    let struct_args = quote!('params, C, __R);
 
     // Where clause: each unique header must impl `Header<C::CircuitField>`.
     let header_bounds: Vec<_> = headers
@@ -753,7 +746,7 @@ fn generate_wrapper(
         #(#attrs)*
         /// Generated application wrapper.
         #vis struct #enum_ident<#struct_gen> {
-            inner: #prelude::Application<'params, C, __R, HEADER_SIZE>,
+            inner: #prelude::Application<'params, C, __R, { #header_size }>,
         }
 
         #[allow(private_bounds)]
@@ -773,20 +766,20 @@ fn generate_wrapper(
             /// succeeds and only a later `verify` of the resulting PCD fails,
             /// by returning `Ok(false)`.
             ///
-            /// Returns an initialization error if `HEADER_SIZE` is zero, and
-            /// propagates registration errors such as a header encoding that
-            /// does not fit in the configured width.
+            /// Returns an initialization error if the configured header size
+            /// is zero, and propagates registration errors such as a header
+            /// encoding that does not fit in the configured width.
             #vis fn build(
                 params: &'params C::Params,
                 #(#build_params),*
             ) -> #prelude::Result<Self> {
-                if HEADER_SIZE == 0 {
+                if { #header_size } == 0 {
                     return Err(#prelude::Error::Initialization(
                         "HEADER_SIZE must be at least 1".into(),
                     ));
                 }
 
-                let inner = #prelude::ApplicationBuilder::<C, __R, HEADER_SIZE>::new()
+                let inner = #prelude::ApplicationBuilder::<C, __R, { #header_size }>::new()
                     #(#register_calls)*
                     .finalize(params)?;
                 Ok(Self { inner })
@@ -884,9 +877,11 @@ mod tests {
     }
 
     #[test]
-    fn attr_accepts_empty_and_full_defaults() {
-        let attr = parse_attr(quote!()).unwrap();
-        assert!(attr.cycle.is_none() && attr.rank.is_none() && attr.header_size.is_none());
+    fn attr_accepts_required_size_and_full_defaults() {
+        let attr = parse_attr(quote!(header_size = 4)).unwrap();
+        assert!(attr.cycle.is_none() && attr.rank.is_none());
+        let header_size = &attr.header_size;
+        assert_eq!(quote!(#header_size).to_string(), "4");
 
         let attr = parse_attr(quote!(
             cycle = Pasta,
@@ -894,22 +889,24 @@ mod tests {
             header_size = 4
         ))
         .unwrap();
-        assert!(attr.cycle.is_some() && attr.rank.is_some() && attr.header_size.is_some());
+        assert!(attr.cycle.is_some() && attr.rank.is_some());
     }
 
     #[test]
-    fn attr_accepts_trailing_subsets() {
-        assert!(parse_attr(quote!(header_size = 4)).is_ok());
+    fn attr_accepts_optional_rank_default() {
         assert!(parse_attr(quote!(rank = ProductionRank, header_size = 4)).is_ok());
     }
 
     #[test]
-    fn attr_rejects_non_trailing_defaults() {
-        let err = parse_attr_err(quote!(cycle = Pasta, header_size = 4));
-        assert!(err.contains("requires a `rank` default"));
+    fn attr_requires_header_size_and_rejects_non_trailing_defaults() {
+        let err = parse_attr_err(quote!());
+        assert!(err.contains("missing required `header_size`"));
 
         let err = parse_attr_err(quote!(rank = ProductionRank));
-        assert!(err.contains("requires a `header_size` default"));
+        assert!(err.contains("missing required `header_size`"));
+
+        let err = parse_attr_err(quote!(cycle = Pasta, header_size = 4));
+        assert!(err.contains("requires a `rank` default"));
     }
 
     #[test]
@@ -1070,7 +1067,7 @@ mod tests {
             &attrs,
             &parse_quote!(pub),
             &parse_quote!(ExampleApp),
-            &parse_attr(quote!()).unwrap(),
+            &parse_attr(quote!(header_size = 4)).unwrap(),
             &variants,
             &headers,
             &app,
@@ -1079,7 +1076,10 @@ mod tests {
         .to_string()
         .replace(' ', "");
         assert!(wrapper.contains("#[must_use]"));
-        assert!(wrapper.contains("ifHEADER_SIZE==0"));
+        assert!(!wrapper.contains("constHEADER_SIZE"));
+        assert!(wrapper.contains("Application<'params,C,__R,{4}>"));
+        assert!(wrapper.contains("ApplicationBuilder::<C,__R,{4}>::new()"));
+        assert!(wrapper.contains("if{4}==0"));
         assert!(wrapper.contains("Error::Initialization"));
         assert!(wrapper.contains("trait__RaguApplicationStepForExampleApp"));
         assert!(wrapper.contains("trait__RaguApplicationHeaderForExampleApp"));
