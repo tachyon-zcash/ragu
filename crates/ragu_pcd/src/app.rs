@@ -1,23 +1,15 @@
 //! Developer APIs for PCD applications using Ragu.
 //!
-//! This crate provides simplified [`Step`] and [`HeaderContent`] traits that
+//! This module provides simplified [`Step`] and [`HeaderContent`] traits that
 //! application developers implement. The `#[application]` proc-macro (from
 //! `ragu_macros`) then generates:
 //!
-//! - [`ragu_pcd::header::Header`] impls with auto-assigned `const SUFFIX`
+//! - [`crate::header::Header`] impls with auto-assigned `const SUFFIX`
 //!   values from each [`HeaderContent`] impl
-//! - [`ragu_pcd::step::Step`] impls with `const INDEX` and `Encoded` bridging
+//! - [`crate::step::Step`] impls with `const INDEX` and `Encoded` bridging
 //!   from each [`Step`] impl
 //! - A wrapper struct with typed `build()`/`seed()`/`fuse()`/`verify()`/
 //!   `rerandomize()` methods
-
-#![no_std]
-#![allow(clippy::type_complexity)]
-#![deny(unsafe_code)]
-#![deny(rustdoc::broken_intra_doc_links)]
-#![deny(missing_docs)]
-#![doc(html_favicon_url = "https://tachyon.z.cash/assets/ragu/v1/favicon-32x32.png")]
-#![doc(html_logo_url = "https://tachyon.z.cash/assets/ragu/v1/rustdoc-128x128.png")]
 
 pub use ff::Field;
 pub use ragu_arithmetic::Cycle;
@@ -28,11 +20,12 @@ pub use ragu_core::{
     gadgets::Bound,
 };
 pub use ragu_macros::{application, header};
-pub use ragu_pcd::header::Header;
 pub use ragu_primitives::{
     allocator::{Allocator, Standard},
     io::Write,
 };
+
+pub use crate::header::Header;
 
 /// Re-exports used by `#[application]` and `#[header]` generated code.
 /// Not public API.
@@ -46,19 +39,20 @@ pub mod __macro_internal {
         drivers::{Driver, DriverValue},
         gadgets::{Bound, Kind},
     };
-    pub use ragu_pcd::{
+    pub use ragu_primitives::allocator::{Allocator, Standard};
+
+    pub use crate::{
         Application, ApplicationBuilder, Pcd,
         header::{Header, Suffix},
         step::{Encoded, Index, Step as PcdStep},
     };
-    pub use ragu_primitives::allocator::{Allocator, Standard};
 }
 
 /// Simplified header trait for application developers.
 ///
-/// Unlike [`ragu_pcd::header::Header`], this trait has no `const SUFFIX`.
+/// Unlike [`crate::header::Header`], this trait has no `const SUFFIX`.
 /// The [`#[application]`](macro@application) macro generates the full
-/// [`ragu_pcd::header::Header`] impl with auto-assigned suffix values based
+/// [`crate::header::Header`] impl with auto-assigned suffix values based
 /// on declaration order.
 ///
 /// # Using `#[header]` for single-gadget headers
@@ -68,7 +62,7 @@ pub mod __macro_internal {
 /// `HeaderContent` implementation automatically:
 ///
 /// ```ignore
-/// use ragu_app::header;
+/// use ragu_pcd::app::header;
 /// use ragu_primitives::Element;
 ///
 /// /// A leaf node carrying a hashed field element.
@@ -84,7 +78,7 @@ pub mod __macro_internal {
 /// `Point`), add `alloc = direct`:
 ///
 /// ```ignore
-/// use ragu_app::header;
+/// use ragu_pcd::app::header;
 /// use ragu_primitives::Point;
 ///
 /// /// A header carrying a curve point.
@@ -136,9 +130,9 @@ pub trait HeaderContent<F: Field>: Send + Sync + 'static {
 
 /// Simplified step trait for application developers.
 ///
-/// Unlike [`ragu_pcd::step::Step`], this trait has no `const INDEX` and works
+/// Unlike [`crate::step::Step`], this trait has no `const INDEX` and works
 /// with pre-encoded header gadgets (`&Bound<...>`) instead of raw `Encoded`
-/// types. The `#[application]` macro generates the full [`ragu_pcd::step::Step`]
+/// types. The `#[application]` macro generates the full [`crate::step::Step`]
 /// impl that bridges between this trait and the internal encoding layer.
 pub trait Step<C: Cycle>: Sized + Send + Sync {
     /// The witness data needed to construct a proof for this step.

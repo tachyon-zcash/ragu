@@ -1,10 +1,12 @@
 use core::marker::PhantomData;
 
 use group::CurveAffine;
-use ragu_app::{Bound, Cycle, Driver, DriverValue, Header, Result, Standard, application, header};
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::maybe::Maybe;
 use ragu_pasta::{EpAffine, Fp, Pasta};
+use ragu_pcd::app::{
+    Bound, Cycle, Driver, DriverValue, Header, Result, Standard, application, header,
+};
 use ragu_primitives::{Element, Endoscalar, Point, poseidon::Sponge};
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -25,7 +27,7 @@ pub struct WitnessLeaf<'params, C: Cycle> {
     pub poseidon_params: &'params C::CircuitPoseidon,
 }
 
-impl<C: Cycle> ragu_app::Step<C> for WitnessLeaf<'_, C> {
+impl<C: Cycle> ragu_pcd::app::Step<C> for WitnessLeaf<'_, C> {
     type Witness = C::CircuitField;
     type Left = ();
     type Right = ();
@@ -60,7 +62,7 @@ pub struct Hash2<'params, C: Cycle> {
     pub poseidon_params: &'params C::CircuitPoseidon,
 }
 
-impl<C: Cycle> ragu_app::Step<C> for Hash2<'_, C> {
+impl<C: Cycle> ragu_pcd::app::Step<C> for Hash2<'_, C> {
     type Witness = ();
     type Left = LeafNode;
     type Right = LeafNode;
@@ -94,7 +96,7 @@ impl<C: Cycle> ragu_app::Step<C> for Hash2<'_, C> {
 /// endoscalar group scaling on the generator point.
 pub struct Endoscale<'params, C: Cycle>(PhantomData<&'params C>);
 
-impl ragu_app::Step<Pasta> for Endoscale<'_, Pasta> {
+impl ragu_pcd::app::Step<Pasta> for Endoscale<'_, Pasta> {
     type Witness = ();
     type Left = ExponentNode;
     type Right = ();

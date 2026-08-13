@@ -24,6 +24,7 @@ extern crate alloc;
 #[cfg(any(feature = "std", test))]
 extern crate std;
 
+pub mod app;
 mod fuse;
 #[cfg(feature = "unstable-fuzzing")]
 pub mod fuzz_utils;

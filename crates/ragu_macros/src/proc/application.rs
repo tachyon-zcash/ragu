@@ -1,7 +1,7 @@
 //! Implementation of the `#[application]` proc-macro.
 //!
 //! Parses an enum annotated with `#[application]` and generates:
-//! - `ragu_pcd::step::Step` impls (with `const INDEX`) bridging from `ragu_app::Step`
+//! - `ragu_pcd::step::Step` impls (with `const INDEX`) bridging from `ragu_pcd::app::Step`
 //! - A wrapper struct with typed `build()`/`seed()`/`fuse()`/`verify()`/`rerandomize()`
 //! - Compile-time assertions for header suffix uniqueness
 //!
@@ -172,7 +172,7 @@ pub fn evaluate(attr: ApplicationAttr, input: ItemEnum) -> Result<TokenStream> {
 
     // Collect unique headers for suffix/Header impl generation.
     let headers = collect_unique_headers(&variants);
-    // All generated code references items through `ragu_app::__macro_internal`.
+    // All generated code references items through `ragu_pcd::app::__macro_internal`.
     let prelude = quote!(#app::__macro_internal);
 
     let header_impls = generate_header_impls(&headers, &app, &prelude);
@@ -235,16 +235,16 @@ fn is_unit_type(ty: &Type) -> bool {
     matches!(ty, Type::Tuple(t) if t.elems.is_empty())
 }
 
-/// Generate `ragu_pcd::step::Step` impls that bridge from `ragu_app::Step`.
+/// Generate `ragu_pcd::step::Step` impls that bridge from `ragu_pcd::app::Step`.
 ///
 /// For each variant at position `i`, generates an impl of `PcdStep<C>` on the
 /// inner step type with `const INDEX = Index::new(i)`. The generated `witness()`
 /// method encodes left/right headers via `Encoded::new`, delegates to the
-/// user's `ragu_app::Step::synthesize` (which works with pre-encoded `&Bound`
+/// user's `ragu_pcd::app::Step::synthesize` (which works with pre-encoded `&Bound`
 /// gadgets), then wraps the output via `Encoded::from_gadget`.
 ///
 /// Associated types (`Left`, `Right`, `Output`) are delegated to the
-/// `ragu_app::Step` trait — the macro doesn't need to know them.
+/// `ragu_pcd::app::Step` trait — the macro doesn't need to know them.
 ///
 /// # Example
 ///
@@ -253,15 +253,15 @@ fn is_unit_type(ty: &Type) -> bool {
 /// ```ignore
 /// impl<'params, C: Cycle> PcdStep<C> for Hash2<'params, C>
 /// where
-///     Hash2<'params, C>: ragu_app::Step<C>,
-///     <Hash2<'params, C> as ragu_app::Step<C>>::Left: Header<C::CircuitField>,
-///     <Hash2<'params, C> as ragu_app::Step<C>>::Right: Header<C::CircuitField>,
-///     <Hash2<'params, C> as ragu_app::Step<C>>::Output: Header<C::CircuitField>,
+///     Hash2<'params, C>: ragu_pcd::app::Step<C>,
+///     <Hash2<'params, C> as ragu_pcd::app::Step<C>>::Left: Header<C::CircuitField>,
+///     <Hash2<'params, C> as ragu_pcd::app::Step<C>>::Right: Header<C::CircuitField>,
+///     <Hash2<'params, C> as ragu_pcd::app::Step<C>>::Output: Header<C::CircuitField>,
 /// {
 ///     const INDEX: Index = Index::new(1);
-///     type Left = <Hash2<'params, C> as ragu_app::Step<C>>::Left;
-///     type Right = <Hash2<'params, C> as ragu_app::Step<C>>::Right;
-///     type Output = <Hash2<'params, C> as ragu_app::Step<C>>::Output;
+///     type Left = <Hash2<'params, C> as ragu_pcd::app::Step<C>>::Left;
+///     type Right = <Hash2<'params, C> as ragu_pcd::app::Step<C>>::Right;
+///     type Output = <Hash2<'params, C> as ragu_pcd::app::Step<C>>::Output;
 ///     // ... witness() bridging impl
 /// }
 /// ```
@@ -360,7 +360,7 @@ fn generate_step_impls(
     impls
 }
 
-/// Generate `ragu_pcd::header::Header` impls from `ragu_app::HeaderContent` impls.
+/// Generate `ragu_pcd::header::Header` impls from `ragu_pcd::app::HeaderContent` impls.
 ///
 /// Each unique non-unit header type gets an auto-assigned `const SUFFIX` based
 /// on its first-appearance order across all `#[step(...)]` attributes. The unit
@@ -458,7 +458,7 @@ fn generate_header_impls(
 ///     ExponentNode: Header<C::CircuitField>,
 ///     // Step bounds — needed because `build()` calls `.register()` which
 ///     // requires `PcdStep<C>`, and the generated `PcdStep` impls are
-///     // conditional on `ragu_app::Step<C>`. Without these, steps
+///     // conditional on `ragu_pcd::app::Step<C>`. Without these, steps
 ///     // implemented for one concrete cycle (e.g. `Endoscale<'_, Pasta>:
 ///     // Step<Pasta>`) fail to resolve for generic `C`.
 ///     WitnessLeaf<'params, C>: Step<C>,
@@ -537,7 +537,7 @@ fn generate_wrapper(
         .map(|h| quote!(#h: #prelude::Header<C::CircuitField>))
         .collect();
 
-    // Where clause: each step type must impl `ragu_app::Step<C>`.
+    // Where clause: each step type must impl `ragu_pcd::app::Step<C>`.
     // Required so `.register()` in `build()` can resolve the generated
     // `PcdStep<C>` impl (which is conditional on this bound). Without these,
     // steps implemented for one concrete cycle (e.g. `Endoscale<'_, Pasta>:

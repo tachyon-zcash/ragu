@@ -70,7 +70,6 @@ ragu_primitives = { path = "crates/ragu_primitives", version = "0.0.0", default-
 
 [workspace]
 members = [
-  "crates/ragu_app",
   "crates/ragu_arithmetic",
   "crates/ragu_circuits",
   "crates/ragu_core",

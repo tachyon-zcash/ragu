@@ -39,7 +39,6 @@ features = ["full"]
 # when building doc tests that invoke derive macros inside the derive macro's
 # actual documentation. Also, this allows us to have compilation errors if paths
 # change where macros are ultimately re-exported downstream.
-ragu_app = { path = "../ragu_app", version = "0.0.0" }
 ragu_arithmetic = { path = "../ragu_arithmetic", version = "0.0.0" }
 ragu_core = { path = "../ragu_core", version = "0.0.0" }
 ragu_pcd = { path = "../ragu_pcd", version = "0.0.0" }
