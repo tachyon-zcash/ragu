@@ -6,7 +6,8 @@
 //! # Modes
 //!
 //! - **Generic** (`#[header(data = F, gadget = Element)]`): `data` doubles as
-//!   the field type parameter, producing `impl<F: Field> HeaderContent<F>`.
+//!   the field type parameter, producing `impl<F: Field> HeaderContent<F>`;
+//!   it must therefore be a bare type-parameter identifier.
 //! - **Concrete** (`#[header(data = EpAffine, gadget = Point<EpAffine>, field = Fp)]`):
 //!   an explicit `field` pins the impl to a specific field type.
 //! - **Direct allocation** (`alloc = direct`): by default the generated
@@ -15,15 +16,20 @@
 //!   produces constrained wires directly and takes no allocator (e.g.
 //!   `Point`), `alloc = direct` generates `Gadget::alloc(dr, witness)`
 //!   instead.
+//!
+//! Gadget types follow the `Gadget<'dr, D, ...>` convention. The macro injects
+//! the lifetime and driver arguments before any extra arguments supplied by
+//! the caller.
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::{
-    Error, Ident, ItemStruct, Result, Token, Type,
+    Error, GenericArgument, Ident, ItemStruct, PathArguments, Result, Token, Type,
     parse::{Parse, ParseStream},
+    parse_quote,
 };
 
-use crate::path_resolution::RaguAppPath;
+use crate::{path_resolution::RaguAppPath, substitution::replace_inferences};
 
 /// Generates the `HeaderContent` impl for a `#[header]`-annotated struct.
 pub fn evaluate(attr: HeaderAttr, item: ItemStruct) -> Result<TokenStream> {
@@ -48,26 +54,36 @@ pub fn evaluate(attr: HeaderAttr, item: ItemStruct) -> Result<TokenStream> {
     let struct_attrs = &item.attrs;
     let data_ty = &attr.data;
     let prelude = quote!(#app::__macro_internal);
-    let kind_expr = make_kind_expr(&attr.gadget)?;
+    let output_kind = make_output_kind(
+        &attr.gadget,
+        attr.field.as_ref().unwrap_or(data_ty),
+        &prelude,
+    )?;
     let gadget_base = extract_base_path(&attr.gadget)?;
 
     // When `field` is absent, `data` is both the field parameter and the data
     // type, yielding a generic impl. When present, the impl is concrete.
     let field_ty = attr.field.as_ref().unwrap_or(data_ty);
-    let impl_generics = if attr.field.is_some() {
-        quote!()
+    let generic_field = if attr.field.is_none() {
+        Some(generic_field_ident(data_ty)?)
     } else {
-        quote!(<#data_ty: #prelude::Field>)
+        None
     };
+    let impl_generics = match generic_field {
+        Some(field) => quote!(<#field: #prelude::Field>),
+        None => quote!(),
+    };
+    let driver_ident = fresh_internal_ident("__RaguHeaderDriver", generic_field);
+    let allocator_ident = fresh_internal_ident("__RaguHeaderAllocator", generic_field);
 
     let (allocator_param, alloc_call) = if attr.alloc_direct {
         (
-            quote!(_allocator: &mut __A),
+            quote!(_allocator: &mut #allocator_ident),
             quote!(#gadget_base::alloc(dr, witness)),
         )
     } else {
         (
-            quote!(allocator: &mut __A),
+            quote!(allocator: &mut #allocator_ident),
             quote!(#gadget_base::alloc(dr, allocator, witness)),
         )
     };
@@ -78,13 +94,13 @@ pub fn evaluate(attr: HeaderAttr, item: ItemStruct) -> Result<TokenStream> {
 
         impl #impl_generics #app::HeaderContent<#field_ty> for #struct_ident {
             type Data = #data_ty;
-            type Output = #prelude::Kind![#field_ty; #kind_expr];
+            type Output = #output_kind;
 
-            fn encode<'dr, __D: #prelude::Driver<'dr, F = #field_ty>, __A: #prelude::Allocator<'dr, __D>>(
-                dr: &mut __D,
+            fn encode<'dr, #driver_ident: #prelude::Driver<'dr, F = #field_ty>, #allocator_ident: #prelude::Allocator<'dr, #driver_ident>>(
+                dr: &mut #driver_ident,
                 #allocator_param,
-                witness: #prelude::DriverValue<__D, Self::Data>,
-            ) -> #prelude::Result<#prelude::Bound<'dr, __D, Self::Output>> {
+                witness: #prelude::DriverValue<#driver_ident, Self::Data>,
+            ) -> #prelude::Result<#prelude::Bound<'dr, #driver_ident, Self::Output>> {
                 #alloc_call
             }
         }
@@ -178,15 +194,59 @@ impl Parse for HeaderAttr {
             }
         };
 
+        let data =
+            data.ok_or_else(|| Error::new(input.span(), "missing `data` in #[header(...)]"))?;
+        if field.is_none() {
+            generic_field_ident(&data)?;
+        }
+
         Ok(HeaderAttr {
-            data: data
-                .ok_or_else(|| Error::new(input.span(), "missing `data` in #[header(...)]"))?,
+            data,
             gadget: gadget
                 .ok_or_else(|| Error::new(input.span(), "missing `gadget` in #[header(...)]"))?,
             field,
             alloc_direct,
         })
     }
+}
+
+/// Returns the bare type-parameter identifier used by generic header mode.
+fn generic_field_ident(data: &Type) -> Result<&Ident> {
+    let Type::Path(type_path) = data else {
+        return Err(generic_field_error(data));
+    };
+    if type_path.qself.is_some()
+        || type_path.path.leading_colon.is_some()
+        || type_path.path.segments.len() != 1
+    {
+        return Err(generic_field_error(data));
+    }
+
+    let segment = type_path.path.segments.first().expect("length checked");
+    if !matches!(segment.arguments, PathArguments::None)
+        || syn::parse2::<syn::TypeParam>(quote!(#segment)).is_err()
+    {
+        return Err(generic_field_error(data));
+    }
+
+    Ok(&segment.ident)
+}
+
+fn generic_field_error(data: &Type) -> Error {
+    Error::new_spanned(
+        data,
+        "when `field` is not specified, `data` must be a type parameter name (for example, `F`); add `field = YourField` for concrete data types",
+    )
+}
+
+/// Chooses a generated type parameter that cannot collide with generic mode's
+/// caller-selected field identifier.
+fn fresh_internal_ident(base: &str, occupied: Option<&Ident>) -> Ident {
+    let mut candidate = base.to_owned();
+    while occupied.is_some_and(|ident| ident == candidate.as_str()) {
+        candidate.push('_');
+    }
+    Ident::new(&candidate, Span::mixed_site())
 }
 
 /// Returns the inner [`syn::TypePath`], or an error if `ty` is not a path type.
@@ -197,8 +257,9 @@ fn as_type_path(ty: &Type) -> Result<&syn::TypePath> {
     }
 }
 
-/// Builds the `Kind!` gadget expression by prepending `'_, _` (the lifetime
-/// and driver placeholders) to any existing type arguments.
+/// Builds the concrete gadget type expected by [`make_output_kind`] by
+/// prepending `'_, _` (the lifetime and driver placeholders) to any existing
+/// type arguments.
 ///
 /// Assumes all gadgets follow the convention `Gadget<'dr, D: Driver, ...extra>`.
 /// The lifetime and driver slots are filled with `'_, _`; extra user-supplied
@@ -206,38 +267,51 @@ fn as_type_path(ty: &Type) -> Result<&syn::TypePath> {
 ///
 /// - `Element`          → `Element<'_, _>`
 /// - `Point<EpAffine>`  → `Point<'_, _, EpAffine>`
-fn make_kind_expr(gadget_ty: &Type) -> Result<TokenStream> {
-    let type_path = as_type_path(gadget_ty)?;
-    let segments = &type_path.path.segments;
-    let last = segments
-        .last()
+fn make_gadget_type(gadget_ty: &Type) -> Result<Type> {
+    let mut type_path = as_type_path(gadget_ty)?.clone();
+    let last = type_path
+        .path
+        .segments
+        .last_mut()
         .ok_or_else(|| Error::new_spanned(gadget_ty, "empty path for gadget type"))?;
 
-    let prefix: Vec<_> = segments.iter().take(segments.len() - 1).collect();
-    let base_ident = &last.ident;
-
-    let extra_args: Vec<TokenStream> = match &last.arguments {
-        syn::PathArguments::None => vec![],
-        syn::PathArguments::AngleBracketed(args) => args.args.iter().map(|a| quote!(#a)).collect(),
-        _ => {
+    match &mut last.arguments {
+        PathArguments::None => {
+            last.arguments = PathArguments::AngleBracketed(parse_quote!(<'_, _>));
+        }
+        PathArguments::AngleBracketed(args) => {
+            let previous = core::mem::take(&mut args.args);
+            let mut with_driver = syn::punctuated::Punctuated::new();
+            with_driver.push(GenericArgument::Lifetime(parse_quote!('_)));
+            with_driver.push(GenericArgument::Type(parse_quote!(_)));
+            with_driver.extend(previous);
+            args.args = with_driver;
+        }
+        PathArguments::Parenthesized(_) => {
             return Err(Error::new_spanned(
                 gadget_ty,
                 "unexpected parenthesized arguments on gadget type",
             ));
         }
-    };
-
-    let prefix_tokens = if prefix.is_empty() {
-        quote!()
-    } else {
-        quote!(#(#prefix)::* ::)
-    };
-
-    if extra_args.is_empty() {
-        Ok(quote!(#prefix_tokens #base_ident<'_, _>))
-    } else {
-        Ok(quote!(#prefix_tokens #base_ident<'_, _, #(#extra_args),*>))
     }
+
+    Ok(Type::Path(type_path))
+}
+
+/// Computes the gadget kind directly through the app prelude. Avoiding a
+/// nested `Kind!` invocation is important: a nested proc macro would resolve
+/// `ragu_core` from the downstream crate's manifest and incorrectly require it
+/// as a direct dependency.
+fn make_output_kind(
+    gadget_ty: &Type,
+    field_ty: &Type,
+    prelude: &TokenStream,
+) -> Result<TokenStream> {
+    let mut gadget = make_gadget_type(gadget_ty)?;
+    replace_inferences(&mut gadget, field_ty);
+    Ok(quote!(
+        <#gadget as #prelude::Gadget<'static, ::core::marker::PhantomData<#field_ty>>>::Kind
+    ))
 }
 
 /// Strips generic arguments from a gadget path for the `::alloc()` call,
@@ -246,12 +320,11 @@ fn make_kind_expr(gadget_ty: &Type) -> Result<TokenStream> {
 /// - `Element`         → `Element`
 /// - `Point<EpAffine>` → `Point`
 fn extract_base_path(gadget_ty: &Type) -> Result<TokenStream> {
-    let type_path = as_type_path(gadget_ty)?;
-    let mut path = type_path.path.clone();
-    if let Some(last) = path.segments.last_mut() {
+    let mut type_path = as_type_path(gadget_ty)?.clone();
+    if let Some(last) = type_path.path.segments.last_mut() {
         last.arguments = syn::PathArguments::None;
     }
-    Ok(quote!(#path))
+    Ok(quote!(#type_path))
 }
 
 #[cfg(test)]
@@ -296,5 +369,41 @@ mod tests {
 
         let err = parse_attr_err(quote!(data = F, gadget = Element, alloc = indirect));
         assert!(err.contains("unknown `alloc` mode"));
+    }
+
+    #[test]
+    fn generic_mode_requires_a_bare_type_parameter() {
+        assert!(parse_attr(quote!(data = F, gadget = Element)).is_ok());
+        assert!(parse_attr(quote!(data = Vec<F>, gadget = Element, field = F)).is_ok());
+
+        let err = parse_attr_err(quote!(data = Vec<F>, gadget = Element));
+        assert!(err.contains("`data` must be a type parameter name"));
+
+        let err = parse_attr_err(quote!(data = Self, gadget = Element));
+        assert!(err.contains("`data` must be a type parameter name"));
+    }
+
+    #[test]
+    fn gadget_type_preserves_absolute_paths_and_existing_arguments() {
+        let gadget = make_gadget_type(&syn::parse_quote!(::some_crate::Point<Curve>)).unwrap();
+        assert_eq!(
+            quote!(#gadget).to_string(),
+            quote!(::some_crate::Point<'_, _, Curve>).to_string()
+        );
+    }
+
+    #[test]
+    fn output_kind_does_not_invoke_a_nested_proc_macro() {
+        let output = make_output_kind(
+            &syn::parse_quote!(::some_crate::Element),
+            &syn::parse_quote!(F),
+            &quote!(::ragu_pcd::app::__macro_internal),
+        )
+        .unwrap()
+        .to_string();
+
+        assert!(output.contains("Gadget"));
+        assert!(!output.contains("Kind !"));
+        assert!(output.contains(":: some_crate :: Element"));
     }
 }

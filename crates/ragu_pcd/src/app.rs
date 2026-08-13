@@ -53,7 +53,7 @@ pub mod __macro_internal {
     pub use ragu_core::{
         Error, Result,
         drivers::{Driver, DriverValue},
-        gadgets::{Bound, Kind},
+        gadgets::{Bound, Gadget, Kind},
     };
     pub use ragu_primitives::allocator::{Allocator, Standard};
 

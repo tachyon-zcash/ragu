@@ -220,13 +220,17 @@ pub fn application(attr: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// # Attributes
 ///
-/// - `data`: The witness data type (required).
+/// - `data`: The witness data type (required). When `field` is omitted, this
+///   must be a bare type-parameter name such as `F`.
 /// - `gadget`: The gadget type to allocate (required).
 /// - `field`: The field type for a concrete impl (optional; when omitted,
 ///   `data` is used as a generic field type parameter).
 /// - `alloc`: Set to `direct` when the gadget's `alloc` constructor takes no
 ///   allocator (optional; by default the generated `encode()` passes its
 ///   allocator through to `alloc`).
+///
+/// The gadget type must follow Ragu's `Gadget<'dr, D, ...>` parameter order;
+/// write only any additional parameters in the attribute.
 ///
 /// # Example
 ///

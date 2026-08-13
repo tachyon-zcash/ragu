@@ -182,7 +182,9 @@ pub fn evaluate(attr: ApplicationAttr, input: ItemEnum) -> Result<TokenStream> {
             None => (output.clone(), false),
         };
         let name = variant.ident.clone();
-        let step_ty = quote!(#name<'params, C>);
+        // Qualifying the caller's type through the invocation module prevents
+        // names such as `C` from being captured by generated generic parameters.
+        let step_ty = quote!(self::#name<'params, C>);
         variants.push(ParsedVariant {
             build_parameter,
             step_ty,
@@ -1206,7 +1208,7 @@ mod tests {
     ) -> ParsedVariant {
         let name = Ident::new(name, proc_macro2::Span::call_site());
         let build_parameter = syn::parse_str(&name.to_string().to_snake_case()).unwrap();
-        let step_ty = quote!(#name<'params, C>);
+        let step_ty = quote!(self::#name<'params, C>);
         ParsedVariant {
             build_parameter,
             step_ty,
