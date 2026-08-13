@@ -140,10 +140,22 @@ use ragu_pcd as _;
 /// take `<'params, C: Cycle>` generics), annotated with
 /// `#[produces(OutputHeader)]`.
 ///
+/// # Attributes
+///
+/// Optional defaults for the generated wrapper's generic parameters, so
+/// applications can be used without turbofish:
+///
+/// - `cycle`: default for the `C: Cycle` parameter.
+/// - `rank`: default for the `__R: Rank` parameter.
+/// - `header_size`: default for the `const HEADER_SIZE: usize` parameter.
+///
+/// Defaulted generic parameters must be trailing, so `cycle` requires
+/// `rank`, which in turn requires `header_size`.
+///
 /// # Example
 ///
 /// ```ignore
-/// #[application]
+/// #[application(cycle = Pasta, rank = ProductionRank, header_size = 4)]
 /// pub enum MerkleTree {
 ///     #[produces(LeafNode)]
 ///     WitnessLeaf,
@@ -151,11 +163,15 @@ use ragu_pcd as _;
 ///     #[produces(InternalNode)]
 ///     Hash2,
 /// }
+///
+/// // The defaults fill in the wrapper's generics — no turbofish needed:
+/// let app: MerkleTree = MerkleTree::build(params, witness_leaf, hash2)?;
 /// ```
 #[proc_macro_attribute]
-pub fn application(_attr: TokenStream, input: TokenStream) -> TokenStream {
+pub fn application(attr: TokenStream, input: TokenStream) -> TokenStream {
+    let attr = parse_macro_input!(attr as proc::application::ApplicationAttr);
     let input = parse_macro_input!(input as ItemEnum);
-    macro_body(|| proc::application::evaluate(input))
+    macro_body(|| proc::application::evaluate(attr, input))
 }
 
 /// Attribute macro for generating single-gadget `HeaderContent` implementations.

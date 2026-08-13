@@ -145,7 +145,7 @@ impl ragu_app::Step<Pasta> for Endoscale<'_, Pasta> {
 ///                 |
 ///           [ScaledPoint]
 /// ```
-#[application]
+#[application(cycle = Pasta, rank = ProductionRank, header_size = 4)]
 pub enum ExampleApp {
     #[produces(LeafNode)]
     WitnessLeaf,
@@ -162,7 +162,7 @@ fn example_pipeline() -> Result<()> {
     let pasta = Pasta::baked();
     let poseidon = Pasta::circuit_poseidon(pasta);
 
-    let app = ExampleApp::<Pasta, ProductionRank, 4>::build(
+    let app: ExampleApp = ExampleApp::build(
         pasta,
         WitnessLeaf {
             poseidon_params: poseidon,

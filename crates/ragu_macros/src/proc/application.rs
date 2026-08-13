@@ -9,22 +9,115 @@
 //! itself. Each variant is a unit variant whose name is the step type,
 //! which must take `<'params, C: Cycle>` generics, annotated with
 //! `#[produces(OutputHeader)]`.
+//!
+//! `#[application(cycle = ..., rank = ..., header_size = ...)]` optionally
+//! sets defaults for the generated wrapper's generic parameters, so the
+//! application type can be named without turbofish.
 
 use std::collections::BTreeSet;
 
 use heck::ToSnakeCase;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Error, Fields, Ident, ItemEnum, Result, Type, Variant, Visibility};
+use syn::{
+    Error, Expr, Fields, Ident, ItemEnum, Result, Token, Type, Variant, Visibility,
+    parse::{Parse, ParseStream},
+};
 
 use crate::path_resolution::RaguAppPath;
+
+/// The parsed `#[application(...)]` attribute arguments: optional defaults
+/// for the generated wrapper's generic parameters.
+///
+/// Because defaulted generic parameters must be trailing, `cycle` requires
+/// `rank`, which in turn requires `header_size`.
+pub struct ApplicationAttr {
+    cycle: Option<Type>,
+    rank: Option<Type>,
+    header_size: Option<Expr>,
+}
+
+impl Parse for ApplicationAttr {
+    fn parse(input: ParseStream<'_>) -> Result<Self> {
+        let mut cycle = None;
+        let mut rank = None;
+        let mut header_size = None;
+
+        while !input.is_empty() {
+            let ident: Ident = input.parse()?;
+            input.parse::<Token![=]>()?;
+
+            match ident.to_string().as_str() {
+                "cycle" => {
+                    if cycle.is_some() {
+                        return Err(Error::new(
+                            ident.span(),
+                            "duplicate `cycle` key in #[application(...)]",
+                        ));
+                    }
+                    cycle = Some(input.parse::<Type>()?);
+                }
+                "rank" => {
+                    if rank.is_some() {
+                        return Err(Error::new(
+                            ident.span(),
+                            "duplicate `rank` key in #[application(...)]",
+                        ));
+                    }
+                    rank = Some(input.parse::<Type>()?);
+                }
+                "header_size" => {
+                    if header_size.is_some() {
+                        return Err(Error::new(
+                            ident.span(),
+                            "duplicate `header_size` key in #[application(...)]",
+                        ));
+                    }
+                    header_size = Some(input.parse::<Expr>()?);
+                }
+                other => {
+                    return Err(Error::new(
+                        ident.span(),
+                        format!(
+                            "unknown attribute `{other}`, expected `cycle`, `rank`, or `header_size`"
+                        ),
+                    ));
+                }
+            }
+
+            // Consume optional trailing comma.
+            let _ = input.parse::<Token![,]>();
+        }
+
+        // The generated generics are ordered `C, __R, HEADER_SIZE`, and Rust
+        // requires defaulted parameters to be trailing.
+        if cycle.is_some() && rank.is_none() {
+            return Err(Error::new(
+                input.span(),
+                "`cycle` default requires a `rank` default (defaults must be trailing)",
+            ));
+        }
+        if rank.is_some() && header_size.is_none() {
+            return Err(Error::new(
+                input.span(),
+                "`rank` default requires a `header_size` default (defaults must be trailing)",
+            ));
+        }
+
+        Ok(ApplicationAttr {
+            cycle,
+            rank,
+            header_size,
+        })
+    }
+}
 
 /// Main entry point for the `#[application]` macro.
 ///
 /// # Example
 ///
 /// ```ignore
-/// #[application]
+/// #[application(cycle = Pasta, rank = ProductionRank, header_size = 4)]
 /// enum MyApp {
 ///    #[produces(LeafNode)]
 ///    WitnessLeaf,
@@ -32,7 +125,7 @@ use crate::path_resolution::RaguAppPath;
 ///    #[produces(HashNode)]
 ///    Hash2,
 /// }
-pub fn evaluate(input: ItemEnum) -> Result<TokenStream> {
+pub fn evaluate(attr: ApplicationAttr, input: ItemEnum) -> Result<TokenStream> {
     let app = RaguAppPath::resolve()?;
 
     let vis = &input.vis;
@@ -84,7 +177,7 @@ pub fn evaluate(input: ItemEnum) -> Result<TokenStream> {
 
     let header_impls = generate_header_impls(&headers, &app, &prelude);
     let step_impls = generate_step_impls(&variants, &app, &prelude);
-    let wrapper = generate_wrapper(vis, enum_ident, &variants, &headers, &app, &prelude);
+    let wrapper = generate_wrapper(vis, enum_ident, &attr, &variants, &headers, &app, &prelude);
 
     Ok(quote! {
         #header_impls
@@ -334,7 +427,7 @@ fn generate_header_impls(
 /// Given the input enum (after parsing):
 ///
 /// ```ignore
-/// #[application]
+/// #[application(cycle = Pasta, rank = ProductionRank, header_size = 4)]
 /// pub enum ExampleApp {
 ///     #[produces(LeafNode)]
 ///     WitnessLeaf,
@@ -347,7 +440,12 @@ fn generate_header_impls(
 /// This function generates:
 ///
 /// ```ignore
-/// pub struct ExampleApp<'params, C: Cycle, __R: Rank, const HEADER_SIZE: usize> {
+/// pub struct ExampleApp<
+///     'params,
+///     C: Cycle = Pasta,
+///     __R: Rank = ProductionRank,
+///     const HEADER_SIZE: usize = 4,
+/// > {
 ///     inner: Application<'params, C, __R, HEADER_SIZE>,
 /// }
 ///
@@ -379,9 +477,11 @@ fn generate_header_impls(
 ///     pub fn trivial_pcd(...) -> Pcd<..., ()> { ... }
 /// }
 /// ```
+#[allow(clippy::too_many_arguments)]
 fn generate_wrapper(
     vis: &Visibility,
     enum_ident: &Ident,
+    attr: &ApplicationAttr,
     variants: &[ParsedVariant],
     headers: &[Type],
     app: &RaguAppPath,
@@ -408,7 +508,26 @@ fn generate_wrapper(
         .collect();
 
     // Struct/impl generics: the macro-supplied `'params, C: Cycle` plus
-    // `__R: Rank, const HEADER_SIZE: usize`.
+    // `__R: Rank, const HEADER_SIZE: usize`. The struct declaration carries
+    // any defaults from `#[application(...)]`; impls repeat the generics
+    // without them (defaults are not permitted in impl generics).
+    let cycle_default = attr
+        .cycle
+        .as_ref()
+        .map(|t| quote!(= #t))
+        .unwrap_or_default();
+    let rank_default = attr.rank.as_ref().map(|t| quote!(= #t)).unwrap_or_default();
+    let header_size_default = attr
+        .header_size
+        .as_ref()
+        .map(|e| quote!(= #e))
+        .unwrap_or_default();
+    let struct_gen = quote!(
+        'params,
+        C: #app::Cycle #cycle_default,
+        __R: #prelude::Rank #rank_default,
+        const HEADER_SIZE: usize #header_size_default
+    );
     let impl_gen = quote!('params, C: #app::Cycle, __R: #prelude::Rank, const HEADER_SIZE: usize);
     let struct_args = quote!('params, C, __R, HEADER_SIZE);
 
@@ -433,7 +552,7 @@ fn generate_wrapper(
 
     quote! {
         /// Generated application wrapper.
-        #vis struct #enum_ident<#impl_gen> {
+        #vis struct #enum_ident<#struct_gen> {
             inner: #prelude::Application<'params, C, __R, HEADER_SIZE>,
         }
 
