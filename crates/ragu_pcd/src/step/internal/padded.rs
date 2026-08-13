@@ -69,11 +69,16 @@ impl<F: Field, G: GadgetKind<F> + Write<F>, const HEADER_SIZE: usize> Write<F>
         dr: &mut D,
         buf: &mut B,
     ) -> Result<()> {
+        let content_size = HEADER_SIZE.checked_sub(1).ok_or_else(|| {
+            ragu_core::Error::MalformedEncoding("HEADER_SIZE must be at least 1".into())
+        })?;
+
         // Create a buffer that intercepts the data being written and counts it,
         // prohibiting more than HEADER_SIZE - 1 writes (reserving space for
         // suffix).
-        let mut counting = CountingBuffer::<B, HEADER_SIZE> {
+        let mut counting = CountingBuffer {
             written: 0,
+            limit: content_size,
             inner: buf,
         };
 
@@ -81,7 +86,7 @@ impl<F: Field, G: GadgetKind<F> + Write<F>, const HEADER_SIZE: usize> Write<F>
 
         // Add padding to reach HEADER_SIZE - 1 elements (suffix will be added
         // after).
-        while counting.written < HEADER_SIZE - 1 {
+        while counting.written < content_size {
             Element::zero(dr).write(dr, &mut counting)?;
         }
 
@@ -89,23 +94,24 @@ impl<F: Field, G: GadgetKind<F> + Write<F>, const HEADER_SIZE: usize> Write<F>
     }
 }
 
-struct CountingBuffer<'a, B, const HEADER_SIZE: usize> {
+struct CountingBuffer<'a, B> {
     written: usize,
+    limit: usize,
     inner: &'a mut B,
 }
 
-impl<'dr, D, B, const HEADER_SIZE: usize> Buffer<'dr, D> for CountingBuffer<'_, B, HEADER_SIZE>
+impl<'dr, D, B> Buffer<'dr, D> for CountingBuffer<'_, B>
 where
     D: Driver<'dr>,
     B: Buffer<'dr, D>,
 {
     fn write(&mut self, dr: &mut D, value: &Element<'dr, D>) -> Result<()> {
-        // Limit is N - 1 to reserve space for the suffix element
-        if self.written >= HEADER_SIZE - 1 {
+        // The limit reserves one element for the suffix.
+        if self.written >= self.limit {
             return Err(ragu_core::Error::MalformedEncoding(
                 alloc::format!(
                     "Header encoding size exceeded HEADER_SIZE - 1 ({})",
-                    HEADER_SIZE - 1,
+                    self.limit,
                 )
                 .into(),
             ));
@@ -121,7 +127,7 @@ mod tests {
     use alloc::vec;
 
     use ragu_core::{
-        Result,
+        Error, Result,
         drivers::{Driver, emulator::Emulator},
         gadgets::{Gadget, Kind},
         maybe::{Always, Maybe, MaybeKind},
@@ -197,6 +203,30 @@ mod tests {
             let mut buffer = vec![];
             assert!(padded_gadget.write(dr, &mut buffer).is_err());
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_zero_header_size_returns_an_error() -> Result<()> {
+        let mut dr = Emulator::execute();
+        let dr = &mut dr;
+        let gadget = MySillyGadget {
+            blah: (1u64..=4)
+                .map(|n| Element::alloc(dr, &mut (), Always::maybe_just(|| F::from(n))))
+                .try_collect_fixed()?,
+        };
+        let padded_content =
+            super::PaddedContent::<'_, _, Kind![F; MySillyGadget<'_, _>], 0> { gadget };
+        let padded_gadget = Padded::<'_, _, Kind![F; MySillyGadget<'_, _>], 0> {
+            inner: WithSuffix::new(padded_content, Element::constant(dr, F::from(42u64))),
+        };
+        let mut buffer = vec![];
+
+        assert!(matches!(
+            padded_gadget.write(dr, &mut buffer),
+            Err(Error::MalformedEncoding(_))
+        ));
 
         Ok(())
     }

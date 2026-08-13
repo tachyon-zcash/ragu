@@ -89,10 +89,18 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     /// # Errors
     ///
     /// Returns an error if the step's index is not the next sequential index,
-    /// or if any of the step's header suffixes conflict with an
-    /// already-registered header type.
+    /// if its output uses a suffix reserved for framework-internal headers, or
+    /// if any of its header suffixes conflict with an already-registered
+    /// header type. A zero `HEADER_SIZE` is also rejected.
     pub fn register<S: Step<C> + 'params>(mut self, step: S) -> Result<Self> {
+        Self::validate_header_size()?;
         S::INDEX.assert_index(self.num_application_steps)?;
+
+        if S::Output::SUFFIX.is_internal() {
+            return Err(Error::Initialization(
+                "application steps cannot produce headers with reserved internal suffixes".into(),
+            ));
+        }
 
         self.prevent_duplicate_suffixes::<S::Output>()?;
         self.prevent_duplicate_suffixes::<S::Left>()?;
@@ -127,11 +135,13 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     /// # Errors
     ///
     /// Returns an error if internal circuit registration or registry
-    /// finalization fails.
+    /// finalization fails. A zero `HEADER_SIZE` is also rejected.
     pub fn finalize(
         mut self,
         params: &'params C::Params,
     ) -> Result<Application<'params, C, R, HEADER_SIZE>> {
+        Self::validate_header_size()?;
+
         // Build the native registry:
         // 1. Application circuits (already registered)
         // 2. Internal circuits and masks
@@ -180,6 +190,16 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             seeded_trivial: OnceCell::new(),
             _marker: PhantomData,
         })
+    }
+
+    fn validate_header_size() -> Result<()> {
+        if HEADER_SIZE == 0 {
+            return Err(Error::Initialization(
+                "HEADER_SIZE must be at least 1".into(),
+            ));
+        }
+
+        Ok(())
     }
 
     fn prevent_duplicate_suffixes<H: Header<C::CircuitField>>(&mut self) -> Result<()> {

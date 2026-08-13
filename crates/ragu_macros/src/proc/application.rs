@@ -24,15 +24,22 @@
 //! application's header width and optionally sets defaults for the generated
 //! wrapper's cycle and rank parameters, so the application type can be named
 //! without turbofish.
+//!
+//! Because the enum is a declaration DSL rather than an emitted enum, variant
+//! attributes other than `#[produces(...)]` and explicit discriminants are
+//! rejected. Enum attributes are limited to metadata that can be forwarded
+//! faithfully to the generated wrapper.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use heck::ToSnakeCase;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
     Attribute, Error, Expr, Fields, Ident, ItemEnum, Result, Token, Type, Variant, Visibility,
+    ext::IdentExt,
     parse::{Parse, ParseStream},
+    punctuated::Punctuated,
 };
 
 use crate::path_resolution::RaguAppPath;
@@ -145,6 +152,8 @@ pub fn evaluate(attr: ApplicationAttr, input: ItemEnum) -> Result<TokenStream> {
     let vis = &input.vis;
     let enum_ident = &input.ident;
 
+    validate_application_attributes(attrs)?;
+
     if !input.generics.params.is_empty() || input.generics.where_clause.is_some() {
         return Err(Error::new_spanned(
             &input.generics,
@@ -157,15 +166,15 @@ pub fn evaluate(attr: ApplicationAttr, input: ItemEnum) -> Result<TokenStream> {
     // step type (instantiated as `Name<'params, C>`), annotated with a
     // #[produces(...)] attribute naming the output header. The variant name
     // is also used as the `build()` parameter name (converted to snake_case).
+    let build_parameter_idents = build_parameter_idents(&input.variants)?;
     let mut variants = Vec::new();
-    for (index, variant) in input.variants.iter().enumerate() {
-        if !matches!(variant.fields, Fields::Unit) {
-            return Err(Error::new_spanned(
-                variant,
-                "application variants must be unit variants naming a step type \
-                 with `<'params, C: Cycle>` generics",
-            ));
-        }
+    for ((index, variant), build_parameter) in input
+        .variants
+        .iter()
+        .enumerate()
+        .zip(build_parameter_idents)
+    {
+        validate_variant_declaration(variant)?;
         let produces = parse_produces_attr(variant)?;
         let output = produces.output;
         let (header, has_explicit_canonical) = match produces.canonical {
@@ -175,7 +184,7 @@ pub fn evaluate(attr: ApplicationAttr, input: ItemEnum) -> Result<TokenStream> {
         let name = variant.ident.clone();
         let step_ty = quote!(#name<'params, C>);
         variants.push(ParsedVariant {
-            name,
+            build_parameter,
             step_ty,
             output,
             header,
@@ -211,13 +220,117 @@ pub fn evaluate(attr: ApplicationAttr, input: ItemEnum) -> Result<TokenStream> {
     })
 }
 
-/// A parsed enum variant: its name (which doubles as the step type name and,
-/// via snake_case conversion, the `build()` parameter name), the instantiated
-/// step type, the output header, and the declaration index.
+/// Validates attributes that can be meaningfully forwarded from the enum DSL
+/// declaration to the generated wrapper struct.
+fn validate_application_attributes(attrs: &[Attribute]) -> Result<()> {
+    for attr in attrs {
+        let path = attr.path();
+        let forwarded = path.is_ident("doc")
+            || path.is_ident("allow")
+            || path.is_ident("warn")
+            || path.is_ident("deny")
+            || path.is_ident("forbid")
+            || path.is_ident("expect")
+            || path.is_ident("must_use")
+            || path.is_ident("deprecated");
+        if forwarded {
+            continue;
+        }
+
+        let message = if path.is_ident("cfg") || path.is_ident("cfg_attr") {
+            "configuration attributes on an #[application] enum cannot gate the complete macro \
+             expansion; put the application in a cfg-gated module instead"
+        } else {
+            "unsupported attribute on #[application] enum; only doc comments, lint attributes, \
+             #[must_use], and #[deprecated] are forwarded to the generated wrapper"
+        };
+        return Err(Error::new_spanned(attr, message));
+    }
+
+    Ok(())
+}
+
+/// Rejects syntax that would disappear when the enum DSL declaration is
+/// consumed rather than emitted as an enum.
+fn validate_variant_declaration(variant: &Variant) -> Result<()> {
+    for attr in &variant.attrs {
+        if !attr.path().is_ident("produces") {
+            return Err(Error::new_spanned(
+                attr,
+                "unsupported attribute on #[application] variant; only #[produces(...)] is \
+                 accepted because the enum variant is consumed by the macro",
+            ));
+        }
+    }
+
+    if !matches!(variant.fields, Fields::Unit) {
+        return Err(Error::new_spanned(
+            variant,
+            "application variants must be unit variants naming a step type \
+             with `<'params, C: Cycle>` generics",
+        ));
+    }
+
+    if let Some((_, discriminant)) = &variant.discriminant {
+        return Err(Error::new_spanned(
+            discriminant,
+            "explicit discriminants are not supported on #[application] variants; step indices \
+             are assigned from declaration order",
+        ));
+    }
+
+    Ok(())
+}
+
+/// Computes collision-free Rust identifiers for the generated `build()`
+/// parameters, reporting errors at the source variants rather than panicking
+/// or leaving rustc to diagnose invisible generated code.
+fn build_parameter_idents(variants: &Punctuated<Variant, Token![,]>) -> Result<Vec<Ident>> {
+    let mut seen = BTreeMap::<String, Ident>::new();
+    let mut generated = Vec::with_capacity(variants.len());
+
+    for variant in variants {
+        let parameter = variant.ident.unraw().to_string().to_snake_case();
+        if parameter == "params" {
+            return Err(Error::new(
+                variant.ident.span(),
+                "variant generates the reserved build parameter name `params`; rename the step",
+            ));
+        }
+
+        let mut ident = syn::parse_str::<Ident>(&parameter).map_err(|_| {
+            Error::new(
+                variant.ident.span(),
+                format!(
+                    "variant generates `{parameter}`, which is not a valid Rust build parameter; \
+                     rename the step"
+                ),
+            )
+        })?;
+        ident.set_span(variant.ident.span());
+
+        if let Some(first) = seen.insert(parameter.clone(), variant.ident.clone()) {
+            return Err(Error::new(
+                variant.ident.span(),
+                format!(
+                    "variants `{first}` and `{}` both generate the build parameter \
+                     `{parameter}`; rename one step",
+                    variant.ident,
+                ),
+            ));
+        }
+
+        generated.push(ident);
+    }
+
+    Ok(generated)
+}
+
+/// A parsed enum variant: its generated `build()` parameter, instantiated step
+/// type, output header, and declaration index.
 struct ParsedVariant {
-    /// Variant name (e.g. `WitnessLeaf`), which is the step type's name and
-    /// derives the `build()` parameter name (e.g. `witness_leaf`).
-    name: Ident,
+    /// Prevalidated snake_case identifier used as the `build()` parameter.
+    build_parameter: Ident,
     /// The step type: the variant name applied to the macro-supplied
     /// generics, i.e. `Name<'params, C>`.
     step_ty: TokenStream,
@@ -645,8 +758,9 @@ fn generate_wrapper(
     // Private marker traits make the generated wrapper a closed application
     // boundary. Downstream crates cannot implement these traits for a foreign
     // step/header that happens to reuse the same INDEX/SUFFIX values.
-    let step_marker = format_ident!("__RaguApplicationStepFor{}", enum_ident);
-    let header_marker = format_ident!("__RaguApplicationHeaderFor{}", enum_ident);
+    let marker_stem = enum_ident.unraw();
+    let step_marker = format_ident!("__RaguApplicationStepFor{}", marker_stem);
+    let header_marker = format_ident!("__RaguApplicationHeaderFor{}", marker_stem);
 
     let step_memberships: Vec<_> = variants
         .iter()
@@ -675,7 +789,7 @@ fn generate_wrapper(
     let build_params: Vec<_> = variants
         .iter()
         .map(|v| {
-            let name = format_ident!("{}", v.name.to_string().to_snake_case());
+            let name = &v.build_parameter;
             let ty = &v.step_ty;
             quote!(#name: #ty)
         })
@@ -685,7 +799,7 @@ fn generate_wrapper(
     let register_calls: Vec<_> = variants
         .iter()
         .map(|v| {
-            let name = format_ident!("{}", v.name.to_string().to_snake_case());
+            let name = &v.build_parameter;
             quote!(.register(#name)?)
         })
         .collect();
@@ -918,6 +1032,97 @@ mod tests {
         assert!(err.contains("unknown attribute `size`"));
     }
 
+    #[test]
+    fn application_attributes_are_forwarded_or_rejected_explicitly() {
+        let item: ItemEnum = parse_quote! {
+            #[doc = "An application"]
+            #[must_use]
+            #[allow(dead_code)]
+            #[deprecated]
+            enum App {
+                #[produces(Header)]
+                Step,
+            }
+        };
+        assert!(validate_application_attributes(&item.attrs).is_ok());
+
+        let item: ItemEnum = parse_quote! {
+            #[cfg(feature = "optional-app")]
+            enum App {}
+        };
+        let err = validate_application_attributes(&item.attrs)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("cfg-gated module"));
+
+        let item: ItemEnum = parse_quote! {
+            #[derive(Clone)]
+            enum App {}
+        };
+        let err = validate_application_attributes(&item.attrs)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("unsupported attribute"));
+    }
+
+    #[test]
+    fn variant_attributes_and_discriminants_are_rejected_explicitly() {
+        let variant: Variant = parse_quote! {
+            #[cfg(feature = "optional-step")]
+            #[produces(Header)]
+            Step
+        };
+        let err = validate_variant_declaration(&variant)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("unsupported attribute"));
+
+        let variant: Variant = parse_quote! {
+            #[produces(Header)]
+            Step = 5
+        };
+        let err = validate_variant_declaration(&variant)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("explicit discriminants"));
+    }
+
+    #[test]
+    fn build_parameter_names_are_prevalidated() {
+        let item: ItemEnum = parse_quote! {
+            enum App {
+                FooBar,
+                Foo_Bar,
+            }
+        };
+        let err = build_parameter_idents(&item.variants)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("both generate the build parameter `foo_bar`"));
+
+        let item: ItemEnum = parse_quote! { enum App { Params } };
+        let err = build_parameter_idents(&item.variants)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("reserved build parameter name `params`"));
+
+        let item: ItemEnum = parse_quote! { enum App { r#params } };
+        let err = build_parameter_idents(&item.variants)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("reserved build parameter name `params`"));
+
+        let item: ItemEnum = parse_quote! { enum App { Type } };
+        let err = build_parameter_idents(&item.variants)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("`type`, which is not a valid Rust build parameter"));
+
+        let item: ItemEnum = parse_quote! { enum App { Hash2 } };
+        let names = build_parameter_idents(&item.variants).unwrap();
+        assert_eq!(names[0], "hash2");
+    }
+
     fn produces_err(variant: &Variant) -> String {
         match parse_produces_attr(variant) {
             Ok(_) => panic!("expected a parse error"),
@@ -1000,9 +1205,10 @@ mod tests {
         index: usize,
     ) -> ParsedVariant {
         let name = Ident::new(name, proc_macro2::Span::call_site());
+        let build_parameter = syn::parse_str(&name.to_string().to_snake_case()).unwrap();
         let step_ty = quote!(#name<'params, C>);
         ParsedVariant {
-            name,
+            build_parameter,
             step_ty,
             output,
             header,

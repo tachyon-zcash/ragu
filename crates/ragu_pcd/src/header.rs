@@ -75,6 +75,11 @@ impl Suffix {
             suffix: HeaderSuffix::Internal(value),
         }
     }
+
+    /// Returns whether this suffix is reserved for framework-internal use.
+    pub(crate) const fn is_internal(&self) -> bool {
+        matches!(self.suffix, HeaderSuffix::Internal(_))
+    }
 }
 
 #[test]
@@ -83,6 +88,8 @@ fn test_suffix_map() {
     assert_eq!(Suffix::internal(1).get(), 1);
     assert_eq!(Suffix::new(0).get(), 2);
     assert_eq!(Suffix::new(1).get(), 3);
+    assert!(Suffix::internal(0).is_internal());
+    assert!(!Suffix::new(0).is_internal());
 }
 
 #[test]
@@ -110,7 +117,10 @@ fn test_suffix_wrapping_panics() {
 /// guide for usage patterns and examples.
 pub trait Header<F: Field>: Send + Sync + Any {
     /// Each header should use a unique suffix to distinguish itself from other
-    /// headers.
+    /// headers. Application-defined headers must use [`Suffix::new`];
+    /// [`ApplicationBuilder::register`](crate::ApplicationBuilder::register)
+    /// rejects application steps whose output copies a reserved internal
+    /// suffix.
     const SUFFIX: Suffix;
 
     /// The witness input needed to encode a header.

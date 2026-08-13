@@ -54,7 +54,7 @@ impl<C: Cycle> ragu_pcd::app::Step<C> for WitnessLeaf<'_, C> {
         let mut sponge = Sponge::new(dr, self.poseidon_params);
         sponge.absorb(dr, &leaf)?;
         let output = sponge.squeeze(dr)?;
-        let output_data = output.value().map(|v| *v);
+        let output_data = output.value().map(|value| *value);
         Ok((output, output_data, D::unit()))
     }
 }
@@ -257,6 +257,14 @@ fn example_pipeline() -> Result<()> {
         Fp::from(100u64),
     )?;
     assert!(app.verify(&leaf1, &mut rng)?);
+
+    // The proof commits to the original leaf header. Reattaching different
+    // carried data succeeds locally, but wrapper verification must reject it.
+    let mismatched_leaf = leaf1
+        .proof()
+        .clone()
+        .carry::<LeafNode>(*leaf1.data() + Fp::from(1u64));
+    assert!(!app.verify(&mismatched_leaf, &mut rng)?);
 
     let (leaf2, _) = app.seed(
         &mut rng,

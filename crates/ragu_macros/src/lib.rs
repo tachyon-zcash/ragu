@@ -159,6 +159,15 @@ use ragu_pcd as _;
 ///
 /// Defaulted generic parameters must be trailing, so `cycle` requires `rank`.
 ///
+/// Doc comments, lint attributes, `#[must_use]`, and `#[deprecated]` on the
+/// enum are forwarded to the generated wrapper. Other enum attributes are
+/// rejected because they cannot be applied consistently to the complete macro
+/// expansion; to configure an application with `#[cfg]`, place it in a
+/// cfg-gated module. Variants accept only `#[produces(...)]` and cannot have
+/// explicit discriminants because their indices come from declaration order.
+/// Variant names must also produce unique, non-keyword snake_case `build()`
+/// parameter names and cannot produce the reserved name `params`.
+///
 /// # Headers belong to one application
 ///
 /// The macro writes the `Header` impl for every type named by
