@@ -10,12 +10,15 @@ use ragu_arithmetic::{Coeff, CurveAffine, ff::WithSmallOrderMulGroup};
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue, LinearExpression},
-    gadgets::Gadget,
+    gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
 
 use crate::{
-    Boolean, Element, Nonzero, NonzeroBank, comparison::GadgetEquals, consistent::Consistent,
+    Boolean, Element, Nonzero, NonzeroBank,
+    allocator::{Allocatable, Allocator},
+    comparison::GadgetEquals,
+    consistent::Consistent,
     io::Write,
 };
 
@@ -30,8 +33,12 @@ use crate::{
 /// These assumptions are satisfied by the Pasta curves.
 ///
 /// As a result, the $x$ and $y$ coordinates are nonzero for every affine point.
+// The struct deliberately does not link `C::Base` to `D::F`: that equality is
+// required by every constructor and operation, but leaving it off the struct
+// keeps the type (and its kind) nameable for any field, which conditional
+// impls such as `Allocatable` rely on.
 #[derive(Gadget, Write, GadgetEquals)]
-pub struct Point<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
+pub struct Point<'dr, D: Driver<'dr>, C: CurveAffine> {
     #[ragu(gadget)]
     x: Nonzero<'dr, D>,
     #[ragu(gadget)]
@@ -314,6 +321,21 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
 impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Consistent<'dr, D> for Point<'dr, D, C> {
     fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
         Self::alloc(dr, self.value())?.enforce_conservative_equal(dr, self)
+    }
+}
+
+// A point kind is allocatable only over its curve's base field, so this impl
+// is what pins `#[header(gadget = Point<...>)]` headers to that field.
+impl<C: CurveAffine> Allocatable<C::Base> for Kind![C::Base; @Point<'_, _, C>] {
+    type Witness = C;
+
+    fn alloc<'dr, D: Driver<'dr, F = C::Base>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        // `Point::alloc` constrains its own wires and needs no allocator.
+        _allocator: &mut A,
+        witness: DriverValue<D, Self::Witness>,
+    ) -> Result<Bound<'dr, D, Self>> {
+        Point::alloc(dr, witness)
     }
 }
 

@@ -1,25 +1,15 @@
 //! Implementation of the `#[header]` proc-macro.
 //!
-//! Generates a `HeaderContent` implementation for single-gadget headers where
-//! `encode()` calls the gadget's `alloc` constructor.
+//! Generates a `HeaderContent` implementation for single-gadget headers: the
+//! generated `encode()` allocates the gadget through its kind's `Allocatable`
+//! impl, which supplies the witness (`Data`) type, the constructor, and any
+//! field constraint. `Element` headers are therefore generic over every
+//! field, while a point kind is allocatable only over its curve's base field,
+//! pinning the impl accordingly.
 //!
-//! # Modes
-//!
-//! - **Generic** (`#[header(data = F, gadget = Element)]`): `data` doubles as
-//!   the field type parameter, producing `impl<F: Field> HeaderContent<F>`;
-//!   it must therefore be a bare type-parameter identifier.
-//! - **Concrete** (`#[header(data = EpAffine, gadget = Point<EpAffine>, field = Fp)]`):
-//!   an explicit `field` pins the impl to a specific field type.
-//! - **Direct allocation** (`alloc = direct`): by default the generated
-//!   `encode()` passes its allocator through to
-//!   `Gadget::alloc(dr, allocator, witness)`. For gadgets whose `alloc`
-//!   produces constrained wires directly and takes no allocator (e.g.
-//!   `Point`), `alloc = direct` generates `Gadget::alloc(dr, witness)`
-//!   instead.
-//!
-//! Gadget types follow the `Gadget<'dr, D, ...>` convention. The macro injects
-//! the lifetime and driver arguments before any extra arguments supplied by
-//! the caller.
+//! Gadget types follow the `Gadget<'dr, D, ...>` convention. The macro
+//! injects the lifetime and driver arguments; callers write only any extra
+//! arguments (`Element`, `Point<EpAffine>`).
 
 use std::collections::BTreeSet;
 
@@ -59,146 +49,68 @@ pub fn evaluate(attr: HeaderAttr, item: ItemStruct) -> Result<TokenStream> {
     let struct_vis = &item.vis;
     let struct_ident = &item.ident;
     let struct_attrs = &item.attrs;
-    let data_ty = &attr.data;
     let prelude = quote!(#app::__macro_internal);
-    let output_kind = make_output_kind(
-        &attr.gadget,
-        attr.field.as_ref().unwrap_or(data_ty),
-        &prelude,
-    )?;
-    let gadget_base = extract_base_path(&attr.gadget)?;
-
-    // When `field` is absent, `data` is both the field parameter and the data
-    // type, yielding a generic impl. When present, the impl is concrete.
-    let field_ty = attr.field.as_ref().unwrap_or(data_ty);
-    let generic_field = if attr.field.is_none() {
-        Some(generic_field_ident(data_ty)?)
-    } else {
-        None
-    };
-    let impl_generics = match generic_field {
-        Some(field) => quote!(<#field: #prelude::Field>),
-        None => quote!(),
-    };
-
-    if let Some(field) = generic_field {
-        validate_generic_field(field, struct_ident, &attr.gadget)?;
-    }
 
     // Generated generic-parameter names must not capture any identifier the
-    // caller wrote in `data`, `gadget`, or `field`, all of which are
-    // interpolated into scopes where these parameters are live.
+    // caller wrote in the gadget type or as the struct name, both of which
+    // are interpolated into scopes where these parameters are live.
     let mut occupied = BTreeSet::new();
+    occupied.insert(struct_ident.unraw().to_string());
     let gadget_ty = &attr.gadget;
-    collect_idents(quote!(#data_ty), &mut occupied);
     collect_idents(quote!(#gadget_ty), &mut occupied);
-    if let Some(field) = &attr.field {
-        collect_idents(quote!(#field), &mut occupied);
-    }
+    let field_ident = fresh_ident("F", &occupied, Span::mixed_site());
     let driver_ident = fresh_ident("__RaguHeaderDriver", &occupied, Span::mixed_site());
     let allocator_ident = fresh_ident("__RaguHeaderAllocator", &occupied, Span::mixed_site());
 
-    let (allocator_param, alloc_call) = if attr.alloc_direct {
-        (
-            quote!(_allocator: &mut #allocator_ident),
-            quote!(#gadget_base::alloc(dr, witness)),
-        )
-    } else {
-        (
-            quote!(allocator: &mut #allocator_ident),
-            quote!(#gadget_base::alloc(dr, allocator, witness)),
-        )
-    };
+    let field_ty: Type = parse_quote!(#field_ident);
+    let gadget_phantom = phantom_gadget(&attr.gadget, &field_ty)?;
+    let kind = make_output_kind(&attr.gadget, &field_ty, &prelude)?;
 
+    // The bounds do the inference a token-level macro cannot: `Gadget`
+    // legitimizes the kind projection for every field parameter (a gadget
+    // that exists only over some fields makes the impl unsatisfiable
+    // elsewhere), and `Allocatable` supplies the witness type and
+    // constructor.
     Ok(quote! {
         #(#struct_attrs)*
         #struct_vis struct #struct_ident;
 
-        impl #impl_generics #app::HeaderContent<#field_ty> for #struct_ident {
-            type Data = #data_ty;
-            type Output = #output_kind;
+        impl<#field_ident: #prelude::Field> #app::HeaderContent<#field_ident> for #struct_ident
+        where
+            #gadget_phantom: #prelude::Gadget<'static, ::core::marker::PhantomData<#field_ident>>,
+            #kind: #prelude::Allocatable<#field_ident>,
+        {
+            type Data = <#kind as #prelude::Allocatable<#field_ident>>::Witness;
+            type Output = #kind;
 
-            fn encode<'dr, #driver_ident: #prelude::Driver<'dr, F = #field_ty>, #allocator_ident: #prelude::Allocator<'dr, #driver_ident>>(
+            fn encode<'dr, #driver_ident: #prelude::Driver<'dr, F = #field_ident>, #allocator_ident: #prelude::Allocator<'dr, #driver_ident>>(
                 dr: &mut #driver_ident,
-                #allocator_param,
+                allocator: &mut #allocator_ident,
                 witness: #prelude::DriverValue<#driver_ident, Self::Data>,
             ) -> #prelude::Result<#prelude::Bound<'dr, #driver_ident, Self::Output>> {
-                #alloc_call
+                <#kind as #prelude::Allocatable<#field_ident>>::alloc(dr, allocator, witness)
             }
         }
     })
 }
 
-/// Rejects generic-mode `data` parameter names that would shadow a name the
-/// generated impl must resolve: the struct itself, or the head of a relative
-/// gadget path. Only the caller can rename the parameter, so these are
-/// rejected rather than freshened; absolute gadget paths cannot be shadowed
-/// and are accepted.
-fn validate_generic_field(field: &Ident, struct_ident: &Ident, gadget: &Type) -> Result<()> {
-    // Raw and plain spellings denote the same name, so compare unraw'd.
-    let field_name = field.unraw();
-    if field_name == struct_ident.unraw() {
-        return Err(Error::new(
-            field.span(),
-            "the `data` type parameter collides with the struct name; rename one of them",
-        ));
-    }
-
-    if let Type::Path(path) = gadget
-        && path.qself.is_none()
-        && path.path.leading_colon.is_none()
-        && path
-            .path
-            .segments
-            .first()
-            .is_some_and(|segment| segment.ident.unraw() == field_name)
-    {
-        return Err(Error::new(
-            field.span(),
-            "the `data` type parameter shadows the gadget path inside the generated impl; \
-             rename the parameter (for example, `F`), refer to the gadget by an absolute path, \
-             or add `field = ...` if the data type is concrete",
-        ));
-    }
-
-    Ok(())
-}
-
 /// The parsed `#[header(...)]` attribute arguments.
 ///
-/// Required: `data` and `gadget`.
-/// Optional: `field` (when absent, `data` is used as both the field type
-/// parameter and the data type, producing a generic `impl<F: Field>`) and
-/// `alloc = direct` (for gadgets whose `alloc` takes no allocator).
+/// `gadget` is the only key: the gadget kind's `Allocatable` impl supplies
+/// everything else.
 pub struct HeaderAttr {
-    data: Type,
     gadget: Type,
-    field: Option<Type>,
-    alloc_direct: bool,
 }
 
 impl Parse for HeaderAttr {
     fn parse(input: ParseStream<'_>) -> Result<Self> {
-        let mut data = None;
         let mut gadget = None;
-        let mut field = None;
-        let mut alloc = None;
 
         while !input.is_empty() {
             let ident: Ident = input.parse()?;
             input.parse::<Token![=]>()?;
-            let ty: Type = input.parse()?;
 
             match ident.to_string().as_str() {
-                "data" => {
-                    if data.is_some() {
-                        return Err(Error::new(
-                            ident.span(),
-                            "duplicate `data` key in #[header(...)]",
-                        ));
-                    }
-                    data = Some(ty);
-                }
                 "gadget" => {
                     if gadget.is_some() {
                         return Err(Error::new(
@@ -206,32 +118,21 @@ impl Parse for HeaderAttr {
                             "duplicate `gadget` key in #[header(...)]",
                         ));
                     }
-                    gadget = Some(ty);
+                    gadget = Some(input.parse::<Type>()?);
                 }
-                "field" => {
-                    if field.is_some() {
-                        return Err(Error::new(
-                            ident.span(),
-                            "duplicate `field` key in #[header(...)]",
-                        ));
-                    }
-                    field = Some(ty);
-                }
-                "alloc" => {
-                    if alloc.is_some() {
-                        return Err(Error::new(
-                            ident.span(),
-                            "duplicate `alloc` key in #[header(...)]",
-                        ));
-                    }
-                    alloc = Some(ty);
+                removed @ ("data" | "field" | "alloc") => {
+                    return Err(Error::new(
+                        ident.span(),
+                        format!(
+                            "`{removed}` is no longer accepted: the gadget kind's `Allocatable` \
+                             impl supplies the witness type, field constraint, and constructor"
+                        ),
+                    ));
                 }
                 other => {
                     return Err(Error::new(
                         ident.span(),
-                        format!(
-                            "unknown attribute `{other}`, expected `data`, `gadget`, `field`, or `alloc`"
-                        ),
+                        format!("unknown attribute `{other}`, expected `gadget`"),
                     ));
                 }
             }
@@ -242,60 +143,11 @@ impl Parse for HeaderAttr {
             }
         }
 
-        let alloc_direct = match alloc {
-            None => false,
-            Some(ty) if matches!(&ty, Type::Path(p) if p.path.is_ident("direct")) => true,
-            Some(ty) => {
-                return Err(Error::new_spanned(
-                    ty,
-                    "unknown `alloc` mode in #[header(...)], expected `direct`",
-                ));
-            }
-        };
-
-        let data =
-            data.ok_or_else(|| Error::new(input.span(), "missing `data` in #[header(...)]"))?;
-        if field.is_none() {
-            generic_field_ident(&data)?;
-        }
-
         Ok(HeaderAttr {
-            data,
             gadget: gadget
                 .ok_or_else(|| Error::new(input.span(), "missing `gadget` in #[header(...)]"))?,
-            field,
-            alloc_direct,
         })
     }
-}
-
-/// Returns the bare type-parameter identifier used by generic header mode.
-fn generic_field_ident(data: &Type) -> Result<&Ident> {
-    let Type::Path(type_path) = data else {
-        return Err(generic_field_error(data));
-    };
-    if type_path.qself.is_some()
-        || type_path.path.leading_colon.is_some()
-        || type_path.path.segments.len() != 1
-    {
-        return Err(generic_field_error(data));
-    }
-
-    let segment = type_path.path.segments.first().expect("length checked");
-    if !matches!(segment.arguments, PathArguments::None)
-        || syn::parse2::<syn::TypeParam>(quote!(#segment)).is_err()
-    {
-        return Err(generic_field_error(data));
-    }
-
-    Ok(&segment.ident)
-}
-
-fn generic_field_error(data: &Type) -> Error {
-    Error::new_spanned(
-        data,
-        "when `field` is not specified, `data` must be a type parameter name (for example, `F`); add `field = YourField` for concrete data types",
-    )
 }
 
 /// Returns the inner [`syn::TypePath`], or an error if `ty` is not a path type.
@@ -347,6 +199,15 @@ fn make_gadget_type(gadget_ty: &Type) -> Result<Type> {
     Ok(Type::Path(type_path))
 }
 
+/// Builds the gadget type instantiated at the phantom driver
+/// `PhantomData<field_ty>`, the form the generated impl's bounds and kind
+/// projection are written against.
+fn phantom_gadget(gadget_ty: &Type, field_ty: &Type) -> Result<Type> {
+    let mut gadget = make_gadget_type(gadget_ty)?;
+    replace_inferences(&mut gadget, field_ty);
+    Ok(gadget)
+}
+
 /// Computes the gadget kind directly through the app prelude. Avoiding a
 /// nested `Kind!` invocation is important: a nested proc macro would resolve
 /// `ragu_core` from the downstream crate's manifest and incorrectly require it
@@ -356,24 +217,10 @@ fn make_output_kind(
     field_ty: &Type,
     prelude: &TokenStream,
 ) -> Result<TokenStream> {
-    let mut gadget = make_gadget_type(gadget_ty)?;
-    replace_inferences(&mut gadget, field_ty);
+    let gadget = phantom_gadget(gadget_ty, field_ty)?;
     Ok(quote!(
         <#gadget as #prelude::Gadget<'static, ::core::marker::PhantomData<#field_ty>>>::Kind
     ))
-}
-
-/// Strips generic arguments from a gadget path for the `::alloc()` call,
-/// preserving the leading `::` and any path qualifiers.
-///
-/// - `Element`         → `Element`
-/// - `Point<EpAffine>` → `Point`
-fn extract_base_path(gadget_ty: &Type) -> Result<TokenStream> {
-    let mut type_path = as_type_path(gadget_ty)?.clone();
-    if let Some(last) = type_path.path.segments.last_mut() {
-        last.arguments = syn::PathArguments::None;
-    }
-    Ok(quote!(#type_path))
 }
 
 #[cfg(test)]
@@ -392,101 +239,38 @@ mod tests {
     }
 
     #[test]
-    fn attr_requires_data_and_gadget() {
-        assert!(parse_attr(quote!(data = F, gadget = Element)).is_ok());
+    fn attr_requires_gadget() {
+        assert!(parse_attr(quote!(gadget = Element)).is_ok());
+        assert!(parse_attr(quote!(gadget = Point<EpAffine>)).is_ok());
 
-        let err = parse_attr_err(quote!(gadget = Element));
-        assert!(err.contains("missing `data`"));
-
-        let err = parse_attr_err(quote!(data = F));
+        let err = parse_attr_err(quote!());
         assert!(err.contains("missing `gadget`"));
     }
 
     #[test]
     fn attr_rejects_duplicate_and_unknown_keys() {
-        let err = parse_attr_err(quote!(data = F, data = G, gadget = Element));
-        assert!(err.contains("duplicate `data` key"));
+        let err = parse_attr_err(quote!(gadget = Element, gadget = Boolean));
+        assert!(err.contains("duplicate `gadget` key"));
 
-        let err = parse_attr_err(quote!(data = F, gadget = Element, kind = X));
+        let err = parse_attr_err(quote!(kind = X));
         assert!(err.contains("unknown attribute `kind`"));
     }
 
     #[test]
+    fn attr_rejects_removed_keys_with_migration_help() {
+        for removed in ["data", "field", "alloc"] {
+            let ident = Ident::new(removed, Span::call_site());
+            let err = parse_attr_err(quote!(#ident = X, gadget = Element));
+            assert!(err.contains("no longer accepted"), "{removed}: {err}");
+        }
+    }
+
+    #[test]
     fn attr_requires_commas_between_entries() {
-        assert!(parse_attr(quote!(data = F, gadget = Element,)).is_ok());
+        assert!(parse_attr(quote!(gadget = Element,)).is_ok());
 
-        let err = parse_attr_err(quote!(data = F gadget = Element));
+        let err = parse_attr_err(quote!(gadget = Element gadget = Boolean));
         assert!(err.contains("expected `,`"));
-    }
-
-    #[test]
-    fn attr_accepts_direct_alloc_mode_only() {
-        let attr = parse_attr(quote!(data = F, gadget = Element, alloc = direct)).unwrap();
-        assert!(attr.alloc_direct);
-
-        let err = parse_attr_err(quote!(data = F, gadget = Element, alloc = indirect));
-        assert!(err.contains("unknown `alloc` mode"));
-    }
-
-    #[test]
-    fn generic_field_shadowing_is_rejected() {
-        let strukt: Ident = parse_quote!(LeafNode);
-
-        let field: Ident = parse_quote!(F);
-        assert!(validate_generic_field(&field, &strukt, &parse_quote!(Element)).is_ok());
-        // Intentional field-parameter references inside gadget arguments stay
-        // allowed.
-        assert!(validate_generic_field(&field, &strukt, &parse_quote!(Point<F>)).is_ok());
-
-        let field: Ident = parse_quote!(Element);
-        let err = validate_generic_field(&field, &strukt, &parse_quote!(Element))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("shadows the gadget path"));
-
-        // Absolute paths cannot be shadowed by a generic parameter.
-        assert!(
-            validate_generic_field(&field, &strukt, &parse_quote!(::ragu_primitives::Element))
-                .is_ok()
-        );
-
-        let field: Ident = parse_quote!(LeafNode);
-        let err = validate_generic_field(&field, &strukt, &parse_quote!(Element))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("collides with the struct name"));
-
-        // Raw spellings denote the same name and are normalized before
-        // comparison.
-        let field: Ident = parse_quote!(r#Element);
-        let err = validate_generic_field(&field, &strukt, &parse_quote!(Element))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("shadows the gadget path"));
-
-        let field: Ident = parse_quote!(Element);
-        let err = validate_generic_field(&field, &strukt, &parse_quote!(r#Element))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("shadows the gadget path"));
-
-        let field: Ident = parse_quote!(r#LeafNode);
-        let err = validate_generic_field(&field, &strukt, &parse_quote!(Element))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("collides with the struct name"));
-    }
-
-    #[test]
-    fn generic_mode_requires_a_bare_type_parameter() {
-        assert!(parse_attr(quote!(data = F, gadget = Element)).is_ok());
-        assert!(parse_attr(quote!(data = Vec<F>, gadget = Element, field = F)).is_ok());
-
-        let err = parse_attr_err(quote!(data = Vec<F>, gadget = Element));
-        assert!(err.contains("`data` must be a type parameter name"));
-
-        let err = parse_attr_err(quote!(data = Self, gadget = Element));
-        assert!(err.contains("`data` must be a type parameter name"));
     }
 
     #[test]

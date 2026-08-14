@@ -10,13 +10,13 @@ use ragu_arithmetic::{Coeff, ff::Field};
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue, LinearExpression},
-    gadgets::{Gadget, Kind},
+    gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
 
 use crate::{
     Boolean, GadgetExt, Invertible, Nonzero,
-    allocator::Allocator,
+    allocator::{Allocatable, Allocator},
     comparison::GadgetEquals,
     consistent::Consistent,
     io::{Buffer, Write},
@@ -550,6 +550,18 @@ impl<F: Field> GadgetEquals<F> for Kind![F; @Element<'_, _>] {
         b: &Element<'dr, D2>,
     ) -> Result<()> {
         dr.enforce_equal(a.wire(), b.wire())
+    }
+}
+
+impl<F: Field> Allocatable<F> for Kind![F; @Element<'_, _>] {
+    type Witness = F;
+
+    fn alloc<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Witness>,
+    ) -> Result<Bound<'dr, D, Self>> {
+        Element::alloc(dr, allocator, witness)
     }
 }
 

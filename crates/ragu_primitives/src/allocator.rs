@@ -27,8 +27,14 @@
 
 use alloc::vec::Vec;
 
-use ragu_arithmetic::Coeff;
-use ragu_core::{Result, drivers::Driver};
+use ragu_arithmetic::{Coeff, ff::Field};
+use ragu_core::{
+    Result,
+    drivers::{Driver, DriverValue},
+    gadgets::{Bound, GadgetKind},
+};
+
+use crate::io::Write;
 
 /// Allocates wires on behalf of a gadget.
 ///
@@ -119,4 +125,32 @@ impl<'dr, D: Driver<'dr>> Allocator<'dr, D> for Standard<D::Extra> {
     fn donate(&mut self, extra: D::Extra) {
         self.pool.push(extra);
     }
+}
+
+/// A gadget kind whose gadget is allocated directly from one witness value.
+///
+/// Implementations connect a kind to its gadget's canonical constructor and
+/// name the witness data it consumes, so generic code — notably the
+/// `#[header]` macro in `ragu_pcd` — can allocate the gadget knowing only its
+/// kind. Any field constraint carried by the implementation restricts where
+/// the kind is allocatable: `Element` is allocatable over every field, while
+/// a point kind exists only over its curve's base field.
+///
+/// The [`Write`] supertrait reflects that allocated-from-witness gadgets are
+/// serialized by their consumers (headers write their encoding). Constructors
+/// that need no [`Allocator`] simply ignore the one they are given.
+pub trait Allocatable<F: Field>: GadgetKind<F> + Write<F> {
+    /// The witness data the gadget is allocated from.
+    type Witness: Send + Clone;
+
+    /// Allocates the gadget from `witness`.
+    ///
+    /// # Errors
+    ///
+    /// Propagates driver, allocator, and witness-generation errors.
+    fn alloc<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Witness>,
+    ) -> Result<Bound<'dr, D, Self>>;
 }

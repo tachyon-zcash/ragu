@@ -12,7 +12,7 @@ use ragu_arithmetic::{
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue, LinearExpression},
-    gadgets::{Gadget, Kind},
+    gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
 
@@ -20,7 +20,7 @@ use ragu_core::{
 use crate::allocator::Standard;
 use crate::{
     Element, GadgetExt,
-    allocator::Allocator,
+    allocator::{Allocatable, Allocator},
     comparison::GadgetEquals,
     consistent::Consistent,
     io::{Buffer, Write},
@@ -248,6 +248,18 @@ impl<F: Field> Write<F> for Kind![F; @Boolean<'_, _>] {
         buf: &mut B,
     ) -> Result<()> {
         this.element().write(dr, buf)
+    }
+}
+
+impl<F: Field> Allocatable<F> for Kind![F; @Boolean<'_, _>] {
+    type Witness = bool;
+
+    fn alloc<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Witness>,
+    ) -> Result<Bound<'dr, D, Self>> {
+        Boolean::alloc(dr, allocator, witness)
     }
 }
 

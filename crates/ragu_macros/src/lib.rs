@@ -208,20 +208,16 @@ pub fn application(attr: TokenStream, input: TokenStream) -> TokenStream {
 /// Attribute macro for generating single-gadget `HeaderContent` implementations.
 ///
 /// For headers where `encode()` allocates a single gadget directly from
-/// witness data, this macro generates the full `HeaderContent` implementation.
+/// witness data, this macro generates the full `HeaderContent` implementation
+/// from the gadget alone.
 ///
 /// # Attributes
 ///
-/// - `data`: The witness data type (required). When `field` is omitted, this
-///   must be a bare type-parameter name such as `F`, and must not spell the
-///   struct name or the head of a relative `gadget` path (it would shadow
-///   them inside the generated impl).
-/// - `gadget`: The gadget type to allocate (required).
-/// - `field`: The field type for a concrete impl (optional; when omitted,
-///   `data` is used as a generic field type parameter).
-/// - `alloc`: Set to `direct` when the gadget's `alloc` constructor takes no
-///   allocator (optional; by default the generated `encode()` passes its
-///   allocator through to `alloc`).
+/// - `gadget` (required): the gadget type to allocate. Its kind must
+///   implement `Allocatable`, which supplies the witness (`Data`) type, the
+///   constructor, and any field constraint: `Element` headers are generic
+///   over every field, while `Point<EpAffine>` headers exist only over the
+///   curve's base field.
 ///
 /// The gadget type must follow Ragu's `Gadget<'dr, D, ...>` parameter order;
 /// write only any additional parameters in the attribute.
@@ -229,13 +225,12 @@ pub fn application(attr: TokenStream, input: TokenStream) -> TokenStream {
 /// # Example
 ///
 /// ```ignore
-/// // Generic: F is both the field type and the witness data type
-/// #[header(data = F, gadget = Element)]
+/// // Generic over every field: one field element.
+/// #[header(gadget = Element)]
 /// pub struct LeafNode;
 ///
-/// // Concrete: data is a curve point, field is explicit, and Point::alloc
-/// // takes no allocator
-/// #[header(data = EpAffine, gadget = Point<EpAffine>, field = Fp, alloc = direct)]
+/// // Pinned to `Fp` by the curve: an affine Pallas point.
+/// #[header(gadget = Point<EpAffine>)]
 /// pub struct ScaledPoint;
 /// ```
 #[proc_macro_attribute]

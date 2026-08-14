@@ -39,7 +39,7 @@ pub use ragu_core::{
 };
 pub use ragu_macros::{application, header};
 pub use ragu_primitives::{
-    allocator::{Allocator, Standard},
+    allocator::{Allocatable, Allocator, Standard},
     io::Write,
 };
 
@@ -56,7 +56,7 @@ pub mod __macro_internal {
         drivers::{Driver, DriverValue},
         gadgets::{Bound, Gadget, Kind},
     };
-    pub use ragu_primitives::allocator::{Allocator, Standard};
+    pub use ragu_primitives::allocator::{Allocatable, Allocator, Standard};
 
     pub use crate::{
         Application, ApplicationBuilder, Pcd,
@@ -75,28 +75,21 @@ pub mod __macro_internal {
 /// # Using `#[header]` for single-gadget headers
 ///
 /// When `encode()` just allocates one gadget from the data, the
-/// [`#[header]`](macro@header) attribute macro generates the whole impl:
+/// [`#[header]`](macro@header) attribute macro generates the whole impl from
+/// the gadget alone — its kind's [`Allocatable`] impl supplies the witness
+/// (`Data`) type, the constructor, and any field constraint:
 ///
 /// ```ignore
 /// use ragu_pcd::app::header;
-/// use ragu_primitives::Element;
+/// use ragu_primitives::{Element, Point};
 ///
-/// /// A leaf node carrying a hashed field element.
-/// #[header(data = F, gadget = Element)]
+/// /// A leaf node carrying a hashed field element. Generic over every field.
+/// #[header(gadget = Element)]
 /// pub struct LeafNode;
-/// ```
 ///
-/// This expands to `impl<F: Field> HeaderContent<F>` with `encode()` calling
-/// `Element::alloc(dr, allocator, witness)`. Provide an explicit `field` when
-/// the gadget has extra type parameters (so `data` cannot double as the field
-/// parameter), and `alloc = direct` when its `alloc` takes no allocator:
-///
-/// ```ignore
-/// use ragu_pcd::app::header;
-/// use ragu_primitives::Point;
-///
-/// /// A header carrying a curve point.
-/// #[header(data = EpAffine, gadget = Point<EpAffine>, field = Fp, alloc = direct)]
+/// /// A header carrying a curve point. The point kind is allocatable only
+/// /// over the curve's base field, which pins this header to `Fp`.
+/// #[header(gadget = Point<EpAffine>)]
 /// pub struct ScaledPoint;
 /// ```
 ///

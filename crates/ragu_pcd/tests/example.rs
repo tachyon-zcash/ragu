@@ -10,17 +10,18 @@ use ragu_primitives::{Element, Endoscalar, Point, poseidon::Sponge};
 use rand::{SeedableRng, rngs::StdRng};
 
 /// Header for a hashed leaf value.
-#[header(data = F, gadget = Element)]
+#[header(gadget = Element)]
 pub struct LeafNode;
 
 type LeafNodeAlias = LeafNode;
 
 /// Header for a hash node whose value serves as an endoscalar source.
-#[header(data = F, gadget = Element)]
+#[header(gadget = Element)]
 pub struct ExponentNode;
 
-/// Header carrying a scaled curve point.
-#[header(data = EpAffine, gadget = Point<EpAffine>, field = Fp, alloc = direct)]
+/// Header carrying a scaled curve point. The point kind is allocatable only
+/// over the curve's base field, which pins this header to `Fp`.
+#[header(gadget = Point<EpAffine>)]
 pub struct ScaledPoint;
 
 /// Hash a witness field element to produce a leaf.
@@ -173,7 +174,7 @@ macro_rules! boundary_application {
         mod $module {
             use super::*;
 
-            #[header(data = F, gadget = Element)]
+            #[header(gadget = Element)]
             pub struct BoundaryHeader;
 
             pub struct BoundaryStep<'params, C: Cycle>(PhantomData<&'params C>);
@@ -233,12 +234,14 @@ mod macro_hygiene {
         pub struct Element;
     }
 
-    #[header(data = F, gadget = ::ragu_primitives::Element)]
+    #[header(gadget = ::ragu_primitives::Element)]
     struct AbsoluteHeader;
 
-    // This intentionally matches the macro's preferred driver parameter name;
+    // A gadget alias spelled like the macro's preferred field parameter name;
     // generated identifiers must be made fresh before they are emitted.
-    #[header(data = __RaguHeaderDriver, gadget = Element)]
+    use ::ragu_primitives::Element as F;
+
+    #[header(gadget = F)]
     struct CollisionHeader;
 
     // `C` used to resolve to the cycle parameter emitted by `#[application]`
@@ -284,7 +287,7 @@ mod macro_hygiene {
     mod application_named_c {
         use super::*;
 
-        #[header(data = F, gadget = Element)]
+        #[header(gadget = Element)]
         pub struct NamedHeader;
 
         // Spelled like the generated assertion trait: the alias must stay
@@ -330,33 +333,19 @@ mod macro_hygiene {
     // Caller types spelled exactly like the generated generic parameters: the
     // macros must freshen their names rather than capture these.
     mod shadowed_parameter_names {
-        use ::ragu_primitives::Element as __RaguHeaderAllocator;
+        use ::ragu_primitives::{Element as __RaguHeaderAllocator, Element as __RaguHeaderDriver};
 
         use super::*;
 
         type C = Pasta;
         type __R = ProductionRank;
-        type __RaguHeaderDriver = Fp;
 
-        #[header(data = F, gadget = __RaguHeaderAllocator)]
+        // Gadget aliases spelled like the generated driver and allocator
+        // parameters: the macro must freshen those names.
+        #[header(gadget = __RaguHeaderAllocator)]
         pub struct AllocatorShadowHeader;
 
-        // A field parameter named after the gadget is accepted when the
-        // gadget path is absolute, which a generic parameter cannot shadow.
-        #[header(data = Element, gadget = ::ragu_primitives::Element)]
-        pub struct AbsoluteGadgetHeader;
-
-        // The same in raw spelling: collision checks normalize raw
-        // identifiers but must not over-reject absolute paths.
-        #[header(data = r#Element, gadget = ::ragu_primitives::Element)]
-        pub struct RawAbsoluteGadgetHeader;
-
-        #[header(
-            data = EpAffine,
-            gadget = Point<EpAffine>,
-            field = __RaguHeaderDriver,
-            alloc = direct
-        )]
+        #[header(gadget = __RaguHeaderDriver)]
         pub struct DriverShadowHeader;
 
         pub struct ShadowStep<'params, T: Cycle>(PhantomData<fn(&'params T)>);
@@ -400,7 +389,7 @@ mod macro_hygiene {
     mod marker_named_step {
         use super::*;
 
-        #[header(data = F, gadget = Element)]
+        #[header(gadget = Element)]
         pub struct MarkerHeader;
 
         pub struct __RaguApplicationStepForApp<'params, T: Cycle>(pub PhantomData<fn(&'params T)>);
@@ -444,9 +433,8 @@ mod macro_hygiene {
         fn assert_header_content<H: ragu_pcd::app::HeaderContent<Fp>>() {}
 
         assert_header_content::<AbsoluteHeader>();
+        assert_header_content::<shadowed_parameter_names::AllocatorShadowHeader>();
         assert_header_content::<shadowed_parameter_names::DriverShadowHeader>();
-        assert_header_content::<shadowed_parameter_names::AbsoluteGadgetHeader>();
-        assert_header_content::<shadowed_parameter_names::RawAbsoluteGadgetHeader>();
         assert_eq!(
             <marker_named_step::MarkerHeader as Header<Fp>>::SUFFIX.get(),
             2
