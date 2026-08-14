@@ -140,6 +140,11 @@ pub trait HeaderContent<F: Field>: Send + Sync + 'static {
     type Data: Send + Clone;
 
     /// The output gadget that encodes the data for this header.
+    ///
+    /// Its serialization should have a fixed length determined by the header
+    /// type alone, not by the data value. A data-dependent length lets two
+    /// distinct values encode to the same padded header, making them
+    /// indistinguishable to a verifier.
     type Output: Write<F>;
 
     /// Encode some data into a gadget representing this header.

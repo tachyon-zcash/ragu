@@ -1061,6 +1061,11 @@ fn generate_wrapper(
             }
 
             /// Verify proof-carrying data.
+            ///
+            /// `rng` must be a fresh, unpredictable cryptographic RNG: the
+            /// verifier's challenges are sampled from it, and the soundness of
+            /// the check relies on the prover being unable to predict them. A
+            /// fixed or replayed seed is not safe outside tests.
             #vis fn verify<__RNG: #prelude::CryptoRngCore, __H>(
                 &self,
                 pcd: &#prelude::Pcd<#cycle, #rank, __H>,
@@ -1087,6 +1092,10 @@ fn generate_wrapper(
             /// Returns a seeded trivial PCD with no header data, suitable
             /// as a placeholder input for steps that only use one of their
             /// two inputs.
+            ///
+            /// The proof is built once and cached: the first call consumes
+            /// `rng`, and every later call returns that same deterministic,
+            /// `rng`-independent proof regardless of the `rng` passed in.
             #vis fn trivial_pcd<__RNG: #prelude::CryptoRngCore>(&self, rng: &mut __RNG) -> #prelude::Pcd<#cycle, #rank, ()> {
                 self.inner.seeded_trivial_pcd(rng)
             }
