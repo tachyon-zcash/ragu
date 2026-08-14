@@ -96,12 +96,10 @@ impl<C: Cycle> ragu_pcd::app::Step<C> for Hash2<'_, C> {
 /// Extract an endoscalar from the internal node hash and perform
 /// endoscalar group scaling on the generator point.
 ///
-/// Soundness here relies on the left header being a hash image:
-/// `Endoscalar::extract` is unambiguous only because `ExponentNode` is a
-/// Poseidon squeeze. A header whose element a prover could choose freely
-/// (such as a raw witness) would let them flip a bit of the extracted scalar
-/// and produce two valid outputs for one input. Do not reuse this pattern for
-/// a header that is not a hash image.
+/// Sound only because `ExponentNode` is a Poseidon squeeze: with a
+/// prover-chosen element instead of a hash image, `Endoscalar::extract` is
+/// ambiguous and one input could yield two valid scaled points. Do not copy
+/// this pattern for non-hash headers.
 pub struct Endoscale<'params, C: Cycle>(PhantomData<&'params C>);
 
 impl ragu_pcd::app::Step<Pasta> for Endoscale<'_, Pasta> {
@@ -125,8 +123,8 @@ impl ragu_pcd::app::Step<Pasta> for Endoscale<'_, Pasta> {
     where
         Self: 'dr,
     {
-        // Extract endoscalar from the internal node's hash element. Sound
-        // only because `left` is a hash image; see the type-level note.
+        // Extract the endoscalar; sound only for hash-image headers (see the
+        // type-level note).
         let endo = Endoscalar::extract(dr, &mut Standard::new(), left.clone())?;
 
         // Create a constant generator point on the nested curve.

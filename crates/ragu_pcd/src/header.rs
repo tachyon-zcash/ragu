@@ -108,10 +108,9 @@ fn test_suffix_wrapping_panics() {
 /// inputs to recursive proofs in order to represent the current state of the
 /// computation.
 ///
-/// Verification authenticates the representation produced by [`Header::encode`],
-/// not necessarily every component of [`Header::Data`]. An implementation may
-/// be non-injective, but callers must then treat data discarded by `encode()` as
-/// unauthenticated witness data rather than proof-backed state.
+/// Verification authenticates what [`Header::encode`] produces, not every
+/// component of [`Header::Data`]: under a non-injective encoding, whatever
+/// `encode()` discards is unauthenticated witness data.
 ///
 /// See the [Writing Circuits](https://tachyon.z.cash/ragu/guide/writing_circuits.html)
 /// guide for usage patterns and examples.

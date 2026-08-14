@@ -129,74 +129,59 @@ use ragu_pcd as _;
 /// Attribute macro for defining a PCD application.
 ///
 /// Generates `ragu_pcd::Header` impls (with `const SUFFIX`),
-/// `ragu_pcd::Step` impls (with `const INDEX`), and a wrapper struct
-/// with `build()`/`seed()`/`fuse()`/`verify()`/`rerandomize()` methods.
+/// `ragu_pcd::Step` impls (with `const INDEX`), and a wrapper struct with
+/// `build()`/`seed()`/`fuse()`/`verify()`/`rerandomize()` methods.
 ///
-/// The enum carries no generics — the macro supplies `<'params, C: Cycle>`
-/// itself. Each variant is a unit variant naming a step type (which must
-/// take `<'params, C: Cycle>` generics), annotated with
-/// `#[produces(OutputHeader)]`.
-/// The generated wrapper's proof methods are sealed to those declared steps
-/// and their headers, so a step or PCD from another application cannot be used
-/// merely because its numeric index or suffix collides.
-/// The trivial header `()` is the one deliberate exception to the seal: every
-/// application accepts trivial PCDs as placeholder inputs, so a trivial PCD
-/// minted by a different application type-checks and is instead rejected at
-/// runtime, by verification against this application's circuit registry.
-/// Sealing works through generated module-level helper items with
-/// `__Ragu`-prefixed names derived from the enum name; a caller item spelling
-/// one of those names is reported as a duplicate definition.
+/// The enum carries no generics — the macro supplies `<'params, C: Cycle>`.
+/// Each variant is a unit variant naming a step type with those generics,
+/// annotated with `#[produces(OutputHeader)]`.
+///
+/// The wrapper's proof methods are sealed to the declared steps and headers:
+/// a step or PCD from another application is rejected at compile time even
+/// when its index or suffix collides. The one exception is the trivial header
+/// `()` — every application accepts trivial PCDs as placeholders, so a
+/// foreign trivial PCD type-checks and is instead rejected at runtime by
+/// verification against this application's registry. The seal is built from
+/// module-level items with `__Ragu`-prefixed names derived from the enum
+/// name; a caller item spelling one of those names is a duplicate definition.
 ///
 /// # Attributes
 ///
-/// `header_size` fixes the application's encoded header width. Optional cycle
-/// and rank defaults let applications be used without turbofish:
+/// - `header_size` (required): encoded width of every header, including one
+///   suffix element. Must be at least 1 and large enough for every header
+///   encoding.
+/// - `cycle`: default for the `C: Cycle` parameter, so the wrapper can be
+///   named without turbofish.
+/// - `rank`: default for the `__R: Rank` parameter. Defaults must be
+///   trailing, so `cycle` requires `rank`.
 ///
-/// - `header_size` (required): fixed encoded width for every header, including
-///   one suffix element. It must be at least 1 and large enough for every
-///   header encoding.
-/// - `cycle`: default for the `C: Cycle` parameter.
-/// - `rank`: default for the `__R: Rank` parameter.
+/// If two outputs name one header through an alias or different paths, pick
+/// one spelling with `#[produces(OutputAlias, canonical = CanonicalOutput)]`:
+/// the canonical spelling drives suffix deduplication, and rustc is made to
+/// prove both spellings name the same type.
 ///
-/// If repeated outputs name one header through aliases or different paths,
-/// choose one spelling with
-/// `#[produces(OutputAlias, canonical = CanonicalOutput)]`. The macro uses the
-/// canonical spelling for suffix deduplication and asks rustc to prove that it
-/// is exactly the same type as `OutputAlias`.
-///
-/// Defaulted generic parameters must be trailing, so `cycle` requires `rank`.
-///
-/// Doc comments, lint attributes, `#[must_use]`, and `#[deprecated]` on the
-/// enum are forwarded to the generated wrapper. Other enum attributes are
-/// rejected because they cannot be applied consistently to the complete macro
-/// expansion; to configure an application with `#[cfg]`, place it in a
-/// cfg-gated module. Variants accept only `#[produces(...)]` and cannot have
-/// explicit discriminants because their indices come from declaration order.
-/// Variant names must also produce unique, non-keyword snake_case `build()`
-/// parameter names and cannot produce the reserved name `params`.
+/// Doc comments, lint attributes, `#[must_use]`, and `#[deprecated]` are
+/// forwarded to the wrapper; other enum attributes are rejected because they
+/// cannot apply to the whole expansion (put a `#[cfg]` application in a
+/// cfg-gated module). Variants accept only `#[produces(...)]` and no
+/// discriminants. Variant names must yield unique, non-keyword snake_case
+/// `build()` parameters, and never the reserved name `params`.
 ///
 /// # Headers belong to one application
 ///
-/// The macro writes the `Header` impl for every type named by
-/// `#[produces(...)]`, so a header type can be claimed by only one
-/// `#[application]` in a crate. Naming one from two applications produces a
-/// conflicting-implementation error (`E0119`) pointing at the generated impls
-/// rather than at the declarations; give each application its own header types,
-/// or move the shared one behind a single application that both depend on.
-///
-/// `()` cannot be produced at all: it is the framework's trivial header, whose
-/// suffix marks a proof as a recursion base case. A step that produces no
-/// meaningful state should declare its own empty header, which is assigned an
-/// ordinary suffix.
+/// The macro writes each produced header's `Header` impl, so a header type
+/// can be claimed by one `#[application]` only; a second claim is a
+/// conflicting-implementation error (`E0119`) at the generated impls. `()`
+/// cannot be produced at all: its suffix marks a recursion base case. A step
+/// with no meaningful state should declare its own empty header, which gets
+/// an ordinary suffix.
 ///
 /// # Declaration order is significant
 ///
-/// Suffixes are assigned to headers in order of first appearance across
-/// `#[produces(...)]`, and step indices follow variant order. Both are baked
-/// into the circuits, so reordering variants — or introducing a new header
-/// ahead of existing ones — renumbers them. Proofs are not portable across such
-/// a change, and today are not portable across builds at all, so this matters
-/// when proofs begin to be persisted or exchanged between peers.
+/// Suffixes follow first appearance across `#[produces(...)]`; step indices
+/// follow variant order. Both are baked into the circuits, so reordering
+/// variants or headers renumbers them and invalidates existing proofs —
+/// which matters once proofs are persisted or exchanged.
 ///
 /// # Example
 ///
@@ -228,9 +213,9 @@ pub fn application(attr: TokenStream, input: TokenStream) -> TokenStream {
 /// # Attributes
 ///
 /// - `data`: The witness data type (required). When `field` is omitted, this
-///   must be a bare type-parameter name such as `F`, distinct from the struct
-///   name and from the first segment of a relative `gadget` path (the
-///   parameter would shadow either inside the generated impl).
+///   must be a bare type-parameter name such as `F`, and must not spell the
+///   struct name or the head of a relative `gadget` path (it would shadow
+///   them inside the generated impl).
 /// - `gadget`: The gadget type to allocate (required).
 /// - `field`: The field type for a concrete impl (optional; when omitted,
 ///   `data` is used as a generic field type parameter).

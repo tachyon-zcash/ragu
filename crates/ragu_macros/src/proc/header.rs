@@ -129,15 +129,11 @@ pub fn evaluate(attr: HeaderAttr, item: ItemStruct) -> Result<TokenStream> {
     })
 }
 
-/// Rejects generic-mode `data` parameter names that would shadow another name
-/// the generated impl must resolve.
-///
-/// The parameter is declared on the generated impl, so it shadows same-named
-/// relative paths everywhere inside: the self type (the struct) and the gadget
-/// path resolved by `encode()` and the output kind. Only the caller can rename
-/// the parameter, so both collisions are rejected rather than freshened.
-/// Absolute paths are immune to shadowing, so an absolute gadget path is
-/// accepted.
+/// Rejects generic-mode `data` parameter names that would shadow a name the
+/// generated impl must resolve: the struct itself, or the head of a relative
+/// gadget path. Only the caller can rename the parameter, so these are
+/// rejected rather than freshened; absolute gadget paths cannot be shadowed
+/// and are accepted.
 fn validate_generic_field(field: &Ident, struct_ident: &Ident, gadget: &Type) -> Result<()> {
     // Raw and plain spellings denote the same name, so compare unraw'd.
     let field_name = field.unraw();

@@ -74,9 +74,8 @@ pub mod __macro_internal {
 ///
 /// # Using `#[header]` for single-gadget headers
 ///
-/// Most headers allocate a single gadget from their witness data. For these
-/// cases, the [`#[header]`](macro@header) attribute macro generates the entire
-/// `HeaderContent` implementation automatically:
+/// When `encode()` just allocates one gadget from the data, the
+/// [`#[header]`](macro@header) attribute macro generates the whole impl:
 ///
 /// ```ignore
 /// use ragu_pcd::app::header;
@@ -87,12 +86,10 @@ pub mod __macro_internal {
 /// pub struct LeafNode;
 /// ```
 ///
-/// This generates a generic `impl<F: Field> HeaderContent<F>` where `encode()`
-/// calls `Element::alloc(dr, allocator, witness)`. When the gadget carries
-/// additional type parameters — such as a curve type — `data` alone cannot
-/// serve as the field parameter. In that case, provide an explicit `field`.
-/// For gadgets whose `alloc` constructor takes no allocator (such as
-/// `Point`), add `alloc = direct`:
+/// This expands to `impl<F: Field> HeaderContent<F>` with `encode()` calling
+/// `Element::alloc(dr, allocator, witness)`. Provide an explicit `field` when
+/// the gadget has extra type parameters (so `data` cannot double as the field
+/// parameter), and `alloc = direct` when its `alloc` takes no allocator:
 ///
 /// ```ignore
 /// use ragu_pcd::app::header;
@@ -105,9 +102,8 @@ pub mod __macro_internal {
 ///
 /// # Manual implementation
 ///
-/// Implement `HeaderContent` manually when `encode()` computes a derived value
-/// from the witness data rather than encoding it directly — for example,
-/// encoding a Merkle root from a full Merkle tree:
+/// Implement `HeaderContent` manually when `encode()` derives the committed
+/// value from the data — for example, a Merkle root from a full tree:
 ///
 /// ```ignore
 /// pub struct MerkleRoot;
@@ -130,20 +126,18 @@ pub mod __macro_internal {
 ///
 /// # Authenticated data
 ///
-/// A PCD authenticates only the value represented by [`Self::Output`]. The
-/// mapping from [`Self::Data`] may intentionally be non-injective (for example,
-/// a full Merkle tree mapped to its root). Fields that `encode()` does not
-/// constrain into the output are accompanying witness data, not authenticated
-/// application state. Consumers must not treat those fields as proof-backed.
+/// A PCD authenticates only [`Self::Output`]. The mapping from [`Self::Data`]
+/// may be non-injective (a full tree mapped to its root); whatever `encode()`
+/// does not constrain into the output is unauthenticated witness data, never
+/// proof-backed state.
 pub trait HeaderContent<F: Field>: Send + Sync + 'static {
     /// The data needed to encode a header.
     type Data: Send + Clone;
 
     /// The output gadget that encodes the data for this header.
     ///
-    /// Its serialization should have a fixed length determined by the header
-    /// type alone, not by the data value. A data-dependent length lets two
-    /// distinct values encode to the same padded header, making them
+    /// Its serialized length must depend only on the header type: a
+    /// data-dependent length lets two values pad to identical encodings,
     /// indistinguishable to a verifier.
     type Output: Write<F>;
 
@@ -188,21 +182,18 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     ///
     /// # Agreement between the returned gadget and data
     ///
-    /// The two returned outputs describe the same header through different
-    /// channels, and implementations must keep them in agreement: the gadget
-    /// must serialize to exactly what encoding the data would produce, as if by
-    /// [`Header::encode`] applied to the returned data.
+    /// The gadget and data must agree: the gadget must serialize to exactly
+    /// the encoding of the data, as if by [`Header::encode`].
     ///
-    /// The gadget is what this proof commits to, while a parent step and
-    /// [`Application::verify`](crate::Application::verify) both re-encode the
-    /// carried data instead. Nothing checks the two against each other, so a
-    /// mismatch is not reported where it is introduced: the step succeeds, the
-    /// surrounding [`fuse`](crate::Application::fuse) succeeds, and only a later
-    /// verification of the resulting PCD fails, by returning `Ok(false)` rather
-    /// than an error naming this step.
+    /// The proof commits to the gadget, while a parent step and
+    /// [`Application::verify`](crate::Application::verify) re-encode the
+    /// carried data. Nothing cross-checks the two, so a mismatch surfaces only
+    /// later: this step and the surrounding
+    /// [`fuse`](crate::Application::fuse) succeed, and verification of the
+    /// result returns `Ok(false)` without naming the culprit.
     ///
-    /// Deriving the returned data from the gadget, rather than recomputing it
-    /// alongside, keeps the two in step by construction:
+    /// Deriving the data from the gadget keeps them in agreement by
+    /// construction:
     ///
     /// ```ignore
     /// let output = sponge.squeeze(dr)?;
@@ -210,10 +201,9 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     /// Ok((output, output_data, D::unit()))
     /// ```
     ///
-    /// A header whose `encode` is deliberately non-injective, such as one
-    /// mapping a Merkle tree to its root, must return data that encodes to the
-    /// gadget under that same mapping; see [`HeaderContent`] for which parts of
-    /// the data verification then authenticates.
+    /// A deliberately non-injective header (a tree mapped to its root) must
+    /// return data that encodes to the gadget under that same mapping; see
+    /// [`HeaderContent`] for what verification then authenticates.
     fn synthesize<'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,

@@ -15,10 +15,9 @@
 //! uses one canonical spelling. The macro asserts that both names are the
 //! same Rust type.
 //!
-//! `#[produces(())]` is rejected: suffixes assigned here start past the range
-//! reserved for internal headers, and `()` is the internal trivial header whose
-//! suffix marks a proof as a recursion base case. Producing it from an
-//! application step would let a real circuit mint that marker.
+//! `#[produces(())]` is rejected: `()` is the internal trivial header whose
+//! suffix marks a recursion base case, and an application step must not mint
+//! that marker.
 //!
 //! `#[application(header_size = ..., cycle = ..., rank = ...)]` fixes the
 //! application's header width and optionally sets defaults for the generated
@@ -461,14 +460,12 @@ const UNIT_OUTPUT_REJECTION: &str = "`()` is the reserved trivial header and can
      fn encode(..) -> Result<Bound<'dr, D, Self::Output>> { Ok(()) }\n    \
      }";
 
-/// Names of the generic parameters the macro introduces into generated items.
+/// Generic-parameter names the macro introduces into generated items.
 ///
-/// The preferred names are `C`, `__R`, `__F`, `__D`, and `__A`, but
-/// user-written types are interpolated into scopes where these parameters are
-/// live — cycle/rank defaults in the wrapper's generics, produced header
-/// types in bounds and generated impls, and the wrapper's self type — so each
-/// name is freshened until it collides with no identifier the caller wrote
-/// anywhere in the declaration.
+/// Preferred names are `C`, `__R`, `__F`, `__D`, and `__A`, but user-written
+/// types resolve inside the scopes where these live (defaults, bounds,
+/// generated impls, the wrapper's self type), so each is freshened against
+/// every identifier the caller wrote.
 struct MacroGenerics {
     /// The `C: Cycle` parameter of generated impls and the wrapper.
     cycle: Ident,
@@ -480,9 +477,9 @@ struct MacroGenerics {
     driver: Ident,
     /// The `__A: Allocator` parameter of generated `encode` methods.
     allocator: Ident,
-    /// The block-local `__RaguSameHeaderType` trait of alias assertions. It
-    /// shadows any same-named module item at the assertion's use of the
-    /// caller's header types, so it is freshened like a generic parameter.
+    /// The block-local trait of canonical-alias assertions; it would shadow a
+    /// same-named module item where the assertion names the caller's headers,
+    /// so it is freshened too.
     same_header_trait: Ident,
     /// Every identifier the caller wrote, kept for freshening generated names
     /// that are derived later (the wrapper's marker traits).
@@ -555,13 +552,12 @@ fn collect_unique_headers(variants: &[ParsedVariant]) -> Vec<Type> {
     headers
 }
 
-/// Assert that every explicit canonical header spelling denotes exactly the
-/// same Rust type as the output spelling.
+/// Assert that each explicit canonical spelling names exactly the same Rust
+/// type as its output spelling.
 ///
-/// A private trait with only the reflexive implementation makes rustc perform
-/// semantic type resolution (including aliases), which a proc macro cannot do
-/// from tokens. Unlike assignment or function-return coercion, this rejects
-/// distinct types connected by a coercion.
+/// A private trait with only the reflexive impl makes rustc do the semantic
+/// type resolution (aliases included) that a proc macro cannot; unlike
+/// assignment, it also rejects distinct types connected by a coercion.
 fn generate_header_alias_assertions(
     variants: &[ParsedVariant],
     generics: &MacroGenerics,
@@ -993,17 +989,15 @@ fn generate_wrapper(
             /// Build the application by registering all steps.
             ///
             /// Registration fixes each step's circuit from the instance passed
-            /// here, including whatever configuration that instance carries.
-            /// The steps later handed to `seed` and `fuse` are separate
-            /// instances, and each must be configured identically to the one
-            /// registered here. A step that differs traces against a circuit it
-            /// no longer matches, which is not reported at that point: the call
-            /// succeeds and only a later `verify` of the resulting PCD fails,
-            /// by returning `Ok(false)`.
+            /// here, configuration included. Instances later handed to `seed`
+            /// and `fuse` must be configured identically: a differing step
+            /// traces against a circuit it no longer matches, which is not
+            /// reported there — the call succeeds and only a later `verify` of
+            /// the resulting PCD returns `Ok(false)`.
             ///
-            /// Returns an initialization error if the configured header size
-            /// is zero, and propagates registration errors such as a header
-            /// encoding that does not fit in the configured width.
+            /// Errors if the header size is zero, and propagates registration
+            /// errors such as a header encoding that does not fit the
+            /// configured width.
             #vis fn build(
                 params: &'params #cycle::Params,
                 #(#build_params),*
@@ -1062,10 +1056,9 @@ fn generate_wrapper(
 
             /// Verify proof-carrying data.
             ///
-            /// `rng` must be a fresh, unpredictable cryptographic RNG: the
-            /// verifier's challenges are sampled from it, and the soundness of
-            /// the check relies on the prover being unable to predict them. A
-            /// fixed or replayed seed is not safe outside tests.
+            /// The verifier's challenges are sampled from `rng`, so soundness
+            /// requires that the prover cannot predict them: use a fresh
+            /// CSPRNG. Fixed or replayed seeds are test-only.
             #vis fn verify<__RNG: #prelude::CryptoRngCore, __H>(
                 &self,
                 pcd: &#prelude::Pcd<#cycle, #rank, __H>,
@@ -1089,13 +1082,12 @@ fn generate_wrapper(
                 self.inner.rerandomize(pcd, rng)
             }
 
-            /// Returns a seeded trivial PCD with no header data, suitable
-            /// as a placeholder input for steps that only use one of their
-            /// two inputs.
+            /// Returns a seeded trivial PCD with no header data, the
+            /// placeholder input for steps that use only one of their two
+            /// inputs.
             ///
-            /// The proof is built once and cached: the first call consumes
-            /// `rng`, and every later call returns that same deterministic,
-            /// `rng`-independent proof regardless of the `rng` passed in.
+            /// Built once and cached: only the first call draws from `rng`;
+            /// later calls return the same deterministic proof.
             #vis fn trivial_pcd<__RNG: #prelude::CryptoRngCore>(&self, rng: &mut __RNG) -> #prelude::Pcd<#cycle, #rank, ()> {
                 self.inner.seeded_trivial_pcd(rng)
             }

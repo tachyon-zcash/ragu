@@ -7,13 +7,12 @@ use syn::{
     PathArguments, Result, TypeParam, TypeParamBound, spanned::Spanned,
 };
 
-/// Collects every identifier spelled in `tokens` (recursing into groups and
-/// stripping raw-identifier prefixes) into `set`.
+/// Collects every identifier in `tokens` into `set`, recursing into groups
+/// and unrawing `r#` spellings.
 ///
-/// User-written types are interpolated into generated scopes where
-/// macro-chosen generic parameters are live, so any identifier they mention
-/// must not collide with a generated parameter name; callers gather the
-/// occupied names with this and then pick parameters via [`fresh_ident`].
+/// User-written types resolve inside generated scopes, so generated generic
+/// parameters must avoid every name they mention; gather the names here, then
+/// pick parameters with [`fresh_ident`].
 pub fn collect_idents(tokens: TokenStream, set: &mut BTreeSet<String>) {
     for tt in tokens {
         match tt {
