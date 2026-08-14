@@ -340,6 +340,11 @@ mod macro_hygiene {
         #[header(data = Element, gadget = ::ragu_primitives::Element)]
         pub struct AbsoluteGadgetHeader;
 
+        // The same in raw spelling: collision checks normalize raw
+        // identifiers but must not over-reject absolute paths.
+        #[header(data = r#Element, gadget = ::ragu_primitives::Element)]
+        pub struct RawAbsoluteGadgetHeader;
+
         #[header(
             data = EpAffine,
             gadget = Point<EpAffine>,
@@ -384,6 +389,50 @@ mod macro_hygiene {
         }
     }
 
+    // A step named exactly like the marker trait the macro derives from the
+    // enum name: the marker must be freshened away from it.
+    mod marker_named_step {
+        use super::*;
+
+        #[header(data = F, gadget = Element)]
+        pub struct MarkerHeader;
+
+        pub struct __RaguApplicationStepForApp<'params, T: Cycle>(pub PhantomData<fn(&'params T)>);
+
+        impl<T: Cycle> ragu_pcd::app::Step<T> for __RaguApplicationStepForApp<'_, T> {
+            type Witness = T::CircuitField;
+            type Left = ();
+            type Right = ();
+            type Output = MarkerHeader;
+            type Aux = ();
+
+            fn synthesize<'dr, D: Driver<'dr, F = T::CircuitField>, const HEADER_SIZE: usize>(
+                &self,
+                dr: &mut D,
+                witness: DriverValue<D, Self::Witness>,
+                _left: &Bound<'dr, D, <Self::Left as Header<T::CircuitField>>::Output>,
+                _right: &Bound<'dr, D, <Self::Right as Header<T::CircuitField>>::Output>,
+            ) -> Result<(
+                Bound<'dr, D, <Self::Output as Header<T::CircuitField>>::Output>,
+                DriverValue<D, <Self::Output as Header<T::CircuitField>>::Data>,
+                DriverValue<D, Self::Aux>,
+            )>
+            where
+                Self: 'dr,
+            {
+                let output = Element::alloc(dr, &mut Standard::new(), witness)?;
+                let output_data = output.value().map(|value| *value);
+                Ok((output, output_data, D::unit()))
+            }
+        }
+
+        #[application(cycle = Pasta, rank = ProductionRank, header_size = 2)]
+        pub enum App {
+            #[produces(MarkerHeader)]
+            __RaguApplicationStepForApp,
+        }
+    }
+
     #[test]
     fn generated_identifiers_and_absolute_paths_compile() {
         fn assert_header_content<H: ragu_pcd::app::HeaderContent<Fp>>() {}
@@ -391,6 +440,11 @@ mod macro_hygiene {
         assert_header_content::<AbsoluteHeader>();
         assert_header_content::<shadowed_parameter_names::DriverShadowHeader>();
         assert_header_content::<shadowed_parameter_names::AbsoluteGadgetHeader>();
+        assert_header_content::<shadowed_parameter_names::RawAbsoluteGadgetHeader>();
+        assert_eq!(
+            <marker_named_step::MarkerHeader as Header<Fp>>::SUFFIX.get(),
+            2
+        );
         assert_eq!(<CollisionHeader as Header<Fp>>::SUFFIX.get(), 2);
         assert_eq!(
             <application_named_c::NamedHeader as Header<Fp>>::SUFFIX.get(),

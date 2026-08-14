@@ -139,7 +139,9 @@ pub fn evaluate(attr: HeaderAttr, item: ItemStruct) -> Result<TokenStream> {
 /// Absolute paths are immune to shadowing, so an absolute gadget path is
 /// accepted.
 fn validate_generic_field(field: &Ident, struct_ident: &Ident, gadget: &Type) -> Result<()> {
-    if *field == struct_ident.unraw() {
+    // Raw and plain spellings denote the same name, so compare unraw'd.
+    let field_name = field.unraw();
+    if field_name == struct_ident.unraw() {
         return Err(Error::new(
             field.span(),
             "the `data` type parameter collides with the struct name; rename one of them",
@@ -153,7 +155,7 @@ fn validate_generic_field(field: &Ident, struct_ident: &Ident, gadget: &Type) ->
             .path
             .segments
             .first()
-            .is_some_and(|segment| segment.ident == *field)
+            .is_some_and(|segment| segment.ident.unraw() == field_name)
     {
         return Err(Error::new(
             field.span(),
@@ -453,6 +455,26 @@ mod tests {
         );
 
         let field: Ident = parse_quote!(LeafNode);
+        let err = validate_generic_field(&field, &strukt, &parse_quote!(Element))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("collides with the struct name"));
+
+        // Raw spellings denote the same name and are normalized before
+        // comparison.
+        let field: Ident = parse_quote!(r#Element);
+        let err = validate_generic_field(&field, &strukt, &parse_quote!(Element))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("shadows the gadget path"));
+
+        let field: Ident = parse_quote!(Element);
+        let err = validate_generic_field(&field, &strukt, &parse_quote!(r#Element))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("shadows the gadget path"));
+
+        let field: Ident = parse_quote!(r#LeafNode);
         let err = validate_generic_field(&field, &strukt, &parse_quote!(Element))
             .unwrap_err()
             .to_string();

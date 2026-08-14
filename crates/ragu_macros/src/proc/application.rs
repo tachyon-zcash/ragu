@@ -180,7 +180,8 @@ pub fn evaluate(attr: ApplicationAttr, input: ItemEnum) -> Result<TokenStream> {
 
     // Generated generic-parameter names must not capture any identifier the
     // caller wrote, so they are chosen after all declarations are parsed.
-    let generics = MacroGenerics::fresh(enum_ident, &attr, &declarations);
+    let variant_idents: Vec<Ident> = input.variants.iter().map(|v| v.ident.clone()).collect();
+    let generics = MacroGenerics::fresh(enum_ident, &attr, &declarations, &variant_idents);
     let cycle = &generics.cycle;
 
     let mut variants = Vec::new();
@@ -489,9 +490,19 @@ struct MacroGenerics {
 }
 
 impl MacroGenerics {
-    fn fresh(enum_ident: &Ident, attr: &ApplicationAttr, declarations: &[ProducesAttr]) -> Self {
+    fn fresh(
+        enum_ident: &Ident,
+        attr: &ApplicationAttr,
+        declarations: &[ProducesAttr],
+        variant_idents: &[Ident],
+    ) -> Self {
         let mut occupied = BTreeSet::new();
         occupied.insert(enum_ident.unraw().to_string());
+        // Variant names are the caller's step types, which are module items
+        // like the wrapper's marker traits.
+        for variant in variant_idents {
+            occupied.insert(variant.unraw().to_string());
+        }
         if let Some(cycle) = &attr.cycle {
             collect_idents(quote!(#cycle), &mut occupied);
         }
@@ -1356,7 +1367,7 @@ mod tests {
             canonical: None,
         }];
         let enum_ident: Ident = parse_quote!(App);
-        let generics = MacroGenerics::fresh(&enum_ident, &attr, &declarations);
+        let generics = MacroGenerics::fresh(&enum_ident, &attr, &declarations, &[]);
         assert_eq!(generics.cycle, "C_");
         assert_eq!(generics.rank, "__R_");
         assert_eq!(generics.field, "__F_");
@@ -1367,26 +1378,21 @@ mod tests {
         // type must not resolve to a generic parameter.
         let attr = parse_attr(quote!(header_size = 4)).unwrap();
         let enum_ident: Ident = parse_quote!(C);
-        let generics = MacroGenerics::fresh(&enum_ident, &attr, &[]);
+        let generics = MacroGenerics::fresh(&enum_ident, &attr, &[], &[]);
         assert_eq!(generics.cycle, "C_");
         assert_eq!(generics.rank, "__R");
 
         // Block-local and name-derived generated items are freshened too: a
-        // header spelled like the assertion trait or a marker trait must not
-        // be shadowed by them.
+        // header spelled like the assertion trait, or a step (variant) spelled
+        // like a marker trait, must not be shadowed by them.
         let attr = parse_attr(quote!(header_size = 4)).unwrap();
-        let declarations = [
-            ProducesAttr {
-                output: parse_quote!(__RaguSameHeaderType),
-                canonical: Some(parse_quote!(RealHeader)),
-            },
-            ProducesAttr {
-                output: parse_quote!(__RaguApplicationStepForApp),
-                canonical: None,
-            },
-        ];
+        let declarations = [ProducesAttr {
+            output: parse_quote!(__RaguSameHeaderType),
+            canonical: Some(parse_quote!(RealHeader)),
+        }];
+        let variant_idents: [Ident; 1] = [parse_quote!(__RaguApplicationStepForApp)];
         let enum_ident: Ident = parse_quote!(App);
-        let generics = MacroGenerics::fresh(&enum_ident, &attr, &declarations);
+        let generics = MacroGenerics::fresh(&enum_ident, &attr, &declarations, &variant_idents);
         assert_eq!(generics.same_header_trait, "__RaguSameHeaderType_");
         assert!(generics.occupied.contains("__RaguApplicationStepForApp"));
 
