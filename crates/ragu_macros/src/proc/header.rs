@@ -21,15 +21,22 @@
 //! the lifetime and driver arguments before any extra arguments supplied by
 //! the caller.
 
+use std::collections::BTreeSet;
+
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::{
     Error, GenericArgument, Ident, ItemStruct, PathArguments, Result, Token, Type,
+    ext::IdentExt,
     parse::{Parse, ParseStream},
     parse_quote,
 };
 
-use crate::{path_resolution::RaguAppPath, substitution::replace_inferences};
+use crate::{
+    helpers::{collect_idents, fresh_ident},
+    path_resolution::RaguAppPath,
+    substitution::replace_inferences,
+};
 
 /// Generates the `HeaderContent` impl for a `#[header]`-annotated struct.
 pub fn evaluate(attr: HeaderAttr, item: ItemStruct) -> Result<TokenStream> {
@@ -73,8 +80,30 @@ pub fn evaluate(attr: HeaderAttr, item: ItemStruct) -> Result<TokenStream> {
         Some(field) => quote!(<#field: #prelude::Field>),
         None => quote!(),
     };
-    let driver_ident = fresh_internal_ident("__RaguHeaderDriver", generic_field);
-    let allocator_ident = fresh_internal_ident("__RaguHeaderAllocator", generic_field);
+
+    // In generic mode the caller-selected field parameter would capture the
+    // struct name inside its own impl.
+    if let Some(field) = generic_field
+        && *field == struct_ident.unraw()
+    {
+        return Err(Error::new(
+            field.span(),
+            "the `data` type parameter collides with the struct name; rename one of them",
+        ));
+    }
+
+    // Generated generic-parameter names must not capture any identifier the
+    // caller wrote in `data`, `gadget`, or `field`, all of which are
+    // interpolated into scopes where these parameters are live.
+    let mut occupied = BTreeSet::new();
+    let gadget_ty = &attr.gadget;
+    collect_idents(quote!(#data_ty), &mut occupied);
+    collect_idents(quote!(#gadget_ty), &mut occupied);
+    if let Some(field) = &attr.field {
+        collect_idents(quote!(#field), &mut occupied);
+    }
+    let driver_ident = fresh_ident("__RaguHeaderDriver", &occupied, Span::mixed_site());
+    let allocator_ident = fresh_ident("__RaguHeaderAllocator", &occupied, Span::mixed_site());
 
     let (allocator_param, alloc_call) = if attr.alloc_direct {
         (
@@ -179,8 +208,10 @@ impl Parse for HeaderAttr {
                 }
             }
 
-            // Consume optional trailing comma.
-            let _ = input.parse::<Token![,]>();
+            // Entries are comma-separated; a trailing comma is permitted.
+            if !input.is_empty() {
+                input.parse::<Token![,]>()?;
+            }
         }
 
         let alloc_direct = match alloc {
@@ -237,16 +268,6 @@ fn generic_field_error(data: &Type) -> Error {
         data,
         "when `field` is not specified, `data` must be a type parameter name (for example, `F`); add `field = YourField` for concrete data types",
     )
-}
-
-/// Chooses a generated type parameter that cannot collide with generic mode's
-/// caller-selected field identifier.
-fn fresh_internal_ident(base: &str, occupied: Option<&Ident>) -> Ident {
-    let mut candidate = base.to_owned();
-    while occupied.is_some_and(|ident| ident == candidate.as_str()) {
-        candidate.push('_');
-    }
-    Ident::new(&candidate, Span::mixed_site())
 }
 
 /// Returns the inner [`syn::TypePath`], or an error if `ty` is not a path type.
@@ -360,6 +381,14 @@ mod tests {
 
         let err = parse_attr_err(quote!(data = F, gadget = Element, kind = X));
         assert!(err.contains("unknown attribute `kind`"));
+    }
+
+    #[test]
+    fn attr_requires_commas_between_entries() {
+        assert!(parse_attr(quote!(data = F, gadget = Element,)).is_ok());
+
+        let err = parse_attr_err(quote!(data = F gadget = Element));
+        assert!(err.contains("expected `,`"));
     }
 
     #[test]

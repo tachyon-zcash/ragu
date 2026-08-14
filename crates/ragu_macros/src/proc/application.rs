@@ -33,7 +33,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use heck::ToSnakeCase;
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{
     Attribute, Error, Expr, Fields, Ident, ItemEnum, Result, Token, Type, Variant, Visibility,
@@ -42,7 +42,10 @@ use syn::{
     punctuated::Punctuated,
 };
 
-use crate::path_resolution::RaguAppPath;
+use crate::{
+    helpers::{collect_idents, fresh_ident},
+    path_resolution::RaguAppPath,
+};
 
 /// The parsed `#[application(...)]` attribute arguments: a required fixed
 /// header width and optional defaults for the generated wrapper's cycle and
@@ -107,8 +110,10 @@ impl Parse for ApplicationAttr {
                 }
             }
 
-            // Consume optional trailing comma.
-            let _ = input.parse::<Token![,]>();
+            // Entries are comma-separated; a trailing comma is permitted.
+            if !input.is_empty() {
+                input.parse::<Token![,]>()?;
+            }
         }
 
         // The generated generics are ordered `C, __R`, and Rust requires
@@ -167,15 +172,25 @@ pub fn evaluate(attr: ApplicationAttr, input: ItemEnum) -> Result<TokenStream> {
     // #[produces(...)] attribute naming the output header. The variant name
     // is also used as the `build()` parameter name (converted to snake_case).
     let build_parameter_idents = build_parameter_idents(&input.variants)?;
+    let mut declarations = Vec::new();
+    for variant in &input.variants {
+        validate_variant_declaration(variant)?;
+        declarations.push(parse_produces_attr(variant)?);
+    }
+
+    // Generated generic-parameter names must not capture any identifier the
+    // caller wrote, so they are chosen after all declarations are parsed.
+    let generics = MacroGenerics::fresh(enum_ident, &attr, &declarations);
+    let cycle = &generics.cycle;
+
     let mut variants = Vec::new();
-    for ((index, variant), build_parameter) in input
+    for ((index, (variant, produces)), build_parameter) in input
         .variants
         .iter()
+        .zip(declarations)
         .enumerate()
         .zip(build_parameter_idents)
     {
-        validate_variant_declaration(variant)?;
-        let produces = parse_produces_attr(variant)?;
         let output = produces.output;
         let (header, has_explicit_canonical) = match produces.canonical {
             Some(canonical) => (canonical, true),
@@ -184,7 +199,7 @@ pub fn evaluate(attr: ApplicationAttr, input: ItemEnum) -> Result<TokenStream> {
         let name = variant.ident.clone();
         // Qualifying the caller's type through the invocation module prevents
         // names such as `C` from being captured by generated generic parameters.
-        let step_ty = quote!(self::#name<'params, C>);
+        let step_ty = quote!(self::#name<'params, #cycle>);
         variants.push(ParsedVariant {
             build_parameter,
             step_ty,
@@ -207,11 +222,11 @@ pub fn evaluate(attr: ApplicationAttr, input: ItemEnum) -> Result<TokenStream> {
     // All generated code references items through `ragu_pcd::app::__macro_internal`.
     let prelude = quote!(#app::__macro_internal);
 
-    let header_impls = generate_header_impls(&headers, &app, &prelude);
+    let header_impls = generate_header_impls(&headers, &app, &prelude, &generics);
     let header_alias_assertions = generate_header_alias_assertions(&variants);
-    let step_impls = generate_step_impls(&variants, &app, &prelude);
+    let step_impls = generate_step_impls(&variants, &app, &prelude, &generics);
     let wrapper = generate_wrapper(
-        attrs, vis, enum_ident, &attr, &variants, &headers, &app, &prelude,
+        attrs, vis, enum_ident, &attr, &variants, &headers, &app, &prelude, &generics,
     );
 
     Ok(quote! {
@@ -445,6 +460,59 @@ const UNIT_OUTPUT_REJECTION: &str = "`()` is the reserved trivial header and can
      fn encode(..) -> Result<Bound<'dr, D, Self::Output>> { Ok(()) }\n    \
      }";
 
+/// Names of the generic parameters the macro introduces into generated items.
+///
+/// The preferred names are `C`, `__R`, `__F`, `__D`, and `__A`, but
+/// user-written types are interpolated into scopes where these parameters are
+/// live — cycle/rank defaults in the wrapper's generics, produced header
+/// types in bounds and generated impls, and the wrapper's self type — so each
+/// name is freshened until it collides with no identifier the caller wrote
+/// anywhere in the declaration.
+struct MacroGenerics {
+    /// The `C: Cycle` parameter of generated impls and the wrapper.
+    cycle: Ident,
+    /// The `__R: Rank` parameter of the generated wrapper.
+    rank: Ident,
+    /// The `__F: Field` parameter of generated `Header` impls and markers.
+    field: Ident,
+    /// The `__D: Driver` parameter of generated `encode` methods.
+    driver: Ident,
+    /// The `__A: Allocator` parameter of generated `encode` methods.
+    allocator: Ident,
+}
+
+impl MacroGenerics {
+    fn fresh(enum_ident: &Ident, attr: &ApplicationAttr, declarations: &[ProducesAttr]) -> Self {
+        let mut occupied = BTreeSet::new();
+        occupied.insert(enum_ident.unraw().to_string());
+        if let Some(cycle) = &attr.cycle {
+            collect_idents(quote!(#cycle), &mut occupied);
+        }
+        if let Some(rank) = &attr.rank {
+            collect_idents(quote!(#rank), &mut occupied);
+        }
+        // Const expressions can mention types (e.g. `size_of::<T>()`), so the
+        // header size participates too.
+        let header_size = &attr.header_size;
+        collect_idents(quote!(#header_size), &mut occupied);
+        for produces in declarations {
+            let output = &produces.output;
+            collect_idents(quote!(#output), &mut occupied);
+            if let Some(canonical) = &produces.canonical {
+                collect_idents(quote!(#canonical), &mut occupied);
+            }
+        }
+
+        MacroGenerics {
+            cycle: fresh_ident("C", &occupied, Span::call_site()),
+            rank: fresh_ident("__R", &occupied, Span::call_site()),
+            field: fresh_ident("__F", &occupied, Span::call_site()),
+            driver: fresh_ident("__D", &occupied, Span::call_site()),
+            allocator: fresh_ident("__A", &occupied, Span::call_site()),
+        }
+    }
+}
+
 /// Collect syntactically unique non-unit canonical header types, preserving
 /// first-appearance order (which determines suffix assignment).
 ///
@@ -539,7 +607,10 @@ fn generate_step_impls(
     variants: &[ParsedVariant],
     app: &RaguAppPath,
     prelude: &TokenStream,
+    generics: &MacroGenerics,
 ) -> TokenStream {
+    let cycle = &generics.cycle;
+    let driver = &generics.driver;
     let mut impls = TokenStream::new();
 
     for v in variants {
@@ -548,44 +619,44 @@ fn generate_step_impls(
         let index = v.index;
 
         impls.extend(quote! {
-            impl<'params, C: #app::Cycle> #prelude::PcdStep<C> for #step_ty
+            impl<'params, #cycle: #app::Cycle> #prelude::PcdStep<#cycle> for #step_ty
             where
-                #step_ty: #app::Step<C, Output = #output>,
-                <#step_ty as #app::Step<C>>::Left: #prelude::Header<C::CircuitField>,
-                <#step_ty as #app::Step<C>>::Right: #prelude::Header<C::CircuitField>,
-                #output: #prelude::Header<C::CircuitField>,
+                #step_ty: #app::Step<#cycle, Output = #output>,
+                <#step_ty as #app::Step<#cycle>>::Left: #prelude::Header<#cycle::CircuitField>,
+                <#step_ty as #app::Step<#cycle>>::Right: #prelude::Header<#cycle::CircuitField>,
+                #output: #prelude::Header<#cycle::CircuitField>,
             {
                 const INDEX: #prelude::Index = #prelude::Index::new(#index);
 
-                type Witness<'source> = <#step_ty as #app::Step<C>>::Witness;
-                type Left = <#step_ty as #app::Step<C>>::Left;
-                type Right = <#step_ty as #app::Step<C>>::Right;
+                type Witness<'source> = <#step_ty as #app::Step<#cycle>>::Witness;
+                type Left = <#step_ty as #app::Step<#cycle>>::Left;
+                type Right = <#step_ty as #app::Step<#cycle>>::Right;
                 type Output = #output;
-                type Aux<'source> = <#step_ty as #app::Step<C>>::Aux;
+                type Aux<'source> = <#step_ty as #app::Step<#cycle>>::Aux;
 
-                fn witness<'dr, 'source: 'dr, __D: #prelude::Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
+                fn witness<'dr, 'source: 'dr, #driver: #prelude::Driver<'dr, F = #cycle::CircuitField>, const HEADER_SIZE: usize>(
                     &self,
-                    dr: &mut __D,
-                    witness: #prelude::DriverValue<__D, Self::Witness<'source>>,
+                    dr: &mut #driver,
+                    witness: #prelude::DriverValue<#driver, Self::Witness<'source>>,
                     left: #prelude::DriverValue<
-                        __D,
-                        <Self::Left as #prelude::Header<C::CircuitField>>::Data,
+                        #driver,
+                        <Self::Left as #prelude::Header<#cycle::CircuitField>>::Data,
                     >,
                     right: #prelude::DriverValue<
-                        __D,
-                        <Self::Right as #prelude::Header<C::CircuitField>>::Data,
+                        #driver,
+                        <Self::Right as #prelude::Header<#cycle::CircuitField>>::Data,
                     >,
                 ) -> #prelude::Result<(
                     (
-                        #prelude::Encoded<'dr, __D, Self::Left, HEADER_SIZE>,
-                        #prelude::Encoded<'dr, __D, Self::Right, HEADER_SIZE>,
-                        #prelude::Encoded<'dr, __D, Self::Output, HEADER_SIZE>,
+                        #prelude::Encoded<'dr, #driver, Self::Left, HEADER_SIZE>,
+                        #prelude::Encoded<'dr, #driver, Self::Right, HEADER_SIZE>,
+                        #prelude::Encoded<'dr, #driver, Self::Output, HEADER_SIZE>,
                     ),
                     #prelude::DriverValue<
-                        __D,
-                        <Self::Output as #prelude::Header<C::CircuitField>>::Data,
+                        #driver,
+                        <Self::Output as #prelude::Header<#cycle::CircuitField>>::Data,
                     >,
-                    #prelude::DriverValue<__D, Self::Aux<'source>>,
+                    #prelude::DriverValue<#driver, Self::Aux<'source>>,
                 )>
                 where
                     Self: 'dr,
@@ -613,7 +684,7 @@ fn generate_step_impls(
                     }
 
                     let (output_gadget, output_data, aux) =
-                        call_synthesize::<C, __D, #step_ty, HEADER_SIZE>(
+                        call_synthesize::<#cycle, #driver, #step_ty, HEADER_SIZE>(
                             self,
                             dr,
                             witness,
@@ -662,26 +733,30 @@ fn generate_header_impls(
     headers: &[Type],
     app: &RaguAppPath,
     prelude: &TokenStream,
+    generics: &MacroGenerics,
 ) -> TokenStream {
+    let field = &generics.field;
+    let driver = &generics.driver;
+    let allocator = &generics.allocator;
     let mut impls = TokenStream::new();
 
     for (i, header_ty) in headers.iter().enumerate() {
         impls.extend(quote! {
-            impl<__F: #prelude::Field> #prelude::Header<__F> for #header_ty
+            impl<#field: #prelude::Field> #prelude::Header<#field> for #header_ty
             where
-                #header_ty: #app::HeaderContent<__F>,
+                #header_ty: #app::HeaderContent<#field>,
             {
                 const SUFFIX: #prelude::Suffix = #prelude::Suffix::new(#i);
 
-                type Data = <#header_ty as #app::HeaderContent<__F>>::Data;
-                type Output = <#header_ty as #app::HeaderContent<__F>>::Output;
+                type Data = <#header_ty as #app::HeaderContent<#field>>::Data;
+                type Output = <#header_ty as #app::HeaderContent<#field>>::Output;
 
-                fn encode<'dr, __D: #prelude::Driver<'dr, F = __F>, __A: #prelude::Allocator<'dr, __D>>(
-                    dr: &mut __D,
-                    allocator: &mut __A,
-                    witness: #prelude::DriverValue<__D, Self::Data>,
-                ) -> #prelude::Result<#prelude::Bound<'dr, __D, Self::Output>> {
-                    <#header_ty as #app::HeaderContent<__F>>::encode(dr, allocator, witness)
+                fn encode<'dr, #driver: #prelude::Driver<'dr, F = #field>, #allocator: #prelude::Allocator<'dr, #driver>>(
+                    dr: &mut #driver,
+                    allocator: &mut #allocator,
+                    witness: #prelude::DriverValue<#driver, Self::Data>,
+                ) -> #prelude::Result<#prelude::Bound<'dr, #driver, Self::Output>> {
+                    <#header_ty as #app::HeaderContent<#field>>::encode(dr, allocator, witness)
                 }
             }
         });
@@ -756,7 +831,12 @@ fn generate_wrapper(
     headers: &[Type],
     app: &RaguAppPath,
     prelude: &TokenStream,
+    generics: &MacroGenerics,
 ) -> TokenStream {
+    let cycle = &generics.cycle;
+    let rank = &generics.rank;
+    let field = &generics.field;
+
     // Private marker traits make the generated wrapper a closed application
     // boundary. Downstream crates cannot implement these traits for a foreign
     // step/header that happens to reuse the same INDEX/SUFFIX values.
@@ -769,7 +849,7 @@ fn generate_wrapper(
         .map(|variant| {
             let step_ty = &variant.step_ty;
             quote! {
-                impl<'params, C: #app::Cycle> #step_marker<C> for #step_ty {}
+                impl<'params, #cycle: #app::Cycle> #step_marker<#cycle> for #step_ty {}
             }
         })
         .collect();
@@ -778,9 +858,9 @@ fn generate_wrapper(
         .iter()
         .map(|header| {
             quote! {
-                impl<__F: #prelude::Field> #header_marker<__F> for #header
+                impl<#field: #prelude::Field> #header_marker<#field> for #header
                 where
-                    #header: #prelude::Header<__F>,
+                    #header: #prelude::Header<#field>,
                 {}
             }
         })
@@ -820,16 +900,16 @@ fn generate_wrapper(
     let header_size = &attr.header_size;
     let struct_gen = quote!(
         'params,
-        C: #app::Cycle #cycle_default,
-        __R: #prelude::Rank #rank_default
+        #cycle: #app::Cycle #cycle_default,
+        #rank: #prelude::Rank #rank_default
     );
-    let impl_gen = quote!('params, C: #app::Cycle, __R: #prelude::Rank);
-    let struct_args = quote!('params, C, __R);
+    let impl_gen = quote!('params, #cycle: #app::Cycle, #rank: #prelude::Rank);
+    let struct_args = quote!('params, #cycle, #rank);
 
     // Where clause: each unique header must impl `Header<C::CircuitField>`.
     let header_bounds: Vec<_> = headers
         .iter()
-        .map(|h| quote!(#h: #prelude::Header<C::CircuitField>))
+        .map(|h| quote!(#h: #prelude::Header<#cycle::CircuitField>))
         .collect();
 
     // Where clause: each step type must impl `ragu_pcd::app::Step<C>`.
@@ -842,7 +922,7 @@ fn generate_wrapper(
         .map(|v| {
             let step_ty = &v.step_ty;
             let output = &v.output;
-            quote!(#step_ty: #app::Step<C, Output = #output>)
+            quote!(#step_ty: #app::Step<#cycle, Output = #output>)
         })
         .collect();
 
@@ -850,19 +930,23 @@ fn generate_wrapper(
         // These deliberately remain private even when the application wrapper
         // is public: they seal its generic methods to the declared membership.
         #[doc(hidden)]
-        trait #step_marker<__C: #app::Cycle> {}
+        trait #step_marker<#cycle: #app::Cycle> {}
 
         #[doc(hidden)]
-        trait #header_marker<__F: #prelude::Field> {}
+        trait #header_marker<#field: #prelude::Field> {}
 
         #(#step_memberships)*
         #(#header_memberships)*
-        impl<__F: #prelude::Field> #header_marker<__F> for () {}
+        // `()` is deliberately a member of every application: trivial PCDs
+        // are the universal placeholder input, so the seal cannot exclude
+        // them. A trivial PCD minted elsewhere is instead rejected at runtime
+        // by verification against this application's registry.
+        impl<#field: #prelude::Field> #header_marker<#field> for () {}
 
         #(#attrs)*
         /// Generated application wrapper.
         #vis struct #enum_ident<#struct_gen> {
-            inner: #prelude::Application<'params, C, __R, { #header_size }>,
+            inner: #prelude::Application<'params, #cycle, #rank, { #header_size }>,
         }
 
         #[allow(private_bounds)]
@@ -886,7 +970,7 @@ fn generate_wrapper(
             /// is zero, and propagates registration errors such as a header
             /// encoding that does not fit in the configured width.
             #vis fn build(
-                params: &'params C::Params,
+                params: &'params #cycle::Params,
                 #(#build_params),*
             ) -> #prelude::Result<Self> {
                 if { #header_size } == 0 {
@@ -895,7 +979,7 @@ fn generate_wrapper(
                     ));
                 }
 
-                let inner = #prelude::ApplicationBuilder::<C, __R, { #header_size }>::new()
+                let inner = #prelude::ApplicationBuilder::<#cycle, #rank, { #header_size }>::new()
                     #(#register_calls)*
                     .finalize(params)?;
                 Ok(Self { inner })
@@ -911,10 +995,10 @@ fn generate_wrapper(
                 rng: &mut __RNG,
                 step: __S,
                 witness: __S::Witness<'source>,
-            ) -> #prelude::Result<(#prelude::Pcd<C, __R, __S::Output>, __S::Aux<'source>)>
+            ) -> #prelude::Result<(#prelude::Pcd<#cycle, #rank, __S::Output>, __S::Aux<'source>)>
             where
-                __S: #prelude::PcdStep<C, Left = (), Right = ()> + #step_marker<C>,
-                __S::Output: #header_marker<C::CircuitField>,
+                __S: #prelude::PcdStep<#cycle, Left = (), Right = ()> + #step_marker<#cycle>,
+                __S::Output: #header_marker<#cycle::CircuitField>,
             {
                 self.inner.seed(rng, step, witness)
             }
@@ -929,14 +1013,14 @@ fn generate_wrapper(
                 rng: &mut __RNG,
                 step: __S,
                 witness: __S::Witness<'source>,
-                left: #prelude::Pcd<C, __R, __S::Left>,
-                right: #prelude::Pcd<C, __R, __S::Right>,
-            ) -> #prelude::Result<(#prelude::Pcd<C, __R, __S::Output>, __S::Aux<'source>)>
+                left: #prelude::Pcd<#cycle, #rank, __S::Left>,
+                right: #prelude::Pcd<#cycle, #rank, __S::Right>,
+            ) -> #prelude::Result<(#prelude::Pcd<#cycle, #rank, __S::Output>, __S::Aux<'source>)>
             where
-                __S: #prelude::PcdStep<C> + #step_marker<C>,
-                __S::Left: #header_marker<C::CircuitField>,
-                __S::Right: #header_marker<C::CircuitField>,
-                __S::Output: #header_marker<C::CircuitField>,
+                __S: #prelude::PcdStep<#cycle> + #step_marker<#cycle>,
+                __S::Left: #header_marker<#cycle::CircuitField>,
+                __S::Right: #header_marker<#cycle::CircuitField>,
+                __S::Output: #header_marker<#cycle::CircuitField>,
             {
                 self.inner.fuse(rng, step, witness, left, right)
             }
@@ -944,11 +1028,11 @@ fn generate_wrapper(
             /// Verify proof-carrying data.
             #vis fn verify<__RNG: #prelude::CryptoRngCore, __H>(
                 &self,
-                pcd: &#prelude::Pcd<C, __R, __H>,
+                pcd: &#prelude::Pcd<#cycle, #rank, __H>,
                 rng: __RNG,
             ) -> #prelude::Result<bool>
             where
-                __H: #prelude::Header<C::CircuitField> + #header_marker<C::CircuitField>,
+                __H: #prelude::Header<#cycle::CircuitField> + #header_marker<#cycle::CircuitField>,
             {
                 self.inner.verify(pcd, rng)
             }
@@ -956,11 +1040,11 @@ fn generate_wrapper(
             /// Rerandomize proof-carrying data.
             #vis fn rerandomize<__RNG: #prelude::CryptoRngCore, __H>(
                 &self,
-                pcd: #prelude::Pcd<C, __R, __H>,
+                pcd: #prelude::Pcd<#cycle, #rank, __H>,
                 rng: &mut __RNG,
-            ) -> #prelude::Result<#prelude::Pcd<C, __R, __H>>
+            ) -> #prelude::Result<#prelude::Pcd<#cycle, #rank, __H>>
             where
-                __H: #prelude::Header<C::CircuitField> + #header_marker<C::CircuitField>,
+                __H: #prelude::Header<#cycle::CircuitField> + #header_marker<#cycle::CircuitField>,
             {
                 self.inner.rerandomize(pcd, rng)
             }
@@ -968,7 +1052,7 @@ fn generate_wrapper(
             /// Returns a seeded trivial PCD with no header data, suitable
             /// as a placeholder input for steps that only use one of their
             /// two inputs.
-            #vis fn trivial_pcd<__RNG: #prelude::CryptoRngCore>(&self, rng: &mut __RNG) -> #prelude::Pcd<C, __R, ()> {
+            #vis fn trivial_pcd<__RNG: #prelude::CryptoRngCore>(&self, rng: &mut __RNG) -> #prelude::Pcd<#cycle, #rank, ()> {
                 self.inner.seeded_trivial_pcd(rng)
             }
         }
@@ -1032,6 +1116,14 @@ mod tests {
 
         let err = parse_attr_err(quote!(size = 4));
         assert!(err.contains("unknown attribute `size`"));
+    }
+
+    #[test]
+    fn attr_requires_commas_between_entries() {
+        assert!(parse_attr(quote!(rank = ProductionRank, header_size = 4,)).is_ok());
+
+        let err = parse_attr_err(quote!(header_size = 4 cycle = Pasta));
+        assert!(err.contains("expected `,`"));
     }
 
     #[test]
@@ -1206,7 +1298,7 @@ mod tests {
         has_explicit_canonical: bool,
         index: usize,
     ) -> ParsedVariant {
-        let name = Ident::new(name, proc_macro2::Span::call_site());
+        let name = Ident::new(name, Span::call_site());
         let build_parameter = syn::parse_str(&name.to_string().to_snake_case()).unwrap();
         let step_ty = quote!(self::#name<'params, C>);
         ParsedVariant {
@@ -1217,6 +1309,41 @@ mod tests {
             has_explicit_canonical,
             index,
         }
+    }
+
+    /// The preferred parameter names, as chosen when nothing collides.
+    fn test_generics() -> MacroGenerics {
+        MacroGenerics {
+            cycle: Ident::new("C", Span::call_site()),
+            rank: Ident::new("__R", Span::call_site()),
+            field: Ident::new("__F", Span::call_site()),
+            driver: Ident::new("__D", Span::call_site()),
+            allocator: Ident::new("__A", Span::call_site()),
+        }
+    }
+
+    #[test]
+    fn generated_parameters_avoid_caller_identifiers() {
+        let attr = parse_attr(quote!(cycle = C, rank = __R, header_size = 4)).unwrap();
+        let declarations = [ProducesAttr {
+            output: parse_quote!(Wrapper<__F>),
+            canonical: None,
+        }];
+        let enum_ident: Ident = parse_quote!(App);
+        let generics = MacroGenerics::fresh(&enum_ident, &attr, &declarations);
+        assert_eq!(generics.cycle, "C_");
+        assert_eq!(generics.rank, "__R_");
+        assert_eq!(generics.field, "__F_");
+        assert_eq!(generics.driver, "__D");
+        assert_eq!(generics.allocator, "__A");
+
+        // The enum's own name is occupied too: the generated wrapper's self
+        // type must not resolve to a generic parameter.
+        let attr = parse_attr(quote!(header_size = 4)).unwrap();
+        let enum_ident: Ident = parse_quote!(C);
+        let generics = MacroGenerics::fresh(&enum_ident, &attr, &[]);
+        assert_eq!(generics.cycle, "C_");
+        assert_eq!(generics.rank, "__R");
     }
 
     #[test]
@@ -1265,7 +1392,7 @@ mod tests {
         let prelude = quote!(::ragu_pcd::app::__macro_internal);
         let attrs = vec![parse_quote!(#[must_use])];
 
-        let steps = generate_step_impls(&variants, &app, &prelude)
+        let steps = generate_step_impls(&variants, &app, &prelude, &test_generics())
             .to_string()
             .replace(' ', "");
         assert!(steps.contains("Step<C,Output=LeafNode>"));
@@ -1280,6 +1407,7 @@ mod tests {
             &headers,
             &app,
             &prelude,
+            &test_generics(),
         )
         .to_string()
         .replace(' ', "");

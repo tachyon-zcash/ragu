@@ -77,6 +77,12 @@ impl Default for RaguPrimitivesPath {
     }
 }
 
+/// The `ragu` umbrella fallback assumes the umbrella crate re-exports
+/// `ragu_pcd::app` — including the `application` and `header` attribute
+/// macros — at `ragu::app`, mirroring how it re-exports `ragu_primitives` at
+/// `ragu::primitives`. No umbrella crate exists in this workspace yet; when
+/// one is published, it must provide that path or generated code will not
+/// resolve for its users.
 fn ragu_app_path() -> Result<Path> {
     Ok(match (crate_name("ragu_pcd"), crate_name("ragu")) {
         (Ok(FoundCrate::Itself), _) => parse_quote! { ::ragu_pcd::app },

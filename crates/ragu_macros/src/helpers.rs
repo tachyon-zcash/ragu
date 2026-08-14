@@ -1,9 +1,58 @@
+use std::collections::BTreeSet;
+
 use proc_macro2::{Span, TokenStream, TokenTree};
 use quote::format_ident;
 use syn::{
     Attribute, Error, GenericArgument, GenericParam, Generics, Ident, Lifetime, Meta,
     PathArguments, Result, TypeParam, TypeParamBound, spanned::Spanned,
 };
+
+/// Collects every identifier spelled in `tokens` (recursing into groups and
+/// stripping raw-identifier prefixes) into `set`.
+///
+/// User-written types are interpolated into generated scopes where
+/// macro-chosen generic parameters are live, so any identifier they mention
+/// must not collide with a generated parameter name; callers gather the
+/// occupied names with this and then pick parameters via [`fresh_ident`].
+pub fn collect_idents(tokens: TokenStream, set: &mut BTreeSet<String>) {
+    for tt in tokens {
+        match tt {
+            TokenTree::Ident(ident) => {
+                let repr = ident.to_string();
+                set.insert(repr.strip_prefix("r#").unwrap_or(&repr).to_owned());
+            }
+            TokenTree::Group(group) => collect_idents(group.stream(), set),
+            _ => {}
+        }
+    }
+}
+
+/// Returns `base`, extended with underscores until it collides with nothing
+/// in `occupied`.
+pub fn fresh_ident(base: &str, occupied: &BTreeSet<String>, span: Span) -> Ident {
+    let mut candidate = base.to_owned();
+    while occupied.contains(&candidate) {
+        candidate.push('_');
+    }
+    Ident::new(&candidate, span)
+}
+
+#[test]
+fn test_collect_and_fresh_idents() {
+    use quote::quote;
+
+    let mut set = BTreeSet::new();
+    collect_idents(quote!(Foo<r#C, bar::Baz<'a, __R>, { LEN }>), &mut set);
+    for expected in ["Foo", "C", "bar", "Baz", "__R", "LEN"] {
+        assert!(set.contains(expected), "missing {expected}");
+    }
+
+    assert_eq!(fresh_ident("C", &set, Span::call_site()), "C_");
+    assert_eq!(fresh_ident("D", &set, Span::call_site()), "D");
+
+    set.insert("C_".into());
+    assert_eq!(fresh_ident("C", &set, Span::call_site()), "C__");
+}
 
 pub fn attr_is(attr: &Attribute, needle: &str) -> bool {
     if !attr.path().is_ident("ragu") {

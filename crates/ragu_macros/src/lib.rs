@@ -139,6 +139,10 @@ use ragu_pcd as _;
 /// The generated wrapper's proof methods are sealed to those declared steps
 /// and their headers, so a step or PCD from another application cannot be used
 /// merely because its numeric index or suffix collides.
+/// The trivial header `()` is the one deliberate exception to the seal: every
+/// application accepts trivial PCDs as placeholder inputs, so a trivial PCD
+/// minted by a different application type-checks and is instead rejected at
+/// runtime, by verification against this application's circuit registry.
 ///
 /// # Attributes
 ///

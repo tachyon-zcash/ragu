@@ -1,11 +1,10 @@
 use core::marker::PhantomData;
 
 use group::CurveAffine;
-use ragu_circuits::polynomials::ProductionRank;
-use ragu_core::{Error, maybe::Maybe};
 use ragu_pasta::{EpAffine, Fp, Pasta};
 use ragu_pcd::app::{
-    Bound, Cycle, Driver, DriverValue, Header, Result, Standard, application, header,
+    Bound, Cycle, Driver, DriverValue, Error, Header, Maybe, ProductionRank, Result, Standard,
+    application, header,
 };
 use ragu_primitives::{Element, Endoscalar, Point, poseidon::Sponge};
 use rand::{SeedableRng, rngs::StdRng};
@@ -273,12 +272,124 @@ mod macro_hygiene {
         C,
     }
 
+    // An application named after the macro's preferred cycle parameter: the
+    // generated wrapper's self type must keep resolving to the wrapper rather
+    // than to a generic parameter.
+    mod application_named_c {
+        use super::*;
+
+        #[header(data = F, gadget = Element)]
+        pub struct NamedHeader;
+
+        pub struct NamedStep<'params, T: Cycle>(PhantomData<fn(&'params T)>);
+
+        impl<T: Cycle> ragu_pcd::app::Step<T> for NamedStep<'_, T> {
+            type Witness = T::CircuitField;
+            type Left = ();
+            type Right = ();
+            type Output = NamedHeader;
+            type Aux = ();
+
+            fn synthesize<'dr, D: Driver<'dr, F = T::CircuitField>, const HEADER_SIZE: usize>(
+                &self,
+                dr: &mut D,
+                witness: DriverValue<D, Self::Witness>,
+                _left: &Bound<'dr, D, <Self::Left as Header<T::CircuitField>>::Output>,
+                _right: &Bound<'dr, D, <Self::Right as Header<T::CircuitField>>::Output>,
+            ) -> Result<(
+                Bound<'dr, D, <Self::Output as Header<T::CircuitField>>::Output>,
+                DriverValue<D, <Self::Output as Header<T::CircuitField>>::Data>,
+                DriverValue<D, Self::Aux>,
+            )>
+            where
+                Self: 'dr,
+            {
+                let output = Element::alloc(dr, &mut Standard::new(), witness)?;
+                let output_data = output.value().map(|value| *value);
+                Ok((output, output_data, D::unit()))
+            }
+        }
+
+        #[application(cycle = Pasta, rank = ProductionRank, header_size = 2)]
+        pub enum C {
+            #[produces(NamedHeader)]
+            NamedStep,
+        }
+    }
+
+    // Caller types spelled exactly like the generated generic parameters: the
+    // macros must freshen their names rather than capture these.
+    mod shadowed_parameter_names {
+        use ::ragu_primitives::Element as __RaguHeaderAllocator;
+
+        use super::*;
+
+        type C = Pasta;
+        type __R = ProductionRank;
+        type __RaguHeaderDriver = Fp;
+
+        #[header(data = F, gadget = __RaguHeaderAllocator)]
+        pub struct AllocatorShadowHeader;
+
+        #[header(
+            data = EpAffine,
+            gadget = Point<EpAffine>,
+            field = __RaguHeaderDriver,
+            alloc = direct
+        )]
+        pub struct DriverShadowHeader;
+
+        pub struct ShadowStep<'params, T: Cycle>(PhantomData<fn(&'params T)>);
+
+        impl<T: Cycle> ragu_pcd::app::Step<T> for ShadowStep<'_, T> {
+            type Witness = T::CircuitField;
+            type Left = ();
+            type Right = ();
+            type Output = AllocatorShadowHeader;
+            type Aux = ();
+
+            fn synthesize<'dr, D: Driver<'dr, F = T::CircuitField>, const HEADER_SIZE: usize>(
+                &self,
+                dr: &mut D,
+                witness: DriverValue<D, Self::Witness>,
+                _left: &Bound<'dr, D, <Self::Left as Header<T::CircuitField>>::Output>,
+                _right: &Bound<'dr, D, <Self::Right as Header<T::CircuitField>>::Output>,
+            ) -> Result<(
+                Bound<'dr, D, <Self::Output as Header<T::CircuitField>>::Output>,
+                DriverValue<D, <Self::Output as Header<T::CircuitField>>::Data>,
+                DriverValue<D, Self::Aux>,
+            )>
+            where
+                Self: 'dr,
+            {
+                let output = Element::alloc(dr, &mut Standard::new(), witness)?;
+                let output_data = output.value().map(|value| *value);
+                Ok((output, output_data, D::unit()))
+            }
+        }
+
+        #[application(cycle = C, rank = __R, header_size = 2)]
+        pub enum ShadowApp {
+            #[produces(AllocatorShadowHeader)]
+            ShadowStep,
+        }
+    }
+
     #[test]
     fn generated_identifiers_and_absolute_paths_compile() {
         fn assert_header_content<H: ragu_pcd::app::HeaderContent<Fp>>() {}
 
         assert_header_content::<AbsoluteHeader>();
+        assert_header_content::<shadowed_parameter_names::DriverShadowHeader>();
         assert_eq!(<CollisionHeader as Header<Fp>>::SUFFIX.get(), 2);
+        assert_eq!(
+            <application_named_c::NamedHeader as Header<Fp>>::SUFFIX.get(),
+            2
+        );
+        assert_eq!(
+            <shadowed_parameter_names::AllocatorShadowHeader as Header<Fp>>::SUFFIX.get(),
+            2
+        );
     }
 }
 

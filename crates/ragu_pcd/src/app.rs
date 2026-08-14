@@ -30,11 +30,12 @@
 //! ```
 
 pub use ragu_arithmetic::{Cycle, ff::Field};
-pub use ragu_circuits::polynomials::Rank;
+pub use ragu_circuits::polynomials::{ProductionRank, Rank, TestRank};
 pub use ragu_core::{
-    Result,
+    Error, Result,
     drivers::{Driver, DriverValue},
     gadgets::Bound,
+    maybe::Maybe,
 };
 pub use ragu_macros::{application, header};
 pub use ragu_primitives::{
