@@ -143,6 +143,9 @@ use ragu_pcd as _;
 /// application accepts trivial PCDs as placeholder inputs, so a trivial PCD
 /// minted by a different application type-checks and is instead rejected at
 /// runtime, by verification against this application's circuit registry.
+/// Sealing works through generated module-level helper items with
+/// `__Ragu`-prefixed names derived from the enum name; a caller item spelling
+/// one of those names is reported as a duplicate definition.
 ///
 /// # Attributes
 ///
@@ -225,7 +228,9 @@ pub fn application(attr: TokenStream, input: TokenStream) -> TokenStream {
 /// # Attributes
 ///
 /// - `data`: The witness data type (required). When `field` is omitted, this
-///   must be a bare type-parameter name such as `F`.
+///   must be a bare type-parameter name such as `F`, distinct from the struct
+///   name and from the first segment of a relative `gadget` path (the
+///   parameter would shadow either inside the generated impl).
 /// - `gadget`: The gadget type to allocate (required).
 /// - `field`: The field type for a concrete impl (optional; when omitted,
 ///   `data` is used as a generic field type parameter).

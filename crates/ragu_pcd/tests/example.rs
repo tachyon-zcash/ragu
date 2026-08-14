@@ -281,6 +281,10 @@ mod macro_hygiene {
         #[header(data = F, gadget = Element)]
         pub struct NamedHeader;
 
+        // Spelled like the generated assertion trait: the alias must stay
+        // visible where the generated canonical-type assertion names it.
+        type __RaguSameHeaderType = NamedHeader;
+
         pub struct NamedStep<'params, T: Cycle>(PhantomData<fn(&'params T)>);
 
         impl<T: Cycle> ragu_pcd::app::Step<T> for NamedStep<'_, T> {
@@ -312,7 +316,7 @@ mod macro_hygiene {
 
         #[application(cycle = Pasta, rank = ProductionRank, header_size = 2)]
         pub enum C {
-            #[produces(NamedHeader)]
+            #[produces(__RaguSameHeaderType, canonical = NamedHeader)]
             NamedStep,
         }
     }
@@ -330,6 +334,11 @@ mod macro_hygiene {
 
         #[header(data = F, gadget = __RaguHeaderAllocator)]
         pub struct AllocatorShadowHeader;
+
+        // A field parameter named after the gadget is accepted when the
+        // gadget path is absolute, which a generic parameter cannot shadow.
+        #[header(data = Element, gadget = ::ragu_primitives::Element)]
+        pub struct AbsoluteGadgetHeader;
 
         #[header(
             data = EpAffine,
@@ -381,6 +390,7 @@ mod macro_hygiene {
 
         assert_header_content::<AbsoluteHeader>();
         assert_header_content::<shadowed_parameter_names::DriverShadowHeader>();
+        assert_header_content::<shadowed_parameter_names::AbsoluteGadgetHeader>();
         assert_eq!(<CollisionHeader as Header<Fp>>::SUFFIX.get(), 2);
         assert_eq!(
             <application_named_c::NamedHeader as Header<Fp>>::SUFFIX.get(),

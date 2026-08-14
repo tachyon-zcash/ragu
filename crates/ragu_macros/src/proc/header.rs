@@ -81,15 +81,8 @@ pub fn evaluate(attr: HeaderAttr, item: ItemStruct) -> Result<TokenStream> {
         None => quote!(),
     };
 
-    // In generic mode the caller-selected field parameter would capture the
-    // struct name inside its own impl.
-    if let Some(field) = generic_field
-        && *field == struct_ident.unraw()
-    {
-        return Err(Error::new(
-            field.span(),
-            "the `data` type parameter collides with the struct name; rename one of them",
-        ));
+    if let Some(field) = generic_field {
+        validate_generic_field(field, struct_ident, &attr.gadget)?;
     }
 
     // Generated generic-parameter names must not capture any identifier the
@@ -134,6 +127,43 @@ pub fn evaluate(attr: HeaderAttr, item: ItemStruct) -> Result<TokenStream> {
             }
         }
     })
+}
+
+/// Rejects generic-mode `data` parameter names that would shadow another name
+/// the generated impl must resolve.
+///
+/// The parameter is declared on the generated impl, so it shadows same-named
+/// relative paths everywhere inside: the self type (the struct) and the gadget
+/// path resolved by `encode()` and the output kind. Only the caller can rename
+/// the parameter, so both collisions are rejected rather than freshened.
+/// Absolute paths are immune to shadowing, so an absolute gadget path is
+/// accepted.
+fn validate_generic_field(field: &Ident, struct_ident: &Ident, gadget: &Type) -> Result<()> {
+    if *field == struct_ident.unraw() {
+        return Err(Error::new(
+            field.span(),
+            "the `data` type parameter collides with the struct name; rename one of them",
+        ));
+    }
+
+    if let Type::Path(path) = gadget
+        && path.qself.is_none()
+        && path.path.leading_colon.is_none()
+        && path
+            .path
+            .segments
+            .first()
+            .is_some_and(|segment| segment.ident == *field)
+    {
+        return Err(Error::new(
+            field.span(),
+            "the `data` type parameter shadows the gadget path inside the generated impl; \
+             rename the parameter (for example, `F`), refer to the gadget by an absolute path, \
+             or add `field = ...` if the data type is concrete",
+        ));
+    }
+
+    Ok(())
 }
 
 /// The parsed `#[header(...)]` attribute arguments.
@@ -398,6 +428,35 @@ mod tests {
 
         let err = parse_attr_err(quote!(data = F, gadget = Element, alloc = indirect));
         assert!(err.contains("unknown `alloc` mode"));
+    }
+
+    #[test]
+    fn generic_field_shadowing_is_rejected() {
+        let strukt: Ident = parse_quote!(LeafNode);
+
+        let field: Ident = parse_quote!(F);
+        assert!(validate_generic_field(&field, &strukt, &parse_quote!(Element)).is_ok());
+        // Intentional field-parameter references inside gadget arguments stay
+        // allowed.
+        assert!(validate_generic_field(&field, &strukt, &parse_quote!(Point<F>)).is_ok());
+
+        let field: Ident = parse_quote!(Element);
+        let err = validate_generic_field(&field, &strukt, &parse_quote!(Element))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("shadows the gadget path"));
+
+        // Absolute paths cannot be shadowed by a generic parameter.
+        assert!(
+            validate_generic_field(&field, &strukt, &parse_quote!(::ragu_primitives::Element))
+                .is_ok()
+        );
+
+        let field: Ident = parse_quote!(LeafNode);
+        let err = validate_generic_field(&field, &strukt, &parse_quote!(Element))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("collides with the struct name"));
     }
 
     #[test]

@@ -223,7 +223,7 @@ pub fn evaluate(attr: ApplicationAttr, input: ItemEnum) -> Result<TokenStream> {
     let prelude = quote!(#app::__macro_internal);
 
     let header_impls = generate_header_impls(&headers, &app, &prelude, &generics);
-    let header_alias_assertions = generate_header_alias_assertions(&variants);
+    let header_alias_assertions = generate_header_alias_assertions(&variants, &generics);
     let step_impls = generate_step_impls(&variants, &app, &prelude, &generics);
     let wrapper = generate_wrapper(
         attrs, vis, enum_ident, &attr, &variants, &headers, &app, &prelude, &generics,
@@ -479,6 +479,13 @@ struct MacroGenerics {
     driver: Ident,
     /// The `__A: Allocator` parameter of generated `encode` methods.
     allocator: Ident,
+    /// The block-local `__RaguSameHeaderType` trait of alias assertions. It
+    /// shadows any same-named module item at the assertion's use of the
+    /// caller's header types, so it is freshened like a generic parameter.
+    same_header_trait: Ident,
+    /// Every identifier the caller wrote, kept for freshening generated names
+    /// that are derived later (the wrapper's marker traits).
+    occupied: BTreeSet<String>,
 }
 
 impl MacroGenerics {
@@ -509,6 +516,8 @@ impl MacroGenerics {
             field: fresh_ident("__F", &occupied, Span::call_site()),
             driver: fresh_ident("__D", &occupied, Span::call_site()),
             allocator: fresh_ident("__A", &occupied, Span::call_site()),
+            same_header_trait: fresh_ident("__RaguSameHeaderType", &occupied, Span::call_site()),
+            occupied,
         }
     }
 }
@@ -542,7 +551,11 @@ fn collect_unique_headers(variants: &[ParsedVariant]) -> Vec<Type> {
 /// semantic type resolution (including aliases), which a proc macro cannot do
 /// from tokens. Unlike assignment or function-return coercion, this rejects
 /// distinct types connected by a coercion.
-fn generate_header_alias_assertions(variants: &[ParsedVariant]) -> TokenStream {
+fn generate_header_alias_assertions(
+    variants: &[ParsedVariant],
+    generics: &MacroGenerics,
+) -> TokenStream {
+    let same_header_trait = &generics.same_header_trait;
     let assertions = variants.iter().filter_map(|variant| {
         if !variant.has_explicit_canonical {
             return None;
@@ -552,12 +565,12 @@ fn generate_header_alias_assertions(variants: &[ParsedVariant]) -> TokenStream {
         let header = &variant.header;
         Some(quote! {
             const _: () = {
-                trait __RaguSameHeaderType<__T> {}
-                impl<__T> __RaguSameHeaderType<__T> for __T {}
+                trait #same_header_trait<__T> {}
+                impl<__T> #same_header_trait<__T> for __T {}
 
                 fn __ragu_assert_same_header_type<__Output, __Header>()
                 where
-                    __Output: __RaguSameHeaderType<__Header>,
+                    __Output: #same_header_trait<__Header>,
                 {}
 
                 let _ = __ragu_assert_same_header_type::<#output, #header>;
@@ -839,10 +852,21 @@ fn generate_wrapper(
 
     // Private marker traits make the generated wrapper a closed application
     // boundary. Downstream crates cannot implement these traits for a foreign
-    // step/header that happens to reuse the same INDEX/SUFFIX values.
+    // step/header that happens to reuse the same INDEX/SUFFIX values. Their
+    // names are freshened so a declared header type cannot spell them; other
+    // module items can still collide, which rustc reports as a duplicate
+    // definition.
     let marker_stem = enum_ident.unraw();
-    let step_marker = format_ident!("__RaguApplicationStepFor{}", marker_stem);
-    let header_marker = format_ident!("__RaguApplicationHeaderFor{}", marker_stem);
+    let step_marker = fresh_ident(
+        &format_ident!("__RaguApplicationStepFor{}", marker_stem).to_string(),
+        &generics.occupied,
+        Span::call_site(),
+    );
+    let header_marker = fresh_ident(
+        &format_ident!("__RaguApplicationHeaderFor{}", marker_stem).to_string(),
+        &generics.occupied,
+        Span::call_site(),
+    );
 
     let step_memberships: Vec<_> = variants
         .iter()
@@ -1319,6 +1343,8 @@ mod tests {
             field: Ident::new("__F", Span::call_site()),
             driver: Ident::new("__D", Span::call_site()),
             allocator: Ident::new("__A", Span::call_site()),
+            same_header_trait: Ident::new("__RaguSameHeaderType", Span::call_site()),
+            occupied: BTreeSet::new(),
         }
     }
 
@@ -1344,6 +1370,48 @@ mod tests {
         let generics = MacroGenerics::fresh(&enum_ident, &attr, &[]);
         assert_eq!(generics.cycle, "C_");
         assert_eq!(generics.rank, "__R");
+
+        // Block-local and name-derived generated items are freshened too: a
+        // header spelled like the assertion trait or a marker trait must not
+        // be shadowed by them.
+        let attr = parse_attr(quote!(header_size = 4)).unwrap();
+        let declarations = [
+            ProducesAttr {
+                output: parse_quote!(__RaguSameHeaderType),
+                canonical: Some(parse_quote!(RealHeader)),
+            },
+            ProducesAttr {
+                output: parse_quote!(__RaguApplicationStepForApp),
+                canonical: None,
+            },
+        ];
+        let enum_ident: Ident = parse_quote!(App);
+        let generics = MacroGenerics::fresh(&enum_ident, &attr, &declarations);
+        assert_eq!(generics.same_header_trait, "__RaguSameHeaderType_");
+        assert!(generics.occupied.contains("__RaguApplicationStepForApp"));
+
+        let variants = vec![parsed_variant(
+            "StepA",
+            parse_quote!(__RaguApplicationStepForApp),
+            parse_quote!(__RaguApplicationStepForApp),
+            false,
+            0,
+        )];
+        let headers = collect_unique_headers(&variants);
+        let wrapper = generate_wrapper(
+            &[],
+            &parse_quote!(pub),
+            &enum_ident,
+            &attr,
+            &variants,
+            &headers,
+            &RaguAppPath::default(),
+            &quote!(::ragu_pcd::app::__macro_internal),
+            &generics,
+        )
+        .to_string()
+        .replace(' ', "");
+        assert!(wrapper.contains("trait__RaguApplicationStepForApp_"));
     }
 
     #[test]
@@ -1370,7 +1438,7 @@ mod tests {
         let header = &headers[0];
         assert_eq!(quote!(#header).to_string(), "LeafNode");
 
-        let assertions = generate_header_alias_assertions(&variants)
+        let assertions = generate_header_alias_assertions(&variants, &test_generics())
             .to_string()
             .replace(' ', "");
         assert!(assertions.contains("trait__RaguSameHeaderType<__T>"));
