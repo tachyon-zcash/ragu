@@ -1,6 +1,6 @@
 //! # `ragu_backend`
 //!
-//! Correctness-first computational backend interfaces for Ragu.
+//! Computational backend interfaces for Ragu.
 
 #![no_std]
 #![deny(missing_docs)]
