@@ -13,6 +13,10 @@ use ragu_arithmetic::CurveAffine;
 /// Every method has a correctness-first default. Implementations may override
 /// individual methods, but must return exactly the same result as the default
 /// implementation for the same inputs.
+///
+/// Backends are currently selected by type and cannot carry per-application
+/// state. If implementations need device handles or caches, Ragu can store the
+/// selected backend as a value while retaining static dispatch.
 pub trait Backend: Send + Sync + 'static {
     /// Computes the multiscalar multiplication
     /// $\langle \mathbf{a}, \mathbf{G} \rangle$.
