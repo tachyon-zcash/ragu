@@ -92,9 +92,9 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: Backend>
     ///
     /// Backend implementations may change how operations are computed, but
     /// must not change protocol semantics or outputs.
-    pub fn with_backend<NewBackend: Backend>(
+    pub fn with_backend<SelectedBackend: Backend>(
         self,
-    ) -> ApplicationBuilder<'params, C, R, HEADER_SIZE, NewBackend> {
+    ) -> ApplicationBuilder<'params, C, R, HEADER_SIZE, SelectedBackend> {
         ApplicationBuilder {
             native_registry: self.native_registry,
             nested_registry: self.nested_registry,
