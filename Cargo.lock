@@ -815,6 +815,10 @@ dependencies = [
 [[package]]
 name = "ragu_acceleration"
 version = "0.0.0"
+dependencies = [
+ "ragu_arithmetic",
+ "ragu_backend",
+]
 
 [[package]]
 name = "ragu_arithmetic"
@@ -835,6 +839,9 @@ dependencies = [
 [[package]]
 name = "ragu_backend"
 version = "0.0.0"
+dependencies = [
+ "ragu_arithmetic",
+]
 
 [[package]]
 name = "ragu_circuits"
@@ -908,6 +915,7 @@ dependencies = [
  "maybe-rayon",
  "proptest",
  "ragu_arithmetic",
+ "ragu_backend",
  "ragu_circuits",
  "ragu_core",
  "ragu_pasta",

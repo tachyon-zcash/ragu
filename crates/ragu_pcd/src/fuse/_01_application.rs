@@ -14,7 +14,9 @@ use crate::{
     step::{Step, internal::adapter::Adapter},
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
+    Application<'_, C, R, HEADER_SIZE, B>
+{
     pub(super) fn compute_application_proof<'source, RNG: CryptoRng, S: Step<C>>(
         &self,
         rng: &mut RNG,

@@ -4,7 +4,9 @@
 
 # `ragu_acceleration`
 
-This crate contains internal implementation code for the [`ragu`](https://crates.io/crates/ragu) crate. **This crate currently is not used in the codebase and the crate name is merely reserved.**
+This crate provides Ragu's accelerated computational backend. It currently
+inherits the correctness-first defaults from `ragu_backend`; optimized
+operations will be introduced individually with reference-equivalence tests.
 
 ## License
 

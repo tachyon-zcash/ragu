@@ -43,7 +43,9 @@ use crate::{
 
 type NativeNumGroups = <native::RevdotParameters as fold_revdot::Parameters>::NumGroups;
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
+    Application<'_, C, R, HEADER_SIZE, B>
+{
     pub(super) fn compute_ab<'dr, D>(
         &self,
         a: FixedVec<TrackedPoly<'_, FoldKey, C::CircuitField, R>, NativeNumGroups>,
@@ -110,7 +112,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 msm.push((coeff, commitment));
             }
 
-            ragu_arithmetic::msm(msm.iter().map(|(c, _)| c), msm.iter().map(|(_, b)| b))
+            B::msm(msm.iter().map(|(c, _)| c), msm.iter().map(|(_, b)| b))
         };
 
         let [a_commitment, b_commitment] =

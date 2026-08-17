@@ -30,7 +30,9 @@ use crate::{
 
 type NativeNumGroups = <native::RevdotParameters as fold_revdot::Parameters>::NumGroups;
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
+    Application<'_, C, R, HEADER_SIZE, B>
+{
     pub(super) fn outer_error_terms<'dr, 'rx, D, RNG: CryptoRng>(
         &self,
         rng: &mut RNG,

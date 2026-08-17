@@ -4,7 +4,8 @@
 
 # `ragu_backend`
 
-This crate contains internal implementation code for the [`ragu`](https://crates.io/crates/ragu) crate. **This crate currently is not used in the codebase and the crate name is merely reserved.**
+This crate defines Ragu's statically dispatched computational backend interface
+and its correctness-first reference implementation.
 
 ## License
 

@@ -65,7 +65,9 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
+    Application<'_, C, R, HEADER_SIZE, B>
+{
     /// Create a trivial (all-zero) proof for testing.
     pub fn test_trivial_proof(&self) -> Proof<C, R> {
         self.trivial_proof()
