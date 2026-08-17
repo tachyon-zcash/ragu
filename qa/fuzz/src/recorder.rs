@@ -24,9 +24,7 @@ use ragu_arithmetic::Coeff;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverTypes, LinearExpression},
-    gadgets::Bound,
     maybe::Always,
-    routines::Routine,
 };
 use ragu_primitives::allocator::Allocator;
 
@@ -184,14 +182,6 @@ impl<'dr, F: Field> Driver<'dr> for Recorder<F> {
         self.events.push(Event::Enforce { terms: built.terms });
         Ok(())
     }
-
-    fn routine<R: Routine<F> + 'dr>(
-        &mut self,
-        _routine: R,
-        _input: Bound<'dr, Self, R::Input>,
-    ) -> Result<Bound<'dr, Self, R::Output>> {
-        unreachable!("the recorder does not support routines yet (issue #793)")
-    }
 }
 
 /// The unit allocator with bookkeeping: each `alloc` emits an `a · 0 = 0`
@@ -348,14 +338,6 @@ impl<'dr, F: Field> Driver<'dr> for Playback<F> {
             self.ok = false;
         }
         Ok(())
-    }
-
-    fn routine<R: Routine<F> + 'dr>(
-        &mut self,
-        _routine: R,
-        _input: Bound<'dr, Self, R::Input>,
-    ) -> Result<Bound<'dr, Self, R::Output>> {
-        unreachable!("the recorder does not support routines yet (issue #793)")
     }
 }
 
@@ -892,6 +874,79 @@ pub fn selftest<F: PrimeField>() {
 mod tests {
     use super::*;
     use pasta_curves::{Fp, Fq};
+    use ragu_core::{
+        drivers::DriverValue,
+        gadgets::{Bound, Kind},
+        maybe::Maybe,
+        routines::{Prediction, Routine},
+    };
+    use ragu_primitives::Element;
+
+    /// A small routine whose emitted linear relation is visible to both the
+    /// recorder and playback drivers.
+    #[derive(Clone)]
+    struct ScaleByThreeRoutine;
+
+    impl Routine<Fp> for ScaleByThreeRoutine {
+        type Input = Kind![Fp; Element<'_, _>];
+        type Output = Kind![Fp; Element<'_, _>];
+        type Aux<'dr> = Fp;
+
+        fn execute<'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            input: Bound<'dr, D, Self::Input>,
+            aux: DriverValue<D, Self::Aux<'dr>>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            let output = Element::alloc(dr, &mut (), aux)?;
+            let expected = input.scale(dr, Coeff::Arbitrary(Fp::from(3u64)));
+            dr.enforce_zero(|lc| lc.add(expected.wire()).sub(output.wire()))?;
+            Ok(output)
+        }
+
+        fn predict<'dr, D: Driver<'dr, F = Fp, Wire = ()>>(
+            &self,
+            _dr: &mut D,
+            input: &Bound<'dr, D, Self::Input>,
+        ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>>
+        {
+            Ok(Prediction::Unknown(
+                input.value().map(|value| *value * Fp::from(3u64)),
+            ))
+        }
+    }
+
+    fn replay_routine(values: Vec<Fp>) -> Result<bool> {
+        let mut playback = Playback::new(values);
+        let input = Element::alloc(
+            &mut playback,
+            &mut (),
+            Playback::<Fp>::just(|| Fp::from(7u64)),
+        )?;
+        playback.routine(ScaleByThreeRoutine, input)?;
+        Ok(playback.accepts())
+    }
+
+    #[test]
+    fn routines_are_recorded_and_played_back() -> Result<()> {
+        let mut recorder = Recorder::<Fp>::new();
+        let input = Element::alloc(
+            &mut recorder,
+            &mut TrackingAllocator::default(),
+            Recorder::<Fp>::just(|| Fp::from(7u64)),
+        )?;
+        let output = recorder.routine(ScaleByThreeRoutine, input)?;
+        let output_wire = *output.wire();
+
+        assert!(constraints_hold(&recorder.events, &recorder.values));
+        assert!(replay_routine(recorder.values.clone())?);
+
+        let mut corrupted = recorder.values;
+        corrupted[output_wire] += Fp::ONE;
+        assert!(!replay_routine(corrupted)?);
+
+        Ok(())
+    }
 
     /// Builds the circuit that the continuous-fuzzing crashes minimised down
     /// to, and returns whether [`repair`] finds the satisfying witness.
