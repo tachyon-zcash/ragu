@@ -51,8 +51,9 @@ pub trait Processor<Rx> {
     ) -> Result<()>;
 }
 
-impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx sparse::Polynomial<F, R>>
-    for Builder<'m, 'rx, Cow<'rx, sparse::Polynomial<F, R>>, F, R>
+impl<'m, 'rx, F: PrimeField, R: Rank, B: ragu_backend::Backend>
+    Processor<&'rx sparse::Polynomial<F, R>>
+    for Builder<'m, 'rx, Cow<'rx, sparse::Polynomial<F, R>>, F, R, B>
 {
     fn internal_circuit_claim(
         &mut self,

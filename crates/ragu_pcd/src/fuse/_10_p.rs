@@ -59,7 +59,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
         f: &NativeF<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,

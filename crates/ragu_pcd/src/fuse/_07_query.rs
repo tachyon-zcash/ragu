@@ -29,7 +29,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
         registry_wy: &RegistryWy<C, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<native::stages::query::Witness<C>>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -39,7 +39,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
         let y = *y.value().take();
         let xz = x * *z.value().take();
 
-        let registry_xy_poly = self.native_registry.xy(x, y);
+        let registry_xy_poly = B::registry_xy(&self.native_registry, x, y);
 
         let query_witness = native::stages::query::Witness {
             // TODO: these can all be evaluated at the same time; in fact,

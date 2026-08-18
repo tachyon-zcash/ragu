@@ -19,7 +19,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
         native_registry: &RegistryAt<'_, C::CircuitField, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<NativeSPrime<C, R>> {
         let native = self.compute_native_s_prime(native_registry, left, right)?;
         self.compute_bridge_s_prime(rng, &native, builder)?;
@@ -30,7 +30,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
         &self,
         rng: &mut RNG,
         native: &NativeSPrime<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         let bridge_rx = nested::stages::s_prime::Stage::<C::HostCurve, R>::rx(
             C::ScalarField::random(&mut *rng),
@@ -40,7 +40,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
                 stashed_preamble: builder.native_preamble_commitment(),
             },
         )?;
-        let bridge_commitment = bridge_rx.commit_to_affine(C::nested_generators(self.params));
+        let bridge_commitment =
+            B::sparse_commit_to_affine(&bridge_rx, C::nested_generators(self.params));
         builder.set_bridge_s_prime_rx(bridge_rx, bridge_commitment);
         Ok(())
     }
@@ -54,13 +55,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
         let x0 = left.x();
         let x1 = right.x();
 
-        let registry_wx0_poly = native_registry.x(x0);
-        let registry_wx1_poly = native_registry.x(x1);
+        let registry_wx0_poly = B::registry_at_x(native_registry, x0);
+        let registry_wx1_poly = B::registry_at_x(native_registry, x1);
         let host_gen = C::host_generators(self.params);
         let [registry_wx0_commitment, registry_wx1_commitment] =
             ragu_arithmetic::batch_to_affine([
-                registry_wx0_poly.commit(host_gen),
-                registry_wx1_poly.commit(host_gen),
+                B::sparse_commit(&registry_wx0_poly, host_gen),
+                B::sparse_commit(&registry_wx1_poly, host_gen),
             ]);
 
         Ok(NativeSPrime {

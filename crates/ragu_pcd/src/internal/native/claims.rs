@@ -99,8 +99,9 @@ pub trait Processor<Rx, AppCircuitId> {
     ) -> Result<()>;
 }
 
-impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx sparse::Polynomial<F, R>, CircuitIndex>
-    for Builder<'m, 'rx, Cow<'rx, sparse::Polynomial<F, R>>, F, R>
+impl<'m, 'rx, F: PrimeField, R: Rank, B: ragu_backend::Backend>
+    Processor<&'rx sparse::Polynomial<F, R>, CircuitIndex>
+    for Builder<'m, 'rx, Cow<'rx, sparse::Polynomial<F, R>>, F, R, B>
 {
     fn raw_claim(&mut self, a: &'rx sparse::Polynomial<F, R>, b: &'rx sparse::Polynomial<F, R>) {
         self.a.push(Cow::Borrowed(a));

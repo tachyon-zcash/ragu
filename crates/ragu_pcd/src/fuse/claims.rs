@@ -219,8 +219,8 @@ impl<'rx, C: Cycle, R: Rank> Source for FuseProofSource<'rx, C, R> {
 
 /// [`Builder`] specialized for the fuse pipeline, where `A`
 /// polynomials carry [`CommitmentDecomposition`]s via [`TrackedPoly`].
-pub(super) type FuseBuilder<'m, 'rx, F, R> =
-    Builder<'m, 'rx, TrackedPoly<'rx, FoldKey, F, R>, F, R>;
+pub(super) type FuseBuilder<'m, 'rx, F, R, B> =
+    Builder<'m, 'rx, TrackedPoly<'rx, FoldKey, F, R>, F, R, B>;
 
 /// Fuse-path [`Processor`] implementation.
 ///
@@ -228,8 +228,9 @@ pub(super) type FuseBuilder<'m, 'rx, F, R> =
 /// records how it decomposes as a linear combination of child-proof
 /// polynomials (and therefore their commitments). The decomposition is
 /// consumed in `_06_ab` to compute `a_commitment` via MSM.
-impl<'m, 'rx, F: PrimeField, R: Rank> Processor<Atom<'rx, FoldKey, F, R>, CircuitIndex>
-    for Builder<'m, 'rx, TrackedPoly<'rx, FoldKey, F, R>, F, R>
+impl<'m, 'rx, F: PrimeField, R: Rank, B: ragu_backend::Backend>
+    Processor<Atom<'rx, FoldKey, F, R>, CircuitIndex>
+    for Builder<'m, 'rx, TrackedPoly<'rx, FoldKey, F, R>, F, R, B>
 {
     fn raw_claim(&mut self, a: Atom<'rx, FoldKey, F, R>, b: Atom<'rx, FoldKey, F, R>) {
         self.a

@@ -217,3 +217,52 @@ pub trait PoseidonPermutation<F: Field>: Send + Sync + 'static {
     /// matrix](https://en.wikipedia.org/wiki/MDS_matrix) for this permutation.
     fn mds_matrix(&self) -> impl ExactSizeIterator<Item = &[F]>;
 }
+
+/// Applies a Poseidon permutation directly to a native field-element state.
+///
+/// This is the correctness-first counterpart of the circuit implementation in
+/// `ragu_primitives`. It uses the same round constants, S-box, and MDS matrix,
+/// but emits no circuit constraints.
+///
+/// # Panics
+///
+/// Panics if `state` or any parameter row has the wrong width, if there are
+/// fewer round-constant rows than rounds, or if the S-box exponent is not 5.
+pub fn poseidon_permute<F: Field, P: PoseidonPermutation<F>>(params: &P, state: &mut [F]) {
+    assert_eq!(state.len(), P::T, "Poseidon state width mismatch");
+    assert_eq!(P::ALPHA, 5, "only alpha = 5 is supported");
+
+    let mut round_constants = params.round_constants();
+    let mut scratch = alloc::vec::Vec::with_capacity(P::T);
+
+    for sbox_width in core::iter::repeat_n(P::T, P::FULL_ROUNDS / 2)
+        .chain(core::iter::repeat_n(1, P::PARTIAL_ROUNDS))
+        .chain(core::iter::repeat_n(P::T, P::FULL_ROUNDS / 2))
+    {
+        let constants = round_constants
+            .next()
+            .expect("round constants match total round count");
+        assert_eq!(constants.len(), P::T, "round-constant width mismatch");
+        for (value, constant) in state.iter_mut().zip(constants) {
+            *value += *constant;
+        }
+
+        for value in &mut state[..sbox_width] {
+            *value = value.square().square() * *value;
+        }
+
+        scratch.clear();
+        for row in params.mds_matrix() {
+            assert_eq!(row.len(), P::T, "MDS row width mismatch");
+            scratch.push(
+                state
+                    .iter()
+                    .zip(row)
+                    .map(|(value, coefficient)| *value * *coefficient)
+                    .sum(),
+            );
+        }
+        assert_eq!(scratch.len(), P::T, "MDS matrix height mismatch");
+        state.copy_from_slice(&scratch);
+    }
+}

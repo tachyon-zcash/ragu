@@ -17,9 +17,10 @@
 //! and to aggregate them across proof components.
 
 use alloc::{borrow::Cow, vec::Vec};
-use core::borrow::Borrow;
+use core::{borrow::Borrow, marker::PhantomData};
 
 use ragu_arithmetic::ff::{Field, PrimeField};
+use ragu_backend::Backend;
 use ragu_circuits::{
     polynomials::{Rank, sparse},
     registry::{CircuitIndex, Registry},
@@ -80,7 +81,7 @@ pub trait Source {
 /// - Verify path: `A = Cow<'rx, Polynomial>` (plain polynomial references)
 /// - Fuse path: `A = TrackedPoly<'rx, FoldKey, F, R>` (polynomial +
 ///   commitment decomposition; see `fuse::claims`)
-pub struct Builder<'m, 'rx, A, F: PrimeField, R: Rank> {
+pub struct Builder<'m, 'rx, A, F: PrimeField, R: Rank, B: Backend> {
     pub registry: &'m Registry<'m, F, R>,
     pub y: F,
     pub z: F,
@@ -89,9 +90,10 @@ pub struct Builder<'m, 'rx, A, F: PrimeField, R: Rank> {
     pub a: Vec<A>,
     /// The accumulated `b` polynomials for revdot claims.
     pub b: Vec<Cow<'rx, sparse::Polynomial<F, R>>>,
+    backend: PhantomData<B>,
 }
 
-impl<'m, 'rx, A, F: PrimeField, R: Rank> Builder<'m, 'rx, A, F, R>
+impl<'m, 'rx, A, F: PrimeField, R: Rank, B: Backend> Builder<'m, 'rx, A, F, R, B>
 where
     A: Borrow<sparse::Polynomial<F, R>>,
 {
@@ -104,13 +106,14 @@ where
             tz: R::tz(z),
             a: Vec::new(),
             b: Vec::new(),
+            backend: PhantomData,
         }
     }
 
     /// Push a circuit claim. Computes `b` from `a.borrow()` (the polynomial).
     pub fn circuit_impl(&mut self, circuit_id: CircuitIndex, a: A) {
         let rx = a.borrow();
-        let sy = self.registry.circuit_y(circuit_id, self.y);
+        let sy = B::registry_circuit_y(self.registry, circuit_id, self.y);
         let mut b = rx.clone();
         b.dilate(self.z);
         b.add_assign(&sy);
@@ -122,7 +125,7 @@ where
     /// Push a bonding claim. There is no dilation and no $t(z)$, so
     /// $b = s\_{y}$ and $k(y) = 0$.
     pub fn bonding_impl(&mut self, circuit_id: CircuitIndex, a: A) {
-        let sy = self.registry.circuit_y(circuit_id, self.y);
+        let sy = B::registry_circuit_y(self.registry, circuit_id, self.y);
         self.a.push(a);
         self.b.push(Cow::Owned(sy));
     }

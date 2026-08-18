@@ -43,7 +43,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
         alpha: &Element<'dr, D>,
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
     ) -> Result<NativeF<C, R>>
@@ -74,7 +74,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
         &self,
         rng: &mut RNG,
         native: &NativeF<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         let bridge_rx = nested::stages::f::Stage::<C::HostCurve, R>::rx(
             C::ScalarField::random(&mut *rng),
@@ -82,7 +82,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
                 native_f: native.commitment,
             },
         )?;
-        let bridge_commitment = bridge_rx.commit_to_affine(C::nested_generators(self.params));
+        let bridge_commitment =
+            B::sparse_commit_to_affine(&bridge_rx, C::nested_generators(self.params));
         builder.set_bridge_f_rx(bridge_rx, bridge_commitment);
         Ok(())
     }
@@ -96,7 +97,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
         alpha: &Element<'dr, D>,
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
-        builder: &ProofBuilder<'_, C, R>,
+        builder: &ProofBuilder<'_, C, R, B>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
     ) -> Result<NativeF<C, R>>
@@ -196,7 +197,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
         coeffs.reverse();
 
         let poly = sparse::Polynomial::from_coeffs(coeffs);
-        let commitment = poly.commit_to_affine(C::host_generators(self.params));
+        let commitment = B::sparse_commit_to_affine(&poly, C::host_generators(self.params));
 
         Ok(NativeF { poly, commitment })
     }

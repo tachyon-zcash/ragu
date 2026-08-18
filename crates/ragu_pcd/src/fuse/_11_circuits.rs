@@ -19,7 +19,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
         inner_error_witness: &native::stages::inner_error::Witness<C, native::RevdotParameters>,
         query_witness: &native::stages::query::Witness<C>,
         eval_witness: &native::stages::eval::Witness<C::CircuitField>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         let unified = native::unified::Instance {
             bridge_preamble_commitment: builder.bridge_preamble_commitment(),
@@ -33,7 +33,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
             bridge_outer_error_commitment: builder.bridge_outer_error_commitment()?,
             mu_prime: builder.mu_prime(),
             nu_prime: builder.nu_prime(),
-            c: builder.c::<B>(),
+            c: builder.c(),
             bridge_ab_commitment: builder.bridge_ab_commitment()?,
             x: builder.x(),
             bridge_query_commitment: builder.bridge_query_commitment()?,
@@ -42,7 +42,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
             u: builder.u(),
             bridge_eval_commitment: builder.bridge_eval_commitment()?,
             pre_beta: builder.pre_beta(),
-            v: builder.v::<B>(),
+            v: builder.v(),
             coverage: Default::default(),
         };
 

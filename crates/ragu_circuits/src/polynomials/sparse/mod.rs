@@ -212,6 +212,19 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
         }
     }
 
+    /// Iterates over coefficients physically stored by this sparse
+    /// representation, paired with their degree indices.
+    ///
+    /// The iterator may include zero coefficients retained inside short gaps,
+    /// but never yields coefficients from implicit gaps between blocks.
+    pub fn iter_stored_coeffs(&self) -> impl Iterator<Item = (usize, &F)> + Clone + Sync {
+        self.blocks.iter().flat_map(|(start, data)| {
+            data.iter()
+                .enumerate()
+                .map(move |(offset, coefficient)| (*start + offset, coefficient))
+        })
+    }
+
     /// Merges another polynomial into this one using the given binary
     /// operation, pruning all-zero blocks from the result.
     fn combine_assign(&mut self, other: &Self, mut op: impl FnMut(&mut F, &F)) {

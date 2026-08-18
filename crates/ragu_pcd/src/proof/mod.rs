@@ -291,11 +291,20 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 
     /// Returns the revdot product $c = \text{revdot}(A, B)$.
+    ///
+    /// This is used while allocating canonical circuit witnesses. The
+    /// backend-selected prover path computes the same value through
+    /// [`ProofBuilder`]; keeping this path canonical
+    /// prevents circuit synthesis from depending on the selected backend.
     pub(crate) fn c(&self) -> C::CircuitField {
         self.native_a_poly.revdot(&self.native_b_poly)
     }
 
     /// Returns the evaluation $v = p(u)$.
+    ///
+    /// As with [`Self::c`], this canonical implementation is retained for
+    /// circuit witness allocation while prover-side computation is dispatched
+    /// through the selected backend.
     pub(crate) fn v(&self) -> C::CircuitField {
         self.native_p_poly.eval(self.u)
     }
@@ -464,7 +473,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
         points: &[C::HostCurve],
         endoscalar_alpha: C::ScalarField,
         points_alpha: C::ScalarField,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<C::HostCurve> {
         assert_eq!(points.len(), NUM_ENDOSCALING_POINTS);
 
@@ -520,14 +529,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
             view.d.push(C::CircuitField::ONE);
             view.build()
         };
-        let host_commitment = ones_host.commit_to_affine(C::host_generators(self.params));
+        let host_commitment =
+            B::sparse_commit_to_affine(&ones_host, C::host_generators(self.params));
 
         // registry_xy must be the actual registry evaluation (fuse cross-checks it).
-        let registry_xy_poly = self
-            .native_registry
-            .xy(C::CircuitField::ONE, C::CircuitField::ONE);
+        let registry_xy_poly = B::registry_xy(
+            &self.native_registry,
+            C::CircuitField::ONE,
+            C::CircuitField::ONE,
+        );
 
-        let mut builder = ProofBuilder::new(self.params, C::ScalarField::ONE);
+        let mut builder = ProofBuilder::<C, R, B>::new(self.params, C::ScalarField::ONE);
 
         builder.set_circuit_id(CircuitIndex::new(0));
         builder.set_left_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
@@ -570,7 +582,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
                 },
             )
             .expect("trivial s_prime rx");
-            let commitment = rx.commit_to_affine(nested_gen);
+            let commitment = B::sparse_commit_to_affine(&rx, nested_gen);
             builder.set_bridge_s_prime_rx(rx, commitment);
         }
         {
@@ -582,7 +594,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
                 },
             )
             .expect("trivial inner_error rx");
-            let commitment = rx.commit_to_affine(nested_gen);
+            let commitment = B::sparse_commit_to_affine(&rx, nested_gen);
             builder.set_bridge_inner_error_rx(rx, commitment);
         }
         {
@@ -593,7 +605,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
                 },
             )
             .expect("trivial f rx");
-            let commitment = rx.commit_to_affine(nested_gen);
+            let commitment = B::sparse_commit_to_affine(&rx, nested_gen);
             builder.set_bridge_f_rx(rx, commitment);
         }
 
@@ -675,7 +687,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
                 },
             )
             .expect("trivial preamble rx");
-            let commitment = rx.commit_to_affine(nested_gen);
+            let commitment = B::sparse_commit_to_affine(&rx, nested_gen);
             builder.set_bridge_preamble_rx(rx, commitment);
         }
 

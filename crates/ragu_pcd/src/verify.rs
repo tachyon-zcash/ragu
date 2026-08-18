@@ -84,7 +84,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
 
         // Build a and b polynomials for each revdot claim.
         let source = native::SingleProofSource { proof: pcd.proof() };
-        let mut builder = claims::Builder::new(&self.native_registry, y, z);
+        let mut builder =
+            claims::Builder::<_, C::CircuitField, R, B>::new(&self.native_registry, y, z);
         native_claims::build(&source, &mut builder)?;
 
         // Check all native revdot claims.
@@ -113,8 +114,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
             let nested_source = nested::SingleProofSource { proof: pcd.proof() };
             let y_nested = C::ScalarField::random(&mut rng);
             let z_nested = C::ScalarField::random(&mut rng);
-            let mut nested_builder =
-                claims::Builder::new(&self.nested_registry, y_nested, z_nested);
+            let mut nested_builder = claims::Builder::<_, C::ScalarField, R, B>::new(
+                &self.nested_registry,
+                y_nested,
+                z_nested,
+            );
             nested_claims::build(&nested_source, &mut nested_builder)?;
 
             let ky_source = nested::SingleProofKySource::<C::ScalarField>::new();
@@ -129,7 +133,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
             let x = pcd.proof().x();
             let y = pcd.proof().y();
             let poly_eval = B::sparse_eval(pcd.proof().native_registry_xy_poly(), w);
-            let expected = self.native_registry.wxy(w, x, y);
+            let expected = B::registry_wxy(&self.native_registry, w, x, y);
             poly_eval == expected
         };
 

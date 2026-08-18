@@ -23,7 +23,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
         right: &Proof<C, R>,
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<native::stages::eval::Witness<C::CircuitField>>
     where
         D: Driver<'dr, F = C::CircuitField>,

@@ -7,9 +7,10 @@
 //! native commitments already on the builder.
 
 use alloc::{sync::Arc, vec::Vec};
-use core::cell::OnceCell;
+use core::{cell::OnceCell, marker::PhantomData};
 
 use ragu_arithmetic::{Cycle, ff::Field};
+use ragu_backend::Backend;
 use ragu_circuits::{
     polynomials::{Rank, sparse},
     registry::CircuitIndex,
@@ -48,10 +49,12 @@ macro_rules! lazy_commitment {
     (@impl $getter:ident, $cache:ident, $poly:ident, $curve:ty, $gen:path) => {
         pub(crate) fn $getter(&self) -> $curve {
             *self.$cache.get_or_init(|| {
-                self.$poly
-                    .as_ref()
-                    .expect(concat!(stringify!($poly), " not set"))
-                    .commit_to_affine($gen(self.params))
+                B::sparse_commit_to_affine(
+                    self.$poly
+                        .as_ref()
+                        .expect(concat!(stringify!($poly), " not set")),
+                    $gen(self.params),
+                )
             })
         }
     };
@@ -195,7 +198,7 @@ macro_rules! cached_bridge {
         pub(crate) fn $commitment(&self) -> Result<C::NestedCurve> {
             let rx = self.$rx()?;
             Ok(*self.$commitment.get_or_init(|| {
-                rx.commit_to_affine(C::nested_generators(self.params))
+                B::sparse_commit_to_affine(rx, C::nested_generators(self.params))
             }))
         }
     };
@@ -206,8 +209,9 @@ macro_rules! cached_bridge {
 /// Native commitment caches are computed lazily from polynomials on first
 /// access. Special commitments (`a`, `b`, `p`) must be provided explicitly
 /// because they are computed via non-standard techniques.
-pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
+pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     params: &'params C::Params,
+    _backend: PhantomData<B>,
 
     /// Shared alpha source for the four cached bridge commitments.
     bridge_alpha: C::ScalarField,
@@ -304,12 +308,13 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     child_right_stage_rx: Option<super::ChildStageRx<C::ScalarField, R>>,
 }
 
-impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
+impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
     /// Create a new empty builder with the given `bridge_alpha` source for
     /// deriving cached bridge polynomial alphas.
     pub(crate) fn new(params: &'params C::Params, bridge_alpha: C::ScalarField) -> Self {
         Self {
             params,
+            _backend: PhantomData,
             bridge_alpha,
             circuit_id: None,
             left_header: None,
@@ -602,7 +607,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
                 .as_ref()
                 .expect("nested_endoscaling_step_rxs not set")
                 .iter()
-                .map(|rx| rx.commit_to_affine(nested_gen))
+                .map(|rx| B::sparse_commit_to_affine(rx, nested_gen))
                 .collect()
         })
     }
@@ -656,12 +661,12 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     getter!(pre_beta, pre_beta, C::CircuitField);
 
     /// Returns the revdot product $c = \text{revdot}(A, B)$.
-    pub(crate) fn c<B: ragu_backend::Backend>(&self) -> C::CircuitField {
+    pub(crate) fn c(&self) -> C::CircuitField {
         B::sparse_revdot(self.native_a_poly(), self.native_b_poly())
     }
 
     /// Returns the evaluation $v = p(u)$.
-    pub(crate) fn v<B: ragu_backend::Backend>(&self) -> C::CircuitField {
+    pub(crate) fn v(&self) -> C::CircuitField {
         B::sparse_eval(self.native_p_poly(), self.u())
     }
 

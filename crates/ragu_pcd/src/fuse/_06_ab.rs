@@ -53,7 +53,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
         source: &FuseProofSource<'_, C, R>,
         mu_prime: &Element<'dr, D>,
         nu_prime: &Element<'dr, D>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -70,7 +70,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
         source: &FuseProofSource<'_, C, R>,
         mu_prime: &Element<'dr, D>,
         nu_prime: &Element<'dr, D>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -115,8 +115,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
             B::msm(msm.iter().map(|(c, _)| c), msm.iter().map(|(_, b)| b))
         };
 
-        let [a_commitment, b_commitment] =
-            ragu_arithmetic::batch_to_affine([a_commitment_proj, b_poly.commit(host_gen)]);
+        let [a_commitment, b_commitment] = ragu_arithmetic::batch_to_affine([
+            a_commitment_proj,
+            B::sparse_commit(&b_poly, host_gen),
+        ]);
 
         builder.set_native_a_poly(a_poly, a_commitment);
         builder.set_native_b_poly(b_poly, b_commitment);
