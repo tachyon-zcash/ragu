@@ -10,8 +10,10 @@ use ragu_arithmetic::{
     CurveAffine, DeferredField, FixedGenerators, PoseidonPermutation,
     ff::{Field, PrimeField},
 };
-use ragu_circuits::polynomials::{Rank, sparse};
-use ragu_circuits::registry::{CircuitIndex, Registry, RegistryAt};
+use ragu_circuits::{
+    polynomials::{Rank, sparse},
+    registry::{CircuitIndex, Registry, RegistryAt},
+};
 
 /// A statically dispatched implementation of Ragu's computational operations.
 ///
