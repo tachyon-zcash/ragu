@@ -9,14 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added static computational-backend selection, defaulting to
+- Added sealed, static computational-backend selection between Ragu's reference
+  and accelerated implementations, defaulting to
   `ragu_backend::ReferenceBackend`.
 
 ### Changed
 
 - Routed sparse polynomial evaluation, reverse-dot computations, registry
   evaluation, polynomial commitments, and native Poseidon through the selected
-  backend.
+  backend across proving, native-witness, and verification paths.
 
 ## [0.0.0] - 2025-11-05
 

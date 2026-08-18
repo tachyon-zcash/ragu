@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ragu_arithmetic::{
-    CurveAffine, Cycle, DeferredField, FixedGenerators, PoseidonPermutation,
+    CurveAffine, DeferredField, FixedGenerators, PoseidonPermutation,
     ff::{Field, PrimeField},
 };
 use ragu_backend::{Backend, ReferenceBackend};
@@ -10,10 +10,10 @@ use ragu_circuits::{
     registry::{CircuitIndex, Registry, RegistryAt},
 };
 use ragu_core::Result;
-use ragu_pasta::{Fp, Pasta};
-use ragu_pcd::ApplicationBuilder;
-use ragu_testing::pcd::nontrivial::{Hash2, WitnessLeaf};
+use ragu_pasta::Pasta;
 use rand::{SeedableRng, rngs::StdRng};
+
+use crate::{ApplicationBuilder, step::internal::trivial::Trivial};
 
 static MSM_CALLS: AtomicUsize = AtomicUsize::new(0);
 static SPARSE_EVAL_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -25,7 +25,7 @@ static REGISTRY_AT_CALLS: AtomicUsize = AtomicUsize::new(0);
 static REGISTRY_WXY_CALLS: AtomicUsize = AtomicUsize::new(0);
 static POSEIDON_CALLS: AtomicUsize = AtomicUsize::new(0);
 
-struct TrackingBackend;
+pub(crate) struct TrackingBackend;
 
 impl Backend for TrackingBackend {
     fn sparse_eval<F: Field, R: Rank>(poly: &sparse::Polynomial<F, R>, point: F) -> F {
@@ -111,7 +111,7 @@ impl Backend for TrackingBackend {
 }
 
 #[test]
-fn various_merging_operations() -> Result<()> {
+fn selected_backend_dispatches_across_proving_and_verification() -> Result<()> {
     MSM_CALLS.store(0, Ordering::SeqCst);
     SPARSE_EVAL_CALLS.store(0, Ordering::SeqCst);
     SPARSE_REVDOT_CALLS.store(0, Ordering::SeqCst);
@@ -125,23 +125,12 @@ fn various_merging_operations() -> Result<()> {
     let pasta = Pasta::baked();
     let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
         .with_backend::<TrackingBackend>()
-        .register(WitnessLeaf {
-            poseidon_params: Pasta::circuit_poseidon(pasta),
-        })?
-        .register(Hash2 {
-            poseidon_params: Pasta::circuit_poseidon(pasta),
-        })?
+        .register_dummy_circuits(2)?
         .finalize(pasta)?;
 
     let mut rng = StdRng::seed_from_u64(1234);
 
-    let (leaf1, _) = app.seed(
-        &mut rng,
-        WitnessLeaf {
-            poseidon_params: Pasta::circuit_poseidon(pasta),
-        },
-        Fp::from(42u64),
-    )?;
+    let (leaf1, _) = app.seed(&mut rng, Trivial::new(), ())?;
     assert!(
         MSM_CALLS.load(Ordering::SeqCst) > 0,
         "selected backend MSM was not called"
@@ -156,24 +145,10 @@ fn various_merging_operations() -> Result<()> {
         "selected backend sparse revdot was not called"
     );
 
-    let (leaf2, _) = app.seed(
-        &mut rng,
-        WitnessLeaf {
-            poseidon_params: Pasta::circuit_poseidon(pasta),
-        },
-        Fp::from(42u64),
-    )?;
+    let (leaf2, _) = app.seed(&mut rng, Trivial::new(), ())?;
     assert!(app.verify(&leaf2, &mut rng)?);
 
-    let (node1, _) = app.fuse(
-        &mut rng,
-        Hash2 {
-            poseidon_params: Pasta::circuit_poseidon(pasta),
-        },
-        (),
-        leaf1,
-        leaf2,
-    )?;
+    let (node1, _) = app.fuse(&mut rng, Trivial::new(), (), leaf1, leaf2)?;
     assert!(app.verify(&node1, &mut rng)?);
 
     for (calls, operation) in [

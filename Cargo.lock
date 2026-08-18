@@ -918,6 +918,7 @@ dependencies = [
  "gungraun",
  "maybe-rayon",
  "proptest",
+ "ragu_acceleration",
  "ragu_arithmetic",
  "ragu_backend",
  "ragu_circuits",

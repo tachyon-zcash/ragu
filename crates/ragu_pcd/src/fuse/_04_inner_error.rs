@@ -22,7 +22,7 @@ use crate::{
     proof::ProofBuilder,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::TrustedBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
     pub(super) fn inner_error_terms<'dr, 'rx, D, RNG: CryptoRng>(

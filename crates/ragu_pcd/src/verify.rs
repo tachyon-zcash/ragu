@@ -20,7 +20,7 @@ use crate::{
     },
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::TrustedBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
     /// Verifies some [`Pcd`] for the provided [`Header`].
@@ -29,6 +29,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
     /// any check fails (e.g., invalid circuit ID, header size mismatch,
     /// corrupted commitments or evaluations), or `Err` if an internal
     /// computation error occurs.
+    ///
+    /// Verification uses the selected sealed, Ragu-owned backend. Applications
+    /// may select reference or accelerated verification, but cannot provide
+    /// the implementation that controls the final acceptance decision.
     pub fn verify<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         pcd: &Pcd<C, R, H>,

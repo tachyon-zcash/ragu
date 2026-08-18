@@ -22,6 +22,8 @@ use ragu_circuits::{
 /// implementation for the same inputs.
 /// Canonical circuit and protocol data is constructed before it reaches these
 /// methods; a backend only changes how the requested computation is performed.
+/// Implementing this low-level trait does not make a downstream type selectable
+/// by `ragu_pcd`; application execution is restricted to Ragu-owned backends.
 ///
 /// Backends are currently selected by type and cannot carry per-application
 /// state. If implementations need device handles or caches, Ragu can store the

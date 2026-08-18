@@ -27,7 +27,7 @@ all-features = true
 [features]
 alloc = []
 default = ["alloc"]
-multicore = ["maybe-rayon/threads", "ragu_arithmetic/multicore", "ragu_backend/multicore", "ragu_circuits/multicore", "std"]
+multicore = ["maybe-rayon/threads", "ragu_acceleration/multicore", "ragu_arithmetic/multicore", "ragu_backend/multicore", "ragu_circuits/multicore", "std"]
 std = []
 # Exposes the `fuzz_utils` module, which provides proof-corruption helpers
 # used by external fuzz harnesses. Not part of the stable public API.
@@ -37,6 +37,7 @@ unstable-fuzzing = []
 bench = false
 
 [dependencies]
+ragu_acceleration = { path = "../ragu_acceleration", version = "0.0.0", default-features = false }
 ragu_arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", default-features = false, features = ["alloc"] }
 ragu_backend = { path = "../ragu_backend", version = "0.0.0", default-features = false }
 maybe-rayon = { workspace = true }
