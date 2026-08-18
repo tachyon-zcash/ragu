@@ -37,11 +37,14 @@ pub enum SaveError {
     NothingAbsorbed,
 }
 
-/// Supplies an optional native implementation for Poseidon routine prediction.
+/// Internal adapter for supplying native Poseidon results to Ragu's routine
+/// prediction machinery.
 ///
-/// The circuit implementation remains canonical and is always used by drivers
-/// that emit or check constraints. Native prediction only lets unconstrained
-/// emulation skip that circuit work when an equivalent implementation exists.
+/// This is not a backend interface. Backends implement
+/// `ragu_backend::Backend::poseidon_permute`; Ragu decides when to use that
+/// operation for witness prediction. The circuit implementation remains
+/// canonical and is always used by drivers that emit or check constraints.
+#[doc(hidden)]
 pub trait PoseidonPrediction: Send + 'static {
     /// Whether native prediction is enabled for this implementation.
     const ENABLED: bool;
@@ -53,6 +56,7 @@ pub trait PoseidonPrediction: Send + 'static {
 }
 
 /// Disables native Poseidon prediction and retains circuit execution.
+#[doc(hidden)]
 pub struct NoPoseidonPrediction;
 
 impl PoseidonPrediction for NoPoseidonPrediction {
@@ -140,7 +144,9 @@ impl<'dr, D: Driver<'dr>, P: ragu_arithmetic::PoseidonPermutation<D::F>, N: Pose
 impl<'dr, D: Driver<'dr>, P: ragu_arithmetic::PoseidonPermutation<D::F>, N: PoseidonPrediction>
     Sponge<'dr, D, P, N>
 {
-    /// Initializes a sponge that uses `N` for optional native prediction.
+    /// Initializes a sponge that uses Ragu's internal `N` adapter for optional
+    /// native prediction.
+    #[doc(hidden)]
     pub fn new_with_prediction(dr: &mut D, params: &'dr P) -> Self {
         Sponge {
             mode: Mode::Absorb {
@@ -312,6 +318,7 @@ impl<'dr, D: Driver<'dr>, P: ragu_arithmetic::PoseidonPermutation<D::F>, N: Pose
     ///
     /// This method allows resuming a sponge and then performing custom operations
     /// before squeezing. Used by the `Transcript` API.
+    #[doc(hidden)]
     pub fn resume_with_prediction(state: SpongeState<'dr, D, P>, params: &'dr P) -> Self {
         Sponge {
             mode: Mode::Squeeze {

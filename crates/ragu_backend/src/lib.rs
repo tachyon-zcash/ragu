@@ -132,6 +132,9 @@ pub trait Backend: Send + Sync + 'static {
     /// # Correctness
     ///
     /// Overrides must match [`ragu_arithmetic::poseidon_permute`] exactly.
+    /// Ragu owns transcript semantics and decides when this operation is used
+    /// for native witness prediction; a backend cannot replace the circuit
+    /// constraints or control prediction scheduling.
     fn poseidon_permute<F: Field, P: PoseidonPermutation<F>>(params: &P, state: &mut [F]) {
         ragu_arithmetic::poseidon_permute(params, state);
     }
