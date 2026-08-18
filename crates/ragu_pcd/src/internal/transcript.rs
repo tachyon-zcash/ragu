@@ -36,45 +36,21 @@
 //! Transcripts of protocols with different interaction sequences are
 //! domain-separated by protocol tags during construction [`Transcript::new`].
 
-use core::marker::PhantomData;
-
 use ragu_arithmetic::{PoseidonPermutation, ff::PrimeField};
-use ragu_backend::Backend;
 use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::{
     Element,
     io::Buffer,
-    poseidon::{NoPoseidonPrediction, PoseidonPrediction, SaveError, Sponge, SpongeState},
+    poseidon::{SaveError, Sponge, SpongeState},
 };
 
-/// Routes native Poseidon prediction through the selected computational backend.
-pub(crate) struct BackendPoseidonPrediction<B: Backend>(PhantomData<B>);
-
-impl<B: Backend> PoseidonPrediction for BackendPoseidonPrediction<B> {
-    const ENABLED: bool = true;
-
-    fn permute<F: ragu_arithmetic::ff::Field, P: PoseidonPermutation<F>>(
-        params: &P,
-        state: &mut [F],
-    ) {
-        B::poseidon_permute(params, state);
-    }
-}
-
 /// Transcript wrapper around Poseidon [`Sponge`] for Fiat-Shamir transforms.
-pub struct Transcript<
-    'dr,
-    D: Driver<'dr>,
-    P: PoseidonPermutation<D::F>,
-    N: PoseidonPrediction = NoPoseidonPrediction,
-> {
-    sponge: Sponge<'dr, D, P, N>,
+pub struct Transcript<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> {
+    sponge: Sponge<'dr, D, P>,
     params: &'dr P,
 }
 
-impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>, N: PoseidonPrediction> Clone
-    for Transcript<'dr, D, P, N>
-{
+impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> Clone for Transcript<'dr, D, P> {
     fn clone(&self) -> Self {
         Transcript {
             sponge: self.sponge.clone(),
@@ -89,9 +65,7 @@ impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>, N: PoseidonPrediction> C
 /// constraint-checked during multi-circuit protocols.
 pub type TranscriptState<'dr, D, P> = SpongeState<'dr, D, P>;
 
-impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>, N: PoseidonPrediction>
-    Transcript<'dr, D, P, N>
-{
+impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> Transcript<'dr, D, P> {
     /// Creates a new transcript with mandatory domain separation.
     ///
     /// The `tag` is absorbed as field elements (length-prefixed, 16 bytes per
@@ -105,11 +79,11 @@ impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>, N: PoseidonPrediction>
     ///
     /// [#51]: https://github.com/tachyon-zcash/ragu/issues/51
     /// [#1]: https://github.com/tachyon-zcash/ragu/issues/1
-    pub fn new_with_prediction(dr: &mut D, params: &'dr P, tag: &[u8]) -> Result<Self>
+    pub fn new(dr: &mut D, params: &'dr P, tag: &[u8]) -> Result<Self>
     where
         D::F: PrimeField,
     {
-        let mut sponge = Sponge::new_with_prediction(dr, params);
+        let mut sponge = Sponge::new(dr, params);
 
         // prefix with the tag length
         let len_elem = Element::constant(dr, D::F::from(tag.len() as u64));
@@ -147,36 +121,16 @@ impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>, N: PoseidonPrediction>
     /// Returns a [`ResumedTranscript`] that only permits squeezing challenges.
     /// Call [`ResumedTranscript::into_transcript`] to transition back to a full
     /// transcript that supports absorbing.
-    pub fn resume_from_state_with_prediction(
+    pub fn resume_from_state(
         state: TranscriptState<'dr, D, P>,
         params: &'dr P,
-    ) -> ResumedTranscript<'dr, D, P, N> {
-        let sponge = Sponge::resume_with_prediction(state, params);
+    ) -> ResumedTranscript<'dr, D, P> {
+        let sponge = Sponge::resume(state, params);
         ResumedTranscript {
             sponge,
             params,
             squeezed: false,
         }
-    }
-}
-
-impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>>
-    Transcript<'dr, D, P, NoPoseidonPrediction>
-{
-    /// Creates a new transcript with mandatory domain separation.
-    pub fn new(dr: &mut D, params: &'dr P, tag: &[u8]) -> Result<Self>
-    where
-        D::F: PrimeField,
-    {
-        Self::new_with_prediction(dr, params, tag)
-    }
-
-    /// Resumes a transcript from saved state in squeeze-only mode.
-    pub fn resume_from_state(
-        state: TranscriptState<'dr, D, P>,
-        params: &'dr P,
-    ) -> ResumedTranscript<'dr, D, P, NoPoseidonPrediction> {
-        Self::resume_from_state_with_prediction(state, params)
     }
 }
 
@@ -187,20 +141,13 @@ impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>>
 /// prevents the caller from accidentally absorbing (which would silently discard
 /// those values). Call [`into_transcript`][Self::into_transcript] to transition
 /// back to a full [`Transcript`] that supports absorbing.
-pub struct ResumedTranscript<
-    'dr,
-    D: Driver<'dr>,
-    P: PoseidonPermutation<D::F>,
-    N: PoseidonPrediction = NoPoseidonPrediction,
-> {
-    sponge: Sponge<'dr, D, P, N>,
+pub struct ResumedTranscript<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> {
+    sponge: Sponge<'dr, D, P>,
     params: &'dr P,
     squeezed: bool,
 }
 
-impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>, N: PoseidonPrediction>
-    ResumedTranscript<'dr, D, P, N>
-{
+impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> ResumedTranscript<'dr, D, P> {
     /// Squeezes a single field element challenge.
     pub fn challenge(&mut self, dr: &mut D) -> Result<Element<'dr, D>> {
         self.squeezed = true;
@@ -214,7 +161,7 @@ impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>, N: PoseidonPrediction>
     /// Panics if no challenges have been squeezed since resuming. Calling
     /// `into_transcript` without squeezing would silently discard the buffered
     /// rate values from the saved state.
-    pub fn into_transcript(self) -> Transcript<'dr, D, P, N> {
+    pub fn into_transcript(self) -> Transcript<'dr, D, P> {
         assert!(
             self.squeezed,
             "must squeeze at least once before transitioning back to absorb mode"
@@ -226,9 +173,7 @@ impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>, N: PoseidonPrediction>
     }
 }
 
-impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>, N: PoseidonPrediction> Buffer<'dr, D>
-    for Transcript<'dr, D, P, N>
-{
+impl<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>> Buffer<'dr, D> for Transcript<'dr, D, P> {
     fn write(&mut self, dr: &mut D, value: &Element<'dr, D>) -> Result<()> {
         self.sponge.absorb(dr, value)
     }
@@ -240,8 +185,7 @@ mod tests {
 
     use proptest::prelude::*;
     use ragu_arithmetic::{Cycle, ff::Field};
-    use ragu_backend::ReferenceBackend;
-    use ragu_core::{drivers::emulator::Emulator, maybe::Maybe};
+    use ragu_core::maybe::Maybe;
     use ragu_pasta::{Fp, Pasta};
     use ragu_primitives::{GadgetExt, Simulator};
     use ragu_testing::strategies;
@@ -269,49 +213,6 @@ mod tests {
             strategies::prime_field_element::<Fp>().prop_map(Op::Absorb),
             Just(Op::Squeeze),
         ]
-    }
-
-    #[test]
-    fn backend_native_poseidon_matches_circuit_transcript() {
-        let params = Pasta::baked();
-        let poseidon = Pasta::circuit_poseidon(params);
-
-        let default_challenges = {
-            let mut dr = Emulator::execute();
-            let mut transcript =
-                Transcript::new(&mut dr, poseidon, b"backend-equivalence").unwrap();
-            for value in [Fp::from(3), Fp::from(5), Fp::from(8)] {
-                Element::constant(&mut dr, value)
-                    .write(&mut dr, &mut transcript)
-                    .unwrap();
-            }
-            [
-                *transcript.challenge(&mut dr).unwrap().value().take(),
-                *transcript.challenge(&mut dr).unwrap().value().take(),
-            ]
-        };
-
-        let backend_challenges = {
-            let mut dr = Emulator::execute();
-            let mut transcript =
-                Transcript::<_, _, BackendPoseidonPrediction<ReferenceBackend>>::new_with_prediction(
-                    &mut dr,
-                    poseidon,
-                    b"backend-equivalence",
-                )
-                .unwrap();
-            for value in [Fp::from(3), Fp::from(5), Fp::from(8)] {
-                Element::constant(&mut dr, value)
-                    .write(&mut dr, &mut transcript)
-                    .unwrap();
-            }
-            [
-                *transcript.challenge(&mut dr).unwrap().value().take(),
-                *transcript.challenge(&mut dr).unwrap().value().take(),
-            ]
-        };
-
-        assert_eq!(backend_challenges, default_challenges);
     }
 
     fn apply_ops<P: PoseidonPermutation<Fp>>(

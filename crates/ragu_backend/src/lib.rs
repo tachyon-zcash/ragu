@@ -7,7 +7,7 @@
 #![forbid(unsafe_code)]
 
 use ragu_arithmetic::{
-    CurveAffine, DeferredField, FixedGenerators, PoseidonPermutation,
+    CurveAffine, DeferredField, FixedGenerators,
     ff::{Field, PrimeField},
 };
 use ragu_circuits::{
@@ -127,18 +127,6 @@ pub trait Backend: Send + Sync + 'static {
     /// Evaluates the registry polynomial at $(w, x, y)$.
     fn registry_wxy<F: PrimeField, R: Rank>(registry: &Registry<'_, F, R>, w: F, x: F, y: F) -> F {
         registry.wxy(w, x, y)
-    }
-
-    /// Applies the out-of-circuit Poseidon permutation to `state`.
-    ///
-    /// # Correctness
-    ///
-    /// Overrides must match [`ragu_arithmetic::poseidon_permute`] exactly.
-    /// Ragu owns transcript semantics and decides when this operation is used
-    /// for native witness prediction; a backend cannot replace the circuit
-    /// constraints or control prediction scheduling.
-    fn poseidon_permute<F: Field, P: PoseidonPermutation<F>>(params: &P, state: &mut [F]) {
-        ragu_arithmetic::poseidon_permute(params, state);
     }
 
     /// Computes the multiscalar multiplication

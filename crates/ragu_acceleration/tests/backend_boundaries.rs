@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ragu_acceleration::AcceleratedBackend;
 use ragu_arithmetic::{
-    CurveAffine, FixedGenerators, PoseidonPermutation,
+    CurveAffine, FixedGenerators,
     group::{Curve, Group},
     pasta_curves::pallas,
 };
@@ -140,54 +140,4 @@ fn accelerated_registry_operations_match_reference_and_canonical() {
         ReferenceBackend::registry_wxy(&registry, w, x, y),
         registry.wxy(w, x, y),
     );
-}
-
-struct TestPoseidon {
-    round_constants: [[pallas::Scalar; 3]; 3],
-    mds: [[pallas::Scalar; 3]; 3],
-}
-
-impl TestPoseidon {
-    fn new() -> Self {
-        Self {
-            round_constants: [
-                [1, 2, 3].map(pallas::Scalar::from),
-                [4, 5, 6].map(pallas::Scalar::from),
-                [7, 8, 9].map(pallas::Scalar::from),
-            ],
-            mds: [
-                [2, 1, 1].map(pallas::Scalar::from),
-                [1, 2, 1].map(pallas::Scalar::from),
-                [1, 1, 2].map(pallas::Scalar::from),
-            ],
-        }
-    }
-}
-
-impl PoseidonPermutation<pallas::Scalar> for TestPoseidon {
-    const T: usize = 3;
-    const RATE: usize = 2;
-    const FULL_ROUNDS: usize = 2;
-    const PARTIAL_ROUNDS: usize = 1;
-    const ALPHA: isize = 5;
-
-    fn round_constants(&self) -> impl Iterator<Item = &[pallas::Scalar]> {
-        self.round_constants.iter().map(|row| row.as_slice())
-    }
-
-    fn mds_matrix(&self) -> impl ExactSizeIterator<Item = &[pallas::Scalar]> {
-        self.mds.iter().map(|row| row.as_slice())
-    }
-}
-
-#[test]
-fn accelerated_poseidon_matches_reference() {
-    let params = TestPoseidon::new();
-    let mut reference = [10, 20, 30].map(pallas::Scalar::from);
-    let mut accelerated = reference;
-
-    ReferenceBackend::poseidon_permute(&params, &mut reference);
-    AcceleratedBackend::poseidon_permute(&params, &mut accelerated);
-
-    assert_eq!(accelerated, reference);
 }

@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ragu_arithmetic::{
-    CurveAffine, DeferredField, FixedGenerators, PoseidonPermutation,
+    CurveAffine, DeferredField, FixedGenerators,
     ff::{Field, PrimeField},
 };
 use ragu_backend::{Backend, ReferenceBackend};
@@ -23,7 +23,6 @@ static REGISTRY_XY_CALLS: AtomicUsize = AtomicUsize::new(0);
 static REGISTRY_CIRCUIT_Y_CALLS: AtomicUsize = AtomicUsize::new(0);
 static REGISTRY_AT_CALLS: AtomicUsize = AtomicUsize::new(0);
 static REGISTRY_WXY_CALLS: AtomicUsize = AtomicUsize::new(0);
-static POSEIDON_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 pub(crate) struct TrackingBackend;
 
@@ -88,11 +87,6 @@ impl Backend for TrackingBackend {
         ReferenceBackend::registry_wxy(registry, w, x, y)
     }
 
-    fn poseidon_permute<F: Field, P: PoseidonPermutation<F>>(params: &P, state: &mut [F]) {
-        POSEIDON_CALLS.fetch_add(1, Ordering::SeqCst);
-        ReferenceBackend::poseidon_permute(params, state);
-    }
-
     fn msm<
         'a,
         C: CurveAffine,
@@ -120,7 +114,6 @@ fn selected_backend_dispatches_across_proving_and_verification() -> Result<()> {
     REGISTRY_CIRCUIT_Y_CALLS.store(0, Ordering::SeqCst);
     REGISTRY_AT_CALLS.store(0, Ordering::SeqCst);
     REGISTRY_WXY_CALLS.store(0, Ordering::SeqCst);
-    POSEIDON_CALLS.store(0, Ordering::SeqCst);
 
     let pasta = Pasta::baked();
     let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
@@ -157,7 +150,6 @@ fn selected_backend_dispatches_across_proving_and_verification() -> Result<()> {
         (&REGISTRY_CIRCUIT_Y_CALLS, "registry circuit restriction"),
         (&REGISTRY_AT_CALLS, "cached registry restriction"),
         (&REGISTRY_WXY_CALLS, "registry evaluation"),
-        (&POSEIDON_CALLS, "native Poseidon permutation"),
     ] {
         assert!(
             calls.load(Ordering::SeqCst) > 0,

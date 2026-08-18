@@ -7,11 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- Added optional native prediction for Poseidon permutations while retaining
-  canonical circuit execution for constraint-emitting drivers.
-
 ## [0.0.0] - 2025-07-30
 
 ### Added

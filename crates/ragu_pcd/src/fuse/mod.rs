@@ -23,10 +23,7 @@ use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{GadgetExt, Point, vec::CollectFixed};
 
 use crate::{
-    Application, Pcd, RAGU_TAG,
-    internal::transcript::{BackendPoseidonPrediction, Transcript},
-    proof::ProofBuilder,
-    step::Step,
+    Application, Pcd, RAGU_TAG, internal::transcript::Transcript, proof::ProofBuilder, step::Step,
 };
 
 /// Ephemeral native-field data for $f(X)$, used only during the fuse step.
@@ -86,11 +83,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::TrustedBackend>
             self.compute_application_proof(rng, step, witness, left, right, &mut builder)?;
 
         let mut dr = Emulator::execute();
-        let mut transcript = Transcript::<_, _, BackendPoseidonPrediction<B>>::new_with_prediction(
-            &mut dr,
-            C::circuit_poseidon(self.params),
-            RAGU_TAG,
-        )?;
+        let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
 
         let preamble_witness = self.compute_preamble(rng, &left, &right, &mut builder)?;
         let preamble_commitment = Point::constant(&mut dr, builder.bridge_preamble_commitment())?;

@@ -12,7 +12,6 @@ use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget},
-    maybe::Maybe,
     routines::{Prediction, Routine},
 };
 
@@ -35,32 +34,6 @@ pub enum SaveError {
     /// Cannot save: no values have been absorbed (permutation would not occur).
     #[error("no values have been absorbed")]
     NothingAbsorbed,
-}
-
-/// Internal adapter for supplying native Poseidon results to Ragu's routine
-/// prediction machinery.
-///
-/// This is not a backend interface. Backends implement
-/// `ragu_backend::Backend::poseidon_permute`; Ragu decides when to use that
-/// operation for witness prediction. The circuit implementation remains
-/// canonical and is always used by drivers that emit or check constraints.
-#[doc(hidden)]
-pub trait PoseidonPrediction: Send + 'static {
-    /// Whether native prediction is enabled for this implementation.
-    const ENABLED: bool;
-
-    /// Applies the native permutation to `state`.
-    fn permute<F: Field, P: ragu_arithmetic::PoseidonPermutation<F>>(params: &P, state: &mut [F]) {
-        ragu_arithmetic::poseidon_permute(params, state);
-    }
-}
-
-/// Disables native Poseidon prediction and retains circuit execution.
-#[doc(hidden)]
-pub struct NoPoseidonPrediction;
-
-impl PoseidonPrediction for NoPoseidonPrediction {
-    const ENABLED: bool = false;
 }
 
 /// A type-level length marker for the Poseidon state size (`P::T`).
@@ -110,44 +83,33 @@ impl<'dr, D: Driver<'dr>, P: ragu_arithmetic::PoseidonPermutation<D::F>> Clone f
 /// absorbing nothing: feeding it `[x]` and `[x, 0]` produces the same output.
 /// Only use it where the number of absorbed elements is fixed by the protocol;
 /// to absorb variable-length data, absorb its length first.
-pub struct Sponge<
-    'dr,
-    D: Driver<'dr>,
-    P: ragu_arithmetic::PoseidonPermutation<D::F>,
-    N: PoseidonPrediction = NoPoseidonPrediction,
-> {
+pub struct Sponge<'dr, D: Driver<'dr>, P: ragu_arithmetic::PoseidonPermutation<D::F>> {
     mode: Mode<'dr, D, P>,
     params: &'dr P,
-    _native: PhantomData<N>,
 }
 
-impl<'dr, D: Driver<'dr>, P: ragu_arithmetic::PoseidonPermutation<D::F>, N: PoseidonPrediction>
-    Clone for Sponge<'dr, D, P, N>
+impl<'dr, D: Driver<'dr>, P: ragu_arithmetic::PoseidonPermutation<D::F>> Clone
+    for Sponge<'dr, D, P>
 {
     fn clone(&self) -> Self {
         Sponge {
             mode: self.mode.clone(),
             params: self.params,
-            _native: PhantomData,
         }
     }
 }
 
-impl<'dr, D: Driver<'dr>, P: ragu_arithmetic::PoseidonPermutation<D::F>, N: PoseidonPrediction>
-    Buffer<'dr, D> for Sponge<'dr, D, P, N>
+impl<'dr, D: Driver<'dr>, P: ragu_arithmetic::PoseidonPermutation<D::F>> Buffer<'dr, D>
+    for Sponge<'dr, D, P>
 {
     fn write(&mut self, dr: &mut D, value: &Element<'dr, D>) -> Result<()> {
         self.absorb(dr, value)
     }
 }
 
-impl<'dr, D: Driver<'dr>, P: ragu_arithmetic::PoseidonPermutation<D::F>, N: PoseidonPrediction>
-    Sponge<'dr, D, P, N>
-{
-    /// Initializes a sponge that uses Ragu's internal `N` adapter for optional
-    /// native prediction.
-    #[doc(hidden)]
-    pub fn new_with_prediction(dr: &mut D, params: &'dr P) -> Self {
+impl<'dr, D: Driver<'dr>, P: ragu_arithmetic::PoseidonPermutation<D::F>> Sponge<'dr, D, P> {
+    /// Initialize the sponge in absorb mode with a fixed initial state.
+    pub fn new(dr: &mut D, params: &'dr P) -> Self {
         Sponge {
             mode: Mode::Absorb {
                 values: vec![],
@@ -158,14 +120,13 @@ impl<'dr, D: Driver<'dr>, P: ragu_arithmetic::PoseidonPermutation<D::F>, N: Pose
                 },
             },
             params,
-            _native: PhantomData,
         }
     }
 
     fn permute(&mut self, dr: &mut D) -> Result<()> {
         match &mut self.mode {
             Mode::Squeeze { values, state } => {
-                *state = dr.routine(Permutation::<D::F, P, N>::from(self.params), state.clone())?;
+                *state = dr.routine(Permutation::from(self.params), state.clone())?;
                 *values = state.get_rate();
             }
             Mode::Absorb { values, state } => {
@@ -173,7 +134,7 @@ impl<'dr, D: Driver<'dr>, P: ragu_arithmetic::PoseidonPermutation<D::F>, N: Pose
                     *state = state.add(dr, v);
                 }
                 values.clear();
-                *state = dr.routine(Permutation::<D::F, P, N>::from(self.params), state.clone())?;
+                *state = dr.routine(Permutation::from(self.params), state.clone())?;
             }
         }
 
@@ -318,30 +279,14 @@ impl<'dr, D: Driver<'dr>, P: ragu_arithmetic::PoseidonPermutation<D::F>, N: Pose
     ///
     /// This method allows resuming a sponge and then performing custom operations
     /// before squeezing. Used by the `Transcript` API.
-    #[doc(hidden)]
-    pub fn resume_with_prediction(state: SpongeState<'dr, D, P>, params: &'dr P) -> Self {
+    pub fn resume(state: SpongeState<'dr, D, P>, params: &'dr P) -> Self {
         Sponge {
             mode: Mode::Squeeze {
                 values: state.get_rate(),
                 state,
             },
             params,
-            _native: PhantomData,
         }
-    }
-}
-
-impl<'dr, D: Driver<'dr>, P: ragu_arithmetic::PoseidonPermutation<D::F>>
-    Sponge<'dr, D, P, NoPoseidonPrediction>
-{
-    /// Initialize the sponge in absorb mode with a fixed initial state.
-    pub fn new(dr: &mut D, params: &'dr P) -> Self {
-        Self::new_with_prediction(dr, params)
-    }
-
-    /// Resumes a [`Sponge`] from a saved [`SpongeState`].
-    pub fn resume(state: SpongeState<'dr, D, P>, params: &'dr P) -> Self {
-        Self::resume_with_prediction(state, params)
     }
 }
 
@@ -420,14 +365,13 @@ fn add_round_constants<'dr, D: Driver<'dr>>(
     }
 }
 
-struct Permutation<'a, F: Field, P: ragu_arithmetic::PoseidonPermutation<F>, N: PoseidonPrediction>
-{
+struct Permutation<'a, F: Field, P: ragu_arithmetic::PoseidonPermutation<F>> {
     params: &'a P,
-    _marker: PhantomData<(F, N)>,
+    _marker: PhantomData<F>,
 }
 
-impl<'a, F: Field, P: ragu_arithmetic::PoseidonPermutation<F>, N: PoseidonPrediction> From<&'a P>
-    for Permutation<'a, F, P, N>
+impl<'a, F: Field, P: ragu_arithmetic::PoseidonPermutation<F>> From<&'a P>
+    for Permutation<'a, F, P>
 {
     fn from(params: &'a P) -> Self {
         Permutation {
@@ -437,9 +381,7 @@ impl<'a, F: Field, P: ragu_arithmetic::PoseidonPermutation<F>, N: PoseidonPredic
     }
 }
 
-impl<F: Field, P: ragu_arithmetic::PoseidonPermutation<F>, N: PoseidonPrediction> Clone
-    for Permutation<'_, F, P, N>
-{
+impl<F: Field, P: ragu_arithmetic::PoseidonPermutation<F>> Clone for Permutation<'_, F, P> {
     fn clone(&self) -> Self {
         Permutation {
             params: self.params,
@@ -448,9 +390,7 @@ impl<F: Field, P: ragu_arithmetic::PoseidonPermutation<F>, N: PoseidonPrediction
     }
 }
 
-impl<F: Field, P: ragu_arithmetic::PoseidonPermutation<F>, N: PoseidonPrediction> Routine<F>
-    for Permutation<'_, F, P, N>
-{
+impl<F: Field, P: ragu_arithmetic::PoseidonPermutation<F>> Routine<F> for Permutation<'_, F, P> {
     type Input = SpongeState<'static, PhantomData<F>, P>;
     type Output = SpongeState<'static, PhantomData<F>, P>;
     type Aux<'dr> = ();
@@ -491,29 +431,14 @@ impl<F: Field, P: ragu_arithmetic::PoseidonPermutation<F>, N: PoseidonPrediction
         Ok(state)
     }
 
+    /// Poseidon is not more efficient to predict than it is to directly
+    /// execute.
     fn predict<'dr, D: Driver<'dr, F = F>>(
         &self,
-        dr: &mut D,
-        input: &Bound<'dr, D, Self::Input>,
+        _: &mut D,
+        _: &Bound<'dr, D, Self::Input>,
     ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
-        if !N::ENABLED {
-            return Ok(Prediction::Unknown(D::unit()));
-        }
-
-        let values = D::just(|| {
-            let mut values = input
-                .values
-                .iter()
-                .map(|element| *element.value().take())
-                .collect::<Vec<_>>();
-            N::permute(self.params, &mut values);
-            values
-        });
-        let values = FixedVec::try_from_fn(|index| {
-            Element::alloc(dr, &mut (), values.clone().map(|values| values[index]))
-        })?;
-
-        Ok(Prediction::Known(SpongeState { values }, D::unit()))
+        Ok(Prediction::Unknown(D::unit()))
     }
 }
 
@@ -521,7 +446,7 @@ impl<F: Field, P: ragu_arithmetic::PoseidonPermutation<F>, N: PoseidonPrediction
 mod tests {
     use core::cell::Cell;
 
-    use ragu_arithmetic::{Cycle, PoseidonPermutation};
+    use ragu_arithmetic::Cycle;
     use ragu_core::maybe::Maybe;
     use ragu_pasta::{Fp, Pasta};
 
@@ -549,38 +474,6 @@ mod tests {
             Ok(())
         })?;
         assert_eq!(sim.num_gates(), 288);
-
-        Ok(())
-    }
-
-    #[test]
-    fn native_permutation_matches_circuit_permutation() -> Result<()> {
-        type P = <Pasta as Cycle>::CircuitPoseidon;
-
-        let params = Pasta::baked();
-        let poseidon = Pasta::circuit_poseidon(params);
-        let mut expected = (1..=P::T)
-            .map(|value| Fp::from(value as u64))
-            .collect::<Vec<_>>();
-        ragu_arithmetic::poseidon_permute(poseidon, &mut expected);
-
-        let mut dr = Simulator::new();
-        let state = SpongeState::<_, P>::from_elements(FixedVec::from_fn(|index| {
-            Element::constant(&mut dr, Fp::from(index as u64 + 1))
-        }));
-        let actual = dr.routine(
-            Permutation::<Fp, P, NoPoseidonPrediction>::from(poseidon),
-            state,
-        )?;
-
-        assert_eq!(
-            actual
-                .values
-                .iter()
-                .map(|element| *element.value().take())
-                .collect::<Vec<_>>(),
-            expected,
-        );
 
         Ok(())
     }

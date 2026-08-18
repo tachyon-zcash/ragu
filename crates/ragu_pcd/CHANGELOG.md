@@ -16,8 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Routed sparse polynomial evaluation, reverse-dot computations, registry
-  evaluation, polynomial commitments, and native Poseidon through the selected
-  backend across proving, native-witness, and verification paths.
+  evaluation, and polynomial commitments through the selected backend across
+  proving and verification paths.
 
 ## [0.0.0] - 2025-11-05
 
