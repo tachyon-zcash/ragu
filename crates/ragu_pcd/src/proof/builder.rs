@@ -656,13 +656,13 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     getter!(pre_beta, pre_beta, C::CircuitField);
 
     /// Returns the revdot product $c = \text{revdot}(A, B)$.
-    pub(crate) fn c(&self) -> C::CircuitField {
-        self.native_a_poly().revdot(self.native_b_poly())
+    pub(crate) fn c<B: ragu_backend::Backend>(&self) -> C::CircuitField {
+        B::sparse_revdot(self.native_a_poly(), self.native_b_poly())
     }
 
     /// Returns the evaluation $v = p(u)$.
-    pub(crate) fn v(&self) -> C::CircuitField {
-        self.native_p_poly().eval(self.u())
+    pub(crate) fn v<B: ragu_backend::Backend>(&self) -> C::CircuitField {
+        B::sparse_eval(self.native_p_poly(), self.u())
     }
 
     /// Build the proof. All polynomial fields must have been set. Commitment

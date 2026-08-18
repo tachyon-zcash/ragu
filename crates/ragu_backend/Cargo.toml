@@ -19,7 +19,7 @@ rustdoc-args = ["--html-in-header", "katex-header.html"]
 
 [features]
 default = []
-multicore = ["ragu_arithmetic/multicore", "std"]
+multicore = ["ragu_arithmetic/multicore", "ragu_circuits/multicore", "std"]
 std = []
 
 [lib]
@@ -27,3 +27,4 @@ bench = false
 
 [dependencies]
 ragu_arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", default-features = false, features = ["alloc"] }
+ragu_circuits = { path = "../ragu_circuits", version = "0.0.0", default-features = false, features = ["alloc"] }

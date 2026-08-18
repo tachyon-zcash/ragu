@@ -139,7 +139,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
             },
         )?;
 
-        let error_terms = fold_revdot::outer_error_terms::<_, R, native::RevdotParameters>(&a, &b);
+        let error_terms =
+            fold_revdot::outer_error_terms_with_backend::<B, _, R, native::RevdotParameters>(
+                &a, &b,
+            );
 
         let outer_error_witness =
             native::stages::outer_error::Witness::<C, native::RevdotParameters> {

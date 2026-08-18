@@ -819,6 +819,7 @@ dependencies = [
  "proptest",
  "ragu_arithmetic",
  "ragu_backend",
+ "ragu_circuits",
  "ragu_testing",
 ]
 
@@ -843,6 +844,7 @@ name = "ragu_backend"
 version = "0.0.0"
 dependencies = [
  "ragu_arithmetic",
+ "ragu_circuits",
 ]
 
 [[package]]

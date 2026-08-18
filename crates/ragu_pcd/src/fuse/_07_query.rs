@@ -45,10 +45,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
             // TODO: these can all be evaluated at the same time; in fact,
             // that's what registry.xy is supposed to allow.
             fixed_registry: native::InternalCircuitValues::from_fn(|id| {
-                registry_xy_poly.eval(id.circuit_index().omega_j())
+                B::sparse_eval(&registry_xy_poly, id.circuit_index().omega_j())
             }),
-            registry_wxy: registry_xy_poly.eval(w),
-            left: native::stages::query::ChildEvaluationsWitness::from_proof(
+            registry_wxy: B::sparse_eval(&registry_xy_poly, w),
+            left: native::stages::query::ChildEvaluationsWitness::from_proof::<C, R, B>(
                 left,
                 w,
                 x,
@@ -56,7 +56,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
                 &registry_xy_poly,
                 &registry_wy.poly,
             ),
-            right: native::stages::query::ChildEvaluationsWitness::from_proof(
+            right: native::stages::query::ChildEvaluationsWitness::from_proof::<C, R, B>(
                 right,
                 w,
                 x,

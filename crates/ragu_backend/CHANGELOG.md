@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added the correctness-first `Backend` trait and `ReferenceBackend`.
+- Added correctness-first sparse polynomial evaluation and reverse-dot backend
+  methods.
 
 ## [0.0.0] - 2026-08-16
 

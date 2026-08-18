@@ -15,7 +15,7 @@ use crate::{
     header::Header,
     internal::{
         claims,
-        native::{claims as native_claims, stages::preamble::ProofInputs},
+        native::{RxComponent, claims as native_claims, stages::preamble::ProofInputs},
         nested::claims as nested_claims,
     },
 };
@@ -94,7 +94,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
                 // than stored in the proof, so this claim is tautological
                 // in the verifier. It remains meaningful inside the circuit
                 // where `c` is an independently allocated witness element.
-                raw_c: pcd.proof().c(),
+                raw_c: B::sparse_revdot(
+                    &pcd.proof()[RxComponent::AbA],
+                    &pcd.proof()[RxComponent::AbB],
+                ),
                 application_ky,
                 unified_bridge_ky,
                 unified_ky,
@@ -102,7 +105,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
 
             native::ky_values(&ky_source)
                 .zip(builder.a.iter().zip(builder.b.iter()))
-                .all(|(ky, (a, b))| a.revdot(b) == ky)
+                .all(|(ky, (a, b))| B::sparse_revdot(a, b) == ky)
         };
 
         // Check all nested revdot claims.
@@ -117,7 +120,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
             let ky_source = nested::SingleProofKySource::<C::ScalarField>::new();
             nested::ky_values(&ky_source)
                 .zip(nested_builder.a.iter().zip(nested_builder.b.iter()))
-                .all(|(ky, (a, b))| a.revdot(b) == ky)
+                .all(|(ky, (a, b))| B::sparse_revdot(a, b) == ky)
         };
 
         // Check registry_xy polynomial evaluation at the sampled w.
@@ -125,7 +128,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
         let registry_xy_claim = {
             let x = pcd.proof().x();
             let y = pcd.proof().y();
-            let poly_eval = pcd.proof().native_registry_xy_poly().eval(w);
+            let poly_eval = B::sparse_eval(pcd.proof().native_registry_xy_poly(), w);
             let expected = self.native_registry.wxy(w, x, y);
             poly_eval == expected
         };

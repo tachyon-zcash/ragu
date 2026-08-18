@@ -137,7 +137,13 @@ pub fn fold_outer<T: Foldable<F>, F: Field, P: Parameters>(
 ///
 /// This computes off-diagonal revdot products for each group of `Inner`
 /// polynomials, producing `Outer` groups of error terms.
-fn compute_errors_impl<F: DeferredField, R: Rank, Outer: Len, Inner: Len>(
+fn compute_errors_impl<
+    B: ragu_backend::Backend,
+    F: DeferredField,
+    R: Rank,
+    Outer: Len,
+    Inner: Len,
+>(
     a: &[impl Borrow<sparse::Polynomial<F, R>>],
     b: &[impl Borrow<sparse::Polynomial<F, R>>],
 ) -> FixedVec<FixedVec<F, NumErrorTerms<Inner>>, Outer> {
@@ -162,7 +168,7 @@ fn compute_errors_impl<F: DeferredField, R: Rank, Outer: Len, Inner: Len>(
                     a_chunk
                         .get(i)
                         .zip(b_chunk.get(j))
-                        .map_or(F::ZERO, |(l, r)| l.borrow().revdot(r.borrow()))
+                        .map_or(F::ZERO, |(l, r)| B::sparse_revdot(l.borrow(), r.borrow()))
                 })
                 .collect_fixed()
                 .expect("lengths are correct")
@@ -175,19 +181,47 @@ fn compute_errors_impl<F: DeferredField, R: Rank, Outer: Len, Inner: Len>(
 }
 
 /// Inner error terms: `NumGroups` groups of `GroupSize`*(`GroupSize`-1) off-diagonal revdot products.
+#[cfg(test)]
 pub fn inner_error_terms<F: DeferredField, R: Rank, P: Parameters>(
     a: &[impl Borrow<sparse::Polynomial<F, R>>],
     b: &[impl Borrow<sparse::Polynomial<F, R>>],
 ) -> FixedVec<FixedVec<F, NumErrorTerms<P::GroupSize>>, P::NumGroups> {
-    compute_errors_impl::<F, R, P::NumGroups, P::GroupSize>(a, b)
+    inner_error_terms_with_backend::<ragu_backend::ReferenceBackend, F, R, P>(a, b)
+}
+
+/// Computes inner error terms through the selected backend.
+pub fn inner_error_terms_with_backend<
+    B: ragu_backend::Backend,
+    F: DeferredField,
+    R: Rank,
+    P: Parameters,
+>(
+    a: &[impl Borrow<sparse::Polynomial<F, R>>],
+    b: &[impl Borrow<sparse::Polynomial<F, R>>],
+) -> FixedVec<FixedVec<F, NumErrorTerms<P::GroupSize>>, P::NumGroups> {
+    compute_errors_impl::<B, F, R, P::NumGroups, P::GroupSize>(a, b)
 }
 
 /// Outer error terms: `NumGroups`*(`NumGroups`-1) off-diagonal revdot products.
+#[cfg(test)]
 pub fn outer_error_terms<F: DeferredField, R: Rank, P: Parameters>(
     a: &[impl Borrow<sparse::Polynomial<F, R>>],
     b: &[impl Borrow<sparse::Polynomial<F, R>>],
 ) -> FixedVec<F, NumErrorTerms<P::NumGroups>> {
-    compute_errors_impl::<F, R, ConstLen<1>, P::NumGroups>(a, b)
+    outer_error_terms_with_backend::<ragu_backend::ReferenceBackend, F, R, P>(a, b)
+}
+
+/// Computes outer error terms through the selected backend.
+pub fn outer_error_terms_with_backend<
+    B: ragu_backend::Backend,
+    F: DeferredField,
+    R: Rank,
+    P: Parameters,
+>(
+    a: &[impl Borrow<sparse::Polynomial<F, R>>],
+    b: &[impl Borrow<sparse::Polynomial<F, R>>],
+) -> FixedVec<F, NumErrorTerms<P::NumGroups>> {
+    compute_errors_impl::<B, F, R, ConstLen<1>, P::NumGroups>(a, b)
         .into_iter()
         .next()
         .expect("Outer produces exactly one group")

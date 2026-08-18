@@ -33,7 +33,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
             bridge_outer_error_commitment: builder.bridge_outer_error_commitment()?,
             mu_prime: builder.mu_prime(),
             nu_prime: builder.nu_prime(),
-            c: builder.c(),
+            c: builder.c::<B>(),
             bridge_ab_commitment: builder.bridge_ab_commitment()?,
             x: builder.x(),
             bridge_query_commitment: builder.bridge_query_commitment()?,
@@ -42,7 +42,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
             u: builder.u(),
             bridge_eval_commitment: builder.bridge_eval_commitment()?,
             pre_beta: builder.pre_beta(),
-            v: builder.v(),
+            v: builder.v::<B>(),
             coverage: Default::default(),
         };
 

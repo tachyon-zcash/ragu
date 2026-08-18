@@ -59,7 +59,7 @@ pub struct ChildEvaluationsWitness<F> {
 
 impl<F: PrimeField> ChildEvaluationsWitness<F> {
     /// Creates a child evaluations witness from a proof evaluated at the given points.
-    pub fn from_proof<C: Cycle<CircuitField = F>, R: Rank>(
+    pub fn from_proof<C: Cycle<CircuitField = F>, R: Rank, B: ragu_backend::Backend>(
         proof: &Proof<C, R>,
         w: F,
         x: F,
@@ -68,12 +68,15 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
         registry_wy: &sparse::Polynomial<F, R>,
     ) -> Self {
         ChildEvaluationsWitness {
-            rx: RxValues::from_fn(|id| proof[id].eval(xz)),
-            a_poly_at_xz: proof[RxComponent::AbA].eval(xz),
-            b_poly_at_x: proof[RxComponent::AbB].eval(x),
-            child_registry_xy_at_current_w: proof.native_registry_xy_poly().eval(w),
-            current_registry_xy_at_child_circuit_id: registry_xy.eval(proof.circuit_id().omega_j()),
-            current_registry_wy_at_child_x: registry_wy.eval(proof.x()),
+            rx: RxValues::from_fn(|id| B::sparse_eval(&proof[id], xz)),
+            a_poly_at_xz: B::sparse_eval(&proof[RxComponent::AbA], xz),
+            b_poly_at_x: B::sparse_eval(&proof[RxComponent::AbB], x),
+            child_registry_xy_at_current_w: B::sparse_eval(proof.native_registry_xy_poly(), w),
+            current_registry_xy_at_child_circuit_id: B::sparse_eval(
+                registry_xy,
+                proof.circuit_id().omega_j(),
+            ),
+            current_registry_wy_at_child_x: B::sparse_eval(registry_wy, proof.x()),
         }
     }
 }

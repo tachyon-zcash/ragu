@@ -89,10 +89,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: ragu_backend::Backend>
 
         let inner_error_witness =
             native::stages::inner_error::Witness::<C, native::RevdotParameters> {
-                error_terms: fold_revdot::inner_error_terms::<_, R, native::RevdotParameters>(
-                    &claims_builder.a,
-                    &claims_builder.b,
-                ),
+                error_terms: fold_revdot::inner_error_terms_with_backend::<
+                    B,
+                    _,
+                    R,
+                    native::RevdotParameters,
+                >(&claims_builder.a, &claims_builder.b),
             };
         let native_rx =
             native::stages::inner_error::Stage::<C, R, HEADER_SIZE, native::RevdotParameters>::rx(

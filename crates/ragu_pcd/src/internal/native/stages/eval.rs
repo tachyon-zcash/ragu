@@ -60,13 +60,16 @@ pub struct ChildEvaluationsWitness<F> {
 
 impl<F: PrimeField> ChildEvaluationsWitness<F> {
     /// Create child evaluations witness from a proof evaluated at point u.
-    pub fn from_proof<C: Cycle<CircuitField = F>, R: Rank>(proof: &Proof<C, R>, u: F) -> Self {
+    pub fn from_proof<C: Cycle<CircuitField = F>, R: Rank, B: ragu_backend::Backend>(
+        proof: &Proof<C, R>,
+        u: F,
+    ) -> Self {
         ChildEvaluationsWitness {
-            rx: RxValues::from_fn(|id| proof[id].eval(u)),
-            a_poly: proof[RxComponent::AbA].eval(u),
-            b_poly: proof[RxComponent::AbB].eval(u),
-            registry_xy_poly: proof.native_registry_xy_poly().eval(u),
-            p_poly: proof.native_p_poly().eval(u),
+            rx: RxValues::from_fn(|id| B::sparse_eval(&proof[id], u)),
+            a_poly: B::sparse_eval(&proof[RxComponent::AbA], u),
+            b_poly: B::sparse_eval(&proof[RxComponent::AbB], u),
+            registry_xy_poly: B::sparse_eval(proof.native_registry_xy_poly(), u),
+            p_poly: B::sparse_eval(proof.native_p_poly(), u),
         }
     }
 }

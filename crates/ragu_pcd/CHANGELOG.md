@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added static computational-backend selection, defaulting to
   `ragu_backend::ReferenceBackend`.
 
+### Changed
+
+- Routed sparse polynomial evaluation and reverse-dot computations through the
+  selected backend.
+
 ## [0.0.0] - 2025-11-05
 
 ### Added
