@@ -40,7 +40,6 @@ use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 use header::Header;
 pub use proof::{Pcd, Proof};
-use ragu_acceleration::AcceleratedBackend;
 use ragu_arithmetic::{Cycle, rand::CryptoRng};
 use ragu_backend::{Backend, ReferenceBackend};
 use ragu_circuits::{
@@ -54,31 +53,29 @@ use step::{Step, internal::adapter::Adapter};
 // FIXME: choose a permanent domain separation tag before release.
 pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 
-mod trusted_backend {
-    use super::{AcceleratedBackend, Backend, ReferenceBackend};
+mod selectable_backend {
+    use super::Backend;
 
     mod sealed {
         pub trait Sealed {}
 
         impl Sealed for ragu_backend::ReferenceBackend {}
         impl Sealed for ragu_acceleration::AcceleratedBackend {}
+
         #[cfg(test)]
         impl Sealed for crate::backend_tests::TrackingBackend {}
     }
 
     /// A Ragu-owned computational backend.
     ///
-    /// This trait is sealed: applications may select one of Ragu's trusted
+    /// This trait is sealed: applications may select one of Ragu's supported
     /// implementations, but cannot provide their own backend implementation.
-    pub trait TrustedBackend: Backend + sealed::Sealed {}
+    pub trait SelectableBackend: Backend + sealed::Sealed {}
 
-    impl TrustedBackend for ReferenceBackend {}
-    impl TrustedBackend for AcceleratedBackend {}
-    #[cfg(test)]
-    impl TrustedBackend for crate::backend_tests::TrackingBackend {}
+    impl<T: Backend + sealed::Sealed> SelectableBackend for T {}
 }
 
-pub use trusted_backend::TrustedBackend;
+pub use selectable_backend::SelectableBackend;
 
 /// Builder for an [`Application`] for proof-carrying data.
 pub struct ApplicationBuilder<
@@ -86,7 +83,7 @@ pub struct ApplicationBuilder<
     C: Cycle,
     R: Rank,
     const HEADER_SIZE: usize,
-    B: TrustedBackend = ReferenceBackend,
+    B: SelectableBackend = ReferenceBackend,
 > {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
@@ -95,7 +92,7 @@ pub struct ApplicationBuilder<
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: TrustedBackend> Default
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend> Default
     for ApplicationBuilder<'_, C, R, HEADER_SIZE, B>
 {
     fn default() -> Self {
@@ -103,7 +100,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: TrustedBackend> Default
     }
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: TrustedBackend>
+impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     ApplicationBuilder<'params, C, R, HEADER_SIZE, B>
 {
     /// Create an empty [`ApplicationBuilder`] for proof-carrying data.
@@ -122,7 +119,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: TrustedBackend>
     /// The selected backend is used for proving, native witness computation,
     /// and verifier kernels. Applications may select a Ragu implementation but
     /// cannot provide one.
-    pub fn with_backend<SelectedBackend: TrustedBackend>(
+    pub fn with_backend<SelectedBackend: SelectableBackend>(
         self,
     ) -> ApplicationBuilder<'params, C, R, HEADER_SIZE, SelectedBackend> {
         ApplicationBuilder {
@@ -258,7 +255,7 @@ pub struct Application<
     C: Cycle,
     R: Rank,
     const HEADER_SIZE: usize,
-    B: TrustedBackend = ReferenceBackend,
+    B: SelectableBackend = ReferenceBackend,
 > {
     native_registry: Registry<'params, C::CircuitField, R>,
     nested_registry: Registry<'params, C::ScalarField, R>,
@@ -269,7 +266,7 @@ pub struct Application<
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: TrustedBackend>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
     /// Seed a new computation by running a step with trivial inputs.

@@ -453,7 +453,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::TrustedBackend>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     crate::Application<'_, C, R, HEADER_SIZE, B>
 {
     /// Runs endoscaling over the host-curve commitments that feed

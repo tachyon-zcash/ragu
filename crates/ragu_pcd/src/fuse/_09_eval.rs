@@ -12,7 +12,7 @@ use ragu_primitives::Element;
 use super::{NativeSPrime, RegistryWy};
 use crate::{Application, Proof, internal::native, proof::ProofBuilder};
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::TrustedBackend>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
     pub(super) fn compute_eval<'dr, D, RNG: CryptoRng>(
