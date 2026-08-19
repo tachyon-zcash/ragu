@@ -61,9 +61,6 @@ mod selectable_backend {
 
         impl Sealed for ragu_backend::ReferenceBackend {}
         impl Sealed for ragu_acceleration::AcceleratedBackend {}
-
-        #[cfg(test)]
-        impl Sealed for crate::backend_tests::CanonicalBackend {}
     }
 
     /// A Ragu-owned computational backend.
