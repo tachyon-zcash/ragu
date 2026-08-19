@@ -1,6 +1,5 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
-
 use proptest::prelude::*;
+use proptest::test_runner::{TestCaseError, TestCaseResult};
 use ragu_acceleration::AcceleratedBackend;
 use ragu_arithmetic::{
     CurveAffine, DeferredField, FixedGenerators,
@@ -11,7 +10,6 @@ use ragu_circuits::{
     polynomials::{ProductionRank, Rank, sparse},
     registry::{CircuitIndex, Registry, RegistryAt},
 };
-use ragu_core::Result;
 use ragu_pasta::{Fp, Pasta};
 use ragu_testing::strategies::edge_u64;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
@@ -20,15 +18,6 @@ use crate::{
     Application, ApplicationBuilder, Pcd, Proof, SelectableBackend, fuzz_utils::Corruption,
     step::internal::trivial::Trivial,
 };
-
-static MSM_CALLS: AtomicUsize = AtomicUsize::new(0);
-static SPARSE_EVAL_CALLS: AtomicUsize = AtomicUsize::new(0);
-static SPARSE_REVDOT_CALLS: AtomicUsize = AtomicUsize::new(0);
-static SPARSE_COMMIT_CALLS: AtomicUsize = AtomicUsize::new(0);
-static REGISTRY_XY_CALLS: AtomicUsize = AtomicUsize::new(0);
-static REGISTRY_CIRCUIT_Y_CALLS: AtomicUsize = AtomicUsize::new(0);
-static REGISTRY_AT_CALLS: AtomicUsize = AtomicUsize::new(0);
-static REGISTRY_WXY_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 pub(crate) struct CanonicalBackend;
 
@@ -113,86 +102,6 @@ impl Backend for CanonicalBackend {
     }
 }
 
-pub(crate) struct TrackingBackend;
-
-impl Backend for TrackingBackend {
-    fn sparse_eval<F: Field, R: Rank>(poly: &sparse::Polynomial<F, R>, point: F) -> F {
-        SPARSE_EVAL_CALLS.fetch_add(1, Ordering::SeqCst);
-        CanonicalBackend::sparse_eval(poly, point)
-    }
-
-    fn sparse_revdot<F: DeferredField, R: Rank>(
-        lhs: &sparse::Polynomial<F, R>,
-        rhs: &sparse::Polynomial<F, R>,
-    ) -> F {
-        SPARSE_REVDOT_CALLS.fetch_add(1, Ordering::SeqCst);
-        CanonicalBackend::sparse_revdot(lhs, rhs)
-    }
-
-    fn sparse_commit<F: Field, C: CurveAffine<ScalarExt = F>, R: Rank, G: FixedGenerators<C>>(
-        poly: &sparse::Polynomial<F, R>,
-        generators: &G,
-    ) -> C::Curve {
-        SPARSE_COMMIT_CALLS.fetch_add(1, Ordering::SeqCst);
-        CanonicalBackend::sparse_commit(poly, generators)
-    }
-
-    fn registry_xy<F: PrimeField, R: Rank>(
-        registry: &Registry<'_, F, R>,
-        x: F,
-        y: F,
-    ) -> sparse::Polynomial<F, R> {
-        REGISTRY_XY_CALLS.fetch_add(1, Ordering::SeqCst);
-        CanonicalBackend::registry_xy(registry, x, y)
-    }
-
-    fn registry_circuit_y<F: PrimeField, R: Rank>(
-        registry: &Registry<'_, F, R>,
-        circuit: CircuitIndex,
-        y: F,
-    ) -> sparse::Polynomial<F, R> {
-        REGISTRY_CIRCUIT_Y_CALLS.fetch_add(1, Ordering::SeqCst);
-        CanonicalBackend::registry_circuit_y(registry, circuit, y)
-    }
-
-    fn registry_at_x<F: PrimeField, R: Rank>(
-        registry: &RegistryAt<'_, F, R>,
-        x: F,
-    ) -> sparse::Polynomial<F, R> {
-        REGISTRY_AT_CALLS.fetch_add(1, Ordering::SeqCst);
-        CanonicalBackend::registry_at_x(registry, x)
-    }
-
-    fn registry_at_y<F: PrimeField, R: Rank>(
-        registry: &RegistryAt<'_, F, R>,
-        y: F,
-    ) -> sparse::Polynomial<F, R> {
-        REGISTRY_AT_CALLS.fetch_add(1, Ordering::SeqCst);
-        CanonicalBackend::registry_at_y(registry, y)
-    }
-
-    fn registry_wxy<F: PrimeField, R: Rank>(registry: &Registry<'_, F, R>, w: F, x: F, y: F) -> F {
-        REGISTRY_WXY_CALLS.fetch_add(1, Ordering::SeqCst);
-        CanonicalBackend::registry_wxy(registry, w, x, y)
-    }
-
-    fn msm<
-        'a,
-        C: CurveAffine,
-        A: IntoIterator<Item = &'a C::Scalar>,
-        Bases: IntoIterator<Item = &'a C>,
-    >(
-        coeffs: A,
-        bases: Bases,
-    ) -> C::Curve
-    where
-        Bases::IntoIter: Clone + Sync,
-    {
-        MSM_CALLS.fetch_add(1, Ordering::SeqCst);
-        CanonicalBackend::msm(coeffs, bases)
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum VerifierDecision {
     Accept,
@@ -200,18 +109,25 @@ enum VerifierDecision {
     Error,
 }
 
+type TestApplication<'params, B> = Application<'params, Pasta, ProductionRank, 4, B>;
+type TestPcd = Pcd<Pasta, ProductionRank, ()>;
+
+fn rng_fingerprint(rng: &mut StdRng) -> [u64; 4] {
+    core::array::from_fn(|_| rng.random())
+}
+
 fn verifier_outcome<B: SelectableBackend>(
-    app: &Application<'_, Pasta, ProductionRank, 4, B>,
-    pcd: &Pcd<Pasta, ProductionRank, ()>,
+    app: &TestApplication<'_, B>,
+    pcd: &TestPcd,
     seed: u64,
-) -> (VerifierDecision, u64) {
+) -> (VerifierDecision, [u64; 4]) {
     let mut rng = StdRng::seed_from_u64(seed);
     let decision = match app.verify(pcd, &mut rng) {
         Ok(true) => VerifierDecision::Accept,
         Ok(false) => VerifierDecision::Reject,
         Err(_) => VerifierDecision::Error,
     };
-    (decision, rng.random())
+    (decision, rng_fingerprint(&mut rng))
 }
 
 fn corruptions(proof: &Proof<Pasta, ProductionRank>) -> [(&'static str, Corruption<Fp>); 9] {
@@ -228,56 +144,107 @@ fn corruptions(proof: &Proof<Pasta, ProductionRank>) -> [(&'static str, Corrupti
     ]
 }
 
-#[test]
-fn selected_backend_dispatches_across_proving_and_verification() -> Result<()> {
-    MSM_CALLS.store(0, Ordering::SeqCst);
-    SPARSE_EVAL_CALLS.store(0, Ordering::SeqCst);
-    SPARSE_REVDOT_CALLS.store(0, Ordering::SeqCst);
-    SPARSE_COMMIT_CALLS.store(0, Ordering::SeqCst);
-    REGISTRY_XY_CALLS.store(0, Ordering::SeqCst);
-    REGISTRY_CIRCUIT_Y_CALLS.store(0, Ordering::SeqCst);
-    REGISTRY_AT_CALLS.store(0, Ordering::SeqCst);
-    REGISTRY_WXY_CALLS.store(0, Ordering::SeqCst);
+fn check_valid_pcd_equivalence<Canonical, Reference, Accelerated>(
+    canonical_app: &TestApplication<'_, Canonical>,
+    reference_app: &TestApplication<'_, Reference>,
+    accelerated_app: &TestApplication<'_, Accelerated>,
+    canonical_pcd: &TestPcd,
+    reference_pcd: &TestPcd,
+    accelerated_pcd: &TestPcd,
+    verifier_seed: u64,
+    proof_kind: &str,
+) -> core::result::Result<[u8; 32], TestCaseError>
+where
+    Canonical: SelectableBackend,
+    Reference: SelectableBackend,
+    Accelerated: SelectableBackend,
+{
+    let canonical_digest = canonical_pcd.proof().test_digest();
+    prop_assert_eq!(canonical_digest, reference_pcd.proof().test_digest());
+    prop_assert_eq!(canonical_digest, accelerated_pcd.proof().test_digest());
 
-    let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
-        .with_backend::<TrackingBackend>()
-        .register_dummy_circuits(2)?
-        .finalize(pasta)?;
-
-    let mut rng = StdRng::seed_from_u64(1234);
-
-    let (leaf1, _) = app.seed(&mut rng, Trivial::new(), ())?;
-    assert!(
-        MSM_CALLS.load(Ordering::SeqCst) > 0,
-        "selected backend MSM was not called"
-    );
-    assert!(app.verify(&leaf1, &mut rng)?);
-    assert!(
-        SPARSE_EVAL_CALLS.load(Ordering::SeqCst) > 0,
-        "selected backend sparse evaluation was not called"
-    );
-    assert!(
-        SPARSE_REVDOT_CALLS.load(Ordering::SeqCst) > 0,
-        "selected backend sparse revdot was not called"
-    );
-
-    let (leaf2, _) = app.seed(&mut rng, Trivial::new(), ())?;
-    assert!(app.verify(&leaf2, &mut rng)?);
-
-    let (node1, _) = app.fuse(&mut rng, Trivial::new(), (), leaf1, leaf2)?;
-    assert!(app.verify(&node1, &mut rng)?);
-
-    for (calls, operation) in [
-        (&SPARSE_COMMIT_CALLS, "sparse commitment"),
-        (&REGISTRY_XY_CALLS, "registry xy restriction"),
-        (&REGISTRY_CIRCUIT_Y_CALLS, "registry circuit restriction"),
-        (&REGISTRY_AT_CALLS, "cached registry restriction"),
-        (&REGISTRY_WXY_CALLS, "registry evaluation"),
+    for (proof_name, pcd) in [
+        ("canonical", canonical_pcd),
+        ("reference", reference_pcd),
+        ("accelerated", accelerated_pcd),
     ] {
-        assert!(
-            calls.load(Ordering::SeqCst) > 0,
-            "selected backend {operation} was not called",
+        let canonical_outcome = verifier_outcome(canonical_app, pcd, verifier_seed);
+        let reference_outcome = verifier_outcome(reference_app, pcd, verifier_seed);
+        let accelerated_outcome = verifier_outcome(accelerated_app, pcd, verifier_seed);
+        prop_assert_eq!(
+            canonical_outcome,
+            reference_outcome,
+            "verifier result or RNG consumption mismatch for {} {} proof",
+            proof_name,
+            proof_kind,
+        );
+        prop_assert_eq!(
+            canonical_outcome,
+            accelerated_outcome,
+            "verifier result or RNG consumption mismatch for {} {} proof",
+            proof_name,
+            proof_kind,
+        );
+        prop_assert_eq!(
+            canonical_outcome.0,
+            VerifierDecision::Accept,
+            "valid {} {} proof was rejected",
+            proof_name,
+            proof_kind,
+        );
+    }
+
+    Ok(canonical_digest)
+}
+
+fn check_corrupted_pcd_equivalence<Canonical, Reference, Accelerated>(
+    canonical_app: &TestApplication<'_, Canonical>,
+    reference_app: &TestApplication<'_, Reference>,
+    accelerated_app: &TestApplication<'_, Accelerated>,
+    pcd: &TestPcd,
+    verifier_seed: u64,
+    proof_kind: &str,
+) -> TestCaseResult
+where
+    Canonical: SelectableBackend,
+    Reference: SelectableBackend,
+    Accelerated: SelectableBackend,
+{
+    let canonical_digest = pcd.proof().test_digest();
+    for (corruption_name, corruption) in corruptions(pcd.proof()) {
+        let mut corrupted = pcd.proof().clone();
+        corrupted.corrupt(corruption);
+        prop_assert_ne!(
+            canonical_digest,
+            corrupted.test_digest(),
+            "proof digest ignored {} corruption in {} proof",
+            corruption_name,
+            proof_kind,
+        );
+        let corrupted_pcd = corrupted.carry::<()>(());
+        let canonical_outcome = verifier_outcome(canonical_app, &corrupted_pcd, verifier_seed);
+        let reference_outcome = verifier_outcome(reference_app, &corrupted_pcd, verifier_seed);
+        let accelerated_outcome = verifier_outcome(accelerated_app, &corrupted_pcd, verifier_seed);
+        prop_assert_eq!(
+            canonical_outcome,
+            reference_outcome,
+            "verifier result or RNG consumption mismatch after {} corruption in {} proof",
+            corruption_name,
+            proof_kind,
+        );
+        prop_assert_eq!(
+            canonical_outcome,
+            accelerated_outcome,
+            "verifier result or RNG consumption mismatch after {} corruption in {} proof",
+            corruption_name,
+            proof_kind,
+        );
+        prop_assert_ne!(
+            canonical_outcome.0,
+            VerifierDecision::Accept,
+            "verifier accepted {} corruption in {} proof",
+            corruption_name,
+            proof_kind,
         );
     }
 
@@ -332,86 +299,89 @@ proptest! {
         let mut canonical_rng = StdRng::seed_from_u64(proof_seed);
         let mut reference_rng = StdRng::seed_from_u64(proof_seed);
         let mut accelerated_rng = StdRng::seed_from_u64(proof_seed);
-        let (canonical_pcd, _) = canonical_app
+        let (canonical_leaf1, _) = canonical_app
             .seed(&mut canonical_rng, Trivial::new(), ())
             .unwrap();
-        let (reference_pcd, _) = reference_app
+        let (reference_leaf1, _) = reference_app
             .seed(&mut reference_rng, Trivial::new(), ())
             .unwrap();
-        let (accelerated_pcd, _) = accelerated_app
+        let (accelerated_leaf1, _) = accelerated_app
             .seed(&mut accelerated_rng, Trivial::new(), ())
             .unwrap();
-        let canonical_next_rng = canonical_rng.random::<u64>();
-        prop_assert_eq!(canonical_next_rng, reference_rng.random::<u64>());
-        prop_assert_eq!(canonical_next_rng, accelerated_rng.random::<u64>());
+        let canonical_rng_state = rng_fingerprint(&mut canonical_rng);
+        prop_assert_eq!(canonical_rng_state, rng_fingerprint(&mut reference_rng));
+        prop_assert_eq!(canonical_rng_state, rng_fingerprint(&mut accelerated_rng));
+        check_valid_pcd_equivalence(
+            &canonical_app,
+            &reference_app,
+            &accelerated_app,
+            &canonical_leaf1,
+            &reference_leaf1,
+            &accelerated_leaf1,
+            verifier_seed,
+            "leaf",
+        )?;
 
-        let canonical_digest = canonical_pcd.proof().test_digest();
-        let reference_digest = reference_pcd.proof().test_digest();
-        prop_assert_eq!(canonical_digest, reference_digest);
-        prop_assert_eq!(reference_digest, accelerated_pcd.proof().test_digest());
+        let (canonical_leaf2, _) = canonical_app
+            .seed(&mut canonical_rng, Trivial::new(), ())
+            .unwrap();
+        let (reference_leaf2, _) = reference_app
+            .seed(&mut reference_rng, Trivial::new(), ())
+            .unwrap();
+        let (accelerated_leaf2, _) = accelerated_app
+            .seed(&mut accelerated_rng, Trivial::new(), ())
+            .unwrap();
+        let canonical_rng_state = rng_fingerprint(&mut canonical_rng);
+        prop_assert_eq!(canonical_rng_state, rng_fingerprint(&mut reference_rng));
+        prop_assert_eq!(canonical_rng_state, rng_fingerprint(&mut accelerated_rng));
 
-        for (proof_name, pcd) in [
-            ("canonical", &canonical_pcd),
-            ("reference", &reference_pcd),
-            ("accelerated", &accelerated_pcd),
-        ] {
-            let canonical_outcome = verifier_outcome(&canonical_app, pcd, verifier_seed);
-            let reference_outcome = verifier_outcome(&reference_app, pcd, verifier_seed);
-            let accelerated_outcome = verifier_outcome(&accelerated_app, pcd, verifier_seed);
-            prop_assert_eq!(
-                canonical_outcome,
-                reference_outcome,
-                "verifier result or RNG consumption mismatch for {} proof",
-                proof_name,
-            );
-            prop_assert_eq!(
-                canonical_outcome,
-                accelerated_outcome,
-                "verifier result or RNG consumption mismatch for {} proof",
-                proof_name,
-            );
-            prop_assert_eq!(
-                canonical_outcome.0,
-                VerifierDecision::Accept,
-                "valid {} proof was rejected",
-                proof_name,
-            );
-        }
-
-        for (corruption_name, corruption) in corruptions(canonical_pcd.proof()) {
-            let mut corrupted = canonical_pcd.proof().clone();
-            corrupted.corrupt(corruption);
-            prop_assert_ne!(
-                canonical_digest,
-                corrupted.test_digest(),
-                "proof digest ignored {} corruption",
-                corruption_name,
-            );
-            let corrupted_pcd = corrupted.carry::<()>(());
-            let canonical_outcome =
-                verifier_outcome(&canonical_app, &corrupted_pcd, verifier_seed);
-            let reference_outcome =
-                verifier_outcome(&reference_app, &corrupted_pcd, verifier_seed);
-            let accelerated_outcome =
-                verifier_outcome(&accelerated_app, &corrupted_pcd, verifier_seed);
-            prop_assert_eq!(
-                canonical_outcome,
-                reference_outcome,
-                "verifier result or RNG consumption mismatch after {} corruption",
-                corruption_name,
-            );
-            prop_assert_eq!(
-                canonical_outcome,
-                accelerated_outcome,
-                "verifier result or RNG consumption mismatch after {} corruption",
-                corruption_name,
-            );
-            prop_assert_ne!(
-                canonical_outcome.0,
-                VerifierDecision::Accept,
-                "verifier accepted {} corruption",
-                corruption_name,
-            );
-        }
+        let (canonical_node, _) = canonical_app
+            .fuse(
+                &mut canonical_rng,
+                Trivial::new(),
+                (),
+                canonical_leaf1,
+                canonical_leaf2,
+            )
+            .unwrap();
+        let (reference_node, _) = reference_app
+            .fuse(
+                &mut reference_rng,
+                Trivial::new(),
+                (),
+                reference_leaf1,
+                reference_leaf2,
+            )
+            .unwrap();
+        let (accelerated_node, _) = accelerated_app
+            .fuse(
+                &mut accelerated_rng,
+                Trivial::new(),
+                (),
+                accelerated_leaf1,
+                accelerated_leaf2,
+            )
+            .unwrap();
+        let canonical_rng_state = rng_fingerprint(&mut canonical_rng);
+        prop_assert_eq!(canonical_rng_state, rng_fingerprint(&mut reference_rng));
+        prop_assert_eq!(canonical_rng_state, rng_fingerprint(&mut accelerated_rng));
+        check_valid_pcd_equivalence(
+            &canonical_app,
+            &reference_app,
+            &accelerated_app,
+            &canonical_node,
+            &reference_node,
+            &accelerated_node,
+            verifier_seed,
+            "fused",
+        )?;
+        check_corrupted_pcd_equivalence(
+            &canonical_app,
+            &reference_app,
+            &accelerated_app,
+            &canonical_node,
+            verifier_seed,
+            "fused",
+        )?;
     }
 }
