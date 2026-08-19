@@ -51,6 +51,8 @@ where
 }
 
 fn arb_registry_shape() -> impl Strategy<Value = (Vec<usize>, usize)> {
+    // TODO: Replace the SquareCircuit-only shapes with bounded generated
+    // ProgramCircuit cases once the qa/fuzz substrate is shared through ragu_testing.
     proptest::collection::vec(0usize..=8, 1..=4).prop_flat_map(|circuit_times| {
         let num_circuits = circuit_times.len();
         (Just(circuit_times), 0..num_circuits)
