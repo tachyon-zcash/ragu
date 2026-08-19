@@ -92,6 +92,12 @@
 //! verdict, the recorder mis-captured the circuit and every signal is
 //! suspect — so the engine validates its own model on every run.
 //!
+//! Allocation goes through the production pooling allocator on both sides
+//! (`recorder::TrackingAllocator` wraps a `Standard`; playback uses a plain
+//! `Standard`), so the captured graph includes the gate $D$ wires a pooled
+//! allocation hands out — redeemed from `BoolAlloc`/`IsZero` donations or
+//! paired with the previous allocation — and their `C · D = 0` constraint.
+//!
 //! The engine — the recording driver, the repair solver, and the planted-bug
 //! selftest — lives in `ragu_testing_fuzz::recorder`, where it is unit tested in
 //! CI and reusable against real circuits (issue #793). `PATCHER_SELFTEST=1`
@@ -106,6 +112,7 @@ use arbitrary::Arbitrary;
 use ff::PrimeField;
 use libfuzzer_sys::fuzz_target;
 use pasta_curves::{Fp, Fq};
+use ragu_primitives::allocator::Standard;
 use ragu_testing_fuzz::{
     recorder::{
         Playback, Recorder, TrackingAllocator, constraints_hold, repair, selftest,
@@ -380,8 +387,9 @@ fn patch_round<F: PrimeField<Repr = [u8; 32]>>(input: &Input, decoded: &Program)
     );
 
     // Rank/nullity oracle, independent of any cheat: with the genuine free
-    // wires (advice, gate-D extras, allocator waste) held fixed, every
-    // remaining wire must be locally pinned by the captured constraints.
+    // wires (advice, the gate-D wires pooled allocation handed out as advice,
+    // allocator waste) held fixed, every remaining wire must be locally
+    // pinned by the captured constraints.
     // Skipped only on the genuine degeneracy — an honest `is_zero(0)`, whose
     // inverse hint is benignly free — not on every true boolean (a
     // `BoolAlloc(true)`/`BoolNot` produces no free hint), and on outsized
@@ -494,10 +502,17 @@ fn patch_round<F: PrimeField<Repr = [u8; 32]>>(input: &Input, decoded: &Program)
     // the *real* gadget calls over the repaired witness, with an independent
     // linear-combination evaluator. If the recorder's stored-event verdict
     // and this live re-execution disagree, the recorder mis-captured the
-    // circuit and every signal above is suspect.
+    // circuit and every signal above is suspect. A plain `Standard` replays
+    // exactly the gate / `assign_extra` sequence `TrackingAllocator` made,
+    // so wire ids line up with the recorder's.
     let mut playback = Playback::new(ragu_values.clone());
-    synthesize(&mut playback, &mut (), &program, &honest_anchors)
-        .unwrap_or_else(|err| panic!("playback diverged from honest circuit shape: {err:?}"));
+    synthesize(
+        &mut playback,
+        &mut Standard::new(),
+        &program,
+        &honest_anchors,
+    )
+    .unwrap_or_else(|err| panic!("playback diverged from honest circuit shape: {err:?}"));
     assert_eq!(
         playback.accepts(),
         ragu_accepts,

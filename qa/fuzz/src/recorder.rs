@@ -3,8 +3,9 @@
 //!
 //! [`Recorder`] is a [`Driver`] that captures the constraint graph ragu
 //! actually emits during synthesis — every multiplication gate `a·b = c`,
-//! every linear-combination wire, every `enforce_zero` — together with the
-//! honest wire values, as a flat list of [`Event`]s over `usize` wires.
+//! every assigned auxiliary wire's `c·d = 0`, every linear-combination
+//! wire, every `enforce_zero` — together with the honest wire values, as a
+//! flat list of [`Event`]s over `usize` wires.
 //!
 //! [`repair`] then plays the malicious prover: given a witness whose free
 //! advice wires have been mutated, it solves the captured constraints for
@@ -26,7 +27,7 @@ use ragu_core::{
     drivers::{Driver, DriverTypes, LinearExpression},
     maybe::Always,
 };
-use ragu_primitives::allocator::Allocator;
+use ragu_primitives::allocator::{Allocator, Standard};
 
 /// A captured constraint / wire definition, in emission order.
 #[derive(Clone, Debug)]
@@ -52,6 +53,18 @@ pub enum Event<F> {
         /// The `(wire, coefficient)` terms of the constraint.
         terms: Vec<(usize, F)>,
     },
+    /// A gate's auxiliary-wire constraint: `values[c] · values[d] == 0`,
+    /// where `c` is the output wire of a gate and `d` the $D$ wire a
+    /// pooling allocator assigned to it through
+    /// [`DriverTypes::assign_extra`]. A gate whose $D$ wire is never
+    /// assigned keeps the driver's default `D = 0`, has no `d` wire in the
+    /// recorder, and emits no `Extra` event.
+    Extra {
+        /// The gate's output wire.
+        c: usize,
+        /// The gate's assigned $D$ wire.
+        d: usize,
+    },
 }
 
 /// The recording driver. `Wire = usize`, an index into [`Recorder::values`].
@@ -60,10 +73,13 @@ pub struct Recorder<F> {
     pub values: Vec<F>,
     /// The captured constraint graph, in emission order.
     pub events: Vec<Event<F>>,
-    /// Wires created through [`DriverTypes::assign_extra`] — gate $D$ wires,
-    /// pinned by `C · D = 0` only when `C ≠ 0` and intentionally free
-    /// otherwise. The recorder does not capture that constraint, so these
-    /// are exempt from [`underconstrained_derived`].
+    /// Wires created through [`DriverTypes::assign_extra`] — gate $D$ wires
+    /// handed out by a pooling allocator (`Standard`), each pinned by its
+    /// [`Event::Extra`] to be zero whenever its gate's `C` is nonzero and
+    /// free otherwise. Like an allocation gate's `a` wire they hold
+    /// prover-chosen advice, so callers that know every `alloc` result is
+    /// advice (the substrate) list them among the free wires for
+    /// [`underconstrained_derived`].
     pub extras: Vec<usize>,
 }
 
@@ -134,12 +150,14 @@ impl<F: Field> DriverTypes for Recorder<F> {
     type MaybeKind = Always<()>;
     type LCadd = RecLc<F>;
     type LCenforce = RecLc<F>;
-    type Extra = ();
+    /// The gate's output wire `c`, so that [`assign_extra`](Self::assign_extra)
+    /// can record the `c·d = 0` constraint the $D$ wire is subject to.
+    type Extra = usize;
 
     fn gate(
         &mut self,
         values: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>,
-    ) -> Result<(usize, usize, usize, ())> {
+    ) -> Result<(usize, usize, usize, usize)> {
         let (a, b, c) = values()?;
         let (a, b, c) = (a.value(), b.value(), c.value());
         let ia = self.push_wire(a);
@@ -150,14 +168,15 @@ impl<F: Field> DriverTypes for Recorder<F> {
             b: ib,
             c: ic,
         });
-        Ok((ia, ib, ic, ()))
+        Ok((ia, ib, ic, ic))
     }
 
-    fn assign_extra(&mut self, _extra: (), value: impl Fn() -> Result<Coeff<F>>) -> Result<usize> {
+    fn assign_extra(&mut self, c: usize, value: impl Fn() -> Result<Coeff<F>>) -> Result<usize> {
         let v = value()?.value();
-        let id = self.push_wire(v);
-        self.extras.push(id);
-        Ok(id)
+        let d = self.push_wire(v);
+        self.events.push(Event::Extra { c, d });
+        self.extras.push(d);
+        Ok(d)
     }
 }
 
@@ -184,16 +203,26 @@ impl<'dr, F: Field> Driver<'dr> for Recorder<F> {
     }
 }
 
-/// The unit allocator with bookkeeping: each `alloc` emits an `a · 0 = 0`
-/// gate and returns the `a` wire (exactly like the `()` allocator), but
-/// records the deliberately wasted `b` and `c` wires.
+/// The [`Standard`] pooling allocator with bookkeeping: it delegates every
+/// `alloc` and `donate` to a real `Standard<usize>` — so the recorder sees
+/// exactly the gate / [`assign_extra`](DriverTypes::assign_extra) sequence
+/// production circuits produce, including $D$ wires redeemed from gadgets
+/// like `Boolean::alloc` and `is_zero` that donate their spare token — and
+/// records the `b` and `c` wires of each fresh allocation gate `a · 0 = 0`.
 ///
 /// Those wires are real, prover-controlled degrees of freedom — `b` is
 /// unconstrained and `c = a·b` follows it — that ragu wastes *by design*,
 /// so a whole-graph analysis like [`underconstrained_derived`] must exempt
-/// them or it would flag every allocation.
+/// them or it would flag every allocation. (The $D$ wire of such a gate is
+/// *not* waste: the allocator hands it out as the next allocation, and the
+/// recorder lists it in [`Recorder::extras`].)
+///
+/// Wrapping `Standard` rather than reimplementing its pooling policy is what
+/// lets [`Playback`] replay the same synthesis with a plain `Standard` and
+/// land on identical wire ids.
 #[derive(Default)]
 pub struct TrackingAllocator {
+    inner: Standard<usize>,
     /// The `b` and `c` wires of every allocation gate, in creation order.
     pub wasted: Vec<usize>,
 }
@@ -204,16 +233,29 @@ impl<'dr, F: Field> Allocator<'dr, Recorder<F>> for TrackingAllocator {
         dr: &mut Recorder<F>,
         value: impl Fn() -> Result<Coeff<F>>,
     ) -> Result<usize> {
-        let (a, b, c) = dr.mul(|| Ok((value()?, Coeff::Zero, Coeff::Zero)))?;
-        self.wasted.push(b);
-        self.wasted.push(c);
-        Ok(a)
+        // `Standard` either redeems a pooled token (`assign_extra`: one new
+        // wire, the `d`) or opens a fresh gate (three new wires `a, b, c`,
+        // returning `a`). The recorder allocates ids sequentially, so the
+        // wire-count delta tells the two apart and locates `b` and `c`.
+        let before = dr.values.len();
+        let wire = self.inner.alloc(dr, value)?;
+        if dr.values.len() == before + 3 {
+            debug_assert_eq!(wire, before, "fresh allocation gate returns its `a` wire");
+            self.wasted.push(before + 1);
+            self.wasted.push(before + 2);
+        }
+        Ok(wire)
+    }
+
+    fn donate(&mut self, extra: usize) {
+        <Standard<usize> as Allocator<'dr, Recorder<F>>>::donate(&mut self.inner, extra);
     }
 }
 
 /// A constraint *checker* that re-runs the real gadget synthesis with an
-/// injected witness, verifying each gate and `enforce_zero` against the
-/// supplied values rather than the gadget's own closures.
+/// injected witness, verifying each gate, each assigned $D$ wire's
+/// `c·d = 0`, and each `enforce_zero` against the supplied values rather
+/// than the gadget's own closures.
 ///
 /// `Playback` is the independent cross-check for [`Recorder`]/[`repair`]
 /// (issue #793, the "remove trust in the recorder" item). The recorder
@@ -227,14 +269,16 @@ impl<'dr, F: Field> Allocator<'dr, Recorder<F>> for TrackingAllocator {
 /// the recorder mis-captured the circuit.
 ///
 /// `Wire = usize` and allocation is sequential from the fixed ONE wire, so
-/// running the *same* `synthesize` (with the plain `()` allocator, whose
-/// gate-per-`alloc` call sequence matches [`TrackingAllocator`]) assigns
-/// wire `i` exactly the recorder's wire `i` — so `values` is the recorder's
-/// value vector, honest or repaired, used verbatim.
+/// running the *same* `synthesize` (with a plain [`Standard`] allocator,
+/// whose gate / `assign_extra` call sequence is exactly what
+/// [`TrackingAllocator`] delegates to) assigns wire `i` exactly the
+/// recorder's wire `i` — so `values` is the recorder's value vector, honest
+/// or repaired, used verbatim.
 pub struct Playback<F> {
     values: Vec<F>,
     next: usize,
-    /// Set false by the first failed gate, `add` definition, or enforce.
+    /// Set false by the first failed gate, `c·d = 0` check, `add`
+    /// definition, or enforce.
     ok: bool,
 }
 
@@ -297,21 +341,28 @@ impl<F: Field> DriverTypes for Playback<F> {
     type MaybeKind = Always<()>;
     type LCadd = PlayLc<F>;
     type LCenforce = PlayLc<F>;
-    type Extra = ();
+    /// The gate's output wire `c`, as in [`Recorder`].
+    type Extra = usize;
 
     fn gate(
         &mut self,
         _values: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>,
-    ) -> Result<(usize, usize, usize, ())> {
+    ) -> Result<(usize, usize, usize, usize)> {
         let (ia, ib, ic) = (self.alloc_wire(), self.alloc_wire(), self.alloc_wire());
         if self.values[ia] * self.values[ib] != self.values[ic] {
             self.ok = false;
         }
-        Ok((ia, ib, ic, ()))
+        Ok((ia, ib, ic, ic))
     }
 
-    fn assign_extra(&mut self, _extra: (), _value: impl Fn() -> Result<Coeff<F>>) -> Result<usize> {
-        Ok(self.alloc_wire())
+    fn assign_extra(&mut self, c: usize, _value: impl Fn() -> Result<Coeff<F>>) -> Result<usize> {
+        let d = self.alloc_wire();
+        // The gate's `C · D = 0`: an assigned $D$ wire may be nonzero only
+        // while the gate's output is zero.
+        if self.values[c] * self.values[d] != F::ZERO {
+            self.ok = false;
+        }
+        Ok(d)
     }
 }
 
@@ -354,9 +405,10 @@ impl<F: Field> Playback<F> {
 /// first order, while every free wire is held fixed.
 ///
 /// Builds the Jacobian of the captured constraints at the (satisfying)
-/// witness `values` — `Lin` and `Enforce` are their own (linear) rows, and
-/// a gate `a·b = c` linearizes to `b̄·da + ā·db − dc = 0` — restricted to
-/// the columns *not* in `free` (advice directions are pinned: `da = 0`).
+/// witness `values` — `Lin` and `Enforce` are their own (linear) rows, a
+/// gate `a·b = c` linearizes to `b̄·da + ā·db − dc = 0`, and an assigned
+/// $D$ wire's `c·d = 0` to `d̄·dc + c̄·dd = 0` — restricted to the columns
+/// *not* in `free` (advice directions are pinned: `da = 0`).
 /// A derived wire is **movable** when some null-space vector of that
 /// restricted system is nonzero at its column, computed by Gaussian
 /// elimination to reduced row echelon form: non-pivot columns are free
@@ -376,7 +428,8 @@ impl<F: Field> Playback<F> {
 ///
 /// `free` must include every *intentionally* free wire, or the oracle
 /// reports false positives: the advice itself, [`Recorder::extras`] (gate
-/// $D$ wires whose `C · D = 0` pin the recorder does not capture), and
+/// $D$ wires a pooling allocator handed out as advice — their `c·d = 0` is
+/// captured, but with the gate's output honestly zero it pins nothing), and
 /// [`TrackingAllocator::wasted`] (the `b`/`c` wires of allocation gates).
 ///
 /// Rank can only *drop* at special witnesses (vanishing partial
@@ -462,6 +515,7 @@ impl<F: Field> Rref<F> {
                     push_row(&[(*a, values[*b]), (*b, values[*a]), (*c, -F::ONE)]);
                 }
                 Event::Enforce { terms } => push_row(terms),
+                Event::Extra { c, d } => push_row(&[(*c, values[*d]), (*d, values[*c])]),
             }
         }
 
@@ -517,18 +571,20 @@ const CLUSTER_SOLVE_CAP: usize = 96;
 ///    constraint with exactly one unknown wire and solve it. `Lin` once all
 ///    terms are known; a `Gate` output `c := a·b` or — for `invert`/
 ///    `divide` — an *input* `a := c/b` / `b := c/a` (requires the known
-///    operand nonzero); an `Enforce` with one unknown term.
+///    operand nonzero); an `Enforce` with one unknown term; an `Extra`
+///    whose known side is nonzero, which zeroes the other (`c ≠ 0 ⇒ d = 0`
+///    and vice versa — a known *zero* side pins nothing).
 /// 2. **Linear-cluster solving** (issue #796 follow-up): when propagation
 ///    stalls, the remaining unknowns may still be jointly determined by a
 ///    coupled *linear* subsystem that no single constraint cracks (e.g. an
 ///    `invert`/`divide` chain, or two wires pinned only together). Gather
 ///    every constraint that is linear in the current unknowns — `Lin`,
-///    `Enforce`, and any `Gate` with at least one *known* operand (a known
-///    operand makes `a·b = c` linear) — and solve that system by Gauss–
-///    Jordan elimination, committing the wires the system *forces* before
-///    resorting to holding under-determined unknowns at their honest values.
-///    Newly solved wires can unlock more propagation, so the two passes
-///    alternate.
+///    `Enforce`, any `Gate` with at least one *known* operand (a known
+///    operand makes `a·b = c` linear), and any `Extra` with a known nonzero
+///    side — and solve that system by Gauss–Jordan elimination, committing
+///    the wires the system *forces* before resorting to holding
+///    under-determined unknowns at their honest values. Newly solved wires
+///    can unlock more propagation, so the two passes alternate.
 ///
 /// # Why no false positives
 ///
@@ -623,6 +679,21 @@ fn propagate<F: Field>(events: &[Event<F>], values: &mut [F], known: &mut [bool]
                         changed = true;
                     }
                 }
+                // c·d = 0 with one side known and nonzero forces the other to
+                // zero; a known zero side leaves the other side free.
+                Event::Extra { c, d } => match (known[*c], known[*d]) {
+                    (true, false) if values[*c] != F::ZERO => {
+                        values[*d] = F::ZERO;
+                        known[*d] = true;
+                        changed = true;
+                    }
+                    (false, true) if values[*d] != F::ZERO => {
+                        values[*c] = F::ZERO;
+                        known[*c] = true;
+                        changed = true;
+                    }
+                    _ => {}
+                },
             }
         }
         if !changed {
@@ -639,7 +710,9 @@ fn propagate<F: Field>(events: &[Event<F>], values: &mut [F], known: &mut [bool]
 /// unknown columns, with known wires folded into `rhs`. A `Gate a·b = c`
 /// contributes a row only when at least one of `a`, `b` is known (then it
 /// is linear); a gate with both operands unknown is genuinely nonlinear and
-/// is left for [`constraints_hold`] to check. The augmented matrix is
+/// is left for [`constraints_hold`] to check. An `Extra c·d = 0` likewise
+/// contributes a row only when one side is known *and nonzero* (`c̄·d = 0`
+/// pins `d`); a known zero side constrains nothing. The augmented matrix is
 /// reduced to row echelon form; an inconsistent row (`0 = nonzero`, no
 /// solution) abandons the solve.
 ///
@@ -719,6 +792,15 @@ fn cluster_solve<F: Field>(events: &[Event<F>], values: &mut [F], known: &mut [b
                     push(&[(*b, values[*a]), (*c, -F::ONE)], &mut rows);
                 } else if known[*b] {
                     push(&[(*a, values[*b]), (*c, -F::ONE)], &mut rows);
+                }
+            }
+            Event::Extra { c, d } => {
+                // Linear iff a side is known; a known zero side would give
+                // the empty row `0 = 0`, so only a nonzero side contributes.
+                if known[*c] && values[*c] != F::ZERO {
+                    push(&[(*d, values[*c])], &mut rows);
+                } else if known[*d] && values[*d] != F::ZERO {
+                    push(&[(*c, values[*d])], &mut rows);
                 }
             }
         }
@@ -815,6 +897,7 @@ pub fn constraints_hold<F: Field>(events: &[Event<F>], values: &[F]) -> bool {
         }
         Event::Gate { a, b, c } => values[*a] * values[*b] == values[*c],
         Event::Enforce { terms } => terms.iter().map(|(w, c)| values[*w] * c).sum::<F>() == F::ZERO,
+        Event::Extra { c, d } => values[*c] * values[*d] == F::ZERO,
     })
 }
 
@@ -880,7 +963,7 @@ mod tests {
         maybe::Maybe,
         routines::{Prediction, Routine},
     };
-    use ragu_primitives::Element;
+    use ragu_primitives::{Boolean, Element};
 
     /// A small routine whose emitted linear relation is visible to both the
     /// recorder and playback drivers.
@@ -944,6 +1027,166 @@ mod tests {
         let mut corrupted = recorder.values;
         corrupted[output_wire] += Fp::ONE;
         assert!(!replay_routine(corrupted)?);
+
+        Ok(())
+    }
+
+    /// Replays two `Element::alloc`s through a plain `Standard` allocator —
+    /// the production call sequence [`TrackingAllocator`] delegates to.
+    fn replay_two_allocs(values: Vec<Fp>) -> Result<bool> {
+        let mut playback = Playback::new(values);
+        let mut alloc = Standard::<usize>::new();
+        Element::alloc(
+            &mut playback,
+            &mut alloc,
+            Playback::<Fp>::just(|| Fp::from(5u64)),
+        )?;
+        Element::alloc(
+            &mut playback,
+            &mut alloc,
+            Playback::<Fp>::just(|| Fp::from(9u64)),
+        )?;
+        Ok(playback.accepts())
+    }
+
+    /// Two allocations through the pooling allocator share one gate: the
+    /// second lands on the gate's $D$ wire via `assign_extra`, and the
+    /// recorder captures its `c·d = 0`. The regression: a witness that keeps
+    /// the gate itself satisfied (`b = 1`, `c = a`) but leaves `d` at its
+    /// nonzero advice value is rejected — by the stored events and by a
+    /// `Standard` playback alike — where a recorder that never saw the
+    /// auxiliary constraint accepted it.
+    #[test]
+    fn pooled_allocation_captures_extra_constraint() -> Result<()> {
+        let mut rec = Recorder::<Fp>::new();
+        let mut alloc = TrackingAllocator::default();
+        let first = Element::alloc(
+            &mut rec,
+            &mut alloc,
+            Recorder::<Fp>::just(|| Fp::from(5u64)),
+        )?;
+        let second = Element::alloc(
+            &mut rec,
+            &mut alloc,
+            Recorder::<Fp>::just(|| Fp::from(9u64)),
+        )?;
+        let (a, d) = (*first.wire(), *second.wire());
+
+        // One gate `(a, b, c)` at wires 1..=3 plus the redeemed `d` at 4.
+        assert_eq!((a, d), (1, 4));
+        assert_eq!(rec.values.len(), 5);
+        assert_eq!(alloc.wasted, vec![2, 3]);
+        assert_eq!(rec.extras, vec![d]);
+        assert!(matches!(
+            rec.events.as_slice(),
+            [
+                Event::Gate { a: 1, b: 2, c: 3 },
+                Event::Extra { c: 3, d: 4 }
+            ]
+        ));
+        assert!(constraints_hold(&rec.events, &rec.values));
+        assert!(replay_two_allocs(rec.values.clone())?);
+
+        // `a·b = c` still holds, but `c` is now nonzero next to `d = 9`:
+        // only `C · D = 0` can reject this.
+        let mut corrupted = rec.values.clone();
+        corrupted[2] = Fp::ONE;
+        corrupted[3] = corrupted[1];
+        assert!(!constraints_hold(&rec.events, &corrupted));
+        assert!(!replay_two_allocs(corrupted)?);
+
+        Ok(())
+    }
+
+    /// `Boolean::alloc` donates its gate's spare $D$ token to the allocator,
+    /// so the next `Element::alloc` redeems it instead of opening a gate, and
+    /// the recorder pins that wire against the boolean gate's output with an
+    /// [`Event::Extra`]. No fresh gate means no wasted wires.
+    #[test]
+    fn donated_extra_is_redeemed() -> Result<()> {
+        let mut rec = Recorder::<Fp>::new();
+        let mut alloc = TrackingAllocator::default();
+        let bit = Boolean::alloc(&mut rec, &mut alloc, Recorder::<Fp>::just(|| true))?;
+        let elem = Element::alloc(
+            &mut rec,
+            &mut alloc,
+            Recorder::<Fp>::just(|| Fp::from(11u64)),
+        )?;
+
+        // Boolean gate `(bit, 1 − bit, 0)` at wires 1..=3; the element is
+        // its `d` at wire 4.
+        assert_eq!((*bit.wire(), *elem.wire()), (1, 4));
+        assert!(alloc.wasted.is_empty());
+        assert_eq!(rec.extras, vec![4]);
+        assert_eq!(
+            rec.events
+                .iter()
+                .filter(|ev| matches!(ev, Event::Gate { .. }))
+                .count(),
+            1
+        );
+        assert!(matches!(
+            rec.events.last(),
+            Some(Event::Extra { c: 3, d: 4 })
+        ));
+        assert!(constraints_hold(&rec.events, &rec.values));
+
+        let mut playback = Playback::new(rec.values.clone());
+        let mut alloc = Standard::<usize>::new();
+        Boolean::alloc(&mut playback, &mut alloc, Playback::<Fp>::just(|| true))?;
+        Element::alloc(
+            &mut playback,
+            &mut alloc,
+            Playback::<Fp>::just(|| Fp::from(11u64)),
+        )?;
+        assert!(playback.accepts());
+
+        Ok(())
+    }
+
+    /// The solver and the rank oracle both model `c·d = 0`. Repair: cheating
+    /// the allocation gate's `b` propagates `c := a·b` nonzero, which forces
+    /// the (solvable) `d` to zero — the only satisfying completion. Rank: at
+    /// the honest witness `d` is a genuinely free direction the `Extra`
+    /// cannot pin while `c = 0`, so it is movable unless listed free; once
+    /// `c` is honestly nonzero the row `c̄·dd = 0` pins it.
+    #[test]
+    fn extra_constraint_in_repair_and_rank_oracle() -> Result<()> {
+        let mut rec = Recorder::<Fp>::new();
+        let mut alloc = TrackingAllocator::default();
+        let a = *Element::alloc(
+            &mut rec,
+            &mut alloc,
+            Recorder::<Fp>::just(|| Fp::from(5u64)),
+        )?
+        .wire();
+        let d = *Element::alloc(
+            &mut rec,
+            &mut alloc,
+            Recorder::<Fp>::just(|| Fp::from(9u64)),
+        )?
+        .wire();
+        let (b, c) = (alloc.wasted[0], alloc.wasted[1]);
+
+        let mut values = rec.values.clone();
+        values[b] = Fp::ONE;
+        repair(&rec.events, &mut values, &[a, b]);
+        assert_eq!(values[c], values[a]);
+        assert_eq!(values[d], Fp::ZERO);
+        assert!(constraints_hold(&rec.events, &values));
+
+        assert_eq!(
+            underconstrained_derived(&rec.events, &rec.values, &[a, b]),
+            vec![d]
+        );
+        assert!(underconstrained_derived(&rec.events, &rec.values, &[a, b, d]).is_empty());
+
+        let mut pinned = rec.values.clone();
+        pinned[b] = Fp::ONE;
+        pinned[c] = pinned[a];
+        pinned[d] = Fp::ZERO;
+        assert!(constraints_hold(&rec.events, &pinned));
+        assert!(underconstrained_derived(&rec.events, &pinned, &[a, b]).is_empty());
 
         Ok(())
     }
