@@ -24,8 +24,6 @@ extern crate alloc;
 #[cfg(any(feature = "std", test))]
 extern crate std;
 
-#[cfg(test)]
-mod backend_tests;
 mod fuse;
 #[cfg(feature = "unstable-fuzzing")]
 pub mod fuzz_utils;
@@ -61,9 +59,6 @@ mod selectable_backend {
 
         impl Sealed for ragu_backend::ReferenceBackend {}
         impl Sealed for ragu_acceleration::AcceleratedBackend {}
-
-        #[cfg(test)]
-        impl Sealed for crate::backend_tests::TrackingBackend {}
     }
 
     /// A Ragu-owned computational backend.
