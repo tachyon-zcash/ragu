@@ -169,9 +169,11 @@ were insensitive to it — that's the real bug class.
 Three workflows in `.github/workflows/`:
 
 - **`rust.yml`** runs `cargo test --lib` and `cargo check --bins` from this
-  directory on every PR. This executes the substrate, recorder, and planted-bug
-  self-tests, then catches bitrot in every target without running libFuzzer.
-  Cache keys include `Cargo.toml`, `fuzz_targets/**/*.rs`, and `bin/**/*.rs`.
+  directory on every PR. This executes the substrate self-tests (the patcher
+  engine's own tests, including its planted-bug selftest, run with the
+  workspace in `ragu_testing`), then catches bitrot in every target without
+  running libFuzzer. Cache keys include `Cargo.toml`, `fuzz_targets/**/*.rs`,
+  and `bin/**/*.rs`.
 
 - **`fuzz-cron.yml`** runs every target via matrix-parallel for 5 hours
   each on Sundays, Wednesdays, and Fridays at 00:00 UTC. Each target

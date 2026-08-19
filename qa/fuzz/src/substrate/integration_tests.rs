@@ -8,7 +8,11 @@
 //!   circuits (the accept direction of `fuzz_circuit_revdot_identity`,
 //!   over arbitrary generated programs instead of two fixed circuits);
 //! * the native shadow's verdict on a mutated witness agrees with the
-//!   Simulator's (a deterministic miniature of `fuzz_circuit_cheat`).
+//!   Simulator's (a deterministic miniature of `fuzz_circuit_cheat`);
+//! * the patcher engine's free-advice discovery, working from the recorded
+//!   constraint graph alone, reproduces the substrate's own allocation list
+//!   (the ground truth `fuzz_advice_patcher`'s discovery cross-check rests
+//!   on).
 
 use ff::Field;
 use proptest::prelude::*;
@@ -19,10 +23,11 @@ use ragu_circuits::{
 };
 use ragu_pasta::Fp;
 use ragu_primitives::{Simulator, allocator::Standard};
+use ragu_testing::patcher::{Recorder, TrackingAllocator, constraints_hold, discover_free_advice};
 
 use super::{
     Capabilities, Limits, Op, OpSet, Overrides, Program, ProgramCircuit, native_satisfied,
-    program_strategy, shadow_eval, steer, synthesize_with_witness,
+    program_strategy, shadow_eval, steer, synthesize, synthesize_with_witness,
 };
 
 /// Left-hand side of the revdot constraint identity for trace polynomial
@@ -139,6 +144,49 @@ proptest! {
             sim.is_ok(),
             native_ok,
             "Simulator and native oracle disagree on a mutated witness",
+        );
+    }
+
+    /// Without anchors nothing pins a wire but the gadgets' own constraints,
+    /// so the free wires the patcher engine discovers from the recorded graph
+    /// alone must be *exactly* the substrate's allocations: the advice, the
+    /// pooled `D` wires, and the wasted `b` of each allocation gate (its
+    /// `c = a·b` is derived). The one value-dependent exception is an honest
+    /// `is_zero(0)`, whose inverse hint is genuinely free at that witness.
+    ///
+    /// This is the ground truth behind the fuzz target's discovery
+    /// cross-check — and the only place discovery is checked against an
+    /// independent list, since the circuits it is ultimately for have none.
+    #[test]
+    fn proptest_discovery_matches_allocations_anchorless(
+        program in program_strategy(
+            OpSet::ALL.without(Capabilities::ANCHORS),
+            Limits::default().max_ops,
+        ),
+    ) {
+        let steered = steer::<Fp>(&program);
+        let shadow = shadow_eval::<Fp>(&steered, Overrides::none());
+        prop_assume!(!shadow.is_zero_degenerate);
+
+        let mut rec = Recorder::<Fp>::new();
+        let mut alloc = TrackingAllocator::default();
+        let stacks = synthesize(&mut rec, &mut alloc, &steered, &[])
+            .expect("recorder must accept an honest steered program");
+        prop_assert!(constraints_hold(&rec.events, &rec.values));
+
+        let mut expected: Vec<usize> = stacks
+            .advice_wires
+            .iter()
+            .copied()
+            .chain(rec.extras.iter().copied())
+            .chain(alloc.wasted.iter().map(|&(b, _)| b))
+            .collect();
+        expected.sort_unstable();
+        expected.dedup();
+        prop_assert_eq!(
+            discover_free_advice(&rec.events, &rec.values),
+            expected,
+            "discovered free wires differ from the substrate's allocations",
         );
     }
 }

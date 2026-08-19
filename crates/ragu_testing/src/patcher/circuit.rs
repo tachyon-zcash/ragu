@@ -1,0 +1,152 @@
+//! Running the engine against a [`Circuit`] through its public API.
+//!
+//! [`capture`] synthesizes a circuit's witness through the [`Recorder`] and
+//! then serializes its public output, exactly as trace evaluation does — so
+//! the result carries the constraint graph, the honest wire values, *and*
+//! the wires of the public instance in $k(Y)$ order. [`playback`] re-runs the
+//! same synthesis through [`Playback`] over an injected witness.
+//!
+//! Nothing about the circuit is assumed beyond the trait: it builds its own
+//! allocators (the recorder's `Extra = usize` supports the pooling
+//! [`Standard`](ragu_primitives::allocator::Standard) allocator circuits
+//! normally use), may call routines, and may emit constraints while writing
+//! its output.
+
+use ragu_arithmetic::ff::Field;
+use ragu_circuits::Circuit;
+use ragu_core::{
+    Result,
+    maybe::{Always, MaybeKind},
+};
+use ragu_primitives::{Element, GadgetExt};
+
+use super::{Playback, Recorder};
+
+/// A circuit synthesized through the [`Recorder`].
+pub struct Capture<F> {
+    /// The recording driver after synthesis: the captured constraint graph
+    /// ([`Recorder::events`]), the honest wire values ([`Recorder::values`])
+    /// and the pooled $D$ wires ([`Recorder::extras`]).
+    pub recorder: Recorder<F>,
+    /// The wires of the circuit's public instance, in the order the
+    /// circuit's output gadget writes them — the $k(Y)$ order.
+    pub instance: Vec<usize>,
+}
+
+/// Synthesizes `circuit` on `witness` through the [`Recorder`].
+///
+/// Runs [`Circuit::witness`] and then writes the resulting output gadget
+/// into an element buffer, as trace evaluation does (a `Write` impl may
+/// itself emit constraints, so the write is part of the circuit). The
+/// witness should be satisfying: the engine's oracles assume the captured
+/// values satisfy the captured constraints, which
+/// [`constraints_hold`](super::constraints_hold) verifies.
+///
+/// # Errors
+///
+/// Propagates any error from the circuit's witness generation or from
+/// serializing its output.
+pub fn capture<'witness, F: Field, C: Circuit<F>>(
+    circuit: &C,
+    witness: C::Witness<'witness>,
+) -> Result<Capture<F>> {
+    let mut recorder = Recorder::<F>::new();
+    let output = circuit
+        .witness(&mut recorder, Always::maybe_just(|| witness))?
+        .into_output();
+    let mut buffer: Vec<Element<'_, Recorder<F>>> = Vec::new();
+    output.write(&mut recorder, &mut buffer)?;
+    let instance = buffer.iter().map(|e| *e.wire()).collect();
+    Ok(Capture { recorder, instance })
+}
+
+/// Re-runs `circuit` on `witness` through [`Playback`] over the injected
+/// `values` (indexed by recorder wire, as produced by [`capture`] and
+/// possibly repaired) and reports whether every gate, `C · D = 0`, linear
+/// definition and `enforce_zero` held — and that the synthesis consumed
+/// exactly the injected wires.
+///
+/// # Errors
+///
+/// Propagates any error from the circuit's witness generation or from
+/// serializing its output.
+pub fn playback<'witness, F: Field, C: Circuit<F>>(
+    circuit: &C,
+    witness: C::Witness<'witness>,
+    values: Vec<F>,
+) -> Result<bool> {
+    let mut playback = Playback::<F>::new(values);
+    let output = circuit
+        .witness(&mut playback, Always::maybe_just(|| witness))?
+        .into_output();
+    let mut buffer: Vec<Element<'_, Playback<F>>> = Vec::new();
+    output.write(&mut playback, &mut buffer)?;
+    Ok(playback.accepts())
+}
+
+#[cfg(test)]
+mod tests {
+    use ragu_pasta::Fp;
+
+    use super::*;
+    use crate::{
+        circuits::{MySimpleCircuit, SquareCircuit},
+        patcher::{constraints_hold, discover_free_advice, repair},
+    };
+
+    /// `MySimpleCircuit` proves `a⁵ = b²` and outputs `(a + b, a − b)`.
+    /// Its two witness allocations share one pooled gate: `a` on the gate's
+    /// `a` wire (1), `b` on its `d` wire (4), with `b`/`c` (2, 3) wasted.
+    #[test]
+    fn capture_my_simple_circuit() -> Result<()> {
+        let (a, b) = (Fp::from(4u64), Fp::from(32u64)); // 4⁵ = 1024 = 32²
+        let cap = capture(&MySimpleCircuit, (a, b))?;
+        let rec = &cap.recorder;
+
+        assert!(constraints_hold(&rec.events, &rec.values));
+        assert_eq!(rec.extras, vec![4]);
+        assert_eq!(cap.instance.len(), 2);
+        assert_eq!(rec.values[cap.instance[0]], a + b);
+        assert_eq!(rec.values[cap.instance[1]], a - b);
+        assert!(playback(&MySimpleCircuit, (a, b), rec.values.clone())?);
+
+        // Only the allocations are free: `a`, the wasted `b`, and `d`.
+        // Everything else — the squaring chain, `b²`, both outputs — is
+        // derived from them.
+        assert_eq!(
+            discover_free_advice(&rec.events, &rec.values),
+            vec![1, 2, 4]
+        );
+
+        // Corrupting an output is caught live.
+        let mut corrupted = rec.values.clone();
+        corrupted[cap.instance[0]] += Fp::ONE;
+        assert!(!playback(&MySimpleCircuit, (a, b), corrupted)?);
+
+        Ok(())
+    }
+
+    /// Repairing a cheat on a captured circuit's witness wire: moving `a`
+    /// propagates through every square to the output, which `playback`
+    /// then accepts as a different-but-valid witness.
+    #[test]
+    fn repair_propagates_through_captured_circuit() -> Result<()> {
+        let circuit = SquareCircuit { times: 3 };
+        let cap = capture(&circuit, Fp::from(3u64))?;
+        let rec = &cap.recorder;
+        let free = discover_free_advice(&rec.events, &rec.values);
+        assert_eq!(
+            free,
+            vec![1, 2],
+            "one allocation gate: `a` plus the wasted `b` (`c = a·b` follows)"
+        );
+
+        let mut values = rec.values.clone();
+        values[1] = Fp::from(5u64);
+        repair(&rec.events, &mut values, &free);
+        assert!(constraints_hold(&rec.events, &values));
+        assert_eq!(values[cap.instance[0]], Fp::from(5u64).pow([8u64]));
+        assert!(playback(&circuit, Fp::from(3u64), values)?);
+        Ok(())
+    }
+}

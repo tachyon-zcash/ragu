@@ -85,25 +85,35 @@
 //! must have a trivial null space — an algebraic, mutation-free detector
 //! for wires the constraints fail to pin.
 //!
+//! Every input also runs a **free-advice discovery cross-check**
+//! (`discover_free_advice`): the wires the captured graph leaves
+//! undetermined — found structurally, with no help from the substrate —
+//! must all be allocations the substrate knows it made (advice, pooled $D$
+//! wires, allocation waste). A free wire that is *not* an allocation is a
+//! hint some gadget left unpinned, found without any cheat; and since the
+//! substrate's allocation list is ground truth, the check also keeps
+//! discovery honest for the circuits it will be pointed at without one.
+//!
 //! Every input also runs a **playback cross-check**: the repaired witness is
 //! re-verified by a fresh synthesis of the *real* gadget calls
-//! (`recorder::Playback`) with an independent linear-combination evaluator.
+//! (`patcher::Playback`) with an independent linear-combination evaluator.
 //! If that live re-execution disagrees with the recorder's stored-event
 //! verdict, the recorder mis-captured the circuit and every signal is
 //! suspect — so the engine validates its own model on every run.
 //!
 //! Allocation goes through the production pooling allocator on both sides
-//! (`recorder::TrackingAllocator` wraps a `Standard`; playback uses a plain
+//! (`patcher::TrackingAllocator` wraps a `Standard`; playback uses a plain
 //! `Standard`), so the captured graph includes the gate $D$ wires a pooled
 //! allocation hands out — redeemed from `BoolAlloc`/`IsZero` donations or
 //! paired with the previous allocation — and their `C · D = 0` constraint.
 //!
-//! The engine — the recording driver, the repair solver, and the planted-bug
-//! selftest — lives in `ragu_testing_fuzz::recorder`, where it is unit tested in
-//! CI and reusable against real circuits (issue #793). `PATCHER_SELFTEST=1`
-//! runs that selftest here on demand: a deliberately under-constrained
-//! circuit (a root and a "square" allocated as independent free wires, with
-//! the `square = root²` gate omitted) whose oracle must fire — proof the
+//! The engine — the recording driver, the repair solver, the oracles, and
+//! the planted-bug selftest — lives in `ragu_testing::patcher`, where it is
+//! unit tested in CI and available to `ragu_pcd`'s own tests for the
+//! internal recursion circuits (issue #793). `PATCHER_SELFTEST=1` runs that
+//! selftest here on demand: a deliberately under-constrained circuit (a root
+//! and a "square" allocated as independent free wires, with the
+//! `square = root²` gate omitted) whose oracle must fire — proof the
 //! soundness direction is not vacuous.
 
 #![no_main]
@@ -113,15 +123,13 @@ use ff::PrimeField;
 use libfuzzer_sys::fuzz_target;
 use pasta_curves::{Fp, Fq};
 use ragu_primitives::allocator::Standard;
-use ragu_testing_fuzz::{
-    recorder::{
-        Playback, Recorder, TrackingAllocator, constraints_hold, repair, selftest,
-        underconstrained_derived,
-    },
-    substrate::{
-        AdviceSlot, Limits, OpKind, OpSet, Overrides, Program, anchor_tail, native_satisfied,
-        shadow_eval, special_value, synthesize,
-    },
+use ragu_testing::patcher::{
+    Playback, Recorder, TrackingAllocator, constraints_hold, discover_free_advice, repair,
+    selftest, underconstrained_derived,
+};
+use ragu_testing_fuzz::substrate::{
+    AdviceSlot, Limits, OpKind, OpSet, Overrides, Program, anchor_tail, native_satisfied,
+    shadow_eval, special_value, synthesize,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -386,19 +394,46 @@ fn patch_round<F: PrimeField<Repr = [u8; 32]>>(input: &Input, decoded: &Program)
         "honest native oracle disagreed with itself (harness bug): {program:?}"
     );
 
+    // The wires the substrate knows it allocated: advice, the gate-D wires
+    // pooled allocation handed out as advice, and allocation waste. These are
+    // the genuine free wires of the honest graph.
+    let allocations: Vec<usize> = stacks
+        .advice_wires
+        .iter()
+        .copied()
+        .chain(rec.extras.iter().copied())
+        .chain(alloc.wasted.iter().flat_map(|&(b, c)| [b, c]))
+        .collect();
+
+    // Free-advice discovery cross-check, independent of any cheat: every
+    // wire the captured graph leaves undetermined must be one of those
+    // allocations. A free wire outside the list is a hint some gadget left
+    // unpinned — and the list is ground truth the engine will not have for
+    // the real circuits, so this also validates discovery itself. Skipped on
+    // the genuine degeneracy — an honest `is_zero(0)`, whose inverse hint is
+    // benignly free — exactly as the rank oracle below is.
+    if !shadow.is_zero_degenerate {
+        let discovered = discover_free_advice(&rec.events, &rec.values);
+        let unexplained: Vec<usize> = discovered
+            .iter()
+            .copied()
+            .filter(|w| !allocations.contains(w))
+            .collect();
+        assert!(
+            unexplained.is_empty(),
+            "DISCOVERY SIGNAL: the captured constraints leave wires {unexplained:?} \
+             free, but the substrate allocated none of them — a gadget hint is \
+             unpinned (or discovery is wrong). Program: {program:?}",
+        );
+    }
+
     // Rank/nullity oracle, independent of any cheat: with the genuine free
-    // wires (advice, the gate-D wires pooled allocation handed out as advice,
-    // allocator waste) held fixed, every remaining wire must be locally
-    // pinned by the captured constraints.
-    // Skipped only on the genuine degeneracy — an honest `is_zero(0)`, whose
-    // inverse hint is benignly free — not on every true boolean (a
-    // `BoolAlloc(true)`/`BoolNot` produces no free hint), and on outsized
-    // graphs.
+    // wires held fixed, every remaining wire must be locally pinned by the
+    // captured constraints. Skipped only on the genuine degeneracy above —
+    // not on every true boolean (a `BoolAlloc(true)`/`BoolNot` produces no
+    // free hint) — and on outsized graphs.
     if rec.values.len() <= RANK_WIRE_CAP && !shadow.is_zero_degenerate {
-        let mut rank_free = stacks.advice_wires.clone();
-        rank_free.extend_from_slice(&rec.extras);
-        rank_free.extend_from_slice(&alloc.wasted);
-        let movable = underconstrained_derived(&rec.events, &rec.values, &rank_free);
+        let movable = underconstrained_derived(&rec.events, &rec.values, &allocations);
         assert!(
             movable.is_empty(),
             "RANK ORACLE SIGNAL: derived wires {movable:?} can move while every \
@@ -585,7 +620,7 @@ fn patch_round<F: PrimeField<Repr = [u8; 32]>>(input: &Input, decoded: &Program)
     //    before guessed ones, which lets the input be deduced first and the
     //    hints fall out by propagation. Weakening that ordering resurfaces as
     //    spurious rejections here, not as a solver error — see the
-    //    least-commitment section on `recorder::cluster_solve` and the
+    //    least-commitment section on `patcher::recorder::cluster_solve` and the
     //    `regressions/fuzz_advice_patcher/` reproducers.
     assert_eq!(
         shadow.value_fallible_pushes.len(),

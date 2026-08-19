@@ -1,5 +1,5 @@
-//! The patcher engine: a recording driver plus a constraint-graph repair
-//! solver (issues #728, #793, #796).
+//! The recording driver, its playback twin, and the constraint-graph
+//! solver and oracles that run over what it records.
 //!
 //! [`Recorder`] is a [`Driver`] that captures the constraint graph ragu
 //! actually emits during synthesis — every multiplication gate `a·b = c`,
@@ -16,12 +16,16 @@
 //! independent native oracle is the patcher differential: ragu accepting a
 //! witness the oracle rejects is an under-constrained-advice signal.
 //!
-//! The engine lives here rather than in the fuzz target so it is unit
-//! tested ([`selftest`] runs in CI as a plain test) and reusable against
-//! real circuits (issue #793).
+//! Nothing here knows how the circuit was produced: it is driven through
+//! the [`Driver`] trait alone, which is what lets the same engine run a
+//! generated fuzz program, a hand-written test circuit, or — from
+//! `ragu_pcd`'s own tests — an internal recursion circuit. See the
+//! [parent module](super) for the `Circuit`-level entry points.
 
-use ff::{Field, PrimeField};
-use ragu_arithmetic::Coeff;
+use ragu_arithmetic::{
+    Coeff,
+    ff::{Field, PrimeField},
+};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverTypes, LinearExpression},
@@ -78,7 +82,7 @@ pub struct Recorder<F> {
     /// [`Event::Extra`] to be zero whenever its gate's `C` is nonzero and
     /// free otherwise. Like an allocation gate's `a` wire they hold
     /// prover-chosen advice, so callers that know every `alloc` result is
-    /// advice (the substrate) list them among the free wires for
+    /// advice (the fuzz substrate, say) list them among the free wires for
     /// [`underconstrained_derived`].
     pub extras: Vec<usize>,
 }
@@ -223,8 +227,11 @@ impl<'dr, F: Field> Driver<'dr> for Recorder<F> {
 #[derive(Default)]
 pub struct TrackingAllocator {
     inner: Standard<usize>,
-    /// The `b` and `c` wires of every allocation gate, in creation order.
-    pub wasted: Vec<usize>,
+    /// The `(b, c)` wires of every allocation gate, in creation order. `b`
+    /// is a free wire nothing references; `c = a·b` is derived from it (and
+    /// honestly zero), so [`discover_free_advice`](super::discover_free_advice)
+    /// reports the `b`s but not the `c`s.
+    pub wasted: Vec<(usize, usize)>,
 }
 
 impl<'dr, F: Field> Allocator<'dr, Recorder<F>> for TrackingAllocator {
@@ -241,8 +248,7 @@ impl<'dr, F: Field> Allocator<'dr, Recorder<F>> for TrackingAllocator {
         let wire = self.inner.alloc(dr, value)?;
         if dr.values.len() == before + 3 {
             debug_assert_eq!(wire, before, "fresh allocation gate returns its `a` wire");
-            self.wasted.push(before + 1);
-            self.wasted.push(before + 2);
+            self.wasted.push((before + 1, before + 2));
         }
         Ok(wire)
     }
@@ -263,17 +269,17 @@ impl<'dr, F: Field> Allocator<'dr, Recorder<F>> for TrackingAllocator {
 /// entirely over that stored snapshot ([`Event`]s, [`constraints_hold`]); a
 /// capture bug — a mis-folded `Coeff` gain, a dropped term, a swapped wire —
 /// would corrupt every later verdict invisibly. `Playback` re-derives the
-/// verdict from scratch: same `synthesize`, same gadget calls, but its own
-/// linear-combination evaluator reading the injected `values` directly. If
-/// the recorder's stored answer and this live re-execution ever disagree,
+/// verdict from scratch: the same synthesis, the same gadget calls, but its
+/// own linear-combination evaluator reading the injected `values` directly.
+/// If the recorder's stored answer and this live re-execution ever disagree,
 /// the recorder mis-captured the circuit.
 ///
 /// `Wire = usize` and allocation is sequential from the fixed ONE wire, so
-/// running the *same* `synthesize` (with a plain [`Standard`] allocator,
-/// whose gate / `assign_extra` call sequence is exactly what
-/// [`TrackingAllocator`] delegates to) assigns wire `i` exactly the
-/// recorder's wire `i` — so `values` is the recorder's value vector, honest
-/// or repaired, used verbatim.
+/// running the *same* synthesis (with a plain [`Standard`] allocator, whose
+/// gate / `assign_extra` call sequence is exactly what [`TrackingAllocator`]
+/// delegates to) assigns wire `i` exactly the recorder's wire `i` — so
+/// `values` is the recorder's value vector, honest or repaired, used
+/// verbatim.
 pub struct Playback<F> {
     values: Vec<F>,
     next: usize,
@@ -531,15 +537,15 @@ impl<F: Field> Rref<F> {
             };
             rows.swap(r, pr);
             let inv = rows[r][c].invert().unwrap();
-            for x in c..d {
-                rows[r][x] *= inv;
+            for v in &mut rows[r][c..] {
+                *v *= inv;
             }
-            for i in 0..rows.len() {
-                if i != r && rows[i][c] != F::ZERO {
-                    let f = rows[i][c];
-                    for x in c..d {
-                        let t = rows[r][x] * f;
-                        rows[i][x] -= t;
+            let pivot_row = rows[r].clone();
+            for (i, row) in rows.iter_mut().enumerate() {
+                if i != r && row[c] != F::ZERO {
+                    let f = row[c];
+                    for (v, p) in row[c..].iter_mut().zip(&pivot_row[c..]) {
+                        *v -= *p * f;
                     }
                 }
             }
@@ -569,9 +575,11 @@ const CLUSTER_SOLVE_CAP: usize = 96;
 ///
 /// 1. **Single-unknown propagation** (issue #796 item 1): apply any
 ///    constraint with exactly one unknown wire and solve it. `Lin` once all
-///    terms are known; a `Gate` output `c := a·b` or — for `invert`/
-///    `divide` — an *input* `a := c/b` / `b := c/a` (requires the known
-///    operand nonzero); an `Enforce` with one unknown term; an `Extra`
+///    terms are known, or one unknown term once `out` is (an anchored
+///    difference pins its operand); a `Gate` output `c := a·b` or — for
+///    `invert`/`divide` — an *input* `a := c/b` / `b := c/a` (requires the
+///    known operand nonzero), or `c := 0` as soon as either operand is
+///    known to be zero; an `Enforce` with one unknown term; an `Extra`
 ///    whose known side is nonzero, which zeroes the other (`c ≠ 0 ⇒ d = 0`
 ///    and vice versa — a known *zero* side pins nothing).
 /// 2. **Linear-cluster solving** (issue #796 follow-up): when propagation
@@ -625,7 +633,25 @@ pub fn repair<F: Field>(events: &[Event<F>], values: &mut [F], free: &[usize]) {
         propagate(events, values, &mut known);
         // Propagation has stalled; try to crack a coupled linear cluster.
         // If that solves nothing new, the fixpoint is reached.
-        if !cluster_solve(events, values, &mut known) {
+        if !cluster_solve(events, values, &mut known, true) {
+            break;
+        }
+    }
+}
+
+/// Everything the constraints *force* given the `known` wires, and nothing
+/// more: [`repair`] without its guessing tier.
+///
+/// Runs single-unknown propagation and forced linear-cluster deductions to a
+/// fixpoint, marking each deduced wire `known` and writing its value. Unlike
+/// [`repair`] it never pins an under-determined wire to a chosen value, so a
+/// wire it leaves unknown is genuinely not determined by the known set —
+/// the property [`discover_free_advice`](super::discover_free_advice)
+/// builds on.
+pub(super) fn deduce<F: Field>(events: &[Event<F>], values: &mut [F], known: &mut [bool]) {
+    loop {
+        propagate(events, values, known);
+        if !cluster_solve(events, values, known, false) {
             break;
         }
     }
@@ -638,15 +664,47 @@ fn propagate<F: Field>(events: &[Event<F>], values: &mut [F], known: &mut [bool]
         for ev in events {
             match ev {
                 Event::Lin { out, terms } => {
-                    if !known[*out] && terms.iter().all(|(w, _)| known[*w]) {
-                        values[*out] = terms.iter().map(|(w, c)| values[*w] * c).sum();
-                        known[*out] = true;
-                        changed = true;
+                    if !known[*out] {
+                        if terms.iter().all(|(w, _)| known[*w]) {
+                            values[*out] = terms.iter().map(|(w, c)| values[*w] * c).sum();
+                            known[*out] = true;
+                            changed = true;
+                        }
+                    } else {
+                        // `out` is already pinned (by an enforce on it, say):
+                        // a single unknown term is determined by the rest.
+                        let mut unknown = terms.iter().filter(|(w, _)| !known[*w]);
+                        if let Some(&(uw, uc)) = unknown.next()
+                            && unknown.next().is_none()
+                            && uc != F::ZERO
+                        {
+                            // out = Σ cᵢ·wᵢ ⇒ wⱼ = (out − Σ_{i≠j} cᵢ·wᵢ)/cⱼ.
+                            let rest: F = terms
+                                .iter()
+                                .filter(|(w, _)| *w != uw)
+                                .map(|(w, c)| values[*w] * c)
+                                .sum();
+                            values[uw] = (values[*out] - rest) * uc.invert().unwrap();
+                            known[uw] = true;
+                            changed = true;
+                        }
                     }
                 }
                 Event::Gate { a, b, c } => match (known[*a], known[*b], known[*c]) {
                     (true, true, false) => {
                         values[*c] = values[*a] * values[*b];
+                        known[*c] = true;
+                        changed = true;
+                    }
+                    // A zero operand forces a zero output whatever the other
+                    // operand is.
+                    (true, false, false) if values[*a] == F::ZERO => {
+                        values[*c] = F::ZERO;
+                        known[*c] = true;
+                        changed = true;
+                    }
+                    (false, true, false) if values[*b] == F::ZERO => {
+                        values[*c] = F::ZERO;
                         known[*c] = true;
                         changed = true;
                     }
@@ -743,8 +801,15 @@ fn propagate<F: Field>(events: &[Event<F>], values: &mut [F], known: &mut [bool]
 /// anything returns immediately, letting [`propagate`] and a fresh pass run
 /// against the larger known set. Only when nothing at all is forced does the
 /// guessing tier run, which is the documented benign under-determination —
-/// by then every deduction available has already been made.
-fn cluster_solve<F: Field>(events: &[Event<F>], values: &mut [F], known: &mut [bool]) -> bool {
+/// by then every deduction available has already been made. With `guess`
+/// false the guessing tier is skipped altogether, which is what [`deduce`]
+/// needs: a wire left unknown is then genuinely undetermined.
+fn cluster_solve<F: Field>(
+    events: &[Event<F>],
+    values: &mut [F],
+    known: &mut [bool],
+    guess: bool,
+) -> bool {
     // Columns: the still-unknown wires.
     let mut col_of = vec![usize::MAX; values.len()];
     let mut wire_of = Vec::new();
@@ -818,15 +883,15 @@ fn cluster_solve<F: Field>(events: &[Event<F>], values: &mut [F], known: &mut [b
         };
         rows.swap(r, pr);
         let inv = rows[r][c].invert().unwrap();
-        for x in c..=m {
-            rows[r][x] *= inv;
+        for v in &mut rows[r][c..] {
+            *v *= inv;
         }
-        for i in 0..rows.len() {
-            if i != r && rows[i][c] != F::ZERO {
-                let f = rows[i][c];
-                for x in c..=m {
-                    let t = rows[r][x] * f;
-                    rows[i][x] -= t;
+        let pivot_row = rows[r].clone();
+        for (i, row) in rows.iter_mut().enumerate() {
+            if i != r && row[c] != F::ZERO {
+                let f = row[c];
+                for (v, p) in row[c..].iter_mut().zip(&pivot_row[c..]) {
+                    *v -= *p * f;
                 }
             }
         }
@@ -872,6 +937,9 @@ fn cluster_solve<F: Field>(events: &[Event<F>], values: &mut [F], known: &mut [b
     // Tier 2: nothing is forced, so every remaining pivot depends on a free
     // column. Pin those at their honest values and take the resulting
     // solution — a satisfying witness for an under-determined subsystem.
+    if !guess {
+        return false;
+    }
     let mut changed = false;
     for (row_idx, &pc) in pivot_col_of_row.iter().enumerate() {
         // RREF row: x_pc + Σ_{nonpivot j} row[j]·x_j = row[m].
@@ -912,8 +980,8 @@ pub fn constraints_hold<F: Field>(events: &[Event<F>], values: &[F]) -> bool {
 /// move, violating the anchor. The mismatch is the signal.
 ///
 /// This runs as a unit test (`tests::selftest_fires`) and on demand in the
-/// fuzz target (`PATCHER_SELFTEST=1`): proof the soundness direction is not
-/// vacuous.
+/// `fuzz_advice_patcher` target (`PATCHER_SELFTEST=1`): proof the soundness
+/// direction is not vacuous.
 pub fn selftest<F: PrimeField>() {
     let root_honest = F::from(7u64);
 
@@ -922,7 +990,7 @@ pub fn selftest<F: PrimeField>() {
     let square = rec.push_wire(root_honest.square()); // free advice — BUG: not gated to root²
 
     // Anchor `square` to its honest value via `enforce_zero(square - 49)`,
-    // exactly as the substrate's `Op::Anchor` would: a constant wire, a
+    // exactly as the fuzz substrate's `Op::Anchor` does: a constant wire, a
     // difference Lin, and a 1-term check.
     let pin =
         rec.add(|lc| lc.add_term(&Recorder::<F>::ONE, Coeff::Arbitrary(root_honest.square())));
@@ -955,15 +1023,16 @@ pub fn selftest<F: PrimeField>() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use pasta_curves::{Fp, Fq};
     use ragu_core::{
         drivers::DriverValue,
         gadgets::{Bound, Kind},
         maybe::Maybe,
         routines::{Prediction, Routine},
     };
+    use ragu_pasta::{Fp, Fq};
     use ragu_primitives::{Boolean, Element};
+
+    use super::*;
 
     /// A small routine whose emitted linear relation is visible to both the
     /// recorder and playback drivers.
@@ -1075,7 +1144,7 @@ mod tests {
         // One gate `(a, b, c)` at wires 1..=3 plus the redeemed `d` at 4.
         assert_eq!((a, d), (1, 4));
         assert_eq!(rec.values.len(), 5);
-        assert_eq!(alloc.wasted, vec![2, 3]);
+        assert_eq!(alloc.wasted, vec![(2, 3)]);
         assert_eq!(rec.extras, vec![d]);
         assert!(matches!(
             rec.events.as_slice(),
@@ -1166,7 +1235,7 @@ mod tests {
             Recorder::<Fp>::just(|| Fp::from(9u64)),
         )?
         .wire();
-        let (b, c) = (alloc.wasted[0], alloc.wasted[1]);
+        let (b, c) = alloc.wasted[0];
 
         let mut values = rec.values.clone();
         values[b] = Fp::ONE;
