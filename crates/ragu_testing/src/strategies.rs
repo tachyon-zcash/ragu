@@ -1,8 +1,7 @@
 //! Shared proptest strategies for Ragu crates.
 
-use ff::PrimeField;
 use proptest::{prelude::*, sample::select, strategy::BoxedStrategy};
-use ragu_arithmetic::{Coeff, Domain};
+use ragu_arithmetic::{Coeff, Domain, ff::PrimeField};
 
 fn edge_u64() -> impl Strategy<Value = u64> + Clone {
     let edges = vec![

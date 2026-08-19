@@ -8,7 +8,7 @@
 //!
 //! All circuits must be registered before any bonding objects.
 
-use ff::{FromUniformBytes, PrimeField};
+use ragu_arithmetic::ff::{FromUniformBytes, PrimeField};
 use ragu_circuits::{
     BondingObject, Circuit, Trace,
     polynomials::{Rank, sparse},

@@ -5,7 +5,7 @@
 //! - [`MySimpleCircuit`]: Proves knowledge of a and b such that a^5 = b^2 and outputs c = a+b, d = a-b.
 //! - [`SquareCircuit`]: Parameterized circuit that squares an input `times` times.
 
-use ff::Field;
+use ragu_arithmetic::ff::Field;
 use ragu_circuits::{Circuit, WithAux};
 use ragu_core::{
     Result,

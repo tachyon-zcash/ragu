@@ -29,14 +29,12 @@ default = []
 bench = false
 
 [dependencies]
-ragu_arithmetic = { path = "../ragu_arithmetic", version = "0.0.0" }
-ragu_circuits = { path = "../ragu_circuits", version = "0.0.0" }
-ragu_core = { path = "../ragu_core", version = "0.0.0" }
-ragu_pcd = { path = "../ragu_pcd", version = "0.0.0" }
-ragu_primitives = { path = "../ragu_primitives", version = "0.0.0" }
-ff = { workspace = true }
+ragu_arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", default-features = false, features = ["alloc"] }
+ragu_circuits = { path = "../ragu_circuits", version = "0.0.0", default-features = false, features = ["alloc"] }
+ragu_core = { path = "../ragu_core", version = "0.0.0", default-features = false, features = ["alloc"] }
+ragu_pcd = { path = "../ragu_pcd", version = "0.0.0", default-features = false, features = ["alloc"] }
+ragu_primitives = { path = "../ragu_primitives", version = "0.0.0", default-features = false, features = ["alloc"] }
 proptest = { workspace = true }
-rand = { workspace = true }
 
 [dev-dependencies]
-ragu_pasta = { path = "../ragu_pasta", version = "0.0.0", features = ["baked"] }
+ragu_pasta = { path = "../ragu_pasta", version = "0.0.0", default-features = false, features = ["alloc", "baked"] }
