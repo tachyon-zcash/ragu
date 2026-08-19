@@ -48,6 +48,10 @@ criteria = "safe-to-deploy"
 version = "1.0.4"
 criteria = "safe-to-deploy"
 
+[[exemptions.cc]]
+version = "1.4.3"
+criteria = "safe-to-deploy"
+
 [[exemptions.constant_time_eq]]
 version = "0.4.2"
 criteria = "safe-to-deploy"
@@ -74,6 +78,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.crossbeam-utils]]
 version = "0.8.21"
+criteria = "safe-to-deploy"
+
+[[exemptions.find-msvc-tools]]
+version = "0.1.11"
 criteria = "safe-to-deploy"
 
 [[exemptions.funty]]
@@ -104,9 +112,25 @@ criteria = "safe-to-run"
 version = "2.7.1"
 criteria = "safe-to-run"
 
+[[exemptions.hashbrown]]
+version = "0.12.3"
+criteria = "safe-to-deploy"
+
 [[exemptions.hermit-abi]]
 version = "0.5.2"
 criteria = "safe-to-run"
+
+[[exemptions.indexmap]]
+version = "1.9.3"
+criteria = "safe-to-deploy"
+
+[[exemptions.once_cell]]
+version = "1.21.3"
+criteria = "safe-to-deploy"
+
+[[exemptions.pin-project-lite]]
+version = "0.2.17"
+criteria = "safe-to-deploy"
 
 [[exemptions.ppv-lite86]]
 version = "0.2.21"
@@ -136,6 +160,10 @@ criteria = "safe-to-run"
 version = "0.3.1"
 criteria = "safe-to-run"
 
+[[exemptions.shlex]]
+version = "2.0.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.spin]]
 version = "0.9.8"
 criteria = "safe-to-deploy"
@@ -144,8 +172,24 @@ criteria = "safe-to-deploy"
 version = "3.24.0"
 criteria = "safe-to-run"
 
+[[exemptions.tracing]]
+version = "0.1.44"
+criteria = "safe-to-deploy"
+
+[[exemptions.tracing-attributes]]
+version = "0.1.31"
+criteria = "safe-to-deploy"
+
+[[exemptions.tracing-core]]
+version = "0.1.36"
+criteria = "safe-to-deploy"
+
 [[exemptions.wyz]]
 version = "0.5.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.zakura-halo2-proofs]]
+version = "1.0.0-rc.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.zakura-pasta-curves]]

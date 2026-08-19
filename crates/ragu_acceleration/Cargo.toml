@@ -19,18 +19,20 @@ rustdoc-args = ["--html-in-header", "katex-header.html"]
 
 [features]
 default = []
-multicore = ["ragu_backend/multicore", "std"]
+multicore = ["halo2_proofs?/multicore", "ragu_backend/multicore", "std"]
+native-msm = ["dep:halo2_proofs", "std"]
 std = []
 
 [lib]
 bench = false
 
 [dependencies]
+ragu_arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", default-features = false, features = ["alloc"] }
 ragu_backend = { path = "../ragu_backend", version = "0.0.0", default-features = false }
+halo2_proofs = { package = "zakura-halo2-proofs", version = "1.0.0-rc.2", default-features = false, optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
-ragu_arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", default-features = false, features = ["alloc"] }
 ragu_circuits = { path = "../ragu_circuits", version = "0.0.0", default-features = false, features = ["alloc"] }
 ragu_core = { path = "../ragu_core", version = "0.0.0", default-features = false, features = ["alloc"] }
 ragu_primitives = { path = "../ragu_primitives", version = "0.0.0", default-features = false, features = ["alloc"] }

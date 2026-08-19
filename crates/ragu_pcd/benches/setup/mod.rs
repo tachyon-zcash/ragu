@@ -1,3 +1,5 @@
+#[cfg(feature = "native-msm")]
+use ragu_acceleration::AcceleratedBackend;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_pasta::{Fp, Pasta};
@@ -56,6 +58,47 @@ pub fn setup_fuse() -> (
     StdRng,
 ) {
     let (app, poseidon_params, mut rng) = setup_seed();
+
+    let (leaf1, _) = app
+        .seed(
+            &mut rng,
+            nontrivial::WitnessLeaf { poseidon_params },
+            Fp::from(1u64),
+        )
+        .unwrap();
+
+    let (leaf2, _) = app
+        .seed(
+            &mut rng,
+            nontrivial::WitnessLeaf { poseidon_params },
+            Fp::from(2u64),
+        )
+        .unwrap();
+
+    (app, leaf1, leaf2, poseidon_params, rng)
+}
+
+/// Mirrors [`setup_fuse`], but selects the accelerated backend so the tracked
+/// baselines isolate the cost of the overridden operations.
+#[cfg(feature = "native-msm")]
+pub fn setup_fuse_accelerated() -> (
+    Application<'static, Pasta, ProductionRank, 4, AcceleratedBackend>,
+    Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
+    Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
+    &'static <Pasta as Cycle>::CircuitPoseidon,
+    StdRng,
+) {
+    let pasta = Pasta::baked();
+    let poseidon_params = Pasta::circuit_poseidon(pasta);
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+        .with_backend::<AcceleratedBackend>()
+        .register(nontrivial::WitnessLeaf { poseidon_params })
+        .unwrap()
+        .register(nontrivial::Hash2 { poseidon_params })
+        .unwrap()
+        .finalize(pasta)
+        .unwrap();
+    let mut rng = StdRng::seed_from_u64(1234);
 
     let (leaf1, _) = app
         .seed(

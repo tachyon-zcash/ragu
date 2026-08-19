@@ -6,12 +6,24 @@ use ragu_arithmetic::{
     pasta_curves::{pallas, vesta},
 };
 use ragu_backend::{Backend, ReferenceBackend};
+use ragu_circuits::polynomials::{ProductionRank, Rank, TestRank};
 use ragu_testing::strategies::{bounded_edge_usize, prime_field_element};
 
-const MAX_MSM_TERMS: usize = 255;
-
 fn arb_msm_size() -> impl Strategy<Value = usize> {
-    bounded_edge_usize(MAX_MSM_TERMS)
+    let window_boundaries = (0..=ProductionRank::RANK, -1i8..=1).prop_map(|(log_size, offset)| {
+        let boundary = 1usize << log_size;
+        match offset {
+            -1 => boundary - 1,
+            0 => boundary,
+            1 => (boundary + 1).min(ProductionRank::num_coeffs()),
+            _ => unreachable!("the generated offset is in -1..=1"),
+        }
+    });
+
+    prop_oneof![
+        bounded_edge_usize(TestRank::num_coeffs()),
+        window_boundaries,
+    ]
 }
 
 fn arb_msm_terms<F>() -> impl Strategy<Value = Vec<(F, F)>>
@@ -19,7 +31,42 @@ where
     F: ragu_arithmetic::ff::PrimeField + From<u64> + 'static,
 {
     arb_msm_size().prop_flat_map(|size| {
-        proptest::collection::vec((prime_field_element(), prime_field_element()), size)
+        let independent = proptest::collection::vec(
+            (prime_field_element::<F>(), prime_field_element::<F>()),
+            size,
+        );
+        let repeated = (
+            proptest::collection::vec(prime_field_element::<F>(), size),
+            prime_field_element::<F>(),
+        )
+            .prop_map(|(scalars, base)| scalars.into_iter().map(|scalar| (scalar, base)).collect());
+        let repeated_with_inverses = (
+            proptest::collection::vec((prime_field_element::<F>(), any::<bool>()), size),
+            prime_field_element::<F>(),
+        )
+            .prop_map(|(terms, base)| {
+                terms
+                    .into_iter()
+                    .map(|(scalar, negate)| (scalar, if negate { -base } else { base }))
+                    .collect()
+            });
+        let identity_bases =
+            proptest::collection::vec(prime_field_element::<F>(), size).prop_map(|scalars| {
+                scalars
+                    .into_iter()
+                    .map(|scalar| (scalar, F::ZERO))
+                    .collect()
+            });
+        let zero_scalars = proptest::collection::vec(prime_field_element::<F>(), size)
+            .prop_map(|bases| bases.into_iter().map(|base| (F::ZERO, base)).collect());
+
+        prop_oneof![
+            independent,
+            repeated,
+            repeated_with_inverses,
+            identity_bases,
+            zero_scalars,
+        ]
     })
 }
 

@@ -4,9 +4,14 @@
 
 # `ragu_acceleration`
 
-This crate provides Ragu's accelerated computational backend. It currently
-inherits the correctness-first defaults from `ragu_backend`; optimized
-operations will be introduced individually with reference-equivalence tests.
+This crate provides Ragu's accelerated computational backend. It inherits the
+correctness-first defaults from `ragu_backend` except for individually tested
+overrides.
+
+The opt-in `native-msm` feature routes MSMs through Zakura's signed-Booth
+multiexp (`zakura-halo2-proofs`), which is built over the same
+`zakura-pasta-curves` types Ragu uses. The implementation is variable-time and
+must only be used where Ragu's existing variable-time MSM is appropriate.
 
 ## License
 

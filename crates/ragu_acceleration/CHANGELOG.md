@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added `AcceleratedBackend`, initially inheriting all reference defaults.
+- Added an opt-in `native-msm` override backed by Zakura's signed-Booth
+  multiexp (`zakura-halo2-proofs`), with Pallas and Vesta differential
+  property tests against the reference and canonical implementations.
 
 ## [0.0.0] - 2026-08-16
 

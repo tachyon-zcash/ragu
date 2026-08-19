@@ -87,6 +87,40 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace --lib --tests --benches --locked --all-features -- -D warnings
 
+  # The native MSM is opt-in, so the default jobs do not compile or exercise
+  # it. Test every supported host OS and the end-to-end backend boundary.
+  native-msm:
+    name: native MSM (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Setup Rust
+        uses: ./.github/actions/rust-setup
+        with:
+          components: clippy
+          cache-suffix: native-msm
+      - name: Run native MSM clippy
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo clippy -p ragu_acceleration --lib --tests --locked --features native-msm -- -D warnings
+      - name: Run native PCD clippy
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo clippy -p ragu_pcd --lib --tests --benches --locked --features native-msm -- -D warnings
+      - name: Run native MSM differential properties
+        run: cargo test --release -p ragu_acceleration --locked --features native-msm --test msm_equivalence -- --test-threads=1
+      - name: Run native PCD backend equivalence
+        if: matrix.os == 'ubuntu-latest'
+        run: >-
+          cargo test --release -p ragu_pcd --locked --features native-msm
+          --lib backend_tests:: -- --test-threads=1
+
   # The `mock` feature is off by default and is the root crate's only API. It
   # gets its own job to exercise the no-default-features configuration used by
   # downstream consumers.

@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added sealed, static computational-backend selection between Ragu's reference
   and accelerated implementations, defaulting to
   `ragu_backend::ReferenceBackend`.
+- Added an opt-in `native-msm` feature for applications that select the
+  accelerated backend.
 
 ### Changed
 
