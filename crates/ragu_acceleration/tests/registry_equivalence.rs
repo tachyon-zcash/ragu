@@ -12,7 +12,13 @@ use ragu_circuits::{
     registry::{CircuitIndex, RegistryBuilder},
 };
 use ragu_pasta::Pasta;
-use ragu_testing::{circuits::SquareCircuit, strategies::prime_field_element};
+use ragu_testing::{
+    circuits::SquareCircuit,
+    strategies::{bounded_edge_usize, prime_field_element},
+};
+
+const MAX_TEST_CIRCUITS: usize = 8;
+const MAX_SQUARE_ITERATIONS: usize = 8;
 
 fn coeffs<F: PrimeField>(poly: &Polynomial<F, TestRank>) -> Vec<F> {
     poly.iter_coeffs().collect()
@@ -50,13 +56,33 @@ where
     Ok(())
 }
 
-fn arb_registry_shape() -> impl Strategy<Value = (Vec<usize>, usize)> {
+fn arb_circuit_times() -> impl Strategy<Value = Vec<usize>> {
     // TODO: Replace the SquareCircuit-only shapes with bounded generated
     // ProgramCircuit cases once the qa/fuzz substrate is shared through ragu_testing.
-    proptest::collection::vec(0usize..=8, 1..=4).prop_flat_map(|circuit_times| {
+    proptest::collection::vec(
+        bounded_edge_usize(MAX_SQUARE_ITERATIONS),
+        1..=MAX_TEST_CIRCUITS,
+    )
+}
+
+fn arb_registry_shape() -> impl Strategy<Value = (Vec<usize>, usize)> {
+    arb_circuit_times().prop_flat_map(|circuit_times| {
         let num_circuits = circuit_times.len();
-        (Just(circuit_times), 0..num_circuits)
+        let domain_size = num_circuits.next_power_of_two();
+        (Just(circuit_times), 0..domain_size)
     })
+}
+
+fn arb_padded_registry_shape() -> impl Strategy<Value = (Vec<usize>, usize)> {
+    arb_circuit_times()
+        .prop_filter("registry domain has a padded slot", |circuit_times| {
+            !circuit_times.len().is_power_of_two()
+        })
+        .prop_flat_map(|circuit_times| {
+            let num_circuits = circuit_times.len();
+            let domain_size = num_circuits.next_power_of_two();
+            (Just(circuit_times), num_circuits..domain_size)
+        })
 }
 
 fn check_registry_operations<F, C, G>(
@@ -192,6 +218,40 @@ proptest! {
         x in prime_field_element::<vesta::Scalar>(),
         y in prime_field_element::<vesta::Scalar>(),
         (circuit_times, circuit_index) in arb_registry_shape(),
+    ) {
+        check_registry_operations::<_, vesta::Affine, _>(
+            w,
+            x,
+            y,
+            circuit_times,
+            circuit_index,
+            Pasta::host_generators(Pasta::baked()),
+        )?;
+    }
+
+    #[test]
+    fn accelerated_pallas_padded_registry_slots_match_reference_and_canonical(
+        w in prime_field_element::<pallas::Scalar>(),
+        x in prime_field_element::<pallas::Scalar>(),
+        y in prime_field_element::<pallas::Scalar>(),
+        (circuit_times, circuit_index) in arb_padded_registry_shape(),
+    ) {
+        check_registry_operations::<_, pallas::Affine, _>(
+            w,
+            x,
+            y,
+            circuit_times,
+            circuit_index,
+            Pasta::nested_generators(Pasta::baked()),
+        )?;
+    }
+
+    #[test]
+    fn accelerated_vesta_padded_registry_slots_match_reference_and_canonical(
+        w in prime_field_element::<vesta::Scalar>(),
+        x in prime_field_element::<vesta::Scalar>(),
+        y in prime_field_element::<vesta::Scalar>(),
+        (circuit_times, circuit_index) in arb_padded_registry_shape(),
     ) {
         check_registry_operations::<_, vesta::Affine, _>(
             w,

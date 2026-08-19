@@ -35,6 +35,37 @@ pub fn edge_u64() -> impl Strategy<Value = u64> + Clone {
     ]
 }
 
+/// Generates arbitrary `usize` values up to `max_inclusive`, biased toward
+/// power-of-two boundaries and their immediate neighbors.
+pub fn bounded_edge_usize(max_inclusive: usize) -> BoxedStrategy<usize> {
+    let mut boundaries = vec![max_inclusive];
+    let mut power = 1usize;
+
+    loop {
+        for candidate in [power.checked_sub(1), Some(power), power.checked_add(1)]
+            .into_iter()
+            .flatten()
+        {
+            if candidate <= max_inclusive {
+                boundaries.push(candidate);
+            }
+        }
+
+        if power > max_inclusive {
+            break;
+        }
+        let Some(next_power) = power.checked_mul(2) else {
+            break;
+        };
+        power = next_power;
+    }
+
+    boundaries.sort_unstable();
+    boundaries.dedup();
+
+    prop_oneof![1 => select(boundaries), 3 => 0..=max_inclusive].boxed()
+}
+
 fn edge_field_element<F>() -> impl Strategy<Value = F> + Clone
 where
     F: PrimeField + From<u64> + 'static,

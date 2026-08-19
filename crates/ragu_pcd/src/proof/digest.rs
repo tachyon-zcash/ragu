@@ -5,11 +5,13 @@ use ragu_circuits::polynomials::{Rank, sparse::Polynomial};
 use super::Proof;
 use crate::internal::{native, nested};
 
+const DIGEST_SIZE: usize = 32;
+
 struct ProofDigester(State);
 
 impl ProofDigester {
     fn new() -> Self {
-        let mut state = Params::new().hash_length(32).to_state();
+        let mut state = Params::new().hash_length(DIGEST_SIZE).to_state();
         state.update(b"ragu-proof-digest-v1");
         Self(state)
     }
@@ -53,16 +55,16 @@ impl ProofDigester {
         self.frame(repr.as_ref());
     }
 
-    fn finish(self) -> [u8; 32] {
+    fn finish(self) -> [u8; DIGEST_SIZE] {
         let hash = self.0.finalize();
-        let mut digest = [0; 32];
+        let mut digest = [0; DIGEST_SIZE];
         digest.copy_from_slice(hash.as_bytes());
         digest
     }
 }
 
 impl<C: ragu_arithmetic::Cycle, R: Rank> Proof<C, R> {
-    pub(crate) fn test_digest(&self) -> [u8; 32] {
+    pub(crate) fn test_digest(&self) -> [u8; DIGEST_SIZE] {
         let mut digest = ProofDigester::new();
 
         digest.field(b"bridge_alpha", &self.bridge_alpha);
@@ -77,12 +79,19 @@ impl<C: ragu_arithmetic::Cycle, R: Rank> Proof<C, R> {
         for index in native::RxIndex::ALL {
             digest.polynomial(&self[index]);
         }
-        digest.sequence(b"native_ab_polynomials", 2);
-        digest.polynomial(&self.native_a_poly);
-        digest.polynomial(&self.native_b_poly);
-        digest.sequence(b"native_protocol_polynomials", 2);
-        digest.polynomial(&self.native_registry_xy_poly);
-        digest.polynomial(&self.native_p_poly);
+        let native_ab_polynomials = [&self.native_a_poly, &self.native_b_poly];
+        digest.sequence(b"native_ab_polynomials", native_ab_polynomials.len());
+        for polynomial in native_ab_polynomials {
+            digest.polynomial(polynomial);
+        }
+        let native_protocol_polynomials = [&self.native_registry_xy_poly, &self.native_p_poly];
+        digest.sequence(
+            b"native_protocol_polynomials",
+            native_protocol_polynomials.len(),
+        );
+        for polynomial in native_protocol_polynomials {
+            digest.polynomial(polynomial);
+        }
 
         digest.sequence(b"nested_polynomials", nested::RxIndex::ALL.len());
         for index in nested::RxIndex::ALL {
@@ -109,12 +118,25 @@ impl<C: ragu_arithmetic::Cycle, R: Rank> Proof<C, R> {
         for index in native::RxIndex::ALL {
             digest.point(&self.native_rx_commitment(index));
         }
-        digest.sequence(b"native_ab_commitments", 2);
-        digest.point(&self.native_commitment(native::RxComponent::AbA));
-        digest.point(&self.native_commitment(native::RxComponent::AbB));
-        digest.sequence(b"native_protocol_commitments", 2);
-        digest.point(&self.native_registry_xy_commitment());
-        digest.point(&self.native_p_commitment());
+        let native_ab_commitments = [
+            self.native_commitment(native::RxComponent::AbA),
+            self.native_commitment(native::RxComponent::AbB),
+        ];
+        digest.sequence(b"native_ab_commitments", native_ab_commitments.len());
+        for commitment in &native_ab_commitments {
+            digest.point(commitment);
+        }
+        let native_protocol_commitments = [
+            self.native_registry_xy_commitment(),
+            self.native_p_commitment(),
+        ];
+        digest.sequence(
+            b"native_protocol_commitments",
+            native_protocol_commitments.len(),
+        );
+        for commitment in &native_protocol_commitments {
+            digest.point(commitment);
+        }
 
         digest.sequence(
             b"nested_endoscaling_step_commitments",
@@ -123,18 +145,28 @@ impl<C: ragu_arithmetic::Cycle, R: Rank> Proof<C, R> {
         for commitment in &self.nested_endoscaling_step_commitments {
             digest.point(&commitment.0);
         }
-        digest.sequence(b"nested_stage_commitments", 2);
-        digest.point(&self.nested_endoscalar_commitment());
-        digest.point(&self.nested_points_commitment());
-        digest.sequence(b"bridge_commitments", 8);
-        digest.point(&self.bridge_preamble_commitment());
-        digest.point(&self.bridge_s_prime_commitment());
-        digest.point(&self.bridge_inner_error_commitment());
-        digest.point(&self.bridge_outer_error_commitment());
-        digest.point(&self.bridge_ab_commitment());
-        digest.point(&self.bridge_query_commitment());
-        digest.point(&self.bridge_f_commitment());
-        digest.point(&self.bridge_eval_commitment());
+        let nested_stage_commitments = [
+            self.nested_endoscalar_commitment(),
+            self.nested_points_commitment(),
+        ];
+        digest.sequence(b"nested_stage_commitments", nested_stage_commitments.len());
+        for commitment in &nested_stage_commitments {
+            digest.point(commitment);
+        }
+        let bridge_commitments = [
+            self.bridge_preamble_commitment(),
+            self.bridge_s_prime_commitment(),
+            self.bridge_inner_error_commitment(),
+            self.bridge_outer_error_commitment(),
+            self.bridge_ab_commitment(),
+            self.bridge_query_commitment(),
+            self.bridge_f_commitment(),
+            self.bridge_eval_commitment(),
+        ];
+        digest.sequence(b"bridge_commitments", bridge_commitments.len());
+        for commitment in &bridge_commitments {
+            digest.point(commitment);
+        }
 
         digest.finish()
     }

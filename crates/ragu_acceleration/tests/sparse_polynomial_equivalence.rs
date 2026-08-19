@@ -9,24 +9,13 @@ use ragu_arithmetic::{
 use ragu_backend::{Backend, ReferenceBackend};
 use ragu_circuits::polynomials::{Rank, TestRank, sparse::Polynomial};
 use ragu_pasta::Pasta;
-use ragu_testing::strategies::prime_field_element;
+use ragu_testing::strategies::{bounded_edge_usize, prime_field_element};
 
 fn arb_sparse_poly<F>() -> BoxedStrategy<Polynomial<F, TestRank>>
 where
     F: PrimeField + From<u64> + 'static,
 {
-    let size = prop_oneof![
-        1 => Just(0),
-        1 => Just(1),
-        1 => Just(2),
-        1 => Just(3),
-        1 => Just(TestRank::num_coeffs() / 2 - 1),
-        1 => Just(TestRank::num_coeffs() / 2),
-        1 => Just(TestRank::num_coeffs() / 2 + 1),
-        1 => Just(TestRank::num_coeffs() - 1),
-        1 => Just(TestRank::num_coeffs()),
-        8 => 0..=TestRank::num_coeffs(),
-    ];
+    let size = bounded_edge_usize(TestRank::num_coeffs());
 
     size.prop_flat_map(|size| {
         proptest::collection::vec(

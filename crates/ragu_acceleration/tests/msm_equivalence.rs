@@ -6,23 +6,12 @@ use ragu_arithmetic::{
     pasta_curves::{pallas, vesta},
 };
 use ragu_backend::{Backend, ReferenceBackend};
-use ragu_testing::strategies::prime_field_element;
+use ragu_testing::strategies::{bounded_edge_usize, prime_field_element};
+
+const MAX_MSM_TERMS: usize = 255;
 
 fn arb_msm_size() -> impl Strategy<Value = usize> {
-    prop_oneof![
-        1 => Just(0),
-        1 => Just(1),
-        1 => Just(2),
-        1 => Just(3),
-        1 => Just(15),
-        1 => Just(16),
-        1 => Just(17),
-        1 => Just(31),
-        1 => Just(32),
-        1 => Just(33),
-        1 => Just(255),
-        8 => 0usize..=255,
-    ]
+    bounded_edge_usize(MAX_MSM_TERMS)
 }
 
 fn arb_msm_terms<F>() -> impl Strategy<Value = Vec<(F, F)>>
