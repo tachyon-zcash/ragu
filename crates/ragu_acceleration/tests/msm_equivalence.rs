@@ -1,5 +1,4 @@
-use proptest::prelude::*;
-use proptest::test_runner::TestCaseResult;
+use proptest::{prelude::*, test_runner::TestCaseResult};
 use ragu_acceleration::AcceleratedBackend;
 use ragu_arithmetic::{
     CurveAffine,
