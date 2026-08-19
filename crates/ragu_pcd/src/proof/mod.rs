@@ -10,6 +10,8 @@
 #![allow(dead_code)]
 
 pub(crate) mod builder;
+#[cfg(test)]
+mod digest;
 
 use alloc::{sync::Arc, vec, vec::Vec};
 

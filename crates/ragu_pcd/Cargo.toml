@@ -46,6 +46,7 @@ ragu_core = { path = "../ragu_core", version = "0.0.0", default-features = false
 ragu_primitives = { path = "../ragu_primitives", version = "0.0.0", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
+blake2b_simd = { workspace = true }
 ff = { workspace = true }
 pasta_curves = { workspace = true }
 rand = { workspace = true, features = ["thread_rng"] }
