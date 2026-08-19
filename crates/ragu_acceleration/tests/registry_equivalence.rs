@@ -12,6 +12,13 @@ fn coeffs(poly: Polynomial<pallas::Scalar, TestRank>) -> Vec<pallas::Scalar> {
     poly.iter_coeffs().collect()
 }
 
+fn arb_registry_shape() -> impl Strategy<Value = (Vec<usize>, usize)> {
+    proptest::collection::vec(1usize..=8, 1..=4).prop_flat_map(|circuit_times| {
+        let num_circuits = circuit_times.len();
+        (Just(circuit_times), 0..num_circuits)
+    })
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
 
@@ -20,17 +27,13 @@ proptest! {
         w in prime_field_element(),
         x in prime_field_element(),
         y in prime_field_element(),
-        circuit_index in 0usize..8,
+        (circuit_times, circuit_index) in arb_registry_shape(),
     ) {
-        let registry = RegistryBuilder::<pallas::Scalar, TestRank>::new()
-            .register_circuit(SquareCircuit { times: 1 })
-            .unwrap()
-            .register_circuit(SquareCircuit { times: 2 })
-            .unwrap()
-            .register_circuit(SquareCircuit { times: 3 })
-            .unwrap()
-            .finalize()
-            .unwrap();
+        let mut builder = RegistryBuilder::<pallas::Scalar, TestRank>::new();
+        for times in circuit_times {
+            builder = builder.register_circuit(SquareCircuit { times }).unwrap();
+        }
+        let registry = builder.finalize().unwrap();
         let registry_at = registry.at(w);
         let circuit = CircuitIndex::new(circuit_index);
 
@@ -73,5 +76,60 @@ proptest! {
         let canonical_wxy = registry.wxy(w, x, y);
         prop_assert_eq!(accelerated_wxy, reference_wxy);
         prop_assert_eq!(reference_wxy, canonical_wxy);
+
+        let accelerated_wx_at_y = AcceleratedBackend::sparse_eval(
+            &AcceleratedBackend::registry_at_x(&registry_at, x),
+            y,
+        );
+        let accelerated_wy_at_x = AcceleratedBackend::sparse_eval(
+            &AcceleratedBackend::registry_at_y(&registry_at, y),
+            x,
+        );
+        let reference_wx_at_y = ReferenceBackend::sparse_eval(
+            &ReferenceBackend::registry_at_x(&registry_at, x),
+            y,
+        );
+        let reference_wy_at_x = ReferenceBackend::sparse_eval(
+            &ReferenceBackend::registry_at_y(&registry_at, y),
+            x,
+        );
+        prop_assert_eq!(accelerated_wx_at_y, canonical_wxy);
+        prop_assert_eq!(accelerated_wy_at_x, canonical_wxy);
+        prop_assert_eq!(reference_wx_at_y, canonical_wxy);
+        prop_assert_eq!(reference_wy_at_x, canonical_wxy);
+
+        let circuit_w = circuit.omega_j::<pallas::Scalar>();
+        let canonical_sxy = registry.wxy(circuit_w, x, y);
+        let registry_at_circuit = registry.at(circuit_w);
+        let accelerated_s_x_y = AcceleratedBackend::sparse_eval(
+            &AcceleratedBackend::registry_at_x(&registry_at_circuit, x),
+            y,
+        );
+        let accelerated_s_y_x = AcceleratedBackend::sparse_eval(
+            &AcceleratedBackend::registry_circuit_y(&registry, circuit, y),
+            x,
+        );
+        let accelerated_s_xy_w = AcceleratedBackend::sparse_eval(
+            &AcceleratedBackend::registry_xy(&registry, x, y),
+            circuit_w,
+        );
+        let reference_s_x_y = ReferenceBackend::sparse_eval(
+            &ReferenceBackend::registry_at_x(&registry_at_circuit, x),
+            y,
+        );
+        let reference_s_y_x = ReferenceBackend::sparse_eval(
+            &ReferenceBackend::registry_circuit_y(&registry, circuit, y),
+            x,
+        );
+        let reference_s_xy_w = ReferenceBackend::sparse_eval(
+            &ReferenceBackend::registry_xy(&registry, x, y),
+            circuit_w,
+        );
+        prop_assert_eq!(accelerated_s_x_y, canonical_sxy);
+        prop_assert_eq!(accelerated_s_y_x, canonical_sxy);
+        prop_assert_eq!(accelerated_s_xy_w, canonical_sxy);
+        prop_assert_eq!(reference_s_x_y, canonical_sxy);
+        prop_assert_eq!(reference_s_y_x, canonical_sxy);
+        prop_assert_eq!(reference_s_xy_w, canonical_sxy);
     }
 }
