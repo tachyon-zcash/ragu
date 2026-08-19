@@ -137,6 +137,8 @@ where
     Ok(())
 }
 
+// TODO: Add this end-to-end backend-equivalence property for a generated
+// nontrivial Step; Trivial exercises the protocol flow but not application circuitry.
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(2))]
 
