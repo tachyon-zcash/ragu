@@ -821,6 +821,7 @@ dependencies = [
  "ragu_backend",
  "ragu_circuits",
  "ragu_core",
+ "ragu_pasta",
  "ragu_primitives",
  "ragu_testing",
 ]

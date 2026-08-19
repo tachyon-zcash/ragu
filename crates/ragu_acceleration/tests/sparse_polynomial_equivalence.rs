@@ -1,23 +1,13 @@
 use proptest::prelude::*;
 use ragu_acceleration::AcceleratedBackend;
-use ragu_arithmetic::pasta_curves::pallas;
+use ragu_arithmetic::{Cycle, group::Curve, pasta_curves::pallas};
 use ragu_backend::{Backend, ReferenceBackend};
 use ragu_circuits::polynomials::{Rank, TestRank, sparse::Polynomial};
-
-fn arb_scalar() -> impl Strategy<Value = pallas::Scalar> {
-    prop_oneof![
-        4 => Just(pallas::Scalar::from(0)),
-        1 => Just(pallas::Scalar::from(1)),
-        3 => any::<u64>().prop_map(pallas::Scalar::from),
-        2 => (any::<u64>(), any::<u64>()).prop_map(|(a, b)| {
-            pallas::Scalar::from(a)
-                + pallas::Scalar::from(b) * pallas::Scalar::from(u64::MAX)
-        }),
-    ]
-}
+use ragu_pasta::Pasta;
+use ragu_testing::strategies::prime_field_element;
 
 fn arb_sparse_poly() -> impl Strategy<Value = Polynomial<pallas::Scalar, TestRank>> {
-    proptest::collection::vec(arb_scalar(), TestRank::num_coeffs())
+    proptest::collection::vec(prime_field_element(), TestRank::num_coeffs())
         .prop_map(Polynomial::from_coeffs)
 }
 
@@ -28,7 +18,7 @@ proptest! {
     fn accelerated_sparse_operations_match_reference_and_canonical(
         lhs in arb_sparse_poly(),
         rhs in arb_sparse_poly(),
-        point in arb_scalar(),
+        point in prime_field_element(),
     ) {
         let canonical_lhs_eval = lhs.eval(point);
         let canonical_rhs_eval = rhs.eval(point);
@@ -58,6 +48,29 @@ proptest! {
         prop_assert_eq!(
             AcceleratedBackend::sparse_revdot(&lhs, &rhs),
             canonical_revdot,
+        );
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(64))]
+
+    #[test]
+    fn accelerated_sparse_commitment_matches_reference_and_canonical(
+        poly in arb_sparse_poly(),
+    ) {
+        let generators = Pasta::nested_generators(Pasta::baked());
+        let canonical = poly.commit(generators);
+
+        prop_assert_eq!(ReferenceBackend::sparse_commit(&poly, generators), canonical);
+        prop_assert_eq!(AcceleratedBackend::sparse_commit(&poly, generators), canonical);
+        prop_assert_eq!(
+            ReferenceBackend::sparse_commit_to_affine(&poly, generators),
+            canonical.to_affine(),
+        );
+        prop_assert_eq!(
+            AcceleratedBackend::sparse_commit_to_affine(&poly, generators),
+            canonical.to_affine(),
         );
     }
 }

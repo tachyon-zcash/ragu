@@ -34,4 +34,5 @@ ragu_arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", default-feat
 ragu_circuits = { path = "../ragu_circuits", version = "0.0.0", default-features = false, features = ["alloc"] }
 ragu_core = { path = "../ragu_core", version = "0.0.0", default-features = false, features = ["alloc"] }
 ragu_primitives = { path = "../ragu_primitives", version = "0.0.0", default-features = false, features = ["alloc"] }
+ragu_pasta = { path = "../ragu_pasta", version = "0.0.0", default-features = false, features = ["alloc", "baked"] }
 ragu_testing = { path = "../ragu_testing", version = "0.0.0", default-features = false }
