@@ -32,4 +32,6 @@ ragu_backend = { path = "../ragu_backend", version = "0.0.0", default-features =
 proptest = { workspace = true }
 ragu_arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", default-features = false, features = ["alloc"] }
 ragu_circuits = { path = "../ragu_circuits", version = "0.0.0", default-features = false, features = ["alloc"] }
+ragu_core = { path = "../ragu_core", version = "0.0.0", default-features = false, features = ["alloc"] }
+ragu_primitives = { path = "../ragu_primitives", version = "0.0.0", default-features = false, features = ["alloc"] }
 ragu_testing = { path = "../ragu_testing", version = "0.0.0", default-features = false }

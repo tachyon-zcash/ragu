@@ -820,6 +820,8 @@ dependencies = [
  "ragu_arithmetic",
  "ragu_backend",
  "ragu_circuits",
+ "ragu_core",
+ "ragu_primitives",
  "ragu_testing",
 ]
 

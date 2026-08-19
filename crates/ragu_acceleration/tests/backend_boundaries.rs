@@ -9,9 +9,16 @@ use ragu_arithmetic::{
 };
 use ragu_backend::{Backend, ReferenceBackend};
 use ragu_circuits::{
+    Circuit, WithAux,
     polynomials::{Rank, TestRank, sparse::Polynomial},
     registry::{CircuitIndex, RegistryBuilder},
 };
+use ragu_core::{
+    Result,
+    drivers::{Driver, DriverValue},
+    gadgets::{Bound, Kind},
+};
+use ragu_primitives::{Element, allocator::Standard};
 
 static COMMITMENT_MSM_CALLS: AtomicUsize = AtomicUsize::new(0);
 
@@ -32,6 +39,39 @@ impl Backend for TrackingMsmBackend {
     {
         COMMITMENT_MSM_CALLS.fetch_add(1, Ordering::SeqCst);
         ReferenceBackend::msm(coeffs, bases)
+    }
+}
+
+struct SquareCircuit {
+    times: usize,
+}
+
+impl Circuit<pallas::Scalar> for SquareCircuit {
+    type Instance<'instance> = pallas::Scalar;
+    type Output = Kind![pallas::Scalar; Element<'_, _>];
+    type Witness<'witness> = pallas::Scalar;
+    type Aux<'witness> = ();
+
+    fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = pallas::Scalar>>(
+        &self,
+        dr: &mut D,
+        instance: DriverValue<D, Self::Instance<'instance>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Element::alloc(dr, &mut Standard::new(), instance)
+    }
+
+    fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = pallas::Scalar>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'witness>>,
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'witness>>>> {
+        let mut value = Element::alloc(dr, &mut Standard::new(), witness)?;
+
+        for _ in 0..self.times {
+            value = value.square(dr)?;
+        }
+
+        Ok(WithAux::new(value, D::unit()))
     }
 }
 
@@ -122,6 +162,12 @@ proptest! {
         circuit_index in 0usize..8,
     ) {
         let registry = RegistryBuilder::<pallas::Scalar, TestRank>::new()
+            .register_circuit(SquareCircuit { times: 1 })
+            .unwrap()
+            .register_circuit(SquareCircuit { times: 2 })
+            .unwrap()
+            .register_circuit(SquareCircuit { times: 3 })
+            .unwrap()
             .finalize()
             .unwrap();
         let registry_at = registry.at(w);
