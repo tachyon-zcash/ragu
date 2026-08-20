@@ -52,7 +52,7 @@ mod recorder;
 
 pub use circuit::{Capture, capture, playback};
 pub use discover::{allocation_waste, discover_free_advice};
-pub use oracle::{ProbeOutcome, Violation, determinism_probe, determinism_sweep};
+pub use oracle::{ProbeOutcome, SweepReport, Violation, determinism_probe, determinism_sweep};
 pub use recorder::{
     Event, Playback, Recorder, TrackingAllocator, constraints_hold, repair, selftest,
     underconstrained_derived,

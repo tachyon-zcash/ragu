@@ -82,6 +82,25 @@ pub struct Violation<F> {
     pub moved: Vec<(usize, F, F)>,
 }
 
+/// What a [`determinism_sweep`] found — and how much it actually exercised.
+///
+/// The counters classify every cheatable wire that did *not* violate:
+/// without them, "no violations" cannot be told apart from a sweep whose
+/// every probe was rejected by the bounded solver and so tested nothing.
+/// A report with `violations` empty and `pinned == 0` while `rejected > 0`
+/// is **vacuous**, not clean.
+#[derive(Clone, Debug)]
+pub struct SweepReport<F> {
+    /// The determinism violations, one per violating wire.
+    pub violations: Vec<Violation<F>>,
+    /// Wires where at least one probe was accepted with every output at
+    /// its honest value — cheats the constraints genuinely neutralized.
+    pub pinned: usize,
+    /// Wires where every probe was rejected — the bounded solver found no
+    /// satisfying repair, so nothing about them was demonstrated.
+    pub rejected: usize,
+}
+
 /// One probe of the pinned-input oracle: pin `inputs` at their honest
 /// values, commit each `(wire, value)` in `cheats`, [`repair`] everything
 /// else through `events`, and judge `outputs`.
@@ -135,9 +154,10 @@ pub fn determinism_probe<F: Field>(
 
 /// Sweeps the pinned-input oracle over every cheatable wire: each wire
 /// [`discover_free_advice`] reports outside `inputs` is nudged to
-/// `honest + 1` and (when distinct from both) to `0`, one wire at a time,
-/// and every resulting determinism violation is collected — at most one
-/// per wire.
+/// `honest + 1` and (when distinct from both) to `0`, one wire at a time.
+/// At most one violation is collected per wire; non-violating wires are
+/// tallied in the report as pinned or rejected, so a vacuous sweep is
+/// visible as such.
 ///
 /// A cheap smoke sweep, not an exhaustive search: single-wire cheats and
 /// two nudge values (see the module docs on verdict semantics). Richer
@@ -148,8 +168,12 @@ pub fn determinism_sweep<F: Field>(
     honest: &[F],
     inputs: &[usize],
     outputs: &[usize],
-) -> Vec<Violation<F>> {
-    let mut violations = Vec::new();
+) -> SweepReport<F> {
+    let mut report = SweepReport {
+        violations: Vec::new(),
+        pinned: 0,
+        rejected: 0,
+    };
     for wire in discover_free_advice(events, honest) {
         if inputs.contains(&wire) {
             continue;
@@ -159,21 +183,30 @@ pub fn determinism_sweep<F: Field>(
         if honest[wire] != F::ZERO && nudged != F::ZERO {
             tries.push(F::ZERO);
         }
+        let mut violation = None;
+        let mut any_pinned = false;
         for value in tries {
-            if let ProbeOutcome::OutputsMoved { witness, moved } =
-                determinism_probe(events, honest, inputs, outputs, &[(wire, value)])
-            {
-                violations.push(Violation {
-                    advice: wire,
-                    value,
-                    witness,
-                    moved,
-                });
-                break;
+            match determinism_probe(events, honest, inputs, outputs, &[(wire, value)]) {
+                ProbeOutcome::OutputsMoved { witness, moved } => {
+                    violation = Some(Violation {
+                        advice: wire,
+                        value,
+                        witness,
+                        moved,
+                    });
+                    break;
+                }
+                ProbeOutcome::OutputsPinned => any_pinned = true,
+                ProbeOutcome::Rejected => {}
             }
         }
+        match violation {
+            Some(violation) => report.violations.push(violation),
+            None if any_pinned => report.pinned += 1,
+            None => report.rejected += 1,
+        }
     }
-    violations
+    report
 }
 
 #[cfg(test)]
@@ -187,9 +220,10 @@ mod tests {
     /// The planted under-constrained square, judged by the pinned-input
     /// oracle instead of an anchor: `root` is the declared input, `square`
     /// the output, and the missing `square = root²` gate means the prover
-    /// can move the output with the input pinned. Adding the gate makes
-    /// the sweep come back clean — including against the `root²`-zero
-    /// probe values.
+    /// can move the output with the input pinned. Adding the gate derives
+    /// `square`, so nothing cheatable remains — the report shows that
+    /// honestly (no probes at all), rather than passing off a vacuous
+    /// sweep as a neutralized one.
     #[test]
     fn sweep_finds_missing_square_gate() {
         let root_honest = Fp::from(7u64);
@@ -199,14 +233,18 @@ mod tests {
         let root = rec.push_wire(root_honest);
         let square = rec.push_wire(root_honest.square());
 
-        let violations = determinism_sweep(&rec.events, &rec.values, &[root], &[square]);
-        assert_eq!(violations.len(), 1, "exactly the square hint violates");
-        assert_eq!(violations[0].advice, square);
+        let report = determinism_sweep(&rec.events, &rec.values, &[root], &[square]);
         assert_eq!(
-            violations[0].moved,
+            report.violations.len(),
+            1,
+            "exactly the square hint violates"
+        );
+        assert_eq!(report.violations[0].advice, square);
+        assert_eq!(
+            report.violations[0].moved,
             vec![(square, root_honest.square(), root_honest.square() + Fp::ONE,)]
         );
-        assert!(constraints_hold(&rec.events, &violations[0].witness));
+        assert!(constraints_hold(&rec.events, &report.violations[0].witness));
 
         // Fixed: emit the gate as `Element::square` would (operands copy-
         // constrained to `root`, output to `square`).
@@ -223,9 +261,12 @@ mod tests {
         rec.enforce_equal(&b, &root).unwrap();
         rec.enforce_equal(&c, &square).unwrap();
         assert!(constraints_hold(&rec.events, &rec.values));
-        assert!(
-            determinism_sweep(&rec.events, &rec.values, &[root], &[square]).is_empty(),
-            "with the gate emitted, no cheat moves the output",
+        let report = determinism_sweep(&rec.events, &rec.values, &[root], &[square]);
+        assert!(report.violations.is_empty());
+        assert_eq!(
+            (report.pinned, report.rejected),
+            (0, 0),
+            "with the gate emitted, `square` is derived: nothing cheatable remains",
         );
     }
 
@@ -240,13 +281,17 @@ mod tests {
         let q = rec.push_wire(Fp::from(4u64));
         let sum = rec.add(|lc| lc.add(&p).add(&q));
 
-        assert!(determinism_sweep(&rec.events, &rec.values, &[p, q], &[sum]).is_empty());
+        assert!(
+            determinism_sweep(&rec.events, &rec.values, &[p, q], &[sum])
+                .violations
+                .is_empty()
+        );
 
         // Under-declaring: with only `p` pinned, `q` is (correctly, per the
         // caller's spec) reported as freedom that moves the output.
-        let violations = determinism_sweep(&rec.events, &rec.values, &[p], &[sum]);
-        assert_eq!(violations.len(), 1);
-        assert_eq!(violations[0].advice, q);
+        let report = determinism_sweep(&rec.events, &rec.values, &[p], &[sum]);
+        assert_eq!(report.violations.len(), 1);
+        assert_eq!(report.violations[0].advice, q);
     }
 
     /// Accomplice-neutralized cheats are not violations: two hints pinned
@@ -270,10 +315,46 @@ mod tests {
         });
         assert!(constraints_hold(&rec.events, &rec.values));
 
-        let violations = determinism_sweep(&rec.events, &rec.values, &[input], &[output]);
+        let report = determinism_sweep(&rec.events, &rec.values, &[input], &[output]);
         assert!(
-            violations.is_empty(),
-            "cheating h1 forces h2 to compensate; the output cannot move: {violations:?}",
+            report.violations.is_empty(),
+            "cheating h1 forces h2 to compensate; the output cannot move: {:?}",
+            report.violations,
         );
+        assert_eq!(
+            (report.pinned, report.rejected),
+            (1, 0),
+            "the hint cheat was genuinely exercised and neutralized, not rejected",
+        );
+    }
+
+    /// The oracle at the rank oracle's blind spot: an honest `is_zero(0)`
+    /// leaves the inverse hint genuinely free (the rank oracle must skip
+    /// the whole graph there), yet the result bit is still forced — with
+    /// `x = 0` pinned, `x · inv = 1 − bit` reads `bit = 1` no matter what
+    /// the hint says. The sweep exercises both the hint and the allocation
+    /// waste, neutralizes both, and reports no false positive.
+    #[test]
+    fn is_zero_degenerate_hint_is_not_a_false_positive() -> ragu_core::Result<()> {
+        use ragu_primitives::Element;
+
+        use super::super::TrackingAllocator;
+
+        let mut rec = Recorder::<Fp>::new();
+        let mut alloc = TrackingAllocator::default();
+        let x = Element::alloc(&mut rec, &mut alloc, Recorder::<Fp>::just(|| Fp::ZERO))?;
+        let bit = x.is_zero(&mut rec, &mut alloc)?;
+        assert!(constraints_hold(&rec.events, &rec.values));
+        assert_eq!(rec.values[*bit.wire()], Fp::ONE);
+
+        let report = determinism_sweep(&rec.events, &rec.values, &[*x.wire()], &[*bit.wire()]);
+        assert!(report.violations.is_empty(), "{:?}", report.violations);
+        assert_eq!(
+            (report.pinned, report.rejected),
+            (2, 0),
+            "the inverse hint and the allocation waste were both exercised \
+             and neutralized",
+        );
+        Ok(())
     }
 }

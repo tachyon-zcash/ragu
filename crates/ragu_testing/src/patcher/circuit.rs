@@ -245,13 +245,14 @@ mod tests {
         let cap = capture(&UnderconstrainedSquare, root)?;
         let rec = &cap.recorder;
 
-        let violations = determinism_sweep(&rec.events, &rec.values, &[1], &cap.instance);
+        let report = determinism_sweep(&rec.events, &rec.values, &[1], &cap.instance);
         let square = cap.instance[0];
+        let violations = &report.violations;
         assert_eq!(violations.len(), 2, "the waste lever and the hint itself");
         assert_eq!(violations[0].advice, 2, "allocation waste `b`");
         assert_eq!(violations[0].moved, vec![(square, root.square(), Fp::ZERO)]);
         assert_eq!(violations[1].advice, square, "the unpinned hint directly");
-        for violation in &violations {
+        for violation in violations {
             assert!(playback(
                 &UnderconstrainedSquare,
                 root,
@@ -261,15 +262,21 @@ mod tests {
 
         let (a, b) = (Fp::from(4u64), Fp::from(32u64));
         let cap = capture(&MySimpleCircuit, (a, b))?;
+        let report = determinism_sweep(
+            &cap.recorder.events,
+            &cap.recorder.values,
+            &[1, 4],
+            &cap.instance,
+        );
         assert!(
-            determinism_sweep(
-                &cap.recorder.events,
-                &cap.recorder.values,
-                &[1, 4],
-                &cap.instance,
-            )
-            .is_empty(),
+            report.violations.is_empty(),
             "outputs are functions of the declared witnesses; waste moves nothing",
+        );
+        assert_eq!(
+            (report.pinned, report.rejected),
+            (0, 1),
+            "the waste-`b` cheat is rejected outright here: `C · D = 0` \
+             collides with the pinned witness on the co-allocated `d` wire",
         );
 
         Ok(())
