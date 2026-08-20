@@ -25,6 +25,10 @@
 //!   acceptance check over a recorded graph.
 //! * [`underconstrained_derived`] — the rank/nullity oracle: derived wires
 //!   that can move while every declared free wire is held fixed.
+//! * [`determinism_probe`] / [`determinism_sweep`] — the pinned-input
+//!   soundness oracle (issue #793's "same inputs give the same outputs"):
+//!   pin the declared inputs, cheat the remaining free advice, repair, and
+//!   flag any output that moves while every constraint still holds.
 //! * [`discover_free_advice`] — structural discovery of the free-advice
 //!   candidates a recorded graph exposes (the wires no constraint derives
 //!   from earlier ones), with [`allocation_waste`] classifying the wires an
@@ -43,10 +47,12 @@
 
 mod circuit;
 mod discover;
+mod oracle;
 mod recorder;
 
 pub use circuit::{Capture, capture, playback};
 pub use discover::{allocation_waste, discover_free_advice};
+pub use oracle::{ProbeOutcome, Violation, determinism_probe, determinism_sweep};
 pub use recorder::{
     Event, Playback, Recorder, TrackingAllocator, constraints_hold, repair, selftest,
     underconstrained_derived,
