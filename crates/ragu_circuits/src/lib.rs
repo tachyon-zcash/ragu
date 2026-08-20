@@ -20,6 +20,7 @@ extern crate alloc;
 #[cfg(any(feature = "std", test))]
 extern crate std;
 
+pub mod analytic;
 pub mod floor_planner;
 pub mod horner;
 mod ky;
@@ -161,6 +162,21 @@ pub trait Circuit<F: Field>: Sized + Send + Sync {
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>>
     where
         Self: 'dr;
+
+    /// Supplies a closed form for this circuit's wiring polynomial, replacing
+    /// synthesis when evaluating $s(X, Y)$.
+    ///
+    /// Returning `None` — the default — leaves Ragu synthesizing the circuit,
+    /// which is always correct. Override this only when the circuit's
+    /// constraints are regular enough to evaluate directly, and read
+    /// [`AnalyticWiring`](analytic::AnalyticWiring)'s correctness obligations
+    /// first: a closed form that disagrees with the circuit yields a wiring
+    /// polynomial that does not describe it.
+    fn analytic_wiring<R: polynomials::Rank>(
+        &self,
+    ) -> Option<Box<dyn analytic::AnalyticWiring<F, R>>> {
+        None
+    }
 }
 
 /// Extension trait blanket-implemented for all [`Circuit<F>`](Circuit) types.
@@ -253,7 +269,17 @@ where
         return Err(Error::GateBoundExceeded { limit: R::n() });
     }
 
-    into_raw_wiring_object(raw::CircuitAdapter(circuit), metrics)
+    // Taken before the circuit is consumed below. Ragu keeps the synthesized
+    // object either way: the bounds above, the segment records, and the floor
+    // plan derived from them stay Ragu's, and debug builds cross-check the
+    // closed form against it.
+    let analytic = circuit.analytic_wiring::<R>();
+    let reference = into_raw_wiring_object(raw::CircuitAdapter(circuit), metrics)?;
+
+    Ok(match analytic {
+        Some(analytic) => Box::new(analytic::Analytic::new(analytic, reference)),
+        None => reference,
+    })
 }
 
 /// Like [`into_wiring_object`] but accepts a [`RawCircuit`](raw::RawCircuit)
