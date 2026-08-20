@@ -86,12 +86,19 @@ pub fn playback<'witness, F: Field, C: Circuit<F>>(
 
 #[cfg(test)]
 mod tests {
+    use ragu_circuits::WithAux;
+    use ragu_core::{
+        drivers::{Driver, DriverValue},
+        gadgets::{Bound, Kind},
+        maybe::Maybe,
+    };
     use ragu_pasta::Fp;
+    use ragu_primitives::allocator::Standard;
 
     use super::*;
     use crate::{
         circuits::{MySimpleCircuit, SquareCircuit},
-        patcher::{constraints_hold, discover_free_advice, repair},
+        patcher::{allocation_waste, constraints_hold, discover_free_advice, repair},
     };
 
     /// `MySimpleCircuit` proves `a⁵ = b²` and outputs `(a + b, a − b)`.
@@ -118,10 +125,98 @@ mod tests {
             vec![1, 2, 4]
         );
 
+        // The census over a *healthy* circuit is empty: every discovered
+        // free wire is a declared input (`a` at 1, `b` at 4) or structural
+        // allocator waste — nothing unexplained.
+        assert_eq!(allocation_waste(&rec.events, &rec.values), vec![(2, 3)]);
+
         // Corrupting an output is caught live.
         let mut corrupted = rec.values.clone();
         corrupted[cap.instance[0]] += Fp::ONE;
         assert!(!playback(&MySimpleCircuit, (a, b), corrupted)?);
+
+        Ok(())
+    }
+
+    /// A deliberately under-constrained circuit: `square` is allocated as
+    /// free advice next to `root` — the `square = root²` gate is never
+    /// emitted — and `square` is the public output.
+    struct UnderconstrainedSquare;
+
+    impl Circuit<Fp> for UnderconstrainedSquare {
+        type Instance<'instance> = Fp;
+        type Output = Kind![Fp; Element<'_, _>];
+        type Witness<'witness> = Fp;
+        type Aux<'witness> = ();
+
+        fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            instance: DriverValue<D, Self::Instance<'instance>>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            Element::alloc(dr, &mut Standard::new(), instance)
+        }
+
+        fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            witness: DriverValue<D, Self::Witness<'witness>>,
+        ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'witness>>>>
+        {
+            let allocator = &mut Standard::new();
+            let _root = Element::alloc(dr, allocator, witness.as_ref().map(|w| *w))?;
+            // BUG (deliberate): the square is prover-chosen advice; nothing
+            // ties it to `root`.
+            let square = Element::alloc(dr, allocator, witness.map(|w| w * w))?;
+            Ok(WithAux::new(square, D::unit()))
+        }
+    }
+
+    /// The whole workflow this module exists for, end to end through the
+    /// public `Circuit` API: capture, discover the free wires, subtract the
+    /// declared inputs and the structural waste — the *unexplained* survivor
+    /// is exactly the unpinned hint. And the survivor is exploitable: cheat
+    /// the input, repair, and every captured constraint still holds (both by
+    /// the stored events and by live playback) while the public output
+    /// stays at its stale value instead of the cheated input's square.
+    #[test]
+    fn census_flags_unpinned_hint() -> Result<()> {
+        let root = Fp::from(7u64);
+        let cap = capture(&UnderconstrainedSquare, root)?;
+        let rec = &cap.recorder;
+        assert!(constraints_hold(&rec.events, &rec.values));
+
+        // One pooled gate: `root` on its `a` (1), waste (2, 3), `square`
+        // redeemed onto the `d` wire (4) — the public output.
+        assert_eq!(cap.instance, vec![4]);
+        let declared = [1usize];
+
+        let discovered = discover_free_advice(&rec.events, &rec.values);
+        let waste = allocation_waste(&rec.events, &rec.values);
+        let unexplained: Vec<usize> = discovered
+            .iter()
+            .copied()
+            .filter(|w| !declared.contains(w) && !waste.iter().any(|&(b, _)| b == *w))
+            .collect();
+        assert_eq!(
+            unexplained,
+            vec![4],
+            "the census must flag exactly the unpinned square hint"
+        );
+
+        // Exploit it: move the declared input, repair, and the constraints
+        // are satisfied while the output ignores the change.
+        let mut values = rec.values.clone();
+        values[declared[0]] += Fp::ONE;
+        repair(&rec.events, &mut values, &discovered);
+        assert!(constraints_hold(&rec.events, &values));
+        assert!(playback(&UnderconstrainedSquare, root, values.clone())?);
+        assert_eq!(
+            values[cap.instance[0]],
+            root.square(),
+            "the output kept its stale value — no constraint carries the cheat"
+        );
+        assert_ne!(values[cap.instance[0]], (root + Fp::ONE).square());
 
         Ok(())
     }

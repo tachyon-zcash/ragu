@@ -23,7 +23,9 @@ use ragu_circuits::{
 };
 use ragu_pasta::Fp;
 use ragu_primitives::{Simulator, allocator::Standard};
-use ragu_testing::patcher::{Recorder, TrackingAllocator, constraints_hold, discover_free_advice};
+use ragu_testing::patcher::{
+    Recorder, TrackingAllocator, allocation_waste, constraints_hold, discover_free_advice,
+};
 
 use super::{
     Capabilities, Limits, Op, OpSet, Overrides, Program, ProgramCircuit, native_satisfied,
@@ -173,6 +175,11 @@ proptest! {
         let stacks = synthesize(&mut rec, &mut alloc, &steered, &[])
             .expect("recorder must accept an honest steered program");
         prop_assert!(constraints_hold(&rec.events, &rec.values));
+
+        // The structural waste classifier must agree with the allocator's
+        // own bookkeeping — the same ground-truth game as discovery below,
+        // for the helper a `capture`-based census subtracts with.
+        prop_assert_eq!(&allocation_waste(&rec.events, &rec.values), &alloc.wasted);
 
         let mut expected: Vec<usize> = stacks
             .advice_wires

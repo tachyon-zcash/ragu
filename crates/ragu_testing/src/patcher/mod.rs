@@ -27,7 +27,8 @@
 //!   that can move while every declared free wire is held fixed.
 //! * [`discover_free_advice`] — structural discovery of the free-advice
 //!   candidates a recorded graph exposes (the wires no constraint derives
-//!   from earlier ones).
+//!   from earlier ones), with [`allocation_waste`] classifying the wires an
+//!   allocator wastes by design so a census can subtract them.
 //! * [`Playback`] — the independent cross-check: re-runs the same synthesis
 //!   and verifies an injected witness live, so a recorder capture bug cannot
 //!   silently corrupt a verdict.
@@ -45,7 +46,7 @@ mod discover;
 mod recorder;
 
 pub use circuit::{Capture, capture, playback};
-pub use discover::discover_free_advice;
+pub use discover::{allocation_waste, discover_free_advice};
 pub use recorder::{
     Event, Playback, Recorder, TrackingAllocator, constraints_hold, repair, selftest,
     underconstrained_derived,

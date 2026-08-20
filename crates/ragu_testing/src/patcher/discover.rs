@@ -20,8 +20,8 @@
 //! while an allocation's `a` wire, a pooled allocation's `d` wire, an
 //! `alloc_square` root, a `Boolean::alloc` bit, and an allocation gate's
 //! wasted `b` are free. Only *forced* deductions count ([`deduce`], never
-//! the repair solver's guessing tier), so a wire reported free is genuinely
-//! undetermined by everything before it.
+//! the repair solver's guessing tier), so a wire reported *derived* is
+//! genuinely determined by the wires before it.
 //!
 //! # What it does not tell you
 //!
@@ -32,8 +32,8 @@
 //! caller, not discovery, decides which free wires are the inputs an oracle
 //! pins and which are the advice it cheats.
 //!
-//! Two consequences of the earliest-first policy and of working at one
-//! witness:
+//! Three consequences of the earliest-first policy, of working at one
+//! witness, and of the solver being bounded:
 //!
 //! * An under-determined system reports its *earliest* participant free and
 //!   the rest derived — `p + q = 3` yields `p`, not `q`. The count of free
@@ -42,10 +42,85 @@
 //!   wire that is pinned generically but not at a special point is reported
 //!   free there: the inverse hint of an honestly-zero `is_zero` input, for
 //!   instance. That is the truth at that witness, not a discovery error.
+//! * "Free" means *the bounded solver could not derive it*: [`deduce`] sees
+//!   no deduction from a gate with both operands unknown, and skips linear
+//!   clusters wider than its cap — and since discovery starts with the
+//!   whole graph unknown, the cluster pass only engages near the end. A
+//!   wire pinned solely through such wide coupling is over-reported as
+//!   free. So the result is a *candidate* list that errs toward reporting
+//!   wires, never toward hiding them — the safe direction for a census
+//!   whose job is flagging suspicious freedom. On ragu's actual emission
+//!   patterns the over-approximation is empty: gadgets pin each hint with
+//!   locally solvable constraints, which is pinned down for the whole fuzz
+//!   substrate by an exactness proptest there (discovery must equal the
+//!   substrate's own allocation list on anchorless programs).
 
 use ragu_arithmetic::ff::Field;
 
 use super::recorder::{Event, Recorder, deduce};
+
+/// The `(b, c)` waste-wire pairs of the allocation gates in a recorded
+/// graph, in emission order — recovered structurally, for callers that did
+/// not build the circuit and so cannot ask the allocator
+/// ([`TrackingAllocator::wasted`](super::TrackingAllocator) is the
+/// synthesis-side ground truth this must match).
+///
+/// An allocation gate is `a · 0 = 0`: its `b` and `c` are honestly zero,
+/// `b` appears in no other constraint, and `c` is referenced at most by the
+/// gate's own [`Event::Extra`] (when a pooling allocator later hands out
+/// the $D$ wire). The classification is sound for any gate matching that
+/// shape regardless of which gadget emitted it: a zero, never-referenced
+/// `b` genuinely is an unconstrained wasted wire. `values` must be the
+/// honest capture — waste is zero by construction there, and a repaired
+/// witness may legitimately move it.
+///
+/// The intended use is subtracting design freedom from a census: the free
+/// wires [`discover_free_advice`] reports minus the circuit's declared
+/// input wires minus these `b` wires are the *unexplained* freedom — hints
+/// some gadget left unpinned.
+pub fn allocation_waste<F: Field>(events: &[Event<F>], values: &[F]) -> Vec<(usize, usize)> {
+    let mut occurrences = vec![0usize; values.len()];
+    let mut extra_on_c = vec![false; values.len()];
+    for ev in events {
+        match ev {
+            Event::Lin { out, terms } => {
+                occurrences[*out] += 1;
+                for (w, _) in terms {
+                    occurrences[*w] += 1;
+                }
+            }
+            Event::Gate { a, b, c } => {
+                occurrences[*a] += 1;
+                occurrences[*b] += 1;
+                occurrences[*c] += 1;
+            }
+            Event::Enforce { terms } => {
+                for (w, _) in terms {
+                    occurrences[*w] += 1;
+                }
+            }
+            Event::Extra { c, d } => {
+                occurrences[*c] += 1;
+                occurrences[*d] += 1;
+                extra_on_c[*c] = true;
+            }
+        }
+    }
+    events
+        .iter()
+        .filter_map(|ev| match ev {
+            Event::Gate { b, c, .. }
+                if values[*b] == F::ZERO
+                    && values[*c] == F::ZERO
+                    && occurrences[*b] == 1
+                    && (occurrences[*c] == 1 || (occurrences[*c] == 2 && extra_on_c[*c])) =>
+            {
+                Some((*b, *c))
+            }
+            _ => None,
+        })
+        .collect()
+}
 
 /// The free-advice wires of a recorded constraint graph, ascending.
 ///
@@ -146,7 +221,10 @@ mod tests {
     /// Allocation patterns through the pooling allocator: the `a` wire and
     /// the wasted `b` of a fresh gate are free, its `c` is derived, and the
     /// `d` handed out as the next allocation is free; a `Boolean::alloc`'s
-    /// bit is free with its complement and output derived.
+    /// bit is free with its complement and output derived. The structural
+    /// waste classifier recovers exactly what the allocator recorded —
+    /// including *not* classifying the boolean gate (whose `b` is the
+    /// referenced complement) as an allocation.
     #[test]
     fn allocation_patterns() -> ragu_core::Result<()> {
         let mut rec = Recorder::<Fp>::new();
@@ -169,6 +247,7 @@ mod tests {
             discover_free_advice(&rec.events, &rec.values),
             vec![x, b, y, bit]
         );
+        assert_eq!(allocation_waste(&rec.events, &rec.values), alloc.wasted);
         Ok(())
     }
 

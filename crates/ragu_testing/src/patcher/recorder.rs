@@ -639,15 +639,23 @@ pub fn repair<F: Field>(events: &[Event<F>], values: &mut [F], free: &[usize]) {
     }
 }
 
-/// Everything the constraints *force* given the `known` wires, and nothing
-/// more: [`repair`] without its guessing tier.
+/// Everything the *bounded* solver can force given the `known` wires, and
+/// nothing more: [`repair`] without its guessing tier.
 ///
 /// Runs single-unknown propagation and forced linear-cluster deductions to a
 /// fixpoint, marking each deduced wire `known` and writing its value. Unlike
-/// [`repair`] it never pins an under-determined wire to a chosen value, so a
-/// wire it leaves unknown is genuinely not determined by the known set —
-/// the property [`discover_free_advice`](super::discover_free_advice)
-/// builds on.
+/// [`repair`] it never pins an under-determined wire to a chosen value, so
+/// everything it marks known is a genuine consequence of the known set.
+///
+/// The converse is only as strong as the solver: a wire left unknown is one
+/// this bounded procedure could not force. A gate with both operands unknown
+/// contributes no deduction, and a coupled linear cluster wider than
+/// [`CLUSTER_SOLVE_CAP`] is skipped outright — during discovery the unknown
+/// set starts as the whole graph, so on large circuits the cluster pass only
+/// engages near the end and deduction rests on propagation. Wires such a
+/// graph does pin only through wide coupling are reported free anyway:
+/// [`discover_free_advice`](super::discover_free_advice) over-approximates
+/// there, and says so.
 pub(super) fn deduce<F: Field>(events: &[Event<F>], values: &mut [F], known: &mut [bool]) {
     loop {
         propagate(events, values, known);
