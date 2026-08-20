@@ -110,6 +110,14 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
 
         Ok(WithAux::new(FixedVec::try_from(elements)?, adapter_aux))
     }
+
+    fn analytic_wiring<Rank2: Rank>(
+        &self,
+    ) -> Option<
+        alloc::boxed::Box<dyn ragu_circuits::analytic::AnalyticWiring<C::CircuitField, Rank2>>,
+    > {
+        self.step.analytic_wiring::<Rank2>()
+    }
 }
 
 #[cfg(test)]
@@ -237,3 +245,4 @@ mod tests {
         assert_eq!(output_data, Fp::from(30u64));
     }
 }
+

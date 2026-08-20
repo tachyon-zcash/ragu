@@ -158,6 +158,24 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     )>
     where
         Self: 'dr;
+
+    /// Supplies a closed form for this step's wiring polynomial, replacing
+    /// synthesis when evaluating $s(X, Y)$.
+    ///
+    /// Returning `None` — the default — leaves Ragu synthesizing the step,
+    /// which is always correct.
+    ///
+    /// The closed form must describe the *adapted* circuit, not the step body
+    /// alone: Ragu wraps a step to encode its left, right, and output headers,
+    /// and those constraints are part of the polynomial. See
+    /// [`AnalyticWiring`](ragu_circuits::analytic::AnalyticWiring) for the rest
+    /// of the obligations.
+    fn analytic_wiring<R: ragu_circuits::polynomials::Rank>(
+        &self,
+    ) -> Option<alloc::boxed::Box<dyn ragu_circuits::analytic::AnalyticWiring<C::CircuitField, R>>>
+    {
+        None
+    }
 }
 
 #[cfg(test)]
