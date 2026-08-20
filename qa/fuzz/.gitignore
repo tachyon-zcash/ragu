@@ -3,3 +3,8 @@ corpus
 artifacts
 coverage
 seeds
+
+# Tracked, overriding the repo-root rule: this workspace is not covered by the
+# root lockfile, so without one here every CI run re-resolves from scratch and
+# is at the mercy of upstream yanks.
+!Cargo.lock
