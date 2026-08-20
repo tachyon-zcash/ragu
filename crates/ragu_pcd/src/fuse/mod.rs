@@ -15,6 +15,8 @@ mod _09_eval;
 mod _10_p;
 mod _11_circuits;
 pub(crate) mod claims;
+#[cfg(feature = "unstable-fuzzing")]
+pub mod patcher;
 
 use claims::FuseProofSource;
 use ragu_arithmetic::{CryptoRngCore, Cycle, ff::Field};

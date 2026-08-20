@@ -80,3 +80,7 @@ harness = false
 name = "criterion_registry"
 path = "benches/criterion/registry.rs"
 harness = false
+
+[[test]]
+name = "patcher_internal"
+required-features = ["unstable-fuzzing"]

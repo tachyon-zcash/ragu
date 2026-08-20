@@ -25,6 +25,11 @@ extern crate alloc;
 extern crate std;
 
 mod fuse;
+/// Patcher harness surface: hands the internal recursion circuits and their
+/// honest witnesses to a visitor mid-fuse. See [`fuse::patcher`]. Not part of
+/// the stable API.
+#[cfg(feature = "unstable-fuzzing")]
+pub use fuse::patcher;
 #[cfg(feature = "unstable-fuzzing")]
 pub mod fuzz_utils;
 pub mod header;
