@@ -39,6 +39,9 @@
 //! * [`capture`] / [`playback`] — the [`Circuit`](ragu_circuits::Circuit)
 //!   entry points: run a circuit's `witness` (and its output serialization)
 //!   through the drivers, exposing the wires of its public instance.
+//!   [`capture`] applies [`overlay_stages`] so even a staged
+//!   [`MultiStage`](ragu_circuits::staging::MultiStage) circuit — every
+//!   internal recursion circuit is one — yields a self-consistent capture.
 //! * [`selftest`] — a planted under-constrained circuit whose signal must
 //!   fire, so the soundness direction is never vacuous.
 //!
@@ -50,7 +53,7 @@ mod discover;
 mod oracle;
 mod recorder;
 
-pub use circuit::{Capture, capture, playback};
+pub use circuit::{Capture, capture, overlay_stages, playback};
 pub use discover::{allocation_waste, discover_free_advice};
 pub use oracle::{ProbeOutcome, SweepReport, Violation, determinism_probe, determinism_sweep};
 pub use recorder::{
