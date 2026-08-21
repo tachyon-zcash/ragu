@@ -87,6 +87,35 @@ fn check_msm<C: CurveAffine>(terms: Vec<(C::ScalarExt, C::ScalarExt)>) -> TestCa
     Ok(())
 }
 
+fn deterministic_terms<F: From<u64>>(size: usize) -> Vec<(F, F)> {
+    (0..size)
+        .map(|index| {
+            let index = index as u64;
+            (F::from(index + 1), F::from(index.wrapping_mul(17) + 3))
+        })
+        .collect()
+}
+
+#[test]
+fn exact_algorithm_boundaries_match_canonical_msm() -> TestCaseResult {
+    // Zakura's `best_multiexp` changes its Booth-window width at these
+    // boundaries. Keep them deterministic: the proptest strategy is
+    // power-of-two biased and cannot generate most of these transition points.
+    const ZAKURA_WINDOW_TRANSITIONS: [usize; 8] = [4, 32, 55, 149, 404, 1097, 2981, 8104];
+
+    let sizes = ZAKURA_WINDOW_TRANSITIONS
+        .into_iter()
+        .flat_map(|boundary| [boundary - 1, boundary])
+        .chain(core::iter::once(ProductionRank::num_coeffs()));
+
+    for size in sizes {
+        check_msm::<pallas::Affine>(deterministic_terms(size))?;
+        check_msm::<vesta::Affine>(deterministic_terms(size))?;
+    }
+
+    Ok(())
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
 
