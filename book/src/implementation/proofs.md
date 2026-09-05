@@ -79,11 +79,11 @@ The associated types define the step's interface:
 Consider a simple application that aggregates values:
 
 ```rust
-// Step 1: Leaf step - introduces a single value
+// Step 1: Seed step - introduces a single value
 struct LeafStep { value: u64 }
 impl Step<C> for LeafStep {
-    type Left = ();           // No left child (trivial)
-    type Right = ();          // No right child (trivial)
+    type Left = ();            // Bootstrap child
+    type Right = ();           // Bootstrap child
     type Output = ValueHeader; // Outputs a value commitment
 }
 
@@ -96,7 +96,7 @@ impl Step<C> for DoubleAndAddStep {
 }
 ```
 
-Leaf steps are used with `seed()` to create base proofs. Combine
+Seed steps are used with `seed()` to create initial application proofs. Combine
 steps are used with `fuse()` to merge child proofs, building up the
 PCD tree from leaves to root.
 
@@ -114,20 +114,22 @@ let (proof, aux) = app.seed(&mut rng, MyLeafStep { ... }, witness)?;
 let pcd = proof.carry(aux);
 ```
 
-Internally, `seed` fuses the step with trivial proofs. Steps used with `seed`
-must have `Left = ()` and `Right = ()`.
+Internally, `seed` fuses the step with the application's _bootstrap proof_ as
+both children. Steps used with `seed` must have `Left = ()` and
+`Right = ()`.
 
-#### Trivial Proofs
+#### The Bootstrap Proof
 
-A _trivial proof_ is a dummy proof used to seed the base case of
-recursion. It does not encode any real computation; instead, it
-provides a well-formed starting proof that allows the recursive
-machinery to bootstrap. Internally, trivial proofs use non-degenerate
-polynomials and deterministic challenges.
+The base case of the recursion lives in a single internal step, the only one
+whose fuse does not verify its children. `ApplicationBuilder::finalize` runs it
+once over two synthesized _dummy proofs_ — which do not verify on their own —
+to produce the bootstrap proof, which carries the unit header.
 
-Trivial proofs are not meant to verify independently—they exist
-solely to provide valid input structure for `seed()` when no real
-child proofs are available.
+The bootstrap proof attests nothing, and any prover can produce one; it exists
+only so that the recursion has a valid proof to start from. The internal step's
+private `Dummy` input header is the base-case sentinel. Ordinary steps,
+including those with unit inputs, cannot declare `Dummy` and therefore always
+enforce their child claims.
 
 ### `fuse`
 
@@ -173,20 +175,17 @@ all accumulated claims from previous steps.
 
 ## Rerandomization
 
-The `rerandomize` method produces a new proof that
-verifies identically but reveals nothing about the original proof's randomness:
+The `rerandomize` method produces a fresh proof that verifies identically:
 
 ```rust
 let fresh_pcd = app.rerandomize(pcd, &mut rng)?;
 ```
 
-This is useful for privacy-preserving applications where proof linkability
-must be prevented.
+It is intended to support privacy-preserving applications, but the current
+construction does not yet establish zero knowledge or unlinkability.
 
-Internally, rerandomization folds the input proof with a _seeded
-trivial proof_ using a dedicated rerandomization step. The fresh
-randomness from `rng` ensures the output proof is unlinkable to the
-original.
+Internally, rerandomization folds the input proof with a cached seeded `Pcd<()>`
+using a dedicated rerandomization step.
 
 ## Unified Accumulator Structure
 

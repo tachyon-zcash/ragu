@@ -19,8 +19,8 @@ use crate::internal::native::InternalCircuitIndex;
 pub(crate) enum InternalStepIndex {
     /// Internal step for [`internal::rerandomize`].
     Rerandomize = 0,
-    /// Internal step that produces a valid trivial proof for rerandomization.
-    Trivial = 1,
+    /// Internal step that bootstraps the recursion; see [`internal::bootstrap`].
+    Bootstrap = 1,
 }
 
 /// Internal representation of a [`Step`] index distinguishing internal vs.
@@ -175,7 +175,7 @@ mod tests {
             CircuitIndex::new(InternalCircuitIndex::NUM)
         );
         assert_eq!(
-            Index::internal(InternalStepIndex::Trivial).circuit_index(num_application_steps)?,
+            Index::internal(InternalStepIndex::Bootstrap).circuit_index(num_application_steps)?,
             CircuitIndex::new(InternalCircuitIndex::NUM + 1)
         );
 

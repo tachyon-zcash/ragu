@@ -489,7 +489,7 @@ pub fn lift_endoscalar<F: WithSmallOrderMulGroup<3>>(endo: u128) -> F {
 /// A low-level helper: prefer [`EndoscalarChallenge::extract_native`], which
 /// upholds the precondition below as a type invariant. This function is exposed
 /// directly only for native setup paths with no [`EndoscalarChallenge`] in
-/// scope (e.g. the trivial proof construction over a constant that is in range
+/// scope (e.g. the dummy proof construction over a constant that is in range
 /// by inspection).
 ///
 /// # Completeness

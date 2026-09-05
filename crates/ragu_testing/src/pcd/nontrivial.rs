@@ -105,10 +105,8 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
 /// Hashes two internal nodes into a parent, so a tree can grow past the one
 /// level [`Hash2`] (which takes leaves) allows.
 ///
-/// A fuse of two leaves is a degenerate point for the recursion: the
-/// children carry trivial accumulators, so every error term the collapse
-/// circuits fold is zero. A fuse of two `Hash2` nodes sees children that
-/// carry real ones.
+/// A fuse of two leaves and a fuse of two `Hash2` nodes exercise different
+/// recursion depths and accumulated proof histories.
 pub struct Merge2<'params, C: Cycle> {
     /// The Poseidon parameters the sponge is instantiated with.
     pub poseidon_params: &'params C::CircuitPoseidon,

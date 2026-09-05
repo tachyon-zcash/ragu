@@ -36,6 +36,7 @@ impl ApplicationBuilder {
         }
     }
 
+    /// Mirrors `ragu_pcd::ApplicationBuilder::register`.
     pub fn register<S: Step>(mut self, _step: S) -> Result<Self> {
         S::INDEX.assert_sequential(self.num_application_steps)?;
 
@@ -73,15 +74,16 @@ impl ApplicationBuilder {
 }
 
 impl Application {
-    /// Delegates to [`fuse`](Self::fuse) with trivial PCDs.
+    /// Mirrors `ragu_pcd::Application::seed`: runs a unit-input step over the
+    /// bootstrap proof as both children, via [`fuse`](Self::fuse).
     pub fn seed<'source, RNG: CryptoRng, S: Step<Left = (), Right = ()>>(
         &self,
         rng: &mut RNG,
         step: S,
         witness: S::Witness<'source>,
     ) -> Result<(Pcd<S::Output>, S::Aux<'source>)> {
-        let left = Proof::trivial().carry::<()>(());
-        let right = Proof::trivial().carry::<()>(());
+        let left = Proof::bootstrap().carry::<()>(());
+        let right = Proof::bootstrap().carry::<()>(());
         self.fuse(rng, step, witness, left, right)
     }
 

@@ -28,6 +28,6 @@ pub mod corrupt;
 pub mod patcher {
     pub use crate::fuse::patcher::{
         CircuitSpec, InternalCircuitVisitor, OutputRef, Resolution, capture_internal_circuits,
-        capture_internal_circuits_seeded,
+        capture_internal_circuits_bootstrap,
     };
 }

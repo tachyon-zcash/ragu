@@ -9,7 +9,7 @@ use super::{ctx::StepCtx, header::Header};
 /// Mirrors real ragu's `InternalStepIndex` layout:
 /// - Slot 0: `Rerandomize` (reserved; mock rerandomize is a transformation, not
 ///   a Step, but the slot stays reserved for migration parity).
-/// - Slot 1: trivial step (used to seed [`crate::Proof::trivial`]).
+/// - Slot 1: bootstrap step (produces [`crate::Proof::bootstrap`]).
 pub(crate) const NUM_INTERNAL_STEPS: usize = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]

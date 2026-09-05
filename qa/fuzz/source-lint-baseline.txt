@@ -5,7 +5,7 @@ RAGU005|crates/ragu_circuits/src/horner.rs|61|The first write seeds the accumula
 RAGU004|crates/ragu_circuits/src/raw.rs|171|The SYSTEM gate's A, B, and C wires are intentionally inaccessible; only its Extra handle initializes ONE.
 RAGU004|crates/ragu_circuits/src/raw.rs|172|The reserved extra wire is intentionally consumed only to pin it to zero.
 RAGU005|crates/ragu_core/src/drivers/emulator.rs|354|Known prediction bypasses execution only in the constraint-free Wire-equals-unit emulator.
-RAGU005|crates/ragu_pcd/src/step/encoder.rs|97|The enum structurally distinguishes a pre-encoded value from one requiring conversion.
+RAGU005|crates/ragu_pcd/src/step/encoder.rs|98|The enum structurally distinguishes a pre-encoded value from one requiring conversion.
 RAGU005|crates/ragu_pcd/src/step/internal/padded.rs|104|The early error depends only on the structural number of header elements already written.
 RAGU004|crates/ragu_primitives/src/allocator.rs|69|The stateless allocator intentionally returns A and wastes the zero B and C wires of its allocation gate.
 RAGU005|crates/ragu_primitives/src/allocator.rs|110|Structural pool occupancy selects redemption of a D wire or allocation of a fresh gate.

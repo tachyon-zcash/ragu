@@ -15,17 +15,17 @@
 //! circuit, its [`CircuitSpec`] and its witness to a visitor that records the
 //! constraint graph ([`ragu_testing::patcher::capture_with_stage_values`]). It
 //! does so at four [`Point`]s of a tree, because the cheap ones are degenerate
-//! in their own ways — `outer_collapse` leaves `c` free at the base case; a
-//! trivial child accumulator makes every error term zero; two children of
-//! equal depth make the two sides of a collapse mirror images — and no single
-//! point is representative.
+//! in their own ways — the bootstrap base case consumes synthesized dummies
+//! and leaves `outer_collapse`'s `c` free, while two children of equal depth
+//! make the two sides of a collapse mirror images — and no single point is
+//! representative.
 //!
-//! The points differ in more than shape. Each builds from its own RNG seed and
-//! its own leaf witnesses, so the four captures are not four views of the same
-//! field elements. And the base case runs in an application registering one
-//! step rather than two or three, which puts the registry at $2^4$ circuits
-//! instead of $2^5$ — a different width for `compute_v` to evaluate over, not
-//! just a different tree.
+//! The points differ in more than shape. Each builds from its own RNG seed and,
+//! when applicable, its own leaf witnesses, so the four captures are not four
+//! views of the same field elements. And the base case runs in an application
+//! registering one step rather than two or three. That puts the registry at
+//! $2^4$ circuits instead of $2^5$ — a different width for `compute_v` to
+//! evaluate over, not just a different tree.
 //!
 //! That costs some tens of seconds and happens once, in libFuzzer's `init`;
 //! every fuzz iteration afterwards works on the captured graphs through a
@@ -115,7 +115,7 @@ use ragu_pcd::{
     Application,
     fuzzing::patcher::{
         CircuitSpec, InternalCircuitVisitor, capture_internal_circuits,
-        capture_internal_circuits_seeded,
+        capture_internal_circuits_bootstrap,
     },
 };
 use ragu_testing::patcher::{
@@ -155,11 +155,10 @@ static APPS: LazyLock<[SyncApp; 3]> = LazyLock::new(|| {
 /// depends on that.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Point {
-    /// The base case: a `WitnessLeaf` seed over two trivial children, in the
-    /// one-step application.
-    Seeded,
-    /// A `Hash2` fuse of two leaves. The children carry trivial accumulators,
-    /// so every error term the collapse circuits fold is zero.
+    /// The base case: the internal bootstrap step over two synthesized dummy
+    /// children, in the one-step application.
+    Bootstrap,
+    /// A `Hash2` fuse of two seeded leaves.
     Leaves,
     /// A `Merge2` fuse of two `Hash2` nodes: the first point whose children
     /// carry accumulators of their own.
@@ -171,11 +170,16 @@ enum Point {
 }
 
 impl Point {
-    const ALL: [Point; 4] = [Point::Seeded, Point::Leaves, Point::Nodes, Point::Lopsided];
+    const ALL: [Point; 4] = [
+        Point::Bootstrap,
+        Point::Leaves,
+        Point::Nodes,
+        Point::Lopsided,
+    ];
 
     fn name(self) -> &'static str {
         match self {
-            Point::Seeded => "seeded",
+            Point::Bootstrap => "bootstrap",
             Point::Leaves => "leaves",
             Point::Nodes => "nodes",
             Point::Lopsided => "lopsided",
@@ -185,7 +189,7 @@ impl Point {
     /// How many steps the application this point runs in registers.
     fn steps(self) -> usize {
         match self {
-            Point::Seeded => 1,
+            Point::Bootstrap => 1,
             Point::Leaves => 2,
             Point::Nodes | Point::Lopsided => 3,
         }
@@ -195,17 +199,17 @@ impl Point {
     /// point, so no two points share their blinding.
     fn rng_seed(self) -> u64 {
         match self {
-            Point::Seeded => 0x5eed_0001,
+            Point::Bootstrap => 0x5eed_0001,
             Point::Leaves => 0x1eaf_0002,
             Point::Nodes => 0x0de0_0003,
             Point::Lopsided => 0x109d_0004,
         }
     }
 
-    /// The leaf witnesses this point seeds from — again distinct per point.
+    /// The leaf witnesses this point seeds from — empty for the bootstrap.
     fn witnesses(self) -> &'static [u64] {
         match self {
-            Point::Seeded => &[42],
+            Point::Bootstrap => &[],
             Point::Leaves => &[3, 5],
             Point::Nodes => &[7, 11, 13, 17],
             Point::Lopsided => &[19, 23, 29, 31, 37, 41],
@@ -223,13 +227,7 @@ impl Point {
         let mut rng = StdRng::seed_from_u64(self.rng_seed());
         let w = self.witnesses();
         match self {
-            Point::Seeded => capture_internal_circuits_seeded(
-                app,
-                &mut rng,
-                pcd::witness_leaf(),
-                NativeField::from(w[0]),
-                visitor,
-            ),
+            Point::Bootstrap => capture_internal_circuits_bootstrap(app, &mut rng, visitor),
             Point::Leaves => {
                 let left = pcd::seed(app, &mut rng, w[0]);
                 let right = pcd::seed(app, &mut rng, w[1]);
@@ -439,7 +437,7 @@ impl<C: Cycle> InternalCircuitVisitor<C> for Collector<C::CircuitField, C::Scala
 /// The captured circuits, built from real fuses on first use.
 static CIRCUITS: LazyLock<Collector<NativeField, NestedField>> = LazyLock::new(|| {
     let mut collector = Collector {
-        point: Point::Seeded,
+        point: Point::Bootstrap,
         native: Vec::new(),
         nested: Vec::new(),
     };

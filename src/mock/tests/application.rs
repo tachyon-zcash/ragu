@@ -762,10 +762,10 @@ fn identity_point_in_input_header_fails_fuse() {
         .finalize()
         .expect("finalize");
 
-    let bad_left = Proof::trivial().carry::<PointHeader>(PointHeaderData {
+    let bad_left = Proof::bootstrap().carry::<PointHeader>(PointHeaderData {
         commitment: Eq::identity(),
     });
-    let right = Proof::trivial().carry::<()>(());
+    let right = Proof::bootstrap().carry::<()>(());
 
     assert!(
         matches!(

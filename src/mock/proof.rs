@@ -68,8 +68,14 @@ impl<H: Header> Clone for Pcd<H> {
 }
 
 impl Proof {
+    /// Mirrors `ragu_pcd`'s bootstrap proof: the output of the internal
+    /// bootstrap step, carrying the unit header.
+    ///
+    /// Public so that downstream consumers integrating against the mock can
+    /// still obtain a starting proof directly, as they could from the former
+    /// `Proof::trivial`.
     #[must_use]
-    pub fn trivial() -> Self {
+    pub fn bootstrap() -> Self {
         Self::new(
             <() as Header>::SUFFIX,
             Index::internal(1),

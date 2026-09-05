@@ -458,8 +458,9 @@ where
     app.capture_internal_circuits_at(rng, step, witness, left, right, false, visitor)
 }
 
-/// [`capture_internal_circuits`] at the base case — the fuse
-/// [`seed`](Application::seed) performs, over two trivial children.
+/// [`capture_internal_circuits`] at the base case — the internal bootstrap
+/// fuse [`ApplicationBuilder::finalize`](crate::ApplicationBuilder::finalize)
+/// performs over two synthesized dummy children.
 ///
 /// `outer_collapse` deliberately leaves the final claim `c` unconstrained
 /// there (the prover may witness any `c` to start the recursion), so its
@@ -469,11 +470,9 @@ where
 /// # Errors
 ///
 /// As [`capture_internal_circuits`].
-pub fn capture_internal_circuits_seeded<'source, C, R, const HEADER_SIZE: usize, B, RNG, S, V>(
+pub fn capture_internal_circuits_bootstrap<C, R, const HEADER_SIZE: usize, B, RNG, V>(
     app: &Application<'_, C, R, HEADER_SIZE, B>,
     rng: &mut RNG,
-    step: S,
-    witness: S::Witness<'source>,
     visitor: &mut V,
 ) -> Result<()>
 where
@@ -481,15 +480,14 @@ where
     R: Rank,
     B: crate::SelectableBackend,
     RNG: CryptoRng,
-    S: Step<C, Left = (), Right = ()>,
     V: InternalCircuitVisitor<C>,
 {
     app.capture_internal_circuits_at(
         rng,
-        step,
-        witness,
-        app.trivial_pcd(),
-        app.trivial_pcd(),
+        crate::step::internal::bootstrap::Bootstrap::new(),
+        (),
+        app.dummy_pcd(),
+        app.dummy_pcd(),
         true,
         visitor,
     )

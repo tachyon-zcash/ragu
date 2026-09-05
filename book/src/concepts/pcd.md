@@ -106,14 +106,15 @@ ideas.
 However, as with any PCD construction, there must exist a base case of the
 recursive statement: the computation graph must have leaves that do not
 represent a transition from prior certified data, since no predecessor can exist
-by definition. Ragu handles this base case by allowing the two child PCD
-instances of any node to be invalid so long as they carry trivial data that
-represents no prior computational effort.
+by definition. Ragu confines this base case to a single internal step, the only
+one whose two child PCD instances may be invalid; every application step has the
+claims of both children enforced.
 
-Ragu provides a built-in implementation of [`Header`] for the unit type `()` to
-signify this trivial state. In order to lift non-trivial data into the
-computational graph, applications specify a [`Step`] over these trivial states
-and use a special [`seed`] function to transform a leaf state into valid PCD.
+That internal step declares a private `Dummy` header for both inputs, and
+`Dummy` is the sentinel that selects the base case. It outputs a data-less
+`Pcd<()>`, which [`seed`] supplies as both verified children of an
+application [`Step`] with unit inputs. An ordinary unit-input step does not
+select the base case: its child claims are still enforced.
 
 ## Succinctness and Rerandomization
 
@@ -126,11 +127,11 @@ the decompression needed to prepare a compressed proof for future fusion) should
 be avoided except at the necessary boundaries of application logic, such as when
 succinct proofs must be communicated to third parties.
 
-In its uncompressed form, it is possible to [`rerandomize`] PCD. This process
-produces a proof string that reveals nothing about the initial PCD beyond the
-certified data. Without rerandomization, a proof string (whether compressed or
-not) may leak information such as witness data; proofs are not zero-knowledge by
-default.
+In its uncompressed form, a PCD can be passed through [`rerandomize`] to produce
+a fresh proof of the same certified data. The current construction does not yet
+establish zero knowledge or unlinkability: it still exposes child data and lacks
+a fold-level accumulator randomizer. Those properties require additional
+protocol work.
 
 [`Header`]: ragu_pcd::header::Header
 [`Data`]: ragu_pcd::header::Header::Data

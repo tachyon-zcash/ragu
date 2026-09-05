@@ -8,13 +8,18 @@ use ragu_circuits::{
     polynomials::{ProductionRank, Rank, sparse},
     registry::CircuitIndex,
 };
+use ragu_core::{
+    Result,
+    drivers::{Driver, DriverValue},
+};
 use ragu_pasta::{Fp, Pasta};
+use ragu_primitives::allocator::Standard;
 use ragu_testing::strategies::{bounded_edge_usize, edge_u64, nonzero_prime_field_element};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use crate::{
     Application, ApplicationBuilder, Pcd, Proof, SelectableBackend,
-    step::internal::trivial::Trivial,
+    step::{Encoded, Index, Step},
 };
 
 static TRACKING_MSM_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -72,6 +77,43 @@ type TestPcd = Pcd<Pasta, ProductionRank, ()>;
 type RngFingerprint = [u64; RNG_FINGERPRINT_WORDS];
 type Outcome = (VerifierDecision, RngFingerprint);
 
+/// Minimal application step used to drive the protocol in backend tests.
+#[derive(Clone, Copy)]
+struct UnitStep;
+
+impl Step<Pasta> for UnitStep {
+    const INDEX: Index = Index::new(0);
+
+    type Witness<'source> = ();
+    type Aux<'source> = ();
+    type Left = ();
+    type Right = ();
+    type Output = ();
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
+        &self,
+        dr: &mut D,
+        _: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, ()>,
+        right: DriverValue<D, ()>,
+    ) -> Result<(
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        DriverValue<D, ()>,
+        DriverValue<D, Self::Aux<'source>>,
+    )> {
+        let allocator = &mut Standard::new();
+        let left = Encoded::new(dr, allocator, left)?;
+        let right = Encoded::new(dr, allocator, right)?;
+        let output = Encoded::from_gadget(());
+
+        Ok(((left, right, output), D::unit(), D::unit()))
+    }
+}
+
 /// Every selectable backend, over the same registered circuits: the reference,
 /// the accelerated backend verifying with its own kernels, and the accelerated
 /// prover verifying with the reference kernels.
@@ -85,18 +127,24 @@ impl Apps {
     fn build(dummy_circuits: usize) -> Self {
         let pasta = Pasta::baked();
         let reference = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
+            .register(UnitStep)
+            .unwrap()
             .register_dummy_circuits(dummy_circuits)
             .unwrap()
             .finalize(pasta)
             .unwrap();
         let accelerated = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
             .with_backend::<AcceleratedBackend>()
+            .register(UnitStep)
+            .unwrap()
             .register_dummy_circuits(dummy_circuits)
             .unwrap()
             .finalize(pasta)
             .unwrap();
         let prover = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
             .with_backend::<AcceleratedProver>()
+            .register(UnitStep)
+            .unwrap()
             .register_dummy_circuits(dummy_circuits)
             .unwrap()
             .finalize(pasta)
@@ -413,16 +461,18 @@ fn check_corrupted_pcd_equivalence(
 fn selected_backend_dispatch_reaches_msm() {
     let app = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
         .with_backend::<TrackingBackend>()
+        .register(UnitStep)
+        .unwrap()
         .register_dummy_circuits(0)
         .unwrap()
         .finalize(Pasta::baked())
         .unwrap();
     let mut rng = StdRng::seed_from_u64(0);
-    let (left, _) = app.seed(&mut rng, Trivial::new(), ()).unwrap();
-    let (right, _) = app.seed(&mut rng, Trivial::new(), ()).unwrap();
+    let (left, _) = app.seed(&mut rng, UnitStep, ()).unwrap();
+    let (right, _) = app.seed(&mut rng, UnitStep, ()).unwrap();
 
     TrackingBackend::reset_msm_calls();
-    let _ = app.fuse(&mut rng, Trivial::new(), (), left, right).unwrap();
+    let _ = app.fuse(&mut rng, UnitStep, (), left, right).unwrap();
 
     assert!(
         TrackingBackend::msm_calls() > 0,
@@ -456,7 +506,7 @@ proptest! {
         let mut proof_rng = StdRng::seed_from_u64(proof_seed);
         let (valid_pcd, _) = apps
             .reference
-            .seed(&mut proof_rng, Trivial::new(), ())
+            .seed(&mut proof_rng, UnitStep, ())
             .unwrap();
         check_verifiers_agree(&apps, &valid_pcd, verifier_seed, "valid leaf proof")?;
         prop_assert_eq!(
@@ -480,7 +530,8 @@ proptest! {
 }
 
 // TODO: Add this end-to-end backend-equivalence property for a generated
-// nontrivial Step; Trivial exercises the protocol flow but not application circuitry.
+// nontrivial Step; UnitStep exercises the protocol and application-circuit
+// paths, but not nontrivial gadget logic.
 proptest! {
     #![proptest_config(config())]
 
@@ -520,15 +571,15 @@ proptest! {
 
         let (reference_leaf1, _) = apps
             .reference
-            .seed(&mut reference_rng, Trivial::new(), ())
+            .seed(&mut reference_rng, UnitStep, ())
             .unwrap();
         let (accelerated_leaf1, _) = apps
             .accelerated
-            .seed(&mut accelerated_rng, Trivial::new(), ())
+            .seed(&mut accelerated_rng, UnitStep, ())
             .unwrap();
         let (prover_leaf1, _) = apps
             .prover
-            .seed(&mut prover_rng, Trivial::new(), ())
+            .seed(&mut prover_rng, UnitStep, ())
             .unwrap();
         check_rngs(&mut reference_rng, &mut accelerated_rng, &mut prover_rng)?;
         let leaf1 = Proofs {
@@ -540,15 +591,15 @@ proptest! {
 
         let (reference_leaf2, _) = apps
             .reference
-            .seed(&mut reference_rng, Trivial::new(), ())
+            .seed(&mut reference_rng, UnitStep, ())
             .unwrap();
         let (accelerated_leaf2, _) = apps
             .accelerated
-            .seed(&mut accelerated_rng, Trivial::new(), ())
+            .seed(&mut accelerated_rng, UnitStep, ())
             .unwrap();
         let (prover_leaf2, _) = apps
             .prover
-            .seed(&mut prover_rng, Trivial::new(), ())
+            .seed(&mut prover_rng, UnitStep, ())
             .unwrap();
         check_rngs(&mut reference_rng, &mut accelerated_rng, &mut prover_rng)?;
 
@@ -556,7 +607,7 @@ proptest! {
             .reference
             .fuse(
                 &mut reference_rng,
-                Trivial::new(),
+                UnitStep,
                 (),
                 leaf1.reference,
                 reference_leaf2,
@@ -566,7 +617,7 @@ proptest! {
             .accelerated
             .fuse(
                 &mut accelerated_rng,
-                Trivial::new(),
+                UnitStep,
                 (),
                 leaf1.accelerated,
                 accelerated_leaf2,
@@ -574,7 +625,7 @@ proptest! {
             .unwrap();
         let (prover_node, _) = apps
             .prover
-            .fuse(&mut prover_rng, Trivial::new(), (), leaf1.prover, prover_leaf2)
+            .fuse(&mut prover_rng, UnitStep, (), leaf1.prover, prover_leaf2)
             .unwrap();
         check_rngs(&mut reference_rng, &mut accelerated_rng, &mut prover_rng)?;
         let node = Proofs {

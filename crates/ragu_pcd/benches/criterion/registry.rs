@@ -20,13 +20,18 @@ fn registry_bench(c: &mut Criterion) {
             .unwrap()
     };
 
-    c.bench_function("registry::finalize", |b| {
+    // `finalize` also builds the bootstrap proof (one internal fuse), which
+    // dominates its cost; keep the sample count low so this stays runnable.
+    let mut finalize_group = c.benchmark_group("registry");
+    finalize_group.sample_size(10);
+    finalize_group.bench_function("finalize", |b| {
         b.iter_batched(
             make_builder,
             |builder| builder.finalize(pasta).unwrap(),
             criterion::BatchSize::PerIteration,
         );
     });
+    finalize_group.finish();
 
     // Build the finalized app once for evaluation benchmarks.
     let app = make_builder().finalize(pasta).unwrap();

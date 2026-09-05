@@ -13,10 +13,10 @@
 //! binds — is still exercised, but its verdict is not asserted; see
 //! [`ragu_pcd::fuzzing::corrupt`] for how the two are told apart.
 //!
-//! This target used to corrupt `Application::trivial_proof`. That fixture is
-//! the all-zero placeholder a base case fuses against, and `verify` rejects it
-//! outright — so "the verifier did not accept the corrupted proof" held before
-//! the corruption too, and every assertion passed vacuously.
+//! This target used to corrupt Ragu's synthesized dummy proof. That fixture is
+//! the placeholder the internal Bootstrap step consumes, and `verify` rejects
+//! it outright — so "the verifier did not accept the corrupted proof" held
+//! before the corruption too, and every assertion passed vacuously.
 //! [`ragu_testing_fuzz::pcd`] now checks each fixture verifies before handing
 //! it over.
 
