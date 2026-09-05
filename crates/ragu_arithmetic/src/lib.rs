@@ -90,6 +90,13 @@ pub extern crate rand;
 pub use coeff::Coeff;
 pub use domain::Domain;
 pub use fft::{Ring, bitreverse};
+/// Runs two closures, potentially in parallel, and returns both of their
+/// results. This is the primitive that [`par_join!`] generalizes to more than
+/// two closures.
+///
+/// When the `multicore` feature is disabled the closures simply run in
+/// sequence.
+pub use multicore::join;
 /// Converts a 256-bit integer literal into the little endian `[u64; 4]`
 /// representation that e.g. [`Fp::from_raw`](crate::pasta_curves::Fp::from_raw) or
 /// [`Fp::pow`](crate::pasta_curves::Fp::pow) need as input. This makes constants

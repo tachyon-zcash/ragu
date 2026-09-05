@@ -6,6 +6,9 @@
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
+extern crate alloc;
+
+use alloc::vec::Vec;
 use core::fmt::Debug;
 
 use ragu_arithmetic::{
@@ -93,12 +96,48 @@ pub trait Backend: Clone + Copy + Debug + Default + Send + Sync + 'static {
     }
 
     /// Computes the registry restriction $m(W, x, y)$.
+    ///
+    /// Callers that also need the $W$-domain evaluations can reach for
+    /// [`registry_wxy_over_domain`](Self::registry_wxy_over_domain) and
+    /// [`registry_interpolate_xy`](Self::registry_interpolate_xy) directly,
+    /// sharing a single per-circuit pass between the two representations.
+    ///
+    /// # Correctness
+    ///
+    /// Overrides must match [`Registry::xy`] exactly.
     fn registry_xy<F: PrimeField, R: Rank>(
         registry: &Registry<'_, F, R>,
         x: F,
         y: F,
     ) -> sparse::Polynomial<F, R> {
-        registry.xy(x, y)
+        Self::registry_interpolate_xy(registry, Self::registry_wxy_over_domain(registry, x, y))
+    }
+
+    /// Evaluates the registry polynomial over its $W$-domain at $X = x$,
+    /// $Y = y$.
+    ///
+    /// # Correctness
+    ///
+    /// Overrides must match [`Registry::wxy_over_domain`] exactly.
+    fn registry_wxy_over_domain<F: PrimeField, R: Rank>(
+        registry: &Registry<'_, F, R>,
+        x: F,
+        y: F,
+    ) -> Vec<F> {
+        registry.wxy_over_domain(x, y)
+    }
+
+    /// Interpolates $W$-domain evaluations into the monomial-basis polynomial
+    /// $m(W, x, y)$.
+    ///
+    /// # Correctness
+    ///
+    /// Overrides must match [`Registry::interpolate_xy`] exactly.
+    fn registry_interpolate_xy<F: PrimeField, R: Rank>(
+        registry: &Registry<'_, F, R>,
+        evals: Vec<F>,
+    ) -> sparse::Polynomial<F, R> {
+        registry.interpolate_xy(evals)
     }
 
     /// Computes the circuit restriction $s_i(X, y)$ selected by `circuit`.
