@@ -45,7 +45,7 @@ where
 // Then copy-paste the output into the check_constraints! calls in the test below.
 pub const HEADER_SIZE: usize = 105;
 
-// Number of dummy application circuits to register before testing internal
+// Number of trivial application circuits to register before testing internal
 // circuits. Internal circuit construction depends on the resulting registry
 // domain size, and other tests still build an application with this many
 // placeholder steps.
@@ -232,7 +232,7 @@ fn test_native_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fp!(0x0ed4508b44f141c210b5d5d3bc00c9ec5a9458f89de2210129e03084467adf28);
+    let expected = fp!(0x151b77da7f2c1d7e47d0534116f1ad5ea981bc54b39b26b61a23d13757cf159e);
 
     assert_eq!(
         app.native_registry.digest(),

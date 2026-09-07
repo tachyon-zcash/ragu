@@ -96,11 +96,12 @@ This is where the circuit logic is implemented. The function:
 
 ### Seed Steps (Create Initial Proofs)
 
-Seed steps create the first proofs in a tree - they have no proof inputs:
+Seed steps create the first application proofs in a tree. The caller supplies
+no proof inputs; `seed` provides the application's bootstrap proof:
 
 ```rust
-type Left = ();   // No left input
-type Right = ();  // No right input
+type Left = ();     // Bootstrap child
+type Right = ();    // Bootstrap child
 type Output = LeafNode;
 ```
 
@@ -172,8 +173,8 @@ allocator.
 ### Pattern 1: Seed Steps (Create Initial Proofs)
 
 ```rust
-type Left = ();   // No left input
-type Right = ();  // No right input
+type Left = ();     // Bootstrap child
+type Right = ();    // Bootstrap child
 type Output = YourHeader;
 ```
 

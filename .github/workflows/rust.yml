@@ -168,10 +168,10 @@ jobs:
         uses: ./.github/actions/rust-setup
         with:
           targets: i686-unknown-linux-gnu
-          apt-packages: gcc-multilib
+          cargo-tools: cross@0.2.5
           cache-suffix: release
       - name: Run 32-bit tests
-        run: cargo test --release --all --locked --all-features --target i686-unknown-linux-gnu
+        run: cross test --release --all --locked --all-features --target i686-unknown-linux-gnu
 
   # Ensure the mock API stays `no_std`-buildable on a bare-metal target. This is
   # the configuration downstream consumers (e.g. `zcash_tachyon`) compile for

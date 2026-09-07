@@ -8,14 +8,15 @@
 //! [`ragu_pcd::fuzzing::corrupt::Corruption`] — so a corruption added once is
 //! reachable from all three.
 //!
-//! # No fixture is the trivial proof
+//! # No fixture is the dummy proof
 //!
-//! `Application::trivial_proof` is the all-zero placeholder a base case fuses
-//! against, not a proof the verifier accepts: `verify` returns `Ok(false)` for
-//! it in any application. Corrupting it and asserting non-acceptance therefore
-//! asserts nothing — the assertion holds before the corruption too. Every
-//! fixture here is a proof that verifies, and both [`leaf_fixture`] and
-//! [`fused_fixtures`] check that before handing any of them out.
+//! Ragu's synthesized dummy proof is the placeholder the internal Bootstrap
+//! step consumes, not a proof the verifier accepts: `verify` returns
+//! `Ok(false)` for it in any application. Corrupting it and asserting
+//! non-acceptance therefore asserts nothing — the assertion holds before the
+//! corruption too. Every fixture here is a proof that verifies, and both
+//! [`leaf_fixture`] and [`fused_fixtures`] check that before handing any of
+//! them out.
 
 use arbitrary::Arbitrary;
 use ragu_arithmetic::{Cycle, ff::Field};
@@ -120,9 +121,8 @@ pub enum Shape {
     /// A `Merge2` fuse of two nodes, carrying an [`InternalNode`] header.
     ///
     /// The distinction from [`Shape::Node`] is not in the header but in what
-    /// the proof accumulated: a fuse of two leaves sees children with trivial
-    /// accumulators, so every error term it folds is zero. A fuse of two
-    /// nodes does not.
+    /// the proof accumulated: a fuse of two leaves and a fuse of two nodes
+    /// carry different recursion histories.
     Deep,
 }
 
@@ -235,11 +235,9 @@ pub fn leaf_fixture(app: &Application<'_, C, R, HEADER_SIZE>) -> Fixture {
 /// The fused fixtures: a `Hash2` over two leaves, and a `Merge2` over two such
 /// nodes.
 ///
-/// The two differ in more than depth. A fuse of two leaves sees children
-/// carrying trivial accumulators, so every error term the collapse circuits
-/// fold is zero; a fuse of two nodes does not. Each is built from its own RNG
-/// seed and its own witness values, so the pair is not two views of one
-/// arithmetic accident.
+/// The two differ in more than depth: their children carry different recursion
+/// histories. Each is built from its own RNG seed and its own witness values,
+/// so the pair is not two views of one arithmetic accident.
 pub fn fused_fixtures(app: &Application<'_, C, R, HEADER_SIZE>) -> Vec<Fixture> {
     let mut rng = StdRng::seed_from_u64(0x0de);
     let (proof, data) = node(app, &mut rng, 7, 11).into_parts();

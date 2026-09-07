@@ -1,13 +1,9 @@
 //! Fuzz the verifier with corrupted *fused* proofs.
 //!
-//! `fuzz_verify_reject` corrupts a leaf: a proof with no children of its own,
-//! whose accumulator the base case leaves in its simplest state. This target
-//! runs the same corruption vocabulary against proofs that fused something —
-//! a `Hash2` over two leaves, and a `Merge2` over two of those — so a check
-//! that only bites once the collapse circuits have folded a nonzero error term
-//! is exercised at all. A fuse of two leaves is still degenerate in its own
-//! way: its children carry trivial accumulators, so every error term it folds
-//! is zero. The `Merge2` fixture is the one that is not.
+//! `fuzz_verify_reject` corrupts a seeded leaf. This target runs the same
+//! corruption vocabulary against proofs that fused something — a `Hash2` over
+//! two leaves, and a `Merge2` over two of those — so checks see multiple
+//! recursion depths and accumulated proof histories.
 //!
 //! Both fixtures are built once, in libFuzzer's `init`, and cloned per input;
 //! building the deeper one runs five fuses, which no per-input budget could

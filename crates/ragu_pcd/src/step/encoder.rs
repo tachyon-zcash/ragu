@@ -17,6 +17,7 @@ use ragu_primitives::{
 };
 
 use super::{Header, internal::padded};
+use crate::header::Suffix;
 
 /// Headers can be encoded in two ways depending on the circuit requirements:
 ///
@@ -133,13 +134,22 @@ impl<'dr, D: Driver<'dr, F: PrimeField>, H: Header<D::F>, const HEADER_SIZE: usi
     /// that `Rerandomize<HeaderA>` and `Rerandomize<HeaderB>` emit the same
     /// constraints.
     ///
-    /// The tradeoff: less efficient (requires emulation + serialization) but
-    /// achieves constraint uniformity across different header types.
+    /// Because every slot — including the suffix — is a witness wire rather than
+    /// a constant, this encoding also **constrains the suffix wire to differ
+    /// from the [`Dummy`](crate::header::Dummy) suffix**, so that no
+    /// step consuming a uniform-encoded header can present the suffix that
+    /// triggers the base case. See
+    /// [`is_dummy_input`](crate::internal::native::stages::preamble::ProofInputs::is_dummy_input).
+    ///
+    /// The tradeoff: less efficient (requires emulation + serialization, plus
+    /// one gate for the suffix check) but achieves constraint uniformity across
+    /// different header types.
     ///
     /// # Constraints
     ///
     /// `HEADER_SIZE` and the destination allocator's behavior and state determine
-    /// the emitted constraints. `H::encode` and `H::Output` serialization affect
+    /// the emitted constraints, plus one multiplication gate and two constraints
+    /// for the suffix check. `H::encode` and `H::Output` serialization affect
     /// only the wireless pre-serialization step.
     ///
     /// # Errors
@@ -158,8 +168,16 @@ impl<'dr, D: Driver<'dr, F: PrimeField>, H: Header<D::F>, const HEADER_SIZE: usi
 
         let mut raw = Vec::with_capacity(HEADER_SIZE);
         gadget.write(&mut emulator, &mut Pipe::new(dr, allocator, &mut raw))?;
+        let raw: FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>> = FixedVec::try_from(raw)?;
 
-        Ok(Encoded(EncodedInner::Uniform(FixedVec::try_from(raw)?)))
+        // Unlike a standard encoding, the suffix here is a witness wire rather
+        // than a constant, so pin it away from `Dummy`: no circuit consuming
+        // a uniform-encoded header may present the suffix that triggers the
+        // base case.
+        let trivial = Element::constant(dr, D::F::from(Suffix::internal(2).get()));
+        raw[HEADER_SIZE - 1].sub(dr, &trivial).enforce_nonzero(dr)?;
+
+        Ok(Encoded(EncodedInner::Uniform(raw)))
     }
 }
 
@@ -213,6 +231,59 @@ mod tests {
                 Element::alloc(dr, allocator, b)?,
             ))
         }
+    }
+
+    /// A header squatting the reserved `Dummy` suffix, which is what a prover
+    /// would need in order to make a uniform-encoded header present the suffix
+    /// that triggers the base case.
+    struct TrivialSuffixHeader;
+
+    impl Header<Fp> for TrivialSuffixHeader {
+        const SUFFIX: Suffix = Suffix::internal(2);
+        type Data = ();
+        type Output = ();
+
+        fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+            _: &mut D,
+            _: &mut A,
+            _: DriverValue<D, Self::Data>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn uniform_encoding_cannot_carry_the_dummy_suffix() {
+        // Uniform encoding witnesses every header slot, including the suffix,
+        // so it is the one encoding whose suffix is not a circuit constant.
+        // `new_uniform` therefore constrains that wire away from the `Dummy`
+        // suffix, which is what stops the step using it — rerandomization —
+        // from ever taking the base case. A prover that tries anyway cannot
+        // satisfy the constraint: witness generation fails here, and no
+        // assignment satisfies it in a real circuit either, since the wire is
+        // forced nonzero.
+        let mut dr = Emulator::execute();
+        let dr = &mut dr;
+
+        let honest = Encoded::<_, SingleHeader, HEADER_SIZE>::new_uniform(
+            dr,
+            &mut (),
+            Always::maybe_just(|| Fp::from(7u64)),
+        );
+        assert!(
+            honest.is_ok(),
+            "an ordinary header must encode uniformly without tripping the suffix check"
+        );
+
+        let forged = Encoded::<_, TrivialSuffixHeader, HEADER_SIZE>::new_uniform(
+            dr,
+            &mut (),
+            Always::maybe_just(|| ()),
+        );
+        assert!(
+            forged.is_err(),
+            "a uniform-encoded header must not be able to carry the Dummy suffix"
+        );
     }
 
     #[test]
@@ -270,8 +341,8 @@ mod tests {
         let mut buf = vec![];
         encoded.write(dr, &mut buf).expect("write should succeed");
 
-        // Suffix is at the last position: 100 (app suffix) + 2 (internal offset) = 102
-        assert_eq!(*buf[HEADER_SIZE - 1].value().take(), Fp::from(102u64));
+        // Suffix is at the last position: 100 (app suffix) + 3 (internal offset) = 103
+        assert_eq!(*buf[HEADER_SIZE - 1].value().take(), Fp::from(103u64));
     }
 
     #[test]

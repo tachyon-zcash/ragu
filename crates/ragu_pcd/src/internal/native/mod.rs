@@ -398,7 +398,7 @@ pub(crate) const STATIC_F_QUERIES: [StaticFQuery; 20] = [
 
 /// Registers internal native circuits and masks into the provided registry.
 ///
-/// Does not register internal steps (rerandomize, trivial); those are
+/// Does not register internal steps (rerandomize, bootstrap); those are
 /// registered by the caller after this function returns.
 pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
     mut registry: RegistryBuilder<'params, C::CircuitField, R>,

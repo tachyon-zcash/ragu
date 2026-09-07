@@ -18,10 +18,27 @@
 //!
 //! ### Base case handling
 //!
-//! When both child proofs are trivial (the "base case"), the prover may witness
-//! any [$c$] value without constraint. This allows seeding the recursion with
-//! initial proofs that don't yet carry meaningful revdot claims. The constraint
-//! is enforced only when [`is_base_case`] returns false.
+//! When the current step declares [`Dummy`] for both of its inputs — which
+//! only the internal [`Bootstrap`] step does — the prover may witness any [$c$]
+//! value without constraint. This is what lets [`finalize`] fold two
+//! synthesized dummy proofs, which carry no meaningful revdot claim, into the
+//! bootstrap proof that verifies. The constraint is enforced whenever
+//! [`is_base_case`] returns false.
+//!
+//! For every application step the suffix read here is a constant that
+//! [`padded::for_header`] bakes into the step's application circuit, so no
+//! application step can present the [`Dummy`] suffix and every application
+//! fuse has its child claims enforced — including one whose children carry the
+//! unit `()` header. See [`is_dummy_input`] for how that binding is
+//! established, and for the internal [`Rerandomize`] step, whose suffix is a
+//! witness wire constrained away from `Dummy`.
+//!
+//! [`Dummy`]: crate::header::Dummy
+//! [`Bootstrap`]: crate::step::internal::bootstrap::Bootstrap
+//! [`Rerandomize`]: crate::step::internal::rerandomize::Rerandomize
+//! [`finalize`]: crate::ApplicationBuilder::finalize
+//! [`padded::for_header`]: crate::step::internal::padded::for_header
+//! [`is_dummy_input`]: super::super::stages::preamble::ProofInputs::is_dummy_input
 //!
 //! ### $k(y)$ consistency
 //!
@@ -206,9 +223,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             // as covered by this circuit.
             let witnessed_c = unified_output.c.receive(dr, allocator)?;
 
-            // Enforce witnessed_c == computed_c, but only when NOT in base case.
-            // In base case (both children are trivial proofs), the prover may
-            // witness any c value to seed the recursion.
+            // Enforce witnessed_c == computed_c, except in the base case: the
+            // internal bootstrap step, the only step declaring `Dummy`
+            // inputs. There the prover may witness any c, which is what lets it
+            // fuse two synthesized proofs that do not verify; the resulting
+            // proof attests nothing in return.
             preamble
                 .is_base_case(dr, allocator)?
                 .not(dr)

@@ -56,4 +56,4 @@
 | Large proof string used during recursive fusion; linear-size witness attached | **Uncompressed proof** | [Concepts: PCD](../concepts/pcd.md) |
 | Succinct proof for transmission; orders of magnitude smaller than uncompressed | **Compressed proof** | [Concepts: PCD](../concepts/pcd.md) |
 | Recursive composition of proofs along a PCD tree | **Fuse** | [Architecture](../implementation/arch.md) |
-| Post-fuse transformation producing a proof that reveals nothing about initial PCD beyond certified data | **Rerandomization** | [Concepts: PCD](../concepts/pcd.md) |
+| Post-fuse transformation producing a fresh proof of the same certified data | **Rerandomization** | [Concepts: PCD](../concepts/pcd.md) |

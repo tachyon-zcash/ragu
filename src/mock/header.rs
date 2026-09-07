@@ -6,11 +6,15 @@ use ragu_pasta::{Ep, Eq, Fp, Fq};
 
 /// Number of internal header suffixes reserved by mock_ragu.
 ///
-/// Mirrors real ragu's `InternalStepIndex` layout:
-/// - Slot 0: `Rerandomize` (reserved; mock rerandomize is a transformation, not
-///   a Step, but the slot stays reserved for migration parity).
-/// - Slot 1: trivial header `()`.
-pub(crate) const NUM_INTERNAL_SUFFIXES: usize = 2;
+/// Mirrors real ragu's header suffix namespace:
+/// - Slot 0: fixed-ID circuits used internally for recursion (reserved; mock
+///   rerandomize is a transformation, not a Step, but the slot stays reserved
+///   for migration parity).
+/// - Slot 1: unit header `()`.
+/// - Slot 2: dummy header, carried by the proofs the bootstrap step consumes
+///   (reserved; the mock does not model recursion bootstrapping, but the slot
+///   stays reserved for encoding parity).
+pub(crate) const NUM_INTERNAL_SUFFIXES: usize = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 enum HeaderSuffix {
@@ -28,8 +32,19 @@ pub struct Suffix {
 }
 
 impl Suffix {
+    /// Creates a new application-defined [`Header`] suffix.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `value` is large enough that offsetting it past the internal
+    /// suffixes would overflow and alias a reserved internal suffix.
     #[must_use]
     pub const fn new(value: usize) -> Self {
+        assert!(
+            value <= usize::MAX - NUM_INTERNAL_SUFFIXES,
+            "application header suffix would overflow onto a reserved internal suffix"
+        );
+
         Self {
             suffix: HeaderSuffix::Application(value),
         }
@@ -56,6 +71,25 @@ impl Suffix {
     }
 }
 
+#[test]
+fn application_suffix_namespace_matches_ragu_pcd() {
+    assert_eq!(Suffix::internal(0).get(), 0);
+    assert_eq!(Suffix::internal(1).get(), 1);
+    assert_eq!(Suffix::internal(2).get(), 2);
+    assert_eq!(Suffix::new(0).get(), 3);
+    assert_eq!(Suffix::new(1).get(), 4);
+    assert_eq!(
+        Suffix::new(usize::MAX - NUM_INTERNAL_SUFFIXES).get(),
+        usize::MAX as u64
+    );
+}
+
+#[test]
+#[should_panic(expected = "overflow onto a reserved internal suffix")]
+fn application_suffix_cannot_wrap_onto_a_reserved_suffix() {
+    let _ = Suffix::new(usize::MAX);
+}
+
 /// Mirrors `ragu_pcd::Header`.
 pub trait Header: Send + Sync + 'static {
     const SUFFIX: Suffix;
@@ -68,7 +102,11 @@ pub trait Header: Send + Sync + 'static {
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>);
 }
 
-/// Trivial header for seed steps.
+/// Header that encodes no data.
+///
+/// Mirrors `ragu_pcd`: the bootstrap proof and application steps may carry
+/// this ordinary header, while the private dummy suffix alone marks the base
+/// case.
 impl Header for () {
     type Data = ();
 

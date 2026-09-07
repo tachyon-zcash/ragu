@@ -170,7 +170,7 @@ constraint system reject it. The no-execution front end is described in
 | `fuzz_witness_pinning` | Mutates one occupied coefficient of the assembled trace polynomial and demands the revdot identity reject it. The generated circuit is made fully-pinned (an `Anchor` per element) so every live coefficient is constrained — a survivor means the constraint system fails to pin that wire. |
 | `fuzz_circuit_cheat` | Mutates one witness input, re-traces, and asserts the assembled constraint-identity verdict matches an independent native oracle (with a Simulator cross-check). The operational patcher whose "repair" is re-tracing. |
 | `fuzz_advice_patcher` | Captures the emitted constraint graph through a recording driver, mutates free advice wires, and **repairs through the captured constraints** (not gadget logic) before comparing to the native shadow — catches under-constrained *advice* that re-trace-based repair masks. `PATCHER_SELFTEST=1` proves the oracle fires on a planted bug. |
-| `fuzz_internal_circuits` | The patcher aimed at the **production internal recursion circuits**. Captures all five native circuits and the nested endoscaling steps from real fuses at four points — seeded, leaves, nodes, and a lopsided tree — paid once in libFuzzer's `init`. Before mutation, witness-free source-shape linting must match concrete synthesis; connectivity rejects isolated/floating subgraphs; bounded component rank checks reject movable derived wires with explicit skipped coverage; and `forced_by` requires the declared outputs to be constrained. A `Prepared` probe then pins declared inputs, mutates other free advice, and repairs through captured constraints. Any moved output is replayed through fresh synthesis and becomes a soundness signal only if that synthesis accepts the candidate witness. |
+| `fuzz_internal_circuits` | The patcher aimed at the **production internal recursion circuits**. Captures all five native circuits and the nested endoscaling steps from real fuses at four points — the Bootstrap base case, leaves, nodes, and a lopsided tree — paid once in libFuzzer's `init`. Before mutation, witness-free source-shape linting must match concrete synthesis; connectivity rejects isolated/floating subgraphs; bounded component rank checks reject movable derived wires with explicit skipped coverage; and `forced_by` requires the declared outputs to be constrained. A `Prepared` probe then pins declared inputs, mutates other free advice, and repairs through captured constraints. Any moved output is replayed through fresh synthesis and becomes a soundness signal only if that synthesis accepts the candidate witness. |
 | `fuzz_completeness` | Runs arbitrary witnesses through anchorless, value-infallible generated circuits; every such witness must be accepted, so rejection is an over-constraint signal independent of the patcher's bounded repair search. |
 
 ### Gadget-API property and identity targets
@@ -210,11 +210,11 @@ only `MustReject` is asserted. `crates/ragu_pcd/tests/corruption.rs` pins that
 classification against real proofs, so a wrong one fails there rather than five
 hours into a cron run.
 
-These targets used to corrupt `Application::trivial_proof()`. That fixture is
-the all-zero placeholder a base case fuses against, and `verify` rejects it
+These targets used to corrupt Ragu's synthesized dummy proof. That fixture is
+the placeholder the internal Bootstrap step consumes, and `verify` rejects it
 outright — so "the verifier did not accept the corrupted proof" held *before*
-the corruption, and every assertion passed vacuously. Every fixture is now built
-with `seed`/`fuse` and checked to verify before anything is corrupted.
+the corruption, and every assertion passed vacuously. Every fixture is now
+built with `seed`/`fuse` and checked to verify before anything is corrupted.
 
 ### Circuit-pipeline targets
 

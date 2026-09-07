@@ -12,9 +12,9 @@
 //! `Hash2` nodes, whose accumulators and headers are the nondegenerate ones.
 //!
 //! What is deliberately *not* a fixture is
-//! [`trivial_proof`](ragu_pcd::Application::test_trivial_proof): `verify`
+//! [`dummy_proof`](ragu_pcd::Application::test_dummy_proof): `verify`
 //! rejects it outright, so asserting that a corrupted copy is rejected asserts
-//! nothing. [`the_trivial_proof_does_not_verify`] pins that, because a fuzz
+//! nothing. [`the_dummy_proof_does_not_verify`] pins that, because a fuzz
 //! target that starts from it passes vacuously.
 
 use ragu_arithmetic::Cycle;
@@ -59,8 +59,8 @@ impl Fixture {
     }
 }
 
-/// The application the trivial fixture belongs to: no registered steps, so
-/// circuit id zero — which every trivial proof carries — names no application
+/// The application the dummy fixture belongs to: no registered steps, so
+/// circuit id zero — which every dummy proof carries — names no application
 /// circuit.
 fn empty_app() -> Application<'static, C, R, HEADER_SIZE> {
     ApplicationBuilder::<C, R, HEADER_SIZE>::new()
@@ -182,7 +182,7 @@ fn vocabulary() -> Vec<Corruption<C>> {
     }
 
     for which in Challenge::ALL {
-        // A value no honest proof carries in that slot: the trivial fixture's
+        // A value no honest proof carries in that slot: the dummy fixture's
         // challenges are one, and a real proof's are the transcript's.
         out.push(Corruption::Challenge(which, Fp::from(0xc0ffee_u64)));
     }
@@ -270,23 +270,23 @@ fn corruptions_that_bind_the_verifier_are_rejected() {
     );
 }
 
-/// The all-zero placeholder a base case fuses against is not a proof `verify`
-/// accepts — in the empty application or any other.
+/// The synthesized dummy the Bootstrap base case consumes is not a proof
+/// `verify` accepts — in the empty application or any other.
 ///
 /// A corruption harness that starts from it proves nothing: the rejection it
 /// asserts holds before the corruption. `qa/fuzz`'s proof-level targets build
 /// their fixtures with `seed` and `fuse` and check each one verifies for
 /// exactly this reason.
 #[test]
-fn the_trivial_proof_does_not_verify() {
+fn the_dummy_proof_does_not_verify() {
     for verifier in [empty_app(), app()] {
-        let proof = verifier.test_trivial_proof();
+        let proof = verifier.test_dummy_proof();
         assert!(
             !matches!(
                 verifier.verify(&proof.carry::<()>(()), StdRng::seed_from_u64(1234)),
                 Ok(true)
             ),
-            "the trivial proof verified — corrupting it would then be a meaningful test, \
+            "the dummy proof verified — corrupting it would then be a meaningful test, \
              and the fuzz targets should be pointed back at it",
         );
     }

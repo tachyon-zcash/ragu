@@ -20,7 +20,12 @@ use ragu_primitives::{
     vec::{CollectFixed, ConstLen, FixedVec},
 };
 
-use crate::{Proof, header::Header, internal::native::unified, step::internal::padded};
+use crate::{
+    Proof,
+    header::{Header, Suffix},
+    internal::native::unified,
+    step::internal::padded,
+};
 
 type HeaderVec<'dr, D, const HEADER_SIZE: usize> = FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>;
 
@@ -138,14 +143,19 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         ky.finish_ky(dr)
     }
 
-    /// Returns true if this child proof is a trivial proof (output header suffix == 1).
-    pub fn is_trivial(
+    /// Returns true when the current step declared a [`Dummy`] input for
+    /// this child — which only the internal [`Bootstrap`] step can, so this is
+    /// exactly the base case. See [`Bootstrap`] for why that holds.
+    ///
+    /// [`Dummy`]: crate::header::Dummy
+    /// [`Bootstrap`]: crate::step::internal::bootstrap
+    pub fn is_dummy_input(
         &self,
         dr: &mut D,
         allocator: &mut impl Allocator<'dr, D>,
     ) -> Result<Boolean<'dr, D>> {
-        let suffix = &self.output_header[HEADER_SIZE - 1];
-        suffix.is_equal(dr, allocator, &Element::one())
+        let bootstrap = Element::constant(dr, D::F::from(Suffix::internal(2).get()));
+        self.output_header[HEADER_SIZE - 1].is_equal(dr, allocator, &bootstrap)
     }
 }
 
@@ -236,15 +246,18 @@ pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEAD
 impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>
     Output<'dr, D, C, HEADER_SIZE>
 {
-    /// Returns true if both child proofs are trivial proofs.
+    /// Returns true when the current step declared [`Dummy`] for both of its
+    /// inputs, i.e. this fuse is the base case that bootstraps the recursion.
+    ///
+    /// [`Dummy`]: crate::header::Dummy
     pub fn is_base_case(
         &self,
         dr: &mut D,
         allocator: &mut impl Allocator<'dr, D>,
     ) -> Result<Boolean<'dr, D>> {
-        let left_is_trivial = self.left.is_trivial(dr, allocator)?;
-        let right_is_trivial = self.right.is_trivial(dr, allocator)?;
-        left_is_trivial.and(dr, &right_is_trivial)
+        let left_is_dummy = self.left.is_dummy_input(dr, allocator)?;
+        let right_is_dummy = self.right.is_dummy_input(dr, allocator)?;
+        left_is_dummy.and(dr, &right_is_dummy)
     }
 }
 

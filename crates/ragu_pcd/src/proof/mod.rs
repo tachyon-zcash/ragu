@@ -487,7 +487,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     /// `PointsStage` interstitial).
     ///
     /// Shared by `compute_p` (in `fuse/_10_p.rs`) and by
-    /// [`trivial_proof`](Self::trivial_proof), so the nested
+    /// [`dummy_proof`](Self::dummy_proof), so the nested
     /// endoscaling setup lives in one place.
     pub(crate) fn compute_endoscaling<RNG: ragu_arithmetic::rand::CryptoRng>(
         &self,
@@ -539,11 +539,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             .expect("NUM_ENDOSCALING_POINTS guarantees at least one interstitial"))
     }
 
-    pub(crate) fn trivial_pcd(&self) -> Pcd<C, R, ()> {
-        self.trivial_proof().carry(())
+    /// A synthesized dummy that stands in for the absent predecessors when
+    /// bootstrapping.
+    ///
+    /// This proof does not verify on its own; it is only ever consumed by the
+    /// internal [`Bootstrap`](crate::step::internal::bootstrap::Bootstrap) step, whose
+    /// fuse is the base case and therefore does not enforce its children's
+    /// claims. It carries the [`Dummy`] header so that it can occupy that
+    /// step's input slots.
+    ///
+    /// [`Dummy`]: crate::header::Dummy
+    pub(crate) fn dummy_pcd(&self) -> Pcd<C, R, crate::header::Dummy> {
+        self.dummy_proof().carry(())
     }
 
-    pub(crate) fn trivial_proof(&self) -> Proof<C, R> {
+    pub(crate) fn dummy_proof(&self) -> Proof<C, R> {
         let ones_host = {
             let mut view = sparse::View::<_, R, _>::trace();
             view.a.push(C::CircuitField::ONE);
@@ -565,6 +575,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let mut builder = ProofBuilder::<C, R, B>::new(self.params, C::ScalarField::ONE);
 
         builder.set_circuit_id(CircuitIndex::new(0));
+
         builder.set_left_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
         builder.set_right_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
 
@@ -632,7 +643,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             builder.set_bridge_f_rx(rx, commitment);
         }
 
-        // Build dummy PointsStage inputs in `_10_p` accumulation order
+        // Build trivial PointsStage inputs in `_10_p` accumulation order
         // and delegate to `compute_endoscaling` so this trivial setup
         // cannot silently drift from the real prover path.
         let beta_endo = extract_endoscalar(C::CircuitField::ONE)

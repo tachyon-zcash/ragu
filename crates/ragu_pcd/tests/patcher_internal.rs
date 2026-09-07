@@ -34,10 +34,10 @@
 //!   nudged through the prepared probe: no violation, and enough probes
 //!   accepted that the sweep is not vacuous.
 //!
-//! The circuits are captured at three points of a small tree: the base case
-//! (a seed over two trivial children, where `outer_collapse` leaves `c` free
-//! by design), a fuse of two leaves (trivial child accumulators: every error
-//! term is zero), and a fuse of two such nodes (real accumulators). The
+//! The circuits are captured at three points of a small tree: the bootstrap
+//! base case (over two synthesized dummy children, where `outer_collapse`
+//! leaves `c` free by design), a fuse of two leaves, and a fuse of two such
+//! nodes. The
 //! census — wire counts, declarations, cheatable wires, sweep tallies — is
 //! pinned per circuit and point, so a change that adds or removes hints,
 //! stage wires or instance wires is noticed here.
@@ -55,7 +55,7 @@ use ragu_pcd::{
     ApplicationBuilder,
     fuzzing::patcher::{
         CircuitSpec, InternalCircuitVisitor, OutputRef, capture_internal_circuits,
-        capture_internal_circuits_seeded,
+        capture_internal_circuits_bootstrap,
     },
 };
 use ragu_testing::{
@@ -319,8 +319,8 @@ fn expected(name: &str, point: &str) -> Census {
         "hashes_1" => (456, 5561, 38, 8, 0, 8, 238),
         "hashes_2" => (456, 8527, 30, 6, 2, 6, 231),
         "inner_collapse" => (1254, 6264, 30, 19, 0, 19, 653),
-        "outer_collapse" if point == "seeded" => (456, 2896, 30, 6, 0, 6, 234),
-        "outer_collapse" => (456, 2896, 30, 7, 0, 7, 238),
+        "outer_collapse" if point == "bootstrap" => (456, 2898, 30, 6, 0, 6, 234),
+        "outer_collapse" => (456, 2898, 30, 7, 0, 7, 238),
         "compute_v" => (166, 3422, 30, 1, 0, 1, 337),
         step if step.starts_with("endoscaling_step_") => (220, 10380, 0, 2, 0, 2, 109),
         other => panic!("no census pinned for {other}"),
@@ -328,14 +328,14 @@ fn expected(name: &str, point: &str) -> Census {
     let (pinned, rejected) = match (name, point) {
         ("hashes_1", _) => (188, 50),
         ("hashes_2", _) => (189, 42),
-        ("inner_collapse", "seeded") => (525, 128),
+        ("inner_collapse", "bootstrap") => (525, 128),
         ("inner_collapse", _) => (529, 124),
-        ("outer_collapse", "seeded") => (190, 44),
+        ("outer_collapse", "bootstrap") => (190, 44),
         ("outer_collapse", _) => (188, 50),
         ("compute_v", _) => (13, 324),
-        (_, "seeded") => (44, 65),
-        (_, "leaves") => (51, 58),
-        (_, "nodes") => (47, 62),
+        (_, "bootstrap") => (53, 56),
+        (_, "leaves") => (48, 61),
+        (_, "nodes") => (45, 64),
         other => panic!("no sweep tallies pinned for {other:?}"),
     };
     Census {
@@ -373,12 +373,12 @@ fn patcher_captures_internal_circuits() -> Result<()> {
         .finalize(pasta)?;
     let mut rng = StdRng::seed_from_u64(1234);
 
-    // The base case: a seed over two trivial children.
-    let mut seeded = CaptureChecker {
-        point: "seeded",
+    // The base case: the internal bootstrap step over two dummy children.
+    let mut bootstrap = CaptureChecker {
+        point: "bootstrap",
         ..Default::default()
     };
-    capture_internal_circuits_seeded(&app, &mut rng, leaf_step(), Fp::from(42u64), &mut seeded)?;
+    capture_internal_circuits_bootstrap(&app, &mut rng, &mut bootstrap)?;
 
     // Level one: two leaves.
     let leaf = |rng: &mut StdRng| {
@@ -411,7 +411,7 @@ fn patcher_captures_internal_circuits() -> Result<()> {
         "outer_collapse",
         "compute_v",
     ];
-    for checker in [&seeded, &leaves, &nodes] {
+    for checker in [&bootstrap, &leaves, &nodes] {
         let names: Vec<&str> = checker.census.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(
             &names[..native.len()],
@@ -448,7 +448,7 @@ fn patcher_captures_internal_circuits() -> Result<()> {
     let all_structural =
         |checker: &CaptureChecker| checker.census.iter().map(structural).collect::<Vec<_>>();
     assert_eq!(all_structural(&leaves), all_structural(&nodes));
-    for (s, l) in seeded.census.iter().zip(&leaves.census) {
+    for (s, l) in bootstrap.census.iter().zip(&leaves.census) {
         if s.name == "outer_collapse" {
             assert_eq!(
                 s.outputs + 1,
@@ -468,7 +468,7 @@ fn patcher_captures_internal_circuits() -> Result<()> {
 
     // Only hashes_2 has demoted slots (mu and nu, the resumed sponge state);
     // every output is forced by the inputs alone; and the pinned census.
-    for checker in [&seeded, &leaves, &nodes] {
+    for checker in [&bootstrap, &leaves, &nodes] {
         for census in &checker.census {
             assert!(census.outputs > 0, "{}: watched outputs", census.name);
             assert_eq!(
