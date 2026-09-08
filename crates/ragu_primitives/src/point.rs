@@ -4,6 +4,7 @@
 //! constrained coordinates for in-circuit elliptic curve arithmetic. See
 //! [`Point`] for the full list of supported curve assumptions.
 
+use alloc::boxed::Box;
 use core::marker::PhantomData;
 
 use ragu_arithmetic::{Coeff, CurveAffine, ff::WithSmallOrderMulGroup};
@@ -18,6 +19,26 @@ use crate::{
     Boolean, Element, Nonzero, NonzeroBank, comparison::GadgetEquals, consistent::Consistent,
     io::Write,
 };
+
+/// An error indicating that a point is the identity (the point at infinity).
+///
+/// [`Point::alloc`] and [`Point::constant`] box this type as the source of
+/// [`Error::InvalidWitness`] when the input point is the identity, which has
+/// no affine coordinates and so cannot be represented. Callers can detect the
+/// condition with [`Error::invalid_witness_source`].
+///
+/// # Examples
+///
+/// ```
+/// use ragu_core::Error;
+/// use ragu_primitives::PointAtInfinityError;
+///
+/// let err = Error::InvalidWitness(Box::new(PointAtInfinityError));
+/// assert!(err.invalid_witness_source::<PointAtInfinityError>().is_some());
+/// ```
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[error("point at infinity cannot be witnessed")]
+pub struct PointAtInfinityError;
 
 /// Represents an affine point on a curve defined over the circuit's field.
 ///
@@ -72,13 +93,14 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
     ///
     /// # Errors
     ///
-    /// Returns a witness-generation error if witness input is the identity.
+    /// Witness generation fails with [`Error::InvalidWitness`] when witness
+    /// input is the identity. The boxed source is a [`PointAtInfinityError`]
+    /// value, which callers can detect with
+    /// [`Error::invalid_witness_source`].
     pub fn alloc(dr: &mut D, p: DriverValue<D, C>) -> Result<Self> {
         let coordinates = D::try_just(|| {
             let coordinates = p.take().coordinates().into_option();
-            coordinates.ok_or_else(|| {
-                Error::InvalidWitness("point at infinity cannot be witnessed".into())
-            })
+            coordinates.ok_or_else(|| Error::InvalidWitness(Box::new(PointAtInfinityError)))
         })?;
 
         let (x, x2) = Element::alloc_square(dr, coordinates.as_ref().map(|p| *p.x()))?;
@@ -102,7 +124,9 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
     ///
     /// # Errors
     ///
-    /// Returns an input error if `p` is the identity.
+    /// Fails with [`Error::InvalidWitness`] when `p` is the identity. The
+    /// boxed source is a [`PointAtInfinityError`] value, which callers can
+    /// detect with [`Error::invalid_witness_source`].
     pub fn constant(dr: &mut D, p: C) -> Result<Self> {
         if let Some(coordinates) = p.coordinates().into_option() {
             let x = Element::constant(dr, *coordinates.x());
@@ -113,9 +137,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
                 Nonzero::new_unchecked(y),
             ))
         } else {
-            Err(Error::InvalidWitness(
-                "point at infinity cannot be witnessed".into(),
-            ))
+            Err(Error::InvalidWitness(Box::new(PointAtInfinityError)))
         }
     }
 
@@ -346,6 +368,35 @@ mod tests {
         assert!(alloc(C::identity()).is_err());
 
         Ok(())
+    }
+
+    /// The identity is rejected with the typed [`PointAtInfinityError`]
+    /// source on both the witnessed and constant paths.
+    #[test]
+    fn test_identity_reports_typed_source() {
+        let result = Simulator::simulate(C::identity(), |dr, point| {
+            Point::alloc(dr, point.clone())?;
+            Ok(())
+        });
+        let Err(err) = result else {
+            panic!("identity point must be rejected");
+        };
+        assert_eq!(
+            err.invalid_witness_source::<PointAtInfinityError>(),
+            Some(&PointAtInfinityError)
+        );
+
+        let result = Simulator::simulate(C::identity(), |dr, _| {
+            Point::constant(dr, C::identity())?;
+            Ok(())
+        });
+        let Err(err) = result else {
+            panic!("identity constant must be rejected");
+        };
+        assert_eq!(
+            err.invalid_witness_source::<PointAtInfinityError>(),
+            Some(&PointAtInfinityError)
+        );
     }
 
     #[test]
