@@ -68,25 +68,28 @@ pub const NUM_BOUND: usize = 2 * NUM_BINDERS;
 
 /// Reads the `i`-th challenge, in challenge-stage order, from the unified
 /// instance.
+///
+/// Only the first [`NUM_BOUND`] challenges are bound here; a larger `i`
+/// panics.
 fn read_challenge<'dr, D: Driver<'dr>, A: Allocator<'dr, D>, C: Cycle<CircuitField = D::F>>(
     unified: &mut OutputBuilder<'dr, D, A, C>,
     dr: &mut D,
     allocator: &mut A,
     i: usize,
 ) -> Result<Element<'dr, D>> {
-    match i {
-        0 => unified.w.read(dr, allocator),
-        1 => unified.y.read(dr, allocator),
-        2 => unified.z.read(dr, allocator),
-        3 => unified.mu.read(dr, allocator),
-        4 => unified.nu.read(dr, allocator),
-        5 => unified.mu_prime.read(dr, allocator),
-        6 => unified.nu_prime.read(dr, allocator),
-        7 => unified.x.read(dr, allocator),
-        8 => unified.alpha.read(dr, allocator),
-        9 => unified.u.read(dr, allocator),
-        _ => unreachable!("only the first {NUM_BOUND} challenges are bound here"),
-    }
+    let slots: [_; NUM_BOUND] = [
+        &mut unified.w,
+        &mut unified.y,
+        &mut unified.z,
+        &mut unified.mu,
+        &mut unified.nu,
+        &mut unified.mu_prime,
+        &mut unified.nu_prime,
+        &mut unified.x,
+        &mut unified.alpha,
+        &mut unified.u,
+    ];
+    slots[i].read(dr, allocator)
 }
 
 /// Circuit `K` of the nested challenge binding.

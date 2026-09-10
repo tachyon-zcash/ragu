@@ -98,7 +98,7 @@ pub struct ChildWitness<C: CurveAffine> {
 }
 
 /// The scalar half of a child's nested unified instance (see
-/// [`unified`](crate::internal::nested::unified)).
+/// [`unified`]).
 #[derive(Clone, Copy)]
 pub struct NestedValues<F> {
     pub c: F,

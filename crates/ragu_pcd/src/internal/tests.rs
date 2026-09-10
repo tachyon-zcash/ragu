@@ -365,9 +365,10 @@ fn print_internal_stage_parameters() {
 ///
 /// Panics for the bonding entries, which are masks rather than circuits.
 fn nested_circuit_counts(variant: nested::InternalCircuitIndex) -> (usize, usize) {
-    use crate::internal::{endoscalar, nested::NUM_ENDOSCALING_POINTS};
     use ragu_circuits::staging::MultiStage;
     use ragu_pasta::EqAffine;
+
+    use crate::internal::{endoscalar, nested::NUM_ENDOSCALING_POINTS};
 
     fn counts(circuit: impl Circuit<ragu_pasta::Fq>) -> (usize, usize) {
         let counts = ragu_circuits::testing::synthesis_counts(&circuit).unwrap();
@@ -479,12 +480,14 @@ fn test_nested_stage_parameters() {
 /// Run with: `cargo test -p ragu_pcd --release print_nested -- --nocapture`
 #[test]
 fn print_nested_circuit_constraint_counts() {
+    use std::println;
+
+    use ragu_pasta::{EqAffine, Fq};
+
     use crate::internal::{
         endoscalar,
         nested::{NUM_ENDOSCALING_POINTS, stages},
     };
-    use ragu_pasta::{EqAffine, Fq};
-    use std::println;
 
     println!("\n// Copy-paste into test_nested_circuit_constraint_counts:");
     for variant in nested_circuits() {

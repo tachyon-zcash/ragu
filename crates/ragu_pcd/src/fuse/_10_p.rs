@@ -8,7 +8,7 @@
 //! $\text{commit}(\sum\_j \beta^j \cdot p\_j) = \sum\_j \beta^j \cdot C\_j$.
 //!
 //! The commitment is computed via
-//! [`PointsWitness`](crate::internal::endoscalar::PointsWitness)
+//! [`PointsWitness`]
 //! Horner evaluation.
 //!
 //! The nested batch is accumulated the same way into $p_n(X)$, with
