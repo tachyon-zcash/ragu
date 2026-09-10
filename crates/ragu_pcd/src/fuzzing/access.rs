@@ -48,6 +48,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 InnerCollapse => &mut self.native_inner_collapse_rx,
                 OuterCollapse => &mut self.native_outer_collapse_rx,
                 ComputeV => &mut self.native_compute_v_rx,
+                BindChallenges(k) => &mut self.native_bind_challenges_rxs[k as usize],
+                BindBeta => &mut self.native_bind_beta_rx,
             },
         }
     }
@@ -110,6 +112,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             BridgeQuery => Arc::make_mut(&mut self.bridge_query_rx),
             BridgeF => Arc::make_mut(&mut self.bridge_f_rx),
             BridgeEval => Arc::make_mut(&mut self.bridge_eval_rx),
+            ChallengeStage => &mut self.nested_challenges_rx,
+            BetaStage => &mut self.nested_beta_rx,
             ChildPointsStage(side) => {
                 Arc::make_mut(&mut self.child_stage_rx_mut(side).points_stage)
             }

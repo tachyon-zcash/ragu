@@ -316,26 +316,31 @@ impl<C: Cycle> InternalCircuitVisitor<C> for CaptureChecker {
 /// capture point; the rest is structural.
 fn expected(name: &str, point: &str) -> Census {
     let (stage_wires, wires, instance, outputs, demoted, strongly_forced, cheatable) = match name {
-        "hashes_1" => (456, 5561, 38, 8, 0, 8, 238),
-        "hashes_2" => (456, 8527, 30, 6, 2, 6, 231),
-        "inner_collapse" => (1254, 6264, 30, 19, 0, 19, 653),
-        "outer_collapse" if point == "seeded" => (456, 2896, 30, 6, 0, 6, 234),
-        "outer_collapse" => (456, 2896, 30, 7, 0, 7, 238),
-        "compute_v" => (166, 3422, 30, 1, 0, 1, 337),
-        step if step.starts_with("endoscaling_step_") => (220, 10380, 0, 2, 0, 2, 109),
+        "hashes_1" => (460, 5569, 38, 8, 0, 8, 240),
+        "hashes_2" => (460, 8535, 30, 6, 2, 6, 233),
+        "inner_collapse" => (1258, 6272, 30, 19, 0, 19, 655),
+        "outer_collapse" if point == "seeded" => (460, 2904, 30, 6, 0, 6, 236),
+        "outer_collapse" => (460, 2904, 30, 7, 0, 7, 240),
+        "compute_v" => (210, 3952, 30, 1, 0, 1, 359),
+        "bind_challenges_0" => (210, 6992, 30, 2, 0, 2, 612),
+        bind if bind.starts_with("bind_challenges_") => (210, 7013, 30, 2, 0, 2, 612),
+        "bind_beta" => (460, 7469, 30, 4, 0, 4, 736),
+        step if step.starts_with("endoscaling_step_") => (250, 10440, 0, 2, 0, 2, 124),
         other => panic!("no census pinned for {other}"),
     };
     let (pinned, rejected) = match (name, point) {
-        ("hashes_1", _) => (188, 50),
-        ("hashes_2", _) => (189, 42),
-        ("inner_collapse", "seeded") => (525, 128),
-        ("inner_collapse", _) => (529, 124),
-        ("outer_collapse", "seeded") => (190, 44),
-        ("outer_collapse", _) => (188, 50),
-        ("compute_v", _) => (13, 324),
-        (_, "seeded") => (47, 62),
-        (_, "leaves") => (44, 65),
-        (_, "nodes") => (49, 60),
+        ("hashes_1", _) => (181, 59),
+        ("hashes_2", _) => (182, 51),
+        ("inner_collapse", "seeded") => (486, 169),
+        ("inner_collapse", _) => (490, 165),
+        ("outer_collapse", "seeded") => (183, 53),
+        ("outer_collapse", _) => (181, 59),
+        ("compute_v", _) => (13, 346),
+        (bind, _) if bind.starts_with("bind_challenges_") => (13, 599),
+        ("bind_beta", _) => (181, 555),
+        (_, "seeded") => (39, 85),
+        (_, "leaves") => (50, 74),
+        (_, "nodes") => (55, 69),
         other => panic!("no sweep tallies pinned for {other:?}"),
     };
     Census {
@@ -410,13 +415,19 @@ fn patcher_captures_internal_circuits() -> Result<()> {
         "inner_collapse",
         "outer_collapse",
         "compute_v",
+        "bind_challenges_0",
+        "bind_challenges_1",
+        "bind_challenges_2",
+        "bind_challenges_3",
+        "bind_challenges_4",
+        "bind_beta",
     ];
     for checker in [&seeded, &leaves, &nodes] {
         let names: Vec<&str> = checker.census.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(
             &names[..native.len()],
             &native,
-            "{}: the five native circuits, in order",
+            "{}: the native circuits, in order",
             checker.point,
         );
         assert!(

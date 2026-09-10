@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use ragu_arithmetic::{Cycle, rand::CryptoRng};
 use ragu_circuits::{CircuitExt, polynomials::Rank};
 use ragu_core::Result;
@@ -24,7 +26,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             native::RevdotParameters,
         >,
         query_witness: &native::stages::query::Witness<C>,
-        eval_witness: &native::stages::eval::Witness<C::CircuitField>,
+        eval_witness: &native::stages::eval::Witness<C>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         let unified = native::unified::Instance {
@@ -142,17 +144,61 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &mut *rng,
         )?;
 
+        // The nested challenge binding circuits.
+        let mut unified = unified;
+        let mut bind_challenges_rxs = Vec::with_capacity(native::NUM_BINDERS);
+        for k in 0..native::NUM_BINDERS {
+            let (trace, updated) =
+                crate::with_binder!(k, C, R, HEADER_SIZE, self.params, |circuit| {
+                    circuit
+                        .trace(native::circuits::bind_challenges::Witness {
+                            unified,
+                            preamble_witness,
+                            query_witness,
+                            eval_witness,
+                        })?
+                        .into_parts()
+                });
+            unified = updated;
+            bind_challenges_rxs.push(self.native_registry.assemble(
+                &trace,
+                native::InternalCircuitIndex::BindChallengesCircuit(k as u32).circuit_index(),
+                &mut *rng,
+            )?);
+        }
+
+        builder.set_native_hashes_1_rx(hashes_1_rx);
+        builder.set_native_hashes_2_rx(hashes_2_rx);
+        builder.set_native_inner_collapse_rx(inner_collapse_rx);
+        builder.set_native_outer_collapse_rx(outer_collapse_rx);
+        // The children's nested beta binding circuit.
+        let (bind_beta_trace, unified) = native::circuits::bind_beta::Circuit::<
+            C,
+            R,
+            HEADER_SIZE,
+            native::RevdotParameters,
+        >::new(self.params)
+        .trace(native::circuits::bind_beta::Witness {
+            unified,
+            preamble_witness,
+            outer_error_witness: native_outer_error_witness,
+        })?
+        .into_parts();
+        let bind_beta_rx = self.native_registry.assemble(
+            &bind_beta_trace,
+            native::InternalCircuitIndex::BindBetaCircuit.circuit_index(),
+            &mut *rng,
+        )?;
+
         // Cross-circuit coverage validation (prover-time development assertion,
         // not a verifier check): all internal recursion circuits together must
         // cover every slot exactly once. Overlap is caught eagerly by finish();
         // missing slots are caught here.
         unified.assert_complete();
 
-        builder.set_native_hashes_1_rx(hashes_1_rx);
-        builder.set_native_hashes_2_rx(hashes_2_rx);
-        builder.set_native_inner_collapse_rx(inner_collapse_rx);
-        builder.set_native_outer_collapse_rx(outer_collapse_rx);
         builder.set_native_compute_v_rx(compute_v_rx);
+        builder.set_native_bind_challenges_rxs(bind_challenges_rxs);
+        builder.set_native_bind_beta_rx(bind_beta_rx);
 
         Ok(())
     }

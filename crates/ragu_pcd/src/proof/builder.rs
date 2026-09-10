@@ -237,6 +237,8 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     native_inner_collapse_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_outer_collapse_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_compute_v_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_bind_challenges_rxs: Option<Vec<sparse::Polynomial<C::CircuitField, R>>>,
+    native_bind_beta_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
 
     // Bridge rx polynomials + commitments (set together by caller)
     bridge_preamble_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
@@ -273,6 +275,10 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     nested_registry_xy_poly: Option<sparse::Polynomial<C::ScalarField, R>>,
     nested_p_poly: Option<sparse::Polynomial<C::ScalarField, R>>,
 
+    // Nested challenge and beta stages
+    nested_challenges_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
+    nested_beta_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
+
     // Nested endoscaling commitment caches (lazily computed from polynomials)
     nested_endoscaling_step_commitments: OnceCell<Vec<C::NestedCurve>>,
     nested_endoscalar_commitment: OnceCell<C::NestedCurve>,
@@ -285,6 +291,10 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     // Nested batch commitment caches (lazily computed from polynomials)
     nested_registry_xy_commitment: OnceCell<C::NestedCurve>,
     nested_p_commitment: OnceCell<C::NestedCurve>,
+
+    // Nested challenge and beta stage commitment caches
+    nested_challenges_commitment: OnceCell<C::NestedCurve>,
+    nested_beta_commitment: OnceCell<C::NestedCurve>,
 
     // Challenges
     w: Option<C::CircuitField>,
@@ -315,6 +325,8 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     native_inner_collapse_commitment: OnceCell<C::HostCurve>,
     native_outer_collapse_commitment: OnceCell<C::HostCurve>,
     native_compute_v_commitment: OnceCell<C::HostCurve>,
+    native_bind_challenges_commitments: OnceCell<Vec<C::HostCurve>>,
+    native_bind_beta_commitment: OnceCell<C::HostCurve>,
 
     // Cached bridge commitment cache (lazily computed from its cached rx)
     bridge_ab_commitment: OnceCell<C::NestedCurve>,
@@ -350,6 +362,8 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             native_inner_collapse_rx: None,
             native_outer_collapse_rx: None,
             native_compute_v_rx: None,
+            native_bind_challenges_rxs: None,
+            native_bind_beta_rx: None,
             bridge_preamble_rx: None,
             bridge_preamble_commitment: None,
             bridge_s_prime_rx: None,
@@ -372,6 +386,8 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             nested_b_poly: None,
             nested_registry_xy_poly: None,
             nested_p_poly: None,
+            nested_challenges_rx: None,
+            nested_beta_rx: None,
             nested_endoscaling_step_commitments: OnceCell::new(),
             nested_endoscalar_commitment: OnceCell::new(),
             nested_points_commitment: OnceCell::new(),
@@ -379,6 +395,8 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             nested_b_commitment: OnceCell::new(),
             nested_registry_xy_commitment: OnceCell::new(),
             nested_p_commitment: OnceCell::new(),
+            nested_challenges_commitment: OnceCell::new(),
+            nested_beta_commitment: OnceCell::new(),
             w: None,
             y: None,
             z: None,
@@ -405,6 +423,8 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             native_inner_collapse_commitment: OnceCell::new(),
             native_outer_collapse_commitment: OnceCell::new(),
             native_compute_v_commitment: OnceCell::new(),
+            native_bind_challenges_commitments: OnceCell::new(),
+            native_bind_beta_commitment: OnceCell::new(),
             bridge_ab_commitment: OnceCell::new(),
             child_left_stage_rx: None,
             child_right_stage_rx: None,
@@ -435,6 +455,33 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
     native_setter!(set_native_inner_collapse_rx, native_inner_collapse_rx);
     native_setter!(set_native_outer_collapse_rx, native_outer_collapse_rx);
     native_setter!(set_native_compute_v_rx, native_compute_v_rx);
+    setter!(
+        set_native_bind_challenges_rxs,
+        native_bind_challenges_rxs,
+        Vec<sparse::Polynomial<C::CircuitField, R>>
+    );
+
+    native_setter!(set_native_bind_beta_rx, native_bind_beta_rx);
+    lazy_commitment!(
+        native,
+        native_bind_beta_commitment,
+        native_bind_beta_commitment,
+        native_bind_beta_rx
+    );
+
+    /// Lazily computes and caches the commitments of the nested challenge
+    /// binding circuits' rx polynomials. Returns the cached slice.
+    pub(crate) fn native_bind_challenges_commitments(&self) -> &[C::HostCurve] {
+        self.native_bind_challenges_commitments.get_or_init(|| {
+            let host_gen = C::host_generators(self.params);
+            self.native_bind_challenges_rxs
+                .as_ref()
+                .expect("native_bind_challenges_rxs not set")
+                .iter()
+                .map(|rx| B::sparse_commit_to_affine(rx, host_gen))
+                .collect()
+        })
+    }
 
     native_poly_with_commitment_setter!(set_native_a_poly, native_a_poly, native_a_commitment);
     native_poly_with_commitment_setter!(set_native_b_poly, native_b_poly, native_b_commitment);
@@ -697,6 +744,31 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         nested_p_poly
     );
 
+    setter!(
+        set_nested_challenges_rx,
+        nested_challenges_rx,
+        sparse::Polynomial<C::ScalarField, R>
+    );
+    ref_getter!(
+        nested_challenges_rx,
+        nested_challenges_rx,
+        sparse::Polynomial<C::ScalarField, R>
+    );
+    lazy_commitment!(
+        nested,
+        nested_challenges_commitment,
+        nested_challenges_commitment,
+        nested_challenges_rx
+    );
+    setter!(set_nested_beta_rx, nested_beta_rx, sparse::Polynomial<C::ScalarField, R>);
+    ref_getter!(nested_beta_rx, nested_beta_rx, sparse::Polynomial<C::ScalarField, R>);
+    lazy_commitment!(
+        nested,
+        nested_beta_commitment,
+        nested_beta_commitment,
+        nested_beta_rx
+    );
+
     setter!(set_w, w, C::CircuitField);
     setter!(set_y, y, C::CircuitField);
     setter!(set_z, z, C::CircuitField);
@@ -766,6 +838,8 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         self.native_inner_collapse_commitment();
         self.native_outer_collapse_commitment();
         self.native_compute_v_commitment();
+        self.native_bind_challenges_commitments();
+        self.native_bind_beta_commitment();
 
         // Force lazy evaluation of the cached bridge commitment.
         self.bridge_ab_commitment()?;
@@ -780,6 +854,8 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         self.nested_b_commitment();
         self.nested_registry_xy_commitment();
         self.nested_p_commitment();
+        self.nested_challenges_commitment();
+        self.nested_beta_commitment();
 
         macro_rules! take {
             ($field:ident) => {
@@ -819,6 +895,8 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             native_inner_collapse_rx: take!(native_inner_collapse_rx),
             native_outer_collapse_rx: take!(native_outer_collapse_rx),
             native_compute_v_rx: take!(native_compute_v_rx),
+            native_bind_challenges_rxs: take!(native_bind_challenges_rxs),
+            native_bind_beta_rx: take!(native_bind_beta_rx),
 
             bridge_preamble_rx: take!(bridge_preamble_rx),
             bridge_preamble_commitment: take!(bridge_preamble_commitment),
@@ -845,6 +923,8 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             nested_b_poly: take!(nested_b_poly),
             nested_registry_xy_poly: take!(nested_registry_xy_poly),
             nested_p_poly: take!(nested_p_poly),
+            nested_challenges_rx: take!(nested_challenges_rx),
+            nested_beta_rx: take!(nested_beta_rx),
 
             nested_endoscaling_step_commitments: self
                 .nested_endoscaling_step_commitments
@@ -859,6 +939,8 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             nested_b_commitment: cached!(nested_b_commitment),
             nested_registry_xy_commitment: cached!(nested_registry_xy_commitment),
             nested_p_commitment: cached!(nested_p_commitment),
+            nested_challenges_commitment: cached!(nested_challenges_commitment),
+            nested_beta_commitment: cached!(nested_beta_commitment),
 
             w: take!(w),
             y: take!(y),
@@ -887,6 +969,14 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             native_inner_collapse_commitment: cached!(native_inner_collapse_commitment),
             native_outer_collapse_commitment: cached!(native_outer_collapse_commitment),
             native_compute_v_commitment: cached!(native_compute_v_commitment),
+            native_bind_challenges_commitments: self
+                .native_bind_challenges_commitments
+                .take()
+                .expect("native_bind_challenges_commitments not set")
+                .into_iter()
+                .map(Cached)
+                .collect(),
+            native_bind_beta_commitment: cached!(native_bind_beta_commitment),
 
             child_left_stage_rx: take!(child_left_stage_rx),
             child_right_stage_rx: take!(child_right_stage_rx),

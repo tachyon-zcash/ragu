@@ -14,7 +14,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Boolean, Element, GadgetExt,
+    Boolean, Element, GadgetExt, Point,
     allocator::Allocator,
     consistent::Consistent,
     vec::{CollectFixed, ConstLen, FixedVec},
@@ -89,6 +89,11 @@ pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const
     pub circuit_id: Element<'dr, D>,
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
+    /// Commitment to the child's nested beta stage, the lift of its
+    /// `pre_beta` on the nested side; the `bind_beta` circuit recomputes it
+    /// from the `pre_beta` in [`unified`](Self::unified).
+    #[ragu(gadget)]
+    pub nested_beta_commitment: Point<'dr, D, C::NestedCurve>,
 }
 
 impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize>
@@ -190,7 +195,11 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 allocator,
                 proof.as_ref().map(|p| p.circuit_id().omega_j()),
             )?,
-            unified: unified::Output::alloc_from_proof(dr, allocator, proof)?,
+            unified: unified::Output::alloc_from_proof(dr, allocator, proof.as_ref().map(|p| *p))?,
+            nested_beta_commitment: Point::alloc(
+                dr,
+                proof.as_ref().map(|p| p.nested_beta_commitment()),
+            )?,
         })
     }
 
@@ -261,8 +270,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     type OutputKind = Kind![C::CircuitField; Output<'_, _, C, HEADER_SIZE>];
 
     fn values() -> usize {
-        // 2 proofs * (3 headers * HEADER_SIZE + 1 circuit_id + unified instance wires)
-        2 * (3 * HEADER_SIZE + 1 + unified::NUM_WIRES)
+        // 2 proofs * (3 headers * HEADER_SIZE + 1 circuit_id + unified
+        // instance wires + (x, y) of the nested beta commitment)
+        2 * (3 * HEADER_SIZE + 1 + unified::NUM_WIRES + 2)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

@@ -162,6 +162,12 @@ where
             BridgeEval => {
                 processor.bonding_claim(id, source.rx(Rx(RxIndex::BridgeEval)))?;
             }
+            ChallengeStage => {
+                processor.bonding_claim(id, source.rx(Rx(RxIndex::ChallengeStage)))?;
+            }
+            BetaStage => {
+                processor.bonding_claim(id, source.rx(Rx(RxIndex::BetaStage)))?;
+            }
             Loading => {
                 let groups = source
                     .rx(Rx(RxIndex::PointsStage))

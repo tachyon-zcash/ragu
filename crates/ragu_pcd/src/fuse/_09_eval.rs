@@ -7,14 +7,17 @@
 //! The nested evaluations at $u_n$ of every polynomial the nested batch folds
 //! into $p_n$ are computed here as well; they ride inside the `eval` bridge
 //! stage, whose commitment is what `pre_beta` is squeezed from.
+//!
+//! The native `eval` stage also carries the running partial sums of the
+//! nested challenge binding (see `bind_challenges`), computed here from the
+//! lifts of the ten challenges squeezed so far.
 
 use ragu_arithmetic::{Cycle, ff::Field, par_join, rand::CryptoRng};
 use ragu_circuits::{
     polynomials::{Rank, sparse},
     staging::StageExt,
 };
-use ragu_core::{Result, drivers::Driver, maybe::Maybe};
-use ragu_primitives::Element;
+use ragu_core::Result;
 
 use super::{NativeSPrime, NestedRegistryWy, NestedSPrime, RegistryWy};
 use crate::{
@@ -26,9 +29,9 @@ use crate::{
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
-    pub(super) fn compute_eval<'dr, D>(
+    pub(super) fn compute_eval(
         &self,
-        u: &Element<'dr, D>,
+        bound_challenges: &[C::CircuitField; native::circuits::bind_challenges::NUM_BOUND],
         left: &Proof<C, R>,
         right: &Proof<C, R>,
         s_prime: &NativeSPrime<C, R>,
@@ -37,13 +40,19 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         nested_registry_wy: &NestedRegistryWy<C, R>,
         builder: &ProofBuilder<'_, C, R, B>,
     ) -> Result<(
-        native::stages::eval::Witness<C::CircuitField>,
+        native::stages::eval::Witness<C>,
         nested::stages::eval::Evaluations<C::ScalarField>,
-    )>
-    where
-        D: Driver<'dr, F = C::CircuitField>,
-    {
-        let u = *u.value().take();
+    )> {
+        // The binding partials over the lifts of the challenges squeezed so
+        // far, in challenge-stage order; `u` is the last of them.
+        let mut lifts = [C::ScalarField::ZERO; native::circuits::bind_challenges::NUM_BOUND];
+        for (lift, challenge) in lifts.iter_mut().zip(bound_challenges) {
+            *lift = nested::challenge::<C>(*challenge)?;
+        }
+        let partials =
+            native::stages::eval::BindingPartials::compute::<C, R, B>(self.params, &lifts);
+
+        let u = bound_challenges[native::circuits::bind_challenges::NUM_BOUND - 1];
         let u_nested = nested::challenge::<C>(u)?;
 
         // ProofBuilder contains OnceCell fields and is therefore !Sync.
@@ -76,6 +85,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             left: left_witness,
             right: right_witness,
             current,
+            partials,
         };
 
         let (left_nested, right_nested, current_nested) = par_join!(
@@ -112,7 +122,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     pub(super) fn sample_eval_commitment<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        eval_witness: &native::stages::eval::Witness<C::CircuitField>,
+        eval_witness: &native::stages::eval::Witness<C>,
         nested_eval: &nested::stages::eval::Evaluations<C::ScalarField>,
     ) -> Result<(
         sparse::Polynomial<C::CircuitField, R>,

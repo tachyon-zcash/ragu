@@ -14,6 +14,7 @@
 //! [`PointsStage`]: crate::internal::endoscalar::PointsStage
 
 use ragu_arithmetic::Cycle;
+use ragu_arithmetic::ff::Field;
 use ragu_circuits::{
     polynomials::Rank,
     registry::{CircuitIndex, RegistryBuilder},
@@ -38,7 +39,7 @@ use crate::internal::{Side, endoscalar, fold_revdot::Parameters};
 ///
 /// The endoscaling circuits process these points across
 /// [`NUM_ENDOSCALING_STEPS`] steps.
-pub const NUM_ENDOSCALING_POINTS: usize = 37;
+pub const NUM_ENDOSCALING_POINTS: usize = 37 + 2 * (crate::internal::native::NUM_BINDERS + 1);
 
 /// Number of endoscaling steps, derived from [`NUM_ENDOSCALING_POINTS`] via
 /// [`endoscalar::num_steps`].
@@ -48,9 +49,10 @@ const NUM_ENDOSCALING_STEPS: usize = endoscalar::num_steps(NUM_ENDOSCALING_POINT
 ///
 /// Two children contribute one raw accumulator claim each, one circuit claim
 /// each per endoscaling step, and one bonding claim per bonding kind (each
-/// bonding kind is $z$-folded across both children): 34 claims today. The
-/// nested side will grow claims as it gains circuits, and `8 x 7` leaves room
-/// for that without re-laying the error stages.
+/// bonding kind is $z$-folded across both children): 42 claims today, over
+/// twelve steps and sixteen bonding kinds. The nested side will grow claims
+/// as it gains circuits, and `8 x 7` leaves room for that without re-laying
+/// the error stages.
 #[derive(Clone, Copy, Default)]
 pub struct RevdotParameters;
 
@@ -78,6 +80,57 @@ impl Parameters for RevdotParameters {
 /// a $2^{-129}$ event for a transcript output.
 pub fn challenge<C: Cycle>(native: C::CircuitField) -> Result<C::ScalarField> {
     Ok(lift_endoscalar(extract_endoscalar(native)?))
+}
+
+/// The native challenges the nested side consumes, in the order the
+/// challenge stage holds their lifts (see [`stages::challenges`]), with
+/// `pre_beta` last (its lift is the [`stages::beta`] stage).
+#[derive(Clone, Copy)]
+pub struct Challenges<F> {
+    pub w: F,
+    pub y: F,
+    pub z: F,
+    pub mu: F,
+    pub nu: F,
+    pub mu_prime: F,
+    pub nu_prime: F,
+    pub x: F,
+    pub alpha: F,
+    pub u: F,
+    pub pre_beta: F,
+}
+
+impl<F: Copy> Challenges<F> {
+    /// The challenges in stage order, `pre_beta` last.
+    pub fn in_order(&self) -> [F; stages::challenges::NUM + 1] {
+        [
+            self.w,
+            self.y,
+            self.z,
+            self.mu,
+            self.nu,
+            self.mu_prime,
+            self.nu_prime,
+            self.x,
+            self.alpha,
+            self.u,
+            self.pre_beta,
+        ]
+    }
+}
+
+impl<F: Copy> Challenges<F> {
+    /// The lifts of these challenges, in stage order, `pre_beta`'s last.
+    pub fn lifts<C: Cycle<CircuitField = F>>(
+        &self,
+    ) -> Result<[C::ScalarField; stages::challenges::NUM + 1]> {
+        let native = self.in_order();
+        let mut out = [C::ScalarField::ZERO; stages::challenges::NUM + 1];
+        for (out, native) in out.iter_mut().zip(native) {
+            *out = challenge::<C>(native)?;
+        }
+        Ok(out)
+    }
 }
 
 /// Index of internal nested circuits registered into the registry.
@@ -109,6 +162,10 @@ pub enum InternalCircuitIndex {
     BridgeF,
     /// Bridge `eval` stage mask.
     BridgeEval,
+    /// Challenge stage mask.
+    ChallengeStage,
+    /// Beta stage mask.
+    BetaStage,
     /// Loading circuit over all nested stages.
     Loading,
     /// Copying circuit relating current preamble to a child proof's stages.
@@ -118,7 +175,7 @@ pub enum InternalCircuitIndex {
 impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`],
     /// equal to the number of entries in [`InternalCircuitIndex::ALL`].
-    pub const NUM: usize = NUM_ENDOSCALING_STEPS + 14;
+    pub const NUM: usize = NUM_ENDOSCALING_STEPS + 16;
 
     /// All variants in canonical iteration order.
     ///
@@ -151,6 +208,8 @@ impl InternalCircuitIndex {
         push(&mut slots, &mut c, Self::BridgeQuery);
         push(&mut slots, &mut c, Self::BridgeF);
         push(&mut slots, &mut c, Self::BridgeEval);
+        push(&mut slots, &mut c, Self::ChallengeStage);
+        push(&mut slots, &mut c, Self::BetaStage);
         push(&mut slots, &mut c, Self::Loading);
         push(&mut slots, &mut c, Self::Copying(Side::Left));
         push(&mut slots, &mut c, Self::Copying(Side::Right));
@@ -234,6 +293,10 @@ pub enum RxIndex {
     BridgeF,
     /// Bridge `eval` rx polynomial.
     BridgeEval,
+    /// Challenge stage rx polynomial.
+    ChallengeStage,
+    /// Beta stage rx polynomial.
+    BetaStage,
     /// Child proof's `PointsStage` rx polynomial (per-side, for copying).
     ChildPointsStage(Side),
     /// Child proof's bridge rx polynomial (per-side, for copying),
@@ -244,11 +307,11 @@ pub enum RxIndex {
 impl RxIndex {
     /// The number of rx components in the nested field,
     /// equal to the number of entries in [`RxIndex::ALL`].
-    pub const NUM: usize = NUM_ENDOSCALING_STEPS + 24;
+    pub const NUM: usize = NUM_ENDOSCALING_STEPS + 26;
 
     /// The number of rx components a proof carries for its own step: the
     /// endoscaling steps and stages, without the children's copies.
-    pub const NUM_OWN: usize = NUM_ENDOSCALING_STEPS + 10;
+    pub const NUM_OWN: usize = NUM_ENDOSCALING_STEPS + 12;
 
     /// A proof's own rx components, in canonical order: the leading
     /// [`NUM_OWN`](Self::NUM_OWN) entries of [`ALL`](Self::ALL).
@@ -290,6 +353,8 @@ impl RxIndex {
         push(&mut slots, &mut c, Self::BridgeQuery);
         push(&mut slots, &mut c, Self::BridgeF);
         push(&mut slots, &mut c, Self::BridgeEval);
+        push(&mut slots, &mut c, Self::ChallengeStage);
+        push(&mut slots, &mut c, Self::BetaStage);
         push(&mut slots, &mut c, Self::ChildPointsStage(Side::Left));
         push(&mut slots, &mut c, Self::ChildPointsStage(Side::Right));
         {
@@ -324,6 +389,8 @@ pub mod pcs;
 
 pub mod stages {
     pub mod ab;
+    pub mod beta;
+    pub mod challenges;
     pub mod eval;
     pub mod f;
     pub mod inner_error;
@@ -384,6 +451,10 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
             BridgeEval => {
                 registry.register_bonding(stages::eval::Stage::<C::HostCurve, R>::mask()?)
             }
+            ChallengeStage => {
+                registry.register_bonding(stages::challenges::Stage::<C::HostCurve, R>::mask()?)
+            }
+            BetaStage => registry.register_bonding(stages::beta::Stage::<C::HostCurve, R>::mask()?),
             Loading => {
                 let circuit = circuits::loading::Circuit::<C::HostCurve, R>::new();
                 registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)

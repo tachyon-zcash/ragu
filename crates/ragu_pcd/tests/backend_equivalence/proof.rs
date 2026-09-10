@@ -37,6 +37,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             native_inner_collapse_rx: _,
             native_outer_collapse_rx: _,
             native_compute_v_rx: _,
+            native_bind_challenges_rxs: _,
+            native_bind_beta_rx: _,
             bridge_preamble_rx: _,
             bridge_s_prime_rx: _,
             bridge_inner_error_rx: _,
@@ -52,6 +54,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             nested_b_poly: _,
             nested_registry_xy_poly: _,
             nested_p_poly: _,
+            nested_challenges_rx: _,
+            nested_beta_rx: _,
             nested_endoscaling_step_commitments: _,
             nested_endoscalar_commitment: _,
             nested_points_commitment: _,
@@ -59,6 +63,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             nested_b_commitment: _,
             nested_registry_xy_commitment: _,
             nested_p_commitment: _,
+            nested_challenges_commitment: _,
+            nested_beta_commitment: _,
             w: _,
             y: _,
             z: _,
@@ -85,6 +91,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             native_inner_collapse_commitment: _,
             native_outer_collapse_commitment: _,
             native_compute_v_commitment: _,
+            native_bind_challenges_commitments: _,
+            native_bind_beta_commitment: _,
             bridge_preamble_commitment: _,
             bridge_s_prime_commitment: _,
             bridge_inner_error_commitment: _,
@@ -204,6 +212,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         }
         if self.nested_registry_xy_commitment != other.nested_registry_xy_commitment
             || self.nested_p_commitment != other.nested_p_commitment
+            || self.nested_challenges_commitment != other.nested_challenges_commitment
+            || self.nested_beta_commitment != other.nested_beta_commitment
         {
             return Some("nested protocol commitments");
         }

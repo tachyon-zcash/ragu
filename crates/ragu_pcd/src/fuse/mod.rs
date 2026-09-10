@@ -27,7 +27,10 @@ pub(crate) mod patcher;
 
 use claims::{NativeFuseProofSource, NestedFuseProofSource};
 use ragu_arithmetic::{Cycle, ff::Field, rand::CryptoRng};
-use ragu_circuits::polynomials::{Rank, sparse};
+use ragu_circuits::{
+    polynomials::{Rank, sparse},
+    staging::StageExt,
+};
 use ragu_core::{
     Result,
     drivers::{
@@ -116,6 +119,30 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             a: builder.nested_a_poly(),
             b: builder.nested_b_poly(),
         }
+    }
+
+    /// Commits the nested challenge and beta stages: the lifts of this
+    /// step's challenges, unblinded, so that their nested-curve commitments
+    /// are the fixed linear combinations of generators the binding circuits
+    /// recompute.
+    fn commit_nested_challenges(
+        &self,
+        challenges: nested::Challenges<C::CircuitField>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<()> {
+        let lifts = challenges.lifts::<C>()?;
+        let (challenge_lifts, beta_lift) = lifts.split_at(nested::stages::challenges::NUM);
+        builder.set_nested_challenges_rx(nested::stages::challenges::Stage::<C::HostCurve, R>::rx(
+            C::ScalarField::ZERO,
+            &nested::stages::challenges::Witness::new(
+                challenge_lifts.try_into().expect("NUM challenge lifts"),
+            ),
+        )?);
+        builder.set_nested_beta_rx(nested::stages::beta::Stage::<C::HostCurve, R>::rx(
+            C::ScalarField::ZERO,
+            nested::stages::beta::Witness { lift: beta_lift[0] },
+        )?);
+        Ok(())
     }
 
     /// The nested challenges this step's openings are at, derived from the
@@ -319,8 +346,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         bridge_f_commitment.write(&mut dr, &mut transcript)?;
         let u = transcript.challenge(&mut dr)?;
 
+        let bound_challenges = [&w, &y, &z, &mu, &nu, &mu_prime, &nu_prime, &x, &alpha, &u]
+            .map(|challenge| *challenge.value().take());
         let (eval_witness, nested_eval) = self.compute_eval(
-            &u,
+            &bound_challenges,
             &left,
             &right,
             &native_s_prime,
@@ -358,6 +387,26 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             })?;
         builder.set_native_eval_rx(eval_rx);
         builder.set_bridge_eval_rx(bridge_eval_rx, bridge_eval_commitment);
+
+        // Every nested challenge is now known: commit the nested challenge
+        // and beta stages, unblinded, which the binding circuits tie to the
+        // transcript (the beta stage by the parent's).
+        self.commit_nested_challenges(
+            nested::Challenges {
+                w: bound_challenges[0],
+                y: bound_challenges[1],
+                z: bound_challenges[2],
+                mu: bound_challenges[3],
+                nu: bound_challenges[4],
+                mu_prime: bound_challenges[5],
+                nu_prime: bound_challenges[6],
+                x: bound_challenges[7],
+                alpha: bound_challenges[8],
+                u: bound_challenges[9],
+                pre_beta: *pre_beta.element().value().take(),
+            },
+            &mut builder,
+        )?;
 
         self.compute_p(
             rng,

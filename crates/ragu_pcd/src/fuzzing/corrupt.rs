@@ -55,6 +55,8 @@
 //! * **A nested `p` coefficient** is [`Binding::Unbound`] for now: $v_n$ is
 //!   derived from it but reaches no instance and no claim until the nested
 //!   batch is verified in-circuit.
+//! * **A nested challenge or beta stage coefficient** is caught at any
+//!   index: the verifier recomputes both stages from the proof's challenges.
 //!
 //! `bridge_alpha` has no variant: single-proof verification never reads it,
 //! the cached bridge polynomials it derived being materialized in the proof
@@ -132,6 +134,10 @@ pub enum NativeRx {
     OuterCollapse,
     /// The `compute_v` circuit's rx polynomial.
     ComputeV,
+    /// A `bind_challenges` circuit's rx polynomial.
+    BindChallenges(u32),
+    /// The `bind_beta` circuit's rx polynomial.
+    BindBeta,
     /// The `preamble` stage's rx polynomial.
     Preamble,
     /// The `inner_error` stage's rx polynomial.
@@ -186,6 +192,8 @@ impl NativeRx {
             I::InnerCollapse => Self::InnerCollapse,
             I::OuterCollapse => Self::OuterCollapse,
             I::ComputeV => Self::ComputeV,
+            I::BindChallenges(k) => Self::BindChallenges(k),
+            I::BindBeta => Self::BindBeta,
             I::Preamble => Self::Preamble,
             I::InnerError => Self::InnerError,
             I::OuterError => Self::OuterError,
@@ -274,6 +282,10 @@ pub enum NestedRx {
     BridgeF,
     /// Bridge `eval` rx polynomial.
     BridgeEval,
+    /// Nested challenge stage rx polynomial.
+    ChallengeStage,
+    /// Nested beta stage rx polynomial.
+    BetaStage,
     /// Child proof's `PointsStage` rx polynomial (per-side, for copying).
     ChildPointsStage(Side),
     /// Child proof's bridge rx polynomial (per-side, for copying),
@@ -708,7 +720,9 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                     return Binding::Unbound;
                 };
                 self.nested_rx_mut(index).add_assign(&delta);
-                if nested_enters_circuit_claim(index) && in_tz_reach::<R>(coeff) {
+                if matches!(index, NestedRx::ChallengeStage | NestedRx::BetaStage)
+                    || (nested_enters_circuit_claim(index) && in_tz_reach::<R>(coeff))
+                {
                     Binding::MustReject
                 } else {
                     Binding::Unbound
@@ -816,6 +830,8 @@ impl NestedRx {
             I::BridgeQuery => Self::BridgeQuery,
             I::BridgeF => Self::BridgeF,
             I::BridgeEval => Self::BridgeEval,
+            I::ChallengeStage => Self::ChallengeStage,
+            I::BetaStage => Self::BetaStage,
             I::ChildPointsStage(s) => Self::ChildPointsStage(Side::from_internal(s)),
             I::ChildBridge(k, s) => {
                 Self::ChildBridge(ChildBridgeKind::from_internal(k), Side::from_internal(s))

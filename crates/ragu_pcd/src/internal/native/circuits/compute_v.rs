@@ -112,7 +112,7 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     /// Witness for the query stage (provides registry and polynomial evaluations).
     pub query_witness: &'a native_query::Witness<C>,
     /// Witness for the eval stage (provides evaluation component polynomials).
-    pub eval_witness: &'a native_eval::Witness<C::CircuitField>,
+    pub eval_witness: &'a native_eval::Witness<C>,
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitField, R>
@@ -158,6 +158,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
 
         let query = query.unenforced(dr, witness.as_ref().map(|w| w.query_witness))?;
         let eval = eval.unenforced(dr, witness.as_ref().map(|w| w.eval_witness))?;
+        // The binding partials the eval stage also carries are the binders'
+        // business; only the evaluations enter v.
+        let eval = &eval.evaluations;
 
         let allocator = &mut Standard::new();
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
@@ -219,7 +222,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
                     Denominators::new(dr, &u, &w, x.element(), &y, z.element(), &preamble)?;
                 let mut horner = Horner::new(&alpha);
                 for (pu, v, denominator) in poly_queries(
-                    &eval,
+                    eval,
                     &query,
                     &preamble,
                     &denominators,
@@ -566,7 +569,7 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
 /// [$\alpha$]: unified::Output::alpha
 #[rustfmt::skip]
 fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>(
-    eval: &'a native_eval::Output<'dr, D>,
+    eval: &'a native_eval::Evaluations<'dr, D>,
     query: &'a native_query::Output<'dr, D>,
     preamble: &'a native_preamble::Output<'dr, D, C, HEADER_SIZE>,
     d: &'a Denominators<'dr, D>,

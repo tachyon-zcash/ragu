@@ -658,8 +658,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         bridge_f_commitment.write(&mut dr, &mut transcript)?;
         let u = transcript.challenge(&mut dr)?;
 
+        let bound_challenges = [&w, &y, &z, &mu, &nu, &mu_prime, &nu_prime, &x, &alpha, &u]
+            .map(|challenge| *challenge.value().take());
         let (eval_witness, nested_eval) = self.compute_eval(
-            &u,
+            &bound_challenges,
             &left,
             &right,
             &native_s_prime,
@@ -686,6 +688,23 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             })?;
         builder.set_native_eval_rx(eval_rx);
         builder.set_bridge_eval_rx(bridge_eval_rx, bridge_eval_commitment);
+
+        self.commit_nested_challenges(
+            nested::Challenges {
+                w: bound_challenges[0],
+                y: bound_challenges[1],
+                z: bound_challenges[2],
+                mu: bound_challenges[3],
+                nu: bound_challenges[4],
+                mu_prime: bound_challenges[5],
+                nu_prime: bound_challenges[6],
+                x: bound_challenges[7],
+                alpha: bound_challenges[8],
+                u: bound_challenges[9],
+                pre_beta: *pre_beta.element().value().take(),
+            },
+            &mut builder,
+        )?;
 
         self.compute_p(
             rng,
@@ -955,6 +974,75 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &compute_v,
             &chain(&[&preamble_values, &query_values, &eval_values]),
             compute_v_witness,
+        )?;
+
+        // The nested challenge binding circuits: circuit k endoscales two
+        // generators by two challenges and checks the running sum against
+        // the k-th partial the eval stage witnessed, which is its output.
+        type Eval<C, R, const HEADER_SIZE: usize> = native::stages::eval::Stage<C, R, HEADER_SIZE>;
+        for k in 0..native::NUM_BINDERS {
+            let bind_witness = || {
+                Ok(native::circuits::bind_challenges::Witness {
+                    unified: make_unified(&builder)?,
+                    preamble_witness: &preamble_witness,
+                    query_witness: &query_witness,
+                    eval_witness: &eval_witness,
+                })
+            };
+            let bind_spec = CircuitSpec {
+                name: format!("bind_challenges_{k}"),
+                outputs: stage_wire_indices::<_, R, Eval<C, R, HEADER_SIZE>>(|stage| {
+                    wires_of(&stage.partials[k])
+                })?
+                .into_iter()
+                .map(OutputRef::Stage)
+                .collect(),
+            };
+            crate::with_binder!(k, C, R, HEADER_SIZE, self.params, |circuit| {
+                visitor.visit(
+                    &bind_spec,
+                    &circuit,
+                    &chain(&[&preamble_values, &query_values, &eval_values]),
+                    bind_witness,
+                )?
+            });
+        }
+
+        // bind_beta recomputes each child's nested beta stage commitment
+        // from the child's pre_beta and checks it against the commitment the
+        // preamble stage witnessed: those are its outputs.
+        let bind_beta = native::circuits::bind_beta::Circuit::<
+            C,
+            R,
+            HEADER_SIZE,
+            native::RevdotParameters,
+        >::new(self.params);
+        let bind_beta_witness = || {
+            Ok(native::circuits::bind_beta::Witness {
+                unified: make_unified(&builder)?,
+                preamble_witness: &preamble_witness,
+                outer_error_witness: &native_outer_error_witness,
+            })
+        };
+        let bind_beta_spec = CircuitSpec {
+            name: "bind_beta".into(),
+            outputs:
+                stage_wire_indices::<_, R, native::stages::preamble::Stage<C, R, HEADER_SIZE>>(
+                    |stage| {
+                        let mut wires = wires_of(&stage.left.nested_beta_commitment)?;
+                        wires.extend(wires_of(&stage.right.nested_beta_commitment)?);
+                        Ok(wires)
+                    },
+                )?
+                .into_iter()
+                .map(OutputRef::Stage)
+                .collect(),
+        };
+        visitor.visit(
+            &bind_beta_spec,
+            &bind_beta,
+            &preamble_outer_error,
+            bind_beta_witness,
         )?;
 
         // The nested endoscaling steps, on the scalar field. Each one

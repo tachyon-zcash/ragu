@@ -9,6 +9,8 @@ use ragu_circuits::{
 use ragu_core::Result;
 use ragu_primitives::vec::ConstLen;
 
+pub use circuits::bind_challenges::NUM_BINDERS;
+
 use crate::{internal::fold_revdot::Parameters, step};
 
 /// Default parameters for native revdot folding
@@ -29,6 +31,8 @@ pub mod stages {
 }
 
 pub mod circuits {
+    pub mod bind_beta;
+    pub mod bind_challenges;
     pub mod compute_v;
     pub mod hashes_1;
     pub mod hashes_2;
@@ -47,6 +51,12 @@ pub enum InternalCircuitIndex {
     InnerCollapseCircuit,
     OuterCollapseCircuit,
     ComputeVCircuit,
+    /// Nested challenge binding circuit at the given index (see
+    /// [`bind_challenges`](circuits::bind_challenges)).
+    BindChallengesCircuit(u32),
+    /// The children's nested beta binding circuit (see
+    /// [`bind_beta`](circuits::bind_beta)).
+    BindBetaCircuit,
     // Native stages
     PreambleStage,
     InnerErrorStage,
@@ -71,7 +81,7 @@ pub const fn total_circuit_counts(num_application_steps: usize) -> (usize, u32) 
 impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`],
     /// equal to the number of variants in [`InternalCircuitIndex`].
-    pub const NUM: usize = 13;
+    pub const NUM: usize = 14 + NUM_BINDERS;
 
     /// All variants in canonical iteration order.
     ///
@@ -91,6 +101,14 @@ impl InternalCircuitIndex {
         push(&mut slots, &mut c, Self::InnerCollapseCircuit);
         push(&mut slots, &mut c, Self::OuterCollapseCircuit);
         push(&mut slots, &mut c, Self::ComputeVCircuit);
+        {
+            let mut k = 0;
+            while k < NUM_BINDERS {
+                push(&mut slots, &mut c, Self::BindChallengesCircuit(k as u32));
+                k += 1;
+            }
+        }
+        push(&mut slots, &mut c, Self::BindBetaCircuit);
         push(&mut slots, &mut c, Self::PreambleStage);
         push(&mut slots, &mut c, Self::InnerErrorStage);
         push(&mut slots, &mut c, Self::OuterErrorStage);
@@ -125,6 +143,8 @@ pub struct InternalCircuitValues<T> {
     pub inner_collapse_circuit: T,
     pub outer_collapse_circuit: T,
     pub compute_v_circuit: T,
+    pub bind_challenges_circuits: [T; NUM_BINDERS],
+    pub bind_beta_circuit: T,
     pub preamble_stage: T,
     pub inner_error_stage: T,
     pub outer_error_stage: T,
@@ -145,6 +165,8 @@ impl<T> InternalCircuitValues<T> {
             InnerCollapseCircuit => &self.inner_collapse_circuit,
             OuterCollapseCircuit => &self.outer_collapse_circuit,
             ComputeVCircuit => &self.compute_v_circuit,
+            BindChallengesCircuit(k) => &self.bind_challenges_circuits[k as usize],
+            BindBetaCircuit => &self.bind_beta_circuit,
             PreambleStage => &self.preamble_stage,
             InnerErrorStage => &self.inner_error_stage,
             OuterErrorStage => &self.outer_error_stage,
@@ -178,6 +200,14 @@ impl<T> InternalCircuitValues<T> {
             inner_collapse_circuit: f(InnerCollapseCircuit)?,
             outer_collapse_circuit: f(OuterCollapseCircuit)?,
             compute_v_circuit: f(ComputeVCircuit)?,
+            bind_challenges_circuits: {
+                let mut out = [(); NUM_BINDERS].map(|()| None);
+                for (k, slot) in out.iter_mut().enumerate() {
+                    *slot = Some(f(BindChallengesCircuit(k as u32))?);
+                }
+                out.map(|slot| slot.expect("filled"))
+            },
+            bind_beta_circuit: f(BindBetaCircuit)?,
             preamble_stage: f(PreambleStage)?,
             inner_error_stage: f(InnerErrorStage)?,
             outer_error_stage: f(OuterErrorStage)?,
@@ -200,6 +230,10 @@ pub enum RxIndex {
     InnerCollapse,
     OuterCollapse,
     ComputeV,
+    /// A nested challenge binding circuit's rx polynomial.
+    BindChallenges(u32),
+    /// The nested beta binding circuit's rx polynomial.
+    BindBeta,
     // Stages
     Preamble,
     InnerError,
@@ -210,7 +244,7 @@ pub enum RxIndex {
 
 impl RxIndex {
     /// The number of rx polynomial components.
-    pub const NUM: usize = 11;
+    pub const NUM: usize = 12 + NUM_BINDERS;
 
     /// All variants in canonical order.
     ///
@@ -229,6 +263,14 @@ impl RxIndex {
         push(&mut slots, &mut c, Self::InnerCollapse);
         push(&mut slots, &mut c, Self::OuterCollapse);
         push(&mut slots, &mut c, Self::ComputeV);
+        {
+            let mut k = 0;
+            while k < NUM_BINDERS {
+                push(&mut slots, &mut c, Self::BindChallenges(k as u32));
+                k += 1;
+            }
+        }
+        push(&mut slots, &mut c, Self::BindBeta);
         push(&mut slots, &mut c, Self::Preamble);
         push(&mut slots, &mut c, Self::InnerError);
         push(&mut slots, &mut c, Self::OuterError);
@@ -252,6 +294,8 @@ pub struct RxValues<T> {
     pub inner_collapse: T,
     pub outer_collapse: T,
     pub compute_v: T,
+    pub bind_challenges: [T; NUM_BINDERS],
+    pub bind_beta: T,
     pub preamble: T,
     pub inner_error: T,
     pub outer_error: T,
@@ -270,6 +314,8 @@ impl<T> RxValues<T> {
             InnerCollapse => &self.inner_collapse,
             OuterCollapse => &self.outer_collapse,
             ComputeV => &self.compute_v,
+            BindChallenges(k) => &self.bind_challenges[k as usize],
+            BindBeta => &self.bind_beta,
             Preamble => &self.preamble,
             InnerError => &self.inner_error,
             OuterError => &self.outer_error,
@@ -300,6 +346,14 @@ impl<T> RxValues<T> {
             inner_collapse: f(InnerCollapse)?,
             outer_collapse: f(OuterCollapse)?,
             compute_v: f(ComputeV)?,
+            bind_challenges: {
+                let mut out = [(); NUM_BINDERS].map(|()| None);
+                for (k, slot) in out.iter_mut().enumerate() {
+                    *slot = Some(f(BindChallenges(k as u32))?);
+                }
+                out.map(|slot| slot.expect("filled"))
+            },
+            bind_beta: f(BindBeta)?,
             preamble: f(Preamble)?,
             inner_error: f(InnerError)?,
             outer_error: f(OuterError)?,
@@ -482,6 +536,19 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
                     R,
                     HEADER_SIZE,
                 >::new())?
+            }
+            BindChallengesCircuit(k) => {
+                crate::with_binder!(k, C, R, HEADER_SIZE, params, |circuit| {
+                    registry.register_internal_circuit(circuit)?
+                })
+            }
+            BindBetaCircuit => {
+                registry.register_internal_circuit(circuits::bind_beta::Circuit::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                    RevdotParameters,
+                >::new(params))?
             }
         };
     }

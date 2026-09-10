@@ -136,9 +136,11 @@ fn nested_accumulator_is_the_fold_of_the_children() -> Result<()> {
         right_c: right.nested_c(),
     };
 
-    // Two raw claims, nine circuit claims per child, and one bonding claim
-    // per bonding kind folded across both children.
-    assert_eq!(nested_claims.a.len(), 2 + 2 * 9 + 14);
+    // Two raw claims, one circuit claim per endoscaling step per child, and
+    // one bonding claim per bonding kind folded across both children.
+    let steps = crate::internal::endoscalar::num_steps(nested::NUM_ENDOSCALING_POINTS);
+    let bonding_kinds = nested::InternalCircuitIndex::NUM - steps;
+    assert_eq!(nested_claims.a.len(), 2 + 2 * steps + bonding_kinds);
 
     // 1. Every nested claim of the children holds at the derived challenges.
     for (i, (ky, (a, b))) in nested::claims::ky_values(&children)
@@ -363,6 +365,93 @@ fn nested_batch_opens_what_it_claims() -> Result<()> {
         parent.nested_v()?,
         v,
         "nested v is not the batch's evaluation"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn nested_challenge_stages_are_bound_by_their_commitments() -> Result<()> {
+    use ragu_arithmetic::{
+        Cycle, FixedGenerators,
+        group::{Curve, Group},
+    };
+    use ragu_circuits::staging::StageExt;
+
+    use crate::internal::native::{
+        circuits::{
+            bind_beta,
+            bind_challenges::{NUM_BINDERS, NUM_BOUND},
+        },
+        stages::eval::{BindingPartials, generator_index},
+    };
+
+    let app = app();
+    let (parent, _, _) = fused(&app);
+    let pasta = Pasta::baked();
+
+    // 1. The stored stages are the unblinded stages of the lifts.
+    let lifts = parent.challenges().lifts::<C>()?;
+    let (challenge_lifts, beta_lift) = lifts.split_at(NUM_BOUND);
+    let expected = nested::stages::challenges::Stage::<ragu_pasta::EqAffine, R>::rx(
+        Fq::ZERO,
+        &nested::stages::challenges::Witness::new(challenge_lifts.try_into().unwrap()),
+    )?;
+    assert!(
+        parent
+            .nested_challenges_rx()
+            .iter_coeffs()
+            .eq(expected.iter_coeffs()),
+        "nested challenge stage is not the stage of the lifts"
+    );
+    let expected = nested::stages::beta::Stage::<ragu_pasta::EqAffine, R>::rx(
+        Fq::ZERO,
+        nested::stages::beta::Witness { lift: beta_lift[0] },
+    )?;
+    assert!(
+        parent
+            .nested_beta_rx()
+            .iter_coeffs()
+            .eq(expected.iter_coeffs()),
+        "nested beta stage is not the stage of the lift"
+    );
+
+    // 2. Their commitments are the fixed generator combinations the binding
+    //    circuits recompute, term by term.
+    let generators = Pasta::nested_generators(pasta);
+    let mut acc = ragu_pasta::Ep::identity();
+    for (i, lift) in challenge_lifts.iter().enumerate() {
+        acc += generators.g()[generator_index::<C, R>(i)] * *lift;
+    }
+    assert_eq!(
+        parent.nested_challenges_commitment(),
+        acc.to_affine(),
+        "challenge commitment is not the generator combination of the lifts"
+    );
+    assert_eq!(
+        parent.nested_beta_commitment(),
+        (generators.g()[bind_beta::generator_index::<C, R>()] * beta_lift[0]).to_affine(),
+        "beta commitment is not the generator times the lift"
+    );
+
+    // 3. The eval stage's partials are the running sums the binders check;
+    //    the last is the challenge commitment.
+    let partials = BindingPartials::compute::<C, R, ReferenceBackend>(pasta, challenge_lifts);
+    let mut acc = ragu_pasta::Ep::identity();
+    for k in 0..NUM_BINDERS {
+        for (i, lift) in challenge_lifts
+            .iter()
+            .enumerate()
+            .take(2 * (k + 1))
+            .skip(2 * k)
+        {
+            acc += generators.g()[generator_index::<C, R>(i)] * *lift;
+        }
+        assert_eq!(partials.partials[k], acc.to_affine(), "partial {k}");
+    }
+    assert_eq!(
+        parent.nested_challenges_commitment(),
+        partials.partials[NUM_BINDERS - 1]
     );
 
     Ok(())

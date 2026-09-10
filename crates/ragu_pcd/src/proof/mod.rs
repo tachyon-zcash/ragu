@@ -52,7 +52,7 @@ use crate::{
             EndoscalarStage, EndoscalingStep, EndoscalingStepWitness, NumStepsLen, PointsStage,
             PointsWitness,
         },
-        native::{RxComponent, RxIndex},
+        native::{self, RxComponent, RxIndex},
         nested,
         nested::{ChildBridgeKind, NUM_ENDOSCALING_POINTS},
     },
@@ -177,6 +177,8 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) native_inner_collapse_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_outer_collapse_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_compute_v_rx: sparse::Polynomial<C::CircuitField, R>,
+    pub(crate) native_bind_challenges_rxs: Vec<sparse::Polynomial<C::CircuitField, R>>,
+    pub(crate) native_bind_beta_rx: sparse::Polynomial<C::CircuitField, R>,
 
     // Bridge rx polynomials (non-cached, set by caller)
     pub(crate) bridge_preamble_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
@@ -205,6 +207,12 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) nested_registry_xy_poly: sparse::Polynomial<C::ScalarField, R>,
     pub(crate) nested_p_poly: sparse::Polynomial<C::ScalarField, R>,
 
+    // Nested challenge and beta stages (ScalarField, unblinded NestedCurve
+    // commitments): the lifts of this step's challenges, bound by the native
+    // binding circuits (the beta stage by the parent's).
+    pub(crate) nested_challenges_rx: sparse::Polynomial<C::ScalarField, R>,
+    pub(crate) nested_beta_rx: sparse::Polynomial<C::ScalarField, R>,
+
     // Nested endoscaling commitment caches
     nested_endoscaling_step_commitments: Vec<Cached<C::NestedCurve>>,
     nested_endoscalar_commitment: Cached<C::NestedCurve>,
@@ -217,6 +225,10 @@ pub struct Proof<C: Cycle, R: Rank> {
     // Nested batch commitment caches
     nested_registry_xy_commitment: Cached<C::NestedCurve>,
     nested_p_commitment: Cached<C::NestedCurve>,
+
+    // Nested challenge and beta stage commitment caches
+    nested_challenges_commitment: Cached<C::NestedCurve>,
+    nested_beta_commitment: Cached<C::NestedCurve>,
 
     // Challenges
     pub(crate) w: C::CircuitField,
@@ -247,6 +259,8 @@ pub struct Proof<C: Cycle, R: Rank> {
     native_inner_collapse_commitment: Cached<C::HostCurve>,
     native_outer_collapse_commitment: Cached<C::HostCurve>,
     native_compute_v_commitment: Cached<C::HostCurve>,
+    native_bind_challenges_commitments: Vec<Cached<C::HostCurve>>,
+    native_bind_beta_commitment: Cached<C::HostCurve>,
 
     // Bridge commitments (non-cached)
     pub(crate) bridge_preamble_commitment: C::NestedCurve,
@@ -281,6 +295,8 @@ impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
             InnerCollapse => &self.native_inner_collapse_rx,
             OuterCollapse => &self.native_outer_collapse_rx,
             ComputeV => &self.native_compute_v_rx,
+            BindChallenges(k) => &self.native_bind_challenges_rxs[k as usize],
+            BindBeta => &self.native_bind_beta_rx,
         }
     }
 }
@@ -312,6 +328,8 @@ impl<C: Cycle, R: Rank> core::ops::Index<nested::RxIndex> for Proof<C, R> {
             BridgeQuery => self.bridge_query_rx.as_ref(),
             BridgeF => self.bridge_f_rx.as_ref(),
             BridgeEval => self.bridge_eval_rx.as_ref(),
+            ChallengeStage => &self.nested_challenges_rx,
+            BetaStage => &self.nested_beta_rx,
             ChildPointsStage(side) => self.child_stage_rx(side).points_stage.as_ref(),
             ChildBridge(kind, side) => self.child_stage_rx(side).bridge_at(kind),
         }
@@ -388,6 +406,39 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 
     pub(crate) fn nested_p_poly(&self) -> &sparse::Polynomial<C::ScalarField, R> {
         &self.nested_p_poly
+    }
+
+    pub(crate) fn nested_challenges_rx(&self) -> &sparse::Polynomial<C::ScalarField, R> {
+        &self.nested_challenges_rx
+    }
+
+    pub(crate) fn nested_challenges_commitment(&self) -> C::NestedCurve {
+        self.nested_challenges_commitment.0
+    }
+
+    pub(crate) fn nested_beta_rx(&self) -> &sparse::Polynomial<C::ScalarField, R> {
+        &self.nested_beta_rx
+    }
+
+    pub(crate) fn nested_beta_commitment(&self) -> C::NestedCurve {
+        self.nested_beta_commitment.0
+    }
+
+    /// The native challenges of this proof, in challenge-stage order.
+    pub(crate) fn challenges(&self) -> nested::Challenges<C::CircuitField> {
+        nested::Challenges {
+            w: self.w,
+            y: self.y,
+            z: self.z,
+            mu: self.mu,
+            nu: self.nu,
+            mu_prime: self.mu_prime,
+            nu_prime: self.nu_prime,
+            x: self.x,
+            alpha: self.alpha,
+            u: self.u,
+            pre_beta: self.pre_beta,
+        }
     }
 
     pub(crate) fn circuit_id(&self) -> CircuitIndex {
@@ -469,6 +520,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             InnerCollapse => self.native_inner_collapse_commitment.0,
             OuterCollapse => self.native_outer_collapse_commitment.0,
             ComputeV => self.native_compute_v_commitment.0,
+            BindChallenges(k) => self.native_bind_challenges_commitments[k as usize].0,
+            BindBeta => self.native_bind_beta_commitment.0,
         }
     }
 
@@ -570,6 +623,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             BridgeQuery => self.bridge_query_commitment,
             BridgeF => self.bridge_f_commitment,
             BridgeEval => self.bridge_eval_commitment,
+            ChallengeStage => self.nested_challenges_commitment.0,
+            BetaStage => self.nested_beta_commitment.0,
             ChildPointsStage(_) | ChildBridge(..) => {
                 panic!("child components are committed on the child proof: {idx:?}")
             }
@@ -675,6 +730,23 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let nested_one = nested::challenge::<C>(C::CircuitField::ONE)
             .expect("one is in the endoscalar challenge range");
         let nested_registry_xy_poly = B::registry_xy(&self.nested_registry, nested_one, nested_one);
+        // The all-one challenges, and their lifts on the nested side.
+        let challenges = nested::Challenges {
+            w: C::CircuitField::ONE,
+            y: C::CircuitField::ONE,
+            z: C::CircuitField::ONE,
+            mu: C::CircuitField::ONE,
+            nu: C::CircuitField::ONE,
+            mu_prime: C::CircuitField::ONE,
+            nu_prime: C::CircuitField::ONE,
+            x: C::CircuitField::ONE,
+            alpha: C::CircuitField::ONE,
+            u: C::CircuitField::ONE,
+            pre_beta: C::CircuitField::ONE,
+        };
+        let lifts = challenges
+            .lifts::<C>()
+            .expect("one is in the endoscalar challenge range");
 
         let mut builder = ProofBuilder::<C, R, B>::new(self.params, C::ScalarField::ONE);
 
@@ -691,7 +763,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         builder.set_native_b_poly(ones_host.clone(), host_commitment);
         builder.set_native_query_rx(ones_host.clone());
         builder.set_native_registry_xy_poly(registry_xy_poly);
-        builder.set_native_eval_rx(ones_host.clone());
+        // The eval stage carries the binding partial sums over the challenge
+        // lifts; a trivial proof's are those of the all-one challenges.
+        builder.set_native_eval_rx(
+            native::stages::eval::Stage::<C, R, HEADER_SIZE>::rx(
+                C::CircuitField::ONE,
+                &native::stages::eval::Witness::<C>::trivial(
+                    native::stages::eval::BindingPartials::compute::<C, R, B>(
+                        self.params,
+                        &lifts[..native::circuits::bind_challenges::NUM_BOUND],
+                    ),
+                ),
+            )
+            .expect("trivial eval rx"),
+        );
         // native_p_poly: deferred until after endoscaling computation,
         // since the real p commitment is the PointsStage last interstitial.
         builder.set_native_hashes_1_rx(ones_host.clone());
@@ -699,6 +784,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         builder.set_native_inner_collapse_rx(ones_host.clone());
         builder.set_native_outer_collapse_rx(ones_host.clone());
         builder.set_native_compute_v_rx(ones_host.clone());
+        builder.set_native_bind_challenges_rxs(vec![ones_host.clone(); native::NUM_BINDERS]);
+        builder.set_native_bind_beta_rx(ones_host.clone());
 
         // Nested accumulator: a trivial claim (all-ones traces), so that a
         // trivial child contributes a well-formed raw claim to its parent's
@@ -709,6 +796,26 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         builder.set_nested_b_poly(ones_nested.clone());
         builder.set_nested_registry_xy_poly(nested_registry_xy_poly);
         builder.set_nested_p_poly(ones_nested);
+
+        // The challenge and beta stages hold the lifts of the all-one
+        // challenges, unblinded, exactly as a real fuse would commit them.
+        let (challenge_lifts, beta_lift) = lifts.split_at(nested::stages::challenges::NUM);
+        builder.set_nested_challenges_rx(
+            nested::stages::challenges::Stage::<C::HostCurve, R>::rx(
+                C::ScalarField::ZERO,
+                &nested::stages::challenges::Witness::new(
+                    challenge_lifts.try_into().expect("NUM challenge lifts"),
+                ),
+            )
+            .expect("trivial challenge stage rx"),
+        );
+        builder.set_nested_beta_rx(
+            nested::stages::beta::Stage::<C::HostCurve, R>::rx(
+                C::ScalarField::ZERO,
+                nested::stages::beta::Witness { lift: beta_lift[0] },
+            )
+            .expect("trivial beta stage rx"),
+        );
 
         // Bridge polynomials: compute via Stage::rx() with trivial witnesses
         // so that traces are valid for their witnesses (not just ones).
@@ -858,6 +965,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 inner_collapse: host_commitment,
                 outer_collapse: host_commitment,
                 compute_v: host_commitment,
+                bind_challenges: [host_commitment; native::NUM_BINDERS],
+                bind_beta: host_commitment,
                 stashed_preamble: host_commitment,
                 stashed_inner_error: host_commitment,
                 stashed_outer_error: host_commitment,

@@ -15,23 +15,86 @@
 //!
 //! This stage contains the committed claims of all evaluations (other than
 //! $f(X)$) at $u$ for all the queried polynomials.
+//!
+//! It also carries the running sums of the nested challenge binding: the
+//! `bind_challenges` circuits each endoscale two nested-curve generators by
+//! two challenges and check the sum so far against the partial this stage
+//! witnessed. The last partial is the nested challenge stage's commitment.
 
 use core::marker::PhantomData;
 
 use ragu_arithmetic::{Cycle, ff::PrimeField};
-use ragu_circuits::{polynomials::Rank, staging};
+use ragu_circuits::{
+    polynomials::Rank,
+    staging::{self, StageExt},
+};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, allocator::Allocator, io::Write};
+use ragu_primitives::{
+    Element, Point,
+    allocator::Allocator,
+    io::Write,
+    vec::{ConstLen, FixedVec},
+};
 
 use crate::{
     Proof,
-    internal::native::{RxComponent, RxValues},
+    internal::{
+        native::{RxComponent, RxIndex, RxValues, circuits::bind_challenges::NUM_BINDERS},
+        nested,
+    },
 };
+
+/// Length type for the binding partial sums, one per `bind_challenges`
+/// circuit.
+pub type PartialsLen = ConstLen<NUM_BINDERS>;
+
+/// The running sums of the nested challenge binding: partial $k$ is the sum
+/// of the first $2(k+1)$ terms of the nested challenge stage's commitment,
+/// $\sum_{i < 2(k+1)} \mathrm{lift}(\mathrm{ch}_i) \cdot G_{\mathrm{idx}(i)}$.
+#[derive(Clone)]
+pub struct BindingPartials<P> {
+    pub partials: FixedVec<P, PartialsLen>,
+}
+
+impl<P: ragu_arithmetic::CurveAffine> BindingPartials<P> {
+    /// Computes the partials of the given lifts (the first ten challenges,
+    /// `w` through `u`, in stage order) over the nested-curve generators the
+    /// challenge stage commits them with.
+    pub fn compute<C: Cycle<NestedCurve = P, ScalarField = P::ScalarExt>, R: Rank, B>(
+        params: &C::Params,
+        lifts: &[C::ScalarField],
+    ) -> Self
+    where
+        B: ragu_backend::Backend,
+    {
+        use ragu_arithmetic::FixedGenerators;
+
+        assert_eq!(lifts.len(), 2 * NUM_BINDERS);
+        let generators = C::nested_generators(params);
+        let bases: alloc::vec::Vec<P> = (0..lifts.len())
+            .map(|i| generators.g()[generator_index::<C, R>(i)])
+            .collect();
+        let partials =
+            ragu_arithmetic::batch_to_affine(core::array::from_fn::<_, NUM_BINDERS, _>(|k| {
+                let n = 2 * (k + 1);
+                B::msm(lifts[..n].iter(), bases[..n].iter())
+            }));
+        Self {
+            partials: FixedVec::new(partials.into()).expect("NUM_BINDERS partials"),
+        }
+    }
+}
+
+/// The nested-curve generator index the challenge stage commits its `i`-th
+/// lift with (see [`StageExt::generator_index_for_a`]).
+pub fn generator_index<C: Cycle, R: Rank>(i: usize) -> usize {
+    <nested::stages::challenges::Stage<C::HostCurve, R> as StageExt<C::ScalarField, R>>::generator_index_for_a(i)
+}
 
 /// Polynomial evaluations at $u$ (from the parent fuse operation) for a child
 /// proof. Supplied by the prover to construct the `eval` stage witness.
@@ -110,15 +173,46 @@ pub struct CurrentStepWitness<F> {
 }
 
 /// Witness for the eval stage.
-pub struct Witness<F> {
+pub struct Witness<C: Cycle> {
     /// Left proof's evaluations at $u$.
-    pub left: ChildEvaluationsWitness<F>,
+    pub left: ChildEvaluationsWitness<C::CircuitField>,
 
     /// Right proof's evaluations at $u$.
-    pub right: ChildEvaluationsWitness<F>,
+    pub right: ChildEvaluationsWitness<C::CircuitField>,
 
     /// Current fuse step's evaluations at $u$.
-    pub current: CurrentStepWitness<F>,
+    pub current: CurrentStepWitness<C::CircuitField>,
+
+    /// The nested challenge binding's running sums.
+    pub partials: BindingPartials<C::NestedCurve>,
+}
+
+impl<C: Cycle> Witness<C> {
+    /// The all-zero evaluations of a proof that opens nothing, with the
+    /// given binding partials.
+    pub fn trivial(partials: BindingPartials<C::NestedCurve>) -> Self {
+        use ragu_arithmetic::ff::Field;
+        let child = || ChildEvaluationsWitness {
+            rx: RxValues::from_fn(|_| C::CircuitField::ZERO),
+            a_poly: C::CircuitField::ZERO,
+            b_poly: C::CircuitField::ZERO,
+            registry_xy_poly: C::CircuitField::ZERO,
+            p_poly: C::CircuitField::ZERO,
+        };
+        Witness {
+            left: child(),
+            right: child(),
+            current: CurrentStepWitness {
+                registry_wx0: C::CircuitField::ZERO,
+                registry_wx1: C::CircuitField::ZERO,
+                registry_wy: C::CircuitField::ZERO,
+                a_poly: C::CircuitField::ZERO,
+                b_poly: C::CircuitField::ZERO,
+                registry_xy: C::CircuitField::ZERO,
+            },
+            partials,
+        }
+    }
 }
 
 /// Committed (claimed) polynomial evaluations at $u$ (from the parent fuse
@@ -166,11 +260,13 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
     }
 }
 
-/// Prover-internal output gadget for the eval stage.
+/// The committed evaluations at $u$.
 ///
-/// This is stage communication data, not part of the circuit's public instance.
+/// The [`Write`] order defines the coefficient order of the $\beta$-weighted
+/// sum that computes $v = p(u)$, so it must match `compute_p`'s accumulation
+/// order.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>> {
+pub struct Evaluations<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
     pub left: ChildEvaluations<'dr, D>,
     #[ragu(gadget)]
@@ -189,6 +285,19 @@ pub struct Output<'dr, D: Driver<'dr>> {
     pub registry_xy: Element<'dr, D>,
 }
 
+/// Prover-internal output gadget for the eval stage.
+///
+/// This is stage communication data, not part of the circuit's public instance.
+/// The binding partials are kept apart from the evaluations so that writing
+/// the evaluations into the $v$ Horner sum never includes them.
+#[derive(Gadget)]
+pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
+    #[ragu(gadget)]
+    pub evaluations: Evaluations<'dr, D>,
+    #[ragu(gadget)]
+    pub partials: FixedVec<Point<'dr, D, C::NestedCurve>, PartialsLen>,
+}
+
 /// The eval stage of the fuse witness.
 #[derive(Default)]
 pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
@@ -199,12 +308,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     for Stage<C, R, HEADER_SIZE>
 {
     type Parent = super::query::Stage<C, R, HEADER_SIZE>;
-    type Witness<'source> = &'source Witness<C::CircuitField>;
-    type OutputKind = Kind![C::CircuitField; Output<'_, _>];
+    type Witness<'source> = &'source Witness<C>;
+    type OutputKind = Kind![C::CircuitField; Output<'_, _, C>];
 
     fn values() -> usize {
-        // 2 * ChildEvaluations (15 each) + current step elements (6)
-        2 * 15 + 6
+        // 2 * ChildEvaluations (rx + 4 each) + current step elements (6)
+        // + (x, y) per binding partial
+        2 * (RxIndex::NUM + 4) + 6 + 2 * NUM_BINDERS
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -240,15 +350,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
             allocator,
             witness.as_ref().map(|w| w.current.registry_xy),
         )?;
+        let partials = FixedVec::try_from_fn(|k| {
+            Point::alloc(dr, witness.as_ref().map(|w| w.partials.partials[k]))
+        })?;
         Ok(Output {
-            left,
-            right,
-            registry_wx0,
-            registry_wx1,
-            registry_wy,
-            a_poly,
-            b_poly,
-            registry_xy,
+            evaluations: Evaluations {
+                left,
+                right,
+                registry_wx0,
+                registry_wx1,
+                registry_wy,
+                a_poly,
+                b_poly,
+                registry_xy,
+            },
+            partials,
         })
     }
 }

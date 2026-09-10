@@ -21,13 +21,14 @@ use ragu_circuits::{
 use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::Element;
 
-use super::{InternalCircuitIndex, RxComponent, RxIndex};
+use super::{InternalCircuitIndex, NUM_BINDERS, RxComponent, RxIndex};
 use crate::internal::claims::{Builder, Source, sum_polynomials};
 
 /// Number of circuits using unified $k(y)$ in [`build`].
 ///
 /// These circuits use [`unified::InternalOutputKind`]:
-/// [`hashes_2`], [`inner_collapse`], [`outer_collapse`], [`compute_v`].
+/// [`hashes_2`], [`inner_collapse`], [`outer_collapse`], [`compute_v`], the
+/// [`NUM_BINDERS`] `bind_challenges` circuits, and `bind_beta`.
 ///
 /// Note: [`hashes_1`] separately uses `unified_bridge_ky` because its public
 /// inputs include child proof headers (see [`hashes_1::Output`]).
@@ -39,7 +40,7 @@ use crate::internal::claims::{Builder, Source, sum_polynomials};
 /// [`outer_collapse`]: crate::internal::native::circuits::outer_collapse
 /// [`compute_v`]: crate::internal::native::circuits::compute_v
 /// [`unified::InternalOutputKind`]: crate::internal::native::unified::InternalOutputKind
-const NUM_UNIFIED_CIRCUITS: usize = 4;
+const NUM_UNIFIED_CIRCUITS: usize = 5 + NUM_BINDERS;
 
 /// Trait that processes claim values into accumulated outputs.
 ///
@@ -218,6 +219,29 @@ where
                 }
             }
 
+            // bind_challenges: BindChallenges(k) + Preamble + Query + Eval
+            BindChallengesCircuit(k) => {
+                for (((bc, pre), q), e) in source
+                    .rx(Rx(BindChallenges(k)))
+                    .zip(source.rx(Rx(Preamble)))
+                    .zip(source.rx(Rx(Query)))
+                    .zip(source.rx(Rx(Eval)))
+                {
+                    processor.internal_circuit_claim(id, [bc, pre, q, e].into_iter());
+                }
+            }
+
+            // bind_beta: BindBeta + Preamble + OuterError
+            BindBetaCircuit => {
+                for ((bb, pre), en) in source
+                    .rx(Rx(BindBeta))
+                    .zip(source.rx(Rx(Preamble)))
+                    .zip(source.rx(Rx(OuterError)))
+                {
+                    processor.internal_circuit_claim(id, [bb, pre, en].into_iter());
+                }
+            }
+
             // Native stages (aggregated across all proofs)
             PreambleStage => {
                 processor.bonding_claim(id, source.rx(Rx(Preamble)))?;
@@ -245,11 +269,17 @@ where
                     source
                         .rx(Rx(Hashes1))
                         .chain(source.rx(Rx(Hashes2)))
-                        .chain(source.rx(Rx(OuterCollapse))),
+                        .chain(source.rx(Rx(OuterCollapse)))
+                        .chain(source.rx(Rx(BindBeta))),
                 )?;
             }
             EvalFinalStaged => {
-                processor.bonding_claim(id, source.rx(Rx(ComputeV)))?;
+                processor.bonding_claim(
+                    id,
+                    source.rx(Rx(ComputeV)).chain(
+                        (0..NUM_BINDERS as u32).flat_map(|k| source.rx(Rx(BindChallenges(k)))),
+                    ),
+                )?;
             }
         }
     }

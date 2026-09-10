@@ -7,6 +7,7 @@ use ragu_backend::Backend;
 use ragu_circuits::{
     polynomials::{Rank, sparse},
     registry::CircuitIndex,
+    staging::StageExt,
 };
 use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::Element;
@@ -20,6 +21,7 @@ use crate::{
         nested::{
             RxComponent as NestedRxComponent, challenge as nested_challenge,
             claims as nested_claims,
+            stages::{beta as nested_beta, challenges as nested_challenges},
         },
     },
 };
@@ -175,6 +177,33 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             poly_eval == expected
         };
 
+        // The nested challenge stage is the unblinded stage of the lifts of
+        // this proof's challenges: recompute it and compare. In-circuit, the
+        // binding circuits tie its commitment to the transcript challenges.
+        let nested_challenges_claim = {
+            let lifts = pcd.proof().challenges().lifts::<C>()?;
+            let (challenge_lifts, beta_lift) = lifts.split_at(nested_challenges::NUM);
+            let expected_challenges = nested_challenges::Stage::<C::HostCurve, R>::rx(
+                C::ScalarField::ZERO,
+                &nested_challenges::Witness::new(
+                    challenge_lifts.try_into().expect("NUM challenge lifts"),
+                ),
+            )?;
+            let expected_beta = nested_beta::Stage::<C::HostCurve, R>::rx(
+                C::ScalarField::ZERO,
+                nested_beta::Witness { lift: beta_lift[0] },
+            )?;
+            pcd.proof()
+                .nested_challenges_rx()
+                .iter_coeffs()
+                .eq(expected_challenges.iter_coeffs())
+                && pcd
+                    .proof()
+                    .nested_beta_rx()
+                    .iter_coeffs()
+                    .eq(expected_beta.iter_coeffs())
+        };
+
         // TODO: Add checks for registry_wx0_poly, registry_wx1_poly, and registry_wy_poly.
         // - registry_wx0/wx1: need child proof x challenges (x₀, x₁) which "disappear" in preamble
         // - registry_wy: interstitial value that will be elided later
@@ -182,7 +211,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         Ok(native_revdot_claims
             && nested_revdot_claims
             && registry_xy_claim
-            && nested_registry_xy_claim)
+            && nested_registry_xy_claim
+            && nested_challenges_claim)
     }
 }
 
