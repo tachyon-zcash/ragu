@@ -52,9 +52,10 @@
 //! The nested (scalar-field) endoscaling step circuits follow the same
 //! pattern — each checks one interstitial of the points stage against its
 //! Horner accumulation — and are handed to
-//! [`InternalCircuitVisitor::visit_nested`]. The remaining nested circuits,
-//! `loading` and `copying`, are bonding claims over stage polynomials with
-//! no witness of their own to capture.
+//! [`InternalCircuitVisitor::visit_nested`]. The remaining nested circuits
+//! derive nothing to capture: `loading` is a bonding claim over stage
+//! polynomials with no witness of its own, and `export` only equates its
+//! instance, wire by wire, to stage wires.
 //!
 //! Like the rest of the fuzzing surface it is gated behind `unstable-fuzzing`
 //! — by the inner attribute at the top of this file, so the pipeline modules
@@ -522,7 +523,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let mut dr = Emulator::execute();
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
 
-        let preamble_witness = self.compute_preamble(rng, &left, &right, &mut builder)?;
+        let (preamble_witness, nested_preamble) =
+            self.compute_preamble(rng, &left, &right, &mut builder)?;
         let bridge_preamble_commitment =
             Point::constant(&mut dr, builder.bridge_preamble_commitment())?;
         bridge_preamble_commitment.write(&mut dr, &mut transcript)?;
@@ -588,21 +590,28 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let mu = transcript.challenge(&mut dr)?;
         let nu = transcript.challenge(&mut dr)?;
 
-        let (native_outer_error_witness, native_a, native_b, nested_a, nested_b) = self
-            .outer_error_terms(
-                rng,
-                &preamble_witness,
-                &native_inner_error_witness,
-                native_claims,
-                &nested_inner_error_witness,
-                nested_claims,
-                &nested_source,
-                &y,
-                &mu,
-                &nu,
-                saved_transcript_state,
-                &mut builder,
-            )?;
+        let (
+            native_outer_error_witness,
+            native_a,
+            native_b,
+            _nested_outer_error_witness,
+            nested_a,
+            nested_b,
+        ) = self.outer_error_terms(
+            rng,
+            &preamble_witness,
+            &native_inner_error_witness,
+            native_claims,
+            &nested_inner_error_witness,
+            nested_claims,
+            &nested_source,
+            &nested_preamble,
+            &y,
+            &mu,
+            &nu,
+            saved_transcript_state,
+            &mut builder,
+        )?;
         let bridge_outer_error_commitment =
             Point::constant(&mut dr, builder.bridge_outer_error_commitment())?;
         bridge_outer_error_commitment.write(&mut dr, &mut transcript)?;
@@ -662,6 +671,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             .map(|challenge| *challenge.value().take());
         let (eval_witness, nested_eval) = self.compute_eval(
             &bound_challenges,
+            base_case,
             &left,
             &right,
             &native_s_prime,
@@ -689,7 +699,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         builder.set_native_eval_rx(eval_rx);
         builder.set_bridge_eval_rx(bridge_eval_rx, bridge_eval_commitment);
 
-        self.commit_nested_challenges(
+        let _nested_challenges = self.commit_nested_challenges(
             nested::Challenges {
                 w: bound_challenges[0],
                 y: bound_challenges[1],
@@ -703,10 +713,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 u: bound_challenges[9],
                 pre_beta: *pre_beta.element().value().take(),
             },
+            base_case,
             &mut builder,
         )?;
 
-        self.compute_p(
+        let _points = self.compute_p(
             rng,
             &pre_beta,
             &left,
@@ -731,9 +742,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         builder.set_alpha(*alpha.value().take());
         builder.set_u(*u.value().take());
         builder.set_pre_beta(*pre_beta.element().value().take());
-
-        builder.set_child_left_stage_rx(left.as_child_stage_rx());
-        builder.set_child_right_stage_rx(right.as_child_stage_rx());
 
         // Rebuild the shared instance from the finished builder for each
         // circuit. Threading the accumulated coverage (as the prover does) is

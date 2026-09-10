@@ -230,7 +230,7 @@ fn test_internal_circuit_constraint_counts() {
     check_constraints!(BindChallengesCircuit(1),    mul = 1862, lin = 2931);
     check_constraints!(BindChallengesCircuit(2),    mul = 1862, lin = 2931);
     check_constraints!(BindChallengesCircuit(3),    mul = 1862, lin = 2931);
-    check_constraints!(BindChallengesCircuit(4),    mul = 1862, lin = 2931);
+    check_constraints!(BindChallengesCircuit(4),    mul = 1873, lin = 2953);
     check_constraints!(BindBetaCircuit,             mul = 1976, lin = 2913);
 }
 
@@ -329,7 +329,7 @@ fn test_native_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fp!(0x26aed5da747fd6dc30fed01f0b764bd0cc21c8b62cabd480f6860467d5d14c52);
+    let expected = fp!(0x3026465cfee248a182990f65a3cb714052815eaa2bd1ad122b0ee24379ee9c36);
 
     assert_eq!(
         app.native_registry.digest(),
@@ -353,7 +353,7 @@ fn test_nested_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fq!(0x323a2a97a3679117f1a52efafcf3ae1089a31e8a4da76676545fcf23cd059fa7);
+    let expected = fq!(0x0a21c9820f3ca56a4912400aa975c6240ee99d0a86b9f8cdf775f1dd45bab17d);
 
     assert_eq!(
         app.nested_registry.digest(),

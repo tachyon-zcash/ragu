@@ -21,9 +21,9 @@ use alloc::sync::Arc;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::{Rank, sparse};
 
-use super::{ChildStageRx, Proof};
+use super::Proof;
 use crate::fuzzing::corrupt::{
-    BridgeCommitment, ChildBridgeKind, NativeRx, NestedAccumulator, NestedRx, RxComponent, Side,
+    BridgeCommitment, NativeRx, NestedAccumulator, NestedRx, RxComponent,
 };
 
 impl<C: Cycle, R: Rank> Proof<C, R> {
@@ -92,9 +92,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// The nested polynomial named by `idx`, mutably.
     ///
     /// The `Arc`-shared polynomials are unshared through
-    /// [`Arc::make_mut`](alloc::sync::Arc::make_mut), so corrupting a parent's
-    /// copy never reaches back into a child proof that still holds the
-    /// original.
+    /// [`Arc::make_mut`](alloc::sync::Arc::make_mut), so corrupting a proof's
+    /// copy never reaches into another that shares it.
     pub(crate) fn nested_rx_mut(
         &mut self,
         idx: NestedRx,
@@ -102,6 +101,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         use NestedRx::*;
         match idx {
             EndoscalingStep(step) => &mut self.nested_endoscaling_step_rxs[step as usize],
+            Export => &mut self.nested_export_rx,
             EndoscalarStage => &mut self.nested_endoscalar_rx,
             PointsStage => Arc::make_mut(&mut self.nested_points_rx),
             BridgePreamble => Arc::make_mut(&mut self.bridge_preamble_rx),
@@ -114,20 +114,6 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             BridgeEval => Arc::make_mut(&mut self.bridge_eval_rx),
             ChallengeStage => &mut self.nested_challenges_rx,
             BetaStage => &mut self.nested_beta_rx,
-            ChildPointsStage(side) => {
-                Arc::make_mut(&mut self.child_stage_rx_mut(side).points_stage)
-            }
-            ChildBridge(kind, side) => {
-                let child = self.child_stage_rx_mut(side);
-                Arc::make_mut(match kind {
-                    ChildBridgeKind::SPrime => &mut child.bridge_s_prime,
-                    ChildBridgeKind::InnerError => &mut child.bridge_inner_error,
-                    ChildBridgeKind::OuterError => &mut child.bridge_outer_error,
-                    ChildBridgeKind::AB => &mut child.bridge_ab,
-                    ChildBridgeKind::Query => &mut child.bridge_query,
-                    ChildBridgeKind::Eval => &mut child.bridge_eval,
-                })
-            }
         }
     }
 
@@ -147,13 +133,6 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             AB => &mut self.bridge_ab_commitment.0,
             Query => &mut self.bridge_query_commitment,
             Eval => &mut self.bridge_eval_commitment,
-        }
-    }
-
-    fn child_stage_rx_mut(&mut self, side: Side) -> &mut ChildStageRx<C::ScalarField, R> {
-        match side {
-            Side::Left => &mut self.child_left_stage_rx,
-            Side::Right => &mut self.child_right_stage_rx,
         }
     }
 }

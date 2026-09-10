@@ -8,12 +8,6 @@
 //! (matched against `BridgeF.native_f`). The accumulation walk mirrors
 //! `compute_p` in `_10_p` so that correctness can be verified by visual
 //! comparison.
-//!
-//! Also enforces: `BridgeSPrime.stashed_preamble` ==
-//! `BridgePreamble.native_preamble`, stashing the current step's native
-//! preamble so that a parent's [`copying`](super::copying) circuit can
-//! read it from `BridgeSPrime` instead of `BridgePreamble` (avoiding a
-//! wire-position collision).
 
 use core::marker::PhantomData;
 
@@ -148,13 +142,6 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         walker.enforce_equal(dr, &query.registry_xy)?;
 
         walker.finish();
-
-        // Relay: the current step's native_preamble is stashed in
-        // BridgeSPrime so that a future copying circuit can verify it
-        // from the child's BridgeSPrime without BridgePreamble collision.
-        s_prime
-            .stashed_preamble
-            .enforce_equal(dr, &preamble.native_preamble)?;
 
         // The initial point (f.commitment) must match BridgeF.native_f.
         points.initial.enforce_equal(dr, &f_stage.native_f)?;

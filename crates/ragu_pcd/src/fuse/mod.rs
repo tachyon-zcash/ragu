@@ -25,6 +25,7 @@ mod tests;
 #[path = "../fuzzing/patcher.rs"]
 pub(crate) mod patcher;
 
+use _11_circuits::NestedWitnesses;
 use claims::{NativeFuseProofSource, NestedFuseProofSource};
 use ragu_arithmetic::{Cycle, ff::Field, rand::CryptoRng};
 use ragu_circuits::{
@@ -93,12 +94,28 @@ struct NestedSPrime<C: Cycle, R: Rank> {
     registry_wx1_commitment: C::NestedCurve,
 }
 
+/// Witnesses of the nested challenge and beta stages, kept for the nested
+/// circuits that load them.
+pub(super) struct NestedChallengeWitnesses<F> {
+    pub(super) challenges: nested::stages::challenges::Witness<F>,
+    pub(super) beta: nested::stages::beta::Witness<F>,
+}
+
 type NativeFuseEmulator<C> = Emulator<Wireless<Always<()>, <C as Cycle>::CircuitField>>;
 type NestedFuseEmulator<C> = Emulator<Wireless<Always<()>, <C as Cycle>::ScalarField>>;
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
+    /// Whether this step is a base case: both children carry the trivial
+    /// header, whose last element is one.
+    fn is_base_case(&self, builder: &ProofBuilder<'_, C, R, B>) -> bool {
+        let is_trivial = |header: &[C::CircuitField]| {
+            header.len() == HEADER_SIZE && header[HEADER_SIZE - 1] == C::CircuitField::ONE
+        };
+        is_trivial(builder.left_header()) && is_trivial(builder.right_header())
+    }
+
     /// The nested batch this step opens, over the nested polynomials the
     /// builder has committed so far.
     fn nested_batch<'a>(
@@ -122,27 +139,32 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     }
 
     /// Commits the nested challenge and beta stages: the lifts of this
-    /// step's challenges, unblinded, so that their nested-curve commitments
-    /// are the fixed linear combinations of generators the binding circuits
-    /// recompute.
+    /// step's challenges (and the base-case sign), unblinded, so that their
+    /// nested-curve commitments are the fixed linear combinations of
+    /// generators the binding circuits recompute. Returns the stage
+    /// witnesses for the nested circuits that load them.
     fn commit_nested_challenges(
         &self,
         challenges: nested::Challenges<C::CircuitField>,
+        is_base_case: bool,
         builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<()> {
+    ) -> Result<NestedChallengeWitnesses<C::ScalarField>> {
         let lifts = challenges.lifts::<C>()?;
         let (challenge_lifts, beta_lift) = lifts.split_at(nested::stages::challenges::NUM);
+        let challenges = nested::stages::challenges::Witness::new(
+            challenge_lifts.try_into().expect("NUM challenge lifts"),
+            is_base_case,
+        );
+        let beta = nested::stages::beta::Witness { lift: beta_lift[0] };
         builder.set_nested_challenges_rx(nested::stages::challenges::Stage::<C::HostCurve, R>::rx(
             C::ScalarField::ZERO,
-            &nested::stages::challenges::Witness::new(
-                challenge_lifts.try_into().expect("NUM challenge lifts"),
-            ),
+            &challenges,
         )?);
         builder.set_nested_beta_rx(nested::stages::beta::Stage::<C::HostCurve, R>::rx(
             C::ScalarField::ZERO,
-            nested::stages::beta::Witness { lift: beta_lift[0] },
+            beta,
         )?);
-        Ok(())
+        Ok(NestedChallengeWitnesses { challenges, beta })
     }
 
     /// The nested challenges this step's openings are at, derived from the
@@ -206,7 +228,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let mut dr = Emulator::execute();
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
 
-        let preamble_witness = self.compute_preamble(rng, &left, &right, &mut builder)?;
+        let (preamble_witness, nested_preamble) =
+            self.compute_preamble(rng, &left, &right, &mut builder)?;
         let bridge_preamble_commitment =
             Point::constant(&mut dr, builder.bridge_preamble_commitment())?;
         bridge_preamble_commitment.write(&mut dr, &mut transcript)?;
@@ -274,21 +297,28 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let mu = transcript.challenge(&mut dr)?;
         let nu = transcript.challenge(&mut dr)?;
 
-        let (native_outer_error_witness, native_a, native_b, nested_a, nested_b) = self
-            .outer_error_terms(
-                rng,
-                &preamble_witness,
-                &native_inner_error_witness,
-                native_claims,
-                &nested_inner_error_witness,
-                nested_claims,
-                &nested_source,
-                &y,
-                &mu,
-                &nu,
-                saved_transcript_state,
-                &mut builder,
-            )?;
+        let (
+            native_outer_error_witness,
+            native_a,
+            native_b,
+            nested_outer_error_witness,
+            nested_a,
+            nested_b,
+        ) = self.outer_error_terms(
+            rng,
+            &preamble_witness,
+            &native_inner_error_witness,
+            native_claims,
+            &nested_inner_error_witness,
+            nested_claims,
+            &nested_source,
+            &nested_preamble,
+            &y,
+            &mu,
+            &nu,
+            saved_transcript_state,
+            &mut builder,
+        )?;
         let bridge_outer_error_commitment =
             Point::constant(&mut dr, builder.bridge_outer_error_commitment())?;
         bridge_outer_error_commitment.write(&mut dr, &mut transcript)?;
@@ -309,9 +339,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         bridge_ab_commitment.write(&mut dr, &mut transcript)?;
         let x = transcript.challenge(&mut dr)?;
 
-        // The nested query values ride in the bridge; a nested `compute_v`
-        // circuit will consume them once it exists.
-        let (query_witness, _nested_query) = self.compute_query(
+        let (query_witness, nested_query) = self.compute_query(
             rng,
             &w,
             &x,
@@ -348,8 +376,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 
         let bound_challenges = [&w, &y, &z, &mu, &nu, &mu_prime, &nu_prime, &x, &alpha, &u]
             .map(|challenge| *challenge.value().take());
+        // Whether both children are trivial: the base-case flag the native
+        // circuits read off the headers, bound for the nested side through
+        // the challenge stage.
+        let is_base_case = self.is_base_case(&builder);
         let (eval_witness, nested_eval) = self.compute_eval(
             &bound_challenges,
+            is_base_case,
             &left,
             &right,
             &native_s_prime,
@@ -391,7 +424,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         // Every nested challenge is now known: commit the nested challenge
         // and beta stages, unblinded, which the binding circuits tie to the
         // transcript (the beta stage by the parent's).
-        self.commit_nested_challenges(
+        let nested_challenges = self.commit_nested_challenges(
             nested::Challenges {
                 w: bound_challenges[0],
                 y: bound_challenges[1],
@@ -405,10 +438,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 u: bound_challenges[9],
                 pre_beta: *pre_beta.element().value().take(),
             },
+            is_base_case,
             &mut builder,
         )?;
 
-        self.compute_p(
+        let points = self.compute_p(
             rng,
             &pre_beta,
             &left,
@@ -435,10 +469,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         builder.set_u(*u.value().take());
         builder.set_pre_beta(*pre_beta.element().value().take());
 
-        // Store children's stage rx polynomials for copying circuit claims.
-        builder.set_child_left_stage_rx(left.as_child_stage_rx());
-        builder.set_child_right_stage_rx(right.as_child_stage_rx());
-
         self.compute_internal_circuits(
             rng,
             &preamble_witness,
@@ -446,6 +476,41 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &native_inner_error_witness,
             &query_witness,
             &eval_witness,
+            &mut builder,
+        )?;
+
+        // The nested circuits: the export circuit pins the nested unified
+        // instance to the bridge stages it was read from.
+        self.compute_nested_circuits(
+            rng,
+            &NestedWitnesses {
+                endoscalar: pre_beta.extract_native(),
+                points: &points,
+                preamble: nested_preamble,
+                s_prime: nested::stages::s_prime::Witness {
+                    registry_wx0: native_s_prime.registry_wx0_commitment,
+                    registry_wx1: native_s_prime.registry_wx1_commitment,
+                },
+                inner_error: nested_inner_error_witness,
+                outer_error: nested_outer_error_witness,
+                ab: nested::stages::ab::Witness {
+                    a: builder.native_a_commitment(),
+                    b: builder.native_b_commitment(),
+                },
+                query: nested::stages::query::Witness {
+                    native_query: builder.native_query_commitment(),
+                    registry_xy: builder.native_registry_xy_commitment(),
+                    nested: nested_query,
+                },
+                f: nested::stages::f::Witness {
+                    native_f: native_f.commitment,
+                },
+                eval: nested::stages::eval::Witness {
+                    native_eval: builder.native_eval_commitment(),
+                    nested: nested_eval,
+                },
+                challenges: nested_challenges,
+            },
             &mut builder,
         )?;
 

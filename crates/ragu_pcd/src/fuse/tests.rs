@@ -94,6 +94,8 @@ fn stage_values<S: Stage<Fq, R>>(rx: &sparse::Polynomial<Fq, R>) -> Vec<Fq> {
 struct ChildValues {
     left_c: Fq,
     right_c: Fq,
+    left_unified: Fq,
+    right_unified: Fq,
 }
 
 impl KySource for ChildValues {
@@ -105,6 +107,10 @@ impl KySource for ChildValues {
 
     fn ones(&self) -> impl Iterator<Item = Fq> + Clone {
         [Fq::ONE, Fq::ONE].into_iter()
+    }
+
+    fn unified_ky(&self) -> impl Iterator<Item = Fq> {
+        [self.left_unified, self.right_unified].into_iter()
     }
 
     fn zero(&self) -> Fq {
@@ -131,16 +137,32 @@ fn nested_accumulator_is_the_fold_of_the_children() -> Result<()> {
     let mut nested_claims =
         claims::Builder::<_, Fq, R, ReferenceBackend>::new(&app.nested_registry, y, z);
     nested::claims::build(&nested_source, &mut nested_claims)?;
+    let unified_ky = |proof: &Proof<C, R>| -> Result<Fq> {
+        NestedFuseEmulator::<C>::emulate_wireless((proof.nested_instance()?, y), |dr, witness| {
+            let (instance, y) = witness.cast();
+            let y = Element::alloc(dr, &mut (), y)?;
+            let output = nested::unified::Output::<_, ragu_pasta::EqAffine>::alloc(
+                dr,
+                &mut (),
+                instance.as_ref(),
+            )?;
+            Ok(*output.ky(dr, &y)?.value().take())
+        })
+    };
     let children = ChildValues {
         left_c: left.nested_c(),
         right_c: right.nested_c(),
+        left_unified: unified_ky(&left)?,
+        right_unified: unified_ky(&right)?,
     };
 
-    // Two raw claims, one circuit claim per endoscaling step per child, and
-    // one bonding claim per bonding kind folded across both children.
+    // Two raw claims, one circuit claim per endoscaling step per child, one
+    // export claim per child, and one bonding claim per bonding kind folded
+    // across both children.
     let steps = crate::internal::endoscalar::num_steps(nested::NUM_ENDOSCALING_POINTS);
-    let bonding_kinds = nested::InternalCircuitIndex::NUM - steps;
-    assert_eq!(nested_claims.a.len(), 2 + 2 * steps + bonding_kinds);
+    let circuits = steps + 1;
+    let bonding_kinds = nested::InternalCircuitIndex::NUM - circuits;
+    assert_eq!(nested_claims.a.len(), 2 + 2 * circuits + bonding_kinds);
 
     // 1. Every nested claim of the children holds at the derived challenges.
     for (i, (ky, (a, b))) in nested::claims::ky_values(&children)
@@ -251,14 +273,19 @@ fn nested_accumulator_is_the_fold_of_the_children() -> Result<()> {
             (&inner_errors, &outer_errors),
             (mu, nu),
             (mu_prime, nu_prime),
-            (children.left_c, children.right_c),
+            (
+                (children.left_c, children.right_c),
+                (children.left_unified, children.right_unified),
+            ),
         ),
         |dr, witness| {
-            let (errors, layer1, layer2, cs) = witness.cast();
+            let (errors, layer1, layer2, kys) = witness.cast();
             let (inner_errors, outer_errors) = errors.cast();
             let (mu, nu) = layer1.cast();
             let (mu_prime, nu_prime) = layer2.cast();
+            let (cs, unifieds) = kys.cast();
             let (left_c, right_c) = cs.cast();
+            let (left_unified, right_unified) = unifieds.cast();
             let allocator = &mut ();
 
             let mu = Element::alloc(dr, allocator, mu)?;
@@ -268,7 +295,15 @@ fn nested_accumulator_is_the_fold_of_the_children() -> Result<()> {
             let left_c = Element::alloc(dr, allocator, left_c)?;
             let right_c = Element::alloc(dr, allocator, right_c)?;
 
-            let ky_source = nested::claims::TwoProofKySource::new(dr, left_c, right_c);
+            let left_unified = Element::alloc(dr, allocator, left_unified)?;
+            let right_unified = Element::alloc(dr, allocator, right_unified)?;
+            let ky_source = nested::claims::TwoProofKySource::new(
+                dr,
+                left_c,
+                right_c,
+                left_unified,
+                right_unified,
+            );
             let mut ky = nested::claims::ky_values(&ky_source);
 
             let layer1 = ClaimFolder::new(dr, &mu, &nu)?;
@@ -393,9 +428,13 @@ fn nested_challenge_stages_are_bound_by_their_commitments() -> Result<()> {
     // 1. The stored stages are the unblinded stages of the lifts.
     let lifts = parent.challenges().lifts::<C>()?;
     let (challenge_lifts, beta_lift) = lifts.split_at(NUM_BOUND);
+    let is_base_case = parent.is_base_case::<HEADER_SIZE>();
     let expected = nested::stages::challenges::Stage::<ragu_pasta::EqAffine, R>::rx(
         Fq::ZERO,
-        &nested::stages::challenges::Witness::new(challenge_lifts.try_into().unwrap()),
+        &nested::stages::challenges::Witness::new(
+            challenge_lifts.try_into().unwrap(),
+            is_base_case,
+        ),
     )?;
     assert!(
         parent
@@ -423,6 +462,8 @@ fn nested_challenge_stages_are_bound_by_their_commitments() -> Result<()> {
     for (i, lift) in challenge_lifts.iter().enumerate() {
         acc += generators.g()[generator_index::<C, R>(i)] * *lift;
     }
+    acc += generators.g()[generator_index::<C, R>(NUM_BOUND)]
+        * nested::stages::challenges::base_case_sign::<Fq>(is_base_case);
     assert_eq!(
         parent.nested_challenges_commitment(),
         acc.to_affine(),
@@ -436,7 +477,8 @@ fn nested_challenge_stages_are_bound_by_their_commitments() -> Result<()> {
 
     // 3. The eval stage's partials are the running sums the binders check;
     //    the last is the challenge commitment.
-    let partials = BindingPartials::compute::<C, R, ReferenceBackend>(pasta, challenge_lifts);
+    let partials =
+        BindingPartials::compute::<C, R, ReferenceBackend>(pasta, challenge_lifts, is_base_case);
     let mut acc = ragu_pasta::Ep::identity();
     for k in 0..NUM_BINDERS {
         for (i, lift) in challenge_lifts
@@ -446,6 +488,10 @@ fn nested_challenge_stages_are_bound_by_their_commitments() -> Result<()> {
             .skip(2 * k)
         {
             acc += generators.g()[generator_index::<C, R>(i)] * *lift;
+        }
+        if k + 1 == NUM_BINDERS {
+            acc += generators.g()[generator_index::<C, R>(NUM_BOUND)]
+                * nested::stages::challenges::base_case_sign::<Fq>(is_base_case);
         }
         assert_eq!(partials.partials[k], acc.to_affine(), "partial {k}");
     }

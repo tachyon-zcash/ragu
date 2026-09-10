@@ -6,15 +6,13 @@
 //!   in `compute_p` was computed correctly via Horner's rule.
 //! - **Loading**: enforces consistency between [`PointsStage`]
 //!   inputs and the bridge stage commitments for the current step.
-//! - **Copying**: enforces that [`ChildWitness`] stash fields in
-//!   `BridgePreamble` match the corresponding child proof's bridge
-//!   stage contents.
+//! - **Export**: pins the nested [`unified`] instance, which a parent copies
+//!   into its `BridgePreamble` and folds this step's claims with, to the
+//!   stages that hold its values.
 //!
-//! [`ChildWitness`]: stages::preamble::ChildWitness
 //! [`PointsStage`]: crate::internal::endoscalar::PointsStage
 
-use ragu_arithmetic::Cycle;
-use ragu_arithmetic::ff::Field;
+use ragu_arithmetic::{Cycle, ff::Field};
 use ragu_circuits::{
     polynomials::Rank,
     registry::{CircuitIndex, RegistryBuilder},
@@ -24,11 +22,11 @@ use ragu_core::Result;
 use ragu_primitives::{extract_endoscalar, lift_endoscalar, vec::ConstLen};
 
 pub mod circuits {
-    pub mod copying;
+    pub mod export;
     pub mod loading;
 }
 
-use crate::internal::{Side, endoscalar, fold_revdot::Parameters};
+use crate::internal::{endoscalar, fold_revdot::Parameters};
 
 /// Number of curve points accumulated during `compute_p` for nested field
 /// endoscaling verification.
@@ -140,6 +138,8 @@ impl<F: Copy> Challenges<F> {
 pub enum InternalCircuitIndex {
     /// `EndoscalingStep` circuit at given step.
     EndoscalingStep(u32),
+    /// Export circuit pinning the nested unified instance to the stages.
+    Export,
     /// `EndoscalarStage` stage mask.
     EndoscalarStage,
     /// `PointsStage` stage mask.
@@ -166,10 +166,10 @@ pub enum InternalCircuitIndex {
     ChallengeStage,
     /// Beta stage mask.
     BetaStage,
+    /// Final staged mask of the circuits whose last stage is the beta stage.
+    BetaFinalStaged,
     /// Loading circuit over all nested stages.
     Loading,
-    /// Copying circuit relating current preamble to a child proof's stages.
-    Copying(Side),
 }
 
 impl InternalCircuitIndex {
@@ -197,6 +197,7 @@ impl InternalCircuitIndex {
                 step += 1;
             }
         }
+        push(&mut slots, &mut c, Self::Export);
         push(&mut slots, &mut c, Self::EndoscalarStage);
         push(&mut slots, &mut c, Self::PointsStage);
         push(&mut slots, &mut c, Self::PointsFinalStaged);
@@ -210,9 +211,8 @@ impl InternalCircuitIndex {
         push(&mut slots, &mut c, Self::BridgeEval);
         push(&mut slots, &mut c, Self::ChallengeStage);
         push(&mut slots, &mut c, Self::BetaStage);
+        push(&mut slots, &mut c, Self::BetaFinalStaged);
         push(&mut slots, &mut c, Self::Loading);
-        push(&mut slots, &mut c, Self::Copying(Side::Left));
-        push(&mut slots, &mut c, Self::Copying(Side::Right));
         assert!(c == Self::NUM);
         slots
     }
@@ -233,46 +233,14 @@ impl InternalCircuitIndex {
 /// Enum identifying which nested field rx polynomial to retrieve from a proof.
 ///
 /// Analogous to [`native::RxIndex`](super::native::RxIndex) for the scalar
-/// field. Each variant maps to a polynomial in
-/// the proof's nested-field polynomial storage.
+/// field. Each variant maps to a polynomial in the proof's nested-field
+/// polynomial storage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ChildBridgeKind {
-    /// Child proof's `BridgeSPrime` rx polynomial.
-    SPrime,
-    /// Child proof's `BridgeInnerError` rx polynomial.
-    InnerError,
-    /// Child proof's `BridgeOuterError` rx polynomial.
-    OuterError,
-    /// Child proof's `BridgeAB` rx polynomial.
-    AB,
-    /// Child proof's `BridgeQuery` rx polynomial.
-    Query,
-    /// Child proof's `BridgeEval` rx polynomial.
-    Eval,
-}
-
-impl ChildBridgeKind {
-    /// All kinds in the canonical slot order.
-    ///
-    /// This constant is the source of truth for the relative order of
-    /// `RxIndex::ChildBridge(kind, side)` entries in [`RxIndex::ALL`]
-    /// (see [`RxIndex::all_slots`]), and is therefore pinned by
-    /// `test_nested_registry_digest` — re-ordering these variants
-    /// changes the nested registry digest.
-    pub const ALL: [Self; 6] = [
-        Self::SPrime,
-        Self::InnerError,
-        Self::OuterError,
-        Self::AB,
-        Self::Query,
-        Self::Eval,
-    ];
-}
-
-#[derive(Clone, Copy, Debug)]
 pub enum RxIndex {
     /// EndoscalingStep circuit rx polynomial (indexed by step number).
     EndoscalingStep(u32),
+    /// Export circuit rx polynomial.
+    Export,
     /// EndoscalarStage rx polynomial.
     EndoscalarStage,
     /// PointsStage rx polynomial.
@@ -297,33 +265,12 @@ pub enum RxIndex {
     ChallengeStage,
     /// Beta stage rx polynomial.
     BetaStage,
-    /// Child proof's `PointsStage` rx polynomial (per-side, for copying).
-    ChildPointsStage(Side),
-    /// Child proof's bridge rx polynomial (per-side, for copying),
-    /// keyed by which bridge stage it comes from.
-    ChildBridge(ChildBridgeKind, Side),
 }
 
 impl RxIndex {
     /// The number of rx components in the nested field,
     /// equal to the number of entries in [`RxIndex::ALL`].
-    pub const NUM: usize = NUM_ENDOSCALING_STEPS + 26;
-
-    /// The number of rx components a proof carries for its own step: the
-    /// endoscaling steps and stages, without the children's copies.
-    pub const NUM_OWN: usize = NUM_ENDOSCALING_STEPS + 12;
-
-    /// A proof's own rx components, in canonical order: the leading
-    /// [`NUM_OWN`](Self::NUM_OWN) entries of [`ALL`](Self::ALL).
-    pub const OWN: [Self; Self::NUM_OWN] = {
-        let mut out = [Self::EndoscalarStage; Self::NUM_OWN];
-        let mut i = 0;
-        while i < Self::NUM_OWN {
-            out[i] = Self::ALL[i];
-            i += 1;
-        }
-        out
-    };
+    pub const NUM: usize = NUM_ENDOSCALING_STEPS + 13;
 
     /// All variants in canonical order (circuits, then stages).
     ///
@@ -343,6 +290,7 @@ impl RxIndex {
                 step += 1;
             }
         }
+        push(&mut slots, &mut c, Self::Export);
         push(&mut slots, &mut c, Self::EndoscalarStage);
         push(&mut slots, &mut c, Self::PointsStage);
         push(&mut slots, &mut c, Self::BridgePreamble);
@@ -355,26 +303,23 @@ impl RxIndex {
         push(&mut slots, &mut c, Self::BridgeEval);
         push(&mut slots, &mut c, Self::ChallengeStage);
         push(&mut slots, &mut c, Self::BetaStage);
-        push(&mut slots, &mut c, Self::ChildPointsStage(Side::Left));
-        push(&mut slots, &mut c, Self::ChildPointsStage(Side::Right));
-        {
-            let mut i = 0;
-            while i < ChildBridgeKind::ALL.len() {
-                let kind = ChildBridgeKind::ALL[i];
-                push(&mut slots, &mut c, Self::ChildBridge(kind, Side::Left));
-                push(&mut slots, &mut c, Self::ChildBridge(kind, Side::Right));
-                i += 1;
-            }
-        }
         assert!(c == Self::NUM);
         slots
+    }
+
+    /// The position of `self` in [`ALL`](Self::ALL).
+    pub fn position(self) -> usize {
+        Self::ALL
+            .iter()
+            .position(|&v| v == self)
+            .expect("every variant appears in ALL")
     }
 }
 
 /// Identifies a nested-field polynomial within a proof: either one of the
 /// two accumulator polynomials (which are not rx polynomials) or one of the
 /// rx polynomials addressed by [`RxIndex`].
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RxComponent {
     /// The `a` polynomial of the nested accumulator (raw revdot claim).
     AbA,
@@ -386,6 +331,7 @@ pub enum RxComponent {
 
 pub mod claims;
 pub mod pcs;
+pub mod unified;
 
 pub mod stages {
     pub mod ab;
@@ -422,6 +368,10 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
                 let staged = MultiStage::new(step_circuit);
                 registry.register_internal_circuit(staged)?
             }
+            Export => {
+                let circuit = circuits::export::Circuit::<C::HostCurve, R>::new();
+                registry.register_internal_circuit(MultiStage::new(circuit))?
+            }
             EndoscalarStage => registry.register_bonding(endoscalar::EndoscalarStage::mask()?),
             PointsStage => registry.register_bonding(endoscalar::PointsStage::<
                 C::HostCurve,
@@ -455,12 +405,11 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
                 registry.register_bonding(stages::challenges::Stage::<C::HostCurve, R>::mask()?)
             }
             BetaStage => registry.register_bonding(stages::beta::Stage::<C::HostCurve, R>::mask()?),
+            BetaFinalStaged => {
+                registry.register_bonding(stages::beta::Stage::<C::HostCurve, R>::final_mask()?)
+            }
             Loading => {
                 let circuit = circuits::loading::Circuit::<C::HostCurve, R>::new();
-                registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)
-            }
-            Copying(side) => {
-                let circuit = circuits::copying::Circuit::<C::HostCurve, R>::new(side);
                 registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)
             }
         };

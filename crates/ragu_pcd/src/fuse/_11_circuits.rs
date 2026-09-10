@@ -1,14 +1,36 @@
 use alloc::vec::Vec;
 
 use ragu_arithmetic::{Cycle, rand::CryptoRng};
-use ragu_circuits::{CircuitExt, polynomials::Rank};
+use ragu_circuits::{CircuitExt, polynomials::Rank, staging::MultiStage};
 use ragu_core::Result;
 
+use super::NestedChallengeWitnesses;
 use crate::{
     Application,
-    internal::{native, native::total_circuit_counts},
+    internal::{
+        endoscalar::PointsWitness,
+        native,
+        native::total_circuit_counts,
+        nested::{self, NUM_ENDOSCALING_POINTS},
+    },
     proof::ProofBuilder,
 };
+
+/// The witnesses of every nested stage a fuse step committed, for tracing
+/// the nested circuits that load them.
+pub(super) struct NestedWitnesses<'a, C: Cycle> {
+    pub(super) endoscalar: u128,
+    pub(super) points: &'a PointsWitness<C::HostCurve, NUM_ENDOSCALING_POINTS>,
+    pub(super) preamble: nested::stages::preamble::Witness<C::HostCurve>,
+    pub(super) s_prime: nested::stages::s_prime::Witness<C::HostCurve>,
+    pub(super) inner_error: nested::stages::inner_error::Witness<C::HostCurve>,
+    pub(super) outer_error: nested::stages::outer_error::Witness<C::HostCurve>,
+    pub(super) ab: nested::stages::ab::Witness<C::HostCurve>,
+    pub(super) query: nested::stages::query::Witness<C::HostCurve>,
+    pub(super) f: nested::stages::f::Witness<C::HostCurve>,
+    pub(super) eval: nested::stages::eval::Witness<C::HostCurve>,
+    pub(super) challenges: NestedChallengeWitnesses<C::ScalarField>,
+}
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
@@ -199,6 +221,63 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         builder.set_native_compute_v_rx(compute_v_rx);
         builder.set_native_bind_challenges_rxs(bind_challenges_rxs);
         builder.set_native_bind_beta_rx(bind_beta_rx);
+
+        Ok(())
+    }
+
+    /// Traces the nested circuits that verify this step on the nested side.
+    ///
+    /// Today that is the export circuit, which pins the nested unified
+    /// instance to the stages; the collapse and `compute_v` mirrors follow.
+    pub(super) fn compute_nested_circuits<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        witnesses: &NestedWitnesses<'_, C>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<()> {
+        let instance = nested::unified::Instance {
+            c: builder.nested_c(),
+            v: builder.nested_v()?,
+            x: nested::challenge::<C>(builder.x())?,
+            y: nested::challenge::<C>(builder.y())?,
+            u: nested::challenge::<C>(builder.u())?,
+            exported: [
+                builder.native_preamble_commitment(),
+                builder.native_inner_error_commitment(),
+                builder.native_outer_error_commitment(),
+                builder.native_query_commitment(),
+                builder.native_eval_commitment(),
+                builder.native_a_commitment(),
+                builder.native_b_commitment(),
+                builder.native_registry_xy_commitment(),
+                builder.native_p_commitment(),
+            ],
+        };
+
+        let export_trace =
+            MultiStage::new(nested::circuits::export::Circuit::<C::HostCurve, R>::new())
+                .trace(nested::circuits::export::Witness {
+                    instance,
+                    endoscalar: witnesses.endoscalar,
+                    points: witnesses.points,
+                    preamble: &witnesses.preamble,
+                    s_prime: &witnesses.s_prime,
+                    inner_error: &witnesses.inner_error,
+                    outer_error: &witnesses.outer_error,
+                    ab: &witnesses.ab,
+                    query: &witnesses.query,
+                    f: &witnesses.f,
+                    eval: &witnesses.eval,
+                    challenges: &witnesses.challenges.challenges,
+                    beta: witnesses.challenges.beta,
+                })?
+                .into_output();
+        let export_rx = self.nested_registry.assemble(
+            &export_trace,
+            nested::InternalCircuitIndex::Export.circuit_index(),
+            &mut *rng,
+        )?;
+        builder.set_nested_export_rx(export_rx);
 
         Ok(())
     }

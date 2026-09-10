@@ -28,33 +28,36 @@
 //! * **The `registry_xy` polynomial** is compared against
 //!   $m(w, x, y)$ at a $w$ the verifier samples fresh, so any change to it is
 //!   caught on the same grounds.
-//! * **A native rx coefficient, or a nested one whose component enters a
-//!   circuit claim**, is caught when the coefficient sits in $[0, n)$. A
-//!   circuit claim checks $\operatorname{revdot}(a, a(zX) + s\_y + t\_z) = k(y)$,
+//! * **A native or nested rx coefficient** is caught when the coefficient
+//!   sits in $[0, n)$: every native component enters some circuit claim, and
+//!   every nested one enters the endoscaling steps' or the export circuit's,
+//!   which reserves every nested stage. A circuit claim checks
+//!   $\operatorname{revdot}(a, a(zX) + s\_y + t\_z) = k(y)$,
 //!   where the verifier — not the prover — supplies $t\_z$. Perturbing
 //!   coefficient $i$ of $a$ by $\delta$ moves the left side by
 //!   $$\delta \left( a\_{4n-1-i}(z^i + z^{4n-1-i}) + s\_{y,4n-1-i} - z^{2n-1-i} - z^{2n+i} \right),$$
 //!   and for $i < n$ the exponent $2n + i$ of that last term — which comes
 //!   from $t\_z$ and is thus outside the prover's reach — is matched by no
 //!   other term, so the bracket is a nonzero polynomial in the fresh $z$.
-//! * **Everything else** — a coefficient at $i \ge n$, or any coefficient of
-//!   a component that only ever appears in bonding claims (every `Bridge*`
-//!   and child-stage polynomial, whose $b$ side is $s\_y$ alone) — is
+//! * **Everything else** — a coefficient at $i \ge n$ — is
 //!   [`Binding::Unbound`]: the claim moves only where $s\_y$ happens to be
 //!   occupied, which the wiring polynomial decides and this module does not
 //!   model.
 //!
-//! * **A nested accumulator coefficient** is [`Binding::Unbound`] for now.
-//!   The raw nested claim's $k(y)$ is derived as
-//!   $\operatorname{revdot}(a, b)$ from the very polynomials the claim checks,
-//!   so the claim is tautological, and nothing else reads the nested
-//!   accumulator until the nested fold is verified in-circuit.
+//! * **A nested accumulator coefficient** is caught when it moves the
+//!   derived $c_n = \operatorname{revdot}(a_n, b_n)$. The raw nested claim
+//!   itself is tautological, its $k(y)$ being derived from the very
+//!   polynomials it checks, but $c_n$ is also a wire of the export
+//!   circuit's instance: that claim's $k(y_n)$ moves while the circuit's
+//!   trace stays put, and the two are compared at a $y$ the verifier
+//!   samples fresh. Whether a coefficient moves $c_n$ depends on the
+//!   partner polynomial, so the classification compares $c_n$ before and
+//!   after the edit.
 //! * **The nested `registry_xy` polynomial** is compared against
 //!   $m_n(w, x_n, y_n)$ at a $w$ the verifier samples fresh, like its native
 //!   counterpart, so any change to it is caught.
-//! * **A nested `p` coefficient** is [`Binding::Unbound`] for now: $v_n$ is
-//!   derived from it but reaches no instance and no claim until the nested
-//!   batch is verified in-circuit.
+//! * **A nested `p` coefficient** is caught on the same grounds: the
+//!   derived $v_n = p_n(u_n)$ is a wire of the export circuit's instance.
 //! * **A nested challenge or beta stage coefficient** is caught at any
 //!   index: the verifier recomputes both stages from the proof's challenges.
 //!
@@ -150,15 +153,6 @@ pub enum NativeRx {
     Eval,
 }
 
-impl Side {
-    const fn from_internal(v: crate::internal::Side) -> Self {
-        match v {
-            crate::internal::Side::Left => Self::Left,
-            crate::internal::Side::Right => Self::Right,
-        }
-    }
-}
-
 impl NativeRx {
     /// The number of native rx polynomial components.
     pub const NUM: usize = crate::internal::native::RxIndex::NUM;
@@ -203,58 +197,6 @@ impl NativeRx {
     }
 }
 
-/// Which bridge stage a child proof's rx polynomial comes from.
-///
-/// Mirrors `internal::nested::ChildBridgeKind`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ChildBridgeKind {
-    /// Child proof's `BridgeSPrime` rx polynomial.
-    SPrime,
-    /// Child proof's `BridgeInnerError` rx polynomial.
-    InnerError,
-    /// Child proof's `BridgeOuterError` rx polynomial.
-    OuterError,
-    /// Child proof's `BridgeAB` rx polynomial.
-    AB,
-    /// Child proof's `BridgeQuery` rx polynomial.
-    Query,
-    /// Child proof's `BridgeEval` rx polynomial.
-    Eval,
-}
-
-impl ChildBridgeKind {
-    /// All kinds in the canonical slot order `internal` defines.
-    ///
-    /// Derived, not restated: this order is the source of truth for the
-    /// relative position of `ChildBridge` entries in the nested `ALL`, and is
-    /// pinned by `test_nested_registry_digest` — re-ordering it changes the
-    /// nested registry digest.
-    pub const ALL: [Self; 6] = Self::derive_all();
-
-    const fn derive_all() -> [Self; 6] {
-        let src = crate::internal::nested::ChildBridgeKind::ALL;
-        let mut out = [Self::SPrime; 6];
-        let mut i = 0;
-        while i < 6 {
-            out[i] = Self::from_internal(src[i]);
-            i += 1;
-        }
-        out
-    }
-
-    const fn from_internal(v: crate::internal::nested::ChildBridgeKind) -> Self {
-        use crate::internal::nested::ChildBridgeKind as I;
-        match v {
-            I::SPrime => Self::SPrime,
-            I::InnerError => Self::InnerError,
-            I::OuterError => Self::OuterError,
-            I::AB => Self::AB,
-            I::Query => Self::Query,
-            I::Eval => Self::Eval,
-        }
-    }
-}
-
 /// Which nested-field rx polynomial of a proof to address.
 ///
 /// Mirrors `internal::nested::RxIndex`.
@@ -262,6 +204,8 @@ impl ChildBridgeKind {
 pub enum NestedRx {
     /// EndoscalingStep circuit rx polynomial (indexed by step number).
     EndoscalingStep(u32),
+    /// Export circuit rx polynomial.
+    Export,
     /// EndoscalarStage rx polynomial.
     EndoscalarStage,
     /// PointsStage rx polynomial.
@@ -286,11 +230,6 @@ pub enum NestedRx {
     ChallengeStage,
     /// Nested beta stage rx polynomial.
     BetaStage,
-    /// Child proof's `PointsStage` rx polynomial (per-side, for copying).
-    ChildPointsStage(Side),
-    /// Child proof's bridge rx polynomial (per-side, for copying),
-    /// keyed by which bridge stage it comes from.
-    ChildBridge(ChildBridgeKind, Side),
 }
 
 /// One of the two nested accumulator polynomials.
@@ -561,16 +500,6 @@ fn in_tz_reach<R: Rank>(coeff: usize) -> bool {
     coeff < R::n()
 }
 
-/// Whether the nested component named by `index` is folded into a circuit
-/// claim at all. The rest appear only in bonding claims, whose `b` side is
-/// $s\_y$ alone.
-fn nested_enters_circuit_claim(index: NestedRx) -> bool {
-    matches!(
-        index,
-        NestedRx::EndoscalingStep(_) | NestedRx::EndoscalarStage | NestedRx::PointsStage
-    )
-}
-
 impl<C: Cycle, R: Rank> Proof<C, R> {
     /// Apply a [`Corruption`] to this proof, reporting whether
     /// [`verify`](crate::Application::verify) is obliged to reject afterwards.
@@ -719,9 +648,11 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 let Some(delta) = monomial::<_, R>(coeff, delta) else {
                     return Binding::Unbound;
                 };
+                // Every nested component enters a circuit claim: the
+                // export circuit reserves every stage.
                 self.nested_rx_mut(index).add_assign(&delta);
                 if matches!(index, NestedRx::ChallengeStage | NestedRx::BetaStage)
-                    || (nested_enters_circuit_claim(index) && in_tz_reach::<R>(coeff))
+                    || in_tz_reach::<R>(coeff)
                 {
                     Binding::MustReject
                 } else {
@@ -737,13 +668,17 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 let Some(delta) = monomial::<_, R>(coeff, delta) else {
                     return Binding::Unbound;
                 };
-                // The raw nested claim's k(y) is derived from these very
-                // polynomials at verification time, so the claim is
-                // tautological, and nothing else reads the nested
-                // accumulator yet: unbound until the nested fold is
-                // verified in-circuit.
+                // The raw nested claim is tautological, its k(y) being
+                // derived from these very polynomials at verification time;
+                // the derived c_n is bound as a wire of the export claim's
+                // instance, so the edit is caught exactly when it moves it.
+                let before = self.nested_c();
                 self.nested_accumulator_mut(which).add_assign(&delta);
-                Binding::Unbound
+                if self.nested_c() == before {
+                    Binding::Unbound
+                } else {
+                    Binding::MustReject
+                }
             }
 
             Corruption::NestedRegistryXyCoeff { coeff, delta } => {
@@ -758,11 +693,15 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 let Some(delta) = monomial::<_, R>(coeff, delta) else {
                     return Binding::Unbound;
                 };
-                // `v_n` is derived from `p_n` but reaches no instance and no
-                // claim yet: unbound until the nested batch is verified
-                // in-circuit.
+                // The derived v_n is bound as a wire of the export claim's
+                // instance, so the edit is caught exactly when it moves it.
+                let before = self.nested_v().ok();
                 self.nested_p_poly_mut().add_assign(&delta);
-                Binding::Unbound
+                if self.nested_v().ok() == before {
+                    Binding::Unbound
+                } else {
+                    Binding::MustReject
+                }
             }
         }
     }
@@ -820,6 +759,7 @@ impl NestedRx {
         use crate::internal::nested::RxIndex as I;
         match v {
             I::EndoscalingStep(n) => Self::EndoscalingStep(n),
+            I::Export => Self::Export,
             I::EndoscalarStage => Self::EndoscalarStage,
             I::PointsStage => Self::PointsStage,
             I::BridgePreamble => Self::BridgePreamble,
@@ -832,10 +772,6 @@ impl NestedRx {
             I::BridgeEval => Self::BridgeEval,
             I::ChallengeStage => Self::ChallengeStage,
             I::BetaStage => Self::BetaStage,
-            I::ChildPointsStage(s) => Self::ChildPointsStage(Side::from_internal(s)),
-            I::ChildBridge(k, s) => {
-                Self::ChildBridge(ChildBridgeKind::from_internal(k), Side::from_internal(s))
-            }
         }
     }
 }

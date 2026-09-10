@@ -1,5 +1,6 @@
 //! Native curve circuits for recursive verification.
 
+pub use circuits::bind_challenges::NUM_BINDERS;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::Rank,
@@ -8,8 +9,6 @@ use ragu_circuits::{
 };
 use ragu_core::Result;
 use ragu_primitives::vec::ConstLen;
-
-pub use circuits::bind_challenges::NUM_BINDERS;
 
 use crate::{internal::fold_revdot::Parameters, step};
 

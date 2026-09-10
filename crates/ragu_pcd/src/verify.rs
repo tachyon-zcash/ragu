@@ -22,6 +22,7 @@ use crate::{
             RxComponent as NestedRxComponent, challenge as nested_challenge,
             claims as nested_claims,
             stages::{beta as nested_beta, challenges as nested_challenges},
+            unified as nested_unified,
         },
     },
 };
@@ -139,6 +140,23 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             );
             nested_claims::build(&nested_source, &mut nested_builder)?;
 
+            // The nested unified instance's k(y), at the sampled nested y,
+            // for the export circuit claim: the instance is read off the
+            // proof (c_n and v_n derived from its polynomials), and the claim
+            // binds it to the export circuit's trace.
+            let unified_ky = Emulator::emulate_wireless(
+                (pcd.proof().nested_instance()?, y_nested),
+                |dr, witness| {
+                    let (instance, y) = witness.cast();
+                    let y = Element::alloc(dr, &mut (), y)?;
+                    let output = nested_unified::Output::<_, C::HostCurve>::alloc(
+                        dr,
+                        &mut (),
+                        instance.as_ref(),
+                    )?;
+                    Ok(*output.ky(dr, &y)?.value().take())
+                },
+            )?;
             let ky_source = nested::SingleProofKySource {
                 // As with the native `raw_c` above, the nested accumulator's
                 // claim is tautological here: its k(y) is derived from the
@@ -149,6 +167,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                     &pcd.proof()[NestedRxComponent::AbA],
                     &pcd.proof()[NestedRxComponent::AbB],
                 ),
+                unified_ky,
             };
             nested::ky_values(&ky_source)
                 .zip(nested_builder.a.iter().zip(nested_builder.b.iter()))
@@ -187,6 +206,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                 C::ScalarField::ZERO,
                 &nested_challenges::Witness::new(
                     challenge_lifts.try_into().expect("NUM challenge lifts"),
+                    pcd.proof().is_base_case::<HEADER_SIZE>(),
                 ),
             )?;
             let expected_beta = nested_beta::Stage::<C::HostCurve, R>::rx(
@@ -305,6 +325,7 @@ mod nested {
     /// Source for k(y) values for nested single-proof verification.
     pub struct SingleProofKySource<F> {
         pub raw_c: F,
+        pub unified_ky: F,
     }
 
     impl<F: Field> KySource for SingleProofKySource<F> {
@@ -316,6 +337,10 @@ mod nested {
 
         fn ones(&self) -> impl Iterator<Item = F> + Clone {
             once(F::ONE)
+        }
+
+        fn unified_ky(&self) -> impl Iterator<Item = F> {
+            once(self.unified_ky)
         }
 
         fn zero(&self) -> F {

@@ -45,26 +45,45 @@ use ragu_primitives::{
 /// mu, nu, mu_prime, nu_prime, x, alpha, u`.
 pub const NUM: usize = 10;
 
+/// The position of the lift of $y$.
+pub const Y: usize = 1;
+/// The position of the lift of $x$.
+pub const X: usize = 7;
+/// The position of the lift of $u$.
+pub const U: usize = 9;
+
 /// Length type for the challenge lifts.
 pub type Len = ConstLen<NUM>;
 
-/// The lifts, in stage order.
+/// The lifts, in stage order, and the base-case sign.
 #[derive(Clone)]
 pub struct Witness<F> {
     pub lifts: FixedVec<F, Len>,
+    /// $+1$ when both children of this step are trivial proofs, $-1$
+    /// otherwise: the native side's base-case verdict, carried as a sign so
+    /// the last binding circuit can add or subtract one generator.
+    pub base_case_sign: F,
 }
 
 impl<F: PrimeField> Witness<F> {
-    /// The lifts of the given native challenges, in stage order.
-    pub fn new(lifts: [F; NUM]) -> Self {
+    /// The lifts of the given native challenges, in stage order, and the
+    /// base-case sign.
+    pub fn new(lifts: [F; NUM], is_base_case: bool) -> Self {
         Self {
             lifts: FixedVec::new(lifts.into()).expect("NUM lifts"),
+            base_case_sign: base_case_sign(is_base_case),
         }
     }
 }
 
+/// The sign the stage carries for the given base-case verdict.
+pub fn base_case_sign<F: PrimeField>(is_base_case: bool) -> F {
+    if is_base_case { F::ONE } else { -F::ONE }
+}
+
 /// Prover-internal output gadget for this stage: each lift followed by the
-/// zero that keeps the next lift at an $a$-wire.
+/// zero that keeps the next lift at an $a$-wire, then the base-case sign
+/// and its zero.
 ///
 /// This is stage communication data, not part of any circuit's public
 /// instance.
@@ -72,6 +91,8 @@ impl<F: PrimeField> Witness<F> {
 pub struct Output<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
     pub pairs: FixedVec<Pair<'dr, D>, Len>,
+    #[ragu(gadget)]
+    pub base_case: Pair<'dr, D>,
 }
 
 /// One lift and its trailing zero.
@@ -94,8 +115,9 @@ impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stag
     type OutputKind = Kind![C::Base; Output<'_, _>];
 
     fn values() -> usize {
-        // One lift and one zero per challenge: each lift at an a-wire.
-        NUM * 2
+        // One lift and one zero per challenge, then the base-case sign and
+        // its zero: every value at an a-wire.
+        (NUM + 1) * 2
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -113,7 +135,11 @@ impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stag
                 zero: Element::alloc(dr, allocator, witness.as_ref().map(|_| C::Base::ZERO))?,
             })
         })?;
-        Ok(Output { pairs })
+        let base_case = Pair {
+            lift: Element::alloc(dr, allocator, witness.as_ref().map(|w| w.base_case_sign))?,
+            zero: Element::alloc(dr, allocator, witness.as_ref().map(|_| C::Base::ZERO))?,
+        };
+        Ok(Output { pairs, base_case })
     }
 }
 

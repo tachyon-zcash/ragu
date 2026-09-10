@@ -279,6 +279,9 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     nested_challenges_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
     nested_beta_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
 
+    // Nested export circuit
+    nested_export_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
+
     // Nested endoscaling commitment caches (lazily computed from polynomials)
     nested_endoscaling_step_commitments: OnceCell<Vec<C::NestedCurve>>,
     nested_endoscalar_commitment: OnceCell<C::NestedCurve>,
@@ -295,6 +298,9 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     // Nested challenge and beta stage commitment caches
     nested_challenges_commitment: OnceCell<C::NestedCurve>,
     nested_beta_commitment: OnceCell<C::NestedCurve>,
+
+    // Nested export circuit commitment cache
+    nested_export_commitment: OnceCell<C::NestedCurve>,
 
     // Challenges
     w: Option<C::CircuitField>,
@@ -330,10 +336,6 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
 
     // Cached bridge commitment cache (lazily computed from its cached rx)
     bridge_ab_commitment: OnceCell<C::NestedCurve>,
-
-    // Children's stage rx (for copying circuit claims)
-    child_left_stage_rx: Option<super::ChildStageRx<C::ScalarField, R>>,
-    child_right_stage_rx: Option<super::ChildStageRx<C::ScalarField, R>>,
 }
 
 impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
@@ -388,6 +390,7 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             nested_p_poly: None,
             nested_challenges_rx: None,
             nested_beta_rx: None,
+            nested_export_rx: None,
             nested_endoscaling_step_commitments: OnceCell::new(),
             nested_endoscalar_commitment: OnceCell::new(),
             nested_points_commitment: OnceCell::new(),
@@ -397,6 +400,7 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             nested_p_commitment: OnceCell::new(),
             nested_challenges_commitment: OnceCell::new(),
             nested_beta_commitment: OnceCell::new(),
+            nested_export_commitment: OnceCell::new(),
             w: None,
             y: None,
             z: None,
@@ -426,8 +430,6 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             native_bind_challenges_commitments: OnceCell::new(),
             native_bind_beta_commitment: OnceCell::new(),
             bridge_ab_commitment: OnceCell::new(),
-            child_left_stage_rx: None,
-            child_right_stage_rx: None,
         }
     }
 
@@ -768,6 +770,17 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         nested_beta_commitment,
         nested_beta_rx
     );
+    setter!(
+        set_nested_export_rx,
+        nested_export_rx,
+        sparse::Polynomial<C::ScalarField, R>
+    );
+    lazy_commitment!(
+        nested,
+        nested_export_commitment,
+        nested_export_commitment,
+        nested_export_rx
+    );
 
     setter!(set_w, w, C::CircuitField);
     setter!(set_y, y, C::CircuitField);
@@ -780,17 +793,6 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
     setter!(set_alpha, alpha, C::CircuitField);
     setter!(set_u, u, C::CircuitField);
     setter!(set_pre_beta, pre_beta, C::CircuitField);
-
-    setter!(
-        set_child_left_stage_rx,
-        child_left_stage_rx,
-        super::ChildStageRx<C::ScalarField, R>
-    );
-    setter!(
-        set_child_right_stage_rx,
-        child_right_stage_rx,
-        super::ChildStageRx<C::ScalarField, R>
-    );
 
     getter!(w, w, C::CircuitField);
     getter!(y, y, C::CircuitField);
@@ -818,6 +820,15 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
     /// $c = \text{revdot}(a, b)$ in the scalar field.
     pub(crate) fn nested_c(&self) -> C::ScalarField {
         B::sparse_revdot(self.nested_a_poly(), self.nested_b_poly())
+    }
+
+    /// Returns the nested batch's evaluation $v_n = p_n(u_n)$, at the nested
+    /// counterpart of $u$.
+    pub(crate) fn nested_v(&self) -> Result<C::ScalarField> {
+        Ok(B::sparse_eval(
+            self.nested_p_poly(),
+            nested::challenge::<C>(self.u())?,
+        ))
     }
 
     /// Build the proof. All polynomial fields must have been set. Commitment
@@ -856,6 +867,7 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         self.nested_p_commitment();
         self.nested_challenges_commitment();
         self.nested_beta_commitment();
+        self.nested_export_commitment();
 
         macro_rules! take {
             ($field:ident) => {
@@ -925,6 +937,7 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             nested_p_poly: take!(nested_p_poly),
             nested_challenges_rx: take!(nested_challenges_rx),
             nested_beta_rx: take!(nested_beta_rx),
+            nested_export_rx: take!(nested_export_rx),
 
             nested_endoscaling_step_commitments: self
                 .nested_endoscaling_step_commitments
@@ -941,6 +954,7 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             nested_p_commitment: cached!(nested_p_commitment),
             nested_challenges_commitment: cached!(nested_challenges_commitment),
             nested_beta_commitment: cached!(nested_beta_commitment),
+            nested_export_commitment: cached!(nested_export_commitment),
 
             w: take!(w),
             y: take!(y),
@@ -977,9 +991,6 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
                 .map(Cached)
                 .collect(),
             native_bind_beta_commitment: cached!(native_bind_beta_commitment),
-
-            child_left_stage_rx: take!(child_left_stage_rx),
-            child_right_stage_rx: take!(child_right_stage_rx),
         })
     }
 }

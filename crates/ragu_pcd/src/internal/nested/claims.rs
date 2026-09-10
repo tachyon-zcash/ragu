@@ -6,12 +6,13 @@
 //! The nested claim structure is simpler than native:
 //! - Raw accumulator checks ([`RxComponent::AbA`] paired with
 //!   [`RxComponent::AbB`]): $k(y) = c$
-//! - Circuit checks ([`EndoscalingStep`](InternalCircuitIndex::EndoscalingStep)): $k(y) = 1$
-//! - Masking checks ([`EndoscalarStage`](InternalCircuitIndex::EndoscalarStage),
-//!   [`PointsStage`](InternalCircuitIndex::PointsStage),
-//!   `PointsFinalStaged`, and all `Bridge*` variants): $k(y) = 0$
+//! - Circuit checks: [`EndoscalingStep`](InternalCircuitIndex::EndoscalingStep)
+//!   ($k(y) = 1$) and [`Export`](InternalCircuitIndex::Export) ($k(y)$ the
+//!   nested unified instance's)
+//! - Masking checks (every stage mask, the final staged masks, and the
+//!   loading circuit): $k(y) = 0$
 
-use alloc::borrow::Cow;
+use alloc::{borrow::Cow, vec::Vec};
 use core::iter::once;
 
 use ragu_arithmetic::ff::PrimeField;
@@ -19,7 +20,7 @@ use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::Element;
 
-use super::{ChildBridgeKind, InternalCircuitIndex, RxComponent, RxIndex};
+use super::{InternalCircuitIndex, RxComponent, RxIndex};
 use crate::internal::claims::{Builder, Source, sum_polynomials};
 
 /// Trait for processing nested claim values into accumulated outputs.
@@ -94,12 +95,11 @@ impl<'m, 'rx, F: PrimeField, R: Rank, B: ragu_backend::Backend>
 ///
 /// The ordering is:
 /// 1. Raw accumulator checks ($k(y) = c$): one per proof
-/// 2. Circuit checks ($k(y) = 1$): [`EndoscalingStep`](InternalCircuitIndex::EndoscalingStep)
-///    for each step, interleaved across proofs
-/// 3. Masking checks ($k(y) = 0$): [`EndoscalarStage`](InternalCircuitIndex::EndoscalarStage),
-///    [`PointsStage`](InternalCircuitIndex::PointsStage), `PointsFinalStaged`,
-///    all `Bridge*` variants, and the routing circuits, each folded across
-///    proofs
+/// 2. Circuit checks: [`EndoscalingStep`](InternalCircuitIndex::EndoscalingStep)
+///    for each step ($k(y) = 1$), then [`Export`](InternalCircuitIndex::Export)
+///    ($k(y)$ the nested unified instance's), each interleaved across proofs
+/// 3. Masking checks ($k(y) = 0$): every stage mask, the final staged masks,
+///    and the loading circuit, each folded across proofs
 ///
 /// This ordering must match the ky_elements ordering from [`ky_values`].
 pub fn build<S, P>(source: &S, processor: &mut P) -> Result<()>
@@ -124,6 +124,37 @@ where
                     .zip(source.rx(Rx(RxIndex::PointsStage)))
                 {
                     processor.internal_circuit_claim(id, [step_rx, endo_rx, pts_rx].into_iter());
+                }
+            }
+            // export: its rx and every stage it reserves, which is every
+            // nested stage.
+            Export => {
+                let loaded = [
+                    RxIndex::Export,
+                    RxIndex::EndoscalarStage,
+                    RxIndex::PointsStage,
+                    RxIndex::BridgePreamble,
+                    RxIndex::BridgeSPrime,
+                    RxIndex::BridgeInnerError,
+                    RxIndex::BridgeOuterError,
+                    RxIndex::BridgeAB,
+                    RxIndex::BridgeQuery,
+                    RxIndex::BridgeF,
+                    RxIndex::BridgeEval,
+                    RxIndex::ChallengeStage,
+                    RxIndex::BetaStage,
+                ];
+                let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
+                for index in loaded {
+                    for (i, rx) in source.rx(Rx(index)).enumerate() {
+                        if per_proof.len() <= i {
+                            per_proof.push(Vec::new());
+                        }
+                        per_proof[i].push(rx);
+                    }
+                }
+                for rxs in per_proof {
+                    processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
             EndoscalarStage => {
@@ -168,6 +199,9 @@ where
             BetaStage => {
                 processor.bonding_claim(id, source.rx(Rx(RxIndex::BetaStage)))?;
             }
+            BetaFinalStaged => {
+                processor.bonding_claim(id, source.rx(Rx(RxIndex::Export)))?;
+            }
             Loading => {
                 let groups = source
                     .rx(Rx(RxIndex::PointsStage))
@@ -179,21 +213,6 @@ where
                     .zip(source.rx(Rx(RxIndex::BridgeF)))
                     .map(|((((((ps, bp), bs), bi), ba), bq), bf)| {
                         [ps, bp, bs, bi, ba, bq, bf].into_iter()
-                    });
-                processor.grouped_bonding_claim(id, groups)?;
-            }
-            Copying(side) => {
-                let groups = source
-                    .rx(Rx(RxIndex::ChildPointsStage(side)))
-                    .zip(source.rx(Rx(RxIndex::BridgePreamble)))
-                    .zip(source.rx(Rx(RxIndex::ChildBridge(ChildBridgeKind::SPrime, side))))
-                    .zip(source.rx(Rx(RxIndex::ChildBridge(ChildBridgeKind::InnerError, side))))
-                    .zip(source.rx(Rx(RxIndex::ChildBridge(ChildBridgeKind::OuterError, side))))
-                    .zip(source.rx(Rx(RxIndex::ChildBridge(ChildBridgeKind::AB, side))))
-                    .zip(source.rx(Rx(RxIndex::ChildBridge(ChildBridgeKind::Query, side))))
-                    .zip(source.rx(Rx(RxIndex::ChildBridge(ChildBridgeKind::Eval, side))))
-                    .map(|(((((((cp, bp), cs), ci), co), ca), cq), ce)| {
-                        [cp, bp, cs, ci, co, ca, cq, ce].into_iter()
                     });
                 processor.grouped_bonding_claim(id, groups)?;
             }
@@ -212,11 +231,15 @@ pub trait KySource {
     /// $c = \operatorname{revdot}(a, b)$.
     fn raw_c(&self) -> impl Iterator<Item = Self::Ky>;
 
-    /// One value of $1$ per proof, for the circuit checks.
+    /// One value of $1$ per proof, for the endoscaling step checks.
     ///
     /// Repeated once per endoscaling step by [`ky_values`]. The `+ Clone`
     /// bound is required for `repeat_n`.
     fn ones(&self) -> impl Iterator<Item = Self::Ky> + Clone;
+
+    /// The nested unified instance's $k(y)$, one per proof, for the export
+    /// circuit check.
+    fn unified_ky(&self) -> impl Iterator<Item = Self::Ky>;
 
     /// Returns 0 for stage checks.
     fn zero(&self) -> Self::Ky;
@@ -228,6 +251,7 @@ pub trait KySource {
 /// - The raw accumulator values (one per proof)
 /// - `num_steps` copies of the per-proof ones (for EndoscalingStep circuit
 ///   checks, interleaved across proofs exactly as [`build`] emits them)
+/// - The per-proof unified $k(y)$ values (for the export circuit check)
 /// - Infinite zeros (for stage checks)
 pub fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
     let num_steps = super::NUM_ENDOSCALING_STEPS;
@@ -235,26 +259,38 @@ pub fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
     source
         .raw_c()
         .chain(core::iter::repeat_n(source.ones(), num_steps).flatten())
+        .chain(source.unified_ky())
         .chain(core::iter::repeat(source.zero()))
 }
 
 /// [`KySource`] for the two child proofs of a fuse step, inside a driver.
 ///
-/// Carries each child's raw accumulator value $c$ as an element, and the
-/// constant one and zero the circuit and stage checks take.
+/// Carries each child's raw accumulator value $c$ and nested unified $k(y)$
+/// as elements, and the constant one and zero the other checks take.
 pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
     pub left_raw_c: Element<'dr, D>,
     pub right_raw_c: Element<'dr, D>,
+    pub left_unified: Element<'dr, D>,
+    pub right_unified: Element<'dr, D>,
     pub one: Element<'dr, D>,
     pub zero: Element<'dr, D>,
 }
 
 impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
-    /// Create a [`TwoProofKySource`] from the children's raw `c` values.
-    pub fn new(dr: &mut D, left_raw_c: Element<'dr, D>, right_raw_c: Element<'dr, D>) -> Self {
+    /// Create a [`TwoProofKySource`] from the children's raw `c` values and
+    /// unified $k(y)$ values.
+    pub fn new(
+        dr: &mut D,
+        left_raw_c: Element<'dr, D>,
+        right_raw_c: Element<'dr, D>,
+        left_unified: Element<'dr, D>,
+        right_unified: Element<'dr, D>,
+    ) -> Self {
         Self {
             left_raw_c,
             right_raw_c,
+            left_unified,
+            right_unified,
             one: Element::one(),
             zero: Element::zero(dr),
         }
@@ -270,6 +306,10 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
 
     fn ones(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
         once(self.one.clone()).chain(once(self.one.clone()))
+    }
+
+    fn unified_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
+        once(self.left_unified.clone()).chain(once(self.right_unified.clone()))
     }
 
     fn zero(&self) -> Element<'dr, D> {

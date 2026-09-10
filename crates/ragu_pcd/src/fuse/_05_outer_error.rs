@@ -55,6 +55,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         nested_inner_error_witness: &nested::stages::inner_error::Witness<C::HostCurve>,
         nested_claims: NestedFuseBuilder<'_, 'rx, C::ScalarField, R, B>,
         nested_source: &NestedFuseProofSource<'rx, C, R>,
+        nested_preamble: &nested::stages::preamble::Witness<C::HostCurve>,
         y: &Element<'dr, D>,
         mu: &Element<'dr, D>,
         nu: &Element<'dr, D>,
@@ -67,6 +68,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         native::stages::outer_error::Witness<C, native::RevdotParameters>,
         FixedVec<TrackedPoly<'rx, FoldKey, C::CircuitField, R>, NativeNumGroups>,
         FixedVec<sparse::Polynomial<C::CircuitField, R>, NativeNumGroups>,
+        nested::stages::outer_error::Witness<C::HostCurve>,
         FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
         FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
     )>
@@ -175,11 +177,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 
         // The bridge for this stage carries the nested fold's second layer, so
         // it is built once the native commitment it also bridges exists.
-        let (nested_a, nested_b) = self.compute_nested_outer_error(
+        let (nested_outer_error_witness, nested_a, nested_b) = self.compute_nested_outer_error(
             rng,
             nested_inner_error_witness,
             nested_claims,
             nested_source,
+            nested_preamble,
+            y,
             mu,
             nu,
             builder,
@@ -189,6 +193,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             native_outer_error_witness,
             native_a,
             native_b,
+            nested_outer_error_witness,
             nested_a,
             nested_b,
         ))
@@ -217,25 +222,32 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     /// Applies the first layer of the nested fold and commits its second
     /// layer's data into the `outer_error` bridge stage.
     ///
-    /// The nested $\mu$ and $\nu$ are derived from the native challenges (see
-    /// [`nested::challenge`]), which the transcript squeezes only after the
-    /// bridge carrying the layer-1 error terms is absorbed. The collapsed
+    /// The nested $y$, $\mu$ and $\nu$ are derived from the native challenges
+    /// (see [`nested::challenge`]), which the transcript squeezes only after
+    /// the bridge carrying the layer-1 error terms is absorbed. The collapsed
     /// values are computed through [`fold_revdot::ClaimFolder`] exactly as a
-    /// nested collapse circuit would, so the witness this stage commits is the
-    /// one such a circuit will later enforce.
+    /// nested collapse circuit would, from the children's $k(y_n)$ values
+    /// the bridge preamble's copies of their nested unified instances
+    /// determine, so the witness this stage commits is the one such a
+    /// circuit will later enforce.
+    #[allow(clippy::too_many_arguments)]
     fn compute_nested_outer_error<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         nested_inner_error_witness: &nested::stages::inner_error::Witness<C::HostCurve>,
         nested_claims: NestedFuseBuilder<'_, '_, C::ScalarField, R, B>,
         nested_source: &NestedFuseProofSource<'_, C, R>,
+        nested_preamble: &nested::stages::preamble::Witness<C::HostCurve>,
+        native_y: C::CircuitField,
         native_mu: C::CircuitField,
         native_nu: C::CircuitField,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
+        nested::stages::outer_error::Witness<C::HostCurve>,
         FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
         FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
     )> {
+        let nested_y = nested::challenge::<C>(native_y)?;
         let nested_mu = nested::challenge::<C>(native_mu)?;
         let nested_nu = nested::challenge::<C>(native_nu)?;
         let nested_mu_inv = nested_mu.invert().expect("nested mu must be non-zero");
@@ -255,23 +267,47 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 
         let collapsed = NestedFuseEmulator::<C>::emulate_wireless(
             (
-                &nested_inner_error_witness.error_terms,
-                nested_mu,
-                nested_nu,
-                nested_source.left.nested_c(),
-                nested_source.right.nested_c(),
+                (
+                    &nested_inner_error_witness.error_terms,
+                    nested_y,
+                    nested_mu,
+                    nested_nu,
+                ),
+                (
+                    nested_source.left.nested_c(),
+                    nested_source.right.nested_c(),
+                ),
+                nested_preamble,
             ),
             |dr, witness| {
-                let (inner_error_terms, nested_mu, nested_nu, left_c, right_c) = witness.cast();
+                let (challenges, cs, nested_preamble) = witness.cast();
+                let (inner_error_terms, nested_y, nested_mu, nested_nu) = challenges.cast();
+                let (left_c, right_c) = cs.cast();
                 let allocator = &mut ();
 
+                let preamble = nested::stages::preamble::Stage::<C::HostCurve, R>::default()
+                    .witness(dr, nested_preamble.as_ref().map(|w| *w))?;
+
+                let nested_y = Element::alloc(dr, allocator, nested_y)?;
                 let nested_mu = Element::alloc(dr, allocator, nested_mu)?;
                 let nested_nu = Element::alloc(dr, allocator, nested_nu)?;
                 let left_c = Element::alloc(dr, allocator, left_c)?;
                 let right_c = Element::alloc(dr, allocator, right_c)?;
 
+                // The k(y) of each child's nested unified instance, from the
+                // bridge preamble's copies: the value the export claim's
+                // fold uses.
+                let left_unified = preamble.left.nested_instance().ky(dr, &nested_y)?;
+                let right_unified = preamble.right.nested_instance().ky(dr, &nested_y)?;
+
                 // Build k(y) values in nested claim order.
-                let ky_source = nested::claims::TwoProofKySource::new(dr, left_c, right_c);
+                let ky_source = nested::claims::TwoProofKySource::new(
+                    dr,
+                    left_c,
+                    right_c,
+                    left_unified,
+                    right_unified,
+                );
                 let mut ky = nested::claims::ky_values(&ky_source);
 
                 let fold_products = fold_revdot::ClaimFolder::new(dr, &nested_mu, &nested_nu)?;
@@ -294,18 +330,19 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 &a, &b,
             );
 
+        let bridge = nested::stages::outer_error::Witness {
+            native_outer_error: builder.native_outer_error_commitment(),
+            error_terms,
+            collapsed,
+        };
         let bridge_rx = nested::stages::outer_error::Stage::<C::HostCurve, R>::rx(
             C::ScalarField::random(&mut *rng),
-            &nested::stages::outer_error::Witness {
-                native_outer_error: builder.native_outer_error_commitment(),
-                error_terms,
-                collapsed,
-            },
+            &bridge,
         )?;
         let bridge_commitment =
             B::sparse_commit_to_affine(&bridge_rx, C::nested_generators(self.params));
         builder.set_bridge_outer_error_rx(bridge_rx, bridge_commitment);
 
-        Ok((a, b))
+        Ok((bridge, a, b))
     }
 }

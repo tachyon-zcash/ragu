@@ -18,8 +18,8 @@ use ragu_primitives::vec::ConstLen;
 use super::{InternalCircuitIndex, RxComponent, RxIndex, challenge};
 use crate::Proof;
 
-/// Length type for a proof's own nested rx components.
-pub type OwnRxLen = ConstLen<{ RxIndex::NUM_OWN }>;
+/// Length type for a proof's nested rx components.
+pub type OwnRxLen = ConstLen<{ RxIndex::NUM }>;
 
 /// Length type for the nested internal circuits, one registry index each.
 pub type InternalLen = ConstLen<{ InternalCircuitIndex::NUM }>;
@@ -95,7 +95,7 @@ pub const STATIC_F_QUERIES: [StaticFQuery; 18] = [
 /// for each child its own rx commitments, $a$, $b$, `registry_xy` and $p$,
 /// then the current step's two `registry_wx`, `registry_wy`, $a$, $b$ and
 /// `registry_xy`. See [`Batch::evaluated`] for the order.
-pub const NUM_BATCHED_POINTS: usize = 1 + 2 * (RxIndex::NUM_OWN + 4) + 6;
+pub const NUM_BATCHED_POINTS: usize = 1 + 2 * (RxIndex::NUM + 4) + 6;
 
 /// The nested challenges of a child proof, derived from its native ones.
 #[derive(Clone, Copy)]
@@ -187,7 +187,7 @@ impl<'a, C: Cycle, R: Rank> Batch<'a, C, R> {
             .chain(
                 [left, right]
                     .into_iter()
-                    .flat_map(move |proof| RxIndex::OWN.iter().map(move |&id| (&proof[id], xz))),
+                    .flat_map(move |proof| RxIndex::ALL.iter().map(move |&id| (&proof[id], xz))),
             )
             .chain(
                 InternalCircuitIndex::ALL
@@ -197,7 +197,7 @@ impl<'a, C: Cycle, R: Rank> Batch<'a, C, R> {
     }
 
     /// The polynomials the batch evaluates at $u_n$ and folds into $p_n$
-    /// after $f_n$, in that order: for each child its own rx polynomials,
+    /// after $f_n$, in that order: for each child its rx polynomials,
     /// $a$, $b$, `registry_xy` and $p$; then the current step's
     /// `registry_wx0`, `registry_wx1`, `registry_wy`, $a$, $b$ and
     /// `registry_xy`.
@@ -210,7 +210,7 @@ impl<'a, C: Cycle, R: Rank> Batch<'a, C, R> {
         [self.left, self.right]
             .into_iter()
             .flat_map(|proof| {
-                RxIndex::OWN.iter().map(move |&id| &proof[id]).chain([
+                RxIndex::ALL.iter().map(move |&id| &proof[id]).chain([
                     &proof[RxComponent::AbA],
                     &proof[RxComponent::AbB],
                     proof.nested_registry_xy_poly(),
@@ -236,7 +236,7 @@ impl<'a, C: Cycle, R: Rank> Batch<'a, C, R> {
         [self.left, self.right]
             .into_iter()
             .flat_map(|proof| {
-                RxIndex::OWN
+                RxIndex::ALL
                     .iter()
                     .map(move |&id| proof.nested_rx_commitment(id))
                     .chain([

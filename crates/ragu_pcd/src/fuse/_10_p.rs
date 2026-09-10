@@ -72,14 +72,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         nested_registry_wy: &NestedRegistryWy<C, R>,
         nested_f: &NestedF<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<()> {
+    ) -> Result<PointsWitness<C::HostCurve, NUM_ENDOSCALING_POINTS>> {
         // Extract endoscalar from pre_beta and compute effective beta. Going
         // through the validated `EndoscalarChallenge` makes the
         // `value < 2^CAPACITY` precondition a type invariant rather than an
         // unchecked argument to `extract_endoscalar`.
         let beta_endo = pre_beta.extract_native();
 
-        self.compute_native_p(
+        let points = self.compute_native_p(
             rng,
             beta_endo,
             left,
@@ -99,7 +99,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             builder,
         )?;
 
-        Ok(())
+        Ok(points)
     }
 
     fn compute_native_p<RNG: ragu_arithmetic::rand::CryptoRng>(
@@ -112,7 +112,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         registry_wy: &RegistryWy<C, R>,
         f: &NativeF<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<()> {
+    ) -> Result<PointsWitness<C::HostCurve, NUM_ENDOSCALING_POINTS>> {
         let mut poly = f.poly.clone();
 
         // Collect commitments for PointsWitness construction.
@@ -172,7 +172,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 
         let endoscalar_alpha = C::ScalarField::random(&mut *rng);
         let points_alpha = C::ScalarField::random(&mut *rng);
-        let p_commitment = self.compute_endoscaling(
+        let (p_commitment, points) = self.compute_endoscaling(
             rng,
             beta_endo,
             &points,
@@ -183,7 +183,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 
         builder.set_native_p_poly(poly, p_commitment);
 
-        Ok(())
+        Ok(points)
     }
 
     /// Accumulates the nested batch into $p_n(X)$, in [`pcs::Batch::evaluated`]

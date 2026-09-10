@@ -32,6 +32,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     pub(super) fn compute_eval(
         &self,
         bound_challenges: &[C::CircuitField; native::circuits::bind_challenges::NUM_BOUND],
+        is_base_case: bool,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
         s_prime: &NativeSPrime<C, R>,
@@ -49,8 +50,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         for (lift, challenge) in lifts.iter_mut().zip(bound_challenges) {
             *lift = nested::challenge::<C>(*challenge)?;
         }
-        let partials =
-            native::stages::eval::BindingPartials::compute::<C, R, B>(self.params, &lifts);
+        let partials = native::stages::eval::BindingPartials::compute::<C, R, B>(
+            self.params,
+            &lifts,
+            is_base_case,
+        );
 
         let u = bound_challenges[native::circuits::bind_challenges::NUM_BOUND - 1];
         let u_nested = nested::challenge::<C>(u)?;

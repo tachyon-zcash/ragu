@@ -36,8 +36,8 @@ const NUM: usize = 2;
 /// Witness for a child proof's nested polynomial evaluations.
 #[derive(Clone)]
 pub struct ChildEvaluationsWitness<F> {
-    /// The child's own nested rx polynomials at $x_n z_n$, in
-    /// [`RxIndex::OWN`] order.
+    /// The child's nested rx polynomials at $x_n z_n$, in
+    /// [`RxIndex::ALL`] order.
     pub rx: FixedVec<F, OwnRxLen>,
     /// The child's nested $a$ polynomial at $x_n z_n$.
     pub a_poly_at_xz: F,
@@ -61,7 +61,7 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
     ) -> Result<Self> {
         let child_x = nested::challenge::<C>(proof.x())?;
         Ok(ChildEvaluationsWitness {
-            rx: FixedVec::from_fn(|i| B::sparse_eval(&proof[RxIndex::OWN[i]], xz)),
+            rx: FixedVec::from_fn(|i| B::sparse_eval(&proof[RxIndex::ALL[i]], xz)),
             a_poly_at_xz: B::sparse_eval(&proof[RxComponent::AbA], xz),
             b_poly_at_x: B::sparse_eval(&proof[RxComponent::AbB], x),
             child_registry_xy_at_current_w: B::sparse_eval(proof.nested_registry_xy_poly(), w),

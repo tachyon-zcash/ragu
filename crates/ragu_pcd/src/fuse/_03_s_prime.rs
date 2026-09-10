@@ -44,7 +44,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &nested::stages::s_prime::Witness {
                 registry_wx0: native.registry_wx0_commitment,
                 registry_wx1: native.registry_wx1_commitment,
-                stashed_preamble: builder.native_preamble_commitment(),
             },
         )?;
         let bridge_commitment =

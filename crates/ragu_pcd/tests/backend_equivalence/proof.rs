@@ -56,6 +56,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             nested_p_poly: _,
             nested_challenges_rx: _,
             nested_beta_rx: _,
+            nested_export_rx: _,
             nested_endoscaling_step_commitments: _,
             nested_endoscalar_commitment: _,
             nested_points_commitment: _,
@@ -65,6 +66,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             nested_p_commitment: _,
             nested_challenges_commitment: _,
             nested_beta_commitment: _,
+            nested_export_commitment: _,
             w: _,
             y: _,
             z: _,
@@ -101,8 +103,6 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             bridge_ab_commitment: _,
             bridge_query_commitment: _,
             bridge_eval_commitment: _,
-            child_left_stage_rx: _,
-            child_right_stage_rx: _,
         } = self;
 
         if self.bridge_alpha != other.bridge_alpha {
@@ -214,6 +214,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             || self.nested_p_commitment != other.nested_p_commitment
             || self.nested_challenges_commitment != other.nested_challenges_commitment
             || self.nested_beta_commitment != other.nested_beta_commitment
+            || self.nested_export_commitment != other.nested_export_commitment
         {
             return Some("nested protocol commitments");
         }
