@@ -15,8 +15,8 @@
 //! $\beta_n$ the scalar-field lift of the same endoscalar bits. Its
 //! nested-curve commitment $P_n$ is the Horner walk over the batch's
 //! nested-curve commitments, performed by the native endoscaling steps over
-//! the points inputs stage committed before $\beta$ (see
-//! [`prepare_native_points`](crate::Application::prepare_native_points)).
+//! the points stages the earlier phases committed (see
+//! [`native::stages::points`](crate::internal::native::stages::points)).
 
 use alloc::vec::Vec;
 use core::ops::AddAssign;
@@ -32,23 +32,20 @@ use super::{
 use crate::{
     Application, Proof,
     internal::{
-        endoscalar::PointsWitness,
         native::{
-            self, RxComponent, RxIndex,
-            stages::points::{InputsWitness, InterstitialsWitness},
+            RxComponent, RxIndex,
+            stages::points::{Inputs, WalkWitness},
         },
-        nested::{NUM_ENDOSCALING_POINTS, pcs},
+        nested::{PointsWitness, pcs},
     },
     proof::ProofBuilder,
 };
 
-/// The native points inputs witness: the nested batch's commitments.
-pub(super) type NativeInputs<C> =
-    InputsWitness<<C as Cycle>::NestedCurve, { native::NUM_ENDOSCALING_POINTS }>;
+/// The native points stages' witnesses: the nested batch's commitments.
+pub(super) type NativeInputs<C> = Inputs<<C as Cycle>::NestedCurve>;
 
-/// The native points interstitials witness: the walk's outputs.
-pub(super) type NativeInterstitials<C> =
-    InterstitialsWitness<<C as Cycle>::NestedCurve, { native::NUM_ENDOSCALING_POINTS }>;
+/// The native walk stage's witness: the endoscalar and the walk's outputs.
+pub(super) type NativeWalk<C> = WalkWitness<<C as Cycle>::NestedCurve>;
 
 /// Accumulates polynomials with their commitments.
 struct Accumulator<'a, C: Cycle, R: Rank> {
@@ -71,21 +68,18 @@ impl<C: Cycle, R: Rank> Accumulator<'_, C, R> {
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
-    /// Commits the native points inputs stage over the nested batch's
-    /// commitments, $f_n$'s first, in [`pcs::Batch::evaluated`] order. Runs
-    /// before the `eval` bridge is absorbed, so that the points $P_n$ is
-    /// walked over are fixed before $\beta$ is squeezed.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn prepare_native_points<RNG: ragu_arithmetic::rand::CryptoRng>(
+    /// The nested batch's commitments, $f_n$'s first, in
+    /// [`pcs::Batch::evaluated`] order, as the native points stages the
+    /// earlier phases committed hold them.
+    fn native_inputs(
         &self,
-        rng: &mut RNG,
         nested_f: &NestedF<C, R>,
         nested_s_prime: &NestedSPrime<C, R>,
         nested_registry_wy: &NestedRegistryWy<C, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<NativeInputs<C>> {
+        builder: &ProofBuilder<'_, C, R, B>,
+    ) -> NativeInputs<C> {
         let batch = self.nested_batch(builder, nested_s_prime, nested_registry_wy, left, right);
         let current = pcs::CurrentCommitments {
             registry_wx0: nested_s_prime.registry_wx0_commitment,
@@ -99,7 +93,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             .chain(batch.commitments(current))
             .collect();
         assert_eq!(points.len(), pcs::NUM_BATCHED_POINTS);
-        self.commit_native_points_inputs(rng, &points, builder)
+        Inputs::from_walk(&points)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -115,12 +109,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         nested_s_prime: &NestedSPrime<C, R>,
         nested_registry_wy: &NestedRegistryWy<C, R>,
         nested_f: &NestedF<C, R>,
-        native_points: &NativeInputs<C>,
         builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<(
-        PointsWitness<C::HostCurve, NUM_ENDOSCALING_POINTS>,
-        NativeInterstitials<C>,
-    )> {
+    ) -> Result<(PointsWitness<C::HostCurve>, NativeInputs<C>, NativeWalk<C>)> {
         // Extract endoscalar from pre_beta and compute effective beta. Going
         // through the validated `EndoscalarChallenge` makes the
         // `value < 2^CAPACITY` precondition a type invariant rather than an
@@ -137,7 +127,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             f,
             builder,
         )?;
-        let native_interstitials = self.compute_nested_p(
+        let native_points = self.native_inputs(
+            nested_f,
+            nested_s_prime,
+            nested_registry_wy,
+            left,
+            right,
+            builder,
+        );
+        let native_walk = self.compute_nested_p(
             rng,
             beta_endo,
             left,
@@ -145,11 +143,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             nested_s_prime,
             nested_registry_wy,
             nested_f,
-            native_points,
+            &native_points,
             builder,
         )?;
 
-        Ok((points, native_interstitials))
+        Ok((points, native_points, native_walk))
     }
 
     fn compute_native_p<RNG: ragu_arithmetic::rand::CryptoRng>(
@@ -162,7 +160,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         registry_wy: &RegistryWy<C, R>,
         f: &NativeF<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<PointsWitness<C::HostCurve, NUM_ENDOSCALING_POINTS>> {
+    ) -> Result<PointsWitness<C::HostCurve>> {
         let mut poly = f.poly.clone();
 
         // Collect commitments for PointsWitness construction.
@@ -216,7 +214,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         // and delegate to the shared endoscaling helper, which also
         // sets `nested_endoscalar_rx`, `nested_points_rx`, and
         // `nested_endoscaling_step_rxs` on the builder.
-        let mut points = Vec::with_capacity(NUM_ENDOSCALING_POINTS);
+        let mut points = Vec::with_capacity(pcs::NUM_BATCHED_POINTS.max(1));
         points.push(f.commitment);
         points.extend_from_slice(&commitments);
 
@@ -252,7 +250,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         nested_f: &NestedF<C, R>,
         native_points: &NativeInputs<C>,
         builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<NativeInterstitials<C>> {
+    ) -> Result<NativeWalk<C>> {
         let beta: C::ScalarField = lift_endoscalar(beta_endo);
         let batch = self.nested_batch(builder, nested_s_prime, nested_registry_wy, left, right);
 
@@ -262,7 +260,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             poly.add_assign(evaluated);
         }
 
-        let (p_commitment, interstitials) =
+        let (p_commitment, walk) =
             self.compute_native_endoscaling(rng, beta_endo, native_points, builder)?;
         debug_assert_eq!(
             B::sparse_commit_to_affine(&poly, C::nested_generators(self.params)),
@@ -271,6 +269,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         );
         builder.set_nested_p_poly(poly, p_commitment);
 
-        Ok(interstitials)
+        Ok(walk)
     }
 }

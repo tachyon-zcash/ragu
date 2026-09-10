@@ -317,6 +317,8 @@ pub enum FuzzCorruption {
         /// Which commitment.
         which: u8,
     },
+    /// Negate the exported challenge binding the unified instance carries.
+    NegateChallengesPartial,
     /// Negate a cached native commitment.
     NegateNativeCommitment {
         /// Which commitment.
@@ -443,6 +445,7 @@ impl FuzzCorruption {
                 (11, which as usize % NestedCommitment::ALL.len())
             }
             FuzzCorruption::RescaleNativeAccumulator { .. } => (12, 0),
+            FuzzCorruption::NegateChallengesPartial => (14, 0),
             FuzzCorruption::RescaleNestedAccumulator { .. } => (13, 0),
             FuzzCorruption::NativeCoeff {
                 component,
@@ -495,6 +498,7 @@ impl FuzzCorruption {
             FuzzCorruption::NegateBridgeCommitment { which } => Corruption::NegateBridgeCommitment(
                 BridgeCommitment::ALL[which as usize % BridgeCommitment::ALL.len()],
             ),
+            FuzzCorruption::NegateChallengesPartial => Corruption::NegateChallengesPartial,
             FuzzCorruption::NegateNativeCommitment { which } => Corruption::NegateNativeCommitment(
                 NativeCommitment::ALL[which as usize % NativeCommitment::ALL.len()],
             ),

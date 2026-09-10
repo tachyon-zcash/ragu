@@ -50,9 +50,36 @@ use crate::internal::{endoscalar, fold_revdot::Parameters};
 /// [`NUM_ENDOSCALING_STEPS`] steps.
 pub const NUM_ENDOSCALING_POINTS: usize = 1 + 2 * (crate::internal::native::RxIndex::NUM + 4) + 6;
 
+/// The endoscalings a nested step performs: what fits a step beside the
+/// stages it reserves, which hold every point the walk consumes.
+pub const ENDOSCALINGS_PER_STEP: usize = 4;
+
 /// Number of endoscaling steps, derived from [`NUM_ENDOSCALING_POINTS`] via
 /// [`endoscalar::num_steps`].
-const NUM_ENDOSCALING_STEPS: usize = endoscalar::num_steps(NUM_ENDOSCALING_POINTS);
+const NUM_ENDOSCALING_STEPS: usize =
+    endoscalar::num_steps::<ENDOSCALINGS_PER_STEP>(NUM_ENDOSCALING_POINTS);
+
+/// The nested points stage, over the native batch's commitments.
+pub type PointsStage<C> = endoscalar::PointsStage<C, NUM_ENDOSCALING_POINTS, ENDOSCALINGS_PER_STEP>;
+
+/// The nested points stage's witness.
+pub type PointsWitness<C> =
+    endoscalar::PointsWitness<C, NUM_ENDOSCALING_POINTS, ENDOSCALINGS_PER_STEP>;
+
+/// The nested points stage's output gadget.
+pub type Points<'dr, D, C> =
+    endoscalar::Points<'dr, D, C, NUM_ENDOSCALING_POINTS, ENDOSCALINGS_PER_STEP>;
+
+/// A nested endoscaling step.
+pub type EndoscalingStep<C, R> =
+    endoscalar::EndoscalingStep<C, R, NUM_ENDOSCALING_POINTS, ENDOSCALINGS_PER_STEP>;
+
+/// A nested endoscaling step's witness.
+pub type EndoscalingStepWitness<'source, C> =
+    endoscalar::EndoscalingStepWitness<'source, C, NUM_ENDOSCALING_POINTS, ENDOSCALINGS_PER_STEP>;
+
+/// Length type for the nested endoscaling steps.
+pub type NumStepsLen = endoscalar::NumStepsLen<NUM_ENDOSCALING_POINTS, ENDOSCALINGS_PER_STEP>;
 
 /// The number of circuits whose public input is the nested [`unified`]
 /// instance: export, collapse and compute-v.
@@ -63,8 +90,8 @@ pub const NUM_INSTANCE_CIRCUITS: usize = 3;
 /// Two children contribute one raw accumulator claim each, one circuit claim
 /// each per endoscaling step and per instance circuit, and one bonding claim
 /// per bonding kind (each bonding kind is $z$-folded across both children):
-/// 76 claims today, over twenty-six steps, three instance circuits and
-/// sixteen bonding kinds. `12 x 7` leaves a little room.
+/// 78 claims today, over twenty-eight steps, three instance circuits and
+/// fourteen bonding kinds. `12 x 7` leaves a little room.
 #[derive(Clone, Copy, Default)]
 pub struct RevdotParameters;
 
@@ -96,7 +123,7 @@ pub fn challenge<C: Cycle>(native: C::CircuitField) -> Result<C::ScalarField> {
 
 /// The native challenges the nested side consumes, in the order the
 /// challenge stage holds their lifts (see [`stages::challenges`]), with
-/// `pre_beta` last (its lift is the [`stages::beta`] stage).
+/// `pre_beta` last.
 #[derive(Clone, Copy)]
 pub struct Challenges<F> {
     pub w: F,
@@ -182,10 +209,9 @@ pub enum InternalCircuitIndex {
     BridgeEval,
     /// Challenge stage mask.
     ChallengeStage,
-    /// Beta stage mask.
-    BetaStage,
-    /// Final staged mask of the circuits whose last stage is the beta stage.
-    BetaFinalStaged,
+    /// Final staged mask of the circuits whose last stage is the challenge
+    /// stage.
+    ChallengeFinalStaged,
     /// Loading circuit over all nested stages.
     Loading,
 }
@@ -193,7 +219,7 @@ pub enum InternalCircuitIndex {
 impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`],
     /// equal to the number of entries in [`InternalCircuitIndex::ALL`].
-    pub const NUM: usize = NUM_ENDOSCALING_STEPS + NUM_INSTANCE_CIRCUITS + 15;
+    pub const NUM: usize = NUM_ENDOSCALING_STEPS + NUM_INSTANCE_CIRCUITS + 14;
 
     /// The circuits whose public input is the nested [`unified`] instance,
     /// in claim order.
@@ -235,8 +261,7 @@ impl InternalCircuitIndex {
         push(&mut slots, &mut c, Self::BridgeF);
         push(&mut slots, &mut c, Self::BridgeEval);
         push(&mut slots, &mut c, Self::ChallengeStage);
-        push(&mut slots, &mut c, Self::BetaStage);
-        push(&mut slots, &mut c, Self::BetaFinalStaged);
+        push(&mut slots, &mut c, Self::ChallengeFinalStaged);
         push(&mut slots, &mut c, Self::Loading);
         assert!(c == Self::NUM);
         slots
@@ -292,14 +317,12 @@ pub enum RxIndex {
     BridgeEval,
     /// Challenge stage rx polynomial.
     ChallengeStage,
-    /// Beta stage rx polynomial.
-    BetaStage,
 }
 
 impl RxIndex {
     /// The number of rx components in the nested field,
     /// equal to the number of entries in [`RxIndex::ALL`].
-    pub const NUM: usize = NUM_ENDOSCALING_STEPS + NUM_INSTANCE_CIRCUITS + 12;
+    pub const NUM: usize = NUM_ENDOSCALING_STEPS + NUM_INSTANCE_CIRCUITS + 11;
 
     /// The rx polynomials of the instance circuits, in
     /// [`InternalCircuitIndex::INSTANCE`] order.
@@ -338,7 +361,6 @@ impl RxIndex {
         push(&mut slots, &mut c, Self::BridgeF);
         push(&mut slots, &mut c, Self::BridgeEval);
         push(&mut slots, &mut c, Self::ChallengeStage);
-        push(&mut slots, &mut c, Self::BetaStage);
         assert!(c == Self::NUM);
         slots
     }
@@ -371,7 +393,6 @@ pub mod unified;
 
 pub mod stages {
     pub mod ab;
-    pub mod beta;
     pub mod challenges;
     pub mod eval;
     pub mod f;
@@ -397,10 +418,7 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
         use InternalCircuitIndex::*;
         registry = match id {
             EndoscalingStep(step) => {
-                let step_circuit =
-                    endoscalar::EndoscalingStep::<C::HostCurve, R, NUM_ENDOSCALING_POINTS>::new(
-                        step as usize,
-                    );
+                let step_circuit = self::EndoscalingStep::<C::HostCurve, R>::new(step as usize);
                 let staged = MultiStage::new(step_circuit);
                 registry.register_internal_circuit(staged)?
             }
@@ -417,14 +435,10 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
                 registry.register_internal_circuit(MultiStage::new(circuit))?
             }
             EndoscalarStage => registry.register_bonding(endoscalar::EndoscalarStage::mask()?),
-            PointsStage => registry.register_bonding(endoscalar::PointsStage::<
-                C::HostCurve,
-                NUM_ENDOSCALING_POINTS,
-            >::mask()?),
-            PointsFinalStaged => registry.register_bonding(endoscalar::PointsStage::<
-                C::HostCurve,
-                NUM_ENDOSCALING_POINTS,
-            >::final_mask()?),
+            PointsStage => registry.register_bonding(self::PointsStage::<C::HostCurve>::mask()?),
+            PointsFinalStaged => {
+                registry.register_bonding(self::PointsStage::<C::HostCurve>::final_mask()?)
+            }
             BridgePreamble => {
                 registry.register_bonding(stages::preamble::Stage::<C::HostCurve, R>::mask()?)
             }
@@ -448,10 +462,8 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
             ChallengeStage => {
                 registry.register_bonding(stages::challenges::Stage::<C::HostCurve, R>::mask()?)
             }
-            BetaStage => registry.register_bonding(stages::beta::Stage::<C::HostCurve, R>::mask()?),
-            BetaFinalStaged => {
-                registry.register_bonding(stages::beta::Stage::<C::HostCurve, R>::final_mask()?)
-            }
+            ChallengeFinalStaged => registry
+                .register_bonding(stages::challenges::Stage::<C::HostCurve, R>::final_mask()?),
             Loading => {
                 let circuit = circuits::loading::Circuit::<C::HostCurve, R>::new();
                 registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)

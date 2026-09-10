@@ -149,7 +149,6 @@ where
                     RxIndex::BridgeF,
                     RxIndex::BridgeEval,
                     RxIndex::ChallengeStage,
-                    RxIndex::BetaStage,
                 ];
                 let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
                 for index in loaded {
@@ -203,10 +202,7 @@ where
             ChallengeStage => {
                 processor.bonding_claim(id, source.rx(Rx(RxIndex::ChallengeStage)))?;
             }
-            BetaStage => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::BetaStage)))?;
-            }
-            BetaFinalStaged => {
+            ChallengeFinalStaged => {
                 let final_rxs = RxIndex::INSTANCE.iter().flat_map(|&own| source.rx(Rx(own)));
                 processor.bonding_claim(id, final_rxs)?;
             }

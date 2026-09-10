@@ -10,7 +10,8 @@
 //!
 //! The native `eval` stage also carries the running partial sums of the
 //! nested challenge binding (see `bind_challenges`), computed here from the
-//! lifts of the ten challenges squeezed so far.
+//! lifts of the ten challenges squeezed so far; the binding they complete
+//! to goes to the unified instance.
 
 use ragu_arithmetic::{Cycle, ff::Field, par_join, rand::CryptoRng};
 use ragu_circuits::{
@@ -43,6 +44,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     ) -> Result<(
         native::stages::eval::Witness<C>,
         nested::stages::eval::Evaluations<C::ScalarField>,
+        C::NestedCurve,
     )> {
         // The binding partials over the lifts of the challenges squeezed so
         // far, in challenge-stage order; `u` is the last of them.
@@ -55,6 +57,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &lifts,
             is_base_case,
         );
+        let binding = partials.binding;
 
         let u = bound_challenges[native::circuits::bind_challenges::NUM_BOUND - 1];
         let u_nested = nested::challenge::<C>(u)?;
@@ -113,7 +116,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             current: current_nested,
         };
 
-        Ok((native, nested))
+        Ok((native, nested, binding))
     }
 
     /// Samples fresh eval-stage blindings and returns the native eval rx
@@ -128,7 +131,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         rng: &mut RNG,
         eval_witness: &native::stages::eval::Witness<C>,
         nested_eval: &nested::stages::eval::Evaluations<C::ScalarField>,
-        native_points_inputs: C::HostCurve,
     ) -> Result<(
         sparse::Polynomial<C::CircuitField, R>,
         sparse::Polynomial<C::ScalarField, R>,
@@ -145,7 +147,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             C::ScalarField::random(&mut *rng),
             &nested::stages::eval::Witness {
                 native_eval: native_eval_commitment,
-                native_points_inputs,
                 nested: nested_eval.clone(),
             },
         )?;

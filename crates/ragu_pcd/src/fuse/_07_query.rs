@@ -10,9 +10,9 @@
 //!
 //! The nested counterparts are computed here as well: the nested query values
 //! at $x_n z_n$, $x_n$ and $w_n$ ride inside the `query` bridge stage, and
-//! the $m_n(W, x_n, y_n)$ restriction is stored on the proof. That
-//! restriction's nested-curve commitment enters the nested batch through the
-//! native points inputs stage (see `_10_p`).
+//! the $m_n(W, x_n, y_n)$ restriction is stored on the proof; its
+//! nested-curve commitment enters the native points stage committed before
+//! $u$ (see `_08_f`).
 
 use ragu_arithmetic::{Cycle, bitreverse, ff::Field, par_join, rand::CryptoRng};
 use ragu_circuits::{polynomials::Rank, staging::StageExt};
@@ -184,6 +184,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             right: right_witness?,
         };
 
+        builder.set_nested_registry_xy_poly(registry_xy_poly);
+
         let bridge_rx = nested::stages::query::Stage::<C::HostCurve, R>::rx(
             C::ScalarField::random(&mut *rng),
             &nested::stages::query::Witness {
@@ -195,7 +197,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let bridge_commitment =
             B::sparse_commit_to_affine(&bridge_rx, C::nested_generators(self.params));
         builder.set_bridge_query_rx(bridge_rx, bridge_commitment);
-        builder.set_nested_registry_xy_poly(registry_xy_poly);
 
         Ok(nested_query)
     }

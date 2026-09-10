@@ -53,9 +53,12 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 BindBeta => &mut self.native_bind_beta_rx,
                 BindEndoscalar => &mut self.native_bind_endoscalar_rx,
                 EndoscalingStep(step) => &mut self.native_endoscaling_step_rxs[step as usize],
-                EndoscalarStage => &mut self.native_endoscalar_rx,
-                PointsInputs => &mut self.native_points_inputs_rx,
-                PointsInterstitials => &mut self.native_points_interstitials_rx,
+                PointsBinding => &mut self.native_points_binding_rx,
+                PointsChildren => &mut self.native_points_children_rx,
+                PointsRegistryWx => &mut self.native_points_registry_wx_rx,
+                PointsAb => &mut self.native_points_ab_rx,
+                PointsF => &mut self.native_points_f_rx,
+                PointsWalk => &mut self.native_points_walk_rx,
             },
         }
     }
@@ -121,8 +124,12 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             BridgeF => Arc::make_mut(&mut self.bridge_f_rx),
             BridgeEval => Arc::make_mut(&mut self.bridge_eval_rx),
             ChallengeStage => &mut self.nested_challenges_rx,
-            BetaStage => &mut self.nested_beta_rx,
         }
+    }
+
+    /// The nested challenge stage's exported partial binding, mutably.
+    pub(crate) fn nested_challenges_partial_mut(&mut self) -> &mut C::NestedCurve {
+        &mut self.nested_challenges_partial
     }
 
     /// The cached native commitment named by `which`, mutably.
@@ -157,9 +164,12 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 EndoscalingStep(step) => {
                     &mut self.native_endoscaling_step_commitments[step as usize].0
                 }
-                EndoscalarStage => &mut self.native_endoscalar_commitment.0,
-                PointsInputs => &mut self.native_points_inputs_commitment.0,
-                PointsInterstitials => &mut self.native_points_interstitials_commitment.0,
+                PointsBinding => &mut self.native_points_binding_commitment.0,
+                PointsChildren => &mut self.native_points_children_commitment.0,
+                PointsRegistryWx => &mut self.native_points_registry_wx_commitment.0,
+                PointsAb => &mut self.native_points_ab_commitment.0,
+                PointsF => &mut self.native_points_f_commitment.0,
+                PointsWalk => &mut self.native_points_walk_commitment.0,
             },
         }
     }
@@ -193,7 +203,6 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 BridgeF => &mut self.bridge_f_commitment,
                 BridgeEval => &mut self.bridge_eval_commitment,
                 ChallengeStage => &mut self.nested_challenges_commitment.0,
-                BetaStage => &mut self.nested_beta_commitment.0,
             },
         }
     }

@@ -2,6 +2,11 @@
 //!
 //! This sets the preamble fields on the [`ProofBuilder`], which commits to the
 //! instance and trace polynomials used in the fuse step.
+//!
+//! The children's nested-curve commitments are committed here as well, in
+//! the native points binding and children stages the endoscaling walk reads
+//! them from; the preamble bridge carries those stages' commitments, so the
+//! points are fixed before $w$ is squeezed.
 
 use ragu_arithmetic::{Cycle, ff::Field, rand::CryptoRng};
 use ragu_circuits::{polynomials::Rank, staging::StageExt};
@@ -30,6 +35,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         nested::stages::preamble::Witness<C::HostCurve>,
     )> {
         let preamble_witness = self.compute_native_preamble(rng, left, right, builder)?;
+        self.commit_native_points_children(rng, left, right, builder)?;
         let bridge_witness = self.compute_bridge_preamble(rng, left, right, builder)?;
         Ok((preamble_witness, bridge_witness))
     }
@@ -67,6 +73,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     ) -> Result<nested::stages::preamble::Witness<C::HostCurve>> {
         let bridge_witness = nested::stages::preamble::Witness {
             native_preamble: builder.native_preamble_commitment(),
+            native_points_binding: builder.native_points_binding_commitment(),
+            native_points_children: builder.native_points_children_commitment(),
             left: nested::stages::preamble::ChildWitness::from_proof(left)?,
             right: nested::stages::preamble::ChildWitness::from_proof(right)?,
         };

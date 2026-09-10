@@ -11,8 +11,11 @@
 //!
 //! The nested quotient polynomial $f_n(X)$ is built the same way over the
 //! nested batch ([`pcs::Batch::queries`]), with $\alpha_n$ derived from
-//! $\alpha$. Its nested-curve commitment is the initial point of the native
-//! points inputs stage (see `_10_p`).
+//! $\alpha$. Its nested-curve commitment, the initial point of the native
+//! endoscaling walk, is committed with the nested $m_n(W, x_n, y_n)$
+//! restriction's in the native points stage the walk reads them from, whose
+//! commitment the `f` bridge carries, so they are fixed before $u$ is
+//! squeezed.
 
 use alloc::vec::Vec;
 
@@ -75,6 +78,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             let alpha = nested::challenge::<C>(*alpha.value().take())?;
             self.compute_nested_f(&batch, challenges, alpha)
         };
+        self.commit_native_points_f(
+            rng,
+            builder.nested_registry_xy_commitment(),
+            nested.commitment,
+            builder,
+        )?;
         self.compute_bridge_f(rng, &native, builder)?;
         Ok((native, nested))
     }
@@ -93,6 +102,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             C::ScalarField::random(&mut *rng),
             &nested::stages::f::Witness {
                 native_f: native.commitment,
+                native_points_f: builder.native_points_f_commitment(),
             },
         )?;
         let bridge_commitment =

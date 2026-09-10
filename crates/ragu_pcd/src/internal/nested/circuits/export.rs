@@ -6,7 +6,9 @@
 //! circuit loads the stages and enforces, wire by wire, that the instance's
 //! lifted $x$, $y$ and $u$ are the challenge stage's, and that its exported
 //! host-curve commitments are the ones the bridge stages and the points
-//! stage hold. $c_n$ and $v_n$ are the [`collapse`](super::collapse) and
+//! stage hold: the native stages a parent endoscales, and the native points
+//! stages whose contents the transcript must have (see [`unified`]). $c_n$
+//! and $v_n$ are the [`collapse`](super::collapse) and
 //! [`compute_v`](super::compute_v) circuits' slots.
 //!
 //! Its claim's $k(Y)$ is the instance, so a parent folding this claim with a
@@ -53,7 +55,7 @@ impl<C: CurveAffine, R: Rank> Circuit<C, R> {
 }
 
 impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
-    type Last = stages::beta::Stage<C, R>;
+    type Last = stages::challenges::Stage<C, R>;
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = common::Witness<'source, C>;
     type Output = unified::OutputKind<C>;
@@ -117,7 +119,11 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
             &stages.ab.b,
             &stages.query.registry_xy,
             last_interstitial,
-            &stages.eval.native_points_inputs,
+            &stages.preamble.native_points_binding,
+            &stages.preamble.native_points_children,
+            &stages.s_prime.native_points_registry_wx,
+            &stages.ab.native_points_ab,
+            &stages.f.native_points_f,
         ];
         let exported = unified.exported.receive(dr, allocator)?;
         for (instance, stage) in exported.iter().zip(held) {

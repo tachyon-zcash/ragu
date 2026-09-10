@@ -14,7 +14,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Boolean, Element, GadgetExt, Point,
+    Boolean, Element, GadgetExt,
     allocator::Allocator,
     consistent::Consistent,
     vec::{CollectFixed, ConstLen, FixedVec},
@@ -89,11 +89,6 @@ pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const
     pub circuit_id: Element<'dr, D>,
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
-    /// Commitment to the child's nested beta stage, the lift of its
-    /// `pre_beta` on the nested side; the `bind_beta` circuit recomputes it
-    /// from the `pre_beta` in [`unified`](Self::unified).
-    #[ragu(gadget)]
-    pub nested_beta_commitment: Point<'dr, D, C::NestedCurve>,
 }
 
 impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize>
@@ -196,10 +191,6 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 proof.as_ref().map(|p| p.circuit_id().omega_j()),
             )?,
             unified: unified::Output::alloc_from_proof(dr, allocator, proof.as_ref().map(|p| *p))?,
-            nested_beta_commitment: Point::alloc(
-                dr,
-                proof.as_ref().map(|p| p.nested_beta_commitment()),
-            )?,
         })
     }
 
@@ -265,14 +256,17 @@ pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
     for Stage<C, R, HEADER_SIZE>
 {
-    type Parent = ();
+    // The native stage tree is rooted at the binding stage of the
+    // endoscaling walk, so the preamble chain reserves it too (see
+    // `stages::points`).
+    type Parent = super::points::BindingStage<C::NestedCurve>;
     type Witness<'source> = &'source Witness<'source, C, R, HEADER_SIZE>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _, C, HEADER_SIZE>];
 
     fn values() -> usize {
         // 2 proofs * (3 headers * HEADER_SIZE + 1 circuit_id + unified
-        // instance wires + (x, y) of the nested beta commitment)
-        2 * (3 * HEADER_SIZE + 1 + unified::NUM_WIRES + 2)
+        // instance wires)
+        2 * (3 * HEADER_SIZE + 1 + unified::NUM_WIRES)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

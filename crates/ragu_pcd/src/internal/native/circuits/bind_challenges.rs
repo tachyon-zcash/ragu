@@ -14,20 +14,25 @@
 //! times the generator. The sum so far is checked against the running
 //! partial the [`eval`] stage witnessed; circuit $k$ continues from partial
 //! $k - 1$. The last circuit also adds the base-case sign's term, reading the
-//! base case off the [`preamble`] as the native circuits do, so that the last
-//! partial is $C_s$ itself and the nested side reads the base case from a
-//! wire the native side vouches for. $\beta$, squeezed after the eval stage
-//! is committed, is bound by [`bind_beta`](super::bind_beta).
+//! base case off the [`preamble`] as the native circuits do, and enforces
+//! the sum equal to the instance's [`nested_challenges_partial`] slot: the
+//! challenge stage's commitment without its $\beta$ term, which the nested
+//! side reads the base case from and which a parent's
+//! [`bind_beta`](super::bind_beta) completes with $\beta$'s term and holds
+//! against the stage as walked. $\beta$ is squeezed after the eval stage is
+//! committed, so its term cannot be bound here.
 //!
 //! ## Staging
 //!
-//! Chained through [`eval`] for its partials: [`preamble`] and [`query`]
-//! are reserved but unused.
+//! Chained through [`eval`] for its partials: the binding stage at the
+//! root, [`preamble`] and [`query`] are reserved but unused.
 //!
 //! ## Instance
 //!
 //! Uses [`unified::Output`] via [`unified::InternalOutputKind`]. The circuits
-//! read challenges and cover no slot.
+//! read challenges; the last covers [`nested_challenges_partial`].
+//!
+//! [`nested_challenges_partial`]: unified::Output::nested_challenges_partial
 //!
 //! [`challenges`]: crate::internal::nested::stages::challenges
 //! [`eval`]: super::super::stages::eval
@@ -54,9 +59,13 @@ use ragu_primitives::{
 };
 
 use super::super::{
-    stages::{eval as native_eval, preamble as native_preamble, query as native_query},
+    stages::{
+        eval as native_eval, points::BindingStage, preamble as native_preamble,
+        query as native_query,
+    },
     unified::{self, OutputBuilder},
 };
+use crate::internal::nested;
 
 /// The number of binding circuits: two challenges each over the ten the
 /// challenge stage holds.
@@ -160,6 +169,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
     where
         Self: 'dr,
     {
+        let builder = builder.skip_stage::<BindingStage<C::NestedCurve>>()?;
         let (preamble, builder) =
             builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
         let (query, builder) = builder.add_stage::<native_query::Stage<C, R, HEADER_SIZE>>()?;
@@ -198,18 +208,25 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
 
         let mut acc = acc.expect("two terms were added");
 
-        // The last circuit adds the base-case sign's term: plus or minus the
-        // generator of the challenge stage's last value.
+        // The last circuit adds the base-case sign's term, plus or minus the
+        // generator of the challenge stage's sign value, and pins the sum to
+        // the instance; the others check it against the eval stage's next
+        // partial.
         if K + 1 == NUM_BINDERS {
             let is_base_case = preamble.is_base_case(dr, allocator)?;
-            let generator = generators.g()[native_eval::generator_index::<C, R>(NUM_BOUND)];
+            let generator = generators.g()
+                [native_eval::generator_index::<C, R>(nested::stages::challenges::SIGN_INDEX)];
             let generator = Point::constant(dr, generator)?;
             let negate = is_base_case.not(dr);
             let term = generator.conditional_negate(dr, &negate)?;
             acc = NonzeroBank::scope(dr, |dr, bank| acc.add_incomplete(dr, &term, bank))?;
+            let binding = unified_output
+                .nested_challenges_partial
+                .receive(dr, allocator)?;
+            acc.enforce_equal(dr, &binding)?;
+        } else {
+            acc.enforce_equal(dr, &eval.partials[K])?;
         }
-
-        acc.enforce_equal(dr, &eval.partials[K])?;
 
         let (output, aux) = unified_output.finish(dr, allocator)?;
         Ok(WithAux::new(output, aux))

@@ -159,7 +159,9 @@ fn nested_accumulator_is_the_fold_of_the_children() -> Result<()> {
     // Two raw claims, one circuit claim per endoscaling step and per
     // instance circuit per child, and one bonding claim per bonding kind
     // folded across both children.
-    let steps = crate::internal::endoscalar::num_steps(nested::NUM_ENDOSCALING_POINTS);
+    let steps = crate::internal::endoscalar::num_steps::<{ nested::ENDOSCALINGS_PER_STEP }>(
+        nested::NUM_ENDOSCALING_POINTS,
+    );
     let circuits = steps + nested::NUM_INSTANCE_CIRCUITS;
     let bonding_kinds = nested::InternalCircuitIndex::NUM - circuits;
     assert_eq!(nested_claims.a.len(), 2 + 2 * circuits + bonding_kinds);
@@ -406,7 +408,7 @@ fn nested_batch_opens_what_it_claims() -> Result<()> {
 }
 
 #[test]
-fn nested_challenge_stages_are_bound_by_their_commitments() -> Result<()> {
+fn nested_challenge_stage_is_bound_by_its_commitment() -> Result<()> {
     use ragu_arithmetic::{
         Cycle, FixedGenerators,
         group::{Curve, Group},
@@ -425,7 +427,8 @@ fn nested_challenge_stages_are_bound_by_their_commitments() -> Result<()> {
     let (parent, _, _) = fused(&app);
     let pasta = Pasta::baked();
 
-    // 1. The stored stages are the unblinded stages of the lifts.
+    // 1. The stored stage is the unblinded stage of the lifts, the sign and
+    //    beta's lift.
     let lifts = parent.challenges().lifts::<C>()?;
     let (challenge_lifts, beta_lift) = lifts.split_at(NUM_BOUND);
     let is_base_case = parent.is_base_case::<HEADER_SIZE>();
@@ -434,6 +437,7 @@ fn nested_challenge_stages_are_bound_by_their_commitments() -> Result<()> {
         &nested::stages::challenges::Witness::new(
             challenge_lifts.try_into().unwrap(),
             is_base_case,
+            beta_lift[0],
         ),
     )?;
     assert!(
@@ -443,40 +447,31 @@ fn nested_challenge_stages_are_bound_by_their_commitments() -> Result<()> {
             .eq(expected.iter_coeffs()),
         "nested challenge stage is not the stage of the lifts"
     );
-    let expected = nested::stages::beta::Stage::<ragu_pasta::EqAffine, R>::rx(
-        Fq::ZERO,
-        nested::stages::beta::Witness { lift: beta_lift[0] },
-    )?;
-    assert!(
-        parent
-            .nested_beta_rx()
-            .iter_coeffs()
-            .eq(expected.iter_coeffs()),
-        "nested beta stage is not the stage of the lift"
-    );
 
-    // 2. Their commitments are the fixed generator combinations the binding
-    //    circuits recompute, term by term.
+    // 2. Its commitment is the fixed generator combination the binding
+    //    circuits recompute, term by term: the binders' terms, then beta's.
     let generators = Pasta::nested_generators(pasta);
-    let mut acc = ragu_pasta::Ep::identity();
+    let sign = nested::stages::challenges::base_case_sign::<Fq>(is_base_case);
+    let mut binding = ragu_pasta::Ep::identity();
     for (i, lift) in challenge_lifts.iter().enumerate() {
-        acc += generators.g()[generator_index::<C, R>(i)] * *lift;
+        binding += generators.g()[generator_index::<C, R>(i)] * *lift;
     }
-    acc += generators.g()[generator_index::<C, R>(NUM_BOUND)]
-        * nested::stages::challenges::base_case_sign::<Fq>(is_base_case);
+    binding +=
+        generators.g()[generator_index::<C, R>(nested::stages::challenges::SIGN_INDEX)] * sign;
+    let beta_term = generators.g()[bind_beta::generator_index::<C, R>()] * beta_lift[0];
     assert_eq!(
         parent.nested_challenges_commitment(),
-        acc.to_affine(),
+        (binding + beta_term).to_affine(),
         "challenge commitment is not the generator combination of the lifts"
     );
     assert_eq!(
-        parent.nested_beta_commitment(),
-        (generators.g()[bind_beta::generator_index::<C, R>()] * beta_lift[0]).to_affine(),
-        "beta commitment is not the generator times the lift"
+        parent.nested_challenges_partial(),
+        binding.to_affine(),
+        "the exported binding is not the commitment without beta's term"
     );
 
     // 3. The eval stage's partials are the running sums the binders check;
-    //    the last is the challenge commitment.
+    //    the last binder's sum is the exported binding.
     let partials =
         BindingPartials::compute::<C, R, ReferenceBackend>(pasta, challenge_lifts, is_base_case);
     let mut acc = ragu_pasta::Ep::identity();
@@ -490,15 +485,14 @@ fn nested_challenge_stages_are_bound_by_their_commitments() -> Result<()> {
             acc += generators.g()[generator_index::<C, R>(i)] * *lift;
         }
         if k + 1 == NUM_BINDERS {
-            acc += generators.g()[generator_index::<C, R>(NUM_BOUND)]
-                * nested::stages::challenges::base_case_sign::<Fq>(is_base_case);
+            acc += generators.g()[generator_index::<C, R>(nested::stages::challenges::SIGN_INDEX)]
+                * sign;
+            assert_eq!(partials.binding, acc.to_affine(), "binding");
+        } else {
+            assert_eq!(partials.partials[k], acc.to_affine(), "partial {k}");
         }
-        assert_eq!(partials.partials[k], acc.to_affine(), "partial {k}");
     }
-    assert_eq!(
-        parent.nested_challenges_commitment(),
-        partials.partials[NUM_BINDERS - 1]
-    );
+    assert_eq!(parent.nested_challenges_partial(), partials.binding);
 
     Ok(())
 }

@@ -151,6 +151,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     where
         Self: 'dr,
     {
+        let builder =
+            builder.skip_stage::<super::super::stages::points::BindingStage<C::NestedCurve>>()?;
         let (preamble, builder) = builder.add_stage::<preamble::Stage<C, R, HEADER_SIZE>>()?;
         let (outer_error, builder) =
             builder.add_stage::<outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;

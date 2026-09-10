@@ -1,23 +1,25 @@
 //! The native endoscaling steps: the Horner walk over the nested-curve
-//! commitments the nested batch folds into $P_n$, four points per step.
+//! commitments the nested batch folds into $P_n$,
+//! [`ENDOSCALINGS_PER_STEP`] points per step.
 //!
 //! The mirror of the nested [`EndoscalingStep`] for the split points layout
 //! of [`stages::points`]: step $k$ starts from the previous interstitial (or
-//! the initial point for step 0), endoscales it by the endoscalar stage's
-//! bits and adds each of its inputs in turn, and enforces the result equal
-//! to its own interstitial. The last interstitial is $P_n$.
+//! $F_n$ for step 0), endoscales it by the walk stage's endoscalar bits and adds
+//! each of its inputs in turn, reading every point from the stage that
+//! committed it, and enforces the result equal to its own interstitial. The
+//! last interstitial is $P_n$.
 //!
 //! The stages are loaded unenforced: [`bind_endoscalar`](super::bind_endoscalar)
-//! binds the endoscalar's bits to `pre_beta` and enforces the inputs' curve
-//! membership, and the interstitials are equal to points computed from
-//! them.
+//! binds the walk stage's endoscalar bits to `pre_beta` and enforces the
+//! inputs' curve membership, and the interstitials are equal to points
+//! computed from them.
 //!
 //! [`EndoscalingStep`]: crate::internal::endoscalar::EndoscalingStep
 //! [`stages::points`]: crate::internal::native::stages::points
 
 use core::marker::PhantomData;
 
-use ragu_arithmetic::CurveAffine;
+use ragu_arithmetic::Cycle;
 use ragu_circuits::{
     WithAux,
     polynomials::Rank,
@@ -31,28 +33,30 @@ use ragu_core::{
 };
 use ragu_primitives::{GadgetExt, NonzeroBank, vec::Len};
 
-use crate::internal::{
-    endoscalar::{EndoscalarStage, InputsLen, NumStepsLen, input_range},
-    native::stages::points::{
-        InputsStage, InputsWitness, InterstitialsStage, InterstitialsWitness,
+use super::super::{
+    ENDOSCALINGS_PER_STEP,
+    stages::points::{
+        AbStage, BindingStage, ChildrenStage, FStage, Inputs, NumInputs, NumSteps, RegistryWxStage,
+        WalkInputs, WalkStage, WalkWitness,
     },
 };
+use crate::internal::endoscalar::input_range;
 
 /// One step of the native endoscaling walk.
 #[derive(Clone)]
-pub struct Circuit<C: CurveAffine, R: Rank, const NUM_POINTS: usize> {
+pub struct Circuit<C: Cycle, R: Rank> {
     step: usize,
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: CurveAffine, R: Rank, const NUM_POINTS: usize> Circuit<C, R, NUM_POINTS> {
+impl<C: Cycle, R: Rank> Circuit<C, R> {
     /// Creates step `step`.
     ///
     /// # Panics
     ///
-    /// Panics if `step` is not a step of the walk over `NUM_POINTS` points.
-    pub fn new(step: usize) -> MultiStage<C::Base, R, Self> {
-        let num_steps = NumStepsLen::<NUM_POINTS>::len();
+    /// Panics if `step` is not a step of the walk.
+    pub fn new(step: usize) -> MultiStage<C::CircuitField, R, Self> {
+        let num_steps = NumSteps::len();
         assert!(
             step < num_steps,
             "step {step} exceeds available steps ({num_steps})"
@@ -64,23 +68,20 @@ impl<C: CurveAffine, R: Rank, const NUM_POINTS: usize> Circuit<C, R, NUM_POINTS>
     }
 }
 
-/// Witness for one step: the endoscalar and both points stages.
-pub struct Witness<'a, C: CurveAffine, const NUM_POINTS: usize> {
-    pub endoscalar: u128,
-    pub inputs: &'a InputsWitness<C, NUM_POINTS>,
-    pub interstitials: &'a InterstitialsWitness<C, NUM_POINTS>,
+/// Witness for one step: every points stage.
+pub struct Witness<'a, C: Cycle> {
+    pub inputs: &'a Inputs<C::NestedCurve>,
+    pub walk: &'a WalkWitness<C::NestedCurve>,
 }
 
-impl<C: CurveAffine, R: Rank, const NUM_POINTS: usize> MultiStageCircuit<C::Base, R>
-    for Circuit<C, R, NUM_POINTS>
-{
-    type Last = InterstitialsStage<C, NUM_POINTS>;
+impl<C: Cycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circuit<C, R> {
+    type Last = WalkStage<C::NestedCurve>;
     type Instance<'source> = ();
-    type Witness<'source> = Witness<'source, C, NUM_POINTS>;
-    type Output = Kind![C::Base; ()];
+    type Witness<'source> = Witness<'source, C>;
+    type Output = Kind![C::CircuitField; ()];
     type Aux<'source> = ();
 
-    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
+    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
         _: &mut D,
         _: DriverValue<D, ()>,
@@ -88,40 +89,55 @@ impl<C: CurveAffine, R: Rank, const NUM_POINTS: usize> MultiStageCircuit<C::Base
         Ok(())
     }
 
-    fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
+    fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
         dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
-        let (endoscalar, dr) = dr.add_stage::<EndoscalarStage>()?;
-        let (inputs, dr) = dr.add_stage::<InputsStage<C, NUM_POINTS>>()?;
-        let (interstitials, dr) = dr.add_stage::<InterstitialsStage<C, NUM_POINTS>>()?;
+        let (binding, dr) = dr.add_stage::<BindingStage<C::NestedCurve>>()?;
+        let (children, dr) = dr.add_stage::<ChildrenStage<C::NestedCurve>>()?;
+        let (registry_wx, dr) = dr.add_stage::<RegistryWxStage<C::NestedCurve>>()?;
+        let (ab, dr) = dr.add_stage::<AbStage<C::NestedCurve>>()?;
+        let (f, dr) = dr.add_stage::<FStage<C::NestedCurve>>()?;
+        let (walk, dr) = dr.add_stage::<WalkStage<C::NestedCurve>>()?;
         let dr = dr.finish();
 
-        let endoscalar = endoscalar.unenforced(dr, witness.as_ref().map(|w| w.endoscalar))?;
-        let inputs = inputs.unenforced(dr, witness.as_ref().map(|w| w.inputs))?;
-        let interstitials =
-            interstitials.unenforced(dr, witness.as_ref().map(|w| w.interstitials))?;
+        let inputs = witness.as_ref().map(|w| w.inputs);
+        let binding = binding.unenforced(dr, inputs.as_ref().map(|i| &i.binding))?;
+        let children = children.unenforced(dr, inputs.as_ref().map(|i| &i.children))?;
+        let registry_wx = registry_wx.unenforced(dr, inputs.as_ref().map(|i| &i.registry_wx))?;
+        let ab = ab.unenforced(dr, inputs.as_ref().map(|i| &i.ab))?;
+        let f = f.unenforced(dr, inputs.as_ref().map(|i| &i.f))?;
+        let walked = walk.unenforced(dr, witness.as_ref().map(|w| w.walk))?;
+        let endoscalar = &walked.endoscalar;
+        let interstitials = &walked.interstitials;
+        let walk = WalkInputs {
+            binding: &binding,
+            children: &children,
+            registry_wx: &registry_wx,
+            ab: &ab,
+            f: &f,
+        };
 
         let initial = self
             .step
             .checked_sub(1)
-            .map(|i| &interstitials.interstitials[i])
-            .unwrap_or(&inputs.initial)
+            .map(|i| &interstitials[i])
+            .unwrap_or(walk.initial())
             .clone();
 
-        let range = input_range(self.step, InputsLen::<NUM_POINTS>::len());
+        let range = input_range::<ENDOSCALINGS_PER_STEP>(self.step, NumInputs::len());
         assert!(!range.is_empty());
 
         let acc = NonzeroBank::scope(dr, |dr, bank| {
             let mut acc = initial;
             for idx in range {
                 let scaled = endoscalar.group_scale(dr, &acc)?;
-                acc = scaled.add_incomplete(dr, &inputs.inputs[idx], bank)?;
+                acc = scaled.add_incomplete(dr, walk.input(idx), bank)?;
             }
             Ok(acc)
         })?;
-        acc.enforce_equal(dr, &interstitials.interstitials[self.step])?;
+        acc.enforce_equal(dr, &interstitials[self.step])?;
 
         Ok(WithAux::new((), D::unit()))
     }

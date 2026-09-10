@@ -80,7 +80,7 @@ impl<C: CurveAffine, R: Rank> Circuit<C, R> {
 }
 
 impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
-    type Last = stages::beta::Stage<C, R>;
+    type Last = stages::challenges::Stage<C, R>;
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = common::Witness<'source, C>;
     type Output = unified::OutputKind<C>;

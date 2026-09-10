@@ -32,8 +32,10 @@
 //! The second layer of the nested fold happens here too, producing the
 //! nested accumulator polynomials $A\_n(X)$, $B\_n(X)$ over the scalar
 //! field. Their commitments live on the nested curve and are computed by
-//! committing the polynomials directly; nothing binds them yet, so they are
-//! not bridged anywhere.
+//! committing the polynomials directly, then committed, with the nested
+//! $m_n(w_n, X, y_n)$ restriction's, in the native points stage the
+//! endoscaling walk reads them from, whose commitment the `ab` bridge
+//! carries: they are fixed before $x$ is squeezed, as $A$ and $B$ are.
 
 use alloc::vec::Vec;
 
@@ -42,7 +44,10 @@ use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::{Element, vec::FixedVec};
 
-use super::claims::{FoldKey, NativeFuseProofSource, TrackedPoly};
+use super::{
+    NestedRegistryWy,
+    claims::{FoldKey, NativeFuseProofSource, TrackedPoly},
+};
 use crate::{
     Application,
     internal::{fold_revdot, native, nested},
@@ -55,12 +60,15 @@ type NestedNumGroups = <nested::RevdotParameters as fold_revdot::Parameters>::Nu
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
-    pub(super) fn compute_ab<'dr, D>(
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn compute_ab<'dr, D, RNG: ragu_arithmetic::rand::CryptoRng>(
         &self,
+        rng: &mut RNG,
         native_a: FixedVec<TrackedPoly<'_, FoldKey, C::CircuitField, R>, NativeNumGroups>,
         native_b: FixedVec<sparse::Polynomial<C::CircuitField, R>, NativeNumGroups>,
         nested_a: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
         nested_b: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
+        nested_registry_wy: &NestedRegistryWy<C, R>,
         native_source: &NativeFuseProofSource<'_, C, R>,
         mu_prime: &Element<'dr, D>,
         nu_prime: &Element<'dr, D>,
@@ -78,7 +86,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             builder,
         )?;
         self.compute_nested_ab(nested_a, nested_b, mu_prime, nu_prime, builder)?;
-
+        self.commit_native_points_ab(
+            rng,
+            nested_registry_wy.commitment,
+            builder.nested_a_commitment(),
+            builder.nested_b_commitment(),
+            builder,
+        )?;
         Ok(())
     }
 

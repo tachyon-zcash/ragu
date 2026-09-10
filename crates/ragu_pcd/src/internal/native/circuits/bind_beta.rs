@@ -1,32 +1,41 @@
-//! Circuit binding the children's nested beta stages to their `pre_beta`.
+//! Circuit binding the children's nested challenge stages, as walked, to
+//! the bindings the children exported and to their `pre_beta`.
 //!
 //! ## Operations
 //!
-//! A proof's nested [`beta`] stage holds the lift of its `pre_beta`,
-//! committed unblinded, so its commitment is $\mathrm{lift}(\beta) \cdot
-//! G_{\mathrm{idx}}$ for a fixed nested-curve generator. `pre_beta` is
-//! squeezed after the native `eval` stage is committed, so unlike the other
-//! challenges (see [`bind_challenges`]) it cannot be bound by the same step.
-//! The parent binds it instead: this circuit takes each child's `pre_beta`
-//! from the child's unified instance in the [`preamble`] and its beta stage
-//! commitment from the same stage, decomposes the challenge into bits
-//! ([`EndoscalarChallenge`]), endoscales the generator by them
-//! ([`Endoscalar::group_scale`]) and enforces equality.
+//! A proof's nested [`challenges`] stage holds the lifts of its challenges,
+//! the base-case sign and the lift of its `pre_beta`, committed unblinded,
+//! so its commitment is a fixed combination of nested-curve generators. The
+//! proof's own `bind_challenges` circuits recompute every term but
+//! $\beta$'s from the transcript challenges and export that partial sum as
+//! the [`nested_challenges_partial`] slot of the unified instance;
+//! `pre_beta` is squeezed after the native `eval` stage is committed, so
+//! its term cannot be bound by the same step. The parent completes the
+//! binding: for each child it takes the exported partial and `pre_beta`
+//! from the child's unified instance in the [`preamble`], decomposes
+//! `pre_beta` into bits ([`EndoscalarChallenge`]), endoscales the beta
+//! lift's generator by them ([`Endoscalar::group_scale`]), adds the term
+//! to the partial, and enforces the result equal to the child's
+//! challenge-stage commitment as the parent walks it, which the
+//! [`points::BindingStage`] holds at the root of the native stage tree.
+//! That is what ties the stage the child's nested circuits read their
+//! challenges from to the child's transcript.
 //!
 //! ## Staging
 //!
 //! Chained through [`outer_error`] to share the final mask of the hash and
-//! outer collapse circuits; both stages are unenforced here, the preamble's
-//! contracts being [`compute_v`]'s responsibility.
+//! outer collapse circuits; the binding stage is loaded unenforced, its
+//! curve membership being `bind_endoscalar`'s, and the preamble's contracts
+//! `compute_v`'s.
 //!
 //! ## Instance
 //!
 //! Uses [`unified::Output`] via [`unified::InternalOutputKind`]; reads no
 //! slot and covers none.
 //!
-//! [`beta`]: crate::internal::nested::stages::beta
-//! [`bind_challenges`]: super::bind_challenges
-//! [`compute_v`]: super::compute_v
+//! [`challenges`]: crate::internal::nested::stages::challenges
+//! [`nested_challenges_partial`]: unified::Output::nested_challenges_partial
+//! [`points::BindingStage`]: super::super::stages::points::BindingStage
 //! [`preamble`]: super::super::stages::preamble
 //! [`outer_error`]: super::super::stages::outer_error
 
@@ -44,20 +53,27 @@ use ragu_core::{
     gadgets::Bound,
     maybe::Maybe,
 };
-use ragu_primitives::{Endoscalar, EndoscalarChallenge, GadgetExt, Point, allocator::Standard};
+use ragu_primitives::{
+    Endoscalar, EndoscalarChallenge, GadgetExt, NonzeroBank, Point, allocator::Standard,
+};
 
 use super::super::{
-    stages::{outer_error as native_outer_error, preamble as native_preamble},
+    stages::{
+        outer_error as native_outer_error, points::BindingStage, preamble as native_preamble,
+    },
     unified::{self, OutputBuilder},
 };
 use crate::internal::{fold_revdot, nested};
 
-/// The nested-curve generator index the beta stage commits its lift with.
+/// The nested-curve generator index the challenge stage commits the lift of
+/// `pre_beta` with.
 pub fn generator_index<C: Cycle, R: Rank>() -> usize {
-    <nested::stages::beta::Stage<C::HostCurve, R> as StageExt<C::ScalarField, R>>::generator_index_for_a(0)
+    <nested::stages::challenges::Stage<C::HostCurve, R> as StageExt<C::ScalarField, R>>::generator_index_for_a(
+        nested::stages::challenges::BETA_INDEX,
+    )
 }
 
-/// Circuit binding both children's beta stages.
+/// Circuit binding both children's challenge stages.
 ///
 /// See the [module-level documentation] for details.
 ///
@@ -72,7 +88,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Para
 {
     /// Creates a new multi-stage circuit.
     ///
-    /// `params` provides the nested-curve generators the beta stage is
+    /// `params` provides the nested-curve generators the challenge stage is
     /// committed with.
     pub fn new(params: &'params C::Params) -> MultiStage<C::CircuitField, R, Self> {
         MultiStage::new(Circuit {
@@ -86,8 +102,11 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Para
 pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
     /// The unified instance, for the instance and accumulated coverage.
     pub unified: unified::Instance<C>,
+    /// The binding stage: the children's challenge-stage commitments as
+    /// walked.
+    pub binding: &'a super::super::stages::points::BindingWitness<C::NestedCurve>,
     /// Witness for the preamble stage (provides the children's `pre_beta`
-    /// and beta stage commitments).
+    /// and exported bindings).
     pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
     /// Witness for the outer error stage (reserved, unused).
     pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
@@ -122,12 +141,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     where
         Self: 'dr,
     {
+        let (binding, builder) = builder.add_stage::<BindingStage<C::NestedCurve>>()?;
         let (preamble, builder) =
             builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
         let (outer_error, builder) =
             builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();
 
+        let binding = binding.unenforced(dr, witness.as_ref().map(|w| w.binding))?;
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
         let _ = outer_error.unenforced(dr, witness.as_ref().map(|w| w.outer_error_witness))?;
 
@@ -135,13 +156,22 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
         let generator = C::nested_generators(self.params).g()[generator_index::<C, R>()];
-        for child in [&preamble.left, &preamble.right] {
+        for (child, walked) in [
+            (&preamble.left, &binding.left),
+            (&preamble.right, &binding.right),
+        ] {
             let pre_beta =
                 EndoscalarChallenge::from_element(dr, allocator, child.unified.pre_beta.clone())?;
             let bits = Endoscalar::extract(pre_beta);
             let generator = Point::constant(dr, generator)?;
-            bits.group_scale(dr, &generator)?
-                .enforce_equal(dr, &child.nested_beta_commitment)?;
+            let beta_term = bits.group_scale(dr, &generator)?;
+            let expected = NonzeroBank::scope(dr, |dr, bank| {
+                child
+                    .unified
+                    .nested_challenges_partial
+                    .add_incomplete(dr, &beta_term, bank)
+            })?;
+            walked.enforce_equal(dr, &expected)?;
         }
 
         let (output, aux) = unified_output.finish(dr, allocator)?;

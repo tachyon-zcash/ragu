@@ -10,7 +10,8 @@
 //! schedule.
 //!
 //! This phase of the fuse operation is also used to commit to the $m(w, X, y)$
-//! restriction.
+//! restriction; its nested counterpart's commitment enters the native
+//! points stage committed before $x$ (see `_06_ab`).
 
 use ragu_arithmetic::{Cycle, ff::Field, rand::CryptoRng};
 use ragu_circuits::{polynomials::Rank, registry::RegistryAt, staging::StageExt};

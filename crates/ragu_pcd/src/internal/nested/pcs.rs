@@ -99,6 +99,23 @@ pub const STATIC_F_QUERIES: [StaticFQuery; 18] = [
 /// `registry_xy`. See [`Batch::evaluated`] for the order.
 pub const NUM_BATCHED_POINTS: usize = 1 + 2 * (RxIndex::NUM + 4) + 6;
 
+/// A child's nested-curve commitments in the order the batch walks them:
+/// its rx commitments in [`RxIndex::ALL`] order, then $a$, $b$,
+/// `registry_xy` and $p$.
+pub fn child_commitments<C: Cycle, R: Rank>(
+    proof: &Proof<C, R>,
+) -> impl Iterator<Item = C::NestedCurve> + '_ {
+    RxIndex::ALL
+        .iter()
+        .map(move |&id| proof.nested_rx_commitment(id))
+        .chain([
+            proof.nested_a_commitment(),
+            proof.nested_b_commitment(),
+            proof.nested_registry_xy_commitment(),
+            proof.nested_p_commitment(),
+        ])
+}
+
 /// The nested challenges of a child proof, derived from its native ones.
 #[derive(Clone, Copy)]
 pub struct ChildChallenges<F> {
@@ -237,17 +254,7 @@ impl<'a, C: Cycle, R: Rank> Batch<'a, C, R> {
     ) -> impl Iterator<Item = C::NestedCurve> + '_ {
         [self.left, self.right]
             .into_iter()
-            .flat_map(|proof| {
-                RxIndex::ALL
-                    .iter()
-                    .map(move |&id| proof.nested_rx_commitment(id))
-                    .chain([
-                        proof.nested_a_commitment(),
-                        proof.nested_b_commitment(),
-                        proof.nested_registry_xy_commitment(),
-                        proof.nested_p_commitment(),
-                    ])
-            })
+            .flat_map(|proof| child_commitments(proof))
             .chain([
                 current.registry_wx0,
                 current.registry_wx1,

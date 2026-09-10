@@ -241,9 +241,12 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     native_bind_beta_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_bind_endoscalar_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_endoscaling_step_rxs: Option<Vec<sparse::Polynomial<C::CircuitField, R>>>,
-    native_endoscalar_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
-    native_points_inputs_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
-    native_points_interstitials_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_points_binding_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_points_children_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_points_registry_wx_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_points_ab_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_points_f_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_points_walk_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
 
     // Bridge rx polynomials + commitments (set together by caller)
     bridge_preamble_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
@@ -280,9 +283,9 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     nested_registry_xy_poly: Option<sparse::Polynomial<C::ScalarField, R>>,
     nested_p_poly: Option<sparse::Polynomial<C::ScalarField, R>>,
 
-    // Nested challenge and beta stages
+    // Nested challenge stage, and its commitment without the beta term
     nested_challenges_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
-    nested_beta_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
+    nested_challenges_partial: Option<C::NestedCurve>,
 
     // Nested instance circuits
     nested_export_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
@@ -302,9 +305,8 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     nested_registry_xy_commitment: OnceCell<C::NestedCurve>,
     nested_p_commitment: OnceCell<C::NestedCurve>,
 
-    // Nested challenge and beta stage commitment caches
+    // Nested challenge stage commitment cache
     nested_challenges_commitment: OnceCell<C::NestedCurve>,
-    nested_beta_commitment: OnceCell<C::NestedCurve>,
 
     // Nested instance circuit commitment caches
     nested_export_commitment: OnceCell<C::NestedCurve>,
@@ -344,9 +346,12 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     native_bind_beta_commitment: OnceCell<C::HostCurve>,
     native_bind_endoscalar_commitment: OnceCell<C::HostCurve>,
     native_endoscaling_step_commitments: OnceCell<Vec<C::HostCurve>>,
-    native_endoscalar_commitment: OnceCell<C::HostCurve>,
-    native_points_inputs_commitment: OnceCell<C::HostCurve>,
-    native_points_interstitials_commitment: OnceCell<C::HostCurve>,
+    native_points_binding_commitment: OnceCell<C::HostCurve>,
+    native_points_children_commitment: OnceCell<C::HostCurve>,
+    native_points_registry_wx_commitment: OnceCell<C::HostCurve>,
+    native_points_ab_commitment: OnceCell<C::HostCurve>,
+    native_points_f_commitment: OnceCell<C::HostCurve>,
+    native_points_walk_commitment: OnceCell<C::HostCurve>,
 
     // Cached bridge commitment cache (lazily computed from its cached rx)
     bridge_ab_commitment: OnceCell<C::NestedCurve>,
@@ -382,9 +387,12 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             native_bind_beta_rx: None,
             native_bind_endoscalar_rx: None,
             native_endoscaling_step_rxs: None,
-            native_endoscalar_rx: None,
-            native_points_inputs_rx: None,
-            native_points_interstitials_rx: None,
+            native_points_binding_rx: None,
+            native_points_children_rx: None,
+            native_points_registry_wx_rx: None,
+            native_points_ab_rx: None,
+            native_points_f_rx: None,
+            native_points_walk_rx: None,
             bridge_preamble_rx: None,
             bridge_preamble_commitment: None,
             bridge_s_prime_rx: None,
@@ -408,7 +416,7 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             nested_registry_xy_poly: None,
             nested_p_poly: None,
             nested_challenges_rx: None,
-            nested_beta_rx: None,
+            nested_challenges_partial: None,
             nested_export_rx: None,
             nested_collapse_rx: None,
             nested_compute_v_rx: None,
@@ -420,7 +428,6 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             nested_registry_xy_commitment: OnceCell::new(),
             nested_p_commitment: OnceCell::new(),
             nested_challenges_commitment: OnceCell::new(),
-            nested_beta_commitment: OnceCell::new(),
             nested_export_commitment: OnceCell::new(),
             nested_collapse_commitment: OnceCell::new(),
             nested_compute_v_commitment: OnceCell::new(),
@@ -454,9 +461,12 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             native_bind_beta_commitment: OnceCell::new(),
             native_bind_endoscalar_commitment: OnceCell::new(),
             native_endoscaling_step_commitments: OnceCell::new(),
-            native_endoscalar_commitment: OnceCell::new(),
-            native_points_inputs_commitment: OnceCell::new(),
-            native_points_interstitials_commitment: OnceCell::new(),
+            native_points_binding_commitment: OnceCell::new(),
+            native_points_children_commitment: OnceCell::new(),
+            native_points_registry_wx_commitment: OnceCell::new(),
+            native_points_ab_commitment: OnceCell::new(),
+            native_points_f_commitment: OnceCell::new(),
+            native_points_walk_commitment: OnceCell::new(),
             bridge_ab_commitment: OnceCell::new(),
         }
     }
@@ -506,29 +516,50 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         native_bind_endoscalar_commitment,
         native_bind_endoscalar_rx
     );
-    native_setter!(set_native_endoscalar_rx, native_endoscalar_rx);
+    native_setter!(set_native_points_binding_rx, native_points_binding_rx);
     lazy_commitment!(
         native,
-        native_endoscalar_commitment,
-        native_endoscalar_commitment,
-        native_endoscalar_rx
+        native_points_binding_commitment,
+        native_points_binding_commitment,
+        native_points_binding_rx
     );
-    native_setter!(set_native_points_inputs_rx, native_points_inputs_rx);
+    native_setter!(set_native_points_children_rx, native_points_children_rx);
     lazy_commitment!(
         native,
-        native_points_inputs_commitment,
-        native_points_inputs_commitment,
-        native_points_inputs_rx
+        native_points_children_commitment,
+        native_points_children_commitment,
+        native_points_children_rx
     );
     native_setter!(
-        set_native_points_interstitials_rx,
-        native_points_interstitials_rx
+        set_native_points_registry_wx_rx,
+        native_points_registry_wx_rx
     );
     lazy_commitment!(
         native,
-        native_points_interstitials_commitment,
-        native_points_interstitials_commitment,
-        native_points_interstitials_rx
+        native_points_registry_wx_commitment,
+        native_points_registry_wx_commitment,
+        native_points_registry_wx_rx
+    );
+    native_setter!(set_native_points_ab_rx, native_points_ab_rx);
+    lazy_commitment!(
+        native,
+        native_points_ab_commitment,
+        native_points_ab_commitment,
+        native_points_ab_rx
+    );
+    native_setter!(set_native_points_f_rx, native_points_f_rx);
+    lazy_commitment!(
+        native,
+        native_points_f_commitment,
+        native_points_f_commitment,
+        native_points_f_rx
+    );
+    native_setter!(set_native_points_walk_rx, native_points_walk_rx);
+    lazy_commitment!(
+        native,
+        native_points_walk_commitment,
+        native_points_walk_commitment,
+        native_points_walk_rx
     );
     setter!(
         set_native_endoscaling_step_rxs,
@@ -735,7 +766,11 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         bridge_ab_commitment,
         nested::RxIndex::BridgeAB,
         ab,
-        { a: native_a_commitment(), b: native_b_commitment() }
+        {
+            a: native_a_commitment(),
+            b: native_b_commitment(),
+            native_points_ab: native_points_ab_commitment()
+        }
     );
 
     setter!(
@@ -851,13 +886,15 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         nested_challenges_commitment,
         nested_challenges_rx
     );
-    setter!(set_nested_beta_rx, nested_beta_rx, sparse::Polynomial<C::ScalarField, R>);
-    ref_getter!(nested_beta_rx, nested_beta_rx, sparse::Polynomial<C::ScalarField, R>);
-    lazy_commitment!(
-        nested,
-        nested_beta_commitment,
-        nested_beta_commitment,
-        nested_beta_rx
+    setter!(
+        set_nested_challenges_partial,
+        nested_challenges_partial,
+        C::NestedCurve
+    );
+    getter!(
+        nested_challenges_partial,
+        nested_challenges_partial,
+        C::NestedCurve
     );
     setter!(
         set_nested_export_rx,
@@ -964,9 +1001,12 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         self.native_bind_beta_commitment();
         self.native_bind_endoscalar_commitment();
         self.native_endoscaling_step_commitments();
-        self.native_endoscalar_commitment();
-        self.native_points_inputs_commitment();
-        self.native_points_interstitials_commitment();
+        self.native_points_binding_commitment();
+        self.native_points_children_commitment();
+        self.native_points_registry_wx_commitment();
+        self.native_points_ab_commitment();
+        self.native_points_f_commitment();
+        self.native_points_walk_commitment();
 
         // Force lazy evaluation of the cached bridge commitment.
         self.bridge_ab_commitment()?;
@@ -982,7 +1022,6 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         self.nested_registry_xy_commitment();
         self.nested_p_commitment();
         self.nested_challenges_commitment();
-        self.nested_beta_commitment();
         self.nested_export_commitment();
         self.nested_collapse_commitment();
         self.nested_compute_v_commitment();
@@ -1029,9 +1068,12 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             native_bind_beta_rx: take!(native_bind_beta_rx),
             native_bind_endoscalar_rx: take!(native_bind_endoscalar_rx),
             native_endoscaling_step_rxs: take!(native_endoscaling_step_rxs),
-            native_endoscalar_rx: take!(native_endoscalar_rx),
-            native_points_inputs_rx: take!(native_points_inputs_rx),
-            native_points_interstitials_rx: take!(native_points_interstitials_rx),
+            native_points_binding_rx: take!(native_points_binding_rx),
+            native_points_children_rx: take!(native_points_children_rx),
+            native_points_registry_wx_rx: take!(native_points_registry_wx_rx),
+            native_points_ab_rx: take!(native_points_ab_rx),
+            native_points_f_rx: take!(native_points_f_rx),
+            native_points_walk_rx: take!(native_points_walk_rx),
 
             bridge_preamble_rx: take!(bridge_preamble_rx),
             bridge_preamble_commitment: take!(bridge_preamble_commitment),
@@ -1059,7 +1101,7 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             nested_registry_xy_poly: take!(nested_registry_xy_poly),
             nested_p_poly: take!(nested_p_poly),
             nested_challenges_rx: take!(nested_challenges_rx),
-            nested_beta_rx: take!(nested_beta_rx),
+            nested_challenges_partial: take!(nested_challenges_partial),
             nested_export_rx: take!(nested_export_rx),
             nested_collapse_rx: take!(nested_collapse_rx),
             nested_compute_v_rx: take!(nested_compute_v_rx),
@@ -1078,7 +1120,6 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             nested_registry_xy_commitment: cached!(nested_registry_xy_commitment),
             nested_p_commitment: cached!(nested_p_commitment),
             nested_challenges_commitment: cached!(nested_challenges_commitment),
-            nested_beta_commitment: cached!(nested_beta_commitment),
             nested_export_commitment: cached!(nested_export_commitment),
             nested_collapse_commitment: cached!(nested_collapse_commitment),
             nested_compute_v_commitment: cached!(nested_compute_v_commitment),
@@ -1126,9 +1167,12 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
                 .into_iter()
                 .map(Cached)
                 .collect(),
-            native_endoscalar_commitment: cached!(native_endoscalar_commitment),
-            native_points_inputs_commitment: cached!(native_points_inputs_commitment),
-            native_points_interstitials_commitment: cached!(native_points_interstitials_commitment),
+            native_points_binding_commitment: cached!(native_points_binding_commitment),
+            native_points_children_commitment: cached!(native_points_children_commitment),
+            native_points_registry_wx_commitment: cached!(native_points_registry_wx_commitment),
+            native_points_ab_commitment: cached!(native_points_ab_commitment),
+            native_points_f_commitment: cached!(native_points_f_commitment),
+            native_points_walk_commitment: cached!(native_points_walk_commitment),
         })
     }
 }

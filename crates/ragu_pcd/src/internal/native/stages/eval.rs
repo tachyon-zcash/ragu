@@ -19,7 +19,9 @@
 //! It also carries the running sums of the nested challenge binding: the
 //! `bind_challenges` circuits each endoscale two nested-curve generators by
 //! two challenges and check the sum so far against the partial this stage
-//! witnessed. The last partial is the nested challenge stage's commitment.
+//! witnessed. The last circuit's sum is the nested challenge stage's
+//! commitment without its $\beta$ term, and goes to the unified instance
+//! rather than to this stage.
 
 use core::marker::PhantomData;
 
@@ -49,25 +51,26 @@ use crate::{
     },
 };
 
-/// Length type for the binding partial sums, one per `bind_challenges`
-/// circuit.
-pub type PartialsLen = ConstLen<NUM_BINDERS>;
+/// Length type for the binding partial sums: one per `bind_challenges`
+/// circuit but the last, whose sum the unified instance carries.
+pub type PartialsLen = ConstLen<{ NUM_BINDERS - 1 }>;
 
 /// The running sums of the nested challenge binding: partial $k$ is the sum
 /// of the first $2(k+1)$ terms of the nested challenge stage's commitment,
-/// $\sum_{i < 2(k+1)} \mathrm{lift}(\mathrm{ch}_i) \cdot G_{\mathrm{idx}(i)}$,
-/// and the last partial also carries the base-case sign's term, so that it
-/// is the stage's commitment.
+/// $\sum_{i < 2(k+1)} \mathrm{lift}(\mathrm{ch}_i) \cdot G_{\mathrm{idx}(i)}$.
+/// The binding is the sum of all ten terms and the base-case sign's: the
+/// stage's commitment without its $\beta$ term, which the last binding
+/// circuit pins to the unified instance.
 #[derive(Clone)]
 pub struct BindingPartials<P> {
     pub partials: FixedVec<P, PartialsLen>,
+    pub binding: P,
 }
 
 impl<P: ragu_arithmetic::CurveAffine> BindingPartials<P> {
-    /// Computes the partials of the given lifts (the ten challenges, `w`
-    /// through `u`, in stage order) over the nested-curve generators the
-    /// challenge stage commits them with; the last partial also carries the
-    /// base-case sign's term.
+    /// Computes the partials and the binding of the given lifts (the ten
+    /// challenges, `w` through `u`, in stage order) over the nested-curve
+    /// generators the challenge stage commits them with.
     pub fn compute<C: Cycle<NestedCurve = P, ScalarField = P::ScalarExt>, R: Rank, B>(
         params: &C::Params,
         lifts: &[C::ScalarField],
@@ -80,15 +83,16 @@ impl<P: ragu_arithmetic::CurveAffine> BindingPartials<P> {
 
         assert_eq!(lifts.len(), 2 * NUM_BINDERS);
         let generators = C::nested_generators(params);
-        // The stage's values: the lifts, then the base-case sign.
+        // The stage's values the binders cover: the lifts, then the
+        // base-case sign.
         let mut scalars: alloc::vec::Vec<C::ScalarField> = lifts.to_vec();
         scalars.push(nested::stages::challenges::base_case_sign(is_base_case));
         let bases: alloc::vec::Vec<P> = (0..scalars.len())
             .map(|i| generators.g()[generator_index::<C, R>(i)])
             .collect();
-        let partials =
+        let sums =
             ragu_arithmetic::batch_to_affine(core::array::from_fn::<_, NUM_BINDERS, _>(|k| {
-                // The last partial includes the sign term.
+                // The last sum includes the sign term.
                 let n = if k + 1 == NUM_BINDERS {
                     scalars.len()
                 } else {
@@ -96,8 +100,10 @@ impl<P: ragu_arithmetic::CurveAffine> BindingPartials<P> {
                 };
                 B::msm(scalars[..n].iter(), bases[..n].iter())
             }));
+        let (partials, binding) = sums.split_at(NUM_BINDERS - 1);
         Self {
-            partials: FixedVec::new(partials.into()).expect("NUM_BINDERS partials"),
+            partials: FixedVec::new(partials.to_vec()).expect("NUM_BINDERS - 1 partials"),
+            binding: binding[0],
         }
     }
 }
@@ -326,7 +332,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     fn values() -> usize {
         // 2 * ChildEvaluations (rx + 4 each) + current step elements (6)
         // + (x, y) per binding partial
-        2 * (RxIndex::NUM + 4) + 6 + 2 * NUM_BINDERS
+        2 * (RxIndex::NUM + 4) + 6 + 2 * (NUM_BINDERS - 1)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

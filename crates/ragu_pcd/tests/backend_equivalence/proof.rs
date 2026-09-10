@@ -41,9 +41,12 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             native_bind_beta_rx: _,
             native_bind_endoscalar_rx: _,
             native_endoscaling_step_rxs: _,
-            native_endoscalar_rx: _,
-            native_points_inputs_rx: _,
-            native_points_interstitials_rx: _,
+            native_points_binding_rx: _,
+            native_points_children_rx: _,
+            native_points_registry_wx_rx: _,
+            native_points_ab_rx: _,
+            native_points_f_rx: _,
+            native_points_walk_rx: _,
             bridge_preamble_rx: _,
             bridge_s_prime_rx: _,
             bridge_inner_error_rx: _,
@@ -60,7 +63,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             nested_registry_xy_poly: _,
             nested_p_poly: _,
             nested_challenges_rx: _,
-            nested_beta_rx: _,
+            nested_challenges_partial: _,
             nested_export_rx: _,
             nested_collapse_rx: _,
             nested_compute_v_rx: _,
@@ -72,7 +75,6 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             nested_registry_xy_commitment: _,
             nested_p_commitment: _,
             nested_challenges_commitment: _,
-            nested_beta_commitment: _,
             nested_export_commitment: _,
             nested_collapse_commitment: _,
             nested_compute_v_commitment: _,
@@ -106,9 +108,12 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             native_bind_beta_commitment: _,
             native_bind_endoscalar_commitment: _,
             native_endoscaling_step_commitments: _,
-            native_endoscalar_commitment: _,
-            native_points_inputs_commitment: _,
-            native_points_interstitials_commitment: _,
+            native_points_binding_commitment: _,
+            native_points_children_commitment: _,
+            native_points_registry_wx_commitment: _,
+            native_points_ab_commitment: _,
+            native_points_f_commitment: _,
+            native_points_walk_commitment: _,
             bridge_preamble_commitment: _,
             bridge_s_prime_commitment: _,
             bridge_inner_error_commitment: _,
@@ -227,7 +232,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         if self.nested_registry_xy_commitment != other.nested_registry_xy_commitment
             || self.nested_p_commitment != other.nested_p_commitment
             || self.nested_challenges_commitment != other.nested_challenges_commitment
-            || self.nested_beta_commitment != other.nested_beta_commitment
+            || self.nested_challenges_partial != other.nested_challenges_partial
             || self.nested_export_commitment != other.nested_export_commitment
             || self.nested_collapse_commitment != other.nested_collapse_commitment
             || self.nested_compute_v_commitment != other.nested_compute_v_commitment

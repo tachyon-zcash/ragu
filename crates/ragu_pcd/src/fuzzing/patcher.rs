@@ -92,11 +92,9 @@ use super::claims::{NativeFuseProofSource, NestedFuseProofSource};
 use crate::{
     Application, Pcd, RAGU_TAG,
     internal::{
-        endoscalar::{
-            EndoscalarStage, EndoscalingStep, EndoscalingStepWitness, NumStepsLen, PointsStage,
-        },
-        native::{self, total_circuit_counts},
-        nested::{self, NUM_ENDOSCALING_POINTS},
+        endoscalar::EndoscalarStage,
+        native::{self, stages::points as native_points, total_circuit_counts},
+        nested::{self, EndoscalingStep, EndoscalingStepWitness, NumStepsLen, PointsStage},
         stage_wires::{stage_wire_indices, wires_of},
         transcript::Transcript,
     },
@@ -312,6 +310,21 @@ fn covered_element_positions(coverage: &native::unified::Coverage) -> Vec<usize>
     positions
 }
 
+/// The positions, in the native unified output's $k(Y)$ order, of the wires
+/// of the slot named `name`.
+fn unified_slot_positions(name: &str) -> Vec<usize> {
+    let mut positions = Vec::new();
+    let mut position = 0;
+    native::unified::Coverage::default().for_each_slot(|slot, _, wires| {
+        if slot == name {
+            positions.extend(position..position + wires);
+        }
+        position += wires;
+    });
+    assert!(!positions.is_empty(), "no unified slot named {name}");
+    positions
+}
+
 /// [`covered_element_positions`] for the nested unified instance.
 fn covered_nested_element_positions(coverage: &nested::unified::Coverage) -> Vec<usize> {
     let mut positions = Vec::new();
@@ -523,10 +536,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let nu_prime = transcript.challenge(&mut dr)?;
 
         self.compute_ab(
+            rng,
             native_a,
             native_b,
             nested_a,
             nested_b,
+            &nested_registry_wy,
             &native_source,
             &mu_prime,
             &nu_prime,
@@ -573,7 +588,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 
         let bound_challenges = [&w, &y, &z, &mu, &nu, &mu_prime, &nu_prime, &x, &alpha, &u]
             .map(|challenge| *challenge.value().take());
-        let (eval_witness, nested_eval) = self.compute_eval(
+        let (eval_witness, nested_eval, nested_challenges_partial) = self.compute_eval(
             &bound_challenges,
             base_case,
             &left,
@@ -584,30 +599,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &nested_registry_wy,
             &builder,
         )?;
-
-        let native_points = self.prepare_native_points(
-            rng,
-            &nested_f,
-            &nested_s_prime,
-            &nested_registry_wy,
-            &left,
-            &right,
-            &mut builder,
-        )?;
-        let native_points_inputs_commitment = builder.native_points_inputs_commitment();
+        builder.set_nested_challenges_partial(nested_challenges_partial);
 
         // Mirrors `fuse`: `pre_beta` is ground rather than squeezed once, so
         // each attempt re-blinds the eval commitment and re-derives it from a
         // fresh transcript clone until it lands in endoscalar range.
         let (pre_beta, (eval_rx, bridge_eval_rx, bridge_eval_commitment)) =
             EndoscalarChallenge::sample(&mut dr, |dr| {
-                let (eval_rx, bridge_eval_rx, bridge_eval_commitment) = self
-                    .sample_eval_commitment(
-                        rng,
-                        &eval_witness,
-                        &nested_eval,
-                        native_points_inputs_commitment,
-                    )?;
+                let (eval_rx, bridge_eval_rx, bridge_eval_commitment) =
+                    self.sample_eval_commitment(rng, &eval_witness, &nested_eval)?;
 
                 let mut transcript = transcript.clone();
                 let bridge_eval_commitment_point = Point::constant(dr, bridge_eval_commitment)?;
@@ -637,7 +637,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &mut builder,
         )?;
 
-        let (points_witness, native_interstitials) = self.compute_p(
+        let (points_witness, native_points, native_walk) = self.compute_p(
             rng,
             &pre_beta,
             &left,
@@ -648,7 +648,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &nested_s_prime,
             &nested_registry_wy,
             &nested_f,
-            &native_points,
             &mut builder,
         )?;
 
@@ -693,6 +692,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                     bridge_eval_commitment: builder.bridge_eval_commitment(),
                     pre_beta: builder.pre_beta(),
                     v: builder.v(),
+                    nested_challenges_partial: builder.nested_challenges_partial(),
                     coverage: Default::default(),
                 })
             };
@@ -705,11 +705,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 
         // The honest stage values, per stage, for the overlay: each circuit's
         // chain is the concatenation in `add_stage` order (a skipped stage is
-        // reserved all the same, so it is included).
-        let preamble_values =
-            stage_values::<_, R, native::stages::preamble::Stage<C, R, HEADER_SIZE>>(
+        // reserved all the same, so it is included). The binding stage roots
+        // every chain.
+        let binding_values = stage_values::<_, R, native_points::BindingStage<C::NestedCurve>>(
+            &native_points.binding,
+        )?;
+        let preamble_values = [
+            binding_values.as_slice(),
+            &stage_values::<_, R, native::stages::preamble::Stage<C, R, HEADER_SIZE>>(
                 &preamble_witness,
-            )?;
+            )?,
+        ]
+        .concat();
         let outer_error_values =
             stage_values::<_, R, OuterError<C, R, HEADER_SIZE>>(&native_outer_error_witness)?;
         let inner_error_values = stage_values::<
@@ -907,7 +914,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 
         // The nested challenge binding circuits: circuit k endoscales two
         // generators by two challenges and checks the running sum against
-        // the k-th partial the eval stage witnessed, which is its output.
+        // the k-th partial the eval stage witnessed, which is its output; the
+        // last one checks it against the instance's partial binding instead.
         type Eval<C, R, const HEADER_SIZE: usize> = native::stages::eval::Stage<C, R, HEADER_SIZE>;
         for k in 0..native::NUM_BINDERS {
             let bind_witness = || {
@@ -918,14 +926,22 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                     eval_witness: &eval_witness,
                 })
             };
-            let bind_spec = CircuitSpec {
-                name: format!("bind_challenges_{k}"),
-                outputs: stage_wire_indices::<_, R, Eval<C, R, HEADER_SIZE>>(|stage| {
+            let outputs = if k + 1 == native::NUM_BINDERS {
+                unified_slot_positions("nested_challenges_partial")
+                    .into_iter()
+                    .map(OutputRef::Instance)
+                    .collect()
+            } else {
+                stage_wire_indices::<_, R, Eval<C, R, HEADER_SIZE>>(|stage| {
                     wires_of(&stage.partials[k])
                 })?
                 .into_iter()
                 .map(OutputRef::Stage)
-                .collect(),
+                .collect()
+            };
+            let bind_spec = CircuitSpec {
+                name: format!("bind_challenges_{k}"),
+                outputs,
             };
             crate::with_binder!(k, C, R, HEADER_SIZE, self.params, |circuit| {
                 visitor.visit(
@@ -937,9 +953,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             });
         }
 
-        // bind_beta recomputes each child's nested beta stage commitment
-        // from the child's pre_beta and checks it against the commitment the
-        // preamble stage witnessed: those are its outputs.
+        // bind_beta completes each child's exported challenge binding with
+        // the child's pre_beta term and checks it against the challenge
+        // stage commitment the binding stage witnessed: those are its
+        // outputs.
         let bind_beta = native::circuits::bind_beta::Circuit::<
             C,
             R,
@@ -949,23 +966,23 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let bind_beta_witness = || {
             Ok(native::circuits::bind_beta::Witness {
                 unified: make_unified(&builder)?,
+                binding: &native_points.binding,
                 preamble_witness: &preamble_witness,
                 outer_error_witness: &native_outer_error_witness,
             })
         };
         let bind_beta_spec = CircuitSpec {
             name: "bind_beta".into(),
-            outputs:
-                stage_wire_indices::<_, R, native::stages::preamble::Stage<C, R, HEADER_SIZE>>(
-                    |stage| {
-                        let mut wires = wires_of(&stage.left.nested_beta_commitment)?;
-                        wires.extend(wires_of(&stage.right.nested_beta_commitment)?);
-                        Ok(wires)
-                    },
-                )?
-                .into_iter()
-                .map(OutputRef::Stage)
-                .collect(),
+            outputs: stage_wire_indices::<_, R, native_points::BindingStage<C::NestedCurve>>(
+                |stage| {
+                    let mut wires = wires_of(&stage.left)?;
+                    wires.extend(wires_of(&stage.right)?);
+                    Ok(wires)
+                },
+            )?
+            .into_iter()
+            .map(OutputRef::Stage)
+            .collect(),
         };
         visitor.visit(
             &bind_beta_spec,
@@ -975,26 +992,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         )?;
 
         // The native endoscaling walk over the nested batch's commitments.
-        // bind_endoscalar forces the endoscalar stage's bits from pre_beta;
-        // each step forces its interstitial from the endoscalar bits, the
-        // previous interstitial and its four inputs.
+        // bind_endoscalar forces the walk stage's endoscalar bits from
+        // pre_beta; each step forces its interstitial from those bits, the
+        // previous interstitial and its inputs. The walk's chain is every
+        // points stage, then the walk stage.
         let beta_endo = extract_endoscalar(builder.pre_beta())?;
-        type NativeInputsStage<C> = native::stages::points::InputsStage<
-            <C as Cycle>::NestedCurve,
-            { native::NUM_ENDOSCALING_POINTS },
-        >;
-        type NativeInterstitialsStage<C> = native::stages::points::InterstitialsStage<
-            <C as Cycle>::NestedCurve,
-            { native::NUM_ENDOSCALING_POINTS },
-        >;
-        let native_endoscalar_values =
-            stage_values::<C::CircuitField, R, EndoscalarStage>(beta_endo)?;
-        let native_inputs_values = stage_values::<_, R, NativeInputsStage<C>>(&native_points)?;
-        let bind_endoscalar_values: Vec<C::CircuitField> =
-            [native_endoscalar_values.as_slice(), &native_inputs_values].concat();
+        type Nested<C> = <C as Cycle>::NestedCurve;
         let native_walk_values: Vec<C::CircuitField> = [
-            bind_endoscalar_values.as_slice(),
-            &stage_values::<_, R, NativeInterstitialsStage<C>>(&native_interstitials)?,
+            binding_values.clone(),
+            stage_values::<_, R, native_points::ChildrenStage<Nested<C>>>(&native_points.children)?,
+            stage_values::<_, R, native_points::RegistryWxStage<Nested<C>>>(
+                &native_points.registry_wx,
+            )?,
+            stage_values::<_, R, native_points::AbStage<Nested<C>>>(&native_points.ab)?,
+            stage_values::<_, R, native_points::FStage<Nested<C>>>(&native_points.f)?,
+            stage_values::<_, R, native_points::WalkStage<Nested<C>>>(&native_walk)?,
         ]
         .concat();
 
@@ -1002,15 +1014,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let bind_endoscalar_witness = || {
             Ok(native::circuits::bind_endoscalar::Witness {
                 unified: make_unified(&builder)?,
-                endoscalar: beta_endo,
                 inputs: &native_points,
+                walk: &native_walk,
             })
         };
         let bind_endoscalar_spec = CircuitSpec {
             name: "bind_endoscalar".into(),
-            outputs: stage_wire_indices::<C::CircuitField, R, EndoscalarStage>(|endoscalar| {
-                wires_of(&endoscalar)
-            })?
+            outputs: stage_wire_indices::<C::CircuitField, R, native_points::WalkStage<Nested<C>>>(
+                |walk| wires_of(&walk.endoscalar),
+            )?
             .into_iter()
             .map(OutputRef::Stage)
             .collect(),
@@ -1018,36 +1030,33 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         visitor.visit(
             &bind_endoscalar_spec,
             &bind_endoscalar,
-            &bind_endoscalar_values,
+            &native_walk_values,
             bind_endoscalar_witness,
         )?;
 
         for step in 0..native::NUM_ENDOSCALING_STEPS {
-            let circuit = native::circuits::endoscaling_step::Circuit::<
-                C::NestedCurve,
-                R,
-                { native::NUM_ENDOSCALING_POINTS },
-            >::new(step);
+            let circuit = native::circuits::endoscaling_step::Circuit::<C, R>::new(step);
             let spec = CircuitSpec {
                 name: format!("native_endoscaling_step_{step}"),
-                outputs: stage_wire_indices::<C::CircuitField, R, NativeInterstitialsStage<C>>(
-                    |stage| wires_of(&stage.interstitials[step]),
-                )?
+                outputs: stage_wire_indices::<
+                    C::CircuitField,
+                    R,
+                    native_points::WalkStage<Nested<C>>,
+                >(|walk| wires_of(&walk.interstitials[step]))?
                 .into_iter()
                 .map(OutputRef::Stage)
                 .collect(),
             };
             visitor.visit(&spec, &circuit, &native_walk_values, || {
                 Ok(native::circuits::endoscaling_step::Witness {
-                    endoscalar: beta_endo,
                     inputs: &native_points,
-                    interstitials: &native_interstitials,
+                    walk: &native_walk,
                 })
             })?;
         }
 
         // The nested endoscaling steps, on the scalar field. Each one
-        // Horner-accumulates four of the host-curve commitments `compute_p`
+        // Horner-accumulates a few of the host-curve commitments `compute_p`
         // folds into p(X), under the endoscalar extracted from pre_beta, and
         // checks the result against the interstitial the points stage
         // witnessed: that interstitial is its output; the endoscalar bits and
@@ -1055,23 +1064,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         // witness, from `compute_p`.
         let endoscaling_values: Vec<C::ScalarField> = [
             stage_values::<C::ScalarField, R, EndoscalarStage>(beta_endo)?,
-            stage_values::<_, R, PointsStage<C::HostCurve, NUM_ENDOSCALING_POINTS>>(
-                &points_witness,
-            )?,
+            stage_values::<_, R, PointsStage<C::HostCurve>>(&points_witness)?,
         ]
         .concat();
 
-        for step in 0..NumStepsLen::<NUM_ENDOSCALING_POINTS>::len() {
-            let circuit = MultiStage::new(
-                EndoscalingStep::<C::HostCurve, R, NUM_ENDOSCALING_POINTS>::new(step),
-            );
+        for step in 0..NumStepsLen::len() {
+            let circuit = MultiStage::new(EndoscalingStep::<C::HostCurve, R>::new(step));
             let spec = CircuitSpec {
                 name: format!("endoscaling_step_{step}"),
-                outputs: stage_wire_indices::<
-                    C::ScalarField,
-                    R,
-                    PointsStage<C::HostCurve, NUM_ENDOSCALING_POINTS>,
-                >(|points| wires_of(&points.interstitials[step]))?
+                outputs: stage_wire_indices::<C::ScalarField, R, PointsStage<C::HostCurve>>(
+                    |points| wires_of(&points.interstitials[step]),
+                )?
                 .into_iter()
                 .map(OutputRef::Stage)
                 .collect(),
@@ -1091,10 +1094,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let nested_s_prime_witness = nested::stages::s_prime::Witness {
             registry_wx0: native_s_prime.registry_wx0_commitment,
             registry_wx1: native_s_prime.registry_wx1_commitment,
+            native_points_registry_wx: builder.native_points_registry_wx_commitment(),
         };
         let nested_ab_witness = nested::stages::ab::Witness {
             a: builder.native_a_commitment(),
             b: builder.native_b_commitment(),
+            native_points_ab: builder.native_points_ab_commitment(),
         };
         let nested_query_witness = nested::stages::query::Witness {
             native_query: builder.native_query_commitment(),
@@ -1103,13 +1108,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         };
         let nested_f_witness = nested::stages::f::Witness {
             native_f: native_f.commitment,
+            native_points_f: builder.native_points_f_commitment(),
         };
         let nested_eval_witness = nested::stages::eval::Witness {
             native_eval: builder.native_eval_commitment(),
-            native_points_inputs: native_points_inputs_commitment,
             nested: nested_eval,
         };
-        type NestedStage<C, R> = nested::stages::beta::Stage<<C as Cycle>::HostCurve, R>;
         let nested_values: Vec<C::ScalarField> = [
             endoscaling_values,
             stage_values::<_, R, nested::stages::preamble::Stage<C::HostCurve, R>>(
@@ -1133,9 +1137,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 &nested_eval_witness,
             )?,
             stage_values::<_, R, nested::stages::challenges::Stage<C::HostCurve, R>>(
-                &nested_challenges.challenges,
+                &nested_challenges,
             )?,
-            stage_values::<_, R, NestedStage<C, R>>(nested_challenges.beta)?,
         ]
         .concat();
         let nested_witness = || {
@@ -1151,8 +1154,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 query: &nested_query_witness,
                 f: &nested_f_witness,
                 eval: &nested_eval_witness,
-                challenges: &nested_challenges.challenges,
-                beta: nested_challenges.beta,
+                challenges: &nested_challenges,
             })
         };
         let nested_coverage = |instance: nested::unified::Instance<C::HostCurve>| -> Vec<usize> {

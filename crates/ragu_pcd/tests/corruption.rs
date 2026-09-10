@@ -191,6 +191,7 @@ fn vocabulary() -> Vec<Corruption<C>> {
     for which in BridgeCommitment::ALL {
         out.push(Corruption::NegateBridgeCommitment(which));
     }
+    out.push(Corruption::NegateChallengesPartial);
 
     for which in NativeCommitment::ALL {
         out.push(Corruption::NegateNativeCommitment(which));
@@ -389,6 +390,7 @@ fn clone_corruption(corruption: &Corruption<C>) -> Corruption<C> {
         Corruption::SwapHeaders => Corruption::SwapHeaders,
         Corruption::Challenge(which, value) => Corruption::Challenge(which, value),
         Corruption::NegateBridgeCommitment(which) => Corruption::NegateBridgeCommitment(which),
+        Corruption::NegateChallengesPartial => Corruption::NegateChallengesPartial,
         Corruption::NegateNativeCommitment(which) => Corruption::NegateNativeCommitment(which),
         Corruption::NegateNestedCommitment(which) => Corruption::NegateNestedCommitment(which),
         Corruption::RescaleNativeAccumulator(scale) => Corruption::RescaleNativeAccumulator(scale),

@@ -5,8 +5,9 @@
 //!
 //! The nested registry's restrictions $m_n(w_n, x_{i,n}, Y)$ are computed
 //! here as well, at the nested counterparts of the same challenges. Their
-//! nested-curve commitments feed the nested batch, through the native
-//! points inputs stage committed before $\beta$ (see `_10_p`).
+//! nested-curve commitments are committed in the native points stage the
+//! endoscaling walk reads them from, whose commitment the `s_prime` bridge
+//! carries, so they are fixed before $y$ is squeezed.
 
 use ragu_arithmetic::{Cycle, ff::Field, rand::CryptoRng};
 use ragu_circuits::{polynomials::Rank, registry::RegistryAt, staging::StageExt};
@@ -29,6 +30,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     ) -> Result<(NativeSPrime<C, R>, NestedSPrime<C, R>)> {
         let native = self.compute_native_s_prime(native_registry, left, right)?;
         let nested = self.compute_nested_s_prime(nested_registry, left, right)?;
+        self.commit_native_points_registry_wx(
+            rng,
+            nested.registry_wx0_commitment,
+            nested.registry_wx1_commitment,
+            builder,
+        )?;
         self.compute_bridge_s_prime(rng, &native, builder)?;
         Ok((native, nested))
     }
@@ -44,6 +51,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &nested::stages::s_prime::Witness {
                 registry_wx0: native.registry_wx0_commitment,
                 registry_wx1: native.registry_wx1_commitment,
+                native_points_registry_wx: builder.native_points_registry_wx_commitment(),
             },
         )?;
         let bridge_commitment =

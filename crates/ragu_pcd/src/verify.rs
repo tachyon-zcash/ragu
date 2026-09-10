@@ -11,8 +11,8 @@
 //!   circuits verified to the batch polynomials;
 //! - the challenges are rederived from the transcript over the bridge
 //!   commitments, in the fuse's schedule;
-//! - the `ab` bridge stage and the nested challenge and beta stages, whose
-//!   contents are functions of other proof data, are rederived and compared;
+//! - the `ab` bridge stage and the nested challenge stage, whose contents
+//!   are functions of other proof data, are rederived and compared;
 //! - the registry values the query and eval stages claim, and the current
 //!   step's own evaluations at $u$ and $u_n$, are read off the stage
 //!   polynomials and held against the registry and the polynomials;
@@ -48,7 +48,7 @@ use crate::{
         nested::{
             self as nested_internal, RxComponent as NestedRxComponent,
             challenge as nested_challenge, claims as nested_claims,
-            stages::{ab as nested_ab, beta as nested_beta, challenges as nested_challenges},
+            stages::{ab as nested_ab, challenges as nested_challenges},
             unified as nested_unified,
         },
         stage_wires::{StageReader, stage_wire_indices, wires_of},
@@ -113,6 +113,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         {
             return Ok(false);
         }
+
+        // Every nested challenge is the lift of a native one, which exists
+        // only for challenges in the endoscalar range. An honest transcript
+        // output lies outside it with negligible probability; a proof
+        // carrying one is malformed rather than an internal error.
+        let Ok(lifts) = pcd.proof().challenges().lifts::<C>() else {
+            return Ok(false);
+        };
 
         // Compute unified k(y), unified_bridge k(y), and application k(y).
         let (unified_ky, unified_bridge_ky, application_ky) =
@@ -226,31 +234,23 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         };
 
         // The nested challenge stage is the unblinded stage of the lifts of
-        // this proof's challenges: recompute it and compare. In-circuit, the
-        // binding circuits tie its commitment to the transcript challenges.
+        // this proof's challenges, the base-case sign and the lift of
+        // `pre_beta`: recompute it and compare. In-circuit, the binding
+        // circuits tie its commitment to the transcript challenges.
         let nested_challenges_claim = {
-            let lifts = pcd.proof().challenges().lifts::<C>()?;
             let (challenge_lifts, beta_lift) = lifts.split_at(nested_challenges::NUM);
             let expected_challenges = nested_challenges::Stage::<C::HostCurve, R>::rx(
                 C::ScalarField::ZERO,
                 &nested_challenges::Witness::new(
                     challenge_lifts.try_into().expect("NUM challenge lifts"),
                     pcd.proof().is_base_case::<HEADER_SIZE>(),
+                    beta_lift[0],
                 ),
-            )?;
-            let expected_beta = nested_beta::Stage::<C::HostCurve, R>::rx(
-                C::ScalarField::ZERO,
-                nested_beta::Witness { lift: beta_lift[0] },
             )?;
             pcd.proof()
                 .nested_challenges_rx()
                 .iter_coeffs()
                 .eq(expected_challenges.iter_coeffs())
-                && pcd
-                    .proof()
-                    .nested_beta_rx()
-                    .iter_coeffs()
-                    .eq(expected_beta.iter_coeffs())
         };
 
         // Every cached commitment, recomputed from its polynomial and
@@ -362,7 +362,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         };
 
         // The `ab` bridge stage is a function of the native a and b
-        // commitments and the proof's bridge blinding: rederive and compare.
+        // commitments, the native points stage holding the nested ones, and
+        // the proof's bridge blinding: rederive and compare.
         let ab_bridge_claim = {
             let proof = pcd.proof();
             let expected = nested_ab::Stage::<C::HostCurve, R>::rx(
@@ -373,6 +374,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                 &nested_ab::Witness {
                     a: proof.native_commitment(RxComponent::AbA),
                     b: proof.native_commitment(RxComponent::AbB),
+                    native_points_ab: proof
+                        .native_rx_commitment(native_internal::RxIndex::PointsAb),
                 },
             )?;
             proof[nested_internal::RxIndex::BridgeAB]

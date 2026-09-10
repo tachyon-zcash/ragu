@@ -19,11 +19,11 @@
 //!   by Horner.
 //!
 //! ### $v_n$ computation
-//! - Takes $\beta_n$ from the beta stage: the lift of the endoscalar the
-//!   parent binds through `bind_beta`, so no extraction is needed here. The
-//!   endoscalar stage's wires, which the endoscaling steps walk $P$ with and
-//!   which the export circuit constrains to bits, are enforced to lift to
-//!   the same value, which binds them through it.
+//! - Takes $\beta_n$ from the challenge stage: the lift of the endoscalar
+//!   the parent binds through `bind_beta`, so no extraction is needed here.
+//!   The endoscalar stage's wires, which the endoscaling steps walk $P$
+//!   with and which the export circuit constrains to bits, are enforced to
+//!   lift to the same value, which binds them through it.
 //! - Computes $v_n$ as the $\beta_n$-weighted sum of $f_n(u_n)$ and the eval
 //!   stage's nested evaluations, in [`Batch::evaluated`] order.
 //!
@@ -82,7 +82,7 @@ impl<C: CurveAffine, R: Rank> Circuit<C, R> {
 }
 
 impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
-    type Last = stages::beta::Stage<C, R>;
+    type Last = stages::challenges::Stage<C, R>;
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = common::Witness<'source, C>;
     type Output = unified::OutputKind<C>;
@@ -167,15 +167,14 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         };
 
         // The endoscalar the endoscaling steps walked P with lifts to the
-        // beta stage's wire, which the parent's `bind_beta` ties to pre_beta.
-        stages
-            .endoscalar
-            .lift(dr)?
-            .enforce_equal(dr, &stages.beta.lift)?;
+        // challenge stage's beta wire, which the parent's `bind_beta` ties
+        // to pre_beta.
+        let beta = &stages.challenges.beta.lift;
+        stages.endoscalar.lift(dr)?.enforce_equal(dr, beta)?;
 
         // v_n = beta_n-weighted sum of f_n(u_n) and the evaluations at u_n.
         let computed_v = {
-            let mut horner = Horner::new(&stages.beta.lift);
+            let mut horner = Horner::new(beta);
             fu.write(dr, &mut horner)?;
             eval.write(dr, &mut horner)?;
             horner.finish(dr)

@@ -41,7 +41,7 @@ pub type InternalOutputKind<C: Cycle> = Kind![C::CircuitField; WithSuffix<'_, _,
 /// The number of wires in an [`Output`] gadget.
 ///
 /// Used for allocation sizing and verified by tests.
-pub const NUM_WIRES: usize = 29;
+pub const NUM_WIRES: usize = 31;
 
 /// Maps a field type to its `Output` gadget type.
 macro_rules! unified_output_type {
@@ -315,6 +315,11 @@ define_unified_instance! {
     pre_beta: Element,
     /// Expected evaluation at the challenge point for consistency verification.
     v: Element,
+    /// The nested challenge stage's commitment without its $\beta$ term:
+    /// the sum the `bind_challenges` circuits recompute from the transcript
+    /// challenges, which a parent's `bind_beta` completes and holds against
+    /// the stage as walked.
+    nested_challenges_partial: Point,
 }
 
 /// A lazy-allocation slot for a single field in the unified output.
@@ -485,6 +490,8 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
             Point::alloc(dr, proof.as_ref().map(|p| p.bridge_eval_commitment()))?;
         let pre_beta = Element::alloc(dr, allocator, proof.as_ref().map(|p| p.pre_beta()))?;
         let v = Element::alloc(dr, allocator, proof.as_ref().map(|p| p.v()))?;
+        let nested_challenges_partial =
+            Point::alloc(dr, proof.as_ref().map(|p| p.nested_challenges_partial()))?;
 
         Ok(Output {
             bridge_preamble_commitment,
@@ -508,6 +515,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
             bridge_eval_commitment,
             pre_beta,
             v,
+            nested_challenges_partial,
         })
     }
 }
@@ -588,6 +596,7 @@ mod tests {
             bridge_eval_commitment: true,
             pre_beta: true,
             v: true,
+            nested_challenges_partial: true,
         };
         cov.assert_complete();
     }

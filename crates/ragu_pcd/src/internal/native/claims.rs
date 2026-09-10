@@ -10,7 +10,7 @@
 //! - [`Processor`]: Processes rx values into accumulated outputs
 //! - [`build`]: Orchestrates claim building in unified order
 
-use alloc::borrow::Cow;
+use alloc::{borrow::Cow, vec::Vec};
 use core::iter::{once, repeat_n};
 
 use ragu_arithmetic::ff::PrimeField;
@@ -42,6 +42,15 @@ use crate::internal::claims::{Builder, Source, sum_polynomials};
 /// [`compute_v`]: crate::internal::native::circuits::compute_v
 /// [`unified::InternalOutputKind`]: crate::internal::native::unified::InternalOutputKind
 const NUM_UNIFIED_CIRCUITS: usize = 6 + NUM_BINDERS;
+
+/// The points stages the walk's inputs are committed in, in chain order.
+const POINTS_INPUT_STAGES: [RxIndex; 5] = [
+    RxIndex::PointsBinding,
+    RxIndex::PointsChildren,
+    RxIndex::PointsRegistryWx,
+    RxIndex::PointsAb,
+    RxIndex::PointsF,
+];
 
 /// Trait that processes claim values into accumulated outputs.
 ///
@@ -232,38 +241,57 @@ where
                 }
             }
 
-            // bind_beta: BindBeta + Preamble + OuterError
+            // bind_beta: BindBeta + PointsBinding + Preamble + OuterError
             BindBetaCircuit => {
-                for ((bb, pre), en) in source
+                for (((bb, pb), pre), en) in source
                     .rx(Rx(BindBeta))
+                    .zip(source.rx(Rx(PointsBinding)))
                     .zip(source.rx(Rx(Preamble)))
                     .zip(source.rx(Rx(OuterError)))
                 {
-                    processor.internal_circuit_claim(id, [bb, pre, en].into_iter());
+                    processor.internal_circuit_claim(id, [bb, pb, pre, en].into_iter());
                 }
             }
 
-            // bind_endoscalar: BindEndoscalar + EndoscalarStage + PointsInputs
+            // bind_endoscalar: BindEndoscalar + every points input stage +
+            // PointsWalk
             BindEndoscalarCircuit => {
-                for ((be, es), pi) in source
-                    .rx(Rx(BindEndoscalar))
-                    .zip(source.rx(Rx(RxIndex::EndoscalarStage)))
-                    .zip(source.rx(Rx(PointsInputs)))
+                let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
+                for index in [BindEndoscalar]
+                    .into_iter()
+                    .chain(POINTS_INPUT_STAGES)
+                    .chain([PointsWalk])
                 {
-                    processor.internal_circuit_claim(id, [be, es, pi].into_iter());
+                    for (i, rx) in source.rx(Rx(index)).enumerate() {
+                        if per_proof.len() <= i {
+                            per_proof.push(Vec::new());
+                        }
+                        per_proof[i].push(rx);
+                    }
+                }
+                for rxs in per_proof {
+                    processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
 
-            // endoscaling step k: its rx + EndoscalarStage + PointsInputs +
-            // PointsInterstitials (k(y) = 1)
+            // endoscaling step k: its rx + every points input stage +
+            // PointsWalk (k(y) = 1)
             EndoscalingStep(step) => {
-                for (((st, es), pi), pt) in source
-                    .rx(Rx(RxIndex::EndoscalingStep(step)))
-                    .zip(source.rx(Rx(RxIndex::EndoscalarStage)))
-                    .zip(source.rx(Rx(PointsInputs)))
-                    .zip(source.rx(Rx(PointsInterstitials)))
+                let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
+                for index in [RxIndex::EndoscalingStep(step)]
+                    .into_iter()
+                    .chain(POINTS_INPUT_STAGES)
+                    .chain([PointsWalk])
                 {
-                    processor.internal_circuit_claim(id, [st, es, pi, pt].into_iter());
+                    for (i, rx) in source.rx(Rx(index)).enumerate() {
+                        if per_proof.len() <= i {
+                            per_proof.push(Vec::new());
+                        }
+                        per_proof[i].push(rx);
+                    }
+                }
+                for rxs in per_proof {
+                    processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
 
@@ -283,14 +311,23 @@ where
             EvalStage => {
                 processor.bonding_claim(id, source.rx(Rx(Eval)))?;
             }
-            EndoscalarStage => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::EndoscalarStage)))?;
+            PointsBindingStage => {
+                processor.bonding_claim(id, source.rx(Rx(PointsBinding)))?;
             }
-            PointsInputsStage => {
-                processor.bonding_claim(id, source.rx(Rx(PointsInputs)))?;
+            PointsChildrenStage => {
+                processor.bonding_claim(id, source.rx(Rx(PointsChildren)))?;
             }
-            PointsInterstitialsStage => {
-                processor.bonding_claim(id, source.rx(Rx(PointsInterstitials)))?;
+            PointsRegistryWxStage => {
+                processor.bonding_claim(id, source.rx(Rx(PointsRegistryWx)))?;
+            }
+            PointsAbStage => {
+                processor.bonding_claim(id, source.rx(Rx(PointsAb)))?;
+            }
+            PointsFStage => {
+                processor.bonding_claim(id, source.rx(Rx(PointsF)))?;
+            }
+            PointsWalkStage => {
+                processor.bonding_claim(id, source.rx(Rx(PointsWalk)))?;
             }
 
             // Final stage bonding claims
@@ -315,14 +352,13 @@ where
                     ),
                 )?;
             }
-            PointsInputsFinalStaged => {
-                processor.bonding_claim(id, source.rx(Rx(BindEndoscalar)))?;
-            }
-            PointsInterstitialsFinalStaged => {
+            PointsWalkFinalStaged => {
                 processor.bonding_claim(
                     id,
-                    (0..NUM_ENDOSCALING_STEPS as u32)
-                        .flat_map(|step| source.rx(Rx(RxIndex::EndoscalingStep(step)))),
+                    source.rx(Rx(BindEndoscalar)).chain(
+                        (0..NUM_ENDOSCALING_STEPS as u32)
+                            .flat_map(|step| source.rx(Rx(RxIndex::EndoscalingStep(step)))),
+                    ),
                 )?;
             }
         }

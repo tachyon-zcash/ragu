@@ -31,7 +31,7 @@ use crate::{
 };
 
 /// Number of curve points in this stage.
-const NUM: usize = 2;
+const NUM: usize = 1;
 
 /// A child proof's nested polynomial evaluations at $u_n$.
 #[derive(Clone)]
@@ -111,9 +111,6 @@ impl<F: PrimeField> Evaluations<F> {
 /// Witness data for this bridge stage.
 pub struct Witness<C: CurveAffine> {
     pub native_eval: C,
-    /// Commitment of the native points inputs stage, which holds the
-    /// nested batch's commitments and must be fixed before $\beta$.
-    pub native_points_inputs: C,
     /// The nested evaluations at $u_n$.
     pub nested: Evaluations<C::Base>,
 }
@@ -187,9 +184,6 @@ pub struct EvaluationsOutput<'dr, D: Driver<'dr>> {
 pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     #[ragu(gadget)]
     pub native_eval: Point<'dr, D, C>,
-    /// Commitment of the native points inputs stage.
-    #[ragu(gadget)]
-    pub native_points_inputs: Point<'dr, D, C>,
     /// The nested evaluations at $u_n$.
     #[ragu(gadget)]
     pub nested: EvaluationsOutput<'dr, D>,
@@ -219,8 +213,6 @@ impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stag
         Self: 'dr,
     {
         let native_eval = Point::alloc(dr, witness.as_ref().map(|w| w.native_eval))?;
-        let native_points_inputs =
-            Point::alloc(dr, witness.as_ref().map(|w| w.native_points_inputs))?;
         let current = |dr: &mut D, f: fn(&CurrentStepWitness<D::F>) -> D::F| {
             Element::alloc(dr, &mut (), witness.as_ref().map(|w| f(&w.nested.current)))
         };
@@ -237,7 +229,6 @@ impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stag
 
         Ok(Output {
             native_eval,
-            native_points_inputs,
             nested,
         })
     }
