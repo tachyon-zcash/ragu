@@ -23,7 +23,7 @@ use ragu_circuits::polynomials::{Rank, sparse};
 
 use super::{ChildStageRx, Proof};
 use crate::fuzzing::corrupt::{
-    BridgeCommitment, ChildBridgeKind, NativeRx, NestedRx, RxComponent, Side,
+    BridgeCommitment, ChildBridgeKind, NativeRx, NestedAccumulator, NestedRx, RxComponent, Side,
 };
 
 impl<C: Cycle, R: Rank> Proof<C, R> {
@@ -64,6 +64,17 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         &mut self.native_p_poly
     }
 
+    /// The nested accumulator polynomial named by `which`, mutably.
+    pub(crate) fn nested_accumulator_mut(
+        &mut self,
+        which: NestedAccumulator,
+    ) -> &mut sparse::Polynomial<C::ScalarField, R> {
+        match which {
+            NestedAccumulator::A => &mut self.nested_a_poly,
+            NestedAccumulator::B => &mut self.nested_b_poly,
+        }
+    }
+
     /// The nested polynomial named by `idx`, mutably.
     ///
     /// The `Arc`-shared polynomials are unshared through
@@ -82,7 +93,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             BridgePreamble => Arc::make_mut(&mut self.bridge_preamble_rx),
             BridgeSPrime => Arc::make_mut(&mut self.bridge_s_prime_rx),
             BridgeInnerError => Arc::make_mut(&mut self.bridge_inner_error_rx),
-            BridgeOuterError => Arc::make_mut(&mut self.bridge_outer_error_rx.0),
+            BridgeOuterError => Arc::make_mut(&mut self.bridge_outer_error_rx),
             BridgeAB => Arc::make_mut(&mut self.bridge_ab_rx.0),
             BridgeQuery => Arc::make_mut(&mut self.bridge_query_rx.0),
             BridgeF => Arc::make_mut(&mut self.bridge_f_rx),
@@ -116,7 +127,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             SPrime => &mut self.bridge_s_prime_commitment,
             InnerError => &mut self.bridge_inner_error_commitment,
             F => &mut self.bridge_f_commitment,
-            OuterError => &mut self.bridge_outer_error_commitment.0,
+            OuterError => &mut self.bridge_outer_error_commitment,
             AB => &mut self.bridge_ab_commitment.0,
             Query => &mut self.bridge_query_commitment.0,
             Eval => &mut self.bridge_eval_commitment.0,

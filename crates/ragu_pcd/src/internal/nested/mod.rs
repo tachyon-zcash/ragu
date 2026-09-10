@@ -20,13 +20,14 @@ use ragu_circuits::{
     staging::{MultiStage, StageExt},
 };
 use ragu_core::Result;
+use ragu_primitives::{extract_endoscalar, lift_endoscalar, vec::ConstLen};
 
 pub mod circuits {
     pub mod copying;
     pub mod loading;
 }
 
-use crate::internal::{Side, endoscalar};
+use crate::internal::{Side, endoscalar, fold_revdot::Parameters};
 
 /// Number of curve points accumulated during `compute_p` for nested field
 /// endoscaling verification.
@@ -42,6 +43,42 @@ pub const NUM_ENDOSCALING_POINTS: usize = 37;
 /// Number of endoscaling steps, derived from [`NUM_ENDOSCALING_POINTS`] via
 /// [`endoscalar::num_steps`].
 const NUM_ENDOSCALING_STEPS: usize = endoscalar::num_steps(NUM_ENDOSCALING_POINTS);
+
+/// Parameters for folding the children's nested-field revdot claims.
+///
+/// Two children contribute one raw accumulator claim each, one circuit claim
+/// each per endoscaling step, and one bonding claim per bonding kind (each
+/// bonding kind is $z$-folded across both children): 34 claims today. The
+/// nested side will grow claims as it gains circuits, and `8 x 7` leaves room
+/// for that without re-laying the error stages.
+#[derive(Clone, Copy, Default)]
+pub struct RevdotParameters;
+
+impl Parameters for RevdotParameters {
+    type NumGroups = ConstLen<8>;
+    type GroupSize = ConstLen<7>;
+}
+
+/// Derives the nested-field counterpart of a native Fiat-Shamir challenge.
+///
+/// The nested side squeezes nothing itself: every challenge it consumes is the
+/// endoscalar lift, in the scalar field, of the low 128 bits of the
+/// corresponding native challenge, the derivation `compute_p` already applies
+/// to `pre_beta`.
+///
+/// The protocol requires the relevant nested commitments to be bound into
+/// the native transcript before the challenge, and the consuming circuits
+/// to use this same lifted value. This helper performs only the scalar
+/// conversion; it does not establish those recursive bindings or enforce
+/// the nested fold in-circuit.
+///
+/// # Errors
+///
+/// Fails when the native challenge lies at or above $2^{\mathtt{CAPACITY}}$,
+/// a $2^{-129}$ event for a transcript output.
+pub fn challenge<C: Cycle>(native: C::CircuitField) -> Result<C::ScalarField> {
+    Ok(lift_endoscalar(extract_endoscalar(native)?))
+}
 
 /// Index of internal nested circuits registered into the registry.
 ///
@@ -251,6 +288,19 @@ impl RxIndex {
         assert!(c == Self::NUM);
         slots
     }
+}
+
+/// Identifies a nested-field polynomial within a proof: either one of the
+/// two accumulator polynomials (which are not rx polynomials) or one of the
+/// rx polynomials addressed by [`RxIndex`].
+#[derive(Clone, Copy, Debug)]
+pub enum RxComponent {
+    /// The `a` polynomial of the nested accumulator (raw revdot claim).
+    AbA,
+    /// The `b` polynomial of the nested accumulator (raw revdot claim).
+    AbB,
+    /// An rx polynomial component indexed by [`RxIndex`].
+    Rx(RxIndex),
 }
 
 pub mod claims;

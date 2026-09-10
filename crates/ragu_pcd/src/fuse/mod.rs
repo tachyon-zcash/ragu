@@ -15,6 +15,8 @@ mod _09_eval;
 mod _10_p;
 mod _11_circuits;
 pub(crate) mod claims;
+#[cfg(test)]
+mod tests;
 // The patcher seam (see `crate::fuzzing`). Its source lives with the rest of
 // the fuzzing surface in `src/fuzzing/`, but it is mounted here because it
 // calls this pipeline's `pub(super)` steps. The file gates itself behind
@@ -23,7 +25,7 @@ pub(crate) mod claims;
 #[path = "../fuzzing/patcher.rs"]
 pub(crate) mod patcher;
 
-use claims::FuseProofSource;
+use claims::{NativeFuseProofSource, NestedFuseProofSource};
 use ragu_arithmetic::{Cycle, ff::Field, rand::CryptoRng};
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{
@@ -58,6 +60,7 @@ struct NativeSPrime<C: Cycle, R: Rank> {
 }
 
 type NativeFuseEmulator<C> = Emulator<Wireless<Always<()>, <C as Cycle>::CircuitField>>;
+type NestedFuseEmulator<C> = Emulator<Wireless<Always<()>, <C as Cycle>::ScalarField>>;
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
@@ -99,28 +102,47 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
 
         let preamble_witness = self.compute_preamble(rng, &left, &right, &mut builder)?;
-        let preamble_commitment = Point::constant(&mut dr, builder.bridge_preamble_commitment())?;
-        preamble_commitment.write(&mut dr, &mut transcript)?;
+        let bridge_preamble_commitment =
+            Point::constant(&mut dr, builder.bridge_preamble_commitment())?;
+        bridge_preamble_commitment.write(&mut dr, &mut transcript)?;
         let w = transcript.challenge(&mut dr)?;
         let native_registry = self.native_registry.at(*w.value().take());
 
         let native_s_prime =
             self.compute_s_prime(rng, &native_registry, &left, &right, &mut builder)?;
-        let s_prime_commitment = Point::constant(&mut dr, builder.bridge_s_prime_commitment())?;
-        s_prime_commitment.write(&mut dr, &mut transcript)?;
+        let bridge_s_prime_commitment =
+            Point::constant(&mut dr, builder.bridge_s_prime_commitment())?;
+        bridge_s_prime_commitment.write(&mut dr, &mut transcript)?;
         let y = transcript.challenge(&mut dr)?;
         let z = transcript.challenge(&mut dr)?;
 
-        let source = FuseProofSource {
+        let native_source = NativeFuseProofSource {
+            left: &left,
+            right: &right,
+        };
+        let nested_source = NestedFuseProofSource {
             left: &left,
             right: &right,
         };
 
-        let (inner_error_witness, claims, registry_wy) =
-            self.inner_error_terms(rng, &native_registry, &y, &z, &source, &mut builder)?;
-        let inner_error_commitment =
+        let (
+            native_inner_error_witness,
+            native_claims,
+            registry_wy,
+            nested_inner_error_witness,
+            nested_claims,
+        ) = self.inner_error_terms(
+            rng,
+            &native_registry,
+            &y,
+            &z,
+            &native_source,
+            &nested_source,
+            &mut builder,
+        )?;
+        let bridge_inner_error_commitment =
             Point::constant(&mut dr, builder.bridge_inner_error_commitment())?;
-        inner_error_commitment.write(&mut dr, &mut transcript)?;
+        bridge_inner_error_commitment.write(&mut dr, &mut transcript)?;
 
         // Clone-then-save: `save_state` consumes the transcript, but we need
         // the original to keep squeezing. Both paths apply the same permutation.
@@ -136,26 +158,39 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let mu = transcript.challenge(&mut dr)?;
         let nu = transcript.challenge(&mut dr)?;
 
-        let (outer_error_witness, a, b) = self.outer_error_terms(
-            rng,
-            &preamble_witness,
-            &inner_error_witness,
-            claims,
-            &y,
-            &mu,
-            &nu,
-            saved_transcript_state,
-            &mut builder,
-        )?;
-        let outer_error_commitment =
-            Point::constant(&mut dr, builder.bridge_outer_error_commitment()?)?;
-        outer_error_commitment.write(&mut dr, &mut transcript)?;
+        let (native_outer_error_witness, native_a, native_b, nested_a, nested_b) = self
+            .outer_error_terms(
+                rng,
+                &preamble_witness,
+                &native_inner_error_witness,
+                native_claims,
+                &nested_inner_error_witness,
+                nested_claims,
+                &nested_source,
+                &y,
+                &mu,
+                &nu,
+                saved_transcript_state,
+                &mut builder,
+            )?;
+        let bridge_outer_error_commitment =
+            Point::constant(&mut dr, builder.bridge_outer_error_commitment())?;
+        bridge_outer_error_commitment.write(&mut dr, &mut transcript)?;
         let mu_prime = transcript.challenge(&mut dr)?;
         let nu_prime = transcript.challenge(&mut dr)?;
 
-        self.compute_ab(a, b, &source, &mu_prime, &nu_prime, &mut builder)?;
-        let ab_commitment = Point::constant(&mut dr, builder.bridge_ab_commitment()?)?;
-        ab_commitment.write(&mut dr, &mut transcript)?;
+        self.compute_ab(
+            native_a,
+            native_b,
+            nested_a,
+            nested_b,
+            &native_source,
+            &mu_prime,
+            &nu_prime,
+            &mut builder,
+        )?;
+        let bridge_ab_commitment = Point::constant(&mut dr, builder.bridge_ab_commitment()?)?;
+        bridge_ab_commitment.write(&mut dr, &mut transcript)?;
         let x = transcript.challenge(&mut dr)?;
 
         let query_witness = self.compute_query(
@@ -169,8 +204,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &right,
             &mut builder,
         )?;
-        let query_commitment = Point::constant(&mut dr, builder.bridge_query_commitment()?)?;
-        query_commitment.write(&mut dr, &mut transcript)?;
+        let bridge_query_commitment = Point::constant(&mut dr, builder.bridge_query_commitment()?)?;
+        bridge_query_commitment.write(&mut dr, &mut transcript)?;
         let alpha = transcript.challenge(&mut dr)?;
 
         let native_f = self.compute_f(
@@ -186,8 +221,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &left,
             &right,
         )?;
-        let f_commitment = Point::constant(&mut dr, builder.bridge_f_commitment())?;
-        f_commitment.write(&mut dr, &mut transcript)?;
+        let bridge_f_commitment = Point::constant(&mut dr, builder.bridge_f_commitment())?;
+        bridge_f_commitment.write(&mut dr, &mut transcript)?;
         let u = transcript.challenge(&mut dr)?;
 
         let eval_witness =
@@ -211,8 +246,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 self.sample_eval_commitment(rng, &eval_witness, &builder)?;
 
             let mut transcript = transcript.clone();
-            let eval_commitment = Point::constant(dr, bridge_eval_commitment)?;
-            eval_commitment.write(dr, &mut transcript)?;
+            let bridge_eval_commitment = Point::constant(dr, bridge_eval_commitment)?;
+            bridge_eval_commitment.write(dr, &mut transcript)?;
             let pre_beta = transcript.challenge(dr)?;
 
             Ok((pre_beta, eval_rx))
@@ -250,8 +285,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         self.compute_internal_circuits(
             rng,
             &preamble_witness,
-            &outer_error_witness,
-            &inner_error_witness,
+            &native_outer_error_witness,
+            &native_inner_error_witness,
             &query_witness,
             &eval_witness,
             &mut builder,

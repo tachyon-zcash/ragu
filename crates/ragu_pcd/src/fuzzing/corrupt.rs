@@ -44,6 +44,12 @@
 //!   occupied, which the wiring polynomial decides and this module does not
 //!   model.
 //!
+//! * **A nested accumulator coefficient** is [`Binding::Unbound`] for now.
+//!   The raw nested claim's $k(y)$ is derived as
+//!   $\operatorname{revdot}(a, b)$ from the very polynomials the claim checks,
+//!   so the claim is tautological, and nothing else reads the nested
+//!   accumulator until the nested fold is verified in-circuit.
+//!
 //! `bridge_alpha` has no variant: single-proof verification never reads it,
 //! the cached bridge polynomials it derived being materialized in the proof
 //! already. Neither do the native commitment caches, for the same reason —
@@ -269,6 +275,22 @@ pub enum NestedRx {
     ChildBridge(ChildBridgeKind, Side),
 }
 
+/// One of the two nested accumulator polynomials.
+///
+/// Mirrors the `AbA` / `AbB` variants of `internal::nested::RxComponent`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NestedAccumulator {
+    /// The `a` polynomial of the nested accumulator.
+    A,
+    /// The `b` polynomial of the nested accumulator.
+    B,
+}
+
+impl NestedAccumulator {
+    /// Both polynomials.
+    pub const ALL: [Self; 2] = [Self::A, Self::B];
+}
+
 /// Whether [`verify`](crate::Application::verify) is obliged to reject a
 /// corrupted proof.
 ///
@@ -433,6 +455,15 @@ pub enum Corruption<C: Cycle> {
         /// What to add.
         delta: C::ScalarField,
     },
+    /// Add `delta` to one coefficient of a nested accumulator polynomial.
+    NestedAccumulatorCoeff {
+        /// Which polynomial.
+        which: NestedAccumulator,
+        /// The coefficient's index; out of range is a no-op.
+        coeff: usize,
+        /// What to add.
+        delta: C::ScalarField,
+    },
 }
 
 impl<C: Cycle> core::fmt::Debug for Corruption<C> {
@@ -462,6 +493,12 @@ impl<C: Cycle> core::fmt::Debug for Corruption<C> {
             Corruption::PCoeff { coeff, .. } => write!(f, "PCoeff {{ coeff: {coeff} }}"),
             Corruption::NestedCoeff { index, coeff, .. } => {
                 write!(f, "NestedCoeff {{ index: {index:?}, coeff: {coeff} }}")
+            }
+            Corruption::NestedAccumulatorCoeff { which, coeff, .. } => {
+                write!(
+                    f,
+                    "NestedAccumulatorCoeff {{ which: {which:?}, coeff: {coeff} }}"
+                )
             }
         }
     }
@@ -593,9 +630,9 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                     // two polynomials and so is tautological. Whether `c`
                     // moved is decided exactly, by looking.
                     RxComponent::AbA | RxComponent::AbB => {
-                        let before = self.c();
+                        let before = self.native_c();
                         self.native_component_mut(component).add_assign(&delta);
-                        if self.c() == before {
+                        if self.native_c() == before {
                             Binding::Unbound
                         } else {
                             Binding::MustReject
@@ -650,6 +687,23 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 } else {
                     Binding::Unbound
                 }
+            }
+
+            Corruption::NestedAccumulatorCoeff {
+                which,
+                coeff,
+                delta,
+            } => {
+                let Some(delta) = monomial::<_, R>(coeff, delta) else {
+                    return Binding::Unbound;
+                };
+                // The raw nested claim's k(y) is derived from these very
+                // polynomials at verification time, so the claim is
+                // tautological, and nothing else reads the nested
+                // accumulator yet: unbound until the nested fold is
+                // verified in-circuit.
+                self.nested_accumulator_mut(which).add_assign(&delta);
+                Binding::Unbound
             }
         }
     }

@@ -48,9 +48,13 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             nested_endoscaling_step_rxs: _,
             nested_endoscalar_rx: _,
             nested_points_rx: _,
+            nested_a_poly: _,
+            nested_b_poly: _,
             nested_endoscaling_step_commitments: _,
             nested_endoscalar_commitment: _,
             nested_points_commitment: _,
+            nested_a_commitment: _,
+            nested_b_commitment: _,
             w: _,
             y: _,
             z: _,
@@ -123,6 +127,11 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         {
             return Some("nested polynomials");
         }
+        if !polynomial_eq(&self.nested_a_poly, &other.nested_a_poly)
+            || !polynomial_eq(&self.nested_b_poly, &other.nested_b_poly)
+        {
+            return Some("nested ab polynomials");
+        }
 
         if [
             self.w,
@@ -176,6 +185,11 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             || self.nested_points_commitment != other.nested_points_commitment
         {
             return Some("nested commitments");
+        }
+        if self.nested_a_commitment != other.nested_a_commitment
+            || self.nested_b_commitment != other.nested_b_commitment
+        {
+            return Some("nested ab commitments");
         }
         if [
             self.bridge_preamble_commitment(),

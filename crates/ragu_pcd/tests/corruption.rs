@@ -24,7 +24,8 @@ use ragu_pasta::{Fp, Fq, Pasta};
 use ragu_pcd::{
     Application, ApplicationBuilder, Proof,
     fuzzing::corrupt::{
-        Binding, BridgeCommitment, Challenge, Corruption, NativeRx, NestedRx, RxComponent, Side,
+        Binding, BridgeCommitment, Challenge, Corruption, NativeRx, NestedAccumulator, NestedRx,
+        RxComponent, Side,
     },
 };
 use ragu_testing::pcd::nontrivial::{Hash2, InternalNode, LeafNode, Merge2, WitnessLeaf};
@@ -218,6 +219,16 @@ fn vocabulary() -> Vec<Corruption<C>> {
         }
     }
 
+    for which in NestedAccumulator::ALL {
+        for coeff in [0, n - 1, n] {
+            out.push(Corruption::NestedAccumulatorCoeff {
+                which,
+                coeff,
+                delta: nested_delta,
+            });
+        }
+    }
+
     out
 }
 
@@ -377,6 +388,15 @@ fn clone_corruption(corruption: &Corruption<C>) -> Corruption<C> {
             delta,
         } => Corruption::NestedCoeff {
             index,
+            coeff,
+            delta,
+        },
+        Corruption::NestedAccumulatorCoeff {
+            which,
+            coeff,
+            delta,
+        } => Corruption::NestedAccumulatorCoeff {
+            which,
             coeff,
             delta,
         },

@@ -15,8 +15,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         &self,
         rng: &mut RNG,
         preamble_witness: &native::stages::preamble::Witness<'_, C, R, HEADER_SIZE>,
-        outer_error_witness: &native::stages::outer_error::Witness<C, native::RevdotParameters>,
-        inner_error_witness: &native::stages::inner_error::Witness<C, native::RevdotParameters>,
+        native_outer_error_witness: &native::stages::outer_error::Witness<
+            C,
+            native::RevdotParameters,
+        >,
+        native_inner_error_witness: &native::stages::inner_error::Witness<
+            C,
+            native::RevdotParameters,
+        >,
         query_witness: &native::stages::query::Witness<C>,
         eval_witness: &native::stages::eval::Witness<C::CircuitField>,
         builder: &mut ProofBuilder<'_, C, R, B>,
@@ -30,10 +36,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             bridge_inner_error_commitment: builder.bridge_inner_error_commitment(),
             mu: builder.mu(),
             nu: builder.nu(),
-            bridge_outer_error_commitment: builder.bridge_outer_error_commitment()?,
+            bridge_outer_error_commitment: builder.bridge_outer_error_commitment(),
             mu_prime: builder.mu_prime(),
             nu_prime: builder.nu_prime(),
-            c: builder.c(),
+            c: builder.native_c(),
             bridge_ab_commitment: builder.bridge_ab_commitment()?,
             x: builder.x(),
             bridge_query_commitment: builder.bridge_query_commitment()?,
@@ -58,7 +64,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         .trace(native::circuits::hashes_1::Witness {
             unified,
             preamble_witness,
-            outer_error_witness,
+            outer_error_witness: native_outer_error_witness,
         })?
         .into_parts();
         let hashes_1_rx = self.native_registry.assemble(
@@ -75,7 +81,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         >::new(self.params)
         .trace(native::circuits::hashes_2::Witness {
             unified,
-            outer_error_witness,
+            outer_error_witness: native_outer_error_witness,
         })?
         .into_parts();
         let hashes_2_rx = self.native_registry.assemble(
@@ -93,8 +99,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         .trace(native::circuits::inner_collapse::Witness {
             preamble_witness,
             unified,
-            outer_error_witness,
-            inner_error_witness,
+            outer_error_witness: native_outer_error_witness,
+            inner_error_witness: native_inner_error_witness,
         })?
         .into_parts();
         let inner_collapse_rx = self.native_registry.assemble(
@@ -112,7 +118,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         .trace(native::circuits::outer_collapse::Witness {
             unified,
             preamble_witness,
-            outer_error_witness,
+            outer_error_witness: native_outer_error_witness,
         })?
         .into_parts();
         let outer_collapse_rx = self.native_registry.assemble(

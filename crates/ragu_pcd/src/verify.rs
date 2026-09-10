@@ -17,7 +17,7 @@ use crate::{
     internal::{
         claims,
         native::{RxComponent, claims as native_claims, stages::preamble::ProofInputs},
-        nested::claims as nested_claims,
+        nested::{RxComponent as NestedRxComponent, claims as nested_claims},
     },
 };
 
@@ -134,7 +134,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             );
             nested_claims::build(&nested_source, &mut nested_builder)?;
 
-            let ky_source = nested::SingleProofKySource::<C::ScalarField>::new();
+            let ky_source = nested::SingleProofKySource {
+                // As with the native `raw_c` above, the nested accumulator's
+                // claim is tautological here: its k(y) is derived from the
+                // very polynomials the claim checks. It becomes meaningful
+                // once the nested fold is verified in-circuit and `c` is a
+                // witnessed instance value.
+                raw_c: Verifier::<B>::sparse_revdot(
+                    &pcd.proof()[NestedRxComponent::AbA],
+                    &pcd.proof()[NestedRxComponent::AbB],
+                ),
+            };
             nested::ky_values(&ky_source)
                 .zip(nested_builder.a.iter().zip(nested_builder.b.iter()))
                 .all(|(ky, (a, b))| Verifier::<B>::sparse_revdot(a, b) == ky)
@@ -222,20 +232,20 @@ mod nested {
     pub use crate::internal::nested::claims::ky_values;
     use crate::internal::{
         claims::Source,
-        nested::{RxIndex, claims::KySource},
+        nested::{RxComponent, claims::KySource},
     };
 
-    /// Source for nested field rx polynomials for single-proof verification.
+    /// Source for nested field polynomials for single-proof verification.
     pub struct SingleProofSource<'rx, C: Cycle, R: Rank> {
         pub proof: &'rx Proof<C, R>,
     }
 
     impl<'rx, C: Cycle, R: Rank> Source for SingleProofSource<'rx, C, R> {
-        type RxComponent = RxIndex;
+        type RxComponent = RxComponent;
         type Rx = &'rx sparse::Polynomial<C::ScalarField, R>;
         type AppCircuitId = ();
 
-        fn rx(&self, component: RxIndex) -> impl Iterator<Item = Self::Rx> {
+        fn rx(&self, component: RxComponent) -> impl Iterator<Item = Self::Rx> {
             core::iter::once(&self.proof[component])
         }
 
@@ -245,19 +255,19 @@ mod nested {
     }
 
     /// Source for k(y) values for nested single-proof verification.
-    pub struct SingleProofKySource<F>(core::marker::PhantomData<F>);
-
-    impl<F> SingleProofKySource<F> {
-        pub fn new() -> Self {
-            Self(core::marker::PhantomData)
-        }
+    pub struct SingleProofKySource<F> {
+        pub raw_c: F,
     }
 
     impl<F: Field> KySource for SingleProofKySource<F> {
         type Ky = F;
 
-        fn one(&self) -> F {
-            F::ONE
+        fn raw_c(&self) -> impl Iterator<Item = F> {
+            once(self.raw_c)
+        }
+
+        fn ones(&self) -> impl Iterator<Item = F> + Clone {
+            once(F::ONE)
         }
 
         fn zero(&self) -> F {
