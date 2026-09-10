@@ -17,7 +17,10 @@ use crate::{
     internal::{
         claims,
         native::{RxComponent, claims as native_claims, stages::preamble::ProofInputs},
-        nested::{RxComponent as NestedRxComponent, claims as nested_claims},
+        nested::{
+            RxComponent as NestedRxComponent, challenge as nested_challenge,
+            claims as nested_claims,
+        },
     },
 };
 
@@ -160,11 +163,26 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             poly_eval == expected
         };
 
+        // The nested counterpart: the proof's nested registry_xy polynomial is
+        // m_n(W, x_n, y_n) at the nested counterparts of its x and y, checked
+        // at a sampled w.
+        let nested_registry_xy_claim = {
+            let w = C::ScalarField::random(&mut rng);
+            let x = nested_challenge::<C>(pcd.proof().x())?;
+            let y = nested_challenge::<C>(pcd.proof().y())?;
+            let poly_eval = Verifier::<B>::sparse_eval(pcd.proof().nested_registry_xy_poly(), w);
+            let expected = Verifier::<B>::registry_wxy(&self.nested_registry, w, x, y);
+            poly_eval == expected
+        };
+
         // TODO: Add checks for registry_wx0_poly, registry_wx1_poly, and registry_wy_poly.
         // - registry_wx0/wx1: need child proof x challenges (x₀, x₁) which "disappear" in preamble
         // - registry_wy: interstitial value that will be elided later
 
-        Ok(native_revdot_claims && nested_revdot_claims && registry_xy_claim)
+        Ok(native_revdot_claims
+            && nested_revdot_claims
+            && registry_xy_claim
+            && nested_registry_xy_claim)
     }
 }
 

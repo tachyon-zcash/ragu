@@ -100,7 +100,7 @@ use crate::{
             PointsWitness,
         },
         native::{self, RxComponent, RxIndex, total_circuit_counts},
-        nested::NUM_ENDOSCALING_POINTS,
+        nested::{self, NUM_ENDOSCALING_POINTS},
         transcript::Transcript,
     },
     proof::ProofBuilder,
@@ -528,9 +528,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         bridge_preamble_commitment.write(&mut dr, &mut transcript)?;
         let w = transcript.challenge(&mut dr)?;
         let native_registry = self.native_registry.at(*w.value().take());
+        let nested_registry = self
+            .nested_registry
+            .at(nested::challenge::<C>(*w.value().take())?);
 
-        let native_s_prime =
-            self.compute_s_prime(rng, &native_registry, &left, &right, &mut builder)?;
+        let (native_s_prime, nested_s_prime) = self.compute_s_prime(
+            rng,
+            &native_registry,
+            &nested_registry,
+            &left,
+            &right,
+            &mut builder,
+        )?;
         let bridge_s_prime_commitment =
             Point::constant(&mut dr, builder.bridge_s_prime_commitment())?;
         bridge_s_prime_commitment.write(&mut dr, &mut transcript)?;
@@ -552,9 +561,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             registry_wy,
             nested_inner_error_witness,
             nested_claims,
+            nested_registry_wy,
         ) = self.inner_error_terms(
             rng,
             &native_registry,
+            &nested_registry,
             &y,
             &z,
             &native_source,
@@ -612,22 +623,23 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         bridge_ab_commitment.write(&mut dr, &mut transcript)?;
         let x = transcript.challenge(&mut dr)?;
 
-        let query_witness = self.compute_query(
+        let (query_witness, _nested_query) = self.compute_query(
             rng,
             &w,
             &x,
             &y,
             &z,
             &registry_wy,
+            &nested_registry_wy,
             &left,
             &right,
             &mut builder,
         )?;
-        let bridge_query_commitment = Point::constant(&mut dr, builder.bridge_query_commitment()?)?;
+        let bridge_query_commitment = Point::constant(&mut dr, builder.bridge_query_commitment())?;
         bridge_query_commitment.write(&mut dr, &mut transcript)?;
         let alpha = transcript.challenge(&mut dr)?;
 
-        let native_f = self.compute_f(
+        let (native_f, nested_f) = self.compute_f(
             rng,
             &w,
             &y,
@@ -636,6 +648,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &alpha,
             &native_s_prime,
             &registry_wy,
+            &nested_s_prime,
+            &nested_registry_wy,
             &mut builder,
             &left,
             &right,
@@ -644,24 +658,34 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         bridge_f_commitment.write(&mut dr, &mut transcript)?;
         let u = transcript.challenge(&mut dr)?;
 
-        let eval_witness =
-            self.compute_eval(&u, &left, &right, &native_s_prime, &registry_wy, &builder);
+        let (eval_witness, nested_eval) = self.compute_eval(
+            &u,
+            &left,
+            &right,
+            &native_s_prime,
+            &registry_wy,
+            &nested_s_prime,
+            &nested_registry_wy,
+            &builder,
+        )?;
 
         // Mirrors `fuse`: `pre_beta` is ground rather than squeezed once, so
         // each attempt re-blinds the eval commitment and re-derives it from a
         // fresh transcript clone until it lands in endoscalar range.
-        let (pre_beta, eval_rx) = EndoscalarChallenge::sample(&mut dr, |dr| {
-            let (eval_rx, bridge_eval_commitment) =
-                self.sample_eval_commitment(rng, &eval_witness, &builder)?;
+        let (pre_beta, (eval_rx, bridge_eval_rx, bridge_eval_commitment)) =
+            EndoscalarChallenge::sample(&mut dr, |dr| {
+                let (eval_rx, bridge_eval_rx, bridge_eval_commitment) =
+                    self.sample_eval_commitment(rng, &eval_witness, &nested_eval)?;
 
-            let mut transcript = transcript.clone();
-            let bridge_eval_commitment = Point::constant(dr, bridge_eval_commitment)?;
-            bridge_eval_commitment.write(dr, &mut transcript)?;
-            let pre_beta = transcript.challenge(dr)?;
+                let mut transcript = transcript.clone();
+                let bridge_eval_commitment_point = Point::constant(dr, bridge_eval_commitment)?;
+                bridge_eval_commitment_point.write(dr, &mut transcript)?;
+                let pre_beta = transcript.challenge(dr)?;
 
-            Ok((pre_beta, eval_rx))
-        })?;
+                Ok((pre_beta, (eval_rx, bridge_eval_rx, bridge_eval_commitment)))
+            })?;
         builder.set_native_eval_rx(eval_rx);
+        builder.set_bridge_eval_rx(bridge_eval_rx, bridge_eval_commitment);
 
         self.compute_p(
             rng,
@@ -671,6 +695,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &native_s_prime,
             &registry_wy,
             &native_f,
+            &nested_s_prime,
+            &nested_registry_wy,
+            &nested_f,
             &mut builder,
         )?;
 
@@ -711,11 +738,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                     c: builder.native_c(),
                     bridge_ab_commitment: builder.bridge_ab_commitment()?,
                     x: builder.x(),
-                    bridge_query_commitment: builder.bridge_query_commitment()?,
+                    bridge_query_commitment: builder.bridge_query_commitment(),
                     alpha: builder.alpha(),
                     bridge_f_commitment: builder.bridge_f_commitment(),
                     u: builder.u(),
-                    bridge_eval_commitment: builder.bridge_eval_commitment()?,
+                    bridge_eval_commitment: builder.bridge_eval_commitment(),
                     pre_beta: builder.pre_beta(),
                     v: builder.v(),
                     coverage: Default::default(),

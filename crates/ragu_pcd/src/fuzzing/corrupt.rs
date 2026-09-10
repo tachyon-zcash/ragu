@@ -49,6 +49,12 @@
 //!   $\operatorname{revdot}(a, b)$ from the very polynomials the claim checks,
 //!   so the claim is tautological, and nothing else reads the nested
 //!   accumulator until the nested fold is verified in-circuit.
+//! * **The nested `registry_xy` polynomial** is compared against
+//!   $m_n(w, x_n, y_n)$ at a $w$ the verifier samples fresh, like its native
+//!   counterpart, so any change to it is caught.
+//! * **A nested `p` coefficient** is [`Binding::Unbound`] for now: $v_n$ is
+//!   derived from it but reaches no instance and no claim until the nested
+//!   batch is verified in-circuit.
 //!
 //! `bridge_alpha` has no variant: single-proof verification never reads it,
 //! the cached bridge polynomials it derived being materialized in the proof
@@ -464,6 +470,20 @@ pub enum Corruption<C: Cycle> {
         /// What to add.
         delta: C::ScalarField,
     },
+    /// Add `delta` to one coefficient of the nested `registry_xy` polynomial.
+    NestedRegistryXyCoeff {
+        /// The coefficient's index; out of range is a no-op.
+        coeff: usize,
+        /// What to add.
+        delta: C::ScalarField,
+    },
+    /// Add `delta` to one coefficient of the nested `p` polynomial.
+    NestedPCoeff {
+        /// The coefficient's index; out of range is a no-op.
+        coeff: usize,
+        /// What to add.
+        delta: C::ScalarField,
+    },
 }
 
 impl<C: Cycle> core::fmt::Debug for Corruption<C> {
@@ -499,6 +519,12 @@ impl<C: Cycle> core::fmt::Debug for Corruption<C> {
                     f,
                     "NestedAccumulatorCoeff {{ which: {which:?}, coeff: {coeff} }}"
                 )
+            }
+            Corruption::NestedRegistryXyCoeff { coeff, .. } => {
+                write!(f, "NestedRegistryXyCoeff {{ coeff: {coeff} }}")
+            }
+            Corruption::NestedPCoeff { coeff, .. } => {
+                write!(f, "NestedPCoeff {{ coeff: {coeff} }}")
             }
         }
     }
@@ -703,6 +729,25 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 // accumulator yet: unbound until the nested fold is
                 // verified in-circuit.
                 self.nested_accumulator_mut(which).add_assign(&delta);
+                Binding::Unbound
+            }
+
+            Corruption::NestedRegistryXyCoeff { coeff, delta } => {
+                let Some(delta) = monomial::<_, R>(coeff, delta) else {
+                    return Binding::Unbound;
+                };
+                self.nested_registry_xy_poly_mut().add_assign(&delta);
+                Binding::MustReject
+            }
+
+            Corruption::NestedPCoeff { coeff, delta } => {
+                let Some(delta) = monomial::<_, R>(coeff, delta) else {
+                    return Binding::Unbound;
+                };
+                // `v_n` is derived from `p_n` but reaches no instance and no
+                // claim yet: unbound until the nested batch is verified
+                // in-circuit.
+                self.nested_p_poly_mut().add_assign(&delta);
                 Binding::Unbound
             }
         }

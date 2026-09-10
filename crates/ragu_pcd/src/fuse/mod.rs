@@ -30,13 +30,22 @@ use ragu_arithmetic::{Cycle, ff::Field, rand::CryptoRng};
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{
     Result,
-    drivers::emulator::{Emulator, Wireless},
+    drivers::{
+        Driver,
+        emulator::{Emulator, Wireless},
+    },
     maybe::{Always, Maybe},
 };
-use ragu_primitives::{EndoscalarChallenge, GadgetExt, Point, vec::CollectFixed};
+use ragu_primitives::{Element, EndoscalarChallenge, GadgetExt, Point, vec::CollectFixed};
 
 use crate::{
-    Application, Pcd, RAGU_TAG, internal::transcript::Transcript, proof::ProofBuilder, step::Step,
+    Application, Pcd, Proof, RAGU_TAG,
+    internal::{
+        nested::{self, pcs},
+        transcript::Transcript,
+    },
+    proof::ProofBuilder,
+    step::Step,
 };
 
 /// Ephemeral native-field data for $f(X)$, used only during the fuse step.
@@ -59,8 +68,77 @@ struct NativeSPrime<C: Cycle, R: Rank> {
     registry_wx1_commitment: C::HostCurve,
 }
 
+/// Ephemeral nested-field data for $f_n(X)$, used only during the fuse step.
+struct NestedF<C: Cycle, R: Rank> {
+    poly: sparse::Polynomial<C::ScalarField, R>,
+    commitment: C::NestedCurve,
+}
+
+/// Ephemeral $m_n(w_n, X, y_n)$ nested registry restriction, used only
+/// during the fuse step.
+struct NestedRegistryWy<C: Cycle, R: Rank> {
+    poly: sparse::Polynomial<C::ScalarField, R>,
+    commitment: C::NestedCurve,
+}
+
+/// Ephemeral nested-field data for the $m_n(w_n, x_{i,n}, Y)$ restrictions,
+/// used only during the fuse step.
+struct NestedSPrime<C: Cycle, R: Rank> {
+    registry_wx0_poly: sparse::Polynomial<C::ScalarField, R>,
+    registry_wx0_commitment: C::NestedCurve,
+    registry_wx1_poly: sparse::Polynomial<C::ScalarField, R>,
+    registry_wx1_commitment: C::NestedCurve,
+}
+
 type NativeFuseEmulator<C> = Emulator<Wireless<Always<()>, <C as Cycle>::CircuitField>>;
 type NestedFuseEmulator<C> = Emulator<Wireless<Always<()>, <C as Cycle>::ScalarField>>;
+
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
+    Application<'_, C, R, HEADER_SIZE, B>
+{
+    /// The nested batch this step opens, over the nested polynomials the
+    /// builder has committed so far.
+    fn nested_batch<'a>(
+        &self,
+        builder: &'a ProofBuilder<'_, C, R, B>,
+        nested_s_prime: &'a NestedSPrime<C, R>,
+        nested_registry_wy: &'a NestedRegistryWy<C, R>,
+        left: &'a Proof<C, R>,
+        right: &'a Proof<C, R>,
+    ) -> pcs::Batch<'a, C, R> {
+        pcs::Batch {
+            left,
+            right,
+            registry_wx0: &nested_s_prime.registry_wx0_poly,
+            registry_wx1: &nested_s_prime.registry_wx1_poly,
+            registry_wy: &nested_registry_wy.poly,
+            registry_xy: builder.nested_registry_xy_poly(),
+            a: builder.nested_a_poly(),
+            b: builder.nested_b_poly(),
+        }
+    }
+
+    /// The nested challenges this step's openings are at, derived from the
+    /// native ones (see [`nested::challenge`]).
+    fn nested_challenges<'dr, D: Driver<'dr, F = C::CircuitField>>(
+        &self,
+        w: &Element<'dr, D>,
+        x: &Element<'dr, D>,
+        y: &Element<'dr, D>,
+        z: &Element<'dr, D>,
+        left: &Proof<C, R>,
+        right: &Proof<C, R>,
+    ) -> Result<pcs::Challenges<C::ScalarField>> {
+        Ok(pcs::Challenges {
+            w: nested::challenge::<C>(*w.value().take())?,
+            x: nested::challenge::<C>(*x.value().take())?,
+            y: nested::challenge::<C>(*y.value().take())?,
+            z: nested::challenge::<C>(*z.value().take())?,
+            left: pcs::ChildChallenges::of(left)?,
+            right: pcs::ChildChallenges::of(right)?,
+        })
+    }
+}
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
@@ -107,9 +185,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         bridge_preamble_commitment.write(&mut dr, &mut transcript)?;
         let w = transcript.challenge(&mut dr)?;
         let native_registry = self.native_registry.at(*w.value().take());
+        let nested_registry = self
+            .nested_registry
+            .at(nested::challenge::<C>(*w.value().take())?);
 
-        let native_s_prime =
-            self.compute_s_prime(rng, &native_registry, &left, &right, &mut builder)?;
+        let (native_s_prime, nested_s_prime) = self.compute_s_prime(
+            rng,
+            &native_registry,
+            &nested_registry,
+            &left,
+            &right,
+            &mut builder,
+        )?;
         let bridge_s_prime_commitment =
             Point::constant(&mut dr, builder.bridge_s_prime_commitment())?;
         bridge_s_prime_commitment.write(&mut dr, &mut transcript)?;
@@ -131,9 +218,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             registry_wy,
             nested_inner_error_witness,
             nested_claims,
+            nested_registry_wy,
         ) = self.inner_error_terms(
             rng,
             &native_registry,
+            &nested_registry,
             &y,
             &z,
             &native_source,
@@ -193,22 +282,25 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         bridge_ab_commitment.write(&mut dr, &mut transcript)?;
         let x = transcript.challenge(&mut dr)?;
 
-        let query_witness = self.compute_query(
+        // The nested query values ride in the bridge; a nested `compute_v`
+        // circuit will consume them once it exists.
+        let (query_witness, _nested_query) = self.compute_query(
             rng,
             &w,
             &x,
             &y,
             &z,
             &registry_wy,
+            &nested_registry_wy,
             &left,
             &right,
             &mut builder,
         )?;
-        let bridge_query_commitment = Point::constant(&mut dr, builder.bridge_query_commitment()?)?;
+        let bridge_query_commitment = Point::constant(&mut dr, builder.bridge_query_commitment())?;
         bridge_query_commitment.write(&mut dr, &mut transcript)?;
         let alpha = transcript.challenge(&mut dr)?;
 
-        let native_f = self.compute_f(
+        let (native_f, nested_f) = self.compute_f(
             rng,
             &w,
             &y,
@@ -217,6 +309,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &alpha,
             &native_s_prime,
             &registry_wy,
+            &nested_s_prime,
+            &nested_registry_wy,
             &mut builder,
             &left,
             &right,
@@ -225,8 +319,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         bridge_f_commitment.write(&mut dr, &mut transcript)?;
         let u = transcript.challenge(&mut dr)?;
 
-        let eval_witness =
-            self.compute_eval(&u, &left, &right, &native_s_prime, &registry_wy, &builder);
+        let (eval_witness, nested_eval) = self.compute_eval(
+            &u,
+            &left,
+            &right,
+            &native_s_prime,
+            &registry_wy,
+            &nested_s_prime,
+            &nested_registry_wy,
+            &builder,
+        )?;
 
         // Rejection-sample the eval-stage blinding until the squeezed `pre_beta`
         // lands in range as an endoscalar challenge. Unlike the single-shot
@@ -239,20 +341,23 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         // computed, not squeezed), so the accepted transcript clone is dropped
         // rather than threaded onward; the internal circuits re-derive every
         // challenge in-circuit from the values recorded on the builder.
-        let (pre_beta, eval_rx) = EndoscalarChallenge::sample(&mut dr, |dr| {
-            // Fresh eval-stage blinding each attempt: re-deriving the eval
-            // commitment is what makes `pre_beta` independent across retries.
-            let (eval_rx, bridge_eval_commitment) =
-                self.sample_eval_commitment(rng, &eval_witness, &builder)?;
+        let (pre_beta, (eval_rx, bridge_eval_rx, bridge_eval_commitment)) =
+            EndoscalarChallenge::sample(&mut dr, |dr| {
+                // Fresh eval-stage blindings each attempt: re-deriving the eval
+                // commitment is what makes `pre_beta` independent across
+                // retries.
+                let (eval_rx, bridge_eval_rx, bridge_eval_commitment) =
+                    self.sample_eval_commitment(rng, &eval_witness, &nested_eval)?;
 
-            let mut transcript = transcript.clone();
-            let bridge_eval_commitment = Point::constant(dr, bridge_eval_commitment)?;
-            bridge_eval_commitment.write(dr, &mut transcript)?;
-            let pre_beta = transcript.challenge(dr)?;
+                let mut transcript = transcript.clone();
+                let bridge_eval_commitment_point = Point::constant(dr, bridge_eval_commitment)?;
+                bridge_eval_commitment_point.write(dr, &mut transcript)?;
+                let pre_beta = transcript.challenge(dr)?;
 
-            Ok((pre_beta, eval_rx))
-        })?;
+                Ok((pre_beta, (eval_rx, bridge_eval_rx, bridge_eval_commitment)))
+            })?;
         builder.set_native_eval_rx(eval_rx);
+        builder.set_bridge_eval_rx(bridge_eval_rx, bridge_eval_commitment);
 
         self.compute_p(
             rng,
@@ -262,6 +367,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &native_s_prime,
             &registry_wy,
             &native_f,
+            &nested_s_prime,
+            &nested_registry_wy,
+            &nested_f,
             &mut builder,
         )?;
 

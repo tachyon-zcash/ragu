@@ -1,11 +1,13 @@
-//! The nested fold, checked against the children it folds.
+//! The nested fold and batch, checked against the children they cover.
 //!
-//! Nothing in-circuit verifies the nested fold yet, and the decider's raw
-//! nested claim is tautological, so this is where the prover-side fold is held
-//! to its definition: the children's nested claims all hold at the derived
-//! nested challenges, the accumulator is their two-layer fold, and its revdot
-//! value is what a nested collapse circuit would compute from the committed
-//! error terms and the children's `c` values.
+//! Nothing in-circuit verifies the nested side yet, and the decider's raw
+//! nested claim is tautological, so this is where the prover-side work is
+//! held to its definition: the children's nested claims all hold at the
+//! derived nested challenges, the accumulator is their two-layer fold, its
+//! revdot value is what a nested collapse circuit would compute from the
+//! committed error terms and the children's `c` values, and the nested batch
+//! evaluation $v_n$ is what a nested `compute_v` circuit would compute from
+//! the openings the batch claims.
 
 use alloc::vec::Vec;
 
@@ -26,7 +28,7 @@ use crate::{
     internal::{
         claims,
         fold_revdot::{self, ClaimFolder},
-        nested::{self, claims::KySource},
+        nested::{self, claims::KySource, pcs},
     },
     step::internal::trivial::Trivial,
 };
@@ -288,6 +290,79 @@ fn nested_accumulator_is_the_fold_of_the_children() -> Result<()> {
         parent.nested_c(),
         expected_c,
         "nested c is not the collapse of the children's claims"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn nested_batch_opens_what_it_claims() -> Result<()> {
+    let app = app();
+    let (parent, left, right) = fused(&app);
+
+    let challenges = pcs::Challenges {
+        w: nested::challenge::<C>(parent.w())?,
+        x: nested::challenge::<C>(parent.x())?,
+        y: nested::challenge::<C>(parent.y())?,
+        z: nested::challenge::<C>(parent.z())?,
+        left: pcs::ChildChallenges::of(&left)?,
+        right: pcs::ChildChallenges::of(&right)?,
+    };
+    let alpha = nested::challenge::<C>(parent.alpha())?;
+    let u = nested::challenge::<C>(parent.u())?;
+    let beta = nested::challenge::<C>(parent.pre_beta())?;
+
+    // The registry restrictions the step committed, recomputed from the
+    // registry at the derived challenges.
+    let registry = app.nested_registry.at(challenges.w);
+    let registry_wx0 = ReferenceBackend::registry_at_x(&registry, challenges.left.x);
+    let registry_wx1 = ReferenceBackend::registry_at_x(&registry, challenges.right.x);
+    let registry_wy = ReferenceBackend::registry_at_y(&registry, challenges.y);
+    let registry_xy =
+        ReferenceBackend::registry_xy(&app.nested_registry, challenges.x, challenges.y);
+
+    // 1. The stored restriction is the registry's.
+    assert!(
+        registry_xy
+            .iter_coeffs()
+            .eq(parent.nested_registry_xy_poly().iter_coeffs()),
+        "nested registry_xy is not m_n(W, x_n, y_n)"
+    );
+
+    let batch = pcs::Batch {
+        left: &left,
+        right: &right,
+        registry_wx0: &registry_wx0,
+        registry_wx1: &registry_wx1,
+        registry_wy: &registry_wy,
+        registry_xy: parent.nested_registry_xy_poly(),
+        a: &parent.nested_a_poly,
+        b: &parent.nested_b_poly,
+    };
+
+    // 2. f_n(u_n) from the quotients' definition: each opening contributes
+    //    (p(u) - p(point)) / (u - point), batched by alpha with the first
+    //    query weighted highest.
+    let mut f_at_u = Fq::ZERO;
+    for (poly, point) in batch.queries(challenges) {
+        let quotient = (poly.eval(u) - poly.eval(point)) * (u - point).invert().unwrap();
+        f_at_u = f_at_u * alpha + quotient;
+    }
+
+    // 3. v_n is the beta-weighted sum of f_n(u_n) and the batch's evaluations
+    //    at u_n, in the order the batch fixes, over exactly the points P_n
+    //    folds.
+    let mut v = f_at_u;
+    let mut folded = 1;
+    for poly in batch.evaluated() {
+        v = v * beta + poly.eval(u);
+        folded += 1;
+    }
+    assert_eq!(folded, pcs::NUM_BATCHED_POINTS);
+    assert_eq!(
+        parent.nested_v()?,
+        v,
+        "nested v is not the batch's evaluation"
     );
 
     Ok(())

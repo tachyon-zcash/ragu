@@ -75,6 +75,18 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         }
     }
 
+    /// The nested `registry_xy` polynomial, mutably.
+    pub(crate) fn nested_registry_xy_poly_mut(
+        &mut self,
+    ) -> &mut sparse::Polynomial<C::ScalarField, R> {
+        &mut self.nested_registry_xy_poly
+    }
+
+    /// The nested `p` polynomial, mutably.
+    pub(crate) fn nested_p_poly_mut(&mut self) -> &mut sparse::Polynomial<C::ScalarField, R> {
+        &mut self.nested_p_poly
+    }
+
     /// The nested polynomial named by `idx`, mutably.
     ///
     /// The `Arc`-shared polynomials are unshared through
@@ -95,9 +107,9 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             BridgeInnerError => Arc::make_mut(&mut self.bridge_inner_error_rx),
             BridgeOuterError => Arc::make_mut(&mut self.bridge_outer_error_rx),
             BridgeAB => Arc::make_mut(&mut self.bridge_ab_rx.0),
-            BridgeQuery => Arc::make_mut(&mut self.bridge_query_rx.0),
+            BridgeQuery => Arc::make_mut(&mut self.bridge_query_rx),
             BridgeF => Arc::make_mut(&mut self.bridge_f_rx),
-            BridgeEval => Arc::make_mut(&mut self.bridge_eval_rx.0),
+            BridgeEval => Arc::make_mut(&mut self.bridge_eval_rx),
             ChildPointsStage(side) => {
                 Arc::make_mut(&mut self.child_stage_rx_mut(side).points_stage)
             }
@@ -129,8 +141,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             F => &mut self.bridge_f_commitment,
             OuterError => &mut self.bridge_outer_error_commitment,
             AB => &mut self.bridge_ab_commitment.0,
-            Query => &mut self.bridge_query_commitment.0,
-            Eval => &mut self.bridge_eval_commitment.0,
+            Query => &mut self.bridge_query_commitment,
+            Eval => &mut self.bridge_eval_commitment,
         }
     }
 

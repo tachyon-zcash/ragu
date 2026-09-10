@@ -18,7 +18,7 @@ use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::{Element, vec::FixedVec};
 
 use super::{
-    RegistryWy,
+    NestedRegistryWy, RegistryWy,
     claims::{NativeFuseBuilder, NativeFuseProofSource, NestedFuseBuilder, NestedFuseProofSource},
 };
 use crate::{
@@ -37,6 +37,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         &self,
         rng: &mut RNG,
         native_registry: &RegistryAt<'_, C::CircuitField, R>,
+        nested_registry: &RegistryAt<'_, C::ScalarField, R>,
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
         native_source: &NativeFuseProofSource<'rx, C, R>,
@@ -48,14 +49,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         RegistryWy<C, R>,
         nested::stages::inner_error::Witness<C::HostCurve>,
         NestedFuseBuilder<'_, 'rx, C::ScalarField, R, B>,
+        NestedRegistryWy<C, R>,
     )>
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
         let (native_inner_error_witness, native_claims, registry_wy) =
             self.compute_native_inner_error(rng, native_registry, y, z, native_source, builder)?;
-        let (nested_inner_error_terms, nested_claims) =
-            self.compute_nested_inner_error(y, z, nested_source)?;
+        let (nested_inner_error_terms, nested_claims, nested_registry_wy) =
+            self.compute_nested_inner_error(nested_registry, y, z, nested_source)?;
         let nested_inner_error_witness =
             self.compute_bridge_inner_error(rng, &registry_wy, nested_inner_error_terms, builder)?;
         Ok((
@@ -64,6 +66,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             registry_wy,
             nested_inner_error_witness,
             nested_claims,
+            nested_registry_wy,
         ))
     }
 
@@ -119,7 +122,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     }
 
     /// Assembles the children's nested claims and computes the layer-1 error
-    /// terms of their fold.
+    /// terms of their fold, along with the $m_n(w_n, X, y_n)$ restriction.
     ///
     /// The nested $y$ and $z$ are derived from the native challenges for the
     /// claims' $b$ sides and for folding the bonding claims across the two
@@ -129,6 +132,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     /// challenges, and checking the fold in-circuit (see [`nested::challenge`]).
     fn compute_nested_inner_error<'dr, 'rx, D>(
         &self,
+        nested_registry: &RegistryAt<'_, C::ScalarField, R>,
         native_y: &Element<'dr, D>,
         native_z: &Element<'dr, D>,
         nested_source: &NestedFuseProofSource<'rx, C, R>,
@@ -141,6 +145,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             <nested::RevdotParameters as Parameters>::NumGroups,
         >,
         NestedFuseBuilder<'_, 'rx, C::ScalarField, R, B>,
+        NestedRegistryWy<C, R>,
     )>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -161,7 +166,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 &nested_claims.b,
             );
 
-        Ok((error_terms, nested_claims))
+        let nested_registry_wy_poly = B::registry_at_y(nested_registry, nested_y);
+        let nested_registry_wy_commitment =
+            B::sparse_commit_to_affine(&nested_registry_wy_poly, C::nested_generators(self.params));
+        let nested_registry_wy = NestedRegistryWy {
+            poly: nested_registry_wy_poly,
+            commitment: nested_registry_wy_commitment,
+        };
+
+        Ok((error_terms, nested_claims, nested_registry_wy))
     }
 
     /// Commits the nested fold's inner error terms alongside the native

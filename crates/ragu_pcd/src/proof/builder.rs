@@ -2,9 +2,9 @@
 //!
 //! Polynomial setters store values immediately. Native commitment caches are
 //! computed lazily on first access via [`OnceCell`]-based interior mutability.
-//! The three "simple" bridge commitments (ab, query, eval) are also lazily
-//! computed from [`bridge_alpha`](ProofBuilder::bridge_alpha) and the native
-//! commitments already on the builder.
+//! The "simple" `ab` bridge commitment is also lazily computed from
+//! [`bridge_alpha`](ProofBuilder::bridge_alpha) and the native commitments
+//! already on the builder.
 
 use alloc::{sync::Arc, vec::Vec};
 use core::{cell::OnceCell, marker::PhantomData};
@@ -202,25 +202,6 @@ macro_rules! cached_bridge {
             }))
         }
     };
-    // As above, plus a non-caching `$candidate` variant that takes the native
-    // witness commitments explicitly instead of reading the builder's cached
-    // cells. Used for rejection sampling: each attempt commits to a fresh
-    // candidate whose rx must not be memoized and whose native commitment is not
-    // yet stored on the builder. Shares the rx derivation with the cached path
-    // above, so the candidate and final commitments cannot drift.
-    ($rx:ident, $commitment:ident,
-     $idx:expr, $stage:ident, { $($wit_field:ident : $getter:ident()),* },
-     candidate: $candidate:ident) => {
-        cached_bridge!($rx, $commitment, $idx, $stage, { $($wit_field : $getter()),* });
-
-        pub(crate) fn $candidate(&self, $($wit_field: C::HostCurve),*) -> Result<C::NestedCurve> {
-            let rx = nested::stages::$stage::Stage::<C::HostCurve, R>::rx(
-                self.bridge_alpha_power($idx),
-                &nested::stages::$stage::Witness { $($wit_field),* },
-            )?;
-            Ok(B::sparse_commit_to_affine(&rx, C::nested_generators(self.params)))
-        }
-    };
 }
 
 /// Builder for incremental [`Proof`] construction.
@@ -232,7 +213,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     params: &'params C::Params,
     _backend: PhantomData<B>,
 
-    /// Shared alpha source for the three cached bridge commitments.
+    /// Shared alpha source for the cached `ab` bridge commitment.
     bridge_alpha: C::ScalarField,
 
     // Application metadata
@@ -266,16 +247,18 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     bridge_inner_error_commitment: Option<C::NestedCurve>,
     bridge_outer_error_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
     bridge_outer_error_commitment: Option<C::NestedCurve>,
+    bridge_query_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
+    bridge_query_commitment: Option<C::NestedCurve>,
     bridge_f_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
     bridge_f_commitment: Option<C::NestedCurve>,
+    bridge_eval_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
+    bridge_eval_commitment: Option<C::NestedCurve>,
 
-    // Cached bridge rx polynomials (lazily derived from `bridge_alpha` +
+    // Cached bridge rx polynomial (lazily derived from `bridge_alpha` +
     // native commitments). Parallels the native rx/commitment split: the rx
     // slot is populated on first access, and the commitment slot is derived
     // lazily from it.
     bridge_ab_rx: OnceCell<Arc<sparse::Polynomial<C::ScalarField, R>>>,
-    bridge_query_rx: OnceCell<Arc<sparse::Polynomial<C::ScalarField, R>>>,
-    bridge_eval_rx: OnceCell<Arc<sparse::Polynomial<C::ScalarField, R>>>,
 
     // Nested endoscaling data
     nested_endoscaling_step_rxs: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
@@ -286,6 +269,10 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     nested_a_poly: Option<sparse::Polynomial<C::ScalarField, R>>,
     nested_b_poly: Option<sparse::Polynomial<C::ScalarField, R>>,
 
+    // Nested batch polynomials
+    nested_registry_xy_poly: Option<sparse::Polynomial<C::ScalarField, R>>,
+    nested_p_poly: Option<sparse::Polynomial<C::ScalarField, R>>,
+
     // Nested endoscaling commitment caches (lazily computed from polynomials)
     nested_endoscaling_step_commitments: OnceCell<Vec<C::NestedCurve>>,
     nested_endoscalar_commitment: OnceCell<C::NestedCurve>,
@@ -294,6 +281,10 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     // Nested accumulator commitment caches (lazily computed from polynomials)
     nested_a_commitment: OnceCell<C::NestedCurve>,
     nested_b_commitment: OnceCell<C::NestedCurve>,
+
+    // Nested batch commitment caches (lazily computed from polynomials)
+    nested_registry_xy_commitment: OnceCell<C::NestedCurve>,
+    nested_p_commitment: OnceCell<C::NestedCurve>,
 
     // Challenges
     w: Option<C::CircuitField>,
@@ -325,10 +316,8 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     native_outer_collapse_commitment: OnceCell<C::HostCurve>,
     native_compute_v_commitment: OnceCell<C::HostCurve>,
 
-    // Cached bridge commitment caches (lazily computed from their cached rxs)
+    // Cached bridge commitment cache (lazily computed from its cached rx)
     bridge_ab_commitment: OnceCell<C::NestedCurve>,
-    bridge_query_commitment: OnceCell<C::NestedCurve>,
-    bridge_eval_commitment: OnceCell<C::NestedCurve>,
 
     // Children's stage rx (for copying circuit claims)
     child_left_stage_rx: Option<super::ChildStageRx<C::ScalarField, R>>,
@@ -369,21 +358,27 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             bridge_inner_error_commitment: None,
             bridge_outer_error_rx: None,
             bridge_outer_error_commitment: None,
+            bridge_query_rx: None,
+            bridge_query_commitment: None,
             bridge_f_rx: None,
             bridge_f_commitment: None,
+            bridge_eval_rx: None,
+            bridge_eval_commitment: None,
             bridge_ab_rx: OnceCell::new(),
-            bridge_query_rx: OnceCell::new(),
-            bridge_eval_rx: OnceCell::new(),
             nested_endoscaling_step_rxs: None,
             nested_endoscalar_rx: None,
             nested_points_rx: None,
             nested_a_poly: None,
             nested_b_poly: None,
+            nested_registry_xy_poly: None,
+            nested_p_poly: None,
             nested_endoscaling_step_commitments: OnceCell::new(),
             nested_endoscalar_commitment: OnceCell::new(),
             nested_points_commitment: OnceCell::new(),
             nested_a_commitment: OnceCell::new(),
             nested_b_commitment: OnceCell::new(),
+            nested_registry_xy_commitment: OnceCell::new(),
+            nested_p_commitment: OnceCell::new(),
             w: None,
             y: None,
             z: None,
@@ -411,8 +406,6 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             native_outer_collapse_commitment: OnceCell::new(),
             native_compute_v_commitment: OnceCell::new(),
             bridge_ab_commitment: OnceCell::new(),
-            bridge_query_commitment: OnceCell::new(),
-            bridge_eval_commitment: OnceCell::new(),
             child_left_stage_rx: None,
             child_right_stage_rx: None,
         }
@@ -575,6 +568,28 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         Arc<sparse::Polynomial<C::ScalarField, R>>
     );
     bridge_pair!(
+        set_bridge_query_rx,
+        bridge_query_commitment,
+        bridge_query_rx,
+        bridge_query_commitment
+    );
+    ref_getter!(
+        bridge_query_rx,
+        bridge_query_rx,
+        Arc<sparse::Polynomial<C::ScalarField, R>>
+    );
+    bridge_pair!(
+        set_bridge_eval_rx,
+        bridge_eval_commitment,
+        bridge_eval_rx,
+        bridge_eval_commitment
+    );
+    ref_getter!(
+        bridge_eval_rx,
+        bridge_eval_rx,
+        Arc<sparse::Polynomial<C::ScalarField, R>>
+    );
+    bridge_pair!(
         set_bridge_f_rx,
         bridge_f_commitment,
         bridge_f_rx,
@@ -586,8 +601,6 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
     fn bridge_alpha_power(&self, idx: nested::RxIndex) -> C::ScalarField {
         let n = match idx {
             nested::RxIndex::BridgeAB => 2,
-            nested::RxIndex::BridgeQuery => 3,
-            nested::RxIndex::BridgeEval => 4,
             _ => panic!("not a cached bridge: {idx:?}"),
         };
         self.bridge_alpha.pow_vartime([n])
@@ -599,23 +612,6 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         nested::RxIndex::BridgeAB,
         ab,
         { a: native_a_commitment(), b: native_b_commitment() }
-    );
-
-    cached_bridge!(
-        bridge_query_rx,
-        bridge_query_commitment,
-        nested::RxIndex::BridgeQuery,
-        query,
-        { native_query: native_query_commitment(), registry_xy: native_registry_xy_commitment() }
-    );
-
-    cached_bridge!(
-        bridge_eval_rx,
-        bridge_eval_commitment,
-        nested::RxIndex::BridgeEval,
-        eval,
-        { native_eval: native_eval_commitment() },
-        candidate: candidate_bridge_eval_commitment
     );
 
     setter!(
@@ -674,6 +670,31 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         nested_b_commitment,
         nested_b_commitment,
         nested_b_poly
+    );
+
+    setter!(
+        set_nested_registry_xy_poly,
+        nested_registry_xy_poly,
+        sparse::Polynomial<C::ScalarField, R>
+    );
+    setter!(set_nested_p_poly, nested_p_poly, sparse::Polynomial<C::ScalarField, R>);
+    ref_getter!(
+        nested_registry_xy_poly,
+        nested_registry_xy_poly,
+        sparse::Polynomial<C::ScalarField, R>
+    );
+    ref_getter!(nested_p_poly, nested_p_poly, sparse::Polynomial<C::ScalarField, R>);
+    lazy_commitment!(
+        nested,
+        nested_registry_xy_commitment,
+        nested_registry_xy_commitment,
+        nested_registry_xy_poly
+    );
+    lazy_commitment!(
+        nested,
+        nested_p_commitment,
+        nested_p_commitment,
+        nested_p_poly
     );
 
     setter!(set_w, w, C::CircuitField);
@@ -746,19 +767,19 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         self.native_outer_collapse_commitment();
         self.native_compute_v_commitment();
 
-        // Force lazy evaluation of cached bridge commitments.
+        // Force lazy evaluation of the cached bridge commitment.
         self.bridge_ab_commitment()?;
-        self.bridge_query_commitment()?;
-        self.bridge_eval_commitment()?;
 
         // Ensure nested endoscaling commitment caches are populated.
         self.nested_endoscaling_step_commitments();
         self.nested_endoscalar_commitment();
         self.nested_points_commitment();
 
-        // Ensure nested accumulator commitment caches are populated.
+        // Ensure nested accumulator and batch commitment caches are populated.
         self.nested_a_commitment();
         self.nested_b_commitment();
+        self.nested_registry_xy_commitment();
+        self.nested_p_commitment();
 
         macro_rules! take {
             ($field:ident) => {
@@ -807,21 +828,23 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             bridge_inner_error_commitment: take!(bridge_inner_error_commitment),
             bridge_outer_error_rx: take!(bridge_outer_error_rx),
             bridge_outer_error_commitment: take!(bridge_outer_error_commitment),
+            bridge_query_rx: take!(bridge_query_rx),
+            bridge_query_commitment: take!(bridge_query_commitment),
             bridge_f_rx: take!(bridge_f_rx),
             bridge_f_commitment: take!(bridge_f_commitment),
+            bridge_eval_rx: take!(bridge_eval_rx),
+            bridge_eval_commitment: take!(bridge_eval_commitment),
 
             bridge_ab_rx: cached!(bridge_ab_rx),
             bridge_ab_commitment: cached!(bridge_ab_commitment),
-            bridge_query_rx: cached!(bridge_query_rx),
-            bridge_query_commitment: cached!(bridge_query_commitment),
-            bridge_eval_rx: cached!(bridge_eval_rx),
-            bridge_eval_commitment: cached!(bridge_eval_commitment),
 
             nested_endoscaling_step_rxs: take!(nested_endoscaling_step_rxs),
             nested_endoscalar_rx: take!(nested_endoscalar_rx),
             nested_points_rx: take!(nested_points_rx),
             nested_a_poly: take!(nested_a_poly),
             nested_b_poly: take!(nested_b_poly),
+            nested_registry_xy_poly: take!(nested_registry_xy_poly),
+            nested_p_poly: take!(nested_p_poly),
 
             nested_endoscaling_step_commitments: self
                 .nested_endoscaling_step_commitments
@@ -834,6 +857,8 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             nested_points_commitment: cached!(nested_points_commitment),
             nested_a_commitment: cached!(nested_a_commitment),
             nested_b_commitment: cached!(nested_b_commitment),
+            nested_registry_xy_commitment: cached!(nested_registry_xy_commitment),
+            nested_p_commitment: cached!(nested_p_commitment),
 
             w: take!(w),
             y: take!(y),

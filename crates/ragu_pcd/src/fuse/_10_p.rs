@@ -10,6 +10,12 @@
 //! The commitment is computed via
 //! [`PointsWitness`](crate::internal::endoscalar::PointsWitness)
 //! Horner evaluation.
+//!
+//! The nested batch is accumulated the same way into $p_n(X)$, with
+//! $\beta_n$ the scalar-field lift of the same endoscalar bits. Its
+//! nested-curve commitment $P_n$ is the same Horner walk over the batch's
+//! nested-curve commitments, which is the walk a native-side endoscaling of
+//! those points will one day reproduce; today only the prover computes it.
 
 use alloc::vec::Vec;
 use core::ops::AddAssign;
@@ -19,12 +25,15 @@ use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::Result;
 use ragu_primitives::{EndoscalarChallenge, lift_endoscalar};
 
-use super::{NativeF, NativeFuseEmulator, NativeSPrime, RegistryWy};
+use super::{
+    NativeF, NativeFuseEmulator, NativeSPrime, NestedF, NestedRegistryWy, NestedSPrime, RegistryWy,
+};
 use crate::{
     Application, Proof,
     internal::{
+        endoscalar::PointsWitness,
         native::{RxComponent, RxIndex},
-        nested::NUM_ENDOSCALING_POINTS,
+        nested::{NUM_ENDOSCALING_POINTS, pcs},
     },
     proof::ProofBuilder,
 };
@@ -59,6 +68,49 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
         f: &NativeF<C, R>,
+        nested_s_prime: &NestedSPrime<C, R>,
+        nested_registry_wy: &NestedRegistryWy<C, R>,
+        nested_f: &NestedF<C, R>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<()> {
+        // Extract endoscalar from pre_beta and compute effective beta. Going
+        // through the validated `EndoscalarChallenge` makes the
+        // `value < 2^CAPACITY` precondition a type invariant rather than an
+        // unchecked argument to `extract_endoscalar`.
+        let beta_endo = pre_beta.extract_native();
+
+        self.compute_native_p(
+            rng,
+            beta_endo,
+            left,
+            right,
+            s_prime,
+            registry_wy,
+            f,
+            builder,
+        )?;
+        self.compute_nested_p(
+            beta_endo,
+            left,
+            right,
+            nested_s_prime,
+            nested_registry_wy,
+            nested_f,
+            builder,
+        )?;
+
+        Ok(())
+    }
+
+    fn compute_native_p<RNG: ragu_arithmetic::rand::CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        beta_endo: u128,
+        left: &Proof<C, R>,
+        right: &Proof<C, R>,
+        s_prime: &NativeSPrime<C, R>,
+        registry_wy: &RegistryWy<C, R>,
+        f: &NativeF<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         let mut poly = f.poly.clone();
@@ -71,12 +123,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         //
         // We accumulate polynomials while collecting MSM terms for the
         // commitment computation.
-
-        // Extract endoscalar from pre_beta and compute effective beta. Going
-        // through the validated `EndoscalarChallenge` makes the
-        // `value < 2^CAPACITY` precondition a type invariant rather than an
-        // unchecked argument to `extract_endoscalar`.
-        let beta_endo = pre_beta.extract_native();
         let effective_beta = lift_endoscalar(beta_endo);
 
         {
@@ -136,6 +182,59 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         )?;
 
         builder.set_native_p_poly(poly, p_commitment);
+
+        Ok(())
+    }
+
+    /// Accumulates the nested batch into $p_n(X)$, in [`pcs::Batch::evaluated`]
+    /// order after $f_n$, and checks that its commitment is the Horner walk
+    /// over the batch's nested-curve commitments.
+    fn compute_nested_p(
+        &self,
+        beta_endo: u128,
+        left: &Proof<C, R>,
+        right: &Proof<C, R>,
+        nested_s_prime: &NestedSPrime<C, R>,
+        nested_registry_wy: &NestedRegistryWy<C, R>,
+        nested_f: &NestedF<C, R>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<()> {
+        let beta: C::ScalarField = lift_endoscalar(beta_endo);
+        let batch = self.nested_batch(builder, nested_s_prime, nested_registry_wy, left, right);
+        let current = pcs::CurrentCommitments {
+            registry_wx0: nested_s_prime.registry_wx0_commitment,
+            registry_wx1: nested_s_prime.registry_wx1_commitment,
+            registry_wy: nested_registry_wy.commitment,
+            a: builder.nested_a_commitment(),
+            b: builder.nested_b_commitment(),
+            registry_xy: builder.nested_registry_xy_commitment(),
+        };
+
+        let mut poly = nested_f.poly.clone();
+        let mut points = Vec::with_capacity(pcs::NUM_BATCHED_POINTS);
+        points.push(nested_f.commitment);
+        for (evaluated, commitment) in batch.evaluated().zip(batch.commitments(current)) {
+            poly.scale(beta);
+            poly.add_assign(evaluated);
+            points.push(commitment);
+        }
+        assert_eq!(points.len(), pcs::NUM_BATCHED_POINTS);
+
+        // The walk a native-side endoscaling of these points would perform:
+        // its last interstitial is P_n.
+        let walk =
+            PointsWitness::<C::NestedCurve, { pcs::NUM_BATCHED_POINTS }>::new(beta_endo, &points);
+        let p_commitment = *walk
+            .interstitials
+            .last()
+            .expect("NUM_BATCHED_POINTS guarantees at least one interstitial");
+
+        builder.set_nested_p_poly(poly);
+        debug_assert_eq!(
+            builder.nested_p_commitment(),
+            p_commitment,
+            "nested P must be the Horner walk over the batch's commitments"
+        );
 
         Ok(())
     }

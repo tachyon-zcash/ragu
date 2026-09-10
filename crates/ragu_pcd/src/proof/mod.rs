@@ -137,8 +137,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             bridge_inner_error: Arc::clone(&self.bridge_inner_error_rx),
             bridge_outer_error: Arc::clone(&self.bridge_outer_error_rx),
             bridge_ab: Arc::clone(&self.bridge_ab_rx.0),
-            bridge_query: Arc::clone(&self.bridge_query_rx.0),
-            bridge_eval: Arc::clone(&self.bridge_eval_rx.0),
+            bridge_query: Arc::clone(&self.bridge_query_rx),
+            bridge_eval: Arc::clone(&self.bridge_eval_rx),
         }
     }
 }
@@ -147,10 +147,10 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 ///
 /// All fields are flat (no nested component structs). Polynomial fields are
 /// primary data; commitment fields are `Cached` values derivable from
-/// polynomials. Three bridge polynomials (ab, query, eval) are also `Cached`,
-/// derivable from `bridge_alpha` and native commitments; the other five carry
-/// prover-chosen data (the nested fold's error terms among them) and are
-/// primary.
+/// polynomials. The `ab` bridge polynomial is also `Cached`, derivable from
+/// `bridge_alpha` and native commitments; the other seven carry prover-chosen
+/// data (the nested fold's error terms and the nested batch's values among
+/// them) and are primary.
 #[derive(Clone)]
 pub struct Proof<C: Cycle, R: Rank> {
     /// Shared alpha source for deriving cached bridge polynomial alphas.
@@ -183,12 +183,12 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) bridge_s_prime_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
     pub(crate) bridge_inner_error_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
     pub(crate) bridge_outer_error_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
+    pub(crate) bridge_query_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
     pub(crate) bridge_f_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
+    pub(crate) bridge_eval_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
 
-    // Bridge rx polynomials (cached, derived from bridge_alpha + native commitments)
+    // Bridge rx polynomial (cached, derived from bridge_alpha + native commitments)
     bridge_ab_rx: Cached<Arc<sparse::Polynomial<C::ScalarField, R>>>,
-    bridge_query_rx: Cached<Arc<sparse::Polynomial<C::ScalarField, R>>>,
-    bridge_eval_rx: Cached<Arc<sparse::Polynomial<C::ScalarField, R>>>,
 
     // Nested endoscaling data (ScalarField, NestedCurve commitment)
     pub(crate) nested_endoscaling_step_rxs: Vec<sparse::Polynomial<C::ScalarField, R>>,
@@ -200,6 +200,11 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) nested_a_poly: sparse::Polynomial<C::ScalarField, R>,
     pub(crate) nested_b_poly: sparse::Polynomial<C::ScalarField, R>,
 
+    // Nested batch polynomials (ScalarField, NestedCurve commitment): the
+    // $m_n(W, x_n, y_n)$ restriction, and the batch accumulated into $p_n$.
+    pub(crate) nested_registry_xy_poly: sparse::Polynomial<C::ScalarField, R>,
+    pub(crate) nested_p_poly: sparse::Polynomial<C::ScalarField, R>,
+
     // Nested endoscaling commitment caches
     nested_endoscaling_step_commitments: Vec<Cached<C::NestedCurve>>,
     nested_endoscalar_commitment: Cached<C::NestedCurve>,
@@ -208,6 +213,10 @@ pub struct Proof<C: Cycle, R: Rank> {
     // Nested accumulator commitment caches
     nested_a_commitment: Cached<C::NestedCurve>,
     nested_b_commitment: Cached<C::NestedCurve>,
+
+    // Nested batch commitment caches
+    nested_registry_xy_commitment: Cached<C::NestedCurve>,
+    nested_p_commitment: Cached<C::NestedCurve>,
 
     // Challenges
     pub(crate) w: C::CircuitField,
@@ -244,12 +253,12 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) bridge_s_prime_commitment: C::NestedCurve,
     pub(crate) bridge_inner_error_commitment: C::NestedCurve,
     pub(crate) bridge_outer_error_commitment: C::NestedCurve,
+    pub(crate) bridge_query_commitment: C::NestedCurve,
     pub(crate) bridge_f_commitment: C::NestedCurve,
+    pub(crate) bridge_eval_commitment: C::NestedCurve,
 
-    // Bridge commitments (cached, derived from cached bridge rx)
+    // Bridge commitment (cached, derived from the cached bridge rx)
     bridge_ab_commitment: Cached<C::NestedCurve>,
-    bridge_query_commitment: Cached<C::NestedCurve>,
-    bridge_eval_commitment: Cached<C::NestedCurve>,
 
     // Children's stage rx polynomials (for copying circuit claims)
     pub(crate) child_left_stage_rx: ChildStageRx<C::ScalarField, R>,
@@ -300,9 +309,9 @@ impl<C: Cycle, R: Rank> core::ops::Index<nested::RxIndex> for Proof<C, R> {
             BridgeInnerError => self.bridge_inner_error_rx.as_ref(),
             BridgeOuterError => self.bridge_outer_error_rx.as_ref(),
             BridgeAB => self.bridge_ab_rx.0.as_ref(),
-            BridgeQuery => self.bridge_query_rx.0.as_ref(),
+            BridgeQuery => self.bridge_query_rx.as_ref(),
             BridgeF => self.bridge_f_rx.as_ref(),
-            BridgeEval => self.bridge_eval_rx.0.as_ref(),
+            BridgeEval => self.bridge_eval_rx.as_ref(),
             ChildPointsStage(side) => self.child_stage_rx(side).points_stage.as_ref(),
             ChildBridge(kind, side) => self.child_stage_rx(side).bridge_at(kind),
         }
@@ -363,6 +372,22 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// As with [`Self::native_c`], this computes witness data, not circuit structure.
     pub(crate) fn nested_c(&self) -> C::ScalarField {
         self.nested_a_poly.revdot(&self.nested_b_poly)
+    }
+
+    /// Returns the nested batch's evaluation $v_n = p_n(u_n)$, at the nested
+    /// counterpart of $u$.
+    ///
+    /// As with [`Self::v`], this computes witness data, not circuit structure.
+    pub(crate) fn nested_v(&self) -> Result<C::ScalarField> {
+        Ok(self.nested_p_poly.eval(nested::challenge::<C>(self.u)?))
+    }
+
+    pub(crate) fn nested_registry_xy_poly(&self) -> &sparse::Polynomial<C::ScalarField, R> {
+        &self.nested_registry_xy_poly
+    }
+
+    pub(crate) fn nested_p_poly(&self) -> &sparse::Polynomial<C::ScalarField, R> {
+        &self.nested_p_poly
     }
 
     pub(crate) fn circuit_id(&self) -> CircuitIndex {
@@ -489,11 +514,11 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 
     pub(crate) fn bridge_query_commitment(&self) -> C::NestedCurve {
-        self.bridge_query_commitment.0
+        self.bridge_query_commitment
     }
 
     pub(crate) fn bridge_eval_commitment(&self) -> C::NestedCurve {
-        self.bridge_eval_commitment.0
+        self.bridge_eval_commitment
     }
 
     pub(crate) fn nested_endoscaling_step_commitment(&self, step: u32) -> C::NestedCurve {
@@ -514,6 +539,41 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 
     pub(crate) fn nested_b_commitment(&self) -> C::NestedCurve {
         self.nested_b_commitment.0
+    }
+
+    pub(crate) fn nested_registry_xy_commitment(&self) -> C::NestedCurve {
+        self.nested_registry_xy_commitment.0
+    }
+
+    pub(crate) fn nested_p_commitment(&self) -> C::NestedCurve {
+        self.nested_p_commitment.0
+    }
+
+    /// Returns the nested commitment for one of this proof's own nested rx
+    /// components (see [`nested::RxIndex::OWN`]).
+    ///
+    /// # Panics
+    ///
+    /// Panics on a child component: those are the children's polynomials,
+    /// whose commitments live on the child proofs.
+    pub(crate) fn nested_rx_commitment(&self, idx: nested::RxIndex) -> C::NestedCurve {
+        use nested::RxIndex::*;
+        match idx {
+            EndoscalingStep(step) => self.nested_endoscaling_step_commitment(step),
+            EndoscalarStage => self.nested_endoscalar_commitment(),
+            PointsStage => self.nested_points_commitment(),
+            BridgePreamble => self.bridge_preamble_commitment,
+            BridgeSPrime => self.bridge_s_prime_commitment,
+            BridgeInnerError => self.bridge_inner_error_commitment,
+            BridgeOuterError => self.bridge_outer_error_commitment,
+            BridgeAB => self.bridge_ab_commitment.0,
+            BridgeQuery => self.bridge_query_commitment,
+            BridgeF => self.bridge_f_commitment,
+            BridgeEval => self.bridge_eval_commitment,
+            ChildPointsStage(_) | ChildBridge(..) => {
+                panic!("child components are committed on the child proof: {idx:?}")
+            }
+        }
     }
 }
 
@@ -610,6 +670,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             C::CircuitField::ONE,
             C::CircuitField::ONE,
         );
+        // The nested counterpart, at the nested counterparts of the all-one
+        // challenges below: a parent opens it at its own nested w.
+        let nested_one = nested::challenge::<C>(C::CircuitField::ONE)
+            .expect("one is in the endoscalar challenge range");
+        let nested_registry_xy_poly = B::registry_xy(&self.nested_registry, nested_one, nested_one);
 
         let mut builder = ProofBuilder::<C, R, B>::new(self.params, C::ScalarField::ONE);
 
@@ -637,18 +702,23 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 
         // Nested accumulator: a trivial claim (all-ones traces), so that a
         // trivial child contributes a well-formed raw claim to its parent's
-        // nested fold. Commitments are computed lazily by the builder.
+        // nested fold. The nested batch is trivial too, except for the
+        // registry restriction a parent opens. Commitments are computed
+        // lazily by the builder.
         builder.set_nested_a_poly(ones_nested.clone());
-        builder.set_nested_b_poly(ones_nested);
+        builder.set_nested_b_poly(ones_nested.clone());
+        builder.set_nested_registry_xy_poly(nested_registry_xy_poly);
+        builder.set_nested_p_poly(ones_nested);
 
         // Bridge polynomials: compute via Stage::rx() with trivial witnesses
         // so that traces are valid for their witnesses (not just ones).
-        // Cached bridges (ab, query, eval) are already computed lazily by the
-        // builder via cached_bridge! with proper witnesses.
+        // The cached bridge (ab) is already computed lazily by the builder
+        // via cached_bridge! with a proper witness.
         //
-        // Order: s_prime, inner_error, outer_error, f first (independent of
-        // p_commitment), then endoscaling (computes p_commitment), then
-        // preamble (needs p_commitment for ChildWitness.p), then native_p_poly.
+        // Order: s_prime, inner_error, outer_error, query, f, eval first
+        // (independent of p_commitment), then endoscaling (computes
+        // p_commitment), then preamble (needs p_commitment for
+        // ChildWitness.p), then native_p_poly.
         let nested_gen = C::nested_generators(self.params);
         {
             let rx = nested::stages::s_prime::Stage::<C::HostCurve, R>::rx(
@@ -692,6 +762,19 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             builder.set_bridge_outer_error_rx(rx, commitment);
         }
         {
+            let rx = nested::stages::query::Stage::<C::HostCurve, R>::rx(
+                C::ScalarField::ONE,
+                &nested::stages::query::Witness {
+                    native_query: builder.native_query_commitment(),
+                    registry_xy: builder.native_registry_xy_commitment(),
+                    nested: nested::stages::query::Evaluations::zero(),
+                },
+            )
+            .expect("trivial query rx");
+            let commitment = B::sparse_commit_to_affine(&rx, nested_gen);
+            builder.set_bridge_query_rx(rx, commitment);
+        }
+        {
             let rx = nested::stages::f::Stage::<C::HostCurve, R>::rx(
                 C::ScalarField::ONE,
                 &nested::stages::f::Witness {
@@ -701,6 +784,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             .expect("trivial f rx");
             let commitment = B::sparse_commit_to_affine(&rx, nested_gen);
             builder.set_bridge_f_rx(rx, commitment);
+        }
+        {
+            let rx = nested::stages::eval::Stage::<C::HostCurve, R>::rx(
+                C::ScalarField::ONE,
+                &nested::stages::eval::Witness {
+                    native_eval: builder.native_eval_commitment(),
+                    nested: nested::stages::eval::Evaluations::zero(),
+                },
+            )
+            .expect("trivial eval rx");
+            let commitment = B::sparse_commit_to_affine(&rx, nested_gen);
+            builder.set_bridge_eval_rx(rx, commitment);
         }
 
         // Build dummy PointsStage inputs in `_10_p` accumulation order
@@ -795,8 +890,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             bridge_inner_error: Arc::clone(builder.bridge_inner_error_rx()),
             bridge_outer_error: Arc::clone(builder.bridge_outer_error_rx()),
             bridge_ab: Arc::clone(builder.bridge_ab_rx().expect("trivial bridge_ab_rx")),
-            bridge_query: Arc::clone(builder.bridge_query_rx().expect("trivial bridge_query_rx")),
-            bridge_eval: Arc::clone(builder.bridge_eval_rx().expect("trivial bridge_eval_rx")),
+            bridge_query: Arc::clone(builder.bridge_query_rx()),
+            bridge_eval: Arc::clone(builder.bridge_eval_rx()),
         };
         builder.set_child_left_stage_rx(trivial_child.clone());
         builder.set_child_right_stage_rx(trivial_child);

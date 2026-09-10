@@ -50,11 +50,15 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             nested_points_rx: _,
             nested_a_poly: _,
             nested_b_poly: _,
+            nested_registry_xy_poly: _,
+            nested_p_poly: _,
             nested_endoscaling_step_commitments: _,
             nested_endoscalar_commitment: _,
             nested_points_commitment: _,
             nested_a_commitment: _,
             nested_b_commitment: _,
+            nested_registry_xy_commitment: _,
+            nested_p_commitment: _,
             w: _,
             y: _,
             z: _,
@@ -132,6 +136,13 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         {
             return Some("nested ab polynomials");
         }
+        if !polynomial_eq(
+            &self.nested_registry_xy_poly,
+            &other.nested_registry_xy_poly,
+        ) || !polynomial_eq(&self.nested_p_poly, &other.nested_p_poly)
+        {
+            return Some("nested protocol polynomials");
+        }
 
         if [
             self.w,
@@ -190,6 +201,11 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             || self.nested_b_commitment != other.nested_b_commitment
         {
             return Some("nested ab commitments");
+        }
+        if self.nested_registry_xy_commitment != other.nested_registry_xy_commitment
+            || self.nested_p_commitment != other.nested_p_commitment
+        {
+            return Some("nested protocol commitments");
         }
         if [
             self.bridge_preamble_commitment(),

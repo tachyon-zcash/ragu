@@ -229,6 +229,17 @@ fn vocabulary() -> Vec<Corruption<C>> {
         }
     }
 
+    for coeff in coeffs {
+        out.push(Corruption::NestedRegistryXyCoeff {
+            coeff,
+            delta: nested_delta,
+        });
+        out.push(Corruption::NestedPCoeff {
+            coeff,
+            delta: nested_delta,
+        });
+    }
+
     out
 }
 
@@ -400,5 +411,9 @@ fn clone_corruption(corruption: &Corruption<C>) -> Corruption<C> {
             coeff,
             delta,
         },
+        Corruption::NestedRegistryXyCoeff { coeff, delta } => {
+            Corruption::NestedRegistryXyCoeff { coeff, delta }
+        }
+        Corruption::NestedPCoeff { coeff, delta } => Corruption::NestedPCoeff { coeff, delta },
     }
 }

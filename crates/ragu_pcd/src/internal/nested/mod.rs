@@ -246,6 +246,22 @@ impl RxIndex {
     /// equal to the number of entries in [`RxIndex::ALL`].
     pub const NUM: usize = NUM_ENDOSCALING_STEPS + 24;
 
+    /// The number of rx components a proof carries for its own step: the
+    /// endoscaling steps and stages, without the children's copies.
+    pub const NUM_OWN: usize = NUM_ENDOSCALING_STEPS + 10;
+
+    /// A proof's own rx components, in canonical order: the leading
+    /// [`NUM_OWN`](Self::NUM_OWN) entries of [`ALL`](Self::ALL).
+    pub const OWN: [Self; Self::NUM_OWN] = {
+        let mut out = [Self::EndoscalarStage; Self::NUM_OWN];
+        let mut i = 0;
+        while i < Self::NUM_OWN {
+            out[i] = Self::ALL[i];
+            i += 1;
+        }
+        out
+    };
+
     /// All variants in canonical order (circuits, then stages).
     ///
     /// Must maintain the same ordering convention as
@@ -304,6 +320,7 @@ pub enum RxComponent {
 }
 
 pub mod claims;
+pub mod pcs;
 
 pub mod stages {
     pub mod ab;
