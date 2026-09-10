@@ -50,6 +50,11 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 ComputeV => &mut self.native_compute_v_rx,
                 BindChallenges(k) => &mut self.native_bind_challenges_rxs[k as usize],
                 BindBeta => &mut self.native_bind_beta_rx,
+                BindEndoscalar => &mut self.native_bind_endoscalar_rx,
+                EndoscalingStep(step) => &mut self.native_endoscaling_step_rxs[step as usize],
+                EndoscalarStage => &mut self.native_endoscalar_rx,
+                PointsInputs => &mut self.native_points_inputs_rx,
+                PointsInterstitials => &mut self.native_points_interstitials_rx,
             },
         }
     }

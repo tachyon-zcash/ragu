@@ -39,15 +39,16 @@ pub mod circuits {
 use crate::internal::{endoscalar, fold_revdot::Parameters};
 
 /// Number of curve points accumulated during `compute_p` for nested field
-/// endoscaling verification.
+/// endoscaling verification: the native batch's commitments.
 ///
-/// This is the sum of per-child commitment components (for both proofs),
-/// current-step stage proof components, and the `f.commitment` base
-/// polynomial. See `_10_p` for the canonical accumulation order.
+/// This is `f`'s commitment, then for each child its native rx commitments,
+/// $a$, $b$, `registry_xy` and $p$, then the current step's two
+/// `registry_wx`, `registry_wy`, $a$, $b$ and `registry_xy`. See `_10_p`
+/// for the canonical accumulation order.
 ///
 /// The endoscaling circuits process these points across
 /// [`NUM_ENDOSCALING_STEPS`] steps.
-pub const NUM_ENDOSCALING_POINTS: usize = 37 + 2 * (crate::internal::native::NUM_BINDERS + 1);
+pub const NUM_ENDOSCALING_POINTS: usize = 1 + 2 * (crate::internal::native::RxIndex::NUM + 4) + 6;
 
 /// Number of endoscaling steps, derived from [`NUM_ENDOSCALING_POINTS`] via
 /// [`endoscalar::num_steps`].
@@ -62,14 +63,13 @@ pub const NUM_INSTANCE_CIRCUITS: usize = 3;
 /// Two children contribute one raw accumulator claim each, one circuit claim
 /// each per endoscaling step and per instance circuit, and one bonding claim
 /// per bonding kind (each bonding kind is $z$-folded across both children):
-/// 48 claims today, over twelve steps, three instance circuits and sixteen
-/// bonding kinds. `8 x 7` leaves room for the native-side points the nested
-/// stages will gain without re-laying the error stages.
+/// 76 claims today, over twenty-six steps, three instance circuits and
+/// sixteen bonding kinds. `12 x 7` leaves a little room.
 #[derive(Clone, Copy, Default)]
 pub struct RevdotParameters;
 
 impl Parameters for RevdotParameters {
-    type NumGroups = ConstLen<8>;
+    type NumGroups = ConstLen<12>;
     type GroupSize = ConstLen<7>;
 }
 

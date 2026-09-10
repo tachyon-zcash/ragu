@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 use ragu_arithmetic::{Cycle, rand::CryptoRng};
 use ragu_circuits::{CircuitExt, polynomials::Rank, staging::MultiStage};
 use ragu_core::Result;
+use ragu_primitives::extract_endoscalar;
 
 use super::NestedChallengeWitnesses;
 use crate::{
@@ -212,6 +213,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &mut *rng,
         )?;
 
+        // The endoscalar stage binding circuit: the bits the native
+        // endoscaling steps walked with are pre_beta's.
+        let (bind_endoscalar_trace, unified) =
+            native::circuits::bind_endoscalar::Circuit::<C, R>::new()
+                .trace(native::circuits::bind_endoscalar::Witness {
+                    unified,
+                    endoscalar: extract_endoscalar(builder.pre_beta())?,
+                })?
+                .into_parts();
+        let bind_endoscalar_rx = self.native_registry.assemble(
+            &bind_endoscalar_trace,
+            native::InternalCircuitIndex::BindEndoscalarCircuit.circuit_index(),
+            &mut *rng,
+        )?;
+
         // Cross-circuit coverage validation (prover-time development assertion,
         // not a verifier check): all internal recursion circuits together must
         // cover every slot exactly once. Overlap is caught eagerly by finish();
@@ -221,6 +237,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         builder.set_native_compute_v_rx(compute_v_rx);
         builder.set_native_bind_challenges_rxs(bind_challenges_rxs);
         builder.set_native_bind_beta_rx(bind_beta_rx);
+        builder.set_native_bind_endoscalar_rx(bind_endoscalar_rx);
 
         Ok(())
     }
@@ -246,6 +263,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 builder.native_b_commitment(),
                 builder.native_registry_xy_commitment(),
                 builder.native_p_commitment(),
+                builder.native_points_inputs_commitment(),
             ],
             coverage: Default::default(),
         })

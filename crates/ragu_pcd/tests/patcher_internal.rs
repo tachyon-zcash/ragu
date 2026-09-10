@@ -316,48 +316,56 @@ impl<C: Cycle> InternalCircuitVisitor<C> for CaptureChecker {
 /// capture point; the rest is structural.
 fn expected(name: &str, point: &str) -> Census {
     let (stage_wires, wires, instance, outputs, demoted, strongly_forced, cheatable) = match name {
-        "hashes_1" => (460, 5569, 38, 8, 0, 8, 240),
+        "hashes_1" => (460, 5575, 38, 8, 0, 8, 240),
         "hashes_2" => (460, 8535, 30, 6, 2, 6, 233),
         "inner_collapse" => (1258, 6272, 30, 19, 0, 19, 655),
         "outer_collapse" if point == "seeded" => (460, 2904, 30, 6, 0, 6, 236),
         "outer_collapse" => (460, 2904, 30, 7, 0, 7, 240),
-        "compute_v" => (210, 3952, 30, 1, 0, 1, 359),
-        "bind_challenges_0" => (210, 6992, 30, 2, 0, 2, 612),
-        "bind_challenges_4" if point == "seeded" => (210, 7060, 30, 2, 0, 2, 616),
-        "bind_challenges_4" => (210, 7060, 30, 2, 0, 2, 614),
-        bind if bind.starts_with("bind_challenges_") => (210, 7013, 30, 2, 0, 2, 612),
+        "compute_v" => (352, 6344, 30, 1, 0, 1, 430),
+        "bind_challenges_0" => (352, 7276, 30, 2, 0, 2, 683),
+        "bind_challenges_4" if point == "seeded" => (352, 7344, 30, 2, 0, 2, 687),
+        "bind_challenges_4" => (352, 7344, 30, 2, 0, 2, 685),
+        bind if bind.starts_with("bind_challenges_") => (352, 7297, 30, 2, 0, 2, 683),
         "bind_beta" => (460, 7469, 30, 4, 0, 4, 736),
-        step if step.starts_with("endoscaling_step_") => (250, 10440, 0, 2, 0, 2, 124),
-        "nested_export" => (954, 2001, 23, 3, 0, 3, 479),
-        "nested_collapse" if point == "seeded" => (954, 3995, 23, 8, 0, 8, 487),
-        "nested_collapse" => (954, 3995, 23, 9, 0, 9, 485),
-        "nested_compute_v" => (954, 5104, 23, 1, 0, 1, 479),
+        "bind_endoscalar" => (128, 1108, 30, 128, 0, 128, 318),
+        step if step.starts_with("native_endoscaling_step_") => (370, 10680, 0, 2, 0, 2, 184),
+        step if step.starts_with("endoscaling_step_") => (390, 10720, 0, 2, 0, 2, 194),
+        "nested_export" => (1526, 3154, 25, 3, 0, 3, 765),
+        "nested_collapse" if point == "seeded" => (1526, 6252, 25, 12, 0, 12, 777),
+        "nested_collapse" => (1526, 6252, 25, 13, 0, 13, 775),
+        "nested_compute_v" => (1526, 7335, 25, 1, 0, 1, 765),
         other => panic!("no census pinned for {other}"),
     };
     let (pinned, rejected) = match (name, point) {
-        ("hashes_1", _) => (181, 59),
-        ("hashes_2", _) => (182, 51),
-        ("inner_collapse", "seeded") => (486, 169),
-        ("inner_collapse", _) => (489, 166),
-        ("outer_collapse", "seeded") => (183, 53),
-        ("outer_collapse", _) => (181, 59),
-        ("compute_v", _) => (13, 346),
-        ("bind_challenges_4", "seeded") => (15, 601),
-        ("bind_challenges_4", _) => (13, 601),
-        (bind, _) if bind.starts_with("bind_challenges_") => (13, 599),
-        ("bind_beta", _) => (181, 555),
-        ("nested_export", "seeded") => (107, 372),
-        ("nested_export", "leaves") => (109, 370),
-        ("nested_export", "nodes") => (114, 365),
-        ("nested_collapse", "seeded") => (108, 379),
-        ("nested_collapse", "leaves") => (109, 376),
-        ("nested_collapse", "nodes") => (114, 371),
-        ("nested_compute_v", "seeded") => (106, 373),
-        ("nested_compute_v", "leaves") => (108, 371),
-        ("nested_compute_v", "nodes") => (113, 366),
-        (_, "seeded") => (47, 77),
-        (_, "leaves") => (45, 79),
-        (_, "nodes") => (50, 74),
+        ("hashes_1", _) => (109, 131),
+        ("hashes_2", _) => (110, 123),
+        ("inner_collapse", "seeded") => (252, 403),
+        ("inner_collapse", _) => (257, 398),
+        ("outer_collapse", "seeded") => (111, 125),
+        ("outer_collapse", _) => (109, 131),
+        ("compute_v", _) => (13, 417),
+        ("bind_challenges_4", "seeded") => (15, 672),
+        ("bind_challenges_4", _) => (13, 672),
+        (bind, _) if bind.starts_with("bind_challenges_") => (13, 670),
+        ("bind_beta", _) => (109, 627),
+        ("bind_endoscalar", "seeded") => (47, 271),
+        ("bind_endoscalar", "leaves") => (45, 273),
+        ("bind_endoscalar", "nodes") => (49, 269),
+        (step, "seeded") if step.starts_with("native_endoscaling_step_") => (46, 138),
+        (step, "leaves") if step.starts_with("native_endoscaling_step_") => (44, 140),
+        (step, "nodes") if step.starts_with("native_endoscaling_step_") => (48, 136),
+        ("nested_export", "seeded") => (112, 653),
+        ("nested_export", "leaves") => (114, 651),
+        ("nested_export", "nodes") => (118, 647),
+        ("nested_collapse", "seeded") => (113, 664),
+        ("nested_collapse", "leaves") => (114, 661),
+        ("nested_collapse", "nodes") => (118, 657),
+        ("nested_compute_v", "seeded") => (111, 654),
+        ("nested_compute_v", "leaves") => (113, 652),
+        ("nested_compute_v", "nodes") => (117, 648),
+        (_, "seeded") => (46, 148),
+        (_, "leaves") => (44, 150),
+        (_, "nodes") => (48, 146),
         other => panic!("no sweep tallies pinned for {other:?}"),
     };
     Census {
@@ -438,6 +446,7 @@ fn patcher_captures_internal_circuits() -> Result<()> {
         "bind_challenges_3",
         "bind_challenges_4",
         "bind_beta",
+        "bind_endoscalar",
     ];
     for checker in [&seeded, &leaves, &nodes] {
         let names: Vec<&str> = checker.census.iter().map(|c| c.name.as_str()).collect();
@@ -447,8 +456,22 @@ fn patcher_captures_internal_circuits() -> Result<()> {
             "{}: the native circuits, in order",
             checker.point,
         );
+        let native_steps: Vec<&str> = names[native.len()..]
+            .iter()
+            .copied()
+            .take_while(|n| n.starts_with("native_endoscaling_step_"))
+            .collect();
+        assert!(
+            !native_steps.is_empty()
+                && native_steps
+                    .iter()
+                    .enumerate()
+                    .all(|(i, n)| *n == format!("native_endoscaling_step_{i}")),
+            "{}: then the native endoscaling steps, in order: {names:?}",
+            checker.point,
+        );
         let nested = ["nested_export", "nested_collapse", "nested_compute_v"];
-        let steps = &names[native.len()..names.len() - nested.len()];
+        let steps = &names[native.len() + native_steps.len()..names.len() - nested.len()];
         assert!(
             steps
                 .iter()

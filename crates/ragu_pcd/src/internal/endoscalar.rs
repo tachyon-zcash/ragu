@@ -41,7 +41,14 @@ use ragu_primitives::{
 
 /// Number of endoscaling operations per step. This is how many we can fit into
 /// a single circuit in our target circuit size.
-const ENDOSCALINGS_PER_STEP: usize = 4;
+pub(crate) const ENDOSCALINGS_PER_STEP: usize = 4;
+
+/// The range of input indices step `step` walks, out of `num_inputs`.
+pub(crate) fn input_range(step: usize, num_inputs: usize) -> core::ops::Range<usize> {
+    let start = step * ENDOSCALINGS_PER_STEP;
+    let end = (start + ENDOSCALINGS_PER_STEP).min(num_inputs);
+    start..end
+}
 
 /// Number of inputs (excluding initial) for `NUM_POINTS`.
 pub struct InputsLen<const NUM_POINTS: usize>;
@@ -245,9 +252,7 @@ impl<C: CurveAffine, R: Rank, const NUM_POINTS: usize> EndoscalingStep<C, R, NUM
 
     /// Range of input indices to iterate over in the Horner loop.
     fn input_range(&self) -> core::ops::Range<usize> {
-        let start = self.step * ENDOSCALINGS_PER_STEP;
-        let end = (start + ENDOSCALINGS_PER_STEP).min(InputsLen::<NUM_POINTS>::len());
-        start..end
+        input_range(self.step, InputsLen::<NUM_POINTS>::len())
     }
 }
 

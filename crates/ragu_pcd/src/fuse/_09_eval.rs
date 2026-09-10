@@ -128,6 +128,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         rng: &mut RNG,
         eval_witness: &native::stages::eval::Witness<C>,
         nested_eval: &nested::stages::eval::Evaluations<C::ScalarField>,
+        native_points_inputs: C::HostCurve,
     ) -> Result<(
         sparse::Polynomial<C::CircuitField, R>,
         sparse::Polynomial<C::ScalarField, R>,
@@ -144,6 +145,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             C::ScalarField::random(&mut *rng),
             &nested::stages::eval::Witness {
                 native_eval: native_eval_commitment,
+                native_points_inputs,
                 nested: nested_eval.clone(),
             },
         )?;

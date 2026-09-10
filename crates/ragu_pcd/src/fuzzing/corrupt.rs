@@ -141,6 +141,10 @@ pub enum NativeRx {
     BindChallenges(u32),
     /// The `bind_beta` circuit's rx polynomial.
     BindBeta,
+    /// The `bind_endoscalar` circuit's rx polynomial.
+    BindEndoscalar,
+    /// A native endoscaling step's rx polynomial.
+    EndoscalingStep(u32),
     /// The `preamble` stage's rx polynomial.
     Preamble,
     /// The `inner_error` stage's rx polynomial.
@@ -151,6 +155,12 @@ pub enum NativeRx {
     Query,
     /// The `eval` stage's rx polynomial.
     Eval,
+    /// The native endoscalar stage's rx polynomial.
+    EndoscalarStage,
+    /// The native points inputs stage's rx polynomial.
+    PointsInputs,
+    /// The native points interstitials stage's rx polynomial.
+    PointsInterstitials,
 }
 
 impl NativeRx {
@@ -188,11 +198,16 @@ impl NativeRx {
             I::ComputeV => Self::ComputeV,
             I::BindChallenges(k) => Self::BindChallenges(k),
             I::BindBeta => Self::BindBeta,
+            I::BindEndoscalar => Self::BindEndoscalar,
+            I::EndoscalingStep(step) => Self::EndoscalingStep(step),
             I::Preamble => Self::Preamble,
             I::InnerError => Self::InnerError,
             I::OuterError => Self::OuterError,
             I::Query => Self::Query,
             I::Eval => Self::Eval,
+            I::EndoscalarStage => Self::EndoscalarStage,
+            I::PointsInputs => Self::PointsInputs,
+            I::PointsInterstitials => Self::PointsInterstitials,
         }
     }
 }

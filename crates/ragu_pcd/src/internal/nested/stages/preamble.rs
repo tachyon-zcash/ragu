@@ -22,13 +22,15 @@ use crate::{
     Proof,
     internal::{
         endoscalar::PointsStage,
-        native::{NUM_BINDERS, RxIndex},
+        native::{NUM_BINDERS, NUM_ENDOSCALING_STEPS, RxIndex},
         nested::{NUM_ENDOSCALING_POINTS, unified},
     },
 };
 
-/// Number of curve points in this stage.
-pub const NUM_POINTS: usize = 31 + 2 * (NUM_BINDERS + 1);
+/// Number of curve points in this stage: the native preamble's commitment,
+/// then for each child every native rx commitment and its $a$, $b$,
+/// `registry_xy` and $P$.
+pub const NUM_POINTS: usize = 1 + 2 * (RxIndex::NUM + 4);
 
 /// Witness data for a single child proof in the preamble bridge stage.
 ///
@@ -58,6 +60,14 @@ pub struct ChildWitness<C: CurveAffine> {
     pub bind_challenges: [C; NUM_BINDERS],
     /// Commitment from the child's nested beta binding circuit.
     pub bind_beta: C,
+    /// Commitment from the child's endoscalar binding circuit.
+    pub bind_endoscalar: C,
+    /// Commitments from the child's native endoscaling steps.
+    pub endoscaling_steps: [C; NUM_ENDOSCALING_STEPS],
+    /// Commitment from the child's native endoscalar stage.
+    pub endoscalar_stage: C,
+    /// Commitment from the child's native points interstitials stage.
+    pub points_interstitials: C,
 
     /// Stashed commitment from the child's preamble bridge stage.
     pub stashed_preamble: C,
@@ -77,6 +87,8 @@ pub struct ChildWitness<C: CurveAffine> {
     pub stashed_registry_xy: C,
     /// Stashed accumulated P commitment from the child.
     pub stashed_p: C,
+    /// Stashed commitment from the child's native points inputs stage.
+    pub stashed_points_inputs: C,
 
     /// The scalars of the child's nested unified instance: its nested
     /// accumulator value and batch evaluation, and the lifts of its $x$, $y$
@@ -117,6 +129,12 @@ impl<C: CurveAffine> ChildWitness<C> {
                 proof.native_rx_commitment(RxIndex::BindChallenges(k as u32))
             }),
             bind_beta: proof.native_rx_commitment(RxIndex::BindBeta),
+            bind_endoscalar: proof.native_rx_commitment(RxIndex::BindEndoscalar),
+            endoscaling_steps: core::array::from_fn(|step| {
+                proof.native_rx_commitment(RxIndex::EndoscalingStep(step as u32))
+            }),
+            endoscalar_stage: proof.native_rx_commitment(RxIndex::EndoscalarStage),
+            points_interstitials: proof.native_rx_commitment(RxIndex::PointsInterstitials),
             stashed_preamble: proof.native_rx_commitment(RxIndex::Preamble),
             stashed_inner_error: proof.native_rx_commitment(RxIndex::InnerError),
             stashed_outer_error: proof.native_rx_commitment(RxIndex::OuterError),
@@ -126,6 +144,7 @@ impl<C: CurveAffine> ChildWitness<C> {
             stashed_ab_b: proof.native_commitment(RxComponent::AbB),
             stashed_registry_xy: proof.native_registry_xy_commitment(),
             stashed_p: proof.native_p_commitment(),
+            stashed_points_inputs: proof.native_rx_commitment(RxIndex::PointsInputs),
             nested: NestedValues {
                 c: instance.c,
                 v: instance.v,
@@ -175,6 +194,18 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// Point commitment from the child's nested beta binding circuit.
     #[ragu(gadget)]
     pub bind_beta: Point<'dr, D, C>,
+    /// Point commitment from the child's endoscalar binding circuit.
+    #[ragu(gadget)]
+    pub bind_endoscalar: Point<'dr, D, C>,
+    /// Point commitments from the child's native endoscaling steps.
+    #[ragu(gadget)]
+    pub endoscaling_steps: FixedVec<Point<'dr, D, C>, ConstLen<NUM_ENDOSCALING_STEPS>>,
+    /// Point commitment from the child's native endoscalar stage.
+    #[ragu(gadget)]
+    pub endoscalar_stage: Point<'dr, D, C>,
+    /// Point commitment from the child's native points interstitials stage.
+    #[ragu(gadget)]
+    pub points_interstitials: Point<'dr, D, C>,
 
     /// Stashed commitment from the child's preamble bridge stage.
     #[ragu(gadget)]
@@ -203,6 +234,9 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// Stashed accumulated P commitment from the child.
     #[ragu(gadget)]
     pub stashed_p: Point<'dr, D, C>,
+    /// Stashed commitment from the child's native points inputs stage.
+    #[ragu(gadget)]
+    pub stashed_points_inputs: Point<'dr, D, C>,
 
     /// The scalars of the child's nested unified instance.
     #[ragu(gadget)]
@@ -244,6 +278,7 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChildOutput<'dr, D, C> {
                 self.stashed_ab_b.clone(),
                 self.stashed_registry_xy.clone(),
                 self.stashed_p.clone(),
+                self.stashed_points_inputs.clone(),
             ])
             .expect("NUM_EXPORTED commitments"),
         }
@@ -266,11 +301,16 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> core::ops::Index<RxIndex>
             ComputeV => &self.compute_v,
             BindChallenges(k) => &self.bind_challenges[k as usize],
             BindBeta => &self.bind_beta,
+            BindEndoscalar => &self.bind_endoscalar,
+            EndoscalingStep(step) => &self.endoscaling_steps[step as usize],
             Preamble => &self.stashed_preamble,
             InnerError => &self.stashed_inner_error,
             OuterError => &self.stashed_outer_error,
             Query => &self.stashed_query,
             Eval => &self.stashed_eval,
+            EndoscalarStage => &self.endoscalar_stage,
+            PointsInputs => &self.stashed_points_inputs,
+            PointsInterstitials => &self.points_interstitials,
         }
     }
 }
@@ -288,6 +328,15 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChildOutput<'dr, D, C> {
                 Point::alloc(dr, witness.as_ref().map(|w| w.bind_challenges[k]))
             })?,
             bind_beta: Point::alloc(dr, witness.as_ref().map(|w| w.bind_beta))?,
+            bind_endoscalar: Point::alloc(dr, witness.as_ref().map(|w| w.bind_endoscalar))?,
+            endoscaling_steps: FixedVec::try_from_fn(|step| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.endoscaling_steps[step]))
+            })?,
+            endoscalar_stage: Point::alloc(dr, witness.as_ref().map(|w| w.endoscalar_stage))?,
+            points_interstitials: Point::alloc(
+                dr,
+                witness.as_ref().map(|w| w.points_interstitials),
+            )?,
             stashed_preamble: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_preamble))?,
             stashed_inner_error: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_inner_error))?,
             stashed_outer_error: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_outer_error))?,
@@ -297,6 +346,10 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChildOutput<'dr, D, C> {
             stashed_ab_b: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_ab_b))?,
             stashed_registry_xy: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_registry_xy))?,
             stashed_p: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_p))?,
+            stashed_points_inputs: Point::alloc(
+                dr,
+                witness.as_ref().map(|w| w.stashed_points_inputs),
+            )?,
             nested: {
                 let value = |dr: &mut D, f: fn(&NestedValues<D::F>) -> D::F| {
                     Element::alloc(dr, &mut (), witness.as_ref().map(|w| f(&w.nested)))

@@ -11,7 +11,8 @@
 //!
 //! The nested quotient polynomial $f_n(X)$ is built the same way over the
 //! nested batch ([`pcs::Batch::queries`]), with $\alpha_n$ derived from
-//! $\alpha$. Its nested-curve commitment is not bridged anywhere yet.
+//! $\alpha$. Its nested-curve commitment is the initial point of the native
+//! points inputs stage (see `_10_p`).
 
 use alloc::vec::Vec;
 

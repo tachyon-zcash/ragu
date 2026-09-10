@@ -11,7 +11,8 @@
 //! The nested counterparts are computed here as well: the nested query values
 //! at $x_n z_n$, $x_n$ and $w_n$ ride inside the `query` bridge stage, and
 //! the $m_n(W, x_n, y_n)$ restriction is stored on the proof. That
-//! restriction's nested-curve commitment is not bridged anywhere yet.
+//! restriction's nested-curve commitment enters the nested batch through the
+//! native points inputs stage (see `_10_p`).
 
 use ragu_arithmetic::{Cycle, bitreverse, ff::Field, par_join, rand::CryptoRng};
 use ragu_circuits::{polynomials::Rank, staging::StageExt};

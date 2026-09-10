@@ -8,7 +8,10 @@
 //!   this step's polynomials at;
 //! - the host-curve commitments the parent endoscales and that live in this
 //!   step's bridge stages: `preamble`, `inner_error`, `outer_error`, `query`,
-//!   `eval`, $a$, $b$, `registry_xy` and $P$.
+//!   `eval`, $a$, $b$, `registry_xy`, $P$ and the native points inputs
+//!   stage, the one native stage besides those whose contents must be
+//!   fixed before a challenge is squeezed (see
+//!   [`native::stages::points`](crate::internal::native::stages::points)).
 //!
 //! A parent witnesses all of these in its `preamble` bridge stage and folds
 //! this step's circuit claims with the $k(y_n)$ it computes from them, which
@@ -43,7 +46,7 @@ use ragu_primitives::{
 use crate::internal::native::unified::Slot;
 
 /// The host-curve commitments the instance exports, in [`Write`] order.
-pub const NUM_EXPORTED: usize = 9;
+pub const NUM_EXPORTED: usize = 10;
 
 /// Length type for the exported commitments.
 pub type ExportedLen = ConstLen<NUM_EXPORTED>;

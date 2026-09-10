@@ -21,14 +21,15 @@ use ragu_circuits::{
 use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::Element;
 
-use super::{InternalCircuitIndex, NUM_BINDERS, RxComponent, RxIndex};
+use super::{InternalCircuitIndex, NUM_BINDERS, NUM_ENDOSCALING_STEPS, RxComponent, RxIndex};
 use crate::internal::claims::{Builder, Source, sum_polynomials};
 
 /// Number of circuits using unified $k(y)$ in [`build`].
 ///
 /// These circuits use [`unified::InternalOutputKind`]:
 /// [`hashes_2`], [`inner_collapse`], [`outer_collapse`], [`compute_v`], the
-/// [`NUM_BINDERS`] `bind_challenges` circuits, and `bind_beta`.
+/// [`NUM_BINDERS`] `bind_challenges` circuits, `bind_beta` and
+/// `bind_endoscalar`.
 ///
 /// Note: [`hashes_1`] separately uses `unified_bridge_ky` because its public
 /// inputs include child proof headers (see [`hashes_1::Output`]).
@@ -40,7 +41,7 @@ use crate::internal::claims::{Builder, Source, sum_polynomials};
 /// [`outer_collapse`]: crate::internal::native::circuits::outer_collapse
 /// [`compute_v`]: crate::internal::native::circuits::compute_v
 /// [`unified::InternalOutputKind`]: crate::internal::native::unified::InternalOutputKind
-const NUM_UNIFIED_CIRCUITS: usize = 5 + NUM_BINDERS;
+const NUM_UNIFIED_CIRCUITS: usize = 6 + NUM_BINDERS;
 
 /// Trait that processes claim values into accumulated outputs.
 ///
@@ -242,6 +243,29 @@ where
                 }
             }
 
+            // bind_endoscalar: BindEndoscalar + EndoscalarStage
+            BindEndoscalarCircuit => {
+                for (be, es) in source
+                    .rx(Rx(BindEndoscalar))
+                    .zip(source.rx(Rx(RxIndex::EndoscalarStage)))
+                {
+                    processor.internal_circuit_claim(id, [be, es].into_iter());
+                }
+            }
+
+            // endoscaling step k: its rx + EndoscalarStage + PointsInputs +
+            // PointsInterstitials (k(y) = 1)
+            EndoscalingStep(step) => {
+                for (((st, es), pi), pt) in source
+                    .rx(Rx(RxIndex::EndoscalingStep(step)))
+                    .zip(source.rx(Rx(RxIndex::EndoscalarStage)))
+                    .zip(source.rx(Rx(PointsInputs)))
+                    .zip(source.rx(Rx(PointsInterstitials)))
+                {
+                    processor.internal_circuit_claim(id, [st, es, pi, pt].into_iter());
+                }
+            }
+
             // Native stages (aggregated across all proofs)
             PreambleStage => {
                 processor.bonding_claim(id, source.rx(Rx(Preamble)))?;
@@ -257,6 +281,15 @@ where
             }
             EvalStage => {
                 processor.bonding_claim(id, source.rx(Rx(Eval)))?;
+            }
+            EndoscalarStage => {
+                processor.bonding_claim(id, source.rx(Rx(RxIndex::EndoscalarStage)))?;
+            }
+            PointsInputsStage => {
+                processor.bonding_claim(id, source.rx(Rx(PointsInputs)))?;
+            }
+            PointsInterstitialsStage => {
+                processor.bonding_claim(id, source.rx(Rx(PointsInterstitials)))?;
             }
 
             // Final stage bonding claims
@@ -279,6 +312,16 @@ where
                     source.rx(Rx(ComputeV)).chain(
                         (0..NUM_BINDERS as u32).flat_map(|k| source.rx(Rx(BindChallenges(k)))),
                     ),
+                )?;
+            }
+            EndoscalarFinalStaged => {
+                processor.bonding_claim(id, source.rx(Rx(BindEndoscalar)))?;
+            }
+            PointsInterstitialsFinalStaged => {
+                processor.bonding_claim(
+                    id,
+                    (0..NUM_ENDOSCALING_STEPS as u32)
+                        .flat_map(|step| source.rx(Rx(RxIndex::EndoscalingStep(step)))),
                 )?;
             }
         }
@@ -307,6 +350,12 @@ pub trait KySource {
     /// The `+ Clone` bound is required for `repeat_n` in [`ky_values`].
     fn unified_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
 
+    /// One value of $1$ per proof, for the endoscaling step checks.
+    ///
+    /// Repeated [`NUM_ENDOSCALING_STEPS`] times; the `+ Clone` bound is
+    /// required for `repeat_n` in [`ky_values`].
+    fn ones(&self) -> impl Iterator<Item = Self::Ky> + Clone;
+
     /// The zero value for stage claims.
     fn zero(&self) -> Self::Ky;
 }
@@ -314,8 +363,9 @@ pub trait KySource {
 /// Build an iterator over $k(y)$ values in claim order.
 ///
 /// Chains the $k(y)$ sources in the order required by [`build`],
-/// with `unified_ky` repeated [`NUM_UNIFIED_CIRCUITS`] times,
-/// followed by infinite zeros for stage claims.
+/// with `unified_ky` repeated [`NUM_UNIFIED_CIRCUITS`] times and `ones`
+/// [`NUM_ENDOSCALING_STEPS`] times, followed by infinite zeros for stage
+/// claims.
 ///
 /// The `unified_ky` and `unified_bridge_ky` values are computed by
 /// [`ProofInputs::unified_ky_values`](super::stages::preamble::ProofInputs::unified_ky_values)
@@ -326,6 +376,7 @@ pub fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
         .chain(source.application_ky())
         .chain(source.unified_bridge_ky())
         .chain(repeat_n(source.unified_ky(), NUM_UNIFIED_CIRCUITS).flatten())
+        .chain(repeat_n(source.ones(), NUM_ENDOSCALING_STEPS).flatten())
         .chain(core::iter::repeat(source.zero()))
 }
 
@@ -338,6 +389,7 @@ pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
     pub right_bridge: Element<'dr, D>,
     pub left_unified: Element<'dr, D>,
     pub right_unified: Element<'dr, D>,
+    pub one: Element<'dr, D>,
     pub zero: Element<'dr, D>,
 }
 
@@ -359,6 +411,7 @@ impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
             right_bridge: right_ky.unified_bridge.clone(),
             left_unified: left_ky.unified.clone(),
             right_unified: right_ky.unified.clone(),
+            one: Element::one(),
             zero: Element::zero(dr),
         }
     }
@@ -381,6 +434,10 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
 
     fn unified_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
         once(self.left_unified.clone()).chain(once(self.right_unified.clone()))
+    }
+
+    fn ones(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
+        once(self.one.clone()).chain(once(self.one.clone()))
     }
 
     fn zero(&self) -> Element<'dr, D> {

@@ -100,6 +100,7 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
             &stages.ab.b,
             &stages.query.registry_xy,
             last_interstitial,
+            &stages.eval.native_points_inputs,
         ];
         let exported = unified.exported.receive(dr, allocator)?;
         for (instance, stage) in exported.iter().zip(held) {

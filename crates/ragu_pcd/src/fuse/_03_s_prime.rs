@@ -5,8 +5,8 @@
 //!
 //! The nested registry's restrictions $m_n(w_n, x_{i,n}, Y)$ are computed
 //! here as well, at the nested counterparts of the same challenges. Their
-//! nested-curve commitments are not bridged anywhere yet: they feed the
-//! nested batch, and binding them is in-circuit work still to come.
+//! nested-curve commitments feed the nested batch, through the native
+//! points inputs stage committed before $\beta$ (see `_10_p`).
 
 use ragu_arithmetic::{Cycle, ff::Field, rand::CryptoRng};
 use ragu_circuits::{polynomials::Rank, registry::RegistryAt, staging::StageExt};
