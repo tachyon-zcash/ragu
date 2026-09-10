@@ -141,9 +141,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             nested_claims::build(&nested_source, &mut nested_builder)?;
 
             // The nested unified instance's k(y), at the sampled nested y,
-            // for the export circuit claim: the instance is read off the
-            // proof (c_n and v_n derived from its polynomials), and the claim
-            // binds it to the export circuit's trace.
+            // for the instance circuits' claims: the instance is read off
+            // the proof (c_n and v_n derived from its polynomials), and the
+            // claims bind it to those circuits' traces.
             let unified_ky = Emulator::emulate_wireless(
                 (pcd.proof().nested_instance()?, y_nested),
                 |dr, witness| {
@@ -160,9 +160,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             let ky_source = nested::SingleProofKySource {
                 // As with the native `raw_c` above, the nested accumulator's
                 // claim is tautological here: its k(y) is derived from the
-                // very polynomials the claim checks. It becomes meaningful
-                // once the nested fold is verified in-circuit and `c` is a
-                // witnessed instance value.
+                // very polynomials the claim checks. It remains meaningful
+                // inside the collapse circuit, where c_n is an instance
+                // wire the fold is checked against.
                 raw_c: Verifier::<B>::sparse_revdot(
                     &pcd.proof()[NestedRxComponent::AbA],
                     &pcd.proof()[NestedRxComponent::AbB],
@@ -339,7 +339,7 @@ mod nested {
             once(F::ONE)
         }
 
-        fn unified_ky(&self) -> impl Iterator<Item = F> {
+        fn unified_ky(&self) -> impl Iterator<Item = F> + Clone {
             once(self.unified_ky)
         }
 

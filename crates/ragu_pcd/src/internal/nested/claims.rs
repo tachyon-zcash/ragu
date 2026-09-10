@@ -7,8 +7,9 @@
 //! - Raw accumulator checks ([`RxComponent::AbA`] paired with
 //!   [`RxComponent::AbB`]): $k(y) = c$
 //! - Circuit checks: [`EndoscalingStep`](InternalCircuitIndex::EndoscalingStep)
-//!   ($k(y) = 1$) and [`Export`](InternalCircuitIndex::Export) ($k(y)$ the
-//!   nested unified instance's)
+//!   ($k(y) = 1$) and the instance circuits
+//!   ([`INSTANCE`](InternalCircuitIndex::INSTANCE), $k(y)$ the nested
+//!   unified instance's)
 //! - Masking checks (every stage mask, the final staged masks, and the
 //!   loading circuit): $k(y) = 0$
 
@@ -20,7 +21,7 @@ use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::Element;
 
-use super::{InternalCircuitIndex, RxComponent, RxIndex};
+use super::{InternalCircuitIndex, NUM_INSTANCE_CIRCUITS, RxComponent, RxIndex};
 use crate::internal::claims::{Builder, Source, sum_polynomials};
 
 /// Trait for processing nested claim values into accumulated outputs.
@@ -32,7 +33,8 @@ pub trait Processor<Rx> {
     fn raw_claim(&mut self, a: Rx, b: Rx);
 
     /// Process an internal circuit claim whose trace is the sum of the given
-    /// rxs ($k(y) = 1$ for [`EndoscalingStep`]).
+    /// rxs ($k(y) = 1$ for [`EndoscalingStep`], the nested unified
+    /// instance's $k(y)$ for the instance circuits).
     ///
     /// [`EndoscalingStep`]: InternalCircuitIndex::EndoscalingStep
     fn internal_circuit_claim(&mut self, id: InternalCircuitIndex, rxs: impl Iterator<Item = Rx>);
@@ -96,8 +98,9 @@ impl<'m, 'rx, F: PrimeField, R: Rank, B: ragu_backend::Backend>
 /// The ordering is:
 /// 1. Raw accumulator checks ($k(y) = c$): one per proof
 /// 2. Circuit checks: [`EndoscalingStep`](InternalCircuitIndex::EndoscalingStep)
-///    for each step ($k(y) = 1$), then [`Export`](InternalCircuitIndex::Export)
-///    ($k(y)$ the nested unified instance's), each interleaved across proofs
+///    for each step ($k(y) = 1$), then each instance circuit
+///    ([`INSTANCE`](InternalCircuitIndex::INSTANCE), $k(y)$ the nested
+///    unified instance's), each interleaved across proofs
 /// 3. Masking checks ($k(y) = 0$): every stage mask, the final staged masks,
 ///    and the loading circuit, each folded across proofs
 ///
@@ -126,11 +129,15 @@ where
                     processor.internal_circuit_claim(id, [step_rx, endo_rx, pts_rx].into_iter());
                 }
             }
-            // export: its rx and every stage it reserves, which is every
-            // nested stage.
-            Export => {
+            // The instance circuits: each one's rx and every stage it
+            // reserves, which is every nested stage.
+            Export | Collapse | ComputeV => {
+                let own = RxIndex::INSTANCE[InternalCircuitIndex::INSTANCE
+                    .iter()
+                    .position(|&circuit| circuit == id)
+                    .expect("an instance circuit")];
                 let loaded = [
-                    RxIndex::Export,
+                    own,
                     RxIndex::EndoscalarStage,
                     RxIndex::PointsStage,
                     RxIndex::BridgePreamble,
@@ -200,7 +207,8 @@ where
                 processor.bonding_claim(id, source.rx(Rx(RxIndex::BetaStage)))?;
             }
             BetaFinalStaged => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::Export)))?;
+                let final_rxs = RxIndex::INSTANCE.iter().flat_map(|&own| source.rx(Rx(own)));
+                processor.bonding_claim(id, final_rxs)?;
             }
             Loading => {
                 let groups = source
@@ -237,9 +245,12 @@ pub trait KySource {
     /// bound is required for `repeat_n`.
     fn ones(&self) -> impl Iterator<Item = Self::Ky> + Clone;
 
-    /// The nested unified instance's $k(y)$, one per proof, for the export
-    /// circuit check.
-    fn unified_ky(&self) -> impl Iterator<Item = Self::Ky>;
+    /// The nested unified instance's $k(y)$, one per proof, for the
+    /// instance circuit checks.
+    ///
+    /// Repeated once per instance circuit by [`ky_values`]. The `+ Clone`
+    /// bound is required for `repeat_n`.
+    fn unified_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
 
     /// Returns 0 for stage checks.
     fn zero(&self) -> Self::Ky;
@@ -251,7 +262,8 @@ pub trait KySource {
 /// - The raw accumulator values (one per proof)
 /// - `num_steps` copies of the per-proof ones (for EndoscalingStep circuit
 ///   checks, interleaved across proofs exactly as [`build`] emits them)
-/// - The per-proof unified $k(y)$ values (for the export circuit check)
+/// - `NUM_INSTANCE_CIRCUITS` copies of the per-proof unified $k(y)$ values
+///   (for the instance circuit checks, interleaved the same way)
 /// - Infinite zeros (for stage checks)
 pub fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
     let num_steps = super::NUM_ENDOSCALING_STEPS;
@@ -259,7 +271,7 @@ pub fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
     source
         .raw_c()
         .chain(core::iter::repeat_n(source.ones(), num_steps).flatten())
-        .chain(source.unified_ky())
+        .chain(core::iter::repeat_n(source.unified_ky(), NUM_INSTANCE_CIRCUITS).flatten())
         .chain(core::iter::repeat(source.zero()))
 }
 
@@ -308,7 +320,7 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
         once(self.one.clone()).chain(once(self.one.clone()))
     }
 
-    fn unified_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
+    fn unified_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
         once(self.left_unified.clone()).chain(once(self.right_unified.clone()))
     }
 

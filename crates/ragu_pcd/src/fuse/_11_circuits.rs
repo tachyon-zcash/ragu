@@ -225,17 +225,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         Ok(())
     }
 
-    /// Traces the nested circuits that verify this step on the nested side.
-    ///
-    /// Today that is the export circuit, which pins the nested unified
-    /// instance to the stages; the collapse and `compute_v` mirrors follow.
-    pub(super) fn compute_nested_circuits<RNG: CryptoRng>(
-        &self,
-        rng: &mut RNG,
-        witnesses: &NestedWitnesses<'_, C>,
-        builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<()> {
-        let instance = nested::unified::Instance {
+    /// This step's nested unified instance, read off the finished builder,
+    /// with fresh coverage.
+    pub(super) fn nested_instance(
+        builder: &ProofBuilder<'_, C, R, B>,
+    ) -> Result<nested::unified::Instance<C::HostCurve>> {
+        Ok(nested::unified::Instance {
             c: builder.nested_c(),
             v: builder.nested_v()?,
             x: nested::challenge::<C>(builder.x())?,
@@ -252,32 +247,75 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 builder.native_registry_xy_commitment(),
                 builder.native_p_commitment(),
             ],
+            coverage: Default::default(),
+        })
+    }
+
+    /// Traces the nested circuits that verify this step on the nested side:
+    /// the export circuit, which pins the nested unified instance to the
+    /// stages, the collapse circuit, which verifies the nested fold, and the
+    /// compute-v circuit, which recomputes the nested batch evaluation. The
+    /// instance threads through them accumulating coverage, which must be
+    /// complete once all three are traced.
+    pub(super) fn compute_nested_circuits<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        witnesses: &NestedWitnesses<'_, C>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<()> {
+        let instance = Self::nested_instance(builder)?;
+        let witness = |instance| nested::circuits::common::Witness {
+            instance,
+            endoscalar: witnesses.endoscalar,
+            points: witnesses.points,
+            preamble: &witnesses.preamble,
+            s_prime: &witnesses.s_prime,
+            inner_error: &witnesses.inner_error,
+            outer_error: &witnesses.outer_error,
+            ab: &witnesses.ab,
+            query: &witnesses.query,
+            f: &witnesses.f,
+            eval: &witnesses.eval,
+            challenges: &witnesses.challenges.challenges,
+            beta: witnesses.challenges.beta,
         };
 
-        let export_trace =
+        let (export_trace, instance) =
             MultiStage::new(nested::circuits::export::Circuit::<C::HostCurve, R>::new())
-                .trace(nested::circuits::export::Witness {
-                    instance,
-                    endoscalar: witnesses.endoscalar,
-                    points: witnesses.points,
-                    preamble: &witnesses.preamble,
-                    s_prime: &witnesses.s_prime,
-                    inner_error: &witnesses.inner_error,
-                    outer_error: &witnesses.outer_error,
-                    ab: &witnesses.ab,
-                    query: &witnesses.query,
-                    f: &witnesses.f,
-                    eval: &witnesses.eval,
-                    challenges: &witnesses.challenges.challenges,
-                    beta: witnesses.challenges.beta,
-                })?
-                .into_output();
+                .trace(witness(instance))?
+                .into_parts();
         let export_rx = self.nested_registry.assemble(
             &export_trace,
             nested::InternalCircuitIndex::Export.circuit_index(),
             &mut *rng,
         )?;
+
+        let (collapse_trace, instance) =
+            MultiStage::new(nested::circuits::collapse::Circuit::<C::HostCurve, R>::new())
+                .trace(witness(instance))?
+                .into_parts();
+        let collapse_rx = self.nested_registry.assemble(
+            &collapse_trace,
+            nested::InternalCircuitIndex::Collapse.circuit_index(),
+            &mut *rng,
+        )?;
+
+        let (compute_v_trace, instance) =
+            MultiStage::new(nested::circuits::compute_v::Circuit::<C::HostCurve, R>::new())
+                .trace(witness(instance))?
+                .into_parts();
+        let compute_v_rx = self.nested_registry.assemble(
+            &compute_v_trace,
+            nested::InternalCircuitIndex::ComputeV.circuit_index(),
+            &mut *rng,
+        )?;
+
+        // As for the native instance: every slot covered exactly once.
+        instance.assert_complete();
+
         builder.set_nested_export_rx(export_rx);
+        builder.set_nested_collapse_rx(collapse_rx);
+        builder.set_nested_compute_v_rx(compute_v_rx);
 
         Ok(())
     }

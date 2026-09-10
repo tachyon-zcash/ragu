@@ -45,10 +45,24 @@ use ragu_primitives::{
 /// mu, nu, mu_prime, nu_prime, x, alpha, u`.
 pub const NUM: usize = 10;
 
+/// The position of the lift of $w$.
+pub const W: usize = 0;
 /// The position of the lift of $y$.
 pub const Y: usize = 1;
+/// The position of the lift of $z$.
+pub const Z: usize = 2;
+/// The position of the lift of $\mu$.
+pub const MU: usize = 3;
+/// The position of the lift of $\nu$.
+pub const NU: usize = 4;
+/// The position of the lift of $\mu'$.
+pub const MU_PRIME: usize = 5;
+/// The position of the lift of $\nu'$.
+pub const NU_PRIME: usize = 6;
 /// The position of the lift of $x$.
 pub const X: usize = 7;
+/// The position of the lift of $\alpha$.
+pub const ALPHA: usize = 8;
 /// The position of the lift of $u$.
 pub const U: usize = 9;
 

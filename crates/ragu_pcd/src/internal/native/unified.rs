@@ -319,6 +319,9 @@ define_unified_instance! {
 
 /// A lazy-allocation slot for a single field in the unified output.
 ///
+/// Shared with the nested unified instance's builder (see
+/// [`nested::unified`](crate::internal::nested::unified)).
+///
 /// Slots enable circuits to either compute values in circuit (via
 /// [`provide`](Self::provide)) or allocate on-demand (via
 /// [`read`](Self::read)). This avoids redundant wire allocations when the
@@ -355,7 +358,7 @@ pub struct Slot<'dr, D: Driver<'dr>, A, T, W: Send> {
 
 impl<'dr, D: Driver<'dr>, A, T: Clone, W: Copy + Send + Sync> Slot<'dr, D, A, T, W> {
     /// Creates a new slot with a pre-extracted instance value and allocation function.
-    pub(super) fn new(
+    pub(crate) fn new(
         instance: DriverValue<D, W>,
         alloc: fn(&mut D, &mut A, DriverValue<D, W>) -> Result<T>,
     ) -> Self {
@@ -427,7 +430,7 @@ impl<'dr, D: Driver<'dr>, A, T: Clone, W: Copy + Send + Sync> Slot<'dr, D, A, T,
     /// needed) along with the coverage flag.
     ///
     /// Used during finalization to build the [`Output`] gadget.
-    fn take(self, dr: &mut D, allocator: &mut A) -> Result<(T, bool)> {
+    pub(crate) fn take(self, dr: &mut D, allocator: &mut A) -> Result<(T, bool)> {
         let value = self
             .value
             .map(Result::Ok)

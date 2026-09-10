@@ -314,6 +314,164 @@ fn print_internal_stage_parameters() {
     print_stage!(Eval);
 }
 
+/// The nested circuits' gate and constraint counts, by [`nested::InternalCircuitIndex`].
+///
+/// # Panics
+///
+/// Panics for the bonding entries, which are masks rather than circuits.
+fn nested_circuit_counts(variant: nested::InternalCircuitIndex) -> (usize, usize) {
+    use crate::internal::{endoscalar, nested::NUM_ENDOSCALING_POINTS};
+    use ragu_circuits::staging::MultiStage;
+    use ragu_pasta::EqAffine;
+
+    fn counts(circuit: impl Circuit<ragu_pasta::Fq>) -> (usize, usize) {
+        let counts = ragu_circuits::testing::synthesis_counts(&circuit).unwrap();
+        (counts.num_gates, counts.num_constraints)
+    }
+    match variant {
+        nested::InternalCircuitIndex::EndoscalingStep(step) => {
+            counts(MultiStage::new(endoscalar::EndoscalingStep::<
+                EqAffine,
+                R,
+                NUM_ENDOSCALING_POINTS,
+            >::new(step as usize)))
+        }
+        nested::InternalCircuitIndex::Export => {
+            counts(MultiStage::new(nested::circuits::export::Circuit::<
+                EqAffine,
+                R,
+            >::new()))
+        }
+        nested::InternalCircuitIndex::Collapse => {
+            counts(MultiStage::new(nested::circuits::collapse::Circuit::<
+                EqAffine,
+                R,
+            >::new()))
+        }
+        nested::InternalCircuitIndex::ComputeV => {
+            counts(MultiStage::new(nested::circuits::compute_v::Circuit::<
+                EqAffine,
+                R,
+            >::new()))
+        }
+        nested::InternalCircuitIndex::Loading => {
+            counts(MultiStage::new(nested::circuits::loading::Circuit::<
+                EqAffine,
+                R,
+            >::new()))
+        }
+        _ => panic!("constraint counts only apply to nested circuits"),
+    }
+}
+
+/// The nested circuits [`nested_circuit_counts`] covers, in
+/// [`nested::InternalCircuitIndex::ALL`] order.
+fn nested_circuits() -> impl Iterator<Item = nested::InternalCircuitIndex> {
+    nested::InternalCircuitIndex::ALL
+        .into_iter()
+        .filter(|variant| {
+            matches!(
+                variant,
+                nested::InternalCircuitIndex::EndoscalingStep(_)
+                    | nested::InternalCircuitIndex::Export
+                    | nested::InternalCircuitIndex::Collapse
+                    | nested::InternalCircuitIndex::ComputeV
+                    | nested::InternalCircuitIndex::Loading
+            )
+        })
+}
+
+#[rustfmt::skip]
+#[test]
+fn test_nested_circuit_constraint_counts() {
+    // Every endoscaling step but the last walks four points and lays out
+    // the same; the pins below are per variant.
+    let steps = crate::internal::endoscalar::num_steps(nested::NUM_ENDOSCALING_POINTS);
+    let mut expected = alloc::vec::Vec::new();
+    for step in 0..steps {
+        expected.push((nested::InternalCircuitIndex::EndoscalingStep(step as u32), (1963, 3677)));
+    }
+    expected.push((nested::InternalCircuitIndex::Export,   (508,  90)));
+    expected.push((nested::InternalCircuitIndex::Collapse, (1007, 1078)));
+    expected.push((nested::InternalCircuitIndex::ComputeV, (1102, 1260)));
+    expected.push((nested::InternalCircuitIndex::Loading,  (466,  99)));
+
+    let actual: alloc::vec::Vec<_> = nested_circuits()
+        .map(|variant| (variant, nested_circuit_counts(variant)))
+        .collect();
+    assert_eq!(actual, expected, "(variant, (gates, constraints))");
+}
+
+#[rustfmt::skip]
+#[test]
+fn test_nested_stage_parameters() {
+    use crate::internal::{endoscalar, nested::{NUM_ENDOSCALING_POINTS, stages}};
+    use ragu_pasta::{EqAffine, Fq};
+
+    macro_rules! check_stage {
+        ($Stage:ty, skip = $skip:expr, num = $num:expr) => {{
+            assert_eq!(<$Stage as Stage<Fq, R>>::skip_gates(), $skip, "{}: skip", stringify!($Stage));
+            assert_eq!(<$Stage as StageExt<Fq, R>>::num_gates(), $num, "{}: num", stringify!($Stage));
+        }};
+    }
+
+    check_stage!(endoscalar::EndoscalarStage,                          skip =   1, num =  64);
+    check_stage!(endoscalar::PointsStage<EqAffine, NUM_ENDOSCALING_POINTS>, skip =  65, num =  61);
+    check_stage!(stages::preamble::Stage<EqAffine, R>,                 skip = 126, num =  48);
+    check_stage!(stages::s_prime::Stage<EqAffine, R>,                  skip = 174, num =   2);
+    check_stage!(stages::inner_error::Stage<EqAffine, R>,              skip = 176, num = 170);
+    check_stage!(stages::outer_error::Stage<EqAffine, R>,              skip = 346, num =  33);
+    check_stage!(stages::ab::Stage<EqAffine, R>,                       skip = 379, num =   2);
+    check_stage!(stages::query::Stage<EqAffine, R>,                    skip = 381, num =  49);
+    check_stage!(stages::f::Stage<EqAffine, R>,                        skip = 430, num =   1);
+    check_stage!(stages::eval::Stage<EqAffine, R>,                     skip = 431, num =  35);
+    check_stage!(stages::challenges::Stage<EqAffine, R>,               skip = 466, num =  11);
+    check_stage!(stages::beta::Stage<EqAffine, R>,                     skip = 477, num =   1);
+}
+
+/// Helper test to print the nested circuits' current counts and the nested
+/// stage parameters, to pin in the two tests above.
+/// Run with: `cargo test -p ragu_pcd --release print_nested -- --nocapture`
+#[test]
+fn print_nested_circuit_constraint_counts() {
+    use crate::internal::{
+        endoscalar,
+        nested::{NUM_ENDOSCALING_POINTS, stages},
+    };
+    use ragu_pasta::{EqAffine, Fq};
+    use std::println;
+
+    println!("\n// Copy-paste into test_nested_circuit_constraint_counts:");
+    for variant in nested_circuits() {
+        let (mul, lin) = nested_circuit_counts(variant);
+        println!("    {variant:?}: gates = {mul}, constraints = {lin}");
+    }
+
+    macro_rules! print_stage {
+        ($name:expr, $Stage:ty) => {{
+            println!(
+                "    {:<12} skip = {:>3}, num = {:>3}",
+                $name,
+                <$Stage as Stage<Fq, R>>::skip_gates(),
+                <$Stage as StageExt<Fq, R>>::num_gates()
+            );
+        }};
+    }
+    println!("\n// Copy-paste into test_nested_stage_parameters:");
+    print_stage!("endoscalar", endoscalar::EndoscalarStage);
+    print_stage!("points", endoscalar::PointsStage<EqAffine, NUM_ENDOSCALING_POINTS>);
+    print_stage!("preamble", stages::preamble::Stage<EqAffine, R>);
+    print_stage!("s_prime", stages::s_prime::Stage<EqAffine, R>);
+    print_stage!("inner_error", stages::inner_error::Stage<EqAffine, R>);
+    print_stage!("outer_error", stages::outer_error::Stage<EqAffine, R>);
+    print_stage!("ab", stages::ab::Stage<EqAffine, R>);
+    print_stage!("query", stages::query::Stage<EqAffine, R>);
+    print_stage!("f", stages::f::Stage<EqAffine, R>);
+    print_stage!("eval", stages::eval::Stage<EqAffine, R>);
+    print_stage!("challenges", stages::challenges::Stage<EqAffine, R>);
+    print_stage!("beta", stages::beta::Stage<EqAffine, R>);
+}
+
 /// Verifies the native registry digest matches the expected value.
 ///
 /// This test ensures the wiring polynomial structure is mathematically
@@ -329,7 +487,7 @@ fn test_native_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fp!(0x3026465cfee248a182990f65a3cb714052815eaa2bd1ad122b0ee24379ee9c36);
+    let expected = fp!(0x09646267438ea07921e45a1eff6a4193882a599d067e45c9836788e87b3dc1a6);
 
     assert_eq!(
         app.native_registry.digest(),
@@ -353,7 +511,7 @@ fn test_nested_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fq!(0x0a21c9820f3ca56a4912400aa975c6240ee99d0a86b9f8cdf775f1dd45bab17d);
+    let expected = fq!(0x325cccd86370f603deaea7282a4ea365b396fe4c8ec057f402572ddd18dbc0a5);
 
     assert_eq!(
         app.nested_registry.digest(),

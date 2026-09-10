@@ -30,8 +30,8 @@
 //!   caught on the same grounds.
 //! * **A native or nested rx coefficient** is caught when the coefficient
 //!   sits in $[0, n)$: every native component enters some circuit claim, and
-//!   every nested one enters the endoscaling steps' or the export circuit's,
-//!   which reserves every nested stage. A circuit claim checks
+//!   every nested one enters the endoscaling steps' or the instance
+//!   circuits', which reserve every nested stage. A circuit claim checks
 //!   $\operatorname{revdot}(a, a(zX) + s\_y + t\_z) = k(y)$,
 //!   where the verifier — not the prover — supplies $t\_z$. Perturbing
 //!   coefficient $i$ of $a$ by $\delta$ moves the left side by
@@ -206,6 +206,10 @@ pub enum NestedRx {
     EndoscalingStep(u32),
     /// Export circuit rx polynomial.
     Export,
+    /// Collapse circuit rx polynomial.
+    Collapse,
+    /// Compute-v circuit rx polynomial.
+    ComputeV,
     /// EndoscalarStage rx polynomial.
     EndoscalarStage,
     /// PointsStage rx polynomial.
@@ -649,7 +653,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                     return Binding::Unbound;
                 };
                 // Every nested component enters a circuit claim: the
-                // export circuit reserves every stage.
+                // instance circuits reserve every stage.
                 self.nested_rx_mut(index).add_assign(&delta);
                 if matches!(index, NestedRx::ChallengeStage | NestedRx::BetaStage)
                     || in_tz_reach::<R>(coeff)
@@ -760,6 +764,8 @@ impl NestedRx {
         match v {
             I::EndoscalingStep(n) => Self::EndoscalingStep(n),
             I::Export => Self::Export,
+            I::Collapse => Self::Collapse,
+            I::ComputeV => Self::ComputeV,
             I::EndoscalarStage => Self::EndoscalarStage,
             I::PointsStage => Self::PointsStage,
             I::BridgePreamble => Self::BridgePreamble,

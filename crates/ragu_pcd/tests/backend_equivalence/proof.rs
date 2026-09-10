@@ -57,6 +57,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             nested_challenges_rx: _,
             nested_beta_rx: _,
             nested_export_rx: _,
+            nested_collapse_rx: _,
+            nested_compute_v_rx: _,
             nested_endoscaling_step_commitments: _,
             nested_endoscalar_commitment: _,
             nested_points_commitment: _,
@@ -67,6 +69,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             nested_challenges_commitment: _,
             nested_beta_commitment: _,
             nested_export_commitment: _,
+            nested_collapse_commitment: _,
+            nested_compute_v_commitment: _,
             w: _,
             y: _,
             z: _,
@@ -215,6 +219,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             || self.nested_challenges_commitment != other.nested_challenges_commitment
             || self.nested_beta_commitment != other.nested_beta_commitment
             || self.nested_export_commitment != other.nested_export_commitment
+            || self.nested_collapse_commitment != other.nested_collapse_commitment
+            || self.nested_compute_v_commitment != other.nested_compute_v_commitment
         {
             return Some("nested protocol commitments");
         }

@@ -328,6 +328,10 @@ fn expected(name: &str, point: &str) -> Census {
         bind if bind.starts_with("bind_challenges_") => (210, 7013, 30, 2, 0, 2, 612),
         "bind_beta" => (460, 7469, 30, 4, 0, 4, 736),
         step if step.starts_with("endoscaling_step_") => (250, 10440, 0, 2, 0, 2, 124),
+        "nested_export" => (954, 2001, 23, 3, 0, 3, 479),
+        "nested_collapse" if point == "seeded" => (954, 3995, 23, 8, 0, 8, 487),
+        "nested_collapse" => (954, 3995, 23, 9, 0, 9, 485),
+        "nested_compute_v" => (954, 5104, 23, 1, 0, 1, 479),
         other => panic!("no census pinned for {other}"),
     };
     let (pinned, rejected) = match (name, point) {
@@ -342,9 +346,18 @@ fn expected(name: &str, point: &str) -> Census {
         ("bind_challenges_4", _) => (13, 601),
         (bind, _) if bind.starts_with("bind_challenges_") => (13, 599),
         ("bind_beta", _) => (181, 555),
-        (_, "seeded") => (49, 75),
-        (_, "leaves") => (49, 75),
-        (_, "nodes") => (46, 78),
+        ("nested_export", "seeded") => (107, 372),
+        ("nested_export", "leaves") => (109, 370),
+        ("nested_export", "nodes") => (114, 365),
+        ("nested_collapse", "seeded") => (108, 379),
+        ("nested_collapse", "leaves") => (109, 376),
+        ("nested_collapse", "nodes") => (114, 371),
+        ("nested_compute_v", "seeded") => (106, 373),
+        ("nested_compute_v", "leaves") => (108, 371),
+        ("nested_compute_v", "nodes") => (113, 366),
+        (_, "seeded") => (47, 77),
+        (_, "leaves") => (45, 79),
+        (_, "nodes") => (50, 74),
         other => panic!("no sweep tallies pinned for {other:?}"),
     };
     Census {
@@ -434,12 +447,20 @@ fn patcher_captures_internal_circuits() -> Result<()> {
             "{}: the native circuits, in order",
             checker.point,
         );
+        let nested = ["nested_export", "nested_collapse", "nested_compute_v"];
+        let steps = &names[native.len()..names.len() - nested.len()];
         assert!(
-            names[native.len()..]
+            steps
                 .iter()
                 .enumerate()
                 .all(|(i, n)| *n == format!("endoscaling_step_{i}")),
             "{}: then the endoscaling steps, in order: {names:?}",
+            checker.point,
+        );
+        assert_eq!(
+            &names[names.len() - nested.len()..],
+            &nested,
+            "{}: then the nested instance circuits, in order",
             checker.point,
         );
         for census in &checker.census {
@@ -448,7 +469,8 @@ fn patcher_captures_internal_circuits() -> Result<()> {
     }
 
     // Leaves and nodes agree on everything the witness' values do not
-    // decide; the base case differs only in outer_collapse's c.
+    // decide; the base case differs only in the c the two collapse circuits
+    // leave free.
     let structural = |census: &Census| {
         (
             census.name.clone(),
@@ -464,11 +486,12 @@ fn patcher_captures_internal_circuits() -> Result<()> {
         |checker: &CaptureChecker| checker.census.iter().map(structural).collect::<Vec<_>>();
     assert_eq!(all_structural(&leaves), all_structural(&nodes));
     for (s, l) in seeded.census.iter().zip(&leaves.census) {
-        if s.name == "outer_collapse" {
+        if s.name == "outer_collapse" || s.name == "nested_collapse" {
             assert_eq!(
                 s.outputs + 1,
                 l.outputs,
-                "outer_collapse: c is not an output at the base case"
+                "{}: c is not an output at the base case",
+                s.name
             );
             assert_eq!(s.strongly_forced + 1, l.strongly_forced);
         } else {

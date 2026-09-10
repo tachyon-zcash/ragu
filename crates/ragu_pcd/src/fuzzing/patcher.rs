@@ -52,10 +52,12 @@
 //! The nested (scalar-field) endoscaling step circuits follow the same
 //! pattern — each checks one interstitial of the points stage against its
 //! Horner accumulation — and are handed to
-//! [`InternalCircuitVisitor::visit_nested`]. The remaining nested circuits
-//! derive nothing to capture: `loading` is a bonding claim over stage
-//! polynomials with no witness of its own, and `export` only equates its
-//! instance, wire by wire, to stage wires.
+//! [`InternalCircuitVisitor::visit_nested`], as are the nested instance
+//! circuits: `export`, whose covered slots are copies of stage wires;
+//! `collapse`, which forces the `outer_error` stage's collapsed values and,
+//! outside the base case, the instance's $c_n$; and `compute_v`, which
+//! derives $v_n$. The remaining nested circuit, `loading`, is a bonding
+//! claim over stage polynomials with no witness of its own to capture.
 //!
 //! Like the rest of the fuzzing surface it is gated behind `unstable-fuzzing`
 //! — by the inner attribute at the top of this file, so the pipeline modules
@@ -98,9 +100,8 @@ use crate::{
     internal::{
         endoscalar::{
             EndoscalarStage, EndoscalingStep, EndoscalingStepWitness, NumStepsLen, PointsStage,
-            PointsWitness,
         },
-        native::{self, RxComponent, RxIndex, total_circuit_counts},
+        native::{self, total_circuit_counts},
         nested::{self, NUM_ENDOSCALING_POINTS},
         transcript::Transcript,
     },
@@ -247,9 +248,10 @@ pub trait InternalCircuitVisitor<C: Cycle> {
         make_witness: impl Fn() -> Result<Cir::Witness<'w>>,
     ) -> Result<()>;
 
-    /// Visit a nested (scalar-field) `circuit` — one of the endoscaling
-    /// steps — described by `spec`, with its honest witness and stage values
-    /// as for [`visit`](Self::visit). Skipped by default.
+    /// Visit a nested (scalar-field) `circuit` — an endoscaling step or one
+    /// of the instance circuits — described by `spec`, with its honest
+    /// witness and stage values as for [`visit`](Self::visit). Skipped by
+    /// default.
     ///
     /// # Errors
     ///
@@ -304,6 +306,19 @@ fn covered_elements<'w, F: Field, Cir: Circuit<F>>(
 /// This is a circuit's output declaration for the harness: with every other
 /// instance wire pinned, these are the wires its constraints must determine.
 fn covered_element_positions(coverage: &native::unified::Coverage) -> Vec<usize> {
+    let mut positions = Vec::new();
+    let mut position = 0;
+    coverage.for_each_slot(|_, covered, wires| {
+        if wires == 1 && covered {
+            positions.push(position);
+        }
+        position += wires;
+    });
+    positions
+}
+
+/// [`covered_element_positions`] for the nested unified instance.
+fn covered_nested_element_positions(coverage: &nested::unified::Coverage) -> Vec<usize> {
     let mut positions = Vec::new();
     let mut position = 0;
     coverage.for_each_slot(|_, covered, wires| {
@@ -594,7 +609,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             native_outer_error_witness,
             native_a,
             native_b,
-            _nested_outer_error_witness,
+            nested_outer_error_witness,
             nested_a,
             nested_b,
         ) = self.outer_error_terms(
@@ -632,7 +647,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         bridge_ab_commitment.write(&mut dr, &mut transcript)?;
         let x = transcript.challenge(&mut dr)?;
 
-        let (query_witness, _nested_query) = self.compute_query(
+        let (query_witness, nested_query) = self.compute_query(
             rng,
             &w,
             &x,
@@ -699,7 +714,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         builder.set_native_eval_rx(eval_rx);
         builder.set_bridge_eval_rx(bridge_eval_rx, bridge_eval_commitment);
 
-        let _nested_challenges = self.commit_nested_challenges(
+        let nested_challenges = self.commit_nested_challenges(
             nested::Challenges {
                 w: bound_challenges[0],
                 y: bound_challenges[1],
@@ -717,7 +732,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &mut builder,
         )?;
 
-        let _points = self.compute_p(
+        let points_witness = self.compute_p(
             rng,
             &pre_beta,
             &left,
@@ -1058,31 +1073,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         // folds into p(X), under the endoscalar extracted from pre_beta, and
         // checks the result against the interstitial the points stage
         // witnessed: that interstitial is its output; the endoscalar bits and
-        // every other point are inputs. The commitments are collected in
-        // `compute_p`'s order from the same objects it used; any valid point
-        // list exercises the step circuits identically, so the order only
-        // keeps the capture faithful to the prover's.
+        // every other point are inputs. The points are the prover's own
+        // witness, from `compute_p`.
         let beta_endo = extract_endoscalar(builder.pre_beta())?;
-        let mut points: Vec<C::HostCurve> = Vec::with_capacity(NUM_ENDOSCALING_POINTS);
-        points.push(native_f.commitment);
-        for proof in [&left, &right] {
-            for &id in &RxIndex::ALL {
-                points.push(proof.native_rx_commitment(id));
-            }
-            points.push(proof.native_commitment(RxComponent::AbA));
-            points.push(proof.native_commitment(RxComponent::AbB));
-            points.push(proof.native_registry_xy_commitment());
-            points.push(proof.native_p_commitment());
-        }
-        points.push(native_s_prime.registry_wx0_commitment);
-        points.push(native_s_prime.registry_wx1_commitment);
-        points.push(registry_wy.commitment);
-        points.push(builder.native_a_commitment());
-        points.push(builder.native_b_commitment());
-        points.push(builder.native_registry_xy_commitment());
-        debug_assert_eq!(points.len(), NUM_ENDOSCALING_POINTS);
-        let points_witness =
-            PointsWitness::<C::HostCurve, NUM_ENDOSCALING_POINTS>::new(beta_endo, &points);
         let endoscaling_values: Vec<C::ScalarField> = [
             stage_values::<C::ScalarField, R, EndoscalarStage>(beta_endo)?,
             stage_values::<_, R, PointsStage<C::HostCurve, NUM_ENDOSCALING_POINTS>>(
@@ -1113,6 +1106,133 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 })
             })?;
         }
+
+        // The nested instance circuits, which reserve the whole nested stage
+        // chain. Their stage witnesses are the ones the prover commits, and
+        // the instance is rebuilt fresh per circuit as `make_unified` does
+        // for the native one.
+        let nested_s_prime_witness = nested::stages::s_prime::Witness {
+            registry_wx0: native_s_prime.registry_wx0_commitment,
+            registry_wx1: native_s_prime.registry_wx1_commitment,
+        };
+        let nested_ab_witness = nested::stages::ab::Witness {
+            a: builder.native_a_commitment(),
+            b: builder.native_b_commitment(),
+        };
+        let nested_query_witness = nested::stages::query::Witness {
+            native_query: builder.native_query_commitment(),
+            registry_xy: builder.native_registry_xy_commitment(),
+            nested: nested_query,
+        };
+        let nested_f_witness = nested::stages::f::Witness {
+            native_f: native_f.commitment,
+        };
+        let nested_eval_witness = nested::stages::eval::Witness {
+            native_eval: builder.native_eval_commitment(),
+            nested: nested_eval,
+        };
+        type NestedStage<C, R> = nested::stages::beta::Stage<<C as Cycle>::HostCurve, R>;
+        let nested_values: Vec<C::ScalarField> = [
+            endoscaling_values,
+            stage_values::<_, R, nested::stages::preamble::Stage<C::HostCurve, R>>(
+                &nested_preamble,
+            )?,
+            stage_values::<_, R, nested::stages::s_prime::Stage<C::HostCurve, R>>(
+                &nested_s_prime_witness,
+            )?,
+            stage_values::<_, R, nested::stages::inner_error::Stage<C::HostCurve, R>>(
+                &nested_inner_error_witness,
+            )?,
+            stage_values::<_, R, nested::stages::outer_error::Stage<C::HostCurve, R>>(
+                &nested_outer_error_witness,
+            )?,
+            stage_values::<_, R, nested::stages::ab::Stage<C::HostCurve, R>>(&nested_ab_witness)?,
+            stage_values::<_, R, nested::stages::query::Stage<C::HostCurve, R>>(
+                &nested_query_witness,
+            )?,
+            stage_values::<_, R, nested::stages::f::Stage<C::HostCurve, R>>(&nested_f_witness)?,
+            stage_values::<_, R, nested::stages::eval::Stage<C::HostCurve, R>>(
+                &nested_eval_witness,
+            )?,
+            stage_values::<_, R, nested::stages::challenges::Stage<C::HostCurve, R>>(
+                &nested_challenges.challenges,
+            )?,
+            stage_values::<_, R, NestedStage<C, R>>(nested_challenges.beta)?,
+        ]
+        .concat();
+        let nested_witness = || {
+            Ok(nested::circuits::common::Witness {
+                instance: Self::nested_instance(&builder)?,
+                endoscalar: beta_endo,
+                points: &points_witness,
+                preamble: &nested_preamble,
+                s_prime: &nested_s_prime_witness,
+                inner_error: &nested_inner_error_witness,
+                outer_error: &nested_outer_error_witness,
+                ab: &nested_ab_witness,
+                query: &nested_query_witness,
+                f: &nested_f_witness,
+                eval: &nested_eval_witness,
+                challenges: &nested_challenges.challenges,
+                beta: nested_challenges.beta,
+            })
+        };
+        let nested_coverage = |instance: nested::unified::Instance<C::HostCurve>| -> Vec<usize> {
+            covered_nested_element_positions(&instance.coverage)
+        };
+
+        // export copies the instance's x, y, u (and its commitments) from
+        // stage wires.
+        let export = MultiStage::new(nested::circuits::export::Circuit::<C::HostCurve, R>::new());
+        let export_spec = CircuitSpec {
+            name: "nested_export".into(),
+            outputs: covered_elements(&export, nested_witness()?, nested_coverage)?
+                .into_iter()
+                .map(OutputRef::Instance)
+                .collect(),
+        };
+        visitor.visit_nested(&export_spec, &export, &nested_values, nested_witness)?;
+
+        // collapse forces the outer_error stage's collapsed values from the
+        // inner error terms and, outside the base case, c_n from those.
+        let collapse =
+            MultiStage::new(nested::circuits::collapse::Circuit::<C::HostCurve, R>::new());
+        let collapse_covered = if base_case {
+            Vec::new()
+        } else {
+            covered_elements(&collapse, nested_witness()?, nested_coverage)?
+        };
+        let collapse_spec = CircuitSpec {
+            name: "nested_collapse".into(),
+            outputs: collapse_covered
+                .into_iter()
+                .map(OutputRef::Instance)
+                .chain(
+                    stage_wire_indices::<
+                        C::ScalarField,
+                        R,
+                        nested::stages::outer_error::Stage<C::HostCurve, R>,
+                    >(|stage| {
+                        Ok(stage.collapsed.iter().map(|e| *e.wire()).collect())
+                    })?
+                    .into_iter()
+                    .map(OutputRef::Stage),
+                )
+                .collect(),
+        };
+        visitor.visit_nested(&collapse_spec, &collapse, &nested_values, nested_witness)?;
+
+        // compute_v derives v_n.
+        let compute_v =
+            MultiStage::new(nested::circuits::compute_v::Circuit::<C::HostCurve, R>::new());
+        let compute_v_spec = CircuitSpec {
+            name: "nested_compute_v".into(),
+            outputs: covered_elements(&compute_v, nested_witness()?, nested_coverage)?
+                .into_iter()
+                .map(OutputRef::Instance)
+                .collect(),
+        };
+        visitor.visit_nested(&compute_v_spec, &compute_v, &nested_values, nested_witness)?;
 
         Ok(())
     }

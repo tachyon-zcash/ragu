@@ -1,6 +1,6 @@
 //! Nested field circuits for the scalar field.
 //!
-//! Contains three groups of circuits:
+//! Contains these circuits:
 //!
 //! - **Endoscaling**: verifies that the commitment accumulation
 //!   in `compute_p` was computed correctly via Horner's rule.
@@ -9,6 +9,13 @@
 //! - **Export**: pins the nested [`unified`] instance, which a parent copies
 //!   into its `BridgePreamble` and folds this step's claims with, to the
 //!   stages that hold its values.
+//! - **Collapse**: verifies the two-layer fold of the children's nested
+//!   claims, the mirror of the native `inner_collapse` and `outer_collapse`.
+//! - **Compute v**: recomputes the nested batch evaluation $v_n$, the mirror
+//!   of the native `compute_v`.
+//!
+//! The export, collapse and compute-v circuits share the [`unified`]
+//! instance as their public input, each constraining the slots it owns.
 //!
 //! [`PointsStage`]: crate::internal::endoscalar::PointsStage
 
@@ -22,6 +29,9 @@ use ragu_core::Result;
 use ragu_primitives::{extract_endoscalar, lift_endoscalar, vec::ConstLen};
 
 pub mod circuits {
+    pub mod collapse;
+    pub mod common;
+    pub mod compute_v;
     pub mod export;
     pub mod loading;
 }
@@ -43,14 +53,18 @@ pub const NUM_ENDOSCALING_POINTS: usize = 37 + 2 * (crate::internal::native::NUM
 /// [`endoscalar::num_steps`].
 const NUM_ENDOSCALING_STEPS: usize = endoscalar::num_steps(NUM_ENDOSCALING_POINTS);
 
+/// The number of circuits whose public input is the nested [`unified`]
+/// instance: export, collapse and compute-v.
+pub const NUM_INSTANCE_CIRCUITS: usize = 3;
+
 /// Parameters for folding the children's nested-field revdot claims.
 ///
 /// Two children contribute one raw accumulator claim each, one circuit claim
-/// each per endoscaling step, and one bonding claim per bonding kind (each
-/// bonding kind is $z$-folded across both children): 42 claims today, over
-/// twelve steps and sixteen bonding kinds. The nested side will grow claims
-/// as it gains circuits, and `8 x 7` leaves room for that without re-laying
-/// the error stages.
+/// each per endoscaling step and per instance circuit, and one bonding claim
+/// per bonding kind (each bonding kind is $z$-folded across both children):
+/// 48 claims today, over twelve steps, three instance circuits and sixteen
+/// bonding kinds. `8 x 7` leaves room for the native-side points the nested
+/// stages will gain without re-laying the error stages.
 #[derive(Clone, Copy, Default)]
 pub struct RevdotParameters;
 
@@ -140,6 +154,10 @@ pub enum InternalCircuitIndex {
     EndoscalingStep(u32),
     /// Export circuit pinning the nested unified instance to the stages.
     Export,
+    /// Collapse circuit verifying the fold of the children's nested claims.
+    Collapse,
+    /// Circuit computing the nested batch evaluation $v_n$.
+    ComputeV,
     /// `EndoscalarStage` stage mask.
     EndoscalarStage,
     /// `PointsStage` stage mask.
@@ -175,7 +193,12 @@ pub enum InternalCircuitIndex {
 impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`],
     /// equal to the number of entries in [`InternalCircuitIndex::ALL`].
-    pub const NUM: usize = NUM_ENDOSCALING_STEPS + 16;
+    pub const NUM: usize = NUM_ENDOSCALING_STEPS + NUM_INSTANCE_CIRCUITS + 15;
+
+    /// The circuits whose public input is the nested [`unified`] instance,
+    /// in claim order.
+    pub const INSTANCE: [Self; NUM_INSTANCE_CIRCUITS] =
+        [Self::Export, Self::Collapse, Self::ComputeV];
 
     /// All variants in canonical iteration order.
     ///
@@ -198,6 +221,8 @@ impl InternalCircuitIndex {
             }
         }
         push(&mut slots, &mut c, Self::Export);
+        push(&mut slots, &mut c, Self::Collapse);
+        push(&mut slots, &mut c, Self::ComputeV);
         push(&mut slots, &mut c, Self::EndoscalarStage);
         push(&mut slots, &mut c, Self::PointsStage);
         push(&mut slots, &mut c, Self::PointsFinalStaged);
@@ -241,6 +266,10 @@ pub enum RxIndex {
     EndoscalingStep(u32),
     /// Export circuit rx polynomial.
     Export,
+    /// Collapse circuit rx polynomial.
+    Collapse,
+    /// Compute-v circuit rx polynomial.
+    ComputeV,
     /// EndoscalarStage rx polynomial.
     EndoscalarStage,
     /// PointsStage rx polynomial.
@@ -270,7 +299,12 @@ pub enum RxIndex {
 impl RxIndex {
     /// The number of rx components in the nested field,
     /// equal to the number of entries in [`RxIndex::ALL`].
-    pub const NUM: usize = NUM_ENDOSCALING_STEPS + 13;
+    pub const NUM: usize = NUM_ENDOSCALING_STEPS + NUM_INSTANCE_CIRCUITS + 12;
+
+    /// The rx polynomials of the instance circuits, in
+    /// [`InternalCircuitIndex::INSTANCE`] order.
+    pub const INSTANCE: [Self; NUM_INSTANCE_CIRCUITS] =
+        [Self::Export, Self::Collapse, Self::ComputeV];
 
     /// All variants in canonical order (circuits, then stages).
     ///
@@ -291,6 +325,8 @@ impl RxIndex {
             }
         }
         push(&mut slots, &mut c, Self::Export);
+        push(&mut slots, &mut c, Self::Collapse);
+        push(&mut slots, &mut c, Self::ComputeV);
         push(&mut slots, &mut c, Self::EndoscalarStage);
         push(&mut slots, &mut c, Self::PointsStage);
         push(&mut slots, &mut c, Self::BridgePreamble);
@@ -370,6 +406,14 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
             }
             Export => {
                 let circuit = circuits::export::Circuit::<C::HostCurve, R>::new();
+                registry.register_internal_circuit(MultiStage::new(circuit))?
+            }
+            Collapse => {
+                let circuit = circuits::collapse::Circuit::<C::HostCurve, R>::new();
+                registry.register_internal_circuit(MultiStage::new(circuit))?
+            }
+            ComputeV => {
+                let circuit = circuits::compute_v::Circuit::<C::HostCurve, R>::new();
                 registry.register_internal_circuit(MultiStage::new(circuit))?
             }
             EndoscalarStage => registry.register_bonding(endoscalar::EndoscalarStage::mask()?),

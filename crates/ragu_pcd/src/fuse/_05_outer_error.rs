@@ -225,11 +225,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     /// The nested $y$, $\mu$ and $\nu$ are derived from the native challenges
     /// (see [`nested::challenge`]), which the transcript squeezes only after
     /// the bridge carrying the layer-1 error terms is absorbed. The collapsed
-    /// values are computed through [`fold_revdot::ClaimFolder`] exactly as a
-    /// nested collapse circuit would, from the children's $k(y_n)$ values
+    /// values are computed through [`fold_revdot::ClaimFolder`] exactly as
+    /// the nested collapse circuit does, from the children's $k(y_n)$ values
     /// the bridge preamble's copies of their nested unified instances
-    /// determine, so the witness this stage commits is the one such a
-    /// circuit will later enforce.
+    /// determine, so the witness this stage commits is the one that circuit
+    /// enforces.
     #[allow(clippy::too_many_arguments)]
     fn compute_nested_outer_error<RNG: CryptoRng>(
         &self,

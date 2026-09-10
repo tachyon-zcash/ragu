@@ -102,6 +102,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         match idx {
             EndoscalingStep(step) => &mut self.nested_endoscaling_step_rxs[step as usize],
             Export => &mut self.nested_export_rx,
+            Collapse => &mut self.nested_collapse_rx,
+            ComputeV => &mut self.nested_compute_v_rx,
             EndoscalarStage => &mut self.nested_endoscalar_rx,
             PointsStage => Arc::make_mut(&mut self.nested_points_rx),
             BridgePreamble => Arc::make_mut(&mut self.bridge_preamble_rx),

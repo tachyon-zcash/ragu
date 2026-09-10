@@ -2,9 +2,11 @@
 //!
 //! Alongside the two host-curve commitments it bridges, this stage carries
 //! the nested query values: the claimed evaluations, at the nested $x_n z_n$,
-//! $x_n$ and $w_n$, that a nested `compute_v` circuit will fold into the
+//! $x_n$ and $w_n$, that the nested [`compute_v`] circuit folds into the
 //! nested quotient polynomial's evaluation. They ride here because this
 //! bridge stage's commitment is absorbed before $\alpha$ is squeezed.
+//!
+//! [`compute_v`]: crate::internal::nested::circuits::compute_v
 
 use core::marker::PhantomData;
 

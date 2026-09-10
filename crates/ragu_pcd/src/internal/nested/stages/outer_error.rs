@@ -7,6 +7,9 @@
 //! preserving the commit-before-challenge order for the second layer.
 //! Recursive verification additionally requires binding the derived
 //! challenges and checking the fold; storing these terms does not enforce it.
+//! The [`collapse`] circuit checks both layers.
+//!
+//! [`collapse`]: crate::internal::nested::circuits::collapse
 
 use core::marker::PhantomData;
 

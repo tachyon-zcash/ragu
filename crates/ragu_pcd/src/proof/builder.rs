@@ -279,8 +279,10 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     nested_challenges_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
     nested_beta_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
 
-    // Nested export circuit
+    // Nested instance circuits
     nested_export_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
+    nested_collapse_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
+    nested_compute_v_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
 
     // Nested endoscaling commitment caches (lazily computed from polynomials)
     nested_endoscaling_step_commitments: OnceCell<Vec<C::NestedCurve>>,
@@ -299,8 +301,10 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     nested_challenges_commitment: OnceCell<C::NestedCurve>,
     nested_beta_commitment: OnceCell<C::NestedCurve>,
 
-    // Nested export circuit commitment cache
+    // Nested instance circuit commitment caches
     nested_export_commitment: OnceCell<C::NestedCurve>,
+    nested_collapse_commitment: OnceCell<C::NestedCurve>,
+    nested_compute_v_commitment: OnceCell<C::NestedCurve>,
 
     // Challenges
     w: Option<C::CircuitField>,
@@ -391,6 +395,8 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             nested_challenges_rx: None,
             nested_beta_rx: None,
             nested_export_rx: None,
+            nested_collapse_rx: None,
+            nested_compute_v_rx: None,
             nested_endoscaling_step_commitments: OnceCell::new(),
             nested_endoscalar_commitment: OnceCell::new(),
             nested_points_commitment: OnceCell::new(),
@@ -401,6 +407,8 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             nested_challenges_commitment: OnceCell::new(),
             nested_beta_commitment: OnceCell::new(),
             nested_export_commitment: OnceCell::new(),
+            nested_collapse_commitment: OnceCell::new(),
+            nested_compute_v_commitment: OnceCell::new(),
             w: None,
             y: None,
             z: None,
@@ -781,6 +789,28 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         nested_export_commitment,
         nested_export_rx
     );
+    setter!(
+        set_nested_collapse_rx,
+        nested_collapse_rx,
+        sparse::Polynomial<C::ScalarField, R>
+    );
+    lazy_commitment!(
+        nested,
+        nested_collapse_commitment,
+        nested_collapse_commitment,
+        nested_collapse_rx
+    );
+    setter!(
+        set_nested_compute_v_rx,
+        nested_compute_v_rx,
+        sparse::Polynomial<C::ScalarField, R>
+    );
+    lazy_commitment!(
+        nested,
+        nested_compute_v_commitment,
+        nested_compute_v_commitment,
+        nested_compute_v_rx
+    );
 
     setter!(set_w, w, C::CircuitField);
     setter!(set_y, y, C::CircuitField);
@@ -868,6 +898,8 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         self.nested_challenges_commitment();
         self.nested_beta_commitment();
         self.nested_export_commitment();
+        self.nested_collapse_commitment();
+        self.nested_compute_v_commitment();
 
         macro_rules! take {
             ($field:ident) => {
@@ -938,6 +970,8 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             nested_challenges_rx: take!(nested_challenges_rx),
             nested_beta_rx: take!(nested_beta_rx),
             nested_export_rx: take!(nested_export_rx),
+            nested_collapse_rx: take!(nested_collapse_rx),
+            nested_compute_v_rx: take!(nested_compute_v_rx),
 
             nested_endoscaling_step_commitments: self
                 .nested_endoscaling_step_commitments
@@ -955,6 +989,8 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             nested_challenges_commitment: cached!(nested_challenges_commitment),
             nested_beta_commitment: cached!(nested_beta_commitment),
             nested_export_commitment: cached!(nested_export_commitment),
+            nested_collapse_commitment: cached!(nested_collapse_commitment),
+            nested_compute_v_commitment: cached!(nested_compute_v_commitment),
 
             w: take!(w),
             y: take!(y),

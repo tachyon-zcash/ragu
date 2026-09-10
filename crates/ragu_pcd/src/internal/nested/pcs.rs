@@ -6,9 +6,11 @@
 //! queries: every nested circuit is internal, with a fixed registry index.
 //!
 //! The prover-side `compute_f` and `compute_p` phases consume these
-//! definitions, and so does the test that holds them to their meaning. A
-//! nested `compute_v` circuit will consume the same ones, which is what keeps
-//! the prover and the circuit from drifting.
+//! definitions, and so do the nested [`compute_v`] circuit and the test that
+//! holds them to their meaning, which is what keeps the prover and the
+//! circuit from drifting.
+//!
+//! [`compute_v`]: super::circuits::compute_v
 
 use ragu_arithmetic::{Cycle, ff::PrimeField};
 use ragu_circuits::polynomials::{Rank, sparse};

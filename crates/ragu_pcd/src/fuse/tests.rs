@@ -109,7 +109,7 @@ impl KySource for ChildValues {
         [Fq::ONE, Fq::ONE].into_iter()
     }
 
-    fn unified_ky(&self) -> impl Iterator<Item = Fq> {
+    fn unified_ky(&self) -> impl Iterator<Item = Fq> + Clone {
         [self.left_unified, self.right_unified].into_iter()
     }
 
@@ -156,11 +156,11 @@ fn nested_accumulator_is_the_fold_of_the_children() -> Result<()> {
         right_unified: unified_ky(&right)?,
     };
 
-    // Two raw claims, one circuit claim per endoscaling step per child, one
-    // export claim per child, and one bonding claim per bonding kind folded
-    // across both children.
+    // Two raw claims, one circuit claim per endoscaling step and per
+    // instance circuit per child, and one bonding claim per bonding kind
+    // folded across both children.
     let steps = crate::internal::endoscalar::num_steps(nested::NUM_ENDOSCALING_POINTS);
-    let circuits = steps + 1;
+    let circuits = steps + nested::NUM_INSTANCE_CIRCUITS;
     let bonding_kinds = nested::InternalCircuitIndex::NUM - circuits;
     assert_eq!(nested_claims.a.len(), 2 + 2 * circuits + bonding_kinds);
 

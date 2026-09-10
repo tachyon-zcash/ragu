@@ -8,6 +8,9 @@
 //! commit-before-challenge order without changing the transcript schedule.
 //! Recursive verification additionally requires binding the derived
 //! challenges and checking the fold; storing these terms does not enforce it.
+//! The [`collapse`] circuit checks the fold.
+//!
+//! [`collapse`]: crate::internal::nested::circuits::collapse
 
 use core::marker::PhantomData;
 
