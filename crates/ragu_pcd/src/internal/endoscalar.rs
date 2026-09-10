@@ -36,6 +36,7 @@ use ragu_core::{
 };
 use ragu_primitives::{
     Endoscalar, GadgetExt, NonzeroBank, Point,
+    consistent::Consistent,
     vec::{FixedVec, Len},
 };
 
@@ -169,7 +170,7 @@ where
 }
 
 /// Output gadget containing initial, inputs, and interstitials. See [`PointsWitness`].
-#[derive(Gadget)]
+#[derive(Gadget, Consistent)]
 pub struct Points<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, const NUM_POINTS: usize> {
     #[ragu(gadget)]
     pub initial: Point<'dr, D, C>,
@@ -290,10 +291,10 @@ impl<C: CurveAffine, R: Rank, const NUM_POINTS: usize> MultiStageCircuit<C::Base
         let (points_guard, dr) = dr.add_stage::<PointsStage<C, NUM_POINTS>>()?;
         let dr = dr.finish();
 
-        // Stages are loaded unenforced here. Curve membership for points and
-        // boolean constraints for these stages are enforced by the routing
-        // circuits (see #172). This only constrains the Horner accumulation
-        // relationship between inputs and interstitials.
+        // Stages are loaded unenforced here: the export circuit enforces the
+        // points' curve membership and the endoscalar's booleanity once for
+        // the whole nested section. This only constrains the Horner
+        // accumulation relationship between inputs and interstitials.
         let endoscalar = endoscalar_guard.unenforced(dr, witness.as_ref().map(|w| w.endoscalar))?;
         let points = points_guard.unenforced(dr, witness.as_ref().map(|w| w.points))?;
 

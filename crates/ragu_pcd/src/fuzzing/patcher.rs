@@ -989,10 +989,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         >;
         let native_endoscalar_values =
             stage_values::<C::CircuitField, R, EndoscalarStage>(beta_endo)?;
+        let native_inputs_values = stage_values::<_, R, NativeInputsStage<C>>(&native_points)?;
+        let bind_endoscalar_values: Vec<C::CircuitField> =
+            [native_endoscalar_values.as_slice(), &native_inputs_values].concat();
         let native_walk_values: Vec<C::CircuitField> = [
-            native_endoscalar_values.clone(),
-            stage_values::<_, R, NativeInputsStage<C>>(&native_points)?,
-            stage_values::<_, R, NativeInterstitialsStage<C>>(&native_interstitials)?,
+            bind_endoscalar_values.as_slice(),
+            &stage_values::<_, R, NativeInterstitialsStage<C>>(&native_interstitials)?,
         ]
         .concat();
 
@@ -1001,6 +1003,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             Ok(native::circuits::bind_endoscalar::Witness {
                 unified: make_unified(&builder)?,
                 endoscalar: beta_endo,
+                inputs: &native_points,
             })
         };
         let bind_endoscalar_spec = CircuitSpec {
@@ -1015,7 +1018,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         visitor.visit(
             &bind_endoscalar_spec,
             &bind_endoscalar,
-            &native_endoscalar_values,
+            &bind_endoscalar_values,
             bind_endoscalar_witness,
         )?;
 

@@ -243,13 +243,14 @@ where
                 }
             }
 
-            // bind_endoscalar: BindEndoscalar + EndoscalarStage
+            // bind_endoscalar: BindEndoscalar + EndoscalarStage + PointsInputs
             BindEndoscalarCircuit => {
-                for (be, es) in source
+                for ((be, es), pi) in source
                     .rx(Rx(BindEndoscalar))
                     .zip(source.rx(Rx(RxIndex::EndoscalarStage)))
+                    .zip(source.rx(Rx(PointsInputs)))
                 {
-                    processor.internal_circuit_claim(id, [be, es].into_iter());
+                    processor.internal_circuit_claim(id, [be, es, pi].into_iter());
                 }
             }
 
@@ -314,7 +315,7 @@ where
                     ),
                 )?;
             }
-            EndoscalarFinalStaged => {
+            PointsInputsFinalStaged => {
                 processor.bonding_claim(id, source.rx(Rx(BindEndoscalar)))?;
             }
             PointsInterstitialsFinalStaged => {

@@ -7,10 +7,10 @@
 //! bits and adds each of its inputs in turn, and enforces the result equal
 //! to its own interstitial. The last interstitial is $P_n$.
 //!
-//! The stages are loaded unenforced: the endoscalar's bits are bound to
-//! `pre_beta` by [`bind_endoscalar`](super::bind_endoscalar), and the
-//! points' curve membership is the loading question the nested side also
-//! leaves open.
+//! The stages are loaded unenforced: [`bind_endoscalar`](super::bind_endoscalar)
+//! binds the endoscalar's bits to `pre_beta` and enforces the inputs' curve
+//! membership, and the interstitials are equal to points computed from
+//! them.
 //!
 //! [`EndoscalingStep`]: crate::internal::endoscalar::EndoscalingStep
 //! [`stages::points`]: crate::internal::native::stages::points

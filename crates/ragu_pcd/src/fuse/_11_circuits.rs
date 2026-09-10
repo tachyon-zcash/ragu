@@ -36,6 +36,7 @@ pub(super) struct NestedWitnesses<'a, C: Cycle> {
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn compute_internal_circuits<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -50,6 +51,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         >,
         query_witness: &native::stages::query::Witness<C>,
         eval_witness: &native::stages::eval::Witness<C>,
+        native_points: &super::NativeInputs<C>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         let unified = native::unified::Instance {
@@ -213,13 +215,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &mut *rng,
         )?;
 
-        // The endoscalar stage binding circuit: the bits the native
-        // endoscaling steps walked with are pre_beta's.
+        // The native walk's inputs: the bits the endoscaling steps walked
+        // with are pre_beta's, and the points lie on the curve.
         let (bind_endoscalar_trace, unified) =
             native::circuits::bind_endoscalar::Circuit::<C, R>::new()
                 .trace(native::circuits::bind_endoscalar::Witness {
                     unified,
                     endoscalar: extract_endoscalar(builder.pre_beta())?,
+                    inputs: native_points,
                 })?
                 .into_parts();
         let bind_endoscalar_rx = self.native_registry.assemble(

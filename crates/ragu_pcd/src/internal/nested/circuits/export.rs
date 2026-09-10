@@ -11,6 +11,14 @@
 //!
 //! Its claim's $k(Y)$ is the instance, so a parent folding this claim with a
 //! $k(y_n)$ computed from its own copies binds those copies to these wires.
+//!
+//! It also emits the stage contracts the endoscaling walk rests on, which
+//! the loading circuit, a bonding claim, cannot: every point of the points
+//! stage lies on the curve, and the endoscalar stage's wires are bits (the
+//! [`compute_v`](super::compute_v) circuit ties their lift to the beta
+//! stage's). Every other point the nested stages hold is equal, by the
+//! loading circuit or by this one, to a point of the points stage or to one
+//! a parent walks.
 
 use core::marker::PhantomData;
 
@@ -26,7 +34,7 @@ use ragu_core::{
     gadgets::Bound,
     maybe::Maybe,
 };
-use ragu_primitives::{GadgetExt as _, allocator::Standard};
+use ragu_primitives::{Endoscalar, GadgetExt as _, allocator::Standard, consistent::Consistent};
 
 use super::common;
 use crate::internal::nested::{stages, unified};
@@ -65,6 +73,15 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
         let (dr, stages) = common::load_all(dr, &witness)?;
+
+        // The walk's contracts: points on the curve, endoscalar wires bits.
+        // The bits are constrained fresh from the witness endoscalar and
+        // the stage's wires enforced equal to them.
+        stages.points.enforce_consistent(dr)?;
+        let bits = Endoscalar::alloc(dr, witness.as_ref().map(|w| w.endoscalar))?;
+        for (staged, fresh) in stages.endoscalar.bits().zip(bits.bits()) {
+            staged.element().enforce_equal(dr, &fresh.element())?;
+        }
 
         let allocator = &mut Standard::new();
         let mut unified = unified::OutputBuilder::new(witness.map(|w| w.instance));

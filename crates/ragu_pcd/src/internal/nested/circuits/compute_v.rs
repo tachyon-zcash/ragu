@@ -21,8 +21,9 @@
 //! ### $v_n$ computation
 //! - Takes $\beta_n$ from the beta stage: the lift of the endoscalar the
 //!   parent binds through `bind_beta`, so no extraction is needed here. The
-//!   endoscalar stage's bits, which the endoscaling steps walk $P$ with,
-//!   are enforced to lift to the same value, which binds them through it.
+//!   endoscalar stage's wires, which the endoscaling steps walk $P$ with and
+//!   which the export circuit constrains to bits, are enforced to lift to
+//!   the same value, which binds them through it.
 //! - Computes $v_n$ as the $\beta_n$-weighted sum of $f_n(u_n)$ and the eval
 //!   stage's nested evaluations, in [`Batch::evaluated`] order.
 //!

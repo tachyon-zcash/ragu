@@ -25,6 +25,7 @@ mod tests;
 #[path = "../fuzzing/patcher.rs"]
 pub(crate) mod patcher;
 
+use _10_p::NativeInputs;
 use _11_circuits::NestedWitnesses;
 use claims::{NativeFuseProofSource, NestedFuseProofSource};
 use ragu_arithmetic::{Cycle, ff::Field, rand::CryptoRng};
@@ -495,6 +496,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &native_inner_error_witness,
             &query_witness,
             &eval_witness,
+            &native_points,
             &mut builder,
         )?;
 

@@ -1,11 +1,13 @@
-//! Circuit binding the native endoscalar stage to `pre_beta`.
+//! Circuit binding the native endoscaling walk's inputs: the endoscalar
+//! stage to `pre_beta`, and the points inputs stage to the curve.
 //!
 //! The endoscaling steps walk the nested batch's commitments with the bits
 //! the [`EndoscalarStage`] holds. This circuit reads `pre_beta` from the
 //! unified instance, extracts the endoscalar from it exactly as `compute_v`
 //! does, and enforces the stage's bits equal to it, so that the walk is by
-//! the transcript's $\beta$. It covers no unified slot: `pre_beta` is
-//! `hashes_2`'s.
+//! the transcript's $\beta$. It loads the points inputs stage enforced, so
+//! that every point the walk consumes lies on the curve. It covers no
+//! unified slot: `pre_beta` is `hashes_2`'s.
 
 use core::marker::PhantomData;
 
@@ -23,7 +25,11 @@ use ragu_core::{
 };
 use ragu_primitives::{Endoscalar, EndoscalarChallenge, GadgetExt as _, allocator::Standard};
 
-use super::super::unified::{self, OutputBuilder};
+use super::super::{
+    NUM_ENDOSCALING_POINTS,
+    stages::points::{InputsStage, InputsWitness},
+    unified::{self, OutputBuilder},
+};
 use crate::internal::endoscalar::EndoscalarStage;
 
 /// Circuit binding the endoscalar stage's bits to `pre_beta`.
@@ -40,17 +46,19 @@ impl<C: Cycle, R: Rank> Circuit<C, R> {
 }
 
 /// Witness for the binding circuit.
-pub struct Witness<C: Cycle> {
+pub struct Witness<'a, C: Cycle> {
     /// The unified instance, for `pre_beta`.
     pub unified: unified::Instance<C>,
     /// The endoscalar stage's value.
     pub endoscalar: u128,
+    /// The points inputs stage's value.
+    pub inputs: &'a InputsWitness<C::NestedCurve, NUM_ENDOSCALING_POINTS>,
 }
 
 impl<C: Cycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circuit<C, R> {
-    type Last = EndoscalarStage;
+    type Last = InputsStage<C::NestedCurve, NUM_ENDOSCALING_POINTS>;
     type Instance<'source> = &'source unified::Instance<C>;
-    type Witness<'source> = Witness<C>;
+    type Witness<'source> = Witness<'source, C>;
     type Output = unified::InternalOutputKind<C>;
     type Aux<'source> = unified::Instance<C>;
 
@@ -74,8 +82,12 @@ impl<C: Cycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circuit<C, R> 
         Self: 'dr,
     {
         let (endoscalar, builder) = builder.add_stage::<EndoscalarStage>()?;
+        let (inputs, builder) =
+            builder.add_stage::<InputsStage<C::NestedCurve, NUM_ENDOSCALING_POINTS>>()?;
         let dr = builder.finish();
         let staged = endoscalar.unenforced(dr, witness.as_ref().map(|w| w.endoscalar))?;
+        // Enforced: every point the walk consumes lies on the curve.
+        let _ = inputs.enforced(dr, witness.as_ref().map(|w| w.inputs))?;
 
         let allocator = &mut Standard::new();
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));

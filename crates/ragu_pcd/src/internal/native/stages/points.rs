@@ -29,6 +29,7 @@ use ragu_core::{
 };
 use ragu_primitives::{
     Point,
+    consistent::Consistent,
     vec::{FixedVec, Len},
 };
 
@@ -75,7 +76,7 @@ impl<C: CurveAffine, const NUM_POINTS: usize> From<PointsWitness<C, NUM_POINTS>>
 }
 
 /// Output gadget of [`InputsStage`].
-#[derive(Gadget)]
+#[derive(Gadget, Consistent)]
 pub struct Inputs<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, const NUM_POINTS: usize> {
     #[ragu(gadget)]
     pub initial: Point<'dr, D, C>,

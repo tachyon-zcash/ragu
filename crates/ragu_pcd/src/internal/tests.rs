@@ -261,7 +261,7 @@ fn test_internal_circuit_constraint_counts() {
     check_constraints!(BindChallengesCircuit(3),    mul = 1933, lin = 2931);
     check_constraints!(BindChallengesCircuit(4),    mul = 1944, lin = 2953);
     check_constraints!(BindBetaCircuit,             mul = 1976, lin = 2913);
-    check_constraints!(BindEndoscalarCircuit,       mul = 344,  lin = 708);
+    check_constraints!(BindEndoscalarCircuit,       mul = 732,  lin = 1387);
     // Every native endoscaling step lays out the same.
     for step in 0..native::NUM_ENDOSCALING_STEPS as u32 {
         check_constraints!(EndoscalingStep(step),   mul = 2023, lin = 3677);
@@ -309,7 +309,7 @@ fn print_internal_circuit_constraint_counts() {
                 | InternalCircuitIndex::InnerErrorFinalStaged
                 | InternalCircuitIndex::OuterErrorFinalStaged
                 | InternalCircuitIndex::EvalFinalStaged
-                | InternalCircuitIndex::EndoscalarFinalStaged
+                | InternalCircuitIndex::PointsInputsFinalStaged
                 | InternalCircuitIndex::PointsInterstitialsFinalStaged
         )
     });
@@ -436,7 +436,7 @@ fn test_nested_circuit_constraint_counts() {
     for step in 0..steps {
         expected.push((nested::InternalCircuitIndex::EndoscalingStep(step as u32), (2033, 3677)));
     }
-    expected.push((nested::InternalCircuitIndex::Export,   (797,  99)));
+    expected.push((nested::InternalCircuitIndex::Export,   (1318, 1400)));
     expected.push((nested::InternalCircuitIndex::Collapse, (1572, 1641)));
     expected.push((nested::InternalCircuitIndex::ComputeV, (1601, 1687)));
     expected.push((nested::InternalCircuitIndex::Loading,  (752,  211)));
@@ -532,7 +532,7 @@ fn test_native_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fp!(0x1d2817c8acc33fdb6def033ba8c7816b1975c8cb45eb204a6dbe6526018c5dcc);
+    let expected = fp!(0x1032b1e6b974da312e49d900128772a156aa39fda91edcc6dae62004d3720f65);
 
     assert_eq!(
         app.native_registry.digest(),
@@ -556,7 +556,7 @@ fn test_nested_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fq!(0x1343f79e0882da55f60d4ab299395cc865733052a5bd1827e91e65a93350cf44);
+    let expected = fq!(0x262ac3839779e06670f33689843dd3a66b7435ad935fd5123f4fe86560e63b78);
 
     assert_eq!(
         app.nested_registry.digest(),
