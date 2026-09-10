@@ -24,7 +24,21 @@
 //!   or $v = p(u)$ — change $k(y)$, which the verifier evaluates by Horner at
 //!   a $y$ it samples fresh. The polynomials the claims fold do not move with
 //!   it, so the claim breaks unless the fresh $y$ is a root of the difference:
-//!   a Schwartz–Zippel event of probability under $4n/|\mathbb{F}|$.
+//!   a Schwartz–Zippel event of probability under $4n/|\mathbb{F}|$. A
+//!   challenge or bridge commitment is caught earlier still: the verifier
+//!   rederives every challenge from the transcript over the bridge
+//!   commitments.
+//! * **A cached commitment** — of a native or nested polynomial, the walked
+//!   $P$ and $P_n$ included — is recomputed by the verifier from its
+//!   polynomial and compared as one batch per curve under a fresh scalar,
+//!   so any change is caught unless that scalar is a root of the
+//!   difference.
+//! * **A rescaled accumulator** — $a \mapsto s\,a$, $b \mapsto s^{-1} b$,
+//!   caches updated to match — preserves the derived $c$ and every
+//!   commitment check, and is caught by what the verifier reads off the
+//!   stages instead: the eval stage claims $a(u)$ and $b(u)$, which the
+//!   verifier recomputes from the polynomials, and on the native side the
+//!   `ab` bridge stage the verifier rederives holds the old commitments.
 //! * **The `registry_xy` polynomial** is compared against
 //!   $m(w, x, y)$ at a $w$ the verifier samples fresh, so any change to it is
 //!   caught on the same grounds.
@@ -329,6 +343,85 @@ impl Challenge {
     ];
 }
 
+/// Which cached native commitment of a proof to address: one of its native
+/// rx polynomials', or the $a$, $b$, `registry_xy` or walked $P$ commitment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeCommitment {
+    /// A native rx polynomial's commitment.
+    Rx(NativeRx),
+    /// The native `a` commitment.
+    AbA,
+    /// The native `b` commitment.
+    AbB,
+    /// The native `registry_xy` commitment.
+    RegistryXy,
+    /// The walked $P$.
+    P,
+}
+
+impl NativeCommitment {
+    /// The number of cached native commitments.
+    pub const NUM: usize = NativeRx::NUM + 4;
+
+    /// All variants, the rx commitments in [`NativeRx::ALL`] order.
+    pub const ALL: [Self; Self::NUM] = {
+        let mut out = [Self::AbA; Self::NUM];
+        let mut i = 0;
+        while i < NativeRx::NUM {
+            out[i] = Self::Rx(NativeRx::ALL[i]);
+            i += 1;
+        }
+        out[i] = Self::AbA;
+        out[i + 1] = Self::AbB;
+        out[i + 2] = Self::RegistryXy;
+        out[i + 3] = Self::P;
+        out
+    };
+}
+
+/// Which cached nested commitment of a proof to address: one of its nested
+/// rx polynomials' other than the bridges' (see [`BridgeCommitment`]), or
+/// the $a_n$, $b_n$, nested `registry_xy` or walked $P_n$ commitment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NestedCommitment {
+    /// A nested rx polynomial's commitment.
+    Rx(NestedRx),
+    /// The nested `a` commitment.
+    AbA,
+    /// The nested `b` commitment.
+    AbB,
+    /// The nested `registry_xy` commitment.
+    RegistryXy,
+    /// The walked $P_n$.
+    P,
+}
+
+impl NestedCommitment {
+    /// The number of cached nested commitments this addresses.
+    pub const NUM: usize = NestedRx::NUM - BridgeCommitment::ALL.len() + 4;
+
+    /// All variants, the rx commitments in [`NestedRx::ALL`] order with the
+    /// bridges skipped.
+    pub const ALL: [Self; Self::NUM] = {
+        let mut out = [Self::AbA; Self::NUM];
+        let mut i = 0;
+        let mut j = 0;
+        while j < NestedRx::NUM {
+            if !NestedRx::ALL[j].is_bridge() {
+                out[i] = Self::Rx(NestedRx::ALL[j]);
+                i += 1;
+            }
+            j += 1;
+        }
+        out[i] = Self::AbA;
+        out[i + 1] = Self::AbB;
+        out[i + 2] = Self::RegistryXy;
+        out[i + 3] = Self::P;
+        assert!(i + 4 == Self::NUM);
+        out
+    };
+}
+
 /// One of the eight nested-curve commitments the unified instance carries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BridgeCommitment {
@@ -398,6 +491,16 @@ pub enum Corruption<C: Cycle> {
     Challenge(Challenge, C::CircuitField),
     /// Negate a bridge commitment, moving its $y$ coordinate in the instance.
     NegateBridgeCommitment(BridgeCommitment),
+    /// Negate a cached native commitment, which the verifier recomputes.
+    NegateNativeCommitment(NativeCommitment),
+    /// Negate a cached nested commitment, which the verifier recomputes.
+    NegateNestedCommitment(NestedCommitment),
+    /// Scale the native accumulator's `a` by the given factor and `b` by
+    /// its inverse, caches included, which preserves $c$.
+    RescaleNativeAccumulator(C::CircuitField),
+    /// Scale the nested accumulator's `a` by the given factor and `b` by
+    /// its inverse, caches included, which preserves $c_n$.
+    RescaleNestedAccumulator(C::ScalarField),
     /// Add `delta` to one coefficient of a native rx polynomial, or of the
     /// `a` / `b` polynomials of the raw revdot claim.
     NativeCoeff {
@@ -471,6 +574,14 @@ impl<C: Cycle> core::fmt::Debug for Corruption<C> {
             Corruption::NegateBridgeCommitment(which) => {
                 write!(f, "NegateBridgeCommitment({which:?})")
             }
+            Corruption::NegateNativeCommitment(which) => {
+                write!(f, "NegateNativeCommitment({which:?})")
+            }
+            Corruption::NegateNestedCommitment(which) => {
+                write!(f, "NegateNestedCommitment({which:?})")
+            }
+            Corruption::RescaleNativeAccumulator(_) => write!(f, "RescaleNativeAccumulator"),
+            Corruption::RescaleNestedAccumulator(_) => write!(f, "RescaleNestedAccumulator"),
             Corruption::NativeCoeff {
                 component, coeff, ..
             } => write!(
@@ -598,6 +709,60 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                     return Binding::Unbound;
                 }
                 *point = negated;
+                Binding::MustReject
+            }
+
+            Corruption::NegateNativeCommitment(which) => {
+                let point = self.native_commitment_cache_mut(which);
+                let negated = -*point;
+                if negated == *point {
+                    return Binding::Unbound;
+                }
+                *point = negated;
+                Binding::MustReject
+            }
+
+            Corruption::NegateNestedCommitment(which) => {
+                let point = self.nested_commitment_cache_mut(which);
+                let negated = -*point;
+                if negated == *point {
+                    return Binding::Unbound;
+                }
+                *point = negated;
+                Binding::MustReject
+            }
+
+            Corruption::RescaleNativeAccumulator(scale) => {
+                let Some(inverse) = Option::<C::CircuitField>::from(scale.invert()) else {
+                    return Binding::Unbound;
+                };
+                if scale == C::CircuitField::ONE {
+                    return Binding::Unbound;
+                }
+                self.native_component_mut(RxComponent::AbA).scale(scale);
+                self.native_component_mut(RxComponent::AbB).scale(inverse);
+                let a = self.native_commitment_cache_mut(NativeCommitment::AbA);
+                *a = (*a * scale).into();
+                let b = self.native_commitment_cache_mut(NativeCommitment::AbB);
+                *b = (*b * inverse).into();
+                Binding::MustReject
+            }
+
+            Corruption::RescaleNestedAccumulator(scale) => {
+                let Some(inverse) = Option::<C::ScalarField>::from(scale.invert()) else {
+                    return Binding::Unbound;
+                };
+                if scale == C::ScalarField::ONE {
+                    return Binding::Unbound;
+                }
+                self.nested_accumulator_mut(NestedAccumulator::A)
+                    .scale(scale);
+                self.nested_accumulator_mut(NestedAccumulator::B)
+                    .scale(inverse);
+                let a = self.nested_commitment_cache_mut(NestedCommitment::AbA);
+                *a = (*a * scale).into();
+                let b = self.nested_commitment_cache_mut(NestedCommitment::AbB);
+                *b = (*b * inverse).into();
                 Binding::MustReject
             }
 
@@ -754,6 +919,22 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 impl NestedRx {
     /// The number of nested rx components.
     pub const NUM: usize = crate::internal::nested::RxIndex::NUM;
+
+    /// Whether this is a bridge stage's rx, whose commitment
+    /// [`BridgeCommitment`] addresses.
+    pub const fn is_bridge(self) -> bool {
+        matches!(
+            self,
+            Self::BridgePreamble
+                | Self::BridgeSPrime
+                | Self::BridgeInnerError
+                | Self::BridgeOuterError
+                | Self::BridgeAB
+                | Self::BridgeQuery
+                | Self::BridgeF
+                | Self::BridgeEval
+        )
+    }
 
     /// All variants, in the canonical order `internal` defines.
     ///

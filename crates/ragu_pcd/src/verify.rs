@@ -1,8 +1,32 @@
 //! This module provides the [`Application::verify`] method implementation.
+//!
+//! The verifier is the decider: it holds every polynomial of the proof and
+//! checks the accumulated claims on them directly, at challenges it samples
+//! itself. What it reads from the proof beyond the polynomials it rederives
+//! rather than trusts:
+//!
+//! - every cached commitment is recomputed from its polynomial, native and
+//!   nested alike, batched per curve under a fresh scalar; the walked $P$
+//!   and $P_n$ are among them, which is what ties the endoscaling walks the
+//!   circuits verified to the batch polynomials;
+//! - the challenges are rederived from the transcript over the bridge
+//!   commitments, in the fuse's schedule;
+//! - the `ab` bridge stage and the nested challenge and beta stages, whose
+//!   contents are functions of other proof data, are rederived and compared;
+//! - the registry values the query and eval stages claim, and the current
+//!   step's own evaluations at $u$ and $u_n$, are read off the stage
+//!   polynomials and held against the registry and the polynomials;
+//! - $c$, $v$, $c_n$ and $v_n$ are derived from the polynomials, never read.
 
+use alloc::vec::Vec;
 use core::iter::once;
 
-use ragu_arithmetic::{Cycle, ff::Field, rand::CryptoRng};
+use ragu_arithmetic::{
+    CurveAffine, Cycle, FixedGenerators, bitreverse,
+    ff::{Field, PrimeField},
+    group::Curve,
+    rand::CryptoRng,
+};
 use ragu_backend::Backend;
 use ragu_circuits::{
     polynomials::{Rank, sparse},
@@ -10,20 +34,25 @@ use ragu_circuits::{
     staging::StageExt,
 };
 use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
-use ragu_primitives::Element;
+use ragu_primitives::{Element, GadgetExt as _, Point, extract_endoscalar};
 
 use crate::{
-    Application, Pcd, Proof, SelectableBackend,
+    Application, Pcd, Proof, RAGU_TAG, SelectableBackend,
     header::Header,
     internal::{
         claims,
-        native::{RxComponent, claims as native_claims, stages::preamble::ProofInputs},
+        native::{
+            self as native_internal, RxComponent, claims as native_claims,
+            stages::preamble::ProofInputs,
+        },
         nested::{
-            RxComponent as NestedRxComponent, challenge as nested_challenge,
-            claims as nested_claims,
-            stages::{beta as nested_beta, challenges as nested_challenges},
+            self as nested_internal, RxComponent as NestedRxComponent,
+            challenge as nested_challenge, claims as nested_claims,
+            stages::{ab as nested_ab, beta as nested_beta, challenges as nested_challenges},
             unified as nested_unified,
         },
+        stage_wires::{StageReader, stage_wire_indices, wires_of},
+        transcript::Transcript,
     },
 };
 
@@ -224,16 +253,368 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                     .eq(expected_beta.iter_coeffs())
         };
 
-        // TODO: Add checks for registry_wx0_poly, registry_wx1_poly, and registry_wy_poly.
-        // - registry_wx0/wx1: need child proof x challenges (x₀, x₁) which "disappear" in preamble
-        // - registry_wy: interstitial value that will be elided later
+        // Every cached commitment, recomputed from its polynomial and
+        // compared as one batch per curve. The walked P and P_n are among
+        // them: the endoscaling steps verified the walks over the copied
+        // points, and this is what ties those walks to p and p_n.
+        let commitments_claim = {
+            let proof = pcd.proof();
+            let native = {
+                let mut polys: Vec<&sparse::Polynomial<C::CircuitField, R>> = Vec::new();
+                let mut points: Vec<C::HostCurve> = Vec::new();
+                for &id in &native_internal::RxIndex::ALL {
+                    polys.push(&proof[id]);
+                    points.push(proof.native_rx_commitment(id));
+                }
+                for component in [RxComponent::AbA, RxComponent::AbB] {
+                    polys.push(&proof[component]);
+                    points.push(proof.native_commitment(component));
+                }
+                polys.push(proof.native_registry_xy_poly());
+                points.push(proof.native_registry_xy_commitment());
+                polys.push(proof.native_p_poly());
+                points.push(proof.native_p_commitment());
+                commitments_match::<Verifier<B>, _, _, R, _>(
+                    &polys,
+                    &points,
+                    C::CircuitField::random(&mut rng),
+                    C::host_generators(self.params),
+                )
+            };
+            let nested = {
+                let mut polys: Vec<&sparse::Polynomial<C::ScalarField, R>> = Vec::new();
+                let mut points: Vec<C::NestedCurve> = Vec::new();
+                for &id in &nested_internal::RxIndex::ALL {
+                    polys.push(&proof[id]);
+                    points.push(proof.nested_rx_commitment(id));
+                }
+                polys.push(&proof[NestedRxComponent::AbA]);
+                points.push(proof.nested_a_commitment());
+                polys.push(&proof[NestedRxComponent::AbB]);
+                points.push(proof.nested_b_commitment());
+                polys.push(proof.nested_registry_xy_poly());
+                points.push(proof.nested_registry_xy_commitment());
+                polys.push(proof.nested_p_poly());
+                points.push(proof.nested_p_commitment());
+                commitments_match::<Verifier<B>, _, _, R, _>(
+                    &polys,
+                    &points,
+                    C::ScalarField::random(&mut rng),
+                    C::nested_generators(self.params),
+                )
+            };
+            native && nested
+        };
+
+        // The challenges, rederived from the transcript over the bridge
+        // commitments in the fuse's schedule, and pre_beta in the endoscalar
+        // challenge range the prover grinds it into.
+        let transcript_claim = {
+            let proof = pcd.proof();
+            let mut dr = Emulator::execute();
+            let mut transcript =
+                Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
+            macro_rules! absorb {
+                ($point:expr) => {
+                    Point::constant(&mut dr, $point)?.write(&mut dr, &mut transcript)?
+                };
+            }
+            macro_rules! squeeze {
+                () => {
+                    *transcript.challenge(&mut dr)?.value().take()
+                };
+            }
+            absorb!(proof.bridge_preamble_commitment());
+            let w = squeeze!();
+            absorb!(proof.bridge_s_prime_commitment());
+            let y = squeeze!();
+            let z = squeeze!();
+            absorb!(proof.bridge_inner_error_commitment());
+            let mu = squeeze!();
+            let nu = squeeze!();
+            absorb!(proof.bridge_outer_error_commitment());
+            let mu_prime = squeeze!();
+            let nu_prime = squeeze!();
+            absorb!(proof.bridge_ab_commitment());
+            let x = squeeze!();
+            absorb!(proof.bridge_query_commitment());
+            let alpha = squeeze!();
+            absorb!(proof.bridge_f_commitment());
+            let u = squeeze!();
+            absorb!(proof.bridge_eval_commitment());
+            let pre_beta = squeeze!();
+
+            [w, y, z, mu, nu, mu_prime, nu_prime, x, alpha, u, pre_beta]
+                == [
+                    proof.w(),
+                    proof.y(),
+                    proof.z(),
+                    proof.mu(),
+                    proof.nu(),
+                    proof.mu_prime(),
+                    proof.nu_prime(),
+                    proof.x(),
+                    proof.alpha(),
+                    proof.u(),
+                    proof.pre_beta(),
+                ]
+                && extract_endoscalar(proof.pre_beta()).is_ok()
+        };
+
+        // The `ab` bridge stage is a function of the native a and b
+        // commitments and the proof's bridge blinding: rederive and compare.
+        let ab_bridge_claim = {
+            let proof = pcd.proof();
+            let expected = nested_ab::Stage::<C::HostCurve, R>::rx(
+                crate::proof::bridge_alpha_power(
+                    proof.bridge_alpha,
+                    nested_internal::RxIndex::BridgeAB,
+                ),
+                &nested_ab::Witness {
+                    a: proof.native_commitment(RxComponent::AbA),
+                    b: proof.native_commitment(RxComponent::AbB),
+                },
+            )?;
+            proof[nested_internal::RxIndex::BridgeAB]
+                .iter_coeffs()
+                .eq(expected.iter_coeffs())
+        };
+
+        // What the query and eval stages claim of the registry, and of the
+        // current step's own polynomials, held against the registry and the
+        // polynomials themselves. The children's challenges and circuit ids
+        // are read off the preamble stage, where the fold binds them. The
+        // registry restrictions the step opened (m(w, x_i, Y), m(w, X, y))
+        // are not carried by the proof, but their claimed evaluations are,
+        // and the registry gives what they must be.
+        let mesh_claim = {
+            let proof = pcd.proof();
+            let native = self.native_mesh_claim(proof)?;
+            let nested = self.nested_mesh_claim(proof)?;
+            native && nested
+        };
 
         Ok(native_revdot_claims
             && nested_revdot_claims
             && registry_xy_claim
             && nested_registry_xy_claim
-            && nested_challenges_claim)
+            && nested_challenges_claim
+            && commitments_claim
+            && transcript_claim
+            && ab_bridge_claim
+            && mesh_claim)
     }
+
+    /// The native mesh claim: see [`verify`](Self::verify).
+    fn native_mesh_claim(&self, proof: &Proof<C, R>) -> Result<bool> {
+        use native_internal::{InternalCircuitIndex, RxIndex, stages};
+        type Preamble<C, R, const H: usize> = stages::preamble::Stage<C, R, H>;
+        type Query<C, R, const H: usize> = stages::query::Stage<C, R, H>;
+        type Eval<C, R, const H: usize> = stages::eval::Stage<C, R, H>;
+
+        let registry = &self.native_registry;
+        let (w, x, y, u) = (proof.w(), proof.x(), proof.y(), proof.u());
+        let m = |w, x, y| Verifier::<B>::registry_wxy(registry, w, x, y);
+
+        // The children's challenges and circuit ids, off the preamble.
+        let preamble = StageReader::<C::CircuitField, R>::new(&proof[RxIndex::Preamble]);
+        let child = stage_wire_indices::<_, R, Preamble<C, R, HEADER_SIZE>>(|out| {
+            let mut wires = Vec::new();
+            for child in [&out.left, &out.right] {
+                wires.extend(wires_of(&child.unified.x)?);
+                wires.extend(wires_of(&child.unified.y)?);
+                wires.extend(wires_of(&child.circuit_id)?);
+            }
+            Ok(wires)
+        })?;
+        let child: Vec<C::CircuitField> = child.iter().map(|&i| preamble.read(i)).collect();
+        let [left_x, left_y, left_id, right_x, right_y, right_id] =
+            child.try_into().expect("six child values");
+
+        // The query stage's registry values.
+        let query = StageReader::<C::CircuitField, R>::new(&proof[RxIndex::Query]);
+        let mut fixed = Vec::new();
+        let claimed = stage_wire_indices::<_, R, Query<C, R, HEADER_SIZE>>(|out| {
+            fixed = wires_of(&out.fixed_registry)?;
+            let mut wires = wires_of(&out.registry_wxy)?;
+            for child in [&out.left, &out.right] {
+                wires.extend(wires_of(&child.child_registry_xy_at_current_w)?);
+                wires.extend(wires_of(&child.current_registry_xy_at_child_circuit_id)?);
+                wires.extend(wires_of(&child.current_registry_wy_at_child_x)?);
+            }
+            Ok(wires)
+        })?;
+        let evals = Verifier::<B>::registry_wxy_over_domain(registry, x, y);
+        let log2_n = registry.log2_domain();
+        let fixed_registry_claim = InternalCircuitIndex::ALL
+            .iter()
+            .zip(&fixed)
+            .all(|(id, &i)| {
+                let j = usize::from(id.circuit_index()) as u32;
+                query.read(i) == evals[bitreverse(j, log2_n) as usize]
+            });
+        let claimed: Vec<C::CircuitField> = claimed.iter().map(|&i| query.read(i)).collect();
+        let query_claim = claimed
+            == [
+                m(w, x, y),
+                m(w, left_x, left_y),
+                m(left_id, x, y),
+                m(w, left_x, y),
+                m(w, right_x, right_y),
+                m(right_id, x, y),
+                m(w, right_x, y),
+            ];
+
+        // The eval stage's current-step evaluations at u.
+        let eval = StageReader::<C::CircuitField, R>::new(&proof[RxIndex::Eval]);
+        let current = stage_wire_indices::<_, R, Eval<C, R, HEADER_SIZE>>(|out| {
+            let e = &out.evaluations;
+            let mut wires = Vec::new();
+            for element in [
+                &e.registry_wx0,
+                &e.registry_wx1,
+                &e.registry_wy,
+                &e.a_poly,
+                &e.b_poly,
+                &e.registry_xy,
+            ] {
+                wires.extend(wires_of(element)?);
+            }
+            Ok(wires)
+        })?;
+        let current: Vec<C::CircuitField> = current.iter().map(|&i| eval.read(i)).collect();
+        let eval_claim = current
+            == [
+                m(w, left_x, u),
+                m(w, right_x, u),
+                m(w, u, y),
+                Verifier::<B>::sparse_eval(&proof[RxComponent::AbA], u),
+                Verifier::<B>::sparse_eval(&proof[RxComponent::AbB], u),
+                m(u, x, y),
+            ];
+
+        Ok(fixed_registry_claim && query_claim && eval_claim)
+    }
+
+    /// The nested mesh claim: see [`verify`](Self::verify).
+    fn nested_mesh_claim(&self, proof: &Proof<C, R>) -> Result<bool> {
+        use nested_internal::{InternalCircuitIndex, RxIndex, stages};
+        type Preamble<C, R> = stages::preamble::Stage<C, R>;
+        type Query<C, R> = stages::query::Stage<C, R>;
+        type Eval<C, R> = stages::eval::Stage<C, R>;
+
+        let registry = &self.nested_registry;
+        let w = nested_challenge::<C>(proof.w())?;
+        let x = nested_challenge::<C>(proof.x())?;
+        let y = nested_challenge::<C>(proof.y())?;
+        let u = nested_challenge::<C>(proof.u())?;
+        let m = |w, x, y| Verifier::<B>::registry_wxy(registry, w, x, y);
+
+        // The children's lifted challenges, off the preamble.
+        let preamble = StageReader::<C::ScalarField, R>::new(&proof[RxIndex::BridgePreamble]);
+        let child = stage_wire_indices::<_, R, Preamble<C::HostCurve, R>>(|out| {
+            let mut wires = Vec::new();
+            for child in [&out.left, &out.right] {
+                wires.extend(wires_of(&child.nested.x)?);
+                wires.extend(wires_of(&child.nested.y)?);
+            }
+            Ok(wires)
+        })?;
+        let child: Vec<C::ScalarField> = child.iter().map(|&i| preamble.read(i)).collect();
+        let [left_x, left_y, right_x, right_y] = child.try_into().expect("four child values");
+
+        // The query stage's registry values.
+        let query = StageReader::<C::ScalarField, R>::new(&proof[RxIndex::BridgeQuery]);
+        let mut fixed = Vec::new();
+        let claimed = stage_wire_indices::<_, R, Query<C::HostCurve, R>>(|out| {
+            let q = &out.nested;
+            fixed = wires_of(&q.fixed_registry)?;
+            let mut wires = wires_of(&q.registry_wxy)?;
+            for child in [&q.left, &q.right] {
+                wires.extend(wires_of(&child.child_registry_xy_at_current_w)?);
+                wires.extend(wires_of(&child.current_registry_wy_at_child_x)?);
+            }
+            Ok(wires)
+        })?;
+        let evals = Verifier::<B>::registry_wxy_over_domain(registry, x, y);
+        let log2_n = registry.log2_domain();
+        let fixed_registry_claim = InternalCircuitIndex::ALL
+            .iter()
+            .zip(&fixed)
+            .all(|(id, &i)| {
+                let j = usize::from(id.circuit_index()) as u32;
+                query.read(i) == evals[bitreverse(j, log2_n) as usize]
+            });
+        let claimed: Vec<C::ScalarField> = claimed.iter().map(|&i| query.read(i)).collect();
+        let query_claim = claimed
+            == [
+                m(w, x, y),
+                m(w, left_x, left_y),
+                m(w, left_x, y),
+                m(w, right_x, right_y),
+                m(w, right_x, y),
+            ];
+
+        // The eval stage's current-step evaluations at u_n.
+        let eval = StageReader::<C::ScalarField, R>::new(&proof[RxIndex::BridgeEval]);
+        let current = stage_wire_indices::<_, R, Eval<C::HostCurve, R>>(|out| {
+            let e = &out.nested;
+            let mut wires = Vec::new();
+            for element in [
+                &e.registry_wx0,
+                &e.registry_wx1,
+                &e.registry_wy,
+                &e.a_poly,
+                &e.b_poly,
+                &e.registry_xy,
+            ] {
+                wires.extend(wires_of(element)?);
+            }
+            Ok(wires)
+        })?;
+        let current: Vec<C::ScalarField> = current.iter().map(|&i| eval.read(i)).collect();
+        let eval_claim = current
+            == [
+                m(w, left_x, u),
+                m(w, right_x, u),
+                m(w, u, y),
+                Verifier::<B>::sparse_eval(&proof[NestedRxComponent::AbA], u),
+                Verifier::<B>::sparse_eval(&proof[NestedRxComponent::AbB], u),
+                m(u, x, y),
+            ];
+
+        Ok(fixed_registry_claim && query_claim && eval_claim)
+    }
+}
+
+/// Whether `commitments` are the commitments of `polys` under `generators`,
+/// as one batch: the Horner combination of the polynomials under `r` must
+/// commit to the same combination of the points, which a mismatch in any
+/// pair breaks unless `r` is a root of the difference.
+fn commitments_match<B, F, P, R, G>(
+    polys: &[&sparse::Polynomial<F, R>],
+    commitments: &[P],
+    r: F,
+    generators: &G,
+) -> bool
+where
+    B: Backend,
+    F: PrimeField,
+    P: CurveAffine<ScalarExt = F>,
+    R: Rank,
+    G: FixedGenerators<P>,
+{
+    assert_eq!(polys.len(), commitments.len());
+    let folded = sparse::Polynomial::fold(polys.iter().copied(), r);
+    let expected = B::sparse_commit_to_affine(&folded, generators);
+
+    // Polynomial i carries r^{n-1-i}; so does its commitment.
+    let n = commitments.len();
+    let mut weights = alloc::vec![F::ONE; n];
+    for i in (0..n.saturating_sub(1)).rev() {
+        weights[i] = weights[i + 1] * r;
+    }
+    B::msm(weights.iter(), commitments.iter()).to_affine() == expected
 }
 
 mod native {

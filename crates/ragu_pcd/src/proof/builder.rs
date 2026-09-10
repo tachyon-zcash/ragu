@@ -9,7 +9,7 @@
 use alloc::{sync::Arc, vec::Vec};
 use core::{cell::OnceCell, marker::PhantomData};
 
-use ragu_arithmetic::{Cycle, ff::Field};
+use ragu_arithmetic::Cycle;
 use ragu_backend::Backend;
 use ragu_circuits::{
     polynomials::{Rank, sparse},
@@ -727,11 +727,7 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
     /// Returns the derived alpha for a cached bridge, as a distinct power of
     /// `bridge_alpha`.
     fn bridge_alpha_power(&self, idx: nested::RxIndex) -> C::ScalarField {
-        let n = match idx {
-            nested::RxIndex::BridgeAB => 2,
-            _ => panic!("not a cached bridge: {idx:?}"),
-        };
-        self.bridge_alpha.pow_vartime([n])
+        super::bridge_alpha_power(self.bridge_alpha, idx)
     }
 
     cached_bridge!(

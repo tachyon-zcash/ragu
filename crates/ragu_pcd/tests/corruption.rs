@@ -24,8 +24,8 @@ use ragu_pasta::{Fp, Fq, Pasta};
 use ragu_pcd::{
     Application, ApplicationBuilder, Proof,
     fuzzing::corrupt::{
-        Binding, BridgeCommitment, Challenge, Corruption, NativeRx, NestedAccumulator, NestedRx,
-        RxComponent, Side,
+        Binding, BridgeCommitment, Challenge, Corruption, NativeCommitment, NativeRx,
+        NestedAccumulator, NestedCommitment, NestedRx, RxComponent, Side,
     },
 };
 use ragu_testing::pcd::nontrivial::{Hash2, InternalNode, LeafNode, Merge2, WitnessLeaf};
@@ -191,6 +191,15 @@ fn vocabulary() -> Vec<Corruption<C>> {
     for which in BridgeCommitment::ALL {
         out.push(Corruption::NegateBridgeCommitment(which));
     }
+
+    for which in NativeCommitment::ALL {
+        out.push(Corruption::NegateNativeCommitment(which));
+    }
+    for which in NestedCommitment::ALL {
+        out.push(Corruption::NegateNestedCommitment(which));
+    }
+    out.push(Corruption::RescaleNativeAccumulator(Fp::from(5u64)));
+    out.push(Corruption::RescaleNestedAccumulator(Fq::from(5u64)));
 
     let mut components = vec![RxComponent::AbA, RxComponent::AbB];
     components.extend(NativeRx::ALL.map(RxComponent::Rx));
@@ -380,6 +389,10 @@ fn clone_corruption(corruption: &Corruption<C>) -> Corruption<C> {
         Corruption::SwapHeaders => Corruption::SwapHeaders,
         Corruption::Challenge(which, value) => Corruption::Challenge(which, value),
         Corruption::NegateBridgeCommitment(which) => Corruption::NegateBridgeCommitment(which),
+        Corruption::NegateNativeCommitment(which) => Corruption::NegateNativeCommitment(which),
+        Corruption::NegateNestedCommitment(which) => Corruption::NegateNestedCommitment(which),
+        Corruption::RescaleNativeAccumulator(scale) => Corruption::RescaleNativeAccumulator(scale),
+        Corruption::RescaleNestedAccumulator(scale) => Corruption::RescaleNestedAccumulator(scale),
         Corruption::NativeCoeff {
             component,
             coeff,

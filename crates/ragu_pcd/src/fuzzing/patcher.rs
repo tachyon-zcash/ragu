@@ -71,9 +71,8 @@
 //! track will surface as a failing patcher test.
 
 use alloc::{format, string::String, vec::Vec};
-use core::marker::PhantomData;
 
-use ragu_arithmetic::{Coeff, Cycle, ff::Field, rand::CryptoRng};
+use ragu_arithmetic::{Cycle, ff::Field, rand::CryptoRng};
 use ragu_circuits::{
     Circuit,
     polynomials::Rank,
@@ -81,13 +80,8 @@ use ragu_circuits::{
 };
 use ragu_core::{
     Result,
-    convert::WireMap,
-    drivers::{
-        Driver, DriverTypes,
-        emulator::{Emulator, Wireless},
-    },
-    gadgets::{Bound, Gadget},
-    maybe::{Always, Empty, Maybe, MaybeKind},
+    drivers::emulator::Emulator,
+    maybe::{Always, Maybe, MaybeKind},
 };
 use ragu_primitives::{
     EndoscalarChallenge, GadgetExt, Point, extract_endoscalar,
@@ -103,6 +97,7 @@ use crate::{
         },
         native::{self, total_circuit_counts},
         nested::{self, NUM_ENDOSCALING_POINTS},
+        stage_wires::{stage_wire_indices, wires_of},
         transcript::Transcript,
     },
     proof::ProofBuilder,
@@ -328,112 +323,6 @@ fn covered_nested_element_positions(coverage: &nested::unified::Coverage) -> Vec
         position += wires;
     });
     positions
-}
-
-/// A driver that is never driven: its `usize` wires let a stage gadget be
-/// rebound onto reservation indices, exactly as `StageGuard` rebinds it
-/// onto the reserved wires, so a harness can name a stage field by index.
-struct Indexed<F>(PhantomData<F>);
-
-impl<F: Field> DriverTypes for Indexed<F> {
-    type ImplField = F;
-    type ImplWire = usize;
-    type MaybeKind = Empty;
-    type LCadd = ();
-    type LCenforce = ();
-    type Extra = ();
-
-    fn gate(
-        &mut self,
-        _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>,
-    ) -> Result<(usize, usize, usize, ())> {
-        unreachable!("`Indexed` only rebinds wires; it is never driven")
-    }
-
-    fn assign_extra(&mut self, _: (), _: impl Fn() -> Result<Coeff<F>>) -> Result<usize> {
-        unreachable!("`Indexed` only rebinds wires; it is never driven")
-    }
-}
-
-impl<'dr, F: Field> Driver<'dr> for Indexed<F> {
-    type F = F;
-    type Wire = usize;
-    const ONE: usize = usize::MAX;
-
-    fn add(&mut self, _: impl Fn(())) -> usize {
-        unreachable!("`Indexed` only rebinds wires; it is never driven")
-    }
-
-    fn enforce_zero(&mut self, _: impl Fn(())) -> Result<()> {
-        unreachable!("`Indexed` only rebinds wires; it is never driven")
-    }
-}
-
-/// Hands out successive reservation indices, the way `StageWireInjector`
-/// hands out successive reserved wires.
-struct Indexer<F> {
-    next: usize,
-    _marker: PhantomData<F>,
-}
-
-impl<F: Field> WireMap<F> for Indexer<F> {
-    type Src = Emulator<Wireless<Empty, F>>;
-    type Dst = Indexed<F>;
-
-    fn convert_wire(&mut self, _: &()) -> Result<usize> {
-        let index = self.next;
-        self.next += 1;
-        Ok(index)
-    }
-}
-
-/// Collects the wires of a gadget already bound to [`Indexed`], in
-/// traversal order — the same order the stage injector assigns them.
-struct WireCollector<F> {
-    wires: Vec<usize>,
-    _marker: PhantomData<F>,
-}
-
-impl<F: Field> WireMap<F> for WireCollector<F> {
-    type Src = Indexed<F>;
-    type Dst = Indexed<F>;
-
-    fn convert_wire(&mut self, wire: &usize) -> Result<usize> {
-        self.wires.push(*wire);
-        Ok(*wire)
-    }
-}
-
-/// The reservation indices of a sub-gadget of a stage output rebound by
-/// [`stage_wire_indices`] (a `Point` yields its two coordinates).
-fn wires_of<'dr, F: Field, G: Gadget<'dr, Indexed<F>>>(gadget: &G) -> Result<Vec<usize>> {
-    let mut collector = WireCollector::<F> {
-        wires: Vec::new(),
-        _marker: PhantomData,
-    };
-    gadget.map(&mut collector)?;
-    Ok(collector.wires)
-}
-
-/// The reservation indices of the wires `select` picks from stage `S`'s
-/// output gadget.
-///
-/// Runs the stage on the counter emulator, as `configure_stage` does to lay
-/// the stage out, then rebinds the gadget onto indices starting at the
-/// stage's first reserved wire — `2 · (skip_gates − 1)` wires precede it,
-/// two per gate of every ancestor stage, the SYSTEM gate aside.
-fn stage_wire_indices<F: Field, R: Rank, S: Stage<F, R> + Default>(
-    select: impl for<'dst> FnOnce(Bound<'dst, Indexed<F>, S::OutputKind>) -> Result<Vec<usize>>,
-) -> Result<Vec<usize>> {
-    let mut counter = Emulator::counter();
-    let stage = S::default();
-    let gadget = stage.witness(&mut counter, Empty)?;
-    let mut indexer = Indexer::<F> {
-        next: 2 * (S::skip_gates() - 1),
-        _marker: PhantomData,
-    };
-    let rebound = gadget.map(&mut indexer)?;
-    select(rebound)
 }
 
 /// Runs the fuse witness-generation for `step` over `left` and `right` and

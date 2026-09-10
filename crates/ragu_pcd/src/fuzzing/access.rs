@@ -23,7 +23,8 @@ use ragu_circuits::polynomials::{Rank, sparse};
 
 use super::Proof;
 use crate::fuzzing::corrupt::{
-    BridgeCommitment, NativeRx, NestedAccumulator, NestedRx, RxComponent,
+    BridgeCommitment, NativeCommitment, NativeRx, NestedAccumulator, NestedCommitment, NestedRx,
+    RxComponent,
 };
 
 impl<C: Cycle, R: Rank> Proof<C, R> {
@@ -124,11 +125,83 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         }
     }
 
+    /// The cached native commitment named by `which`, mutably.
+    ///
+    /// The verifier recomputes every cached commitment from its polynomial,
+    /// so these are worth corrupting.
+    pub(crate) fn native_commitment_cache_mut(
+        &mut self,
+        which: NativeCommitment,
+    ) -> &mut C::HostCurve {
+        use NativeRx::*;
+        match which {
+            NativeCommitment::AbA => &mut self.native_a_commitment.0,
+            NativeCommitment::AbB => &mut self.native_b_commitment.0,
+            NativeCommitment::RegistryXy => &mut self.native_registry_xy_commitment.0,
+            NativeCommitment::P => &mut self.native_p_commitment.0,
+            NativeCommitment::Rx(idx) => match idx {
+                Preamble => &mut self.native_preamble_commitment.0,
+                InnerError => &mut self.native_inner_error_commitment.0,
+                OuterError => &mut self.native_outer_error_commitment.0,
+                Query => &mut self.native_query_commitment.0,
+                Eval => &mut self.native_eval_commitment.0,
+                Application => &mut self.native_application_commitment.0,
+                Hashes1 => &mut self.native_hashes_1_commitment.0,
+                Hashes2 => &mut self.native_hashes_2_commitment.0,
+                InnerCollapse => &mut self.native_inner_collapse_commitment.0,
+                OuterCollapse => &mut self.native_outer_collapse_commitment.0,
+                ComputeV => &mut self.native_compute_v_commitment.0,
+                BindChallenges(k) => &mut self.native_bind_challenges_commitments[k as usize].0,
+                BindBeta => &mut self.native_bind_beta_commitment.0,
+                BindEndoscalar => &mut self.native_bind_endoscalar_commitment.0,
+                EndoscalingStep(step) => {
+                    &mut self.native_endoscaling_step_commitments[step as usize].0
+                }
+                EndoscalarStage => &mut self.native_endoscalar_commitment.0,
+                PointsInputs => &mut self.native_points_inputs_commitment.0,
+                PointsInterstitials => &mut self.native_points_interstitials_commitment.0,
+            },
+        }
+    }
+
+    /// The cached nested commitment named by `which`, mutably.
+    pub(crate) fn nested_commitment_cache_mut(
+        &mut self,
+        which: NestedCommitment,
+    ) -> &mut C::NestedCurve {
+        use NestedRx::*;
+        match which {
+            NestedCommitment::AbA => &mut self.nested_a_commitment.0,
+            NestedCommitment::AbB => &mut self.nested_b_commitment.0,
+            NestedCommitment::RegistryXy => &mut self.nested_registry_xy_commitment.0,
+            NestedCommitment::P => &mut self.nested_p_commitment.0,
+            NestedCommitment::Rx(idx) => match idx {
+                EndoscalingStep(step) => {
+                    &mut self.nested_endoscaling_step_commitments[step as usize].0
+                }
+                Export => &mut self.nested_export_commitment.0,
+                Collapse => &mut self.nested_collapse_commitment.0,
+                ComputeV => &mut self.nested_compute_v_commitment.0,
+                EndoscalarStage => &mut self.nested_endoscalar_commitment.0,
+                PointsStage => &mut self.nested_points_commitment.0,
+                BridgePreamble => &mut self.bridge_preamble_commitment,
+                BridgeSPrime => &mut self.bridge_s_prime_commitment,
+                BridgeInnerError => &mut self.bridge_inner_error_commitment,
+                BridgeOuterError => &mut self.bridge_outer_error_commitment,
+                BridgeAB => &mut self.bridge_ab_commitment.0,
+                BridgeQuery => &mut self.bridge_query_commitment,
+                BridgeF => &mut self.bridge_f_commitment,
+                BridgeEval => &mut self.bridge_eval_commitment,
+                ChallengeStage => &mut self.nested_challenges_commitment.0,
+                BetaStage => &mut self.nested_beta_commitment.0,
+            },
+        }
+    }
+
     /// The bridge commitment named by `which`, mutably.
     ///
     /// These are the eight nested-curve points the unified instance carries
-    /// (see `unified::Output::alloc_from_proof`); the native commitment caches
-    /// have no accessor because single-proof verification never reads them.
+    /// (see `unified::Output::alloc_from_proof`).
     pub(crate) fn bridge_commitment_mut(&mut self, which: BridgeCommitment) -> &mut C::NestedCurve {
         use BridgeCommitment::*;
         match which {
