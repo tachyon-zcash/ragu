@@ -82,8 +82,9 @@
 //! `bridge_alpha` has no variant: single-proof verification never reads it,
 //! the cached bridge polynomials it derived being materialized in the proof
 //! already. Neither do the native commitment caches, for the same reason —
-//! of the commitments, only the eight nested-curve bridge commitments and
-//! the exported challenge binding reach the unified instance.
+//! of the commitments, only the eight nested-curve bridge commitments, the
+//! exported challenge binding and the walked $P_n$ reach the unified
+//! instance.
 //!
 //! Nor is there a variant for the `registry_wx0`, `registry_wx1` and
 //! `registry_wy` polynomials the `TODO` in `verify.rs` is about:

@@ -496,3 +496,68 @@ fn nested_challenge_stage_is_bound_by_its_commitment() -> Result<()> {
 
     Ok(())
 }
+
+/// The parent's root stage holds each child's challenge-stage commitment
+/// and $P_n$ as the child cached them, and the parent's own $P_n$ is its
+/// walk's last interstitial: the two ends `bind_beta` and `bind_endoscalar`
+/// hold together through the `nested_p_commitment` slot.
+#[test]
+fn nested_p_is_pinned_at_both_ends_of_the_walk() -> Result<()> {
+    use ragu_arithmetic::CurveAffine;
+
+    use crate::internal::{
+        native::{
+            RxIndex,
+            stages::points::{BindingStage, WalkStage},
+        },
+        stage_wires::{StageReader, stage_wire_indices, wires_of},
+    };
+
+    type Nested = <C as ragu_arithmetic::Cycle>::NestedCurve;
+    let coordinates = |point: Nested| -> [ragu_pasta::Fp; 2] {
+        let c = point
+            .coordinates()
+            .into_option()
+            .expect("a walked point is not the identity");
+        [*c.x(), *c.y()]
+    };
+
+    let app = app();
+    let (parent, left, right) = fused(&app);
+
+    // The root stage, wire by wire, against the children's caches.
+    let binding = StageReader::<ragu_pasta::Fp, R>::new(&parent[RxIndex::PointsBinding]);
+    let wires = stage_wire_indices::<_, R, BindingStage<Nested>>(|stage| {
+        let mut wires = wires_of(&stage.left_challenges)?;
+        wires.extend(wires_of(&stage.left_p)?);
+        wires.extend(wires_of(&stage.right_challenges)?);
+        wires.extend(wires_of(&stage.right_p)?);
+        Ok(wires)
+    })?;
+    let held: alloc::vec::Vec<ragu_pasta::Fp> = wires.iter().map(|&i| binding.read(i)).collect();
+    let expected: alloc::vec::Vec<ragu_pasta::Fp> = [
+        left.nested_challenges_commitment(),
+        left.nested_p_commitment(),
+        right.nested_challenges_commitment(),
+        right.nested_p_commitment(),
+    ]
+    .into_iter()
+    .flat_map(coordinates)
+    .collect();
+    assert_eq!(
+        held, expected,
+        "the root stage does not hold the children's points"
+    );
+
+    // The walk's last interstitial, against this step's cache.
+    let walk = StageReader::<ragu_pasta::Fp, R>::new(&parent[RxIndex::PointsWalk]);
+    let wires = stage_wire_indices::<_, R, WalkStage<Nested>>(|stage| wires_of(stage.p()))?;
+    let last: alloc::vec::Vec<ragu_pasta::Fp> = wires.iter().map(|&i| walk.read(i)).collect();
+    assert_eq!(
+        last,
+        coordinates(parent.nested_p_commitment()).to_vec(),
+        "P_n is not the walk's last interstitial"
+    );
+
+    Ok(())
+}

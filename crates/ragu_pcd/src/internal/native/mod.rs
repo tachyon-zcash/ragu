@@ -346,7 +346,7 @@ pub enum RxIndex {
     Query,
     Eval,
     /// The points stage holding the children's challenge-stage commitments
-    /// (see [`stages::points`]).
+    /// and $P_n$ (see [`stages::points`]).
     PointsBinding,
     /// The points stage holding the rest of the children's commitments.
     PointsChildren,

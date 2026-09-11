@@ -13,7 +13,7 @@
 //!
 //! | stage | holds | fixed before | carried by |
 //! |---|---|---|---|
-//! | [`BindingStage`] | the children's challenge-stage commitments | $w$ | `preamble` bridge |
+//! | [`BindingStage`] | the children's challenge-stage commitments and $P_n$ | $w$ | `preamble` bridge |
 //! | [`ChildrenStage`] | the rest of the children's nested commitments | $w$ | `preamble` bridge |
 //! | [`RegistryWxStage`] | $m_n(w_n, x_{i,n}, Y)$ | $y$ | `s_prime` bridge |
 //! | [`AbStage`] | $m_n(w_n, X, y_n)$, $A_n$, $B_n$ | $x$ | `ab` bridge |
@@ -26,13 +26,19 @@
 //!
 //! [`BindingStage`] is the root of the whole native stage tree, so the
 //! circuits on the preamble chain reserve it too: that is what lets
-//! [`bind_beta`](super::super::circuits::bind_beta) hold the walked
-//! challenge-stage commitments against the bindings the children exported,
-//! and it is kept to those two points so that the preamble chain stays
-//! within its gate budget. [`WalkStage`], committed after $\beta$, holds
-//! the endoscalar's bits and the walk's interstitials and closes the steps'
-//! chain. Every point stage's curve membership is enforced once, by
-//! [`bind_endoscalar`](super::super::circuits::bind_endoscalar).
+//! [`bind_beta`](super::super::circuits::bind_beta) hold the points it
+//! walks against what the children exported through their unified
+//! instances, their challenge-stage commitments against the bindings and
+//! their $P_n$ against the [`nested_p_commitment`] slots. It is kept to
+//! those four points so that the preamble chain stays within its gate
+//! budget. [`WalkStage`], committed after $\beta$, holds the endoscalar's
+//! bits and the walk's interstitials and closes the steps' chain; its last
+//! interstitial is this step's $P_n$, which
+//! [`bind_endoscalar`](super::super::circuits::bind_endoscalar) pins to the
+//! step's own [`nested_p_commitment`] slot. Every point stage's curve
+//! membership is enforced once, by `bind_endoscalar`.
+//!
+//! [`nested_p_commitment`]: super::super::unified::Output::nested_p_commitment
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -69,8 +75,8 @@ pub type NumInputs = InputsLen<NUM_ENDOSCALING_POINTS>;
 pub const NUM_CHILD_POINTS: usize = nested::RxIndex::NUM + 4;
 
 /// The points of [`ChildrenStage`]: each child's points in walk order, the
-/// challenge stage's aside, which [`BindingStage`] holds.
-pub const NUM_CHILDREN_POINTS: usize = 2 * (NUM_CHILD_POINTS - 1);
+/// challenge stage's and $P_n$ aside, which [`BindingStage`] holds.
+pub const NUM_CHILDREN_POINTS: usize = 2 * (NUM_CHILD_POINTS - 2);
 
 /// Length type for the [`ChildrenStage`] points.
 pub type ChildrenLen = ConstLen<NUM_CHILDREN_POINTS>;
@@ -83,11 +89,22 @@ const _: () = assert!(
     "the walk's layout does not match the nested batch"
 );
 
+/// The position of a child's $P_n$ among its points: the last, as
+/// [`nested::pcs::child_commitments`] orders them.
+const CHILD_P: usize = NUM_CHILD_POINTS - 1;
+
+/// The position of a child's challenge-stage commitment among its points.
+fn child_challenges() -> usize {
+    nested::RxIndex::ChallengeStage.position()
+}
+
 /// Where an input of the walk lives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputSource {
     /// A child's challenge-stage commitment, in [`BindingStage`].
-    Binding(Side),
+    Challenges(Side),
+    /// A child's $P_n$, in [`BindingStage`].
+    P(Side),
     /// A point of [`ChildrenStage`], by position.
     Children(usize),
     /// One of the two points of [`RegistryWxStage`].
@@ -119,14 +136,18 @@ pub fn input_source(i: usize) -> InputSource {
             Side::Right
         };
         let k = i % NUM_CHILD_POINTS;
-        let challenge = nested::RxIndex::ChallengeStage.position();
-        if k == challenge {
-            return InputSource::Binding(side);
+        let challenges = child_challenges();
+        if k == challenges {
+            return InputSource::Challenges(side);
         }
-        let offset = if k > challenge { k - 1 } else { k };
+        if k == CHILD_P {
+            return InputSource::P(side);
+        }
+        // P_n is the last point, so only the challenge stage can precede k.
+        let offset = if k > challenges { k - 1 } else { k };
         let base = match side {
             Side::Left => 0,
-            Side::Right => NUM_CHILD_POINTS - 1,
+            Side::Right => NUM_CHILD_POINTS - 2,
         };
         return InputSource::Children(base + offset);
     }
@@ -141,11 +162,14 @@ pub fn input_source(i: usize) -> InputSource {
     }
 }
 
-/// Witness of [`BindingStage`]: the children's challenge-stage commitments.
+/// Witness of [`BindingStage`]: for each child, its challenge-stage
+/// commitment and its $P_n$.
 #[derive(Clone, Copy)]
 pub struct BindingWitness<C: CurveAffine> {
-    pub left: C,
-    pub right: C,
+    pub left_challenges: C,
+    pub left_p: C,
+    pub right_challenges: C,
+    pub right_p: C,
 }
 
 /// Witness of [`ChildrenStage`].
@@ -195,6 +219,14 @@ impl<C: CurveAffine> WalkWitness<C> {
             interstitials: walk.interstitials,
         }
     }
+
+    /// The walk's last interstitial: $P_n$.
+    pub fn p(&self) -> C {
+        *self
+            .interstitials
+            .last()
+            .expect("NUM_ENDOSCALING_POINTS guarantees at least one interstitial")
+    }
 }
 
 /// Splits the two children's points, each in the order
@@ -210,12 +242,12 @@ pub fn children_witnesses<C: CurveAffine>(
 ) -> (BindingWitness<C>, ChildrenWitness<C>) {
     assert_eq!(left.len(), NUM_CHILD_POINTS);
     assert_eq!(right.len(), NUM_CHILD_POINTS);
-    let challenge = nested::RxIndex::ChallengeStage.position();
+    let challenges = child_challenges();
     let rest = |points: &[C]| {
         points
             .iter()
             .enumerate()
-            .filter(|&(k, _)| k != challenge)
+            .filter(|&(k, _)| k != challenges && k != CHILD_P)
             .map(|(_, &point)| point)
             .collect::<Vec<_>>()
     };
@@ -223,8 +255,10 @@ pub fn children_witnesses<C: CurveAffine>(
     points.extend(rest(right));
     (
         BindingWitness {
-            left: left[challenge],
-            right: right[challenge],
+            left_challenges: left[challenges],
+            left_p: left[CHILD_P],
+            right_challenges: right[challenges],
+            right_p: right[CHILD_P],
         },
         ChildrenWitness {
             points: FixedVec::new(points).expect("NUM_CHILDREN_POINTS points"),
@@ -253,8 +287,10 @@ impl<C: CurveAffine> Inputs<C> {
         assert_eq!(points.len(), NUM_ENDOSCALING_POINTS);
         let input = |i: usize| points[1 + i];
         let mut binding = BindingWitness {
-            left: C::identity(),
-            right: C::identity(),
+            left_challenges: C::identity(),
+            left_p: C::identity(),
+            right_challenges: C::identity(),
+            right_p: C::identity(),
         };
         let mut children = Vec::with_capacity(NUM_CHILDREN_POINTS);
         let mut registry_wx = [C::identity(); 2];
@@ -263,8 +299,10 @@ impl<C: CurveAffine> Inputs<C> {
         let mut registry_xy = C::identity();
         for i in 0..NumInputs::len() {
             match input_source(i) {
-                InputSource::Binding(Side::Left) => binding.left = input(i),
-                InputSource::Binding(Side::Right) => binding.right = input(i),
+                InputSource::Challenges(Side::Left) => binding.left_challenges = input(i),
+                InputSource::Challenges(Side::Right) => binding.right_challenges = input(i),
+                InputSource::P(Side::Left) => binding.left_p = input(i),
+                InputSource::P(Side::Right) => binding.right_p = input(i),
                 InputSource::Children(k) => {
                     debug_assert_eq!(k, children.len());
                     children.push(input(i));
@@ -300,8 +338,10 @@ impl<C: CurveAffine> Inputs<C> {
     /// The walk's `i`-th input.
     pub fn input(&self, i: usize) -> C {
         match input_source(i) {
-            InputSource::Binding(Side::Left) => self.binding.left,
-            InputSource::Binding(Side::Right) => self.binding.right,
+            InputSource::Challenges(Side::Left) => self.binding.left_challenges,
+            InputSource::Challenges(Side::Right) => self.binding.right_challenges,
+            InputSource::P(Side::Left) => self.binding.left_p,
+            InputSource::P(Side::Right) => self.binding.right_p,
             InputSource::Children(k) => self.children.points[k],
             InputSource::RegistryWx(0) => self.registry_wx.registry_wx0,
             InputSource::RegistryWx(_) => self.registry_wx.registry_wx1,
@@ -324,9 +364,13 @@ impl<C: CurveAffine> Inputs<C> {
 #[derive(Gadget, Consistent)]
 pub struct Binding<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     #[ragu(gadget)]
-    pub left: Point<'dr, D, C>,
+    pub left_challenges: Point<'dr, D, C>,
     #[ragu(gadget)]
-    pub right: Point<'dr, D, C>,
+    pub left_p: Point<'dr, D, C>,
+    #[ragu(gadget)]
+    pub right_challenges: Point<'dr, D, C>,
+    #[ragu(gadget)]
+    pub right_p: Point<'dr, D, C>,
 }
 
 /// Output gadget of [`ChildrenStage`].
@@ -374,6 +418,15 @@ pub struct Walk<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     pub interstitials: FixedVec<Point<'dr, D, C>, NumSteps>,
 }
 
+impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> Walk<'dr, D, C> {
+    /// The walk's last interstitial: $P_n$.
+    pub fn p(&self) -> &Point<'dr, D, C> {
+        self.interstitials
+            .last()
+            .expect("NUM_ENDOSCALING_POINTS guarantees at least one interstitial")
+    }
+}
+
 /// The loaded input stages, viewed as the walk's inputs.
 pub struct WalkInputs<'a, 'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     pub binding: &'a Binding<'dr, D, C>,
@@ -392,8 +445,10 @@ impl<'a, 'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> WalkInputs<'a, 'dr, D
     /// The walk's `i`-th input.
     pub fn input(&self, i: usize) -> &'a Point<'dr, D, C> {
         match input_source(i) {
-            InputSource::Binding(Side::Left) => &self.binding.left,
-            InputSource::Binding(Side::Right) => &self.binding.right,
+            InputSource::Challenges(Side::Left) => &self.binding.left_challenges,
+            InputSource::Challenges(Side::Right) => &self.binding.right_challenges,
+            InputSource::P(Side::Left) => &self.binding.left_p,
+            InputSource::P(Side::Right) => &self.binding.right_p,
             InputSource::Children(k) => &self.children.points[k],
             InputSource::RegistryWx(0) => &self.registry_wx.registry_wx0,
             InputSource::RegistryWx(_) => &self.registry_wx.registry_wx1,
@@ -444,10 +499,10 @@ macro_rules! points_stage {
 }
 
 points_stage!(
-    /// The root of the native stage tree: the children's challenge-stage
-    /// commitments, committed before $w$.
+    /// The root of the native stage tree: for each child, its challenge-stage
+    /// commitment and its $P_n$, committed before $w$.
     BindingStage, parent = (), witness = BindingWitness, output = Binding,
-    { left, right }
+    { left_challenges, left_p, right_challenges, right_p }
 );
 
 /// The rest of the children's nested commitments, committed before $w$.
@@ -501,8 +556,8 @@ points_stage!(
 );
 
 /// The walk's stage: $\beta$'s bits, bound to `pre_beta` by
-/// `bind_endoscalar`, and the walk's outputs, one per step; committed after
-/// $\beta$.
+/// `bind_endoscalar`, and the walk's outputs, one per step, the last of
+/// which is $P_n$; committed after $\beta$.
 #[derive(Default)]
 pub struct WalkStage<C: CurveAffine>(PhantomData<C>);
 
@@ -569,11 +624,13 @@ mod tests {
         assert_eq!(inputs.walk(), points);
 
         let mut children = alloc::vec![false; NUM_CHILDREN_POINTS];
-        let mut binding = [false; 2];
+        let mut binding = [false; 4];
         for i in 0..NumInputs::len() {
             match input_source(i) {
-                InputSource::Binding(Side::Left) => binding[0] = true,
-                InputSource::Binding(Side::Right) => binding[1] = true,
+                InputSource::Challenges(Side::Left) => binding[0] = true,
+                InputSource::P(Side::Left) => binding[1] = true,
+                InputSource::Challenges(Side::Right) => binding[2] = true,
+                InputSource::P(Side::Right) => binding[3] = true,
                 InputSource::Children(k) => {
                     assert!(!children[k], "child point {k} sourced twice");
                     children[k] = true;
@@ -583,5 +640,17 @@ mod tests {
         }
         assert!(binding.iter().all(|&b| b));
         assert!(children.iter().all(|&c| c));
+    }
+
+    /// A child's $P_n$ is the last of its points, where
+    /// [`nested::pcs::child_commitments`] puts it.
+    #[test]
+    fn child_p_is_the_last_child_point() {
+        assert_eq!(input_source(CHILD_P), InputSource::P(Side::Left));
+        assert_eq!(
+            input_source(NUM_CHILD_POINTS + CHILD_P),
+            InputSource::P(Side::Right)
+        );
+        assert!(child_challenges() < CHILD_P);
     }
 }

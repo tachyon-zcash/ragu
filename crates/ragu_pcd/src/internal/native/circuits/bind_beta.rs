@@ -1,5 +1,6 @@
-//! Circuit binding the children's nested challenge stages, as walked, to
-//! the bindings the children exported and to their `pre_beta`.
+//! Circuit binding the children's nested challenge stages and $P_n$, as
+//! walked, to what the children exported: the bindings, completed with
+//! their `pre_beta`, and their [`nested_p_commitment`] slots.
 //!
 //! ## Operations
 //!
@@ -21,6 +22,13 @@
 //! That is what ties the stage the child's nested circuits read their
 //! challenges from to the child's transcript.
 //!
+//! The same stage holds each child's $P_n$ as walked. The child's own
+//! `bind_endoscalar` pinned its walk's last interstitial to the
+//! [`nested_p_commitment`] slot of its unified instance, and this circuit
+//! enforces the walked copy equal to that slot, read from the [`preamble`]:
+//! the parent opens the child's $p_n$ against the very point the child's
+//! steps computed, which is what makes the child's nested batch binding.
+//!
 //! ## Staging
 //!
 //! Chained through [`outer_error`] to share the final mask of the hash and
@@ -35,6 +43,7 @@
 //!
 //! [`challenges`]: crate::internal::nested::stages::challenges
 //! [`nested_challenges_partial`]: unified::Output::nested_challenges_partial
+//! [`nested_p_commitment`]: unified::Output::nested_p_commitment
 //! [`points::BindingStage`]: super::super::stages::points::BindingStage
 //! [`preamble`]: super::super::stages::preamble
 //! [`outer_error`]: super::super::stages::outer_error
@@ -102,8 +111,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Para
 pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
     /// The unified instance, for the instance and accumulated coverage.
     pub unified: unified::Instance<C>,
-    /// The binding stage: the children's challenge-stage commitments as
-    /// walked.
+    /// The binding stage: the children's challenge-stage commitments and
+    /// $P_n$ as walked.
     pub binding: &'a super::super::stages::points::BindingWitness<C::NestedCurve>,
     /// Witness for the preamble stage (provides the children's `pre_beta`
     /// and exported bindings).
@@ -156,9 +165,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
         let generator = C::nested_generators(self.params).g()[generator_index::<C, R>()];
-        for (child, walked) in [
-            (&preamble.left, &binding.left),
-            (&preamble.right, &binding.right),
+        for (child, challenges, p) in [
+            (&preamble.left, &binding.left_challenges, &binding.left_p),
+            (&preamble.right, &binding.right_challenges, &binding.right_p),
         ] {
             let pre_beta =
                 EndoscalarChallenge::from_element(dr, allocator, child.unified.pre_beta.clone())?;
@@ -171,7 +180,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
                     .nested_challenges_partial
                     .add_incomplete(dr, &beta_term, bank)
             })?;
-            walked.enforce_equal(dr, &expected)?;
+            challenges.enforce_equal(dr, &expected)?;
+
+            // The child's P_n as walked is the one its own bind_endoscalar
+            // pinned to its instance.
+            p.enforce_equal(dr, &child.unified.nested_p_commitment)?;
         }
 
         let (output, aux) = unified_output.finish(dr, allocator)?;

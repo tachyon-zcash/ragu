@@ -41,7 +41,7 @@ pub type InternalOutputKind<C: Cycle> = Kind![C::CircuitField; WithSuffix<'_, _,
 /// The number of wires in an [`Output`] gadget.
 ///
 /// Used for allocation sizing and verified by tests.
-pub const NUM_WIRES: usize = 31;
+pub const NUM_WIRES: usize = 33;
 
 /// Maps a field type to its `Output` gadget type.
 macro_rules! unified_output_type {
@@ -320,6 +320,10 @@ define_unified_instance! {
     /// challenges, which a parent's `bind_beta` completes and holds against
     /// the stage as walked.
     nested_challenges_partial: Point,
+    /// The nested batch's commitment $P_n$: the last interstitial of the
+    /// native endoscaling walk, which `bind_endoscalar` pins here and a
+    /// parent's `bind_beta` holds against the copy it walks.
+    nested_p_commitment: Point,
 }
 
 /// A lazy-allocation slot for a single field in the unified output.
@@ -492,6 +496,8 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
         let v = Element::alloc(dr, allocator, proof.as_ref().map(|p| p.v()))?;
         let nested_challenges_partial =
             Point::alloc(dr, proof.as_ref().map(|p| p.nested_challenges_partial()))?;
+        let nested_p_commitment =
+            Point::alloc(dr, proof.as_ref().map(|p| p.nested_p_commitment()))?;
 
         Ok(Output {
             bridge_preamble_commitment,
@@ -516,6 +522,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
             pre_beta,
             v,
             nested_challenges_partial,
+            nested_p_commitment,
         })
     }
 }
@@ -597,6 +604,7 @@ mod tests {
             pre_beta: true,
             v: true,
             nested_challenges_partial: true,
+            nested_p_commitment: true,
         };
         cov.assert_complete();
     }

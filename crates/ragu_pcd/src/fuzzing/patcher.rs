@@ -693,6 +693,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                     pre_beta: builder.pre_beta(),
                     v: builder.v(),
                     nested_challenges_partial: builder.nested_challenges_partial(),
+                    nested_p_commitment: builder.nested_p_commitment(),
                     coverage: Default::default(),
                 })
             };
@@ -975,8 +976,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             name: "bind_beta".into(),
             outputs: stage_wire_indices::<_, R, native_points::BindingStage<C::NestedCurve>>(
                 |stage| {
-                    let mut wires = wires_of(&stage.left)?;
-                    wires.extend(wires_of(&stage.right)?);
+                    let mut wires = wires_of(&stage.left_challenges)?;
+                    wires.extend(wires_of(&stage.left_p)?);
+                    wires.extend(wires_of(&stage.right_challenges)?);
+                    wires.extend(wires_of(&stage.right_p)?);
                     Ok(wires)
                 },
             )?
@@ -993,9 +996,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 
         // The native endoscaling walk over the nested batch's commitments.
         // bind_endoscalar forces the walk stage's endoscalar bits from
-        // pre_beta; each step forces its interstitial from those bits, the
-        // previous interstitial and its inputs. The walk's chain is every
-        // points stage, then the walk stage.
+        // pre_beta and the instance's P_n from the walk's last interstitial;
+        // each step forces its interstitial from those bits, the previous
+        // interstitial and its inputs. The walk's chain is every points
+        // stage, then the walk stage.
         let beta_endo = extract_endoscalar(builder.pre_beta())?;
         type Nested<C> = <C as Cycle>::NestedCurve;
         let native_walk_values: Vec<C::CircuitField> = [
@@ -1025,6 +1029,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             )?
             .into_iter()
             .map(OutputRef::Stage)
+            .chain(
+                unified_slot_positions("nested_p_commitment")
+                    .into_iter()
+                    .map(OutputRef::Instance),
+            )
             .collect(),
         };
         visitor.visit(

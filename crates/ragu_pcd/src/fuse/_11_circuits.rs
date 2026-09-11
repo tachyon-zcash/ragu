@@ -75,6 +75,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             pre_beta: builder.pre_beta(),
             v: builder.v(),
             nested_challenges_partial: builder.nested_challenges_partial(),
+            nested_p_commitment: builder.nested_p_commitment(),
             coverage: Default::default(),
         };
 

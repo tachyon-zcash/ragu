@@ -237,7 +237,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     /// Accumulates the nested batch into $p_n(X)$, in [`pcs::Batch::evaluated`]
     /// order after $f_n$, and runs the native endoscaling over the committed
     /// points: $P_n$ is the walk's last interstitial, which the native steps
-    /// enforce.
+    /// enforce and `bind_endoscalar` pins to the unified instance.
     #[allow(clippy::too_many_arguments)]
     fn compute_nested_p<RNG: ragu_arithmetic::rand::CryptoRng>(
         &self,

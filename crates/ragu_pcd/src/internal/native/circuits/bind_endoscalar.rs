@@ -1,13 +1,20 @@
-//! Circuit binding the native endoscaling walk's inputs: the walk stage's
-//! endoscalar bits to `pre_beta`, and every points stage to the curve.
+//! Circuit binding the native endoscaling walk at both ends: the walk
+//! stage's endoscalar bits to `pre_beta`, every points stage to the curve,
+//! and the walk's last interstitial, $P_n$, to the unified instance.
 //!
 //! The endoscaling steps walk the nested batch's commitments with the bits
 //! the [`WalkStage`] holds. This circuit reads `pre_beta` from the unified
 //! instance, extracts the endoscalar from it exactly as `compute_v` does,
 //! and enforces the stage's bits equal to it, so that the walk is by the
 //! transcript's $\beta$. It loads every input stage enforced, so that every
-//! point the walk consumes lies on the curve. It covers no unified slot:
-//! `pre_beta` is `hashes_2`'s.
+//! point the walk consumes lies on the curve. It covers the
+//! [`nested_p_commitment`] slot, enforcing it equal to the walk's last
+//! interstitial: a parent walks the cached $P_n$ and holds that copy against
+//! this slot in its `bind_beta`, which is what makes the nested batch's
+//! commitment the walk's result rather than the prover's choice. `pre_beta`
+//! itself is `hashes_2`'s.
+//!
+//! [`nested_p_commitment`]: unified::Output::nested_p_commitment
 
 use core::marker::PhantomData;
 
@@ -33,8 +40,9 @@ use super::super::{
     unified::{self, OutputBuilder},
 };
 
-/// Circuit binding the walk stage's endoscalar bits to `pre_beta` and the
-/// points stages to the curve.
+/// Circuit binding the walk stage's endoscalar bits to `pre_beta`, the
+/// points stages to the curve and the walk's last interstitial to the
+/// instance.
 pub struct Circuit<C: Cycle, R> {
     _marker: PhantomData<(C, R)>,
 }
@@ -98,9 +106,7 @@ impl<C: Cycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circuit<C, R> 
         let _ = registry_wx.enforced(dr, inputs.as_ref().map(|i| &i.registry_wx))?;
         let _ = ab.enforced(dr, inputs.as_ref().map(|i| &i.ab))?;
         let _ = f.enforced(dr, inputs.as_ref().map(|i| &i.f))?;
-        let staged = walk
-            .unenforced(dr, witness.as_ref().map(|w| w.walk))?
-            .endoscalar;
+        let walk = walk.unenforced(dr, witness.as_ref().map(|w| w.walk))?;
 
         let allocator = &mut Standard::new();
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
@@ -108,9 +114,14 @@ impl<C: Cycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circuit<C, R> 
         let pre_beta = unified_output.pre_beta.read(dr, allocator)?;
         let pre_beta = EndoscalarChallenge::from_element(dr, allocator, pre_beta)?;
         let extracted = Endoscalar::extract(pre_beta);
-        for (staged, extracted) in staged.bits().zip(extracted.bits()) {
+        for (staged, extracted) in walk.endoscalar.bits().zip(extracted.bits()) {
             staged.element().enforce_equal(dr, &extracted.element())?;
         }
+
+        // The walk's last interstitial is P_n: pin it to the instance, where
+        // a parent reads it.
+        let p = unified_output.nested_p_commitment.receive(dr, allocator)?;
+        walk.p().enforce_equal(dr, &p)?;
 
         let (output, aux) = unified_output.finish(dr, allocator)?;
         Ok(WithAux::new(output, aux))

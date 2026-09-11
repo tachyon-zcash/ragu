@@ -43,7 +43,7 @@ where
 // When changing HEADER_SIZE, update the constraint counts by running:
 //   cargo test -p ragu_pcd --release print_internal_circuit -- --nocapture
 // Then copy-paste the output into the check_constraints! calls in the test below.
-pub const HEADER_SIZE: usize = 104;
+pub const HEADER_SIZE: usize = 103;
 
 // Number of dummy application circuits to register before testing internal
 // circuits. Internal circuit construction depends on the resulting registry
@@ -240,18 +240,18 @@ fn test_internal_circuit_constraint_counts() {
         }};
     }
 
-    check_constraints!(Hashes1Circuit,              mul = 1455, lin = 2073);
-    check_constraints!(Hashes2Circuit,              mul = 2003, lin = 2958);
-    check_constraints!(InnerCollapseCircuit,        mul = 1880, lin = 1925);
-    check_constraints!(OuterCollapseCircuit,        mul = 2041, lin = 3037);
-    check_constraints!(ComputeVCircuit,             mul = 1769, lin = 2603);
-    check_constraints!(BindChallengesCircuit(0),    mul = 1939, lin = 2928);
-    check_constraints!(BindChallengesCircuit(1),    mul = 1944, lin = 2938);
-    check_constraints!(BindChallengesCircuit(2),    mul = 1944, lin = 2938);
-    check_constraints!(BindChallengesCircuit(3),    mul = 1944, lin = 2938);
-    check_constraints!(BindChallengesCircuit(4),    mul = 1955, lin = 2960);
-    check_constraints!(BindBetaCircuit,             mul = 1988, lin = 2940);
-    check_constraints!(BindEndoscalarCircuit,       mul = 768,  lin = 1408);
+    check_constraints!(Hashes1Circuit,              mul = 1459, lin = 2078);
+    check_constraints!(Hashes2Circuit,              mul = 2007, lin = 2965);
+    check_constraints!(InnerCollapseCircuit,        mul = 1884, lin = 1932);
+    check_constraints!(OuterCollapseCircuit,        mul = 2039, lin = 3032);
+    check_constraints!(ComputeVCircuit,             mul = 1779, lin = 2624);
+    check_constraints!(BindChallengesCircuit(0),    mul = 1943, lin = 2935);
+    check_constraints!(BindChallengesCircuit(1),    mul = 1948, lin = 2945);
+    check_constraints!(BindChallengesCircuit(2),    mul = 1948, lin = 2945);
+    check_constraints!(BindChallengesCircuit(3),    mul = 1948, lin = 2945);
+    check_constraints!(BindChallengesCircuit(4),    mul = 1959, lin = 2967);
+    check_constraints!(BindBetaCircuit,             mul = 1992, lin = 2951);
+    check_constraints!(BindEndoscalarCircuit,       mul = 771,  lin = 1417);
     // Every native endoscaling step but the last walks four points and lays
     // out the same; the last walks the two that remain.
     let last = native::NUM_ENDOSCALING_STEPS as u32 - 1;
@@ -271,13 +271,13 @@ fn test_internal_stage_parameters() {
         }};
     }
 
-    check_stage!(PointsBinding,    skip =   1, num =   2);
-    check_stage!(Preamble,         skip =   3, num = 344);
-    check_stage!(OuterError,       skip = 347, num = 186);
-    check_stage!(InnerError,       skip = 533, num = 399);
-    check_stage!(Query,            skip = 347, num =  81);
-    check_stage!(Eval,             skip = 428, num =  60);
-    check_stage!(PointsChildren,   skip =   3, num =  90);
+    check_stage!(PointsBinding,    skip =   1, num =   4);
+    check_stage!(Preamble,         skip =   5, num = 343);
+    check_stage!(OuterError,       skip = 348, num = 186);
+    check_stage!(InnerError,       skip = 534, num = 399);
+    check_stage!(Query,            skip = 348, num =  81);
+    check_stage!(Eval,             skip = 429, num =  60);
+    check_stage!(PointsChildren,   skip =   5, num =  88);
     check_stage!(PointsRegistryWx, skip =  93, num =   2);
     check_stage!(PointsAb,         skip =  95, num =   3);
     check_stage!(PointsF,          skip =  98, num =   2);
@@ -528,7 +528,7 @@ fn test_native_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fp!(0x030029d318669c2a619e0d83479bd24f05e8184ef8da8fc6df9d57927feb2016);
+    let expected = fp!(0x21bc3d2cb77797b2c48af71f645ec471367c8bde93b15fd5e50dafe9f4b1c052);
 
     assert_eq!(
         app.native_registry.digest(),

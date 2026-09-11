@@ -944,10 +944,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         builder.set_native_points_walk_rx(walk_rx);
         builder.set_native_endoscaling_step_rxs(step_rxs);
 
-        let p_commitment = *walk
-            .interstitials
-            .last()
-            .expect("NUM_ENDOSCALING_POINTS guarantees at least one interstitial");
+        let p_commitment = walk.p();
         Ok((p_commitment, walk))
     }
 
