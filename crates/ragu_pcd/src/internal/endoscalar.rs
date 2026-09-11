@@ -327,12 +327,8 @@ impl<C: CurveAffine, R: Rank, const NUM_POINTS: usize, const E: usize> MultiStag
 
         let input_range = self.input_range();
 
-        // We should never be performing more steps than necessary, though the
-        // code in that case _should_ fail over to the simple case of just
-        // constraining the output to equal the previous value.
-        assert!(!input_range.is_empty());
-
-        // Horner's rule: scale and add each input
+        // Horner's rule: scale and add each input. With only the initial
+        // point, the empty loop leaves it to be constrained to the output.
         let acc = NonzeroBank::scope(dr, |dr, bank| {
             let mut acc = initial;
             for idx in input_range {
@@ -573,6 +569,47 @@ mod tests {
             lhs.add_assign(&endoscalar_rx);
             lhs.add_assign(&points_rx);
             assert_eq!(lhs.revdot(&registry.y(staged_h, y)), staged.ky((), y)?);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_endoscaling_single_point() -> Result<()> {
+        const NUM_POINTS: usize = 1;
+        let endoscalar = 7;
+        let initial = Ep::generator().to_affine();
+        let mut points = PointsWitness::<EpAffine, NUM_POINTS, E>::new(endoscalar, &[initial]);
+        let step = EndoscalingStep::<EpAffine, R, NUM_POINTS, E>::new(0);
+
+        let mut builder = TestRegistryBuilder::new();
+        let staged_h = builder.register_circuit(MultiStage::new(step.clone()))?;
+        builder.register_bonding(EndoscalarStage::mask()?);
+        builder.register_bonding(PointsStage::<EpAffine, NUM_POINTS, E>::mask()?);
+        builder.register_bonding(PointsStage::<EpAffine, NUM_POINTS, E>::final_mask()?);
+        let registry = builder.finalize()?;
+        let staged = MultiStage::new(step);
+        let y = Fp::from(7);
+        let sy = registry.y(staged_h, y);
+        let ky = staged.ky((), y)?;
+        let endoscalar_rx = <EndoscalarStage as StageExt<Fp, R>>::rx(Fp::ZERO, endoscalar)?;
+
+        // The one-point walk must accept its initial point and reject a
+        // different output, even though it performs no endoscalings.
+        for (output, valid) in [(initial, true), (-initial, false)] {
+            points.interstitials[0] = output;
+            let trace = staged
+                .trace(EndoscalingStepWitness {
+                    endoscalar,
+                    points: &points,
+                })?
+                .into_output();
+            let mut rx = registry.assemble(&trace, staged_h, Fp::ZERO)?;
+            let points_rx =
+                <PointsStage<EpAffine, NUM_POINTS, E> as StageExt<Fp, R>>::rx(Fp::ZERO, &points)?;
+            rx.add_assign(&endoscalar_rx);
+            rx.add_assign(&points_rx);
+            assert_eq!(rx.revdot(&sy) == ky, valid);
         }
 
         Ok(())
