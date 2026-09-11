@@ -694,6 +694,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                     v: builder.v(),
                     nested_challenges_partial: builder.nested_challenges_partial(),
                     nested_p_commitment: builder.nested_p_commitment(),
+                    nested_a_commitment: builder.nested_a_commitment(),
+                    nested_b_commitment: builder.nested_b_commitment(),
+                    nested_registry_xy_commitment: builder.nested_registry_xy_commitment(),
                     coverage: Default::default(),
                 })
             };
@@ -733,7 +736,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let preamble_outer_error = chain(&[&preamble_values, &outer_error_values]);
 
         // hashes_1 squeezes w, y, z and checks the sponge state the
-        // outer_error stage carries over to hashes_2.
+        // outer_error stage carries over to hashes_2, and the children's
+        // unified k(y) evaluations at the y it derived.
         let hashes_1 = native::circuits::hashes_1::Circuit::<
             C,
             R,
@@ -757,12 +761,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 .map(OutputRef::Instance)
                 .chain(
                     stage_wire_indices::<_, R, OuterError<C, R, HEADER_SIZE>>(|stage| {
-                        Ok(stage
+                        let mut wires: Vec<_> = stage
                             .sponge_state
                             .into_elements()
                             .iter()
                             .map(|e| *e.wire())
-                            .collect())
+                            .collect();
+                        for child in [&stage.left, &stage.right] {
+                            wires.extend(wires_of(&child.unified)?);
+                            wires.extend(wires_of(&child.unified_bridge)?);
+                        }
+                        Ok(wires)
                     })?
                     .into_iter()
                     .map(OutputRef::Stage),
@@ -838,8 +847,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             inner_collapse_witness,
         )?;
 
-        // outer_collapse recomputes the children's k(y) values from the
-        // preamble and checks them against the outer_error stage, then folds
+        // outer_collapse recomputes the children's application k(y) values
+        // from the preamble and checks them against outer_error, then folds
         // to the final claim c it receives (and checks, outside the base
         // case).
         let outer_collapse = native::circuits::outer_collapse::Circuit::<
@@ -871,9 +880,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                     stage_wire_indices::<_, R, OuterError<C, R, HEADER_SIZE>>(|stage| {
                         Ok([&stage.left, &stage.right]
                             .into_iter()
-                            .flat_map(|child| {
-                                [&child.application, &child.unified, &child.unified_bridge]
-                            })
+                            .map(|child| &child.application)
                             .map(|e| *e.wire())
                             .collect())
                     })?
@@ -956,8 +963,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 
         // bind_beta completes each child's exported challenge binding with
         // the child's pre_beta term and checks it against the challenge
-        // stage commitment the binding stage witnessed: those are its
-        // outputs.
+        // stage commitment the binding stage witnessed. The other points
+        // in that stage must match the child's transcript and persistent
+        // commitment exports too: every binding-stage wire is an output.
         let bind_beta = native::circuits::bind_beta::Circuit::<
             C,
             R,
@@ -975,13 +983,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let bind_beta_spec = CircuitSpec {
             name: "bind_beta".into(),
             outputs: stage_wire_indices::<_, R, native_points::BindingStage<C::NestedCurve>>(
-                |stage| {
-                    let mut wires = wires_of(&stage.left_challenges)?;
-                    wires.extend(wires_of(&stage.left_p)?);
-                    wires.extend(wires_of(&stage.right_challenges)?);
-                    wires.extend(wires_of(&stage.right_p)?);
-                    Ok(wires)
-                },
+                |stage| wires_of(&stage),
             )?
             .into_iter()
             .map(OutputRef::Stage)
@@ -996,7 +998,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 
         // The native endoscaling walk over the nested batch's commitments.
         // bind_endoscalar forces the walk stage's endoscalar bits from
-        // pre_beta and the instance's P_n from the walk's last interstitial;
+        // pre_beta and the instance's persistent commitments from the
+        // walked points (including P_n at the last interstitial);
         // each step forces its interstitial from those bits, the previous
         // interstitial and its inputs. The walk's chain is every points
         // stage, then the walk stage.
@@ -1030,9 +1033,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             .into_iter()
             .map(OutputRef::Stage)
             .chain(
-                unified_slot_positions("nested_p_commitment")
-                    .into_iter()
-                    .map(OutputRef::Instance),
+                [
+                    "nested_p_commitment",
+                    "nested_a_commitment",
+                    "nested_b_commitment",
+                    "nested_registry_xy_commitment",
+                ]
+                .into_iter()
+                .flat_map(unified_slot_positions)
+                .map(OutputRef::Instance),
             )
             .collect(),
         };

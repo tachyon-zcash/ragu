@@ -240,18 +240,18 @@ fn test_internal_circuit_constraint_counts() {
         }};
     }
 
-    check_constraints!(Hashes1Circuit,              mul = 1459, lin = 2078);
-    check_constraints!(Hashes2Circuit,              mul = 2007, lin = 2965);
-    check_constraints!(InnerCollapseCircuit,        mul = 1884, lin = 1932);
-    check_constraints!(OuterCollapseCircuit,        mul = 2039, lin = 3032);
-    check_constraints!(ComputeVCircuit,             mul = 1779, lin = 2624);
-    check_constraints!(BindChallengesCircuit(0),    mul = 1943, lin = 2935);
-    check_constraints!(BindChallengesCircuit(1),    mul = 1948, lin = 2945);
-    check_constraints!(BindChallengesCircuit(2),    mul = 1948, lin = 2945);
-    check_constraints!(BindChallengesCircuit(3),    mul = 1948, lin = 2945);
-    check_constraints!(BindChallengesCircuit(4),    mul = 1959, lin = 2967);
-    check_constraints!(BindBetaCircuit,             mul = 1992, lin = 2951);
-    check_constraints!(BindEndoscalarCircuit,       mul = 771,  lin = 1417);
+    check_constraints!(Hashes1Circuit,              mul = 1992, lin = 3095);
+    check_constraints!(Hashes2Circuit,              mul = 2044, lin = 2986);
+    check_constraints!(InnerCollapseCircuit,        mul = 1921, lin = 1953);
+    check_constraints!(OuterCollapseCircuit,        mul = 1592, lin = 2081);
+    check_constraints!(ComputeVCircuit,             mul = 1834, lin = 2687);
+    check_constraints!(BindChallengesCircuit(0),    mul = 1980, lin = 2956);
+    check_constraints!(BindChallengesCircuit(1),    mul = 1985, lin = 2966);
+    check_constraints!(BindChallengesCircuit(2),    mul = 1985, lin = 2966);
+    check_constraints!(BindChallengesCircuit(3),    mul = 1985, lin = 2966);
+    check_constraints!(BindChallengesCircuit(4),    mul = 1996, lin = 2988);
+    check_constraints!(BindBetaCircuit,             mul = 2029, lin = 3016);
+    check_constraints!(BindEndoscalarCircuit,       mul = 780,  lin = 1444);
     // Every native endoscaling step but the last walks four points and lays
     // out the same; the last walks the two that remain.
     let last = native::NUM_ENDOSCALING_STEPS as u32 - 1;
@@ -271,13 +271,13 @@ fn test_internal_stage_parameters() {
         }};
     }
 
-    check_stage!(PointsBinding,    skip =   1, num =   4);
-    check_stage!(Preamble,         skip =   5, num = 343);
-    check_stage!(OuterError,       skip = 348, num = 186);
-    check_stage!(InnerError,       skip = 534, num = 399);
-    check_stage!(Query,            skip = 348, num =  81);
-    check_stage!(Eval,             skip = 429, num =  60);
-    check_stage!(PointsChildren,   skip =   5, num =  88);
+    check_stage!(PointsBinding,    skip =   1, num =  26);
+    check_stage!(Preamble,         skip =  27, num = 349);
+    check_stage!(OuterError,       skip = 376, num = 186);
+    check_stage!(InnerError,       skip = 562, num = 399);
+    check_stage!(Query,            skip = 376, num =  81);
+    check_stage!(Eval,             skip = 457, num =  60);
+    check_stage!(PointsChildren,   skip =  27, num =  66);
     check_stage!(PointsRegistryWx, skip =  93, num =   2);
     check_stage!(PointsAb,         skip =  95, num =   3);
     check_stage!(PointsF,          skip =  98, num =   2);
@@ -528,7 +528,7 @@ fn test_native_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fp!(0x21bc3d2cb77797b2c48af71f645ec471367c8bde93b15fd5e50dafe9f4b1c052);
+    let expected = fp!(0x20b594fd69d7376b5269ca69b4af33c13da6e3fa19d343789784bbc933466db6);
 
     assert_eq!(
         app.native_registry.digest(),

@@ -16,6 +16,8 @@
 //! - the registry values the query and eval stages claim, and the current
 //!   step's own evaluations at $u$ and $u_n$, are read off the stage
 //!   polynomials and held against the registry and the polynomials;
+//! - the nested accumulator and registry commitments inside the native
+//!   points stages are compared with the recomputed polynomial commitments;
 //! - $c$, $v$, $c_n$ and $v_n$ are derived from the polynomials, never read.
 
 use alloc::vec::Vec;
@@ -306,6 +308,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             native && nested
         };
 
+        // The points the native walk consumes must commit to the nested
+        // polynomials the decider retains, not just to evaluations at u_n.
+        let nested_points_claim = nested_points_match(pcd.proof())?;
+
         // The challenges, rederived from the transcript over the bridge
         // commitments in the fuse's schedule, and pre_beta in the endoscalar
         // challenge range the prover grinds it into.
@@ -403,6 +409,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             && nested_registry_xy_claim
             && nested_challenges_claim
             && commitments_claim
+            && nested_points_claim
             && transcript_claim
             && ab_bridge_claim
             && mesh_claim)
@@ -588,6 +595,42 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
 
         Ok(fixed_registry_claim && query_claim && eval_claim)
     }
+}
+
+/// Whether the persistent nested points consumed by the native walk are
+/// the proof's polynomial commitments. `verify` separately recomputes the
+/// caches; the recursive counterpart is `bind_endoscalar`'s exports and the
+/// parent's `bind_beta` checks.
+pub(crate) fn nested_points_match<C: Cycle, R: Rank>(proof: &Proof<C, R>) -> Result<bool> {
+    use native_internal::{RxIndex, stages::points};
+
+    let ab = StageReader::<C::CircuitField, R>::new(&proof[RxIndex::PointsAb]);
+    let ab_wires = stage_wire_indices::<_, R, points::AbStage<C::NestedCurve>>(|stage| {
+        let mut wires = wires_of(&stage.a)?;
+        wires.extend(wires_of(&stage.b)?);
+        Ok(wires)
+    })?;
+    let f = StageReader::<C::CircuitField, R>::new(&proof[RxIndex::PointsF]);
+    let registry_wires = stage_wire_indices::<_, R, points::FStage<C::NestedCurve>>(|stage| {
+        wires_of(&stage.registry_xy)
+    })?;
+    let held = ab_wires
+        .iter()
+        .map(|&i| ab.read(i))
+        .chain(registry_wires.iter().map(|&i| f.read(i)));
+
+    let mut expected = Vec::with_capacity(6);
+    for point in [
+        proof.nested_a_commitment(),
+        proof.nested_b_commitment(),
+        proof.nested_registry_xy_commitment(),
+    ] {
+        let Some(coordinates) = point.coordinates().into_option() else {
+            return Ok(false);
+        };
+        expected.extend_from_slice(&[*coordinates.x(), *coordinates.y()]);
+    }
+    Ok(held.eq(expected))
 }
 
 /// Whether `commitments` are the commitments of `polys` under `generators`,

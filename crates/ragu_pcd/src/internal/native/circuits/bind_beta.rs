@@ -1,6 +1,6 @@
-//! Circuit binding the children's nested challenge stages and $P_n$, as
-//! walked, to what the children exported: the bindings, completed with
-//! their `pre_beta`, and their [`nested_p_commitment`] slots.
+//! Circuit binding the children's walked nested commitments to their native
+//! unified instances: the transcript's bridge commitments, the challenge
+//! bindings completed with `pre_beta`, and the persistent polynomials.
 //!
 //! ## Operations
 //!
@@ -28,6 +28,12 @@
 //! enforces the walked copy equal to that slot, read from the [`preamble`]:
 //! the parent opens the child's $p_n$ against the very point the child's
 //! steps computed, which is what makes the child's nested batch binding.
+//!
+//! The bridge points must equal the slots that the child's hash circuits
+//! absorbed before squeezing its challenges. Likewise, the walked $A_n$,
+//! $B_n$ and `registry_xy` must equal the commitments its own
+//! `bind_endoscalar` exported, so the parent folds and opens the same
+//! polynomials the child's walk certified.
 //!
 //! ## Staging
 //!
@@ -82,7 +88,7 @@ pub fn generator_index<C: Cycle, R: Rank>() -> usize {
     )
 }
 
-/// Circuit binding both children's challenge stages.
+/// Circuit binding both children's transcript and persistent commitments.
 ///
 /// See the [module-level documentation] for details.
 ///
@@ -111,8 +117,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Para
 pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
     /// The unified instance, for the instance and accumulated coverage.
     pub unified: unified::Instance<C>,
-    /// The binding stage: the children's challenge-stage commitments and
-    /// $P_n$ as walked.
+    /// The binding stage: the children's walked commitments that must
+    /// match their unified instances.
     pub binding: &'a super::super::stages::points::BindingWitness<C::NestedCurve>,
     /// Witness for the preamble stage (provides the children's `pre_beta`
     /// and exported bindings).
@@ -165,10 +171,26 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
         let generator = C::nested_generators(self.params).g()[generator_index::<C, R>()];
-        for (child, challenges, p) in [
-            (&preamble.left, &binding.left_challenges, &binding.left_p),
-            (&preamble.right, &binding.right_challenges, &binding.right_p),
+        for (child, bound) in [
+            (&preamble.left, &binding.left),
+            (&preamble.right, &binding.right),
         ] {
+            // Same order as nested::RxIndex::BRIDGES. These are the points
+            // the child's hash circuits absorbed, before its challenges.
+            let absorbed: [_; nested::RxIndex::BRIDGES.len()] = [
+                &child.unified.bridge_preamble_commitment,
+                &child.unified.bridge_s_prime_commitment,
+                &child.unified.bridge_inner_error_commitment,
+                &child.unified.bridge_outer_error_commitment,
+                &child.unified.bridge_ab_commitment,
+                &child.unified.bridge_query_commitment,
+                &child.unified.bridge_f_commitment,
+                &child.unified.bridge_eval_commitment,
+            ];
+            for (walked, absorbed) in bound.bridges.iter().zip(absorbed) {
+                walked.enforce_equal(dr, absorbed)?;
+            }
+
             let pre_beta =
                 EndoscalarChallenge::from_element(dr, allocator, child.unified.pre_beta.clone())?;
             let bits = Endoscalar::extract(pre_beta);
@@ -180,11 +202,22 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
                     .nested_challenges_partial
                     .add_incomplete(dr, &beta_term, bank)
             })?;
-            challenges.enforce_equal(dr, &expected)?;
+            bound.challenges.enforce_equal(dr, &expected)?;
 
             // The child's P_n as walked is the one its own bind_endoscalar
             // pinned to its instance.
-            p.enforce_equal(dr, &child.unified.nested_p_commitment)?;
+            bound
+                .p
+                .enforce_equal(dr, &child.unified.nested_p_commitment)?;
+            bound
+                .a
+                .enforce_equal(dr, &child.unified.nested_a_commitment)?;
+            bound
+                .b
+                .enforce_equal(dr, &child.unified.nested_b_commitment)?;
+            bound
+                .registry_xy
+                .enforce_equal(dr, &child.unified.nested_registry_xy_commitment)?;
         }
 
         let (output, aux) = unified_output.finish(dr, allocator)?;

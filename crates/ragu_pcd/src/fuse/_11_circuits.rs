@@ -76,6 +76,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             v: builder.v(),
             nested_challenges_partial: builder.nested_challenges_partial(),
             nested_p_commitment: builder.nested_p_commitment(),
+            nested_a_commitment: builder.nested_a_commitment(),
+            nested_b_commitment: builder.nested_b_commitment(),
+            nested_registry_xy_commitment: builder.nested_registry_xy_commitment(),
             coverage: Default::default(),
         };
 

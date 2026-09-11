@@ -1,12 +1,11 @@
 //! The nested fold and batch, checked against the children they cover.
 //!
-//! Nothing in-circuit verifies the nested side yet, and the decider's raw
-//! nested claim is tautological, so this is where the prover-side work is
-//! held to its definition: the children's nested claims all hold at the
+//! The prover-side work is held to its definition independently of the
+//! circuits that mirror it: the children's nested claims all hold at the
 //! derived nested challenges, the accumulator is their two-layer fold, its
-//! revdot value is what a nested collapse circuit would compute from the
+//! revdot value is what the nested collapse circuit computes from the
 //! committed error terms and the children's `c` values, and the nested batch
-//! evaluation $v_n$ is what a nested `compute_v` circuit would compute from
+//! evaluation $v_n$ is what the nested `compute_v` circuit computes from
 //! the openings the batch claims.
 
 use alloc::vec::Vec;
@@ -497,12 +496,11 @@ fn nested_challenge_stage_is_bound_by_its_commitment() -> Result<()> {
     Ok(())
 }
 
-/// The parent's root stage holds each child's challenge-stage commitment
-/// and $P_n$ as the child cached them, and the parent's own $P_n$ is its
-/// walk's last interstitial: the two ends `bind_beta` and `bind_endoscalar`
-/// hold together through the `nested_p_commitment` slot.
+/// The parent's root stage holds each child's bridge, challenge-stage and
+/// persistent polynomial commitments. Its own persistent points match the
+/// decider's caches, including $P_n$ at the walk's last interstitial.
 #[test]
-fn nested_p_is_pinned_at_both_ends_of_the_walk() -> Result<()> {
+fn nested_commitments_are_pinned_at_both_ends_of_the_walk() -> Result<()> {
     use ragu_arithmetic::CurveAffine;
 
     use crate::internal::{
@@ -527,23 +525,29 @@ fn nested_p_is_pinned_at_both_ends_of_the_walk() -> Result<()> {
 
     // The root stage, wire by wire, against the children's caches.
     let binding = StageReader::<ragu_pasta::Fp, R>::new(&parent[RxIndex::PointsBinding]);
-    let wires = stage_wire_indices::<_, R, BindingStage<Nested>>(|stage| {
-        let mut wires = wires_of(&stage.left_challenges)?;
-        wires.extend(wires_of(&stage.left_p)?);
-        wires.extend(wires_of(&stage.right_challenges)?);
-        wires.extend(wires_of(&stage.right_p)?);
-        Ok(wires)
-    })?;
+    let wires = stage_wire_indices::<_, R, BindingStage<Nested>>(|stage| wires_of(&stage))?;
     let held: alloc::vec::Vec<ragu_pasta::Fp> = wires.iter().map(|&i| binding.read(i)).collect();
-    let expected: alloc::vec::Vec<ragu_pasta::Fp> = [
-        left.nested_challenges_commitment(),
-        left.nested_p_commitment(),
-        right.nested_challenges_commitment(),
-        right.nested_p_commitment(),
-    ]
-    .into_iter()
-    .flat_map(coordinates)
-    .collect();
+    let expected: alloc::vec::Vec<ragu_pasta::Fp> = [&left, &right]
+        .into_iter()
+        .flat_map(|child| {
+            [
+                child.bridge_preamble_commitment(),
+                child.bridge_s_prime_commitment(),
+                child.bridge_inner_error_commitment(),
+                child.bridge_outer_error_commitment(),
+                child.bridge_ab_commitment(),
+                child.bridge_query_commitment(),
+                child.bridge_f_commitment(),
+                child.bridge_eval_commitment(),
+                child.nested_challenges_commitment(),
+                child.nested_a_commitment(),
+                child.nested_b_commitment(),
+                child.nested_registry_xy_commitment(),
+                child.nested_p_commitment(),
+            ]
+        })
+        .flat_map(coordinates)
+        .collect();
     assert_eq!(
         held, expected,
         "the root stage does not hold the children's points"
@@ -558,6 +562,37 @@ fn nested_p_is_pinned_at_both_ends_of_the_walk() -> Result<()> {
         coordinates(parent.nested_p_commitment()).to_vec(),
         "P_n is not the walk's last interstitial"
     );
+
+    for (i, proof) in [&parent, &left, &right].into_iter().enumerate() {
+        assert!(crate::verify::nested_points_match(proof)?);
+        assert!(app.verify(
+            &proof.clone().carry::<()>(()),
+            StdRng::seed_from_u64(0xb1d0 + i as u64),
+        )?);
+    }
+
+    // Exercise the decider's point comparison in isolation: a valid point
+    // in the cache must still be the one carried by the walk's stage.
+    #[cfg(feature = "unstable-fuzzing")]
+    for which in [
+        crate::fuzzing::corrupt::NestedCommitment::AbA,
+        crate::fuzzing::corrupt::NestedCommitment::AbB,
+        crate::fuzzing::corrupt::NestedCommitment::RegistryXy,
+    ] {
+        let mut changed = parent.clone();
+        let point = changed.nested_commitment_cache_mut(which);
+        *point = -*point;
+        assert!(
+            !crate::verify::nested_points_match(&changed)?,
+            "mismatched {which:?}"
+        );
+        *changed.nested_commitment_cache_mut(which) =
+            <Nested as ragu_arithmetic::group::CurveAffine>::identity();
+        assert!(
+            !crate::verify::nested_points_match(&changed)?,
+            "identity {which:?}"
+        );
+    }
 
     Ok(())
 }

@@ -345,8 +345,8 @@ pub enum RxIndex {
     OuterError,
     Query,
     Eval,
-    /// The points stage holding the children's challenge-stage commitments
-    /// and $P_n$ (see [`stages::points`]).
+    /// The points stage holding the children's commitments that must match
+    /// their native unified instances (see [`stages::points`]).
     PointsBinding,
     /// The points stage holding the rest of the children's commitments.
     PointsChildren,

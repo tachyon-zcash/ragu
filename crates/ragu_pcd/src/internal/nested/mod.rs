@@ -329,6 +329,18 @@ impl RxIndex {
     pub const INSTANCE: [Self; NUM_INSTANCE_CIRCUITS] =
         [Self::Export, Self::Collapse, Self::ComputeV];
 
+    /// The bridge stages, in transcript absorption order.
+    pub const BRIDGES: [Self; 8] = [
+        Self::BridgePreamble,
+        Self::BridgeSPrime,
+        Self::BridgeInnerError,
+        Self::BridgeOuterError,
+        Self::BridgeAB,
+        Self::BridgeQuery,
+        Self::BridgeF,
+        Self::BridgeEval,
+    ];
+
     /// All variants in canonical order (circuits, then stages).
     ///
     /// Must maintain the same ordering convention as

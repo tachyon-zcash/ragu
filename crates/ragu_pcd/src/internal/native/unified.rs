@@ -41,7 +41,7 @@ pub type InternalOutputKind<C: Cycle> = Kind![C::CircuitField; WithSuffix<'_, _,
 /// The number of wires in an [`Output`] gadget.
 ///
 /// Used for allocation sizing and verified by tests.
-pub const NUM_WIRES: usize = 33;
+pub const NUM_WIRES: usize = 39;
 
 /// Maps a field type to its `Output` gadget type.
 macro_rules! unified_output_type {
@@ -324,6 +324,16 @@ define_unified_instance! {
     /// native endoscaling walk, which `bind_endoscalar` pins here and a
     /// parent's `bind_beta` holds against the copy it walks.
     nested_p_commitment: Point,
+    /// The nested accumulator $A_n$ commitment consumed by this step's walk.
+    /// `bind_endoscalar` pins them here and the parent's `bind_beta` checks
+    /// the copies it folds against these slots.
+    nested_a_commitment: Point,
+    /// The nested accumulator $B_n$ commitment, bound like $A_n$ above.
+    nested_b_commitment: Point,
+    /// The nested registry restriction as consumed by this step's walk.
+    /// Its parent's fresh-w opening and the decider's registry check must
+    /// concern this same committed polynomial.
+    nested_registry_xy_commitment: Point,
 }
 
 /// A lazy-allocation slot for a single field in the unified output.
@@ -498,6 +508,14 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
             Point::alloc(dr, proof.as_ref().map(|p| p.nested_challenges_partial()))?;
         let nested_p_commitment =
             Point::alloc(dr, proof.as_ref().map(|p| p.nested_p_commitment()))?;
+        let nested_a_commitment =
+            Point::alloc(dr, proof.as_ref().map(|p| p.nested_a_commitment()))?;
+        let nested_b_commitment =
+            Point::alloc(dr, proof.as_ref().map(|p| p.nested_b_commitment()))?;
+        let nested_registry_xy_commitment = Point::alloc(
+            dr,
+            proof.as_ref().map(|p| p.nested_registry_xy_commitment()),
+        )?;
 
         Ok(Output {
             bridge_preamble_commitment,
@@ -523,6 +541,9 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
             v,
             nested_challenges_partial,
             nested_p_commitment,
+            nested_a_commitment,
+            nested_b_commitment,
+            nested_registry_xy_commitment,
         })
     }
 }
@@ -605,6 +626,9 @@ mod tests {
             v: true,
             nested_challenges_partial: true,
             nested_p_commitment: true,
+            nested_a_commitment: true,
+            nested_b_commitment: true,
+            nested_registry_xy_commitment: true,
         };
         cov.assert_complete();
     }
