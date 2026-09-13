@@ -8,6 +8,14 @@
 //! / (X - x\_i)$ for a single query. The static query prefix is defined by
 //! [`STATIC_F_QUERIES`] and consumed by both this prover path and the
 //! `compute_v` circuit.
+//!
+//! The nested quotient polynomial $f_n(X)$ is built the same way over the
+//! nested batch ([`pcs::Batch::queries`]), with $\alpha_n$ derived from
+//! $\alpha$. Its nested-curve commitment, the initial point of the native
+//! endoscaling walk, is committed with the nested $m_n(W, x_n, y_n)$
+//! restriction's in the native points stage the walk reads them from, whose
+//! commitment the `f` bridge carries, so they are fixed before $u$ is
+//! squeezed.
 
 use alloc::vec::Vec;
 
@@ -19,13 +27,13 @@ use ragu_circuits::{
 use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::Element;
 
-use super::{NativeF, NativeSPrime, RegistryWy};
+use super::{NativeF, NativeSPrime, NestedF, NestedRegistryWy, NestedSPrime, RegistryWy};
 use crate::{
     Application, Proof,
     internal::{
         native,
         native::{RxComponent, RxIndex, STATIC_F_QUERIES, StaticFQuery},
-        nested,
+        nested::{self, pcs},
     },
     proof::ProofBuilder,
 };
@@ -43,10 +51,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         alpha: &Element<'dr, D>,
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
+        nested_s_prime: &NestedSPrime<C, R>,
+        nested_registry_wy: &NestedRegistryWy<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-    ) -> Result<NativeF<C, R>>
+    ) -> Result<(NativeF<C, R>, NestedF<C, R>)>
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
@@ -62,8 +72,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             left,
             right,
         )?;
+        let nested = {
+            let batch = self.nested_batch(builder, nested_s_prime, nested_registry_wy, left, right);
+            let challenges = self.nested_challenges(w, x, y, z, left, right)?;
+            let alpha = nested::challenge::<C>(*alpha.value().take())?;
+            self.compute_nested_f(&batch, challenges, alpha)
+        };
+        self.commit_native_points_f(
+            rng,
+            builder.nested_registry_xy_commitment(),
+            nested.commitment,
+            builder,
+        )?;
         self.compute_bridge_f(rng, &native, builder)?;
-        Ok(native)
+        Ok((native, nested))
     }
 
     /// Manually commits the bridge for $f$, rather than having the
@@ -80,6 +102,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             C::ScalarField::random(&mut *rng),
             &nested::stages::f::Witness {
                 native_f: native.commitment,
+                native_points_f: builder.native_points_f_commitment(),
             },
         )?;
         let bridge_commitment =
@@ -186,19 +209,49 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             ));
         }
 
-        let mut coeffs = Vec::with_capacity(R::num_coeffs());
-        let (first, rest) = iters.split_first_mut().unwrap();
-        for val in first.by_ref() {
-            let c = rest
-                .iter_mut()
-                .fold(val, |acc, iter| alpha * acc + iter.next().unwrap());
-            coeffs.push(c);
-        }
-        coeffs.reverse();
-
-        let poly = sparse::Polynomial::from_coeffs(coeffs);
+        let poly = alpha_batched_quotients::<_, R>(iters, alpha);
         let commitment = B::sparse_commit_to_affine(&poly, C::host_generators(self.params));
 
         Ok(NativeF { poly, commitment })
     }
+
+    /// Builds $f_n(X)$: the $\alpha_n$-batched quotients of every opening
+    /// in the nested batch, in [`pcs::Batch::queries`] order.
+    fn compute_nested_f(
+        &self,
+        batch: &pcs::Batch<'_, C, R>,
+        challenges: pcs::Challenges<C::ScalarField>,
+        alpha: C::ScalarField,
+    ) -> NestedF<C, R> {
+        use ragu_arithmetic::factor_iter;
+
+        let iters: Vec<_> = batch
+            .queries(challenges)
+            .map(|(poly, point)| factor_iter(poly.iter_coeffs(), point))
+            .collect();
+
+        let poly = alpha_batched_quotients::<_, R>(iters, alpha);
+        let commitment = B::sparse_commit_to_affine(&poly, C::nested_generators(self.params));
+
+        NestedF { poly, commitment }
+    }
+}
+
+/// Horner-batches quotient coefficient streams with $\alpha$: the first
+/// stream receives the highest power.
+fn alpha_batched_quotients<F: Field, R: Rank>(
+    mut iters: Vec<alloc::boxed::Box<dyn Iterator<Item = F> + '_>>,
+    alpha: F,
+) -> sparse::Polynomial<F, R> {
+    let mut coeffs = Vec::with_capacity(R::num_coeffs());
+    let (first, rest) = iters.split_first_mut().unwrap();
+    for val in first.by_ref() {
+        let c = rest
+            .iter_mut()
+            .fold(val, |acc, iter| alpha * acc + iter.next().unwrap());
+        coeffs.push(c);
+    }
+    coeffs.reverse();
+
+    sparse::Polynomial::from_coeffs(coeffs)
 }

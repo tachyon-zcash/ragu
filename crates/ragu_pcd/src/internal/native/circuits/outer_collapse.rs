@@ -25,9 +25,10 @@
 //!
 //! ### $k(y)$ consistency
 //!
-//! This circuit also enforces that the $k(y)$ (instance polynomial evaluations)
-//! for the child proofs, witnessed in the [`outer_error`] stage, are consistent
-//! with the headers and unified instance data from the [`preamble`] stage. The
+//! This circuit also enforces that the application $k(y)$ evaluations for
+//! the child proofs, witnessed in the [`outer_error`] stage, are consistent
+//! with the headers from the [`preamble`] stage. The unified $k(y)$ checks
+//! are performed by [`hashes_1`][super::hashes_1]. The
 //! $y$ challenge is derived in [`hashes_1`][super::hashes_1] and read from the
 //! unified instance here.
 //!
@@ -151,6 +152,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     where
         Self: 'dr,
     {
+        let builder =
+            builder.skip_stage::<super::super::stages::points::BindingStage<C::NestedCurve>>()?;
         let (preamble, builder) = builder.add_stage::<preamble::Stage<C, R, HEADER_SIZE>>()?;
         let (outer_error, builder) =
             builder.add_stage::<outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
@@ -163,7 +166,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let allocator = &mut Standard::new();
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
-        // Compute k(y) values from preamble and enforce equality with staged
+        // Compute application k(y) values and enforce equality with staged
         // values witnessed in outer_error. The y challenge is derived in
         // hashes_1 and read (not received) here, since hashes_1 owns coverage.
         {
@@ -174,16 +177,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 
             left_application_ky.enforce_equal(dr, &outer_error.left.application)?;
             right_application_ky.enforce_equal(dr, &outer_error.right.application)?;
-
-            let (left_unified_ky, left_unified_bridge_ky) =
-                preamble.left.unified_ky_values(dr, &y)?;
-            let (right_unified_ky, right_unified_bridge_ky) =
-                preamble.right.unified_ky_values(dr, &y)?;
-
-            left_unified_ky.enforce_equal(dr, &outer_error.left.unified)?;
-            right_unified_ky.enforce_equal(dr, &outer_error.right.unified)?;
-            left_unified_bridge_ky.enforce_equal(dr, &outer_error.left.unified_bridge)?;
-            right_unified_bridge_ky.enforce_equal(dr, &outer_error.right.unified_bridge)?;
         }
 
         // Get layer 2 folding challenges. These are distinct from the layer 1

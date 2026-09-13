@@ -292,8 +292,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
     fn values() -> usize {
-        // InternalCircuitIndex::NUM + registry_wxy (1) + 2 * ChildEvaluations (16 each)
-        InternalCircuitIndex::NUM + 1 + 2 * 16
+        // InternalCircuitIndex::NUM + registry_wxy (1) + 2 * ChildEvaluations
+        // (rx + 5 each)
+        InternalCircuitIndex::NUM + 1 + 2 * (RxIndex::NUM + 5)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

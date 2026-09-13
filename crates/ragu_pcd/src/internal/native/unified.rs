@@ -41,7 +41,7 @@ pub type InternalOutputKind<C: Cycle> = Kind![C::CircuitField; WithSuffix<'_, _,
 /// The number of wires in an [`Output`] gadget.
 ///
 /// Used for allocation sizing and verified by tests.
-pub const NUM_WIRES: usize = 29;
+pub const NUM_WIRES: usize = 39;
 
 /// Maps a field type to its `Output` gadget type.
 macro_rules! unified_output_type {
@@ -315,9 +315,31 @@ define_unified_instance! {
     pre_beta: Element,
     /// Expected evaluation at the challenge point for consistency verification.
     v: Element,
+    /// The nested challenge stage's commitment without its $\beta$ term:
+    /// the sum the `bind_challenges` circuits recompute from the transcript
+    /// challenges, which a parent's `bind_beta` completes and holds against
+    /// the stage as walked.
+    nested_challenges_partial: Point,
+    /// The nested batch's commitment $P_n$: the last interstitial of the
+    /// native endoscaling walk, which `bind_endoscalar` pins here and a
+    /// parent's `bind_beta` holds against the copy it walks.
+    nested_p_commitment: Point,
+    /// The nested accumulator $A_n$ commitment consumed by this step's walk.
+    /// `bind_endoscalar` pins them here and the parent's `bind_beta` checks
+    /// the copies it folds against these slots.
+    nested_a_commitment: Point,
+    /// The nested accumulator $B_n$ commitment, bound like $A_n$ above.
+    nested_b_commitment: Point,
+    /// The nested registry restriction as consumed by this step's walk.
+    /// Its parent's fresh-w opening and the decider's registry check must
+    /// concern this same committed polynomial.
+    nested_registry_xy_commitment: Point,
 }
 
 /// A lazy-allocation slot for a single field in the unified output.
+///
+/// Shared with the nested unified instance's builder (see
+/// [`nested::unified`](crate::internal::nested::unified)).
 ///
 /// Slots enable circuits to either compute values in circuit (via
 /// [`provide`](Self::provide)) or allocate on-demand (via
@@ -355,7 +377,7 @@ pub struct Slot<'dr, D: Driver<'dr>, A, T, W: Send> {
 
 impl<'dr, D: Driver<'dr>, A, T: Clone, W: Copy + Send + Sync> Slot<'dr, D, A, T, W> {
     /// Creates a new slot with a pre-extracted instance value and allocation function.
-    pub(super) fn new(
+    pub(crate) fn new(
         instance: DriverValue<D, W>,
         alloc: fn(&mut D, &mut A, DriverValue<D, W>) -> Result<T>,
     ) -> Self {
@@ -427,7 +449,7 @@ impl<'dr, D: Driver<'dr>, A, T: Clone, W: Copy + Send + Sync> Slot<'dr, D, A, T,
     /// needed) along with the coverage flag.
     ///
     /// Used during finalization to build the [`Output`] gadget.
-    fn take(self, dr: &mut D, allocator: &mut A) -> Result<(T, bool)> {
+    pub(crate) fn take(self, dr: &mut D, allocator: &mut A) -> Result<(T, bool)> {
         let value = self
             .value
             .map(Result::Ok)
@@ -468,7 +490,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
         )?;
         let mu_prime = Element::alloc(dr, allocator, proof.as_ref().map(|p| p.mu_prime()))?;
         let nu_prime = Element::alloc(dr, allocator, proof.as_ref().map(|p| p.nu_prime()))?;
-        let c = Element::alloc(dr, allocator, proof.as_ref().map(|p| p.c()))?;
+        let c = Element::alloc(dr, allocator, proof.as_ref().map(|p| p.native_c()))?;
         let bridge_ab_commitment =
             Point::alloc(dr, proof.as_ref().map(|p| p.bridge_ab_commitment()))?;
         let x = Element::alloc(dr, allocator, proof.as_ref().map(|p| p.x()))?;
@@ -482,6 +504,18 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
             Point::alloc(dr, proof.as_ref().map(|p| p.bridge_eval_commitment()))?;
         let pre_beta = Element::alloc(dr, allocator, proof.as_ref().map(|p| p.pre_beta()))?;
         let v = Element::alloc(dr, allocator, proof.as_ref().map(|p| p.v()))?;
+        let nested_challenges_partial =
+            Point::alloc(dr, proof.as_ref().map(|p| p.nested_challenges_partial()))?;
+        let nested_p_commitment =
+            Point::alloc(dr, proof.as_ref().map(|p| p.nested_p_commitment()))?;
+        let nested_a_commitment =
+            Point::alloc(dr, proof.as_ref().map(|p| p.nested_a_commitment()))?;
+        let nested_b_commitment =
+            Point::alloc(dr, proof.as_ref().map(|p| p.nested_b_commitment()))?;
+        let nested_registry_xy_commitment = Point::alloc(
+            dr,
+            proof.as_ref().map(|p| p.nested_registry_xy_commitment()),
+        )?;
 
         Ok(Output {
             bridge_preamble_commitment,
@@ -505,6 +539,11 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
             bridge_eval_commitment,
             pre_beta,
             v,
+            nested_challenges_partial,
+            nested_p_commitment,
+            nested_a_commitment,
+            nested_b_commitment,
+            nested_registry_xy_commitment,
         })
     }
 }
@@ -585,6 +624,11 @@ mod tests {
             bridge_eval_commitment: true,
             pre_beta: true,
             v: true,
+            nested_challenges_partial: true,
+            nested_p_commitment: true,
+            nested_a_commitment: true,
+            nested_b_commitment: true,
+            nested_registry_xy_commitment: true,
         };
         cov.assert_complete();
     }

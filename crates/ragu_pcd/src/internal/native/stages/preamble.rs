@@ -190,7 +190,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 allocator,
                 proof.as_ref().map(|p| p.circuit_id().omega_j()),
             )?,
-            unified: unified::Output::alloc_from_proof(dr, allocator, proof)?,
+            unified: unified::Output::alloc_from_proof(dr, allocator, proof.as_ref().map(|p| *p))?,
         })
     }
 
@@ -256,12 +256,16 @@ pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
     for Stage<C, R, HEADER_SIZE>
 {
-    type Parent = ();
+    // The native stage tree is rooted at the binding stage of the
+    // endoscaling walk, so the preamble chain reserves it too (see
+    // `stages::points`).
+    type Parent = super::points::BindingStage<C::NestedCurve>;
     type Witness<'source> = &'source Witness<'source, C, R, HEADER_SIZE>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _, C, HEADER_SIZE>];
 
     fn values() -> usize {
-        // 2 proofs * (3 headers * HEADER_SIZE + 1 circuit_id + unified instance wires)
+        // 2 proofs * (3 headers * HEADER_SIZE + 1 circuit_id + unified
+        // instance wires)
         2 * (3 * HEADER_SIZE + 1 + unified::NUM_WIRES)
     }
 

@@ -1,4 +1,6 @@
-//! AB stage for nested fuse operations.
+//! AB stage for nested fuse operations: the native $A$ and $B$
+//! commitments, and the commitment of the native points stage holding $A_n$
+//! and $B_n$.
 
 use core::marker::PhantomData;
 
@@ -13,12 +15,16 @@ use ragu_core::{
 use ragu_primitives::{Point, io::Write};
 
 /// Number of curve points in this stage.
-const NUM: usize = 2;
+const NUM: usize = 3;
 
 /// Witness data for this bridge stage.
 pub struct Witness<C: CurveAffine> {
     pub a: C,
     pub b: C,
+    /// Commitment of the native points stage holding the nested
+    /// `registry_wy` commitment, $A_n$ and $B_n$, fixed here before $x$ is
+    /// squeezed.
+    pub native_points_ab: C,
 }
 
 /// Prover-internal output gadget for this bridge stage.
@@ -31,6 +37,8 @@ pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     pub a: Point<'dr, D, C>,
     #[ragu(gadget)]
     pub b: Point<'dr, D, C>,
+    #[ragu(gadget)]
+    pub native_points_ab: Point<'dr, D, C>,
 }
 
 #[derive(Default)]
@@ -58,6 +66,7 @@ impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stag
         Ok(Output {
             a: Point::alloc(dr, witness.as_ref().map(|w| w.a))?,
             b: Point::alloc(dr, witness.as_ref().map(|w| w.b))?,
+            native_points_ab: Point::alloc(dr, witness.as_ref().map(|w| w.native_points_ab))?,
         })
     }
 }
