@@ -81,9 +81,10 @@ jobs:
     runs-on: ubuntu-latest
     # GitHub-hosted runners have a 6-hour (360-minute) hard ceiling per
     # job. Setting timeout-minutes to that maximum gives the 5-hour
-    # fuzz budget ~1 hour of headroom for build, cache restore, and
-    # cargo-fuzz install. Manual dispatches that pass `duration`
-    # higher than 18000 will hit the hard ceiling and be killed.
+    # fuzz budget ~1 hour of headroom for build, cache restore,
+    # cargo-fuzz install, and the bounded corpus minimization below.
+    # Manual dispatches that pass `duration` higher than 18000 will hit
+    # the hard ceiling and be killed.
     timeout-minutes: 360
     strategy:
       # Each target is independent; let the others continue if one finds a
@@ -261,10 +262,15 @@ jobs:
             exit 0
           fi
           BEFORE=$(find "corpus/${FUZZ_TARGET}" -type f | wc -l | tr -d ' ')
-          # Best-effort: a cmin failure must not fail a campaign that has
-          # already done its work, and the un-minimized corpus is still worth
-          # uploading.
-          cargo fuzz cmin --fuzz-dir . "$FUZZ_TARGET" || true
+          # Best-effort, and bounded. cmin re-executes every corpus unit, and
+          # on a target that costs seconds per input a few hundred units take
+          # longer than the hour the job has left after a five-hour campaign;
+          # unbounded, the job dies at the runner's six-hour ceiling with
+          # nothing uploaded. cargo-fuzz swaps the minimized corpus in only
+          # when the merge succeeds, so a pass that times out, like one that
+          # fails for any other reason, leaves the un-minimized corpus in
+          # place — and that is still worth uploading.
+          timeout 15m cargo fuzz cmin --fuzz-dir . "$FUZZ_TARGET" || true
           AFTER=$(find "corpus/${FUZZ_TARGET}" -type f | wc -l | tr -d ' ')
           echo "${FUZZ_TARGET}: ${BEFORE} -> ${AFTER} inputs"
 
@@ -378,8 +384,13 @@ jobs:
     if: github.event.schedule == '0 0 * * 6' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_hardening == 'true')
     runs-on: ubuntu-latest
     # `careful` rebuilds the standard library from source, which dominates
-    # the job well past the fuzz budget itself.
-    timeout-minutes: 120
+    # the job well past the fuzz budget itself. The exception is spelled out
+    # in the matrix: libFuzzer replays the whole restored corpus before it
+    # starts mutating and `-max_total_time` does not cut that replay short,
+    # and `fuzz_pcd_lifecycle` builds and verifies real proof trees at
+    # seconds per unit, so a few hundred units under a debug standard
+    # library already fill most of the default ceiling.
+    timeout-minutes: ${{ matrix.timeout || 120 }}
     strategy:
       fail-fast: false
       matrix:
@@ -415,6 +426,9 @@ jobs:
           - fuzz_internal_circuits
           - fuzz_completeness
           - fuzz_registry
+        include:
+          - target: fuzz_pcd_lifecycle
+            timeout: 240
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:

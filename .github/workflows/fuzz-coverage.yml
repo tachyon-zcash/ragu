@@ -39,7 +39,13 @@ jobs:
       # Reading the fuzz cron's corpus artifacts from another workflow run.
       actions: read
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # A fast target replays its corpus in minutes. `fuzz_pcd_lifecycle`
+    # builds and verifies real proof trees, and under coverage
+    # instrumentation each of its few hundred corpus units costs tens of
+    # seconds, so its replay is a fuzz campaign in miniature and the
+    # default ceiling cut it off partway through the corpus. It gets its
+    # own ceiling in the matrix.
+    timeout-minutes: ${{ matrix.timeout || 90 }}
     strategy:
       fail-fast: false
       matrix:
@@ -72,6 +78,9 @@ jobs:
           - fuzz_internal_circuits
           - fuzz_completeness
           - fuzz_registry
+        include:
+          - target: fuzz_pcd_lifecycle
+            timeout: 300
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
