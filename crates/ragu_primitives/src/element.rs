@@ -3,7 +3,7 @@
 //! Provides the [`Element`] type representing a wire and its field element
 //! assignment, the fundamental building block for circuit construction.
 
-use alloc::vec::Vec;
+use alloc::{boxed::Box, vec::Vec};
 use core::borrow::Borrow;
 
 use ragu_arithmetic::{Coeff, ff::Field};
@@ -21,6 +21,26 @@ use crate::{
     consistent::Consistent,
     io::{Buffer, Write},
 };
+
+/// An error indicating that a division's divisor is zero.
+///
+/// [`Element::divide`] and [`Invertible::alloc`] box this type as the source
+/// of [`Error::InvalidWitness`] when the divisor (or the value to invert) is
+/// zero, so callers can detect the condition with
+/// [`Error::invalid_witness_source`].
+///
+/// # Examples
+///
+/// ```
+/// use ragu_core::Error;
+/// use ragu_primitives::DivisionByZeroError;
+///
+/// let err = Error::InvalidWitness(Box::new(DivisionByZeroError));
+/// assert!(err.invalid_witness_source::<DivisionByZeroError>().is_some());
+/// ```
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[error("division by zero")]
+pub struct DivisionByZeroError;
 
 /// Represents a wire and its witness value.
 ///
@@ -277,8 +297,10 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
     ///
     /// # Errors
     ///
-    /// Returns a witness-generation error if witness input for this element
-    /// is zero.
+    /// Witness generation fails with [`Error::InvalidWitness`] when witness
+    /// input for this element is zero. The boxed source is a
+    /// [`DivisionByZeroError`] value, which callers can detect with
+    /// [`Error::invalid_witness_source`].
     pub fn enforce_invertible(&self, dr: &mut D) -> Result<Invertible<'dr, D>> {
         let invertible = Invertible::alloc(dr, self.value.clone())?;
         self.enforce_equal(dr, invertible.element())?;
@@ -329,8 +351,10 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
     ///
     /// # Errors
     ///
-    /// Returns a witness-generation error if witness input for this element
-    /// is zero.
+    /// Witness generation fails with [`Error::InvalidWitness`] when witness
+    /// input for this element is zero. The boxed source is a
+    /// [`DivisionByZeroError`] value, which callers can detect with
+    /// [`Error::invalid_witness_source`].
     pub fn enforce_nonzero(self, dr: &mut D) -> Result<Nonzero<'dr, D>> {
         Ok(self.enforce_invertible(dr)?.into_element())
     }
@@ -354,8 +378,10 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
     ///
     /// # Errors
     ///
-    /// Returns a witness-generation error if witness input for this element
-    /// is zero.
+    /// Witness generation fails with [`Error::InvalidWitness`] when witness
+    /// input for this element is zero. The boxed source is a
+    /// [`DivisionByZeroError`] value, which callers can detect with
+    /// [`Error::invalid_witness_source`].
     pub fn invert(&self, dr: &mut D) -> Result<Self> {
         self.enforce_invertible(dr)
             .map(|inv| inv.into_inverse().into_inner())
@@ -399,8 +425,10 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
     ///
     /// # Errors
     ///
-    /// Returns a witness-generation error if the quotient assignment cannot
-    /// be computed from witness input.
+    /// Witness generation fails with [`Error::InvalidWitness`] when the
+    /// divisor's witness value is zero. The boxed source is a
+    /// [`DivisionByZeroError`] value, which callers can detect with
+    /// [`Error::invalid_witness_source`].
     pub fn divide(&self, dr: &mut D, divisor: &Nonzero<'dr, D>) -> Result<Self> {
         let quotient_value = D::try_just(|| {
             Ok(*self.value().take()
@@ -409,7 +437,7 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
                     .take()
                     .invert()
                     .into_option()
-                    .ok_or_else(|| Error::InvalidWitness("division by zero".into()))?)
+                    .ok_or_else(|| Error::InvalidWitness(Box::new(DivisionByZeroError)))?)
         })?;
 
         let (quotient, denominator, numerator) = dr.mul(|| {
@@ -730,6 +758,31 @@ mod tests {
         assert!(alloc(F::from(4578u64), F::ZERO).is_err());
 
         Ok(())
+    }
+
+    /// Division by a zero divisor fails in witness generation with the typed
+    /// [`DivisionByZeroError`] source. The divisor bypasses
+    /// [`Element::enforce_nonzero`] via [`Nonzero::new_unchecked`], so this
+    /// exercises the quotient computation itself rather than failing earlier
+    /// in the nonzero constraint.
+    #[test]
+    fn test_divide_by_zero_reports_typed_source() {
+        let result = Simulator::simulate((F::from(4578u64), F::ZERO), |dr, witness| {
+            let (a, b) = witness.cast();
+            let allocator = &mut Standard::new();
+            let a = Element::alloc(dr, allocator, a.clone())?;
+            let b = Element::alloc(dr, allocator, b.clone())?;
+            a.divide(dr, &Nonzero::new_unchecked(b))?;
+            Ok(())
+        });
+
+        let Err(err) = result else {
+            panic!("division by zero must be rejected");
+        };
+        assert_eq!(
+            err.invalid_witness_source::<DivisionByZeroError>(),
+            Some(&DivisionByZeroError)
+        );
     }
 
     #[test]
