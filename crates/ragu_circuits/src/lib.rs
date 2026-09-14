@@ -197,7 +197,7 @@ impl<F: Field, C: Circuit<F>> CircuitExt<F> for C {}
 ///
 /// Constructed internally from a [`Circuit`] implementation.
 ///
-/// The registry key constraint is **not** part of these evaluations; it is
+/// The registry tag constraint is **not** part of these evaluations; it is
 /// injected at the [`Registry`] level at the fixed $Y^{4n-1}$ position.
 ///
 /// [`Registry`]: registry::Registry
@@ -241,7 +241,7 @@ where
 {
     let metrics = metrics::eval(&circuit)?;
 
-    // Reserve the last coefficient slot (Y^{4n-1}) for the registry key
+    // Reserve the last coefficient slot (Y^{4n-1}) for the registry tag
     // constraint, which is injected at the registry level.
     if metrics.num_constraints >= R::num_coeffs() {
         return Err(Error::ConstraintBoundExceeded {

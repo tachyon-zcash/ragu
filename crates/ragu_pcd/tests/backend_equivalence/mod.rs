@@ -157,12 +157,12 @@ impl Apps {
     }
 
     fn check_registries(&self) -> TestCaseResult {
-        let native = self.reference.native_registry.digest();
-        let nested = self.reference.nested_registry.digest();
-        prop_assert_eq!(native, self.accelerated.native_registry.digest());
-        prop_assert_eq!(nested, self.accelerated.nested_registry.digest());
-        prop_assert_eq!(native, self.prover.native_registry.digest());
-        prop_assert_eq!(nested, self.prover.nested_registry.digest());
+        let native = self.reference.native_registry.tag();
+        let nested = self.reference.nested_registry.tag();
+        prop_assert_eq!(native, self.accelerated.native_registry.tag());
+        prop_assert_eq!(nested, self.accelerated.nested_registry.tag());
+        prop_assert_eq!(native, self.prover.native_registry.tag());
+        prop_assert_eq!(nested, self.prover.nested_registry.tag());
         Ok(())
     }
 

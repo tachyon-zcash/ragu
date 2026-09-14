@@ -291,7 +291,7 @@ fn test_gate_bound_exceeded() {
 }
 
 /// With `TestRank` (`R<7>`): `num_coeffs` = 128, of which `into_wiring_object`
-/// reserves the last slot ($Y^{4n-1}$) for the registry key constraint, leaving
+/// reserves the last slot ($Y^{4n-1}$) for the registry tag constraint, leaving
 /// 127 usable. Overhead is 2 constraints (1 output + 1 ONE), so 125
 /// `enforce_zero` calls exactly fill the available slots.
 #[test]

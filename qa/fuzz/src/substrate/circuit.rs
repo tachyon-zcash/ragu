@@ -5,7 +5,7 @@
 //! ops, the constant preamble slots, the anchor constants) and circuit
 //! *witness* (the values of the witness-allocated preamble slots). The same
 //! registered circuit can therefore be traced with an honest witness
-//! ([`Preamble::values`]) or a mutated one — the registry digest, floor
+//! ([`Preamble::values`]) or a mutated one — the registry tag, floor
 //! plan, and `ky` stay fixed, which is what the constraint-identity oracles
 //! (`fuzz_circuit_cheat`, `fuzz_witness_pinning`) require.
 //!

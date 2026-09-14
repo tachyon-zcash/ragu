@@ -193,7 +193,7 @@ constraint system reject it. The no-execution front end is described in
 | `fuzz_endoscalar` | Endoscalar (point × scalar) operations; has its own `special_scalar` table with `Fp::ZETA`. |
 | `fuzz_revdot` | Reverse-dot-product primitive, at a fuzzer-chosen field and rank (see [Field and rank dispatch](#field-and-rank-dispatch)). Rank is not incidental here: `View`'s segments are clamped against `R::n()` and `revdot` pairs coefficients against a reversal whose length is the rank's, so a disagreement that only shows up at `n = 2048` was previously unreachable. |
 | `fuzz_fold_revdot` | RevDot folding. |
-| `fuzz_sxy_agreement` | `s(X, Y)` registry consistency (`wxy == wx.eval(y) == wy.eval(x)`) over arbitrary generated circuits. Caught `Key::new(0)` divide-by-zero. |
+| `fuzz_sxy_agreement` | `s(X, Y)` registry consistency (`wxy == wx.eval(y) == wy.eval(x)`) over arbitrary generated circuits. Caught `Tag::new(0)` divide-by-zero. |
 
 ### Verifier robustness
 
@@ -226,7 +226,7 @@ gaps.
 | Target | What it catches |
 |---|---|
 | `fuzz_circuit_witness` | `Circuit::witness` pipeline correctness. The `Generated` arm drives arbitrary substrate programs against the native shadow; bespoke `BoolCircuit`, `PointCircuit`, `RoutineCircuit` (Routine via `Prediction::Unknown`), and `KnownRoutineCircuit` (`Prediction::Known`) arms cover gadget families the grammar does not generate (points, custom routines). Asserts Simulator output matches the native spec, `trace::eval` agrees with `Simulator` on accept/reject, and the `assemble_with_alpha` α-injection contract. |
-| `fuzz_circuit_revdot_identity` | The canonical algebraic identity from `tests/mod.rs:158-187` — `r.revdot(r + r.dilate(z) + s(X,y) + t(X,z)) == circuit.ky(instance, y)` — over arbitrary generated circuits (accept direction; the rejection direction is `fuzz_witness_pinning`). Uses the public `Registry::circuit_y` for `s(X, y)`. |
+| `fuzz_circuit_revdot_identity` | The canonical algebraic identity from `ragu_circuits::tests::test_simple_circuit` — `r.revdot(r + r.dilate(z) + s(X,y) + t(X,z)) == circuit.ky(instance, y)` — over arbitrary generated circuits (accept direction; the rejection direction is `fuzz_witness_pinning`). Uses the public `Registry::circuit_y` for `s(X, y)`. |
 | `fuzz_staging` | Full staging-system coverage: **Invariant A** (`rx.revdot(own_mask) == 0` per stage), **Invariant B** (combined revdot identity through `MultiStage::witness`), **final_mask** check on the bare assembled trace, plus structural **cross-mask** (rx coefficient positions stay within the stage's declared range — robust against adversarial witness/y) and `skip_gates`/`num_gates` hand-coded pins. Three variants exercise `Single2W`, `Single4W`, and `Chain2x4` (parent → child, exercising `skip_gates` recursion). |
 | `fuzz_registry` | Registry construction past one circuit at index zero: a fuzzer-chosen sequence of circuits across all four `RegistryBuilder` categories, at a fuzzer-chosen rank. Asserts `finalize` concatenates by category rather than call order (the ordering `InternalCircuitIndex::ALL` depends on), that `xy(x,y).eval(w)`, `wy`, `wx` and `wxy` agree across the IFFT and cached-Lagrange paths — the same relation `verify.rs` checks on `native_registry_xy_poly` — that `circuit_y(i,y).eval(x) == circuit_xy(i,x,y)` at every index including the zero-polynomial padding above the circuit count, and that `finalize` returns `CircuitBoundExceeded` exactly one circuit past `R::num_coeffs()`. |
 

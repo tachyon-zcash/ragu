@@ -71,17 +71,13 @@
 //! routine chains, multi-routine compositions) can be added as further
 //! `CircuitChoice` arms when warranted.
 //!
-//! ## What this does not catch (deferred — issue #709)
+//! ## What this does not catch
 //!
-//! The full algebraic identity from `tests/mod.rs:158-187` —
-//! `a.revdot(b) == circuit.ky(instance, y)` where
-//! `b = r + r.dilate(z) + obj.sy(y, &plan) + Rank::tz(z)` — is the
-//! strongest oracle for the synthesis layer and the algebraic bridge
-//! between this target (witness-driver side) and `fuzz_sxy_agreement`
-//! (wiring/constraint side). Its construction requires
-//! `WiringObject::sy` and `Rank::tz`, both `pub(crate)` in
-//! `ragu_circuits`, so it is deferred to a separate `unstable-fuzzing`-
-//! gated target.
+//! The full algebraic identity from `ragu_circuits::tests::test_simple_circuit`
+//! is covered by `fuzz_circuit_revdot_identity` (honest witnesses) and
+//! `fuzz_witness_pinning` (mutated witnesses). Those targets use the public
+//! `Registry::circuit_y` and `Rank::tz` APIs to check the assembled trace
+//! against the wiring and gate polynomials.
 
 #![no_main]
 
@@ -149,7 +145,7 @@ enum CircuitChoice {
     /// `KnownRoutineCircuit` over a single Fp witness. Exercises the
     /// `Prediction::Known(output, aux)` branch of the Routine trait —
     /// the branch that lets witness drivers short-circuit `execute`.
-    /// Catches Routine impls that mis-construct the predicted-output
+    /// Catches Routine impls that incorrectly construct the predicted-output
     /// gadget while still satisfying the synthesis-side aux contract.
     KnownRoutine {
         witness_seed: u64,
@@ -387,7 +383,7 @@ fn routine_native(witness: Fp) -> Fp {
 // `Prediction::Unknown(aux)`; `DoubleKnown` returns
 // `Prediction::Known(predicted_output, aux)`, letting witness-extraction
 // drivers short-circuit execution if they choose to. Catches Routine
-// impls that mis-construct the predicted-output gadget (wrong wire shape
+// impls that incorrectly construct the predicted-output gadget (wrong wire shape
 // or wrong predicted value) — bugs that an Unknown-only routine cannot
 // surface because witness drivers never see the predicted output there.
 // ---------------------------------------------------------------------------

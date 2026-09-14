@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added iteration over the stored coefficients of sparse polynomials.
 
+### Changed
+
+- Renamed `registry::Key` to `registry::Tag` and `Registry::digest()` to
+  `Registry::tag()`.
+
 ## [0.0.0] - 2025-07-29
 
 ### Added

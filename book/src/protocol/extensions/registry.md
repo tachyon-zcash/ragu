@@ -186,8 +186,13 @@ one that was explicitly registered — a circuit, or one of the
 registers alongside them — but $2^k$ is the smallest power of two that
 accommodates all of them, so unless that count is itself a power of two
 some domain points are left unassigned. Those points are not invalid:
-the registry interpolates the value $0$ at each of them, so each one
-carries the zero polynomial.
+their underlying wiring polynomial is zero.
+
+The registry adds the shared [registry tag](../local/wiring.md)
+term $\kappa \cdot (XY)^{4n-1}$ at every domain point, including these
+unassigned points. The full registry evaluation at an unassigned point
+therefore consists of this tag term alone. Since the term vanishes at
+$Y = 0$, it does not affect the distinction below.
 
 The zero polynomial is not a special case. A bonding polynomial is
 precisely a wiring polynomial that omits the $0$th constraint against

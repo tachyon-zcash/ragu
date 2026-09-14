@@ -161,8 +161,8 @@ impl ChildBridgeKind {
     /// This constant is the source of truth for the relative order of
     /// `RxIndex::ChildBridge(kind, side)` entries in [`RxIndex::ALL`]
     /// (see [`RxIndex::all_slots`]), and is therefore pinned by
-    /// `test_nested_registry_digest` — re-ordering these variants
-    /// changes the nested registry digest.
+    /// `test_nested_registry_tag` — re-ordering these variants
+    /// changes the nested registry tag.
     pub const ALL: [Self; 6] = [
         Self::SPrime,
         Self::InnerError,

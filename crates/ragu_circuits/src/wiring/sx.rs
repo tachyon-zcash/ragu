@@ -64,7 +64,7 @@
 //! This follows from the root segment's emission order — circuit body first,
 //! then public outputs, and `ONE` last — being flipped by the reversal.
 //!
-//! The registry key constraint is **not** included in these coefficients; it
+//! The registry tag constraint is **not** included in these coefficients; it
 //! occupies the fixed $Y^{4n-1}$ slot and is injected at the registry level.
 //!
 //! [`Driver`]: ragu_core::drivers::Driver
@@ -251,7 +251,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
     ///
     /// Returns [`Error::ConstraintBoundExceeded`] if the constraint count reaches
     /// `Rank::num_coeffs() - 1` (the last slot is reserved for the registry
-    /// key constraint).
+    /// tag constraint).
     fn enforce_zero(&mut self, lc: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
         let q = self.scope.constraints;
         if q >= R::num_coeffs() - 1 {

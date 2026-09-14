@@ -95,9 +95,10 @@ injected in all wiring polynomials at the $Y^{4n - 1}$ position; circuits are
 restricted in the number of constraints they emit to avoid overlapping this
 term. This so-called [registry constraint](../extensions/registry.md) is
 trivially satisfied for all values of $\color{#7e22ce}{\kappa}$, since $\v{c}_0
-= 0$ anyway. In practice, $\color{#7e22ce}{\kappa}$ is a fixed value computed as
-a digest of $s(X, Y)$ prior to substitution, forcing every non-trivial
-evaluation of $s$ to be unpredictable even to someone who chooses $s$.
+= 0$ anyway. In practice, $\color{#7e22ce}{\kappa}$ is the public registry
+binding tag, computed deterministically from the registry polynomial prior to
+substitution. Its purpose is to make non-trivial evaluations of $s$
+unpredictable even to someone who chooses the circuits.
 
 [^conventionally]: There is nothing preventing the roles of $\v{a}_0$ and
     $\v{b}_0$ from being swapped, since neither wire is actually constrained in
@@ -184,7 +185,7 @@ In this stage-mask matrix, each diagonal block is an $n \times n$ main-diagonal
 matrix with $1$ at every position where the corresponding wire is forced to $0$ (via
 $\revdot{\v{r}}{\v{s}} = 0$) and $0$ at every stage-gate position that this mask
 leaves unconstrained. The `SYSTEM` corners are also $0$, except that the
-registry-key contribution changes the $\v{c}_0$ entry to $\kappa$, as explained
+registry tag contribution changes the $\v{c}_0$ entry to $\kappa$, as explained
 below.
 
 The diagrams below show the generic case with distinct boundary positions. When

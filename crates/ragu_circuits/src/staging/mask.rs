@@ -312,7 +312,7 @@ mod tests {
             // b[j] at degree 2n-1-j (j=0..n-1), d[j] at degree j (j=n-1 down to 1).
             // d[0] at degree 0 is the ONE wire slot, not issued here (handled
             // by orchestrate + Stripped for bonding polynomials).
-            // c[0] is the registry key slot at degree 4n-1 — not emitted here.
+            // c[0] is the registry tag slot at degree 4n-1 — not emitted here.
             //
             // The a[j=0] and b[j=0] slots are dummy constraints (the SYSTEM
             // gate is always "active" so its wires are not masked); we

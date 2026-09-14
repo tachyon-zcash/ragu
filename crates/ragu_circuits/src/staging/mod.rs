@@ -12,7 +12,7 @@
 //!
 //! where $\mathbf{r}$ is the coefficient vector for $r(X)$, and $\mathbf{s},
 //! \mathbf{t}$ are determined by $y$ and $z$ (respectively) to enforce the
-//! gates and constraints (respectively) of the particular
+//! constraints and gates (respectively) of the particular
 //! circuit. We say that $\mathbf{s}$ is the coefficient vector for $s(X, Y)$ at
 //! the restriction $Y = y$.
 //!
@@ -64,20 +64,26 @@
 //! stage's [staging mask](StageExt::mask).
 //!
 //! ```rust,ignore
+//! use ragu_circuits::registry::{CircuitIndex, RegistryBuilder};
+//!
 //! let a = MyStage::rx(alpha, my_stage_witness)?;
 //!
-//! // Register the mask into a registry to obtain s(X, y).
-//! let mask_handle = builder.register_bonding(MyStage::mask()?);
-//! let registry = builder.finalize()?;
+//! // Register the mask alone, so its circuit index is zero.
+//! let registry = RegistryBuilder::<Fp, R>::new()
+//!     .register_bonding(MyStage::mask()?)
+//!     .finalize()?;
+//! let mask_index = CircuitIndex::new(0);
 //!
 //! let y = Fp::random(&mut ragu_arithmetic::rand::rng());
-//! assert_eq!(a.revdot(&registry.y(mask_handle, y)), Fp::ZERO);
+//! assert_eq!(a.revdot(&registry.circuit_y(mask_index, y)), Fp::ZERO);
 //! ```
 //!
 //! If two or more stage polynomials must satisfy the same well-formedness
 //! check, they can be combined using a random challenge $z$:
 //!
 //! ```rust,ignore
+//! use ragu_circuits::registry::{CircuitIndex, RegistryBuilder};
+//!
 //! let a = MyStage::rx(alpha_a, my_stage_witness)?;
 //! let b = MyStage::rx(alpha_b, my_stage_witness)?;
 //!
@@ -88,11 +94,13 @@
 //! combined.scale(z);
 //! combined.add_assign(&b);
 //!
-//! let mask_handle = builder.register_bonding(MyStage::mask()?);
-//! let registry = builder.finalize()?;
+//! let registry = RegistryBuilder::<Fp, R>::new()
+//!     .register_bonding(MyStage::mask()?)
+//!     .finalize()?;
+//! let mask_index = CircuitIndex::new(0);
 //!
 //! let y = Fp::random(&mut ragu_arithmetic::rand::rng());
-//! assert_eq!(combined.revdot(&registry.y(mask_handle, y)), Fp::ZERO);
+//! assert_eq!(combined.revdot(&registry.circuit_y(mask_index, y)), Fp::ZERO);
 //! ```
 //!
 //! ### Final Stage

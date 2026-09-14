@@ -3,7 +3,7 @@
 //!
 //! For a satisfying witness `w` of a `MultiStageCircuit`, wrapped via
 //! `MultiStage::new(_)` to implement the [`Circuit`] trait, the algebraic
-//! identity from `tests/mod.rs:158-187` must hold:
+//! identity from `ragu_circuits::tests::test_simple_circuit` must hold:
 //!
 //! ```text
 //! r.revdot(b) == ms.ky(instance, y)
@@ -11,16 +11,15 @@
 //! ```
 //!
 //! `r` is the assembled trace polynomial; `s(X, y)` is derived from
-//! `Registry::wy(omega_0, y)` minus the registry key term (same trick as
-//! `fuzz_circuit_revdot_identity`, valid for a single-circuit registry
-//! whose circuit is not a mask). `ms.ky(instance, y)` is the instance
-//! polynomial evaluated at `y`.
+//! `Registry::wy(omega_0, y)` minus the registry tag term. This subtraction
+//! is valid for the single-circuit, non-mask registries used below.
+//! `ms.ky(instance, y)` is the instance polynomial evaluated at `y`.
 //!
 //! ## What this catches that the non-staged targets don't
 //!
 //! The `MultiStage`-as-`Circuit` path runs the user-supplied
-//! `MultiStageCircuit::witness` body, which receives a [`StageBuilder`]
-//! (`staging/builder.rs:73`). The builder allocates stage wires in a
+//! `MultiStageCircuit::witness` body, which receives a [`StageBuilder`].
+//! The builder allocates stage wires in a
 //! two-phase protocol (phase 1: reserve, phase 2: inject), then hands the
 //! injected wires to post-stage code that calls real driver ops. None of
 //! that machinery is on `fuzz_circuit_witness` / `fuzz_circuit_revdot_identity`'s
@@ -29,28 +28,28 @@
 //! Specifically, this target re-runs the revdot identity under conditions
 //! that exercise:
 //!
-//! - `StageBuilder::configure_stage` (`staging/builder.rs:198-242`) — wire
+//! - `StageBuilder::configure_stage` — wire
 //!   counting via a wireless counter emulator, then real allocation through
 //!   the supplied driver.
 //! - `StageGuard::unenforced` / `unenforced_inner`
-//!   (`staging/builder.rs:158-186`) — wireless witness execution followed
-//!   by wire injection via `StageWireInjector` (`staging/builder.rs:99-115`).
+//!   — wireless witness execution followed
+//!   by wire injection via `StageWireInjector`.
 //!   A bug that injects the wrong wires produces a trace polynomial that
 //!   no longer satisfies the algebraic identity.
-//! - `MultiStage::witness` (`staging/mod.rs:359-368`) — the adapter that
+//! - `MultiStage::witness` — the adapter that
 //!   makes `MultiStageCircuit` look like `Circuit` and threads `StageBuilder`
 //!   into the user body.
-//! - Parent-chain `skip_gates` arithmetic (`staging/mod.rs:220-222`) — one
-//!   of the registered variants (`MscChain`) stacks `StageW4Child` on top
+//! - Parent-chain `Stage::skip_gates` arithmetic — one
+//!   of the registered variants (`Chain2x4`) stacks `StageW4Child` on top
 //!   of `StageW2`, so `skip_gates` recurses one level.
 //!
-//! `MultiStage::trace` (`mod.rs:359-368`) alone is not enough: the trace it
+//! `MultiStage::trace` alone is not enough: the trace it
 //! produces has zero-valued stage wire slots (`configure_stage` allocates
-//! with `Coeff::Zero` at `staging/builder.rs:221`). The real $r(X)$ is
+//! with `Coeff::Zero`). The real $r(X)$ is
 //! formed by adding `MultiStage::trace`'s output and each stage's
-//! `StageExt::rx(0, witness_i)` polynomial (`staging/mod.rs:431`). In
+//! `StageExt::rx(0, witness_i)` polynomial. In
 //! production these are committed separately and summed at verification —
-//! see `crates/ragu_pcd/src/fuse/_11_circuits.rs:63-148` for an
+//! see `crates/ragu_pcd/src/fuse/_11_circuits.rs` for an
 //! application of this pattern.
 //!
 //! The fuzz target reconstructs the full $r(X)$ that way and runs the
@@ -71,7 +70,7 @@
 //!
 //! where `s_mask(y)` is `Registry::circuit_y(0, y)` for a registry built
 //! from a single `StageType::mask()` bonding object, minus the same
-//! `digest * y^{4n-1}` key term Invariant B subtracts.
+//! `tag * y^{4n-1}` tag term Invariant B subtracts.
 //!
 //! Invariant A catches sum-preserving bugs that Invariant B misses — e.g.,
 //! reversing two slots inside one stage's `rx_configured` and a
@@ -355,7 +354,7 @@ impl Single4W {
 /// Two stages: `StageW2` parent, `StageW4Child` last. Post-stage: output =
 /// (parent.a + child.a) * (parent.b + child.b).
 ///
-/// Exercises `skip_gates` recursion at `staging/mod.rs:220-222`.
+/// Exercises `Stage::skip_gates` recursion through the parent stage.
 #[derive(Clone, Default)]
 struct Chain2x4;
 
@@ -419,9 +418,7 @@ impl Chain2x4 {
 }
 
 // ---------------------------------------------------------------------------
-// Per-variant memoized registries. Same `LazyLock<Option<Registry<...>>>`
-// pattern as fuzz_circuit_revdot_identity's SIMPLE_REGISTRY but one slot per
-// variant.
+// Per-variant memoized registries, with one slot per multistage shape.
 // ---------------------------------------------------------------------------
 
 fn build_registry<C>(circuit: C) -> Option<Registry<'static, Fp, TestRank>>
@@ -447,9 +444,9 @@ static CHAIN_REGISTRY: LazyLock<Option<Registry<'static, Fp, TestRank>>> =
 /// entry. The resulting registry's `circuit_y(0, y)` is the stage's full
 /// mask polynomial (the framework's `RegistryAt::y` adds the global term
 /// for masking circuits, recovering it from the `-notch`-only `sy()` that
-/// the underlying `StageMask` returns) plus the `digest * y^{4n-1}` key
+/// the underlying `StageMask` returns) plus the `tag * y^{4n-1}` tag
 /// term — exactly the inputs Invariant A wants for its zero check, after
-/// subtracting the key term.
+/// subtracting the tag term.
 fn build_mask_registry(mask: BondingObject<'static, Fp, TestRank>) -> Option<Registry<'static, Fp, TestRank>> {
     RegistryBuilder::<Fp, TestRank>::new()
         .register_bonding(mask)
@@ -558,11 +555,12 @@ fn maybe_special(seed: u64, special: Option<u8>) -> Fp {
     }
 }
 
-/// Same trick as `fuzz_circuit_revdot_identity::sy_from_registry`:
-/// `Registry::wy(omega_0, y)` is `s(X, y)` plus the registry key term
-/// `key.value() * y^{4n-1}` at slot `c[R::n() - 1]`. Subtract it to
-/// recover the bare wiring polynomial. Valid because each MSC variant
-/// is registered alone (single-circuit registry, non-mask).
+/// Recover the bare wiring polynomial from a single-circuit registry.
+///
+/// `Registry::wy(omega_0, y)` is `s(X, y)` plus the registry tag term
+/// `registry.tag() * y^{4n-1}` at slot `c[0]` in the wiring view (degree `4n-1`).
+/// Subtract it to recover the bare wiring polynomial. Valid because each
+/// MSC variant is registered alone (single-circuit registry, non-mask).
 fn sy_from_registry(
     registry: &Registry<'_, Fp, TestRank>,
     y: Fp,
@@ -571,17 +569,17 @@ fn sy_from_registry(
     let mut wy = registry.wy(omega_0, y);
     if y != Fp::ZERO {
         let y_4n_minus_1 = y.pow_vartime([(4 * TestRank::n() - 1) as u64]);
-        let mut key_view = sparse::View::<_, TestRank, _>::wiring();
-        key_view.c.push(registry.digest() * y_4n_minus_1);
-        let key_term = key_view.build();
-        wy.sub_assign(&key_term);
+        let mut tag_view = sparse::View::<_, TestRank, _>::wiring();
+        tag_view.c.push(registry.tag() * y_4n_minus_1);
+        let tag_term = tag_view.build();
+        wy.sub_assign(&tag_term);
     }
     wy
 }
 
-/// Same key-term subtraction as `sy_from_registry`, applied to a
+/// Same tag term subtraction as `sy_from_registry`, applied to a
 /// mask-only registry. The mask-only registry's `circuit_y(0, y)` is the
-/// stage's full mask polynomial plus the `digest * y^{4n-1}` key term;
+/// stage's full mask polynomial plus the `tag * y^{4n-1}` tag term;
 /// subtracting the latter gives the bare mask polynomial that Invariant
 /// A revdots against.
 fn sy_from_mask_registry(
@@ -591,10 +589,10 @@ fn sy_from_mask_registry(
     let mut wy = mask_registry.circuit_y(CircuitIndex::new(0), y);
     if y != Fp::ZERO {
         let y_4n_minus_1 = y.pow_vartime([(4 * TestRank::n() - 1) as u64]);
-        let mut key_view = sparse::View::<_, TestRank, _>::wiring();
-        key_view.c.push(mask_registry.digest() * y_4n_minus_1);
-        let key_term = key_view.build();
-        wy.sub_assign(&key_term);
+        let mut tag_view = sparse::View::<_, TestRank, _>::wiring();
+        tag_view.c.push(mask_registry.tag() * y_4n_minus_1);
+        let tag_term = tag_view.build();
+        wy.sub_assign(&tag_term);
     }
     wy
 }

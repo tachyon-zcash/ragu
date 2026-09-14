@@ -207,8 +207,8 @@ impl ChildBridgeKind {
     ///
     /// Derived, not restated: this order is the source of truth for the
     /// relative position of `ChildBridge` entries in the nested `ALL`, and is
-    /// pinned by `test_nested_registry_digest` — re-ordering it changes the
-    /// nested registry digest.
+    /// pinned by `test_nested_registry_tag` — re-ordering it changes the
+    /// nested registry tag.
     pub const ALL: [Self; 6] = Self::derive_all();
 
     const fn derive_all() -> [Self; 6] {
@@ -688,7 +688,7 @@ impl NestedRx {
     ///
     /// Derived from `internal::nested::RxIndex::ALL` for the same reason as
     /// [`NativeRx::ALL`], and more urgently: this order is pinned by
-    /// `test_nested_registry_digest`, so restating it by hand would put a
+    /// `test_nested_registry_tag`, so restating it by hand would put a
     /// consensus-relevant ordering in two places.
     pub const ALL: [Self; Self::NUM] = Self::derive_all();
 

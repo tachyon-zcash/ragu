@@ -39,4 +39,4 @@ to notice, which is the bug class worth chasing.
 
 - Squeezing from an empty sponge violated a precondition.
 - The native and circuit sponge APIs disagreed on that same case.
-- `Key::new(0)` divided by zero during registry construction.
+- `Tag::new(0)` divided by zero during registry construction.

@@ -255,32 +255,32 @@ impl<'params, F: FromUniformBytes<64>, R: Rank> RegistryBuilder<'params, F, R> {
             .map(|circuit| crate::floor_planner::floor_plan(circuit.segment_records()))
             .collect();
 
-        // Create provisional registry (key not yet computed)
+        // Create provisional registry (tag not yet computed)
         let mut registry = Registry {
             domain,
             circuits,
             floor_plans,
-            key: Key::default(),
+            tag: Tag::default(),
         };
-        registry.key = Key::new(registry.compute_registry_digest());
+        registry.tag = Tag::new(registry.compute_registry_tag());
 
         Ok(registry)
     }
 }
 
-/// Key that binds the registry polynomial $m(W, X, Y)$ to prevent Fiat-Shamir
-/// soundness attacks.
+/// Public registry binding tag derived deterministically from the registry
+/// polynomial $m(W, X, Y)$ to prevent Fiat-Shamir soundness attacks.
 ///
 /// In Fiat-Shamir transformed protocols, common inputs such as the proving
 /// statement (i.e., circuit descriptions) must be included in the transcript
 /// before any prover messages or verifier challenges. Otherwise, malicious
-/// provers may adapatively choose another statement during, or even after,
+/// provers may adaptively choose another statement during, or even after,
 /// generating a proof. In the literature, this is known as
 /// [weak Fiat-Shamir attacks](https://eprint.iacr.org/2023/1400).
 ///
-/// To prevent such attacks, one can salt the registry digest $H(m(W, X, Y))$ to
-/// the transcript before any prover messages, forcing a fixed instance.
-/// However, the registry polynomial $m$ contains the description of a recursive
+/// To prevent such attacks, one can include a digest $H(m(W, X, Y))$ of the
+/// registry polynomial in the transcript before any prover messages, forcing a
+/// fixed instance. However, $m$ contains the description of a recursive
 /// verifier whose logic depends on a transcript salted with the very digest
 /// itself, creating a circular dependency.
 ///
@@ -294,9 +294,10 @@ impl<'params, F: FromUniformBytes<64>, R: Rank> RegistryBuilder<'params, F, R> {
 ///
 /// Polynomials of bounded degree are overdetermined by their evaluation at a
 /// sufficient number of distinct points. Starting from public constants, we
-/// iteratively evaluate $e_i = m(w_i, x_i, y_i)$ where each evaluation point
-/// $(w_{i+1}, x_{i+1}, y_{i+1})$ is seeded by hashing the prior evaluation $e_i$.
-/// The final evaluation serves as the binding key.
+/// iteratively evaluate $e_i = m(w_i, x_i, y_i)$ and absorb each evaluation into
+/// a running hash state. Each updated hash state seeds the next evaluation
+/// point $(w_{i+1}, x_{i+1}, y_{i+1})$. The registry tag is a field element
+/// derived from the final hash state.
 ///
 /// The number of iterations must exceed the degrees of freedom an adversary
 /// could exploit to adaptively modify circuits.
@@ -304,35 +305,34 @@ impl<'params, F: FromUniformBytes<64>, R: Rank> RegistryBuilder<'params, F, R> {
 ///
 /// # Break self-reference without preprocessing
 ///
-/// Now with a binding evaluation `e_d`, which is the registry [`Key`], we can
-/// break the self-reference more elegantly without preprocessing or reliance on
-/// public inputs.
+/// With the resulting registry [`Tag`], we can break the self-reference without
+/// preprocessing or reliance on public inputs.
 ///
-/// Concretely, the registry key $k$ is injected as the monomial
+/// Concretely, the registry tag $k$ is injected as the monomial
 /// $k \cdot (XY)^{4n-1}$ at the registry level, binding each circuit's wiring
 /// polynomial to the registry polynomial and thus the entire registry polynomial
-/// to the Fiat-Shamir transcript without self-reference. The key randomizes the
+/// to the Fiat-Shamir transcript without self-reference. The tag randomizes the
 /// wiring polynomial directly.
 ///
-/// The key is computed during [`RegistryBuilder::finalize`] and used during
+/// The tag is computed during [`RegistryBuilder::finalize`] and used during
 /// polynomial evaluations of circuits in the registry.
 ///
 /// [#78]: https://github.com/tachyon-zcash/ragu/issues/78
-pub struct Key<F: Field>(F);
+pub struct Tag<F: Field>(F);
 
-impl<F: Field> Default for Key<F> {
+impl<F: Field> Default for Tag<F> {
     fn default() -> Self {
         Self(F::ONE)
     }
 }
 
-impl<F: Field> Key<F> {
-    /// Creates a new registry key from a field element.
+impl<F: Field> Tag<F> {
+    /// Creates a new registry tag from a field element.
     pub fn new(val: F) -> Self {
         Self(val)
     }
 
-    /// Returns the registry key value.
+    /// Returns the registry tag value.
     pub fn value(&self) -> F {
         self.0
     }
@@ -349,8 +349,8 @@ pub struct Registry<'params, F: PrimeField, R: Rank> {
     /// Per-circuit floor plans computed during finalization.
     floor_plans: Vec<Vec<ConstraintSegment>>,
 
-    /// Registry key used to bind circuits to this registry.
-    key: Key<F>,
+    /// Registry tag used to bind circuits to this registry.
+    tag: Tag<F>,
 }
 
 /// Cached Lagrange state for a fixed W point.
@@ -427,13 +427,13 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
         trace.assemble(&self.floor_plans[usize::from(circuit)], alpha)
     }
 
-    /// Returns the registry digest value.
+    /// Returns the registry tag value.
     ///
-    /// This is the binding key computed during
+    /// This is the binding tag computed during
     /// [`RegistryBuilder::finalize`] that ties each circuit's wiring
     /// polynomial to this registry.
-    pub fn digest(&self) -> F {
-        self.key.value()
+    pub fn tag(&self) -> F {
+        self.tag.value()
     }
 
     /// Returns the number of circuits in this registry.
@@ -448,14 +448,14 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
         bitreverse(i as u32, self.domain.log2_n()) as usize
     }
 
-    /// Evaluates the registry key contribution $k \cdot (XY)^{4n-1}$
+    /// Evaluates the registry tag contribution $k \cdot (XY)^{4n-1}$
     /// at $(x, y)$, returning a scalar.
-    fn key_sxy(&self, x: F, y: F) -> F {
+    fn tag_sxy(&self, x: F, y: F) -> F {
         if x == F::ZERO || y == F::ZERO {
             return F::ZERO;
         }
         let xy_4n_minus_1 = (x * y).pow_vartime([(4 * R::n() - 1) as u64]);
-        self.key.value() * xy_4n_minus_1
+        self.tag.value() * xy_4n_minus_1
     }
 
     /// Evaluate the registry polynomial unrestricted at $W$.
@@ -476,16 +476,16 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
     /// Entries are indexed by domain position: circuit $i$'s evaluation lives
     /// at $j = \text{bitreverse}(i, \log\_2 n)$, the same point
     /// [`CircuitIndex::omega_j`] computes against the field's full $2^S$
-    /// domain. Every entry includes the $W$-independent key term (positions
+    /// domain. Every entry includes the $W$-independent tag term (positions
     /// with no registered circuit hold it alone), and masking circuits also
     /// carry the shared global term.
     pub fn wxy_over_domain(&self, x: F, y: F) -> Vec<F> {
-        // The key term k * (XY)^{4n-1} has no W factor, so it adds the same
+        // The tag term k * (XY)^{4n-1} has no W factor, so it adds the same
         // scalar to every domain evaluation.
-        let key_scalar = self.key_sxy(x, y);
+        let tag_scalar = self.tag_sxy(x, y);
         let global_xy = crate::staging::mask::global_mask::<F, R>(x, y);
 
-        let mut evals = alloc::vec![key_scalar; self.domain.n()];
+        let mut evals = alloc::vec![tag_scalar; self.domain.n()];
         // Masking polynomials return only -notch from sxy(); add the shared
         // global term to each mask slot inline.
         for (i, circuit) in self.circuits.iter().enumerate() {
@@ -615,7 +615,7 @@ impl<F: PrimeField, R: Rank> Registry<'_, F, R> {
             }
             LagrangeCache::Zero => {
                 // This domain point carries the zero polynomial, so it
-                // contributes nothing. The registry key term is still added by
+                // contributes nothing. The registry tag term is still added by
                 // the caller (`RegistryAt` methods), so the evaluation is not
                 // identically zero.
             }
@@ -710,14 +710,14 @@ impl<F: PrimeField, R: Rank> RegistryAt<'_, F, R> {
         global.scale(self.mask_coeff_sum);
         poly.add_assign(&global);
 
-        // Add the registry key contribution k * (XY)^{4n-1}.  Restricted
+        // Add the registry tag contribution k * (XY)^{4n-1}.  Restricted
         // at Y, this is k * y^{4n-1} at X^{4n-1} (c-wire of the SYSTEM gate in
         // the wiring layout).
         if y != F::ZERO {
             let y_4n_minus_1 = y.pow_vartime([(4 * R::n() - 1) as u64]);
-            let mut key_view = sparse::View::<_, R, _>::wiring();
-            key_view.c.push(self.registry.key.value() * y_4n_minus_1);
-            poly.add_assign(&key_view.build());
+            let mut tag_view = sparse::View::<_, R, _>::wiring();
+            tag_view.c.push(self.registry.tag.value() * y_4n_minus_1);
+            poly.add_assign(&tag_view.build());
         }
 
         poly
@@ -741,16 +741,16 @@ impl<F: PrimeField, R: Rank> RegistryAt<'_, F, R> {
         global.scale(self.mask_coeff_sum);
         poly.add_assign(&global);
 
-        // Add the registry key contribution k * (XY)^{4n-1}.  Restricted
+        // Add the registry tag contribution k * (XY)^{4n-1}.  Restricted
         // at X, this is k * x^{4n-1} at Y^{4n-1}.
         if x != F::ZERO {
             let x_4n_minus_1 = x.pow_vartime([(4 * R::n() - 1) as u64]);
-            let key_coeff = self.registry.key.value() * x_4n_minus_1;
-            let mut key_coeffs = alloc::vec![F::ZERO; R::num_coeffs()];
+            let tag_coeff = self.registry.tag.value() * x_4n_minus_1;
+            let mut tag_coeffs = alloc::vec![F::ZERO; R::num_coeffs()];
             // Y^{4n-1} is the last coefficient (index num_coeffs() - 1 = 4n - 1),
             // the slot reserved by circuit-level bounds checks.
-            key_coeffs[R::num_coeffs() - 1] = key_coeff;
-            poly.add_assign(&sparse::Polynomial::from_coeffs(key_coeffs));
+            tag_coeffs[R::num_coeffs() - 1] = tag_coeff;
+            poly.add_assign(&sparse::Polynomial::from_coeffs(tag_coeffs));
         }
 
         poly
@@ -770,14 +770,14 @@ impl<F: PrimeField, R: Rank> RegistryAt<'_, F, R> {
         // scalar once.
         result += self.mask_coeff_sum * crate::staging::mask::global_mask::<F, R>(x, y);
 
-        // Add the registry key contribution.
-        result + self.registry.key_sxy(x, y)
+        // Add the registry tag contribution.
+        result + self.registry.tag_sxy(x, y)
     }
 }
 
 impl<F: FromUniformBytes<64>, R: Rank> Registry<'_, F, R> {
-    /// Compute a digest of this registry using BLAKE2b.
-    fn compute_registry_digest(&self) -> F {
+    /// Compute the registry tag using BLAKE2b.
+    fn compute_registry_tag(&self) -> F {
         let mut hasher = Params::new().personal(b"ragu_registry___").to_state();
 
         let field_from_hash = |digest_state: &blake2b_simd::Hash, index: u8| {
@@ -1021,7 +1021,7 @@ mod tests {
         // 5 circuits pad the domain to size 8; indices 5..8 carry the zero
         // polynomial. Every domain point — registered (`Assigned` fast path)
         // and padded (`Zero` fast path) — must agree with the interpolation
-        // evaluated there, key term included.
+        // evaluated there, tag term included.
         let mut builder = TestRegistryBuilder::new();
         for i in 1..=5 {
             builder = builder.register_circuit(SquareCircuit { times: i })?;
