@@ -41,7 +41,9 @@
 //! [`commit`]: Polynomial::commit
 
 pub(crate) mod view;
+mod wire;
 pub use view::View;
+pub use wire::InvalidBlock;
 
 #[cfg(test)]
 mod tests;
@@ -54,6 +56,11 @@ use ragu_arithmetic::{CurveAffine, DeferredField, ff::Field, rand::CryptoRng};
 use super::Rank;
 
 /// A sparse polynomial with coefficients stored as non-overlapping blocks.
+///
+/// The [`ragu_primitives::wire`] codecs encode maximal contiguous runs of
+/// nonzero coefficients, independently of these in-memory block boundaries.
+/// Decoding rejects alternative layouts and invalid blocks; block failures
+/// carry [`InvalidBlock`] as the source of a wire error.
 ///
 /// See the [module documentation](self) for details.
 #[derive(Clone, Debug)]
@@ -112,37 +119,48 @@ const GAP_TOLERANCE: usize = 4;
 /// consecutive zeros are kept inline within a run; longer gaps cause a split.
 /// Leading and trailing zeros are always trimmed.
 fn extend_runs<F: Field>(out: &mut Vec<(usize, Vec<F>)>, base: usize, data: Vec<F>) {
-    let mut run_start: Option<usize> = None;
-    let mut run = Vec::new();
-    let mut zero_count: usize = 0;
+    let coeffs = data
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(i, coeff)| (base + i, coeff));
+    let result = try_extend_runs(out, coeffs, |length| {
+        Ok::<_, core::convert::Infallible>(Vec::with_capacity(length))
+    });
+    result.unwrap_or_else(|never| match never {});
+}
 
-    for (i, coeff) in data.into_iter().enumerate() {
-        let is_zero = bool::from(coeff.is_zero());
-
-        match (run_start, is_zero) {
-            (None, true) => {}
-            (None, false) => {
-                run_start = Some(base + i);
-                run.push(coeff);
+/// The same block builder with fallible reservation for decoded input.
+/// Indexed coefficients let callers omit long zero gaps without expanding them.
+fn try_extend_runs<F: Field, E>(
+    out: &mut Vec<(usize, Vec<F>)>,
+    coeffs: impl Iterator<Item = (usize, F)> + Clone,
+    mut reserve: impl FnMut(usize) -> Result<Vec<F>, E>,
+) -> Result<(), E> {
+    let mut nonzero = coeffs
+        .filter(|(_, value)| !bool::from(value.is_zero()))
+        .peekable();
+    while let Some((start, first)) = nonzero.next() {
+        let mut end = start + 1;
+        for (index, _) in nonzero.clone() {
+            if index - end > GAP_TOLERANCE {
+                break;
             }
-            (Some(_), false) => {
-                run.extend(core::iter::repeat_n(F::ZERO, zero_count));
-                zero_count = 0;
-                run.push(coeff);
-            }
-            (Some(_), true) => {
-                zero_count += 1;
-                if zero_count > GAP_TOLERANCE {
-                    out.push((run_start.take().unwrap(), core::mem::take(&mut run)));
-                    zero_count = 0;
-                }
-            }
+            end = index + 1;
         }
+        let mut run = reserve(end - start)?;
+        run.push(first);
+        while let Some(&(index, _)) = nonzero.peek() {
+            if index >= end {
+                break;
+            }
+            let (_, value) = nonzero.next().unwrap();
+            run.resize(index - start, F::ZERO);
+            run.push(value);
+        }
+        out.push((start, run));
     }
-
-    if let Some(s) = run_start {
-        out.push((s, run));
-    }
+    Ok(())
 }
 
 impl<T, R: Rank> Default for Polynomial<T, R> {
