@@ -1,47 +1,176 @@
 //! Nested field circuits for the scalar field.
 //!
-//! Contains three groups of circuits:
+//! Contains these circuits:
 //!
 //! - **Endoscaling**: verifies that the commitment accumulation
 //!   in `compute_p` was computed correctly via Horner's rule.
 //! - **Loading**: enforces consistency between [`PointsStage`]
 //!   inputs and the bridge stage commitments for the current step.
-//! - **Copying**: enforces that [`ChildWitness`] stash fields in
-//!   `BridgePreamble` match the corresponding child proof's bridge
-//!   stage contents.
+//! - **Export**: pins the nested [`unified`] instance, which a parent copies
+//!   into its `BridgePreamble` and folds this step's claims with, to the
+//!   stages that hold its values.
+//! - **Collapse**: verifies the two-layer fold of the children's nested
+//!   claims, the mirror of the native `inner_collapse` and `outer_collapse`.
+//! - **Compute v**: recomputes the nested batch evaluation $v_n$, the mirror
+//!   of the native `compute_v`.
 //!
-//! [`ChildWitness`]: stages::preamble::ChildWitness
+//! The export, collapse and compute-v circuits share the [`unified`]
+//! instance as their public input, each constraining the slots it owns.
+//!
 //! [`PointsStage`]: crate::internal::endoscalar::PointsStage
 
-use ragu_arithmetic::Cycle;
+use ragu_arithmetic::{Cycle, ff::Field};
 use ragu_circuits::{
     polynomials::Rank,
     registry::{CircuitIndex, RegistryBuilder},
     staging::{MultiStage, StageExt},
 };
 use ragu_core::Result;
+use ragu_primitives::{extract_endoscalar, lift_endoscalar, vec::ConstLen};
 
 pub mod circuits {
-    pub mod copying;
+    pub mod collapse;
+    pub mod common;
+    pub mod compute_v;
+    pub mod export;
     pub mod loading;
 }
 
-use crate::internal::{Side, endoscalar};
+use crate::internal::{endoscalar, fold_revdot::Parameters};
 
 /// Number of curve points accumulated during `compute_p` for nested field
-/// endoscaling verification.
+/// endoscaling verification: the native batch's commitments.
 ///
-/// This is the sum of per-child commitment components (for both proofs),
-/// current-step stage proof components, and the `f.commitment` base
-/// polynomial. See `_10_p` for the canonical accumulation order.
+/// This is `f`'s commitment, then for each child its native rx commitments,
+/// $a$, $b$, `registry_xy` and $p$, then the current step's two
+/// `registry_wx`, `registry_wy`, $a$, $b$ and `registry_xy`. See `_10_p`
+/// for the canonical accumulation order.
 ///
 /// The endoscaling circuits process these points across
 /// [`NUM_ENDOSCALING_STEPS`] steps.
-pub const NUM_ENDOSCALING_POINTS: usize = 37;
+pub const NUM_ENDOSCALING_POINTS: usize = 1 + 2 * (crate::internal::native::RxIndex::NUM + 4) + 6;
+
+/// The endoscalings a nested step performs: what fits a step beside the
+/// stages it reserves, which hold every point the walk consumes.
+pub const ENDOSCALINGS_PER_STEP: usize = 4;
 
 /// Number of endoscaling steps, derived from [`NUM_ENDOSCALING_POINTS`] via
 /// [`endoscalar::num_steps`].
-const NUM_ENDOSCALING_STEPS: usize = endoscalar::num_steps(NUM_ENDOSCALING_POINTS);
+const NUM_ENDOSCALING_STEPS: usize =
+    endoscalar::num_steps::<ENDOSCALINGS_PER_STEP>(NUM_ENDOSCALING_POINTS);
+
+/// The nested points stage, over the native batch's commitments.
+pub type PointsStage<C> = endoscalar::PointsStage<C, NUM_ENDOSCALING_POINTS, ENDOSCALINGS_PER_STEP>;
+
+/// The nested points stage's witness.
+pub type PointsWitness<C> =
+    endoscalar::PointsWitness<C, NUM_ENDOSCALING_POINTS, ENDOSCALINGS_PER_STEP>;
+
+/// The nested points stage's output gadget.
+pub type Points<'dr, D, C> =
+    endoscalar::Points<'dr, D, C, NUM_ENDOSCALING_POINTS, ENDOSCALINGS_PER_STEP>;
+
+/// A nested endoscaling step.
+pub type EndoscalingStep<C, R> =
+    endoscalar::EndoscalingStep<C, R, NUM_ENDOSCALING_POINTS, ENDOSCALINGS_PER_STEP>;
+
+/// A nested endoscaling step's witness.
+pub type EndoscalingStepWitness<'source, C> =
+    endoscalar::EndoscalingStepWitness<'source, C, NUM_ENDOSCALING_POINTS, ENDOSCALINGS_PER_STEP>;
+
+/// Length type for the nested endoscaling steps.
+pub type NumStepsLen = endoscalar::NumStepsLen<NUM_ENDOSCALING_POINTS, ENDOSCALINGS_PER_STEP>;
+
+/// The number of circuits whose public input is the nested [`unified`]
+/// instance: export, collapse and compute-v.
+pub const NUM_INSTANCE_CIRCUITS: usize = 3;
+
+/// Parameters for folding the children's nested-field revdot claims.
+///
+/// Two children contribute one raw accumulator claim each, one circuit claim
+/// each per endoscaling step and per instance circuit, and one bonding claim
+/// per bonding kind (each bonding kind is $z$-folded across both children):
+/// 78 claims today, over twenty-eight steps, three instance circuits and
+/// fourteen bonding kinds. `12 x 7` leaves a little room.
+#[derive(Clone, Copy, Default)]
+pub struct RevdotParameters;
+
+impl Parameters for RevdotParameters {
+    type NumGroups = ConstLen<12>;
+    type GroupSize = ConstLen<7>;
+}
+
+/// Derives the nested-field counterpart of a native Fiat-Shamir challenge.
+///
+/// The nested side squeezes nothing itself: every challenge it consumes is the
+/// endoscalar lift, in the scalar field, of the low 128 bits of the
+/// corresponding native challenge, the derivation `compute_p` already applies
+/// to `pre_beta`.
+///
+/// The protocol requires the relevant nested commitments to be bound into
+/// the native transcript before the challenge, and the consuming circuits
+/// to use this same lifted value. This helper performs only the scalar
+/// conversion; it does not establish those recursive bindings or enforce
+/// the nested fold in-circuit.
+///
+/// # Errors
+///
+/// Fails when the native challenge lies at or above $2^{\mathtt{CAPACITY}}$,
+/// a $2^{-129}$ event for a transcript output.
+pub fn challenge<C: Cycle>(native: C::CircuitField) -> Result<C::ScalarField> {
+    Ok(lift_endoscalar(extract_endoscalar(native)?))
+}
+
+/// The native challenges the nested side consumes, in the order the
+/// challenge stage holds their lifts (see [`stages::challenges`]), with
+/// `pre_beta` last.
+#[derive(Clone, Copy)]
+pub struct Challenges<F> {
+    pub w: F,
+    pub y: F,
+    pub z: F,
+    pub mu: F,
+    pub nu: F,
+    pub mu_prime: F,
+    pub nu_prime: F,
+    pub x: F,
+    pub alpha: F,
+    pub u: F,
+    pub pre_beta: F,
+}
+
+impl<F: Copy> Challenges<F> {
+    /// The challenges in stage order, `pre_beta` last.
+    pub fn in_order(&self) -> [F; stages::challenges::NUM + 1] {
+        [
+            self.w,
+            self.y,
+            self.z,
+            self.mu,
+            self.nu,
+            self.mu_prime,
+            self.nu_prime,
+            self.x,
+            self.alpha,
+            self.u,
+            self.pre_beta,
+        ]
+    }
+}
+
+impl<F: Copy> Challenges<F> {
+    /// The lifts of these challenges, in stage order, `pre_beta`'s last.
+    pub fn lifts<C: Cycle<CircuitField = F>>(
+        &self,
+    ) -> Result<[C::ScalarField; stages::challenges::NUM + 1]> {
+        let native = self.in_order();
+        let mut out = [C::ScalarField::ZERO; stages::challenges::NUM + 1];
+        for (out, native) in out.iter_mut().zip(native) {
+            *out = challenge::<C>(native)?;
+        }
+        Ok(out)
+    }
+}
 
 /// Index of internal nested circuits registered into the registry.
 ///
@@ -50,6 +179,12 @@ const NUM_ENDOSCALING_STEPS: usize = endoscalar::num_steps(NUM_ENDOSCALING_POINT
 pub enum InternalCircuitIndex {
     /// `EndoscalingStep` circuit at given step.
     EndoscalingStep(u32),
+    /// Export circuit pinning the nested unified instance to the stages.
+    Export,
+    /// Collapse circuit verifying the fold of the children's nested claims.
+    Collapse,
+    /// Circuit computing the nested batch evaluation $v_n$.
+    ComputeV,
     /// `EndoscalarStage` stage mask.
     EndoscalarStage,
     /// `PointsStage` stage mask.
@@ -72,16 +207,24 @@ pub enum InternalCircuitIndex {
     BridgeF,
     /// Bridge `eval` stage mask.
     BridgeEval,
+    /// Challenge stage mask.
+    ChallengeStage,
+    /// Final staged mask of the circuits whose last stage is the challenge
+    /// stage.
+    ChallengeFinalStaged,
     /// Loading circuit over all nested stages.
     Loading,
-    /// Copying circuit relating current preamble to a child proof's stages.
-    Copying(Side),
 }
 
 impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`],
     /// equal to the number of entries in [`InternalCircuitIndex::ALL`].
-    pub const NUM: usize = NUM_ENDOSCALING_STEPS + 14;
+    pub const NUM: usize = NUM_ENDOSCALING_STEPS + NUM_INSTANCE_CIRCUITS + 14;
+
+    /// The circuits whose public input is the nested [`unified`] instance,
+    /// in claim order.
+    pub const INSTANCE: [Self; NUM_INSTANCE_CIRCUITS] =
+        [Self::Export, Self::Collapse, Self::ComputeV];
 
     /// All variants in canonical iteration order.
     ///
@@ -103,6 +246,9 @@ impl InternalCircuitIndex {
                 step += 1;
             }
         }
+        push(&mut slots, &mut c, Self::Export);
+        push(&mut slots, &mut c, Self::Collapse);
+        push(&mut slots, &mut c, Self::ComputeV);
         push(&mut slots, &mut c, Self::EndoscalarStage);
         push(&mut slots, &mut c, Self::PointsStage);
         push(&mut slots, &mut c, Self::PointsFinalStaged);
@@ -114,9 +260,9 @@ impl InternalCircuitIndex {
         push(&mut slots, &mut c, Self::BridgeQuery);
         push(&mut slots, &mut c, Self::BridgeF);
         push(&mut slots, &mut c, Self::BridgeEval);
+        push(&mut slots, &mut c, Self::ChallengeStage);
+        push(&mut slots, &mut c, Self::ChallengeFinalStaged);
         push(&mut slots, &mut c, Self::Loading);
-        push(&mut slots, &mut c, Self::Copying(Side::Left));
-        push(&mut slots, &mut c, Self::Copying(Side::Right));
         assert!(c == Self::NUM);
         slots
     }
@@ -137,46 +283,18 @@ impl InternalCircuitIndex {
 /// Enum identifying which nested field rx polynomial to retrieve from a proof.
 ///
 /// Analogous to [`native::RxIndex`](super::native::RxIndex) for the scalar
-/// field. Each variant maps to a polynomial in
-/// the proof's nested-field polynomial storage.
+/// field. Each variant maps to a polynomial in the proof's nested-field
+/// polynomial storage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ChildBridgeKind {
-    /// Child proof's `BridgeSPrime` rx polynomial.
-    SPrime,
-    /// Child proof's `BridgeInnerError` rx polynomial.
-    InnerError,
-    /// Child proof's `BridgeOuterError` rx polynomial.
-    OuterError,
-    /// Child proof's `BridgeAB` rx polynomial.
-    AB,
-    /// Child proof's `BridgeQuery` rx polynomial.
-    Query,
-    /// Child proof's `BridgeEval` rx polynomial.
-    Eval,
-}
-
-impl ChildBridgeKind {
-    /// All kinds in the canonical slot order.
-    ///
-    /// This constant is the source of truth for the relative order of
-    /// `RxIndex::ChildBridge(kind, side)` entries in [`RxIndex::ALL`]
-    /// (see [`RxIndex::all_slots`]), and is therefore pinned by
-    /// `test_nested_registry_digest` — re-ordering these variants
-    /// changes the nested registry digest.
-    pub const ALL: [Self; 6] = [
-        Self::SPrime,
-        Self::InnerError,
-        Self::OuterError,
-        Self::AB,
-        Self::Query,
-        Self::Eval,
-    ];
-}
-
-#[derive(Clone, Copy, Debug)]
 pub enum RxIndex {
     /// EndoscalingStep circuit rx polynomial (indexed by step number).
     EndoscalingStep(u32),
+    /// Export circuit rx polynomial.
+    Export,
+    /// Collapse circuit rx polynomial.
+    Collapse,
+    /// Compute-v circuit rx polynomial.
+    ComputeV,
     /// EndoscalarStage rx polynomial.
     EndoscalarStage,
     /// PointsStage rx polynomial.
@@ -197,17 +315,31 @@ pub enum RxIndex {
     BridgeF,
     /// Bridge `eval` rx polynomial.
     BridgeEval,
-    /// Child proof's `PointsStage` rx polynomial (per-side, for copying).
-    ChildPointsStage(Side),
-    /// Child proof's bridge rx polynomial (per-side, for copying),
-    /// keyed by which bridge stage it comes from.
-    ChildBridge(ChildBridgeKind, Side),
+    /// Challenge stage rx polynomial.
+    ChallengeStage,
 }
 
 impl RxIndex {
     /// The number of rx components in the nested field,
     /// equal to the number of entries in [`RxIndex::ALL`].
-    pub const NUM: usize = NUM_ENDOSCALING_STEPS + 24;
+    pub const NUM: usize = NUM_ENDOSCALING_STEPS + NUM_INSTANCE_CIRCUITS + 11;
+
+    /// The rx polynomials of the instance circuits, in
+    /// [`InternalCircuitIndex::INSTANCE`] order.
+    pub const INSTANCE: [Self; NUM_INSTANCE_CIRCUITS] =
+        [Self::Export, Self::Collapse, Self::ComputeV];
+
+    /// The bridge stages, in transcript absorption order.
+    pub const BRIDGES: [Self; 8] = [
+        Self::BridgePreamble,
+        Self::BridgeSPrime,
+        Self::BridgeInnerError,
+        Self::BridgeOuterError,
+        Self::BridgeAB,
+        Self::BridgeQuery,
+        Self::BridgeF,
+        Self::BridgeEval,
+    ];
 
     /// All variants in canonical order (circuits, then stages).
     ///
@@ -227,6 +359,9 @@ impl RxIndex {
                 step += 1;
             }
         }
+        push(&mut slots, &mut c, Self::Export);
+        push(&mut slots, &mut c, Self::Collapse);
+        push(&mut slots, &mut c, Self::ComputeV);
         push(&mut slots, &mut c, Self::EndoscalarStage);
         push(&mut slots, &mut c, Self::PointsStage);
         push(&mut slots, &mut c, Self::BridgePreamble);
@@ -237,26 +372,40 @@ impl RxIndex {
         push(&mut slots, &mut c, Self::BridgeQuery);
         push(&mut slots, &mut c, Self::BridgeF);
         push(&mut slots, &mut c, Self::BridgeEval);
-        push(&mut slots, &mut c, Self::ChildPointsStage(Side::Left));
-        push(&mut slots, &mut c, Self::ChildPointsStage(Side::Right));
-        {
-            let mut i = 0;
-            while i < ChildBridgeKind::ALL.len() {
-                let kind = ChildBridgeKind::ALL[i];
-                push(&mut slots, &mut c, Self::ChildBridge(kind, Side::Left));
-                push(&mut slots, &mut c, Self::ChildBridge(kind, Side::Right));
-                i += 1;
-            }
-        }
+        push(&mut slots, &mut c, Self::ChallengeStage);
         assert!(c == Self::NUM);
         slots
     }
+
+    /// The position of `self` in [`ALL`](Self::ALL).
+    pub fn position(self) -> usize {
+        Self::ALL
+            .iter()
+            .position(|&v| v == self)
+            .expect("every variant appears in ALL")
+    }
+}
+
+/// Identifies a nested-field polynomial within a proof: either one of the
+/// two accumulator polynomials (which are not rx polynomials) or one of the
+/// rx polynomials addressed by [`RxIndex`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RxComponent {
+    /// The `a` polynomial of the nested accumulator (raw revdot claim).
+    AbA,
+    /// The `b` polynomial of the nested accumulator (raw revdot claim).
+    AbB,
+    /// An rx polynomial component indexed by [`RxIndex`].
+    Rx(RxIndex),
 }
 
 pub mod claims;
+pub mod pcs;
+pub mod unified;
 
 pub mod stages {
     pub mod ab;
+    pub mod challenges;
     pub mod eval;
     pub mod f;
     pub mod inner_error;
@@ -281,22 +430,27 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
         use InternalCircuitIndex::*;
         registry = match id {
             EndoscalingStep(step) => {
-                let step_circuit =
-                    endoscalar::EndoscalingStep::<C::HostCurve, R, NUM_ENDOSCALING_POINTS>::new(
-                        step as usize,
-                    );
+                let step_circuit = self::EndoscalingStep::<C::HostCurve, R>::new(step as usize);
                 let staged = MultiStage::new(step_circuit);
                 registry.register_internal_circuit(staged)?
             }
+            Export => {
+                let circuit = circuits::export::Circuit::<C::HostCurve, R>::new();
+                registry.register_internal_circuit(MultiStage::new(circuit))?
+            }
+            Collapse => {
+                let circuit = circuits::collapse::Circuit::<C::HostCurve, R>::new();
+                registry.register_internal_circuit(MultiStage::new(circuit))?
+            }
+            ComputeV => {
+                let circuit = circuits::compute_v::Circuit::<C::HostCurve, R>::new();
+                registry.register_internal_circuit(MultiStage::new(circuit))?
+            }
             EndoscalarStage => registry.register_bonding(endoscalar::EndoscalarStage::mask()?),
-            PointsStage => registry.register_bonding(endoscalar::PointsStage::<
-                C::HostCurve,
-                NUM_ENDOSCALING_POINTS,
-            >::mask()?),
-            PointsFinalStaged => registry.register_bonding(endoscalar::PointsStage::<
-                C::HostCurve,
-                NUM_ENDOSCALING_POINTS,
-            >::final_mask()?),
+            PointsStage => registry.register_bonding(self::PointsStage::<C::HostCurve>::mask()?),
+            PointsFinalStaged => {
+                registry.register_bonding(self::PointsStage::<C::HostCurve>::final_mask()?)
+            }
             BridgePreamble => {
                 registry.register_bonding(stages::preamble::Stage::<C::HostCurve, R>::mask()?)
             }
@@ -317,12 +471,13 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
             BridgeEval => {
                 registry.register_bonding(stages::eval::Stage::<C::HostCurve, R>::mask()?)
             }
+            ChallengeStage => {
+                registry.register_bonding(stages::challenges::Stage::<C::HostCurve, R>::mask()?)
+            }
+            ChallengeFinalStaged => registry
+                .register_bonding(stages::challenges::Stage::<C::HostCurve, R>::final_mask()?),
             Loading => {
                 let circuit = circuits::loading::Circuit::<C::HostCurve, R>::new();
-                registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)
-            }
-            Copying(side) => {
-                let circuit = circuits::copying::Circuit::<C::HostCurve, R>::new(side);
                 registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)
             }
         };

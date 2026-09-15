@@ -296,12 +296,24 @@ fn fold_products_impl<'dr, D: Driver<'dr>, S: Len>(
     Ok(outer_horner.finish(dr))
 }
 
+/// Folds scalar evaluations through both layers, padding missing sources with zero.
+///
+/// # Panics
+///
+/// Panics if `sources.len()` exceeds `GroupSize * NumGroups`.
 pub fn fold_two_layer<'dr, D: Driver<'dr>, P: Parameters>(
     dr: &mut D,
     sources: &[Element<'dr, D>],
     layer1_scale: &Element<'dr, D>,
     layer2_scale: &Element<'dr, D>,
 ) -> Result<Element<'dr, D>> {
+    assert!(
+        sources.len() <= P::GroupSize::len() * P::NumGroups::len(),
+        "source length {} exceeds GroupSize*NumGroups = {}",
+        sources.len(),
+        P::GroupSize::len() * P::NumGroups::len()
+    );
+
     let m = P::GroupSize::len();
     let mut results = alloc::vec::Vec::with_capacity(P::NumGroups::len());
 
@@ -721,6 +733,9 @@ mod tests {
         }
 
         // Test with various parameter combinations and various sizes
+        for count in 0..=6 {
+            verify::<TestParams<2, 3>>(count)?;
+        }
         for &count in &[1, 2, 3, 4] {
             verify::<TestParams<2, 2>>(count)?;
         }
@@ -879,6 +894,16 @@ mod tests {
             .map(|_| sparse::Polynomial::<Fp, TestRank>::new())
             .collect();
         let _ = fold_inner::<_, Fp, P>(&polys, Fp::ONE);
+    }
+
+    #[test]
+    #[should_panic(expected = "source length 7 exceeds GroupSize*NumGroups = 6")]
+    fn test_fold_two_layer_overflow_panics() {
+        let dr = &mut Emulator::execute();
+        let one = Element::constant(dr, Fp::ONE);
+        let sources = vec![one.clone(); 7];
+
+        fold_two_layer::<_, TestParams<2, 3>>(dr, &sources, &one, &one).unwrap();
     }
 
     #[test]

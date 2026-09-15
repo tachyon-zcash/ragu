@@ -1,4 +1,5 @@
-//! F stage for nested fuse operations.
+//! F stage for nested fuse operations: the native $f$ commitment, and the
+//! commitment of the native points stage holding $F_n$.
 
 use core::marker::PhantomData;
 
@@ -13,11 +14,15 @@ use ragu_core::{
 use ragu_primitives::{Point, io::Write};
 
 /// Number of curve points in this stage.
-const NUM: usize = 1;
+const NUM: usize = 2;
 
 /// Witness data for this bridge stage.
 pub struct Witness<C: CurveAffine> {
     pub native_f: C,
+    /// Commitment of the native points stage holding the nested
+    /// `registry_xy` commitment and $F_n$, fixed here before $u$ is
+    /// squeezed.
+    pub native_points_f: C,
 }
 
 /// Prover-internal output gadget for this bridge stage.
@@ -28,6 +33,8 @@ pub struct Witness<C: CurveAffine> {
 pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     #[ragu(gadget)]
     pub native_f: Point<'dr, D, C>,
+    #[ragu(gadget)]
+    pub native_points_f: Point<'dr, D, C>,
 }
 
 #[derive(Default)]
@@ -54,6 +61,7 @@ impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stag
     {
         Ok(Output {
             native_f: Point::alloc(dr, witness.as_ref().map(|w| w.native_f))?,
+            native_points_f: Point::alloc(dr, witness.as_ref().map(|w| w.native_points_f))?,
         })
     }
 }

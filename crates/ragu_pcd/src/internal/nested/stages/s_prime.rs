@@ -1,4 +1,6 @@
-//! S-prime stage for nested fuse operations.
+//! S-prime stage for nested fuse operations: the native `registry_wx`
+//! commitments, and the commitment of the native points stage holding their
+//! nested counterparts.
 
 use core::marker::PhantomData;
 
@@ -19,14 +21,9 @@ const NUM: usize = 3;
 pub struct Witness<C: CurveAffine> {
     pub registry_wx0: C,
     pub registry_wx1: C,
-    /// Stashed copy of the current step's native preamble commitment.
-    ///
-    /// The copying circuit loads a fresh trace of the child's stages
-    /// and cannot access `BridgePreamble.native_preamble` at a
-    /// different wire position from its own `BridgePreamble`. Stashing
-    /// the value here lets a parent's copying circuit read it from
-    /// `BridgeSPrime` instead.
-    pub stashed_preamble: C,
+    /// Commitment of the native points stage holding the nested
+    /// `registry_wx` commitments, fixed here before $y$ is squeezed.
+    pub native_points_registry_wx: C,
 }
 
 /// Prover-internal output gadget for this bridge stage.
@@ -40,7 +37,7 @@ pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     #[ragu(gadget)]
     pub registry_wx1: Point<'dr, D, C>,
     #[ragu(gadget)]
-    pub stashed_preamble: Point<'dr, D, C>,
+    pub native_points_registry_wx: Point<'dr, D, C>,
 }
 
 #[derive(Default)]
@@ -68,7 +65,10 @@ impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stag
         Ok(Output {
             registry_wx0: Point::alloc(dr, witness.as_ref().map(|w| w.registry_wx0))?,
             registry_wx1: Point::alloc(dr, witness.as_ref().map(|w| w.registry_wx1))?,
-            stashed_preamble: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_preamble))?,
+            native_points_registry_wx: Point::alloc(
+                dr,
+                witness.as_ref().map(|w| w.native_points_registry_wx),
+            )?,
         })
     }
 }

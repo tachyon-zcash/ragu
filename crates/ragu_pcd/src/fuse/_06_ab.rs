@@ -26,6 +26,16 @@
 //! $A(xz) = \text{fold}(r\_i(xz))$ reuses the same $\{r\_i(xz)\}$
 //! evaluations that $B(x)$ already needs, eliminating separate
 //! $r\_i(x)$ queries.
+//!
+//! ### Nested accumulator
+//!
+//! The second layer of the nested fold happens here too, producing the
+//! nested accumulator polynomials $A\_n(X)$, $B\_n(X)$ over the scalar
+//! field. Their commitments live on the nested curve and are computed by
+//! committing the polynomials directly, then committed, with the nested
+//! $m_n(w_n, X, y_n)$ restriction's, in the native points stage the
+//! endoscaling walk reads them from, whose commitment the `ab` bridge
+//! carries: they are fixed before $x$ is squeezed, as $A$ and $B$ are.
 
 use alloc::vec::Vec;
 
@@ -34,23 +44,32 @@ use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::{Element, vec::FixedVec};
 
-use super::claims::{FoldKey, FuseProofSource, TrackedPoly};
+use super::{
+    NestedRegistryWy,
+    claims::{FoldKey, NativeFuseProofSource, TrackedPoly},
+};
 use crate::{
     Application,
-    internal::{fold_revdot, native},
+    internal::{fold_revdot, native, nested},
     proof::ProofBuilder,
 };
 
 type NativeNumGroups = <native::RevdotParameters as fold_revdot::Parameters>::NumGroups;
+type NestedNumGroups = <nested::RevdotParameters as fold_revdot::Parameters>::NumGroups;
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
-    pub(super) fn compute_ab<'dr, D>(
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn compute_ab<'dr, D, RNG: ragu_arithmetic::rand::CryptoRng>(
         &self,
-        a: FixedVec<TrackedPoly<'_, FoldKey, C::CircuitField, R>, NativeNumGroups>,
-        b: FixedVec<sparse::Polynomial<C::CircuitField, R>, NativeNumGroups>,
-        source: &FuseProofSource<'_, C, R>,
+        rng: &mut RNG,
+        native_a: FixedVec<TrackedPoly<'_, FoldKey, C::CircuitField, R>, NativeNumGroups>,
+        native_b: FixedVec<sparse::Polynomial<C::CircuitField, R>, NativeNumGroups>,
+        nested_a: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
+        nested_b: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
+        nested_registry_wy: &NestedRegistryWy<C, R>,
+        native_source: &NativeFuseProofSource<'_, C, R>,
         mu_prime: &Element<'dr, D>,
         nu_prime: &Element<'dr, D>,
         builder: &mut ProofBuilder<'_, C, R, B>,
@@ -58,7 +77,56 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
-        self.compute_native_ab(a, b, source, mu_prime, nu_prime, builder)?;
+        self.compute_native_ab(
+            native_a,
+            native_b,
+            native_source,
+            mu_prime,
+            nu_prime,
+            builder,
+        )?;
+        self.compute_nested_ab(nested_a, nested_b, mu_prime, nu_prime, builder)?;
+        self.commit_native_points_ab(
+            rng,
+            nested_registry_wy.commitment,
+            builder.nested_a_commitment(),
+            builder.nested_b_commitment(),
+            builder,
+        )?;
+        Ok(())
+    }
+
+    /// Applies the second layer of the nested fold, producing the nested
+    /// accumulator polynomials.
+    ///
+    /// The nested $\mu'$ and $\nu'$ are derived from the native challenges
+    /// (see [`nested::challenge`]), which the transcript squeezes only after
+    /// the bridge carrying the layer-2 error terms is absorbed.
+    fn compute_nested_ab<'dr, D>(
+        &self,
+        a: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
+        b: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
+        native_mu_prime: &Element<'dr, D>,
+        native_nu_prime: &Element<'dr, D>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<()>
+    where
+        D: Driver<'dr, F = C::CircuitField>,
+    {
+        let nested_mu_prime = nested::challenge::<C>(*native_mu_prime.value().take())?;
+        let nested_nu_prime = nested::challenge::<C>(*native_nu_prime.value().take())?;
+        let nested_mu_prime_inv = nested_mu_prime
+            .invert()
+            .expect("nested mu_prime must be non-zero");
+        let nested_mu_prime_nu_prime = nested_mu_prime * nested_nu_prime;
+
+        let a_poly =
+            fold_revdot::fold_outer::<_, _, nested::RevdotParameters>(a, nested_mu_prime_inv);
+        let b_poly =
+            fold_revdot::fold_outer::<_, _, nested::RevdotParameters>(b, nested_mu_prime_nu_prime);
+
+        builder.set_nested_a_poly(a_poly);
+        builder.set_nested_b_poly(b_poly);
 
         Ok(())
     }
@@ -67,7 +135,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         &self,
         a: FixedVec<TrackedPoly<'_, FoldKey, C::CircuitField, R>, NativeNumGroups>,
         b: FixedVec<sparse::Polynomial<C::CircuitField, R>, NativeNumGroups>,
-        source: &FuseProofSource<'_, C, R>,
+        native_source: &NativeFuseProofSource<'_, C, R>,
         mu_prime: &Element<'dr, D>,
         nu_prime: &Element<'dr, D>,
         builder: &mut ProofBuilder<'_, C, R, B>,
@@ -108,7 +176,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 
             let mut msm: Vec<(C::CircuitField, C::HostCurve)> = Vec::with_capacity(entries.len());
             for (key, coeff) in entries {
-                let commitment = source.get(key);
+                let commitment = native_source.get(key);
                 msm.push((coeff, commitment));
             }
 

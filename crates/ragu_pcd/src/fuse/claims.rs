@@ -1,6 +1,6 @@
-//! Fuse-path claim source and commitment tracking.
+//! Fuse-path claim sources and native commitment tracking.
 //!
-//! In the fuse pipeline the `A` polynomials need to carry their corresponding
+//! In the native fuse pipeline, `A` polynomials carry their corresponding
 //! commitments so that `_06_ab` can compute `a_commitment` via a small MSM
 //! over known child-proof commitments instead of a full polynomial-degree MSM.
 //!
@@ -10,6 +10,9 @@
 //! the corresponding [`CommitmentDecomposition`] accumulates the linear
 //! combination of those keys, so the final commitment can be resolved
 //! directly from the child proofs.
+//!
+//! The nested source supplies polynomial references; its folded commitments
+//! are computed from the resulting polynomials directly.
 
 use alloc::{borrow::Cow, vec::Vec};
 use core::borrow::Borrow;
@@ -30,6 +33,7 @@ use crate::{
         claims::{Builder, Source},
         fold_revdot::{self, Foldable},
         native::{InternalCircuitIndex, RxComponent, claims::Processor},
+        nested,
     },
 };
 
@@ -176,12 +180,12 @@ pub(super) type FoldKey = (Side, RxComponent);
 /// The two child proofs being fused. Provides [`Atom`]-tagged rx values
 /// for claim building, and resolves [`FoldKey`] keys back to their
 /// commitments for the MSM in `_06_ab`.
-pub(super) struct FuseProofSource<'rx, C: Cycle, R: Rank> {
+pub(super) struct NativeFuseProofSource<'rx, C: Cycle, R: Rank> {
     pub(super) left: &'rx Proof<C, R>,
     pub(super) right: &'rx Proof<C, R>,
 }
 
-impl<'rx, C: Cycle, R: Rank> FuseProofSource<'rx, C, R> {
+impl<'rx, C: Cycle, R: Rank> NativeFuseProofSource<'rx, C, R> {
     /// Look up the commitment for a [`FoldKey`] in the corresponding child
     /// proof.
     pub(super) fn get(&self, (side, component): FoldKey) -> C::HostCurve {
@@ -193,7 +197,7 @@ impl<'rx, C: Cycle, R: Rank> FuseProofSource<'rx, C, R> {
     }
 }
 
-impl<'rx, C: Cycle, R: Rank> Source for FuseProofSource<'rx, C, R> {
+impl<'rx, C: Cycle, R: Rank> Source for NativeFuseProofSource<'rx, C, R> {
     type RxComponent = RxComponent;
     type Rx = Atom<'rx, FoldKey, C::CircuitField, R>;
     type AppCircuitId = CircuitIndex;
@@ -219,7 +223,7 @@ impl<'rx, C: Cycle, R: Rank> Source for FuseProofSource<'rx, C, R> {
 
 /// [`Builder`] specialized for the fuse pipeline, where `A`
 /// polynomials carry [`CommitmentDecomposition`]s via [`TrackedPoly`].
-pub(super) type FuseBuilder<'m, 'rx, F, R, B> =
+pub(super) type NativeFuseBuilder<'m, 'rx, F, R, B> =
     Builder<'m, 'rx, TrackedPoly<'rx, FoldKey, F, R>, F, R, B>;
 
 /// Fuse-path [`Processor`] implementation.
@@ -263,3 +267,33 @@ impl<'m, 'rx, F: PrimeField, R: Rank, B: ragu_backend::Backend>
         Ok(())
     }
 }
+
+/// The two child proofs' nested-field polynomials, for folding the children's
+/// nested claims.
+///
+/// Nothing is tracked here: the nested accumulator commitments are computed
+/// by committing the folded polynomials directly, so the fold works on plain
+/// polynomial references.
+pub(super) struct NestedFuseProofSource<'rx, C: Cycle, R: Rank> {
+    pub(super) left: &'rx Proof<C, R>,
+    pub(super) right: &'rx Proof<C, R>,
+}
+
+impl<'rx, C: Cycle, R: Rank> Source for NestedFuseProofSource<'rx, C, R> {
+    type RxComponent = nested::RxComponent;
+    type Rx = &'rx sparse::Polynomial<C::ScalarField, R>;
+    type AppCircuitId = ();
+
+    fn rx(&self, component: nested::RxComponent) -> impl Iterator<Item = Self::Rx> {
+        [&self.left[component], &self.right[component]].into_iter()
+    }
+
+    fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
+        core::iter::empty()
+    }
+}
+
+/// [`Builder`] specialized for folding the children's nested claims in the
+/// fuse pipeline.
+pub(super) type NestedFuseBuilder<'m, 'rx, F, R, B> =
+    Builder<'m, 'rx, Cow<'rx, sparse::Polynomial<F, R>>, F, R, B>;

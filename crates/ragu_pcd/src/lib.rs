@@ -363,7 +363,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// fuse treated as the base case. The result verifies, so
     /// [`seed`](Self::seed) consumes it as an ordinary child.
     ///
-    /// The proof attests nothing: `Bootstrap` ignores its children entirely and
+    /// The proof attests nothing: `Bootstrap` skips its children's claims and
     /// outputs the data-less unit header. It is a public constant of the
     /// application, and every call returns a clone of the same proof.
     fn bootstrap_pcd(&self) -> Pcd<C, R, ()> {

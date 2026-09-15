@@ -6,7 +6,7 @@
 //! [`dummy_pcd`] proofs to produce the bootstrap proof, which [`seed`] then
 //! consumes as an ordinary, fully verified child of every seed step.
 //!
-//! Because this step ignores its children and outputs the data-less unit
+//! Because this step skips its children's claims and outputs the data-less unit
 //! header, its proof attests nothing and any prover can mint one. Confining the
 //! base case here rests on every other circuit's declared input suffixes being
 //! unable to equal `Dummy` — constants for application steps, and a wire
