@@ -36,13 +36,13 @@ mod util;
 pub mod vec;
 
 pub use boolean::{Boolean, multipack};
-pub use element::{Element, multiadd};
+pub use element::{DivisionByZeroError, Element, multiadd};
 pub use endoscalar::{
     Endoscalar, EndoscalarChallenge, EndoscalarRangeError, extract_endoscalar, lift_endoscalar,
 };
 pub use invertible::{Invertible, Nonzero, NonzeroBank};
 use io::{Buffer, Write};
-pub use point::Point;
+pub use point::{Point, PointAtInfinityError};
 use promotion::Demoted;
 use ragu_core::{Result, drivers::Driver, gadgets::Gadget};
 pub use sendable::Sendable;
