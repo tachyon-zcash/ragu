@@ -24,7 +24,7 @@ use ragu_primitives::{allocator::Allocator, io::Write};
 ///
 /// [`Bootstrap`]: crate::step::internal::bootstrap::Bootstrap
 /// [`Step`]: crate::step::Step
-const NUM_INTERNAL_SUFFIXES: u8 = 3;
+pub(crate) const NUM_INTERNAL_SUFFIXES: u8 = 3;
 
 /// Internal representation of a [`Suffix`] distinguishing internal vs.
 /// application suffixes.

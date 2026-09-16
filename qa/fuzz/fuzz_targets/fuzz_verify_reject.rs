@@ -2,16 +2,16 @@
 //!
 //! Applies fuzzer-chosen corruptions to a valid leaf proof, one or several at
 //! a time. A leaf is the cheapest proof `verify` actually accepts, so the
-//! per-input cost is a clone, a corruption and a verify — this is the target
-//! that explores the corruption vocabulary at speed.
+//! single-edit cost is a clone, a corruption and a verify. Combined edits
+//! additionally check each edit against a copy of the original proof.
 //! `fuzz_verify_reject_full` runs the same vocabulary against fused proofs,
 //! whose accumulators are not degenerate.
 //!
-//! Invariant: `verify()` never panics, and never accepts a corruption that
-//! bound it (`Ok(false)` or `Err` are both rejections). No-op edits are still
-//! exercised, but their verdict is not asserted. Every effective coefficient
-//! edit leaves a stale commitment and requires rejection; see
-//! [`ragu_pcd::fuzzing::corrupt`] for the classification.
+//! Invariant: `verify()` never panics, rejects every individually classified
+//! corruption (`Ok(false)` or `Err`), and accepts no-op controls. Multiple
+//! effective edits need a separate relation argument to demand rejection;
+//! their combined result is exercised without an outcome assertion. See
+//! [`ragu_pcd::fuzzing::corrupt`] for the classification and repair scope.
 //!
 //! This target used to corrupt Ragu's synthesized dummy proof. That fixture is
 //! the placeholder the internal Bootstrap step consumes, and `verify` rejects
@@ -27,7 +27,6 @@ use std::sync::LazyLock;
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use ragu_testing_fuzz::pcd::{self, Fixture, SyncApp};
-use rand::{SeedableRng, rngs::StdRng};
 
 /// At most this many corruptions per input. Enough for the coordinated
 /// mutations that need a second edit to reach a check, bounded so one input
@@ -74,7 +73,6 @@ fuzz_target!(
             return;
         }
 
-        let rng = StdRng::seed_from_u64(input.rng_seed);
-        pcd::assert_rejected(app, &fixture, &applied, binding, rng);
+        pcd::assert_rejected(app, &LEAF, &fixture, &applied, binding, input.rng_seed);
     }
 );

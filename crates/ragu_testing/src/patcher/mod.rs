@@ -25,6 +25,9 @@
 //!   acceptance check over a recorded graph.
 //! * [`underconstrained_derived`] — the rank/nullity oracle: derived wires
 //!   that can move while every declared free wire is held fixed.
+//! * [`jacobian_kernel`] / [`jacobian_witness`] — sparse coordinated
+//!   tangent proposals over a caller-selected wire set, followed by
+//!   nonlinear repair and exact constraint checking.
 //! * [`determinism_probe`] / [`determinism_sweep`] — the pinned-input
 //!   soundness oracle (issue #793's "same inputs give the same outputs"):
 //!   pin the declared inputs, cheat the remaining free advice, repair, and
@@ -65,8 +68,9 @@ pub use circuit::{Capture, capture, capture_with_stage_values, playback};
 pub use discover::{allocation_waste, discover_free_advice, forced_by};
 pub use oracle::{
     Prepared, ProbeOutcome, SweepReport, Violation, determinism_probe, determinism_sweep,
+    jacobian_probe, jacobian_witness,
 };
 pub use recorder::{
-    Event, Playback, Recorder, TrackingAllocator, constraints_hold, repair, selftest,
-    underconstrained_derived,
+    Event, JacobianDirection, Playback, Recorder, TrackingAllocator, constraints_hold,
+    jacobian_kernel, repair, selftest, underconstrained_derived,
 };

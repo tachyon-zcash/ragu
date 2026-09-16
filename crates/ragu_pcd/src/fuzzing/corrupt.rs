@@ -8,16 +8,21 @@
 //! carries, and an individual coefficient of any native or nested polynomial
 //! a revdot claim folds.
 //!
-//! # Why a corruption is not always a rejection
+//! # Classification and repair scope
 //!
-//! Some requested edits make no change: a zero delta, an out-of-range
-//! coefficient index, or an assignment of the value already present. These
-//! return [`Binding::Unbound`]; a harness asserts rejection only for
-//! [`Binding::MustReject`]. Classification describes one edit to an otherwise
-//! valid proof. Composed edits can cancel, so their final effect must be
-//! considered separately.
+//! [`Binding`] distinguishes an unchanged proof, a required rejection, a
+//! constructively valid reencoding, and an unclassified edit. The verdict
+//! from [`Proof::corrupt`] assumes a valid input proof and exactly the edit
+//! named by the variant. In particular, coefficient edits **keep the cached
+//! commitment frozen**. Every nonzero in-range monomial edit must therefore
+//! reject: its commitment changes by a nonzero multiple of a generator,
+//! even if it leaves the derived c or v unchanged or lies outside the
+//! circuit claim's independently classified support.
 //!
-//! The classification is derived, not guessed:
+//! The verifier batches cache checks under fresh private randomness. A
+//! fixed mismatch escapes only when the scalar is a root of the batch
+//! difference polynomial. Tests must fix the edited proof before sampling
+//! that randomness. A scalar chosen by the attacker is a different game.
 //!
 //! * **Instance edits** — challenges, bridge commitments, headers, the
 //!   circuit id, and anything that moves the derived $c = \operatorname{revdot}(A, B)$
@@ -52,6 +57,24 @@
 //!   without its $\beta$ term, a point of the unified instance — is caught
 //!   as any instance edit is: the last `bind_challenges` circuit recomputes
 //!   it from the transcript challenges.
+//!
+//! Repairing a cache changes the experiment: discard the stale-cache verdict
+//! and classify the remaining relations anew. Matching a cache alone does
+//! not prove validity. A [`Binding::ValidReencoding`] needs a constructive
+//! witness that all required relations are preserved; no current corruption
+//! variant supplies one. Use [`Binding::Unclassified`] when that argument is
+//! absent, without asserting either acceptance or rejection.
+//!
+//! Instance edits are also bound by transcript reconstruction or the
+//! verifier's freshly challenged revdot relations. Inverse rescaling of the
+//! accumulators repairs their caches and preserves c, but leaves the staged
+//! evaluations and commitment copies fixed, so it is still a rejection case.
+//!
+//! Individual rejection verdicts do not compose by logical OR: later edits
+//! can undo an earlier edit, even through differently named aliases of the
+//! same commitment. [`Binding::combine`] conservatively marks multiple
+//! effective edits unclassified. A harness can still check each edit on an
+//! independent copy of the original valid proof.
 //!
 //! `bridge_alpha` has no dedicated corruption variant yet, although the
 //! verifier uses it to reconstruct and check the cached `ab` bridge
@@ -279,9 +302,27 @@ pub enum Binding {
     /// must not accept — except with negligible probability over the
     /// randomness the verifier samples for itself.
     MustReject,
-    /// The edit made no change, such as a zero delta or an out-of-range
-    /// coefficient index. It creates no obligation to reject.
-    Unbound,
+    /// No proof value changed. For a valid input proof, acceptance is required.
+    NoOp,
+    /// All required relations were constructively preserved by a changed
+    /// encoding. Acceptance is required; a repaired cache alone is not such
+    /// a witness. No current `Corruption` variant produces this verdict.
+    ValidReencoding,
+    /// The edit or repair scope has no established acceptance/rejection
+    /// obligation. Either result is allowed, and must not be called freedom.
+    Unclassified,
+}
+
+impl Binding {
+    /// Combine verdicts without assuming that distinct edits cannot cancel.
+    /// A no-op preserves the other verdict; multiple effective edits need
+    /// their own relation analysis before asserting acceptance or rejection.
+    pub fn combine(self, next: Self) -> Self {
+        match (self, next) {
+            (Self::NoOp, binding) | (binding, Self::NoOp) => binding,
+            _ => Self::Unclassified,
+        }
+    }
 }
 
 /// One of the eleven verifier challenges the unified instance carries.
@@ -365,8 +406,9 @@ impl NativeCommitment {
 }
 
 /// Which cached nested commitment of a proof to address: one of its nested
-/// rx polynomials' other than the bridges' (see [`BridgeCommitment`]), or
-/// the $a_n$, $b_n$, nested `registry_xy` or walked $P_n$ commitment.
+/// rx polynomials', or the $a_n$, $b_n$, nested `registry_xy` or walked $P_n$
+/// commitment. Bridge rx variants alias [`BridgeCommitment`]; [`Self::ALL`]
+/// omits those aliases.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NestedCommitment {
     /// A nested rx polynomial's commitment.
@@ -444,8 +486,9 @@ impl BridgeCommitment {
 
 /// Targeted corruption of a single proof component.
 ///
-/// Apply one with [`Proof::corrupt`]. Its [`Binding`] describes that edit in
-/// isolation; a harness composing edits must account for cancellations.
+/// Apply one with [`Proof::corrupt`]; apply several in sequence for a
+/// coordinated mutation. Individual [`Binding::MustReject`] verdicts do not
+/// establish that the combined edit must reject; use [`Binding::combine`].
 pub enum Corruption<C: Cycle> {
     /// Set `circuit_id` to the given index. Out-of-domain indices are
     /// rejected outright; in-domain ones move `omega_j` in the instance and
@@ -620,7 +663,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             Corruption::CircuitId(id) => {
                 let id = CircuitIndex::from_u32(id);
                 if self.circuit_id == id {
-                    return Binding::Unbound;
+                    return Binding::NoOp;
                 }
                 self.circuit_id = id;
                 Binding::MustReject
@@ -636,7 +679,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                         *element += delta;
                         Binding::MustReject
                     }
-                    _ => Binding::Unbound,
+                    _ => Binding::NoOp,
                 }
             }
 
@@ -646,7 +689,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                     Side::Right => &mut self.right_header,
                 };
                 if header.len() == len {
-                    return Binding::Unbound;
+                    return Binding::NoOp;
                 }
                 header.resize(len, C::CircuitField::ZERO);
                 Binding::MustReject
@@ -654,7 +697,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 
             Corruption::SwapHeaders => {
                 if self.left_header == self.right_header {
-                    return Binding::Unbound;
+                    return Binding::NoOp;
                 }
                 core::mem::swap(&mut self.left_header, &mut self.right_header);
                 Binding::MustReject
@@ -675,7 +718,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                     Challenge::PreBeta => &mut self.pre_beta,
                 };
                 if *slot == value {
-                    return Binding::Unbound;
+                    return Binding::NoOp;
                 }
                 *slot = value;
                 Binding::MustReject
@@ -687,7 +730,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 if negated == *point {
                     // The identity, and points of order two, negate to
                     // themselves; the instance would not move.
-                    return Binding::Unbound;
+                    return Binding::NoOp;
                 }
                 *point = negated;
                 Binding::MustReject
@@ -697,7 +740,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 let point = self.nested_challenges_partial_mut();
                 let negated = -*point;
                 if negated == *point {
-                    return Binding::Unbound;
+                    return Binding::NoOp;
                 }
                 *point = negated;
                 Binding::MustReject
@@ -707,7 +750,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 let point = self.native_commitment_cache_mut(which);
                 let negated = -*point;
                 if negated == *point {
-                    return Binding::Unbound;
+                    return Binding::NoOp;
                 }
                 *point = negated;
                 Binding::MustReject
@@ -717,7 +760,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 let point = self.nested_commitment_cache_mut(which);
                 let negated = -*point;
                 if negated == *point {
-                    return Binding::Unbound;
+                    return Binding::NoOp;
                 }
                 *point = negated;
                 Binding::MustReject
@@ -725,10 +768,10 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 
             Corruption::RescaleNativeAccumulator(scale) => {
                 let Some(inverse) = Option::<C::CircuitField>::from(scale.invert()) else {
-                    return Binding::Unbound;
+                    return Binding::NoOp;
                 };
                 if scale == C::CircuitField::ONE {
-                    return Binding::Unbound;
+                    return Binding::NoOp;
                 }
                 self.native_component_mut(RxComponent::AbA).scale(scale);
                 self.native_component_mut(RxComponent::AbB).scale(inverse);
@@ -741,10 +784,10 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 
             Corruption::RescaleNestedAccumulator(scale) => {
                 let Some(inverse) = Option::<C::ScalarField>::from(scale.invert()) else {
-                    return Binding::Unbound;
+                    return Binding::NoOp;
                 };
                 if scale == C::ScalarField::ONE {
-                    return Binding::Unbound;
+                    return Binding::NoOp;
                 }
                 self.nested_accumulator_mut(NestedAccumulator::A)
                     .scale(scale);
@@ -763,7 +806,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 delta,
             } => {
                 let Some(delta) = monomial::<_, R>(coeff, delta) else {
-                    return Binding::Unbound;
+                    return Binding::NoOp;
                 };
                 self.native_component_mut(component).add_assign(&delta);
                 Binding::MustReject
@@ -771,7 +814,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 
             Corruption::RegistryXyCoeff { coeff, delta } => {
                 let Some(delta) = monomial::<_, R>(coeff, delta) else {
-                    return Binding::Unbound;
+                    return Binding::NoOp;
                 };
                 self.native_registry_xy_poly_mut().add_assign(&delta);
                 Binding::MustReject
@@ -779,7 +822,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 
             Corruption::PCoeff { coeff, delta } => {
                 let Some(delta) = monomial::<_, R>(coeff, delta) else {
-                    return Binding::Unbound;
+                    return Binding::NoOp;
                 };
                 self.native_p_poly_mut().add_assign(&delta);
                 Binding::MustReject
@@ -791,7 +834,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 delta,
             } => {
                 let Some(delta) = monomial::<_, R>(coeff, delta) else {
-                    return Binding::Unbound;
+                    return Binding::NoOp;
                 };
                 self.nested_rx_mut(index).add_assign(&delta);
                 Binding::MustReject
@@ -803,7 +846,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 delta,
             } => {
                 let Some(delta) = monomial::<_, R>(coeff, delta) else {
-                    return Binding::Unbound;
+                    return Binding::NoOp;
                 };
                 self.nested_accumulator_mut(which).add_assign(&delta);
                 Binding::MustReject
@@ -811,7 +854,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 
             Corruption::NestedRegistryXyCoeff { coeff, delta } => {
                 let Some(delta) = monomial::<_, R>(coeff, delta) else {
-                    return Binding::Unbound;
+                    return Binding::NoOp;
                 };
                 self.nested_registry_xy_poly_mut().add_assign(&delta);
                 Binding::MustReject
@@ -819,7 +862,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 
             Corruption::NestedPCoeff { coeff, delta } => {
                 let Some(delta) = monomial::<_, R>(coeff, delta) else {
-                    return Binding::Unbound;
+                    return Binding::NoOp;
                 };
                 self.nested_p_poly_mut().add_assign(&delta);
                 Binding::MustReject
@@ -835,9 +878,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 
     /// The number of coefficients at the low end that a circuit claim's
-    /// $t\_z$ term reaches, for harnesses that bias sampling toward this region.
-    /// Cached commitments bind every coefficient, so this is not a boundary
-    /// between [`Binding::MustReject`] and [`Binding::Unbound`] edits.
+    /// $t\_z$ term reaches, so a harness can target that additional guard.
+    /// Stale-cache coefficient edits are bound across the entire rank.
     #[doc(hidden)]
     pub fn num_bound_coeffs() -> usize {
         R::n()

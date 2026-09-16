@@ -73,7 +73,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         mu_prime: &Element<'dr, D>,
         nu_prime: &Element<'dr, D>,
         builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<()>
+        #[cfg(test)] edit_accumulators: impl FnOnce(
+            &mut sparse::Polynomial<C::CircuitField, R>,
+            &mut sparse::Polynomial<C::CircuitField, R>,
+            &mut sparse::Polynomial<C::ScalarField, R>,
+            &mut sparse::Polynomial<C::ScalarField, R>,
+        ) -> bool,
+    ) -> Result<nested::stages::ab::Witness<C::HostCurve>>
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
@@ -86,6 +92,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             builder,
         )?;
         self.compute_nested_ab(nested_a, nested_b, mu_prime, nu_prime, builder)?;
+        // Test seam at the real A/B commitment deadline. Both prescribed
+        // folds exist, but no point stage or bridge containing them has been
+        // committed and x has not been squeezed. A changed fold therefore
+        // receives a completely ordinary, causally rebuilt fusion suffix.
+        #[cfg(test)]
+        {
+            let changed = {
+                let (native_a, native_b, nested_a, nested_b) = builder.accumulator_polys_mut();
+                edit_accumulators(native_a, native_b, nested_a, nested_b)
+            };
+            if changed {
+                builder.refresh_accumulator_commitments();
+            }
+        }
         self.commit_native_points_ab(
             rng,
             nested_registry_wy.commitment,
@@ -93,7 +113,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             builder.nested_b_commitment(),
             builder,
         )?;
-        Ok(())
+        let bridge_witness = nested::stages::ab::Witness {
+            a: builder.native_a_commitment(),
+            b: builder.native_b_commitment(),
+            native_points_ab: builder.native_points_ab_commitment(),
+        };
+        Ok(bridge_witness)
     }
 
     /// Applies the second layer of the nested fold, producing the nested

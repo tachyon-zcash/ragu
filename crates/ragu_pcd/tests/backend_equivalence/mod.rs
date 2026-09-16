@@ -1,7 +1,11 @@
+#[cfg(feature = "unstable-fuzzing")]
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use proptest::{prelude::*, test_runner::TestCaseResult};
 use ragu_acceleration::{AcceleratedBackend, AcceleratedProver};
+#[cfg(feature = "unstable-fuzzing")]
+use ragu_arithmetic::ff::PrimeField;
 use ragu_arithmetic::{Cycle, ff::Field};
 use ragu_backend::{Backend, ReferenceBackend};
 use ragu_circuits::{
@@ -12,14 +16,22 @@ use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
 };
-use ragu_pasta::{Fp, Pasta};
+use ragu_pasta::{Fp, Fq, Pasta};
 use ragu_primitives::allocator::Standard;
 use ragu_testing::strategies::{bounded_edge_usize, edge_u64, nonzero_prime_field_element};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use crate::{
     Application, ApplicationBuilder, Pcd, Proof, SelectableBackend,
+    header::Header,
     step::{Encoded, Index, Step},
+};
+#[cfg(feature = "unstable-fuzzing")]
+use crate::{
+    fuse::test_steps::{Add, AddAtTwo, Leaf, Number, OrderedAdd},
+    fuzzing::corrupt::{NativeCommitment, NestedCommitment},
+    internal::nested,
+    verify::VerificationChecks,
 };
 
 static TRACKING_MSM_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -73,7 +85,7 @@ const MAX_DUMMY_CIRCUITS: usize = 3;
 const MAX_CORRUPTED_HEADER_LEN: usize = TEST_HEADER_SIZE * 2;
 
 type TestApplication<'params, B> = Application<'params, Pasta, ProductionRank, TEST_HEADER_SIZE, B>;
-type TestPcd = Pcd<Pasta, ProductionRank, ()>;
+type TestPcd<H = ()> = Pcd<Pasta, ProductionRank, H>;
 type RngFingerprint = [u64; RNG_FINGERPRINT_WORDS];
 type Outcome = (VerifierDecision, RngFingerprint);
 
@@ -156,6 +168,84 @@ impl Apps {
         }
     }
 
+    #[cfg(feature = "unstable-fuzzing")]
+    fn build_semantic_source() -> Self {
+        let pasta = Pasta::baked();
+        let reference = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
+            .register(Leaf)
+            .unwrap()
+            .register(Add)
+            .unwrap()
+            .register(AddAtTwo)
+            .unwrap()
+            .finalize(pasta)
+            .unwrap();
+        let accelerated = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
+            .with_backend::<AcceleratedBackend>()
+            .register(Leaf)
+            .unwrap()
+            .register(Add)
+            .unwrap()
+            .register(AddAtTwo)
+            .unwrap()
+            .finalize(pasta)
+            .unwrap();
+        let prover = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
+            .with_backend::<AcceleratedProver>()
+            .register(Leaf)
+            .unwrap()
+            .register(Add)
+            .unwrap()
+            .register(AddAtTwo)
+            .unwrap()
+            .finalize(pasta)
+            .unwrap();
+        Self {
+            reference,
+            accelerated,
+            prover,
+        }
+    }
+
+    #[cfg(feature = "unstable-fuzzing")]
+    fn build_semantic_receiver() -> Self {
+        let pasta = Pasta::baked();
+        let reference = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
+            .register(Leaf)
+            .unwrap()
+            .register(Add)
+            .unwrap()
+            .register(OrderedAdd)
+            .unwrap()
+            .finalize(pasta)
+            .unwrap();
+        let accelerated = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
+            .with_backend::<AcceleratedBackend>()
+            .register(Leaf)
+            .unwrap()
+            .register(Add)
+            .unwrap()
+            .register(OrderedAdd)
+            .unwrap()
+            .finalize(pasta)
+            .unwrap();
+        let prover = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
+            .with_backend::<AcceleratedProver>()
+            .register(Leaf)
+            .unwrap()
+            .register(Add)
+            .unwrap()
+            .register(OrderedAdd)
+            .unwrap()
+            .finalize(pasta)
+            .unwrap();
+        Self {
+            reference,
+            accelerated,
+            prover,
+        }
+    }
+
     fn check_registries(&self) -> TestCaseResult {
         let native = self.reference.native_registry.tag();
         let nested = self.reference.nested_registry.tag();
@@ -168,7 +258,11 @@ impl Apps {
 
     /// Verifies `pcd` with every backend, reseeding the verifier RNG from
     /// `seed` each time, so the outcomes are comparable.
-    fn verify_all(&self, pcd: &TestPcd, seed: u64) -> [(&'static str, Outcome); 3] {
+    fn verify_all<H: Header<Fp>>(
+        &self,
+        pcd: &TestPcd<H>,
+        seed: u64,
+    ) -> [(&'static str, Outcome); 3] {
         [
             ("reference", verifier_outcome(&self.reference, pcd, seed)),
             (
@@ -324,9 +418,9 @@ fn rng_fingerprint(rng: &mut StdRng) -> RngFingerprint {
     core::array::from_fn(|_| rng.random())
 }
 
-fn verifier_outcome<B: SelectableBackend>(
+fn verifier_outcome<B: SelectableBackend, H: Header<Fp>>(
     app: &TestApplication<'_, B>,
-    pcd: &TestPcd,
+    pcd: &TestPcd<H>,
     seed: u64,
 ) -> Outcome {
     let mut rng = StdRng::seed_from_u64(seed);
@@ -372,9 +466,9 @@ fn corruptions(
 
 /// Every backend must agree with the reference verifier on `pcd`: same
 /// decision and same randomness consumption.
-fn check_verifiers_agree(
+fn check_verifiers_agree<H: Header<Fp>>(
     apps: &Apps,
-    pcd: &TestPcd,
+    pcd: &TestPcd<H>,
     verifier_seed: u64,
     context: &str,
 ) -> TestCaseResult {
@@ -390,6 +484,152 @@ fn check_verifiers_agree(
         );
     }
     Ok(())
+}
+
+/// Independently advance the verifier RNG through the complete schedule for
+/// a well-formed proof. This deliberately does not call a verifier helper or
+/// share its control flow: three native claim challenges, three nested claim
+/// and registry challenges, then the native and nested commitment scalars.
+fn full_verifier_schedule(seed: u64) -> RngFingerprint {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let _: Fp = Fp::random(&mut rng);
+    let _: Fp = Fp::random(&mut rng);
+    let _: Fp = Fp::random(&mut rng);
+    let _: Fq = Fq::random(&mut rng);
+    let _: Fq = Fq::random(&mut rng);
+    let _: Fq = Fq::random(&mut rng);
+    let _: Fp = Fp::random(&mut rng);
+    let _: Fq = Fq::random(&mut rng);
+    rng_fingerprint(&mut rng)
+}
+
+/// Backend agreement is necessary but not sufficient: a well-formed attack
+/// must also reach the independently specified full verifier RNG schedule.
+#[cfg(feature = "unstable-fuzzing")]
+fn check_well_formed_verifiers(
+    apps: &Apps,
+    pcd: &TestPcd<Number>,
+    verifier_seed: u64,
+    expected: VerifierDecision,
+    context: &str,
+) -> TestCaseResult {
+    check_verifiers_agree(apps, pcd, verifier_seed, context)?;
+    let schedule = full_verifier_schedule(verifier_seed);
+    for (backend, (decision, fingerprint)) in apps.verify_all(pcd, verifier_seed) {
+        prop_assert_eq!(
+            decision,
+            expected,
+            "unexpected {} decision for {}",
+            backend,
+            context,
+        );
+        prop_assert_eq!(
+            fingerprint,
+            schedule,
+            "{} did not follow the full verifier RNG schedule for {}",
+            backend,
+            context,
+        );
+    }
+    Ok(())
+}
+
+#[cfg(feature = "unstable-fuzzing")]
+#[derive(Clone, Copy, Debug)]
+enum CoherentBatch {
+    Native,
+    Nested,
+}
+
+/// Change a polynomial by delta * (X-u), preserving its opening at `u`.
+/// The dense Horner calculation is intentionally separate from the sparse
+/// polynomial implementation used by the prover and verifier.
+#[cfg(feature = "unstable-fuzzing")]
+fn preserve_evaluation<F: PrimeField>(poly: &mut sparse::Polynomial<F, ProductionRank>, u: F) {
+    let before: Vec<_> = poly.iter_coeffs().collect();
+    let delta = F::from(7);
+    let mut after = before.clone();
+    after[0] -= delta * u;
+    after[1] += delta;
+
+    let dense_eval = |coefficients: &[F]| {
+        coefficients
+            .iter()
+            .rev()
+            .fold(F::ZERO, |acc, coefficient| acc * u + coefficient)
+    };
+    assert_eq!(dense_eval(&before), dense_eval(&after));
+    *poly = sparse::Polynomial::from_coeffs(after.clone());
+    assert_eq!(poly.eval(u), dense_eval(&before));
+    assert_ne!(before, after);
+}
+
+/// Produce the same evaluation-preserving, cache-repaired proof substitution
+/// that the focused substitution tests exercise. Commitments are recomputed
+/// by both independent backend implementations before any verifier sees it.
+#[cfg(feature = "unstable-fuzzing")]
+fn coherent_substitution(
+    original: &Proof<Pasta, ProductionRank>,
+    batch: CoherentBatch,
+) -> Proof<Pasta, ProductionRank> {
+    let mut changed = original.clone();
+    match batch {
+        CoherentBatch::Native => {
+            preserve_evaluation(&mut changed.native_p_poly, original.u());
+            let reference = ReferenceBackend::sparse_commit_to_affine(
+                changed.native_p_poly(),
+                Pasta::host_generators(Pasta::baked()),
+            );
+            let accelerated = AcceleratedBackend::sparse_commit_to_affine(
+                changed.native_p_poly(),
+                Pasta::host_generators(Pasta::baked()),
+            );
+            assert_eq!(reference, accelerated);
+            assert_ne!(reference, original.native_p_commitment());
+            *changed.native_commitment_cache_mut(NativeCommitment::P) = reference;
+            assert_eq!(changed.v(), original.v());
+        }
+        CoherentBatch::Nested => {
+            let nested_u = nested::challenge::<Pasta>(original.u())
+                .expect("a produced proof has a valid nested challenge");
+            preserve_evaluation(&mut changed.nested_p_poly, nested_u);
+            let reference = ReferenceBackend::sparse_commit_to_affine(
+                changed.nested_p_poly(),
+                Pasta::nested_generators(Pasta::baked()),
+            );
+            let accelerated = AcceleratedBackend::sparse_commit_to_affine(
+                changed.nested_p_poly(),
+                Pasta::nested_generators(Pasta::baked()),
+            );
+            assert_eq!(reference, accelerated);
+            assert_ne!(reference, original.nested_p_commitment());
+            *changed.nested_commitment_cache_mut(NestedCommitment::P) = reference;
+            assert_eq!(changed.nested_v().unwrap(), original.nested_v().unwrap());
+        }
+    }
+    assert_eq!(
+        changed.challenges().in_order(),
+        original.challenges().in_order(),
+    );
+    assert_eq!(changed.left_header(), original.left_header());
+    assert_eq!(changed.right_header(), original.right_header());
+    changed
+}
+
+#[cfg(feature = "unstable-fuzzing")]
+fn reference_checks(
+    apps: &Apps,
+    pcd: &TestPcd<Number>,
+    verifier_seed: u64,
+    context: &str,
+) -> VerificationChecks {
+    let (accepted, checks) = apps
+        .reference
+        .verify_with_checks(pcd, StdRng::seed_from_u64(verifier_seed))
+        .unwrap();
+    let checks = checks.expect("well-formed proof metadata reaches every verifier predicate");
+    assert_eq!(accepted, checks.all(), "{context}: {checks:?}");
+    checks
 }
 
 fn check_valid_pcd_equivalence(
@@ -416,10 +656,17 @@ fn check_valid_pcd_equivalence(
     ] {
         let context = alloc::format!("{proof_name} {proof_kind} proof");
         check_verifiers_agree(apps, pcd, verifier_seed, &context)?;
+        let outcome = verifier_outcome(&apps.reference, pcd, verifier_seed);
         prop_assert_eq!(
-            verifier_outcome(&apps.reference, pcd, verifier_seed).0,
+            outcome.0,
             VerifierDecision::Accept,
             "valid {} was rejected",
+            context,
+        );
+        prop_assert_eq!(
+            outcome.1,
+            full_verifier_schedule(verifier_seed),
+            "valid {} did not follow the independently specified RNG schedule",
             context,
         );
     }
@@ -454,6 +701,128 @@ fn check_corrupted_pcd_equivalence(
         );
     }
 
+    Ok(())
+}
+
+#[cfg(feature = "unstable-fuzzing")]
+#[test]
+fn coherent_attacks_match_all_backends_and_independent_oracles() -> TestCaseResult {
+    const PROOF_SEED: u64 = 0x0000_0009_0873_0001;
+    const VERIFIER_SEED: u64 = 0x0000_0009_0873_0002;
+    const LEFT: Fp = Fp::from_raw([19, 0, 0, 0]);
+    const RIGHT: Fp = Fp::from_raw([43, 0, 0, 0]);
+
+    let source = Apps::build_semantic_source();
+    let receiver = Apps::build_semantic_receiver();
+    source.check_registries()?;
+    receiver.check_registries()?;
+
+    let mut rng = StdRng::seed_from_u64(PROOF_SEED);
+    let left = source.reference.seed(&mut rng, Leaf, LEFT).unwrap().0;
+    let right = source.reference.seed(&mut rng, Leaf, RIGHT).unwrap().0;
+    let parent = source
+        .reference
+        .fuse(&mut rng, AddAtTwo, (), left, right)
+        .unwrap()
+        .0;
+    prop_assert_eq!(*parent.data(), LEFT + RIGHT);
+    prop_assert_ne!(*parent.data(), LEFT + RIGHT + RIGHT);
+    check_well_formed_verifiers(
+        &source,
+        &parent,
+        VERIFIER_SEED,
+        VerifierDecision::Accept,
+        "source control",
+    )?;
+
+    for batch in [CoherentBatch::Native, CoherentBatch::Nested] {
+        let changed_proof = coherent_substitution(parent.proof(), batch);
+        prop_assert!(parent.proof().test_mismatch(&changed_proof).is_some());
+        let changed = changed_proof.carry::<Number>(*parent.data());
+        let context = alloc::format!("{batch:?} evaluation-preserving substitution");
+        let checks = reference_checks(&source, &changed, VERIFIER_SEED, &context);
+        prop_assert_eq!(
+            checks,
+            VerificationChecks {
+                native_revdot: matches!(batch, CoherentBatch::Native),
+                nested_revdot: matches!(batch, CoherentBatch::Nested),
+                native_registry: true,
+                nested_registry: true,
+                nested_challenges: true,
+                commitments: true,
+                nested_points: true,
+                transcript: true,
+                ab_bridge: true,
+                mesh: true,
+            },
+            "only the cross-field claim may reject {}",
+            context,
+        );
+        check_well_formed_verifiers(
+            &source,
+            &changed,
+            VERIFIER_SEED,
+            VerifierDecision::Reject,
+            &context,
+        )?;
+    }
+
+    // The proof bytes and public output remain those of the source relation.
+    // The receiver assigns the same circuit index to left + 2*right, which is
+    // independently false for that output.
+    let spliced = parent.proof().clone().carry::<Number>(*parent.data());
+    prop_assert_eq!(spliced.proof().test_mismatch(parent.proof()), None);
+    prop_assert_ne!(*spliced.data(), LEFT + RIGHT + RIGHT);
+    let checks = reference_checks(&receiver, &spliced, VERIFIER_SEED, "application splice");
+    prop_assert!(
+        !checks.native_registry,
+        "receiver registry accepted: {:?}",
+        checks,
+    );
+    prop_assert!(
+        checks.commitments,
+        "unchanged caches rejected: {:?}",
+        checks,
+    );
+    prop_assert!(
+        checks.transcript,
+        "unchanged transcript rejected: {:?}",
+        checks,
+    );
+    check_well_formed_verifiers(
+        &receiver,
+        &spliced,
+        VERIFIER_SEED,
+        VerifierDecision::Reject,
+        "application splice",
+    )?;
+
+    // Prove that the receiving context and all three of its verifiers accept
+    // a proof generated for the relation they actually registered.
+    let mut receiver_rng = StdRng::seed_from_u64(PROOF_SEED + 1);
+    let left = receiver
+        .reference
+        .seed(&mut receiver_rng, Leaf, LEFT)
+        .unwrap()
+        .0;
+    let right = receiver
+        .reference
+        .seed(&mut receiver_rng, Leaf, RIGHT)
+        .unwrap()
+        .0;
+    let receiver_parent = receiver
+        .reference
+        .fuse(&mut receiver_rng, OrderedAdd, (), left, right)
+        .unwrap()
+        .0;
+    prop_assert_eq!(*receiver_parent.data(), LEFT + RIGHT + RIGHT);
+    check_well_formed_verifiers(
+        &receiver,
+        &receiver_parent,
+        VERIFIER_SEED,
+        VerifierDecision::Accept,
+        "receiver control",
+    )?;
     Ok(())
 }
 

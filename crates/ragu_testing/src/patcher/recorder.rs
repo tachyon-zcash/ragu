@@ -467,9 +467,75 @@ pub fn underconstrained_derived<F: Field>(
         .collect()
 }
 
+/// One sparse basis direction in the Jacobian kernel of a recorded
+/// constraint graph.
+///
+/// The entries are `(wire, delta)` pairs in ascending wire order; omitted
+/// wires have zero delta. A direction is only a first-order proposal. For
+/// nonlinear constraints, `honest + direction` need not be a satisfying
+/// witness and must be checked exactly (or repaired and then checked).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JacobianDirection<F> {
+    entries: Vec<(usize, F)>,
+}
+
+impl<F> JacobianDirection<F> {
+    /// The nonzero `(wire, delta)` entries of this direction.
+    pub fn entries(&self) -> &[(usize, F)] {
+        &self.entries
+    }
+}
+
+/// A sparse basis for the Jacobian kernel on a caller-selected set of
+/// `variables`.
+///
+/// Every wire outside `variables` has derivative zero. This makes the
+/// routine suitable for a causal frontier: public inputs and already
+/// committed stage values are omitted, while a small set of stage copies,
+/// accumulators, or advice wires is allowed to move. Each non-pivot column
+/// contributes one basis direction, normalized to one in that column.
+///
+/// The result describes tangent directions only. In particular, a zero
+/// Jacobian for `x² = 0` at `x = 0` reports the `x` direction even though no
+/// nonzero exact solution exists. Callers must subject every proposal to
+/// full finite-field constraint evaluation and live playback.
+///
+/// # Panics
+///
+/// Panics if `variables` contains the fixed ONE wire, a wire outside
+/// `values`, or the same wire more than once.
+pub fn jacobian_kernel<F: Field>(
+    events: &[Event<F>],
+    values: &[F],
+    variables: &[usize],
+) -> Vec<JacobianDirection<F>> {
+    let rref = Rref::build_on(events, values, variables);
+    let d = rref.wire_of.len();
+    let mut basis = Vec::new();
+
+    for free in (0..d).filter(|&column| rref.pivot_row_of_col[column].is_none()) {
+        let mut dense = vec![F::ZERO; d];
+        dense[free] = F::ONE;
+        for (pivot, row) in rref.pivot_row_of_col.iter().enumerate() {
+            if let Some(row) = row {
+                dense[pivot] = -rref.rows[*row][free];
+            }
+        }
+        let entries = rref
+            .wire_of
+            .iter()
+            .copied()
+            .zip(dense)
+            .filter(|(_, delta)| *delta != F::ZERO)
+            .collect();
+        basis.push(JacobianDirection { entries });
+    }
+    basis
+}
+
 /// The reduced row echelon form of the Jacobian of `events` at `values`,
-/// restricted to the columns not in `free` (those directions are pinned to
-/// zero). Backs [`underconstrained_derived`].
+/// restricted to columns selected by a fixed-wire mask. Backs
+/// [`underconstrained_derived`] and [`jacobian_kernel`].
 struct Rref<F> {
     rows: Vec<Vec<F>>,
     pivot_row_of_col: Vec<Option<usize>>,
@@ -484,6 +550,29 @@ impl<F: Field> Rref<F> {
         for &w in free {
             fixed[w] = true;
         }
+
+        Self::build_with_fixed(events, values, fixed)
+    }
+
+    fn build_on(events: &[Event<F>], values: &[F], variables: &[usize]) -> Self {
+        let mut fixed = vec![true; values.len()];
+        let mut seen = vec![false; values.len()];
+        for &wire in variables {
+            assert!(
+                wire < values.len(),
+                "Jacobian variable {wire} is outside 0..{}",
+                values.len(),
+            );
+            assert_ne!(wire, Recorder::<F>::ONE, "ONE is not a Jacobian variable");
+            assert!(!seen[wire], "duplicate Jacobian variable {wire}");
+            seen[wire] = true;
+            fixed[wire] = false;
+        }
+        Self::build_with_fixed(events, values, fixed)
+    }
+
+    fn build_with_fixed(events: &[Event<F>], values: &[F], fixed: Vec<bool>) -> Self {
+        let n = values.len();
 
         // Map derived wires onto dense columns.
         let mut col_of = vec![usize::MAX; n];
@@ -501,14 +590,15 @@ impl<F: Field> Rref<F> {
         let mut rows: Vec<Vec<F>> = Vec::new();
         let mut push_row = |entries: &[(usize, F)]| {
             let mut row = vec![F::ZERO; d];
-            let mut nonzero = false;
             for &(w, c) in entries {
                 if !fixed[w] && c != F::ZERO {
                     row[col_of[w]] += c;
-                    nonzero = true;
                 }
             }
-            if nonzero {
+            // Repeated variables can cancel (for example the derivative of
+            // x·x at x=0). Do not retain a row merely because a nonzero term
+            // was visited before aggregation.
+            if row.iter().any(|value| *value != F::ZERO) {
                 rows.push(row);
             }
         };

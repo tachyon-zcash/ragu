@@ -20,6 +20,11 @@ pub(crate) mod claims;
 #[cfg(test)]
 #[path = "../../tests/pcs.rs"]
 mod pcs_tests;
+#[cfg(test)]
+#[path = "test_steps.rs"]
+pub(crate) mod test_steps;
+#[cfg(test)]
+mod tests;
 // The patcher seam (see `crate::fuzzing`). Its source lives with the rest of
 // the fuzzing surface in `src/fuzzing/`, but it is mounted here because it
 // calls this pipeline's `pub(super)` steps. The file gates itself behind
@@ -54,6 +59,134 @@ use crate::{
     proof::ProofBuilder,
     step::Step,
 };
+
+/// Observes an actual Eval attempt before range validation. Tests can inject
+/// the astronomically rare out-of-range response without finding a Poseidon
+/// preimage; accepted responses still come from the ordinary transcript.
+#[cfg(test)]
+struct EvalAttempt<'a, C: Cycle, R: Rank> {
+    native: &'a sparse::Polynomial<C::CircuitField, R>,
+    bridge: &'a sparse::Polynomial<C::ScalarField, R>,
+    commitment: C::NestedCurve,
+    candidate: C::CircuitField,
+}
+
+/// Adversarial suffix advice, supplied only after the corresponding challenge
+/// has been squeezed. Earlier builder cells and transcript state are never
+/// exposed: tests must detect attempts to substitute a different committed
+/// object even when the ordinary pipeline regenerates all later advice.
+#[cfg(test)]
+trait SuffixAttack<C: Cycle, R: Rank> {
+    /// Edit the point-stage commitments carried by the preamble bridge at
+    /// its real commitment deadline. The native point stages already exist;
+    /// fusion rebuilds the entire transcript and advice suffix from here.
+    fn before_preamble_bridge(
+        &mut self,
+        _witness: &mut nested::stages::preamble::Witness<C::HostCurve>,
+    ) {
+    }
+
+    /// Edit the point-stage commitment carried by the s-prime bridge before
+    /// the bridge is committed and `y` is squeezed.
+    fn before_s_prime_bridge(
+        &mut self,
+        _witness: &mut nested::stages::s_prime::Witness<C::HostCurve>,
+    ) {
+    }
+
+    fn after_y(
+        &mut self,
+        _y: C::CircuitField,
+        _native: &mut NativeSPrime<C, R>,
+        _nested: &mut NestedSPrime<C, R>,
+    ) {
+    }
+
+    /// Edit the completed accumulator fold before its commitments enter the
+    /// point stages or transcript. Return true to rebuild the direct
+    /// commitment caches from the edited polynomials. The ordinary fusion
+    /// pipeline constructs every later stage, bridge, challenge and circuit.
+    fn before_ab_commitment(
+        &mut self,
+        _native_a: &mut sparse::Polynomial<C::CircuitField, R>,
+        _native_b: &mut sparse::Polynomial<C::CircuitField, R>,
+        _nested_a: &mut sparse::Polynomial<C::ScalarField, R>,
+        _nested_b: &mut sparse::Polynomial<C::ScalarField, R>,
+    ) -> bool {
+        false
+    }
+
+    /// Edit the point-stage commitment carried by the A/B bridge before the
+    /// bridge is committed and `x` is squeezed.
+    fn before_ab_bridge(
+        &mut self,
+        _witness: &mut nested::stages::ab::Witness<C::HostCurve>,
+    ) -> bool {
+        false
+    }
+
+    fn after_x(
+        &mut self,
+        _x: C::CircuitField,
+        _z: C::CircuitField,
+        _native_a: &mut sparse::Polynomial<C::CircuitField, R>,
+        _native_b: &mut sparse::Polynomial<C::CircuitField, R>,
+        _nested_a: &mut sparse::Polynomial<C::ScalarField, R>,
+        _nested_b: &mut sparse::Polynomial<C::ScalarField, R>,
+    ) {
+    }
+
+    fn after_alpha(
+        &mut self,
+        _w: C::CircuitField,
+        _alpha: C::CircuitField,
+        _nested_registry_xy: &mut sparse::Polynomial<C::ScalarField, R>,
+    ) {
+    }
+
+    /// Edit the point-stage commitment carried by the quotient bridge before
+    /// the bridge is committed and `u` is squeezed.
+    fn before_f_bridge(&mut self, _witness: &mut nested::stages::f::Witness<C::HostCurve>) {}
+
+    /// Return true to recompute the transient quotient commitment caches.
+    fn after_u(
+        &mut self,
+        _u: C::CircuitField,
+        _native: &mut sparse::Polynomial<C::CircuitField, R>,
+        _nested: &mut sparse::Polynomial<C::ScalarField, R>,
+    ) -> bool {
+        false
+    }
+
+    /// Edit the challenge-binding witness before the Eval stage and its
+    /// exported partial are committed. This is a test-only internal-advice
+    /// tier: implementations that change a challenge-stage value must also
+    /// rebuild the binding partials they intend to keep coherent.
+    fn before_eval_commitment(
+        &mut self,
+        _native: &mut crate::internal::native::stages::eval::Witness<C>,
+        _nested_challenges: &mut nested::stages::challenges::Witness<C::ScalarField>,
+    ) {
+    }
+
+    fn after_pre_beta(
+        &mut self,
+        _pre_beta: C::CircuitField,
+        _native: &mut crate::internal::native::stages::eval::Witness<C>,
+        _nested: &mut nested::stages::eval::Evaluations<C::ScalarField>,
+        _nested_challenges: &mut nested::stages::challenges::Witness<C::ScalarField>,
+    ) {
+    }
+
+    /// Observe the completed proof together with the transient objects that
+    /// ordinary fusion discards. This is immutable and runs only after every
+    /// proof field and cache has been built, so it cannot repair a suffix.
+    #[cfg(feature = "unstable-fuzzing")]
+    fn inspect(&mut self, _witness: ExpandedWitness<'_, C, R>) {}
+}
+
+#[cfg(test)]
+impl<C: Cycle, R: Rank> SuffixAttack<C, R> for () {}
 
 /// Ephemeral native-field data for $f(X)$, used only during the fuse step.
 struct NativeF<C: Cycle, R: Rank> {
@@ -97,6 +230,22 @@ struct NestedSPrime<C: Cycle, R: Rank> {
     registry_wx1_commitment: C::NestedCurve,
 }
 
+/// Test-only expanded fusion witness. The references deliberately preserve
+/// the semantic groupings used while constructing the proof; the production
+/// proof format continues to discard these objects.
+#[cfg(all(test, feature = "unstable-fuzzing"))]
+struct ExpandedWitness<'a, C: Cycle, R: Rank> {
+    proof: &'a Proof<C, R>,
+    left: &'a Proof<C, R>,
+    right: &'a Proof<C, R>,
+    native_s_prime: &'a NativeSPrime<C, R>,
+    nested_s_prime: &'a NestedSPrime<C, R>,
+    registry_wy: &'a RegistryWy<C, R>,
+    nested_registry_wy: &'a NestedRegistryWy<C, R>,
+    native_f: &'a NativeF<C, R>,
+    nested_f: &'a NestedF<C, R>,
+}
+
 type NativeFuseEmulator<C> = Emulator<Wireless<Always<()>, <C as Cycle>::CircuitField>>;
 type NestedFuseEmulator<C> = Emulator<Wireless<Always<()>, <C as Cycle>::ScalarField>>;
 
@@ -133,11 +282,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     /// it for the nested circuits that load the stage.
     fn commit_nested_challenges(
         &self,
-        mut challenges: nested::stages::challenges::Witness<C::ScalarField>,
-        pre_beta: C::CircuitField,
+        challenges: nested::stages::challenges::Witness<C::ScalarField>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<nested::stages::challenges::Witness<C::ScalarField>> {
-        challenges.beta = nested::challenge::<C>(pre_beta)?;
         builder.set_nested_challenges_rx(nested::stages::challenges::Stage::<C::HostCurve, R>::rx(
             C::ScalarField::ZERO,
             &challenges,
@@ -197,6 +344,37 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         left: Pcd<C, R, S::Left>,
         right: Pcd<C, R, S::Right>,
     ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
+        self.fuse_inner(
+            rng,
+            step,
+            witness,
+            left,
+            right,
+            #[cfg(test)]
+            |_, _| {},
+            #[cfg(test)]
+            |_| Ok(None),
+            #[cfg(test)]
+            &mut (),
+        )
+    }
+
+    fn fuse_inner<'source, RNG: CryptoRng, S: Step<C>>(
+        &self,
+        rng: &mut RNG,
+        step: S,
+        witness: S::Witness<'source>,
+        left: Pcd<C, R, S::Left>,
+        right: Pcd<C, R, S::Right>,
+        #[cfg(test)] edit_quotients: impl FnOnce(
+            &mut sparse::Polynomial<C::CircuitField, R>,
+            &mut sparse::Polynomial<C::ScalarField, R>,
+        ),
+        #[cfg(test)] mut eval_attempt: impl FnMut(
+            EvalAttempt<'_, C, R>,
+        ) -> Result<Option<C::CircuitField>>,
+        #[cfg(test)] suffix_attack: &mut impl SuffixAttack<C, R>,
+    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
         let mut builder =
             ProofBuilder::<C, R, B>::new(self.params, C::ScalarField::random(&mut *rng));
 
@@ -206,8 +384,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let mut dr = Emulator::execute();
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
 
-        let (preamble_witness, nested_preamble) =
-            self.compute_preamble(rng, &left, &right, &mut builder)?;
+        let (preamble_witness, nested_preamble) = self.compute_preamble(
+            rng,
+            &left,
+            &right,
+            &mut builder,
+            #[cfg(test)]
+            |witness| suffix_attack.before_preamble_bridge(witness),
+        )?;
         let bridge_preamble_commitment =
             Point::constant(&mut dr, builder.bridge_preamble_commitment())?;
         bridge_preamble_commitment.write(&mut dr, &mut transcript)?;
@@ -217,18 +401,26 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             .nested_registry
             .at(nested::challenge::<C>(*w.value().take())?);
 
-        let (native_s_prime, nested_s_prime) = self.compute_s_prime(
-            rng,
-            &native_registry,
-            &nested_registry,
-            &left,
-            &right,
-            &mut builder,
-        )?;
+        #[allow(unused_mut)]
+        let (mut native_s_prime, mut nested_s_prime, nested_s_prime_witness) = self
+            .compute_s_prime(
+                rng,
+                &native_registry,
+                &nested_registry,
+                &left,
+                &right,
+                &mut builder,
+                #[cfg(test)]
+                |witness| suffix_attack.before_s_prime_bridge(witness),
+            )?;
         let bridge_s_prime_commitment =
             Point::constant(&mut dr, builder.bridge_s_prime_commitment())?;
         bridge_s_prime_commitment.write(&mut dr, &mut transcript)?;
         let y = transcript.challenge(&mut dr)?;
+
+        #[cfg(test)]
+        suffix_attack.after_y(*y.value().take(), &mut native_s_prime, &mut nested_s_prime);
+
         let z = transcript.challenge(&mut dr)?;
 
         let native_source = NativeFuseProofSource {
@@ -303,7 +495,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let mu_prime = transcript.challenge(&mut dr)?;
         let nu_prime = transcript.challenge(&mut dr)?;
 
-        self.compute_ab(
+        #[allow(unused_mut)]
+        let mut nested_ab_witness = self.compute_ab(
             rng,
             native_a,
             native_b,
@@ -314,10 +507,33 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &mu_prime,
             &nu_prime,
             &mut builder,
+            #[cfg(test)]
+            |native_a, native_b, nested_a, nested_b| {
+                suffix_attack.before_ab_commitment(native_a, native_b, nested_a, nested_b)
+            },
         )?;
+        #[cfg(test)]
+        {
+            if suffix_attack.before_ab_bridge(&mut nested_ab_witness) {
+                builder.set_bridge_ab_witness_for_test(&nested_ab_witness)?;
+            }
+        }
         let bridge_ab_commitment = Point::constant(&mut dr, builder.bridge_ab_commitment()?)?;
         bridge_ab_commitment.write(&mut dr, &mut transcript)?;
         let x = transcript.challenge(&mut dr)?;
+
+        #[cfg(test)]
+        {
+            let (native_a, native_b, nested_a, nested_b) = builder.accumulator_polys_mut();
+            suffix_attack.after_x(
+                *x.value().take(),
+                *z.value().take(),
+                native_a,
+                native_b,
+                nested_a,
+                nested_b,
+            );
+        }
 
         let (query_witness, nested_query) = self.compute_query(
             rng,
@@ -335,7 +551,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         bridge_query_commitment.write(&mut dr, &mut transcript)?;
         let alpha = transcript.challenge(&mut dr)?;
 
-        let (native_f, nested_f) = self.compute_f(
+        #[cfg(test)]
+        suffix_attack.after_alpha(
+            *w.value().take(),
+            *alpha.value().take(),
+            builder.nested_registry_xy_poly_mut(),
+        );
+
+        let (native_f, nested_f, nested_f_witness) = self.compute_f(
             rng,
             &w,
             &y,
@@ -349,10 +572,26 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &mut builder,
             &left,
             &right,
+            #[cfg(test)]
+            edit_quotients,
+            #[cfg(test)]
+            |witness| suffix_attack.before_f_bridge(witness),
         )?;
         let bridge_f_commitment = Point::constant(&mut dr, builder.bridge_f_commitment())?;
         bridge_f_commitment.write(&mut dr, &mut transcript)?;
         let u = transcript.challenge(&mut dr)?;
+
+        #[cfg(test)]
+        let (native_f, nested_f) = {
+            let (mut native_f, mut nested_f) = (native_f, nested_f);
+            if suffix_attack.after_u(*u.value().take(), &mut native_f.poly, &mut nested_f.poly) {
+                native_f.commitment =
+                    B::sparse_commit_to_affine(&native_f.poly, C::host_generators(self.params));
+                nested_f.commitment =
+                    B::sparse_commit_to_affine(&nested_f.poly, C::nested_generators(self.params));
+            }
+            (native_f, nested_f)
+        };
 
         let bound_challenges = [&w, &y, &z, &mu, &nu, &mu_prime, &nu_prime, &x, &alpha, &u]
             .map(|challenge| *challenge.value().take());
@@ -366,6 +605,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &nested_registry_wy,
             &builder,
         )?;
+        #[cfg(test)]
+        let (eval_witness, nested_challenges_witness) = {
+            let (mut eval_witness, mut nested_challenges_witness) =
+                (eval_witness, nested_challenges_witness);
+            suffix_attack.before_eval_commitment(&mut eval_witness, &mut nested_challenges_witness);
+            (eval_witness, nested_challenges_witness)
+        };
         builder.set_nested_challenges_partial(eval_witness.partials.binding);
 
         // Rejection-sample the eval-stage blinding until the squeezed `pre_beta`
@@ -392,19 +638,43 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 bridge_eval_commitment_point.write(dr, &mut transcript)?;
                 let pre_beta = transcript.challenge(dr)?;
 
+                #[cfg(test)]
+                let pre_beta = match eval_attempt(EvalAttempt {
+                    native: &eval_rx,
+                    bridge: &bridge_eval_rx,
+                    commitment: bridge_eval_commitment,
+                    candidate: *pre_beta.value().take(),
+                })? {
+                    Some(value) => Element::constant(dr, value),
+                    None => pre_beta,
+                };
+
                 Ok((pre_beta, (eval_rx, bridge_eval_rx, bridge_eval_commitment)))
             })?;
         builder.set_native_eval_rx(eval_rx);
         builder.set_bridge_eval_rx(bridge_eval_rx, bridge_eval_commitment);
 
+        let mut nested_challenges_witness = nested_challenges_witness;
+        nested_challenges_witness.beta =
+            nested::challenge::<C>(*pre_beta.element().value().take())?;
+
+        #[cfg(test)]
+        let (eval_witness, nested_eval, nested_challenges_witness) = {
+            let (mut eval_witness, mut nested_eval) = (eval_witness, nested_eval);
+            suffix_attack.after_pre_beta(
+                *pre_beta.element().value().take(),
+                &mut eval_witness,
+                &mut nested_eval,
+                &mut nested_challenges_witness,
+            );
+            (eval_witness, nested_eval, nested_challenges_witness)
+        };
+
         // Every nested challenge is now known: commit the nested challenge
         // stage, unblinded. Its expected commitment is computed by this
         // step's native binders and completed with beta by the parent's.
-        let nested_challenges = self.commit_nested_challenges(
-            nested_challenges_witness,
-            *pre_beta.element().value().take(),
-            &mut builder,
-        )?;
+        let nested_challenges =
+            self.commit_nested_challenges(nested_challenges_witness, &mut builder)?;
 
         let (points, native_points, native_walk) = self.compute_p(
             rng,
@@ -445,24 +715,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &mut builder,
         )?;
 
-        let nested_s_prime_witness = nested::stages::s_prime::Witness {
-            registry_wx0: native_s_prime.registry_wx0_commitment,
-            registry_wx1: native_s_prime.registry_wx1_commitment,
-            native_points_registry_wx: builder.native_points_registry_wx_commitment(),
-        };
-        let nested_ab_witness = nested::stages::ab::Witness {
-            a: builder.native_a_commitment(),
-            b: builder.native_b_commitment(),
-            native_points_ab: builder.native_points_ab_commitment(),
-        };
         let nested_query_witness = nested::stages::query::Witness {
             native_query: builder.native_query_commitment(),
             registry_xy: builder.native_registry_xy_commitment(),
             nested: nested_query,
-        };
-        let nested_f_witness = nested::stages::f::Witness {
-            native_f: native_f.commitment,
-            native_points_f: builder.native_points_f_commitment(),
         };
         let nested_eval_witness = nested::stages::eval::Witness {
             native_eval: builder.native_eval_commitment(),
@@ -486,6 +742,19 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         )?;
 
         let proof = builder.build()?;
+
+        #[cfg(all(test, feature = "unstable-fuzzing"))]
+        suffix_attack.inspect(ExpandedWitness {
+            proof: &proof,
+            left: &left,
+            right: &right,
+            native_s_prime: &native_s_prime,
+            nested_s_prime: &nested_s_prime,
+            registry_wy: &registry_wy,
+            nested_registry_wy: &nested_registry_wy,
+            native_f: &native_f,
+            nested_f: &nested_f,
+        });
 
         Ok((proof.carry(application_data), application_aux))
     }

@@ -68,6 +68,39 @@ use crate::{
 /// fixed by the sealed [`SelectableBackend::Verifier`] mapping.
 type Verifier<B> = <B as SelectableBackend>::Verifier;
 
+/// Test-only observations of the decider's checks, before their conjunction.
+/// A failed predicate can coexist with other independent rejection causes.
+#[cfg(test)]
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct VerificationChecks {
+    pub native_revdot: bool,
+    pub nested_revdot: bool,
+    pub native_registry: bool,
+    pub nested_registry: bool,
+    pub nested_challenges: bool,
+    pub commitments: bool,
+    pub nested_points: bool,
+    pub transcript: bool,
+    pub ab_bridge: bool,
+    pub mesh: bool,
+}
+
+#[cfg(test)]
+impl VerificationChecks {
+    pub(crate) fn all(&self) -> bool {
+        self.native_revdot
+            && self.nested_revdot
+            && self.native_registry
+            && self.nested_registry
+            && self.nested_challenges
+            && self.commitments
+            && self.nested_points
+            && self.transcript
+            && self.ab_bridge
+            && self.mesh
+    }
+}
+
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
@@ -86,7 +119,34 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     pub fn verify<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         pcd: &Pcd<C, R, H>,
+        rng: RNG,
+    ) -> Result<bool> {
+        self.verify_inner(
+            pcd,
+            rng,
+            #[cfg(test)]
+            None,
+        )
+    }
+
+    /// Runs the same verifier while observing its predicates. Diagnostics
+    /// are absent when malformed metadata or challenges cause early rejection.
+    #[cfg(test)]
+    pub(crate) fn verify_with_checks<RNG: CryptoRng, H: Header<C::CircuitField>>(
+        &self,
+        pcd: &Pcd<C, R, H>,
+        rng: RNG,
+    ) -> Result<(bool, Option<VerificationChecks>)> {
+        let mut checks = None;
+        let accepted = self.verify_inner(pcd, rng, Some(&mut checks))?;
+        Ok((accepted, checks))
+    }
+
+    fn verify_inner<RNG: CryptoRng, H: Header<C::CircuitField>>(
+        &self,
+        pcd: &Pcd<C, R, H>,
         mut rng: RNG,
+        #[cfg(test)] checks: Option<&mut Option<VerificationChecks>>,
     ) -> Result<bool> {
         // Sample verification challenges w, y, and z.
         let w = C::CircuitField::random(&mut rng);
@@ -408,6 +468,22 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             let nested = self.nested_mesh_claim(proof)?;
             native && nested
         };
+
+        #[cfg(test)]
+        if let Some(checks) = checks {
+            *checks = Some(VerificationChecks {
+                native_revdot: native_revdot_claims,
+                nested_revdot: nested_revdot_claims,
+                native_registry: registry_xy_claim,
+                nested_registry: nested_registry_xy_claim,
+                nested_challenges: nested_challenges_claim,
+                commitments: commitments_claim,
+                nested_points: nested_points_claim,
+                transcript: transcript_claim,
+                ab_bridge: ab_bridge_claim,
+                mesh: mesh_claim,
+            });
+        }
 
         Ok(native_revdot_claims
             && nested_revdot_claims
@@ -787,17 +863,24 @@ mod nested {
 }
 
 #[cfg(test)]
+#[path = "verification_randomness_tests.rs"]
+mod verification_randomness_tests;
+
+#[cfg(test)]
 mod tests {
+    use alloc::borrow::Cow;
+
     use ragu_arithmetic::{
         ff::Field,
         rand::{SeedableRng, rngs::StdRng},
     };
+    use ragu_backend::ReferenceBackend;
     use ragu_circuits::{
         polynomials::{ProductionRank, sparse},
         registry::CircuitIndex,
     };
     use ragu_core::drivers::{Driver, DriverValue};
-    use ragu_pasta::Pasta;
+    use ragu_pasta::{Fp, Pasta};
     use ragu_primitives::allocator::Standard;
 
     use super::*;
@@ -925,6 +1008,105 @@ mod tests {
         let pcd = proof.carry::<()>(());
         let result = app.verify(&pcd, &mut rng).expect("verify should not error");
         assert!(!result, "verify should reject invalid circuit_id");
+    }
+
+    fn application_k0(
+        app: &crate::Application<'_, Pasta, TestR, HEADER_SIZE>,
+        circuit_id: CircuitIndex,
+        rx: &sparse::Polynomial<Fp, TestR>,
+    ) -> Fp {
+        let mut builder = claims::Builder::<
+            Cow<'_, sparse::Polynomial<Fp, TestR>>,
+            Fp,
+            TestR,
+            ReferenceBackend,
+        >::new(app.native_registry(), Fp::ZERO, Fp::from(17));
+        builder.circuit_impl(circuit_id, Cow::Borrowed(rx));
+        rx.revdot(builder.b[0].as_ref())
+    }
+
+    /// Review A08: an application ID may select any point in the registry
+    /// domain, but registered bonding and unassigned points have k0 = 0 and
+    /// cannot satisfy the application's k0 = 1 circuit claim. Only points
+    /// outside the domain require the explicit metadata guard.
+    #[test]
+    fn application_ids_distinguish_circuits_bonding_padding_and_outside_domain() -> Result<()> {
+        let app = unit_app();
+        let registry = app.native_registry();
+        let bonding_id = native_internal::InternalCircuitIndex::PreambleStage.circuit_index();
+        let padded_id = CircuitIndex::new(registry.num_circuits());
+        let outside_id = CircuitIndex::new(1usize << registry.log2_domain());
+
+        assert!(registry.circuit_in_domain(bonding_id));
+        assert!(registry.circuit_in_domain(padded_id));
+        assert!(!registry.circuit_in_domain(outside_id));
+        assert!(registry.num_circuits() < 1usize << registry.log2_domain());
+
+        let mut proving_rng = StdRng::seed_from_u64(0xa08);
+        let (valid, ()) = app.seed(&mut proving_rng, UnitSeed, ())?;
+        let proof = valid.proof().clone();
+        let application_rx = &proof[native_internal::RxIndex::Application];
+        assert_eq!(
+            application_k0(&app, proof.circuit_id, application_rx),
+            Fp::ONE,
+            "the registered application circuit has k0 = 1"
+        );
+
+        // A deliberately heterogeneous multiplication trace still has a zero
+        // product-gate residual. Thus neither a bonding slot nor an unassigned
+        // zero-wiring slot can be repaired with adversarial trace coefficients.
+        let adversarial_rx = {
+            let mut view = sparse::View::<_, TestR, _>::trace();
+            for gate in 0..13u64 {
+                let a = Fp::from(3 * gate + 2);
+                let b = Fp::from(5 * gate + 7);
+                view.a.push(a);
+                view.b.push(b);
+                view.c.push(a * b);
+            }
+            view.build()
+        };
+        for (label, id) in [("bonding", bonding_id), ("padding", padded_id)] {
+            assert_eq!(
+                registry.circuit_xy(id, Fp::from(19), Fp::ZERO),
+                Fp::ZERO,
+                "{label} wiring has k0 = 0"
+            );
+            assert_eq!(
+                application_k0(&app, id, &adversarial_rx),
+                Fp::ZERO,
+                "{label} cannot turn a valid product trace into k0 = 1"
+            );
+
+            let mut attacked = proof.clone();
+            attacked.circuit_id = id;
+            let attacked = attacked.carry::<()>(());
+            let (accepted, observed) = app.verify_with_checks(
+                &attacked,
+                StdRng::seed_from_u64(0xa08_100 + usize::from(id) as u64),
+            )?;
+            assert!(!accepted, "{label} application ID must be rejected");
+            let checks = observed.expect("in-domain IDs reach verifier predicates");
+            assert!(!checks.native_revdot, "{label} must fail the k0 claim");
+            assert!(checks.nested_revdot);
+            assert!(checks.native_registry);
+            assert!(checks.nested_registry);
+            assert!(checks.nested_challenges);
+            assert!(checks.commitments);
+            assert!(checks.nested_points);
+            assert!(checks.transcript);
+            assert!(checks.ab_bridge);
+            assert!(checks.mesh);
+        }
+
+        let mut attacked = proof;
+        attacked.circuit_id = outside_id;
+        let (accepted, observed) =
+            app.verify_with_checks(&attacked.carry::<()>(()), StdRng::seed_from_u64(0xa08_200))?;
+        assert!(!accepted, "out-of-domain application ID must be rejected");
+        assert_eq!(observed, None, "domain guard must reject before predicates");
+
+        Ok(())
     }
 
     #[test]

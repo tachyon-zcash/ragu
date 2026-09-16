@@ -18,6 +18,10 @@ use ragu_primitives::{
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
+#[cfg(test)]
+#[path = "fold_revdot_tests.rs"]
+mod coefficient_tests;
+
 /// The two operations a Horner-style fold needs: scale all components, then
 /// add another element in.
 pub trait Foldable<F: Field>: Default + Clone {
@@ -755,6 +759,151 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    /// Review A02: an independent positional sum checks the padding and
+    /// Horner exponents, including an incomplete last group. Distinct,
+    /// nonzero monomials keep an omitted or extra entry observable.
+    #[test]
+    fn test_two_layer_capacity_boundaries() -> Result<()> {
+        fn check<P: Parameters>() -> Result<()> {
+            let m = P::GroupSize::len();
+            let n = P::NumGroups::len();
+            let capacity = m * n;
+            let x = Fp::from(11);
+            let scale1 = Fp::from(3);
+            let scale2 = Fp::from(7);
+            for count in [0, 1, m - 1, m, m + 1, capacity - 1, capacity] {
+                let polynomials: Vec<_> = (0..count)
+                    .map(|i| {
+                        let mut coefficients = vec![Fp::ZERO; i % 3 + 1];
+                        coefficients[i % 3] = Fp::from(i as u64 + 1);
+                        sparse::Polynomial::<Fp, TestRank>::from_coeffs(coefficients)
+                    })
+                    .collect();
+                let values: Vec<_> = (0..count)
+                    .map(|i| Fp::from(i as u64 + 1) * x.pow_vartime([(i % 3) as u64]))
+                    .collect();
+                let expected: Fp = values
+                    .iter()
+                    .enumerate()
+                    .map(|(i, value)| {
+                        *value
+                            * scale1.pow_vartime([(m - 1 - i % m) as u64])
+                            * scale2.pow_vartime([(n - 1 - i / m) as u64])
+                    })
+                    .sum();
+                let folded =
+                    fold_outer::<_, _, P>(fold_inner::<_, _, P>(&polynomials, scale1), scale2);
+                assert_eq!(folded.eval(x), expected, "polynomial: {m} x {n}, {count}");
+
+                let dr = &mut Emulator::execute();
+                let sources: Vec<_> = values
+                    .iter()
+                    .map(|&value| Element::constant(dr, value))
+                    .collect();
+                let scale1 = Element::constant(dr, scale1);
+                let scale2 = Element::constant(dr, scale2);
+                let folded = fold_two_layer::<_, P>(dr, &sources, &scale1, &scale2)?;
+                assert_eq!(
+                    *folded.value().take(),
+                    expected,
+                    "scalar: {m} x {n}, {count}"
+                );
+
+                // Error generation must accept the same supported sizes.
+                // Reverse the coefficients to make every present cross term
+                // nonzero when its two monomial degrees agree. Use distinct
+                // right-hand weights so transposed terms cannot agree.
+                let reversed: Vec<_> = polynomials
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| {
+                        let mut coefficients: Vec<_> = p
+                            .iter_coeffs()
+                            .map(|coefficient| coefficient * Fp::from(i as u64 + 2))
+                            .collect();
+                        coefficients.reverse();
+                        sparse::Polynomial::from_coeffs(coefficients)
+                    })
+                    .collect();
+                let errors = inner_error_terms::<_, TestRank, P>(&polynomials, &reversed);
+                for group in 0..n {
+                    let mut term = 0;
+                    for i in 0..m {
+                        for j in 0..m {
+                            if i == j {
+                                continue;
+                            }
+                            let left = group * m + i;
+                            let right = group * m + j;
+                            let expected = if left < count && right < count && left % 3 == right % 3
+                            {
+                                Fp::from(left as u64 + 1)
+                                    * Fp::from(right as u64 + 1)
+                                    * Fp::from(right as u64 + 2)
+                            } else {
+                                Fp::ZERO
+                            };
+                            assert_eq!(
+                                errors[group][term], expected,
+                                "error: {m} x {n}, {count}, ({left}, {right})"
+                            );
+                            term += 1;
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+
+        check::<TestParams<2, 3>>()?;
+        check::<TestParams<3, 2>>()?;
+        check::<RevdotParameters>()?;
+        check::<crate::internal::nested::RevdotParameters>()
+    }
+
+    /// All three paths must reject capacity + 1, including in release builds.
+    #[test]
+    fn test_two_layer_capacity_overflow() {
+        fn check<P: Parameters>() {
+            let count = P::GroupSize::len() * P::NumGroups::len() + 1;
+            let polynomials: Vec<_> = (0..count)
+                .map(|i| {
+                    sparse::Polynomial::<Fp, TestRank>::from_coeffs(vec![Fp::from(i as u64 + 1)])
+                })
+                .collect();
+            assert!(
+                std::panic::catch_unwind(|| { fold_inner::<_, _, P>(&polynomials, Fp::from(3)) })
+                    .is_err(),
+                "polynomial fold accepted {count} inputs"
+            );
+            assert!(
+                std::panic::catch_unwind(|| {
+                    inner_error_terms::<_, TestRank, P>(&polynomials, &polynomials)
+                })
+                .is_err(),
+                "error terms accepted {count} inputs"
+            );
+            assert!(
+                std::panic::catch_unwind(|| {
+                    let dr = &mut Emulator::execute();
+                    let sources: Vec<_> = (0..count)
+                        .map(|i| Element::constant(dr, Fp::from(i as u64 + 1)))
+                        .collect();
+                    let scale1 = Element::constant(dr, Fp::from(3));
+                    let scale2 = Element::constant(dr, Fp::from(7));
+                    fold_two_layer::<_, P>(dr, &sources, &scale1, &scale2).unwrap();
+                })
+                .is_err(),
+                "scalar fold accepted {count} inputs"
+            );
+        }
+
+        check::<TestParams<2, 3>>();
+        check::<TestParams<3, 2>>();
+        check::<RevdotParameters>();
+        check::<crate::internal::nested::RevdotParameters>();
     }
 
     /// Computes the number of gates for given M, N.
