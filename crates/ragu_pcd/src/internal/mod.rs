@@ -24,8 +24,10 @@ pub mod claims;
 pub mod const_fns;
 pub mod endoscalar;
 pub mod fold_revdot;
+pub mod inverter;
 pub mod native;
 pub mod nested;
+pub mod stage_wires;
 pub mod transcript;
 
 /// Identifies which of the two child proofs a component came from.

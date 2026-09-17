@@ -23,9 +23,11 @@
 //! the [`outer_error`][super::super::stages::outer_error] stage and verified here to
 //! enable resumption in `hashes_2`.
 //!
-//! The $k(y)$ (instance polynomial) consistency checks against the witnessed
-//! values in the [`outer_error`][super::super::stages::outer_error] stage are
-//! performed in [`outer_collapse`][super::outer_collapse].
+//! This circuit also checks the children's unified $k(y)$ values against
+//! the [`outer_error`][super::super::stages::outer_error] stage, using the
+//! $y$ it just derived. The application $k(y)$ checks remain in
+//! [`outer_collapse`][super::outer_collapse]; splitting the checks keeps
+//! both circuits within their gate budgets as the unified instance grows.
 //!
 //! ### Valid circuit IDs
 //!
@@ -208,6 +210,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     where
         Self: 'dr,
     {
+        let builder =
+            builder.skip_stage::<super::super::stages::points::BindingStage<C::NestedCurve>>()?;
         let (preamble, builder) =
             builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
         let (outer_error, builder) =
@@ -254,8 +258,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             let z = transcript.challenge(dr)?;
             (y, z)
         };
-        unified_output.y.provide(y);
+        unified_output.y.provide(y.clone());
         unified_output.z.provide(z);
+
+        for (child, staged) in [
+            (&preamble.left, &outer_error.left),
+            (&preamble.right, &outer_error.right),
+        ] {
+            let (unified_ky, unified_bridge_ky) = child.unified_ky_values(dr, &y)?;
+            unified_ky.enforce_equal(dr, &staged.unified)?;
+            unified_bridge_ky.enforce_equal(dr, &staged.unified_bridge)?;
+        }
 
         // Absorb bridge_inner_error_commitment and verify saved transcript state
         {

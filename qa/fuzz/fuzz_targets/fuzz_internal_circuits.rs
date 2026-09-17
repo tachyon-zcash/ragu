@@ -114,7 +114,7 @@ use ragu_pasta::Pasta;
 use ragu_pcd::{
     Application,
     fuzzing::patcher::{
-        CircuitSpec, InternalCircuitVisitor, capture_internal_circuits,
+        CircuitSpec, InternalCircuitVisitor, OutputRef, capture_internal_circuits,
         capture_internal_circuits_bootstrap,
     },
 };
@@ -131,6 +131,7 @@ use rand::{SeedableRng, rngs::StdRng};
 type NativeField = <Pasta as Cycle>::CircuitField;
 type NestedField = <Pasta as Cycle>::ScalarField;
 type App = Application<'static, Pasta, R, HEADER_SIZE>;
+type CircuitSelector = u16;
 
 /// The applications the capture points run in, indexed by how many steps they
 /// register.
@@ -428,6 +429,13 @@ impl<C: Cycle> InternalCircuitVisitor<C> for Collector<C::CircuitField, C::Scala
         stage_values: &[C::ScalarField],
         make_witness: impl Fn() -> Result<Cir::Witness<'w>>,
     ) -> Result<()> {
+        if spec.name == "nested_export" {
+            assert_eq!(
+                spec.outputs,
+                (2..33).map(OutputRef::Instance).collect::<Vec<_>>(),
+                "nested export must declare x, y, u and every exported point coordinate",
+            );
+        }
         let captured = collect(self.point, spec, circuit, stage_values, make_witness)?;
         self.nested.push(captured);
         Ok(())
@@ -450,6 +458,11 @@ static CIRCUITS: LazyLock<Collector<NativeField, NestedField>> = LazyLock::new(|
             )
         });
     }
+    let total = collector.native.len() + collector.nested.len();
+    assert!(
+        total <= usize::from(CircuitSelector::MAX) + 1,
+        "the circuit selector must reach all {total} captured circuits",
+    );
     collector
 });
 
@@ -546,7 +559,7 @@ enum Mutation {
 #[derive(Arbitrary, Debug)]
 struct Input {
     /// Which captured circuit to probe (modulo the count, native first).
-    circuit: u8,
+    circuit: CircuitSelector,
     /// Coordinated cheats: `(wire index mod cheatable count, mutation)`.
     cheats: Vec<(u16, Mutation)>,
 }
@@ -570,7 +583,7 @@ fuzz_target!(
         if total == 0 {
             return;
         }
-        let index = input.circuit as usize % total;
+        let index = usize::from(input.circuit) % total;
         if index < circuits.native.len() {
             let circuit = &circuits.native[index];
             probe(circuit, &input, |witness| {

@@ -203,12 +203,12 @@ constraint system reject it. The no-execution front end is described in
 | `fuzz_verify_reject_full` | The same vocabulary against **fused** proofs: a `Hash2` over two leaves and a `Merge2` over two of those, whose accumulators the leaf case leaves degenerate. |
 | `fuzz_pcd_lifecycle` | The whole lifecycle per input: a fuzzer-chosen registry size and tree shape, seeded from fuzzer-chosen witnesses, verified at every level, optionally rerandomized, then corrupted and required to be rejected. Seconds per iteration — a randomized integration test libFuzzer steers. |
 
-Not every corruption obliges the verifier to reject: a proof's polynomials are
-blinded, and moving a coefficient no claim binds is not forgery. `Proof::corrupt`
-returns a `Binding` saying which case it is, derived rather than guessed, and
-only `MustReject` is asserted. `crates/ragu_pcd/tests/corruption.rs` pins that
-classification against real proofs, so a wrong one fails there rather than five
-hours into a cron run.
+`Proof::corrupt` returns `Binding::Unbound` for no-op edits, such as setting a
+challenge to its existing value. Every effective coefficient edit requires
+rejection because it leaves a stale cached commitment, even if the coefficient
+is a blinding term or the derived `c` or `v` is unchanged. The harness asserts
+rejection for `MustReject` edits. `crates/ragu_pcd/tests/corruption.rs` checks both
+the classification and the verifier's response against real proofs.
 
 These targets used to corrupt Ragu's synthesized dummy proof. That fixture is
 the placeholder the internal Bootstrap step consumes, and `verify` rejects it

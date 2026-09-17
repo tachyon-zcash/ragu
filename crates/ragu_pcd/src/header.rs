@@ -173,21 +173,30 @@ mod tests {
 
     #[test]
     fn test_suffix_map() {
+        const MAX_APPLICATION_SUFFIX: Suffix =
+            Suffix::new(usize::MAX - NUM_INTERNAL_SUFFIXES as usize);
+
         assert_eq!(Suffix::internal(0).get(), 0);
         assert_eq!(Suffix::internal(1).get(), 1);
         assert_eq!(Suffix::internal(2).get(), 2);
         assert_eq!(Suffix::new(0).get(), 3);
         assert_eq!(Suffix::new(1).get(), 4);
-        assert_eq!(
-            Suffix::new(usize::MAX - NUM_INTERNAL_SUFFIXES as usize).get(),
-            usize::MAX as u64
-        );
+        assert_eq!(MAX_APPLICATION_SUFFIX.get(), usize::MAX as u64);
     }
 
     #[test]
-    #[should_panic(expected = "overflow onto a reserved internal suffix")]
+    #[should_panic(
+        expected = "application header suffix would overflow onto a reserved internal suffix"
+    )]
     fn application_suffix_cannot_wrap_onto_a_reserved_suffix() {
-        let first_invalid = usize::MAX - NUM_INTERNAL_SUFFIXES as usize + 1;
-        let _ = Suffix::new(first_invalid);
+        let _ = Suffix::new(usize::MAX - NUM_INTERNAL_SUFFIXES as usize + 1);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "application header suffix would overflow onto a reserved internal suffix"
+    )]
+    fn test_suffix_rejects_usize_max() {
+        let _ = Suffix::new(usize::MAX);
     }
 }

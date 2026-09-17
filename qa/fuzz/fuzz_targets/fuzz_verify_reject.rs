@@ -8,10 +8,10 @@
 //! whose accumulators are not degenerate.
 //!
 //! Invariant: `verify()` never panics, and never accepts a corruption that
-//! bound it (`Ok(false)` or `Err` are both rejections). A corruption the
-//! verifier is *not* obliged to notice — a blinding coefficient no claim
-//! binds — is still exercised, but its verdict is not asserted; see
-//! [`ragu_pcd::fuzzing::corrupt`] for how the two are told apart.
+//! bound it (`Ok(false)` or `Err` are both rejections). No-op edits are still
+//! exercised, but their verdict is not asserted. Every effective coefficient
+//! edit leaves a stale commitment and requires rejection; see
+//! [`ragu_pcd::fuzzing::corrupt`] for the classification.
 //!
 //! This target used to corrupt Ragu's synthesized dummy proof. That fixture is
 //! the placeholder the internal Bootstrap step consumes, and `verify` rejects
