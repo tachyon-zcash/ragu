@@ -127,6 +127,24 @@ jobs:
         env:
           PROPTEST_CASES: "64"
 
+  # Keep the default- and all-features suites in separate jobs: the recursive
+  # regression tests can exhaust the six-hour limit when both run sequentially.
+  test-default:
+    name: test (default features)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Setup Rust
+        uses: ./.github/actions/rust-setup
+        with:
+          cache-suffix: release
+      - name: Run tests (default features)
+        run: cargo test --release --all --locked
+
   test:
     name: test (${{ matrix.os }})
     needs: changes
@@ -144,22 +162,33 @@ jobs:
         uses: ./.github/actions/rust-setup
         with:
           cache-suffix: release
-      - name: Run tests (default features)
-        if: matrix.os == 'ubuntu-latest'
-        run: cargo test --release --all --locked
       - name: Run tests (all features)
         run: cargo test --release --all --locked --all-features
-      # Gated behind `unstable-fuzzing`, so the default-features run above
+      # Gated behind `unstable-fuzzing`, so the default-features job
       # skips it. The all-features run does cover it; this pins it to that one
       # feature so a failure is not confounded by the rest of the matrix.
       - name: Run the patcher over the internal recursion circuits
         run: cargo test --release -p ragu_pcd --features unstable-fuzzing --test patcher_internal --locked
 
   test-32-bit:
-    name: test (i686-unknown-linux-gnu)
+    name: test (i686-unknown-linux-gnu, ${{ matrix.suite }})
     needs: changes
     if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
+    # The full 32-bit suite exceeds the runner's six-hour limit. Partition the
+    # expensive PCD modules; pcd-other retains every remaining PCD test and
+    # doctest, while workspace runs all other packages.
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - workspace
+          - fuse
+          - base-cases
+          - recursive-binding
+          - recursive-boundaries
+          - recursive-propagation
+          - pcd-other
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -171,7 +200,44 @@ jobs:
           cargo-tools: cross@0.2.5
           cache-suffix: release
       - name: Run 32-bit tests
-        run: cross test --release --all --locked --all-features --target i686-unknown-linux-gnu
+        shell: bash
+        env:
+          TEST_SUITE: ${{ matrix.suite }}
+        run: |
+          args=(test --release --locked --all-features --target i686-unknown-linux-gnu)
+          case "$TEST_SUITE" in
+            workspace)
+              args+=(--workspace --exclude ragu_pcd)
+              ;;
+            fuse)
+              args+=(-p ragu_pcd --lib fuse::)
+              ;;
+            base-cases)
+              args+=(-p ragu_pcd --lib proof::base_case_combinations_tests::)
+              ;;
+            recursive-binding)
+              args+=(-p ragu_pcd --lib proof::recursive_binding_tests::)
+              ;;
+            recursive-boundaries)
+              args+=(-p ragu_pcd --lib proof::recursive_boundary_tests::)
+              ;;
+            recursive-propagation)
+              args+=(-p ragu_pcd --lib proof::recursive_propagation_tests::)
+              ;;
+            pcd-other)
+              args+=(-p ragu_pcd --
+                --skip fuse::
+                --skip proof::base_case_combinations_tests::
+                --skip proof::recursive_binding_tests::
+                --skip proof::recursive_boundary_tests::
+                --skip proof::recursive_propagation_tests::)
+              ;;
+            *)
+              echo "Unknown test suite: $TEST_SUITE" >&2
+              exit 1
+              ;;
+          esac
+          cross "${args[@]}"
 
   # Ensure the mock API stays `no_std`-buildable on a bare-metal target. This is
   # the configuration downstream consumers (e.g. `zcash_tachyon`) compile for
@@ -304,6 +370,7 @@ jobs:
       - clippy
       - mock
       - proptests-fast
+      - test-default
       - test
       - test-32-bit
       - build-nostd

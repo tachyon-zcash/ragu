@@ -31,6 +31,10 @@ use crate::internal::{
     nested::{Points, PointsStage, stages},
 };
 
+#[cfg(test)]
+#[path = "loading_tests.rs"]
+pub(crate) mod tests;
+
 /// A cursor over [`PointsStage`] inputs that enforces equality against
 /// corresponding bridge stage elements.
 struct Walker<'pts, 'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {

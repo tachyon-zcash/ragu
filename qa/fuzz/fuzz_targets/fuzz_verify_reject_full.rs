@@ -9,8 +9,9 @@
 //! building the deeper one runs five fuses, which no per-input budget could
 //! afford.
 //!
-//! Invariant: as `fuzz_verify_reject` — `verify()` never panics, and never
-//! accepts a corruption that bound it.
+//! Invariants match `fuzz_verify_reject`: no panics, rejection of classified
+//! individual edits, and acceptance of no-ops. Combined edits are also
+//! exercised, with the conservative composition rule in `pcd::apply`.
 
 #![no_main]
 
@@ -19,7 +20,6 @@ use std::sync::LazyLock;
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use ragu_testing_fuzz::pcd::{self, Fixture, SyncApp};
-use rand::{SeedableRng, rngs::StdRng};
 
 /// At most this many corruptions per input; see `fuzz_verify_reject`.
 const MAX_CORRUPTIONS: usize = 4;
@@ -56,14 +56,14 @@ fuzz_target!(
         let app = &APP.0;
         let fixtures: &Vec<Fixture> = &FIXTURES;
 
-        let mut fixture = fixtures[input.fixture as usize % fixtures.len()].clone();
+        let original = &fixtures[input.fixture as usize % fixtures.len()];
+        let mut fixture = original.clone();
         let (applied, binding) =
             pcd::apply(&mut fixture.proof, &input.corruptions, MAX_CORRUPTIONS);
         if applied.is_empty() {
             return;
         }
 
-        let rng = StdRng::seed_from_u64(input.rng_seed);
-        pcd::assert_rejected(app, &fixture, &applied, binding, rng);
+        pcd::assert_rejected(app, original, &fixture, &applied, binding, input.rng_seed);
     }
 );

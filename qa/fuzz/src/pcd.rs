@@ -421,10 +421,9 @@ impl FuzzCorruption {
     ///
     /// Coordinated corruptions are deduplicated by this key: two edits to the
     /// same component can cancel — add a delta, then subtract it — and leave
-    /// an honest proof that the verifier is right to accept. Edits to
-    /// *different* components cancel only if the verifier's freshly sampled
-    /// challenge is a root of their difference, which is the same negligible
-    /// event every other classification rests on.
+    /// an honest proof that the verifier is right to accept. This key only
+    /// avoids redundant selections: differently named targets can alias,
+    /// and even edits to different values need a joint relation analysis.
     pub fn target(&self) -> (u8, usize) {
         match *self {
             FuzzCorruption::CircuitId { .. } => (0, 0),
@@ -546,8 +545,8 @@ impl FuzzCorruption {
 }
 
 /// Applies `choices` to `proof`, deduplicated by
-/// [`target`](FuzzCorruption::target), and reports whether any of them bound
-/// the verifier.
+/// [`target`](FuzzCorruption::target), and conservatively classifies the
+/// combined edit. Multiple effective edits may cancel.
 ///
 /// Returns the corruptions actually applied alongside the verdict, so a
 /// panic message can name them.
@@ -558,16 +557,14 @@ pub fn apply(
 ) -> (Vec<FuzzCorruption>, Binding) {
     let mut seen: Vec<(u8, usize)> = Vec::new();
     let mut applied = Vec::new();
-    let mut binding = Binding::Unbound;
+    let mut binding = Binding::NoOp;
     for choice in choices.iter().take(limit) {
         let target = choice.target();
         if seen.contains(&target) {
             continue;
         }
         seen.push(target);
-        if proof.corrupt(choice.resolve()) == Binding::MustReject {
-            binding = Binding::MustReject;
-        }
+        binding = binding.combine(proof.corrupt(choice.resolve()));
         applied.push(choice.clone());
     }
     (applied, binding)
@@ -575,22 +572,80 @@ pub fn apply(
 
 /// Asserts the verifier's response to a corrupted fixture.
 ///
-/// `verify` must never accept a corruption that bound it, and must never
-/// panic on one that did not — an internal error is a rejection, not a
-/// crash.
+/// Each effective edit is also checked independently on the original valid
+/// fixture when the combined edit is unclassified. Thus cancellation does
+/// not create a false rejection oracle or remove individual coverage.
 pub fn assert_rejected(
     app: &Application<'_, C, R, HEADER_SIZE>,
+    original: &Fixture,
     fixture: &Fixture,
     applied: &[FuzzCorruption],
     binding: Binding,
-    rng: StdRng,
+    verifier_seed: u64,
 ) {
-    let result = fixture.verify(app, rng);
-    if binding == Binding::MustReject {
-        assert!(
-            !matches!(result, Ok(true)),
-            "the verifier accepted a corrupted {} proof: {applied:?}",
-            fixture.shape.name(),
+    let check = |fixture: &Fixture, binding, edits: &[FuzzCorruption]| {
+        let result = fixture.verify(app, StdRng::seed_from_u64(verifier_seed));
+        match binding {
+            Binding::MustReject => assert!(
+                !matches!(result, Ok(true)),
+                "the verifier accepted a corrupted {} proof: {edits:?}",
+                fixture.shape.name(),
+            ),
+            Binding::NoOp | Binding::ValidReencoding => assert!(
+                matches!(result, Ok(true)),
+                "the verifier rejected a preserved {} proof: {edits:?}",
+                fixture.shape.name(),
+            ),
+            Binding::Unclassified => {}
+        }
+    };
+    check(fixture, binding, applied);
+    if binding == Binding::Unclassified {
+        for edit in applied {
+            let mut single = original.clone();
+            let binding = single.proof.corrupt(edit.resolve());
+            check(&single, binding, core::slice::from_ref(edit));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coordinated_edits_are_unclassified_and_singles_still_reject() {
+        let app = nontrivial_app(1);
+        let original = leaf_fixture(&app.0);
+        let bridge = FuzzCorruption::NegateBridgeCommitment { which: 0 };
+        let partial = FuzzCorruption::NegateChallengesPartial;
+        assert_ne!(bridge.target(), partial.target());
+        let mut fixture = original.clone();
+        let (applied, binding) = apply(&mut fixture.proof, &[bridge, partial], 4);
+        assert_eq!(applied.len(), 2);
+        assert_eq!(binding, Binding::Unclassified);
+        assert_rejected(&app.0, &original, &fixture, &applied, binding, 101);
+
+        let mut fixture = original.clone();
+        let (applied, binding) = apply(&mut fixture.proof, &[FuzzCorruption::SwapHeaders], 4);
+        assert_eq!(binding, Binding::NoOp, "leaf child headers are identical");
+        assert_rejected(&app.0, &original, &fixture, &applied, binding, 101);
+
+        let mut fixture = original.clone();
+        let edits = [
+            FuzzCorruption::HeaderElement {
+                right: false,
+                index: HEADER_SIZE as u8,
+                delta: 7,
+            },
+            FuzzCorruption::NegateBridgeCommitment { which: 0 },
+        ];
+        let (applied, binding) = apply(&mut fixture.proof, &edits, 4);
+        assert_eq!(
+            binding,
+            Binding::MustReject,
+            "a no-op must not dilute a rejection verdict"
         );
+        assert_rejected(&app.0, &original, &fixture, &applied, binding, 102);
     }
 }

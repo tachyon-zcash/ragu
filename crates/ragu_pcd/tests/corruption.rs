@@ -209,32 +209,35 @@ fn corruptions_that_bind_the_verifier_are_rejected() {
             };
             let described = format!("{corruption:?}");
             let binding = corrupted.proof.corrupt(clone_corruption(corruption));
-            // These coefficient edits all have nonzero deltas and in-range
-            // indices. Require rejection even if the classifier says they
-            // are unbound, then check the classification itself.
-            let coefficient_edit = matches!(
+            if matches!(
                 corruption,
                 Corruption::NativeCoeff { .. }
-                    | Corruption::RegistryXyCoeff { .. }
-                    | Corruption::PCoeff { .. }
                     | Corruption::NestedCoeff { .. }
-                    | Corruption::NestedAccumulatorCoeff { .. }
-                    | Corruption::NestedRegistryXyCoeff { .. }
+                    | Corruption::PCoeff { .. }
                     | Corruption::NestedPCoeff { .. }
-            );
-            if !coefficient_edit && binding != Binding::MustReject {
+                    | Corruption::RegistryXyCoeff { .. }
+                    | Corruption::NestedRegistryXyCoeff { .. }
+                    | Corruption::NestedAccumulatorCoeff { .. }
+            ) {
+                assert_eq!(binding, Binding::MustReject, "stale cache: {described}");
+            }
+            if binding == Binding::NoOp {
+                assert!(
+                    matches!(corrupted.verify(&app, 1234), Ok(true)),
+                    "{described}"
+                );
                 continue;
             }
+            assert_eq!(
+                binding,
+                Binding::MustReject,
+                "unexpected verdict: {described}"
+            );
             bound += 1;
             assert!(
                 !matches!(corrupted.verify(&app, 1234), Ok(true)),
                 "the verifier accepted a corrupted {:?} proof: {described}",
                 fixture.shape,
-            );
-            assert_eq!(
-                binding,
-                Binding::MustReject,
-                "a coefficient edit with a stale commitment was classified Unbound: {described}",
             );
         }
 
@@ -256,7 +259,7 @@ fn corruptions_that_bind_the_verifier_are_rejected() {
                     proof: fixture.proof.clone(),
                     data: fixture.data,
                 };
-                assert_eq!(unchanged.proof.corrupt(corruption), Binding::Unbound);
+                assert_eq!(unchanged.proof.corrupt(corruption), Binding::NoOp);
                 assert!(matches!(unchanged.verify(&app, 1234), Ok(true)));
             }
         }
@@ -268,6 +271,11 @@ fn corruptions_that_bind_the_verifier_are_rejected() {
         "only {bound} corruptions bound the verifier across {} fixtures — the sweep is \
          near-vacuous and proves little",
         cases.len(),
+    );
+    let total = vocabulary.len() * cases.len();
+    eprintln!(
+        "checked {total} single edits: {bound} required rejections, {} no-ops",
+        total - bound
     );
 }
 
@@ -293,10 +301,8 @@ fn the_dummy_proof_does_not_verify() {
     }
 }
 
-/// Two corruptions at once still reject, and the deduplication the fuzz
-/// harnesses rely on is what keeps them from cancelling: applying the same
-/// header edit twice with opposite deltas restores the honest proof, which
-/// the verifier is then right to accept.
+/// Named independent guards can survive a combined edit, but rejection
+/// verdicts alone do not compose: inverse header edits restore the proof.
 #[test]
 fn coordinated_corruptions_reject_and_cancelling_ones_do_not() {
     let app = app();

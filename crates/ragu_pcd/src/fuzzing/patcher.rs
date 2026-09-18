@@ -375,7 +375,42 @@ where
     S: Step<C>,
     V: InternalCircuitVisitor<C>,
 {
-    app.capture_internal_circuits_at(rng, step, witness, left, right, false, visitor)
+    app.capture_internal_circuits_at(rng, step, witness, left, right, visitor)
+}
+
+/// [`capture_internal_circuits`] at a seed — the fuse
+/// [`Application::seed`](crate::Application::seed) performs against two copies
+/// of the bootstrap proof.
+///
+/// This is no longer the base case: only a step declaring `Dummy` inputs is,
+/// so the captured circuits enforce both children's claims.
+///
+/// # Errors
+///
+/// As [`capture_internal_circuits`].
+pub fn capture_internal_circuits_seeded<'source, C, R, const HEADER_SIZE: usize, B, RNG, S, V>(
+    app: &Application<'_, C, R, HEADER_SIZE, B>,
+    rng: &mut RNG,
+    step: S,
+    witness: S::Witness<'source>,
+    visitor: &mut V,
+) -> Result<()>
+where
+    C: Cycle,
+    R: Rank,
+    B: crate::SelectableBackend,
+    RNG: CryptoRng,
+    S: Step<C, Left = (), Right = ()>,
+    V: InternalCircuitVisitor<C>,
+{
+    app.capture_internal_circuits_at(
+        rng,
+        step,
+        witness,
+        app.bootstrap_pcd(),
+        app.bootstrap_pcd(),
+        visitor,
+    )
 }
 
 /// [`capture_internal_circuits`] at the base case — the internal bootstrap
@@ -408,7 +443,6 @@ where
         (),
         app.dummy_pcd(),
         app.dummy_pcd(),
-        true,
         visitor,
     )
 }
@@ -424,7 +458,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         witness: S::Witness<'source>,
         left: Pcd<C, R, S::Left>,
         right: Pcd<C, R, S::Right>,
-        base_case: bool,
         visitor: &mut V,
     ) -> Result<()>
     where
@@ -440,8 +473,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let mut dr = Emulator::execute();
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
 
-        let (preamble_witness, nested_preamble) =
-            self.compute_preamble(rng, &left, &right, &mut builder)?;
+        let (preamble_witness, nested_preamble) = self.compute_preamble(
+            rng,
+            &left,
+            &right,
+            &mut builder,
+            #[cfg(test)]
+            |_| {},
+        )?;
         let bridge_preamble_commitment =
             Point::constant(&mut dr, builder.bridge_preamble_commitment())?;
         bridge_preamble_commitment.write(&mut dr, &mut transcript)?;
@@ -451,13 +490,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             .nested_registry
             .at(nested::challenge::<C>(*w.value().take())?);
 
-        let (native_s_prime, nested_s_prime) = self.compute_s_prime(
+        let (native_s_prime, nested_s_prime, nested_s_prime_witness) = self.compute_s_prime(
             rng,
             &native_registry,
             &nested_registry,
             &left,
             &right,
             &mut builder,
+            #[cfg(test)]
+            |_| {},
         )?;
         let bridge_s_prime_commitment =
             Point::constant(&mut dr, builder.bridge_s_prime_commitment())?;
@@ -535,7 +576,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let mu_prime = transcript.challenge(&mut dr)?;
         let nu_prime = transcript.challenge(&mut dr)?;
 
-        self.compute_ab(
+        let nested_ab_witness = self.compute_ab(
             rng,
             native_a,
             native_b,
@@ -546,6 +587,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &mu_prime,
             &nu_prime,
             &mut builder,
+            #[cfg(test)]
+            |_, _, _, _| false,
         )?;
         let bridge_ab_commitment = Point::constant(&mut dr, builder.bridge_ab_commitment()?)?;
         bridge_ab_commitment.write(&mut dr, &mut transcript)?;
@@ -567,7 +610,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         bridge_query_commitment.write(&mut dr, &mut transcript)?;
         let alpha = transcript.challenge(&mut dr)?;
 
-        let (native_f, nested_f) = self.compute_f(
+        let (native_f, nested_f, nested_f_witness) = self.compute_f(
             rng,
             &w,
             &y,
@@ -581,6 +624,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &mut builder,
             &left,
             &right,
+            #[cfg(test)]
+            |_, _| {},
+            #[cfg(test)]
+            |_| {},
         )?;
         let bridge_f_commitment = Point::constant(&mut dr, builder.bridge_f_commitment())?;
         bridge_f_commitment.write(&mut dr, &mut transcript)?;
@@ -588,7 +635,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 
         let bound_challenges = [&w, &y, &z, &mu, &nu, &mu_prime, &nu_prime, &x, &alpha, &u]
             .map(|challenge| *challenge.value().take());
-        let (eval_witness, nested_eval, nested_challenges_witness) = self.compute_eval(
+        let (eval_witness, nested_eval, mut nested_challenges_witness) = self.compute_eval(
             &bound_challenges,
             &left,
             &right,
@@ -598,6 +645,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &nested_registry_wy,
             &builder,
         )?;
+        // Use the sign derived from this fusion's encoded child output
+        // headers. A generic capture can also be a base case, regardless
+        // of the children's proof history or which wrapper called us.
+        let base_case = nested_challenges_witness.base_case_sign == C::ScalarField::ONE;
         builder.set_nested_challenges_partial(eval_witness.partials.binding);
 
         // Mirrors `fuse`: `pre_beta` is ground rather than squeezed once, so
@@ -618,11 +669,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         builder.set_native_eval_rx(eval_rx);
         builder.set_bridge_eval_rx(bridge_eval_rx, bridge_eval_commitment);
 
-        let nested_challenges = self.commit_nested_challenges(
-            nested_challenges_witness,
-            *pre_beta.element().value().take(),
-            &mut builder,
-        )?;
+        nested_challenges_witness.beta =
+            nested::challenge::<C>(*pre_beta.element().value().take())?;
+        let nested_challenges =
+            self.commit_nested_challenges(nested_challenges_witness, &mut builder)?;
 
         let (points_witness, native_points, native_walk) = self.compute_p(
             rng,
@@ -1096,24 +1146,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         // chain. Their stage witnesses are the ones the prover commits, and
         // the instance is rebuilt fresh per circuit as `make_unified` does
         // for the native one.
-        let nested_s_prime_witness = nested::stages::s_prime::Witness {
-            registry_wx0: native_s_prime.registry_wx0_commitment,
-            registry_wx1: native_s_prime.registry_wx1_commitment,
-            native_points_registry_wx: builder.native_points_registry_wx_commitment(),
-        };
-        let nested_ab_witness = nested::stages::ab::Witness {
-            a: builder.native_a_commitment(),
-            b: builder.native_b_commitment(),
-            native_points_ab: builder.native_points_ab_commitment(),
-        };
         let nested_query_witness = nested::stages::query::Witness {
             native_query: builder.native_query_commitment(),
             registry_xy: builder.native_registry_xy_commitment(),
             nested: nested_query,
-        };
-        let nested_f_witness = nested::stages::f::Witness {
-            native_f: native_f.commitment,
-            native_points_f: builder.native_points_f_commitment(),
         };
         let nested_eval_witness = nested::stages::eval::Witness {
             native_eval: builder.native_eval_commitment(),
@@ -1245,3 +1281,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "patcher_tests.rs"]
+mod tests;

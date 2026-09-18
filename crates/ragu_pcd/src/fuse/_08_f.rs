@@ -56,7 +56,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         builder: &mut ProofBuilder<'_, C, R, B>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-    ) -> Result<(NativeF<C, R>, NestedF<C, R>)>
+        #[cfg(test)] edit_quotients: impl FnOnce(
+            &mut sparse::Polynomial<C::CircuitField, R>,
+            &mut sparse::Polynomial<C::ScalarField, R>,
+        ),
+        #[cfg(test)] edit_bridge: impl FnOnce(&mut nested::stages::f::Witness<C::HostCurve>),
+    ) -> Result<(
+        NativeF<C, R>,
+        NestedF<C, R>,
+        nested::stages::f::Witness<C::HostCurve>,
+    )>
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
@@ -78,14 +87,34 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             let alpha = nested::challenge::<C>(*alpha.value().take())?;
             self.compute_nested_f(&batch, challenges, alpha)
         };
+        // Test seam at the actual commitment deadline. The callback sees only
+        // the quotient polynomials, before either is placed in a point stage
+        // or absorbed into the transcript. All subsequent witnesses are built
+        // by the ordinary fusion suffix, including both commitment walks.
+        #[cfg(test)]
+        let (native, nested) = {
+            let (mut native, mut nested) = (native, nested);
+            edit_quotients(&mut native.poly, &mut nested.poly);
+            native.commitment =
+                B::sparse_commit_to_affine(&native.poly, C::host_generators(self.params));
+            nested.commitment =
+                B::sparse_commit_to_affine(&nested.poly, C::nested_generators(self.params));
+            (native, nested)
+        };
         self.commit_native_points_f(
             rng,
             builder.nested_registry_xy_commitment(),
             nested.commitment,
             builder,
         )?;
-        self.compute_bridge_f(rng, &native, builder)?;
-        Ok((native, nested))
+        let bridge_witness = self.compute_bridge_f(
+            rng,
+            &native,
+            builder,
+            #[cfg(test)]
+            edit_bridge,
+        )?;
+        Ok((native, nested, bridge_witness))
     }
 
     /// Manually commits the bridge for $f$, rather than having the
@@ -97,18 +126,26 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         rng: &mut RNG,
         native: &NativeF<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<()> {
+        #[cfg(test)] edit_bridge: impl FnOnce(&mut nested::stages::f::Witness<C::HostCurve>),
+    ) -> Result<nested::stages::f::Witness<C::HostCurve>> {
+        let bridge_witness = nested::stages::f::Witness {
+            native_f: native.commitment,
+            native_points_f: builder.native_points_f_commitment(),
+        };
+        #[cfg(test)]
+        let bridge_witness = {
+            let mut bridge_witness = bridge_witness;
+            edit_bridge(&mut bridge_witness);
+            bridge_witness
+        };
         let bridge_rx = nested::stages::f::Stage::<C::HostCurve, R>::rx(
             C::ScalarField::random(&mut *rng),
-            &nested::stages::f::Witness {
-                native_f: native.commitment,
-                native_points_f: builder.native_points_f_commitment(),
-            },
+            &bridge_witness,
         )?;
         let bridge_commitment =
             B::sparse_commit_to_affine(&bridge_rx, C::nested_generators(self.params));
         builder.set_bridge_f_rx(bridge_rx, bridge_commitment);
-        Ok(())
+        Ok(bridge_witness)
     }
 
     fn compute_native_f<'dr, D>(
