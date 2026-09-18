@@ -16,7 +16,7 @@ use crate::{
     header::Header,
     internal::{
         claims,
-        native::{RxComponent, claims as native_claims, stages::preamble::ProofInputs},
+        native::{claims as native_claims, stages::preamble::ProofInputs},
         nested::claims as nested_claims,
     },
 };
@@ -104,14 +104,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         // Check all native revdot claims.
         let native_revdot_claims = {
             let ky_source = native::SingleProofKySource {
-                // NOTE: `raw_c` is now computed as `revdot(a, b)` rather
-                // than stored in the proof, so this claim is tautological
-                // in the verifier. It remains meaningful inside the circuit
-                // where `c` is an independently allocated witness element.
-                raw_c: Verifier::<B>::sparse_revdot(
-                    &pcd.proof()[RxComponent::AbA],
-                    &pcd.proof()[RxComponent::AbB],
-                ),
                 application_ky,
                 unified_bridge_ky,
                 unified_ky,
@@ -176,7 +168,14 @@ mod native {
         type AppCircuitId = CircuitIndex;
 
         fn rx(&self, component: RxComponent) -> impl Iterator<Item = Self::Rx> {
-            core::iter::once(&self.proof[component])
+            // The verifier computes c from AbA and AbB when reconstructing
+            // unified k(y), so checking the raw claim would be tautological.
+            // Omit it together with `SingleProofKySource::raw_c`.
+            match component {
+                RxComponent::AbA | RxComponent::AbB => None,
+                RxComponent::Rx(_) => Some(&self.proof[component]),
+            }
+            .into_iter()
         }
 
         fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
@@ -186,7 +185,6 @@ mod native {
 
     /// Source for k(y) values for single-proof verification.
     pub struct SingleProofKySource<F> {
-        pub raw_c: F,
         pub application_ky: F,
         pub unified_bridge_ky: F,
         pub unified_ky: F,
@@ -196,7 +194,8 @@ mod native {
         type Ky = F;
 
         fn raw_c(&self) -> impl Iterator<Item = F> {
-            once(self.raw_c)
+            // Match the raw-claim omission in `SingleProofSource::rx`.
+            core::iter::empty()
         }
 
         fn application_ky(&self) -> impl Iterator<Item = F> {
