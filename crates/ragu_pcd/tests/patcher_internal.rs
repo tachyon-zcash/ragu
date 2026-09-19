@@ -333,9 +333,9 @@ fn expected(name: &str, point: &str) -> Census {
         ("outer_collapse", "bootstrap") => (190, 44),
         ("outer_collapse", _) => (188, 50),
         ("compute_v", _) => (13, 324),
-        (_, "bootstrap") => (53, 56),
-        (_, "leaves") => (48, 61),
-        (_, "nodes") => (45, 64),
+        (_, "bootstrap") => (50, 59),
+        (_, "leaves") => (47, 62),
+        (_, "nodes") => (42, 67),
         other => panic!("no sweep tallies pinned for {other:?}"),
     };
     Census {

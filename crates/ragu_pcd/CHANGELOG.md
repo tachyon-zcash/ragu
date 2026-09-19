@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Replaced the placeholder PCD transcript tag with `ragu-pcd-v1`. Proofs produced
+  with the previous `FIXME` tag are incompatible with this protocol version.
 - The `std` feature now enables the required `alloc` feature.
 - Routed sparse polynomial evaluation, reverse-dot computations, registry
   evaluation, and polynomial commitments through the selected backend across

@@ -232,7 +232,7 @@ fn test_native_registry_tag() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fp!(0x151b77da7f2c1d7e47d0534116f1ad5ea981bc54b39b26b61a23d13757cf159e);
+    let expected = fp!(0x2d79887a5bba454fd675fbbeba1027eee9be53f804179f1e2ca2481644f2b547);
 
     assert_eq!(
         app.native_registry.tag(),

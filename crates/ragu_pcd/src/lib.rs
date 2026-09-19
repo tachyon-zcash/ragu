@@ -56,9 +56,15 @@ use ragu_circuits::{
 use ragu_core::{Error, Result};
 use step::{Step, internal::adapter::Adapter};
 
-/// Domain separation tag for Ragu PCD protocol.
-// FIXME: choose a permanent domain separation tag before release.
-pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
+/// Domain separation tag for the Ragu PCD protocol.
+///
+/// This version is independent of crate releases. Bump it for incompatible changes
+/// to the transcript schedule, encodings, challenge derivation, cryptographic suite,
+/// or verification semantics. Compatible implementation changes retain the tag.
+///
+/// The prover and all verifier paths must agree on this tag. Changing it breaks
+/// compatibility with existing proofs.
+pub(crate) const RAGU_TAG: &[u8] = b"ragu-pcd-v1";
 
 pub use backend::SelectableBackend;
 
