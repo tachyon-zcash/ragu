@@ -45,8 +45,8 @@ use ragu_arithmetic::ff::{Field, PrimeFieldBits};
 use super::{
     discover::discover_free_advice,
     recorder::{
-        Event, Recorder, constraints_hold, constraints_hold_over, deduce_by_cases, repair,
-        repair_over,
+        Event, JacobianDirection, Recorder, constraints_hold, constraints_hold_over,
+        deduce_by_cases, repair, repair_over,
     },
 };
 
@@ -140,6 +140,106 @@ pub fn determinism_probe<F: Field>(
         .filter(|&o| values[o] != honest[o])
         .map(|o| (o, honest[o], values[o]))
         .collect();
+    if moved.is_empty() {
+        ProbeOutcome::OutputsPinned
+    } else {
+        ProbeOutcome::OutputsMoved {
+            witness: values,
+            moved,
+        }
+    }
+}
+
+/// Repairs one Jacobian-kernel direction into an exact witness, if possible.
+///
+/// The tangent proposal starts at `honest + step · direction`. Wires in
+/// `frozen` retain their honest values (the public inputs and causal
+/// commitment frontier), while the proposed values of `committed` wires are
+/// held fixed. Every other wire is available to [`repair`] for nonlinear
+/// correction. The candidate is returned only after exact evaluation of all
+/// `events`; a tangent direction that cannot be repaired returns `None`.
+/// Callers with a live circuit should pass the returned witness to
+/// [`playback`](super::playback) before treating it as evidence.
+///
+/// # Panics
+///
+/// Panics when a frozen wire occurs in the direction, a committed wire does
+/// not occur in it, or either list references an invalid wire.
+pub fn jacobian_witness<F: Field>(
+    events: &[Event<F>],
+    honest: &[F],
+    frozen: &[usize],
+    direction: &JacobianDirection<F>,
+    step: F,
+    committed: &[usize],
+) -> Option<Vec<F>> {
+    let mut values = honest.to_vec();
+    let mut proposed = vec![false; honest.len()];
+    for &(wire, delta) in direction.entries() {
+        assert!(
+            wire < honest.len(),
+            "direction wire {wire} is outside the witness"
+        );
+        assert!(
+            !frozen.contains(&wire),
+            "direction moves frozen frontier wire {wire}",
+        );
+        values[wire] += delta * step;
+        proposed[wire] = true;
+    }
+
+    let mut fixed = frozen.to_vec();
+    for &wire in committed {
+        assert!(
+            wire < honest.len(),
+            "committed wire {wire} is outside the witness"
+        );
+        assert!(
+            proposed[wire],
+            "committed wire {wire} is absent from the direction"
+        );
+        if !fixed.contains(&wire) {
+            fixed.push(wire);
+        }
+    }
+    repair(events, &mut values, &fixed);
+    constraints_hold(events, &values).then_some(values)
+}
+
+/// Turns one Jacobian-kernel direction into an exact witness probe.
+///
+/// This classifies the exact candidate from [`jacobian_witness`] against
+/// `outputs` using the same verdicts as [`determinism_probe`]. A tangent
+/// direction that cannot be repaired is [`ProbeOutcome::Rejected`], never an
+/// exploit.
+///
+/// `outputs` are watched against the honest witness using the same verdicts
+/// as [`determinism_probe`]. Callers should additionally replay an accepted
+/// witness through the live circuit driver when one is available.
+///
+/// # Panics
+///
+/// Panics when a frozen wire occurs in the direction, a committed wire does
+/// not occur in it, or either list references an invalid wire.
+pub fn jacobian_probe<F: Field>(
+    events: &[Event<F>],
+    honest: &[F],
+    frozen: &[usize],
+    outputs: &[usize],
+    direction: &JacobianDirection<F>,
+    step: F,
+    committed: &[usize],
+) -> ProbeOutcome<F> {
+    let Some(values) = jacobian_witness(events, honest, frozen, direction, step, committed) else {
+        return ProbeOutcome::Rejected;
+    };
+
+    let moved = outputs
+        .iter()
+        .copied()
+        .filter(|&wire| values[wire] != honest[wire])
+        .map(|wire| (wire, honest[wire], values[wire]))
+        .collect::<Vec<_>>();
     if moved.is_empty() {
         ProbeOutcome::OutputsPinned
     } else {
@@ -410,7 +510,10 @@ mod tests {
     use ragu_core::drivers::{Driver, LinearExpression};
     use ragu_pasta::Fp;
 
-    use super::{super::recorder::Recorder, *};
+    use super::{
+        super::recorder::{Recorder, jacobian_kernel},
+        *,
+    };
 
     /// The planted under-constrained square, judged by the pinned-input
     /// oracle instead of an anchor: `root` is the declared input, `square`
@@ -622,5 +725,102 @@ mod tests {
             ProbeOutcome::Rejected
         ));
         assert!(matches!(prepared.probe(&cheat), ProbeOutcome::Rejected));
+    }
+
+    /// A tangent direction coordinates two advice wires so their committed
+    /// sum stays fixed. Its linearized product is deliberately wrong at a
+    /// finite step; exact repair must recompute the nonlinear product before
+    /// the changed output can count as evidence.
+    #[test]
+    fn jacobian_direction_gets_nonlinear_exact_repair() {
+        let mut rec = Recorder::<Fp>::new();
+        let x = rec.push_wire(Fp::from(2));
+        let y = rec.push_wire(Fp::from(3));
+        let product = rec.push_wire(Fp::from(6));
+        let sum = rec.add(|lc| lc.add(&x).add(&y));
+        let expected_sum = rec.push_wire(Fp::from(5));
+        rec.events.push(Event::Gate {
+            a: x,
+            b: y,
+            c: product,
+        });
+        rec.enforce_zero(|lc| lc.add(&sum).sub(&expected_sum))
+            .unwrap();
+        assert!(constraints_hold(&rec.events, &rec.values));
+
+        let basis = jacobian_kernel(&rec.events, &rec.values, &[x, y, product]);
+        assert_eq!(basis.len(), 1);
+        let direction = &basis[0];
+        assert_eq!(
+            direction.entries(),
+            &[(x, Fp::ONE), (y, -Fp::ONE), (product, Fp::ONE)],
+        );
+
+        // At step two the tangent says (x, y, product) = (4, 1, 8), but
+        // the exact product is 4. A tangent-only verdict would be unsound.
+        let mut tangent = rec.values.clone();
+        for &(wire, delta) in direction.entries() {
+            tangent[wire] += delta.double();
+        }
+        assert_eq!(
+            (tangent[x], tangent[y], tangent[product]),
+            (Fp::from(4), Fp::ONE, Fp::from(8))
+        );
+        assert!(!constraints_hold(&rec.events, &tangent));
+
+        match jacobian_probe(
+            &rec.events,
+            &rec.values,
+            &[expected_sum],
+            &[product],
+            direction,
+            Fp::from(2),
+            &[x, y],
+        ) {
+            ProbeOutcome::OutputsMoved { witness, moved } => {
+                assert_eq!(
+                    (witness[x], witness[y], witness[product]),
+                    (Fp::from(4), Fp::ONE, Fp::from(4))
+                );
+                assert_eq!(witness[sum], rec.values[sum]);
+                assert_eq!(witness[expected_sum], rec.values[expected_sum]);
+                assert_eq!(moved, vec![(product, Fp::from(6), Fp::from(4))]);
+                assert!(constraints_hold(&rec.events, &witness));
+            }
+            other => panic!("exact nonlinear repair must find the coordinated witness: {other:?}"),
+        }
+    }
+
+    /// The mandatory singular negative control: `x² = 0` has a zero
+    /// derivative at zero, so the Jacobian proposes moving x, but exact
+    /// finite-field evaluation rejects every nonzero step used here.
+    #[test]
+    fn singular_square_tangent_is_not_an_exploit() {
+        let mut rec = Recorder::<Fp>::new();
+        let x = rec.push_wire(Fp::ZERO);
+        let square = rec.push_wire(Fp::ZERO);
+        rec.events.push(Event::Gate {
+            a: x,
+            b: x,
+            c: square,
+        });
+        rec.enforce_zero(|lc| lc.add(&square)).unwrap();
+        assert!(constraints_hold(&rec.events, &rec.values));
+
+        let basis = jacobian_kernel(&rec.events, &rec.values, &[x, square]);
+        assert_eq!(basis.len(), 1);
+        assert_eq!(basis[0].entries(), &[(x, Fp::ONE)]);
+        assert!(matches!(
+            jacobian_probe(
+                &rec.events,
+                &rec.values,
+                &[],
+                &[x],
+                &basis[0],
+                Fp::ONE,
+                &[x],
+            ),
+            ProbeOutcome::Rejected,
+        ));
     }
 }

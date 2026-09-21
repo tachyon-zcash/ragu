@@ -5,7 +5,7 @@
 //! application registers, pick a tree shape those steps admit, seed its
 //! leaves from fuzzer-chosen witnesses, fuse it together, verify every proof
 //! along the way, optionally rerandomize the root — and then corrupt the root
-//! and demand the rejection back.
+//! and check the applicable corruption verdicts.
 //!
 //! # What varies
 //!
@@ -28,7 +28,8 @@
 //! * Seeding and fusing an honest tree never fails.
 //! * Every honest proof verifies, at every level, and still verifies after
 //!   rerandomization.
-//! * The root, once corrupted in a way that binds the verifier, does not.
+//! * Individually classified corruptions reject; no-op controls accept.
+//!   Combined edits are exercised without assuming rejection verdicts compose.
 //!
 //! An iteration here costs seconds, not microseconds: it is a randomized
 //! integration test that libFuzzer steers, and the corpus it accumulates is
@@ -247,7 +248,8 @@ fuzz_target!(
 
         // Close the loop: the honest root that just verified must stop
         // verifying once a corruption binds the verifier.
-        let mut fixture = Fixture { shape, proof, data };
+        let original = Fixture { shape, proof, data };
+        let mut fixture = original.clone();
         let (applied, binding) =
             pcd::apply(&mut fixture.proof, &input.corruptions, MAX_CORRUPTIONS);
         if applied.is_empty() {
@@ -255,10 +257,11 @@ fuzz_target!(
         }
         pcd::assert_rejected(
             app,
+            &original,
             &fixture,
             &applied,
             binding,
-            StdRng::seed_from_u64(verify_seed),
+            verify_seed,
         );
     }
 );

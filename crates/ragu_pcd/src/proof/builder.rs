@@ -604,6 +604,59 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
     ref_getter!(native_registry_xy_poly, native_registry_xy_poly, sparse::Polynomial<C::CircuitField, R>);
     ref_getter!(native_p_poly, native_p_poly, sparse::Polynomial<C::CircuitField, R>);
 
+    /// Test-only access to completed accumulator folds. Callers at the
+    /// pre-commitment deadline may refresh the caches; post-challenge callers
+    /// intentionally leave them untouched to test the frozen object.
+    #[cfg(test)]
+    pub(crate) fn accumulator_polys_mut(
+        &mut self,
+    ) -> (
+        &mut sparse::Polynomial<C::CircuitField, R>,
+        &mut sparse::Polynomial<C::CircuitField, R>,
+        &mut sparse::Polynomial<C::ScalarField, R>,
+        &mut sparse::Polynomial<C::ScalarField, R>,
+    ) {
+        (
+            self.native_a_poly.as_mut().expect("native_a_poly not set"),
+            self.native_b_poly.as_mut().expect("native_b_poly not set"),
+            self.nested_a_poly.as_mut().expect("nested_a_poly not set"),
+            self.nested_b_poly.as_mut().expect("nested_b_poly not set"),
+        )
+    }
+
+    /// Rebuild all four accumulator commitment caches after a test-only edit
+    /// made before their point stages and AB bridge are constructed.
+    #[cfg(test)]
+    pub(crate) fn refresh_accumulator_commitments(&mut self) {
+        let host_gen = C::host_generators(self.params);
+        let nested_gen = C::nested_generators(self.params);
+        let native_a = B::sparse_commit_to_affine(
+            self.native_a_poly.as_ref().expect("native_a_poly not set"),
+            host_gen,
+        );
+        let native_b = B::sparse_commit_to_affine(
+            self.native_b_poly.as_ref().expect("native_b_poly not set"),
+            host_gen,
+        );
+        let nested_a = B::sparse_commit_to_affine(
+            self.nested_a_poly.as_ref().expect("nested_a_poly not set"),
+            nested_gen,
+        );
+        let nested_b = B::sparse_commit_to_affine(
+            self.nested_b_poly.as_ref().expect("nested_b_poly not set"),
+            nested_gen,
+        );
+
+        self.native_a_commitment = OnceCell::new();
+        self.native_b_commitment = OnceCell::new();
+        self.nested_a_commitment = OnceCell::new();
+        self.nested_b_commitment = OnceCell::new();
+        assert!(self.native_a_commitment.set(native_a).is_ok());
+        assert!(self.native_b_commitment.set(native_b).is_ok());
+        assert!(self.nested_a_commitment.set(nested_a).is_ok());
+        assert!(self.nested_b_commitment.set(nested_b).is_ok());
+    }
+
     ref_getter!(
         nested_points_rx,
         nested_points_rx,
@@ -773,6 +826,31 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         }
     );
 
+    /// Test-only bridge deadline seam: cache an explicitly supplied A/B
+    /// witness so fusion can rebuild the ordinary suffix from that bridge.
+    #[cfg(test)]
+    pub(crate) fn set_bridge_ab_witness_for_test(
+        &mut self,
+        witness: &nested::stages::ab::Witness<C::HostCurve>,
+    ) -> Result<()> {
+        assert!(
+            self.bridge_ab_rx.get().is_none(),
+            "double-set: bridge_ab_rx"
+        );
+        assert!(
+            self.bridge_ab_commitment.get().is_none(),
+            "double-set: bridge_ab_commitment"
+        );
+        let rx = nested::stages::ab::Stage::<C::HostCurve, R>::rx(
+            self.bridge_alpha_power(nested::RxIndex::BridgeAB),
+            witness,
+        )?;
+        let commitment = B::sparse_commit_to_affine(&rx, C::nested_generators(self.params));
+        assert!(self.bridge_ab_rx.set(Arc::new(rx)).is_ok());
+        assert!(self.bridge_ab_commitment.set(commitment).is_ok());
+        Ok(())
+    }
+
     setter!(
         set_nested_endoscaling_step_rxs,
         nested_endoscaling_step_rxs,
@@ -863,6 +941,20 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         nested_registry_xy_poly,
         sparse::Polynomial<C::ScalarField, R>
     );
+    /// Test-only access at the real late-registry deadline: the polynomial is
+    /// known, but its nested-curve commitment has not entered the transcript.
+    #[cfg(test)]
+    pub(crate) fn nested_registry_xy_poly_mut(
+        &mut self,
+    ) -> &mut sparse::Polynomial<C::ScalarField, R> {
+        assert!(
+            self.nested_registry_xy_commitment.get().is_none(),
+            "nested registry_xy commitment is already fixed"
+        );
+        self.nested_registry_xy_poly
+            .as_mut()
+            .expect("nested_registry_xy_poly not set")
+    }
     ref_getter!(nested_p_poly, nested_p_poly, sparse::Polynomial<C::ScalarField, R>);
     lazy_commitment!(
         nested,

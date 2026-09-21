@@ -209,6 +209,10 @@ impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stag
 }
 
 #[cfg(test)]
+#[path = "challenges_tests.rs"]
+mod placement_tests;
+
+#[cfg(test)]
 mod tests {
     use ragu_pasta::EqAffine;
 

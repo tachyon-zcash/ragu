@@ -30,13 +30,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
+        #[cfg(test)] edit_bridge: impl FnOnce(&mut nested::stages::preamble::Witness<C::HostCurve>),
     ) -> Result<(
         native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>,
         nested::stages::preamble::Witness<C::HostCurve>,
     )> {
         let preamble_witness = self.compute_native_preamble(rng, left, right, builder)?;
         self.commit_native_points_children(rng, left, right, builder)?;
-        let bridge_witness = self.compute_bridge_preamble(rng, left, right, builder)?;
+        let bridge_witness = self.compute_bridge_preamble(
+            rng,
+            left,
+            right,
+            builder,
+            #[cfg(test)]
+            edit_bridge,
+        )?;
         Ok((preamble_witness, bridge_witness))
     }
 
@@ -70,6 +78,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         left: &Proof<C, R>,
         right: &Proof<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
+        #[cfg(test)] edit_bridge: impl FnOnce(&mut nested::stages::preamble::Witness<C::HostCurve>),
     ) -> Result<nested::stages::preamble::Witness<C::HostCurve>> {
         let bridge_witness = nested::stages::preamble::Witness {
             native_preamble: builder.native_preamble_commitment(),
@@ -77,6 +86,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             native_points_children: builder.native_points_children_commitment(),
             left: nested::stages::preamble::ChildWitness::from_proof(left)?,
             right: nested::stages::preamble::ChildWitness::from_proof(right)?,
+        };
+        #[cfg(test)]
+        let bridge_witness = {
+            let mut bridge_witness = bridge_witness;
+            edit_bridge(&mut bridge_witness);
+            bridge_witness
         };
         let bridge_rx = nested::stages::preamble::Stage::<C::HostCurve, R>::rx(
             C::ScalarField::random(&mut *rng),

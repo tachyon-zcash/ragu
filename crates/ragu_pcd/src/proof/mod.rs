@@ -676,6 +676,21 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         self.nested_b_commitment.0
     }
 
+    /// Test-only cache repair used to expose the earlier A/B binding after an
+    /// adaptive polynomial substitution.
+    #[cfg(test)]
+    pub(crate) fn replace_native_ab_commitments(&mut self, a: C::HostCurve, b: C::HostCurve) {
+        self.native_a_commitment.0 = a;
+        self.native_b_commitment.0 = b;
+    }
+
+    /// Nested-field counterpart of [`Self::replace_native_ab_commitments`].
+    #[cfg(test)]
+    pub(crate) fn replace_nested_ab_commitments(&mut self, a: C::NestedCurve, b: C::NestedCurve) {
+        self.nested_a_commitment.0 = a;
+        self.nested_b_commitment.0 = b;
+    }
+
     pub(crate) fn nested_registry_xy_commitment(&self) -> C::NestedCurve {
         self.nested_registry_xy_commitment.0
     }

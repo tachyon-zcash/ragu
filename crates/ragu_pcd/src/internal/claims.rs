@@ -26,6 +26,10 @@ use ragu_circuits::{
     registry::{CircuitIndex, Registry},
 };
 
+#[cfg(test)]
+#[path = "claims_tests.rs"]
+mod tests;
+
 /// Sum an iterator of polynomials, borrowing if only one element.
 ///
 /// Returns `Cow::Borrowed` for a single polynomial, `Cow::Owned` for multiple.

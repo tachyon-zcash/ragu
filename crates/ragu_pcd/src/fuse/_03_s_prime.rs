@@ -27,7 +27,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         left: &Proof<C, R>,
         right: &Proof<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<(NativeSPrime<C, R>, NestedSPrime<C, R>)> {
+        #[cfg(test)] edit_bridge: impl FnOnce(&mut nested::stages::s_prime::Witness<C::HostCurve>),
+    ) -> Result<(
+        NativeSPrime<C, R>,
+        NestedSPrime<C, R>,
+        nested::stages::s_prime::Witness<C::HostCurve>,
+    )> {
         let native = self.compute_native_s_prime(native_registry, left, right)?;
         let nested = self.compute_nested_s_prime(nested_registry, left, right)?;
         self.commit_native_points_registry_wx(
@@ -36,8 +41,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             nested.registry_wx1_commitment,
             builder,
         )?;
-        self.compute_bridge_s_prime(rng, &native, builder)?;
-        Ok((native, nested))
+        let bridge_witness = self.compute_bridge_s_prime(
+            rng,
+            &native,
+            builder,
+            #[cfg(test)]
+            edit_bridge,
+        )?;
+        Ok((native, nested, bridge_witness))
     }
 
     fn compute_bridge_s_prime<RNG: CryptoRng>(
@@ -45,19 +56,27 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         rng: &mut RNG,
         native: &NativeSPrime<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<()> {
+        #[cfg(test)] edit_bridge: impl FnOnce(&mut nested::stages::s_prime::Witness<C::HostCurve>),
+    ) -> Result<nested::stages::s_prime::Witness<C::HostCurve>> {
+        let bridge_witness = nested::stages::s_prime::Witness {
+            registry_wx0: native.registry_wx0_commitment,
+            registry_wx1: native.registry_wx1_commitment,
+            native_points_registry_wx: builder.native_points_registry_wx_commitment(),
+        };
+        #[cfg(test)]
+        let bridge_witness = {
+            let mut bridge_witness = bridge_witness;
+            edit_bridge(&mut bridge_witness);
+            bridge_witness
+        };
         let bridge_rx = nested::stages::s_prime::Stage::<C::HostCurve, R>::rx(
             C::ScalarField::random(&mut *rng),
-            &nested::stages::s_prime::Witness {
-                registry_wx0: native.registry_wx0_commitment,
-                registry_wx1: native.registry_wx1_commitment,
-                native_points_registry_wx: builder.native_points_registry_wx_commitment(),
-            },
+            &bridge_witness,
         )?;
         let bridge_commitment =
             B::sparse_commit_to_affine(&bridge_rx, C::nested_generators(self.params));
         builder.set_bridge_s_prime_rx(bridge_rx, bridge_commitment);
-        Ok(())
+        Ok(bridge_witness)
     }
 
     fn compute_native_s_prime(
