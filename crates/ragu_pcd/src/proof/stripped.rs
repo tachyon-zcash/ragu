@@ -13,9 +13,10 @@ use ragu_circuits::{
 };
 use ragu_core::Result;
 
-use super::{Proof, ProofBuilder, replay_challenges};
+use super::{Pcd, Proof, ProofBuilder, replay_challenges};
 use crate::{
     Application, SelectableBackend,
+    header::Header,
     internal::{native, nested},
 };
 
@@ -26,7 +27,7 @@ use crate::{
 /// recompute every other field of a [`Proof`] from them, as that type's
 /// documentation lays out, so [`Proof::strip`] loses nothing by
 /// dropping them: [`Application::expand`] rebuilds the [`Proof`], and
-/// [`Application::verify_stripped`] verifies the stripped form as it stands.
+/// [`Application::verify`] accepts the stripped form as it stands.
 ///
 /// The binder and endoscaling-step polynomials are arrays where the working
 /// form holds vectors, so a stripped proof of the wrong shape cannot be
@@ -94,6 +95,14 @@ pub struct StrippedProof<C: Cycle, R: Rank> {
     pub(crate) nested_export_rx: sparse::Polynomial<C::ScalarField, R>,
     pub(crate) nested_collapse_rx: sparse::Polynomial<C::ScalarField, R>,
     pub(crate) nested_compute_v_rx: sparse::Polynomial<C::ScalarField, R>,
+}
+
+impl<C: Cycle, R: Rank> StrippedProof<C, R> {
+    /// Augment a stripped proof with some data, described by a [`Header`],
+    /// for [`Application::verify`].
+    pub fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Pcd<C, R, H, Self> {
+        Pcd::new(self, data)
+    }
 }
 
 impl<C: Cycle, R: Rank> Proof<C, R> {

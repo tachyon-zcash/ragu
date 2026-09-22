@@ -51,9 +51,10 @@ mod proof_equivalence;
 mod access;
 
 use alloc::{sync::Arc, vec, vec::Vec};
+use core::marker::PhantomData;
 
 pub(crate) use builder::ProofBuilder;
-use ragu_arithmetic::{Cycle, ff::Field};
+use ragu_arithmetic::{Cycle, ff::Field, rand::CryptoRng};
 use ragu_circuits::{
     CircuitExt,
     polynomials::{Rank, sparse},
@@ -95,37 +96,79 @@ struct Cached<T>(T);
 
 /// Represents proof-carrying data, a recursive proof for the correctness of
 /// some accompanying data.
-pub struct Pcd<C: Cycle, R: Rank, H: Header<C::CircuitField>> {
-    proof: Proof<C, R>,
+///
+/// `P` is the form the proof takes: the working [`Proof`] by default, which
+/// [`fuse`](crate::Application::fuse) consumes and produces, or a
+/// [`StrippedProof`]. [`verify`](crate::Application::verify) accepts either.
+pub struct Pcd<C: Cycle, R: Rank, H: Header<C::CircuitField>, P = Proof<C, R>> {
+    proof: P,
     data: H::Data,
+    // The rank is fixed by the proof form, whichever it is.
+    _rank: PhantomData<R>,
 }
 
-impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
+impl<C: Cycle, R: Rank, H: Header<C::CircuitField>, P> Pcd<C, R, H, P> {
+    /// Bundles a proof, in whichever form, with the data it accompanies.
+    pub(crate) fn new(proof: P, data: H::Data) -> Self {
+        Pcd {
+            proof,
+            data,
+            _rank: PhantomData,
+        }
+    }
+
     /// Returns a reference to the data that the proof accompanies.
     pub fn data(&self) -> &H::Data {
         &self.data
     }
 
     /// Returns a reference to the recursive proof.
-    pub fn proof(&self) -> &Proof<C, R> {
+    pub fn proof(&self) -> &P {
         &self.proof
     }
 
     /// Consumes the proof-carrying data and returns the proof and data
     /// separately.
-    pub fn into_parts(self) -> (Proof<C, R>, H::Data) {
+    pub fn into_parts(self) -> (P, H::Data) {
         (self.proof, self.data)
     }
 }
 
-impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<C, R, H> {
+impl<C: Cycle, R: Rank, H: Header<C::CircuitField>, P: Clone> Clone for Pcd<C, R, H, P> {
     fn clone(&self) -> Self {
-        Pcd {
-            proof: self.proof.clone(),
-            data: self.data.clone(),
-        }
+        Pcd::new(self.proof.clone(), self.data.clone())
     }
 }
+
+/// A form a proof takes, which [`verify`](crate::Application::verify) checks
+/// its own way: the working [`Proof`] directly, or a [`StrippedProof`] once
+/// expanded.
+///
+/// Sealed: the crate decides how each form is verified, as it decides which
+/// backend kernels decide acceptance.
+pub trait ProofForm<C: Cycle, R: Rank>: sealed::Sealed + Sized {
+    /// Checks `pcd`; the implementation behind
+    /// [`Application::verify`](crate::Application::verify).
+    #[doc(hidden)]
+    fn check<
+        RNG: CryptoRng,
+        H: Header<C::CircuitField>,
+        const HEADER_SIZE: usize,
+        B: crate::SelectableBackend,
+    >(
+        app: &crate::Application<'_, C, R, HEADER_SIZE, B>,
+        pcd: &Pcd<C, R, H, Self>,
+        rng: RNG,
+    ) -> Result<bool>;
+}
+
+mod sealed {
+    /// The supertrait that keeps [`ProofForm`](super::ProofForm) in-crate.
+    pub trait Sealed {}
+}
+
+impl<C: Cycle, R: Rank> sealed::Sealed for Proof<C, R> {}
+impl<C: Cycle, R: Rank> sealed::Sealed for StrippedProof<C, R> {}
 
 /// The Horner fold of `polys` under `beta`, the first weighted highest: the
 /// batch polynomial whose commitment the endoscaling walk over the
@@ -513,7 +556,7 @@ impl<C: Cycle, R: Rank> core::ops::Index<nested::RxComponent> for Proof<C, R> {
 impl<C: Cycle, R: Rank> Proof<C, R> {
     /// Augment a recursive proof with some data, described by a [`Header`].
     pub fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Pcd<C, R, H> {
-        Pcd { proof: self, data }
+        Pcd::new(self, data)
     }
 
     // TODO: Route this witness-value computation through the selected backend

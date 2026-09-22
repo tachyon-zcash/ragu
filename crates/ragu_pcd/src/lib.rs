@@ -44,7 +44,7 @@ use alloc::collections::BTreeMap;
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 use header::Header;
-pub use proof::{Pcd, Proof, StrippedProof};
+pub use proof::{Pcd, Proof, ProofForm, StrippedProof};
 use ragu_arithmetic::{
     Cycle,
     rand::{CryptoRng, SeedableRng, rngs::StdRng},

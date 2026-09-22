@@ -51,7 +51,7 @@ use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{Element, EndoscalarRangeError, extract_endoscalar};
 
 use crate::{
-    Application, Pcd, Proof, SelectableBackend, StrippedProof,
+    Application, Pcd, Proof, ProofForm, SelectableBackend, StrippedProof,
     header::Header,
     internal::{
         claims,
@@ -77,19 +77,44 @@ type Verifier<B> = <B as SelectableBackend>::Verifier;
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
-    /// Verifies some [`Pcd`] for the provided [`Header`].
+    /// Verifies some [`Pcd`] for the provided [`Header`], in either form of
+    /// proof it carries.
     ///
     /// Returns `Ok(true)` if all verification checks pass, `Ok(false)` if
     /// any check fails (e.g., invalid circuit ID, header size mismatch,
     /// corrupted commitments or evaluations), or `Err` if an internal
     /// computation error occurs.
     ///
+    /// The working [`Proof`] is checked directly: the decider holds every
+    /// polynomial, and rederives what the proof caches rather than trusting
+    /// it. A [`StrippedProof`] is [expanded](Self::expand) first and then
+    /// checked the same way, so it is accepted precisely when its expansion
+    /// is. The two forms therefore agree unless a working-form proof is
+    /// inconsistent: a stale cache is what rejects it, and a stripped proof
+    /// has no cache to be stale. In particular a trace coefficient that no
+    /// claim reaches says nothing about the statement; the working form
+    /// binds it through its commitment alone, and the stripped form leaves
+    /// it unconstrained. A stripped proof whose replayed challenges fall
+    /// outside the endoscalar range is malformed and rejected with
+    /// `Ok(false)`, as the working form carrying those challenges would be.
+    /// Expanding commits to every polynomial, which the checks then
+    /// recompute, so the stripped form costs more to verify.
+    ///
     /// The computational kernels used here are those of the sealed
     /// [`SelectableBackend::Verifier`] of the selected backend: the reference
     /// kernels for `ReferenceBackend` and `AcceleratedProver`, the accelerated
     /// ones for `AcceleratedBackend`. Applications choose between them but
     /// cannot supply the implementation that controls the acceptance decision.
-    pub fn verify<RNG: CryptoRng, H: Header<C::CircuitField>>(
+    pub fn verify<RNG: CryptoRng, H: Header<C::CircuitField>, P: ProofForm<C, R>>(
+        &self,
+        pcd: &Pcd<C, R, H, P>,
+        rng: RNG,
+    ) -> Result<bool> {
+        P::check(self, pcd, rng)
+    }
+
+    /// The checks on a working-form [`Pcd`]: see [`verify`](Self::verify).
+    fn check_working<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         pcd: &Pcd<C, R, H>,
         mut rng: RNG,
@@ -387,52 +412,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             && mesh_claim)
     }
 
-    /// Verifies a [`StrippedProof`] for the provided [`Header`] and data.
-    ///
-    /// The proof is [expanded](Self::expand) and then verified exactly as
-    /// [`verify`](Self::verify) verifies the working form, so a stripped proof
-    /// is accepted precisely when its expansion is. A working-form proof and
-    /// its stripped form therefore agree unless the former is inconsistent: a
-    /// stale cache is what rejects it, and a stripped proof has no cache to be
-    /// stale. In particular a trace coefficient that no claim reaches says
-    /// nothing about the statement; the working form binds it through its
-    /// commitment alone, and here it is unconstrained. A stripped proof whose
-    /// replayed challenges fall outside the endoscalar range is malformed
-    /// and rejected with `Ok(false)`, as the working form carrying those
-    /// challenges would be.
-    ///
-    /// Expansion commits to every polynomial, and the verifier then checks
-    /// those commitments against the same polynomials, so this costs more
-    /// than verifying the working form. The header type is not inferable
-    /// from `data` alone and is named explicitly.
-    pub fn verify_stripped<RNG: CryptoRng, H: Header<C::CircuitField>>(
-        &self,
-        proof: &StrippedProof<C, R>,
-        data: &H::Data,
-        rng: RNG,
-    ) -> Result<bool> {
-        // The structural checks `verify` starts with, before the expansion's
-        // commitments are paid for.
-        if !self.native_registry.circuit_in_domain(proof.circuit_id)
-            || proof.left_header.len() != HEADER_SIZE
-            || proof.right_header.len() != HEADER_SIZE
-        {
-            return Ok(false);
-        }
-        let expanded = match self.expand(proof.clone()) {
-            Ok(expanded) => expanded,
-            Err(err)
-                if err
-                    .invalid_witness_source::<EndoscalarRangeError>()
-                    .is_some() =>
-            {
-                return Ok(false);
-            }
-            Err(err) => return Err(err),
-        };
-        self.verify(&expanded.carry::<H>(data.clone()), rng)
-    }
-
     /// The native mesh claim: see [`verify`](Self::verify).
     fn native_mesh_claim(&self, proof: &Proof<C, R>) -> Result<bool> {
         use native_internal::{InternalCircuitIndex, RxIndex, stages};
@@ -612,6 +591,56 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             ];
 
         Ok(fixed_registry_claim && query_claim && eval_claim)
+    }
+}
+
+impl<C: Cycle, R: Rank> ProofForm<C, R> for Proof<C, R> {
+    fn check<
+        RNG: CryptoRng,
+        H: Header<C::CircuitField>,
+        const HEADER_SIZE: usize,
+        B: SelectableBackend,
+    >(
+        app: &Application<'_, C, R, HEADER_SIZE, B>,
+        pcd: &Pcd<C, R, H, Self>,
+        rng: RNG,
+    ) -> Result<bool> {
+        app.check_working(pcd, rng)
+    }
+}
+
+impl<C: Cycle, R: Rank> ProofForm<C, R> for StrippedProof<C, R> {
+    fn check<
+        RNG: CryptoRng,
+        H: Header<C::CircuitField>,
+        const HEADER_SIZE: usize,
+        B: SelectableBackend,
+    >(
+        app: &Application<'_, C, R, HEADER_SIZE, B>,
+        pcd: &Pcd<C, R, H, Self>,
+        rng: RNG,
+    ) -> Result<bool> {
+        let proof = pcd.proof();
+        // The structural checks the working form starts with, before the
+        // expansion's commitments are paid for.
+        if !app.native_registry.circuit_in_domain(proof.circuit_id)
+            || proof.left_header.len() != HEADER_SIZE
+            || proof.right_header.len() != HEADER_SIZE
+        {
+            return Ok(false);
+        }
+        let expanded = match app.expand(proof.clone()) {
+            Ok(expanded) => expanded,
+            Err(err)
+                if err
+                    .invalid_witness_source::<EndoscalarRangeError>()
+                    .is_some() =>
+            {
+                return Ok(false);
+            }
+            Err(err) => return Err(err),
+        };
+        app.check_working(&expanded.carry::<H>(pcd.data().clone()), rng)
     }
 }
 

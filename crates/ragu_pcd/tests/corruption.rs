@@ -72,14 +72,14 @@ impl Fixture {
 
     /// The verdict on the proof stripped to its primary fields, which drops
     /// every derived one.
-    fn verify_stripped(self, app: &Application<'_, C, R, HEADER_SIZE>, seed: u64) -> bool {
+    fn strip_and_verify(self, app: &Application<'_, C, R, HEADER_SIZE>, seed: u64) -> bool {
         let stripped = self.proof.strip();
         let rng = StdRng::seed_from_u64(seed);
         match self.shape {
-            Shape::Leaf => app.verify_stripped::<_, LeafNode>(&stripped, &self.data, rng),
-            Shape::Deep => app.verify_stripped::<_, InternalNode>(&stripped, &self.data, rng),
+            Shape::Leaf => app.verify(&stripped.carry::<LeafNode>(self.data), rng),
+            Shape::Deep => app.verify(&stripped.carry::<InternalNode>(self.data), rng),
         }
-        .expect("verify_stripped must not error")
+        .expect("verify must not error")
     }
 }
 
@@ -338,7 +338,7 @@ fn check_corruptions(shape: Shape, group: CorruptionGroup) {
         // The same edit judged through the stripped form; see `stripped_verdict`.
         if let (Some(expected), Some(to_strip)) = (expected_stripped, to_strip) {
             assert_eq!(
-                to_strip.verify_stripped(&app, 1234),
+                to_strip.strip_and_verify(&app, 1234),
                 expected,
                 "the stripped form's verdict on a corrupted {:?} proof is not the expected one: \
                  {described}",
