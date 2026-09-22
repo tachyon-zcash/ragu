@@ -56,7 +56,7 @@ pub const ENDOSCALINGS_PER_STEP: usize = 4;
 
 /// Number of endoscaling steps, derived from [`NUM_ENDOSCALING_POINTS`] via
 /// [`endoscalar::num_steps`].
-const NUM_ENDOSCALING_STEPS: usize =
+pub const NUM_ENDOSCALING_STEPS: usize =
     endoscalar::num_steps::<ENDOSCALINGS_PER_STEP>(NUM_ENDOSCALING_POINTS);
 
 /// The nested points stage, over the native batch's commitments.

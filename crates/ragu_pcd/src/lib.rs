@@ -8,7 +8,8 @@
 //!   [`verify`](Application::verify) proofs.
 //! - [`step::Step`] — the trait that defines computation nodes (transitions).
 //! - [`header::Header`] — the trait that defines succinct state representations.
-//! - [`Proof`] / [`Pcd`] — the proof and proof-carrying-data structures.
+//! - [`Proof`] / [`Pcd`] — the proof and proof-carrying-data structures;
+//!   [`MinimalProof`] is a proof reduced to its prover-supplied fields.
 
 #![no_std]
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -43,7 +44,7 @@ use alloc::collections::BTreeMap;
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 use header::Header;
-pub use proof::{Pcd, Proof};
+pub use proof::{MinimalProof, Pcd, Proof};
 use ragu_arithmetic::{
     Cycle,
     rand::{CryptoRng, SeedableRng, rngs::StdRng},

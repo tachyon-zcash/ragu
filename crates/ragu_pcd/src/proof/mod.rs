@@ -12,6 +12,7 @@
 #![allow(dead_code)]
 
 pub(crate) mod builder;
+mod minimal;
 // These regression suites edit proof fields directly. Keep their sources
 // grouped by subject in tests/ and their access confined to the test build.
 // Their properties prove tens of production-rank proofs each, so they are
@@ -52,6 +53,7 @@ mod access;
 use alloc::{sync::Arc, vec, vec::Vec};
 
 pub(crate) use builder::ProofBuilder;
+pub use minimal::MinimalProof;
 use ragu_arithmetic::{Cycle, ff::Field};
 use ragu_circuits::{
     CircuitExt,
