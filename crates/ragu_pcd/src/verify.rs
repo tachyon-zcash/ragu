@@ -390,12 +390,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// Verifies a [`MinimalProof`] for the provided [`Header`] and data.
     ///
     /// The proof is [expanded](Self::expand) and then verified exactly as
-    /// [`verify`](Self::verify) verifies the working form, so the two agree
-    /// on every proof: the derived fields the minimal form drops are
-    /// functions of the ones it keeps, and the expansion derives them
-    /// honestly. A minimal proof whose replayed challenges fall outside the
-    /// endoscalar range is malformed and rejected with `Ok(false)`, as the
-    /// working form carrying those challenges would be.
+    /// [`verify`](Self::verify) verifies the working form, so a minimal proof
+    /// is accepted precisely when its expansion is. A working-form proof and
+    /// its reduction therefore agree unless the former is inconsistent: a
+    /// stale cache is what rejects it, and a reduction has no cache to be
+    /// stale. In particular a trace coefficient that no claim reaches says
+    /// nothing about the statement; the working form binds it through its
+    /// commitment alone, and here it is unconstrained. A minimal proof whose
+    /// replayed challenges fall outside the endoscalar range is malformed
+    /// and rejected with `Ok(false)`, as the working form carrying those
+    /// challenges would be.
     ///
     /// Expansion commits to every polynomial, and the verifier then checks
     /// those commitments against the same polynomials, so this costs more

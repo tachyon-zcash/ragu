@@ -836,8 +836,12 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 
     /// The number of coefficients at the low end that a circuit claim's
     /// $t\_z$ term reaches, for harnesses that bias sampling toward this region.
-    /// Cached commitments bind every coefficient, so this is not a boundary
-    /// between [`Binding::MustReject`] and [`Binding::Unbound`] edits.
+    /// Cached commitments bind every coefficient of the working form, so this
+    /// is not a boundary between [`Binding::MustReject`] and
+    /// [`Binding::Unbound`] edits there. The minimal form recomputes its
+    /// commitments, and for it this is the bound below which every
+    /// coefficient edit is rejected; beyond it, only an edit the circuit's
+    /// wiring reaches is.
     #[doc(hidden)]
     pub fn num_bound_coeffs() -> usize {
         R::n()

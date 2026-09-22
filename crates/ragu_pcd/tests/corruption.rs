@@ -10,10 +10,11 @@
 //! proofs of two shapes: a `WitnessLeaf` seed, and a `Merge2` fuse of two
 //! `Hash2` nodes, whose accumulators and headers are the nondegenerate ones.
 //!
-//! Each corruption is also judged through the minimal form: reducing the
-//! proof keeps a primary edit, which must still be rejected, and drops a
-//! derived one, which the expansion then derives honestly, so the proof
-//! verifies again.
+//! Each corruption is also judged through the minimal form, which drops the
+//! derived fields: a derived edit vanishes and the proof verifies again,
+//! while a primary edit is kept and must still be rejected. Trace
+//! coefficients beyond the claims' guaranteed reach are the exception; see
+//! [`minimal_verdict`].
 //!
 //! This entire suite is ignored in the platform matrix and runs in the
 //! dedicated Linux PR job with `--test corruption -- --include-ignored`.
@@ -245,18 +246,45 @@ impl CorruptionGroup {
     }
 }
 
-/// Whether a corruption edits a primary field, which the reduction to a
-/// minimal proof keeps, rather than a derived one, which it drops and the
-/// expansion derives afresh.
-fn survives_reduction(corruption: &Corruption<C>) -> bool {
-    !matches!(
-        corruption,
+/// The verdict the minimal form must reach on a corruption, or `None` where
+/// the sweep holds it to none.
+///
+/// Reducing a proof drops an edit to a derived field, which the expansion
+/// then derives honestly, so the proof verifies again; it keeps an edit to
+/// a primary field, which must still be rejected. The exception is a trace
+/// coefficient at or beyond [`Proof::num_bound_coeffs`]: the working form
+/// rejects that edit for its stale commitment alone, the minimal form
+/// recomputes the commitment, and whether a claim still reaches the
+/// coefficient depends on the circuit's wiring, so those go unasserted.
+/// Below the bound every circuit claim's $t_z$ term reaches the coefficient
+/// at the verifier's fresh $z$.
+fn minimal_verdict(corruption: &Corruption<C>) -> Option<bool> {
+    let bound = Proof::<C, R>::num_bound_coeffs();
+    match corruption {
+        // Derived fields, the `ab` bridge and challenge stage polynomials
+        // among them: the reduction drops the edit.
         Corruption::Challenge(..)
-            | Corruption::NegateBridgeCommitment(_)
-            | Corruption::NegateChallengesPartial
-            | Corruption::NegateNativeCommitment(_)
-            | Corruption::NegateNestedCommitment(_)
-    )
+        | Corruption::NegateBridgeCommitment(_)
+        | Corruption::NegateChallengesPartial
+        | Corruption::NegateNativeCommitment(_)
+        | Corruption::NegateNestedCommitment(_)
+        | Corruption::NestedCoeff {
+            index: NestedRx::BridgeAB | NestedRx::ChallengeStage,
+            ..
+        } => Some(true),
+        // Trace coefficients: asserted only where a claim is guaranteed to
+        // reach them.
+        Corruption::NativeCoeff {
+            component: RxComponent::Rx(_),
+            coeff,
+            ..
+        }
+        | Corruption::NestedCoeff { coeff, .. } => (*coeff < bound).then_some(false),
+        // Every other primary field, the accumulator, `registry_xy` and $p$
+        // polynomials included, which the verifier evaluates at points it
+        // samples or derives.
+        _ => Some(false),
+    }
 }
 
 /// Effective coefficient edits must be classified `MustReject`, and every
@@ -300,21 +328,23 @@ fn check_corruptions(shape: Shape, group: CorruptionGroup) {
             continue;
         }
         bound += 1;
-        let reduced = corrupted.clone();
+        let expected_minimal = minimal_verdict(corruption);
+        let reduced = expected_minimal.is_some().then(|| corrupted.clone());
         assert!(
             !corrupted.verify(&app, 1234),
             "the verifier accepted a corrupted {:?} proof: {described}",
             fixture.shape,
         );
-        // Reduced to its primary fields, the proof keeps a primary edit and
-        // loses a derived one, which the expansion then derives honestly.
-        assert_eq!(
-            reduced.verify_minimal(&app, 1234),
-            !survives_reduction(corruption),
-            "the minimal form's verdict on a corrupted {:?} proof does not follow \
-             whether the edit survives reduction: {described}",
-            fixture.shape,
-        );
+        // The same edit judged through the minimal form; see `minimal_verdict`.
+        if let (Some(expected), Some(reduced)) = (expected_minimal, reduced) {
+            assert_eq!(
+                reduced.verify_minimal(&app, 1234),
+                expected,
+                "the minimal form's verdict on a corrupted {:?} proof is not the expected one: \
+                 {described}",
+                fixture.shape,
+            );
+        }
         assert_eq!(
             binding,
             Binding::MustReject,
