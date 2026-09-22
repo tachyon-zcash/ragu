@@ -10,11 +10,11 @@
 //! proofs of two shapes: a `WitnessLeaf` seed, and a `Merge2` fuse of two
 //! `Hash2` nodes, whose accumulators and headers are the nondegenerate ones.
 //!
-//! Each corruption is also judged through the minimal form, which drops the
+//! Each corruption is also judged through the stripped form, which drops the
 //! derived fields: a derived edit vanishes and the proof verifies again,
 //! while a primary edit is kept and must still be rejected. Trace
 //! coefficients beyond the claims' guaranteed reach are the exception; see
-//! [`minimal_verdict`].
+//! [`stripped_verdict`].
 //!
 //! This entire suite is ignored in the platform matrix and runs in the
 //! dedicated Linux PR job with `--test corruption -- --include-ignored`.
@@ -70,16 +70,16 @@ impl Fixture {
         .expect("verify must not error")
     }
 
-    /// The verdict on the proof reduced to its primary fields, which drops
+    /// The verdict on the proof stripped to its primary fields, which drops
     /// every derived one.
-    fn verify_minimal(self, app: &Application<'_, C, R, HEADER_SIZE>, seed: u64) -> bool {
-        let minimal = self.proof.into_minimal();
+    fn verify_stripped(self, app: &Application<'_, C, R, HEADER_SIZE>, seed: u64) -> bool {
+        let stripped = self.proof.strip();
         let rng = StdRng::seed_from_u64(seed);
         match self.shape {
-            Shape::Leaf => app.verify_minimal::<_, LeafNode>(&minimal, &self.data, rng),
-            Shape::Deep => app.verify_minimal::<_, InternalNode>(&minimal, &self.data, rng),
+            Shape::Leaf => app.verify_stripped::<_, LeafNode>(&stripped, &self.data, rng),
+            Shape::Deep => app.verify_stripped::<_, InternalNode>(&stripped, &self.data, rng),
         }
-        .expect("verify_minimal must not error")
+        .expect("verify_stripped must not error")
     }
 }
 
@@ -246,23 +246,23 @@ impl CorruptionGroup {
     }
 }
 
-/// The verdict the minimal form must reach on a corruption, or `None` where
+/// The verdict the stripped form must reach on a corruption, or `None` where
 /// the sweep holds it to none.
 ///
-/// Reducing a proof drops an edit to a derived field, which the expansion
+/// Stripping a proof drops an edit to a derived field, which the expansion
 /// then derives honestly, so the proof verifies again; it keeps an edit to
 /// a primary field, which must still be rejected. The exception is a trace
 /// coefficient at or beyond [`Proof::num_bound_coeffs`]: the working form
-/// rejects that edit for its stale commitment alone, the minimal form
+/// rejects that edit for its stale commitment alone, the stripped form
 /// recomputes the commitment, and whether a claim still reaches the
 /// coefficient depends on the circuit's wiring, so those go unasserted.
 /// Below the bound every circuit claim's $t_z$ term reaches the coefficient
 /// at the verifier's fresh $z$.
-fn minimal_verdict(corruption: &Corruption<C>) -> Option<bool> {
+fn stripped_verdict(corruption: &Corruption<C>) -> Option<bool> {
     let bound = Proof::<C, R>::num_bound_coeffs();
     match corruption {
         // Derived fields, the `ab` bridge and challenge stage polynomials
-        // among them: the reduction drops the edit.
+        // among them: stripping drops the edit.
         Corruption::Challenge(..)
         | Corruption::NegateBridgeCommitment(_)
         | Corruption::NegateChallengesPartial
@@ -328,19 +328,19 @@ fn check_corruptions(shape: Shape, group: CorruptionGroup) {
             continue;
         }
         bound += 1;
-        let expected_minimal = minimal_verdict(corruption);
-        let reduced = expected_minimal.is_some().then(|| corrupted.clone());
+        let expected_stripped = stripped_verdict(corruption);
+        let to_strip = expected_stripped.is_some().then(|| corrupted.clone());
         assert!(
             !corrupted.verify(&app, 1234),
             "the verifier accepted a corrupted {:?} proof: {described}",
             fixture.shape,
         );
-        // The same edit judged through the minimal form; see `minimal_verdict`.
-        if let (Some(expected), Some(reduced)) = (expected_minimal, reduced) {
+        // The same edit judged through the stripped form; see `stripped_verdict`.
+        if let (Some(expected), Some(to_strip)) = (expected_stripped, to_strip) {
             assert_eq!(
-                reduced.verify_minimal(&app, 1234),
+                to_strip.verify_stripped(&app, 1234),
                 expected,
-                "the minimal form's verdict on a corrupted {:?} proof is not the expected one: \
+                "the stripped form's verdict on a corrupted {:?} proof is not the expected one: \
                  {described}",
                 fixture.shape,
             );

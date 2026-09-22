@@ -1,4 +1,4 @@
-//! The minimal form of a proof: its primary fields alone.
+//! The stripped form of a proof: its primary fields alone.
 //!
 //! See [`Proof`]'s documentation for which fields are primary and how the
 //! verifier derives the rest.
@@ -19,20 +19,20 @@ use crate::{
     internal::{native, nested},
 };
 
-/// A [`Proof`] reduced to its primary fields.
+/// A [`Proof`] stripped to its primary fields.
 ///
 /// These are the fields only the prover can supply: the statement, the
 /// polynomials and the blinding seed of the `ab` bridge. The verifier can
 /// recompute every other field of a [`Proof`] from them, as that type's
-/// documentation lays out, so [`Proof::into_minimal`] loses nothing by
+/// documentation lays out, so [`Proof::strip`] loses nothing by
 /// dropping them: [`Application::expand`] rebuilds the [`Proof`], and
-/// [`Application::verify_minimal`] verifies the minimal form as it stands.
+/// [`Application::verify_stripped`] verifies the stripped form as it stands.
 ///
 /// The binder and endoscaling-step polynomials are arrays where the working
-/// form holds vectors, so a minimal proof of the wrong shape cannot be
+/// form holds vectors, so a stripped proof of the wrong shape cannot be
 /// represented.
 #[derive(Clone)]
-pub struct MinimalProof<C: Cycle, R: Rank> {
+pub struct StrippedProof<C: Cycle, R: Rank> {
     // The statement: which circuit, and the children's headers.
     pub(crate) circuit_id: CircuitIndex,
     pub(crate) left_header: Vec<C::CircuitField>,
@@ -99,8 +99,8 @@ pub struct MinimalProof<C: Cycle, R: Rank> {
 impl<C: Cycle, R: Rank> Proof<C, R> {
     /// Drops the derived fields, keeping what only the prover can supply;
     /// [`Application::expand`] derives them again.
-    pub fn into_minimal(self) -> MinimalProof<C, R> {
-        MinimalProof {
+    pub fn strip(self) -> StrippedProof<C, R> {
+        StrippedProof {
             circuit_id: self.circuit_id,
             left_header: self.left_header,
             right_header: self.right_header,
@@ -154,8 +154,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
-    /// Rebuilds the working form of a minimal proof, deriving every field
-    /// [`Proof::into_minimal`] dropped: the commitments, from the
+    /// Rebuilds the working form of a stripped proof, deriving every field
+    /// [`Proof::strip`] dropped: the commitments, from the
     /// polynomials; the challenges, from the transcript over the bridge
     /// commitments; the `ab` bridge, from `bridge_alpha` and the native
     /// commitments; and the nested challenge stage with its binding partial,
@@ -166,7 +166,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// Fails when the polynomials do not admit a derivation, such as a
     /// replayed challenge outside the endoscalar range. An honest proof's
     /// always do.
-    pub fn expand(&self, minimal: MinimalProof<C, R>) -> Result<Proof<C, R>> {
+    pub fn expand(&self, stripped: StrippedProof<C, R>) -> Result<Proof<C, R>> {
         let host = C::host_generators(self.params);
         let nested_gen = C::nested_generators(self.params);
         let commit_host =
@@ -175,9 +175,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             B::sparse_commit_to_affine(poly, nested_gen)
         };
 
-        // Destructured exhaustively, so that a field added to the minimal
+        // Destructured exhaustively, so that a field added to the stripped
         // form fails to compile until this derivation accounts for it.
-        let MinimalProof {
+        let StrippedProof {
             circuit_id,
             left_header,
             right_header,
@@ -224,7 +224,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             nested_export_rx,
             nested_collapse_rx,
             nested_compute_v_rx,
-        } = minimal;
+        } = stripped;
 
         let mut builder = ProofBuilder::<C, R, B>::new(self.params, bridge_alpha);
         builder.set_circuit_id(circuit_id);
@@ -343,7 +343,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     }
 }
 
-/// The array the minimal form holds in place of one of the working form's
+/// The array the stripped form holds in place of one of the working form's
 /// polynomial vectors.
 ///
 /// # Panics
@@ -359,5 +359,5 @@ fn sized<T, const N: usize>(polys: Vec<T>) -> [T; N] {
 }
 
 #[cfg(test)]
-#[path = "../../tests/minimal.rs"]
+#[path = "../../tests/stripped.rs"]
 mod tests;

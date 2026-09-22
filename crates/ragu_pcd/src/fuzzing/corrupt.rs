@@ -838,7 +838,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// $t\_z$ term reaches, for harnesses that bias sampling toward this region.
     /// Cached commitments bind every coefficient of the working form, so this
     /// is not a boundary between [`Binding::MustReject`] and
-    /// [`Binding::Unbound`] edits there. The minimal form recomputes its
+    /// [`Binding::Unbound`] edits there. The stripped form recomputes its
     /// commitments, and for it this is the bound below which every
     /// coefficient edit is rejected; beyond it, only an edit the circuit's
     /// wiring reaches is.

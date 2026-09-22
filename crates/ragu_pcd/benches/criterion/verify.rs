@@ -47,10 +47,10 @@ fn verify_bench(c: &mut Criterion) {
         )
         .unwrap();
     let rerandomized = app.rerandomize(fused.clone(), &mut rng).unwrap();
-    // The fused proof reduced to its primary fields, expanded inside the
+    // The fused proof stripped to its primary fields, expanded inside the
     // timed loop.
-    let minimal = fused.proof().clone().into_minimal();
-    let minimal_data = *fused.data();
+    let stripped = fused.proof().clone().strip();
+    let stripped_data = *fused.data();
 
     let proofs = [
         ("verify_fused", fused, true),
@@ -96,14 +96,14 @@ fn verify_bench(c: &mut Criterion) {
             );
         });
     }
-    c.bench_function("verify_minimal_fused", |b| {
+    c.bench_function("verify_stripped_fused", |b| {
         b.iter_batched(
             || StdRng::seed_from_u64(5678),
             |rng| {
                 assert!(
-                    app.verify_minimal::<_, nontrivial::InternalNode>(
-                        black_box(&minimal),
-                        &minimal_data,
+                    app.verify_stripped::<_, nontrivial::InternalNode>(
+                        black_box(&stripped),
+                        &stripped_data,
                         rng
                     )
                     .unwrap()

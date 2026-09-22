@@ -51,7 +51,7 @@ use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{Element, EndoscalarRangeError, extract_endoscalar};
 
 use crate::{
-    Application, MinimalProof, Pcd, Proof, SelectableBackend,
+    Application, Pcd, Proof, SelectableBackend, StrippedProof,
     header::Header,
     internal::{
         claims,
@@ -387,16 +387,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             && mesh_claim)
     }
 
-    /// Verifies a [`MinimalProof`] for the provided [`Header`] and data.
+    /// Verifies a [`StrippedProof`] for the provided [`Header`] and data.
     ///
     /// The proof is [expanded](Self::expand) and then verified exactly as
-    /// [`verify`](Self::verify) verifies the working form, so a minimal proof
+    /// [`verify`](Self::verify) verifies the working form, so a stripped proof
     /// is accepted precisely when its expansion is. A working-form proof and
-    /// its reduction therefore agree unless the former is inconsistent: a
-    /// stale cache is what rejects it, and a reduction has no cache to be
+    /// its stripped form therefore agree unless the former is inconsistent: a
+    /// stale cache is what rejects it, and a stripped proof has no cache to be
     /// stale. In particular a trace coefficient that no claim reaches says
     /// nothing about the statement; the working form binds it through its
-    /// commitment alone, and here it is unconstrained. A minimal proof whose
+    /// commitment alone, and here it is unconstrained. A stripped proof whose
     /// replayed challenges fall outside the endoscalar range is malformed
     /// and rejected with `Ok(false)`, as the working form carrying those
     /// challenges would be.
@@ -405,9 +405,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// those commitments against the same polynomials, so this costs more
     /// than verifying the working form. The header type is not inferable
     /// from `data` alone and is named explicitly.
-    pub fn verify_minimal<RNG: CryptoRng, H: Header<C::CircuitField>>(
+    pub fn verify_stripped<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
-        proof: &MinimalProof<C, R>,
+        proof: &StrippedProof<C, R>,
         data: &H::Data,
         rng: RNG,
     ) -> Result<bool> {
