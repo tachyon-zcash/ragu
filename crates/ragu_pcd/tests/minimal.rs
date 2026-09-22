@@ -1,6 +1,9 @@
-use ragu_arithmetic::rand::{SeedableRng, rngs::StdRng};
+use ragu_arithmetic::{
+    ff::Field,
+    rand::{SeedableRng, rngs::StdRng},
+};
 use ragu_circuits::polynomials::ProductionRank;
-use ragu_pasta::Pasta;
+use ragu_pasta::{Fp, Pasta};
 
 use crate::{Application, ApplicationBuilder, Proof};
 
@@ -43,4 +46,52 @@ fn expand_restores_reduced_proofs() {
             "the expanded {name} proof differs from the original"
         );
     }
+}
+
+fn verify(
+    app: &Application<'static, Pasta, ProductionRank, HEADER_SIZE>,
+    proof: &Proof<Pasta, ProductionRank>,
+    rng: &mut StdRng,
+) -> bool {
+    app.verify(&proof.clone().carry::<()>(()), &mut *rng)
+        .expect("verify must not error")
+}
+
+fn verify_minimal(
+    app: &Application<'static, Pasta, ProductionRank, HEADER_SIZE>,
+    proof: &Proof<Pasta, ProductionRank>,
+    rng: &mut StdRng,
+) -> bool {
+    app.verify_minimal::<_, ()>(&proof.clone().into_minimal(), &(), &mut *rng)
+        .expect("verify_minimal must not error")
+}
+
+/// The minimal form verifies exactly when the working form does, and a
+/// derived field carries nothing: editing one rejects the working form but
+/// the reduction drops the edit, while a primary edit survives it and both
+/// forms reject. A minimal proof of the wrong shape is rejected outright.
+#[test]
+fn verify_minimal_agrees_with_verify() {
+    let app = create_test_app();
+    let mut rng = StdRng::seed_from_u64(2);
+    let (proof, ()) = app.bootstrap_pcd().into_parts();
+    assert!(verify(&app, &proof, &mut rng));
+    assert!(verify_minimal(&app, &proof, &mut rng));
+
+    let mut challenge_edited = proof.clone();
+    challenge_edited.w += Fp::ONE;
+    assert!(!verify(&app, &challenge_edited, &mut rng));
+    assert!(verify_minimal(&app, &challenge_edited, &mut rng));
+
+    let mut header_edited = proof.clone();
+    header_edited.left_header[0] += Fp::ONE;
+    assert!(!verify(&app, &header_edited, &mut rng));
+    assert!(!verify_minimal(&app, &header_edited, &mut rng));
+
+    let mut resized = proof.into_minimal();
+    resized.left_header.push(Fp::ZERO);
+    assert!(
+        !app.verify_minimal::<_, ()>(&resized, &(), &mut rng)
+            .expect("verify_minimal must not error")
+    );
 }

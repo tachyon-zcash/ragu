@@ -10,6 +10,11 @@
 //! proofs of two shapes: a `WitnessLeaf` seed, and a `Merge2` fuse of two
 //! `Hash2` nodes, whose accumulators and headers are the nondegenerate ones.
 //!
+//! Each corruption is also judged through the minimal form: reducing the
+//! proof keeps a primary edit, which must still be rejected, and drops a
+//! derived one, which the expansion then derives honestly, so the proof
+//! verifies again.
+//!
 //! This entire suite is ignored in the platform matrix and runs in the
 //! dedicated Linux PR job with `--test corruption -- --include-ignored`.
 //!
@@ -62,6 +67,18 @@ impl Fixture {
             Shape::Deep => app.verify(&proof.carry::<InternalNode>(self.data), rng),
         }
         .expect("verify must not error")
+    }
+
+    /// The verdict on the proof reduced to its primary fields, which drops
+    /// every derived one.
+    fn verify_minimal(self, app: &Application<'_, C, R, HEADER_SIZE>, seed: u64) -> bool {
+        let minimal = self.proof.into_minimal();
+        let rng = StdRng::seed_from_u64(seed);
+        match self.shape {
+            Shape::Leaf => app.verify_minimal::<_, LeafNode>(&minimal, &self.data, rng),
+            Shape::Deep => app.verify_minimal::<_, InternalNode>(&minimal, &self.data, rng),
+        }
+        .expect("verify_minimal must not error")
     }
 }
 
@@ -228,6 +245,20 @@ impl CorruptionGroup {
     }
 }
 
+/// Whether a corruption edits a primary field, which the reduction to a
+/// minimal proof keeps, rather than a derived one, which it drops and the
+/// expansion derives afresh.
+fn survives_reduction(corruption: &Corruption<C>) -> bool {
+    !matches!(
+        corruption,
+        Corruption::Challenge(..)
+            | Corruption::NegateBridgeCommitment(_)
+            | Corruption::NegateChallengesPartial
+            | Corruption::NegateNativeCommitment(_)
+            | Corruption::NegateNestedCommitment(_)
+    )
+}
+
 /// Effective coefficient edits must be classified `MustReject`, and every
 /// `MustReject` edit must be rejected, with an honest control in each group.
 fn check_corruptions(shape: Shape, group: CorruptionGroup) {
@@ -269,9 +300,19 @@ fn check_corruptions(shape: Shape, group: CorruptionGroup) {
             continue;
         }
         bound += 1;
+        let reduced = corrupted.clone();
         assert!(
             !corrupted.verify(&app, 1234),
             "the verifier accepted a corrupted {:?} proof: {described}",
+            fixture.shape,
+        );
+        // Reduced to its primary fields, the proof keeps a primary edit and
+        // loses a derived one, which the expansion then derives honestly.
+        assert_eq!(
+            reduced.verify_minimal(&app, 1234),
+            !survives_reduction(corruption),
+            "the minimal form's verdict on a corrupted {:?} proof does not follow \
+             whether the edit survives reduction: {described}",
             fixture.shape,
         );
         assert_eq!(

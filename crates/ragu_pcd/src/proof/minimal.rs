@@ -25,7 +25,8 @@ use crate::{
 /// polynomials and the blinding seed of the `ab` bridge. The verifier can
 /// recompute every other field of a [`Proof`] from them, as that type's
 /// documentation lays out, so [`Proof::into_minimal`] loses nothing by
-/// dropping them and [`Application::expand`] rebuilds the [`Proof`].
+/// dropping them: [`Application::expand`] rebuilds the [`Proof`], and
+/// [`Application::verify_minimal`] verifies the minimal form as it stands.
 ///
 /// The binder and endoscaling-step polynomials are arrays where the working
 /// form holds vectors, so a minimal proof of the wrong shape cannot be

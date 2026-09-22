@@ -48,10 +48,10 @@ use ragu_circuits::{
     staging::{StageExt, StageReader, stage_wire_indices, wires_of},
 };
 use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
-use ragu_primitives::{Element, extract_endoscalar};
+use ragu_primitives::{Element, EndoscalarRangeError, extract_endoscalar};
 
 use crate::{
-    Application, Pcd, Proof, SelectableBackend,
+    Application, MinimalProof, Pcd, Proof, SelectableBackend,
     header::Header,
     internal::{
         claims,
@@ -385,6 +385,48 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             && transcript_claim
             && ab_bridge_claim
             && mesh_claim)
+    }
+
+    /// Verifies a [`MinimalProof`] for the provided [`Header`] and data.
+    ///
+    /// The proof is [expanded](Self::expand) and then verified exactly as
+    /// [`verify`](Self::verify) verifies the working form, so the two agree
+    /// on every proof: the derived fields the minimal form drops are
+    /// functions of the ones it keeps, and the expansion derives them
+    /// honestly. A minimal proof whose replayed challenges fall outside the
+    /// endoscalar range is malformed and rejected with `Ok(false)`, as the
+    /// working form carrying those challenges would be.
+    ///
+    /// Expansion commits to every polynomial, and the verifier then checks
+    /// those commitments against the same polynomials, so this costs more
+    /// than verifying the working form. The header type is not inferable
+    /// from `data` alone and is named explicitly.
+    pub fn verify_minimal<RNG: CryptoRng, H: Header<C::CircuitField>>(
+        &self,
+        proof: &MinimalProof<C, R>,
+        data: &H::Data,
+        rng: RNG,
+    ) -> Result<bool> {
+        // The structural checks `verify` starts with, before the expansion's
+        // commitments are paid for.
+        if !self.native_registry.circuit_in_domain(proof.circuit_id)
+            || proof.left_header.len() != HEADER_SIZE
+            || proof.right_header.len() != HEADER_SIZE
+        {
+            return Ok(false);
+        }
+        let expanded = match self.expand(proof.clone()) {
+            Ok(expanded) => expanded,
+            Err(err)
+                if err
+                    .invalid_witness_source::<EndoscalarRangeError>()
+                    .is_some() =>
+            {
+                return Ok(false);
+            }
+            Err(err) => return Err(err),
+        };
+        self.verify(&expanded.carry::<H>(data.clone()), rng)
     }
 
     /// The native mesh claim: see [`verify`](Self::verify).
