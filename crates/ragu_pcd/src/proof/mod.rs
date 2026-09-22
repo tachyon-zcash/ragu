@@ -61,13 +61,14 @@ use ragu_circuits::{
     registry::CircuitIndex,
     staging::{MultiStage, StageExt},
 };
-use ragu_core::Result;
+use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{
-    extract_endoscalar, lift_endoscalar,
+    GadgetExt as _, Point, extract_endoscalar, lift_endoscalar,
     vec::{FixedVec, Len},
 };
 
 use crate::{
+    RAGU_TAG,
     header::Header,
     internal::{
         endoscalar::EndoscalarStage,
@@ -79,6 +80,7 @@ use crate::{
             self, EndoscalingStep, EndoscalingStepWitness, NUM_ENDOSCALING_POINTS, NumStepsLen,
             PointsStage, PointsWitness,
         },
+        transcript::Transcript,
     },
 };
 
@@ -149,6 +151,71 @@ pub(crate) fn bridge_alpha_power<F: Field>(bridge_alpha: F, idx: nested::RxIndex
         _ => panic!("not a cached bridge: {idx:?}"),
     };
     bridge_alpha.pow_vartime([n])
+}
+
+/// The challenges the fuse squeezes, replayed from the bridge commitments
+/// in its schedule: `bridges` in transcript absorption order, the order of
+/// [`nested::RxIndex::BRIDGES`]. Shared by the verifier, which holds a
+/// proof's challenges to the replay, and [`expand`](crate::Application::expand),
+/// which derives them.
+pub(crate) fn replay_challenges<C: Cycle>(
+    params: &C::Params,
+    bridges: &[C::NestedCurve; nested::RxIndex::BRIDGES.len()],
+) -> Result<nested::Challenges<C::CircuitField>> {
+    let [
+        preamble,
+        s_prime,
+        inner_error,
+        outer_error,
+        ab,
+        query,
+        f,
+        eval,
+    ] = *bridges;
+    let mut dr = Emulator::execute();
+    let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(params), RAGU_TAG)?;
+    macro_rules! absorb {
+        ($point:expr) => {
+            Point::constant(&mut dr, $point)?.write(&mut dr, &mut transcript)?
+        };
+    }
+    macro_rules! squeeze {
+        () => {
+            *transcript.challenge(&mut dr)?.value().take()
+        };
+    }
+    absorb!(preamble);
+    let w = squeeze!();
+    absorb!(s_prime);
+    let y = squeeze!();
+    let z = squeeze!();
+    absorb!(inner_error);
+    let mu = squeeze!();
+    let nu = squeeze!();
+    absorb!(outer_error);
+    let mu_prime = squeeze!();
+    let nu_prime = squeeze!();
+    absorb!(ab);
+    let x = squeeze!();
+    absorb!(query);
+    let alpha = squeeze!();
+    absorb!(f);
+    let u = squeeze!();
+    absorb!(eval);
+    let pre_beta = squeeze!();
+    Ok(nested::Challenges {
+        w,
+        y,
+        z,
+        mu,
+        nu,
+        mu_prime,
+        nu_prime,
+        x,
+        alpha,
+        u,
+        pre_beta,
+    })
 }
 
 /// Represents a recursive proof for the correctness of some computation.

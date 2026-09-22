@@ -48,10 +48,10 @@ use ragu_circuits::{
     staging::{StageExt, StageReader, stage_wire_indices, wires_of},
 };
 use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
-use ragu_primitives::{Element, GadgetExt as _, Point, extract_endoscalar};
+use ragu_primitives::{Element, extract_endoscalar};
 
 use crate::{
-    Application, Pcd, Proof, RAGU_TAG, SelectableBackend,
+    Application, Pcd, Proof, SelectableBackend,
     header::Header,
     internal::{
         claims,
@@ -65,7 +65,6 @@ use crate::{
             stages::{ab as nested_ab, challenges as nested_challenges},
             unified as nested_unified,
         },
-        transcript::Transcript,
     },
 };
 
@@ -323,53 +322,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         // challenge range the prover grinds it into.
         let transcript_claim = {
             let proof = pcd.proof();
-            let mut dr = Emulator::execute();
-            let mut transcript =
-                Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
-            macro_rules! absorb {
-                ($point:expr) => {
-                    Point::constant(&mut dr, $point)?.write(&mut dr, &mut transcript)?
-                };
-            }
-            macro_rules! squeeze {
-                () => {
-                    *transcript.challenge(&mut dr)?.value().take()
-                };
-            }
-            absorb!(proof.bridge_preamble_commitment());
-            let w = squeeze!();
-            absorb!(proof.bridge_s_prime_commitment());
-            let y = squeeze!();
-            let z = squeeze!();
-            absorb!(proof.bridge_inner_error_commitment());
-            let mu = squeeze!();
-            let nu = squeeze!();
-            absorb!(proof.bridge_outer_error_commitment());
-            let mu_prime = squeeze!();
-            let nu_prime = squeeze!();
-            absorb!(proof.bridge_ab_commitment());
-            let x = squeeze!();
-            absorb!(proof.bridge_query_commitment());
-            let alpha = squeeze!();
-            absorb!(proof.bridge_f_commitment());
-            let u = squeeze!();
-            absorb!(proof.bridge_eval_commitment());
-            let pre_beta = squeeze!();
-
-            [w, y, z, mu, nu, mu_prime, nu_prime, x, alpha, u, pre_beta]
-                == [
-                    proof.w(),
-                    proof.y(),
-                    proof.z(),
-                    proof.mu(),
-                    proof.nu(),
-                    proof.mu_prime(),
-                    proof.nu_prime(),
-                    proof.x(),
-                    proof.alpha(),
-                    proof.u(),
-                    proof.pre_beta(),
-                ]
+            let replayed = crate::proof::replay_challenges::<C>(
+                self.params,
+                &[
+                    proof.bridge_preamble_commitment(),
+                    proof.bridge_s_prime_commitment(),
+                    proof.bridge_inner_error_commitment(),
+                    proof.bridge_outer_error_commitment(),
+                    proof.bridge_ab_commitment(),
+                    proof.bridge_query_commitment(),
+                    proof.bridge_f_commitment(),
+                    proof.bridge_eval_commitment(),
+                ],
+            )?;
+            replayed.in_order() == proof.challenges().in_order()
                 && extract_endoscalar(proof.pre_beta()).is_ok()
         };
 
