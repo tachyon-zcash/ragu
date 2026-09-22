@@ -6,6 +6,8 @@
 //! protocol phase (application proof, folding, query/evaluation, and
 //! commitment opening) alongside verifier challenges and bridge/nested-curve
 //! data, kept flat to make verification and proof transformation explicit.
+//! [`Proof`]'s documentation classifies each field as primary, supplied by
+//! the prover, or derived from the primary ones.
 
 #![allow(dead_code)]
 
@@ -78,11 +80,12 @@ use crate::{
     },
 };
 
-/// A newtype marking a field as derived/cacheable.
+/// A newtype marking a field the builder stores as a cache.
 ///
-/// Wraps a value that can be recomputed from primary proof data. Used to
-/// distinguish commitment caches from primary polynomial fields at the type
-/// level. Immutable once constructed.
+/// Wraps a value that can be recomputed from primary proof data: the
+/// commitment caches and the `ab` bridge polynomial. Not every derived field
+/// of a [`Proof`] carries it; see the provenance table there. Immutable once
+/// constructed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Cached<T>(T);
 
@@ -148,24 +151,63 @@ pub(crate) fn bridge_alpha_power<F: Field>(bridge_alpha: F, idx: nested::RxIndex
 
 /// Represents a recursive proof for the correctness of some computation.
 ///
-/// All fields are flat (no nested component structs). Polynomial fields are
-/// primary data; commitment fields are `Cached` values derivable from
-/// polynomials, which [`verify`](crate::Application::verify) rederives
-/// rather than trusts. The `ab` bridge polynomial is also `Cached`,
-/// derivable from `bridge_alpha` and native commitments; the other seven
-/// carry prover-chosen data (the nested fold's error terms and the nested
-/// batch's values among them) and are primary.
+/// All fields are flat (no nested component structs), and each is either
+/// **primary** or **derived**, by whether
+/// [`verify`](crate::Application::verify) can recompute it from the rest of
+/// the proof.
+///
+/// Primary fields are what only the prover can supply:
+///
+/// - the statement: `circuit_id`, `left_header` and `right_header`;
+/// - `bridge_alpha`, the prover's blinding of the `ab` bridge;
+/// - the native polynomials: this step's traces, accumulator and batch;
+/// - the seven bridge polynomials other than `bridge_ab_rx`, which the fuse
+///   blinds and fills with data the proof holds nowhere else, the nested
+///   fold's error terms and the nested batch's values among them;
+/// - the nested polynomials other than `nested_challenges_rx`: the nested
+///   traces, accumulator and batch.
+///
+/// Derived fields are functions of the primary ones, stored as caches: a
+/// parent fuse copies a child's commitments and challenges into its own
+/// stages without recomputing them, and the verifier checks all cached
+/// commitments in one batch per curve instead of committing to each
+/// polynomial itself. The verifier rederives them, or holds them to the
+/// recursion circuits' claims, rather than trusting them, so none carries
+/// information a verifier could not obtain on its own:
+///
+/// - every commitment, by committing the polynomial it names; $P$ and $P_n$
+///   come from the endoscaling walks rather than from $p$ and $p_n$, and
+///   the verifier checks that the two agree;
+/// - the challenges `w` through `pre_beta`, by replaying the transcript
+///   over the eight bridge commitments in the fuse's schedule;
+/// - `bridge_ab_rx` and its commitment, from the `ab` stage over
+///   `bridge_alpha` and the native $a$, $b$ and `points_ab` commitments;
+/// - `nested_challenges_rx`, from the challenge stage over the challenges'
+///   lifts and the headers;
+/// - `nested_challenges_partial`, the challenge stage's commitment without
+///   its $\beta$ term.
+///
+/// The values $c$, $v$, $c_n$ and $v_n$ are derived too, but never stored.
+///
+/// The `Cached` wrapper marks the derived fields the builder stores as
+/// caches: every commitment other than the seven bridge ones, and the `ab`
+/// bridge polynomial. The challenges, the bridge commitments, the challenge
+/// stage and its partial are set by the fuse as its transcript proceeds and
+/// carry no wrapper, but they are derived all the same. The verifier
+/// rederives all of them except the partial, which the `bind_challenges`
+/// circuits' claims hold to the challenges.
 #[derive(Clone)]
 pub struct Proof<C: Cycle, R: Rank> {
-    /// Shared alpha source for deriving cached bridge polynomial alphas.
+    /// Blinding seed for the derived `ab` bridge stage; see
+    /// `bridge_alpha_power`.
     pub(crate) bridge_alpha: C::ScalarField,
 
-    // Application metadata
+    // The statement (primary): which circuit, and the children's headers.
     pub(crate) circuit_id: CircuitIndex,
     pub(crate) left_header: Vec<C::CircuitField>,
     pub(crate) right_header: Vec<C::CircuitField>,
 
-    // Native rx polynomials (CircuitField, HostCurve commitment)
+    // Native polynomials (primary; CircuitField, HostCurve commitment)
     pub(crate) native_application_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_preamble_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_inner_error_rx: sparse::Polynomial<C::CircuitField, R>,
@@ -196,7 +238,9 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) native_points_f_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_points_walk_rx: sparse::Polynomial<C::CircuitField, R>,
 
-    // Bridge rx polynomials (non-cached, set by caller)
+    // Bridge polynomials (primary): the seven stages the fuse blinds and
+    // fills with data the proof holds nowhere else, the nested fold's error
+    // terms and the nested batch's values among them.
     pub(crate) bridge_preamble_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
     pub(crate) bridge_s_prime_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
     pub(crate) bridge_inner_error_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
@@ -205,43 +249,46 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) bridge_f_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
     pub(crate) bridge_eval_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
 
-    // Bridge rx polynomial (cached, derived from bridge_alpha + native commitments)
+    // Bridge polynomial (derived, `Cached`): the `ab` stage over
+    // bridge_alpha and the native a, b and points_ab commitments, which the
+    // verifier rederives.
     bridge_ab_rx: Cached<Arc<sparse::Polynomial<C::ScalarField, R>>>,
 
-    // Nested endoscaling data (ScalarField, NestedCurve commitment)
+    // Nested endoscaling data (primary; ScalarField, NestedCurve commitment)
     pub(crate) nested_endoscaling_step_rxs: Vec<sparse::Polynomial<C::ScalarField, R>>,
     pub(crate) nested_endoscalar_rx: sparse::Polynomial<C::ScalarField, R>,
     pub(crate) nested_points_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
 
-    // Nested accumulator polynomials (ScalarField, NestedCurve commitment):
-    // the children's nested claims, folded.
+    // Nested accumulator polynomials (primary; ScalarField, NestedCurve
+    // commitment): the children's nested claims, folded.
     pub(crate) nested_a_poly: sparse::Polynomial<C::ScalarField, R>,
     pub(crate) nested_b_poly: sparse::Polynomial<C::ScalarField, R>,
 
-    // Nested batch polynomials (ScalarField, NestedCurve commitment): the
-    // $m_n(W, x_n, y_n)$ restriction, and the batch accumulated into $p_n$.
+    // Nested batch polynomials (primary; ScalarField, NestedCurve commitment):
+    // the $m_n(W, x_n, y_n)$ restriction, and the batch accumulated into $p_n$.
     pub(crate) nested_registry_xy_poly: sparse::Polynomial<C::ScalarField, R>,
     pub(crate) nested_p_poly: sparse::Polynomial<C::ScalarField, R>,
 
-    // Nested challenge stage (ScalarField, unblinded NestedCurve
+    // Nested challenge stage (derived; ScalarField, unblinded NestedCurve
     // commitment): the lifts of this step's native challenges, the
-    // base-case sign and the lift of `pre_beta`.
+    // base-case sign and the lift of `pre_beta`, a function of the
+    // challenges and the headers that the verifier recomputes.
     pub(crate) nested_challenges_rx: sparse::Polynomial<C::ScalarField, R>,
-    // The challenge stage's commitment without its beta term: the sum the
-    // `bind_challenges` circuits recompute from the transcript challenges,
-    // carried by the native unified instance so that a parent can complete
-    // it and hold it against the stage it walks.
+    // The challenge stage's commitment without its beta term (derived): the
+    // sum the `bind_challenges` circuits recompute from the transcript
+    // challenges, carried by the native unified instance so that a parent
+    // can complete it and hold it against the stage it walks.
     pub(crate) nested_challenges_partial: C::NestedCurve,
 
-    // Nested instance circuits (ScalarField, NestedCurve commitments): the
-    // export circuit pins the nested unified instance to the stages, the
-    // collapse circuit verifies the nested fold, and the compute-v circuit
-    // the nested batch evaluation.
+    // Nested instance circuits (primary; ScalarField, NestedCurve
+    // commitments): the export circuit pins the nested unified instance to
+    // the stages, the collapse circuit verifies the nested fold, and the
+    // compute-v circuit the nested batch evaluation.
     pub(crate) nested_export_rx: sparse::Polynomial<C::ScalarField, R>,
     pub(crate) nested_collapse_rx: sparse::Polynomial<C::ScalarField, R>,
     pub(crate) nested_compute_v_rx: sparse::Polynomial<C::ScalarField, R>,
 
-    // Nested endoscaling commitment caches
+    // Nested commitment caches (derived, `Cached`), endoscaling first
     nested_endoscaling_step_commitments: Vec<Cached<C::NestedCurve>>,
     nested_endoscalar_commitment: Cached<C::NestedCurve>,
     nested_points_commitment: Cached<C::NestedCurve>,
@@ -262,7 +309,8 @@ pub struct Proof<C: Cycle, R: Rank> {
     nested_collapse_commitment: Cached<C::NestedCurve>,
     nested_compute_v_commitment: Cached<C::NestedCurve>,
 
-    // Challenges
+    // Challenges (derived): squeezed in this order from the transcript over
+    // the bridge commitments, which the verifier replays.
     pub(crate) w: C::CircuitField,
     pub(crate) y: C::CircuitField,
     pub(crate) z: C::CircuitField,
@@ -275,7 +323,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) u: C::CircuitField,
     pub(crate) pre_beta: C::CircuitField,
 
-    // Native commitment caches
+    // Native commitment caches (derived, `Cached`)
     native_application_commitment: Cached<C::HostCurve>,
     native_preamble_commitment: Cached<C::HostCurve>,
     native_inner_error_commitment: Cached<C::HostCurve>,
@@ -302,7 +350,9 @@ pub struct Proof<C: Cycle, R: Rank> {
     native_points_f_commitment: Cached<C::HostCurve>,
     native_points_walk_commitment: Cached<C::HostCurve>,
 
-    // Bridge commitments (non-cached)
+    // Bridge commitments (derived, not `Cached`): the fuse sets each one
+    // alongside its polynomial as it absorbs it into the transcript, and the
+    // verifier recommits the polynomial.
     pub(crate) bridge_preamble_commitment: C::NestedCurve,
     pub(crate) bridge_s_prime_commitment: C::NestedCurve,
     pub(crate) bridge_inner_error_commitment: C::NestedCurve,
@@ -311,7 +361,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) bridge_f_commitment: C::NestedCurve,
     pub(crate) bridge_eval_commitment: C::NestedCurve,
 
-    // Bridge commitment (cached, derived from the cached bridge rx)
+    // Bridge commitment (derived, `Cached`, from the derived bridge rx)
     bridge_ab_commitment: Cached<C::NestedCurve>,
 }
 
