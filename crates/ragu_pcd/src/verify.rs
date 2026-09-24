@@ -81,9 +81,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// Verifies some [`Pcd`] for the provided [`Header`].
     ///
     /// Returns `Ok(true)` if all verification checks pass, `Ok(false)` if
-    /// any check fails (e.g., invalid circuit ID, header size mismatch,
-    /// corrupted commitments or evaluations), or `Err` if an internal
-    /// computation error occurs.
+    /// any check fails (e.g., malformed proof structure, invalid circuit ID,
+    /// header size mismatch, corrupted commitments or evaluations), or `Err`
+    /// if an internal computation error occurs.
     ///
     /// The computational kernels used here are those of the sealed
     /// [`SelectableBackend::Verifier`] of the selected backend: the reference
@@ -124,6 +124,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         if pcd.proof().left_header().len() != HEADER_SIZE
             || pcd.proof().right_header().len() != HEADER_SIZE
         {
+            return Ok(false);
+        }
+
+        if !pcd.proof().is_well_formed() {
             return Ok(false);
         }
 
