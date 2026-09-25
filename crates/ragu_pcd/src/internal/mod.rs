@@ -25,6 +25,7 @@ pub mod const_fns;
 pub mod endoscalar;
 pub mod fold_revdot;
 pub mod inverter;
+pub mod ky;
 pub mod native;
 pub mod nested;
 pub mod transcript;

@@ -97,14 +97,17 @@ pub use fft::{Ring, bitreverse};
 /// When the `multicore` feature is disabled the closures simply run in
 /// sequence.
 pub use multicore::join;
+/// Runs one operation over a mutable slice, split into per-thread chunks
+/// when the `multicore` feature is enabled.
+pub use multicore::parallelize;
 /// Converts a 256-bit integer literal into the little endian `[u64; 4]`
 /// representation that e.g. [`Fp::from_raw`](crate::pasta_curves::Fp::from_raw) or
 /// [`Fp::pow`](crate::pasta_curves::Fp::pow) need as input. This makes constants
 /// more readable, but is not intended for use in other contexts.
 pub use ragu_macros::repr256;
 pub use util::{
-    batch_to_affine, decomp_product_poly, dot, eval, factor, factor_iter, geosum, low_u64, msm,
-    poly_mul, poly_with_roots,
+    batch_to_affine, decomp_poly, decomp_product_poly, dot, eval, factor, factor_iter, geosum,
+    low_u64, msm, poly_mul, poly_with_roots,
 };
 
 use crate::ff::{Field, FromUniformBytes, PrimeFieldBits, WithSmallOrderMulGroup};
@@ -192,6 +195,11 @@ pub trait FixedGenerators<C: CurveAffine>: Send + Sync + 'static {
 
     /// Generator used as a blinding factor or randomization.
     fn h(&self) -> &C;
+
+    /// Generator the inner product argument uses to bind the inner product
+    /// value into the commitment being opened. Independent of the vector
+    /// generators and of the blinding generator.
+    fn u(&self) -> &C;
 
     /// Compute a commitment to a single value.
     fn short_commit(&self, value: C::ScalarExt, blind: C::ScalarExt) -> C {

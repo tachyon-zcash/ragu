@@ -382,8 +382,7 @@ fn poly_mul_fft<F: PrimeField>(a: &[F], b: &[F], out: &mut Vec<F>) {
 /// This is the polynomial-decomposition step in the protocol's reduction
 /// from a revdot claim to a polynomial query; see the
 /// [book](https://tachyon.z.cash/ragu/protocol/prelim/structured_vectors.html#reduction-to-polynomial-queries)
-/// for how the protocol consumes it. This function has no callers in this
-/// workspace yet; it is groundwork for the upcoming revdot-reduction prover.
+/// for how the protocol consumes it.
 ///
 /// Equal length is required: the identity is parameterized by a single $n$
 /// where $|\mathbf{a}| = |\mathbf{b}| = n$. With $c = a \cdot b$ of length
@@ -429,10 +428,26 @@ pub fn decomp_product_poly<F: PrimeField>(a: &[F], b: &[F]) -> (Vec<F>, Vec<F>) 
     let n = a.len();
     let mut c = Vec::new();
     poly_mul(a, b, &mut c);
+    decomp_poly(c, n)
+}
+
+/// Splits a polynomial $c$ of $2n - 1$ coefficients into $(p, q)$ with
+///
+/// $$ c(X) = X^{n-1} p(X^{-1}) + X^n q(X), $$
+///
+/// so that $p(0) = c\_{n-1}$: $p$ is the reverse of the lower $n$
+/// coefficients and $q$ the upper $n - 1$. This is the split
+/// [`decomp_product_poly`] applies to one product; a sum of products, as
+/// the revdot reduction forms over many claims, is split the same way.
+///
+/// # Panics
+///
+/// Panics if `c` does not have exactly $2n - 1$ coefficients.
+pub fn decomp_poly<F: Field>(mut c: Vec<F>, n: usize) -> (Vec<F>, Vec<F>) {
     assert_eq!(
         c.len(),
         2 * n - 1,
-        "internal invariant: poly_mul should produce a vector of length 2n - 1"
+        "decomp_poly requires a product of length 2n - 1"
     );
 
     let q = c.split_off(n);

@@ -23,11 +23,17 @@ fn write_point<C: CurveAffine, W: Write>(v: &mut W, point: C) -> Result<()> {
     Ok(())
 }
 
-fn write_params_for_curve<C: CurveAffine, W: Write>(v: &mut W, g: &[C], h: &C) -> Result<()> {
+fn write_params_for_curve<C: CurveAffine, W: Write>(
+    v: &mut W,
+    g: &[C],
+    h: &C,
+    u: &C,
+) -> Result<()> {
     for point in g {
         write_point(v, *point)?;
     }
     write_point(v, *h)?;
+    write_point(v, *u)?;
 
     Ok(())
 }
@@ -43,6 +49,6 @@ fn main() {
     let params = common::PastaParams::generate();
 
     let mut f = File::create(out_path).unwrap();
-    write_params_for_curve(&mut f, &params.pallas.g, &params.pallas.h).unwrap();
-    write_params_for_curve(&mut f, &params.vesta.g, &params.vesta.h).unwrap();
+    write_params_for_curve(&mut f, &params.pallas.g, &params.pallas.h, &params.pallas.u).unwrap();
+    write_params_for_curve(&mut f, &params.vesta.g, &params.vesta.h, &params.vesta.u).unwrap();
 }

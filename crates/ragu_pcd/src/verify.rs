@@ -33,7 +33,6 @@
 //! [`challenges`]: crate::internal::nested::stages::challenges
 
 use alloc::vec::Vec;
-use core::iter::once;
 
 use ragu_arithmetic::{
     CurveAffine, Cycle, FixedGenerators, bitreverse,
@@ -48,22 +47,18 @@ use ragu_circuits::{
     staging::{StageExt, StageReader, stage_wire_indices, wires_of},
 };
 use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
-use ragu_primitives::{Element, GadgetExt as _, Point, extract_endoscalar};
+use ragu_primitives::{GadgetExt as _, Point, extract_endoscalar};
 
 use crate::{
     Application, Pcd, Proof, RAGU_TAG, SelectableBackend,
     header::Header,
     internal::{
-        claims,
-        native::{
-            self as native_internal, RxComponent, claims as native_claims,
-            stages::preamble::ProofInputs,
-        },
+        claims, ky,
+        native::{self as native_internal, RxComponent, claims as native_claims},
         nested::{
             self as nested_internal, RxComponent as NestedRxComponent,
             challenge as nested_challenge, claims as nested_claims,
             stages::{ab as nested_ab, challenges as nested_challenges},
-            unified as nested_unified,
         },
         transcript::Transcript,
     },
@@ -136,20 +131,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         };
 
         // Compute unified k(y), unified_bridge k(y), and application k(y).
-        let (unified_ky, unified_bridge_ky, application_ky) =
-            Emulator::emulate_wireless((pcd.proof(), pcd.data().clone(), y), |dr, witness| {
-                let (proof, data, y) = witness.cast();
-                let y = Element::alloc(dr, &mut (), y)?;
-                let proof_inputs =
-                    ProofInputs::<_, C, HEADER_SIZE>::alloc_for_verify::<R, H>(dr, proof, data)?;
-
-                let (unified_ky, unified_bridge_ky) = proof_inputs.unified_ky_values(dr, &y)?;
-                let unified_ky = *unified_ky.value().take();
-                let unified_bridge_ky = *unified_bridge_ky.value().take();
-                let application_ky = *proof_inputs.application_ky(dr, &y)?.value().take();
-
-                Ok((unified_ky, unified_bridge_ky, application_ky))
-            })?;
+        // The raw claim's target stays `None`: see `SingleProofSource::rx`.
+        let native_ky = ky::native_ky::<C, R, H, HEADER_SIZE>(pcd, y)?;
 
         // Build a and b polynomials for each revdot claim.
         let source = native::SingleProofSource { proof: pcd.proof() };
@@ -159,13 +142,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
 
         // Check all native revdot claims.
         let native_revdot_claims = {
-            let ky_source = native::SingleProofKySource {
-                application_ky,
-                unified_bridge_ky,
-                unified_ky,
-            };
-
-            native::ky_values(&ky_source)
+            native::ky_values(&native_ky)
                 .zip(builder.a.iter().zip(builder.b.iter()))
                 .all(|(ky, (a, b))| Verifier::<B>::sparse_revdot(a, b) == ky)
         };
@@ -186,29 +163,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             // for the instance circuits' claims: the instance is read off
             // the proof (c_n and v_n derived from its polynomials), and the
             // claims bind it to those circuits' traces.
-            let unified_ky = Emulator::emulate_wireless(
-                (pcd.proof().nested_instance()?, y_nested),
-                |dr, witness| {
-                    let (instance, y) = witness.cast();
-                    let y = Element::alloc(dr, &mut (), y)?;
-                    let output = nested_unified::Output::<_, C::HostCurve>::alloc(
-                        dr,
-                        &mut (),
-                        instance.as_ref(),
-                    )?;
-                    Ok(*output.ky(dr, &y)?.value().take())
-                },
-            )?;
-            let ky_source = nested::SingleProofKySource {
+            let nested_ky = ky::nested_ky(pcd.proof(), y_nested)?;
+            let ky_source = ky::NestedKy {
                 // The nested accumulator's claim is tautological here: its
                 // k(y) is derived from the very polynomials the claim checks.
                 // It remains meaningful inside the collapse circuit, where
                 // c_n is an instance wire the fold is checked against.
-                raw_c: Verifier::<B>::sparse_revdot(
+                c: Verifier::<B>::sparse_revdot(
                     &pcd.proof()[NestedRxComponent::AbA],
                     &pcd.proof()[NestedRxComponent::AbB],
                 ),
-                unified_ky,
+                unified: nested_ky,
             };
             nested::ky_values(&ky_source)
                 .zip(nested_builder.a.iter().zip(nested_builder.b.iter()))
@@ -672,10 +637,7 @@ where
 mod native {
     use super::*;
     pub use crate::internal::native::claims::ky_values;
-    use crate::internal::{
-        claims::Source,
-        native::{RxComponent, claims::KySource},
-    };
+    use crate::internal::{claims::Source, native::RxComponent};
 
     pub struct SingleProofSource<'rx, C: Cycle, R: Rank> {
         pub proof: &'rx Proof<C, R>,
@@ -689,7 +651,7 @@ mod native {
         fn rx(&self, component: RxComponent) -> impl Iterator<Item = Self::Rx> {
             // The verifier computes c from AbA and AbB when reconstructing
             // unified k(y), so checking the raw claim would be tautological.
-            // Omit it together with `SingleProofKySource::raw_c`.
+            // Omit it together with its target, `NativeKy::c`.
             match component {
                 RxComponent::AbA | RxComponent::AbB => None,
                 RxComponent::Rx(_) => Some(&self.proof[component]),
@@ -701,51 +663,12 @@ mod native {
             core::iter::once(self.proof.circuit_id())
         }
     }
-
-    /// Source for k(y) values for single-proof verification.
-    pub struct SingleProofKySource<F> {
-        pub application_ky: F,
-        pub unified_bridge_ky: F,
-        pub unified_ky: F,
-    }
-
-    impl<F: Field> KySource for SingleProofKySource<F> {
-        type Ky = F;
-
-        fn raw_c(&self) -> impl Iterator<Item = F> {
-            // Match the raw-claim omission in `SingleProofSource::rx`.
-            core::iter::empty()
-        }
-
-        fn application_ky(&self) -> impl Iterator<Item = F> {
-            once(self.application_ky)
-        }
-
-        fn unified_bridge_ky(&self) -> impl Iterator<Item = F> {
-            once(self.unified_bridge_ky)
-        }
-
-        fn unified_ky(&self) -> impl Iterator<Item = F> + Clone {
-            once(self.unified_ky)
-        }
-
-        fn ones(&self) -> impl Iterator<Item = F> + Clone {
-            once(F::ONE)
-        }
-
-        fn zero(&self) -> F {
-            F::ZERO
-        }
-    }
 }
 
 mod nested {
     use super::*;
     pub use crate::internal::nested::claims::ky_values;
-    use crate::internal::{
-        claims::Source,
-        nested::{RxComponent, claims::KySource},
-    };
+    use crate::internal::{claims::Source, nested::RxComponent};
 
     /// Source for nested field polynomials for single-proof verification.
     pub struct SingleProofSource<'rx, C: Cycle, R: Rank> {
@@ -763,32 +686,6 @@ mod nested {
 
         fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
             core::iter::empty()
-        }
-    }
-
-    /// Source for k(y) values for nested single-proof verification.
-    pub struct SingleProofKySource<F> {
-        pub raw_c: F,
-        pub unified_ky: F,
-    }
-
-    impl<F: Field> KySource for SingleProofKySource<F> {
-        type Ky = F;
-
-        fn raw_c(&self) -> impl Iterator<Item = F> {
-            once(self.raw_c)
-        }
-
-        fn ones(&self) -> impl Iterator<Item = F> + Clone {
-            once(F::ONE)
-        }
-
-        fn unified_ky(&self) -> impl Iterator<Item = F> + Clone {
-            once(self.unified_ky)
-        }
-
-        fn zero(&self) -> F {
-            F::ZERO
         }
     }
 }

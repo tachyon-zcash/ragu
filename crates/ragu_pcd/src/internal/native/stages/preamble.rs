@@ -5,7 +5,7 @@
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use ragu_arithmetic::Cycle;
+use ragu_arithmetic::{Cycle, ff::PrimeField};
 use ragu_circuits::{horner::Horner, polynomials::Rank, staging};
 use ragu_core::{
     Error, Result,
@@ -211,24 +211,73 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         proof: DriverValue<D, &Proof<C, R>>,
         header_data: DriverValue<D, H::Data>,
     ) -> Result<Self> {
-        let header_data = D::try_just(|| {
-            use ragu_core::drivers::emulator::{Emulator, Wireless};
-            let emulator = &mut Emulator::<Wireless<D::MaybeKind, D::F>>::wireless();
-
-            let output = H::encode(emulator, &mut (), header_data)?;
-            let output = padded::for_header::<H, HEADER_SIZE, _>(emulator, output)?;
-
-            let mut header_data = Vec::with_capacity(HEADER_SIZE);
-            output.write(emulator, &mut header_data)?;
-
-            header_data
-                .into_iter()
-                .map(|e| *e.value().take())
-                .collect_fixed()
-        })?;
-
+        let header_data = encode_output_header::<D, H, HEADER_SIZE>(header_data)?;
         Self::alloc(dr, proof, header_data.as_ref())
     }
+
+    /// Allocate ProofInputs from the parts a proof's instance carries: the
+    /// child headers, the encoded output header, the circuit id as its
+    /// domain point, and the unified instance's values.
+    pub fn alloc_from_parts(
+        dr: &mut D,
+        left_header: DriverValue<D, &[D::F]>,
+        right_header: DriverValue<D, &[D::F]>,
+        output_header: DriverValue<D, &[D::F]>,
+        circuit_id: DriverValue<D, D::F>,
+        unified: DriverValue<D, &unified::Instance<C>>,
+    ) -> Result<Self> {
+        fn alloc_header<'dr, D: Driver<'dr>, const N: usize>(
+            dr: &mut D,
+            data: DriverValue<D, &[D::F]>,
+        ) -> Result<FixedVec<Element<'dr, D>, ConstLen<N>>> {
+            D::try_just(|| {
+                if data.as_ref().take().len() != N {
+                    return Err(Error::MalformedEncoding(
+                        "Header data length does not match HEADER_SIZE".into(),
+                    ));
+                }
+                Ok(())
+            })?;
+            (0..N)
+                .map(|i| Element::alloc(dr, &mut (), data.as_ref().map(|d| d[i])))
+                .try_collect_fixed()
+        }
+
+        Ok(ProofInputs {
+            children: ChildHeaders {
+                left: alloc_header(dr, left_header)?,
+                right: alloc_header(dr, right_header)?,
+            },
+            output_header: alloc_header(dr, output_header)?,
+            circuit_id: Element::alloc(dr, &mut (), circuit_id)?,
+            unified: unified::Output::alloc_from_instance(dr, &mut (), unified)?,
+        })
+    }
+}
+
+/// Encodes a header's data as the step's padded output header: the
+/// `HEADER_SIZE` field elements the application circuit's instance carries.
+pub fn encode_output_header<'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_SIZE: usize>(
+    header_data: DriverValue<D, H::Data>,
+) -> Result<DriverValue<D, FixedVec<D::F, ConstLen<HEADER_SIZE>>>>
+where
+    D::F: PrimeField,
+{
+    D::try_just(|| {
+        use ragu_core::drivers::emulator::{Emulator, Wireless};
+        let emulator = &mut Emulator::<Wireless<D::MaybeKind, D::F>>::wireless();
+
+        let output = H::encode(emulator, &mut (), header_data)?;
+        let output = padded::for_header::<H, HEADER_SIZE, _>(emulator, output)?;
+
+        let mut header_data = Vec::with_capacity(HEADER_SIZE);
+        output.write(emulator, &mut header_data)?;
+
+        header_data
+            .into_iter()
+            .map(|e| *e.value().take())
+            .collect_fixed()
+    })
 }
 
 /// Prover-internal output of the native preamble stage.

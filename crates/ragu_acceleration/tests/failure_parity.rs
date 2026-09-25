@@ -46,6 +46,7 @@ fn unequal_lengths_truncate_identically() {
 struct ShortGenerators {
     g: Vec<pallas::Affine>,
     h: pallas::Affine,
+    u: pallas::Affine,
 }
 
 impl ShortGenerators {
@@ -54,6 +55,7 @@ impl ShortGenerators {
         Self {
             g: full.g()[..TestRank::num_coeffs() / 2].to_vec(),
             h: *full.h(),
+            u: *full.u(),
         }
     }
 }
@@ -65,6 +67,10 @@ impl FixedGenerators<pallas::Affine> for ShortGenerators {
 
     fn h(&self) -> &pallas::Affine {
         &self.h
+    }
+
+    fn u(&self) -> &pallas::Affine {
+        &self.u
     }
 }
 

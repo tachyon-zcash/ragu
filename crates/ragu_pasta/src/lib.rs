@@ -101,6 +101,10 @@ impl FixedGenerators<ragu_arithmetic::pasta_curves::EpAffine> for PallasGenerato
     fn h(&self) -> &ragu_arithmetic::pasta_curves::EpAffine {
         &self.h
     }
+
+    fn u(&self) -> &ragu_arithmetic::pasta_curves::EpAffine {
+        &self.u
+    }
 }
 
 impl FixedGenerators<ragu_arithmetic::pasta_curves::EqAffine> for VestaGenerators {
@@ -110,6 +114,10 @@ impl FixedGenerators<ragu_arithmetic::pasta_curves::EqAffine> for VestaGenerator
 
     fn h(&self) -> &ragu_arithmetic::pasta_curves::EqAffine {
         &self.h
+    }
+
+    fn u(&self) -> &ragu_arithmetic::pasta_curves::EqAffine {
+        &self.u
     }
 }
 
@@ -137,28 +145,39 @@ mod baked {
         C::from_xy(x, y).unwrap()
     }
 
-    fn get_points_for_curve<C: CurveAffine>(source: &mut &[u8], n: usize) -> (Vec<C>, C) {
+    fn get_points_for_curve<C: CurveAffine>(source: &mut &[u8], n: usize) -> (Vec<C>, C, C) {
         let mut g = Vec::with_capacity(n);
         for _ in 0..n {
             g.push(get_point(source));
         }
         let h = get_point(source);
+        let u = get_point(source);
 
-        (g, h)
+        (g, h, u)
     }
 
     lazy_static! {
         static ref PASTA_PARAMETERS: PastaParams = {
             let mut params = RAW_PARAMETERS;
 
-            let (ep_g, ep_h) = get_points_for_curve(&mut params, 1 << crate::common::DEFAULT_EP_K);
-            let (eq_g, eq_h) = get_points_for_curve(&mut params, 1 << crate::common::DEFAULT_EQ_K);
+            let (ep_g, ep_h, ep_u) =
+                get_points_for_curve(&mut params, 1 << crate::common::DEFAULT_EP_K);
+            let (eq_g, eq_h, eq_u) =
+                get_points_for_curve(&mut params, 1 << crate::common::DEFAULT_EQ_K);
 
             assert_eq!(params.len(), 0);
 
             PastaParams {
-                pallas: PallasGenerators { g: ep_g, h: ep_h },
-                vesta: VestaGenerators { g: eq_g, h: eq_h },
+                pallas: PallasGenerators {
+                    g: ep_g,
+                    h: ep_h,
+                    u: ep_u,
+                },
+                vesta: VestaGenerators {
+                    g: eq_g,
+                    h: eq_h,
+                    u: eq_u,
+                },
             }
         };
     }
@@ -208,6 +227,24 @@ mod tests {
         assert_eq!(
             Pasta::host_generators(params).h(),
             Pasta::host_generators(&regenerated).h()
+        );
+        assert_eq!(
+            Pasta::nested_generators(params).u(),
+            Pasta::nested_generators(&regenerated).u()
+        );
+        assert_eq!(
+            Pasta::host_generators(params).u(),
+            Pasta::host_generators(&regenerated).u()
+        );
+
+        // The two auxiliary generators hash distinct messages.
+        assert_ne!(
+            Pasta::nested_generators(params).u(),
+            Pasta::nested_generators(params).h()
+        );
+        assert_ne!(
+            Pasta::host_generators(params).u(),
+            Pasta::host_generators(params).h()
         );
     }
 }

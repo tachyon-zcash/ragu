@@ -2,12 +2,40 @@
 
 #[cfg(feature = "multicore")]
 pub use maybe_rayon::{current_num_threads, iter::ParallelIterator};
-pub use maybe_rayon::{iter::IntoParallelIterator, join};
+pub use maybe_rayon::{iter::IntoParallelIterator, join, scope};
 
 /// Returns 1 when the `multicore` feature is disabled.
 #[cfg(not(feature = "multicore"))]
 pub fn current_num_threads() -> usize {
     1
+}
+
+/// Applies `f` to disjoint chunks of `v`, in parallel when the `multicore`
+/// feature is enabled. Each call receives one chunk and the index in `v` at
+/// which that chunk starts.
+///
+/// This is the data-parallel counterpart of [`par_join!`](crate::par_join): one operation
+/// over a slice, split into as many chunks as there are threads.
+pub fn parallelize<T: Send, F: Fn(&mut [T], usize) + Send + Sync + Clone>(v: &mut [T], f: F) {
+    let n = v.len();
+    if n == 0 {
+        return;
+    }
+    let num_threads = current_num_threads();
+    let mut chunk = n / num_threads;
+    if chunk < num_threads {
+        chunk = n;
+    }
+
+    scope(|scope| {
+        for (chunk_num, v) in v.chunks_mut(chunk).enumerate() {
+            let f = f.clone();
+            scope.spawn(move |_| {
+                let start = chunk_num * chunk;
+                f(v, start);
+            });
+        }
+    });
 }
 
 /// N-way parallel join for coarse-grained task parallelism.

@@ -459,6 +459,54 @@ impl<'dr, D: Driver<'dr>, A, T: Clone, W: Copy + Send + Sync> Slot<'dr, D, A, T,
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
+    /// Allocates an [`Output`] from an [`Instance`]'s values.
+    ///
+    /// Field order follows `define_unified_instance!` for consistency.
+    pub fn alloc_from_instance<A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        instance: DriverValue<D, &Instance<C>>,
+    ) -> Result<Self> {
+        macro_rules! point {
+            ($field:ident) => {
+                Point::alloc(dr, instance.as_ref().map(|i| i.$field))?
+            };
+        }
+        macro_rules! element {
+            ($field:ident) => {
+                Element::alloc(dr, allocator, instance.as_ref().map(|i| i.$field))?
+            };
+        }
+        Ok(Output {
+            bridge_preamble_commitment: point!(bridge_preamble_commitment),
+            w: element!(w),
+            bridge_s_prime_commitment: point!(bridge_s_prime_commitment),
+            y: element!(y),
+            z: element!(z),
+            bridge_inner_error_commitment: point!(bridge_inner_error_commitment),
+            mu: element!(mu),
+            nu: element!(nu),
+            bridge_outer_error_commitment: point!(bridge_outer_error_commitment),
+            mu_prime: element!(mu_prime),
+            nu_prime: element!(nu_prime),
+            c: element!(c),
+            bridge_ab_commitment: point!(bridge_ab_commitment),
+            x: element!(x),
+            bridge_query_commitment: point!(bridge_query_commitment),
+            alpha: element!(alpha),
+            bridge_f_commitment: point!(bridge_f_commitment),
+            u: element!(u),
+            bridge_eval_commitment: point!(bridge_eval_commitment),
+            pre_beta: element!(pre_beta),
+            v: element!(v),
+            nested_challenges_partial: point!(nested_challenges_partial),
+            nested_p_commitment: point!(nested_p_commitment),
+            nested_a_commitment: point!(nested_a_commitment),
+            nested_b_commitment: point!(nested_b_commitment),
+            nested_registry_xy_commitment: point!(nested_registry_xy_commitment),
+        })
+    }
+
     /// Allocates an [`Output`] directly from a current proof reference.
     ///
     /// This is a convenience method that extracts all fields from the current
