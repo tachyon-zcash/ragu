@@ -60,6 +60,7 @@ use ragu_arithmetic::{
     ff::{Field, FromUniformBytes, PrimeField},
 };
 use ragu_core::{Error, Result};
+use ragu_primitives::wire::{self, Decode, Encode};
 
 use crate::{
     BondingObject, Circuit, WiringObject,
@@ -813,6 +814,22 @@ impl<F: FromUniformBytes<64>, R: Rank> Registry<'_, F, R> {
     /// Use the caller's beacon tag through the temporary replacement.
     fn compute_registry_tag(&self, tag: Option<Tag<F>>) -> Result<F> {
         crate::beacon::registry_tag(tag)
+    }
+}
+
+impl Encode for CircuitIndex {
+    fn encode(&self, output: &mut Vec<u8>) {
+        self.0.encode(output);
+    }
+}
+
+impl Decode for CircuitIndex {
+    fn min_encoded_len() -> usize {
+        <u32 as Decode>::min_encoded_len()
+    }
+
+    fn decode<'a>(reader: &mut wire::Reader<'a>) -> core::result::Result<Self, wire::Error<'a>> {
+        u32::decode(reader).map(CircuitIndex)
     }
 }
 

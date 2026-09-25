@@ -97,3 +97,6 @@ name = "registry_tags"
 
 [[test]]
 name = "rerandomization"
+
+[[test]]
+name = "wire"
