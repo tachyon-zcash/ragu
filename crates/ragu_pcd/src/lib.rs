@@ -11,6 +11,16 @@
 //! - [`Proof`] / [`Pcd`] — the proof and proof-carrying-data structures.
 //! - [`pasta`] — Ragu's fixed generators, derived and embedded at build time
 //!   with the `baked` feature.
+//! - [`MinimalProof`] — the retained proof data, verified with
+//!   [`Application::verify_minimal`]. Use [`Application::proof_format`] with
+//!   trusted [`ProofContext`] identifiers for versioned storage and transport.
+//!
+//! [`ProofFormat`] checks envelope, schema and protocol versions, rank, header
+//! size, suite and application identifiers before decoding proof data. It uses
+//! rank-derived resource budgets; callers can impose a smaller resource policy.
+//! The optional `serde` adapter on `MinimalProof` carries the low-level payload
+//! bytes for embedding in an already context-bound container. Decoding is not
+//! verification. See `crates/ragu_pcd/WIRE_FORMAT.md` for the compatibility contract.
 
 #![no_std]
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -47,7 +57,7 @@ use alloc::collections::BTreeMap;
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 use header::Header;
-pub use proof::{Pcd, Proof};
+pub use proof::{MinimalProof, Pcd, Proof, ProofContext, ProofFormat};
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
     polynomials::Rank,

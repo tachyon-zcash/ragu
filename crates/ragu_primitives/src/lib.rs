@@ -34,6 +34,7 @@ mod simulator;
 pub mod suffix;
 mod util;
 pub mod vec;
+pub mod wire;
 
 pub use boolean::{Boolean, multipack};
 pub use element::{Element, multiadd};

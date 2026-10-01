@@ -845,6 +845,8 @@ dependencies = [
  "ragu_testing",
  "rand 0.10.1",
  "rayon",
+ "serde",
+ "serde_json",
  "tachyon-maybe-rayon",
  "zakura-bento",
  "zakura-pasta-curves",
