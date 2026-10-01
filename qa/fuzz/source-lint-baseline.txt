@@ -11,10 +11,10 @@ RAGU004|crates/ragu_primitives/src/allocator.rs|68|The stateless allocator inten
 RAGU005|crates/ragu_primitives/src/allocator.rs|109|Structural pool occupancy selects redemption of a D wire or allocation of a fresh gate.
 RAGU004|crates/ragu_primitives/src/allocator.rs|112|The pooled allocator intentionally returns A, stores Extra, and wastes the zero B and C wires.
 RAGU004|crates/ragu_primitives/src/boolean.rs|220|The inverse is a constrained witness hint whose wire is intentionally not exposed by is_zero.
-RAGU005|crates/ragu_primitives/src/element.rs|481|Iterator emptiness is structural API input; the method documents that its length must not depend on witness data.
-RAGU005|crates/ragu_primitives/src/invertible.rs|333|Checked versus unchecked construction mode determines whether a product is accumulated.
-RAGU005|crates/ragu_primitives/src/invertible.rs|343|The same structural construction mode determines whether the batched proof is discharged.
-RAGU005|crates/ragu_primitives/src/point.rs|107|A native construction-time constant is rejected before either coordinate is embedded.
+RAGU005|crates/ragu_primitives/src/element.rs|509|Iterator emptiness is structural API input; the method documents that its length must not depend on witness data.
+RAGU005|crates/ragu_primitives/src/invertible.rs|337|Checked versus unchecked construction mode determines whether a product is accumulated.
+RAGU005|crates/ragu_primitives/src/invertible.rs|347|The same structural construction mode determines whether the batched proof is discharged.
+RAGU005|crates/ragu_primitives/src/point.rs|131|A native construction-time constant is rejected before either coordinate is embedded.
 RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|123|Structural sponge mode determines whether buffered absorbs precede the common permutation.
 RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|167|Buffer occupancy follows the structural sequence of absorb and squeeze calls.
 RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|176|Empty absorb state is an API-state error; nonempty state performs a fixed transition.
