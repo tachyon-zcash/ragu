@@ -467,7 +467,7 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
     }
 
     /// Computes a commitment to this polynomial in projective form, through
-    /// the group vocabulary's [`Affine::msm`]. Use [`Affine::batch_to_affine`]
+    /// [`ragu_core::msm`]. Use [`Affine::batch_to_affine`]
     /// to convert multiple projective commitments to affine with a single
     /// field inversion.
     pub fn commit<C: Affine<Scalar = F>>(
@@ -481,7 +481,7 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
             .iter_stored_coeffs()
             .map(|(index, coefficient)| (*coefficient, g[index]))
             .unzip();
-        C::msm(&scalars, &bases)
+        ragu_core::msm(scalars, bases)
     }
 
     /// Computes a commitment to this polynomial, normalized to affine. For

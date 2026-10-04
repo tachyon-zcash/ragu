@@ -37,12 +37,14 @@ extern crate alloc;
 pub mod convert;
 pub mod drivers;
 mod errors;
+mod execution;
 pub mod gadgets;
 pub mod maybe;
 pub mod routines;
 
 pub use drivers::Coeff;
 pub use errors::{Error, Result};
+pub use execution::{fft, ifft, msm};
 pub use udon::{
     cycle::{Cycle, FixedGenerators},
     poseidon::PoseidonPermutation,

@@ -8,10 +8,12 @@ use ragu_backend::Backend;
 
 mod sealed {
     use ragu_acceleration::{AcceleratedBackend, AcceleratedProver};
-    use ragu_backend::{Backend, ReferenceBackend};
+    use ragu_backend::ReferenceBackend;
+
+    use super::SelectableBackend;
 
     pub trait Sealed {
-        type Verifier: Backend;
+        type Verifier: SelectableBackend;
     }
 
     impl Sealed for ReferenceBackend {
@@ -36,15 +38,16 @@ pub(crate) use sealed::Sealed as TestSealed;
 /// implementations, but cannot provide their own backend implementation.
 /// Each selectable backend also fixes [`Verifier`](Self::Verifier), the
 /// backend whose kernels [`Application::verify`](crate::Application::verify)
-/// consults, so accelerating verification is an explicit choice rather
-/// than a consequence of accelerating proving.
+/// and [`Application::verify_compressed`](crate::Application::verify_compressed)
+/// consult, so accelerating verification is an explicit choice rather than a
+/// consequence of accelerating proving.
 pub trait SelectableBackend: Backend + sealed::Sealed {
     /// The backend whose kernels the verifier consults.
     ///
     /// `ReferenceBackend` and `AcceleratedBackend` verify with their own
     /// kernels; `AcceleratedProver` proves with the accelerated kernels
     /// and verifies with the reference ones.
-    type Verifier: Backend;
+    type Verifier: SelectableBackend;
 }
 
 impl<T: Backend + sealed::Sealed> SelectableBackend for T {

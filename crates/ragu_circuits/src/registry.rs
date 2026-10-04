@@ -545,7 +545,7 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
     /// Panics if `evals.len()` does not equal the registry's domain size.
     pub fn interpolate_xy(&self, mut evals: Vec<F>) -> sparse::Polynomial<F, R> {
         assert_eq!(evals.len(), self.domain.size());
-        self.domain.inverse_transform(&mut evals);
+        ragu_core::ifft(self.domain, &mut evals);
         sparse::Polynomial::from_coeffs(evals)
     }
 

@@ -108,9 +108,14 @@ fn duplicate_claims<C: Affine>(generators: &impl FixedGenerators<C>) {
         claim(1, repeated.point),
         repeated,
     ];
-    let (messages, witness) =
-        batch::<C, TestRank, _>(&polys, &claims, generators, &mut BatchTranscript::new()).unwrap();
-    let batched = verify(
+    let (messages, witness) = batch::<C, TestRank, ReferenceBackend, _>(
+        &polys,
+        &claims,
+        generators,
+        &mut BatchTranscript::new(),
+    )
+    .unwrap();
+    let batched = verify::<_, ReferenceBackend, _>(
         &commitments,
         &claims,
         &messages,
@@ -131,14 +136,14 @@ fn duplicate_claims<C: Affine>(generators: &impl FixedGenerators<C>) {
     conflicting[3].value -= C::Scalar::ONE;
     let mut verifier = BatchTranscript::new();
     assert!(matches!(
-        verify(&commitments, &conflicting, &messages, &mut verifier),
+        verify::<_, ReferenceBackend, _>(&commitments, &conflicting, &messages, &mut verifier),
         Err(Error::InvalidWitness(_))
     ));
     verifier.assert_unused();
 
     let mut prover = BatchTranscript::new();
     assert!(matches!(
-        batch::<C, TestRank, _>(&polys, &conflicting, generators, &mut prover),
+        batch::<C, TestRank, ReferenceBackend, _>(&polys, &conflicting, generators, &mut prover),
         Err(Error::InvalidWitness(_))
     ));
     prover.assert_unused();
@@ -181,8 +186,9 @@ where
     T: IpaTranscript<C>,
 {
     let (messages, witness) =
-        batch::<C, R, _>(polys, &openings.claims, generators, transcript).unwrap();
-    let claim = verify(
+        batch::<C, R, ReferenceBackend, _>(polys, &openings.claims, generators, transcript)
+            .unwrap();
+    let claim = verify::<_, ReferenceBackend, _>(
         &openings.commitments,
         &openings.claims,
         &messages,
@@ -214,7 +220,7 @@ where
     C: Affine,
     T: IpaTranscript<C>,
 {
-    let claim = verify(
+    let claim = verify::<_, ReferenceBackend, _>(
         &openings.commitments,
         &openings.claims,
         messages,

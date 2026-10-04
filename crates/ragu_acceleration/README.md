@@ -6,8 +6,8 @@
 
 This crate provides Ragu's accelerated computational backend. It inherits the
 defaults from `ragu_backend` except for individually tested overrides, and it
-carries none today: the defaults call Udon's MSM implementation. It is the
-home for the next overrides.
+carries none today: the defaults call Udon's MSM and FFT implementations. It is
+the home for the next overrides.
 
 It carries no tests of its own: an override arrives with its differential
 test against `ReferenceBackend`, and `ragu_pcd`'s `backend_equivalence` tests

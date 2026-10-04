@@ -16,9 +16,8 @@ use ragu_circuits::{
     registry::{CircuitIndex, Registry, RegistryAt},
 };
 use ragu_core::FixedGenerators;
-use udon::{curve::Affine, field::Field};
+use udon::{curve::Affine, fft::Domain, field::Field};
 
-// TODO: Ragu's MSM and FFT don't use Udon's scratch-buffer APIs.
 /// A statically dispatched implementation of Ragu's computational operations.
 ///
 /// Every method has a correctness-first default. Implementations may override
@@ -124,14 +123,19 @@ pub trait Backend: Clone + Copy + Debug + Default + Send + Sync + 'static {
     /// Interpolates $W$-domain evaluations into the monomial-basis polynomial
     /// $m(W, x, y)$.
     ///
+    /// The default dispatches the inverse transform through [`Backend::ifft`].
+    ///
     /// # Correctness
     ///
     /// Overrides must match [`Registry::interpolate_xy`] exactly.
     fn registry_interpolate_xy<F: Field, R: Rank>(
         registry: &Registry<'_, F, R>,
-        evals: Vec<F>,
+        mut evals: Vec<F>,
     ) -> sparse::Polynomial<F, R> {
-        registry.interpolate_xy(evals)
+        let domain = F::domain(registry.log2_domain()).expect("registry domain exists");
+        assert_eq!(evals.len(), domain.size());
+        Self::ifft(domain, &mut evals);
+        sparse::Polynomial::from_coeffs(evals)
     }
 
     /// Computes the circuit restriction $s_i(X, y)$ selected by `circuit`.
@@ -164,6 +168,27 @@ pub trait Backend: Clone + Copy + Debug + Default + Send + Sync + 'static {
         registry.wxy(w, x, y)
     }
 
+    /// Transforms natural-order coefficients into natural-order domain evaluations.
+    ///
+    /// # Correctness
+    ///
+    /// Overrides must match [`ragu_core::fft`] exactly, including rejecting an
+    /// input whose length differs from the domain size before mutating it.
+    fn fft<F: Field>(domain: Domain<F>, values: &mut Vec<F>) {
+        ragu_core::fft(domain, values);
+    }
+
+    /// Transforms natural-order domain evaluations into normalized coefficients.
+    ///
+    /// # Correctness
+    ///
+    /// Overrides must match [`ragu_core::ifft`] exactly. The inverse includes
+    /// division by the domain size and rejects an input of the wrong length
+    /// before mutating it.
+    fn ifft<F: Field>(domain: Domain<F>, values: &mut Vec<F>) {
+        ragu_core::ifft(domain, values);
+    }
+
     /// Computes the multiscalar multiplication
     /// $\langle \mathbf{a}, \mathbf{G} \rangle$.
     ///
@@ -186,10 +211,7 @@ pub trait Backend: Clone + Copy + Debug + Default + Send + Sync + 'static {
         let coeffs: Vec<C::Scalar> = coeffs.into_iter().copied().collect();
         let bases: Vec<C> = bases.into_iter().copied().collect();
         let len = coeffs.len().min(bases.len());
-        // TODO: expose reusable Udon MSM scratch and an executor through the
-        // backend; the Pasta trait call uses bounded stack scratch and serial
-        // execution.
-        C::msm(&coeffs[..len], &bases[..len])
+        ragu_core::msm(coeffs.into_iter().take(len), bases.into_iter().take(len))
     }
 }
 

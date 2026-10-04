@@ -4,18 +4,20 @@
 
 use alloc::{vec, vec::Vec};
 
+use ragu_backend::ReferenceBackend;
 use ragu_core::{Error, Result};
 use udon::{
     curve::{Affine, Projective},
     field::Field,
 };
 
-use super::{IpaProof, IpaTranscript, MSM, Params};
+use super::{IpaProof, IpaTranscript, MSM, Params, msm::multiexp};
+use crate::SelectableBackend;
 
 /// A guard returned by the verifier
 #[derive(Debug, Clone)]
-pub struct Guard<'a, C: Affine> {
-    msm: MSM<'a, C>,
+pub struct Guard<'a, C: Affine, B: SelectableBackend = ReferenceBackend> {
+    msm: MSM<'a, C, B>,
     neg_c: C::Scalar,
     u: Vec<C::Scalar>,
 }
@@ -31,10 +33,10 @@ pub struct Accumulator<C: Affine> {
     pub u: Vec<C::Scalar>,
 }
 
-impl<'a, C: Affine> Guard<'a, C> {
+impl<'a, C: Affine, B: SelectableBackend> Guard<'a, C, B> {
     /// Lets caller supply the challenges and obtain an MSM with updated
     /// scalars and points.
-    pub fn use_challenges(mut self) -> MSM<'a, C> {
+    pub fn use_challenges(mut self) -> MSM<'a, C, B> {
         let s = compute_s(&self.u, self.neg_c);
         self.msm.add_to_g_scalars(&s);
 
@@ -43,7 +45,7 @@ impl<'a, C: Affine> Guard<'a, C> {
 
     /// Lets caller supply the purported G point and simply appends
     /// [-c] G to return an updated MSM.
-    pub fn use_g(mut self, g: C) -> (MSM<'a, C>, Accumulator<C>) {
+    pub fn use_g(mut self, g: C) -> (MSM<'a, C, B>, Accumulator<C>) {
         self.msm.append_term(self.neg_c, g);
 
         let accumulator = Accumulator { g, u: self.u };
@@ -55,7 +57,7 @@ impl<'a, C: Affine> Guard<'a, C> {
     pub fn compute_g(&self) -> C {
         let s = compute_s(&self.u, C::Scalar::ONE);
 
-        C::msm(&s, &self.msm.params.g).to_affine()
+        multiexp::<C, B>(&s, &self.msm.params.g).to_affine()
     }
 }
 
@@ -63,14 +65,14 @@ impl<'a, C: Affine> Guard<'a, C> {
 /// commitment `P` opens purportedly to the value `v`. The provided `msm`
 /// should evaluate to the unblinded commitment `P = <p, G>` being opened.
 /// The transcript must already bind `P`, `x`, and `v`.
-pub fn verify_proof<'a, C: Affine, T: IpaTranscript<C>>(
-    params: &'a Params<C>,
-    mut msm: MSM<'a, C>,
+pub fn verify_proof<'a, C: Affine, T: IpaTranscript<C>, B: SelectableBackend>(
+    params: &'a Params<C, B>,
+    mut msm: MSM<'a, C, B>,
     transcript: &mut T,
     proof: &IpaProof<C>,
     x: C::Scalar,
     v: C::Scalar,
-) -> Result<Guard<'a, C>> {
+) -> Result<Guard<'a, C, B>> {
     let k = params.k as usize;
 
     if proof.rounds.len() != k {

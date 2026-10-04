@@ -797,6 +797,7 @@ dependencies = [
  "ragu_macros",
  "ragu_testing",
  "rand 0.10.1",
+ "tachyon-maybe-rayon",
  "thiserror",
  "zakura-udon",
 ]

@@ -288,3 +288,57 @@ fn nested_reduction_verifies() {
     tampered.openings[Derived::A as usize] += Fq::ONE;
     assert!(verify(&tampered).is_none());
 }
+
+/// The reduction reads each circuit's restriction as the registry point
+/// $m(\omega^i, r, y)$. It must equal the restriction $s_i(X, y)$ the
+/// decider's claim builder materializes, evaluated at $r$, for every circuit
+/// the claims name on either registry: the internal circuits and the stage
+/// masks, and natively the application circuit as well.
+#[test]
+fn point_restriction_matches_the_materialized_one() {
+    use ragu_backend::Backend;
+    use ragu_circuits::{
+        polynomials::Rank,
+        registry::{CircuitIndex, Registry},
+    };
+
+    use crate::internal::native;
+
+    fn check<F: Field, R: Rank>(
+        registry: &Registry<'_, F, R>,
+        circuits: impl IntoIterator<Item = CircuitIndex>,
+        rng: &mut StdRng,
+    ) {
+        let (r, y) = (
+            F::random(|bytes| rng.fill_bytes(bytes)),
+            F::random(|bytes| rng.fill_bytes(bytes)),
+        );
+        for circuit in circuits {
+            let materialized = ReferenceBackend::sparse_eval(
+                &ReferenceBackend::registry_circuit_y(registry, circuit, y),
+                r,
+            );
+            let point = ReferenceBackend::registry_wxy(registry, circuit.omega_j(), r, y);
+            assert_eq!(materialized, point, "circuit {}", usize::from(circuit));
+        }
+    }
+
+    let app = create_test_app();
+    let mut rng = StdRng::seed_from_u64(4);
+    let circuit_id = app.bootstrap_pcd().proof().circuit_id();
+    check(
+        &app.native_registry,
+        native::InternalCircuitIndex::ALL
+            .iter()
+            .map(|id| id.circuit_index())
+            .chain([circuit_id]),
+        &mut rng,
+    );
+    check(
+        &app.nested_registry,
+        nested::InternalCircuitIndex::ALL
+            .iter()
+            .map(|id| id.circuit_index()),
+        &mut rng,
+    );
+}

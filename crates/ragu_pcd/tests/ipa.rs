@@ -30,6 +30,7 @@ macro_rules! ipa_tests {
             use alloc::vec::Vec;
 
             use proptest::prelude::*;
+            use ragu_backend::ReferenceBackend;
             use ragu_circuits::polynomials::{Rank, TestRank, sparse};
             use ragu_core::{Cycle, Error, FixedGenerators, pasta::Pasta};
             use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -153,10 +154,10 @@ macro_rules! ipa_tests {
                     .eval()
             }
 
-            /// A claim with its proof on `K`-sized parameters.
+            /// A claim with its proof on the provided parameters.
             fn opening(params: &Params<C>, seed: u64) -> (C, F, F, IpaProof<C>) {
                 let mut rng = StdRng::seed_from_u64(seed);
-                let poly = random_poly(1 << K, &mut rng);
+                let poly = random_poly(params.n as usize, &mut rng);
                 let x = F::random(|bytes| rng.fill_bytes(bytes));
                 let (commitment, v, proof) = open(params, &poly, x, &mut rng);
                 (commitment, x, v, proof)
@@ -432,6 +433,91 @@ macro_rules! ipa_tests {
                 let native = sparse::Polynomial::<F, TestRank>::from_coeffs(coeffs)
                     .commit_to_affine(generators());
                 assert_eq!(ipa, native);
+            }
+
+            #[test]
+            fn msm_matches_serial_adapter() {
+                use crate::ipa::msm::multiexp;
+
+                let mut rng = StdRng::seed_from_u64(15);
+                let mut scalars = random_poly(8193, &mut rng);
+                let g = generators().g();
+                let mut bases: Vec<_> = (0..scalars.len()).map(|i| g[i % g.len()]).collect();
+                for (i, (scalar, base)) in scalars.iter_mut().zip(&mut bases).enumerate() {
+                    match i % 7 {
+                        0 => *scalar = F::ZERO,
+                        1 => *scalar = F::ONE,
+                        2 => *scalar = -F::ONE,
+                        3 => *base = C::identity(),
+                        4 => *base = -g[0],
+                        5 => *base = g[0],
+                        _ => {}
+                    }
+                }
+
+                // Include empty, small and large inputs, and lengths that
+                // do not divide evenly among the workers.
+                let expected: Vec<_> = [0, 1, 127, 128, 129, 255, 256, 257, 511, 512, 513, 1025, 8193]
+                    .into_iter()
+                    .map(|n| (n, C::msm(&scalars[..n], &bases[..n])))
+                    .collect();
+
+                // Separate cancellation pairs with one zero term in the middle.
+                let cancelling_scalars: Vec<_> = scalars[..256]
+                    .iter()
+                    .copied()
+                    .chain(core::iter::once(F::ZERO))
+                    .chain(scalars[..256].iter().map(|scalar| -*scalar))
+                    .collect();
+                let cancelling_bases: Vec<_> = bases[..256]
+                    .iter()
+                    .copied()
+                    .chain(core::iter::once(C::identity()))
+                    .chain(bases[..256].iter().copied())
+                    .collect();
+
+                let check = || {
+                    for &(n, expected) in &expected {
+                        assert_eq!(multiexp::<_, ReferenceBackend>(&scalars[..n], &bases[..n]), expected, "MSM length {n}");
+                    }
+                    assert!(multiexp::<_, ReferenceBackend>(&cancelling_scalars, &cancelling_bases).is_identity());
+                };
+
+                #[cfg(feature = "multicore")]
+                for workers in [1, 2, 3, 7] {
+                    rayon::ThreadPoolBuilder::new()
+                        .num_threads(workers)
+                        .build()
+                        .unwrap()
+                        .install(&check);
+                }
+                #[cfg(not(feature = "multicore"))]
+                check();
+            }
+
+            #[test]
+            #[should_panic(expected = "msm operands must have equal length")]
+            fn msm_rejects_mismatched_lengths() {
+                crate::ipa::msm::multiexp::<_, ReferenceBackend>(&[F::ONE; 256], &[u(); 255]);
+            }
+
+            #[cfg(feature = "multicore")]
+            #[test]
+            fn proof_is_independent_of_worker_count() {
+                let params = params(K + 1);
+                let open_with_workers = |workers| {
+                    rayon::ThreadPoolBuilder::new()
+                        .num_threads(workers)
+                        .build()
+                        .unwrap()
+                        .install(|| opening(&params, 16))
+                };
+                let expected = open_with_workers(1);
+                for workers in [2, 3, 7] {
+                    let actual = open_with_workers(workers);
+                    assert_eq!(actual, expected);
+                    assert!(check(&params, actual.0, actual.1, actual.2, &actual.3));
+                }
             }
 
             /// halo2's `msm_arithmetic` test; both Pasta curves are

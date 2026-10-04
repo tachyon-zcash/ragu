@@ -30,9 +30,6 @@ extern crate alloc;
 extern crate std;
 
 mod backend;
-#[cfg(test)]
-#[path = "../tests/backend_equivalence/mod.rs"]
-mod backend_equivalence;
 mod compress;
 mod fuse;
 // The fuzzing surface. Gates itself behind `unstable-fuzzing` with an inner

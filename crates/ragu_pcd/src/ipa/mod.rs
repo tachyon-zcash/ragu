@@ -16,9 +16,13 @@
 //! [`IpaTranscript`], implemented for both curves by [`CycleTranscript`].
 
 use alloc::vec::Vec;
+use core::marker::PhantomData;
 
+use ragu_backend::ReferenceBackend;
 use ragu_core::{Cycle, FixedGenerators};
 use udon::curve::Affine;
+
+use crate::SelectableBackend;
 
 mod msm;
 mod prover;
@@ -63,12 +67,14 @@ pub trait IpaCycle: Cycle {
 
 /// The vector generators and the generator $U$ that binds the inner
 /// product value. Commitments have no separate blinding generator.
+/// The backend `B` evaluates commitments and the IPA's MSMs.
 #[derive(Clone, Debug)]
-pub struct Params<C: Affine> {
+pub struct Params<C: Affine, B: SelectableBackend = ReferenceBackend> {
     pub(crate) k: u32,
     pub(crate) n: u64,
     pub(crate) g: Vec<C>,
     pub(crate) u: C,
+    backend: PhantomData<B>,
 }
 
 impl<C: Affine> Params<C> {
@@ -103,6 +109,36 @@ impl<C: Affine> Params<C> {
             n: n as u64,
             g: generators.g()[..n].to_vec(),
             u,
+            backend: PhantomData,
+        }
+    }
+}
+
+impl<C: Affine, B: SelectableBackend> Params<C, B> {
+    /// Selects the backend used for commitments, proving, and verification
+    /// with these parameters. The generators are unchanged.
+    /// Only Ragu-owned backends may be selected through [`SelectableBackend`].
+    ///
+    /// ```compile_fail,E0277
+    /// use ragu_backend::Backend;
+    /// use ragu_pcd::ipa::Params;
+    /// use udon::curve::Affine;
+    ///
+    /// #[derive(Clone, Copy, Debug, Default)]
+    /// struct CustomBackend;
+    /// impl Backend for CustomBackend {}
+    ///
+    /// fn select<C: Affine>(params: Params<C>) {
+    ///     let _ = params.with_backend::<CustomBackend>();
+    /// }
+    /// ```
+    pub fn with_backend<NewB: SelectableBackend>(self) -> Params<C, NewB> {
+        Params {
+            k: self.k,
+            n: self.n,
+            g: self.g,
+            u: self.u,
+            backend: PhantomData,
         }
     }
 
@@ -113,7 +149,7 @@ impl<C: Affine> Params<C> {
     /// Panics if `poly` does not have exactly $2^k$ coefficients.
     pub fn commit(&self, poly: &[C::Scalar]) -> C::Projective {
         assert_eq!(poly.len(), self.n as usize);
-        C::msm(poly, &self.g)
+        msm::multiexp::<C, B>(poly, &self.g)
     }
 }
 

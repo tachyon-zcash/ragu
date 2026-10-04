@@ -1,0 +1,15 @@
+# Apply only to ragu_pcd's production library with --no-deps. The backend
+# defaults and test oracles intentionally call the underlying arithmetic.
+# Clippy resolves the crate's canonical name, not the `udon` dependency alias.
+disallowed-methods = [
+  { path = "ragu_core::msm", reason = "Route PCD MSMs through the selected Backend::msm" },
+  { path = "zakura_udon::curve::Affine::msm", reason = "Route PCD MSMs through the selected Backend::msm" },
+  { path = "ragu_circuits::polynomials::sparse::Polynomial::commit", reason = "Use the selected Backend::sparse_commit" },
+  { path = "ragu_circuits::polynomials::sparse::Polynomial::commit_to_affine", reason = "Use the selected Backend::sparse_commit_to_affine" },
+  { path = "ragu_core::fft", reason = "Route PCD FFTs through the selected Backend::fft" },
+  { path = "ragu_core::ifft", reason = "Route PCD inverse FFTs through the selected Backend::ifft" },
+  { path = "zakura_udon::field::Field::fft", reason = "Route PCD FFTs through the selected Backend::fft" },
+  { path = "zakura_udon::field::Field::ifft", reason = "Route PCD inverse FFTs through the selected Backend::ifft" },
+  { path = "zakura_udon::fft::Domain::transform", reason = "Route PCD FFTs through the selected Backend::fft" },
+  { path = "zakura_udon::fft::Domain::inverse_transform", reason = "Route PCD inverse FFTs through the selected Backend::ifft" },
+]

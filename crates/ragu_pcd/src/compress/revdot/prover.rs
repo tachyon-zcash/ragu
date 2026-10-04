@@ -28,7 +28,7 @@ use crate::{
 
 /// The product of two coefficient vectors of $n$ coefficients, as its $2n -
 /// 1$ coefficients, over the doubled domain.
-fn poly_mul<F: Field>(a: &[F], b: &[F], out: &mut Vec<F>) {
+fn poly_mul<F: Field, B: Backend>(a: &[F], b: &[F], out: &mut Vec<F>) {
     let n = a.len();
     assert_eq!(b.len(), n, "the factors have the same length");
     let size = 2 * n;
@@ -37,12 +37,12 @@ fn poly_mul<F: Field>(a: &[F], b: &[F], out: &mut Vec<F>) {
     let mut rhs = vec![F::ZERO; size];
     lhs[..n].copy_from_slice(a);
     rhs[..n].copy_from_slice(b);
-    domain.transform(&mut lhs);
-    domain.transform(&mut rhs);
+    B::fft(domain, &mut lhs);
+    B::fft(domain, &mut rhs);
     for (l, r) in lhs.iter_mut().zip(&rhs) {
         *l *= r;
     }
-    domain.inverse_transform(&mut lhs);
+    B::ifft(domain, &mut lhs);
     lhs.truncate(size - 1);
     *out = lhs;
 }
@@ -216,7 +216,7 @@ fn fold_claims<C: Affine, R: Rank, B: Backend, Id: Copy, T: IpaTranscript<C>>(
             .inner()
             .map(|(g, i, j)| (g * fold::GROUP + i, g * fold::GROUP + j)),
     );
-    let inner_commitment = inner.commit_to_affine(generators);
+    let inner_commitment = B::sparse_commit_to_affine(&inner, generators);
     transcript.write_point(inner_commitment)?;
     let (mu, nu) = squeeze_pair(transcript)?;
     let groups: Vec<(sparse::Polynomial<_, R>, sparse::Polynomial<_, R>)> = (0..layout.groups())
@@ -231,7 +231,7 @@ fn fold_claims<C: Affine, R: Rank, B: Backend, Id: Copy, T: IpaTranscript<C>>(
 
     // The second layer, over the groups.
     let outer = errors::<_, R, B>(|g| &groups[g].0, |h| &groups[h].1, layout.outer());
-    let outer_commitment = outer.commit_to_affine(generators);
+    let outer_commitment = B::sparse_commit_to_affine(&outer, generators);
     transcript.write_point(outer_commitment)?;
     let (mu_prime, nu_prime) = squeeze_pair(transcript)?;
     let a = fold_powers(groups.iter().map(|(a, _)| a), mu_prime);
@@ -281,7 +281,7 @@ fn fold_claims<C: Affine, R: Rank, B: Backend, Id: Copy, T: IpaTranscript<C>>(
     let raw = combine(
         of_kind(|kind| matches!(kind, Kind::Raw)).map(|i| (weights.b(i), claims[i].1.as_ref())),
     );
-    let commitments = fold::commitments(shapes, &weights, commitment, &messages);
+    let commitments = fold::commitments::<_, B, _>(shapes, &weights, commitment, &messages);
 
     Ok((
         messages,
@@ -318,7 +318,7 @@ fn reduce<C: Affine, R: Rank, B: Backend, Id: Copy, T: IpaTranscript<C>>(
     let mut weight = C::Scalar::ONE;
     for (a, b) in &folded {
         let (a, b): (Vec<_>, Vec<_>) = (a.iter_coeffs().collect(), b.iter_coeffs().collect());
-        poly_mul(&a, &b, &mut product);
+        poly_mul::<_, B>(&a, &b, &mut product);
         for (t, c) in t.iter_mut().zip(&product) {
             *t += weight * c;
         }
@@ -328,7 +328,10 @@ fn reduce<C: Affine, R: Rank, B: Backend, Id: Copy, T: IpaTranscript<C>>(
     let (p, mut q) = decomp_poly(t, n);
     q.resize(n, C::Scalar::ZERO);
     let commit = |coeffs: &[C::Scalar]| {
-        sparse::Polynomial::<_, R>::from_coeffs(coeffs.to_vec()).commit_to_affine(generators)
+        B::sparse_commit_to_affine(
+            &sparse::Polynomial::<_, R>::from_coeffs(coeffs.to_vec()),
+            generators,
+        )
     };
     let p_commitment = commit(&p);
     let q_commitment = commit(&q);

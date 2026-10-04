@@ -55,6 +55,7 @@ use self::{
     revdot::{Reduction, fold::Derived, native_components, nested_components},
 };
 use crate::{
+    SelectableBackend,
     header::Header,
     ipa::{CycleTranscript, IPA_TAG, IpaProof, IpaTranscript},
 };
@@ -169,12 +170,12 @@ impl<F> Sampled<F> {
 
 /// The compression's transcript with the statement absorbed: the instance,
 /// then the output header.
-fn transcript<'params, C: Cycle>(
+fn transcript<'params, C: Cycle, B: SelectableBackend>(
     params: &'params C::Params,
     instance: &Instance<C>,
     output_header: &[C::CircuitField],
-) -> Result<CycleTranscript<'params, C>> {
-    let mut transcript = CycleTranscript::<C>::new(params, IPA_TAG)?;
+) -> Result<CycleTranscript<'params, C, B>> {
+    let mut transcript = CycleTranscript::<C, B>::new(params, IPA_TAG)?;
     instance.absorb(&mut transcript)?;
     for &element in output_header {
         transcript.host().write_scalar(element)?;

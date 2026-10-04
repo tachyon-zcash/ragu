@@ -27,12 +27,14 @@ all-features = true
 [features]
 alloc = []
 default = ["alloc"]
+multicore = ["maybe-rayon/threads", "std"]
 std = []
 
 [lib]
 bench = false
 
 [dependencies]
+maybe-rayon = { workspace = true }
 udon = { workspace = true }
 ragu_macros = { path = "../ragu_macros", version = "0.0.0" }
 thiserror = { version = "2.0.12", default-features = false }

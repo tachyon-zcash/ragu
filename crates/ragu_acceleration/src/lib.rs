@@ -4,8 +4,8 @@
 //!
 //! Overrides fall back to the defaults of [`ragu_backend::Backend`] where a
 //! method has none. There is no override today: the defaults already run
-//! Udon's MSM through the group vocabulary, and this crate is the home
-//! for the next ones (an external Poseidon, for instance). Overrides of the
+//! Udon's MSMs and FFTs with caller-owned scratch and execution. This crate is
+//! the home for the next ones (an external Poseidon, for instance). Overrides of the
 //! kernels that `ragu_pcd`'s verifier consults belong in [`verifier`], which
 //! carries a stricter review and testing bar than prover-only overrides. An
 //! override arrives with its differential test against the default it

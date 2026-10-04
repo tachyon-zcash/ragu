@@ -2,6 +2,7 @@
 
 use alloc::{borrow::Cow, vec::Vec};
 
+use ragu_backend::Backend;
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{FixedGenerators, Result};
 use udon::{curve::Affine, field::Field, polynomial::divide_linear_rev};
@@ -24,7 +25,7 @@ pub(crate) struct Witness<F> {
 ///
 /// Fails if claims assign different values to the same polynomial at the
 /// same point, or if a transcript operation fails.
-pub(crate) fn batch<C: Affine, R: Rank, T: IpaTranscript<C>>(
+pub(crate) fn batch<C: Affine, R: Rank, B: Backend, T: IpaTranscript<C>>(
     polys: &[Cow<'_, sparse::Polynomial<C::Scalar, R>>],
     claims: &[OpeningClaim<C::Scalar>],
     generators: &impl FixedGenerators<C>,
@@ -39,7 +40,7 @@ pub(crate) fn batch<C: Affine, R: Rank, T: IpaTranscript<C>>(
         .map(|claim| divide_linear_rev(polys[claim.poly].iter_coeffs(), claim.point))
         .collect::<Vec<_>>();
     let f = batched_quotients::<_, R>(quotients, alpha);
-    let f_commitment = f.commit_to_affine(generators);
+    let f_commitment = B::sparse_commit_to_affine(&f, generators);
     transcript.write_point(f_commitment)?;
 
     let u = transcript.squeeze_challenge()?;

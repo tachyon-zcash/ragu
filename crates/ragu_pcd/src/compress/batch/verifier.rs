@@ -2,19 +2,21 @@
 
 use alloc::vec::Vec;
 
+use ragu_backend::Backend;
 use ragu_circuits::polynomials::Rank;
 use ragu_core::{Error, FixedGenerators, Result};
 use udon::{curve::Affine, field::Field};
 
 use super::{Batch, Batched, check_claims};
 use crate::{
+    SelectableBackend,
     compress::revdot::{OpeningClaim, Openings},
     ipa::{self, IpaProof, IpaTranscript, MSM, Params},
 };
 
 /// Derives the batched commitment, point, and value from `openings` and
 /// `batch`, then checks `opening` against that claim through the IPA.
-pub(crate) fn verify_openings<P: Affine, R: Rank, T: IpaTranscript<P>>(
+pub(crate) fn verify_openings<P: Affine, R: Rank, B: SelectableBackend, T: IpaTranscript<P>>(
     openings: &Openings<P>,
     batch: &Batch<P>,
     opening: &IpaProof<P>,
@@ -22,8 +24,8 @@ pub(crate) fn verify_openings<P: Affine, R: Rank, T: IpaTranscript<P>>(
     u: P,
     transcript: &mut T,
 ) -> Result<bool> {
-    let claim = verify(&openings.commitments, &openings.claims, batch, transcript)?;
-    let params = Params::with_k(generators, u, R::RANK);
+    let claim = verify::<_, B, _>(&openings.commitments, &openings.claims, batch, transcript)?;
+    let params = Params::with_k(generators, u, R::RANK).with_backend::<B>();
     let mut msm = MSM::new(&params);
     msm.append_term(P::Scalar::ONE, claim.commitment);
     Ok(
@@ -41,7 +43,7 @@ pub(crate) fn verify_openings<P: Affine, R: Rank, T: IpaTranscript<P>>(
 /// Fails if claims assign different values to the same polynomial at the
 /// same point, if the batch does not carry one value per polynomial, or if
 /// $u$ lands on a query point, which happens with negligible probability.
-pub(crate) fn verify<C: Affine, T: IpaTranscript<C>>(
+pub(crate) fn verify<C: Affine, B: Backend, T: IpaTranscript<C>>(
     commitments: &[C],
     claims: &[OpeningClaim<C::Scalar>],
     batch: &Batch<C>,
@@ -87,7 +89,7 @@ pub(crate) fn verify<C: Affine, T: IpaTranscript<C>>(
     let points: Vec<C> = core::iter::once(batch.f)
         .chain(commitments.iter().copied())
         .collect();
-    let commitment = C::msm(&weights, &points).into();
+    let commitment = B::msm(&weights, &points).into();
 
     Ok(Batched {
         commitment,

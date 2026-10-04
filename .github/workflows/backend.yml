@@ -48,11 +48,18 @@ jobs:
           -- -D warnings
       - name: Run native PCD backend equivalence
         env:
-          # Each case builds three applications and runs seed/seed/fuse/verify.
+          # Each case builds three applications and exercises both proof formats.
           PROPTEST_CASES: "4"
         run: >-
           cargo test --release -p ragu_pcd --no-default-features
           --lib backend_equivalence:: -- --test-threads=1
+      - name: Enforce PCD MSM and FFT backend routing
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          CLIPPY_CONF_DIR: qa/backend
+        run: >-
+          cargo clippy -p ragu_pcd --lib --no-deps --all-features
+          -- -D clippy::disallowed_methods
 
   # Every backend must retain its correctness-first fallback on bare metal.
   backend-nostd:

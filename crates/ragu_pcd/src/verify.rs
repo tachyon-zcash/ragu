@@ -691,5 +691,5 @@ mod nested {
 }
 
 #[cfg(test)]
-#[path = "../tests/verify.rs"]
+#[path = "../tests/verify_uncompressed.rs"]
 mod tests;

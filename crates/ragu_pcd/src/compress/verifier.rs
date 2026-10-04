@@ -26,11 +26,8 @@ impl<C: IpaCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     ///
     /// The registry and polynomial evaluations and the recomputed stage
     /// commitments go through the sealed [`SelectableBackend::Verifier`] of
-    /// the selected backend, as in [`verify`](Self::verify). The batch's
-    /// commitment combination and the IPA's multiscalar multiplications do
-    /// not: they call [`Affine::msm`](udon::curve::Affine::msm) directly,
-    /// Udon's kernel every backend must agree with, so no backend can alter
-    /// them either.
+    /// the selected backend, as in [`verify`](Self::verify). This also applies
+    /// to transcript bridges, batch commitment combinations, and IPA MSMs.
     pub fn verify_compressed<H: Header<C::CircuitField>>(
         &self,
         pcd: &CompressedPcd<C, H>,
@@ -66,9 +63,8 @@ impl<C: IpaCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         // The fuse's challenges, from the bridge commitments in the fuse's
         // schedule, with pre_beta in the endoscalar range; and the nested
         // stages the decider recomputes from public data.
-        let Some(challenges) = proof_check!(
-            instance.challenges(&mut CycleTranscript::<C>::new(self.params, RAGU_TAG)?)
-        ) else {
+        let mut fuse_transcript = CycleTranscript::<C, Verifier<B>>::new(self.params, RAGU_TAG)?;
+        let Some(challenges) = proof_check!(instance.challenges(&mut fuse_transcript)) else {
             return Ok(false);
         };
         if !proof_check!(instance.stages_match::<R, Verifier<B>, HEADER_SIZE>(
@@ -79,7 +75,11 @@ impl<C: IpaCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         }
 
         let output_header = ky::output_header::<C, H, HEADER_SIZE>(pcd.data().clone())?;
-        let mut transcript = proof_check!(transcript(self.params, instance, &output_header));
+        let mut transcript = proof_check!(transcript::<C, Verifier<B>>(
+            self.params,
+            instance,
+            &output_header,
+        ));
         let native_sampled = proof_check!(Sampled::squeeze(&mut transcript.host()));
         let nested_sampled = proof_check!(Sampled::squeeze(&mut transcript.nested()));
         let (native_targets, nested_targets) = instance.targets::<HEADER_SIZE>(
@@ -118,7 +118,7 @@ impl<C: IpaCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             );
             openings.commitments.extend(commitments);
             openings.claims.extend(claims);
-            proof_check!(batch::verify_openings::<_, R, _>(
+            proof_check!(batch::verify_openings::<_, R, Verifier<B>, _>(
                 &openings,
                 &proof.native.batch,
                 &proof.native.opening,
@@ -156,7 +156,7 @@ impl<C: IpaCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             )?;
             openings.commitments.extend(commitments);
             openings.claims.extend(claims);
-            proof_check!(batch::verify_openings::<_, R, _>(
+            proof_check!(batch::verify_openings::<_, R, Verifier<B>, _>(
                 &openings,
                 &proof.nested.batch,
                 &proof.nested.opening,

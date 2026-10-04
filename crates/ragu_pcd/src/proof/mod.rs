@@ -31,13 +31,11 @@ mod recursive_boundary_tests;
 #[path = "../../tests/recursive_propagation.rs"]
 pub(crate) mod recursive_propagation_tests;
 
-// Keep this beneath `proof` so the equivalence helper can inspect private
-// `Proof` fields while the backend-equivalence suite remains consolidated.
-// TODO: Revisit this temporary layout; for now, it keeps all
-// backend-equivalence tests consolidated in a single subdirectory.
+// Keep this beneath `proof` so the shared test helper can inspect private
+// `Proof` fields.
 #[cfg(test)]
-#[path = "../../tests/backend_equivalence/proof.rs"]
-mod proof_equivalence;
+#[path = "../../tests/backend_equivalence.rs"]
+mod backend_equivalence;
 // Mutable component access for the corruption vocabulary (see
 // `crate::fuzzing`). Its source lives with the rest of the fuzzing surface in
 // `src/fuzzing/`, but it is mounted here, as a child of `proof`, so it can

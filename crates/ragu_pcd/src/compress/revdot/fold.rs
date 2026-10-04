@@ -35,6 +35,7 @@
 
 use alloc::{vec, vec::Vec};
 
+use ragu_backend::Backend;
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::Result;
 use udon::{curve::Affine, field::Field};
@@ -235,7 +236,7 @@ fn mirrored<F: Field, R: Rank>(weights: impl Iterator<Item = F>) -> sparse::Poly
 /// messages: $\[A\]$ sums every claim's $a$ under its $A$ weight, the dilated
 /// polynomial the circuit claims' $a$ under their $B$ weights, and the raw
 /// polynomial the raw claims' $b$ likewise.
-pub(crate) fn commitments<C: Affine, Id: Copy>(
+pub(crate) fn commitments<C: Affine, B: Backend, Id: Copy>(
     shapes: &[Shape<Id, C::Scalar>],
     weights: &Weights<C::Scalar>,
     commitment: impl Fn(Id) -> C,
@@ -246,7 +247,7 @@ pub(crate) fn commitments<C: Affine, Id: Copy>(
             .into_iter()
             .map(|(weight, id)| (weight, commitment(id)))
             .unzip();
-        C::msm(&scalars, &points).into()
+        B::msm(&scalars, &points).into()
     };
     let weighted = |side: fn(&Shape<Id, C::Scalar>) -> &[(C::Scalar, Id)],
                     weight: fn(&Weights<C::Scalar>, usize) -> C::Scalar,

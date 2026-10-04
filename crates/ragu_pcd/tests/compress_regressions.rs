@@ -3,6 +3,7 @@
 
 use alloc::{format, string::ToString, vec, vec::Vec};
 
+use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
     polynomials::{ProductionRank, sparse},
     registry::CircuitIndex,
@@ -339,7 +340,7 @@ fn raw_fuse_challenges(instance: &Instance<Pasta>) -> Vec<Fp> {
 }
 
 fn first_ipa_challenge(instance: &Instance<Pasta>, header: &[Fp]) -> Fp {
-    super::transcript(crate::pasta::baked(), instance, header)
+    super::transcript::<_, ReferenceBackend>(crate::pasta::baked(), instance, header)
         .unwrap()
         .host()
         .squeeze_challenge()
