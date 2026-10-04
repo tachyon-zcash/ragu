@@ -47,8 +47,11 @@
 //! 3. [`batch`]: $f(u)$, $v$ and the $\beta$ weights as a gadget. *Done.*
 //! 4. [`ipa`]: $b$, the round inverses and the scalars of the final check
 //!    as a gadget. *Done.* $s(X)$ as a stage polynomial is item 7's.
-//! 5. The transcript over the allocated instance and messages, with the
-//!    compression's point-multiplying challenges lifted to endoscalars.
+//! 5. [`transcript`]: the compression's transcript over the allocated
+//!    instance and messages, squeezing the native challenges. *Done*,
+//!    with the bridges allocated: binding each bridge to the other field's
+//!    values it commits to, and lifting the point-multiplying challenges
+//!    to endoscalars, change the compression's encoding and remain.
 //! 6. The derived commitments, $\[H\]$ and the IPA folds as endoscalar
 //!    Horner chains over the other curve's points.
 //! 7. The decompression step: the circuits assembled into a proof the fuse
@@ -67,6 +70,7 @@ use ragu_primitives::Element;
 pub(crate) mod batch;
 pub(crate) mod ipa;
 pub(crate) mod revdot;
+pub(crate) mod transcript;
 
 #[cfg(test)]
 #[path = "../../tests/decompress_support.rs"]

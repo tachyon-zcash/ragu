@@ -25,9 +25,10 @@ use crate::{
         claims::{self, Kind, Masked, Shape},
         fold::{Derived, Weights},
     },
-    decompress::support::{EpAffine, EqAffine, HEADER_SIZE, Setup, TestR, alloc, alloc_all},
+    decompress::support::{
+        EpAffine, EqAffine, HEADER_SIZE, Setup, TestR, alloc, alloc_all, replay_reduction,
+    },
     internal::{native, nested},
-    ipa::IpaTranscript,
 };
 
 /// What the gadget takes on one curve, natively, and the native verifier
@@ -46,25 +47,6 @@ struct Side<'a, F: Field, Id, C: Affine> {
     replay: Box<dyn Fn(&Reduction<C>) -> (Weights<F>, F, F) + 'a>,
     /// The native verifier on a reduction, as `verify_compressed` runs it.
     native: Box<dyn Fn(&Reduction<C>) -> Option<Openings<C>> + 'a>,
-}
-
-/// Replays the reduction's messages on `t` as the verifier does, returning
-/// the challenges it squeezes.
-fn replay<C: Affine>(
-    reduction: &Reduction<C>,
-    t: &mut impl IpaTranscript<C>,
-) -> (Weights<C::Scalar>, C::Scalar, C::Scalar) {
-    let weights = reduction.fold.replay(t).unwrap();
-    let rho = t.squeeze_challenge().unwrap();
-    t.write_point(reduction.p).unwrap();
-    t.write_point(reduction.q).unwrap();
-    let r = t.squeeze_challenge().unwrap();
-    for &opened in &reduction.openings {
-        t.write_scalar(opened).unwrap();
-    }
-    t.write_scalar(reduction.p_at_inverse_r).unwrap();
-    t.write_scalar(reduction.q_at_r).unwrap();
-    (weights, rho, r)
 }
 
 /// Each named circuit's restriction at $(r, y)$.
@@ -113,7 +95,7 @@ fn native_side(setup: &Setup) -> Side<'_, Fp, native::RxComponent, EqAffine> {
 
     let replay = |reduction: &Reduction<EqAffine>| {
         let (mut t, _, _) = setup.transcript();
-        replay(reduction, &mut t.host())
+        replay_reduction(reduction, &mut t.host())
     };
     let native = {
         let masked = masked.clone();
@@ -164,7 +146,7 @@ fn nested_side(setup: &Setup) -> Side<'_, Fq, nested::RxComponent, EpAffine> {
     let replay = |reduction: &Reduction<EpAffine>| {
         let (mut t, native_sampled, sampled) = setup.transcript();
         setup.run_native(&mut t, &native_sampled, sampled.y);
-        replay(reduction, &mut t.nested())
+        replay_reduction(reduction, &mut t.nested())
     };
     let native = {
         let masked = masked.clone();
