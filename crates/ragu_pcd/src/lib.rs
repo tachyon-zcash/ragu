@@ -31,6 +31,7 @@ extern crate std;
 
 mod backend;
 mod compress;
+mod decompress;
 mod fuse;
 // The fuzzing surface. Gates itself behind `unstable-fuzzing` with an inner
 // `#![cfg]` and hides itself from the docs, so no feature attribute appears
