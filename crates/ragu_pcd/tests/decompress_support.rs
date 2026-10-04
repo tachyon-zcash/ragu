@@ -13,17 +13,18 @@ use ragu_core::{
 };
 use ragu_primitives::{Element, Simulator};
 use rand::{SeedableRng, rngs::StdRng};
-use udon::field::Field;
+use udon::{curve::Affine, field::Field};
 
 use crate::{
     Application, ApplicationBuilder, CompressedProof, RAGU_TAG,
     compress::{
-        Sampled, batch,
-        revdot::{self, Openings},
+        Lifted, Sampled,
+        batch::{self, Batch},
+        revdot::{self, Openings, Reduction, fold::Weights},
         transcript,
     },
     internal::{ky, nested},
-    ipa::{CycleTranscript, IpaCycle},
+    ipa::{CycleTranscript, IpaCycle, IpaProof, IpaTranscript},
 };
 
 pub(crate) type TestR = ProductionRank;
@@ -68,17 +69,23 @@ impl Setup {
         }
     }
 
-    /// The compression's transcript with the statement absorbed and both
-    /// curves' challenges sampled, as the verifier starts.
-    pub fn transcript(&self) -> (Transcript, Sampled<Fp>, Sampled<Fq>) {
-        let mut t = transcript::<Pasta, ReferenceBackend>(
+    /// The compression's transcript with the statement absorbed, before
+    /// any challenge is sampled.
+    pub fn absorbed(&self) -> Transcript {
+        transcript::<Pasta, ReferenceBackend>(
             crate::pasta::baked(),
             &self.proof.instance,
             &self.header,
         )
-        .unwrap();
-        let native = Sampled::squeeze(&mut t.host()).unwrap();
-        let nested = Sampled::squeeze(&mut t.nested()).unwrap();
+        .unwrap()
+    }
+
+    /// The compression's transcript with the statement absorbed and both
+    /// curves' challenges sampled, as the verifier starts.
+    pub fn transcript(&self) -> (Transcript, Sampled<Fp>, Sampled<Fq>) {
+        let mut t = self.absorbed();
+        let native = Sampled::squeeze(&mut Lifted(t.host())).unwrap();
+        let nested = Sampled::squeeze(&mut Lifted(t.nested())).unwrap();
         (t, native, nested)
     }
 
@@ -117,7 +124,7 @@ impl Setup {
             &targets,
             &masked,
             &self.proof.native.reduction,
-            &mut t.host(),
+            &mut Lifted(t.host()),
         )
         .unwrap()
         .expect("the honest native reduction holds");
@@ -154,7 +161,7 @@ impl Setup {
             &targets,
             &masked,
             &self.proof.nested.reduction,
-            &mut t.nested(),
+            &mut Lifted(t.nested()),
         )
         .unwrap()
         .expect("the honest nested reduction holds");
@@ -183,12 +190,67 @@ impl Setup {
                 &self.proof.native.opening,
                 Pasta::host_generators(crate::pasta::baked()),
                 *Pasta::host_u(crate::pasta::baked()),
-                &mut t.host(),
+                &mut Lifted(t.host()),
             )
             .unwrap(),
             "the honest native batch opens"
         );
     }
+}
+
+/// Replays the reduction's messages on `t` as the verifier does,
+/// returning the challenges it squeezes: the fold's weights, $\rho$ and
+/// $r$.
+pub(crate) fn replay_reduction<C: Affine>(
+    reduction: &Reduction<C>,
+    t: &mut impl IpaTranscript<C>,
+) -> (Weights<C::Scalar>, C::Scalar, C::Scalar) {
+    let weights = reduction.fold.replay(t).unwrap();
+    let rho = t.squeeze_challenge().unwrap();
+    t.write_point(reduction.p).unwrap();
+    t.write_point(reduction.q).unwrap();
+    let r = t.squeeze_challenge().unwrap();
+    for &opened in &reduction.openings {
+        t.write_scalar(opened).unwrap();
+    }
+    t.write_scalar(reduction.p_at_inverse_r).unwrap();
+    t.write_scalar(reduction.q_at_r).unwrap();
+    (weights, rho, r)
+}
+
+/// Replays the batch's messages on `t` as the verifier does, returning
+/// $\alpha$, $u$ and $\beta$.
+pub(crate) fn replay_batch<C: Affine>(
+    batch: &Batch<C>,
+    t: &mut impl IpaTranscript<C>,
+) -> (C::Scalar, C::Scalar, C::Scalar) {
+    let alpha = t.squeeze_challenge().unwrap();
+    t.write_point(batch.f).unwrap();
+    let u = t.squeeze_challenge().unwrap();
+    for &value in &batch.evaluations {
+        t.write_scalar(value).unwrap();
+    }
+    let beta = t.squeeze_challenge().unwrap();
+    (alpha, u, beta)
+}
+
+/// Replays the IPA's messages on `t` as the verifier does, returning
+/// $\xi$, $z$ and the round challenges.
+pub(crate) fn replay_ipa<C: Affine>(
+    proof: &IpaProof<C>,
+    t: &mut impl IpaTranscript<C>,
+) -> (C::Scalar, C::Scalar, Vec<C::Scalar>) {
+    t.write_point(proof.s_commitment).unwrap();
+    let xi = t.squeeze_challenge().unwrap();
+    let z = t.squeeze_challenge().unwrap();
+    let mut rounds = Vec::with_capacity(proof.rounds.len());
+    for &(l, r) in &proof.rounds {
+        t.write_point(l).unwrap();
+        t.write_point(r).unwrap();
+        rounds.push(t.squeeze_challenge().unwrap());
+    }
+    t.write_scalar(proof.c).unwrap();
+    (xi, z, rounds)
 }
 
 /// Allocates a value as an element under the simulator.
