@@ -1,3 +1,5 @@
+use alloc::boxed::Box;
+
 use ragu_core::{
     Coeff, Error, Result,
     drivers::{Driver, DriverValue},
@@ -7,7 +9,7 @@ use ragu_core::{
 use udon::field::Field;
 
 use crate::{
-    Element, GadgetExt,
+    DivisionByZeroError, Element, GadgetExt,
     comparison::GadgetEquals,
     consistent::Consistent,
     io::{Buffer, Write},
@@ -158,13 +160,15 @@ impl<'dr, D: Driver<'dr>> Invertible<'dr, D> {
     ///
     /// # Errors
     ///
-    /// Returns a witness-generation error if `value` is zero.
+    /// Witness generation fails with [`Error::InvalidWitness`] when `value` is
+    /// zero. The boxed source is a [`DivisionByZeroError`] value, which
+    /// callers can detect with [`Error::invalid_witness_source`].
     pub fn alloc(dr: &mut D, value: DriverValue<D, D::F>) -> Result<Self> {
         let inverse_value = D::try_just(|| {
             value
                 .snag()
                 .invert()
-                .ok_or_else(|| Error::InvalidWitness("division by zero".into()))
+                .ok_or_else(|| Error::InvalidWitness(Box::new(DivisionByZeroError)))
         })?;
         Self::alloc_with_advice(dr, value, inverse_value)
     }
@@ -420,7 +424,13 @@ mod tests {
             Invertible::alloc(dr, witness.clone())?;
             Ok(())
         });
-        assert!(result.is_err());
+        let Err(err) = result else {
+            panic!("zero must not be invertible");
+        };
+        assert_eq!(
+            err.invalid_witness_source::<DivisionByZeroError>(),
+            Some(&DivisionByZeroError)
+        );
     }
 
     #[test]
