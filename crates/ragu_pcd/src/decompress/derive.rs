@@ -19,11 +19,11 @@ use core::iter::once;
 
 use ragu_circuits::registry::CircuitIndex;
 use ragu_core::{
-    Error, Result,
+    Coeff, Error, Result,
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
-use ragu_primitives::{Boolean, Endoscalar, GadgetExt, NonzeroBank, Point};
+use ragu_primitives::{Boolean, Element, Endoscalar, GadgetExt, NonzeroBank, Point};
 use udon::{
     curve::{EndomorphismAffine as Affine, Projective},
     field::Field,
@@ -395,6 +395,28 @@ impl<'dr, D: Driver<'dr>> Digits<'dr, D> {
             .map(|bits| Digits { bits })
     }
 
+    /// The digits of the element `k` of this circuit's own field, bound to
+    /// it: $2 B - (2^n - 1) = k$ over the packed bits. The other side
+    /// allocates the same bits from the value and scales by them.
+    pub(crate) fn alloc_bound(dr: &mut D, k: &Element<'dr, D>) -> Result<Self> {
+        let digits = Self::alloc(dr, k.value().map(|k| *k))?;
+        let mut power = D::F::ONE;
+        let mut packed = Element::zero(dr);
+        for bit in &digits.bits {
+            packed = packed.add_coeff(dr, &bit.element(), Coeff::Arbitrary(power));
+            power = power.double();
+        }
+        // 2 B - (2^n - 1) - k = 0, with 2^n the power left after the last
+        // doubling.
+        let shift = power - D::F::ONE;
+        packed
+            .scale(dr, Coeff::Two)
+            .add_coeff(dr, &Element::one(), Coeff::NegativeArbitrary(shift))
+            .sub(dr, k)
+            .enforce_zero(dr)?;
+        Ok(digits)
+    }
+
     /// The bits of $B = (k + 2^n - 1) / 2$ for the scalar $k$.
     fn bits<S: Field>(scalar: S) -> Vec<bool> {
         let n = S::CAPACITY as usize + 1;
@@ -447,7 +469,9 @@ pub(crate) struct Fixed<C> {
 }
 
 /// The IPA's points on one curve: the prover's $\[S\]$, its rounds' $L_j$
-/// and $R_j$, the witness points $u_j^{-1} L_j$, and $G'$.
+/// and $R_j$, the witness points $u_j^{-1} L_j$, and $G'$. The circuit
+/// binds each $u_j^{-1} L_j$ to its $L_j$; $G'$ it does not bind yet, see
+/// the module's *What remains*.
 pub(crate) struct Opening<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     pub s_commitment: Point<'dr, D, C>,
     pub rounds: Vec<(Point<'dr, D, C>, Point<'dr, D, C>)>,
