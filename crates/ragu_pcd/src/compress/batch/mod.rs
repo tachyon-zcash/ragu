@@ -23,6 +23,8 @@ mod prover;
 mod verifier;
 
 pub(crate) use prover::batch;
+#[cfg(test)]
+pub(crate) use verifier::verify;
 pub(crate) use verifier::verify_openings;
 
 /// The prover's messages of the batch on one curve.
