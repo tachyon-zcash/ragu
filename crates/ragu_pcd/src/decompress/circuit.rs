@@ -22,6 +22,10 @@
 //! challenge stage. Here the [`Witness`] carries them, and the two sides
 //! allocate them from it; the registry's evaluations likewise arrive as
 //! wires the decider checks.
+//!
+//! One check is open: each side's IPA takes its $G'$ as a witness point
+//! that nothing yet binds, so the final check holds for a prover who
+//! chooses $G'$. The module's integration notes record the fix.
 
 use alloc::{vec, vec::Vec};
 use core::iter::once;

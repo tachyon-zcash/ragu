@@ -56,7 +56,8 @@
 //! 7. [`circuit`]: the verifier assembled from the gadgets as the two
 //!    circuits of the cycle, with the witness both allocate prepared from
 //!    a compressed proof, and tested end to end under the simulators.
-//!    *Done* up to the proof system's integration, below.
+//!    *Done* up to the proof system's integration, below, with $G'$ the
+//!    one open gap.
 //!
 //! # Integration
 //!
@@ -84,14 +85,23 @@
 //!   scalar to the first, and the stage's layout must become the bridge's.
 //!   The registry's evaluations are the decider's to check against the
 //!   registry, as the fuse's query stage is.
-//! - **$G'$.** The IPA's final check takes $G' = \langle s, G \rangle$ as
-//!   a witness point. It is the commitment to $s(X) = \prod_{i < k} (1 +
-//!   u_{k-1-i} X^{2^i})$ over the same generators, so as a stage polynomial
-//!   of the decompression proof the decider opens it at a fresh point and
-//!   the circuit computes [`ipa::s_at`] there in $2k - 1$ gates; that
-//!   opening is a revdot claim with a public $b$ the decider does not make
-//!   today, so the decider's claims grow by one kind. Until then $G'$ is
-//!   the one value the circuits take on trust.
+//! - **$G'$, the open gap.** The IPA's final check takes $G' = \langle s,
+//!   G \rangle$ as a witness point, so as the circuits stand that check
+//!   binds nothing: a prover who chooses $G'$ satisfies it for any
+//!   left-hand side, and the end-to-end test does not cover such a prover.
+//!   Everything before the IPA's final check is bound. $G'$ is the
+//!   commitment to $s(X) = \prod_{i < k} (1 + u_{k-1-i} X^{2^i})$ over the
+//!   same generators, so the fix is to witness $s$ as a polynomial of the
+//!   decompression proof, take its commitment as $G'$, and defer one
+//!   evaluation claim, $s$ at a fresh point against [`ipa::s_at`], to the
+//!   fuse that consumes the proof. The hooks of
+//!   [#783](https://github.com/tachyon-zcash/ragu/pull/783) and
+//!   [#821](https://github.com/tachyon-zcash/ragu/pull/821),
+//!   `witness_polynomial`, `derive_challenge` and `enforce_poly_query`,
+//!   are exactly that for a circuit-field polynomial, which covers the
+//!   host curve's $G'$. The nested curve's $G'$ is the commitment to a
+//!   scalar-field polynomial on the nested curve, which those hooks do not
+//!   reach, so it needs the same mechanism on the nested side.
 
 // The gadgets have no caller until the decompression step assembles them,
 // so until then only their tests use them.

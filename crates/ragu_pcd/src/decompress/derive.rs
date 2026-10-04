@@ -467,7 +467,9 @@ pub(crate) struct Fixed<C> {
 }
 
 /// The IPA's points on one curve: the prover's $\[S\]$, its rounds' $L_j$
-/// and $R_j$, the witness points $u_j^{-1} L_j$, and $G'$.
+/// and $R_j$, the witness points $u_j^{-1} L_j$, and $G'$. The circuit
+/// binds each $u_j^{-1} L_j$ to its $L_j$; $G'$ it does not bind yet, see
+/// the module's integration notes.
 pub(crate) struct Opening<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     pub s_commitment: Point<'dr, D, C>,
     pub rounds: Vec<(Point<'dr, D, C>, Point<'dr, D, C>)>,
