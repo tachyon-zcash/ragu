@@ -199,6 +199,29 @@ impl<'dr, D: Driver<'dr>> Challenge<'dr, D> {
     }
 }
 
+/// A challenge of the fuse's transcript as the compressed verifier
+/// replays it: the squeezed element, which the native side uses as it is,
+/// and its endoscalar, whose lift the nested side uses and whose bits
+/// scale the challenge stage's generator.
+pub(crate) struct RawChallenge<'dr, D: Driver<'dr>> {
+    pub raw: Element<'dr, D>,
+    pub endoscalar: Endoscalar<'dr, D>,
+}
+
+impl<'dr, D: Driver<'dr>> RawChallenge<'dr, D> {
+    /// Squeezes a challenge, constraining it into the endoscalar range as
+    /// the fuse's circuits do.
+    pub(crate) fn squeeze<P: PoseidonPermutation<D::F>>(
+        dr: &mut D,
+        transcript: &mut Transcript<'dr, D, P>,
+    ) -> Result<Self> {
+        let raw = transcript.challenge(dr)?;
+        let endoscalar =
+            Endoscalar::extract(EndoscalarChallenge::from_element(dr, &mut (), raw.clone())?);
+        Ok(RawChallenge { raw, endoscalar })
+    }
+}
+
 /// One curve's messages as the transcript absorbs them, its points as `P`
 /// and its scalars as `S`: on the host curve the scalars are elements and
 /// the points bridges, on the nested curve the points are points and the

@@ -155,6 +155,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Clone for CompressedPcd<C, H> {
 /// The challenges the verifier samples on one curve once the statement is
 /// absorbed: $w$ for the registry restriction, $y$ and $z$ for the claims
 /// and $\sigma$ for the wire bindings.
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct Sampled<F> {
     pub w: F,
     pub y: F,

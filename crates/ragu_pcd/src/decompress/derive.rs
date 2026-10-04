@@ -19,11 +19,11 @@ use core::iter::once;
 
 use ragu_circuits::registry::CircuitIndex;
 use ragu_core::{
-    Error, Result,
+    Coeff, Error, Result,
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
-use ragu_primitives::{Boolean, Endoscalar, GadgetExt, NonzeroBank, Point};
+use ragu_primitives::{Boolean, Element, Endoscalar, GadgetExt, NonzeroBank, Point};
 use udon::{
     curve::{EndomorphismAffine as Affine, Projective},
     field::Field,
@@ -391,6 +391,28 @@ impl<'dr, D: Driver<'dr>> Digits<'dr, D> {
             .map(|i| Boolean::alloc(dr, &mut (), bits.as_ref().map(|bits| bits[i])))
             .collect::<Result<Vec<_>>>()
             .map(|bits| Digits { bits })
+    }
+
+    /// The digits of the element `k` of this circuit's own field, bound to
+    /// it: $2 B - (2^n - 1) = k$ over the packed bits. The other side
+    /// allocates the same bits from the value and scales by them.
+    pub(crate) fn alloc_bound(dr: &mut D, k: &Element<'dr, D>) -> Result<Self> {
+        let digits = Self::alloc(dr, k.value().map(|k| *k))?;
+        let mut power = D::F::ONE;
+        let mut packed = Element::zero(dr);
+        for bit in &digits.bits {
+            packed = packed.add_coeff(dr, &bit.element(), Coeff::Arbitrary(power));
+            power = power.double();
+        }
+        // 2 B - (2^n - 1) - k = 0, with 2^n the power left after the last
+        // doubling.
+        let shift = power - D::F::ONE;
+        packed
+            .scale(dr, Coeff::Two)
+            .add_coeff(dr, &Element::one(), Coeff::NegativeArbitrary(shift))
+            .sub(dr, k)
+            .enforce_zero(dr)?;
+        Ok(digits)
     }
 
     /// The bits of $B = (k + 2^n - 1) / 2$ for the scalar $k$.
