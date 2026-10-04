@@ -33,20 +33,25 @@
 //! unified instance's $k(y)$, which the `bind_challenges` circuits' claims
 //! hold it to.
 //!
-//! The transcript squeezes circuit-field elements. The host curve's
-//! challenges are those squeezes; the nested curve's preserve their canonical
-//! integers within the two fields' common capacity, rejecting out-of-range
-//! values. For Pasta, the accepted range has $2^{254}$ elements. Under ideal
-//! transcript draws, a nonzero degree-$d$ residual in one nested challenge
-//! therefore vanishes with probability at most $d/2^{254}$. These fresh
-//! compression challenges are checked by the terminal verifier. The fuse's
-//! replayed challenges retain their endoscalar lifts.
+//! The transcript squeezes circuit-field elements, and every compression
+//! challenge is the endoscalar lift of a squeeze, as the fuse's challenges
+//! are: the squeeze's low 128 bits read as an endoscalar and lifted into
+//! the field of the curve the challenge serves, through [`Lifted`]. The
+//! lift is what lets a circuit over the other field scale that curve's
+//! points by the challenge, which decompression needs; the nested curve's
+//! squeezes first keep their canonical integers within the two fields'
+//! common capacity. A squeeze outside the endoscalar range, a $2^{-129}$
+//! event, rejects the proof. The lift is injective, so under ideal
+//! transcript draws a nonzero degree-$d$ residual in one challenge
+//! vanishes with probability at most $d/2^{128}$. These fresh compression
+//! challenges are checked by the terminal verifier.
 //!
 //! Like an uncompressed proof, a compressed proof is not hiding: the
 //! openings it carries are evaluations of the witness polynomials.
 
 use ragu_circuits::polynomials::Rank;
 use ragu_core::{Cycle, Result};
+use ragu_primitives::{extract_endoscalar, lift_endoscalar};
 use udon::curve::Affine;
 
 use self::{
@@ -167,6 +172,32 @@ impl<F> Sampled<F> {
             z: transcript.squeeze_challenge()?,
             sigma: transcript.squeeze_challenge()?,
         })
+    }
+}
+
+/// A transcript whose challenges are endoscalar lifts, as the fuse's are:
+/// each squeeze of the inner transcript is read as an endoscalar, its low
+/// 128 bits, and lifted into the scalar field of the curve the challenge
+/// serves, so that a circuit over the other field can scale that curve's
+/// points by the challenge through the endomorphism while the field checks
+/// use the lift. A squeeze outside the endoscalar range, a $2^{-129}$
+/// event, rejects the proof, as [`Instance::challenges`] rejects such a
+/// `pre_beta`.
+pub(crate) struct Lifted<T>(pub T);
+
+impl<C: Affine, T: IpaTranscript<C>> IpaTranscript<C> for Lifted<T> {
+    fn write_point(&mut self, point: C) -> Result<()> {
+        self.0.write_point(point)
+    }
+
+    fn write_scalar(&mut self, scalar: C::Scalar) -> Result<()> {
+        self.0.write_scalar(scalar)
+    }
+
+    fn squeeze_challenge(&mut self) -> Result<C::Scalar> {
+        Ok(lift_endoscalar(extract_endoscalar(
+            self.0.squeeze_challenge()?,
+        )?))
     }
 }
 

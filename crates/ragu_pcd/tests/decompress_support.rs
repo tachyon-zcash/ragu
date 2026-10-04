@@ -18,7 +18,7 @@ use udon::{curve::Affine, field::Field};
 use crate::{
     Application, ApplicationBuilder, CompressedProof, RAGU_TAG,
     compress::{
-        Sampled,
+        Lifted, Sampled,
         batch::{self, Batch},
         revdot::{self, Openings, Reduction, fold::Weights},
         transcript,
@@ -69,17 +69,23 @@ impl Setup {
         }
     }
 
-    /// The compression's transcript with the statement absorbed and both
-    /// curves' challenges sampled, as the verifier starts.
-    pub fn transcript(&self) -> (Transcript, Sampled<Fp>, Sampled<Fq>) {
-        let mut t = transcript::<Pasta, ReferenceBackend>(
+    /// The compression's transcript with the statement absorbed, before
+    /// any challenge is sampled.
+    pub fn absorbed(&self) -> Transcript {
+        transcript::<Pasta, ReferenceBackend>(
             crate::pasta::baked(),
             &self.proof.instance,
             &self.header,
         )
-        .unwrap();
-        let native = Sampled::squeeze(&mut t.host()).unwrap();
-        let nested = Sampled::squeeze(&mut t.nested()).unwrap();
+        .unwrap()
+    }
+
+    /// The compression's transcript with the statement absorbed and both
+    /// curves' challenges sampled, as the verifier starts.
+    pub fn transcript(&self) -> (Transcript, Sampled<Fp>, Sampled<Fq>) {
+        let mut t = self.absorbed();
+        let native = Sampled::squeeze(&mut Lifted(t.host())).unwrap();
+        let nested = Sampled::squeeze(&mut Lifted(t.nested())).unwrap();
         (t, native, nested)
     }
 
@@ -118,7 +124,7 @@ impl Setup {
             &targets,
             &masked,
             &self.proof.native.reduction,
-            &mut t.host(),
+            &mut Lifted(t.host()),
         )
         .unwrap()
         .expect("the honest native reduction holds");
@@ -155,7 +161,7 @@ impl Setup {
             &targets,
             &masked,
             &self.proof.nested.reduction,
-            &mut t.nested(),
+            &mut Lifted(t.nested()),
         )
         .unwrap()
         .expect("the honest nested reduction holds");
@@ -184,7 +190,7 @@ impl Setup {
                 &self.proof.native.opening,
                 Pasta::host_generators(crate::pasta::baked()),
                 *Pasta::host_u(crate::pasta::baked()),
-                &mut t.host(),
+                &mut Lifted(t.host()),
             )
             .unwrap(),
             "the honest native batch opens"

@@ -2,7 +2,8 @@
 //! compressed proof: over the allocated instance, header and messages,
 //! with the bridges the native transcript forms allocated as points, it
 //! squeezes every challenge the native verifier squeezes on both curves,
-//! and follows a tampered message as the native transcript does.
+//! each as the lift of the endoscalar the native squeeze yields, and
+//! follows a tampered message as the native transcript does.
 
 use alloc::vec::Vec;
 
@@ -13,7 +14,7 @@ use ragu_core::{
     maybe::Maybe,
     pasta::{Fp, Fq, Pasta},
 };
-use ragu_primitives::{Element, Point, Simulator};
+use ragu_primitives::{Element, Point, Simulator, extract_endoscalar, lift_endoscalar};
 use udon::{
     curve::{Affine, Projective},
     field::Field,
@@ -201,9 +202,15 @@ impl<F: Field> Native<F> {
     }
 }
 
-/// The gadget's challenges in the same order, by value.
+/// The lift into the circuit field of the endoscalar a raw squeeze yields,
+/// on either curve: what the gadget's `lift` must be.
+fn lifted<F: Field>(raw: F) -> Fp {
+    lift_endoscalar(extract_endoscalar(raw).expect("a squeeze is in range"))
+}
+
+/// The gadget's challenges' lifts in the same order, by value.
 fn flatten(challenges: &Challenges<'static, Dr>) -> (Vec<Fp>, Vec<Fp>) {
-    let value = |element: &Element<'static, Dr>| *element.value().take();
+    let value = |challenge: &super::Challenge<'static, Dr>| *challenge.lift.value().take();
     let sampled = [
         &challenges.sampled.w,
         &challenges.sampled.y,
@@ -231,16 +238,12 @@ fn flatten(challenges: &Challenges<'static, Dr>) -> (Vec<Fp>, Vec<Fp>) {
     (sampled, rest)
 }
 
-/// A circuit-field challenge and a scalar-field one agree when they are
-/// the same canonical integer, as the native transcript converts them.
-fn same_integer(circuit: Fp, scalar: Fq) -> bool {
-    circuit.to_bytes().as_ref() == scalar.to_bytes().as_ref()
-}
-
-/// Replays `proof`'s transcript natively and in the gadget and compares
-/// every challenge.
+/// Replays `proof`'s transcript natively, as raw squeezes, and in the
+/// gadget, and compares every challenge's lift.
 fn check(setup: &Setup, proof: &compress::CompressedProof<Pasta>) {
-    let (mut t, native_sampled, nested_sampled) = setup.transcript();
+    let mut t = setup.absorbed();
+    let native_sampled = Sampled::squeeze(&mut t.host()).unwrap();
+    let nested_sampled = Sampled::squeeze(&mut t.nested()).unwrap();
     let native = Native::new(
         native_sampled,
         replay_reduction(&proof.native.reduction, &mut t.host()),
@@ -270,18 +273,27 @@ fn check(setup: &Setup, proof: &compress::CompressedProof<Pasta>) {
 
         let (sampled, rest) = flatten(&host);
         let Sampled { w, y, z, sigma } = native.sampled;
-        assert_eq!(sampled, alloc::vec![w, y, z, sigma]);
-        assert_eq!(rest, native.rest);
+        assert_eq!(sampled, [w, y, z, sigma].map(lifted).to_vec());
+        assert_eq!(
+            rest,
+            native
+                .rest
+                .iter()
+                .map(|&raw| lifted(raw))
+                .collect::<Vec<_>>()
+        );
 
         let (sampled, rest) = flatten(&scalar);
         let Sampled { w, y, z, sigma } = nested.sampled;
-        for (circuit, scalar) in sampled.into_iter().chain(rest).zip(
-            [w, y, z, sigma]
-                .into_iter()
-                .chain(nested.rest.iter().copied()),
-        ) {
-            assert!(same_integer(circuit, scalar));
-        }
+        assert_eq!(sampled, [w, y, z, sigma].map(lifted).to_vec());
+        assert_eq!(
+            rest,
+            nested
+                .rest
+                .iter()
+                .map(|&raw| lifted(raw))
+                .collect::<Vec<_>>()
+        );
         Ok(())
     })
     .unwrap();

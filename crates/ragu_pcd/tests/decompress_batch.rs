@@ -14,6 +14,7 @@ use udon::{curve::Affine, field::Field};
 use super::{Challenges, Messages, verify};
 use crate::{
     compress::{
+        Lifted,
         batch::{self, Batch, Batched},
         revdot::{OpeningClaim, Openings},
     },
@@ -112,13 +113,13 @@ fn native_batch_matches_the_verifier() {
         let openings = setup.native_openings(&mut t, &sampled, nested_sampled.y);
         (t, openings)
     };
-    let challenges = |batch: &Batch<_>| replay_batch(batch, &mut at_batch().0.host());
+    let challenges = |batch: &Batch<_>| replay_batch(batch, &mut Lifted(at_batch().0.host()));
     let expected = |openings: &Openings<_>, batch: &Batch<_>| {
         batch::verify::<_, ReferenceBackend, _>(
             &openings.commitments,
             &openings.claims,
             batch,
-            &mut at_batch().0.host(),
+            &mut Lifted(at_batch().0.host()),
         )
     };
 
@@ -159,13 +160,13 @@ fn nested_batch_matches_the_verifier() {
         let openings = setup.nested_openings(&mut t, &sampled, native_sampled.y);
         (t, openings)
     };
-    let challenges = |batch: &Batch<_>| replay_batch(batch, &mut at_batch().0.nested());
+    let challenges = |batch: &Batch<_>| replay_batch(batch, &mut Lifted(at_batch().0.nested()));
     let expected = |openings: &Openings<_>, batch: &Batch<_>| {
         batch::verify::<_, ReferenceBackend, _>(
             &openings.commitments,
             &openings.claims,
             batch,
-            &mut at_batch().0.nested(),
+            &mut Lifted(at_batch().0.nested()),
         )
     };
 

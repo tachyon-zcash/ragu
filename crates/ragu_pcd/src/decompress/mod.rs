@@ -51,8 +51,8 @@
 //!    instance and messages, squeezing the native challenges. *Done*,
 //!    with the bridges allocated; binding them is item 7's.
 //! 6. The derived commitments, $\[H\]$ and the IPA folds as endoscalar
-//!    Horner chains over the other curve's points. Needs the compression
-//!    to squeeze endoscalar challenges, below.
+//!    Horner chains over the other curve's points, the compression's
+//!    challenges squeezed as endoscalars for them.
 //! 7. The decompression step: the circuits assembled into a proof the fuse
 //!    takes as a child, with an end-to-end test from a compressed proof
 //!    through decompression and a fuse back to compression.

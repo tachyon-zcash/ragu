@@ -20,10 +20,13 @@ use udon::{curve::Affine, field::Field};
 
 use super::{Binding, Challenges, Messages, Public, verify};
 use crate::{
-    compress::revdot::{
-        self, Openings, Reduction,
-        claims::{self, Kind, Masked, Shape},
-        fold::{Derived, Weights},
+    compress::{
+        Lifted,
+        revdot::{
+            self, Openings, Reduction,
+            claims::{self, Kind, Masked, Shape},
+            fold::{Derived, Weights},
+        },
     },
     decompress::support::{
         EpAffine, EqAffine, HEADER_SIZE, Setup, TestR, alloc, alloc_all, replay_reduction,
@@ -95,7 +98,7 @@ fn native_side(setup: &Setup) -> Side<'_, Fp, native::RxComponent, EqAffine> {
 
     let replay = |reduction: &Reduction<EqAffine>| {
         let (mut t, _, _) = setup.transcript();
-        replay_reduction(reduction, &mut t.host())
+        replay_reduction(reduction, &mut Lifted(t.host()))
     };
     let native = {
         let masked = masked.clone();
@@ -110,7 +113,7 @@ fn native_side(setup: &Setup) -> Side<'_, Fp, native::RxComponent, EqAffine> {
                 &setup.targets(sampled.y, nested_sampled.y).0,
                 &masked,
                 reduction,
-                &mut t.host(),
+                &mut Lifted(t.host()),
             )
             .unwrap()
         }
@@ -146,7 +149,7 @@ fn nested_side(setup: &Setup) -> Side<'_, Fq, nested::RxComponent, EpAffine> {
     let replay = |reduction: &Reduction<EpAffine>| {
         let (mut t, native_sampled, sampled) = setup.transcript();
         setup.run_native(&mut t, &native_sampled, sampled.y);
-        replay_reduction(reduction, &mut t.nested())
+        replay_reduction(reduction, &mut Lifted(t.nested()))
     };
     let native = {
         let masked = masked.clone();
@@ -161,7 +164,7 @@ fn nested_side(setup: &Setup) -> Side<'_, Fq, nested::RxComponent, EpAffine> {
                 &setup.targets(native_sampled.y, sampled.y).1,
                 &masked,
                 reduction,
-                &mut t.nested(),
+                &mut Lifted(t.nested()),
             )
             .unwrap()
         }

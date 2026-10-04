@@ -13,7 +13,10 @@ use udon::{curve::Affine, field::Field};
 
 use super::{Challenges, Messages, verify};
 use crate::{
-    compress::batch::{self, Batched},
+    compress::{
+        Lifted,
+        batch::{self, Batched},
+    },
     decompress::support::{Setup, TestR, alloc, alloc_all, replay_ipa},
     ipa::{self, IpaCycle, IpaProof, MSM, Params},
 };
@@ -114,7 +117,7 @@ fn native_ipa_scalars_match_the_verifier() {
             &openings.commitments,
             &openings.claims,
             &setup.proof.native.batch,
-            &mut t.host(),
+            &mut Lifted(t.host()),
         )
         .unwrap();
         (t, claim)
@@ -128,7 +131,7 @@ fn native_ipa_scalars_match_the_verifier() {
         let guard = ipa::verify_proof(
             &params,
             msm,
-            &mut t.host(),
+            &mut Lifted(t.host()),
             &proof,
             claim.point,
             claim.value,
@@ -138,7 +141,7 @@ fn native_ipa_scalars_match_the_verifier() {
         assert_eq!(guard.use_challenges().eval::<ReferenceBackend>(), expected);
 
         let (mut t, _) = at_ipa();
-        let challenges = replay_ipa(&proof, &mut t.host());
+        let challenges = replay_ipa(&proof, &mut Lifted(t.host()));
         let scalars = simulate(claim.point, claim.value, challenges, proof.c).unwrap();
         assert_eq!(
             accepts(&params, &claim, &proof, g_prime, &scalars),
@@ -163,7 +166,7 @@ fn nested_ipa_scalars_match_the_verifier() {
             &openings.commitments,
             &openings.claims,
             &setup.proof.nested.batch,
-            &mut t.nested(),
+            &mut Lifted(t.nested()),
         )
         .unwrap();
         (t, claim)
@@ -177,7 +180,7 @@ fn nested_ipa_scalars_match_the_verifier() {
         let guard = ipa::verify_proof(
             &params,
             msm,
-            &mut t.nested(),
+            &mut Lifted(t.nested()),
             &proof,
             claim.point,
             claim.value,
@@ -187,7 +190,7 @@ fn nested_ipa_scalars_match_the_verifier() {
         assert_eq!(guard.use_challenges().eval::<ReferenceBackend>(), expected);
 
         let (mut t, _) = at_ipa();
-        let challenges = replay_ipa(&proof, &mut t.nested());
+        let challenges = replay_ipa(&proof, &mut Lifted(t.nested()));
         let scalars = simulate(claim.point, claim.value, challenges, proof.c).unwrap();
         assert_eq!(
             accepts(&params, &claim, &proof, g_prime, &scalars),

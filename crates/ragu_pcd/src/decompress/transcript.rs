@@ -12,14 +12,17 @@
 //! points, each bridge commitment an allocated point: what the bridge
 //! commits to is bound elsewhere, by a stage over the other field that
 //! holds those values, which is the roadmap's fifth item. Each challenge
-//! is an element of the circuit field; the nested curve's challenges are
-//! those elements' canonical integers, which the circuit over the scalar
-//! field must receive bound and in range.
+//! is read as the compression reads it: the squeezed element constrained
+//! into the endoscalar range, its endoscalar, which scales points, and the
+//! endoscalar's lift into the circuit field, which the field checks over
+//! this field use. The nested curve's field checks use the same
+//! endoscalar's lift into the scalar field, which the circuit over that
+//! field must receive bound to these bits.
 
 use alloc::vec::Vec;
 
 use ragu_core::{PoseidonPermutation, Result, drivers::Driver};
-use ragu_primitives::{Element, GadgetExt, Point, io::Buffer};
+use ragu_primitives::{Element, Endoscalar, EndoscalarChallenge, GadgetExt, Point, io::Buffer};
 use udon::curve::EndomorphismAffine as Affine;
 
 use crate::{
@@ -173,6 +176,29 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Instance<'dr, D, C> {
     }
 }
 
+/// A challenge as the compression uses it: the endoscalar read from the
+/// squeezed element, which scales points, and its lift, the scalar the
+/// field checks over this field use.
+pub(crate) struct Challenge<'dr, D: Driver<'dr>> {
+    pub endoscalar: Endoscalar<'dr, D>,
+    pub lift: Element<'dr, D>,
+}
+
+impl<'dr, D: Driver<'dr>> Challenge<'dr, D> {
+    /// Squeezes a challenge, constraining the element into the endoscalar
+    /// range as the native transcript requires of it.
+    fn squeeze<P: PoseidonPermutation<D::F>>(
+        dr: &mut D,
+        transcript: &mut Transcript<'dr, D, P>,
+    ) -> Result<Self> {
+        let element = transcript.challenge(dr)?;
+        let endoscalar =
+            Endoscalar::extract(EndoscalarChallenge::from_element(dr, &mut (), element)?);
+        let lift = endoscalar.lift(dr)?;
+        Ok(Challenge { endoscalar, lift })
+    }
+}
+
 /// One curve's messages as the transcript absorbs them, its points as `P`
 /// and its scalars as `S`: on the host curve the scalars are elements and
 /// the points bridges, on the nested curve the points are points and the
@@ -197,16 +223,16 @@ pub(crate) struct Messages<S, P> {
 /// The challenges the transcript squeezes for one curve, in the order
 /// the native verifier squeezes them.
 pub(crate) struct Challenges<'dr, D: Driver<'dr>> {
-    pub sampled: Sampled<Element<'dr, D>>,
-    pub weights: Weights<Element<'dr, D>>,
-    pub rho: Element<'dr, D>,
-    pub r: Element<'dr, D>,
-    pub alpha: Element<'dr, D>,
-    pub u: Element<'dr, D>,
-    pub beta: Element<'dr, D>,
-    pub xi: Element<'dr, D>,
-    pub z: Element<'dr, D>,
-    pub rounds: Vec<Element<'dr, D>>,
+    pub sampled: Sampled<Challenge<'dr, D>>,
+    pub weights: Weights<Challenge<'dr, D>>,
+    pub rho: Challenge<'dr, D>,
+    pub r: Challenge<'dr, D>,
+    pub alpha: Challenge<'dr, D>,
+    pub u: Challenge<'dr, D>,
+    pub beta: Challenge<'dr, D>,
+    pub xi: Challenge<'dr, D>,
+    pub z: Challenge<'dr, D>,
+    pub rounds: Vec<Challenge<'dr, D>>,
 }
 
 /// Replays the compression's transcript over the allocated statement and
@@ -242,12 +268,12 @@ where
 fn sample<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>>(
     dr: &mut D,
     transcript: &mut Transcript<'dr, D, P>,
-) -> Result<Sampled<Element<'dr, D>>> {
+) -> Result<Sampled<Challenge<'dr, D>>> {
     Ok(Sampled {
-        w: transcript.challenge(dr)?,
-        y: transcript.challenge(dr)?,
-        z: transcript.challenge(dr)?,
-        sigma: transcript.challenge(dr)?,
+        w: Challenge::squeeze(dr, transcript)?,
+        y: Challenge::squeeze(dr, transcript)?,
+        z: Challenge::squeeze(dr, transcript)?,
+        sigma: Challenge::squeeze(dr, transcript)?,
     })
 }
 
@@ -255,7 +281,7 @@ fn sample<'dr, D: Driver<'dr>, P: PoseidonPermutation<D::F>>(
 fn side<'dr, D, P, S, Q>(
     dr: &mut D,
     transcript: &mut Transcript<'dr, D, P>,
-    sampled: Sampled<Element<'dr, D>>,
+    sampled: Sampled<Challenge<'dr, D>>,
     messages: &Messages<S, Q>,
 ) -> Result<Challenges<'dr, D>>
 where
@@ -264,7 +290,7 @@ where
     S: Absorb<'dr, D>,
     Q: Absorb<'dr, D>,
 {
-    let squeeze = |dr: &mut D, transcript: &mut Transcript<'dr, D, P>| transcript.challenge(dr);
+    let squeeze = Challenge::squeeze;
 
     messages.inner.absorb(dr, transcript)?;
     let mu = squeeze(dr, transcript)?;
