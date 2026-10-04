@@ -50,9 +50,9 @@
 //! 5. [`transcript`]: the compression's transcript over the allocated
 //!    instance and messages, squeezing the native challenges. *Done*,
 //!    with the bridges allocated; binding them is item 7's.
-//! 6. The derived commitments, $\[H\]$ and the IPA folds as endoscalar
-//!    Horner chains over the other curve's points, the compression's
-//!    challenges squeezed as endoscalars for them.
+//! 6. [`derive`](mod@derive): the derived commitments, $\[H\]$ and the IPA's final
+//!    check as endoscalar chains over the other curve's points, the
+//!    compression's challenges squeezed as endoscalars for them. *Done.*
 //! 7. The decompression step: the circuits assembled into a proof the fuse
 //!    takes as a child, with an end-to-end test from a compressed proof
 //!    through decompression and a fuse back to compression.
@@ -131,6 +131,7 @@ use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::Element;
 
 pub(crate) mod batch;
+pub(crate) mod derive;
 pub(crate) mod ipa;
 pub(crate) mod revdot;
 pub(crate) mod transcript;
