@@ -44,7 +44,7 @@
 //! 1. This module and its design. *Done.*
 //! 2. [`revdot`]: the fold and split as a gadget, tested against the
 //!    native verifier on a real compressed proof. *Done.*
-//! 3. `batch`: $f(u)$, $v$ and the $\beta$ weights as a gadget.
+//! 3. [`batch`]: $f(u)$, $v$ and the $\beta$ weights as a gadget. *Done.*
 //! 4. `ipa`: $b$, the round inverses and the final scalar relation as a
 //!    gadget; $s(X)$ as a stage polynomial.
 //! 5. The transcript over the allocated instance and messages, with the
@@ -64,6 +64,7 @@ use alloc::vec::Vec;
 use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::Element;
 
+pub(crate) mod batch;
 pub(crate) mod revdot;
 
 #[cfg(test)]
