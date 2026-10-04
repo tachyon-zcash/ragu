@@ -45,8 +45,8 @@
 //! 2. [`revdot`]: the fold and split as a gadget, tested against the
 //!    native verifier on a real compressed proof. *Done.*
 //! 3. [`batch`]: $f(u)$, $v$ and the $\beta$ weights as a gadget. *Done.*
-//! 4. `ipa`: $b$, the round inverses and the final scalar relation as a
-//!    gadget; $s(X)$ as a stage polynomial.
+//! 4. [`ipa`]: $b$, the round inverses and the scalars of the final check
+//!    as a gadget. *Done.* $s(X)$ as a stage polynomial is item 7's.
 //! 5. The transcript over the allocated instance and messages, with the
 //!    compression's point-multiplying challenges lifted to endoscalars.
 //! 6. The derived commitments, $\[H\]$ and the IPA folds as endoscalar
@@ -65,6 +65,7 @@ use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::Element;
 
 pub(crate) mod batch;
+pub(crate) mod ipa;
 pub(crate) mod revdot;
 
 #[cfg(test)]
