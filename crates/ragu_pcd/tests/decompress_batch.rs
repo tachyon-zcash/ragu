@@ -14,28 +14,12 @@ use udon::{curve::Affine, field::Field};
 use super::{Challenges, Messages, verify};
 use crate::{
     compress::{
+        Lifted,
         batch::{self, Batch, Batched},
         revdot::{OpeningClaim, Openings},
     },
-    decompress::support::{Setup, alloc, alloc_all},
-    ipa::IpaTranscript,
+    decompress::support::{Setup, alloc, alloc_all, replay_batch},
 };
-
-/// Replays the batch's messages on `t` as the verifier does, returning the
-/// challenges it squeezes.
-fn replay<C: Affine>(
-    batch: &Batch<C>,
-    t: &mut impl IpaTranscript<C>,
-) -> (C::Scalar, C::Scalar, C::Scalar) {
-    let alpha = t.squeeze_challenge().unwrap();
-    t.write_point(batch.f).unwrap();
-    let u = t.squeeze_challenge().unwrap();
-    for &value in &batch.evaluations {
-        t.write_scalar(value).unwrap();
-    }
-    let beta = t.squeeze_challenge().unwrap();
-    (alpha, u, beta)
-}
 
 /// What the gadget produces on `claims` over `polys` committed
 /// polynomials, by value: the point, the value and the weights.
@@ -129,13 +113,13 @@ fn native_batch_matches_the_verifier() {
         let openings = setup.native_openings(&mut t, &sampled, nested_sampled.y);
         (t, openings)
     };
-    let challenges = |batch: &Batch<_>| replay(batch, &mut at_batch().0.host());
+    let challenges = |batch: &Batch<_>| replay_batch(batch, &mut Lifted(at_batch().0.host()));
     let expected = |openings: &Openings<_>, batch: &Batch<_>| {
         batch::verify::<_, ReferenceBackend, _>(
             &openings.commitments,
             &openings.claims,
             batch,
-            &mut at_batch().0.host(),
+            &mut Lifted(at_batch().0.host()),
         )
     };
 
@@ -176,13 +160,13 @@ fn nested_batch_matches_the_verifier() {
         let openings = setup.nested_openings(&mut t, &sampled, native_sampled.y);
         (t, openings)
     };
-    let challenges = |batch: &Batch<_>| replay(batch, &mut at_batch().0.nested());
+    let challenges = |batch: &Batch<_>| replay_batch(batch, &mut Lifted(at_batch().0.nested()));
     let expected = |openings: &Openings<_>, batch: &Batch<_>| {
         batch::verify::<_, ReferenceBackend, _>(
             &openings.commitments,
             &openings.claims,
             batch,
-            &mut at_batch().0.nested(),
+            &mut Lifted(at_batch().0.nested()),
         )
     };
 
