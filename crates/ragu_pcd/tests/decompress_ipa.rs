@@ -13,9 +13,12 @@ use udon::{curve::Affine, field::Field};
 
 use super::{Challenges, Messages, verify};
 use crate::{
-    compress::batch::{self, Batched},
-    decompress::support::{Setup, TestR, alloc, alloc_all},
-    ipa::{self, IpaCycle, IpaProof, IpaTranscript, MSM, Params},
+    compress::{
+        Lifted,
+        batch::{self, Batched},
+    },
+    decompress::support::{Setup, TestR, alloc, alloc_all, replay_ipa},
+    ipa::{self, IpaCycle, IpaProof, MSM, Params},
 };
 
 /// The gadget's scalars, by value.
@@ -25,25 +28,6 @@ struct Scalars<F> {
     rounds: Vec<(F, F)>,
     u: F,
     g_prime: F,
-}
-
-/// Replays the IPA's messages on `t` as the verifier does, returning the
-/// challenges it squeezes: $\xi$, $z$ and the rounds'.
-fn replay<C: Affine>(
-    proof: &IpaProof<C>,
-    t: &mut impl IpaTranscript<C>,
-) -> (C::Scalar, C::Scalar, Vec<C::Scalar>) {
-    t.write_point(proof.s_commitment).unwrap();
-    let xi = t.squeeze_challenge().unwrap();
-    let z = t.squeeze_challenge().unwrap();
-    let mut rounds = Vec::with_capacity(proof.rounds.len());
-    for &(l, r) in &proof.rounds {
-        t.write_point(l).unwrap();
-        t.write_point(r).unwrap();
-        rounds.push(t.squeeze_challenge().unwrap());
-    }
-    t.write_scalar(proof.c).unwrap();
-    (xi, z, rounds)
 }
 
 /// What the gadget produces for the claim at `point` with `value`.
@@ -133,7 +117,7 @@ fn native_ipa_scalars_match_the_verifier() {
             &openings.commitments,
             &openings.claims,
             &setup.proof.native.batch,
-            &mut t.host(),
+            &mut Lifted(t.host()),
         )
         .unwrap();
         (t, claim)
@@ -147,7 +131,7 @@ fn native_ipa_scalars_match_the_verifier() {
         let guard = ipa::verify_proof(
             &params,
             msm,
-            &mut t.host(),
+            &mut Lifted(t.host()),
             &proof,
             claim.point,
             claim.value,
@@ -157,7 +141,7 @@ fn native_ipa_scalars_match_the_verifier() {
         assert_eq!(guard.use_challenges().eval::<ReferenceBackend>(), expected);
 
         let (mut t, _) = at_ipa();
-        let challenges = replay(&proof, &mut t.host());
+        let challenges = replay_ipa(&proof, &mut Lifted(t.host()));
         let scalars = simulate(claim.point, claim.value, challenges, proof.c).unwrap();
         assert_eq!(
             accepts(&params, &claim, &proof, g_prime, &scalars),
@@ -182,7 +166,7 @@ fn nested_ipa_scalars_match_the_verifier() {
             &openings.commitments,
             &openings.claims,
             &setup.proof.nested.batch,
-            &mut t.nested(),
+            &mut Lifted(t.nested()),
         )
         .unwrap();
         (t, claim)
@@ -196,7 +180,7 @@ fn nested_ipa_scalars_match_the_verifier() {
         let guard = ipa::verify_proof(
             &params,
             msm,
-            &mut t.nested(),
+            &mut Lifted(t.nested()),
             &proof,
             claim.point,
             claim.value,
@@ -206,7 +190,7 @@ fn nested_ipa_scalars_match_the_verifier() {
         assert_eq!(guard.use_challenges().eval::<ReferenceBackend>(), expected);
 
         let (mut t, _) = at_ipa();
-        let challenges = replay(&proof, &mut t.nested());
+        let challenges = replay_ipa(&proof, &mut Lifted(t.nested()));
         let scalars = simulate(claim.point, claim.value, challenges, proof.c).unwrap();
         assert_eq!(
             accepts(&params, &claim, &proof, g_prime, &scalars),
