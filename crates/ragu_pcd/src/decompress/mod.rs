@@ -42,8 +42,8 @@
 //! # Roadmap
 //!
 //! 1. This module and its design. *Done.*
-//! 2. `revdot`: the fold and split as a gadget, tested against the
-//!    native verifier on a real compressed proof.
+//! 2. [`revdot`]: the fold and split as a gadget, tested against the
+//!    native verifier on a real compressed proof. *Done.*
 //! 3. `batch`: $f(u)$, $v$ and the $\beta$ weights as a gadget.
 //! 4. `ipa`: $b$, the round inverses and the final scalar relation as a
 //!    gadget; $s(X)$ as a stage polynomial.
@@ -63,6 +63,12 @@ use alloc::vec::Vec;
 
 use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::Element;
+
+pub(crate) mod revdot;
+
+#[cfg(test)]
+#[path = "../../tests/decompress_support.rs"]
+pub(crate) mod support;
 
 /// An element's powers $x^{2^i}$, for raising it to constant exponents by
 /// square-and-multiply.

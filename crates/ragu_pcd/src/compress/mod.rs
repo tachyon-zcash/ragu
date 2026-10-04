@@ -150,15 +150,17 @@ impl<C: Cycle, H: Header<C::CircuitField>> Clone for CompressedPcd<C, H> {
 /// The challenges the verifier samples on one curve once the statement is
 /// absorbed: $w$ for the registry restriction, $y$ and $z$ for the claims
 /// and $\sigma$ for the wire bindings.
-struct Sampled<F> {
-    w: F,
-    y: F,
-    z: F,
-    sigma: F,
+pub(crate) struct Sampled<F> {
+    pub w: F,
+    pub y: F,
+    pub z: F,
+    pub sigma: F,
 }
 
 impl<F> Sampled<F> {
-    fn squeeze<P: Affine<Scalar = F>>(transcript: &mut impl IpaTranscript<P>) -> Result<Self> {
+    pub(crate) fn squeeze<P: Affine<Scalar = F>>(
+        transcript: &mut impl IpaTranscript<P>,
+    ) -> Result<Self> {
         Ok(Sampled {
             w: transcript.squeeze_challenge()?,
             y: transcript.squeeze_challenge()?,
@@ -170,7 +172,7 @@ impl<F> Sampled<F> {
 
 /// The compression's transcript with the statement absorbed: the instance,
 /// then the output header.
-fn transcript<'params, C: Cycle, B: SelectableBackend>(
+pub(crate) fn transcript<'params, C: Cycle, B: SelectableBackend>(
     params: &'params C::Params,
     instance: &Instance<C>,
     output_header: &[C::CircuitField],
