@@ -41,7 +41,7 @@ use ragu_circuits::{
     staging::{StageExt, StageReader, stage_wire_indices, wires_of},
 };
 use ragu_core::{Cycle, FixedGenerators, Result, drivers::emulator::Emulator, maybe::Maybe};
-use ragu_primitives::{GadgetExt as _, Point, extract_endoscalar};
+use ragu_primitives::{EndoscalarRangeError, GadgetExt as _, Point, extract_endoscalar};
 use rand::CryptoRng;
 use udon::{
     curve::{Affine as _, EndomorphismAffine as Affine, Projective},
@@ -50,7 +50,7 @@ use udon::{
 };
 
 use crate::{
-    Application, Pcd, Proof, RAGU_TAG, SelectableBackend,
+    Application, MinimalProof, Pcd, Proof, RAGU_TAG, SelectableBackend,
     header::Header,
     internal::{
         claims, ky,
@@ -62,6 +62,7 @@ use crate::{
         },
         transcript::Transcript,
     },
+    proof::CommitmentBatch,
 };
 
 /// The backend whose kernels [`Application::verify`] consults for the selected
@@ -77,8 +78,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     ///
     /// Returns `Ok(true)` if all verification checks pass, `Ok(false)` if
     /// any check fails (e.g., invalid circuit ID, header size mismatch,
-    /// corrupted commitments or evaluations), or `Err` if an internal
-    /// computation error occurs.
+    /// malformed proof structure, corrupted commitments or evaluations),
+    /// or `Err` if an internal computation error occurs.
     ///
     /// The computational kernels used here are those of the sealed
     /// [`SelectableBackend::Verifier`] of the selected backend: the reference
@@ -119,6 +120,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         if pcd.proof().left_header().len() != HEADER_SIZE
             || pcd.proof().right_header().len() != HEADER_SIZE
         {
+            return Ok(false);
+        }
+
+        if !pcd.proof().is_well_formed() {
             return Ok(false);
         }
 
@@ -224,58 +229,30 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                 .eq(expected_challenges.iter_coeffs())
         };
 
-        // Check cached commitments against their polynomials in one batch
-        // per curve, including P = Com(p) and P_n = Com(p_n). The endoscaling
+        // Check every `checked` commitment against its polynomial in one
+        // batch per curve, including P = Com(p) and P_n = Com(p_n); the pairs
+        // come from the field tags on `Proof`. The endoscaling
         // walks' staged inputs and endpoints are tied to these commitments by
         // `nested_points_claim` below and by the circuits that pin each walk
         // (`bind_endoscalar` and `bind_beta` for P_n, the nested `export` and
         // `loading` for P), whose claims the revdot checks above cover.
         let commitments_claim = {
-            let proof = pcd.proof();
-            let native = {
-                let mut polys: Vec<&sparse::Polynomial<C::CircuitField, R>> = Vec::new();
-                let mut points: Vec<C::HostCurve> = Vec::new();
-                for &id in &native_internal::RxIndex::ALL {
-                    polys.push(&proof[id]);
-                    points.push(proof.native_rx_commitment(id));
-                }
-                for component in [RxComponent::AbA, RxComponent::AbB] {
-                    polys.push(&proof[component]);
-                    points.push(proof.native_commitment(component));
-                }
-                polys.push(proof.native_registry_xy_poly());
-                points.push(proof.native_registry_xy_commitment());
-                polys.push(proof.native_p_poly());
-                points.push(proof.native_p_commitment());
-                commitments_match::<Verifier<B>, _, _, R, _>(
-                    &polys,
-                    &points,
-                    C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-                    C::host_generators(self.params),
-                )
-            };
-            let nested = {
-                let mut polys: Vec<&sparse::Polynomial<C::ScalarField, R>> = Vec::new();
-                let mut points: Vec<C::NestedCurve> = Vec::new();
-                for &id in &nested_internal::RxIndex::ALL {
-                    polys.push(&proof[id]);
-                    points.push(proof.nested_rx_commitment(id));
-                }
-                polys.push(&proof[NestedRxComponent::AbA]);
-                points.push(proof.nested_a_commitment());
-                polys.push(&proof[NestedRxComponent::AbB]);
-                points.push(proof.nested_b_commitment());
-                polys.push(proof.nested_registry_xy_poly());
-                points.push(proof.nested_registry_xy_commitment());
-                polys.push(proof.nested_p_poly());
-                points.push(proof.nested_p_commitment());
-                commitments_match::<Verifier<B>, _, _, R, _>(
-                    &polys,
-                    &points,
-                    C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
-                    C::nested_generators(self.params),
-                )
-            };
+            let mut batch = CommitmentBatch::<C::CircuitField, C::HostCurve, R>::default();
+            pcd.proof().for_each_checked_native(&mut batch);
+            let native = commitments_match::<Verifier<B>, _, _, R, _>(
+                &batch.polys,
+                &batch.points,
+                C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
+                C::host_generators(self.params),
+            );
+            let mut batch = CommitmentBatch::<C::ScalarField, C::NestedCurve, R>::default();
+            pcd.proof().for_each_checked_nested(&mut batch);
+            let nested = commitments_match::<Verifier<B>, _, _, R, _>(
+                &batch.polys,
+                &batch.points,
+                C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
+                C::nested_generators(self.params),
+            );
             native && nested
         };
 
@@ -384,6 +361,45 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             && transcript_claim
             && ab_bridge_claim
             && mesh_claim)
+    }
+
+    /// Verifies a [`MinimalProof`] for the provided [`Header`].
+    ///
+    /// The input's vector lengths and required affine point slots are checked
+    /// before [expansion](Self::expand), so malformed inputs are rejected before
+    /// reconstruction can allocate point gadgets. The challenges and
+    /// the two derived stages the decider checks are ones this application
+    /// computed, never ones the encoder supplied; the expanded proof then
+    /// goes through [`verify`](Self::verify) unchanged, including its
+    /// structural checks.
+    ///
+    /// Returns `Ok(false)` for malformed structure or when a squeezed challenge
+    /// has no lift. Other computation and header-encoding errors propagate,
+    /// as in `verify`.
+    pub fn verify_minimal<RNG: CryptoRng, H: Header<C::CircuitField>>(
+        &self,
+        proof: MinimalProof<C, R>,
+        data: H::Data,
+        rng: RNG,
+    ) -> Result<bool> {
+        if !proof.is_well_formed()
+            || proof.left_header.len() != HEADER_SIZE
+            || proof.right_header.len() != HEADER_SIZE
+        {
+            return Ok(false);
+        }
+        let proof = match self.expand(proof) {
+            Ok(proof) => proof,
+            Err(error)
+                if error
+                    .invalid_witness_source::<EndoscalarRangeError>()
+                    .is_some() =>
+            {
+                return Ok(false);
+            }
+            Err(error) => return Err(error),
+        };
+        self.verify(&proof.carry::<H>(data), rng)
     }
 
     /// The native mesh claim: see [`verify`](Self::verify).
