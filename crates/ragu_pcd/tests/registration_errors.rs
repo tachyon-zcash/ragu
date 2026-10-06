@@ -1,16 +1,22 @@
+use core::marker::PhantomData;
+
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::{
-    Result,
+    Error, Result,
     drivers::{Driver, DriverValue},
-    gadgets::Bound,
-    pasta::Pasta,
+    gadgets::{Bound, Kind},
+    maybe::Maybe,
+    pasta::{Fp, Pasta},
 };
 use ragu_pcd::{
     ApplicationBuilder,
     header::{Header, Suffix},
     step::{Encoded, Index, Step},
 };
-use ragu_primitives::allocator::{Allocator, Standard};
+use ragu_primitives::{
+    Element,
+    allocator::{Allocator, Standard},
+};
 use udon::field::Field;
 
 // Header A with suffix 0
@@ -184,5 +190,85 @@ fn register_steps_duplicate_suffix_should_fail() {
         .register(Step0)
         .unwrap()
         .register(Step1Dup)
+        .unwrap();
+}
+
+// Copies the public unit suffix while carrying data, without using () itself.
+struct CopiedUnitSuffix;
+
+impl Header<Fp> for CopiedUnitSuffix {
+    const SUFFIX: Suffix = <() as Header<Fp>>::SUFFIX;
+    type Data = Fp;
+    type Output = Kind![Fp; Element<'_, _>];
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Element::alloc(dr, allocator, witness)
+    }
+}
+
+struct HeaderStep<L, R, O>(PhantomData<(L, R, O)>);
+
+impl<L: Header<Fp>, R: Header<Fp>, O: Header<Fp>> Step<Pasta> for HeaderStep<L, R, O> {
+    const INDEX: Index = Index::new(0);
+    type Witness<'source> = O::Data;
+    type Aux<'source> = ();
+    type Left = L;
+    type Right = R;
+    type Output = O;
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, L::Data>,
+        right: DriverValue<D, R::Data>,
+    ) -> Result<(
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        DriverValue<D, O::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )> {
+        let allocator = &mut Standard::new();
+        let left = Encoded::new(dr, allocator, left)?;
+        let right = Encoded::new(dr, allocator, right)?;
+        let output = Encoded::new(dr, allocator, witness.clone())?;
+        Ok(((left, right, output), witness, D::unit()))
+    }
+}
+
+fn rejects_reserved_suffix<L: Header<Fp>, R: Header<Fp>, O: Header<Fp>>() {
+    let result =
+        ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+            .register(HeaderStep::<L, R, O>(PhantomData));
+    assert!(matches!(
+        result,
+        Err(Error::Initialization(message))
+            if message.to_string() == "only the unit Header () may use a reserved internal suffix"
+    ));
+}
+
+#[test]
+fn register_rejects_copied_unit_suffix_without_unit_header() {
+    rejects_reserved_suffix::<CopiedUnitSuffix, CopiedUnitSuffix, CopiedUnitSuffix>();
+}
+
+#[test]
+fn register_rejects_reserved_suffix_in_each_header_position() {
+    rejects_reserved_suffix::<CopiedUnitSuffix, HSuffixA, HSuffixA>();
+    rejects_reserved_suffix::<HSuffixA, CopiedUnitSuffix, HSuffixA>();
+    rejects_reserved_suffix::<HSuffixA, HSuffixA, CopiedUnitSuffix>();
+}
+
+#[test]
+fn register_accepts_unit_in_every_header_position() {
+    ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+        .register(HeaderStep::<(), (), ()>(PhantomData))
         .unwrap();
 }
