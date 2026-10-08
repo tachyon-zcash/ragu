@@ -415,27 +415,7 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
             });
         }
 
-        let mut dr = RxDriver::<F, R>::with_capacity(Self::skip_gates() + Self::num_gates());
-        let mut allocator = Standard::default();
-
-        // SYSTEM gate: alpha at a[0], 0 at d[0].
-        allocator.alloc(&mut dr, || Ok(Coeff::Arbitrary(alpha)))?;
-        allocator.alloc(&mut dr, || Ok(Coeff::Zero))?;
-
-        // Skip gates 1..skip_gates: two zero allocs each.
-        for _ in 0..(2 * (Self::skip_gates() - 1)) {
-            allocator.alloc(&mut dr, || Ok(Coeff::Zero))?;
-        }
-
-        // Data values, padded with zeros to fill all stage slots.
-        for value in &values {
-            allocator.alloc(&mut dr, || Ok(Coeff::Arbitrary(*value)))?;
-        }
-        for _ in values.len()..Self::values() {
-            allocator.alloc(&mut dr, || Ok(Coeff::Zero))?;
-        }
-
-        Ok(dr.build())
+        stage_rx(alpha, Self::skip_gates(), Self::values(), &values)
     }
 
     /// Compute the (partial) $r(X)$ polynomial for this stage, using a
@@ -460,10 +440,7 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
     ///
     /// Returns a capacity error if the mask cannot be represented at rank `R`.
     fn mask<'a>() -> Result<BondingObject<'a, F, R>> {
-        Ok(BondingObject::new(Box::new(mask::StageMask::new(
-            Self::skip_gates(),
-            Self::num_gates(),
-        )?)))
+        stage_mask(Self::skip_gates(), Self::num_gates())
     }
 
     /// Creates a bonding polynomial that can be used to enforce well-formedness
@@ -474,9 +451,7 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
     ///
     /// Returns a capacity error if the mask cannot be represented at rank `R`.
     fn final_mask<'a>() -> Result<BondingObject<'a, F, R>> {
-        Ok(BondingObject::new(Box::new(mask::StageMask::new_final(
-            Self::skip_gates() + Self::num_gates(),
-        )?)))
+        final_stage_mask(Self::skip_gates() + Self::num_gates())
     }
 
     /// Returns the generator index for the i-th first-value coefficient of
@@ -498,3 +473,163 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
 }
 
 impl<F: Field, R: Rank, S: Stage<F, R>> StageExt<F, R> for S {}
+
+/// The number of gates a stage of `values` values occupies: two values per
+/// gate, in the `(a, 0, 0, d)` layout.
+pub fn stage_gates(values: usize) -> usize {
+    values.div_ceil(2)
+}
+
+/// Checks that a stage of `num_gates` gates from gate `skip_gates` fits the
+/// rank: `skip_gates` includes the SYSTEM gate, so it is at least 1, and the
+/// stage ends at or before gate `n`.
+fn check_stage_bounds<R: Rank>(skip_gates: usize, num_gates: usize) -> Result<()> {
+    if skip_gates == 0 {
+        return Err(ragu_core::Error::Initialization(
+            "a stage's skip_gates must include the SYSTEM gate".into(),
+        ));
+    }
+    if skip_gates
+        .checked_add(num_gates)
+        .is_none_or(|end| end > R::n())
+    {
+        return Err(ragu_core::Error::GateBoundExceeded { limit: R::n() });
+    }
+    Ok(())
+}
+
+/// The (partial) $r(X)$ polynomial of a stage laid out at runtime: `values`
+/// placed from gate `skip_gates`, in a stage of `capacity` values, with
+/// `alpha` at `a[0]`. This is [`StageExt::rx_configured`] for a stage whose
+/// size is not a type-level constant; see that method for `alpha`.
+///
+/// # Errors
+///
+/// Returns a capacity error if `values` exceeds the stage's `capacity`, or if
+/// the stage does not fit the rank's gates; an initialization error if
+/// `skip_gates` is zero.
+pub fn stage_rx<F: Field, R: Rank>(
+    alpha: F,
+    skip_gates: usize,
+    capacity: usize,
+    values: &[F],
+) -> Result<sparse::Polynomial<F, R>> {
+    let num_gates = stage_gates(capacity);
+    check_stage_bounds::<R>(skip_gates, num_gates)?;
+    if values.len() > capacity {
+        return Err(ragu_core::Error::GateBoundExceeded { limit: num_gates });
+    }
+
+    let mut dr = RxDriver::<F, R>::with_capacity(skip_gates + num_gates);
+    let mut allocator = Standard::default();
+
+    // SYSTEM gate: alpha at a[0], 0 at d[0].
+    allocator.alloc(&mut dr, || Ok(Coeff::Arbitrary(alpha)))?;
+    allocator.alloc(&mut dr, || Ok(Coeff::Zero))?;
+
+    // Skip gates 1..skip_gates: two zero allocs each.
+    for _ in 0..(2 * (skip_gates - 1)) {
+        allocator.alloc(&mut dr, || Ok(Coeff::Zero))?;
+    }
+
+    // Data values, padded with zeros to fill all stage slots.
+    for value in values {
+        allocator.alloc(&mut dr, || Ok(Coeff::Arbitrary(*value)))?;
+    }
+    for _ in values.len()..capacity {
+        allocator.alloc(&mut dr, || Ok(Coeff::Zero))?;
+    }
+
+    Ok(dr.build())
+}
+
+/// The well-formedness mask of a stage laid out at runtime over `num_gates`
+/// gates from gate `skip_gates`: [`StageExt::mask`] for a stage whose size
+/// is not a type-level constant.
+///
+/// # Errors
+///
+/// Returns a capacity error if the stage does not fit the rank's gates, or an
+/// initialization error if `skip_gates` is zero.
+pub fn stage_mask<'a, F: Field, R: Rank>(
+    skip_gates: usize,
+    num_gates: usize,
+) -> Result<BondingObject<'a, F, R>> {
+    check_stage_bounds::<R>(skip_gates, num_gates)?;
+    Ok(BondingObject::new(Box::new(mask::StageMask::new(
+        skip_gates, num_gates,
+    )?)))
+}
+
+/// The well-formedness mask of a final trace whose stages end at gate
+/// `skip_gates`: [`StageExt::final_mask`] for a stage whose size is not a
+/// type-level constant.
+///
+/// # Errors
+///
+/// Returns a capacity error if `skip_gates` exceeds the rank's gates, or an
+/// initialization error if it is zero.
+pub fn final_stage_mask<'a, F: Field, R: Rank>(
+    skip_gates: usize,
+) -> Result<BondingObject<'a, F, R>> {
+    check_stage_bounds::<R>(skip_gates, 0)?;
+    Ok(BondingObject::new(Box::new(mask::StageMask::new_final(
+        skip_gates,
+    )?)))
+}
+
+#[cfg(test)]
+mod runtime_tests {
+    use ragu_core::{Error, pasta::Fp};
+    use udon::field::Field;
+
+    use super::*;
+    use crate::polynomials::TestRank;
+
+    type R = TestRank;
+
+    #[test]
+    fn runtime_stage_helpers_reject_stages_outside_the_rank() {
+        let n = R::n();
+        // The rank's last gate is the stage's last gate: still in range.
+        assert!(stage_rx::<Fp, R>(Fp::ZERO, n - 1, 2, &[Fp::ONE, Fp::ONE]).is_ok());
+        assert!(stage_mask::<Fp, R>(n - 1, 1).is_ok());
+        assert!(final_stage_mask::<Fp, R>(n).is_ok());
+
+        // One gate past the rank, and ranges whose end overflows `usize`.
+        for (skip, capacity) in [(n, 1), (1, 2 * n), (usize::MAX, 1), (2, usize::MAX)] {
+            assert!(matches!(
+                stage_rx::<Fp, R>(Fp::ZERO, skip, capacity, &[]),
+                Err(Error::GateBoundExceeded { .. })
+            ));
+            assert!(matches!(
+                stage_mask::<Fp, R>(skip, stage_gates(capacity)),
+                Err(Error::GateBoundExceeded { .. })
+            ));
+        }
+        assert!(matches!(
+            final_stage_mask::<Fp, R>(n + 1),
+            Err(Error::GateBoundExceeded { .. })
+        ));
+
+        // The SYSTEM gate is never part of a stage.
+        assert!(matches!(
+            stage_rx::<Fp, R>(Fp::ZERO, 0, 2, &[]),
+            Err(Error::Initialization(_))
+        ));
+        assert!(matches!(
+            stage_mask::<Fp, R>(0, 1),
+            Err(Error::Initialization(_))
+        ));
+        assert!(matches!(
+            final_stage_mask::<Fp, R>(0),
+            Err(Error::Initialization(_))
+        ));
+
+        // Too many values for the stage's capacity.
+        assert!(matches!(
+            stage_rx::<Fp, R>(Fp::ZERO, 1, 1, &[Fp::ONE, Fp::ONE]),
+            Err(Error::GateBoundExceeded { .. })
+        ));
+    }
+}

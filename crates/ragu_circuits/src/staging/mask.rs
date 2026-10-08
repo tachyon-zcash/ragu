@@ -107,7 +107,10 @@ impl<R: Rank> StageMask<R> {
     /// gate bound.
     pub fn new(skip_gates: usize, num_gates: usize) -> Result<Self> {
         assert!(skip_gates > 0, "skip_gates must include the SYSTEM gate");
-        if skip_gates + num_gates > R::n() {
+        if skip_gates
+            .checked_add(num_gates)
+            .is_none_or(|end| end > R::n())
+        {
             return Err(ragu_core::Error::GateBoundExceeded { limit: R::n() });
         }
         Ok(Self {
