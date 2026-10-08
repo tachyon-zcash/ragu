@@ -244,21 +244,21 @@ fn test_internal_circuit_constraint_counts() {
     check_constraints!(Hashes2Circuit,              mul = 2044, lin = 2986);
     check_constraints!(InnerCollapseCircuit,        mul = 1921, lin = 1953);
     check_constraints!(OuterCollapseCircuit,        mul = 1592, lin = 2081);
-    check_constraints!(ComputeVCircuit,             mul = 1834, lin = 2687);
-    check_constraints!(BindChallengesCircuit(0),    mul = 1980, lin = 2956);
-    check_constraints!(BindChallengesCircuit(1),    mul = 1985, lin = 2966);
-    check_constraints!(BindChallengesCircuit(2),    mul = 1985, lin = 2966);
-    check_constraints!(BindChallengesCircuit(3),    mul = 1985, lin = 2966);
-    check_constraints!(BindChallengesCircuit(4),    mul = 1996, lin = 2988);
-    check_constraints!(BindBetaCircuit,             mul = 2029, lin = 3016);
+    check_constraints!(ComputeVCircuit,             mul = 1855, lin = 2729);
+    check_constraints!(BindChallengesCircuit(0),    mul = 1930, lin = 2856);
+    check_constraints!(BindChallengesCircuit(1),    mul = 1935, lin = 2866);
+    check_constraints!(BindChallengesCircuit(2),    mul = 1935, lin = 2866);
+    check_constraints!(BindChallengesCircuit(3),    mul = 1935, lin = 2866);
+    check_constraints!(BindChallengesCircuit(4),    mul = 1946, lin = 2888);
+    check_constraints!(BindBetaCircuit,             mul = 1979, lin = 2916);
     check_constraints!(BindEndoscalarCircuit,       mul = 780,  lin = 1444);
     // Every native endoscaling step but the last walks four points and lays
     // out the same; the last walks the two that remain.
     let last = native::NUM_ENDOSCALING_STEPS as u32 - 1;
     for step in 0..last {
-        check_constraints!(EndoscalingStep(step),   mul = 2026, lin = 3678);
+        check_constraints!(EndoscalingStep(step),   mul = 1926, lin = 3478);
     }
-    check_constraints!(EndoscalingStep(last),       mul = 1108, lin = 1842);
+    check_constraints!(EndoscalingStep(last),       mul = 1058, lin = 1742);
 }
 
 #[rustfmt::skip]
@@ -433,11 +433,11 @@ fn test_nested_circuit_constraint_counts() {
     );
     let mut expected = alloc::vec::Vec::new();
     for step in 0..steps {
-        expected.push((nested::InternalCircuitIndex::EndoscalingStep(step as u32), (2043, 3677)));
+        expected.push((nested::InternalCircuitIndex::EndoscalingStep(step as u32), (1943, 3477)));
     }
     expected.push((nested::InternalCircuitIndex::Export,   (1384, 1506)));
     expected.push((nested::InternalCircuitIndex::Collapse, (1624, 1701)));
-    expected.push((nested::InternalCircuitIndex::ComputeV, (1661, 1763)));
+    expected.push((nested::InternalCircuitIndex::ComputeV, (1682, 1805)));
     expected.push((nested::InternalCircuitIndex::Loading,  (776,  227)));
 
     let actual: alloc::vec::Vec<_> = nested_circuits()

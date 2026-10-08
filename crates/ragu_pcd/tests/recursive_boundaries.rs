@@ -356,31 +356,48 @@ mod stages {
         Cycle, Result,
         pasta::{EpAffine, EqAffine, Fp, Fq},
     };
+    use ragu_primitives::ENDOSCALAR_DIGITS;
     use ragu_testing::strategies;
     use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
     use super::support::{self, C, R, Value};
     use crate::internal::{endoscalar::EndoscalarStage, native::stages::points::WalkStage, nested};
 
-    /// The algebraic extension of the endoscalar map to arbitrary field wires.
-    /// A pair (n, e) contributes (1 - 2n) * (1 + (zeta - 1)e).
-    fn lifted<F: Field>(bits: &[F]) -> F {
-        assert_eq!(bits.len(), u128::BITS as usize);
-        bits.chunks_exact(2)
-            .fold((F::ZETA + F::ONE).double(), |acc, pair| {
-                acc.double() + (F::ONE - pair[0].double()) * (F::ONE + (F::ZETA - F::ONE) * pair[1])
-            })
+    /// The unsigned value of a radix-3 digit with twist wires `e1`, `e2`:
+    /// 1 + (lambda - 1) e1 + (lambda^2 - 1) e2 + (3 - lambda) e1 e2, which is
+    /// one of 1, lambda, lambda^2, 1 - lambda on bits.
+    fn unsigned_digit<F: Field>(e1: F, e2: F) -> F {
+        let lambda = F::ZETA;
+        F::ONE
+            + (lambda - F::ONE) * e1
+            + (lambda.square() - F::ONE) * e2
+            + (F::from(3) - lambda) * e1 * e2
     }
 
-    /// Change two negate bits and cancel their weighted contributions. Merely
-    /// checking the lifted scalar cannot distinguish this malformed assignment.
+    /// The algebraic extension of the endoscalar map to arbitrary field wires,
+    /// in the digit layout of `Endoscalar::group_scale`: two initial wires
+    /// (s0, e0) contribute 2 (1 - 2 s0) (1 + (lambda - 1) e0), then every
+    /// digit (s, e1, e2) contributes (1 - 2s) times its unsigned value after
+    /// the accumulator is tripled.
+    fn lifted<F: Field>(bits: &[F]) -> F {
+        assert_eq!(bits.len(), u128::BITS as usize);
+        let init =
+            F::from(2) * (F::ONE - bits[0].double()) * (F::ONE + (F::ZETA - F::ONE) * bits[1]);
+        bits[2..].chunks_exact(3).fold(init, |acc, digit| {
+            acc * F::from(3) + (F::ONE - digit[0].double()) * unsigned_digit(digit[1], digit[2])
+        })
+    }
+
+    /// Change two digits' sign bits and cancel their weighted contributions.
+    /// Merely checking the lifted scalar cannot distinguish this malformed
+    /// assignment.
     fn same_lift_bits<F: Field>(
         poly: &mut sparse::Polynomial<F, R>,
         wires: &[usize],
         (first, second): (usize, usize),
         delta: F,
     ) {
-        assert!(first < second && second < u128::BITS as usize / 2);
+        assert!(first < second && second < ENDOSCALAR_DIGITS);
         assert_ne!(delta, F::ZERO);
         let reader = StageReader::new(poly);
         let mut bits: Vec<_> = wires.iter().map(|&wire| reader.read(wire)).collect();
@@ -392,13 +409,17 @@ mod stages {
         let original = lifted(&bits);
         assert_eq!(original, ragu_primitives::lift_endoscalar(packed));
 
-        let factor = |i| F::ONE + (F::ZETA - F::ONE) * bits[2 * i + 1];
+        // Digit i's sign wire weighs -2 * 3^(digits - 1 - i) times its
+        // unsigned value, so a change of `delta` on the earlier digit is
+        // cancelled by `delta * 3^(second - first)` scaled by the ratio of
+        // the two unsigned values on the later one.
+        let unsigned = |i: usize| unsigned_digit(bits[3 + 3 * i], bits[4 + 3 * i]);
         let compensation = delta
-            * F::from(2).pow_u64((second - first) as u64)
-            * factor(first)
-            * factor(second).invert().unwrap();
-        bits[2 * first] += delta;
-        bits[2 * second] -= compensation;
+            * F::from(3).pow_u64((second - first) as u64)
+            * unsigned(first)
+            * unsigned(second).invert().unwrap();
+        bits[2 + 3 * first] += delta;
+        bits[2 + 3 * second] -= compensation;
         assert!(bits.iter().any(|bit| *bit != F::ZERO && *bit != F::ONE));
         assert_eq!(lifted(&bits), original);
         support::set_wires(poly, wires, &bits);
@@ -566,7 +587,8 @@ mod stages {
         #[ignore = "recursion regression suite: run by the scheduled heavy-tests workflow"]
         fn same_lift_bit_substitutions_reject_through_two_generations(
             inputs in support::inputs(),
-            pair in (0usize..63).prop_flat_map(|first| (Just(first), first + 1..64)),
+            pair in (0usize..ENDOSCALAR_DIGITS - 1)
+                .prop_flat_map(|first| (Just(first), first + 1..ENDOSCALAR_DIGITS)),
             native_delta in strategies::nonzero_prime_field_element::<Fp>(),
             nested_delta in strategies::nonzero_prime_field_element::<Fq>(),
         ) {

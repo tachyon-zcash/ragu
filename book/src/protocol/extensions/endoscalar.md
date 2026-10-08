@@ -36,6 +36,48 @@ for any $\endo{s}$
 - circuit efficiency: all three operations above should be efficient to
   constrain
 
+## Radix-3 Endoscaling
+
+Halo's endoscaling reads the endoscalar two bits at a time: each pair selects
+one of $\pm G, \pm \phi(G)$, where $\phi(x, y) = (\zeta x, y)$ is the
+endomorphism, and the accumulator is doubled before the selected point is
+added. Writing $\lambda$ for the scalar $\phi$ acts by, the endomorphism gives
+six cheap multiples of $G$, the units $\pm 1, \pm \lambda, \pm \lambda^2$ of
+$\mathbb{Z}[\lambda]$, but a doubling walk cannot use all six: adding
+$\pm \lambda^2$ to the radix-2 alphabet makes two bit strings map to the same
+scalar, as $2 \cdot 1 + \lambda = 2 \cdot (-\lambda^2) + (-\lambda)$.
+
+`ragu` instead walks the endoscalar in radix 3. After two initial bits
+$(s_0, e_0)$, every three bits $(s, e_1, e_2)$ select one of the eight digits
+
+$$
+\mathcal{D} = \{\pm 1, \pm \lambda, \pm \lambda^2, \pm (1 - \lambda)\},
+\qquad
+d = (-1)^s \cdot \{1, \lambda, \lambda^2, 1 - \lambda\}[e_1, e_2],
+$$
+
+and the walk is $A_0 = [2] (-1)^{s_0} \phi^{e_0}(G)$, $A_{i+1} = [3] A_i +
+[d_i] G$. The eight digits are exactly the nonzero residues of
+$\mathbb{Z}[\lambda]$ modulo $3$, so an expansion decodes uniquely digit by
+digit and the map from bit strings to scalars is injective. Any two distinct
+encodings differ by an element of norm below $2^{139}$, far below the Pasta
+group orders, so they remain distinct in the scalar field. The effective
+scalar, which $\mathsf{lift}$ computes, is
+
+$$
+k = 2 \cdot 3^{42} (-1)^{s_0} \lambda^{e_0} + \sum_{i=0}^{41} 3^{41 - i} d_i.
+$$
+
+In circuit, a round costs ten multiplication gates for three bits: seven for
+$[3] A + D = ((A + D) + A) + A$, whose intermediate $y$-coordinates cancel out
+of the slope equations, and three for the eight-way selection of $D$. The
+selection is cheap because the base point is first moved to the isomorphic
+curve on which it has coordinates $(r, r)$, by $(x, y) \mapsto (c^2 x, c^3 y)$
+with $c = x / y$; there every digit multiple of the base point has coordinates
+affine in $r$. With the three gates of that normalization, four for the
+initial doubling and three to move the result back, a 128-bit endoscaling
+costs $430$ gates against $455$ for the radix-2 walk.
+
 Consider a random verifier challenge $\alpha\in\F_p$ produced in a circuit over
 $\F_p$ where we want to compute $\alpha\cdot G\in\G_1$.
 Any group operations inside an $\F_p$-circuit require expensive non-native

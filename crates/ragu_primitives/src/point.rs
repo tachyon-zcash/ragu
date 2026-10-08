@@ -33,9 +33,9 @@ use crate::{
 #[derive(Gadget, Write, GadgetEquals)]
 pub struct Point<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     #[ragu(gadget)]
-    x: Nonzero<'dr, D>,
+    pub(crate) x: Nonzero<'dr, D>,
     #[ragu(gadget)]
-    y: Nonzero<'dr, D>,
+    pub(crate) y: Nonzero<'dr, D>,
     #[ragu(phantom)]
     _marker: PhantomData<C>,
 }
@@ -48,7 +48,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: Affine> Point<'dr, D, C> {
     ///
     /// The caller must enforce or derive the curve equation before using the
     /// result as an ordinary [`Point`].
-    fn new_unchecked(x: Nonzero<'dr, D>, y: Nonzero<'dr, D>) -> Self {
+    pub(crate) fn new_unchecked(x: Nonzero<'dr, D>, y: Nonzero<'dr, D>) -> Self {
         Point {
             x,
             y,
