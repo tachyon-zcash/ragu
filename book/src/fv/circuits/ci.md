@@ -37,7 +37,7 @@ Finally, CI generates and prints a fresh 32-byte seed and runs the
 domain-separated points. The Rust side runs each real gadget with the
 four-slot `EvaluationDriver`; Lean evaluates the corresponding handwritten
 model without consuming the Rust trace. Their exact headers and four field
-accumulators must match for all 53 enrolled instances. The explicit printed
+accumulators must match for all 57 enrolled instances. The explicit printed
 seed makes failures reproducible, while generating it after checkout prevents
 source changes from targeting a permanently fixed public point.
 

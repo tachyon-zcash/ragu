@@ -4,6 +4,7 @@ import Clean.Gadgets.Boolean
 import Mathlib.Tactic.IntervalCases
 import Mathlib.Tactic.LinearCombination
 import Ragu.Circuits.Element.Mul
+import Ragu.Circuits.Endoscalar.GroupScale
 import Ragu.Circuits.Endoscalar.Initial
 import Ragu.Circuits.Endoscalar.Walk
 import Ragu.Circuits.Point.Denormalize
@@ -12,145 +13,125 @@ import Ragu.Circuits.Point.Spec
 import Ragu.Circuits.Point.TripleAndAddIncompleteUnchecked
 
 /-!
-# `Endoscalar::group_scale`
+# `HoistedEndoscalar::group_scale`
 
-Scales a curve point by a `numBits`-bit endoscalar in radix 3. Mirrors
-`crates/ragu_primitives/src/endoscalar.rs::Endoscalar::group_scale` and the
-`walk` it shares with the hoisted gadget:
+The walk of `Endoscalar::group_scale` with each digit's point selected in
+two gates from the hoisted product wires `e₁ e₂` and `e₁ e₂ s`: with those
+in hand, both coordinates of the digit point are `r` times a linear form
+plus a linear form. Mirrors
+`crates/ragu_primitives/src/endoscalar.rs::HoistedEndoscalar::group_scale`.
 
-* `Point.Normalize`: `c = x / y`, `c²`, `r = c² x` move the point to
-  `(r, r)` on the isomorphic curve `y² = x³ + c⁶ b` (3 gates);
-* `Initial`: `A₀ = [2] (-1)^{s₀} φ^{e₀} (r, r)` from the two initial bits
-  (4 gates);
-* `numDigits` iterations of `Step`: the three-gate eight-way selection of the
-  digit's point among `±(r, r), ±φ(r, r), ±φ²(r, r), ±((r, r) - φ(r, r))`,
-  all affine in `r` on the normalized curve, then the seven-gate
-  `[3] A + D` chain (10 gates);
-* `Point.Denormalize`: back to the original curve (3 gates).
-
-Non-degeneracy: the deployed gadget creates its `NonzeroBank` with
-`NonzeroBank::new_unchecked()`, so no fold or discharge constraints are
-emitted: every incomplete addition's distinct-x condition rests on the
-magnitude argument in `Endoscalar::group_scale`, not on the constraint
-system. This reimpl models exactly that via the unchecked triple-and-add,
-and carries the non-degeneracy as the explicit caller obligation
-`groupScaleNative ≠ none` in `Assumptions`; soundness is conditional on it,
-which is the honest statement about the circuit that ships.
+The product wires are inputs here; that they are the products of the bits
+is the `EnforceProducts` contract, carried as an assumption. Everything else
+is `GroupScale`'s: the normalization, the initial point, the native walk
+and its non-degeneracy, and the move back.
 -/
 
-namespace Ragu.Circuits.Endoscalar.GroupScale
+namespace Ragu.Circuits.Endoscalar.HoistedGroupScale
 open Walk
 variable {p : ℕ} [Fact p.Prime] [NeZero (2 : F p)]
 
+/-- The bits, the hoisted products per digit in digit order, and the point. -/
 structure Input (F : Type) where
   bits : Vector F numBits
+  products : Vector F numProducts
   pt : Point.Spec.Point F
 deriving ProvableStruct
 
-/-! ## The three-gate selector in closed form -/
+/-! ## The two-gate selector in closed form -/
 
-/-- `(4/9)(ζ - 1)`. -/
-def c49 (ζ : F p) : F p := (ζ - 1) * ((3 : F p)⁻¹ ^ 2 * 4)
-/-- `(ζ - 1)/3`. -/
-def kj (ζ : F p) : F p := (ζ - 1) * (3 : F p)⁻¹
-/-- `4ζ/3`. -/
-def ku (ζ : F p) : F p := ζ * ((3 : F p)⁻¹ * 4)
-/-- `-2ζ/3`. -/
-def ky (ζ : F p) : F p := -(ζ * ((3 : F p)⁻¹ * 2))
+/-- `x` of `P̂ - φP̂` is `ζ² r + xq0`: `xq0 = -4ζ²/3`. -/
+def xq0 (ζ : F p) : F p := -(ζ ^ 2 * ((3 : F p)⁻¹ * 4))
+/-- `y` of `P̂ - φP̂` is `c1 r + yq0`: `c1 = 1 + 2ζ`. -/
+def c1 (ζ : F p) : F p := 1 + 2 * ζ
+/-- `yq0 = -(8/9)(1 + 2ζ)`. -/
+def yq0 (ζ : F p) : F p := -(c1 ζ * ((3 : F p)⁻¹ ^ 2 * 8))
 
-/-- `h = (r + (4/9)(ζ-1) u) ((ζ-1) u + (ζ²-1) v)`. -/
-def selH (ζ r u v : F p) : F p := (r + c49 ζ * u) * ((ζ - 1) * u + (ζ ^ 2 - 1) * v)
-/-- `j = (u + v - 1) h`. -/
-def selJ (ζ r u v : F p) : F p := (u + v - 1) * selH ζ r u v
-/-- `x_D = r + h + ((ζ-1)/3) j + (4ζ/3) u`. -/
-def selX (ζ r u v : F p) : F p := r + selH ζ r u v + kj ζ * selJ ζ r u v + ku ζ * u
-/-- `y_D = (1 - 2s)(r - (2ζ/3) j)`. -/
-def selY (ζ r s u v : F p) : F p := (1 + -2 * s) * (r + ky ζ * selJ ζ r u v)
+/-- `x_D = r (1 + (ζ-1) e₁ + (ζ²-1) e₂ + (1-ζ) p) + xq0 p`. -/
+def selX (ζ r e1 e2 pw : F p) : F p :=
+  r * (1 + (ζ - 1) * e1 + (ζ ^ 2 - 1) * e2 + (1 - ζ) * pw) + xq0 ζ * pw
+/-- `y_D = r ((1 - 2s) + (c1 - 1)(p - 2q)) + yq0 (p - 2q)`. -/
+def selY (ζ r s pw qw : F p) : F p :=
+  r * (1 + -2 * s + (c1 ζ - 1) * (pw + -2 * qw)) + yq0 ζ * (pw + -2 * qw)
+
+/-- The digit point's `y` before the sign: `r (1 + (c1 - 1) p) + yq0 p`. -/
+def selYU (ζ r pw : F p) : F p := r * (1 + (c1 ζ - 1) * pw) + yq0 ζ * pw
 
 omit [NeZero (2 : F p)] in
-/-- On boolean bits, the selector computes the unsigned digit point: its
-`y` before the sign is `r - (2ζ/3) j`. The `(1, 0)` and `(1, 1)` cases use
-`ζ² + ζ + 1 = 0` and `3 · 3⁻¹ = 1`. -/
+/-- On boolean bits with their product, the hoisted selector computes the
+unsigned digit point. -/
 lemma digitPointUnsigned_eq_sel (curveParams : Point.Spec.CurveParams p) (r u v : F p)
     (hr : r ≠ 0) (hζ : curveParams.ζ ≠ 1) (h3 : (3 : F p) ≠ 0)
     (hu : IsBool u) (hv : IsBool v) :
     digitPointUnsigned curveParams r u v =
-      some ⟨selX curveParams.ζ r u v, r + ky curveParams.ζ * selJ curveParams.ζ r u v⟩ := by
-  have hq := zeta_quadratic curveParams hζ
-  have h3t : (3 : F p) * (3 : F p)⁻¹ = 1 := mul_inv_cancel₀ h3
+      some ⟨selX curveParams.ζ r u v (u * v), selYU curveParams.ζ r (u * v)⟩ := by
   rcases hu with hu | hu <;> rcases hv with hv | hv <;> subst hu hv
-  · -- (0, 0): the base.
-    simp only [digitPointUnsigned, zero_ne_one, if_false, Option.some.injEq,
-      Point.Spec.Point.mk.injEq, selX, selH, selJ]
+  · simp only [digitPointUnsigned, zero_ne_one, if_false, Option.some.injEq,
+      Point.Spec.Point.mk.injEq, selX, selYU]
     exact ⟨by ring, by ring⟩
-  · -- (0, 1): φ²P̂.
-    simp only [digitPointUnsigned, zero_ne_one, if_true, if_false, Option.some.injEq,
-      Point.Spec.Point.endo, Point.Spec.Point.mk.injEq, selX, selH, selJ]
+  · simp only [digitPointUnsigned, zero_ne_one, if_true, if_false, Option.some.injEq,
+      Point.Spec.Point.endo, Point.Spec.Point.mk.injEq, selX, selYU]
     exact ⟨by ring, by ring⟩
-  · -- (1, 0): φP̂.
-    simp only [digitPointUnsigned, zero_ne_one, if_true, if_false, Option.some.injEq,
-      Point.Spec.Point.endo, Point.Spec.Point.mk.injEq, selX, selH, selJ, c49, kj, ku, ky]
-    refine ⟨?_, by ring⟩
-    linear_combination (-4 * (3 : F p)⁻¹ ^ 2) * hq + (4 * (3 : F p)⁻¹ * curveParams.ζ) * h3t
-  · -- (1, 1): P̂ - φP̂.
-    simp only [digitPointUnsigned, if_true]
+  · simp only [digitPointUnsigned, zero_ne_one, if_true, if_false, Option.some.injEq,
+      Point.Spec.Point.endo, Point.Spec.Point.mk.injEq, selX, selYU]
+    exact ⟨by ring, by ring⟩
+  · simp only [digitPointUnsigned, if_true]
     rw [base_sub_endo curveParams r hr hζ h3]
-    simp only [Option.some.injEq, Point.Spec.Point.mk.injEq, selX, selH, selJ, c49, kj, ku, ky]
-    refine ⟨?_, ?_⟩
-    · linear_combination
-        (r - 4 * (3 : F p)⁻¹ + 4 * (3 : F p)⁻¹ ^ 2 -
-          (r + 4 * (3 : F p)⁻¹ ^ 2 * (curveParams.ζ - 1)) *
-            (1 + (curveParams.ζ - 1) * (3 : F p)⁻¹)) * hq +
-        (4 * (3 : F p)⁻¹ ^ 2 * (curveParams.ζ - 1) ^ 2 - 4 * (3 : F p)⁻¹ +
-          r * (curveParams.ζ - 1)) * h3t
-    · linear_combination
-        (2 * (3 : F p)⁻¹ * curveParams.ζ * (r + 4 * (3 : F p)⁻¹ ^ 2 * (curveParams.ζ - 1)) -
-          8 * (3 : F p)⁻¹ ^ 2) * hq +
-        (-2 * curveParams.ζ * r -
-          8 * (3 : F p)⁻¹ ^ 2 * curveParams.ζ * (curveParams.ζ - 1)) * h3t
+    simp only [Option.some.injEq, Point.Spec.Point.mk.injEq, selX, selYU, xq0, c1, yq0]
+    exact ⟨by ring, by ring⟩
 
 omit [NeZero (2 : F p)] in
-/-- On boolean bits, the selector computes the digit point. -/
+/-- On boolean bits with their products, the hoisted selector computes the
+digit point. -/
 lemma digitPoint_eq_sel (curveParams : Point.Spec.CurveParams p) (r s u v : F p)
     (hr : r ≠ 0) (hζ : curveParams.ζ ≠ 1) (h3 : (3 : F p) ≠ 0)
     (hs : IsBool s) (hu : IsBool u) (hv : IsBool v) :
     digitPoint curveParams r s u v =
-      some ⟨selX curveParams.ζ r u v, selY curveParams.ζ r s u v⟩ := by
+      some ⟨selX curveParams.ζ r u v (u * v), selY curveParams.ζ r s (u * v) (u * v * s)⟩ := by
   simp only [digitPoint, digitPointUnsigned_eq_sel curveParams r u v hr hζ h3 hu hv,
     Option.map_some, negate_if_eq s hs]
-  rfl
+  rw [Option.some_inj, Point.Spec.Point.mk.injEq]
+  refine ⟨rfl, ?_⟩
+  simp only [selY, selYU]
+  ring
 
 /-! ## One loop iteration, bundled as its own subcircuit. -/
 namespace Step
 
-/-- One iteration's inputs: the digit `(s, e₁, e₂)`, the normalized base's
-coordinate `r`, and the running accumulator. -/
+/-- One iteration's inputs: the digit `(s, e₁, e₂)` with its hoisted products
+`pw = e₁ e₂` and `qw = e₁ e₂ s`, the normalized base's coordinate `r`, and
+the running accumulator. -/
 structure Input (F : Type) where
   s : F
   e1 : F
   e2 : F
+  pw : F
+  qw : F
   r : F
   acc : Point.Spec.Point F
 deriving ProvableStruct
 
-/-- The three selector muls, then the unchecked triple-and-add. -/
+/-- The two selector muls, then the unchecked triple-and-add. -/
 def main (curveParams : Point.Spec.CurveParams p) (input : Var Input (F p))
     : Circuit (F p) (Var Point.Spec.Point (F p)) := do
-  let ⟨s, u, v, r, acc⟩ := input
+  let ⟨s, e1, e2, pw, qw, r, acc⟩ := input
   let ζ := curveParams.ζ
-  let h ← Element.Mul.circuit
-    ⟨r + Expression.const (c49 ζ) * u,
-     Expression.const (ζ - 1) * u + Expression.const (ζ ^ 2 - 1) * v⟩
-  let j ← Element.Mul.circuit ⟨u + v - 1, h⟩
-  let xd := r + h + Expression.const (kj ζ) * j + Expression.const (ku ζ) * u
-  let yd ← Element.Mul.circuit
-    ⟨1 + Expression.const (-2) * s, r + Expression.const (ky ζ) * j⟩
+  let lx := 1 + Expression.const (ζ - 1) * e1 + Expression.const (ζ ^ 2 - 1) * e2 +
+    Expression.const (1 - ζ) * pw
+  let xm ← Element.Mul.circuit ⟨r, lx⟩
+  let xd := xm + Expression.const (xq0 ζ) * pw
+  let pm2q := pw + Expression.const (-2) * qw
+  let ly := 1 + Expression.const (-2) * s + Expression.const (c1 ζ - 1) * pm2q
+  let ym ← Element.Mul.circuit ⟨r, ly⟩
+  let yd := ym + Expression.const (yq0 ζ) * pm2q
   Point.TripleAndAddIncompleteUnchecked.circuit ⟨acc, ⟨xd, yd⟩⟩
 
-/-- Caller obligations: boolean bits, a nonzero base coordinate, a nontrivial
-cube root of unity, and the step's non-degeneracy. -/
+/-- Caller obligations: boolean bits whose product wires are their products,
+a nonzero base coordinate, a nontrivial cube root of unity, and the step's
+non-degeneracy. -/
 def Assumptions (curveParams : Point.Spec.CurveParams p) (input : Input (F p)) :=
   IsBool input.s ∧ IsBool input.e1 ∧ IsBool input.e2 ∧
+  input.pw = input.e1 * input.e2 ∧ input.qw = input.pw * input.s ∧
   input.r ≠ 0 ∧ curveParams.ζ ≠ 1 ∧ (3 : F p) ≠ 0 ∧
   stepNative curveParams input.r input.acc input.s input.e1 input.e2 ≠ none
 
@@ -158,27 +139,26 @@ def Spec (curveParams : Point.Spec.CurveParams p) (input : Input (F p))
     (output : Point.Spec.Point (F p)) :=
   stepNative curveParams input.r input.acc input.s input.e1 input.e2 = some output
 
-/-- The digit point's expressions on the layout: `x_D` over the `h` and `j`
-product wires, `y_D` the third Mul's product wire. -/
+/-- The digit point's expressions on the layout: the two Muls' product wires
+with the products' linear terms. -/
 @[circuit_norm]
 def digitVar (curveParams : Point.Spec.CurveParams p) (input : Var Input (F p)) (offset : ℕ)
     : Var Point.Spec.Point (F p) :=
-  ⟨input.r + varFromOffset field (offset + 2) +
-      Expression.const (kj curveParams.ζ) * varFromOffset field (offset + 3 + 2) +
-      Expression.const (ku curveParams.ζ) * input.e1,
-   varFromOffset field (offset + 3 + 3 + 2)⟩
+  ⟨varFromOffset field (offset + 2) + Expression.const (xq0 curveParams.ζ) * input.pw,
+   varFromOffset field (offset + 3 + 2) +
+     Expression.const (yq0 curveParams.ζ) * (input.pw + Expression.const (-2) * input.qw)⟩
 
 /-- The step's output: the triple-and-add's on the digit point. -/
 @[circuit_norm]
 def output (curveParams : Point.Spec.CurveParams p) (input : Var Input (F p)) (offset : ℕ)
     : Var Point.Spec.Point (F p) :=
   Point.TripleAndAddIncompleteUnchecked.output ⟨input.acc, digitVar curveParams input offset⟩
-    (offset + 9)
+    (offset + 6)
 
 instance elaborated (curveParams : Point.Spec.CurveParams p)
     : ElaboratedCircuit (F p) Input Point.Spec.Point (main curveParams) where
-  -- three Muls (9) + triple-and-add (21)
-  localLength _ := 30
+  -- two Muls (6) + triple-and-add (21)
+  localLength _ := 27
   output input offset := output curveParams input offset
   localLength_eq := by
     simp +arith [main, circuit_norm, Element.Mul.circuit,
@@ -200,17 +180,16 @@ theorem soundness (curveParams : Point.Spec.CurveParams p) :
     Point.TripleAndAddIncompleteUnchecked.circuit,
     Point.TripleAndAddIncompleteUnchecked.Assumptions,
     Point.TripleAndAddIncompleteUnchecked.Spec, output, digitVar]
-  obtain ⟨hs, hu, hv, hr, hζ, h3, h_step⟩ := h_assumptions
-  obtain ⟨h_h, h_j, h_yd, h_tri⟩ := h_holds
-  -- The wires are the selector's closed forms.
-  have hx : input_r + env.get i₀.succ.succ +
-      kj curveParams.ζ * env.get (i₀ + 3 + 2) + ku curveParams.ζ * input_e1 =
-      selX curveParams.ζ input_r input_e1 input_e2 := by
-    simp only [selX, selH, selJ]
-    rw [h_j, h_h]
-  have hy : env.get (i₀ + 3 + 3 + 2) = selY curveParams.ζ input_r input_s input_e1 input_e2 := by
-    simp only [selY, selH, selJ]
-    rw [h_yd, h_j, h_h]
+  obtain ⟨hs, hu, hv, hpw, hqw, hr, hζ, h3, h_step⟩ := h_assumptions
+  obtain ⟨h_xm, h_ym, h_tri⟩ := h_holds
+  have hx : env.get i₀.succ.succ + xq0 curveParams.ζ * input_pw =
+      selX curveParams.ζ input_r input_e1 input_e2 (input_e1 * input_e2) := by
+    simp only [selX]
+    rw [h_xm, hpw]
+  have hy : env.get (i₀ + 3 + 2) + yq0 curveParams.ζ * (input_pw - 2 * input_qw) =
+      selY curveParams.ζ input_r input_s (input_e1 * input_e2) (input_e1 * input_e2 * input_s) := by
+    simp only [selY]
+    rw [h_ym, hqw, hpw]
     ring
   have hd := digitPoint_eq_sel curveParams input_r input_s input_e1 input_e2 hr hζ h3 hs hu hv
   simp only [stepNative, hd] at h_step ⊢
@@ -225,16 +204,16 @@ theorem completeness (curveParams : Point.Spec.CurveParams p) :
     Point.TripleAndAddIncompleteUnchecked.circuit,
     Point.TripleAndAddIncompleteUnchecked.Assumptions,
     Point.TripleAndAddIncompleteUnchecked.Spec, output, digitVar]
-  obtain ⟨hs, hu, hv, hr, hζ, h3, h_step⟩ := h_assumptions
-  obtain ⟨h_h, h_j, h_yd, _⟩ := h_env
-  have hx : input_r + env.get i₀.succ.succ +
-      kj curveParams.ζ * env.get (i₀ + 3 + 2) + ku curveParams.ζ * input_e1 =
-      selX curveParams.ζ input_r input_e1 input_e2 := by
-    simp only [selX, selH, selJ]
-    rw [h_j, h_h]
-  have hy : env.get (i₀ + 3 + 3 + 2) = selY curveParams.ζ input_r input_s input_e1 input_e2 := by
-    simp only [selY, selH, selJ]
-    rw [h_yd, h_j, h_h]
+  obtain ⟨hs, hu, hv, hpw, hqw, hr, hζ, h3, h_step⟩ := h_assumptions
+  obtain ⟨h_xm, h_ym, _⟩ := h_env
+  have hx : env.get i₀.succ.succ + xq0 curveParams.ζ * input_pw =
+      selX curveParams.ζ input_r input_e1 input_e2 (input_e1 * input_e2) := by
+    simp only [selX]
+    rw [h_xm, hpw]
+  have hy : env.get (i₀ + 3 + 2) + yq0 curveParams.ζ * (input_pw - 2 * input_qw) =
+      selY curveParams.ζ input_r input_s (input_e1 * input_e2) (input_e1 * input_e2 * input_s) := by
+    simp only [selY]
+    rw [h_ym, hqw, hpw]
     ring
   have hd := digitPoint_eq_sel curveParams input_r input_s input_e1 input_e2 hr hζ h3 hs hu hv
   simp only [stepNative, hd] at h_step
@@ -252,14 +231,8 @@ def circuit (curveParams : Point.Spec.CurveParams p) :
 
 end Step
 
-/-- `Circuit.foldlRange` needs an inhabited accumulator type; file-local so
-it leaks into no importer. -/
 local instance : Inhabited (Var Point.Spec.Point (F p)) := ⟨⟨0, 0⟩⟩
 
-/-- `@[irreducible]` is a defeq seal only: it stops the unifier/kernel from
-whnf-unrolling the `numDigits`-iteration fold during structure-update type
-checks, which exceeds the default heartbeat budget. Proofs still unfold
-`main` via its equation lemma. -/
 @[irreducible]
 def main (curveParams : Point.Spec.CurveParams p) (input : Var Input (F p))
     : Circuit (F p) (Var Point.Spec.Point (F p)) := do
@@ -271,6 +244,8 @@ def main (curveParams : Point.Spec.CurveParams p) (input : Var Input (F p))
         ⟨input.bits[2 + 3 * i.val]'(bit_index_lt i (by norm_num)),
          input.bits[3 + 3 * i.val]'(bit_index_lt i (by norm_num)),
          input.bits[4 + 3 * i.val]'(bit_index_lt i (by norm_num)),
+         input.products[2 * i.val]'(product_index_lt i),
+         input.products[2 * i.val + 1]'(product_index_succ_lt i),
          norm.r, acc⟩)
     (by
       apply Circuit.ConstantLength.fromConstantLength'
@@ -278,17 +253,21 @@ def main (curveParams : Point.Spec.CurveParams p) (input : Var Input (F p))
       simp only [circuit_norm, Step.circuit, Step.elaborated])
   Point.Denormalize.circuit ⟨acc, norm.c, norm.c2⟩
 
-/-- Caller obligations. `groupScaleNative ≠ none` is the no-collision
-condition: the unchecked additions emit no distinct-x constraints, so
-soundness is conditional on it. For transcript-derived endoscalars on the
-Pasta curves this holds by the magnitude argument in
-`Endoscalar::group_scale`. -/
+/-- `GroupScale`'s obligations, plus the `EnforceProducts` contract on the
+product wires. -/
 def Assumptions (curveParams : Point.Spec.CurveParams p) (input : Input (F p)) :=
   input.pt.isOnCurve curveParams ∧
   curveParams.nonzeroCoordinates ∧
   curveParams.ζ ≠ 1 ∧
   (3 : F p) ≠ 0 ∧
   (∀ i : Fin numBits, IsBool input.bits[i]) ∧
+  (∀ i : Fin numDigits,
+    input.products[2 * i.val]'(product_index_lt i) =
+      input.bits[3 + 3 * i.val]'(bit_index_lt i (by norm_num)) *
+        input.bits[4 + 3 * i.val]'(bit_index_lt i (by norm_num)) ∧
+    input.products[2 * i.val + 1]'(product_index_succ_lt i) =
+      input.products[2 * i.val]'(product_index_lt i) *
+        input.bits[2 + 3 * i.val]'(bit_index_lt i (by norm_num))) ∧
   groupScaleNative curveParams input.pt input.bits ≠ none
 
 def Spec (curveParams : Point.Spec.CurveParams p) (input : Input (F p))
@@ -298,8 +277,8 @@ def Spec (curveParams : Point.Spec.CurveParams p) (input : Input (F p))
 
 instance elaborated (curveParams : Point.Spec.CurveParams p)
     : ElaboratedCircuit (F p) Input Point.Spec.Point (main curveParams) where
-  -- 9 (Normalize) + 12 (Initial) + numDigits × 30 (Step) + 9 (Denormalize)
-  localLength _ := 9 + 12 + numDigits * 30 + 9
+  -- 9 (Normalize) + 12 (Initial) + numDigits × 27 (Step) + 9 (Denormalize)
+  localLength _ := 9 + 12 + numDigits * 27 + 9
   localLength_eq := by
     simp +arith [main, circuit_norm, Point.Normalize.circuit, Initial.circuit,
       Initial.elaborated, Step.circuit, Step.elaborated, Point.Denormalize.circuit]
@@ -310,22 +289,6 @@ instance elaborated (curveParams : Point.Spec.CurveParams p)
     simp +arith [main, circuit_norm, Point.Normalize.circuit, Initial.circuit,
       Initial.elaborated, Step.circuit, Step.elaborated, Point.Denormalize.circuit]
 
-omit [NeZero (2 : F p)] in
-/-- The facts about the normalization shared by both proof directions. -/
-lemma normalization_facts (curveParams : Point.Spec.CurveParams p)
-    (x y c c2 r : F p)
-    (h_curve : (⟨x, y⟩ : Point.Spec.Point (F p)).isOnCurve curveParams)
-    (h_nz : curveParams.nonzeroCoordinates)
-    (h_c : c = x / y) (h_c2 : c2 = c ^ 2) (h_r : r = c2 * x) :
-    y ≠ 0 ∧ c ≠ 0 ∧ r ≠ 0 ∧ c = (normalizeNative ⟨x, y⟩).1 ∧ r = (normalizeNative ⟨x, y⟩).2 := by
-  have hy : y ≠ 0 := h_nz.2 _ h_curve
-  have hx : x ≠ 0 := h_nz.1 _ h_curve
-  have hc : c ≠ 0 := by rw [h_c]; exact div_ne_zero hx hy
-  have hr : r ≠ 0 := by rw [h_r, h_c2]; exact mul_ne_zero (pow_ne_zero 2 hc) hx
-  refine ⟨hy, hc, hr, ?_, ?_⟩
-  · simp only [normalizeNative]; exact h_c
-  · simp only [normalizeNative]; rw [h_r, h_c2, h_c]
-
 theorem soundness (curveParams : Point.Spec.CurveParams p)
     : Soundness (F p) (Input := Input) (Output := Point.Spec.Point) (main curveParams)
         (Assumptions curveParams) (Spec curveParams) := by
@@ -333,27 +296,31 @@ theorem soundness (curveParams : Point.Spec.CurveParams p)
     Point.Normalize.circuit, Point.Normalize.Assumptions, Point.Normalize.Spec,
     Initial.circuit, Initial.Assumptions, Initial.Spec, Initial.output,
     Point.Denormalize.circuit, Point.Denormalize.Assumptions, Point.Denormalize.Spec]
-  obtain ⟨h_pt_curve, h_nz, hζ, h3, h_bits, h_native_ne⟩ := h_assumptions
+  obtain ⟨h_pt_curve, h_nz, hζ, h3, h_bits, h_prods, h_native_ne⟩ := h_assumptions
   have h_bool : ∀ (j : ℕ) (hj : j < numBits), IsBool (input_bits[j]'hj) :=
     fun j hj => h_bits ⟨j, hj⟩
   obtain ⟨h_norm, h_init, h_steps, h_denorm⟩ := h_holds
-  obtain ⟨h_bits_eval, h_px, h_py⟩ := h_input
+  obtain ⟨h_bits_eval, h_products_eval, h_px, h_py⟩ := h_input
   have h_bit : ∀ (j : ℕ) (hj : j < numBits),
       Expression.eval env (input_var_bits[j]'hj) = input_bits[j]'hj := by
     intro j hj
     have := congrArg (fun v => v[j]'hj) h_bits_eval
     simpa [Vector.getElem_map] using this
+  have h_prod : ∀ (j : ℕ) (hj : j < numProducts),
+      Expression.eval env (input_var_products[j]'hj) = input_products[j]'hj := by
+    intro j hj
+    have := congrArg (fun v => v[j]'hj) h_products_eval
+    simpa [Vector.getElem_map] using this
   have hy : input_pt_y ≠ 0 := h_nz.2 _ h_pt_curve
   obtain ⟨h_c, h_c2, h_r⟩ := h_norm hy
   obtain ⟨_, hc, hr, h_c_nat, h_r_nat⟩ :=
-    normalization_facts curveParams input_pt_x input_pt_y _ _ _ h_pt_curve h_nz h_c h_c2 h_r
+    GroupScale.normalization_facts curveParams input_pt_x input_pt_y _ _ _ h_pt_curve h_nz
+      h_c h_c2 h_r
   set c := env.get i₀ with hc_def
   set r := env.get (i₀ + 3 + 3 + 2) with hr_def
-  -- The initial point.
   have h_acc0 := h_init ⟨by rw [h_bit 0 (by decide)]; exact h_bool 0 (by decide),
     by rw [h_bit 1 (by decide)]; exact h_bool 1 (by decide), hr⟩
   rw [h_bit 0 (by decide), h_bit 1 (by decide)] at h_acc0
-  -- The walk.
   have h_ne := accAfter_ne_of_groupScale curveParams ⟨input_pt_x, input_pt_y⟩ input_bits
     h_native_ne
   rw [← h_r_nat] at h_ne
@@ -362,28 +329,32 @@ theorem soundness (curveParams : Point.Spec.CurveParams p)
       ⟨input_var_bits[2 + 3 * i.val]'(bit_index_lt i (by norm_num)),
        input_var_bits[3 + 3 * i.val]'(bit_index_lt i (by norm_num)),
        input_var_bits[4 + 3 * i.val]'(bit_index_lt i (by norm_num)),
+       input_var_products[2 * i.val]'(product_index_lt i),
+       input_var_products[2 * i.val + 1]'(product_index_succ_lt i),
        varFromOffset field (i₀ + 3 + 3 + 2), acc⟩)
-    (Initial.output (i₀ + 9)) (i₀ + 9 + 12) 30
+    (Initial.output (i₀ + 9)) (i₀ + 9 + 12) 27
     (fun i acc off => evalPt env (Step.output curveParams
       ⟨input_var_bits[2 + 3 * i.val]'(bit_index_lt i (by norm_num)),
        input_var_bits[3 + 3 * i.val]'(bit_index_lt i (by norm_num)),
        input_var_bits[4 + 3 * i.val]'(bit_index_lt i (by norm_num)),
+       input_var_products[2 * i.val]'(product_index_lt i),
+       input_var_products[2 * i.val + 1]'(product_index_succ_lt i),
        varFromOffset field (i₀ + 3 + 3 + 2), ⟨Expression.const acc.x, Expression.const acc.y⟩⟩ off))
     h_ne
     (by
       intro i h_step_ne
       have h := h_steps i
-      simp only [Step.Assumptions, Step.Spec, h_bit] at h
-      have := h ⟨h_bool _ _, h_bool _ _, h_bool _ _, hr, hζ, h3, h_step_ne⟩
+      simp only [Step.Assumptions, Step.Spec, h_bit, h_prod] at h
+      have := h ⟨h_bool _ _, h_bool _ _, h_bool _ _, (h_prods i).1, (h_prods i).2,
+        hr, hζ, h3, h_step_ne⟩
       simpa only [circuit_norm, Step.circuit, Step.output, Step.digitVar,
-        Point.TripleAndAddIncompleteUnchecked.output, evalPt, Expression.eval, h_bit,
+        Point.TripleAndAddIncompleteUnchecked.output, evalPt, Expression.eval, h_bit, h_prod,
         ← hr_def] using this)
     (fun _ _ => rfl)
     (fun acc i => by
       simp only [circuit_norm, Step.circuit, Step.output, Step.digitVar,
         Point.TripleAndAddIncompleteUnchecked.output, evalPt, Expression.eval])
     (by simpa only [accAfter, evalPt, Initial.output, Expression.eval] using h_acc0)
-  -- Back to the original curve.
   obtain ⟨h_ox, h_oy⟩ := h_denorm ⟨hc, h_c2⟩
   refine ⟨?_, ?_⟩
   · simp only [groupScaleNative, ← h_c_nat, ← h_r_nat]
@@ -406,20 +377,26 @@ theorem completeness (curveParams : Point.Spec.CurveParams p)
     Point.Normalize.circuit, Point.Normalize.Assumptions, Point.Normalize.Spec,
     Initial.circuit, Initial.Assumptions, Initial.Spec, Initial.output,
     Point.Denormalize.circuit, Point.Denormalize.Assumptions, Point.Denormalize.Spec]
-  obtain ⟨h_pt_curve, h_nz, hζ, h3, h_bits, h_native_ne⟩ := h_assumptions
+  obtain ⟨h_pt_curve, h_nz, hζ, h3, h_bits, h_prods, h_native_ne⟩ := h_assumptions
   have h_bool : ∀ (j : ℕ) (hj : j < numBits), IsBool (input_bits[j]'hj) :=
     fun j hj => h_bits ⟨j, hj⟩
   obtain ⟨h_norm_env, h_init_env, h_steps_env, _⟩ := h_env
-  obtain ⟨h_bits_eval, h_px, h_py⟩ := h_input
+  obtain ⟨h_bits_eval, h_products_eval, h_px, h_py⟩ := h_input
   have h_bit : ∀ (j : ℕ) (hj : j < numBits),
       Expression.eval env.toEnvironment (input_var_bits[j]'hj) = input_bits[j]'hj := by
     intro j hj
     have := congrArg (fun v => v[j]'hj) h_bits_eval
     simpa [Vector.getElem_map] using this
+  have h_prod : ∀ (j : ℕ) (hj : j < numProducts),
+      Expression.eval env.toEnvironment (input_var_products[j]'hj) = input_products[j]'hj := by
+    intro j hj
+    have := congrArg (fun v => v[j]'hj) h_products_eval
+    simpa [Vector.getElem_map] using this
   have hy : input_pt_y ≠ 0 := h_nz.2 _ h_pt_curve
   obtain ⟨h_c, h_c2, h_r⟩ := h_norm_env hy
   obtain ⟨_, hc, hr, h_c_nat, h_r_nat⟩ :=
-    normalization_facts curveParams input_pt_x input_pt_y _ _ _ h_pt_curve h_nz h_c h_c2 h_r
+    GroupScale.normalization_facts curveParams input_pt_x input_pt_y _ _ _ h_pt_curve h_nz
+      h_c h_c2 h_r
   set c := env.get i₀ with hc_def
   set r := env.get (i₀ + 3 + 3 + 2) with hr_def
   have h_acc0 := h_init_env ⟨by rw [h_bit 0 (by decide)]; exact h_bool 0 (by decide),
@@ -433,21 +410,26 @@ theorem completeness (curveParams : Point.Spec.CurveParams p)
       ⟨input_var_bits[2 + 3 * i.val]'(bit_index_lt i (by norm_num)),
        input_var_bits[3 + 3 * i.val]'(bit_index_lt i (by norm_num)),
        input_var_bits[4 + 3 * i.val]'(bit_index_lt i (by norm_num)),
+       input_var_products[2 * i.val]'(product_index_lt i),
+       input_var_products[2 * i.val + 1]'(product_index_succ_lt i),
        varFromOffset field (i₀ + 3 + 3 + 2), acc⟩)
-    (Initial.output (i₀ + 9)) (i₀ + 9 + 12) 30
+    (Initial.output (i₀ + 9)) (i₀ + 9 + 12) 27
     (fun i acc off => evalPt env.toEnvironment (Step.output curveParams
       ⟨input_var_bits[2 + 3 * i.val]'(bit_index_lt i (by norm_num)),
        input_var_bits[3 + 3 * i.val]'(bit_index_lt i (by norm_num)),
        input_var_bits[4 + 3 * i.val]'(bit_index_lt i (by norm_num)),
+       input_var_products[2 * i.val]'(product_index_lt i),
+       input_var_products[2 * i.val + 1]'(product_index_succ_lt i),
        varFromOffset field (i₀ + 3 + 3 + 2), ⟨Expression.const acc.x, Expression.const acc.y⟩⟩ off))
     h_ne
     (by
       intro i h_step_ne
       have h := h_steps_env i
-      simp only [Step.Assumptions, Step.Spec, h_bit] at h
-      have := h ⟨h_bool _ _, h_bool _ _, h_bool _ _, hr, hζ, h3, h_step_ne⟩
+      simp only [Step.Assumptions, Step.Spec, h_bit, h_prod] at h
+      have := h ⟨h_bool _ _, h_bool _ _, h_bool _ _, (h_prods i).1, (h_prods i).2,
+        hr, hζ, h3, h_step_ne⟩
       simpa only [circuit_norm, Step.circuit, Step.output, Step.digitVar,
-        Point.TripleAndAddIncompleteUnchecked.output, evalPt, Expression.eval, h_bit,
+        Point.TripleAndAddIncompleteUnchecked.output, evalPt, Expression.eval, h_bit, h_prod,
         ← hr_def] using this)
     (fun _ _ => rfl)
     (fun acc i => by
@@ -462,8 +444,8 @@ theorem completeness (curveParams : Point.Spec.CurveParams p)
     (walk_index_lt i.val i.isLt)
   have h_nei := all_accAfter_ne curveParams r input_bits h_ne (i.val + 1) i.isLt
   rw [h_acci] at h_nei
-  simp only [Step.Assumptions, h_bit]
-  exact ⟨h_bool _ _, h_bool _ _, h_bool _ _, hr, hζ, h3, h_nei⟩
+  simp only [Step.Assumptions, h_bit, h_prod]
+  exact ⟨h_bool _ _, h_bool _ _, h_bool _ _, (h_prods i).1, (h_prods i).2, hr, hζ, h3, h_nei⟩
 
 def circuit (curveParams : Point.Spec.CurveParams p) : FormalCircuit (F p) Input Point.Spec.Point :=
   { main := main curveParams,
@@ -476,4 +458,4 @@ def circuit (curveParams : Point.Spec.CurveParams p) : FormalCircuit (F p) Input
     soundness := soundness curveParams
     completeness := completeness curveParams }
 
-end Ragu.Circuits.Endoscalar.GroupScale
+end Ragu.Circuits.Endoscalar.HoistedGroupScale

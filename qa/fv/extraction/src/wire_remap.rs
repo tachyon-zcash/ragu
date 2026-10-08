@@ -16,7 +16,7 @@ use ragu_core::{
     },
     gadgets::{Bound, Gadget},
 };
-use ragu_primitives::{Boolean, Endoscalar, Invertible, Uendo};
+use ragu_primitives::{Boolean, Endoscalar, HoistedEndoscalar, Invertible, Uendo};
 use udon::field::Field;
 
 type TemplateDriver<D> =
@@ -118,6 +118,32 @@ pub(crate) fn endoscalar_from_bits<'dr, D: Driver<'dr>>(
     bits: &[Boolean<'dr, D>],
 ) -> Result<Endoscalar<'dr, D>> {
     endoscalar_unchecked(bits, D::just(|| Uendo::ZERO))
+}
+
+/// Assembles a [`HoistedEndoscalar`] from its `ENDOSCALAR_BITS` bit wires and
+/// `ENDOSCALAR_PRODUCTS` product wires, all wrapped booleans, without
+/// emitting any operation.
+///
+/// This adds neither Boolean constraints nor the product constraints; the
+/// hoisted instances require `IsBool` for every input wire through their
+/// Lean `Assumptions`, and the products' relation to the bits is the
+/// `EnforceProducts` instance's own contract.
+///
+/// # Errors
+///
+/// Propagates a structural error from the gadget remapping.
+pub(crate) fn hoisted_endoscalar_from_bits<'dr, D: Driver<'dr>>(
+    bits: &[Boolean<'dr, D>],
+    products: &[Boolean<'dr, D>],
+) -> Result<HoistedEndoscalar<'dr, D>> {
+    let mut dr = TemplateDriver::<D>::wireless();
+    let template = HoistedEndoscalar::alloc(&mut dr, D::just(|| Uendo::ZERO))?;
+    let wires = bits
+        .iter()
+        .chain(products)
+        .map(|bit| bit.wire().clone())
+        .collect();
+    remap_template(&template, wires)
 }
 
 /// Assembles an [`Invertible`] from its element and inverse wires without

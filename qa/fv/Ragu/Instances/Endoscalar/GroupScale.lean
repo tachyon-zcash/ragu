@@ -6,12 +6,12 @@ namespace Ragu.Instances.Endoscalar.GroupScale
 @[reducible]
 def p := Core.Primes.p
 
-/-- Deserialize the flat 130-wire input: first 128 are endoscalar bits, last 2
+/-- Deserialize the flat 145-wire input: first 143 are endoscalar bits, last 2
 are the curve point's `(x, y)` coordinates. -/
-def deserializeInput (input : Vector (Expression (F p)) 130)
+def deserializeInput (input : Vector (Expression (F p)) 145)
     : Var Circuits.Endoscalar.GroupScale.Input (F p) :=
-  { bits := Vector.ofFn (fun (i : Fin 128) => input[i.val]'(by have := i.isLt; omega))
-    pt := ⟨input[128], input[129]⟩ }
+  { bits := Vector.ofFn (fun (i : Fin 143) => input[i.val]'(by have := i.isLt; omega))
+    pt := ⟨input[143], input[144]⟩ }
 
 /-- Serialize the output point as a 2-wire vector. -/
 def serializeOutput (output : Var Circuits.Point.Spec.Point (F p))

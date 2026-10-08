@@ -1,510 +1,203 @@
 import Mathlib.Algebra.CharP.Defs
-import Mathlib.Data.Fintype.Pi
+import Mathlib.Data.List.OfFn
 import Mathlib.GroupTheory.OrderOfElement
 import Mathlib.Tactic.Linarith
+import Mathlib.Tactic.LinearCombination
 import Mathlib.Tactic.NormNum
 import Mathlib.Tactic.Ring
 
 /-!
-* `EndoscaleInput n` is an input with exactly `n` two-bit pairs.
-* `endoscaleN ζ input` is the endoscaling algorithm.
-* `endoscaleCharacteristicBound n = 4 * (2 ^ n - 1) ^ 2`.
-* `endoscaleN_injective_of_characteristicBound_lt` proves that if
-  `ζ` has multiplicative order `3` and the field characteristic is larger than
-  `endoscaleCharacteristicBound n`, then `endoscaleN ζ` is injective.
+# Injectivity and non-degeneracy of radix-3 endoscaling
+
+A radix-3 endoscalar (`crates/ragu_primitives/src/endoscalar.rs`) is two
+initial bits `(s₀, e₀)` and `n` three-bit digits `(s, e₁, e₂)`, most
+significant first. Writing `λ` for a cube root of unity it stands for
+
+  `k = 2·3ⁿ·(-1)^{s₀} λ^{e₀} + Σᵢ 3^{n-1-i} dᵢ`,  `dᵢ = (-1)^s {1, λ, λ², 1 - λ}[e₁, e₂]`,
+
+the scalar `Endoscalar::lift` computes and `Endoscalar::group_scale` applies to
+a point. Both live in the Eisenstein integers `ℤ[ω]`, written here as index
+pairs `(a, b) ↦ a·ω + b` with `ω² = -ω - 1`.
+
+* `EndoscaleInput n` is an input with exactly `n` digits.
+* `endoscaleN ζ input` is the endoscaling algorithm: Horner's rule on index
+  pairs, evaluated at `ζ`.
+* `endoscaleCharacteristicBound n = 3·(5·3ⁿ - 1)²`.
+* `endoscaleN_injective_of_characteristicBound_lt`: if `ζ` has multiplicative
+  order `3` and the characteristic exceeds the bound, `endoscaleN ζ` is
+  injective. The eight digits are the eight nonzero residues of `ℤ[ω]` mod
+  `3`, so distinct inputs have distinct accumulators in `ℤ[ω]`; the Eisenstein
+  norm of the difference is then a positive integer below the characteristic.
+* `groupScale_collision_combinations_ne_zero`: the integer core of the
+  no-collision argument for `group_scale`'s unchecked triple-and-add
+  `((A + D) + A) + A`: the accumulator's Eisenstein norm never drops below
+  `4` while a digit point's is at most `3`, so none of the exceptional
+  combinations `A ∓ D`, `2A + D`, `3A + D` vanishes.
 -/
 
 namespace Ragu.Lemmas.EndoscalarProof
 
-/-- An endoscaling input with exactly `n` two-bit pairs. -/
-def EndoscaleInput (n : ℕ) :=
-  Fin n → Bool × Bool
+/-- A digit `(s, e₁, e₂)`: the sign bit and the two endomorphism bits. -/
+abbrev Digit := Bool × Bool × Bool
 
-instance (n : ℕ) : Fintype (EndoscaleInput n) :=
-  inferInstanceAs (Fintype (Fin n → Bool × Bool))
+/-- An endoscaling input: the initial bits `(s₀, e₀)` and `n` digits, most
+significant first. -/
+abbrev EndoscaleInput (n : ℕ) := (Bool × Bool) × (Fin n → Digit)
 
-/-- The endoscaling algorithm on an exactly-sized input.
+/-- The index `(a, b)` of a digit, meaning `a·λ + b`:
+`(-1)^s {1, λ, λ², 1 - λ}[e₁, e₂]` with `λ² = -λ - 1`. -/
+def digitIndex (d : Digit) : ℤ × ℤ :=
+  let unsigned : ℤ × ℤ :=
+    match d.2.1, d.2.2 with
+    | false, false => (0, 1)
+    | false, true => (-1, -1)
+    | true, false => (1, 0)
+    | true, true => (-1, 1)
+  if d.1 then (-unsigned.1, -unsigned.2) else unsigned
 
-For each input pair `(a_j, b_j)`, it updates an integer accumulator `(x, y)` by
-doubling both coordinates and adding `2 * b_j - 1` to the coordinate selected by
-`a_j`. It returns `x * ζ + y`. -/
+/-- The index of the initial accumulator `2·(-1)^{s₀} λ^{e₀}`. -/
+def initIndex (s0 e0 : Bool) : ℤ × ℤ :=
+  let unsigned : ℤ × ℤ := if e0 then (2, 0) else (0, 2)
+  if s0 then (-unsigned.1, -unsigned.2) else unsigned
+
+/-- One Horner step `acc ↦ 3·acc + d` on indices. -/
+def step (acc d : ℤ × ℤ) : ℤ × ℤ :=
+  (3 * acc.1 + d.1, 3 * acc.2 + d.2)
+
+/-- The accumulator index after consuming `digits` from `init`. -/
+def accIndex (init : ℤ × ℤ) (digits : List Digit) : ℤ × ℤ :=
+  digits.foldl (fun acc d => step acc (digitIndex d)) init
+
+/-- The endoscaling algorithm: the accumulator index `(a, b)` of the input,
+read as `a·ζ + b`. -/
 def endoscaleN {R : Type*} [Ring R] (ζ : R) {n : ℕ} (input : EndoscaleInput n) : R :=
-  let bitSign : Bool → ℤ := fun b => if b then 1 else -1
-  let digit : Bool × Bool → ℤ × ℤ := fun ab =>
-    let s := bitSign ab.2
-    if ab.1 then (0, s) else (s, 0)
-  let step : ℤ × ℤ → Bool × Bool → ℤ × ℤ := fun acc ab =>
-    let d := digit ab
-    (2 * acc.1 + d.1, 2 * acc.2 + d.2)
-  let acc := (List.ofFn input).foldl step (2, 2)
+  let acc := accIndex (initIndex input.1.1 input.1.2) (List.ofFn input.2)
   (acc.1 : R) * ζ + acc.2
 
-/-- A uniform sufficient characteristic bound for length-n endoscaling. If a
+/-- A uniform sufficient characteristic bound for length-`n` endoscaling. If a
 field containing a multiplicative-order-3 element has characteristic exceeding
-this bound, then length-n two-bit-pair endoscaling is injective.
-
-Established by endoscaleN_injective_of_characteristicBound_lt below. -/
+this bound, then length-`n` endoscaling is injective
+(`endoscaleN_injective_of_characteristicBound_lt`). For the deployed
+`n = 47` it is below `2^156`. -/
 def endoscaleCharacteristicBound (n : ℕ) : ℕ :=
-  4 * (2 ^ n - 1) ^ 2
+  3 * (5 * 3 ^ n - 1) ^ 2
 
-/-! ## Private proof support -/
+/-- The Eisenstein norm `|a·ω + b|² = a² - ab + b²`. -/
+def eisensteinNorm (a b : ℤ) : ℤ :=
+  a ^ 2 - a * b + b ^ 2
 
-private def bitSign (b : Bool) : ℤ :=
-  if b then 1 else -1
+/-! ## The digits as residues mod 3 -/
 
-namespace EndoscaleInput
+/-- The eight digit indices are the eight nonzero residues of `ℤ[ω]` mod `3`:
+digits with congruent indices are equal. -/
+private theorem digit_eq_of_mod_eq : ∀ d d' : Digit,
+    (digitIndex d).1 % 3 = (digitIndex d').1 % 3 →
+    (digitIndex d).2 % 3 = (digitIndex d').2 % 3 → d = d' := by
+  decide
 
-private def toList {n : ℕ} (input : EndoscaleInput n) : List (Bool × Bool) :=
-  List.ofFn input
+private theorem initIndex_injective : ∀ s0 e0 s0' e0' : Bool,
+    initIndex s0 e0 = initIndex s0' e0' → s0 = s0' ∧ e0 = e0' := by
+  decide
 
-end EndoscaleInput
+private theorem accIndex_nil (init : ℤ × ℤ) : accIndex init [] = init := rfl
 
-private def endoscaleDigit (ab : Bool × Bool) : ℤ × ℤ :=
-  let s := bitSign ab.2
-  if ab.1 then (0, s) else (s, 0)
+private theorem accIndex_cons (init : ℤ × ℤ) (d : Digit) (ds : List Digit) :
+    accIndex init (d :: ds) = accIndex (step init (digitIndex d)) ds := rfl
 
-private def endoscaleStep (acc : ℤ × ℤ) (ab : Bool × Bool) : ℤ × ℤ :=
-  let digit := endoscaleDigit ab
-  (2 * acc.1 + digit.1, 2 * acc.2 + digit.2)
+/-- Horner's rule in radix 3 is injective on equal-length digit strings: the
+least significant digit is the accumulator mod `3`. -/
+private theorem accIndex_injective :
+    ∀ (ds ds' : List Digit) (init init' : ℤ × ℤ), ds.length = ds'.length →
+      accIndex init ds = accIndex init' ds' → init = init' ∧ ds = ds'
+  | [], [], _, _, _, h => ⟨h, rfl⟩
+  | [], _ :: _, _, _, hlen, _ => by simp at hlen
+  | _ :: _, [], _, _, hlen, _ => by simp at hlen
+  | d :: ds, d' :: ds', init, init', hlen, h => by
+    rw [accIndex_cons, accIndex_cons] at h
+    obtain ⟨hstep, hds⟩ := accIndex_injective ds ds' _ _ (by simpa using hlen) h
+    have h1 := congrArg Prod.fst hstep
+    have h2 := congrArg Prod.snd hstep
+    simp only [step] at h1 h2
+    have hd : d = d' := digit_eq_of_mod_eq d d' (by omega) (by omega)
+    subst hd
+    exact ⟨Prod.ext (by omega) (by omega), by rw [hds]⟩
 
-private def endoscaleAcc (pairs : List (Bool × Bool)) : ℤ × ℤ :=
-  pairs.foldl endoscaleStep (2, 2)
+/-! ## Magnitude bounds -/
 
-private def endoscale {R : Type*} [Ring R] (ζ : R) (pairs : List (Bool × Bool)) : R :=
-  (endoscaleAcc pairs).1 * ζ + (endoscaleAcc pairs).2
+private theorem abs_digitIndex_le (d : Digit) :
+    |(digitIndex d).1| ≤ 1 ∧ |(digitIndex d).2| ≤ 1 := by
+  rcases d with ⟨s, e1, e2⟩
+  cases s <;> cases e1 <;> cases e2 <;>
+    exact ⟨abs_le.mpr (by norm_num [digitIndex]), abs_le.mpr (by norm_num [digitIndex])⟩
 
-private theorem endoscaleN_eq_endoscale {R : Type*} [Ring R] (ζ : R) {n : ℕ}
-    (input : EndoscaleInput n) :
-    endoscaleN ζ input = endoscale ζ input.toList := by
-  rfl
+private theorem abs_initIndex_le' (s0 e0 : Bool) :
+    |(initIndex s0 e0).1| ≤ 2 ∧ |(initIndex s0 e0).2| ≤ 2 := by
+  cases s0 <;> cases e0 <;>
+    exact ⟨abs_le.mpr (by norm_num [initIndex]), abs_le.mpr (by norm_num [initIndex])⟩
 
-private def eisensteinNorm (dx dy : ℤ) : ℤ :=
-  dx ^ 2 - dx * dy + dy ^ 2
+/-- The initial index in the form `accIndex_bound` consumes, at `m = 0`. -/
+private theorem abs_initIndex_le (s0 e0 : Bool) :
+    2 * |(initIndex s0 e0).1| ≤ 5 * 3 ^ 0 - 1 ∧ 2 * |(initIndex s0 e0).2| ≤ 5 * 3 ^ 0 - 1 := by
+  obtain ⟨h1, h2⟩ := abs_initIndex_le' s0 e0
+  constructor <;> norm_num <;> linarith
 
-private def EndoscaleRelationFree {R : Type*} [Ring R] (ζ : R) (n : ℕ) : Prop :=
-  ∀ input input' : EndoscaleInput n,
-    input ≠ input' →
-      let acc := endoscaleAcc input.toList
-      let acc' := endoscaleAcc input'.toList
-      (acc.1 - acc'.1 : R) * ζ + (acc.2 - acc'.2 : R) ≠ 0
-
-private theorem endoscaleN_injective_of_relationFree {R : Type*} [Ring R] {ζ : R} {n : ℕ}
-    (hζ : EndoscaleRelationFree ζ n) :
-    Function.Injective (endoscaleN ζ (n := n)) := by
-  intro input input' h
-  by_contra hne
-  have hrel :
-      let acc := endoscaleAcc input.toList
-      let acc' := endoscaleAcc input'.toList
-      (acc.1 - acc'.1 : R) * ζ + (acc.2 - acc'.2 : R) = 0 := by
-    rw [endoscaleN_eq_endoscale] at h
-    rw [endoscaleN_eq_endoscale] at h
-    dsimp [endoscale] at h ⊢
-    rw [← sub_eq_zero] at h
-    simpa [sub_eq_add_neg, add_assoc, add_left_comm, add_comm, mul_add, add_mul] using h
-  exact hζ input input' hne hrel
-
-private def signedFold {α : Type*} (f : α → ℤ) (start : ℤ) (xs : List α) : ℤ :=
-  xs.foldl (fun z a => 2 * z + f a) start
-
-private theorem signedFold_bound {α : Type*} {f : α → ℤ} (hf : ∀ a, |f a| ≤ 1)
-    (xs : List α) (start : ℤ) :
-    |signedFold f start xs - (2 : ℤ) ^ xs.length * start| ≤
-      (2 : ℤ) ^ xs.length - 1 := by
-  induction xs generalizing start with
-  | nil => simp [signedFold]
-  | cons a xs ih =>
-    dsimp [signedFold, List.foldl]
-    have hih := ih (2 * start + f a)
-    let A := signedFold f (2 * start + f a) xs -
-      (2 : ℤ) ^ xs.length * (2 * start + f a)
-    have hA : |A| ≤ (2 : ℤ) ^ xs.length - 1 := by
-      simpa [A] using hih
-    have hf' : |(2 : ℤ) ^ xs.length * f a| ≤ (2 : ℤ) ^ xs.length := by
-      rw [abs_mul]
-      have hpow_nonneg : 0 ≤ (2 : ℤ) ^ xs.length := pow_nonneg (by norm_num) _
-      have habs_pow : |(2 : ℤ) ^ xs.length| = (2 : ℤ) ^ xs.length :=
-        abs_of_nonneg hpow_nonneg
-      rw [habs_pow]
-      nlinarith [hf a, hpow_nonneg]
-    have htri : |A + (2 : ℤ) ^ xs.length * f a| ≤
-        |A| + |(2 : ℤ) ^ xs.length * f a| :=
-      abs_add_le A ((2 : ℤ) ^ xs.length * f a)
-    have hcalc : |A + (2 : ℤ) ^ xs.length * f a| ≤
-        (2 : ℤ) ^ (xs.length + 1) - 1 := by
+/-- After `m` digits from an initial index of magnitude at most `2`, each
+component is at most `(5·3^m - 1)/2` in absolute value. -/
+private theorem accIndex_bound :
+    ∀ (ds : List Digit) (init : ℤ × ℤ) (k : ℕ),
+      2 * |init.1| ≤ 5 * 3 ^ k - 1 → 2 * |init.2| ≤ 5 * 3 ^ k - 1 →
+      2 * |(accIndex init ds).1| ≤ 5 * 3 ^ (k + ds.length) - 1 ∧
+      2 * |(accIndex init ds).2| ≤ 5 * 3 ^ (k + ds.length) - 1
+  | [], init, k, h1, h2 => by simpa [accIndex_nil] using And.intro h1 h2
+  | d :: ds, init, k, h1, h2 => by
+    rw [accIndex_cons]
+    have hd := abs_digitIndex_le d
+    have hstep : ∀ a e : ℤ, 2 * |a| ≤ 5 * 3 ^ k - 1 → |e| ≤ 1 →
+        2 * |3 * a + e| ≤ 5 * 3 ^ (k + 1) - 1 := by
+      intro a e ha he
+      have htri := abs_add_le (3 * a) e
+      rw [abs_mul, abs_of_pos (by norm_num : (0 : ℤ) < 3)] at htri
       rw [pow_succ]
-      nlinarith
-    have hrewrite :
-        signedFold f (2 * start + f a) xs - (2 : ℤ) ^ (xs.length + 1) * start =
-          A + (2 : ℤ) ^ xs.length * f a := by
-      dsimp [A]
-      rw [pow_succ]
-      ring
-    change |signedFold f (2 * start + f a) xs -
-        (2 : ℤ) ^ (xs.length + 1) * start| ≤ (2 : ℤ) ^ (xs.length + 1) - 1
-    rw [hrewrite]
-    exact hcalc
+      linarith
+    have hlen : k + (d :: ds).length = k + 1 + ds.length := by
+      simp only [List.length_cons]
+      omega
+    rw [hlen]
+    exact accIndex_bound ds _ (k + 1) (hstep _ _ h1 hd.1) (hstep _ _ h2 hd.2)
 
-private theorem signedFold_sub_bound {α : Type*} {f : α → ℤ} (hf : ∀ a, |f a| ≤ 1)
-    {xs ys : List α} (hlen : xs.length = ys.length) (start : ℤ) :
-    |signedFold f start xs - signedFold f start ys| ≤
-      2 * ((2 : ℤ) ^ xs.length - 1) := by
-  let center := (2 : ℤ) ^ xs.length * start
-  have hx : |signedFold f start xs - center| ≤ (2 : ℤ) ^ xs.length - 1 := by
-    simpa [center] using signedFold_bound hf xs start
-  have hy : |signedFold f start ys - center| ≤ (2 : ℤ) ^ xs.length - 1 := by
-    simpa [center, hlen] using signedFold_bound hf ys start
-  have htri0 := abs_sub_le (signedFold f start xs) center (signedFold f start ys)
-  have htri : |signedFold f start xs - signedFold f start ys| ≤
-      |signedFold f start xs - center| + |signedFold f start ys - center| := by
-    rw [abs_sub_comm center (signedFold f start ys)] at htri0
-    simpa [add_comm] using htri0
-  linarith
+private theorem eisensteinNorm_nonneg (a b : ℤ) : 0 ≤ eisensteinNorm a b := by
+  unfold eisensteinNorm
+  nlinarith [sq_nonneg (a - b), sq_nonneg a, sq_nonneg b]
 
-private def signedFoldFin {n : ℕ} (f : Fin n → ℤ) (start : ℤ) : ℤ :=
-  signedFold f start (List.finRange n)
-
-private theorem signedFold_toList {n : ℕ} (f : Bool × Bool → ℤ) (start : ℤ)
-    (input : EndoscaleInput n) :
-    signedFold f start input.toList = signedFoldFin (fun i => f (input i)) start := by
-  rw [EndoscaleInput.toList, List.ofFn_eq_map]
-  simp [signedFoldFin, signedFold, List.foldl_map]
-
-private theorem center_close {x c d r : ℤ} (hx : |x - c| ≤ r) (hy : |x - d| ≤ r) :
-    |c - d| ≤ 2 * r := by
-  have htri0 := abs_sub_le c x d
-  have hx' : |c - x| ≤ r := by
-    simpa [abs_sub_comm] using hx
-  nlinarith [htri0, hx', hy]
-
-private theorem signedFoldFin_injective {n : ℕ} {f g : Fin n → ℤ} (start : ℤ)
-    (hf : ∀ i, f i = 1 ∨ f i = -1) (hg : ∀ i, g i = 1 ∨ g i = -1)
-    (h : signedFoldFin f start = signedFoldFin g start) :
-    f = g := by
-  induction n generalizing start with
-  | zero =>
-    funext i
-    exact Fin.elim0 i
-  | succ n ih =>
-    dsimp [signedFoldFin, signedFold] at h
-    rw [List.finRange_succ] at h
-    simp only [List.foldl_cons, List.foldl_map] at h
-    have hf0_eq_g0 : f 0 = g 0 := by
-      by_contra hneq
-      let ftail : Fin n → ℤ := fun i => f i.succ
-      let gtail : Fin n → ℤ := fun i => g i.succ
-      let fstart := 2 * start + f 0
-      let gstart := 2 * start + g 0
-      let final := signedFold ftail fstart (List.finRange n)
-      have hfinal : final = signedFold gtail gstart (List.finRange n) := by
-        simpa [final, ftail, gtail, fstart, gstart, signedFold] using h
-      have hftail_bound : ∀ i, |ftail i| ≤ 1 := by
-        intro i
-        rcases hf i.succ with hi | hi <;> simp [ftail, hi]
-      have hgtail_bound : ∀ i, |gtail i| ≤ 1 := by
-        intro i
-        rcases hg i.succ with hi | hi <;> simp [gtail, hi]
-      let r : ℤ := (2 : ℤ) ^ n - 1
-      let cf : ℤ := (2 : ℤ) ^ n * fstart
-      let cg : ℤ := (2 : ℤ) ^ n * gstart
-      have hfclose : |final - cf| ≤ r := by
-        simpa [final, cf, r] using signedFold_bound hftail_bound (List.finRange n) fstart
-      have hgclose : |final - cg| ≤ r := by
-        have hb := signedFold_bound hgtail_bound (List.finRange n) gstart
-        simpa [cg, r, hfinal] using hb
-      have hcenters : |cf - cg| ≤ 2 * r := center_close hfclose hgclose
-      have hpow_nonneg : 0 ≤ (2 : ℤ) ^ n := pow_nonneg (by norm_num) _
-      rcases hf 0 with hf0 | hf0 <;> rcases hg 0 with hg0 | hg0
-      · exact hneq (by simp [hf0, hg0])
-      · have hcenter :
-            |cf - cg| = (2 : ℤ) ^ n * 2 := by
-          have hnonneg : 0 ≤ (2 : ℤ) ^ n * 2 := by nlinarith
-          rw [show cf - cg = (2 : ℤ) ^ n * 2 by
-            simp [cf, cg, fstart, gstart, hf0, hg0]
-            ring]
-          exact abs_of_nonneg hnonneg
-        rw [hcenter] at hcenters
-        nlinarith
-      · have hcenter :
-            |cf - cg| = (2 : ℤ) ^ n * 2 := by
-          have hnonneg : 0 ≤ (2 : ℤ) ^ n * 2 := by nlinarith
-          rw [show cf - cg = -((2 : ℤ) ^ n * 2) by
-            simp [cf, cg, fstart, gstart, hf0, hg0]
-            ring]
-          rw [abs_neg]
-          exact abs_of_nonneg hnonneg
-        rw [hcenter] at hcenters
-        nlinarith
-      · exact hneq (by simp [hf0, hg0])
-    have htail :
-        signedFoldFin (fun i : Fin n => f i.succ) (2 * start + f 0) =
-          signedFoldFin (fun i : Fin n => g i.succ) (2 * start + f 0) := by
-      dsimp [signedFoldFin, signedFold]
-      simpa [hf0_eq_g0, signedFold] using h
-    have htail_fun : (fun i : Fin n => f i.succ) = (fun i : Fin n => g i.succ) := by
-      apply ih (2 * start + f 0)
-      · intro i
-        exact hf i.succ
-      · intro i
-        exact hg i.succ
-      · exact htail
-    funext i
-    exact Fin.cases hf0_eq_g0 (fun j => congrFun htail_fun j) i
-
-private def endoscaleDigitSum (ab : Bool × Bool) : ℤ :=
-  (endoscaleDigit ab).1 + (endoscaleDigit ab).2
-
-private def endoscaleDigitDiff (ab : Bool × Bool) : ℤ :=
-  (endoscaleDigit ab).1 - (endoscaleDigit ab).2
-
-private theorem abs_endoscaleDigitSum_le_one (ab : Bool × Bool) :
-    |endoscaleDigitSum ab| ≤ 1 := by
-  cases ab with
-  | mk a b =>
-    cases a <;> cases b <;> norm_num [endoscaleDigitSum, endoscaleDigit, bitSign]
-
-private theorem abs_endoscaleDigitDiff_le_one (ab : Bool × Bool) :
-    |endoscaleDigitDiff ab| ≤ 1 := by
-  cases ab with
-  | mk a b =>
-    cases a <;> cases b <;> norm_num [endoscaleDigitDiff, endoscaleDigit, bitSign]
-
-private theorem endoscaleDigitSum_eq_one_or_neg_one (ab : Bool × Bool) :
-    endoscaleDigitSum ab = 1 ∨ endoscaleDigitSum ab = -1 := by
-  cases ab with
-  | mk a b =>
-    cases a <;> cases b <;> norm_num [endoscaleDigitSum, endoscaleDigit, bitSign]
-
-private theorem endoscaleDigitDiff_eq_one_or_neg_one (ab : Bool × Bool) :
-    endoscaleDigitDiff ab = 1 ∨ endoscaleDigitDiff ab = -1 := by
-  cases ab with
-  | mk a b =>
-    cases a <;> cases b <;> norm_num [endoscaleDigitDiff, endoscaleDigit, bitSign]
-
-private theorem eq_of_endoscaleDigitSum_eq_of_endoscaleDigitDiff_eq {ab ab' : Bool × Bool}
-    (hsum : endoscaleDigitSum ab = endoscaleDigitSum ab')
-    (hdiff : endoscaleDigitDiff ab = endoscaleDigitDiff ab') :
-    ab = ab' := by
-  cases ab with
-  | mk a b =>
-    cases ab' with
-    | mk a' b' =>
-      cases a <;> cases b <;> cases a' <;> cases b' <;>
-        simp [endoscaleDigitSum, endoscaleDigitDiff, endoscaleDigit, bitSign] at hsum hdiff ⊢
-
-private theorem endoscale_fold_sum_eq_signedFold (pairs : List (Bool × Bool)) (acc : ℤ × ℤ) :
-    (pairs.foldl endoscaleStep acc).1 + (pairs.foldl endoscaleStep acc).2 =
-      signedFold endoscaleDigitSum (acc.1 + acc.2) pairs := by
-  induction pairs generalizing acc with
-  | nil => simp [signedFold]
-  | cons ab pairs ih =>
-    simp only [List.foldl]
-    rw [ih]
-    simp [signedFold, endoscaleStep, endoscaleDigitSum]
-    ring_nf
-
-private theorem endoscale_fold_diff_eq_signedFold (pairs : List (Bool × Bool)) (acc : ℤ × ℤ) :
-    (pairs.foldl endoscaleStep acc).1 - (pairs.foldl endoscaleStep acc).2 =
-      signedFold endoscaleDigitDiff (acc.1 - acc.2) pairs := by
-  induction pairs generalizing acc with
-  | nil => simp [signedFold]
-  | cons ab pairs ih =>
-    simp only [List.foldl]
-    rw [ih]
-    simp [signedFold, endoscaleStep, endoscaleDigitDiff]
-    ring_nf
-
-private theorem endoscaleAcc_input_injective {n : ℕ} :
-    Function.Injective (fun input : EndoscaleInput n => endoscaleAcc input.toList) := by
-  intro input input' hacc
-  change endoscaleAcc input.toList = endoscaleAcc input'.toList at hacc
-  have hsumList :
-      signedFold endoscaleDigitSum 4 input.toList =
-        signedFold endoscaleDigitSum 4 input'.toList := by
-    calc
-      signedFold endoscaleDigitSum 4 input.toList =
-          (endoscaleAcc input.toList).1 + (endoscaleAcc input.toList).2 := by
-        symm
-        simpa [endoscaleAcc] using endoscale_fold_sum_eq_signedFold input.toList (2, 2)
-      _ = (endoscaleAcc input'.toList).1 + (endoscaleAcc input'.toList).2 := by
-        rw [hacc]
-      _ = signedFold endoscaleDigitSum 4 input'.toList := by
-        simpa [endoscaleAcc] using endoscale_fold_sum_eq_signedFold input'.toList (2, 2)
-  have hdiffList :
-      signedFold endoscaleDigitDiff 0 input.toList =
-        signedFold endoscaleDigitDiff 0 input'.toList := by
-    calc
-      signedFold endoscaleDigitDiff 0 input.toList =
-          (endoscaleAcc input.toList).1 - (endoscaleAcc input.toList).2 := by
-        symm
-        simpa [endoscaleAcc] using endoscale_fold_diff_eq_signedFold input.toList (2, 2)
-      _ = (endoscaleAcc input'.toList).1 - (endoscaleAcc input'.toList).2 := by
-        rw [hacc]
-      _ = signedFold endoscaleDigitDiff 0 input'.toList := by
-        simpa [endoscaleAcc] using endoscale_fold_diff_eq_signedFold input'.toList (2, 2)
-  have hsumFin :
-      signedFoldFin (fun i => endoscaleDigitSum (input i)) 4 =
-        signedFoldFin (fun i => endoscaleDigitSum (input' i)) 4 := by
-    simpa [signedFold_toList] using hsumList
-  have hdiffFin :
-      signedFoldFin (fun i => endoscaleDigitDiff (input i)) 0 =
-        signedFoldFin (fun i => endoscaleDigitDiff (input' i)) 0 := by
-    simpa [signedFold_toList] using hdiffList
-  have hsumFun :
-      (fun i => endoscaleDigitSum (input i)) =
-        fun i => endoscaleDigitSum (input' i) :=
-    signedFoldFin_injective 4
-      (fun i => endoscaleDigitSum_eq_one_or_neg_one (input i))
-      (fun i => endoscaleDigitSum_eq_one_or_neg_one (input' i))
-      hsumFin
-  have hdiffFun :
-      (fun i => endoscaleDigitDiff (input i)) =
-        fun i => endoscaleDigitDiff (input' i) :=
-    signedFoldFin_injective 0
-      (fun i => endoscaleDigitDiff_eq_one_or_neg_one (input i))
-      (fun i => endoscaleDigitDiff_eq_one_or_neg_one (input' i))
-      hdiffFin
-  funext i
-  exact eq_of_endoscaleDigitSum_eq_of_endoscaleDigitDiff_eq
-    (congrFun hsumFun i) (congrFun hdiffFun i)
-
-private theorem endoscale_eisensteinNorm_natAbs_le
-    (n : ℕ) (input input' : EndoscaleInput n) :
-    (eisensteinNorm
-      ((endoscaleAcc input.toList).1 - (endoscaleAcc input'.toList).1)
-      ((endoscaleAcc input.toList).2 - (endoscaleAcc input'.toList).2)).natAbs ≤
-        endoscaleCharacteristicBound n := by
-  let acc := endoscaleAcc input.toList
-  let acc' := endoscaleAcc input'.toList
-  let dx := acc.1 - acc'.1
-  let dy := acc.2 - acc'.2
-  let s := dx + dy
-  let t := dx - dy
-  let Bz : ℤ := (2 : ℤ) ^ n - 1
-  have hlen : input.toList.length = input'.toList.length := by
-    simp [EndoscaleInput.toList]
-  have hsumFold :
-      acc.1 + acc.2 = signedFold endoscaleDigitSum 4 input.toList := by
-    simpa [acc, endoscaleAcc] using
-      endoscale_fold_sum_eq_signedFold input.toList (2, 2)
-  have hsumFold' :
-      acc'.1 + acc'.2 = signedFold endoscaleDigitSum 4 input'.toList := by
-    simpa [acc', endoscaleAcc] using
-      endoscale_fold_sum_eq_signedFold input'.toList (2, 2)
-  have hdiffFold :
-      acc.1 - acc.2 = signedFold endoscaleDigitDiff 0 input.toList := by
-    simpa [acc, endoscaleAcc] using
-      endoscale_fold_diff_eq_signedFold input.toList (2, 2)
-  have hdiffFold' :
-      acc'.1 - acc'.2 = signedFold endoscaleDigitDiff 0 input'.toList := by
-    simpa [acc', endoscaleAcc] using
-      endoscale_fold_diff_eq_signedFold input'.toList (2, 2)
-  have hsumBound : |s| ≤ 2 * Bz := by
-    have h := signedFold_sub_bound abs_endoscaleDigitSum_le_one hlen 4
-    have hlenInput : input.toList.length = n := by simp [EndoscaleInput.toList]
-    rw [hlenInput] at h
-    rw [← hsumFold, ← hsumFold'] at h
-    have hs_eq : s = (acc.1 + acc.2) - (acc'.1 + acc'.2) := by
-      dsimp [s, dx, dy]
-      ring
-    simpa [Bz, hs_eq]
-      using h
-  have hdiffBound : |t| ≤ 2 * Bz := by
-    have h := signedFold_sub_bound abs_endoscaleDigitDiff_le_one hlen 0
-    have hlenInput : input.toList.length = n := by simp [EndoscaleInput.toList]
-    rw [hlenInput] at h
-    rw [← hdiffFold, ← hdiffFold'] at h
-    have ht_eq : t = (acc.1 - acc.2) - (acc'.1 - acc'.2) := by
-      dsimp [t, dx, dy]
-      ring
-    simpa [Bz, ht_eq]
-      using h
-  have hBz_nonneg : 0 ≤ Bz := by
-    dsimp [Bz]
-    have hpow : (1 : ℤ) ≤ (2 : ℤ) ^ n := by
-      exact one_le_pow₀ (a := (2 : ℤ)) (by norm_num)
-    omega
-  have h2Bz_nonneg : 0 ≤ 2 * Bz := by
-    nlinarith
-  have hs_sq : s ^ 2 ≤ (2 * Bz) ^ 2 := by
-    exact sq_le_sq.mpr (by simpa [abs_of_nonneg h2Bz_nonneg] using hsumBound)
-  have ht_sq : t ^ 2 ≤ (2 * Bz) ^ 2 := by
-    exact sq_le_sq.mpr (by simpa [abs_of_nonneg h2Bz_nonneg] using hdiffBound)
-  let norm := eisensteinNorm dx dy
-  have hidentity : 4 * norm = s ^ 2 + 3 * t ^ 2 := by
-    dsimp [norm, eisensteinNorm, s, t, dx, dy]
-    ring
-  have hnorm_nonneg : 0 ≤ norm := by
-    have hs_nonneg : 0 ≤ s ^ 2 := sq_nonneg s
-    have ht_nonneg : 0 ≤ t ^ 2 := sq_nonneg t
-    nlinarith
-  have hnorm_le : norm ≤ 4 * Bz ^ 2 := by
-    nlinarith
-  have habs : |norm| ≤ 4 * Bz ^ 2 := by
-    rwa [abs_of_nonneg hnorm_nonneg]
-  have htarget :
-      (eisensteinNorm
-        ((endoscaleAcc input.toList).1 - (endoscaleAcc input'.toList).1)
-        ((endoscaleAcc input.toList).2 - (endoscaleAcc input'.toList).2)).natAbs ≤
-          4 * (2 ^ n - 1) ^ 2 := by
-    apply Int.le_of_ofNat_le_ofNat
-    simpa [norm, dx, dy, acc, acc', Bz, Int.natCast_natAbs] using habs
-  simpa [endoscaleCharacteristicBound] using htarget
-
-private theorem endoscale_eisensteinNorm_natAbs_pos_of_ne {n : ℕ}
-    {input input' : EndoscaleInput n} (hne : input ≠ input') :
-    0 <
-      (eisensteinNorm
-        ((endoscaleAcc input.toList).1 - (endoscaleAcc input'.toList).1)
-        ((endoscaleAcc input.toList).2 - (endoscaleAcc input'.toList).2)).natAbs := by
-  rw [Int.natAbs_pos]
-  intro hnorm_zero
-  apply hne
-  apply endoscaleAcc_input_injective
-  let acc := endoscaleAcc input.toList
-  let acc' := endoscaleAcc input'.toList
-  let dx := acc.1 - acc'.1
-  let dy := acc.2 - acc'.2
-  let s := dx + dy
-  let t := dx - dy
-  let norm := eisensteinNorm dx dy
-  have hnorm_zero' : norm = 0 := by
-    simpa [norm, dx, dy, acc, acc'] using hnorm_zero
-  have hidentity : 4 * norm = s ^ 2 + 3 * t ^ 2 := by
-    dsimp [norm, eisensteinNorm, s, t, dx, dy]
-    ring
-  have hs_sq_zero : s ^ 2 = 0 := by
-    have hs_nonneg : 0 ≤ s ^ 2 := sq_nonneg s
-    have ht_nonneg : 0 ≤ t ^ 2 := sq_nonneg t
-    nlinarith
-  have ht_sq_zero : t ^ 2 = 0 := by
-    have hs_nonneg : 0 ≤ s ^ 2 := sq_nonneg s
-    have ht_nonneg : 0 ≤ t ^ 2 := sq_nonneg t
-    nlinarith
-  have hs_zero : s = 0 := sq_eq_zero_iff.mp hs_sq_zero
-  have ht_zero : t = 0 := sq_eq_zero_iff.mp ht_sq_zero
-  have hdx_zero : dx = 0 := by
-    dsimp [s, t] at hs_zero ht_zero
-    nlinarith
-  have hdy_zero : dy = 0 := by
-    dsimp [s, t] at hs_zero ht_zero
-    nlinarith
-  apply Prod.ext
-  · dsimp [dx] at hdx_zero
-    exact sub_eq_zero.mp hdx_zero
-  · dsimp [dy] at hdy_zero
-    exact sub_eq_zero.mp hdy_zero
-
-private theorem endoscale_eisensteinNorm_bound {n : ℕ} {input input' : EndoscaleInput n}
-    (hne : input ≠ input') :
-    let acc := endoscaleAcc input.toList
-    let acc' := endoscaleAcc input'.toList
-    0 < (eisensteinNorm (acc.1 - acc'.1) (acc.2 - acc'.2)).natAbs ∧
-      (eisensteinNorm (acc.1 - acc'.1) (acc.2 - acc'.2)).natAbs ≤
-        endoscaleCharacteristicBound n := by
+private theorem eisensteinNorm_eq_zero_iff (a b : ℤ) :
+    eisensteinNorm a b = 0 ↔ a = 0 ∧ b = 0 := by
   constructor
-  · exact endoscale_eisensteinNorm_natAbs_pos_of_ne hne
-  · exact endoscale_eisensteinNorm_natAbs_le n input input'
+  · intro h
+    unfold eisensteinNorm at h
+    have ha : a ^ 2 = 0 := by nlinarith [sq_nonneg (a - b), sq_nonneg a, sq_nonneg b]
+    have hb : b ^ 2 = 0 := by nlinarith [sq_nonneg (a - b), sq_nonneg a, sq_nonneg b]
+    exact ⟨pow_eq_zero_iff (by norm_num) |>.mp ha, pow_eq_zero_iff (by norm_num) |>.mp hb⟩
+  · rintro ⟨rfl, rfl⟩
+    simp [eisensteinNorm]
+
+/-- `|a|, |b| ≤ M` bounds the norm by `3M²`. -/
+private theorem eisensteinNorm_le_of_abs_le {a b M : ℤ} (ha : |a| ≤ M) (hb : |b| ≤ M) :
+    eisensteinNorm a b ≤ 3 * M ^ 2 := by
+  have hM : 0 ≤ M := le_trans (abs_nonneg a) ha
+  have ha2 : a ^ 2 ≤ M ^ 2 := by
+    rw [← sq_abs a]
+    exact pow_le_pow_left₀ (abs_nonneg a) ha 2
+  have hb2 : b ^ 2 ≤ M ^ 2 := by
+    rw [← sq_abs b]
+    exact pow_le_pow_left₀ (abs_nonneg b) hb 2
+  have hab : -(a * b) ≤ M * M := by
+    calc -(a * b) ≤ |a * b| := neg_le_abs (a * b)
+      _ = |a| * |b| := abs_mul a b
+      _ ≤ M * M := mul_le_mul ha hb (abs_nonneg b) hM
+  unfold eisensteinNorm
+  nlinarith
+
+/-! ## From `ℤ[ω]` to the field -/
 
 private theorem zeta_sq_add_zeta_add_one_eq_zero_of_orderOf_three
     {F : Type*} [Field F] {ζ : F}
@@ -538,234 +231,236 @@ private theorem eisensteinNorm_cast_eq_zero_of_collision {F : Type*} [Field F] {
         (dx : F) ^ 2 * (ζ ^ 2 + ζ + 1) := by ring
     _ = 0 := by rw [hζpoly]; ring
 
-private theorem endoscaleRelationFree_of_eisensteinNorm_bound
-    {F : Type*} [Field F] {p B n : ℕ} [CharP F p] {ζ : F}
-    (hζ : orderOf ζ = 3) (hB : B < p)
-    (hnorm : ∀ input input' : EndoscaleInput n,
-      input ≠ input' →
-        let acc := endoscaleAcc input.toList
-        let acc' := endoscaleAcc input'.toList
-        0 < (eisensteinNorm (acc.1 - acc'.1) (acc.2 - acc'.2)).natAbs ∧
-          (eisensteinNorm (acc.1 - acc'.1) (acc.2 - acc'.2)).natAbs ≤ B) :
-    EndoscaleRelationFree ζ n := by
-  intro input input' hne
-  dsimp only
-  intro hcollision
-  let acc := endoscaleAcc input.toList
-  let acc' := endoscaleAcc input'.toList
-  let norm := eisensteinNorm (acc.1 - acc'.1) (acc.2 - acc'.2)
-  have hnorm' := hnorm input input' hne
-  have hpos : 0 < norm.natAbs := by
-    simpa [norm, acc, acc'] using hnorm'.1
-  have hle : norm.natAbs ≤ B := by
-    simpa [norm, acc, acc'] using hnorm'.2
-  have hcollision' : ((acc.1 - acc'.1 : F) * ζ + (acc.2 - acc'.2 : F) = 0) := by
-    simpa [acc, acc'] using hcollision
-  have hcollision'' :
-      (((acc.1 - acc'.1 : ℤ) : F) * ζ + ((acc.2 - acc'.2 : ℤ) : F) = 0) := by
-    simpa only [Int.cast_sub] using hcollision'
-  have hnormCast : (norm : F) = 0 := by
-    exact eisensteinNorm_cast_eq_zero_of_collision
-      (zeta_sq_add_zeta_add_one_eq_zero_of_orderOf_three hζ) hcollision''
-  have hdvd : (p : ℤ) ∣ norm := (CharP.intCast_eq_zero_iff F p norm).mp hnormCast
-  have hneNorm : norm ≠ 0 := Int.natAbs_pos.mp hpos
-  have hp_le : p ≤ norm.natAbs := by
-    simpa using (Int.natAbs_le_of_dvd_ne_zero hdvd hneNorm)
+/-- The modular engine: a nonzero index pair whose norm is below the
+characteristic is nonzero in the field. -/
+private theorem index_ne_zero_of_norm_lt {F : Type*} [Field F] {p : ℕ} [CharP F p] {ζ : F}
+    (hζ : ζ ^ 2 + ζ + 1 = 0) {a b : ℤ} (hne : ¬(a = 0 ∧ b = 0))
+    (hlt : eisensteinNorm a b < p) : (a : F) * ζ + (b : F) ≠ 0 := by
+  intro hcol
+  have hcast := eisensteinNorm_cast_eq_zero_of_collision hζ hcol
+  have hdvd : (p : ℤ) ∣ eisensteinNorm a b := (CharP.intCast_eq_zero_iff F p _).mp hcast
+  have hpos : 0 < eisensteinNorm a b := by
+    rcases lt_or_eq_of_le (eisensteinNorm_nonneg a b) with h | h
+    · exact h
+    · exact absurd ((eisensteinNorm_eq_zero_iff a b).mp h.symm) hne
+  have := Int.le_of_dvd hpos hdvd
   omega
 
-private theorem endoscaleN_injective_of_eisensteinNorm_bound
-    {F : Type*} [Field F] {p B n : ℕ} [CharP F p] {ζ : F}
-    (hζ : orderOf ζ = 3) (hB : B < p)
-    (hnorm : ∀ input input' : EndoscaleInput n,
-      input ≠ input' →
-        let acc := endoscaleAcc input.toList
-        let acc' := endoscaleAcc input'.toList
-        0 < (eisensteinNorm (acc.1 - acc'.1) (acc.2 - acc'.2)).natAbs ∧
-          (eisensteinNorm (acc.1 - acc'.1) (acc.2 - acc'.2)).natAbs ≤ B) :
-    Function.Injective (endoscaleN ζ (n := n)) :=
-  endoscaleN_injective_of_relationFree
-    (endoscaleRelationFree_of_eisensteinNorm_bound hζ hB hnorm)
+/-! ## Injectivity -/
 
 /-- If the characteristic is larger than `endoscaleCharacteristicBound n`, then
 length-`n` endoscaling by a multiplicative order-`3` element is injective. -/
 theorem endoscaleN_injective_of_characteristicBound_lt
     {F : Type*} [Field F] {p n : ℕ} [CharP F p] {ζ : F}
     (hζ : orderOf ζ = 3) (hp : endoscaleCharacteristicBound n < p) :
-    Function.Injective (endoscaleN ζ (n := n)) :=
-  endoscaleN_injective_of_eisensteinNorm_bound hζ hp
-    (fun _ _ hne => endoscale_eisensteinNorm_bound hne)
+    Function.Injective (endoscaleN ζ (n := n)) := by
+  intro input input' h
+  have hζpoly := zeta_sq_add_zeta_add_one_eq_zero_of_orderOf_three hζ
+  set acc := accIndex (initIndex input.1.1 input.1.2) (List.ofFn input.2) with hacc
+  set acc' := accIndex (initIndex input'.1.1 input'.1.2) (List.ofFn input'.2) with hacc'
+  have hcol : ((acc.1 - acc'.1 : ℤ) : F) * ζ + ((acc.2 - acc'.2 : ℤ) : F) = 0 := by
+    simp only [endoscaleN] at h
+    push_cast
+    linear_combination h
+  by_contra hne
+  refine index_ne_zero_of_norm_lt hζpoly ?_ ?_ hcol
+  · -- Distinct inputs have distinct accumulators.
+    rintro ⟨h1, h2⟩
+    have hacc_eq : acc = acc' := Prod.ext (by omega) (by omega)
+    obtain ⟨hinit, hds⟩ := accIndex_injective _ _ _ _ (by simp) hacc_eq
+    obtain ⟨hs0, he0⟩ := initIndex_injective _ _ _ _ hinit
+    exact hne (Prod.ext (Prod.ext hs0 he0) (List.ofFn_injective hds))
+  · -- The difference's norm is below the characteristic.
+    obtain ⟨hb1, hb2⟩ := accIndex_bound (List.ofFn input.2) _ 0
+      (abs_initIndex_le _ _).1 (abs_initIndex_le _ _).2
+    obtain ⟨hb1', hb2'⟩ := accIndex_bound (List.ofFn input'.2) _ 0
+      (abs_initIndex_le _ _).1 (abs_initIndex_le _ _).2
+    simp only [List.length_ofFn, Nat.zero_add] at hb1 hb2 hb1' hb2'
+    have hM1 : |acc.1 - acc'.1| ≤ 5 * 3 ^ n - 1 := by
+      have := abs_sub (acc.1) (acc'.1)
+      linarith
+    have hM2 : |acc.2 - acc'.2| ≤ 5 * 3 ^ n - 1 := by
+      have := abs_sub (acc.2) (acc'.2)
+      linarith
+    have hnorm := eisensteinNorm_le_of_abs_le hM1 hM2
+    have hbound : ((endoscaleCharacteristicBound n : ℕ) : ℤ) = 3 * (5 * 3 ^ n - 1) ^ 2 := by
+      have h5 : 1 ≤ 5 * 3 ^ n := by
+        have : 1 ≤ 3 ^ n := Nat.one_le_pow _ _ (by norm_num)
+        omega
+      simp only [endoscaleCharacteristicBound]
+      push_cast [Nat.cast_sub h5]
+      ring
+    have hp' : ((endoscaleCharacteristicBound n : ℕ) : ℤ) < p := by exact_mod_cast hp
+    omega
 
 /-! ## No-collision integer core for `Endoscalar::group_scale` (BGH19, Appendix C)
 
 `group_scale` runs over a prime-order-`q` group on which the curve
 endomorphism `φ(x, y) = (ζ·x, y)` acts as `[λ]` for an order-3 scalar `λ`.
-Writing the accumulator after `m` consumed 2-bit pairs as `[u·λ + v]P` with
-`(u, v) = accIndex (pairs.take m)`, every exceptional case of the gadget's
-unchecked incomplete additions is the vanishing of a small integer
-combination `a·λ + b`:
-
-* init: `φ(P).x = P.x` ⟺ `λ = ±1` — combinations `(1, ∓1)`;
-* per step, first addition: `acc = ±s` — combinations
-  `(u ∓ δu, v ∓ δv)` for a step index `δ ∈ {(0, ±1), (±1, 0)}`;
-* per step, second addition: `s = -2·acc` — combinations
-  `(2u + δu, 2v + δv)`.
+Writing the accumulator after `m` consumed digits as `[u·λ + v]P̂` with
+`(u, v) = accIndex (initIndex s₀ e₀) (digits.take m)` and the digit point as
+`[δu·λ + δv]P̂`, the unchecked chain `((A + D) + A) + A` fails only when one
+of `A ∓ D`, `2A + D`, `3A + D` is the identity, i.e. when the integer
+combination `(u ∓ δu, v ∓ δv)`, `(2u + δu, 2v + δv)` or `(3u + δu, 3v + δv)`
+vanishes mod `q`.
 
 This section proves all of these are nonzero in `F` whenever the
-characteristic exceeds `groupScaleCollisionBound` — the number-theoretic
-core of the Appendix C no-collision argument. The remaining (future) work
-is curve-side: relating the affine accumulator to `[u·λ + v]P` via the
-group law, at which point `groupScaleNative ≠ none` becomes a theorem
-rather than an assumption. -/
+characteristic exceeds `groupScaleCollisionBound`: the accumulator's
+Eisenstein norm is at least `4` throughout while a digit's is at most `3`, so
+none vanishes in `ℤ[ω]`, and their norms are far below the characteristic.
+The remaining (future) work is curve-side: relating the affine accumulator
+to `[u·λ + v]P̂` via the group law, at which point
+`groupScaleNative ≠ none` becomes a theorem rather than an assumption. -/
 
-/-- Step-point indices: `s ∈ {±P, ±φ(P)}` has index `(δu, δv)` meaning
-`[δu·λ + δv]P`. -/
+/-- Step-point indices: the digit point `D ∈ ±{P̂, φP̂, φ²P̂, P̂ - φP̂}` has the
+index of its digit. -/
 def StepIndex (δ : ℤ × ℤ) : Prop :=
-  δ = (0, 1) ∨ δ = (0, -1) ∨ δ = (1, 0) ∨ δ = (-1, 0)
+  ∃ d : Digit, δ = digitIndex d
 
-/-- The integer index pair `(u, v)` (meaning `[u·λ + v]P`) of the
-group-scale accumulator after consuming `pairs`, each pair being
-`(negate_bit, endo_bit)` in the gadget's consumption order. The start
-`(2, 2)` is `acc₀ = [2·λ + 2]P`, i.e. `(p.endo() + p).double()`. -/
-def accIndex (pairs : List (Bool × Bool)) : ℤ × ℤ :=
-  pairs.foldl
-    (fun acc ab =>
-      let s : ℤ := if ab.1 then -1 else 1
-      if ab.2 then (2 * acc.1 + s, 2 * acc.2) else (2 * acc.1, 2 * acc.2 + s))
-    (2, 2)
+/-- Uniform characteristic bound for the 47-digit group-scale collision
+families: every exceptional combination has components below `5·3^47`, so
+Eisenstein norm at most `3·(5·3^47)²`, below `2^156` and comfortably under
+the Pasta characteristics (≈ 2^254). -/
+def groupScaleCollisionBound : ℕ := 3 * (5 * 3 ^ 47) ^ 2
 
-/-- Uniform characteristic bound for the 64-iteration group-scale collision
-families: every exceptional combination has Eisenstein norm at most
-`3·(2^66)² = 3·2^132`, comfortably below the Pasta characteristics
-(≈ 2^254). -/
-def groupScaleCollisionBound : ℕ := 3 * (2 ^ 66) ^ 2
+private theorem eisensteinNorm_digitIndex_le (d : Digit) :
+    1 ≤ eisensteinNorm (digitIndex d).1 (digitIndex d).2 ∧
+    eisensteinNorm (digitIndex d).1 (digitIndex d).2 ≤ 3 := by
+  rcases d with ⟨s, e1, e2⟩
+  cases s <;> cases e1 <;> cases e2 <;> norm_num [digitIndex, eisensteinNorm]
 
-private def uDigit (ab : Bool × Bool) : ℤ :=
-  if ab.2 then (if ab.1 then -1 else 1) else 0
+private theorem eisensteinNorm_initIndex (s0 e0 : Bool) :
+    eisensteinNorm (initIndex s0 e0).1 (initIndex s0 e0).2 = 4 := by
+  cases s0 <;> cases e0 <;> norm_num [initIndex, eisensteinNorm]
 
-private def vDigit (ab : Bool × Bool) : ℤ :=
-  if ab.2 then 0 else (if ab.1 then -1 else 1)
+/-- A step at least triples the magnitude and a digit adds at most `√3`, so
+norm `≥ 4` is preserved: `N(3a + d) = 9N(a) + 3B(a, d) + N(d)` with
+`B(a, d)² ≤ 4N(a)N(d)`. -/
+private theorem four_le_eisensteinNorm_step {a1 a2 d1 d2 : ℤ}
+    (ha : 4 ≤ eisensteinNorm a1 a2) (hd1 : 1 ≤ eisensteinNorm d1 d2)
+    (hd3 : eisensteinNorm d1 d2 ≤ 3) :
+    4 ≤ eisensteinNorm (3 * a1 + d1) (3 * a2 + d2) := by
+  unfold eisensteinNorm at *
+  -- `B` is the bilinear form; Cauchy–Schwarz for the Eisenstein lattice.
+  have hcs : (2 * a1 * d1 - a1 * d2 - a2 * d1 + 2 * a2 * d2) ^ 2 ≤
+      4 * (a1 ^ 2 - a1 * a2 + a2 ^ 2) * (d1 ^ 2 - d1 * d2 + d2 ^ 2) := by
+    nlinarith [sq_nonneg (a1 * d2 - a2 * d1)]
+  by_contra hlt
+  have hlt := not_le.mp hlt
+  have hexp : (3 * a1 + d1) ^ 2 - (3 * a1 + d1) * (3 * a2 + d2) + (3 * a2 + d2) ^ 2 =
+      9 * (a1 ^ 2 - a1 * a2 + a2 ^ 2) + 3 * (2 * a1 * d1 - a1 * d2 - a2 * d1 + 2 * a2 * d2) +
+        (d1 ^ 2 - d1 * d2 + d2 ^ 2) := by ring
+  rw [hexp] at hlt
+  set Na := a1 ^ 2 - a1 * a2 + a2 ^ 2 with hNa
+  set Nd := d1 ^ 2 - d1 * d2 + d2 ^ 2 with hNd
+  set B := 2 * a1 * d1 - a1 * d2 - a2 * d1 + 2 * a2 * d2 with hB
+  have h1 : 0 < -3 * B - (9 * Na + Nd - 4) := by linarith
+  have h2 : 0 < -3 * B + (9 * Na + Nd - 4) := by linarith
+  have hprod := mul_pos h1 h2
+  nlinarith [hcs, hprod, mul_nonneg (by linarith : (0 : ℤ) ≤ 3 - Nd) (by linarith : (0 : ℤ) ≤ Na),
+    mul_nonneg (by linarith : (0 : ℤ) ≤ Na - 4) (by linarith : (0 : ℤ) ≤ Na),
+    sq_nonneg (Nd - 4)]
 
-private theorem abs_uDigit_le_one (ab : Bool × Bool) : |uDigit ab| ≤ 1 := by
-  rcases ab with ⟨n, e⟩
-  cases n <;> cases e <;> simp [uDigit]
+/-- The accumulator's Eisenstein norm is at least `4` after any number of
+digits: no accumulator index ever degenerates to (plus or minus) a step
+index, nor to half or a third of one. -/
+theorem four_le_eisensteinNorm_accIndex (s0 e0 : Bool) : ∀ ds : List Digit,
+    4 ≤ eisensteinNorm (accIndex (initIndex s0 e0) ds).1 (accIndex (initIndex s0 e0) ds).2 := by
+  suffices h : ∀ (ds : List Digit) (init : ℤ × ℤ), 4 ≤ eisensteinNorm init.1 init.2 →
+      4 ≤ eisensteinNorm (accIndex init ds).1 (accIndex init ds).2 from
+    fun ds => h ds _ (eisensteinNorm_initIndex s0 e0).ge
+  intro ds
+  induction ds with
+  | nil => intro init h; simpa [accIndex_nil] using h
+  | cons d ds ih =>
+    intro init h
+    rw [accIndex_cons]
+    apply ih
+    obtain ⟨hd1, hd3⟩ := eisensteinNorm_digitIndex_le d
+    exact four_le_eisensteinNorm_step h hd1 hd3
 
-private theorem abs_vDigit_le_one (ab : Bool × Bool) : |vDigit ab| ≤ 1 := by
-  rcases ab with ⟨n, e⟩
-  cases n <;> cases e <;> simp [vDigit]
+/-- Scaling an index by `k` scales its norm by `k²`; negation preserves it. -/
+private theorem eisensteinNorm_smul (k a b : ℤ) :
+    eisensteinNorm (k * a) (k * b) = k ^ 2 * eisensteinNorm a b := by
+  unfold eisensteinNorm; ring
 
-private theorem accIndex_foldl_eq (pairs : List (Bool × Bool)) (start : ℤ × ℤ) :
-    pairs.foldl
-      (fun acc ab =>
-        let s : ℤ := if ab.1 then -1 else 1
-        if ab.2 then (2 * acc.1 + s, 2 * acc.2) else (2 * acc.1, 2 * acc.2 + s))
-      start = (signedFold uDigit start.1 pairs, signedFold vDigit start.2 pairs) := by
-  induction pairs generalizing start with
-  | nil => simp [signedFold]
-  | cons ab rest ih =>
-    rcases ab with ⟨n, e⟩
-    cases n <;> cases e <;>
-      simp only [List.foldl_cons, ih, signedFold, uDigit, vDigit] <;>
-      norm_num
+private theorem eisensteinNorm_neg (a b : ℤ) :
+    eisensteinNorm (-a) (-b) = eisensteinNorm a b := by
+  unfold eisensteinNorm; ring
 
-private theorem accIndex_eq (pairs : List (Bool × Bool)) :
-    accIndex pairs = (signedFold uDigit 2 pairs, signedFold vDigit 2 pairs) :=
-  accIndex_foldl_eq pairs (2, 2)
+/-- `k·acc + δ ≠ 0` and `acc - δ ≠ 0` in `ℤ[ω]` for `k ∈ {1, 2, 3}`: the
+norms `k²·N(acc) ≥ 4` and `N(δ) ≤ 3` differ. -/
+private theorem combination_ne_zero_int {u v δu δv : ℤ} (hacc : 4 ≤ eisensteinNorm u v)
+    (hδ : eisensteinNorm δu δv ≤ 3) {k : ℤ} (hk : 1 ≤ k) :
+    ¬(k * u + δu = 0 ∧ k * v + δv = 0) := by
+  rintro ⟨h1, h2⟩
+  have hku : k * u = -δu := by linarith
+  have hkv : k * v = -δv := by linarith
+  have h := eisensteinNorm_smul k u v
+  rw [hku, hkv, eisensteinNorm_neg] at h
+  nlinarith [eisensteinNorm_nonneg u v]
 
-/-- Both accumulator index components stay in `[2^m + 1, 3·2^m − 1]` after
-`m` pairs; in particular they are at least `2`, so no accumulator index ever
-degenerates to a step index. -/
-theorem accIndex_bounds (pairs : List (Bool × Bool)) :
-    2 ^ pairs.length + 1 ≤ (accIndex pairs).1 ∧
-    (accIndex pairs).1 ≤ 3 * 2 ^ pairs.length - 1 ∧
-    2 ^ pairs.length + 1 ≤ (accIndex pairs).2 ∧
-    (accIndex pairs).2 ≤ 3 * 2 ^ pairs.length - 1 := by
-  have hu := signedFold_bound abs_uDigit_le_one pairs 2
-  have hv := signedFold_bound abs_vDigit_le_one pairs 2
-  rcases abs_le.mp hu with ⟨hu1, hu2⟩
-  rcases abs_le.mp hv with ⟨hv1, hv2⟩
-  rw [accIndex_eq]
-  dsimp only
-  omega
-
-private theorem eisensteinNorm_pos_of_fst_pos {a b : ℤ} (ha : 0 < a) :
-    0 < eisensteinNorm a b := by
-  have hid : 4 * eisensteinNorm a b = (a + b) ^ 2 + 3 * (a - b) ^ 2 := by
-    dsimp [eisensteinNorm]; ring
-  rcases lt_or_eq_of_le (show 0 ≤ eisensteinNorm a b by
-    nlinarith [sq_nonneg (a + b), sq_nonneg (a - b)]) with h | h
-  · exact h
-  · exfalso
-    have h1 : a + b = 0 := by nlinarith [sq_nonneg (a + b), sq_nonneg (a - b)]
-    have h2 : a - b = 0 := by nlinarith [sq_nonneg (a + b), sq_nonneg (a - b)]
-    omega
-
-/-- The modular engine: a combination `a·ζ + b` with `0 < a` and both
-components bounded by `2^66` cannot vanish in a field of characteristic
-above `groupScaleCollisionBound`. -/
-private theorem combination_ne_zero {F : Type*} [Field F] {q : ℕ} [CharP F q] {ζ : F}
-    (hζ : orderOf ζ = 3) (hq : groupScaleCollisionBound < q)
-    {a b : ℤ} (ha : 0 < a) (haM : a ≤ 2 ^ 66) (hbM : |b| ≤ 2 ^ 66) :
-    (a : F) * ζ + (b : F) ≠ 0 := by
-  intro hcol
-  have hnormCast : (eisensteinNorm a b : F) = 0 :=
-    eisensteinNorm_cast_eq_zero_of_collision
-      (zeta_sq_add_zeta_add_one_eq_zero_of_orderOf_three hζ) hcol
-  have hdvd : (q : ℤ) ∣ eisensteinNorm a b :=
-    (CharP.intCast_eq_zero_iff F q _).mp hnormCast
-  have hpos : 0 < eisensteinNorm a b := eisensteinNorm_pos_of_fst_pos ha
-  have hq_le : (q : ℤ) ≤ eisensteinNorm a b := Int.le_of_dvd hpos hdvd
-  rcases abs_le.mp hbM with ⟨hb1, hb2⟩
-  have hub : eisensteinNorm a b ≤ ((groupScaleCollisionBound : ℕ) : ℤ) := by
-    have hbound : ((groupScaleCollisionBound : ℕ) : ℤ) = 3 * (2 ^ 66) ^ 2 := by
-      norm_num [groupScaleCollisionBound]
-    rw [hbound]
-    dsimp [eisensteinNorm]
-    nlinarith [sq_nonneg (a - b), sq_nonneg (a + b), mul_pos ha ha]
-  have hcontra : (q : ℤ) ≤ ((groupScaleCollisionBound : ℕ) : ℤ) :=
-    le_trans hq_le hub
-  exact absurd (by exact_mod_cast hcontra) (not_le.mpr hq)
-
-/-- The init addition's index content: an order-3 `λ` is neither `1` nor
-`-1`, so `φ(P).x ≠ P.x` for points of odd prime order. -/
-theorem orderOf_three_ne_one_and_ne_neg_one {F : Type*} [Field F] {ζ : F}
-    (hζ : orderOf ζ = 3) : ζ ≠ 1 ∧ ζ ≠ -1 := by
-  constructor
-  · intro h
-    rw [h] at hζ
-    simp at hζ
-  · intro h
-    have h2 : ζ ^ 2 = 1 := by rw [h]; ring
-    have hdvd := orderOf_dvd_of_pow_eq_one h2
-    rw [hζ] at hdvd
-    omega
-
-/-- The Appendix C no-collision integer core for `group_scale`'s 64-step
-loop: for any prefix of at most 63 pairs and any step index `δ`, the three
-exceptional-case combinations — accumulator equals `s` (`(u−δu, v−δv)`),
-accumulator equals `−s` (`(u+δu, v+δv)`), and `s = −2·acc`
-(`(2u+δu, 2v+δv)`) — are all nonzero in characteristic above
-`groupScaleCollisionBound`. -/
+/-- The Appendix C no-collision integer core for `group_scale`'s 47-step walk:
+for any prefix of at most 46 digits and any step index `δ`, the four
+exceptional-case combinations — accumulator equals `D` (`(u − δu, v − δv)`),
+accumulator equals `−D` (`(u + δu, v + δv)`), `2A + D = 0` and `3A + D = 0` —
+are all nonzero in characteristic above `groupScaleCollisionBound`. -/
 theorem groupScale_collision_combinations_ne_zero
     {F : Type*} [Field F] {q : ℕ} [CharP F q] {ζ : F}
     (hζ : orderOf ζ = 3) (hq : groupScaleCollisionBound < q)
-    (pairs : List (Bool × Bool)) (h_len : pairs.length ≤ 63)
+    (s0 e0 : Bool) (digits : List Digit) (h_len : digits.length ≤ 46)
     {δ : ℤ × ℤ} (hδ : StepIndex δ) :
-    ((((accIndex pairs).1 - δ.1 : ℤ) : F) * ζ + (((accIndex pairs).2 - δ.2 : ℤ) : F) ≠ 0) ∧
-    ((((accIndex pairs).1 + δ.1 : ℤ) : F) * ζ + (((accIndex pairs).2 + δ.2 : ℤ) : F) ≠ 0) ∧
-    (((2 * (accIndex pairs).1 + δ.1 : ℤ) : F) * ζ +
-      ((2 * (accIndex pairs).2 + δ.2 : ℤ) : F) ≠ 0) := by
-  obtain ⟨hu1, hu2, hv1, hv2⟩ := accIndex_bounds pairs
-  have hP1 : (1 : ℤ) ≤ 2 ^ pairs.length := one_le_pow₀ (by norm_num)
-  have hP : (2 : ℤ) ^ pairs.length ≤ 9223372036854775808 := by
-    calc (2 : ℤ) ^ pairs.length ≤ 2 ^ 63 :=
-          pow_le_pow_right₀ (by norm_num) h_len
-      _ = 9223372036854775808 := by norm_num
-  have h66 : (2 : ℤ) ^ 66 = 73786976294838206464 := by norm_num
-  rcases hδ with h | h | h | h <;> subst h <;>
-    refine ⟨combination_ne_zero hζ hq ?_ ?_ ?_,
-            combination_ne_zero hζ hq ?_ ?_ ?_,
-            combination_ne_zero hζ hq ?_ ?_ ?_⟩ <;>
-    simp only [h66, abs_le] <;>
+    let acc := accIndex (initIndex s0 e0) digits
+    (((acc.1 - δ.1 : ℤ) : F) * ζ + ((acc.2 - δ.2 : ℤ) : F) ≠ 0) ∧
+    (((acc.1 + δ.1 : ℤ) : F) * ζ + ((acc.2 + δ.2 : ℤ) : F) ≠ 0) ∧
+    (((2 * acc.1 + δ.1 : ℤ) : F) * ζ + ((2 * acc.2 + δ.2 : ℤ) : F) ≠ 0) ∧
+    (((3 * acc.1 + δ.1 : ℤ) : F) * ζ + ((3 * acc.2 + δ.2 : ℤ) : F) ≠ 0) := by
+  intro acc
+  obtain ⟨d, rfl⟩ := hδ
+  have hζpoly := zeta_sq_add_zeta_add_one_eq_zero_of_orderOf_three hζ
+  have hacc := four_le_eisensteinNorm_accIndex s0 e0 digits
+  obtain ⟨hδ1, hδ3⟩ := eisensteinNorm_digitIndex_le d
+  obtain ⟨hδu, hδv⟩ := abs_digitIndex_le d
+  -- Magnitudes: components of the accumulator are below `(5·3^46)/2`.
+  obtain ⟨hu, hv⟩ := accIndex_bound digits _ 0 (abs_initIndex_le _ _).1 (abs_initIndex_le _ _).2
+  simp only [Nat.zero_add] at hu hv
+  have hpow : (3 : ℤ) ^ digits.length ≤ 3 ^ 46 := pow_le_pow_right₀ (by norm_num) h_len
+  have h46 : (3 : ℤ) ^ 46 = 8862938119652501095929 := by norm_num
+  have h47 : (3 : ℤ) ^ 47 = 26588814358957503287787 := by norm_num
+  have hM : ((groupScaleCollisionBound : ℕ) : ℤ) = 3 * (5 * 3 ^ 47) ^ 2 := by
+    norm_num [groupScaleCollisionBound]
+  have hq' : ((groupScaleCollisionBound : ℕ) : ℤ) < q := by exact_mod_cast hq
+  rw [hM, h47] at hq'
+  rw [h46] at hpow
+  -- Each combination: nonzero in `ℤ[ω]`, with norm below the characteristic.
+  have key : ∀ (k : ℤ), 1 ≤ k → k ≤ 3 → ∀ (σ : ℤ), σ = 1 ∨ σ = -1 →
+      ((k * acc.1 + σ * (digitIndex d).1 : ℤ) : F) * ζ +
+        ((k * acc.2 + σ * (digitIndex d).2 : ℤ) : F) ≠ 0 := by
+    intro k hk1 hk3 σ hσ
+    have hσ' : eisensteinNorm (σ * (digitIndex d).1) (σ * (digitIndex d).2) ≤ 3 := by
+      rcases hσ with rfl | rfl
+      · simpa using hδ3
+      · rw [eisensteinNorm_smul, neg_one_sq, one_mul]; exact hδ3
+    refine index_ne_zero_of_norm_lt hζpoly (combination_ne_zero_int hacc hσ' hk1) ?_
+    have hσabs : |σ| = 1 := by rcases hσ with rfl | rfl <;> norm_num
+    have hc1 : |k * acc.1 + σ * (digitIndex d).1| ≤ 5 * 26588814358957503287787 := by
+      have := abs_add_le (k * acc.1) (σ * (digitIndex d).1)
+      rw [abs_mul, abs_mul, hσabs, abs_of_pos (by linarith : (0 : ℤ) < k)] at this
+      nlinarith [abs_nonneg acc.1, abs_nonneg (digitIndex d).1]
+    have hc2 : |k * acc.2 + σ * (digitIndex d).2| ≤ 5 * 26588814358957503287787 := by
+      have := abs_add_le (k * acc.2) (σ * (digitIndex d).2)
+      rw [abs_mul, abs_mul, hσabs, abs_of_pos (by linarith : (0 : ℤ) < k)] at this
+      nlinarith [abs_nonneg acc.2, abs_nonneg (digitIndex d).2]
+    have := eisensteinNorm_le_of_abs_le hc1 hc2
     omega
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · have := key 1 (by norm_num) (by norm_num) (-1) (by norm_num)
+    simpa [sub_eq_add_neg] using this
+  · have := key 1 (by norm_num) (by norm_num) 1 (by norm_num)
+    simpa using this
+  · have := key 2 (by norm_num) (by norm_num) 1 (by norm_num)
+    simpa using this
+  · have := key 3 (by norm_num) (by norm_num) 1 (by norm_num)
+    simpa using this
 
 end Ragu.Lemmas.EndoscalarProof

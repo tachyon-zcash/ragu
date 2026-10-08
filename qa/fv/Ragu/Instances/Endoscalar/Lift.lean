@@ -6,7 +6,7 @@ namespace Ragu.Instances.Endoscalar.Lift
 @[reducible]
 def p := Core.Primes.p
 
-def deserializeInput (input : Vector (Expression (F p)) 128)
+def deserializeInput (input : Vector (Expression (F p)) 143)
     : Var Circuits.Endoscalar.Lift.Input (F p) :=
   { bits := input }
 

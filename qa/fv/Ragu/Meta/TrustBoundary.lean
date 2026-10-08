@@ -34,9 +34,15 @@ import Ragu.Circuits.Element.IsZero
 import Ragu.Circuits.Element.Mul
 import Ragu.Circuits.Element.Square
 import Ragu.Circuits.Endoscalar.Alloc
+import Ragu.Circuits.Endoscalar.EnforceProducts
 import Ragu.Circuits.Endoscalar.Extract
 import Ragu.Circuits.Endoscalar.GroupScale
+import Ragu.Circuits.Endoscalar.HoistedAlloc
+import Ragu.Circuits.Endoscalar.HoistedGroupScale
+import Ragu.Circuits.Endoscalar.HoistedLift
+import Ragu.Circuits.Endoscalar.Initial
 import Ragu.Circuits.Endoscalar.Lift
+import Ragu.Circuits.Endoscalar.Walk
 import Ragu.Circuits.Horner.Ky
 import Ragu.Circuits.NonzeroBank.Scope
 import Ragu.Circuits.Point.AddIncomplete
@@ -45,10 +51,13 @@ import Ragu.Circuits.Point.Alloc
 import Ragu.Circuits.Point.ConditionalEndo
 import Ragu.Circuits.Point.ConditionalNegate
 import Ragu.Circuits.Point.Consistent
+import Ragu.Circuits.Point.Denormalize
 import Ragu.Circuits.Point.Double
 import Ragu.Circuits.Point.DoubleAndAddIncomplete
 import Ragu.Circuits.Point.DoubleAndAddIncompleteUnchecked
+import Ragu.Circuits.Point.Normalize
 import Ragu.Circuits.Point.Spec
+import Ragu.Circuits.Point.TripleAndAddIncompleteUnchecked
 import Ragu.Circuits.Poseidon.Linear
 import Ragu.Circuits.Poseidon.ParamsFp
 import Ragu.Circuits.Poseidon.ParamsFq
@@ -294,12 +303,30 @@ census_axioms Ragu.Circuits.Element.Square.completeness
 
 census_axioms Ragu.Circuits.Endoscalar.Alloc.soundness
 census_axioms Ragu.Circuits.Endoscalar.Alloc.completeness
+census_axioms Ragu.Circuits.Endoscalar.EnforceProducts.Digit.soundness
+census_axioms Ragu.Circuits.Endoscalar.EnforceProducts.Digit.completeness
+census_axioms Ragu.Circuits.Endoscalar.EnforceProducts.soundness
+census_axioms Ragu.Circuits.Endoscalar.EnforceProducts.completeness
 census_axioms Ragu.Circuits.Endoscalar.Extract.soundness
 census_axioms Ragu.Circuits.Endoscalar.Extract.completeness
 census_axioms Ragu.Circuits.Endoscalar.GroupScale.Step.soundness
 census_axioms Ragu.Circuits.Endoscalar.GroupScale.Step.completeness
 census_axioms Ragu.Circuits.Endoscalar.GroupScale.soundness
 census_axioms Ragu.Circuits.Endoscalar.GroupScale.completeness
+census_axioms Ragu.Circuits.Endoscalar.HoistedAlloc.soundness
+census_axioms Ragu.Circuits.Endoscalar.HoistedAlloc.completeness
+census_axioms Ragu.Circuits.Endoscalar.HoistedGroupScale.Step.soundness
+census_axioms Ragu.Circuits.Endoscalar.HoistedGroupScale.Step.completeness
+census_axioms Ragu.Circuits.Endoscalar.HoistedGroupScale.soundness
+census_axioms Ragu.Circuits.Endoscalar.HoistedGroupScale.completeness
+census_axioms Ragu.Circuits.Endoscalar.HoistedLift.Digit.soundness
+census_axioms Ragu.Circuits.Endoscalar.HoistedLift.Digit.completeness
+census_axioms Ragu.Circuits.Endoscalar.HoistedLift.soundness
+census_axioms Ragu.Circuits.Endoscalar.HoistedLift.completeness
+census_axioms Ragu.Circuits.Endoscalar.Initial.soundness
+census_axioms Ragu.Circuits.Endoscalar.Initial.completeness
+census_axioms Ragu.Circuits.Endoscalar.Lift.Digit.soundness
+census_axioms Ragu.Circuits.Endoscalar.Lift.Digit.completeness
 census_axioms Ragu.Circuits.Endoscalar.Lift.soundness
 census_axioms Ragu.Circuits.Endoscalar.Lift.completeness
 census_axioms Ragu.Circuits.Horner.Ky.soundness
@@ -321,12 +348,18 @@ census_axioms Ragu.Circuits.Point.ConditionalNegate.soundness
 census_axioms Ragu.Circuits.Point.ConditionalNegate.completeness
 census_axioms Ragu.Circuits.Point.Consistent.soundness
 census_axioms Ragu.Circuits.Point.Consistent.completeness
+census_axioms Ragu.Circuits.Point.Denormalize.soundness
+census_axioms Ragu.Circuits.Point.Denormalize.completeness
 census_axioms Ragu.Circuits.Point.Double.soundness
 census_axioms Ragu.Circuits.Point.Double.completeness
 census_axioms Ragu.Circuits.Point.DoubleAndAddIncomplete.soundness
 census_axioms Ragu.Circuits.Point.DoubleAndAddIncomplete.completeness
 census_axioms Ragu.Circuits.Point.DoubleAndAddIncompleteUnchecked.soundness
 census_axioms Ragu.Circuits.Point.DoubleAndAddIncompleteUnchecked.completeness
+census_axioms Ragu.Circuits.Point.Normalize.soundness
+census_axioms Ragu.Circuits.Point.Normalize.completeness
+census_axioms Ragu.Circuits.Point.TripleAndAddIncompleteUnchecked.soundness
+census_axioms Ragu.Circuits.Point.TripleAndAddIncompleteUnchecked.completeness
 
 /-! ## Poseidon circuits -/
 

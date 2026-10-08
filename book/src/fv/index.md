@@ -37,7 +37,7 @@ this part.
 
 ## What is verified today
 
-Verification currently covers the gadget layer: 53 concrete circuit instances,
+Verification currently covers the gadget layer: 57 concrete circuit instances,
 each one a specific instantiation at a fixed prime field with all compile-time
 parameters made concrete.
 
@@ -50,7 +50,9 @@ parameters made concrete.
   conditional endomorphism application and negation.
 - **Booleans** — allocation, conjunction, conditional selection, conditional
   equality enforcement, and contract re-establishment.
-- **Endoscalars** — allocation, extraction, lifting, and group scaling.
+- **Endoscalars** — allocation, extraction, lifting, and radix-3 group
+  scaling, in both the plain form and the hoisted form that reads its digit
+  products from stage wires, plus the contract that pins those product wires.
 - **Poseidon** — the permutation at the deployed Pasta parameters on both
   fields, and the sponge in several distinct control-flow shapes:
   single-block hashing on each field, uniform blocks across a rate boundary,

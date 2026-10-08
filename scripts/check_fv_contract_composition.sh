@@ -11,7 +11,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 source_root='qa/fv/Ragu/Circuits'
-expected_contract_builders=49
+expected_contract_builders=61
 expected_helper_builders=1
 
 contract_builders=$(grep -REc '^def main([[:space:](]|$)' "$source_root" \

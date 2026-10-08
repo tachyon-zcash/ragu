@@ -43,30 +43,34 @@ simple functions named `main`.
 
 | Wrapper | Count |
 | --- | ---: |
-| `FormalCircuit` | 25 |
-| `FormalAssertion` | 6 |
+| `FormalCircuit` | 34 |
+| `FormalAssertion` | 8 |
 | `GeneralFormalCircuit` | 4 |
-| `GeneralFormalCircuit.WithHint` | 14 |
-| **Packaged contracts** | **49** |
+| `GeneralFormalCircuit.WithHint` | 15 |
+| **Packaged contracts** | **61** |
 
 Those contracts are distributed as follows:
 
 - Boolean (6): `Alloc`, `And`, `ConditionalEnforceEqual`,
   `ConditionalSelect`, `Consistent`, and `Decompose`.
 - Core and element (18): `Core.Mul` plus all 17 element contracts.
-- Endoscalar, Horner, and nonzero bank (7): `Endoscalar.Alloc`, `Extract`,
-  `GroupScale.Step`, `GroupScale`, `Lift`, `Horner.Ky`, and
-  `NonzeroBank.Scope`.
-- Point (9): allocation, consistency, conditional endomorphism/negation,
-  addition, doubling, and checked/unchecked double-and-add variants.
+- Endoscalar, Horner, and nonzero bank (16): `Endoscalar.Alloc`,
+  `HoistedAlloc`, `Extract`, `Initial`, `Lift.Digit`, `Lift`,
+  `HoistedLift.Digit`, `HoistedLift`, `EnforceProducts.Digit`,
+  `EnforceProducts`, `GroupScale.Step`, `GroupScale`, `HoistedGroupScale.Step`,
+  `HoistedGroupScale`, `Horner.Ky`, and `NonzeroBank.Scope`.
+- Point (12): allocation, consistency, conditional endomorphism/negation,
+  addition, doubling, checked/unchecked double-and-add variants, the
+  unchecked triple-and-add, and the normalization to and from the walk's
+  `(r, r)` form.
 - Poseidon (9): `Sbox`, both round kinds, `AnyRound`, `Permutation`, `Hash1`,
   `Blocks`, `Squeeze`, and `Ragged`.
 
-There are 49 `soundness` and 49 `completeness` endpoints. Poseidon's internal
+There are 61 `soundness` and 61 `completeness` endpoints. Poseidon's internal
 `Blocks.loop_soundness` and `Blocks.loop_completeness` bring the pinned theorem
-total to 100. Every one is directly pinned in `Ragu.Meta.TrustBoundary`.
+total to 124. Every one is directly pinned in `Ragu.Meta.TrustBoundary`.
 
-The builders contain 49 packaged `main` definitions and one additional
+The builders contain 61 packaged `main` definitions and one additional
 proof-carrying helper, `Poseidon.Sponge.Blocks.loop`. The composition check
 pins those counts so adding or removing a builder requires an explicit review
 and count update.
@@ -82,10 +86,15 @@ The parent-to-child edges are:
   `Core.mul` at the leaf. Composite contracts use `EnforceNonzero` plus
   `Divide`, `Invertible`, `InvertWith`, `IsZero`, or repeated `Mul` calls as
   appropriate.
-- Endoscalar: `Alloc` repeats `Boolean.Alloc`; `Extract` uses
-  `Boolean.Decompose`; `Lift` repeats `Boolean.And`; `GroupScale.Step` composes
-  conditional point operations with unchecked double-and-add; and
-  `GroupScale` composes initial point addition/doubling with 64 `Step` calls.
+- Endoscalar: `Alloc` and `HoistedAlloc` repeat `Boolean.Alloc`; `Extract`
+  uses `Boolean.Decompose`; `Lift` opens with `Boolean.And` and repeats
+  `Lift.Digit` (a `Boolean.And` and an `Element.Mul` per digit), `HoistedLift`
+  likewise with `HoistedLift.Digit` (one `Element.Mul`); `EnforceProducts`
+  repeats `EnforceProducts.Digit` (two `Boolean.And`); `Initial` composes
+  `Element.Square` and `Element.Mul`; `GroupScale.Step` composes three
+  `Element.Mul` selector gates with the unchecked triple-and-add,
+  `HoistedGroupScale.Step` two; and both walks compose `Point.Normalize`,
+  `Initial`, 47 `Step` calls, and `Point.Denormalize`.
 - Horner and nonzero bank: `Horner.Ky` uses `Element.Fold`; the bank scope folds
   with `Element.Mul` and discharges with `Element.EnforceNonzero`.
 - Point: the formulas compose `Element.Divide`, `Square`, `Mul`, and, in the
@@ -97,8 +106,10 @@ The parent-to-child edges are:
   compose `Blocks` and/or `Permutation`.
 
 No parent circuit builder or soundness proof calls a child's qualified `main`.
-`Endoscalar.Lift.soundness` names `Boolean.And.output`, the child's stable
-output/layout accessor, while deriving its meaning from `Boolean.And.Spec`.
+`Endoscalar.EnforceProducts.Digit.soundness` names `Boolean.And.output`, and
+the lift and walk proofs name their `Digit.output` and `Step.output`: the
+children's stable output/layout accessors, while deriving their meaning from
+the children's `Spec`.
 
 ## Assumption discharge
 
@@ -110,18 +121,27 @@ Most child verifier assumptions are `True`. The nontrivial paths are:
 | `Element.Divide`: `y != 0` or `x != 0` | `DivNonzero` obtains `y != 0` from `EnforceNonzero`; checked point gadgets obtain it from the bank discharge; unchecked point gadgets require the relevant non-degeneracy in their own assumptions. |
 | Point inputs lie on the curve | Passed from the parent assumption or established by a prior point child spec. |
 | Point doubling has no order-two input | Derived from `curveParams.noOrderTwoPoints`, giving the nonzero denominator. |
-| An unchecked double-and-add chain succeeds | `GroupScale.Step` derives the two successful additions from `stepNative != none`. |
-| Every group-scale step succeeds | `GroupScale` threads `groupScaleNative != none` through the 64-step invariant. |
+| An unchecked triple-and-add chain succeeds | `GroupScale.Step` and `HoistedGroupScale.Step` pass `stepNative != none` on; `Point.TripleAndAddIncompleteUnchecked` unpacks it into the chain's three distinct-x conditions. |
+| Every group-scale step succeeds | `GroupScale` and `HoistedGroupScale` thread `groupScaleNative != none` through the 47-step invariant. |
+| Product wires are the products of their bits | `HoistedLift` and `HoistedGroupScale` receive it as an assumption; it is `EnforceProducts`'s postcondition. |
+| A nontrivial cube root of unity | Passed from the parent (`Lift`, the walks, and their digit and step children), where the `(1, 1)` digit's affine value `2 + λ²` is `1 - λ` only modulo `λ² + λ + 1 = 0`. |
 
 Two caller-visible residual assumptions remain deliberate:
 
 - `Point.Consistent` receives `curveParams.nonzeroCoordinates` externally.
-- `Endoscalar.GroupScale` receives `groupScaleNative != none`, representing the
-  no-collision/non-degeneracy argument in
-  (Bowe–Grigg–Hopwood, <a href="https://eprint.iacr.org/2019/1021">Recursive
-  Proof Composition without a Trusted Setup</a>, Appendix C). The deployed
-  recursion model must establish that premise from its own context; this gadget
-  proof does not manufacture it.
+- `Endoscalar.GroupScale` and `HoistedGroupScale` receive
+  `groupScaleNative != none`, representing the no-collision/non-degeneracy
+  argument in (Bowe–Grigg–Hopwood,
+  <a href="https://eprint.iacr.org/2019/1021">Recursive Proof Composition
+  without a Trusted Setup</a>, Appendix C), adapted to the radix-3 walk.
+  `Ragu.Lemmas.EndoscalarProof.groupScale_collision_combinations_ne_zero`
+  proves its integer core: the accumulator's Eisenstein norm never drops
+  below 4 while a digit point's is at most 3. The curve-side step relating
+  the affine accumulator to the scalar multiple remains outside the gadget
+  proof, which does not manufacture the premise.
+- `HoistedLift` and `HoistedGroupScale` receive the product-wire relation,
+  which `EnforceProducts` establishes once per endoscalar stage at the
+  circuit that pins the stage.
 
 Verifier and prover contracts remain distinct. For example,
 `Element.Alloc.Spec` is intentionally `True` because an arbitrary fresh
