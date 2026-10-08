@@ -2,6 +2,7 @@ use alloc::vec::Vec;
 
 use ragu_circuits::{CircuitExt, polynomials::Rank, staging::MultiStage};
 use ragu_core::{Cycle, Result};
+use ragu_primitives::Uendo;
 use rand::CryptoRng;
 
 use crate::{
@@ -246,7 +247,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     pub(super) fn compute_nested_internal_circuits<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        nested_endoscalar: u128,
+        nested_endoscalar: Uendo,
         nested_points: &nested::PointsWitness<C::HostCurve>,
         nested_preamble_witness: &nested::stages::preamble::Witness<C::HostCurve>,
         nested_s_prime_witness: &nested::stages::s_prime::Witness<C::HostCurve>,

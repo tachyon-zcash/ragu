@@ -43,14 +43,112 @@ use crate::{
     vec::{CollectFixed, ConstLen, FixedVec},
 };
 
+/// The width of an endoscalar in bits.
+///
+/// An endoscalar is the low `ENDOSCALAR_BITS` bits of a transcript challenge
+/// (see [`EndoscalarChallenge`]), so the field must have at least this much
+/// capacity, which the Pasta fields do.
+pub const ENDOSCALAR_BITS: usize = 134;
+
 /// The radix-3 digits an endoscalar carries after its two initial bits.
 ///
-/// An endoscalar's [`u128::BITS`] bits are consumed as two initial bits,
-/// which sign and twist the doubled base point, and then this many three-bit
-/// digits; see [`Endoscalar::group_scale`].
-pub const ENDOSCALAR_DIGITS: usize = 42;
+/// An endoscalar's [`ENDOSCALAR_BITS`] bits are consumed as two initial
+/// bits, which sign and twist the doubled base point, and then this many
+/// three-bit digits; see [`Endoscalar::group_scale`].
+pub const ENDOSCALAR_DIGITS: usize = 44;
 
-const _: () = assert!(2 + 3 * ENDOSCALAR_DIGITS == u128::BITS as usize);
+const _: () = assert!(2 + 3 * ENDOSCALAR_DIGITS == ENDOSCALAR_BITS);
+const _: () = assert!(
+    ENDOSCALAR_BITS >= u128::BITS as usize,
+    "Uendo's conversion from u128 must be lossless"
+);
+
+/// The value of an endoscalar: an [`ENDOSCALAR_BITS`]-bit string, read as
+/// an unsigned integer with its least significant bit first.
+///
+/// The compact witness of the [`Endoscalar`] gadget, what
+/// [`extract_endoscalar`] produces and what [`lift_endoscalar`] consumes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Uendo([u64; Uendo::LIMBS]);
+
+impl Uendo {
+    /// The number of bits.
+    pub const BITS: usize = ENDOSCALAR_BITS;
+
+    const LIMBS: usize = ENDOSCALAR_BITS.div_ceil(64);
+
+    /// The all-zero endoscalar.
+    pub const ZERO: Self = Self([0; Self::LIMBS]);
+
+    /// Bit `i`, least significant first.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `i` is not below [`Self::BITS`].
+    pub fn bit(&self, i: usize) -> bool {
+        assert!(i < Self::BITS, "bit {i} exceeds the endoscalar width");
+        (self.0[i / 64] >> (i % 64)) & 1 == 1
+    }
+
+    /// The bits, least significant first.
+    pub fn bits(&self) -> impl Iterator<Item = bool> + '_ {
+        (0..Self::BITS).map(move |i| self.bit(i))
+    }
+
+    /// Builds an endoscalar from its bits, least significant first.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless exactly [`Self::BITS`] bits are given.
+    pub fn from_le_bits(bits: impl IntoIterator<Item = bool>) -> Self {
+        let mut limbs = [0u64; Self::LIMBS];
+        let mut count = 0;
+        for (i, bit) in bits.into_iter().enumerate() {
+            assert!(i < Self::BITS, "more than {} bits", Self::BITS);
+            if bit {
+                limbs[i / 64] |= 1 << (i % 64);
+            }
+            count += 1;
+        }
+        assert_eq!(count, Self::BITS, "fewer than {} bits", Self::BITS);
+        Self(limbs)
+    }
+
+    /// Returns this endoscalar with bit `i` flipped.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `i` is not below [`Self::BITS`].
+    pub fn flip_bit(mut self, i: usize) -> Self {
+        assert!(i < Self::BITS, "bit {i} exceeds the endoscalar width");
+        self.0[i / 64] ^= 1 << (i % 64);
+        self
+    }
+
+    /// Draws an endoscalar from the limbs `fill` produces, discarding the
+    /// bits beyond the width.
+    pub fn random(mut fill: impl FnMut() -> u64) -> Self {
+        let mut limbs = [0u64; Self::LIMBS];
+        for limb in &mut limbs {
+            *limb = fill();
+        }
+        let unused = Self::LIMBS * 64 - Self::BITS;
+        if unused > 0 {
+            limbs[Self::LIMBS - 1] &= u64::MAX >> unused;
+        }
+        Self(limbs)
+    }
+}
+
+impl From<u128> for Uendo {
+    /// Zero-extends `value`; the width is at least 128 bits.
+    fn from(value: u128) -> Self {
+        let mut limbs = [0u64; Self::LIMBS];
+        limbs[0] = value as u64;
+        limbs[1] = (value >> 64) as u64;
+        Self(limbs)
+    }
+}
 
 /// An error indicating that an element is out of range for an endoscalar
 /// challenge.
@@ -93,8 +191,8 @@ pub struct EndoscalarRangeError;
 ///
 /// # Field requirements
 ///
-/// The field must have at least 128 bits of capacity; Ragu's supported Pasta
-/// fields satisfy this.
+/// The field must have at least [`ENDOSCALAR_BITS`] bits of capacity; Ragu's
+/// supported Pasta fields satisfy this.
 ///
 /// [`from_element`]: EndoscalarChallenge::from_element
 pub struct EndoscalarChallenge<'dr, D: Driver<'dr>> {
@@ -250,14 +348,14 @@ impl<'dr, F: Field> EndoscalarChallenge<'dr, NativeEmulator<F>> {
 
     /// Extracts the native endoscalar from this validated challenge.
     ///
-    /// Returns the low 128 bits of the challenge's canonical bit
-    /// decomposition, the native, wireless counterpart to
+    /// Returns the low [`ENDOSCALAR_BITS`] bits of the challenge's canonical
+    /// bit decomposition, the native, wireless counterpart to
     /// [`Endoscalar::extract`], intended for native provers that constructed the
     /// challenge via [`sample`]. Because an [`EndoscalarChallenge`] already
     /// contains the constrained extraction, this operation is infallible.
     ///
     /// [`sample`]: EndoscalarChallenge::sample
-    pub fn extract_native(&self) -> u128 {
+    pub fn extract_native(&self) -> Uendo {
         *self.endoscalar.value.snag()
     }
 }
@@ -285,11 +383,11 @@ fn endoscalar_in_range<F: Field>(value: F) -> bool {
 pub struct Endoscalar<'dr, D: Driver<'dr>> {
     /// The bits of this endoscalar in little-endian order.
     #[ragu(gadget)]
-    bits: FixedVec<Demoted<'dr, D, Boolean<'dr, D>>, ConstLen<{ u128::BITS as usize }>>,
+    bits: FixedVec<Demoted<'dr, D, Boolean<'dr, D>>, ConstLen<ENDOSCALAR_BITS>>,
 
     /// Witness data for the represented endoscalar in compact representation.
     #[ragu(value)]
-    value: DriverValue<D, u128>,
+    value: DriverValue<D, Uendo>,
 }
 
 impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
@@ -302,14 +400,10 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
     /// generation decomposes it in little-endian order, but callers needing the
     /// endoscalar bound to a specific field element must enforce that relation
     /// themselves (see [`extract`](Self::extract)).
-    pub fn alloc(dr: &mut D, value: DriverValue<D, u128>) -> Result<Self> {
-        let bits = (0..u128::BITS as usize)
+    pub fn alloc(dr: &mut D, value: DriverValue<D, Uendo>) -> Result<Self> {
+        let bits = (0..ENDOSCALAR_BITS)
             .map(|i| {
-                let bit = Boolean::alloc(
-                    dr,
-                    &mut (),
-                    value.as_ref().map(|v| (*v >> i) & 1u128 == 1u128),
-                )?;
+                let bit = Boolean::alloc(dr, &mut (), value.as_ref().map(|v| v.bit(i)))?;
                 Demoted::new(&bit)
             })
             .try_collect_fixed()?;
@@ -322,7 +416,7 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
         let mut bits = self
             .value
             .as_ref()
-            .map(|v| (0..(u128::BITS as usize)).map(move |i| (*v >> i) & 1u128 == 1u128));
+            .map(|v| (0..ENDOSCALAR_BITS).map(move |i| v.bit(i)));
 
         self.bits.iter().map(move |demoted_bit| {
             demoted_bit.promote(bits.as_mut().map(|bits| bits.next().unwrap()))
@@ -331,16 +425,16 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
 
     /// Returns the endoscalar constrained during challenge construction.
     ///
-    /// The endoscalar is the low 128 bits of the challenge's canonical bit
-    /// decomposition. [`EndoscalarChallenge::from_element`] already emitted the
+    /// The endoscalar is the low [`ENDOSCALAR_BITS`] bits of the challenge's
+    /// canonical bit decomposition. [`EndoscalarChallenge::from_element`] already emitted the
     /// binding decomposition and range constraint, so extraction emits no
     /// additional constraints.
     pub fn extract(challenge: EndoscalarChallenge<'dr, D>) -> Self {
         challenge.endoscalar
     }
 
-    /// Constrains `elem` to its canonical decomposition and returns its low 128
-    /// bits as an endoscalar.
+    /// Constrains `elem` to its canonical decomposition and returns its low
+    /// [`ENDOSCALAR_BITS`] bits as an endoscalar.
     fn extract_element<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -350,23 +444,12 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
 
         let value = elem.value().map(|v| {
             let le_bits = Field::to_le_bits(v);
-            let mut acc = 0u128;
-            for (i, bit) in le_bits
-                .as_ref()
-                .iter()
-                .enumerate()
-                .take(u128::BITS as usize)
-            {
-                if *bit {
-                    acc |= 1u128 << i;
-                }
-            }
-            acc
+            Uendo::from_le_bits(le_bits.as_ref().iter().take(ENDOSCALAR_BITS).copied())
         });
 
         let bits = bits
             .iter()
-            .take(u128::BITS as usize)
+            .take(ENDOSCALAR_BITS)
             .map(|bit| Demoted::new(bit))
             .try_collect_fixed()?;
 
@@ -383,9 +466,10 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
     /// $A_0 = \[2\] (-1)^{s_0} \phi^{e_0}(P)$ and performs
     /// $A_{i+1} = \[3\] A_i + \[d_i\] P$ with the digit
     /// $d_i = (-1)^{s_i} \cdot \{1, \lambda, \lambda^2, 1 - \lambda\}[e_{1,i},
-    /// e_{2,i}]$, so the result is $\[k\] P$ for
+    /// e_{2,i}]$, so with $n = \mathtt{ENDOSCALAR\_DIGITS}$ the result is
+    /// $\[k\] P$ for
     ///
-    /// $$k = 2 \cdot 3^{42} (-1)^{s_0} \lambda^{e_0} + \sum_{i} 3^{41 - i} d_i,$$
+    /// $$k = 2 \cdot 3^{n} (-1)^{s_0} \lambda^{e_0} + \sum_{i} 3^{n - 1 - i} d_i,$$
     ///
     /// the scalar [`lift`](Self::lift) computes.
     ///
@@ -393,8 +477,9 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
     /// modulo $3$, so a radix-3 expansion decodes uniquely from its residues
     /// and the map from bit strings to $k \in \mathbb{Z}[\lambda]$ is
     /// injective. Two distinct encodings differ by an element of norm below
-    /// $2^{139}$, which no prime above that divides, so they stay distinct in
-    /// the scalar field of the Pasta curves.
+    /// $33 \cdot 9^{n}$, about $2^{145}$ here, which no prime above that
+    /// divides, so they stay distinct in the scalar field of the Pasta
+    /// curves.
     ///
     /// The point is first moved to the isomorphic curve on which it has
     /// coordinates $(r, r)$, by $(x, y) \mapsto (c^2 x, c^3 y)$ for
@@ -405,7 +490,7 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
     /// curve's only in its constant term, and the addition formulas never
     /// read that term.
     ///
-    /// This costs $3 + 4 + 10 \cdot \mathtt{ENDOSCALAR_DIGITS} + 3 = 430$ gates.
+    /// This costs $3 + 4 + 10 n + 3$ gates, $450$ here.
     ///
     /// # Exceptional Cases
     ///
@@ -416,8 +501,8 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
     /// with $|a| \geq 2$, every digit has $|d| \leq \sqrt{3}$, and
     /// $|3a + d| \geq 3|a| - \sqrt{3} > |a|$, so none of $d = \pm a$,
     /// $d = -2a$, $a + d = 0$ or $3a + d = 0$ holds in $\mathbb{Z}[\lambda]$.
-    /// All of these have norm below $2^{139}$, so none holds modulo the group
-    /// order either.
+    /// All of these have norm far below the group order, so none holds
+    /// modulo it either.
     ///
     /// # Soundness
     ///
@@ -598,8 +683,8 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
 ///
 /// The native counterpart to [`Endoscalar::lift`]: the scalar $k$ of
 /// [`Endoscalar::group_scale`], with $\lambda$ the field's cube root of unity.
-pub fn lift_endoscalar<F: Field>(endo: u128) -> F {
-    let bit = |i: usize| (endo >> i) & 1 == 1;
+pub fn lift_endoscalar<F: Field>(endo: Uendo) -> F {
+    let bit = |i: usize| endo.bit(i);
     let lambda = F::ZETA;
     let lambda2 = lambda.square();
 
@@ -627,8 +712,8 @@ pub fn lift_endoscalar<F: Field>(endo: u128) -> F {
 
 /// Extracts an endoscalar from a validated field element.
 ///
-/// Returns the low 128 bits of the element's canonical bit decomposition, the
-/// native counterpart to [`Endoscalar::extract`].
+/// Returns the low [`ENDOSCALAR_BITS`] bits of the element's canonical bit
+/// decomposition, the native counterpart to [`Endoscalar::extract`].
 ///
 /// A low-level helper: prefer [`EndoscalarChallenge::extract_native`], which
 /// upholds the precondition below as a type invariant. This function is exposed
@@ -646,8 +731,8 @@ pub fn lift_endoscalar<F: Field>(endo: u128) -> F {
 ///
 /// # Field requirements
 ///
-/// The field must have at least 128 bits of capacity; Ragu's supported Pasta
-/// fields satisfy this.
+/// The field must have at least [`ENDOSCALAR_BITS`] bits of capacity; Ragu's
+/// supported Pasta fields satisfy this.
 ///
 /// # Errors
 ///
@@ -655,7 +740,7 @@ pub fn lift_endoscalar<F: Field>(endo: u128) -> F {
 /// ($\mathtt{value} \geq 2^{\mathtt{CAPACITY}}$); the boxed source is an
 /// [`EndoscalarRangeError`], so callers modeling transcript rejection can
 /// detect the condition with [`Error::invalid_witness_source`].
-pub fn extract_endoscalar<F: Field>(value: F) -> Result<u128> {
+pub fn extract_endoscalar<F: Field>(value: F) -> Result<Uendo> {
     Emulator::emulate_wireless(value, |dr, witness| {
         let elem = Element::alloc(dr, &mut (), witness)?;
         let challenge = EndoscalarChallenge::from_element(dr, &mut (), elem)?;
@@ -679,19 +764,24 @@ mod tests {
 
     use super::{
         Always, Element, Emulator, Endoscalar, EndoscalarChallenge, EndoscalarRangeError, Maybe,
-        Point,
+        Point, Uendo,
     };
     use crate::{Simulator, allocator::Standard};
 
     pub struct EndoscalarTest {
-        pub value: u128,
+        pub value: Uendo,
+    }
+
+    /// A uniformly random endoscalar.
+    pub fn random_endoscalar() -> Uendo {
+        Uendo::random(|| rand::rng().random())
     }
 
     impl EndoscalarTest {
         /// The radix-3 walk of [`Endoscalar::group_scale`], in projective
         /// coordinates with the digit multiples formed by the endomorphism.
         pub fn scale<C: Affine>(&self, p: &C) -> C {
-            let bit = |i: usize| (self.value >> i) & 1 == 1;
+            let bit = |i: usize| self.value.bit(i);
             let p = p.to_projective();
 
             let mut acc = if bit(1) { p.endomorphism() } else { p };
@@ -738,11 +828,11 @@ mod tests {
         use ragu_core::pasta::{EpAffine, EqAffine, Fq};
 
         let mut values = alloc::vec![
-            0u128,
-            u128::MAX,
-            206786806484900909362154774549736492353u128,
+            Uendo::ZERO,
+            Uendo::from_le_bits((0..Uendo::BITS).map(|_| true)),
+            Uendo::from(206786806484900909362154774549736492353u128),
         ];
-        values.extend((0..16).map(|_| rand::rng().random::<u128>()));
+        values.extend((0..16).map(|_| random_endoscalar()));
 
         for value in values {
             let e = EndoscalarTest { value };
@@ -984,7 +1074,7 @@ mod tests {
     #[test]
     fn test_endoscaling() -> Result<()> {
         let p = EpAffine::generator();
-        let r: u128 = rand::rng().random();
+        let r = random_endoscalar();
         let expected = EndoscalarTest { value: r }.scale(&p);
 
         Simulator::simulate((p, r), |dr, witness| {
@@ -1004,7 +1094,7 @@ mod tests {
 
     #[test]
     fn test_endoscalar_lift() -> Result<()> {
-        let r: u128 = rand::rng().random();
+        let r = random_endoscalar();
         let expected: Fp = EndoscalarTest { value: r }.lift();
 
         Simulator::<Fp>::simulate(r, |dr, witness| {

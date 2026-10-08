@@ -6,7 +6,7 @@ use ragu_core::{
     maybe::Always,
     pasta::{EpAffine, Fp, Fq, PoseidonFp},
 };
-use ragu_primitives::{Boolean, Element, Endoscalar, Point, poseidon::Sponge};
+use ragu_primitives::{Boolean, Element, Endoscalar, Point, Uendo, poseidon::Sponge};
 use rand::{Rng, RngExt, SeedableRng, rngs::StdRng};
 use udon::{curve::Affine, field::Field};
 
@@ -69,7 +69,7 @@ pub fn alloc_point(emu: &mut BenchEmu, rng: &mut StdRng) -> Point<'static, Bench
 }
 
 pub fn alloc_endo(emu: &mut BenchEmu, rng: &mut StdRng) -> Endoscalar<'static, BenchEmu> {
-    let u: u128 = rng.random();
+    let u = Uendo::random(|| rng.random());
     Endoscalar::alloc(emu, BenchEmu::just(|| u)).unwrap()
 }
 

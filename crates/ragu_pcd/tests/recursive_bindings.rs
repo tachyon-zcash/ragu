@@ -19,7 +19,7 @@ use ragu_core::{
     Cycle, FixedGenerators, Result,
     pasta::{Ep, EpAffine, EqAffine, Fp, Fq},
 };
-use ragu_primitives::extract_endoscalar;
+use ragu_primitives::{ENDOSCALAR_BITS, extract_endoscalar};
 use ragu_testing::strategies;
 use rand::{SeedableRng, rngs::StdRng};
 use udon::{
@@ -239,15 +239,15 @@ mod challenge_binding {
                 // Flip one bit of pre_beta itself, keeping its upper bits. A
                 // challenge sits below 2^254 < p, so adding or subtracting the
                 // bit's power of two never wraps.
-                let flip = Fp::from_u128(1u128 << bit);
-                proof.pre_beta = if (old_bits >> bit) & 1 == 0 {
+                let flip = Fp::from(2).pow_u64(u64::from(bit));
+                proof.pre_beta = if !old_bits.bit(bit as usize) {
                     proof.pre_beta + flip
                 } else {
                     proof.pre_beta - flip
                 };
                 assert_eq!(
                     extract_endoscalar(proof.pre_beta())?,
-                    old_bits ^ (1u128 << bit)
+                    old_bits.flip_bit(bit as usize)
                 );
                 let new_beta = nested::challenge::<C>(proof.pre_beta())?;
                 assert_ne!(new_beta, old_beta);
@@ -298,7 +298,7 @@ mod challenge_binding {
         #[ignore = "recursion regression suite: run by the scheduled heavy-tests workflow"]
         fn partial_and_pre_beta_substitutions_reject_through_two_generations(
             inputs in support::inputs(),
-            bit in 0u32..128,
+            bit in 0u32..ENDOSCALAR_BITS as u32,
             delta in strategies::nonzero_prime_field_element::<Fq>(),
             reblind_first in any::<bool>(),
         ) {

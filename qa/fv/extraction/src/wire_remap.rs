@@ -16,7 +16,7 @@ use ragu_core::{
     },
     gadgets::{Bound, Gadget},
 };
-use ragu_primitives::{Boolean, Endoscalar, Invertible};
+use ragu_primitives::{Boolean, Endoscalar, Invertible, Uendo};
 use udon::field::Field;
 
 type TemplateDriver<D> =
@@ -80,10 +80,10 @@ fn boolean_unchecked<'dr, D: Driver<'dr>>(
     remap_template(&template, vec![wire])
 }
 
-/// Assembles an [`Endoscalar`] from exactly 128 input-wire booleans.
+/// Assembles an [`Endoscalar`] from exactly `ENDOSCALAR_BITS` input-wire booleans.
 fn endoscalar_unchecked<'dr, D: Driver<'dr>>(
     bits: &[Boolean<'dr, D>],
-    value: DriverValue<D, u128>,
+    value: DriverValue<D, Uendo>,
 ) -> Result<Endoscalar<'dr, D>> {
     let mut dr = TemplateDriver::<D>::wireless();
     let template = Endoscalar::alloc(&mut dr, value)?;
@@ -105,7 +105,7 @@ pub(crate) fn boolean_from_wire<'dr, D: Driver<'dr>>(wire: D::Wire) -> Result<Bo
     boolean_unchecked(wire, D::just(|| false))
 }
 
-/// Assembles an [`Endoscalar`] from exactly 128 wrapped input bits without
+/// Assembles an [`Endoscalar`] from exactly `ENDOSCALAR_BITS` wrapped input bits without
 /// emitting any operation.
 ///
 /// This does not add Boolean constraints; the endoscalar instances require
@@ -117,7 +117,7 @@ pub(crate) fn boolean_from_wire<'dr, D: Driver<'dr>>(wire: D::Wire) -> Result<Bo
 pub(crate) fn endoscalar_from_bits<'dr, D: Driver<'dr>>(
     bits: &[Boolean<'dr, D>],
 ) -> Result<Endoscalar<'dr, D>> {
-    endoscalar_unchecked(bits, D::just(|| 0))
+    endoscalar_unchecked(bits, D::just(|| Uendo::ZERO))
 }
 
 /// Assembles an [`Invertible`] from its element and inverse wires without

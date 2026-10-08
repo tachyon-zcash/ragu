@@ -16,7 +16,7 @@ impl CircuitInstance for EndoscalarExtractInstance {
     /// `from_element` emits `Fp::CAPACITY` (254) `Boolean::alloc` gates and
     /// one recomposition constraint binding their weighted sum to the element
     /// (`boolean.rs::decompose`); `extract` emits nothing and returns the low
-    /// 128 bits. Under `MaybeKind = Empty` the witness-side range check
+    /// `ENDOSCALAR_BITS` bits. Under `MaybeKind = Empty` the witness-side range check
     /// (`try_just`) and the per-bit witness closures never run, so the trace
     /// is exactly those constraints.
     ///
@@ -25,7 +25,7 @@ impl CircuitInstance for EndoscalarExtractInstance {
     /// which the extractor's three-wire model does not have (`Extra = ()`), so
     /// the choice of allocator leaves the trace unchanged.
     ///
-    /// Input wire: `elem` (1 wire). Output: the 128 endoscalar bit wires,
+    /// Input wire: `elem` (1 wire). Output: the `ENDOSCALAR_BITS` endoscalar bit wires,
     /// least significant first.
     fn circuit<'dr, D>(dr: &mut D) -> ragu_core::Result<Vec<D::Wire>>
     where

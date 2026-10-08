@@ -244,21 +244,21 @@ fn test_internal_circuit_constraint_counts() {
     check_constraints!(Hashes2Circuit,              mul = 2044, lin = 2986);
     check_constraints!(InnerCollapseCircuit,        mul = 1921, lin = 1953);
     check_constraints!(OuterCollapseCircuit,        mul = 1592, lin = 2081);
-    check_constraints!(ComputeVCircuit,             mul = 1855, lin = 2729);
-    check_constraints!(BindChallengesCircuit(0),    mul = 1930, lin = 2856);
-    check_constraints!(BindChallengesCircuit(1),    mul = 1935, lin = 2866);
-    check_constraints!(BindChallengesCircuit(2),    mul = 1935, lin = 2866);
-    check_constraints!(BindChallengesCircuit(3),    mul = 1935, lin = 2866);
-    check_constraints!(BindChallengesCircuit(4),    mul = 1946, lin = 2888);
-    check_constraints!(BindBetaCircuit,             mul = 1979, lin = 2916);
-    check_constraints!(BindEndoscalarCircuit,       mul = 780,  lin = 1444);
+    check_constraints!(ComputeVCircuit,             mul = 1859, lin = 2737);
+    check_constraints!(BindChallengesCircuit(0),    mul = 1970, lin = 2936);
+    check_constraints!(BindChallengesCircuit(1),    mul = 1975, lin = 2946);
+    check_constraints!(BindChallengesCircuit(2),    mul = 1975, lin = 2946);
+    check_constraints!(BindChallengesCircuit(3),    mul = 1975, lin = 2946);
+    check_constraints!(BindChallengesCircuit(4),    mul = 1986, lin = 2968);
+    check_constraints!(BindBetaCircuit,             mul = 2019, lin = 2996);
+    check_constraints!(BindEndoscalarCircuit,       mul = 783,  lin = 1450);
     // Every native endoscaling step but the last walks four points and lays
     // out the same; the last walks the two that remain.
     let last = native::NUM_ENDOSCALING_STEPS as u32 - 1;
     for step in 0..last {
-        check_constraints!(EndoscalingStep(step),   mul = 1926, lin = 3478);
+        check_constraints!(EndoscalingStep(step),   mul = 2009, lin = 3638);
     }
-    check_constraints!(EndoscalingStep(last),       mul = 1058, lin = 1742);
+    check_constraints!(EndoscalingStep(last),       mul = 1101, lin = 1822);
 }
 
 #[rustfmt::skip]
@@ -281,7 +281,7 @@ fn test_internal_stage_parameters() {
     check_stage!(PointsRegistryWx, skip =  93, num =   2);
     check_stage!(PointsAb,         skip =  95, num =   3);
     check_stage!(PointsF,          skip =  98, num =   2);
-    check_stage!(PointsWalk,       skip = 100, num =  89);
+    check_stage!(PointsWalk,       skip = 100, num =  92);
 }
 
 /// Helper test to print current constraint counts in copy-pasteable format.
@@ -433,12 +433,12 @@ fn test_nested_circuit_constraint_counts() {
     );
     let mut expected = alloc::vec::Vec::new();
     for step in 0..steps {
-        expected.push((nested::InternalCircuitIndex::EndoscalingStep(step as u32), (1943, 3477)));
+        expected.push((nested::InternalCircuitIndex::EndoscalingStep(step as u32), (2026, 3637)));
     }
-    expected.push((nested::InternalCircuitIndex::Export,   (1384, 1506)));
-    expected.push((nested::InternalCircuitIndex::Collapse, (1624, 1701)));
-    expected.push((nested::InternalCircuitIndex::ComputeV, (1682, 1805)));
-    expected.push((nested::InternalCircuitIndex::Loading,  (776,  227)));
+    expected.push((nested::InternalCircuitIndex::Export,   (1393, 1524)));
+    expected.push((nested::InternalCircuitIndex::Collapse, (1627, 1701)));
+    expected.push((nested::InternalCircuitIndex::ComputeV, (1689, 1813)));
+    expected.push((nested::InternalCircuitIndex::Loading,  (779,  227)));
 
     let actual: alloc::vec::Vec<_> = nested_circuits()
         .map(|variant| (variant, nested_circuit_counts(variant)))
@@ -459,17 +459,17 @@ fn test_nested_stage_parameters() {
         }};
     }
 
-    check_stage!(endoscalar::EndoscalarStage,                          skip =   1, num =  64);
-    check_stage!(nested::PointsStage<EqAffine>,                        skip =  65, num = 141);
-    check_stage!(stages::preamble::Stage<EqAffine, R>,                 skip = 206, num = 114);
-    check_stage!(stages::s_prime::Stage<EqAffine, R>,                  skip = 320, num =   3);
-    check_stage!(stages::inner_error::Stage<EqAffine, R>,              skip = 323, num = 254);
-    check_stage!(stages::outer_error::Stage<EqAffine, R>,              skip = 577, num =  73);
-    check_stage!(stages::ab::Stage<EqAffine, R>,                       skip = 650, num =   3);
-    check_stage!(stages::query::Stage<EqAffine, R>,                    skip = 653, num =  71);
-    check_stage!(stages::f::Stage<EqAffine, R>,                        skip = 724, num =   2);
-    check_stage!(stages::eval::Stage<EqAffine, R>,                     skip = 726, num =  50);
-    check_stage!(stages::challenges::Stage<EqAffine, R>,               skip = 776, num =  12);
+    check_stage!(endoscalar::EndoscalarStage,                          skip =   1, num =  67);
+    check_stage!(nested::PointsStage<EqAffine>,                        skip =  68, num = 141);
+    check_stage!(stages::preamble::Stage<EqAffine, R>,                 skip = 209, num = 114);
+    check_stage!(stages::s_prime::Stage<EqAffine, R>,                  skip = 323, num =   3);
+    check_stage!(stages::inner_error::Stage<EqAffine, R>,              skip = 326, num = 254);
+    check_stage!(stages::outer_error::Stage<EqAffine, R>,              skip = 580, num =  73);
+    check_stage!(stages::ab::Stage<EqAffine, R>,                       skip = 653, num =   3);
+    check_stage!(stages::query::Stage<EqAffine, R>,                    skip = 656, num =  71);
+    check_stage!(stages::f::Stage<EqAffine, R>,                        skip = 727, num =   2);
+    check_stage!(stages::eval::Stage<EqAffine, R>,                     skip = 729, num =  50);
+    check_stage!(stages::challenges::Stage<EqAffine, R>,               skip = 779, num =  12);
 }
 
 /// Helper test to print the nested circuits' current counts and the nested

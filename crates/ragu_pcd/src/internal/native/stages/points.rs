@@ -51,7 +51,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Endoscalar, Point,
+    ENDOSCALAR_BITS, Endoscalar, Point, Uendo,
     consistent::Consistent,
     vec::{ConstLen, FixedVec, Len},
 };
@@ -246,14 +246,14 @@ pub struct FWitness<C: Affine> {
 /// step.
 #[derive(Clone)]
 pub struct WalkWitness<C: Affine> {
-    pub endoscalar: u128,
+    pub endoscalar: Uendo,
     pub interstitials: FixedVec<C, NumSteps>,
 }
 
 impl<C: Affine> WalkWitness<C> {
     /// The walk's outputs under `endoscalar`, from a simulated walk.
     pub fn new(
-        endoscalar: u128,
+        endoscalar: Uendo,
         walk: PointsWitness<C, NUM_ENDOSCALING_POINTS, ENDOSCALINGS_PER_STEP>,
     ) -> Self {
         Self {
@@ -651,7 +651,7 @@ impl<C: Affine, R: Rank> staging::Stage<C::Base, R> for WalkStage<C> {
 
     fn values() -> usize {
         // The endoscalar's bits, then (x, y) of one interstitial per step.
-        u128::BITS as usize + 2 * NumSteps::len()
+        ENDOSCALAR_BITS + 2 * NumSteps::len()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(

@@ -356,7 +356,7 @@ mod stages {
         Cycle, Result,
         pasta::{EpAffine, EqAffine, Fp, Fq},
     };
-    use ragu_primitives::ENDOSCALAR_DIGITS;
+    use ragu_primitives::{ENDOSCALAR_BITS, ENDOSCALAR_DIGITS, Uendo};
     use ragu_testing::strategies;
     use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
@@ -380,7 +380,7 @@ mod stages {
     /// digit (s, e1, e2) contributes (1 - 2s) times its unsigned value after
     /// the accumulator is tripled.
     fn lifted<F: Field>(bits: &[F]) -> F {
-        assert_eq!(bits.len(), u128::BITS as usize);
+        assert_eq!(bits.len(), ENDOSCALAR_BITS);
         let init =
             F::from(2) * (F::ONE - bits[0].double()) * (F::ONE + (F::ZETA - F::ONE) * bits[1]);
         bits[2..].chunks_exact(3).fold(init, |acc, digit| {
@@ -401,11 +401,9 @@ mod stages {
         assert_ne!(delta, F::ZERO);
         let reader = StageReader::new(poly);
         let mut bits: Vec<_> = wires.iter().map(|&wire| reader.read(wire)).collect();
-        assert_eq!(bits.len(), u128::BITS as usize);
+        assert_eq!(bits.len(), ENDOSCALAR_BITS);
         assert!(bits.iter().all(|bit| *bit == F::ZERO || *bit == F::ONE));
-        let packed = bits.iter().enumerate().fold(0u128, |value, (i, bit)| {
-            value | (u128::from(*bit == F::ONE) << i)
-        });
+        let packed = Uendo::from_le_bits(bits.iter().map(|bit| *bit == F::ONE));
         let original = lifted(&bits);
         assert_eq!(original, ragu_primitives::lift_endoscalar(packed));
 

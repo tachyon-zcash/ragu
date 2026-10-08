@@ -1,13 +1,14 @@
 # Endoscalars
 
 Introduced in the [Halo protocol](https://eprint.iacr.org/2019/1021), an
-_endoscalar_ $\endo{s}\in\{0,1\}^\lambda$ (where $\lambda = 128$)
+_endoscalar_ $\endo{s}\in\{0,1\}^\lambda$ (where $\lambda = 134$)
 is a small binary string used to perform scalar multiplication on curves with
 an efficient endomorphism (such as both Pasta curves).
 The endoscalar space is smaller than both $\F_p$ and $\F_q$, allowing it to
 serve as a _cross-circuit scalar_ that can be efficiently mapped to both
-target fields. In `ragu`, the endoscalar type is `u128`, wrapped by the
-`Endoscalar` circuit gadget.
+target fields. In `ragu`, the endoscalar value type is `Uendo`, wrapped by
+the `Endoscalar` circuit gadget; its width is the `ENDOSCALAR_BITS`
+constant.
 
 Endoscalars must support the following operations:
 
@@ -57,15 +58,15 @@ d = (-1)^s \cdot \{1, \lambda, \lambda^2, 1 - \lambda\}[e_1, e_2],
 $$
 
 and the walk is $A_0 = [2] (-1)^{s_0} \phi^{e_0}(G)$, $A_{i+1} = [3] A_i +
-[d_i] G$. The eight digits are exactly the nonzero residues of
-$\mathbb{Z}[\lambda]$ modulo $3$, so an expansion decodes uniquely digit by
-digit and the map from bit strings to scalars is injective. Any two distinct
-encodings differ by an element of norm below $2^{139}$, far below the Pasta
-group orders, so they remain distinct in the scalar field. The effective
-scalar, which $\mathsf{lift}$ computes, is
+[d_i] G$ over $n = 44$ digits. The eight digits are exactly the nonzero
+residues of $\mathbb{Z}[\lambda]$ modulo $3$, so an expansion decodes uniquely
+digit by digit and the map from bit strings to scalars is injective. Any two
+distinct encodings differ by an element of norm below $33 \cdot 9^{n}$, far
+below the Pasta group orders, so they remain distinct in the scalar field.
+The effective scalar, which $\mathsf{lift}$ computes, is
 
 $$
-k = 2 \cdot 3^{42} (-1)^{s_0} \lambda^{e_0} + \sum_{i=0}^{41} 3^{41 - i} d_i.
+k = 2 \cdot 3^{n} (-1)^{s_0} \lambda^{e_0} + \sum_{i=0}^{n-1} 3^{n - 1 - i} d_i.
 $$
 
 In circuit, a round costs ten multiplication gates for three bits: seven for
@@ -75,8 +76,9 @@ selection is cheap because the base point is first moved to the isomorphic
 curve on which it has coordinates $(r, r)$, by $(x, y) \mapsto (c^2 x, c^3 y)$
 with $c = x / y$; there every digit multiple of the base point has coordinates
 affine in $r$. With the three gates of that normalization, four for the
-initial doubling and three to move the result back, a 128-bit endoscaling
-costs $430$ gates against $455$ for the radix-2 walk.
+initial doubling and three to move the result back, an endoscaling costs
+$10 n + 10$ gates: $450$ at the 134 bits used, where the radix-2 walk would
+cost $476$, and $430$ against $455$ at 128 bits.
 
 Consider a random verifier challenge $\alpha\in\F_p$ produced in a circuit over
 $\F_p$ where we want to compute $\alpha\cdot G\in\G_1$.

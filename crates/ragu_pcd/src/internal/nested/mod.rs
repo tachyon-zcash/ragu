@@ -103,7 +103,7 @@ impl Parameters for RevdotParameters {
 /// Derives the nested-field counterpart of a native Fiat-Shamir challenge.
 ///
 /// The nested side squeezes nothing itself: every challenge it consumes is the
-/// endoscalar lift, in the scalar field, of the low 128 bits of the
+/// endoscalar lift, in the scalar field, of the low `ENDOSCALAR_BITS` bits of the
 /// corresponding native challenge, the derivation `compute_p` already applies
 /// to `pre_beta`.
 ///
