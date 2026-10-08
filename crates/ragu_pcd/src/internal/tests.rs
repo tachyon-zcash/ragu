@@ -278,6 +278,233 @@ fn test_internal_stage_parameters() {
     check_stage!(PointsWalk,       skip = 100, num = 144);
 }
 
+/// Every native internal circuit's claim in [`native::claims`] composes its
+/// trace with the stages it reads, listed by hand, and those stages must
+/// lie on the chain the circuit's `Last` stage closes: a stage off that
+/// chain lands its coefficients on gates the circuit uses for its own
+/// constraints, and every honest proof fails to verify. This derives each
+/// circuit's chain from the stages' declared parents, checked against their
+/// gate layout, and holds the claim entries to it.
+#[test]
+fn claimed_stages_lie_on_each_circuits_chain() {
+    use alloc::{vec, vec::Vec};
+    use core::iter::once;
+
+    use InternalCircuitIndex::*;
+    use native::{RxComponent, circuits, claims::Processor};
+
+    use crate::internal::claims::Source;
+
+    /// Yields one marker per component, as a single proof would.
+    struct Marks;
+
+    impl Source for Marks {
+        type RxComponent = RxComponent;
+        type Rx = RxComponent;
+        type AppCircuitId = ();
+
+        fn rx(&self, component: RxComponent) -> impl Iterator<Item = RxComponent> {
+            once(component)
+        }
+
+        fn app_circuits(&self) -> impl Iterator<Item = ()> {
+            once(())
+        }
+    }
+
+    /// Records every internal circuit claim's components.
+    #[derive(Default)]
+    struct Record(Vec<(InternalCircuitIndex, Vec<RxComponent>)>);
+
+    impl Processor<RxComponent, ()> for Record {
+        fn raw_claim(&mut self, _: RxComponent, _: RxComponent) {}
+
+        fn circuit_claim(&mut self, _: (), _: RxComponent) {}
+
+        fn internal_circuit_claim(
+            &mut self,
+            id: InternalCircuitIndex,
+            rxs: impl Iterator<Item = RxComponent>,
+        ) {
+            self.0.push((id, rxs.collect()));
+        }
+
+        fn grouped_bonding_claim(
+            &mut self,
+            _: InternalCircuitIndex,
+            _: impl Iterator<Item = impl Iterator<Item = RxComponent>>,
+        ) -> ragu_core::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn range<S: Stage<Fp, R>>() -> (usize, usize) {
+        (
+            <S as Stage<Fp, R>>::skip_gates(),
+            <S as StageExt<Fp, R>>::num_gates(),
+        )
+    }
+
+    /// A stage's gate range, or `None` for a circuit's own polynomial.
+    fn stage_range(index: RxIndex) -> Option<(usize, usize)> {
+        Some(match index {
+            RxIndex::Preamble => range::<Preamble>(),
+            RxIndex::InnerError => range::<InnerError>(),
+            RxIndex::OuterError => range::<OuterError>(),
+            RxIndex::Query => range::<Query>(),
+            RxIndex::Eval => range::<Eval>(),
+            RxIndex::PointsBinding => range::<PointsBinding>(),
+            RxIndex::PointsChildren => range::<PointsChildren>(),
+            RxIndex::PointsRegistryWx => range::<PointsRegistryWx>(),
+            RxIndex::PointsAb => range::<PointsAb>(),
+            RxIndex::PointsF => range::<PointsF>(),
+            RxIndex::PointsWalk => range::<PointsWalk>(),
+            _ => return None,
+        })
+    }
+
+    // The native stage tree, as each stage's declared parent; a stage
+    // starts where its parent ends, which pins the declaration to the real
+    // layout.
+    let parents = [
+        (RxIndex::PointsBinding, None),
+        (RxIndex::Preamble, Some(RxIndex::PointsBinding)),
+        (RxIndex::OuterError, Some(RxIndex::Preamble)),
+        (RxIndex::InnerError, Some(RxIndex::OuterError)),
+        (RxIndex::Query, Some(RxIndex::Preamble)),
+        (RxIndex::Eval, Some(RxIndex::Query)),
+        (RxIndex::PointsChildren, Some(RxIndex::PointsBinding)),
+        (RxIndex::PointsRegistryWx, Some(RxIndex::PointsChildren)),
+        (RxIndex::PointsAb, Some(RxIndex::PointsRegistryWx)),
+        (RxIndex::PointsF, Some(RxIndex::PointsAb)),
+        (RxIndex::PointsWalk, Some(RxIndex::PointsF)),
+    ];
+    for (stage, parent) in parents {
+        let starts_at = parent.map_or(1, |parent| {
+            let (skip, num) = stage_range(parent).unwrap();
+            skip + num
+        });
+        assert_eq!(
+            stage_range(stage).unwrap().0,
+            starts_at,
+            "{stage:?} does not extend {parent:?}"
+        );
+    }
+    let chain_of = |last: RxIndex| -> Vec<RxIndex> {
+        let mut chain = vec![last];
+        let mut stage = last;
+        while let Some((_, Some(parent))) = parents.iter().find(|(s, _)| *s == stage) {
+            chain.push(*parent);
+            stage = *parent;
+        }
+        chain.reverse();
+        chain
+    };
+
+    // Each circuit's last stage, held to the circuit's own account of where
+    // its stages end.
+    let pasta = crate::pasta::baked();
+    let (_, log2_circuits) = native::total_circuit_counts(NUM_APP_STEPS);
+    let last_stage = |variant: InternalCircuitIndex| -> RxIndex {
+        let (last, staged_gates) = match variant {
+            Hashes1Circuit => (
+                RxIndex::OuterError,
+                circuits::hashes_1::Circuit::<Pasta, R, HEADER_SIZE, RevdotParameters>::new(
+                    pasta,
+                    log2_circuits,
+                )
+                .staged_gates(),
+            ),
+            Hashes2Circuit => (
+                RxIndex::OuterError,
+                circuits::hashes_2::Circuit::<Pasta, R, HEADER_SIZE, RevdotParameters>::new(pasta)
+                    .staged_gates(),
+            ),
+            InnerCollapseCircuit => (
+                RxIndex::InnerError,
+                circuits::inner_collapse::Circuit::<Pasta, R, HEADER_SIZE, RevdotParameters>::new()
+                    .staged_gates(),
+            ),
+            OuterCollapseCircuit => (
+                RxIndex::OuterError,
+                circuits::outer_collapse::Circuit::<Pasta, R, HEADER_SIZE, RevdotParameters>::new()
+                    .staged_gates(),
+            ),
+            ComputeVCircuit => (
+                RxIndex::Eval,
+                circuits::compute_v::Circuit::<Pasta, R, HEADER_SIZE>::new().staged_gates(),
+            ),
+            BindChallengesCircuit(k) => (
+                RxIndex::Eval,
+                crate::with_binder!(k, Pasta, R, HEADER_SIZE, pasta, |circuit| circuit
+                    .staged_gates()),
+            ),
+            BindBetaCircuit => (
+                RxIndex::Preamble,
+                circuits::bind_beta::Circuit::<Pasta, R, HEADER_SIZE>::new(pasta).staged_gates(),
+            ),
+            BindEndoscalarCircuit => (
+                RxIndex::PointsWalk,
+                circuits::bind_endoscalar::Circuit::<Pasta, R>::new().staged_gates(),
+            ),
+            EndoscalingStep(step) => (
+                RxIndex::PointsWalk,
+                circuits::endoscaling_step::Circuit::<Pasta, R>::new(step as usize).staged_gates(),
+            ),
+            other => panic!("{other:?} is not a circuit"),
+        };
+        let (skip, num) = stage_range(last).unwrap();
+        assert_eq!(
+            skip + num,
+            staged_gates,
+            "{variant:?}: {last:?} is not the circuit's last stage"
+        );
+        last
+    };
+
+    let mut record = Record::default();
+    native::claims::build(&Marks, &mut record).unwrap();
+
+    let claimed: Vec<_> = record.0.iter().map(|(id, _)| *id).collect();
+    let circuits: Vec<_> = InternalCircuitIndex::ALL
+        .into_iter()
+        .filter(|id| {
+            matches!(
+                id,
+                Hashes1Circuit
+                    | Hashes2Circuit
+                    | InnerCollapseCircuit
+                    | OuterCollapseCircuit
+                    | ComputeVCircuit
+                    | BindChallengesCircuit(_)
+                    | BindBetaCircuit
+                    | BindEndoscalarCircuit
+                    | EndoscalingStep(_)
+            )
+        })
+        .collect();
+    assert_eq!(claimed, circuits, "every circuit claims once, in order");
+
+    for (id, components) in &record.0 {
+        let chain = chain_of(last_stage(*id));
+        let mut seen = vec![];
+        for component in components {
+            let RxComponent::Rx(index) = component else {
+                panic!("{id:?}: claim adds the raw {component:?}");
+            };
+            if stage_range(*index).is_none() {
+                continue;
+            }
+            assert!(
+                chain.contains(index),
+                "{id:?}: claim adds stage {index:?}, which is not on the chain {chain:?} its last stage closes"
+            );
+            assert!(!seen.contains(index), "{id:?}: claim adds {index:?} twice");
+            seen.push(*index);
+        }
+    }
+}
+
 /// Helper test to print current constraint counts in copy-pasteable format.
 /// Run with: `cargo test -p ragu_pcd --release print_internal_circuit -- --nocapture`
 #[test]

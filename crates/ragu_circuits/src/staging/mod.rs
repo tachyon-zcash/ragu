@@ -344,6 +344,12 @@ impl<F: Field, R: Rank, S: MultiStageCircuit<F, R>> MultiStage<F, R, S> {
     pub fn final_mask<'a>(&self) -> Result<BondingObject<'a, F, R>> {
         S::Last::final_mask()
     }
+
+    /// The gate the circuit's own gates start at: every stage on the chain
+    /// [`S::Last`](MultiStageCircuit::Last) closes occupies gates below it.
+    pub fn staged_gates(&self) -> usize {
+        S::Last::skip_gates() + S::Last::num_gates()
+    }
 }
 
 impl<F: Field, R: Rank, S: MultiStageCircuit<F, R>> Circuit<F> for MultiStage<F, R, S> {
