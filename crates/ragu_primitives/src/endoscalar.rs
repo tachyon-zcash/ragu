@@ -48,14 +48,18 @@ use crate::{
 /// An endoscalar is the low `ENDOSCALAR_BITS` bits of a transcript challenge
 /// (see [`EndoscalarChallenge`]), so the field must have at least this much
 /// capacity, which the Pasta fields do.
-pub const ENDOSCALAR_BITS: usize = 134;
+pub const ENDOSCALAR_BITS: usize = 143;
 
 /// The radix-3 digits an endoscalar carries after its two initial bits.
 ///
 /// An endoscalar's [`ENDOSCALAR_BITS`] bits are consumed as two initial
 /// bits, which sign and twist the doubled base point, and then this many
 /// three-bit digits; see [`Endoscalar::group_scale`].
-pub const ENDOSCALAR_DIGITS: usize = 44;
+pub const ENDOSCALAR_DIGITS: usize = 47;
+
+/// The product wires a [`HoistedEndoscalar`] carries beside its bits: two per
+/// digit, $e_1 e_2$ and $e_1 e_2 s$.
+pub const ENDOSCALAR_PRODUCTS: usize = 2 * ENDOSCALAR_DIGITS;
 
 const _: () = assert!(2 + 3 * ENDOSCALAR_DIGITS == ENDOSCALAR_BITS);
 const _: () = assert!(
@@ -477,7 +481,7 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
     /// modulo $3$, so a radix-3 expansion decodes uniquely from its residues
     /// and the map from bit strings to $k \in \mathbb{Z}[\lambda]$ is
     /// injective. Two distinct encodings differ by an element of norm below
-    /// $33 \cdot 9^{n}$, about $2^{145}$ here, which no prime above that
+    /// $33 \cdot 9^{n}$, about $2^{154}$ here, which no prime above that
     /// divides, so they stay distinct in the scalar field of the Pasta
     /// curves.
     ///
@@ -490,7 +494,7 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
     /// curve's only in its constant term, and the addition formulas never
     /// read that term.
     ///
-    /// This costs $3 + 4 + 10 n + 3$ gates, $450$ here.
+    /// This costs $3 + 4 + 10 n + 3$ gates, $480$ here.
     ///
     /// # Exceptional Cases
     ///
@@ -518,16 +522,6 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
         dr: &mut D,
         p: &Point<'dr, D, C>,
     ) -> Result<Point<'dr, D, C>> {
-        // Soundness: every `fold` below guards a division whose denominator
-        // the magnitude argument above keeps nonzero, so the bank is created
-        // in unchecked mode and the folds emit nothing.
-        //
-        // TODO(ebfull): The no-collision argument above is a property of the
-        // curve / endoscalar interaction that the `Cycle` API should attest to
-        // at compile time, so callers can verify it holds for their choice of
-        // curve rather than relying on this ad-hoc local justification.
-        let mut bank = NonzeroBank::new_unchecked();
-
         let zeta = D::F::ZETA;
         let one = Element::one();
         let two = D::F::from(2);
@@ -540,38 +534,20 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
         let zm1_third = zm1 * third;
         let four_zeta_third = zeta * third.double().double();
         let neg_two_zeta_third = -(zeta * third.double());
-        let three_halves = D::F::from(3) * D::F::TWO_INVERSE;
-
-        // Normalize: c = x / y and r = c² x move p to (r, r) on y² = x³ + c⁶ b.
-        let c = p.x.divide(dr, &p.y)?;
-        let c2 = c.square(dr)?;
-        let r = c2.mul(dr, &p.x)?.into_inner();
 
         let mut bits = self.bits();
         let s0 = bits.next().unwrap().element();
         let e0 = bits.next().unwrap().element();
 
-        // A₀ = [2] (-1)^{s₀} φ^{e₀} (r, r); the tangent at (r, r) has the
-        // linear slope 3r / 2.
-        let t = r.scale(dr, Coeff::Arbitrary(three_halves));
-        let two_r = r.double(dr);
-        let x2 = t.square(dr)?.sub(dr, &two_r);
-        let r_minus_x2 = r.sub(dr, &x2);
-        let y2 = t.mul(dr, &r_minus_x2)?.sub(dr, &r);
-        let twist = one.add_coeff(dr, &e0, Coeff::Arbitrary(zm1));
-        let sign = one.add_coeff(dr, &s0, Coeff::NegativeArbitrary(two));
-        let mut x = x2.mul(dr, &twist)?;
-        let mut y = y2.mul(dr, &sign)?;
-
-        for _ in 0..ENDOSCALAR_DIGITS {
+        // D = (-1)^s {P, φP, φ²P, P - φP}[u, v], in three gates: with
+        // h = (r + (4/9)(ζ-1) u) ((ζ-1) u + (ζ²-1) v) and j = (u + v - 1) h,
+        // x_D = r + h + ((ζ-1)/3) j + (4ζ/3) u and
+        // y_D = (1 - 2s) (r - (2ζ/3) j).
+        let point = walk(dr, p, (s0, e0), |dr, r| {
             let s = bits.next().unwrap().element();
             let u = bits.next().unwrap().element();
             let v = bits.next().unwrap().element();
 
-            // D = (-1)^s {P, φP, φ²P, P - φP}[u, v], in three gates: with
-            // h = (r + (4/9)(ζ-1) u) ((ζ-1) u + (ζ²-1) v) and j = (u + v - 1) h,
-            // x_D = r + h + ((ζ-1)/3) j + (4ζ/3) u and
-            // y_D = (1 - 2s) (r - (2ζ/3) j).
             let lhs = r.add_coeff(dr, &u, Coeff::Arbitrary(four_ninths_zm1));
             let rhs = u
                 .scale(dr, Coeff::Arbitrary(zm1))
@@ -585,40 +561,11 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
             let sign = one.add_coeff(dr, &s, Coeff::NegativeArbitrary(two));
             let yd_unsigned = r.add_coeff(dr, &j, Coeff::Arbitrary(neg_two_zeta_third));
             let yd = sign.mul(dr, &yd_unsigned)?;
-
-            // [3] A + D = ((A + D) + A) + A in seven gates: the intermediate
-            // y-coordinates cancel out of the slope equations
-            // (t₁ + t₂)(x₁ - x) = -2y and (t₂ + t₃)(x₂ - x) = -2y.
-            let neg_2y = y.scale(dr, Coeff::NegativeArbitrary(two));
-            let diff = xd.sub(dr, &x);
-            let den = bank.fold(dr, diff)?;
-            let t1 = yd.sub(dr, &y).divide(dr, &den)?;
-            let x1 = t1.square(dr)?.sub(dr, &x).sub(dr, &xd);
-            let diff = x1.sub(dr, &x);
-            let den = bank.fold(dr, diff)?;
-            let t2 = neg_2y.divide(dr, &den)?.sub(dr, &t1);
-            let x2 = t2.square(dr)?.sub(dr, &x1).sub(dr, &x);
-            let diff = x2.sub(dr, &x);
-            let den = bank.fold(dr, diff)?;
-            let t3 = neg_2y.divide(dr, &den)?.sub(dr, &t2);
-            let x3 = t3.square(dr)?.sub(dr, &x2).sub(dr, &x);
-            let x_minus_x3 = x.sub(dr, &x3);
-            let y3 = t3.mul(dr, &x_minus_x3)?.sub(dr, &y);
-            x = x3;
-            y = y3;
-        }
+            Ok((xd, yd))
+        })?;
         debug_assert!(bits.next().is_none());
 
-        // Move the result back: x = X / c², y = Y / c³. The result is a
-        // nonzero multiple of p, so its coordinates are nonzero.
-        let c3 = c2.mul(dr, &c)?;
-        let x = x.divide(dr, &c2)?;
-        let y = y.divide(dr, &c3)?;
-
-        Ok(Point::new_unchecked(
-            Nonzero::new_unchecked(x),
-            Nonzero::new_unchecked(y),
-        ))
+        Ok(point)
     }
 
     /// Lifts this endoscalar to a field element (scales $1$ by the endoscalar).
@@ -633,50 +580,389 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
     /// Any satisfying assignment makes the returned element represent the
     /// effective scalar for this endoscalar.
     pub fn lift(&self, dr: &mut D) -> Result<Element<'dr, D>> {
-        let lambda = D::F::ZETA;
-        let lm1 = lambda - D::F::ONE;
-        let l2m1 = lambda.square() - D::F::ONE;
-        let three_minus_lambda = D::F::from(3) - lambda;
-        let two = D::F::from(2);
-        let one = Element::one();
-
         let mut bits = self.bits();
         let s0 = bits.next().unwrap();
         let e0 = bits.next().unwrap();
+        let acc = lift_init(dr, &s0, &e0)?;
 
-        // acc = 2 (1 - 2 s₀) (1 + (λ - 1) e₀)
-        //     = 2 + 2 (λ - 1) e₀ - 4 s₀ - 4 (λ - 1) s₀ e₀.
-        let s0e0 = s0.and(dr, &e0)?;
-        let mut acc = Element::constant(dr, two)
-            .add_coeff(dr, &e0.element(), Coeff::Arbitrary(lm1.double()))
-            .add_coeff(dr, &s0.element(), Coeff::NegativeArbitrary(two.double()))
-            .add_coeff(
-                dr,
-                &s0e0.element(),
-                Coeff::NegativeArbitrary(lm1.double().double()),
-            );
-
-        for _ in 0..ENDOSCALAR_DIGITS {
+        let acc = lift_digits(dr, acc, |dr| {
             let s = bits.next().unwrap();
             let e1 = bits.next().unwrap();
             let e2 = bits.next().unwrap();
-
-            // v = {1, λ, λ², 1 - λ}[e₁, e₂]
-            //   = 1 + (λ - 1) e₁ + (λ² - 1) e₂ + (3 - λ) e₁ e₂.
             let e1e2 = e1.and(dr, &e2)?;
-            let v = one
-                .add_coeff(dr, &e1.element(), Coeff::Arbitrary(lm1))
-                .add_coeff(dr, &e2.element(), Coeff::Arbitrary(l2m1))
-                .add_coeff(dr, &e1e2.element(), Coeff::Arbitrary(three_minus_lambda));
-            let sign = one.add_coeff(dr, &s.element(), Coeff::NegativeArbitrary(two));
-            let d = sign.mul(dr, &v)?;
-
-            acc = acc.scale(dr, Coeff::Arbitrary(D::F::from(3))).add(dr, &d);
-        }
+            Ok((s, e1, e2, e1e2))
+        })?;
         debug_assert!(bits.next().is_none());
 
         Ok(acc)
     }
+}
+
+/// An endoscalar whose per-digit bit products are carried as wires, so that
+/// scaling selects each digit's point in two gates instead of three and
+/// lifting costs one gate per digit instead of two.
+///
+/// The products are $e_1 e_2$ and $e_1 e_2 s$ for every digit
+/// $(s, e_1, e_2)$. They are plain wires: nothing in this gadget ties them to
+/// the bits, exactly as nothing ties the bits to the compact witness. A
+/// circuit that loads this gadget from a stage without enforcing its
+/// contracts must have [`enforce_products`](Self::enforce_products) and the
+/// bits' booleanity emitted once by whichever circuit owns those contracts,
+/// or [`group_scale`](Self::group_scale) and [`lift`](Self::lift) are
+/// unsound.
+///
+/// This pays off when many circuits scale by the same endoscalar: the
+/// products live in the stage the circuits share and are constrained once.
+#[derive(Gadget)]
+pub struct HoistedEndoscalar<'dr, D: Driver<'dr>> {
+    /// The bits.
+    #[ragu(gadget)]
+    endoscalar: Endoscalar<'dr, D>,
+
+    /// Per digit, in digit order: the demoted products $e_1 e_2$ and
+    /// $e_1 e_2 s$.
+    #[ragu(gadget)]
+    products: FixedVec<Demoted<'dr, D, Boolean<'dr, D>>, ConstLen<ENDOSCALAR_PRODUCTS>>,
+}
+
+impl<'dr, D: Driver<'dr>> HoistedEndoscalar<'dr, D> {
+    /// The two products of digit `i` of `value`.
+    fn digit_products(value: &Uendo, i: usize) -> (bool, bool) {
+        let base = 2 + 3 * i;
+        let p = value.bit(base + 1) && value.bit(base + 2);
+        (p, p && value.bit(base))
+    }
+
+    /// Allocates an endoscalar with the provided witness input value, its
+    /// bits and its products.
+    ///
+    /// # Soundness
+    ///
+    /// Any satisfying assignment makes each bit and each product wire
+    /// represent `0` or `1`. Nothing ties the products to the bits, nor the
+    /// bits to `value`; see [`enforce_products`](Self::enforce_products).
+    pub fn alloc(dr: &mut D, value: DriverValue<D, Uendo>) -> Result<Self> {
+        let endoscalar = Endoscalar::alloc(dr, value.clone())?;
+        let products = (0..ENDOSCALAR_PRODUCTS)
+            .map(|k| {
+                let bit = Boolean::alloc(
+                    dr,
+                    &mut (),
+                    value.as_ref().map(|v| {
+                        let (p, q) = Self::digit_products(v, k / 2);
+                        if k % 2 == 0 { p } else { q }
+                    }),
+                )?;
+                Demoted::new(&bit)
+            })
+            .try_collect_fixed()?;
+
+        Ok(HoistedEndoscalar {
+            endoscalar,
+            products,
+        })
+    }
+
+    /// Returns an iterator over the bits in this endoscalar, little endian
+    /// order.
+    pub fn bits(&self) -> impl Iterator<Item = Boolean<'dr, D>> {
+        self.endoscalar.bits()
+    }
+
+    /// Returns an iterator over the digits' product pairs $(e_1 e_2,
+    /// e_1 e_2 s)$, in digit order.
+    pub fn products(&self) -> impl Iterator<Item = (Boolean<'dr, D>, Boolean<'dr, D>)> {
+        let mut values = self
+            .endoscalar
+            .value
+            .as_ref()
+            .map(|v| (0..ENDOSCALAR_DIGITS).map(move |i| Self::digit_products(v, i)));
+
+        self.products.chunks_exact(2).map(move |pair| {
+            let value = values.as_mut().map(|values| values.next().unwrap());
+            (
+                pair[0].promote(value.as_ref().map(|(p, _)| *p)),
+                pair[1].promote(value.as_ref().map(|(_, q)| *q)),
+            )
+        })
+    }
+
+    /// Enforces that every product wire is the product of the bits it
+    /// stands for.
+    ///
+    /// This costs two gates per digit. Together with the bits' booleanity,
+    /// it is the contract [`group_scale`](Self::group_scale) and
+    /// [`lift`](Self::lift) rest on.
+    ///
+    /// # Soundness
+    ///
+    /// Any satisfying assignment makes each digit's product wires represent
+    /// $e_1 e_2$ and $e_1 e_2 s$ of its bit wires.
+    pub fn enforce_products(&self, dr: &mut D) -> Result<()> {
+        let mut bits = self.bits().skip(2);
+        for (p, q) in self.products() {
+            let s = bits.next().unwrap();
+            let e1 = bits.next().unwrap();
+            let e2 = bits.next().unwrap();
+            let fresh_p = e1.and(dr, &e2)?;
+            dr.enforce_equal(fresh_p.wire(), p.wire())?;
+            let fresh_q = p.and(dr, &s)?;
+            dr.enforce_equal(fresh_q.wire(), q.wire())?;
+        }
+        debug_assert!(bits.next().is_none());
+        Ok(())
+    }
+
+    /// Scale a point by the endoscalar, selecting each digit's point in two
+    /// gates from the hoisted products.
+    ///
+    /// Computes the same $\[k\] P$ as [`Endoscalar::group_scale`], whose
+    /// exceptional-case argument applies unchanged, for $3 + 4 + 9 n + 3$
+    /// gates.
+    ///
+    /// # Soundness
+    ///
+    /// Given the bits' booleanity and [`enforce_products`](Self::enforce_products),
+    /// and under the exceptional-case argument of
+    /// [`Endoscalar::group_scale`], any satisfying assignment makes the
+    /// returned point represent `p` scaled by this endoscalar.
+    ///
+    /// # Errors
+    ///
+    /// Returns a witness-generation error if witness input falls into an
+    /// incomplete-addition exceptional case.
+    pub fn group_scale<C: Affine<Base = D::F>>(
+        &self,
+        dr: &mut D,
+        p: &Point<'dr, D, C>,
+    ) -> Result<Point<'dr, D, C>> {
+        let zeta = D::F::ZETA;
+        let zeta2 = zeta.square();
+        let one = Element::one();
+        let two = D::F::from(2);
+        let third = D::F::from(3)
+            .invert()
+            .expect("3 is invertible in a field of large characteristic");
+        let zm1 = zeta - D::F::ONE;
+        let z2m1 = zeta2 - D::F::ONE;
+        let one_minus_zeta = D::F::ONE - zeta;
+        // P - φP is (ζ² (r - 4/3), (1 + 2ζ)(r - 8/9)) on the normalized curve.
+        let xq0 = -(zeta2 * third.double().double());
+        let c1 = D::F::ONE + zeta.double();
+        let yq0 = -(c1 * third.square().double().double().double());
+        let c1m1 = c1 - D::F::ONE;
+
+        let mut bits = self.bits();
+        let s0 = bits.next().unwrap().element();
+        let e0 = bits.next().unwrap().element();
+        let mut products = self.products();
+
+        // With the products p = e₁e₂ and q = p s as wires, both coordinates
+        // of D are r times a linear form plus a linear form:
+        // x_D = r (1 + (ζ-1) e₁ + (ζ²-1) e₂ + (1-ζ) p) + xq0 p,
+        // y_D = r ((1 - 2s) + (c₁-1)(p - 2q)) + yq0 (p - 2q).
+        let point = walk(dr, p, (s0, e0), |dr, r| {
+            let s = bits.next().unwrap().element();
+            let e1 = bits.next().unwrap().element();
+            let e2 = bits.next().unwrap().element();
+            let (p, q) = products.next().unwrap();
+            let (p, q) = (p.element(), q.element());
+
+            let lx = one
+                .add_coeff(dr, &e1, Coeff::Arbitrary(zm1))
+                .add_coeff(dr, &e2, Coeff::Arbitrary(z2m1))
+                .add_coeff(dr, &p, Coeff::Arbitrary(one_minus_zeta));
+            let xd = r.mul(dr, &lx)?.add_coeff(dr, &p, Coeff::Arbitrary(xq0));
+
+            let p_minus_2q = p.add_coeff(dr, &q, Coeff::NegativeArbitrary(two));
+            let ly = one
+                .add_coeff(dr, &s, Coeff::NegativeArbitrary(two))
+                .add_coeff(dr, &p_minus_2q, Coeff::Arbitrary(c1m1));
+            let yd = r
+                .mul(dr, &ly)?
+                .add_coeff(dr, &p_minus_2q, Coeff::Arbitrary(yq0));
+            Ok((xd, yd))
+        })?;
+        debug_assert!(bits.next().is_none());
+        debug_assert!(products.next().is_none());
+
+        Ok(point)
+    }
+
+    /// Lifts this endoscalar to a field element, reading each digit's
+    /// $e_1 e_2$ from the hoisted products so that a digit costs one gate.
+    ///
+    /// # Soundness
+    ///
+    /// Given the bits' booleanity and [`enforce_products`](Self::enforce_products),
+    /// any satisfying assignment makes the returned element represent the
+    /// effective scalar for this endoscalar.
+    pub fn lift(&self, dr: &mut D) -> Result<Element<'dr, D>> {
+        let mut bits = self.bits();
+        let s0 = bits.next().unwrap();
+        let e0 = bits.next().unwrap();
+        let acc = lift_init(dr, &s0, &e0)?;
+
+        let mut products = self.products();
+        let acc = lift_digits(dr, acc, |_| {
+            let s = bits.next().unwrap();
+            let e1 = bits.next().unwrap();
+            let e2 = bits.next().unwrap();
+            let (e1e2, _) = products.next().unwrap();
+            Ok((s, e1, e2, e1e2))
+        })?;
+        debug_assert!(bits.next().is_none());
+        debug_assert!(products.next().is_none());
+
+        Ok(acc)
+    }
+}
+
+/// The radix-3 walk shared by [`Endoscalar::group_scale`] and
+/// [`HoistedEndoscalar::group_scale`]: normalizes `p` to $(r, r)$, forms the
+/// initial point from the two initial bits, then for each digit adds the
+/// point `select` returns to the tripled accumulator, and moves the result
+/// back. `select` is called once per digit with $r$ and returns the digit
+/// point's coordinates on the normalized curve.
+///
+/// Costs $3 + 4 + 7 n + 3$ gates plus what `select` emits.
+fn walk<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
+    dr: &mut D,
+    p: &Point<'dr, D, C>,
+    (s0, e0): (Element<'dr, D>, Element<'dr, D>),
+    mut select: impl FnMut(&mut D, &Element<'dr, D>) -> Result<(Element<'dr, D>, Element<'dr, D>)>,
+) -> Result<Point<'dr, D, C>> {
+    // Soundness: every `fold` below guards a division whose denominator the
+    // magnitude argument in `Endoscalar::group_scale` keeps nonzero, so the
+    // bank is created in unchecked mode and the folds emit nothing.
+    //
+    // TODO(ebfull): The no-collision argument is a property of the curve /
+    // endoscalar interaction that the `Cycle` API should attest to at compile
+    // time, so callers can verify it holds for their choice of curve rather
+    // than relying on this ad-hoc local justification.
+    let mut bank = NonzeroBank::new_unchecked();
+
+    let zeta = D::F::ZETA;
+    let one = Element::one();
+    let two = D::F::from(2);
+    let zm1 = zeta - D::F::ONE;
+    let three_halves = D::F::from(3) * D::F::TWO_INVERSE;
+
+    // Normalize: c = x / y and r = c² x move p to (r, r) on y² = x³ + c⁶ b.
+    let c = p.x.divide(dr, &p.y)?;
+    let c2 = c.square(dr)?;
+    let r = c2.mul(dr, &p.x)?.into_inner();
+
+    // A₀ = [2] (-1)^{s₀} φ^{e₀} (r, r); the tangent at (r, r) has the linear
+    // slope 3r / 2.
+    let t = r.scale(dr, Coeff::Arbitrary(three_halves));
+    let two_r = r.double(dr);
+    let x2 = t.square(dr)?.sub(dr, &two_r);
+    let r_minus_x2 = r.sub(dr, &x2);
+    let y2 = t.mul(dr, &r_minus_x2)?.sub(dr, &r);
+    let twist = one.add_coeff(dr, &e0, Coeff::Arbitrary(zm1));
+    let sign = one.add_coeff(dr, &s0, Coeff::NegativeArbitrary(two));
+    let mut x = x2.mul(dr, &twist)?;
+    let mut y = y2.mul(dr, &sign)?;
+
+    for _ in 0..ENDOSCALAR_DIGITS {
+        let (xd, yd) = select(dr, &r)?;
+
+        // [3] A + D = ((A + D) + A) + A in seven gates: the intermediate
+        // y-coordinates cancel out of the slope equations
+        // (t₁ + t₂)(x₁ - x) = -2y and (t₂ + t₃)(x₂ - x) = -2y.
+        let neg_2y = y.scale(dr, Coeff::NegativeArbitrary(two));
+        let diff = xd.sub(dr, &x);
+        let den = bank.fold(dr, diff)?;
+        let t1 = yd.sub(dr, &y).divide(dr, &den)?;
+        let x1 = t1.square(dr)?.sub(dr, &x).sub(dr, &xd);
+        let diff = x1.sub(dr, &x);
+        let den = bank.fold(dr, diff)?;
+        let t2 = neg_2y.divide(dr, &den)?.sub(dr, &t1);
+        let x2 = t2.square(dr)?.sub(dr, &x1).sub(dr, &x);
+        let diff = x2.sub(dr, &x);
+        let den = bank.fold(dr, diff)?;
+        let t3 = neg_2y.divide(dr, &den)?.sub(dr, &t2);
+        let x3 = t3.square(dr)?.sub(dr, &x2).sub(dr, &x);
+        let x_minus_x3 = x.sub(dr, &x3);
+        let y3 = t3.mul(dr, &x_minus_x3)?.sub(dr, &y);
+        x = x3;
+        y = y3;
+    }
+
+    // Move the result back: x = X / c², y = Y / c³. The result is a nonzero
+    // multiple of p, so its coordinates are nonzero.
+    let c3 = c2.mul(dr, &c)?;
+    let x = x.divide(dr, &c2)?;
+    let y = y.divide(dr, &c3)?;
+
+    Ok(Point::new_unchecked(
+        Nonzero::new_unchecked(x),
+        Nonzero::new_unchecked(y),
+    ))
+}
+
+/// The lift's initial accumulator
+/// $2 (1 - 2 s_0)(1 + (\lambda - 1) e_0)$, in one gate for $s_0 e_0$.
+fn lift_init<'dr, D: Driver<'dr>>(
+    dr: &mut D,
+    s0: &Boolean<'dr, D>,
+    e0: &Boolean<'dr, D>,
+) -> Result<Element<'dr, D>> {
+    let lm1 = D::F::ZETA - D::F::ONE;
+    let two = D::F::from(2);
+
+    // 2 (1 - 2 s₀) (1 + (λ - 1) e₀) = 2 + 2 (λ - 1) e₀ - 4 s₀ - 4 (λ - 1) s₀ e₀.
+    let s0e0 = s0.and(dr, e0)?;
+    Ok(Element::constant(dr, two)
+        .add_coeff(dr, &e0.element(), Coeff::Arbitrary(lm1.double()))
+        .add_coeff(dr, &s0.element(), Coeff::NegativeArbitrary(two.double()))
+        .add_coeff(
+            dr,
+            &s0e0.element(),
+            Coeff::NegativeArbitrary(lm1.double().double()),
+        ))
+}
+
+/// Folds the digits into the lift's accumulator by Horner's rule in radix 3.
+/// `digit` yields each digit's $(s, e_1, e_2, e_1 e_2)$ in turn; a digit
+/// then costs one gate, for its sign times its unsigned value.
+fn lift_digits<'dr, D: Driver<'dr>>(
+    dr: &mut D,
+    mut acc: Element<'dr, D>,
+    mut digit: impl FnMut(
+        &mut D,
+    ) -> Result<(
+        Boolean<'dr, D>,
+        Boolean<'dr, D>,
+        Boolean<'dr, D>,
+        Boolean<'dr, D>,
+    )>,
+) -> Result<Element<'dr, D>> {
+    let lambda = D::F::ZETA;
+    let lm1 = lambda - D::F::ONE;
+    let l2m1 = lambda.square() - D::F::ONE;
+    let three_minus_lambda = D::F::from(3) - lambda;
+    let two = D::F::from(2);
+    let one = Element::one();
+
+    for _ in 0..ENDOSCALAR_DIGITS {
+        let (s, e1, e2, e1e2) = digit(dr)?;
+
+        // v = {1, λ, λ², 1 - λ}[e₁, e₂]
+        //   = 1 + (λ - 1) e₁ + (λ² - 1) e₂ + (3 - λ) e₁ e₂.
+        let v = one
+            .add_coeff(dr, &e1.element(), Coeff::Arbitrary(lm1))
+            .add_coeff(dr, &e2.element(), Coeff::Arbitrary(l2m1))
+            .add_coeff(dr, &e1e2.element(), Coeff::Arbitrary(three_minus_lambda));
+        let sign = one.add_coeff(dr, &s.element(), Coeff::NegativeArbitrary(two));
+        let d = sign.mul(dr, &v)?;
+
+        // acc = 3 acc + d.
+        acc = acc.scale(dr, Coeff::Arbitrary(D::F::from(3))).add(dr, &d);
+    }
+
+    Ok(acc)
 }
 
 /// Lifts an endoscalar to a field element (computes the effective scalar).
@@ -763,10 +1049,10 @@ mod tests {
     };
 
     use super::{
-        Always, Element, Emulator, Endoscalar, EndoscalarChallenge, EndoscalarRangeError, Maybe,
-        Point, Uendo,
+        Always, Boolean, Demoted, Element, Emulator, Endoscalar, EndoscalarChallenge,
+        EndoscalarRangeError, HoistedEndoscalar, Maybe, Point, Uendo,
     };
-    use crate::{Simulator, allocator::Standard};
+    use crate::{Simulator, allocator::Standard, vec::CollectFixed};
 
     pub struct EndoscalarTest {
         pub value: Uendo,
@@ -1088,6 +1374,89 @@ mod tests {
 
             Ok(())
         })?;
+
+        Ok(())
+    }
+
+    /// The hoisted gadget scales and lifts exactly as the plain one, at its
+    /// pinned gate counts, and its product contract costs two gates a digit.
+    #[test]
+    fn test_hoisted_endoscalar() -> Result<()> {
+        let p = EpAffine::generator();
+        let r = random_endoscalar();
+        let expected = EndoscalarTest { value: r }.scale(&p);
+        let expected_lift: Fp = EndoscalarTest { value: r }.lift();
+
+        Simulator::simulate((p, r), |dr, witness| {
+            let (p, r) = witness.cast();
+            let p = Point::alloc(dr, p.clone())?;
+            let r = HoistedEndoscalar::alloc(dr, r.clone())?;
+
+            dr.reset();
+            assert_eq!(r.group_scale(dr, &p)?.value().take(), expected);
+            assert_eq!(dr.num_gates(), 3 + 4 + 9 * super::ENDOSCALAR_DIGITS + 3);
+
+            dr.reset();
+            assert_eq!(*r.lift(dr)?.value().take(), expected_lift);
+            assert_eq!(dr.num_gates(), 1 + super::ENDOSCALAR_DIGITS);
+
+            dr.reset();
+            r.enforce_products(dr)?;
+            assert_eq!(dr.num_gates(), 2 * super::ENDOSCALAR_DIGITS);
+
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+
+    /// A product wire that is not the product of its bits changes the
+    /// scaled point and the lift, and fails `enforce_products`: the products
+    /// are a contract, not a convenience.
+    #[test]
+    fn test_hoisted_endoscalar_products_are_binding() -> Result<()> {
+        let p = EpAffine::generator();
+        let r = random_endoscalar();
+        let honest = EndoscalarTest { value: r }.scale(&p);
+        let honest_lift: Fp = EndoscalarTest { value: r }.lift();
+
+        // Corrupt the first digit's `e₁ e₂` wire whichever way flips it.
+        let corrupt =
+            |dr: &mut Simulator<Fp>, r: &Uendo| -> Result<HoistedEndoscalar<'_, Simulator<Fp>>> {
+                let (p0, _) = HoistedEndoscalar::<Simulator<Fp>>::digit_products(r, 0);
+                let endoscalar = Endoscalar::alloc(dr, Always::<Uendo>::just(|| *r))?;
+                let products = (0..super::ENDOSCALAR_PRODUCTS)
+                    .map(|k| {
+                        let (p, q) = HoistedEndoscalar::<Simulator<Fp>>::digit_products(r, k / 2);
+                        let value = if k == 0 {
+                            !p0
+                        } else if k % 2 == 0 {
+                            p
+                        } else {
+                            q
+                        };
+                        let bit = Boolean::alloc(dr, &mut (), Always::<bool>::just(|| value))?;
+                        Demoted::new(&bit)
+                    })
+                    .try_collect_fixed()?;
+                Ok(HoistedEndoscalar {
+                    endoscalar,
+                    products,
+                })
+            };
+
+        let outcome = Simulator::simulate((p, r), |dr, witness| {
+            let (p, r) = witness.cast();
+            let p = Point::alloc(dr, p.clone())?;
+            let r = corrupt(dr, &r.take())?;
+            assert_ne!(r.group_scale(dr, &p)?.value().take(), honest);
+            assert_ne!(*r.lift(dr)?.value().take(), honest_lift);
+            r.enforce_products(dr)
+        });
+        assert!(
+            outcome.is_err(),
+            "a corrupted product must fail the contract"
+        );
 
         Ok(())
     }

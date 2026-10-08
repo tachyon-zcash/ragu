@@ -1,7 +1,7 @@
 # Endoscalars
 
 Introduced in the [Halo protocol](https://eprint.iacr.org/2019/1021), an
-_endoscalar_ $\endo{s}\in\{0,1\}^\lambda$ (where $\lambda = 134$)
+_endoscalar_ $\endo{s}\in\{0,1\}^\lambda$ (where $\lambda = 143$)
 is a small binary string used to perform scalar multiplication on curves with
 an efficient endomorphism (such as both Pasta curves).
 The endoscalar space is smaller than both $\F_p$ and $\F_q$, allowing it to
@@ -58,7 +58,7 @@ d = (-1)^s \cdot \{1, \lambda, \lambda^2, 1 - \lambda\}[e_1, e_2],
 $$
 
 and the walk is $A_0 = [2] (-1)^{s_0} \phi^{e_0}(G)$, $A_{i+1} = [3] A_i +
-[d_i] G$ over $n = 44$ digits. The eight digits are exactly the nonzero
+[d_i] G$ over $n = 47$ digits. The eight digits are exactly the nonzero
 residues of $\mathbb{Z}[\lambda]$ modulo $3$, so an expansion decodes uniquely
 digit by digit and the map from bit strings to scalars is injective. Any two
 distinct encodings differ by an element of norm below $33 \cdot 9^{n}$, far
@@ -77,8 +77,24 @@ curve on which it has coordinates $(r, r)$, by $(x, y) \mapsto (c^2 x, c^3 y)$
 with $c = x / y$; there every digit multiple of the base point has coordinates
 affine in $r$. With the three gates of that normalization, four for the
 initial doubling and three to move the result back, an endoscaling costs
-$10 n + 10$ gates: $450$ at the 134 bits used, where the radix-2 walk would
-cost $476$, and $430$ against $455$ at 128 bits.
+$10 n + 10$ gates: $430$ against $455$ for the radix-2 walk at 128 bits.
+
+### Hoisted digit products
+
+The selector's three gates are two products of $r$ with bit-linear forms
+and one product of bits, $(u + v - 1) h$. Every endoscaling step of a fuse
+scales by the same $\beta$, so the bit-only part of the selection can be
+computed once rather than once per endoscaling: the walk stages carry, for
+every digit, the products $e_1 e_2$ and $e_1 e_2 s$ beside the bits, and the
+circuit that owns the stage's contracts (`bind_endoscalar` natively, the
+nested `export`) enforces them once, two gates per digit, next to the bits'
+booleanity. With those wires in hand both coordinates of the digit point are
+$r$ times a linear form plus a linear form, so a step selects in two gates
+per digit, $9 n + 10$ per endoscaling, and the lift in the nested
+`compute_v` costs one gate per digit. That is what lets $\lambda = 143$ fit
+the same steps that held $128$ bits of the radix-2 walk: $433$ gates per
+endoscaling in a step against $455$ before, with the ten binder challenges
+widened to the same $143$ bits on the plain three-gate selector.
 
 Consider a random verifier challenge $\alpha\in\F_p$ produced in a circuit over
 $\F_p$ where we want to compute $\alpha\cdot G\in\G_1$.

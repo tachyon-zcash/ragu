@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 9324b374a6c4220973236f4fa861a1c5deb459203d338ab387e927ca52d1877d # shrinks to inputs = Inputs { proof_seed: 626504081819303447, verifier_seed: 10749306666350212033, left: 0x0d5b1962de8bc2fcd5d1094924c13392d6924897282eb056b36ac21c215b1602, right: 0x057c854b8f2e0fbf02fc06874232e792fc252acd096c84ccaf7e10554f25eb62, salt: 0x05727dbda81e8a3ec227992868d23fe4443c0b1a2f9682ecb102e66057d7fa1f, left_depth: 2, right_depth: 1 }, pair = (43, 46), native_delta = 0x000000000000000000000000000000000000000000000004d0af1e33cd51fe46, nested_delta = 0x00000000000000000000000000000000000000000000000504ed89339a007ee8

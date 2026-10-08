@@ -232,6 +232,7 @@ mod registry {
             OuterErrorFinalStaged,
             EvalFinalStaged,
             PointsWalkFinalStaged,
+            PreambleFinalStaged,
         ]
         .into_iter()
         .map(InternalCircuitIndex::circuit_index)
@@ -356,7 +357,7 @@ mod stages {
         Cycle, Result,
         pasta::{EpAffine, EqAffine, Fp, Fq},
     };
-    use ragu_primitives::{ENDOSCALAR_BITS, ENDOSCALAR_DIGITS, Uendo};
+    use ragu_primitives::{ENDOSCALAR_BITS, ENDOSCALAR_DIGITS, ENDOSCALAR_PRODUCTS, Uendo};
     use ragu_testing::strategies;
     use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
@@ -400,11 +401,12 @@ mod stages {
         assert!(first < second && second < ENDOSCALAR_DIGITS);
         assert_ne!(delta, F::ZERO);
         let reader = StageReader::new(poly);
-        let mut bits: Vec<_> = wires.iter().map(|&wire| reader.read(wire)).collect();
-        assert_eq!(bits.len(), ENDOSCALAR_BITS);
+        let mut values: Vec<_> = wires.iter().map(|&wire| reader.read(wire)).collect();
+        assert_eq!(values.len(), ENDOSCALAR_BITS + ENDOSCALAR_PRODUCTS);
+        let (bits, products) = values.split_at_mut(ENDOSCALAR_BITS);
         assert!(bits.iter().all(|bit| *bit == F::ZERO || *bit == F::ONE));
         let packed = Uendo::from_le_bits(bits.iter().map(|bit| *bit == F::ONE));
-        let original = lifted(&bits);
+        let original = lifted(bits);
         assert_eq!(original, ragu_primitives::lift_endoscalar(packed));
 
         // Digit i's sign wire weighs -2 * 3^(digits - 1 - i) times its
@@ -418,9 +420,30 @@ mod stages {
             * unsigned(second).invert().unwrap();
         bits[2 + 3 * first] += delta;
         bits[2 + 3 * second] -= compensation;
+        // Keep each changed digit's hoisted `e₁ e₂ s` wire the product of
+        // its wires, so that only booleanity is violated.
+        for digit in [first, second] {
+            products[2 * digit + 1] = products[2 * digit] * bits[2 + 3 * digit];
+        }
         assert!(bits.iter().any(|bit| *bit != F::ZERO && *bit != F::ONE));
-        assert_eq!(lifted(&bits), original);
-        support::set_wires(poly, wires, &bits);
+        assert_eq!(lifted(bits), original);
+        support::set_wires(poly, wires, &values);
+    }
+
+    /// Replace a digit's hoisted `e₁ e₂` wire with a value that is not the
+    /// product of its bits, keeping every bit honest.
+    fn corrupt_product<F: Field>(
+        poly: &mut sparse::Polynomial<F, R>,
+        wires: &[usize],
+        selector: usize,
+        delta: F,
+    ) {
+        assert_ne!(delta, F::ZERO);
+        let reader = StageReader::new(poly);
+        let mut values: Vec<_> = wires.iter().map(|&wire| reader.read(wire)).collect();
+        assert_eq!(values.len(), ENDOSCALAR_BITS + ENDOSCALAR_PRODUCTS);
+        values[ENDOSCALAR_BITS + 2 * (selector % ENDOSCALAR_DIGITS)] += delta;
+        support::set_wires(poly, wires, &values);
     }
 
     /// Keep the last interstitial (the walked commitment) fixed and place an
@@ -451,6 +474,7 @@ mod stages {
     #[derive(Clone, Copy, Debug)]
     enum Mutation {
         Bits((usize, usize)),
+        Product(usize),
         Point(usize),
     }
 
@@ -467,7 +491,7 @@ mod stages {
         assert!(app.verify(&honest, inputs.verifier_rng())?);
         assert!(app.verify(&sibling, inputs.verifier_rng())?);
         let (native_wires, nested_wires) = match mutation {
-            Mutation::Bits(_) => (
+            Mutation::Bits(_) | Mutation::Product(_) => (
                 stage_wire_indices::<_, R, WalkStage<EpAffine>>(|stage| {
                     wires_of(&stage.endoscalar)
                 })?,
@@ -499,6 +523,12 @@ mod stages {
                         pair,
                         native_delta,
                     ),
+                    Mutation::Product(selector) => corrupt_product(
+                        &mut changed.native_points_walk_rx,
+                        &native_wires,
+                        selector,
+                        native_delta,
+                    ),
                     Mutation::Point(selector) => off_curve_point::<EpAffine>(
                         &mut changed.native_points_walk_rx,
                         &native_wires,
@@ -518,6 +548,19 @@ mod stages {
                             &mut changed.nested_endoscalar_rx,
                             &nested_wires,
                             pair,
+                            nested_delta,
+                        );
+                        changed.nested_endoscalar_commitment.0 =
+                            ReferenceBackend::sparse_commit_to_affine(
+                                &changed.nested_endoscalar_rx,
+                                C::nested_generators(app.params),
+                            );
+                    }
+                    Mutation::Product(selector) => {
+                        corrupt_product(
+                            &mut changed.nested_endoscalar_rx,
+                            &nested_wires,
+                            selector,
                             nested_delta,
                         );
                         changed.nested_endoscalar_commitment.0 =
@@ -591,6 +634,17 @@ mod stages {
             nested_delta in strategies::nonzero_prime_field_element::<Fq>(),
         ) {
             support::with_app(|app| check(app, &inputs, Mutation::Bits(pair), native_delta, nested_delta)).unwrap();
+        }
+
+        #[test]
+        #[ignore = "recursion regression suite: run by the scheduled heavy-tests workflow"]
+        fn corrupted_hoisted_products_reject_through_two_generations(
+            inputs in support::inputs(),
+            selector in any::<usize>(),
+            native_delta in strategies::nonzero_prime_field_element::<Fp>(),
+            nested_delta in strategies::nonzero_prime_field_element::<Fq>(),
+        ) {
+            support::with_app(|app| check(app, &inputs, Mutation::Product(selector), native_delta, nested_delta)).unwrap();
         }
 
         #[test]

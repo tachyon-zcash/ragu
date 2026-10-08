@@ -51,7 +51,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    ENDOSCALAR_BITS, Endoscalar, Point, Uendo,
+    ENDOSCALAR_BITS, ENDOSCALAR_PRODUCTS, HoistedEndoscalar, Point, Uendo,
     consistent::Consistent,
     vec::{ConstLen, FixedVec, Len},
 };
@@ -468,7 +468,7 @@ pub struct F<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
 #[derive(Gadget)]
 pub struct Walk<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     #[ragu(gadget)]
-    pub endoscalar: Endoscalar<'dr, D>,
+    pub endoscalar: HoistedEndoscalar<'dr, D>,
     #[ragu(gadget)]
     pub interstitials: FixedVec<Point<'dr, D, C>, NumSteps>,
 }
@@ -650,8 +650,9 @@ impl<C: Affine, R: Rank> staging::Stage<C::Base, R> for WalkStage<C> {
     type OutputKind = Kind![C::Base; Walk<'_, _, C>];
 
     fn values() -> usize {
-        // The endoscalar's bits, then (x, y) of one interstitial per step.
-        ENDOSCALAR_BITS + 2 * NumSteps::len()
+        // The endoscalar's bits and hoisted products, then (x, y) of one
+        // interstitial per step.
+        ENDOSCALAR_BITS + ENDOSCALAR_PRODUCTS + 2 * NumSteps::len()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -663,7 +664,7 @@ impl<C: Affine, R: Rank> staging::Stage<C::Base, R> for WalkStage<C> {
         Self: 'dr,
     {
         Ok(Walk {
-            endoscalar: Endoscalar::alloc(dr, witness.as_ref().map(|w| w.endoscalar))?,
+            endoscalar: HoistedEndoscalar::alloc(dr, witness.as_ref().map(|w| w.endoscalar))?,
             interstitials: FixedVec::try_from_fn(|i| {
                 Point::alloc(dr, witness.as_ref().map(|w| w.interstitials[i]))
             })?,

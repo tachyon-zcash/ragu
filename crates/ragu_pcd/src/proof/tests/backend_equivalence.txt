@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 6aae8c24718f89cb970b5b4543a4e1be7963a397c473352f5150749a47a210cc # shrinks to proof_seed = 2, verifier_seed = 4294967324, dummy_circuits = 3, padded_slot_selector = 14406566924854604316
+cc 96ade01a21939cac0bb0dd92ddf4239f429a74db120ac6cf5ce9c7cb53713c6f # shrinks to proof_seed = 5, verifier_seed = 129, dummy_circuits = 1, corruption_inputs = CorruptionInputs { p_blind_delta: 0x39707a75729b8fc2d3fe3a4d43b6400fc82a52cf78d7bfc32afacef385a6619c, p_eval_delta: 0x0000000000000000000000000000000000000000000000000000000000000002, ab_c_delta: 0x000000000000000000000000000000000000000000000004e1ed1449c0187028, circuit_id: 21519818, challenge_u_delta: 0x112dc52c0085647ec96b24d574e45c56cf0f43e4ceb7d0ed84f873ca4da828a5, challenge_x_delta: 0x40000000000000000000000000000000224698fc094cf91af43d67abb9f227c8, challenge_y_delta: 0x00000000000000000000000000000000000000000000000039a97bad9be54105, left_header_len: 2, right_header_len: 6 }

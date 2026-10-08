@@ -188,19 +188,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         builder.set_native_outer_collapse_rx(outer_collapse_rx);
 
         // Native circuit binding the children's nested beta commitments.
-        let (bind_beta_trace, unified) = native::circuits::bind_beta::Circuit::<
-            C,
-            R,
-            HEADER_SIZE,
-            native::RevdotParameters,
-        >::new(self.params)
-        .trace(native::circuits::bind_beta::Witness {
-            unified,
-            binding: &native_points.binding,
-            preamble_witness,
-            outer_error_witness: native_outer_error_witness,
-        })?
-        .into_parts();
+        let (bind_beta_trace, unified) =
+            native::circuits::bind_beta::Circuit::<C, R, HEADER_SIZE>::new(self.params)
+                .trace(native::circuits::bind_beta::Witness {
+                    unified,
+                    binding: &native_points.binding,
+                    preamble_witness,
+                })?
+                .into_parts();
         let bind_beta_rx = self.native_registry.assemble(
             &bind_beta_trace,
             native::InternalCircuitIndex::BindBetaCircuit.circuit_index(),

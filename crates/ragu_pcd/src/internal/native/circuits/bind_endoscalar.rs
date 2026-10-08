@@ -3,9 +3,10 @@
 //! and the persistent polynomial commitments to the unified instance.
 //!
 //! The endoscaling steps walk the nested batch's commitments with the bits
-//! the [`WalkStage`] holds. This circuit reads `pre_beta` from the unified
-//! instance, extracts the endoscalar from it exactly as `compute_v` does,
-//! and enforces the stage's bits equal to it, so that the walk is by the
+//! and hoisted bit products the [`WalkStage`] holds. This circuit reads
+//! `pre_beta` from the unified instance, extracts the endoscalar from it
+//! exactly as `compute_v` does, enforces the stage's bits equal to it and
+//! its products the products of those bits, so that the walk is by the
 //! transcript's $\beta$. It loads every input stage enforced, so that every
 //! point the walk consumes lies on the curve. It covers the
 //! [`nested_p_commitment`] slot, enforcing it equal to the walk's last
@@ -120,6 +121,7 @@ impl<C: Cycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circuit<C, R> 
         for (staged, extracted) in walk.endoscalar.bits().zip(extracted.bits()) {
             staged.element().enforce_equal(dr, &extracted.element())?;
         }
+        walk.endoscalar.enforce_products(dr)?;
 
         // The walk's last interstitial is P_n: pin it to the instance, where
         // a parent reads it.

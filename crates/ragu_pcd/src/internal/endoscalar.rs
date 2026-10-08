@@ -36,7 +36,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    ENDOSCALAR_BITS, Endoscalar, GadgetExt, NonzeroBank, Point, Uendo,
+    ENDOSCALAR_BITS, ENDOSCALAR_PRODUCTS, GadgetExt, HoistedEndoscalar, NonzeroBank, Point, Uendo,
     consistent::Consistent,
     vec::{FixedVec, Len},
 };
@@ -85,7 +85,9 @@ impl<const NUM_POINTS: usize, const E: usize> Len for NumStepsLen<NUM_POINTS, E>
     }
 }
 
-/// Stage for allocating the endoscalar witness.
+/// Stage for allocating the endoscalar witness: its bits and, hoisted so
+/// that every step selects its digit points in two gates, its per-digit bit
+/// products. The export circuit enforces both contracts once.
 #[derive(Default)]
 pub struct EndoscalarStage;
 
@@ -93,11 +95,11 @@ impl<F: Field, R: Rank> Stage<F, R> for EndoscalarStage {
     type Parent = ();
 
     fn values() -> usize {
-        ENDOSCALAR_BITS
+        ENDOSCALAR_BITS + ENDOSCALAR_PRODUCTS
     }
 
     type Witness<'source> = Uendo;
-    type OutputKind = Kind![F; Endoscalar<'_, _>];
+    type OutputKind = Kind![F; HoistedEndoscalar<'_, _>];
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
         &self,
@@ -107,7 +109,7 @@ impl<F: Field, R: Rank> Stage<F, R> for EndoscalarStage {
     where
         Self: 'dr,
     {
-        Endoscalar::alloc(dr, witness)
+        HoistedEndoscalar::alloc(dr, witness)
     }
 }
 
