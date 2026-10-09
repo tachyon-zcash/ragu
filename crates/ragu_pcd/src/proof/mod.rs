@@ -10,6 +10,10 @@
 #![allow(dead_code)]
 
 pub(crate) mod builder;
+// Bundle regressions recommit forged slots to bypass the honest proving API.
+#[cfg(test)]
+#[path = "../../tests/app_slots.rs"]
+mod slot_tests;
 // These regression suites edit proof fields directly. Keep their sources
 // grouped by subject in tests/ and their access confined to the test build.
 // Their properties prove tens of production-rank proofs each, so they are

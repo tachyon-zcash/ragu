@@ -156,7 +156,7 @@ fn verify_native_round(
 ) -> Option<Openings<EqAffine>> {
     let mut t = transcript();
     verify_native::<Pasta, TestR, ReferenceBackend>(
-        round.proof.circuit_id(),
+        round.proof.circuit_ids(),
         |component| round.proof.native_commitment(component),
         &app.native_registry,
         round.y,

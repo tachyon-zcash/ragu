@@ -236,6 +236,30 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// application does not supply the stage's size or values. Every bundle
     /// reserves the largest shared layout registered in the application.
     ///
+    /// Different connection types cannot be bundled, even if their fields
+    /// have identical shapes:
+    ///
+    /// ```compile_fail,E0271
+    /// use ragu_core::{drivers::Driver, gadgets::{Gadget, Kind}, pasta::{Fp, Pasta}};
+    /// use ragu_circuits::polynomials::ProductionRank;
+    /// use ragu_pcd::{ApplicationBuilder, step::Step};
+    /// use ragu_primitives::{Element, shared::Shared};
+    ///
+    /// #[derive(Gadget, Shared)]
+    /// struct ConnectionA<'dr, D: Driver<'dr>> { value: Element<'dr, D> }
+    /// #[derive(Gadget, Shared)]
+    /// struct ConnectionB<'dr, D: Driver<'dr>> { value: Element<'dr, D> }
+    ///
+    /// fn mismatched<A, B>(builder: ApplicationBuilder<'static, Pasta, ProductionRank, 4>, steps: (A, B))
+    /// where
+    ///     A: Step<Pasta, Shared = Kind![Fp; ConnectionA<'_, _>]> + 'static,
+    ///     B: Step<Pasta, Shared = Kind![Fp; ConnectionB<'_, _>],
+    ///         Left = A::Left, Right = A::Right, Output = A::Output> + 'static,
+    /// {
+    ///     let _ = builder.register_bundle(steps); // The shared types must match.
+    /// }
+    /// ```
+    ///
     /// # Cost
     ///
     /// Every bundle step reserves `ceil(n / 2)` gates, where `n` is the
@@ -320,7 +344,11 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     #[cfg(test)]
     pub(crate) fn register_dummy_circuits(mut self, count: usize) -> Result<Self> {
         for _ in 0..count {
-            self.native_registry = self.native_registry.register_circuit(())?;
+            self.application_circuits
+                .push(Box::new(|registry, _| registry.register_circuit(())));
+            let circuit = step::Index::new(self.num_application_steps)
+                .circuit_index(self.num_application_steps + 1)?;
+            self.application_bundles.push([circuit; APPLICATION_SLOTS]);
             self.num_application_steps += 1;
         }
         Ok(self)

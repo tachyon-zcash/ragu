@@ -103,9 +103,11 @@ fn native_shapes_match_the_decider() {
     let mut builder = Builder::<_, Fp, TestR, ReferenceBackend>::new(&app.native_registry, y, z);
     native::claims::build(&NativePolys(proof), &mut builder).unwrap();
 
-    let shapes = super::native_shapes(proof.circuit_id(), z, &[]).unwrap();
+    let shapes = super::native_shapes(proof.circuit_ids(), z, &[]).unwrap();
     assert_eq!(shapes[0].kind, Kind::Raw);
-    assert_eq!(shapes[1].kind, Kind::Circuit(proof.circuit_id()));
+    for (slot, id) in proof.circuit_ids().into_iter().enumerate() {
+        assert_eq!(shapes[1 + slot].kind, Kind::Circuit(id));
+    }
     check(
         &shapes,
         |component| proof[component].clone(),
@@ -156,8 +158,8 @@ fn wire_bindings_follow_the_claims() {
         alloc::vec![Fp::ONE, Fp::ZERO],
         Fp::from(7),
     )];
-    let shapes = super::native_shapes(proof.circuit_id(), z, &masked).unwrap();
-    let unmasked = super::native_shapes(proof.circuit_id(), z, &[]).unwrap();
+    let shapes = super::native_shapes(proof.circuit_ids(), z, &masked).unwrap();
+    let unmasked = super::native_shapes(proof.circuit_ids(), z, &[]).unwrap();
     assert_eq!(shapes.len(), unmasked.len() + 1);
     let last = shapes.last().unwrap();
     assert_eq!(last.kind, Kind::Masked(0));
