@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `shared::Shared`, the wire schema of a connection shared by application
+  circuits, implemented for `Element`, `FixedVec` and `()`, and re-exported its
+  derive.
+
 ## [0.0.0] - 2025-07-30
 
 ### Added

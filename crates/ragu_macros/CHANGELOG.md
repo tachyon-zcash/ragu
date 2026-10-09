@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added the `Shared` derive for named gadget structs: a fixed wire layout and
+  witness collection in declaration order, refusing skipped, raw-wire and
+  witness-only fields.
+
 ## [0.0.0] - 2025-07-29
 
 ### Added

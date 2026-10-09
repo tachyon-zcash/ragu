@@ -30,6 +30,7 @@ mod point;
 pub mod poseidon;
 pub mod promotion;
 mod sendable;
+pub mod shared;
 mod simulator;
 pub mod suffix;
 mod util;
