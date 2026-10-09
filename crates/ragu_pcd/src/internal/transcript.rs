@@ -7,7 +7,7 @@
 //!
 //! ```rust,ignore
 //! // Initialize transcript with mandatory domain separation
-//! let mut transcript = Transcript::new(dr, params, b"ragu-pcd-v1")?;
+//! let mut transcript = Transcript::new(dr, params, crate::RAGU_TAG)?;
 //!
 //! // Absorb a single field element via Buffer trait
 //! value.write(dr, &mut transcript)?;

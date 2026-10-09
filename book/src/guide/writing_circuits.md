@@ -24,6 +24,7 @@ Every Step must implement this core structure:
 ```rust
 pub trait Step<C: Cycle> {
     const INDEX: Index;
+    type Shared: Shared<C::CircuitField>;
     type Witness<'source>;
     type Aux<'source>;
     type Left: Header<C::CircuitField>;
@@ -42,6 +43,7 @@ pub trait Step<C: Cycle> {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
+        Bound<'dr, D, Self::Shared>,
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>;
@@ -68,6 +70,10 @@ distinct index starting from 0.
 type Witness<'source> = FieldElement;  // What the prover knows
 ```
 
+**Shared**: The typed connection between steps in a bundle. A standalone step
+declares `type Shared = ();` and returns `()` in the shared-gadget position.
+Bundle steps use the same named shared gadget type, described below.
+
 **Aux**: Auxiliary data returned alongside the output header value (e.g., for pipelining to future steps)
 ```rust
 type Aux<'source> = FieldElement;  // What to return
@@ -90,7 +96,7 @@ This is where the circuit logic is implemented. The function:
 1. Receives witness data from the prover
 2. Receives left/right header data as `DriverValue`s
 3. Performs computation (constraints)
-4. Returns encoded proofs and auxiliary output
+4. Returns encoded headers, the shared gadget, output data, and auxiliary output
 
 ## Two Types of Steps
 
@@ -180,7 +186,7 @@ type Output = YourHeader;
 
 Usage:
 ```rust
-let (proof, aux) = app.seed(&mut rng, CreateLeaf { ... }, witness)?;
+let (pcd, aux) = app.seed(&mut rng, CreateLeaf { ... }, witness)?;
 ```
 
 ### Pattern 2: Fuse Steps (Combine Proofs)
@@ -193,8 +199,107 @@ type Output = HeaderC;
 
 Usage:
 ```rust
-let (proof, aux) = app.fuse(&mut rng, CombineNodes { ... }, (), left_pcd, right_pcd)?;
+let (pcd, aux) = app.fuse(&mut rng, CombineNodes { ... }, (), left_pcd, right_pcd)?;
 ```
+
+Every proof carries two application circuit slots. A step
+registered with `register(A)` is registered as the repeated bundle `(A, A)`:
+`seed` and `fuse` take it alone, trace it once, and fill every slot with that
+one claim. An application computation that needs more gates than one circuit
+holds can use two steps, registered together with `register_bundle` and proved with
+`seed_bundle` or `fuse_bundle`:
+
+```rust
+let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    .with_registry_tags(tags)
+    .register_bundle((StepA, StepB))?
+    .finalize(params)?;
+```
+
+The registry tags and parameters come from the application's setup, as for
+standalone steps. No staging configuration is needed.
+
+```rust
+let (pcd, aux) = app.fuse_bundle(
+    &mut rng,
+    (StepA { ... }, StepB { ... }),
+    (witness_a, witness_b),
+    left_pcd,
+    right_pcd,
+)?;
+```
+
+The steps use the same header types and consecutive indices. They cannot
+be proved separately, substituted, or reordered: `fuse` requires a step
+registered on its own, bundle entry points require both steps in the registered order,
+and both verifiers refuse a proof whose slots do not hold the registered bundle.
+
+Both steps implement `Step` and declare
+the **same shared gadget type**: one named collection of circuit values that
+must agree between them. Derive `Gadget` and `Shared` on that struct:
+
+```rust
+use ragu_core::{drivers::Driver, gadgets::{Gadget, Kind}};
+use ragu_primitives::{Element, shared::Shared};
+
+#[derive(Gadget, Shared)]
+struct Connection<'dr, D: Driver<'dr>> {
+    input: Element<'dr, D>,
+    intermediate_state: Element<'dr, D>,
+}
+
+impl Step<Pasta> for StepA {
+    type Shared = Kind![Fp; Connection<'_, _>];
+    // INDEX, Witness, Left, Right, Output, Aux as for a Step.
+
+    fn witness<'dr, 'source: 'dr, D, const HEADER_SIZE: usize>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, LeftData>,
+        right: DriverValue<D, RightData>,
+    ) -> Result<...> {
+        // Allocate or compute these values in this circuit's normal logic.
+        let input = ...;
+        let intermediate_state = ...;
+        let shared = Connection { input, intermediate_state };
+        Ok(((left_header, right_header, output_header), shared, output_data, aux))
+    }
+}
+
+impl Step<Pasta> for StepB {
+    type Shared = Kind![Fp; Connection<'_, _>];
+    // Return the same struct, containing the actual values B uses or computes.
+    ...
+}
+```
+
+Ragu binds every corresponding wire automatically: A's `input` equals B's
+`input`, and A's `intermediate_state` equals B's `intermediate_state`. No
+shared size, positional shared array, or manual connecting equality is
+supplied. The derive includes every gadget field, supports fixed vectors and
+nested shared structs, and refuses skipped, raw-wire, or witness-only fields.
+Using different connection types in one bundle is a compile-time error, even
+if their fields have identical shapes.
+
+Each step must still constrain its own computation and return the actual
+values it uses. The shared type describes which values agree; it does not
+derive application mathematics or determine whether a connection is needed.
+The steps can prepare their witnesses sequentially, in either order, or
+independently in parallel when their data dependencies allow it. This does
+not change their registered slot order or the prover's current scheduling.
+
+Ragu derives its internal capacity from the largest shared gadget among the
+registered bundles and constructs the circuits during `finalize`. It pads
+smaller bundles internally. Each bundle step reserves `ceil(n / 2)`
+gates for the application-wide capacity `n`, and adds one connecting equality
+constraint per shared wire. Registration checks size arithmetic and capacity;
+finalization checks each complete circuit's gate and constraint budgets.
+Standalone steps, bootstrap, and rerandomization reserve no shared block.
+
+Recursive and terminal verification enforce the common stage, including
+proofs built outside the Rust API. The [protocol chapter](../protocol/recursion/public_inputs.md)
+explains the internal staging and binding checks.
 
 ### Pattern 3: Stateful Steps
 
