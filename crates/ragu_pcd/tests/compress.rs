@@ -61,6 +61,7 @@ struct Seed;
 
 impl Step<Pasta> for Seed {
     const INDEX: Index = Index::new(0);
+    type Shared = ();
     type Witness<'source> = Fp;
     type Aux<'source> = ();
     type Left = ();
@@ -79,6 +80,7 @@ impl Step<Pasta> for Seed {
             Encoded<'dr, D, Self::Right, HS>,
             Encoded<'dr, D, Self::Output, HS>,
         ),
+        (),
         DriverValue<D, Fp>,
         DriverValue<D, ()>,
     )>
@@ -92,6 +94,7 @@ impl Step<Pasta> for Seed {
                 Encoded::new(dr, allocator, right)?,
                 Encoded::new(dr, allocator, witness.clone())?,
             ),
+            (),
             witness,
             D::unit(),
         ))
@@ -164,7 +167,7 @@ fn rejects_what_the_decider_rejects() {
     };
     let corruptions: [(&str, fn(&App, &mut Proof<Pasta, TestR>)); 6] = [
         ("circuit id out of the domain", |_, p| {
-            p.circuit_id = CircuitIndex::new(u32::MAX as usize)
+            p.circuit_ids[0] = CircuitIndex::new(u32::MAX as usize)
         }),
         ("left header too long", |_, p| p.left_header.push(Fp::ZERO)),
         ("right header too short", |_, p| {
@@ -347,7 +350,9 @@ fn rejects_tampered_messages() {
     });
     tamper("bridge blinding", &|p| p.instance.bridge_alpha += Fq::ONE);
     tamper("native commitment", &|p| {
-        p.instance.native[3] = p.instance.native[4]
+        let hashes_1 = native_position(native::RxComponent::Rx(native::RxIndex::Hashes1));
+        let hashes_2 = native_position(native::RxComponent::Rx(native::RxIndex::Hashes2));
+        p.instance.native[hashes_1] = p.instance.native[hashes_2]
     });
     tamper("nested commitment", &|p| {
         p.instance.nested[0] = p.instance.nested[1]
@@ -368,7 +373,7 @@ fn rejects_tampered_messages() {
     tamper("header element", &|p| p.instance.right_header[0] += Fp::ONE);
     tamper("header length", &|p| p.instance.left_header.push(Fp::ZERO));
     tamper("circuit id", &|p| {
-        p.instance.circuit_id = CircuitIndex::new(u32::MAX as usize)
+        p.instance.circuit_ids[0] = CircuitIndex::new(u32::MAX as usize)
     });
     tamper("missing commitment", &|p| {
         p.instance.native.pop();

@@ -251,7 +251,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
 
 #[cfg(test)]
 mod tests {
-    use ragu_circuits::polynomials::TestRank;
+    use ragu_circuits::{CircuitExt, polynomials::TestRank};
     use ragu_core::{
         drivers::emulator::Emulator,
         gadgets::{Bound, Kind},
@@ -268,6 +268,7 @@ mod tests {
 
     type TestR = TestRank;
     const HEADER_SIZE: usize = 4;
+    const SHARED_SIZE: usize = 2;
 
     struct TestHeader;
 
@@ -289,6 +290,7 @@ mod tests {
 
     impl Step<Pasta> for TestStep {
         const INDEX: Index = Index::new(0);
+        type Shared = ();
         type Witness<'source> = ();
         type Aux<'source> = ();
         type Left = TestHeader;
@@ -307,6 +309,7 @@ mod tests {
                 Encoded<'dr, D, Self::Right, HS>,
                 Encoded<'dr, D, Self::Output, HS>,
             ),
+            (),
             DriverValue<D, Fp>,
             DriverValue<D, ()>,
         )> {
@@ -323,15 +326,71 @@ mod tests {
             let right_enc = Encoded::from_gadget(right_elem);
             let output_enc = Encoded::from_gadget(output_elem);
 
-            Ok(((left_enc, right_enc, output_enc), output_val, D::unit()))
+            Ok(((left_enc, right_enc, output_enc), (), output_val, D::unit()))
+        }
+    }
+
+    #[derive(Gadget, Shared)]
+    struct Pair<'dr, D: Driver<'dr>> {
+        a: Element<'dr, D>,
+        b: Element<'dr, D>,
+    }
+
+    /// A fragment whose output is the sum of its two shared circuit values.
+    struct SharedSum;
+
+    impl Step<Pasta> for SharedSum {
+        const INDEX: Index = Index::new(1);
+        type Shared = Kind![Fp; Pair<'_, _>];
+        type Witness<'source> = [Fp; 2];
+        type Aux<'source> = ();
+        type Left = TestHeader;
+        type Right = TestHeader;
+        type Output = TestHeader;
+
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
+            &self,
+            dr: &mut D,
+            witness: DriverValue<D, Self::Witness<'source>>,
+            left: DriverValue<D, Fp>,
+            right: DriverValue<D, Fp>,
+        ) -> Result<(
+            (
+                Encoded<'dr, D, Self::Left, HS>,
+                Encoded<'dr, D, Self::Right, HS>,
+                Encoded<'dr, D, Self::Output, HS>,
+            ),
+            Bound<'dr, D, Self::Shared>,
+            DriverValue<D, Fp>,
+            DriverValue<D, ()>,
+        )> {
+            let allocator = &mut Standard::new();
+            let left = Element::alloc(dr, allocator, left)?;
+            let right = Element::alloc(dr, allocator, right)?;
+            let shared = Pair {
+                a: Element::alloc(dr, allocator, witness.as_ref().map(|w| w[0]))?,
+                b: Element::alloc(dr, allocator, witness.map(|w| w[1]))?,
+            };
+            let output = shared.a.add(dr, &shared.b);
+            let value = output.value().map(|v| *v);
+            Ok((
+                (
+                    Encoded::from_gadget(left),
+                    Encoded::from_gadget(right),
+                    Encoded::from_gadget(output),
+                ),
+                shared,
+                value,
+                D::unit(),
+            ))
         }
     }
 
     #[test]
-    fn triple_const_len_returns_3n() {
-        assert_eq!(TripleConstLen::<1>::len(), 3);
-        assert_eq!(TripleConstLen::<4>::len(), 12);
-        assert_eq!(TripleConstLen::<10>::len(), 30);
+    fn instance_len_includes_bundle_and_headers() {
+        assert_eq!(InstanceLen::<1>::len(), APPLICATION_SLOTS + 3);
+        assert_eq!(InstanceLen::<4>::len(), APPLICATION_SLOTS + 12);
+        assert_eq!(InstanceLen::<10>::len(), APPLICATION_SLOTS + 30);
     }
 
     #[test]
@@ -339,7 +398,12 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep);
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(
+            TestStep,
+            [CircuitIndex::new(0); APPLICATION_SLOTS],
+            SHARED_SIZE,
+        )
+        .unwrap();
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
         let output = adapter
@@ -347,8 +411,8 @@ mod tests {
             .expect("witness should succeed")
             .into_output();
 
-        // Output should have 3 * HEADER_SIZE elements (left + right + output headers)
-        assert_eq!(output.len(), HEADER_SIZE * 3);
+        // The fixed bundle precedes the left, right and output headers.
+        assert_eq!(output.len(), APPLICATION_SLOTS + HEADER_SIZE * 3);
     }
 
     #[test]
@@ -356,7 +420,12 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep);
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(
+            TestStep,
+            [CircuitIndex::new(0); APPLICATION_SLOTS],
+            SHARED_SIZE,
+        )
+        .unwrap();
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
         let aux = adapter
@@ -364,7 +433,8 @@ mod tests {
             .expect("witness should succeed")
             .into_aux();
 
-        let ((left_header, right_header), output_data, _step_aux) = aux.take();
+        let ((left_header, right_header), output_data, _step_aux, shared) = aux.take();
+        assert!(shared.is_empty());
 
         // Left header should start with 10
         assert_eq!(left_header[0], Fp::from(10u64));
@@ -372,5 +442,157 @@ mod tests {
         assert_eq!(right_header[0], Fp::from(20u64));
         // Step aux should be 10 + 20 = 30
         assert_eq!(output_data, Fp::from(30u64));
+    }
+
+    /// The fragment returns its actual shared wires; the adapter exports
+    /// their values and binds those wires to the stage's reserved wires.
+    #[test]
+    fn fragment_exports_its_shared_gadget() {
+        let adapter = Adapter::<Pasta, SharedSum, TestR, HEADER_SIZE>::new(
+            SharedSum,
+            [CircuitIndex::new(0), CircuitIndex::new(1)],
+            SHARED_SIZE,
+        )
+        .unwrap();
+        let values = [Fp::from(3u64), Fp::from(4u64)];
+        let (_, aux) = adapter
+            .trace((Fp::from(10u64), Fp::from(20u64), values))
+            .expect("trace")
+            .into_parts();
+        let (_, output_data, (), shared) = aux;
+        assert_eq!(shared, values);
+        assert_eq!(output_data, Fp::from(7u64));
+
+        // A stage smaller than the fragment reads is refused.
+        assert!(
+            Adapter::<Pasta, SharedSum, TestR, HEADER_SIZE>::new(
+                SharedSum,
+                [CircuitIndex::new(0), CircuitIndex::new(1)],
+                SHARED_SIZE - 1,
+            )
+            .is_err()
+        );
+    }
+
+    // Deliberately broken implementations exercise checks independently of
+    // the derive macro: the actual gadget always contains two wires.
+    #[derive(Gadget)]
+    struct Malformed<'dr, D: Driver<'dr>, const SIZE: usize, const EXPORTS: usize> {
+        a: Element<'dr, D>,
+        b: Element<'dr, D>,
+    }
+
+    impl<F: udon::field::Field, const SIZE: usize, const EXPORTS: usize> Shared<F>
+        for Malformed<'static, PhantomData<F>, SIZE, EXPORTS>
+    {
+        fn num_values() -> Result<usize> {
+            Ok(SIZE)
+        }
+        fn write_shared<'dr, D: Driver<'dr, F = F>>(
+            this: &Malformed<'dr, D, SIZE, EXPORTS>,
+            values: &mut Vec<Element<'dr, D>>,
+        ) -> Result<()> {
+            values.extend([this.a.clone(), this.b.clone()].into_iter().take(EXPORTS));
+            Ok(())
+        }
+    }
+
+    struct MalformedFragment<const SIZE: usize, const EXPORTS: usize>;
+
+    impl<const SIZE: usize, const EXPORTS: usize> Step<Pasta> for MalformedFragment<SIZE, EXPORTS> {
+        const INDEX: Index = Index::new(1);
+        type Shared = Kind![Fp; Malformed<'_, _, SIZE, EXPORTS>];
+        type Witness<'source> = [Fp; 2];
+        type Aux<'source> = ();
+        type Left = TestHeader;
+        type Right = TestHeader;
+        type Output = TestHeader;
+
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
+            &self,
+            dr: &mut D,
+            witness: DriverValue<D, Self::Witness<'source>>,
+            left: DriverValue<D, Fp>,
+            right: DriverValue<D, Fp>,
+        ) -> Result<(
+            (
+                Encoded<'dr, D, TestHeader, HS>,
+                Encoded<'dr, D, TestHeader, HS>,
+                Encoded<'dr, D, TestHeader, HS>,
+            ),
+            Bound<'dr, D, Self::Shared>,
+            DriverValue<D, Fp>,
+            DriverValue<D, ()>,
+        )> {
+            let (headers, shared, output, aux) =
+                SharedSum.witness::<_, HS>(dr, witness, left, right)?;
+            Ok((
+                headers,
+                Malformed {
+                    a: shared.a,
+                    b: shared.b,
+                },
+                output,
+                aux,
+            ))
+        }
+    }
+
+    #[test]
+    fn malformed_shared_schemas_cannot_omit_wire_bindings() {
+        fn trace<const SIZE: usize, const EXPORTS: usize>() -> Result<()> {
+            Adapter::<Pasta, MalformedFragment<SIZE, EXPORTS>, TestR, HEADER_SIZE>::new(
+                MalformedFragment,
+                [CircuitIndex::new(0), CircuitIndex::new(1)],
+                3,
+            )?
+            .trace((Fp::from(10), Fp::from(20), [Fp::from(3), Fp::from(4)]))?;
+            Ok(())
+        }
+        assert!(
+            trace::<1, 1>().is_err(),
+            "actual wire count exceeds declaration"
+        );
+        assert!(
+            trace::<3, 2>().is_err(),
+            "actual wire count is below declaration"
+        );
+        assert!(trace::<2, 1>().is_err(), "witness collection omits a wire");
+        assert!(trace::<2, 2>().is_ok(), "honest control uses both wires");
+    }
+
+    #[test]
+    fn standalone_steps_do_not_reserve_shared_stage_gates() {
+        let repeated = [CircuitIndex::new(0); APPLICATION_SLOTS];
+        let split = [CircuitIndex::new(0), CircuitIndex::new(1)];
+        let counts = |size, bundle| {
+            ragu_circuits::testing::synthesis_counts(
+                &Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, bundle, size)
+                    .unwrap(),
+            )
+            .unwrap()
+        };
+        let unstaged = counts(0, repeated);
+        for size in [1, 2, 3, 64, 257] {
+            assert_eq!(
+                counts(size, repeated),
+                unstaged,
+                "shared stage of {size} elements"
+            );
+            assert_eq!(
+                counts(size, split).num_gates - unstaged.num_gates,
+                size.div_ceil(2)
+            );
+        }
+
+        // A fragment reading shared values must belong to a split bundle.
+        assert!(
+            Adapter::<Pasta, SharedSum, TestR, HEADER_SIZE>::new(
+                SharedSum,
+                [CircuitIndex::new(0); APPLICATION_SLOTS],
+                SHARED_SIZE,
+            )
+            .is_err()
+        );
     }
 }

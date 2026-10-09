@@ -85,6 +85,7 @@ pub(crate) mod support {
 
     impl<L: Header<Fp>, H: Header<Fp>, const I: usize> Step<C> for HashStep<L, H, I> {
         const INDEX: Index = Index::new(I);
+        type Shared = ();
         type Witness<'source> = Fp;
         type Aux<'source> = ();
         type Left = L;
@@ -103,6 +104,7 @@ pub(crate) mod support {
                 Encoded<'dr, D, H, N>,
                 Encoded<'dr, D, Value, N>,
             ),
+            (),
             DriverValue<D, Fp>,
             DriverValue<D, ()>,
         )>
@@ -123,7 +125,12 @@ pub(crate) mod support {
             sponge.absorb(dr, &salt)?;
             let output = sponge.squeeze(dr)?;
             let data = output.value().map(|v| *v);
-            Ok(((left, right, Encoded::from_gadget(output)), data, D::unit()))
+            Ok((
+                (left, right, Encoded::from_gadget(output)),
+                (),
+                data,
+                D::unit(),
+            ))
         }
     }
 
@@ -512,14 +519,16 @@ pub(crate) mod support {
                 Side::Left => &stage.left,
                 Side::Right => &stage.right,
             };
-            wires_of(&child.circuit_id)
+            wires_of(&child.circuit_ids)
         })?;
-        assert_eq!(circuit_id.len(), 1);
-        assert_eq!(
-            StageReader::new(&parent.native_preamble_rx).read(circuit_id[0]),
-            child.circuit_id().omega_j(),
-            "{side:?}: copied circuit id"
-        );
+        assert_eq!(circuit_id.len(), crate::APPLICATION_SLOTS);
+        for (wire, id) in circuit_id.iter().zip(child.circuit_ids()) {
+            assert_eq!(
+                StageReader::new(&parent.native_preamble_rx).read(*wire),
+                id.omega_j(),
+                "{side:?}: copied circuit id"
+            );
+        }
         let native_claims = stage_wire_indices::<
             _,
             R,
