@@ -27,7 +27,11 @@ use ragu_circuits::{
 use ragu_core::Result;
 use udon::field::Field;
 
-use crate::internal::{claims::Source, native, nested};
+use crate::internal::{
+    claims::Source,
+    native::{self, APPLICATION_SLOTS},
+    nested,
+};
 
 /// A claim pinning wires of a committed stage polynomial $Q$ to expected
 /// values: with $E = \sum_j e_j X^{d_j}$ over the wires' degrees and
@@ -141,7 +145,7 @@ pub(crate) struct Shape<Id, F> {
 
 /// A [`Source`] over one proof's native components, by identity.
 struct NativeIds {
-    circuit_id: CircuitIndex,
+    circuit_ids: [CircuitIndex; APPLICATION_SLOTS],
 }
 
 impl Source for NativeIds {
@@ -153,8 +157,16 @@ impl Source for NativeIds {
         once(component)
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = CircuitIndex> {
-        once(self.circuit_id)
+    fn app_circuits(&self, slot: usize) -> impl Iterator<Item = CircuitIndex> {
+        once(self.circuit_ids[slot])
+    }
+}
+
+impl native::claims::ApplicationSource for NativeIds {
+    type IsBundle = bool;
+
+    fn is_split_bundle(&self) -> impl Iterator<Item = bool> {
+        once(native::is_split_bundle(self.circuit_ids))
     }
 }
 
@@ -170,7 +182,7 @@ impl Source for NestedIds {
         once(component)
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = ()> {
+    fn app_circuits(&self, _: usize) -> impl Iterator<Item = ()> {
         empty()
     }
 }
@@ -217,8 +229,8 @@ impl<Id, F: Field> native::claims::Processor<Id, CircuitIndex> for Shaper<Id, F>
         self.push(Kind::Raw, vec![(F::ONE, a)], vec![(F::ONE, b)]);
     }
 
-    fn circuit_claim(&mut self, circuit_id: CircuitIndex, rx: Id) {
-        self.circuit(circuit_id, once(rx));
+    fn circuit_claim(&mut self, circuit_id: CircuitIndex, rxs: impl Iterator<Item = Id>) {
+        self.circuit(circuit_id, rxs);
     }
 
     fn internal_circuit_claim(
@@ -235,6 +247,18 @@ impl<Id, F: Field> native::claims::Processor<Id, CircuitIndex> for Shaper<Id, F>
         groups: impl Iterator<Item = impl Iterator<Item = Id>>,
     ) -> Result<()> {
         self.bonding(id.circuit_index(), groups);
+        Ok(())
+    }
+
+    fn application_bonding_claim(
+        &mut self,
+        id: native::InternalCircuitIndex,
+        rxs: impl Iterator<Item = (Id, bool)>,
+    ) -> Result<()> {
+        self.bonding(
+            id.circuit_index(),
+            rxs.map(|(rx, is_bundle)| once(rx).filter(move |_| is_bundle)),
+        );
         Ok(())
     }
 }
@@ -275,11 +299,11 @@ fn with_masked<Id: Copy, F: Field>(
     shapes
 }
 
-/// The shapes of the native claims of a proof whose application circuit is
-/// `circuit_id`, in the decider's order, then the `masked` wire claims in
+/// The shapes of the native claims of a proof whose application slots run
+/// `circuit_ids`, in the decider's order, then the `masked` wire claims in
 /// theirs.
 pub(crate) fn native_shapes<F: Field>(
-    circuit_id: CircuitIndex,
+    circuit_ids: [CircuitIndex; APPLICATION_SLOTS],
     z: F,
     masked: &[Masked<native::RxComponent, F>],
 ) -> Result<Vec<Shape<native::RxComponent, F>>> {
@@ -287,7 +311,7 @@ pub(crate) fn native_shapes<F: Field>(
         z,
         shapes: Vec::new(),
     };
-    native::claims::build(&NativeIds { circuit_id }, &mut shaper)?;
+    native::claims::build(&NativeIds { circuit_ids }, &mut shaper)?;
     Ok(with_masked(shaper.shapes, masked))
 }
 

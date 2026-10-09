@@ -47,6 +47,7 @@ impl<H> Rerandomize<H> {
 impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
     const INDEX: Index = Index::internal(INTERNAL_ID);
 
+    type Shared = ();
     type Witness<'source> = ();
     type Aux<'source> = ();
 
@@ -66,6 +67,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
+        (),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
@@ -92,6 +94,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         // Return left's data as the output data - this preserves it!
         Ok((
             (left_encoded.clone(), right_encoded, left_encoded),
+            (),
             left,
             D::unit(),
         ))

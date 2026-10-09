@@ -69,7 +69,7 @@ use crate::{
     internal::{
         endoscalar::EndoscalarStage,
         native::{
-            self, RxComponent, RxIndex,
+            self, APPLICATION_SLOTS, RxComponent, RxIndex,
             stages::points::{self as native_points, Inputs},
         },
         nested::{
@@ -161,13 +161,16 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// Shared alpha source for deriving cached bridge polynomial alphas.
     pub(crate) bridge_alpha: C::ScalarField,
 
-    // Application metadata
-    pub(crate) circuit_id: CircuitIndex,
+    // Application metadata: one circuit per slot, all sharing the headers.
+    pub(crate) circuit_ids: [CircuitIndex; APPLICATION_SLOTS],
     pub(crate) left_header: Vec<C::CircuitField>,
     pub(crate) right_header: Vec<C::CircuitField>,
 
     // Native rx polynomials (CircuitField, HostCurve commitment)
-    pub(crate) native_application_rx: sparse::Polynomial<C::CircuitField, R>,
+    pub(crate) native_application_rxs: Vec<sparse::Polynomial<C::CircuitField, R>>,
+    /// The application shared stage, which every slot's claim adds to its
+    /// own polynomial, sized from the registered fragments' shared inputs.
+    pub(crate) native_application_stage_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_preamble_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_inner_error_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_outer_error_rx: sparse::Polynomial<C::CircuitField, R>,
@@ -277,7 +280,8 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) pre_beta: C::CircuitField,
 
     // Native commitment caches
-    native_application_commitment: Cached<C::HostCurve>,
+    native_application_commitments: Vec<Cached<C::HostCurve>>,
+    native_application_stage_commitment: Cached<C::HostCurve>,
     native_preamble_commitment: Cached<C::HostCurve>,
     native_inner_error_commitment: Cached<C::HostCurve>,
     native_outer_error_commitment: Cached<C::HostCurve>,
@@ -326,7 +330,8 @@ impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
             OuterError => &self.native_outer_error_rx,
             Query => &self.native_query_rx,
             Eval => &self.native_eval_rx,
-            Application => &self.native_application_rx,
+            Application(slot) => &self.native_application_rxs[slot as usize],
+            ApplicationStage => &self.native_application_stage_rx,
             Hashes1 => &self.native_hashes_1_rx,
             Hashes2 => &self.native_hashes_2_rx,
             InnerCollapse => &self.native_inner_collapse_rx,
@@ -519,8 +524,14 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         }
     }
 
+    /// The primary application slot's circuit: the step the proof ran.
     pub(crate) fn circuit_id(&self) -> CircuitIndex {
-        self.circuit_id
+        self.circuit_ids[0]
+    }
+
+    /// Every application slot's circuit.
+    pub(crate) fn circuit_ids(&self) -> [CircuitIndex; APPLICATION_SLOTS] {
+        self.circuit_ids
     }
 
     pub(crate) fn left_header(&self) -> &[C::CircuitField] {
@@ -592,7 +603,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             OuterError => self.native_outer_error_commitment.0,
             Query => self.native_query_commitment.0,
             Eval => self.native_eval_commitment.0,
-            Application => self.native_application_commitment.0,
+            Application(slot) => self.native_application_commitments[slot as usize].0,
+            ApplicationStage => self.native_application_stage_commitment.0,
             Hashes1 => self.native_hashes_1_commitment.0,
             Hashes2 => self.native_hashes_2_commitment.0,
             InnerCollapse => self.native_inner_collapse_commitment.0,
@@ -1031,13 +1043,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 
         let mut builder = ProofBuilder::<C, R, B>::new(self.params, C::ScalarField::ONE);
 
-        builder.set_circuit_id(CircuitIndex::new(0));
+        builder.set_circuit_ids([CircuitIndex::new(0); APPLICATION_SLOTS]);
 
         builder.set_left_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
         builder.set_right_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
 
         // Native rx polynomials (all trivial ones)
-        builder.set_native_application_rx(ones_host.clone());
+        builder.set_native_application_rxs(builder::ApplicationRxs::Repeated(ones_host.clone()));
+        builder.set_native_application_stage_rx(ones_host.clone());
         builder.set_native_preamble_rx(ones_host.clone());
         builder.set_native_inner_error_rx(ones_host.clone());
         builder.set_native_outer_error_rx(ones_host.clone());
@@ -1296,7 +1309,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         {
             let registry_xy_commitment = builder.native_registry_xy_commitment();
             let trivial_child_witness = nested::stages::preamble::ChildWitness {
-                application: host_commitment,
+                application: [host_commitment; APPLICATION_SLOTS],
+                application_stage: host_commitment,
                 hashes_1: host_commitment,
                 hashes_2: host_commitment,
                 inner_collapse: host_commitment,

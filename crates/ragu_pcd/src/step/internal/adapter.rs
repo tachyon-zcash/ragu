@@ -1,42 +1,158 @@
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use ragu_circuits::{Circuit, WithAux, polynomials::Rank};
+use ragu_circuits::{Circuit, WithAux, polynomials::Rank, registry::CircuitIndex, staging};
 use ragu_core::{
-    Cycle, Result,
+    Coeff, Cycle, Error, Result,
+    convert::WireMap,
     drivers::{Driver, DriverValue},
-    gadgets::{Bound, Kind},
+    gadgets::{Bound, Gadget, GadgetKind, Kind},
     maybe::Maybe,
 };
 use ragu_primitives::{
     Element,
+    allocator::{Allocator, Standard},
+    shared::Shared,
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
 use super::super::Step;
-use crate::Header;
+use crate::{APPLICATION_SLOTS, Header};
 
-/// Represents triple a length determined at compile time.
-pub struct TripleConstLen<const N: usize>;
+/// The fixed bundle IDs followed by three padded headers.
+pub struct InstanceLen<const N: usize>;
 
-impl<const N: usize> Len for TripleConstLen<N> {
+impl<const N: usize> Len for InstanceLen<N> {
     fn len() -> usize {
-        N * 3
+        APPLICATION_SLOTS + N * 3
     }
 }
 
+/// The circuit of an application [`Step`]: the fragment's constraints
+/// over the proof's shared stage, with the registered bundle's IDs and the
+/// three headers as its public inputs.
+///
+/// The shared stage occupies the first gates of a split bundle's circuits,
+/// reserved by [`reserve_shared_stage`]: a fragment's own trace is zero there
+/// and the stage polynomial supplies those wires, as for a staged circuit.
+/// Its size is derived from every registered fragment before constructing
+/// the circuits, so the block is reserved here rather than through a
+/// type-level stage.
 pub(crate) struct Adapter<C, S, R, const HEADER_SIZE: usize> {
     step: S,
+    bundle: [CircuitIndex; APPLICATION_SLOTS],
+    /// The bundle's shared stage size, zero for a standalone step.
+    shared_size: usize,
     _marker: PhantomData<(C, R)>,
 }
 
+/// The witness of an [`Adapter`]: child data and the fragment's own witness.
+pub(crate) type AdapterWitness<'source, C, S> = (
+    <<S as Step<C>>::Left as Header<<C as Cycle>::CircuitField>>::Data,
+    <<S as Step<C>>::Right as Header<<C as Cycle>::CircuitField>>::Data,
+    <S as Step<C>>::Witness<'source>,
+);
+
 impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Adapter<C, S, R, HEADER_SIZE> {
-    pub fn new(step: S) -> Self {
-        Adapter {
+    /// The circuit of `step` within `bundle`, over a shared stage of
+    /// `shared_size` elements.
+    ///
+    /// # Errors
+    ///
+    /// Returns an initialization error if the fragment reads more shared
+    /// elements than the stage holds; registration refuses such a bundle,
+    /// so this guards the prover's own calls.
+    pub fn new(
+        step: S,
+        bundle: [CircuitIndex; APPLICATION_SLOTS],
+        shared_size: usize,
+    ) -> Result<Self> {
+        let shared_size = if crate::internal::native::is_split_bundle(bundle) {
+            shared_size
+        } else {
+            0
+        };
+        if S::Shared::num_values()? > shared_size {
+            return Err(Error::Initialization(
+                "the fragment reads more shared elements than the shared stage holds".into(),
+            ));
+        }
+        Ok(Adapter {
             step,
+            bundle,
+            shared_size,
             _marker: PhantomData,
+        })
+    }
+}
+
+/// Reserves the shared stage's gates at the start of the circuit, as a stage
+/// builder would, and returns its reserved wires.
+///
+/// The reserved wires are zero in the circuit's own trace; the committed
+/// stage polynomial supplies their values, and the application final mask
+/// holds the own trace to zero there. Only split bundles reserve the block;
+/// the mask is switched off for a standalone step using its registered IDs.
+/// See the cost note on
+/// [`ApplicationBuilder::register_bundle`](crate::ApplicationBuilder::register_bundle)
+/// for the gates this takes in each bundle fragment.
+///
+/// Invariant: the adapter only binds the returned gadget to the block's `a`
+/// and `d` wires. The final mask holds all four wire slots of
+/// each reserved gate to zero in the fragment's own trace. The stage mask
+/// does not force the block's `b` and `c` wires or an odd-sized stage's
+/// padding wire to zero in the shared polynomial, so those wires must
+/// remain unexposed. The SYSTEM gate is not part of the shared inputs.
+fn reserve_shared_stage<'dr, D: Driver<'dr>>(dr: &mut D, size: usize) -> Result<Vec<D::Wire>> {
+    // Allocate whole gates, two wires each, so the step's own gates start
+    // after the block; the padding wire of an odd-sized stage is unused.
+    let allocator = &mut Standard::new();
+    let mut shared = Vec::with_capacity(size);
+    for i in 0..2 * staging::stage_gates(size) {
+        let wire = allocator.alloc(dr, || Ok(Coeff::Zero))?;
+        if i < size {
+            shared.push(wire);
         }
     }
+    Ok(shared)
+}
+
+/// Binds every actual gadget wire, independently of shared witness collection.
+/// Neither omitted values nor incorrect cached element values can omit a
+/// connecting constraint. No padding or multiplication wires are exposed.
+pub(crate) fn bind_shared<'dr, D: Driver<'dr>, G: Gadget<'dr, D>>(
+    dr: &mut D,
+    gadget: &G,
+    stage_wires: &[D::Wire],
+) -> Result<()> {
+    struct Binder<'a, 'dr, D: Driver<'dr>> {
+        dr: &'a mut D,
+        wires: core::slice::Iter<'a, D::Wire>,
+    }
+
+    impl<'dr, D: Driver<'dr>> WireMap<D::F> for Binder<'_, 'dr, D> {
+        type Src = D;
+        type Dst = PhantomData<D::F>;
+
+        fn convert_wire(&mut self, wire: &D::Wire) -> Result<()> {
+            let stage_wire = self.wires.next().ok_or_else(|| {
+                Error::Initialization("the shared gadget has more wires than its layout".into())
+            })?;
+            self.dr.enforce_equal(wire, stage_wire)
+        }
+    }
+
+    let mut binder = Binder {
+        dr,
+        wires: stage_wires.iter(),
+    };
+    G::Kind::map_gadget(gadget, &mut binder)?;
+    if binder.wires.next().is_some() {
+        return Err(Error::Initialization(
+            "the shared gadget has fewer wires than its layout".into(),
+        ));
+    }
+    Ok(())
 }
 
 impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::CircuitField>
@@ -47,12 +163,8 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
         <S::Output as Header<C::CircuitField>>::Data,
     );
-    type Witness<'source> = (
-        <S::Left as Header<C::CircuitField>>::Data,
-        <S::Right as Header<C::CircuitField>>::Data,
-        S::Witness<'source>,
-    );
-    type Output = Kind![C::CircuitField; FixedVec<Element<'_, _>, TripleConstLen<HEADER_SIZE>>];
+    type Witness<'source> = AdapterWitness<'source, C, S>;
+    type Output = Kind![C::CircuitField; FixedVec<Element<'_, _>, InstanceLen<HEADER_SIZE>>];
     type Aux<'source> = (
         (
             FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
@@ -60,6 +172,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         ),
         <S::Output as Header<C::CircuitField>>::Data,
         S::Aux<'source>,
+        Vec<C::CircuitField>,
     );
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -78,11 +191,25 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
     where
         Self: 'dr,
     {
+        let stage_wires = reserve_shared_stage(dr, self.shared_size)?;
         let (left, right, witness) = witness.cast();
 
-        let ((left, right, output), output_data, step_aux) = self
+        let ((left, right, output), shared, output_data, step_aux) = self
             .step
             .witness::<_, HEADER_SIZE>(dr, witness, left, right)?;
+
+        let size = S::Shared::num_values()?;
+        let wires = stage_wires.get(..size).ok_or_else(|| {
+            Error::Initialization("the shared gadget exceeds the reserved layout".into())
+        })?;
+        bind_shared(dr, &shared, wires)?;
+        let mut shared_values = Vec::with_capacity(size);
+        S::Shared::write_shared(&shared, &mut shared_values)?;
+        if shared_values.len() != size {
+            return Err(Error::Initialization(
+                "the shared gadget's witness count differs from its layout".into(),
+            ));
+        }
 
         let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
         left.write(dr, &mut elements)?;
@@ -104,10 +231,21 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
                 (left_header, right_header),
                 output_data.take(),
                 step_aux.take(),
+                shared_values.iter().map(|e| *e.value().take()).collect(),
             ))
         })?;
 
-        Ok(WithAux::new(FixedVec::try_from(elements)?, adapter_aux))
+        // These are circuit constants, fixed at registration. Every fragment
+        // attests the entire ordered bundle, so selecting or repeating just
+        // one fragment cannot prove the registered step. The verifier derives
+        // these public inputs from the proof's actual circuit selectors.
+        let instance = self
+            .bundle
+            .map(|id| Element::constant(dr, id.omega_j()))
+            .into_iter()
+            .chain(elements)
+            .collect_fixed()?;
+        Ok(WithAux::new(instance, adapter_aux))
     }
 }
 

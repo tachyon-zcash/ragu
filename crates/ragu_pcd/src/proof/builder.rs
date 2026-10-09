@@ -6,7 +6,7 @@
 //! [`bridge_alpha`](ProofBuilder::bridge_alpha) and the native commitments
 //! already on the builder.
 
-use alloc::{sync::Arc, vec::Vec};
+use alloc::{sync::Arc, vec, vec::Vec};
 use core::{cell::OnceCell, marker::PhantomData};
 
 use ragu_backend::Backend;
@@ -18,7 +18,29 @@ use ragu_circuits::{
 use ragu_core::{Cycle, Result};
 
 use super::{Cached, Proof};
-use crate::internal::nested;
+use crate::internal::{native::APPLICATION_SLOTS, nested};
+
+/// The application slots' rx polynomials as a fuse supplies them.
+///
+/// A step registered on its own fills every slot with its one claim, so the
+/// builder commits its polynomial once and repeats the commitment; a bundle
+/// supplies one polynomial per slot.
+pub(crate) enum ApplicationRxs<F, R: Rank> {
+    /// The step's own polynomial, filling every slot.
+    Repeated(sparse::Polynomial<F, R>),
+    /// One polynomial per slot, in slot order.
+    PerSlot(Vec<sparse::Polynomial<F, R>>),
+}
+
+impl<F: Clone, R: Rank> ApplicationRxs<F, R> {
+    /// The polynomial of each slot, in slot order.
+    fn into_slots(self) -> Vec<sparse::Polynomial<F, R>> {
+        match self {
+            ApplicationRxs::Repeated(rx) => vec![rx; APPLICATION_SLOTS],
+            ApplicationRxs::PerSlot(rxs) => rxs,
+        }
+    }
+}
 
 /// Produces `pub(crate) fn $name(&mut self, v: $ty)` that sets an `Option`
 /// field, panicking on double-set.
@@ -216,12 +238,13 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     bridge_alpha: C::ScalarField,
 
     // Application metadata
-    circuit_id: Option<CircuitIndex>,
+    circuit_ids: Option<[CircuitIndex; APPLICATION_SLOTS]>,
     left_header: Option<Vec<C::CircuitField>>,
     right_header: Option<Vec<C::CircuitField>>,
 
     // Native rx polynomials
-    native_application_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_application_rxs: Option<ApplicationRxs<C::CircuitField, R>>,
+    native_application_stage_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_preamble_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_inner_error_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_outer_error_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
@@ -326,7 +349,8 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     pre_beta: Option<C::CircuitField>,
 
     // Native commitment caches (lazily computed from polynomials)
-    native_application_commitment: OnceCell<C::HostCurve>,
+    native_application_commitments: OnceCell<Vec<C::HostCurve>>,
+    native_application_stage_commitment: OnceCell<C::HostCurve>,
     native_preamble_commitment: OnceCell<C::HostCurve>,
     native_inner_error_commitment: OnceCell<C::HostCurve>,
     native_outer_error_commitment: OnceCell<C::HostCurve>,
@@ -364,10 +388,11 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             params,
             _backend: PhantomData,
             bridge_alpha,
-            circuit_id: None,
+            circuit_ids: None,
             left_header: None,
             right_header: None,
-            native_application_rx: None,
+            native_application_rxs: None,
+            native_application_stage_rx: None,
             native_preamble_rx: None,
             native_inner_error_rx: None,
             native_outer_error_rx: None,
@@ -441,7 +466,8 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             alpha: None,
             u: None,
             pre_beta: None,
-            native_application_commitment: OnceCell::new(),
+            native_application_commitments: OnceCell::new(),
+            native_application_stage_commitment: OnceCell::new(),
             native_preamble_commitment: OnceCell::new(),
             native_inner_error_commitment: OnceCell::new(),
             native_outer_error_commitment: OnceCell::new(),
@@ -475,14 +501,23 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         self.params
     }
 
-    setter!(set_circuit_id, circuit_id, CircuitIndex);
+    setter!(
+        set_circuit_ids,
+        circuit_ids,
+        [CircuitIndex; APPLICATION_SLOTS]
+    );
     setter!(set_left_header, left_header, Vec<C::CircuitField>);
     setter!(set_right_header, right_header, Vec<C::CircuitField>);
 
     slice_getter!(left_header, left_header, C::CircuitField);
     slice_getter!(right_header, right_header, C::CircuitField);
 
-    native_setter!(set_native_application_rx, native_application_rx);
+    setter!(
+        set_native_application_rxs,
+        native_application_rxs,
+        ApplicationRxs<C::CircuitField, R>
+    );
+    native_setter!(set_native_application_stage_rx, native_application_stage_rx);
     native_setter!(set_native_preamble_rx, native_preamble_rx);
     native_setter!(set_native_inner_error_rx, native_inner_error_rx);
     native_setter!(set_native_outer_error_rx, native_outer_error_rx);
@@ -619,11 +654,28 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         Arc<sparse::Polynomial<C::ScalarField, R>>
     );
 
+    /// Lazily computes and caches the commitments of the application slots'
+    /// rx polynomials, one per slot. A repeated polynomial is committed once.
+    /// Returns the cached slice.
+    pub(crate) fn native_application_commitments(&self) -> &[C::HostCurve] {
+        self.native_application_commitments.get_or_init(|| {
+            let host_gen = C::host_generators(self.params);
+            let commit = |rx| B::sparse_commit_to_affine(rx, host_gen);
+            match self
+                .native_application_rxs
+                .as_ref()
+                .expect("native_application_rxs not set")
+            {
+                ApplicationRxs::Repeated(rx) => vec![commit(rx); APPLICATION_SLOTS],
+                ApplicationRxs::PerSlot(rxs) => rxs.iter().map(commit).collect(),
+            }
+        })
+    }
     lazy_commitment!(
         native,
-        native_application_commitment,
-        native_application_commitment,
-        native_application_rx
+        native_application_stage_commitment,
+        native_application_stage_commitment,
+        native_application_stage_rx
     );
     lazy_commitment!(
         native,
@@ -984,7 +1036,8 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         // Force lazy evaluation of every native commitment cache by invoking
         // its getter. The a/b/p caches are set externally via their explicit
         // setters, so they are not touched here.
-        self.native_application_commitment();
+        self.native_application_commitments();
+        self.native_application_stage_commitment();
         self.native_preamble_commitment();
         self.native_inner_error_commitment();
         self.native_outer_error_commitment();
@@ -1044,11 +1097,12 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         Ok(Proof {
             bridge_alpha: self.bridge_alpha,
 
-            circuit_id: take!(circuit_id),
+            circuit_ids: take!(circuit_ids),
             left_header: take!(left_header),
             right_header: take!(right_header),
 
-            native_application_rx: take!(native_application_rx),
+            native_application_rxs: take!(native_application_rxs).into_slots(),
+            native_application_stage_rx: take!(native_application_stage_rx),
             native_preamble_rx: take!(native_preamble_rx),
             native_inner_error_rx: take!(native_inner_error_rx),
             native_outer_error_rx: take!(native_outer_error_rx),
@@ -1135,7 +1189,14 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             u: take!(u),
             pre_beta: take!(pre_beta),
 
-            native_application_commitment: cached!(native_application_commitment),
+            native_application_commitments: self
+                .native_application_commitments
+                .take()
+                .expect("native_application_commitments not set")
+                .into_iter()
+                .map(Cached)
+                .collect(),
+            native_application_stage_commitment: cached!(native_application_stage_commitment),
             native_preamble_commitment: cached!(native_preamble_commitment),
             native_inner_error_commitment: cached!(native_inner_error_commitment),
             native_outer_error_commitment: cached!(native_outer_error_commitment),

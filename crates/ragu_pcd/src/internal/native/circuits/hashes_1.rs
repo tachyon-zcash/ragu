@@ -221,15 +221,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let outer_error =
             outer_error.unenforced(dr, witness.as_ref().map(|w| w.outer_error_witness))?;
 
-        // Verify circuit IDs are valid roots of unity in the registry domain.
-        preamble
+        // Verify every slot's circuit ID is a valid root of unity in the
+        // registry domain.
+        for circuit_id in preamble
             .left
-            .circuit_id
-            .enforce_root_of_unity(dr, self.log2_circuits)?;
-        preamble
-            .right
-            .circuit_id
-            .enforce_root_of_unity(dr, self.log2_circuits)?;
+            .circuit_ids
+            .iter()
+            .chain(preamble.right.circuit_ids.iter())
+        {
+            circuit_id.enforce_root_of_unity(dr, self.log2_circuits)?;
+        }
 
         let allocator = &mut Standard::new();
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));

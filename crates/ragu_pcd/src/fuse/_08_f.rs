@@ -178,13 +178,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 StaticFQuery::RegistryXyAtW => {
                     divide_linear_rev(builder.native_registry_xy_poly().iter_coeffs(), w)
                 }
-                StaticFQuery::RegistryXyAtLeftCircuitId => divide_linear_rev(
+                StaticFQuery::RegistryXyAtLeftCircuitId(slot) => divide_linear_rev(
                     builder.native_registry_xy_poly().iter_coeffs(),
-                    left.circuit_id().omega_j(),
+                    left.circuit_ids()[slot as usize].omega_j(),
                 ),
-                StaticFQuery::RegistryXyAtRightCircuitId => divide_linear_rev(
+                StaticFQuery::RegistryXyAtRightCircuitId(slot) => divide_linear_rev(
                     builder.native_registry_xy_poly().iter_coeffs(),
-                    right.circuit_id().omega_j(),
+                    right.circuit_ids()[slot as usize].omega_j(),
                 ),
                 StaticFQuery::LeftAbAAtXz => {
                     divide_linear_rev(left[RxComponent::AbA].iter_coeffs(), xz)

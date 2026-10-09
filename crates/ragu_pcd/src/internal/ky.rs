@@ -16,7 +16,7 @@ use udon::field::Field;
 
 use super::{
     native::{
-        self,
+        self, APPLICATION_SLOTS,
         stages::preamble::{ProofInputs, encode_output_header},
         unified as native_unified,
     },
@@ -54,7 +54,7 @@ impl<F: Field> native::claims::KySource for NativeKy<F> {
         self.c.into_iter()
     }
 
-    fn application_ky(&self) -> impl Iterator<Item = F> {
+    fn application_ky(&self) -> impl Iterator<Item = F> + Clone {
         once(self.application)
     }
 
@@ -165,7 +165,7 @@ pub struct NativeParts<'a, C: Cycle> {
     pub left_header: &'a [C::CircuitField],
     pub right_header: &'a [C::CircuitField],
     pub output_header: &'a [C::CircuitField],
-    pub circuit_id: CircuitIndex,
+    pub circuit_ids: [CircuitIndex; APPLICATION_SLOTS],
     pub unified: &'a native_unified::Instance<C>,
 }
 
@@ -183,7 +183,7 @@ pub fn native_ky_of<C: Cycle, const HEADER_SIZE: usize>(
             parts.as_ref().map(|p| p.left_header),
             parts.as_ref().map(|p| p.right_header),
             parts.as_ref().map(|p| p.output_header),
-            parts.as_ref().map(|p| p.circuit_id.omega_j()),
+            parts.as_ref().map(|p| p.circuit_ids.map(|id| id.omega_j())),
             parts.as_ref().map(|p| p.unified),
         )?;
 

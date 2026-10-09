@@ -19,7 +19,7 @@ pub use circuits::bind_challenges::NUM_BINDERS;
 use ragu_circuits::{
     polynomials::Rank,
     registry::{CircuitIndex, RegistryBuilder},
-    staging::StageExt,
+    staging::{self, StageExt},
 };
 use ragu_core::{Cycle, Result};
 use ragu_primitives::vec::ConstLen;
@@ -46,6 +46,26 @@ pub const ENDOSCALINGS_PER_STEP: usize = 4;
 /// assertion below checks the pin is the fixed point, so a change to either
 /// batch that moves it fails to build here.
 pub const NUM_ENDOSCALING_STEPS: usize = 25;
+
+/// The application circuits a proof carries: the slots a step fills, each
+/// its own circuit with its own claim, all sharing the step's headers and
+/// the proof's shared stage, sized from the registered fragments' shared inputs.
+/// A step registered on its own fills every slot with its one claim, so
+/// every proof carries the same number of application polynomials.
+///
+/// Each slot adds a native polynomial per proof, which both endoscaling
+/// walks fold and every walk step loads from its points stage, and a
+/// circuit id per child, which the first hashing circuit checks. The shared
+/// stage is a third application polynomial: two slots and the stage fill
+/// the nested steps to the gate exactly, and one more polynomial overflows
+/// them and the first hashing circuit, so this is what a proof holds.
+pub const APPLICATION_SLOTS: usize = 2;
+
+/// Whether the registered IDs name distinct fragments rather than one
+/// standalone step repeated across the slots.
+pub(crate) fn is_split_bundle(ids: [CircuitIndex; APPLICATION_SLOTS]) -> bool {
+    ids[1..].iter().any(|id| *id != ids[0])
+}
 
 const _: () = assert!(
     endoscalar::num_steps::<ENDOSCALINGS_PER_STEP>(NUM_ENDOSCALING_POINTS) == NUM_ENDOSCALING_STEPS,
@@ -122,6 +142,12 @@ pub enum InternalCircuitIndex {
     OuterErrorFinalStaged,
     EvalFinalStaged,
     PointsWalkFinalStaged,
+    // Application masks
+    /// The mask of the application shared stage.
+    ApplicationStage,
+    /// The final mask of split bundle fragments, which load the shared
+    /// stage as their last stage.
+    ApplicationFinalStaged,
 }
 
 /// Compute the total circuit count and log2 domain size from the number of
@@ -136,7 +162,7 @@ pub const fn total_circuit_counts(num_application_steps: usize) -> (usize, u32) 
 impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`],
     /// equal to the number of variants in [`InternalCircuitIndex`].
-    pub const NUM: usize = 22 + NUM_BINDERS + NUM_ENDOSCALING_STEPS;
+    pub const NUM: usize = 24 + NUM_BINDERS + NUM_ENDOSCALING_STEPS;
 
     /// All variants in canonical iteration order.
     ///
@@ -187,6 +213,8 @@ impl InternalCircuitIndex {
         push(&mut slots, &mut c, Self::OuterErrorFinalStaged);
         push(&mut slots, &mut c, Self::EvalFinalStaged);
         push(&mut slots, &mut c, Self::PointsWalkFinalStaged);
+        push(&mut slots, &mut c, Self::ApplicationStage);
+        push(&mut slots, &mut c, Self::ApplicationFinalStaged);
         assert!(c == Self::NUM);
         slots
     }
@@ -232,6 +260,8 @@ pub struct InternalCircuitValues<T> {
     pub outer_error_final_staged: T,
     pub eval_final_staged: T,
     pub points_walk_final_staged: T,
+    pub application_stage: T,
+    pub application_final_staged: T,
 }
 
 impl<T> InternalCircuitValues<T> {
@@ -263,6 +293,8 @@ impl<T> InternalCircuitValues<T> {
             OuterErrorFinalStaged => &self.outer_error_final_staged,
             EvalFinalStaged => &self.eval_final_staged,
             PointsWalkFinalStaged => &self.points_walk_final_staged,
+            ApplicationStage => &self.application_stage,
+            ApplicationFinalStaged => &self.application_final_staged,
         }
     }
 
@@ -319,6 +351,8 @@ impl<T> InternalCircuitValues<T> {
             outer_error_final_staged: f(OuterErrorFinalStaged)?,
             eval_final_staged: f(EvalFinalStaged)?,
             points_walk_final_staged: f(PointsWalkFinalStaged)?,
+            application_stage: f(ApplicationStage)?,
+            application_final_staged: f(ApplicationFinalStaged)?,
         })
     }
 }
@@ -327,7 +361,11 @@ impl<T> InternalCircuitValues<T> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RxIndex {
     // Circuits
-    Application,
+    /// An application slot's rx polynomial.
+    Application(u32),
+    /// The application shared stage's rx polynomial, which every application
+    /// slot's claim adds to its own.
+    ApplicationStage,
     Hashes1,
     Hashes2,
     InnerCollapse,
@@ -366,7 +404,7 @@ pub enum RxIndex {
 
 impl RxIndex {
     /// The number of rx polynomial components.
-    pub const NUM: usize = 19 + NUM_BINDERS + NUM_ENDOSCALING_STEPS;
+    pub const NUM: usize = 19 + APPLICATION_SLOTS + NUM_BINDERS + NUM_ENDOSCALING_STEPS;
 
     /// All variants in canonical order.
     ///
@@ -379,7 +417,14 @@ impl RxIndex {
 
         let mut slots = [None; Self::NUM];
         let mut c = 0;
-        push(&mut slots, &mut c, Self::Application);
+        {
+            let mut slot = 0;
+            while slot < APPLICATION_SLOTS {
+                push(&mut slots, &mut c, Self::Application(slot as u32));
+                slot += 1;
+            }
+        }
+        push(&mut slots, &mut c, Self::ApplicationStage);
         push(&mut slots, &mut c, Self::Hashes1);
         push(&mut slots, &mut c, Self::Hashes2);
         push(&mut slots, &mut c, Self::InnerCollapse);
@@ -424,7 +469,8 @@ impl RxIndex {
 /// [`try_from_fn`](Self::try_from_fn) to construct from a closure.
 #[derive(Clone)]
 pub struct RxValues<T> {
-    pub application: T,
+    pub application: [T; APPLICATION_SLOTS],
+    pub application_stage: T,
     pub hashes_1: T,
     pub hashes_2: T,
     pub inner_collapse: T,
@@ -452,7 +498,8 @@ impl<T> RxValues<T> {
     pub fn get(&self, id: RxIndex) -> &T {
         use RxIndex::*;
         match id {
-            Application => &self.application,
+            Application(slot) => &self.application[slot as usize],
+            ApplicationStage => &self.application_stage,
             Hashes1 => &self.hashes_1,
             Hashes2 => &self.hashes_2,
             InnerCollapse => &self.inner_collapse,
@@ -492,7 +539,14 @@ impl<T> RxValues<T> {
     ) -> core::result::Result<Self, E> {
         use RxIndex::*;
         Ok(RxValues {
-            application: f(Application)?,
+            application: {
+                let mut out = [(); APPLICATION_SLOTS].map(|()| None);
+                for (slot, out) in out.iter_mut().enumerate() {
+                    *out = Some(f(Application(slot as u32))?);
+                }
+                out.map(|slot| slot.expect("filled"))
+            },
+            application_stage: f(ApplicationStage)?,
             hashes_1: f(Hashes1)?,
             hashes_2: f(Hashes2)?,
             inner_collapse: f(InnerCollapse)?,
@@ -549,6 +603,7 @@ pub enum RxComponent {
 /// `compute_v` circuit. Keeping this prefix in one ordered list prevents the
 /// two implementations from drifting independently; the dynamic suffixes are
 /// still driven by [`RxIndex::ALL`] and [`InternalCircuitIndex::ALL`].
+#[derive(Clone, Copy)]
 pub(crate) enum StaticFQuery {
     /// Left child proof $p(u)=v$ check.
     LeftP,
@@ -574,10 +629,12 @@ pub(crate) enum StaticFQuery {
     RegistryWyAtX,
     /// Current registry-xy polynomial queried at the current $w$.
     RegistryXyAtW,
-    /// Current registry-xy polynomial queried at the left child's circuit id.
-    RegistryXyAtLeftCircuitId,
-    /// Current registry-xy polynomial queried at the right child's circuit id.
-    RegistryXyAtRightCircuitId,
+    /// Current registry-xy polynomial queried at the left child's circuit id
+    /// of a slot.
+    RegistryXyAtLeftCircuitId(u32),
+    /// Current registry-xy polynomial queried at the right child's circuit
+    /// id of a slot.
+    RegistryXyAtRightCircuitId(u32),
     /// Left child $a$ polynomial queried at $xz$.
     LeftAbAAtXz,
     /// Left child $b$ polynomial queried at $x$.
@@ -592,44 +649,82 @@ pub(crate) enum StaticFQuery {
     CurrentBAtX,
 }
 
+/// The number of static queries: the registry-xy queries at the children's
+/// circuit ids, one per slot per child, beside the eighteen others.
+pub(crate) const NUM_STATIC_F_QUERIES: usize = 18 + 2 * APPLICATION_SLOTS;
+
 /// Ordered static prefix for fuse quotient polynomial queries.
-pub(crate) const STATIC_F_QUERIES: [StaticFQuery; 20] = [
-    StaticFQuery::LeftP,
-    StaticFQuery::RightP,
-    StaticFQuery::LeftRegistryXyAtW,
-    StaticFQuery::RightRegistryXyAtW,
-    StaticFQuery::RegistryWx0AtLeftY,
-    StaticFQuery::RegistryWx1AtRightY,
-    StaticFQuery::RegistryWx0AtY,
-    StaticFQuery::RegistryWx1AtY,
-    StaticFQuery::RegistryWyAtLeftX,
-    StaticFQuery::RegistryWyAtRightX,
-    StaticFQuery::RegistryWyAtX,
-    StaticFQuery::RegistryXyAtW,
-    StaticFQuery::RegistryXyAtLeftCircuitId,
-    StaticFQuery::RegistryXyAtRightCircuitId,
-    StaticFQuery::LeftAbAAtXz,
-    StaticFQuery::LeftAbBAtX,
-    StaticFQuery::RightAbAAtXz,
-    StaticFQuery::RightAbBAtX,
-    StaticFQuery::CurrentAAtXz,
-    StaticFQuery::CurrentBAtX,
-];
+pub(crate) const STATIC_F_QUERIES: [StaticFQuery; NUM_STATIC_F_QUERIES] =
+    super::const_fns::unwrap_all(static_f_queries());
+
+const fn static_f_queries() -> [Option<StaticFQuery>; NUM_STATIC_F_QUERIES] {
+    use super::const_fns::push;
+
+    let mut slots = [None; NUM_STATIC_F_QUERIES];
+    let mut c = 0;
+    push(&mut slots, &mut c, StaticFQuery::LeftP);
+    push(&mut slots, &mut c, StaticFQuery::RightP);
+    push(&mut slots, &mut c, StaticFQuery::LeftRegistryXyAtW);
+    push(&mut slots, &mut c, StaticFQuery::RightRegistryXyAtW);
+    push(&mut slots, &mut c, StaticFQuery::RegistryWx0AtLeftY);
+    push(&mut slots, &mut c, StaticFQuery::RegistryWx1AtRightY);
+    push(&mut slots, &mut c, StaticFQuery::RegistryWx0AtY);
+    push(&mut slots, &mut c, StaticFQuery::RegistryWx1AtY);
+    push(&mut slots, &mut c, StaticFQuery::RegistryWyAtLeftX);
+    push(&mut slots, &mut c, StaticFQuery::RegistryWyAtRightX);
+    push(&mut slots, &mut c, StaticFQuery::RegistryWyAtX);
+    push(&mut slots, &mut c, StaticFQuery::RegistryXyAtW);
+    {
+        let mut slot = 0;
+        while slot < APPLICATION_SLOTS {
+            push(
+                &mut slots,
+                &mut c,
+                StaticFQuery::RegistryXyAtLeftCircuitId(slot as u32),
+            );
+            push(
+                &mut slots,
+                &mut c,
+                StaticFQuery::RegistryXyAtRightCircuitId(slot as u32),
+            );
+            slot += 1;
+        }
+    }
+    push(&mut slots, &mut c, StaticFQuery::LeftAbAAtXz);
+    push(&mut slots, &mut c, StaticFQuery::LeftAbBAtX);
+    push(&mut slots, &mut c, StaticFQuery::RightAbAAtXz);
+    push(&mut slots, &mut c, StaticFQuery::RightAbBAtX);
+    push(&mut slots, &mut c, StaticFQuery::CurrentAAtXz);
+    push(&mut slots, &mut c, StaticFQuery::CurrentBAtX);
+    assert!(c == NUM_STATIC_F_QUERIES);
+    slots
+}
 
 /// Registers internal native circuits and masks into the provided registry.
 ///
 /// Does not register internal steps (rerandomize, bootstrap); those are
 /// registered by the caller after this function returns.
+///
+/// `shared_size` is the largest registered shared input count, which fixes
+/// the layout of the application masks.
 pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
     mut registry: RegistryBuilder<'params, C::CircuitField, R>,
     params: &'params C::Params,
     log2_circuits: u32,
+    shared_size: usize,
 ) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
     let initial_internal_circuits = registry.num_internal_circuits();
+
+    // The shared stage follows the SYSTEM gate in split bundle fragments.
+    let shared_gates = staging::stage_gates(shared_size);
 
     for &id in &InternalCircuitIndex::ALL {
         use InternalCircuitIndex::*;
         registry = match id {
+            ApplicationStage => registry.register_bonding(staging::stage_mask(1, shared_gates)?),
+            ApplicationFinalStaged => {
+                registry.register_bonding(staging::final_stage_mask(1 + shared_gates)?)
+            }
             PreambleStage => {
                 registry.register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)
             }
