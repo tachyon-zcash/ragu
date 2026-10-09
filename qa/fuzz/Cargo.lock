@@ -430,6 +430,7 @@ name = "ragu_core"
 version = "0.0.0"
 dependencies = [
  "ragu_macros",
+ "tachyon-maybe-rayon",
  "thiserror",
  "zakura-udon",
 ]

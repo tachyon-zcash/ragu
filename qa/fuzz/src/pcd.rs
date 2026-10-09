@@ -22,7 +22,7 @@ use arbitrary::Arbitrary;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::{Cycle, Result, pasta::Pasta};
 use ragu_pcd::{
-    Application, ApplicationBuilder, Proof,
+    APPLICATION_SLOTS, Application, ApplicationBuilder, Proof,
     fuzzing::corrupt::{
         Binding, BridgeCommitment, Challenge, Corruption, NativeCommitment, NativeRx,
         NestedCommitment, NestedRx, RxComponent, Side,
@@ -273,8 +273,10 @@ pub fn fused_fixtures(app: &Application<'_, C, R, HEADER_SIZE>) -> Vec<Fixture> 
 /// [`ragu_pcd::fuzzing::corrupt`].
 #[derive(Arbitrary, Debug, Clone)]
 pub enum FuzzCorruption {
-    /// Replace the circuit id.
+    /// Replace an application slot's circuit ID.
     CircuitId {
+        /// Which slot, resolved modulo the application slot count.
+        slot: u8,
         /// The raw choice.
         raw: u32,
         /// Fold it into the registry's domain rather than leaving it wild.
@@ -426,7 +428,7 @@ impl FuzzCorruption {
     /// event every other classification rests on.
     pub fn target(&self) -> (u8, usize) {
         match *self {
-            FuzzCorruption::CircuitId { .. } => (0, 0),
+            FuzzCorruption::CircuitId { slot, .. } => (0, slot as usize % APPLICATION_SLOTS),
             FuzzCorruption::HeaderElement { right, index, .. } => {
                 (1, usize::from(right) << 16 | header_index(index))
             }
@@ -472,9 +474,14 @@ impl FuzzCorruption {
     pub fn resolve(&self) -> Corruption<C> {
         let side = |right: bool| if right { Side::Right } else { Side::Left };
         match *self {
-            FuzzCorruption::CircuitId { raw, in_domain } => {
-                Corruption::CircuitId(circuit_id(raw, in_domain))
-            }
+            FuzzCorruption::CircuitId {
+                slot,
+                raw,
+                in_domain,
+            } => Corruption::CircuitId {
+                slot: slot as usize % APPLICATION_SLOTS,
+                id: circuit_id(raw, in_domain),
+            },
             FuzzCorruption::HeaderElement {
                 right,
                 index,
@@ -590,6 +597,66 @@ pub fn assert_rejected(
             !matches!(result, Ok(true)),
             "the verifier accepted a corrupted {} proof: {applied:?}",
             fixture.shape.name(),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn circuit_id_mutations_reach_each_slot_and_deduplicate_aliases() {
+        let app = nontrivial_app(1);
+        let honest = leaf_fixture(&app.0);
+        let honest_ids = honest.proof.test_circuit_ids();
+        let mut choices: Vec<_> = (0..APPLICATION_SLOTS)
+            .map(|slot| FuzzCorruption::CircuitId {
+                slot: slot as u8,
+                raw: u32::MAX,
+                in_domain: false,
+            })
+            .collect();
+
+        for (slot, choice) in choices.iter().enumerate() {
+            let mut fixture = honest.clone();
+            let (applied, binding) = apply(&mut fixture.proof, core::slice::from_ref(choice), 1);
+            assert_eq!(binding, Binding::MustReject);
+            let mut expected = honest_ids;
+            expected[slot] = u32::MAX;
+            assert_eq!(fixture.proof.test_circuit_ids(), expected);
+            assert_rejected(
+                &app.0,
+                &fixture,
+                &applied,
+                binding,
+                StdRng::seed_from_u64(895),
+            );
+        }
+
+        // Each aliased slot attempts to undo an earlier edit. Deduplication
+        // must retain all three distinct edits and discard the cancellations.
+        choices.extend(honest_ids.into_iter().enumerate().map(|(slot, id)| {
+            FuzzCorruption::CircuitId {
+                slot: (slot + APPLICATION_SLOTS) as u8,
+                raw: id,
+                in_domain: false,
+            }
+        }));
+        let mut fixture = honest;
+        let (applied, binding) = apply(&mut fixture.proof, &choices, choices.len());
+        assert_eq!(applied.len(), APPLICATION_SLOTS);
+        assert_eq!(binding, Binding::MustReject);
+        assert_eq!(
+            fixture.proof.test_circuit_ids(),
+            [u32::MAX; APPLICATION_SLOTS],
+        );
+        assert_rejected(
+            &app.0,
+            &fixture,
+            &applied,
+            binding,
+            StdRng::seed_from_u64(896),
         );
     }
 }
