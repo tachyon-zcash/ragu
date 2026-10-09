@@ -2,6 +2,7 @@ pub mod consistent;
 pub mod gadget;
 pub mod gadgetequals;
 pub mod gadgetwrite;
+pub mod shared;
 
 use proc_macro2::Span;
 use syn::{AngleBracketedGenericArguments, GenericArgument, Lifetime, Type, parse_quote};
