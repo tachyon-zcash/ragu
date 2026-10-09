@@ -423,13 +423,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         S: Step<C>,
         V: InternalCircuitVisitor<C>,
     {
+        let (left, left_data) = left.into_parts();
+        let (right, right_data) = right.into_parts();
+        let (first, _application_data, _application_aux) =
+            self.slot(rng, step, witness, left_data, right_data)?;
         let mut builder = ProofBuilder::new(
             self.params,
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
         );
 
-        let (left, right, _application_data, _application_aux) =
-            self.compute_application_proof(rng, step, witness, left, right, &mut builder)?;
+        self.compute_application_proof::<RNG, S>(rng, first, alloc::vec![], &mut builder)?;
 
         let mut dr = Emulator::execute();
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
