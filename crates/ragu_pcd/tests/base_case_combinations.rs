@@ -732,13 +732,13 @@ fn noncanonical_unit_children_reject_through_two_generations() {
                     C::nested_generators(app.params),
                 );
             } else {
-                proof
-                    .native_application_rx
+                proof.native_application_rxs[0]
                     .add_assign(&sparse::Polynomial::from_coeffs(vec![Fp::ONE]));
-                proof.native_application_commitment.0 = ReferenceBackend::sparse_commit_to_affine(
-                    &proof.native_application_rx,
-                    C::host_generators(app.params),
-                );
+                proof.native_application_commitments[0].0 =
+                    ReferenceBackend::sparse_commit_to_affine(
+                        &proof.native_application_rxs[0],
+                        C::host_generators(app.params),
+                    );
             }
             let child = proof.carry::<()>(());
             assert!(

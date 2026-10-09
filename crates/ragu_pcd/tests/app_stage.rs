@@ -255,9 +255,9 @@ fn edit<H: Header<Fp>>(
     let (mut proof, data) = pcd.into_parts();
     let edit = staging::stage_rx::<_, R>(Fp::ZERO, gate, 1, &[delta]).unwrap();
     let (rx, commitment) = match component {
-        RxIndex::Application => (
-            &mut proof.native_application_rx,
-            &mut proof.native_application_commitment,
+        RxIndex::Application(slot) => (
+            &mut proof.native_application_rxs[slot as usize],
+            &mut proof.native_application_commitments[slot as usize],
         ),
         RxIndex::ApplicationStage => (
             &mut proof.native_application_stage_rx,
@@ -370,7 +370,7 @@ fn the_stage_commitment_binds_exactly_the_shared_values() {
         delta,
     );
     check_through_recursion(&app, spilled, &honest, &mut rng, false);
-    let overlapped = edit(&app, honest.clone(), RxIndex::Application, inside, delta);
+    let overlapped = edit(&app, honest.clone(), RxIndex::Application(0), inside, delta);
     check_through_recursion(&app, overlapped, &honest, &mut rng, false);
 
     // Steps that stage nothing are held to the same layout. Only the block's
@@ -381,7 +381,7 @@ fn the_stage_commitment_binds_exactly_the_shared_values() {
     check(&app, &padded, &mut rng, true);
     for (component, gate) in [
         (RxIndex::ApplicationStage, outside),
-        (RxIndex::Application, inside),
+        (RxIndex::Application(0), inside),
     ] {
         let edited = edit(&app, unit.clone(), component, gate, delta);
         check(&app, &edited, &mut rng, false);

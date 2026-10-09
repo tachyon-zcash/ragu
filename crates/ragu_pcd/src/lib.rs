@@ -251,6 +251,30 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// application does not supply the stage's size or values. Every bundle
     /// reserves the largest shared layout registered in the application.
     ///
+    /// Different connection types cannot be bundled, even if their fields
+    /// have identical shapes:
+    ///
+    /// ```compile_fail,E0271
+    /// use ragu_core::{drivers::Driver, gadgets::{Gadget, Kind}, pasta::{Fp, Pasta}};
+    /// use ragu_circuits::polynomials::ProductionRank;
+    /// use ragu_pcd::{ApplicationBuilder, step::Step};
+    /// use ragu_primitives::{Element, shared::Shared};
+    ///
+    /// #[derive(Gadget, Shared)]
+    /// struct ConnectionA<'dr, D: Driver<'dr>> { value: Element<'dr, D> }
+    /// #[derive(Gadget, Shared)]
+    /// struct ConnectionB<'dr, D: Driver<'dr>> { value: Element<'dr, D> }
+    ///
+    /// fn mismatched<A, B>(builder: ApplicationBuilder<'static, Pasta, ProductionRank, 4>, steps: (A, B))
+    /// where
+    ///     A: Step<Pasta, Shared = Kind![Fp; ConnectionA<'_, _>]> + 'static,
+    ///     B: Step<Pasta, Shared = Kind![Fp; ConnectionB<'_, _>],
+    ///         Left = A::Left, Right = A::Right, Output = A::Output> + 'static,
+    /// {
+    ///     let _ = builder.register_bundle(steps); // The shared types must match.
+    /// }
+    /// ```
+    ///
     /// # Cost
     ///
     /// Every step reserves `ceil(n / 2)` gates, where `n` is the

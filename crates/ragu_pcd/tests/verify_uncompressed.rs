@@ -150,7 +150,7 @@ fn verify_rejects_invalid_circuit_id() {
     let mut proof = verifying_proof(&app, &mut rng);
 
     // Corrupt the circuit_id to be outside the registry domain
-    proof.circuit_id = CircuitIndex::new(u32::MAX as usize);
+    proof.circuit_ids[0] = CircuitIndex::new(u32::MAX as usize);
 
     let pcd = proof.carry::<()>(());
     let result = app.verify(&pcd, &mut rng).expect("verify should not error");
