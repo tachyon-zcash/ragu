@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and commits that stage once per proof beside the step's own polynomial.
   Stage and final-stage bonding claims hold the stage to its block in both
   verifier paths, so its commitment binds exactly the staged values.
+- Added `ApplicationBuilder::register_bundle` to register two application
+  `Step`s together in one proof. Each step binds the
+  complete ordered tuple of circuit IDs as public inputs, checked by recursive
+  and terminal verification.
+- Added typed connections for bundle steps through `Step::Shared`.
+  Both steps return the same gadget type; Ragu derives its layout,
+  automatically binds every corresponding wire, and commits the shared values
+  once per proof. Smaller bundles are padded internally, and staging and
+  bonding claims enforce the connection in both verifier paths.
 - Added sealed, static computational-backend selection between Ragu's reference
   and accelerated implementations, defaulting to
   `ragu_backend::ReferenceBackend`.
@@ -33,12 +42,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Shared` gadget. `ApplicationBuilder::register` queues each step and
   `finalize` constructs the circuits once that size is known; every step
   circuit reserves the stage's gates.
+- Every proof carries two application circuits over that stage.
+  `register(A)` registers the repeated bundle `(A, A)`: `seed` and `fuse` take
+  the step alone and fill both slots with its one claim. Bundles are proved
+  with `seed_bundle` and `fuse_bundle`, which take the steps' witnesses;
+  proving requires both registered steps with matching headers and staged
+  values.
 - Arithmetic and MSMs now use Udon from Zakura Common; the `native-msm`
   feature is no longer needed.
 - Baked Pasta parameters are loaded through `ragu_pcd::pasta::baked`.
 
-- PCD transcripts use `ragu-pcd-v2` for the application stage. Proofs using
-  previous protocol tags are incompatible.
+- PCD transcripts use `ragu-pcd-v3` for the application stage and
+  bundle-bound public inputs. Proofs using previous protocol tags are
+  incompatible.
 - The `std` feature now enables the required `alloc` feature.
 - Routed sparse polynomial evaluation, reverse-dot computations, registry
   evaluation, and polynomial commitments through the selected backend across

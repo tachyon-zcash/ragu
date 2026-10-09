@@ -71,7 +71,9 @@ type Witness<'source> = FieldElement;  // What the prover knows
 ```
 
 **Shared**: The gadget this step stages, described under
-[Staging part of the witness](#staging-part-of-the-witness). A step that
+[Staging part of the witness](#staging-part-of-the-witness). Steps in a
+bundle declare the same shared gadget type, which also connects them,
+described under [Bundling two steps](#bundling-two-steps). A step that
 stages nothing declares `type Shared = ();` and returns `()` in the shared
 gadget position.
 
@@ -187,7 +189,7 @@ type Output = YourHeader;
 
 Usage:
 ```rust
-let (proof, aux) = app.seed(&mut rng, CreateLeaf { ... }, witness)?;
+let (pcd, aux) = app.seed(&mut rng, CreateLeaf { ... }, witness)?;
 ```
 
 ### Pattern 2: Fuse Steps (Combine Proofs)
@@ -200,7 +202,7 @@ type Output = HeaderC;
 
 Usage:
 ```rust
-let (proof, aux) = app.fuse(&mut rng, CombineNodes { ... }, (), left_pcd, right_pcd)?;
+let (pcd, aux) = app.fuse(&mut rng, CombineNodes { ... }, (), left_pcd, right_pcd)?;
 ```
 
 ### Staging part of the witness
@@ -258,6 +260,81 @@ application whose steps all declare `Shared = ()` reserves nothing.
 Recursive and terminal verification hold the stage to its block and the
 step's own polynomial out of it, including for proofs built outside the Rust
 API.
+
+### Bundling two steps
+
+Every proof carries two application circuit slots. A step
+registered with `register(A)` is registered as the repeated bundle `(A, A)`:
+`seed` and `fuse` take it alone, trace it once, and fill every slot with that
+one claim. An application computation that needs more gates than one circuit
+holds can use two steps, registered together with `register_bundle` and proved with
+`seed_bundle` or `fuse_bundle`:
+
+```rust
+let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    .with_registry_tags(tags)
+    .register_bundle((StepA, StepB))?
+    .finalize(params)?;
+```
+
+The registry tags and parameters come from the application's setup, as for
+standalone steps. No staging configuration is needed.
+
+```rust
+let (pcd, aux) = app.fuse_bundle(
+    &mut rng,
+    (StepA { ... }, StepB { ... }),
+    (witness_a, witness_b),
+    left_pcd,
+    right_pcd,
+)?;
+```
+
+The steps use the same header types and consecutive indices. They cannot
+be proved separately, substituted, or reordered: `fuse` requires a step
+registered on its own, bundle entry points require both steps in the registered order,
+and both verifiers refuse a proof whose slots do not hold the registered bundle.
+
+Both steps implement `Step` and declare the **same shared gadget type**: one
+named collection of circuit values that must agree between them. Both are
+bound to the proof's one application stage, so the staged values of a bundle
+are its connection:
+
+```rust
+#[derive(Gadget, Shared)]
+struct Connection<'dr, D: Driver<'dr>> {
+    input: Element<'dr, D>,
+    intermediate_state: Element<'dr, D>,
+}
+
+impl Step<Pasta> for StepA {
+    type Shared = Kind![Fp; Connection<'_, _>];
+    // Return the struct containing the actual values A uses or computes.
+    ...
+}
+
+impl Step<Pasta> for StepB {
+    type Shared = Kind![Fp; Connection<'_, _>];
+    // Return the same struct, containing the actual values B uses or computes.
+    ...
+}
+```
+
+Ragu binds every corresponding wire automatically: A's `input` equals B's
+`input`, and A's `intermediate_state` equals B's `intermediate_state`. Using
+different connection types in one bundle is a compile-time error, even if
+their fields have identical shapes.
+
+Each step must still constrain its own computation and return the actual
+values it uses. The shared type describes which values agree; it does not
+derive application mathematics or determine whether a connection is needed.
+The steps can prepare their witnesses sequentially, in either order, or
+independently in parallel when their data dependencies allow it. This does
+not change their registered slot order or the prover's current scheduling.
+
+Recursive and terminal verification enforce the common stage, including
+proofs built outside the Rust API. The [protocol chapter](../protocol/recursion/public_inputs.md)
+explains the internal staging and binding checks.
 
 ### Pattern 3: Stateful Steps
 
