@@ -320,19 +320,13 @@ where
         // polynomial at the original shared wires, bypassing both lane masks.
         // Only the registered bundle IDs then distinguish these locally
         // satisfying traces from a legitimate standalone step.
-        app.seed_bundle(
+        app.seed(
             rng,
-            (
-                PrivateStage {
-                    step: steps.0,
-                    shared: shared.to_vec(),
-                },
-                PrivateStage {
-                    step: steps.1,
-                    shared: shared.to_vec(),
-                },
-            ),
-            witnesses,
+            PrivateStage {
+                step: steps.0,
+                shared: shared.to_vec(),
+            },
+            witnesses.0,
         )
     };
     app.application_bundles = original;
@@ -478,6 +472,168 @@ fn standalone_steps_repeat_one_claim() {
 }
 
 #[test]
+fn application_api_refuses_standalone_steps_supplied_as_a_bundle() {
+    let app = app();
+    let mut rng = StdRng::seed_from_u64(89521);
+    assert!(
+        app.seed_bundle(&mut rng, (Unit, Unit), ((), ())).is_err(),
+        "register(Unit) does not register the pair (Unit, Unit) for bundle proving"
+    );
+}
+
+/// A valid step that counts actual witness evaluation, including for empty
+/// shared connections. Registration's unknown-witness pass does not count.
+struct CountedStep<const INDEX: usize>;
+
+impl<const INDEX: usize> Step<Pasta> for CountedStep<INDEX> {
+    const INDEX: Index = Index::new(INDEX);
+    type Shared = ();
+    type Witness<'source> = &'source core::sync::atomic::AtomicUsize;
+    type Aux<'source> = ();
+    type Left = ();
+    type Right = ();
+    type Output = ();
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, ()>,
+        right: DriverValue<D, ()>,
+    ) -> Result<(
+        (
+            Encoded<'dr, D, (), HS>,
+            Encoded<'dr, D, (), HS>,
+            Encoded<'dr, D, (), HS>,
+        ),
+        (),
+        DriverValue<D, ()>,
+        DriverValue<D, ()>,
+    )> {
+        D::try_just(|| {
+            witness
+                .take()
+                .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            Ok(())
+        })?;
+        Unit.witness::<D, HS>(dr, D::unit(), left, right)
+    }
+}
+
+#[test]
+fn application_api_checks_registration_before_evaluating_any_witness() {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    let app = Builder::new()
+        .register(CountedStep::<0>)
+        .unwrap()
+        .register_bundle((CountedStep::<1>, CountedStep::<2>))
+        .unwrap()
+        .register(CountedStep::<3>)
+        .unwrap()
+        .register_bundle((CountedStep::<4>, CountedStep::<5>))
+        .unwrap()
+        .finalize(crate::pasta::baked())
+        .unwrap();
+    let mut rng = StdRng::seed_from_u64(89522);
+    let calls = AtomicUsize::new(0);
+
+    macro_rules! refused {
+        ($case:literal, $call:expr) => {
+            assert!($call.is_err(), "{} must return an error", $case);
+            assert_eq!(
+                calls.load(Ordering::Relaxed),
+                0,
+                "{} must fail before either witness runs",
+                $case,
+            );
+        };
+    }
+
+    refused!(
+        "first bundle step alone",
+        app.seed(&mut rng, CountedStep::<1>, &calls)
+    );
+    refused!(
+        "second bundle step alone",
+        app.seed(&mut rng, CountedStep::<2>, &calls)
+    );
+    refused!(
+        "standalone step twice",
+        app.seed_bundle(
+            &mut rng,
+            (CountedStep::<0>, CountedStep::<0>),
+            (&calls, &calls)
+        )
+    );
+    refused!(
+        "two standalone steps",
+        app.seed_bundle(
+            &mut rng,
+            (CountedStep::<0>, CountedStep::<3>),
+            (&calls, &calls)
+        )
+    );
+    refused!(
+        "repeated bundle step",
+        app.seed_bundle(
+            &mut rng,
+            (CountedStep::<1>, CountedStep::<1>),
+            (&calls, &calls)
+        )
+    );
+    refused!(
+        "reversed bundle",
+        app.seed_bundle(
+            &mut rng,
+            (CountedStep::<2>, CountedStep::<1>),
+            (&calls, &calls)
+        )
+    );
+    refused!(
+        "steps from different bundles",
+        app.seed_bundle(
+            &mut rng,
+            (CountedStep::<1>, CountedStep::<5>),
+            (&calls, &calls)
+        )
+    );
+    refused!(
+        "unregistered standalone step",
+        app.seed(&mut rng, CountedStep::<6>, &calls)
+    );
+    refused!(
+        "unregistered first bundle step",
+        app.seed_bundle(
+            &mut rng,
+            (CountedStep::<6>, CountedStep::<2>),
+            (&calls, &calls)
+        )
+    );
+    refused!(
+        "unregistered second bundle step",
+        app.seed_bundle(
+            &mut rng,
+            (CountedStep::<1>, CountedStep::<6>),
+            (&calls, &calls)
+        )
+    );
+
+    let (standalone, ()) = app.seed(&mut rng, CountedStep::<0>, &calls).unwrap();
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+    check(&app, &standalone, &mut rng, true);
+    let (bundle, ()) = app
+        .seed_bundle(
+            &mut rng,
+            (CountedStep::<1>, CountedStep::<2>),
+            (&calls, &calls),
+        )
+        .unwrap();
+    assert_eq!(calls.load(Ordering::Relaxed), 3);
+    check(&app, &bundle, &mut rng, true);
+}
+
+#[test]
 fn standalone_steps_verify_with_a_large_odd_shared_stage() {
     let app = app_with_shared::<257>();
     let mut rng = StdRng::seed_from_u64(89511);
@@ -546,11 +702,11 @@ fn missing_extra_reordered_and_repeated_fragments_are_refused() {
         "a fragment cannot be proved alone"
     );
 
-    // A step registered on its own takes no slots; it may be given its own
-    // slot explicitly, and nothing more.
-    let (unit, _, ()) = app.slot(&mut rng, Unit, (), (), ()).unwrap();
+    // A step registered on its own takes no additional prepared slots,
+    // including an explicit copy of its own trace.
+    let (unit, _, ()) = app.prepare_step(&mut rng, Unit, (), (), ()).unwrap();
     for count in [APPLICATION_SLOTS - 1, APPLICATION_SLOTS] {
-        assert_eq!(
+        assert!(
             app.fuse_with_slots(
                 &mut rng,
                 Unit,
@@ -559,8 +715,7 @@ fn missing_extra_reordered_and_repeated_fragments_are_refused() {
                 app.bootstrap_pcd(),
                 alloc::vec![unit.clone(); count],
             )
-            .is_ok(),
-            count == APPLICATION_SLOTS - 1,
+            .is_err(),
             "{count} standalone slots",
         );
     }
@@ -738,8 +893,8 @@ where
         }
     };
     (
-        app.assemble_slot::<_, S>(rng, first).unwrap(),
-        app.assemble_slot::<_, T>(rng, second).unwrap().0,
+        app.assemble_step::<_, S>(rng, first).unwrap(),
+        app.assemble_step::<_, T>(rng, second).unwrap().0,
     )
 }
 
@@ -867,7 +1022,9 @@ fn lane_moves_are_rejected_through_recursion(app: &App, rng: &mut StdRng) {
     // `state = 0`. Each trace is valid for what it sees, and the shared
     // header `n = 1` is `2x²` for neither view.
     let stage = shared(Fp::ONE, Fp::ZERO);
-    let (mut finish, _, ()) = app.slot(rng, Finish, (Fp::ZERO, Fp::ONE), (), ()).unwrap();
+    let (mut finish, _, ()) = app
+        .prepare_step(rng, Finish, (Fp::ZERO, Fp::ONE), (), ())
+        .unwrap();
     assert!(
         app.fuse_with_slots(
             rng,

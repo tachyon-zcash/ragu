@@ -426,7 +426,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let (left, left_data) = left.into_parts();
         let (right, right_data) = right.into_parts();
         let (first, _application_data, _application_aux) =
-            self.slot(rng, step, witness, left_data, right_data)?;
+            self.prepare_step(rng, step, witness, left_data, right_data)?;
         let mut builder = ProofBuilder::new(
             self.params,
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),

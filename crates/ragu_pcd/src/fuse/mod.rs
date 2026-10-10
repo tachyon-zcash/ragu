@@ -199,6 +199,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     ///   [`Step::Left`] header.
     /// * `right`: the right [`Pcd`] to fuse in this step; must correspond to
     ///   the [`Step::Right`] header.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an unregistered index or a step registered in a bundle before
+    /// evaluating its witness. Propagates witness and proof construction errors.
     pub fn fuse<'source, RNG: CryptoRng, S: Step<C, Shared = ()>>(
         &self,
         rng: &mut RNG,
@@ -222,6 +227,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     /// and auxiliary data.
     ///
     /// The remaining parameters are those of [`fuse`](Self::fuse).
+    ///
+    /// # Errors
+    ///
+    /// Rejects unregistered indices, standalone steps, and a pair outside its
+    /// registered order before evaluating either witness. Also rejects unequal
+    /// encoded headers or shared values, and propagates witness and proof
+    /// construction errors.
     pub fn fuse_bundle<'source, RNG, S, T>(
         &self,
         rng: &mut RNG,
@@ -235,8 +247,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         S: Step<C>,
         T: Step<C, Left = S::Left, Right = S::Right, Output = S::Output, Shared = S::Shared>,
     {
+        self.check_application_slots::<S>(
+            [T::INDEX.circuit_index(self.num_application_steps)?].into_iter(),
+        )?;
+
+        // Prepare both steps explicitly. The second step contributes only
+        // its prepared slot; the first also supplies the returned data and aux.
         let second = self
-            .slot(
+            .prepare_step(
                 rng,
                 steps.1,
                 witnesses.1,
@@ -244,7 +262,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 right.data().clone(),
             )?
             .0;
-        self.fuse_with_slots(rng, steps.0, witnesses.0, left, right, alloc::vec![second])
+        let (left, left_data) = left.into_parts();
+        let (right, right_data) = right.into_parts();
+        let first = self.prepare_step(rng, steps.0, witnesses.0, left_data, right_data)?;
+
+        // The first prepared step fills slot 0; this additional slot fills 1.
+        self.fuse_prepared::<RNG, S>(rng, first, left, right, alloc::vec![second])
     }
 
     /// Prove a step with the other fragment's prepared trace.
@@ -262,9 +285,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         right: Pcd<C, R, S::Right>,
         slots: Vec<Slot<C, R>>,
     ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
+        self.check_application_slots::<S>(slots.iter().map(|slot| slot.circuit))?;
         let (left, left_data) = left.into_parts();
         let (right, right_data) = right.into_parts();
-        let first = self.slot(rng, step, witness, left_data, right_data)?;
+        let first = self.prepare_step(rng, step, witness, left_data, right_data)?;
         self.fuse_prepared::<RNG, S>(rng, first, left, right, slots)
     }
 
