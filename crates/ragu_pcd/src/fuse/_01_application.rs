@@ -55,9 +55,38 @@ impl<C: Cycle, R: Rank> Clone for Slot<C, R> {
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
+    /// Check the registered proving mode and ordered IDs before evaluating
+    /// witnesses. Standalone steps accept no additional slots; a bundle must
+    /// start with its first registered step and supply every other step.
+    pub(super) fn check_application_slots<S: Step<C>>(
+        &self,
+        slots: impl ExactSizeIterator<Item = CircuitIndex>,
+    ) -> Result<[CircuitIndex; APPLICATION_SLOTS]> {
+        let bundle = S::INDEX.bundle(&self.application_bundles)?;
+        let primary = S::INDEX.circuit_index(self.num_application_steps)?;
+        let split = crate::internal::native::is_split_bundle(bundle);
+        let expected = if split { &bundle[1..] } else { &[][..] };
+        if slots.len() != expected.len() {
+            return Err(Error::InvalidWitness(
+                if split {
+                    "a bundle step cannot be proved alone; supply both registered steps"
+                } else {
+                    "a standalone step cannot be proved as a bundle"
+                }
+                .into(),
+            ));
+        }
+        if primary != bundle[0] || !slots.eq(expected.iter().copied()) {
+            return Err(Error::InvalidWitness(
+                "application steps do not match the registered bundle order".into(),
+            ));
+        }
+        Ok(bundle)
+    }
+
     /// Trace and assemble one registered fragment before proving its bundle.
     /// Its headers and shared values must match the primary fragment's.
-    pub(crate) fn slot<'source, RNG: CryptoRng, S: Step<C>>(
+    pub(crate) fn prepare_step<'source, RNG: CryptoRng, S: Step<C>>(
         &self,
         rng: &mut RNG,
         step: S,
@@ -72,12 +101,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let bundle = S::INDEX.bundle(&self.application_bundles)?;
         let trace = Adapter::<C, S, R, HEADER_SIZE>::new(step, bundle, self.shared_size)?
             .trace((left, right, witness))?;
-        self.assemble_slot::<RNG, S>(rng, trace)
+        self.assemble_step::<RNG, S>(rng, trace)
     }
 
     /// Assemble an independently prepared fragment, including its automatic
     /// wire bindings and the shared values exported by the adapter.
-    pub(crate) fn assemble_slot<'source, RNG: CryptoRng, S: Step<C>>(
+    pub(crate) fn assemble_step<'source, RNG: CryptoRng, S: Step<C>>(
         &self,
         rng: &mut RNG,
         traced: WithAux<
@@ -117,7 +146,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         slots: Vec<Slot<C, R>>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
-        let bundle = S::INDEX.bundle(&self.application_bundles)?;
+        // Repeat the registration check for internal callers that supply
+        // prepared traces, independently of the public proving entry points.
+        let bundle = self.check_application_slots::<S>(slots.iter().map(|slot| slot.circuit))?;
+        if first.circuit != bundle[0] {
+            return Err(Error::InvalidWitness(
+                "application steps do not match the registered bundle order".into(),
+            ));
+        }
         let shared_size = if crate::internal::native::is_split_bundle(bundle) {
             self.shared_size
         } else {
@@ -128,38 +164,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 "the shared gadget does not fit this bundle".into(),
             ));
         }
-        let primary = S::INDEX.circuit_index(self.num_application_steps)?;
-        let repeated = bundle.iter().all(|id| *id == primary);
-
-        // A step registered on its own fills every slot with its one claim,
-        // so it takes no slots; a bundle's fragments must all be supplied, in
-        // the registered order. The registry decides which case applies, not
-        // the caller: a fragment proved alone is refused here, and a prover
-        // that bypasses this check is refused by the bundle constants every
-        // fragment's circuit carries.
-        if slots.is_empty() {
-            if !repeated {
-                return Err(Error::InvalidWitness(
-                    "a bundle fragment cannot be proved alone; supply every fragment".into(),
-                ));
-            }
-        } else if slots.len() != APPLICATION_SLOTS - 1 {
-            return Err(Error::InvalidWitness(
-                "a bundle fills every application slot explicitly".into(),
-            ));
-        }
-        if first.circuit != primary
-            || primary != bundle[0]
-            || slots
-                .iter()
-                .zip(&bundle[1..])
-                .any(|(slot, id)| slot.circuit != *id)
-        {
-            return Err(Error::InvalidWitness(
-                "application slots do not match the registered bundle".into(),
-            ));
-        }
-
         // The shared stage, committed once: every slot's claim adds it to
         // the slot's own polynomial, so a fragment traced against other
         // shared values would not satisfy its circuit.
