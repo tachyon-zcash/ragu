@@ -120,8 +120,10 @@ pub enum RxComponent {
 /// Mirrors `internal::native::RxIndex`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeRx {
-    /// The application circuit's rx polynomial.
-    Application,
+    /// An application slot's rx polynomial.
+    Application(u32),
+    /// The application shared stage's rx polynomial.
+    ApplicationStage,
     /// The `hashes_1` circuit's rx polynomial.
     Hashes1,
     /// The `hashes_2` circuit's rx polynomial.
@@ -179,7 +181,7 @@ impl NativeRx {
 
     const fn derive_all() -> [Self; Self::NUM] {
         let src = crate::internal::native::RxIndex::ALL;
-        let mut out = [Self::Application; Self::NUM];
+        let mut out = [Self::Application(0); Self::NUM];
         let mut i = 0;
         while i < Self::NUM {
             out[i] = Self::from_internal(src[i]);
@@ -191,7 +193,8 @@ impl NativeRx {
     const fn from_internal(v: crate::internal::native::RxIndex) -> Self {
         use crate::internal::native::RxIndex as I;
         match v {
-            I::Application => Self::Application,
+            I::Application(slot) => Self::Application(slot),
+            I::ApplicationStage => Self::ApplicationStage,
             I::Hashes1 => Self::Hashes1,
             I::Hashes2 => Self::Hashes2,
             I::InnerCollapse => Self::InnerCollapse,
@@ -448,10 +451,15 @@ impl BridgeCommitment {
 /// Apply one with [`Proof::corrupt`]. Its [`Binding`] describes that edit in
 /// isolation; a harness composing edits must account for cancellations.
 pub enum Corruption<C: Cycle> {
-    /// Set `circuit_id` to the given index. Out-of-domain indices are
+    /// Set an application slot's circuit ID. Out-of-domain circuit indices are
     /// rejected outright; in-domain ones move `omega_j` in the instance and
     /// select a different wiring polynomial.
-    CircuitId(u32),
+    CircuitId {
+        /// Which application slot to edit; out of range is a no-op.
+        slot: usize,
+        /// The replacement circuit index.
+        id: u32,
+    },
     /// Add `delta` to one element of a child header.
     HeaderElement {
         /// Which child header to edit.
@@ -550,7 +558,9 @@ pub enum Corruption<C: Cycle> {
 impl<C: Cycle> core::fmt::Debug for Corruption<C> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Corruption::CircuitId(id) => write!(f, "CircuitId({id})"),
+            Corruption::CircuitId { slot, id } => {
+                write!(f, "CircuitId {{ slot: {slot}, id: {id} }}")
+            }
             Corruption::HeaderElement { side, index, .. } => {
                 write!(f, "HeaderElement {{ side: {side:?}, index: {index} }}")
             }
@@ -613,17 +623,26 @@ fn monomial<F: Field, R: Rank>(coeff: usize, delta: F) -> Option<sparse::Polynom
 }
 
 impl<C: Cycle, R: Rank> Proof<C, R> {
+    /// The application circuit IDs, for checking which slots a mutation edits.
+    #[doc(hidden)]
+    pub fn test_circuit_ids(&self) -> [u32; crate::APPLICATION_SLOTS] {
+        self.circuit_ids.map(|id| usize::from(id) as u32)
+    }
+
     /// Apply a [`Corruption`] to this proof, reporting whether
     /// [`verify`](crate::Application::verify) is obliged to reject afterwards.
     #[doc(hidden)]
     pub fn corrupt(&mut self, corruption: Corruption<C>) -> Binding {
         match corruption {
-            Corruption::CircuitId(id) => {
+            Corruption::CircuitId { slot, id } => {
+                let Some(current) = self.circuit_ids.get_mut(slot) else {
+                    return Binding::Unbound;
+                };
                 let id = CircuitIndex::from_u32(id);
-                if self.circuit_id == id {
+                if *current == id {
                     return Binding::Unbound;
                 }
-                self.circuit_id = id;
+                *current = id;
                 Binding::MustReject
             }
 

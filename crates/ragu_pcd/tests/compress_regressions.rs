@@ -45,7 +45,7 @@ fn check_targets<H: Header<Fp>>(
     let mut transcript = CycleTranscript::<Pasta>::new(crate::pasta::baked(), RAGU_TAG).unwrap();
     let challenges = instance.challenges(&mut transcript).unwrap().unwrap();
     let header = ky::output_header::<Pasta, H, HEADER_SIZE>(pcd.data().clone()).unwrap();
-    let native_count = claims::native_shapes(instance.circuit_id, Fp::ONE, &[])
+    let native_count = claims::native_shapes(instance.circuit_ids, Fp::ONE, &[])
         .unwrap()
         .len();
     let nested_count = claims::nested_shapes(Fq::ONE, &[]).unwrap().len();
@@ -240,7 +240,7 @@ fn decider_rejects_malformed_inputs_and_propagates_header_errors() {
             );
         }
         rejects_edit(app, &pcd, "out-of-domain circuit", |proof| {
-            proof.circuit_id = CircuitIndex::new(u32::MAX as usize);
+            proof.circuit_ids[0] = CircuitIndex::new(u32::MAX as usize);
         });
         rejects_edit(app, &pcd, "nonliftable pre_beta", |proof| {
             proof.pre_beta = -Fp::ONE

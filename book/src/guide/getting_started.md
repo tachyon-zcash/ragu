@@ -128,6 +128,7 @@ struct CreateLeaf<'params, C: Cycle> {
 impl<'params, C: Cycle> Step<C> for CreateLeaf<'params, C> {
     const INDEX: Index = Index::new(0);  // Step ID
 
+    type Shared = ();                        // Standalone step
     type Witness<'source> = C::CircuitField;  // Input: field element
     type Aux<'source> = ();                   // Output: hash result
     type Left = ();                           // Bootstrap child
@@ -146,6 +147,7 @@ impl<'params, C: Cycle> Step<C> for CreateLeaf<'params, C> {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
+        (),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
@@ -167,13 +169,14 @@ impl<'params, C: Cycle> Step<C> for CreateLeaf<'params, C> {
         // 4. Encode as a proof
         let leaf_encoded = Encoded::from_gadget(leaf);
 
-        // 5. Return (left, right, output) proofs + output data + aux
+        // 5. Return headers, the empty shared gadget, output data, and aux
         Ok((
             (
                 Encoded::from_gadget(()),  // No left
                 Encoded::from_gadget(()),  // No right
                 leaf_encoded,              // Our output
             ),
+            (),          // No connection to another step
             leaf_value,  // Hash result
             D::unit(),
         ))
@@ -200,6 +203,7 @@ struct CombineNodes<'params, C: Cycle> {
 impl<'params, C: Cycle> Step<C> for CombineNodes<'params, C> {
     const INDEX: Index = Index::new(1);  // Different step ID
 
+    type Shared = ();           // Standalone step
     type Witness<'source> = ();  // No extra witness
     type Aux<'source> = ();      // Return combined hash
     type Left = LeafNode;        // Takes LeafNode
@@ -218,6 +222,7 @@ impl<'params, C: Cycle> Step<C> for CombineNodes<'params, C> {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
+        (),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
@@ -239,7 +244,7 @@ impl<'params, C: Cycle> Step<C> for CombineNodes<'params, C> {
         let output = Encoded::from_gadget(output);
 
         // 4. Return verified proofs + output data + aux
-        Ok(((left, right, output), output_value, D::unit()))
+        Ok(((left, right, output), (), output_value, D::unit()))
     }
 }
 ```
@@ -287,34 +292,31 @@ The application can now be used to create and verify proofs:
 
 ```rust
 // Create first leaf using seed
-let leaf1 = app.seed(
+let (leaf1, _) = app.seed(
     &mut rng,
     CreateLeaf { poseidon_params: Pasta::circuit_poseidon(pasta) },
     Fp::from(100u64),  // Hash the value 100
 )?;
-let leaf1 = leaf1.0.carry(leaf1.1);
 assert!(app.verify(&leaf1, &mut rng)?);
 println!("Seed 1 verified (value: 100)");
 
 // Create second leaf
-let leaf2 = app.seed(
+let (leaf2, _) = app.seed(
     &mut rng,
     CreateLeaf { poseidon_params: Pasta::circuit_poseidon(pasta) },
     Fp::from(200u64),  // Hash the value 200
 )?;
-let leaf2 = leaf2.0.carry(leaf2.1);
 assert!(app.verify(&leaf2, &mut rng)?);
 println!("Seed 2 verified (value: 200)");
 
 // Combine leaves into internal node using fuse
-let node1 = app.fuse(
+let (node1, _) = app.fuse(
     &mut rng,
     CombineNodes { poseidon_params: Pasta::circuit_poseidon(pasta) },
     (),  // No extra witness
     leaf1,
     leaf2,
 )?;
-let node1 = node1.0.carry::<InternalNode>(node1.1);
 assert!(app.verify(&node1, &mut rng)?);
 println!("Internal node verified!");
 

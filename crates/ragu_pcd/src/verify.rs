@@ -32,7 +32,7 @@
 //!
 //! [`challenges`]: crate::internal::nested::stages::challenges
 
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
 use ragu_backend::Backend;
 use ragu_circuits::{
@@ -54,7 +54,9 @@ use crate::{
     header::Header,
     internal::{
         claims, ky,
-        native::{self as native_internal, RxComponent, claims as native_claims},
+        native::{
+            self as native_internal, APPLICATION_SLOTS, RxComponent, claims as native_claims,
+        },
         nested::{
             self as nested_internal, RxComponent as NestedRxComponent,
             challenge as nested_challenge, claims as nested_claims,
@@ -106,9 +108,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         // that argument, rather than an evaluation of the registry interpolation
         // at an arbitrary point.
         // (Internal circuit IDs are constants and don't need this check.)
-        if !self
-            .native_registry
-            .circuit_in_domain(pcd.proof().circuit_id())
+        if !pcd
+            .proof()
+            .circuit_ids()
+            .iter()
+            .all(|&id| self.native_registry.circuit_in_domain(id))
         {
             return Ok(false);
         }
@@ -404,13 +408,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             for child in [&out.left, &out.right] {
                 wires.extend(wires_of(&child.unified.x)?);
                 wires.extend(wires_of(&child.unified.y)?);
-                wires.extend(wires_of(&child.circuit_id)?);
+                wires.extend(wires_of(&child.circuit_ids)?);
             }
             Ok(wires)
         })?;
         let child: Vec<C::CircuitField> = child.iter().map(|&i| preamble.read(i)).collect();
-        let [left_x, left_y, left_id, right_x, right_y, right_id] =
-            child.try_into().expect("six child values");
+        // Per child: x, y, then one circuit id per application slot.
+        let (left, right) = child.split_at(2 + APPLICATION_SLOTS);
+        let (left_x, left_y, left_ids) = (left[0], left[1], &left[2..]);
+        let (right_x, right_y, right_ids) = (right[0], right[1], &right[2..]);
 
         // The query stage's registry values.
         let query = StageReader::<C::CircuitField, R>::new(&proof[RxIndex::Query]);
@@ -420,7 +426,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             let mut wires = wires_of(&out.registry_wxy)?;
             for child in [&out.left, &out.right] {
                 wires.extend(wires_of(&child.child_registry_xy_at_current_w)?);
-                wires.extend(wires_of(&child.current_registry_xy_at_child_circuit_id)?);
+                wires.extend(wires_of(&child.current_registry_xy_at_child_circuit_ids)?);
                 wires.extend(wires_of(&child.current_registry_wy_at_child_x)?);
             }
             Ok(wires)
@@ -435,16 +441,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                 query.read(i) == evals[bit_reverse(j as usize, log2_n)]
             });
         let claimed: Vec<C::CircuitField> = claimed.iter().map(|&i| query.read(i)).collect();
-        let query_claim = claimed
-            == [
-                m(w, x, y),
-                m(w, left_x, left_y),
-                m(left_id, x, y),
-                m(w, left_x, y),
-                m(w, right_x, right_y),
-                m(right_id, x, y),
-                m(w, right_x, y),
-            ];
+        let mut expected = vec![m(w, x, y)];
+        for (child_x, child_y, ids) in [(left_x, left_y, left_ids), (right_x, right_y, right_ids)] {
+            expected.push(m(w, child_x, child_y));
+            expected.extend(ids.iter().map(|&id| m(id, x, y)));
+            expected.push(m(w, child_x, y));
+        }
+        let query_claim = claimed == expected;
 
         // The eval stage's current-step evaluations at u.
         let eval = StageReader::<C::CircuitField, R>::new(&proof[RxIndex::Eval]);
@@ -659,8 +662,16 @@ mod native {
             .into_iter()
         }
 
-        fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
-            core::iter::once(self.proof.circuit_id())
+        fn app_circuits(&self, slot: usize) -> impl Iterator<Item = Self::AppCircuitId> {
+            core::iter::once(self.proof.circuit_ids()[slot])
+        }
+    }
+
+    impl<C: Cycle, R: Rank> native_claims::ApplicationSource for SingleProofSource<'_, C, R> {
+        type IsBundle = bool;
+
+        fn is_split_bundle(&self) -> impl Iterator<Item = bool> {
+            core::iter::once(native_internal::is_split_bundle(self.proof.circuit_ids()))
         }
     }
 }
@@ -684,7 +695,7 @@ mod nested {
             core::iter::once(&self.proof[component])
         }
 
-        fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
+        fn app_circuits(&self, _: usize) -> impl Iterator<Item = Self::AppCircuitId> {
             core::iter::empty()
         }
     }

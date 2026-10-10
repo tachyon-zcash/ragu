@@ -26,13 +26,18 @@ use ragu_core::{
     gadgets::{Bound, Gadget, Kind, WireEqualizer},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, allocator::Allocator};
+use ragu_primitives::{
+    Element,
+    allocator::Allocator,
+    vec::{ConstLen, FixedVec},
+};
 use udon::field::Field;
 
 use crate::{
     Proof,
     internal::native::{
-        InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, RxValues,
+        APPLICATION_SLOTS, InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex,
+        RxValues,
     },
 };
 
@@ -50,8 +55,9 @@ pub struct ChildEvaluationsWitness<F> {
     /// Child's `registry_xy` polynomial evaluated at current step's $w$.
     pub child_registry_xy_at_current_w: F,
 
-    /// Current `registry_xy` polynomial evaluated at child's `circuit_id`.
-    pub current_registry_xy_at_child_circuit_id: F,
+    /// Current `registry_xy` polynomial evaluated at the child's circuit id
+    /// of each application slot.
+    pub current_registry_xy_at_child_circuit_ids: [F; APPLICATION_SLOTS],
 
     /// Current `registry_wy` polynomial evaluated at child's $x$.
     pub current_registry_wy_at_child_x: F,
@@ -72,10 +78,9 @@ impl<F: Field> ChildEvaluationsWitness<F> {
             a_poly_at_xz: B::sparse_eval(&proof[RxComponent::AbA], xz),
             b_poly_at_x: B::sparse_eval(&proof[RxComponent::AbB], x),
             child_registry_xy_at_current_w: B::sparse_eval(proof.native_registry_xy_poly(), w),
-            current_registry_xy_at_child_circuit_id: B::sparse_eval(
-                registry_xy,
-                proof.circuit_id().omega_j(),
-            ),
+            current_registry_xy_at_child_circuit_ids: proof
+                .circuit_ids()
+                .map(|id| B::sparse_eval(registry_xy, id.omega_j())),
             current_registry_wy_at_child_x: B::sparse_eval(registry_wy, proof.x()),
         }
     }
@@ -213,9 +218,11 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
     pub child_registry_xy_at_current_w: Element<'dr, D>,
 
-    /// Current `registry_xy` polynomial evaluated at child's `circuit_id`.
+    /// Current `registry_xy` polynomial evaluated at the child's circuit id
+    /// of each application slot.
     #[ragu(gadget)]
-    pub current_registry_xy_at_child_circuit_id: Element<'dr, D>,
+    pub current_registry_xy_at_child_circuit_ids:
+        FixedVec<Element<'dr, D>, ConstLen<APPLICATION_SLOTS>>,
 
     /// Current `registry_wy` polynomial evaluated at child's $x$.
     #[ragu(gadget)]
@@ -241,13 +248,15 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
                 allocator,
                 witness.as_ref().map(|w| w.child_registry_xy_at_current_w),
             )?,
-            current_registry_xy_at_child_circuit_id: Element::alloc(
-                dr,
-                allocator,
-                witness
-                    .as_ref()
-                    .map(|w| w.current_registry_xy_at_child_circuit_id),
-            )?,
+            current_registry_xy_at_child_circuit_ids: FixedVec::try_from_fn(|slot| {
+                Element::alloc(
+                    dr,
+                    allocator,
+                    witness
+                        .as_ref()
+                        .map(|w| w.current_registry_xy_at_child_circuit_ids[slot]),
+                )
+            })?,
             current_registry_wy_at_child_x: Element::alloc(
                 dr,
                 allocator,
@@ -291,8 +300,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
 
     fn values() -> usize {
         // InternalCircuitIndex::NUM + registry_wxy (1) + 2 * ChildEvaluations
-        // (rx + 5 each)
-        InternalCircuitIndex::NUM + 1 + 2 * (RxIndex::NUM + 5)
+        // (rx + 4 + one registry value per slot each)
+        InternalCircuitIndex::NUM + 1 + 2 * (RxIndex::NUM + 4 + APPLICATION_SLOTS)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

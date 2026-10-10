@@ -47,6 +47,7 @@ struct UnitSeed;
 impl Step<Pasta> for UnitSeed {
     const INDEX: Index = Index::new(0);
 
+    type Shared = ();
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = ();
@@ -70,6 +71,7 @@ impl Step<Pasta> for UnitSeed {
             Encoded<'dr, D, Self::Right, HS>,
             Encoded<'dr, D, Self::Output, HS>,
         ),
+        (),
         DriverValue<D, ()>,
         DriverValue<D, ()>,
     )>
@@ -82,6 +84,7 @@ impl Step<Pasta> for UnitSeed {
                 Encoded::from_gadget(()),
                 Encoded::from_gadget(()),
             ),
+            (),
             D::unit(),
             D::unit(),
         ))
@@ -94,6 +97,7 @@ struct UnitStep;
 impl Step<Pasta> for UnitStep {
     const INDEX: Index = Index::new(1);
 
+    type Shared = ();
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = ();
@@ -117,6 +121,7 @@ impl Step<Pasta> for UnitStep {
             Encoded<'dr, D, Self::Right, HS>,
             Encoded<'dr, D, Self::Output, HS>,
         ),
+        (),
         DriverValue<D, ()>,
         DriverValue<D, ()>,
     )>
@@ -130,6 +135,7 @@ impl Step<Pasta> for UnitStep {
                 Encoded::new(dr, allocator, right)?,
                 Encoded::from_gadget(()),
             ),
+            (),
             D::unit(),
             D::unit(),
         ))
@@ -144,7 +150,7 @@ fn verify_rejects_invalid_circuit_id() {
     let mut proof = verifying_proof(&app, &mut rng);
 
     // Corrupt the circuit_id to be outside the registry domain
-    proof.circuit_id = CircuitIndex::new(u32::MAX as usize);
+    proof.circuit_ids[0] = CircuitIndex::new(u32::MAX as usize);
 
     let pcd = proof.carry::<()>(());
     let result = app.verify(&pcd, &mut rng).expect("verify should not error");

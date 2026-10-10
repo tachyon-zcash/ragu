@@ -213,8 +213,24 @@ impl<'rx, C: Cycle, R: Rank> Source for NativeFuseProofSource<'rx, C, R> {
         .into_iter()
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
-        [self.left.circuit_id(), self.right.circuit_id()].into_iter()
+    fn app_circuits(&self, slot: usize) -> impl Iterator<Item = Self::AppCircuitId> {
+        [
+            self.left.circuit_ids()[slot],
+            self.right.circuit_ids()[slot],
+        ]
+        .into_iter()
+    }
+}
+
+impl<C: Cycle, R: Rank> crate::internal::native::claims::ApplicationSource
+    for NativeFuseProofSource<'_, C, R>
+{
+    type IsBundle = bool;
+
+    fn is_split_bundle(&self) -> impl Iterator<Item = bool> {
+        [self.left, self.right]
+            .into_iter()
+            .map(|proof| crate::internal::native::is_split_bundle(proof.circuit_ids()))
     }
 }
 
@@ -239,11 +255,12 @@ impl<'m, 'rx, F: Field, R: Rank, B: ragu_backend::Backend>
         self.b.push(Cow::Borrowed(b.poly));
     }
 
-    fn circuit_claim(&mut self, circuit_id: CircuitIndex, rx: Atom<'rx, FoldKey, F, R>) {
-        self.circuit_impl(
-            circuit_id,
-            TrackedPoly::single(Cow::Borrowed(rx.poly), rx.key),
-        );
+    fn circuit_claim(
+        &mut self,
+        circuit_id: CircuitIndex,
+        rxs: impl Iterator<Item = Atom<'rx, FoldKey, F, R>>,
+    ) {
+        self.circuit_impl(circuit_id, TrackedPoly::sum(rxs));
     }
 
     fn internal_circuit_claim(
@@ -260,6 +277,25 @@ impl<'m, 'rx, F: Field, R: Rank, B: ragu_backend::Backend>
         groups: impl Iterator<Item = impl Iterator<Item = Atom<'rx, FoldKey, F, R>>>,
     ) -> Result<()> {
         let folded = fold_revdot::fold(groups.map(TrackedPoly::sum), self.z);
+        self.bonding_impl(id.circuit_index(), folded);
+        Ok(())
+    }
+
+    fn application_bonding_claim(
+        &mut self,
+        id: InternalCircuitIndex,
+        rxs: impl Iterator<Item = (Atom<'rx, FoldKey, F, R>, bool)>,
+    ) -> Result<()> {
+        let folded = fold_revdot::fold(
+            rxs.map(|(rx, is_bundle)| {
+                if is_bundle {
+                    TrackedPoly::single(Cow::Borrowed(rx.poly), rx.key)
+                } else {
+                    TrackedPoly::default()
+                }
+            }),
+            self.z,
+        );
         self.bonding_impl(id.circuit_index(), folded);
         Ok(())
     }
@@ -285,7 +321,7 @@ impl<'rx, C: Cycle, R: Rank> Source for NestedFuseProofSource<'rx, C, R> {
         [&self.left[component], &self.right[component]].into_iter()
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
+    fn app_circuits(&self, _: usize) -> impl Iterator<Item = Self::AppCircuitId> {
         core::iter::empty()
     }
 }

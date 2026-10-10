@@ -60,6 +60,21 @@ pub fn derive_gadget(input: TokenStream) -> TokenStream {
     })
 }
 
+// Documentation is in `derive@ragu_primitives::shared::Shared`.
+#[allow(missing_docs)]
+#[proc_macro_derive(Shared, attributes(ragu))]
+pub fn derive_shared(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    macro_body(|| {
+        derive::shared::derive(
+            input,
+            path_resolution::UdonPath::resolve()?,
+            path_resolution::RaguCorePath::resolve()?,
+            path_resolution::RaguPrimitivesPath::resolve()?,
+        )
+    })
+}
+
 #[cfg(test)]
 #[allow(unused_imports)]
 use ragu_primitives::io::Write as _;

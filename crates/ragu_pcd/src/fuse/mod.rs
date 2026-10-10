@@ -20,6 +20,7 @@ pub(crate) mod claims;
 #[cfg(test)]
 #[path = "../../tests/pcs.rs"]
 mod pcs_tests;
+
 // The patcher seam (see `crate::fuzzing`). Its source lives with the rest of
 // the fuzzing surface in `src/fuzzing/`, but it is mounted here because it
 // calls this pipeline's `pub(super)` steps. The file gates itself behind
@@ -28,6 +29,9 @@ mod pcs_tests;
 #[path = "../fuzzing/patcher.rs"]
 pub(crate) mod patcher;
 
+use alloc::vec::Vec;
+
+pub(crate) use _01_application::Slot;
 use _10_p::NativeInputs;
 use claims::{NativeFuseProofSource, NestedFuseProofSource};
 use ragu_circuits::{
@@ -173,8 +177,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 {
     /// Fuse two [`Pcd`] into one using a provided [`Step`].
     ///
-    /// The provided `step` must have been previously registered with this
-    /// [`Application`] via [`ApplicationBuilder::register`](crate::ApplicationBuilder::register).
+    /// The provided `step` must have been registered on its own with
+    /// [`ApplicationBuilder::register`](crate::ApplicationBuilder::register).
+    /// Its one claim fills every application slot of the proof: the step is
+    /// traced and committed once, over an empty shared stage, and the same
+    /// polynomial is placed in each slot. A step in a bundle registered
+    /// with [`ApplicationBuilder::register_bundle`](crate::ApplicationBuilder::register_bundle)
+    /// cannot be fused alone; use [`fuse_bundle`](Self::fuse_bundle).
     ///
     /// ## Parameters
     ///
@@ -190,7 +199,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     ///   [`Step::Left`] header.
     /// * `right`: the right [`Pcd`] to fuse in this step; must correspond to
     ///   the [`Step::Right`] header.
-    pub fn fuse<'source, RNG: CryptoRng, S: Step<C>>(
+    ///
+    /// # Errors
+    ///
+    /// Rejects an unregistered index or a step registered in a bundle before
+    /// evaluating its witness. Propagates witness and proof construction errors.
+    pub fn fuse<'source, RNG: CryptoRng, S: Step<C, Shared = ()>>(
         &self,
         rng: &mut RNG,
         step: S,
@@ -198,13 +212,107 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         left: Pcd<C, R, S::Left>,
         right: Pcd<C, R, S::Right>,
     ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
+        self.fuse_with_slots(rng, step, witness, left, right, Vec::new())
+    }
+
+    /// Fuse two [`Pcd`] using both steps of a bundle registered with
+    /// [`ApplicationBuilder::register_bundle`](crate::ApplicationBuilder::register_bundle).
+    ///
+    /// Supply the steps `(A, B)` and their witnesses in the registered
+    /// order. Both steps return the same [`Step::Shared`] gadget
+    /// type. Ragu automatically derives its layout, binds every returned
+    /// wire to the common stage, and refuses mismatching shared values. Each
+    /// step fills one application slot with its own claim; both must
+    /// produce identical headers. Returns the first step's output data
+    /// and auxiliary data.
+    ///
+    /// The remaining parameters are those of [`fuse`](Self::fuse).
+    ///
+    /// # Errors
+    ///
+    /// Rejects unregistered indices, standalone steps, and a pair outside its
+    /// registered order before evaluating either witness. Also rejects unequal
+    /// encoded headers or shared values, and propagates witness and proof
+    /// construction errors.
+    pub fn fuse_bundle<'source, RNG, S, T>(
+        &self,
+        rng: &mut RNG,
+        steps: (S, T),
+        witnesses: (S::Witness<'source>, T::Witness<'source>),
+        left: Pcd<C, R, S::Left>,
+        right: Pcd<C, R, S::Right>,
+    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)>
+    where
+        RNG: CryptoRng,
+        S: Step<C>,
+        T: Step<C, Left = S::Left, Right = S::Right, Output = S::Output, Shared = S::Shared>,
+    {
+        self.check_application_slots::<S>(
+            [T::INDEX.circuit_index(self.num_application_steps)?].into_iter(),
+        )?;
+
+        // Prepare both steps explicitly. The second step contributes only
+        // its prepared slot; the first also supplies the returned data and aux.
+        let second = self
+            .prepare_step(
+                rng,
+                steps.1,
+                witnesses.1,
+                left.data().clone(),
+                right.data().clone(),
+            )?
+            .0;
+        let (left, left_data) = left.into_parts();
+        let (right, right_data) = right.into_parts();
+        let first = self.prepare_step(rng, steps.0, witnesses.0, left_data, right_data)?;
+
+        // The first prepared step fills slot 0; this additional slot fills 1.
+        self.fuse_prepared::<RNG, S>(rng, first, left, right, alloc::vec![second])
+    }
+
+    /// Prove a step with the other fragment's prepared trace.
+    ///
+    /// Standalone steps use an empty stage and repeat their claim. Split
+    /// bundles require the registered second fragment with matching headers
+    /// and shared values.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn fuse_with_slots<'source, RNG: CryptoRng, S: Step<C>>(
+        &self,
+        rng: &mut RNG,
+        step: S,
+        witness: S::Witness<'source>,
+        left: Pcd<C, R, S::Left>,
+        right: Pcd<C, R, S::Right>,
+        slots: Vec<Slot<C, R>>,
+    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
+        self.check_application_slots::<S>(slots.iter().map(|slot| slot.circuit))?;
+        let (left, left_data) = left.into_parts();
+        let (right, right_data) = right.into_parts();
+        let first = self.prepare_step(rng, step, witness, left_data, right_data)?;
+        self.fuse_prepared::<RNG, S>(rng, first, left, right, slots)
+    }
+
+    /// Finish a fuse from independently prepared application fragments.
+    /// Preparation order does not change the registered slot order or binding.
+    pub(crate) fn fuse_prepared<'source, RNG: CryptoRng, S: Step<C>>(
+        &self,
+        rng: &mut RNG,
+        first: (
+            Slot<C, R>,
+            <S::Output as crate::Header<C::CircuitField>>::Data,
+            S::Aux<'source>,
+        ),
+        left: Proof<C, R>,
+        right: Proof<C, R>,
+        slots: Vec<Slot<C, R>>,
+    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
         let mut builder = ProofBuilder::<C, R, B>::new(
             self.params,
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
         );
 
-        let (left, right, application_data, application_aux) =
-            self.compute_application_proof(rng, step, witness, left, right, &mut builder)?;
+        let (first, application_data, application_aux) = first;
+        self.compute_application_proof::<RNG, S>(rng, first, slots, &mut builder)?;
 
         let mut dr = Emulator::execute();
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;

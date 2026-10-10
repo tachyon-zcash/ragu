@@ -45,9 +45,42 @@ $k_\text{unified}(y)$, because it is the circuit that binds child headers.
 
 ### `application_ky`
 
-The step circuit's own public inputs, with no unified output and no zero suffix:
+The two application circuits share one public input polynomial. It contains
+the ordered bundle's circuit IDs (as registry domain points), followed by the
+three headers, with no unified output and no zero suffix:
 
-$$k_\text{app}(Y) = \text{Horner}(\texttt{left\_header} \,\|\, \texttt{right\_header} \,\|\, \texttt{output\_header} \,\|\, 1, \; Y)$$
+$$k_\text{app}(Y) = \text{Horner}(\texttt{circuit\_ids} \,\|\, \texttt{left\_header} \,\|\, \texttt{right\_header} \,\|\, \texttt{output\_header} \,\|\, 1, \; Y)$$
+
+Each step's adapter fixes both IDs as circuit constants at registration.
+The terminal verifiers derive them from the proof's actual selectors, and the
+recursive `outer_collapse` circuit derives them from the committed child
+preamble. A prover cannot replace `(A, B)` with `(A, A)` or swap its
+steps: the public inputs would disagree with the registered circuits.
+A standalone step registers the repeated bundle `(A, A)`; the prover traces
+it once and places the same polynomial in both slots, so each slot's claim is
+the same valid claim.
+
+Split steps share data through the proof's *shared stage*, a third
+application polynomial committed once per proof. Each application circuit
+loads it at its first gates, `ceil(n / 2)` of them for an application whose
+shared stage holds `n` elements, where `n` is derived from the largest
+registered `Step::Shared` gadget. Both steps in a bundle must use the
+same gadget type. The adapter constrains each actual returned gadget wire
+to its corresponding reserved stage wire; the prover derives the stage's
+values from those gadgets. Smaller bundles pad unused capacity with zeros.
+Each slot's claim is checked on the sum
+of the slot's own polynomial and the stage's, so both steps' returned
+connections agree. Two bonding claims, folded
+like the internal stages' masks, keep the lanes apart: the stage's mask pins
+the stage polynomial to its block, and the application final mask pins every
+slot's own polynomial to zero inside it. Without them a step could carry
+a private copy of a shared value in its own lane.
+
+Verification derives the shared-stage lane selector from the proof's bound
+circuit IDs: equal IDs identify a standalone step and disable the lane
+claims, while distinct IDs identify a split bundle and keep them active.
+Standalone steps, including bootstrap and rerandomization, reserve no shared
+block and retain their full circuit capacity.
 
 ### Horner Evaluation
 
