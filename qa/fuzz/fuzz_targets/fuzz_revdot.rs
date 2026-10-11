@@ -11,7 +11,7 @@
 //! rank is not incidental to what is under test: `View`'s four segments are
 //! clamped against `R::n()`, and `revdot` pairs coefficients against the
 //! reversal of a vector whose length is the rank's. A dense-vs-sparse
-//! disagreement that only appears once `n` is 2048 would have been invisible.
+//! disagreement that only appears at production capacity would have been invisible.
 //! The field is drawn evenly; the rank draw is skewed toward `TestRank`, so
 //! the throughput cost of the larger vectors is bounded.
 

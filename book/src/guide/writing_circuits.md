@@ -229,13 +229,13 @@ With Steps and Headers defined, an application is constructed as follows:
 
 ```rust
 let pasta = ragu_pcd::pasta::baked();
-let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
+let app = ApplicationBuilder::<Pasta, R<14>, 4>::new()
     .register(CreateLeaf { poseidon_params: Pasta::circuit_poseidon(pasta) })?
     .register(CombineNodes { poseidon_params: Pasta::circuit_poseidon(pasta) })?
     .finalize(pasta)?;
 ```
 
-For details on parameter selection (`Pasta`, `R<13>`, `4`), see
+For details on parameter selection (`Pasta`, `R<14>`, `4`), see
 [Configuration](configuration.md).
 
 ## Related Topics

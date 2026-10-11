@@ -1,5 +1,5 @@
-//! Pin the embedded generators independently of their derivation and storage
-//! representation by comparing their canonical coordinates with the original.
+//! Pin the original generator prefix independently of derivation and storage
+//! representation by comparing its canonical coordinates with the original.
 
 use ragu_core::{Cycle, FixedGenerators, pasta::Pasta};
 use ragu_pcd::ipa::IpaCycle;
@@ -8,7 +8,9 @@ use udon::{curve::Affine, field::Field};
 #[test]
 fn baked_points_match_original_parameters() {
     fn append<C: Affine<Base: Field>>(out: &mut Vec<u8>, generators: &impl FixedGenerators<C>) {
-        for point in generators.g().iter().chain([generators.h()]) {
+        // The increased production rank extends the vector generators; its
+        // first 8192 entries and blinding generator retain the original values.
+        for point in generators.g().iter().take(1 << 13).chain([generators.h()]) {
             let (x, y) = point.coordinates().expect("nonidentity generator");
             out.extend_from_slice(x.to_bytes().as_ref());
             out.extend_from_slice(y.to_bytes().as_ref());

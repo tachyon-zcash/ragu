@@ -39,8 +39,8 @@ A `Pcd` bundles two components:
 The type parameters configure the proof system:
 
 * **`C: Cycle`**: The elliptic curve cycle used for recursion (e.g., Pasta).
-* **`R: Rank`**: The circuit capacity as a power of two (e.g., `R<13>` for
-  2^13 constraints).
+* **`R: Rank`**: The circuit capacity as a power of two (e.g., `R<14>` for
+  2^14 constraints).
 * **`H: Header`**: The header type providing a succinct encoded representation
   of the proof's public inputs.
 

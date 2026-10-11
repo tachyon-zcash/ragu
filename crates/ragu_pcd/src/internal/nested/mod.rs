@@ -52,7 +52,7 @@ pub const NUM_ENDOSCALING_POINTS: usize = 1 + 2 * (crate::internal::native::RxIn
 
 /// The endoscalings a nested step performs: what fits a step beside the
 /// stages it reserves, which hold every point the walk consumes.
-pub const ENDOSCALINGS_PER_STEP: usize = 4;
+pub const ENDOSCALINGS_PER_STEP: usize = 8;
 
 /// Number of endoscaling steps, derived from [`NUM_ENDOSCALING_POINTS`] via
 /// [`endoscalar::num_steps`].
@@ -90,8 +90,8 @@ pub const NUM_INSTANCE_CIRCUITS: usize = 3;
 /// Two children contribute one raw accumulator claim each, one circuit claim
 /// each per endoscaling step and per instance circuit, and one bonding claim
 /// per bonding kind (each bonding kind is $z$-folded across both children):
-/// 78 claims today, over twenty-eight steps, three instance circuits and
-/// fourteen bonding kinds. `12 x 7` leaves a little room.
+/// 42 claims today, over ten steps, three instance circuits and fourteen
+/// bonding kinds. The existing `12 x 7` layout leaves room.
 #[derive(Clone, Copy, Default)]
 pub struct RevdotParameters;
 

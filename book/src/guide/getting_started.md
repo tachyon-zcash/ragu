@@ -45,12 +45,12 @@ from its children.
 
 ## Configuration at a Glance
 
-This guide uses `ApplicationBuilder::<Pasta, R<13>, 4>`:
+This guide uses `ApplicationBuilder::<Pasta, R<14>, 4>`:
 
 | Parameter | Value | Meaning |
 |-----------|-------|---------|
 | **Cycle** | `Pasta` | Elliptic curve cycle for proof recursion (standard choice) |
-| **Rank** | `R<13>` | Circuit capacity: 2^13 = 8,192 constraints |
+| **Rank** | `R<14>` | Circuit capacity: 2^14 = 16,384 constraints |
 | **Header Size** | `4` | Each proof carries 4 field elements of data |
 
 These defaults work for most applications. See
@@ -265,7 +265,7 @@ fn main() -> Result<()> {
     let mut rng = StdRng::seed_from_u64(12345);
 
     // 2. Build application with our steps
-    let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
+    let app = ApplicationBuilder::<Pasta, R<14>, 4>::new()
         .register(CreateLeaf {
             poseidon_params: Pasta::circuit_poseidon(pasta),
         })?
@@ -351,7 +351,7 @@ For deeper exploration of PCD applications in Ragu:
 
 - **[Writing Circuits](writing_circuits.md)**: Detailed explanation of
   Steps, Headers, and circuit logic implementation
-- **[Configuration](configuration.md)**: Understanding the Pasta/R<13>/4
+- **[Configuration](configuration.md)**: Understanding the Pasta/R<14>/4
   parameters and selection criteria
 - **[Gadgets](gadgets/index.md)**: Documentation of Element, Sponge, and
   other building blocks

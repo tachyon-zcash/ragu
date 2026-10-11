@@ -36,7 +36,7 @@ pub const NUM_ENDOSCALING_POINTS: usize = nested::pcs::NUM_BATCHED_POINTS;
 
 /// The endoscalings a native step performs: what fits a step beside the
 /// stages it reserves.
-pub const ENDOSCALINGS_PER_STEP: usize = 4;
+pub const ENDOSCALINGS_PER_STEP: usize = 8;
 
 /// The number of native endoscaling steps.
 ///
@@ -45,7 +45,7 @@ pub const ENDOSCALINGS_PER_STEP: usize = 4;
 /// batch sizes, and one of them has to be fixed to break the cycle. The
 /// assertion below checks the pin is the fixed point, so a change to either
 /// batch that moves it fails to build here.
-pub const NUM_ENDOSCALING_STEPS: usize = 25;
+pub const NUM_ENDOSCALING_STEPS: usize = 8;
 
 const _: () = assert!(
     endoscalar::num_steps::<ENDOSCALINGS_PER_STEP>(NUM_ENDOSCALING_POINTS) == NUM_ENDOSCALING_STEPS,

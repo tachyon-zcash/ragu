@@ -114,16 +114,16 @@ pub trait Rank:
 }
 
 /// `R<N>` implements [`Rank`] for supported values of $N$. The type aliases
-/// [`ProductionRank`] ($N = 13$) and [`TestRank`] ($N = 7$) are provided for
+/// [`ProductionRank`] ($N = 14$) and [`TestRank`] ($N = 7$) are provided for
 /// convenience. Additional implementations can be added to `impl_rank_for_R!` as needed.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct R<const RANK: u32>;
 
 /// The standard production rank for Ragu circuits.
 ///
-/// Provides $2^{13} = 8192$ polynomial coefficients and supports up to
-/// $2^{11} = 2048$ gates.
-pub type ProductionRank = R<13>;
+/// Provides $2^{14} = 16384$ polynomial coefficients and supports up to
+/// $2^{12} = 4096$ gates.
+pub type ProductionRank = R<14>;
 
 /// A small rank for fast unit tests.
 ///
@@ -143,7 +143,7 @@ macro_rules! impl_rank_for_R {
     };
 }
 
-impl_rank_for_R! {7, 13}
+impl_rank_for_R! {7, 14}
 
 #[cfg(test)]
 mod tests {

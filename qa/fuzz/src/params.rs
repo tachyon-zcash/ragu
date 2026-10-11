@@ -3,8 +3,8 @@
 //!
 //! Most of the generic pipeline was written against `Fp` and [`TestRank`],
 //! and for a good reason: that is the cheap pair. `TestRank` is `R<7>`, so
-//! `n = 32` gates and 128 coefficients; [`ProductionRank`] is `R<13>`, so
-//! `n = 2048` and 8192 coefficients — sixty-four times the vector length,
+//! `n = 32` gates and 128 coefficients; [`ProductionRank`] is `R<14>`, so
+//! `n = 4096` and 16384 coefficients — 128 times the vector length,
 //! and the polynomial work scales with it. A target that ran every input at
 //! production rank would lose most of its executions per second, and
 //! execution count is what finds bugs.
@@ -69,7 +69,7 @@ const PRODUCTION_BAND: core::ops::Range<u8> = 0x50..0x60;
 pub enum RankChoice {
     /// `R<7>`: `n = 32`, 128 coefficients. The fast path.
     Test,
-    /// `R<13>`: `n = 2048`, 8192 coefficients. What ships.
+    /// `R<14>`: `n = 4096`, 16384 coefficients. What ships.
     Production,
 }
 
@@ -254,10 +254,10 @@ mod tests {
     /// Guards the reason the skew exists: production rank really is the
     /// expensive one, by the factor the module doc claims.
     #[test]
-    fn production_rank_is_sixty_four_times_test_rank() {
+    fn production_rank_is_128_times_test_rank() {
         assert_eq!(TestRank::RANK, 7);
-        assert_eq!(ProductionRank::RANK, 13);
-        assert_eq!(ProductionRank::n() / TestRank::n(), 64);
+        assert_eq!(ProductionRank::RANK, 14);
+        assert_eq!(ProductionRank::n() / TestRank::n(), 128);
     }
 
     /// Both field arms are reachable from fuzzer bytes.

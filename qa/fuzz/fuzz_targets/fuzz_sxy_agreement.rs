@@ -19,7 +19,7 @@
 //! dispatch](../README.md)). Rank matters to this identity specifically:
 //! `wx` and `wy` build polynomials whose length is the rank's, and `wxy`
 //! takes the cached-Lagrange shortcut, so the three-way agreement is
-//! exactly where a length- or basis-handling mistake at `n = 2048` would
+//! exactly where a length- or basis-handling mistake at production capacity would
 //! surface. [`fuzz_registry`] runs the same agreement across *many*
 //! registered circuits; this target keeps the single-circuit case, where a
 //! failure is far easier to read.

@@ -56,8 +56,10 @@ of reflexive cost: when we add circuits to handle endoscaling operations on one
 curve, each new circuit creates commitments that require endoscaling on the
 other curve. We'd like to determine how many total circuits the process
 converges to, given that each circuit can only handle $k$ endoscaling
-operations ($k = 4$ without overflowing the recursion threshold of $2^{11}$
-constraints). The convergence can be modeled as a **geometric series**.
+operations. The current production configuration uses $k = 8$, with a gate
+capacity of $n = 2^{12} = 4096$ and recursion threshold
+$\mathrm{RT} = 4n = 2^{14} = 16384$ polynomial coefficients. The convergence
+can be modeled as a **geometric series**.
 
 Let $M$ denote the base endoscalings needed on Pallas, $N$ the base endoscaling
 needed on Vesta, and $k$ the endoscaling capacity per circuit. For simplicity,
@@ -80,7 +82,8 @@ We can model this generalized sequence as:
 
 Each term represents the additional circuits needed in that round. The total
 is the sum of two coupled geometric series, each with ratio $\frac{1}{k^2}$.
-If we expand this geometric series out for $k = 4$:
+For comparison, expanding this geometric series for the former $k = 4$
+packing gives:
 
 **(Pallas circuits)**
 
@@ -131,7 +134,7 @@ version of $\frac{4M+N}{15}$ when $M = N$. Therefore, the blowup factor for
 $k = 4$ is: $\frac{M}{3} / \frac{M}{4} = \mathbf{1.33x}$. The same math works
 for $k = 8$, since the base circuits would be $\frac{M}{8}$, so the total
 circuits required would be $\frac{M}{7}$ and the blowup factor is
-$\frac{M}{8} / \frac{M}{7} = \mathbf{1.14x}$.
+$\frac{M}{7} / \frac{M}{8} = \mathbf{1.14x}$.
 
 In summary, endoscalars provide a bridge for moving scalar values between
 circuits in a curve cycle, with three core operations (extract, lift, and

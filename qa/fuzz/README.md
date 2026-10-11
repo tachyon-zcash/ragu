@@ -191,7 +191,7 @@ constraint system reject it. The no-execution front end is described in
 | `fuzz_poseidon_sponge` | Random Absorb/Squeeze sequences through the circuit `Sponge`. Caught the squeeze-from-empty precondition bug. |
 | `fuzz_poseidon_differential` | Native `NativeSponge` vs circuit `Sponge`; outputs must match. Caught the native↔circuit API asymmetry on squeeze-from-empty. |
 | `fuzz_endoscalar` | Endoscalar (point × scalar) operations; has its own `special_scalar` table with `Fp::ZETA`. |
-| `fuzz_revdot` | Reverse-dot-product primitive, at a fuzzer-chosen field and rank (see [Field and rank dispatch](#field-and-rank-dispatch)). Rank is not incidental here: `View`'s segments are clamped against `R::n()` and `revdot` pairs coefficients against a reversal whose length is the rank's, so a disagreement that only shows up at `n = 2048` was previously unreachable. |
+| `fuzz_revdot` | Reverse-dot-product primitive, at a fuzzer-chosen field and rank (see [Field and rank dispatch](#field-and-rank-dispatch)). Rank is not incidental here: `View`'s segments are clamped against `R::n()` and `revdot` pairs coefficients against a reversal whose length is the rank's, so a disagreement that only shows up at production capacity was previously unreachable. |
 | `fuzz_fold_revdot` | RevDot folding. |
 | `fuzz_sxy_agreement` | `s(X, Y)` registry consistency (`wxy == wx.eval(y) == wy.eval(x)`) over arbitrary generated circuits. Caught `Tag::new(0)` divide-by-zero. |
 
@@ -368,8 +368,8 @@ Three workflows in `.github/workflows/`:
 
 Most of this harness was written against `Fp` and `TestRank`, for a good
 reason: that is the cheap pair. `TestRank` is `R<7>` — `n = 32` gates, 128
-coefficients — where `ProductionRank` is `R<13>`, `n = 2048` and 8192
-coefficients, sixty-four times the vector length. Running every input at
+coefficients — where `ProductionRank` is `R<14>`, `n = 4096` and 16384
+coefficients, 128 times the vector length. Running every input at
 production rank would cost most of the executions per second, and execution
 count is what finds bugs.
 

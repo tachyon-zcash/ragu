@@ -11,9 +11,9 @@ pub use ragu_core::pasta::{Pasta, PastaParams};
 /// Log2 of the number of Pallas generators. The build script's derivation
 /// carries its own copy of these counts; Bento checks the artifact lengths
 /// against the consumer's array types at compile time.
-pub const DEFAULT_EP_K: usize = 13;
+pub const DEFAULT_EP_K: usize = 14;
 /// Log2 of the number of Vesta generators.
-pub const DEFAULT_EQ_K: usize = 13;
+pub const DEFAULT_EQ_K: usize = 14;
 
 #[cfg(feature = "baked")]
 mod baked;

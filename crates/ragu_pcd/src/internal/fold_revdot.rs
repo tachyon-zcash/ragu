@@ -331,7 +331,7 @@ pub fn fold_two_layer<'dr, D: Driver<'dr>, P: Parameters>(
 mod tests {
     use alloc::{vec, vec::Vec};
 
-    use ragu_circuits::polynomials::{TestRank, sparse};
+    use ragu_circuits::polynomials::{ProductionRank, TestRank, sparse};
     use ragu_core::{drivers::emulator::Emulator, maybe::Maybe, pasta::Fp};
     use ragu_primitives::{Simulator, allocator::Standard, vec::CollectFixed};
     use rand::{Rng, SeedableRng};
@@ -742,7 +742,7 @@ mod tests {
             verify::<TestParams<3, 4>>(count)?;
         }
 
-        // Test native parameters (6*18=108) with various sizes
+        // Test a sample 108-claim layout (6*18) with various sizes.
         for &count in &[1, 10, 33, 50, 80, 100, 108] {
             verify::<TestParams<6, 18>>(count)?;
         }
@@ -872,12 +872,13 @@ mod tests {
         verify::<6, 17>()?;
         verify::<7, 14>()?;
 
-        // Verify optimal parameters fit circuit budget.
+        // Verify the sample parameters fit the production circuit budget.
         // Each gate uses 2 trace slots, so effective cost = 2 * total_gates.
         let total_gates = muls(6, 17) + allocs(6, 17) / 2;
+        let gate_budget = ProductionRank::n();
         assert!(
-            total_gates < (1 << 11),
-            "M = 6, N = 17 exceeds budget: {total_gates}",
+            total_gates <= gate_budget,
+            "M = 6, N = 17 uses {total_gates} gates, exceeding production budget {gate_budget}",
         );
 
         Ok(())
@@ -993,14 +994,14 @@ mod tests {
 
     #[test]
     fn test_native_parameters_correctness() -> Result<()> {
-        // Test with actual RevdotParameters (M=6, N=18)
+        // Test with native RevdotParameters (M=7, N=19).
 
         let mut rng = rand::rng();
         let m = <RevdotParameters as Parameters>::GroupSize::len();
         let _n = <RevdotParameters as Parameters>::NumGroups::len();
 
         // Use a subset of the full capacity to keep test fast
-        let count: usize = 20; // Less than M*N=108
+        let count: usize = 20; // Less than M*N=133.
 
         let lhs: Vec<sparse::Polynomial<Fp, TestRank>> = (0..count)
             .map(|_| sparse::Polynomial::random(&mut rng))

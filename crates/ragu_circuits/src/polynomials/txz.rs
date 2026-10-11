@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn simulate_txz() -> Result<()> {
-        // ProductionRank (R<13>) has log2_n = 11
+        // ProductionRank (R<14>) has log2_n = 12
         type TestRank = ProductionRank;
 
         let x = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
@@ -140,8 +140,8 @@ mod tests {
 
             dr.reset();
             dr.routine(evaluator.clone(), (x, z))?;
-            assert_eq!(dr.num_gates(), 74);
-            assert_eq!(dr.num_constraints(), 148);
+            assert_eq!(dr.num_gates(), 80);
+            assert_eq!(dr.num_constraints(), 160);
 
             Ok(())
         })?;

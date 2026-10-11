@@ -382,8 +382,8 @@ fn bonding_mask<'a, R: Rank>() -> Option<ragu_circuits::BondingObject<'a, Fp, R>
 /// Checks that `finalize` refuses one circuit past the rank's capacity and
 /// accepts exactly at it.
 ///
-/// Only meaningful at test rank: `ProductionRank::num_coeffs()` is 8192, and
-/// registering 8193 circuits to watch the check fire would cost more than
+/// Only meaningful at test rank: `ProductionRank::num_coeffs()` is 16384, and
+/// registering 16385 circuits to watch the check fire would cost more than
 /// the rest of the campaign put together.
 fn probe_capacity<R: Rank>() {
     if R::num_coeffs() != TestRank::num_coeffs() {

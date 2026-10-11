@@ -31,12 +31,17 @@ aggregated proof is more expensive to verify than a single Orchard proof.
 
 #### Ragu Verification Cost Drivers
 
+The estimates in this section use the former production configuration:
+gate capacity $N = 2^{11}$ and recursion threshold $\mathrm{RT} = 4N = 8192$.
+The current production configuration has gate capacity $N = 2^{12}$ and
+recursion threshold $\mathrm{RT} = 4N = 16384$; these historical estimates
+have not been rerun for it.
+
 Ragu's verification cost is primarily determined by:
 
-1. **Circuit constraint count**: The verifier circuit contains $4N$ linear
-   constraints, where $N = 2^K$ and $K$ is the recursion threshold (preferred
-   value: $K = 11$). The factor of 4 arises from the circuit structure across
-   multiple stages.
+1. **Polynomial coefficient capacity**: A rank-$r$ polynomial has $4N = 2^r$
+   coefficients, where $N = 2^{r-2}$ is the gate capacity. The estimates here
+   use the former production rank $r = 13$.
 
 2. **Multi-scalar multiplication size**: This corresponds to an MSM of size
    $4N = 4 \cdot 2^{11} = 2^{13} = 8192$ group elements, which dominates the
@@ -46,7 +51,7 @@ Ragu's verification cost is primarily determined by:
    which introduces additional overhead compared to single-curve constructions.
 
 Based on these factors, we estimate Ragu verification at approximately
-**100ms** for the preferred recursion threshold of $K = 11$.
+**100ms** for the former gate capacity $N = 2^{11}$.
 
 #### Break-Even Analysis
 
@@ -55,7 +60,7 @@ Comparing the two approaches:
 | Approach | Cost Model |
 |----------|------------|
 | Orchard batch | $N_{\text{tx}} \times 10\text{ms} \;/\; \log(N_{\text{tx}})$ |
-| Ragu aggregated | $\approx 100\text{ms}$ (constant for fixed $K$) |
+| Ragu aggregated | $\approx 100\text{ms}$ (constant for fixed $\mathrm{RT}$) |
 
 Solving for the break-even point where Ragu becomes more efficient:
 
@@ -72,19 +77,24 @@ The actual break-even point will depend on hardware, implementation
 optimizations, and the specific circuit configurations used.
 ```
 
-The break-even analysis above assumes a fixed recursion threshold of $K = 11$,
-but this parameter itself presents important design choices.
+The break-even analysis above uses the former recursion threshold
+$\mathrm{RT} = 8192$. Choosing the threshold itself presents further design
+trade-offs.
 
 #### Recursion Threshold Trade-offs
 
-The recursion threshold $K$ presents an interesting trade-off space:
+The recursion threshold $\mathrm{RT} = 4N$ presents a trade-off space:
 
-- **Larger $K$**: Larger circuits mean higher verification cost per proof, but
-  shallower PCD trees are needed (fewer recursive steps to aggregate many
-  proofs).
+- **Larger RT**: Larger polynomials increase MSM size and dense storage per
+  polynomial.
+  Larger circuits can pack more endoscalings and application work, reducing
+  the number of internal circuits and potentially application steps. Fewer
+  recursive commitments can offset the larger MSM, so verification cost must
+  be measured for each configuration.
 
-- **Smaller $K$**: Smaller circuits mean lower verification cost per proof, but
-  deeper PCD trees are required to aggregate the same number of proofs.
+- **Smaller RT**: Smaller polynomials reduce MSM size and dense storage per
+  polynomial, but the same workload may require more internal circuits and
+  application steps.
 
 #### Future Work
 
@@ -98,6 +108,6 @@ More rigorous analysis should:
 
 ---
 
-In summary, Ragu's aggregated verification becomes advantageous over Orchard's
-batch verification at roughly 50 transactions for the default $K = 11$
-threshold.
+The historical model estimates a crossover near 50 transactions for the
+former $\mathrm{RT} = 8192$ configuration. The current
+$\mathrm{RT} = 16384$ configuration requires separate benchmarks.
