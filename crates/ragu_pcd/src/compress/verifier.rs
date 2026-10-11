@@ -49,7 +49,7 @@ impl<C: IpaCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         let proof = pcd.proof();
         let instance = &proof.instance;
 
-        // The proof's circuit_id must be in the registry's domain, for the
+        // Each of the proof's circuit IDs must be in the registry's domain, for the
         // reason `verify` gives, and the headers must have the declared
         // size; and the messages must have the shape read below.
         if !instance

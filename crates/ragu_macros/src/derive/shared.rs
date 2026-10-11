@@ -129,4 +129,45 @@ mod tests {
             );
         }
     }
+
+    fn derive_str(input: &str) -> Result<TokenStream> {
+        derive(
+            syn::parse_str(input).unwrap(),
+            UdonPath::resolve().unwrap(),
+            RaguCorePath::resolve().unwrap(),
+            RaguPrimitivesPath::resolve().unwrap(),
+        )
+    }
+
+    #[test]
+    fn shared_derive_refuses_unsupported_shapes() {
+        for (shape, input) in [
+            ("enum", "enum Connection<'dr, D: Driver<'dr>> { Empty }"),
+            (
+                "tuple struct",
+                "struct Connection<'dr, D: Driver<'dr>>(Element<'dr, D>);",
+            ),
+            (
+                "where clause",
+                "struct Connection<'dr, D: Driver<'dr>> where D: Clone { field: Element<'dr, D> }",
+            ),
+            (
+                "phantom gadget",
+                "struct Connection<'dr, D: Driver<'dr>> { #[ragu(phantom)] #[ragu(gadget)] field: Element<'dr, D> }",
+            ),
+        ] {
+            assert!(derive_str(input).is_err(), "{shape}");
+        }
+    }
+
+    #[test]
+    fn shared_derive_accepts_nested_and_generic_layouts() {
+        for input in [
+            "struct Connection<'dr, D: Driver<'dr>> { input: Element<'dr, D>, state: Element<'dr, D> }",
+            "struct Nested<'dr, D: Driver<'dr>, const N: usize> { connection: Connection<'dr, D>, rest: FixedVec<Element<'dr, D>, ConstLen<N>> }",
+            "struct Marked<'dr, D: Driver<'dr>> { #[ragu(phantom)] marker: PhantomData<&'dr D>, value: Element<'dr, D> }",
+        ] {
+            assert!(derive_str(input).is_ok(), "{input}");
+        }
+    }
 }

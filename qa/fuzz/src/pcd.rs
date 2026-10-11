@@ -635,7 +635,8 @@ mod tests {
         }
 
         // Each aliased slot attempts to undo an earlier edit. Deduplication
-        // must retain all three distinct edits and discard the cancellations.
+        // must retain every distinct edit, one per slot, and discard the
+        // cancellations.
         choices.extend(honest_ids.into_iter().enumerate().map(|(slot, id)| {
             FuzzCorruption::CircuitId {
                 slot: (slot + APPLICATION_SLOTS) as u8,

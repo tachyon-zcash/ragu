@@ -58,7 +58,10 @@ use ragu_core::{
     gadgets::Bound,
     maybe::Maybe,
 };
-use ragu_primitives::{Element, Endoscalar, EndoscalarChallenge, GadgetExt, allocator::Standard};
+use ragu_primitives::{
+    Element, Endoscalar, EndoscalarChallenge, GadgetExt,
+    allocator::{Allocator, Standard},
+};
 
 use super::super::{
     InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, STATIC_F_QUERIES,
@@ -207,14 +210,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
                 // so it cannot claim the repeated IDs of a standalone step to
                 // bypass the shared-stage lane checks.
                 let is_split_bundle = [
-                    preamble.left.circuit_ids[0]
-                        .is_equal(dr, allocator, &preamble.left.circuit_ids[1])?
-                        .not(dr)
-                        .element(),
-                    preamble.right.circuit_ids[0]
-                        .is_equal(dr, allocator, &preamble.right.circuit_ids[1])?
-                        .not(dr)
-                        .element(),
+                    split_bundle_selector(dr, allocator, &preamble.left.circuit_ids)?,
+                    split_bundle_selector(dr, allocator, &preamble.right.circuit_ids)?,
                 ];
 
                 compute_axbx::<_, RevdotParameters>(
@@ -270,6 +267,25 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
         let (output, aux) = unified_output.finish(dr, allocator)?;
         Ok(WithAux::new(output, aux))
     }
+}
+
+/// Whether a child's application slots hold a split bundle, as an element:
+/// $1$ when its circuit IDs are not all the first slot's, $0$ when they are.
+/// The circuit's counterpart of
+/// [`is_split_bundle`](super::super::is_split_bundle) over the enforced
+/// preamble IDs, for however many slots a proof carries.
+fn split_bundle_selector<'dr, D: Driver<'dr>>(
+    dr: &mut D,
+    allocator: &mut impl Allocator<'dr, D>,
+    circuit_ids: &[Element<'dr, D>],
+) -> Result<Element<'dr, D>> {
+    let first = &circuit_ids[0];
+    let mut repeated = first.is_equal(dr, allocator, &circuit_ids[1])?;
+    for id in &circuit_ids[2..] {
+        let same = first.is_equal(dr, allocator, id)?;
+        repeated = repeated.and(dr, &same)?;
+    }
+    Ok(repeated.not(dr).element())
 }
 
 /// Denominators for a single child proof evaluation points.

@@ -23,8 +23,8 @@ pub type Values<'dr, D> = Vec<Element<'dr, D>>;
 ///
 /// Derive this together with [`Gadget`] on a named struct containing elements,
 /// fixed vectors of elements, or other shared gadgets. The derivation includes
-/// every gadget field; skipped fields, raw wires, and witness-only fields are
-/// refused. Field order defines the common layout, and the size is derived
+/// every gadget field; fields marked `#[ragu(skip)]` (a `Write` attribute),
+/// raw wires, and witness-only fields are refused. Field order defines the common layout, and the size is derived
 /// from the fields rather than declared separately by each fragment.
 ///
 /// The application adapter binds *every wire* visited by [`GadgetKind::map_gadget`] to

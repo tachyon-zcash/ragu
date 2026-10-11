@@ -61,7 +61,7 @@ it once and places the same polynomial in both slots, so each slot's claim is
 the same valid claim.
 
 Split steps share data through the proof's *shared stage*, a third
-application polynomial committed once per proof. Each application circuit
+application polynomial committed once per proof. Each bundle step's circuit
 loads it at its first gates, `ceil(n / 2)` of them for an application whose
 shared stage holds `n` elements, where `n` is derived from the largest
 registered `Step::Shared` gadget. Both steps in a bundle must use the

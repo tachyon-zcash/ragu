@@ -409,12 +409,6 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
             dr.wires(&out)?
         };
 
-        if values.len() > Self::values() {
-            return Err(ragu_core::Error::GateBoundExceeded {
-                limit: Self::num_gates(),
-            });
-        }
-
         stage_rx(alpha, Self::skip_gates(), Self::values(), &values)
     }
 

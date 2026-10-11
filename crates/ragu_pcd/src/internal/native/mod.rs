@@ -61,8 +61,14 @@ pub const NUM_ENDOSCALING_STEPS: usize = 25;
 /// them and the first hashing circuit, so this is what a proof holds.
 pub const APPLICATION_SLOTS: usize = 2;
 
+const _: () = assert!(
+    APPLICATION_SLOTS >= 2,
+    "a bundle spans two application slots"
+);
+
 /// Whether the registered IDs name distinct fragments rather than one
-/// standalone step repeated across the slots.
+/// standalone step repeated across the slots. `compute_v` derives the same
+/// selector in-circuit from the enforced child IDs.
 pub(crate) fn is_split_bundle(ids: [CircuitIndex; APPLICATION_SLOTS]) -> bool {
     ids[1..].iter().any(|id| *id != ids[0])
 }
@@ -365,6 +371,11 @@ pub enum RxIndex {
     Application(u32),
     /// The application shared stage's rx polynomial, which every application
     /// slot's claim adds to its own.
+    ///
+    /// Only a split bundle's lane claims constrain it. For a standalone step
+    /// it is an arbitrary polynomial, harmless because nothing consumes it,
+    /// or a slot's polynomial, on its own: never read either individually,
+    /// ungated by [`is_split_bundle`], as if it were well formed.
     ApplicationStage,
     Hashes1,
     Hashes2,
