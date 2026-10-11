@@ -62,6 +62,11 @@ pub const NUM_ENDOSCALING_STEPS: usize = 25;
 pub const APPLICATION_SLOTS: usize = 2;
 
 const _: () = assert!(
+    APPLICATION_SLOTS >= 2,
+    "a bundle spans two application slots"
+);
+
+const _: () = assert!(
     endoscalar::num_steps::<ENDOSCALINGS_PER_STEP>(NUM_ENDOSCALING_POINTS) == NUM_ENDOSCALING_STEPS,
     "NUM_ENDOSCALING_STEPS is not the number of steps over the nested batch; re-pin it"
 );

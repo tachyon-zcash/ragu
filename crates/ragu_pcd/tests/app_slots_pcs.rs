@@ -317,7 +317,7 @@ fn run<const PARALLEL: bool>() {
     let (forged, ()) = app
         .fuse_bundle(&mut rng, steps(), (bad_output, bad_output), left, right)
         .unwrap();
-    check(&app, &forged, &mut rng, false);
+    check_through_recursion(&app, forged, &honest, &mut rng, false);
 
     let bundle = BatchStep::<false, PARALLEL>::INDEX
         .bundle(&app.application_bundles)

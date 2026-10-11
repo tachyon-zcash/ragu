@@ -15,7 +15,7 @@ use ragu_core::{
     pasta::{Fp, Pasta},
 };
 use ragu_primitives::{
-    Element,
+    Element, GadgetExt,
     allocator::{Allocator, Standard},
     shared::Shared,
 };
@@ -195,6 +195,112 @@ impl Step<Pasta> for Carry {
     }
 }
 
+/// A connection three wires deep, binding past the first reserved gate.
+/// `Factors` computes `product = a · b`; `Known` pins `a = 2` and `b = 3` and
+/// takes `product` from its witness. Only their connection makes the bundle
+/// prove `product = 6`.
+struct Factors;
+struct Known;
+
+#[derive(Gadget, Shared)]
+struct Triple<'dr, D: Driver<'dr>> {
+    a: Element<'dr, D>,
+    b: Element<'dr, D>,
+    product: Element<'dr, D>,
+}
+
+impl Step<Pasta> for Factors {
+    const INDEX: Index = Index::new(4);
+    type Shared = Kind![Fp; Triple<'_, _>];
+    type Witness<'source> = (Fp, Fp);
+    type Aux<'source> = ();
+    type Left = ();
+    type Right = ();
+    type Output = Number;
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        _: DriverValue<D, ()>,
+        _: DriverValue<D, ()>,
+    ) -> Result<(
+        (
+            Encoded<'dr, D, (), HS>,
+            Encoded<'dr, D, (), HS>,
+            Encoded<'dr, D, Number, HS>,
+        ),
+        Bound<'dr, D, Self::Shared>,
+        DriverValue<D, Fp>,
+        DriverValue<D, ()>,
+    )> {
+        let (a, b) = witness.cast();
+        let a = Element::alloc(dr, &mut (), a)?;
+        let b = Element::alloc(dr, &mut (), b)?;
+        let product = a.mul(dr, &b)?;
+        let value = product.value().map(|value| *value);
+        Ok((
+            (
+                Encoded::from_gadget(()),
+                Encoded::from_gadget(()),
+                Encoded::from_gadget(product.clone()),
+            ),
+            Triple { a, b, product },
+            value,
+            D::unit(),
+        ))
+    }
+}
+
+impl Step<Pasta> for Known {
+    const INDEX: Index = Index::new(5);
+    type Shared = Kind![Fp; Triple<'_, _>];
+    /// The product it takes on trust, and the number it carries: the
+    /// bundle's connection, not this step, ties the two together.
+    type Witness<'source> = (Fp, Fp);
+    type Aux<'source> = ();
+    type Left = ();
+    type Right = ();
+    type Output = Number;
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        _: DriverValue<D, ()>,
+        _: DriverValue<D, ()>,
+    ) -> Result<(
+        (
+            Encoded<'dr, D, (), HS>,
+            Encoded<'dr, D, (), HS>,
+            Encoded<'dr, D, Number, HS>,
+        ),
+        Bound<'dr, D, Self::Shared>,
+        DriverValue<D, Fp>,
+        DriverValue<D, ()>,
+    )> {
+        let a = Element::alloc(dr, &mut (), D::just(|| Fp::from(2)))?;
+        let two = Element::constant(dr, Fp::from(2));
+        a.enforce_equal(dr, &two)?;
+        let b = Element::alloc(dr, &mut (), D::just(|| Fp::from(3)))?;
+        let three = Element::constant(dr, Fp::from(3));
+        b.enforce_equal(dr, &three)?;
+        let (product, output) = witness.cast();
+        let product = Element::alloc(dr, &mut (), product)?;
+        let carried = Element::alloc(dr, &mut (), output.clone())?;
+        Ok((
+            (
+                Encoded::from_gadget(()),
+                Encoded::from_gadget(()),
+                Encoded::from_gadget(carried),
+            ),
+            Triple { a, b, product },
+            output,
+            D::unit(),
+        ))
+    }
+}
+
 fn app() -> App {
     app_with_shared::<STAGE>()
 }
@@ -298,7 +404,6 @@ fn forge_bundle<'source, S, T>(
     app: &mut App,
     rng: &mut StdRng,
     steps: (S, T),
-    shared: &[Fp],
     witnesses: (S::Witness<'source>, T::Witness<'source>),
 ) -> Pcd<Pasta, R, Number>
 where
@@ -322,18 +427,10 @@ where
         app.seed_bundle(rng, steps, witnesses)
     } else {
         // The public API refuses a bundle with repeated IDs. A malicious
-        // prover can instead put the shared values directly into each
-        // fragment's own polynomial, outside the stage so that both masks
-        // hold. Only the registered bundle IDs then distinguish these locally
-        // satisfying traces from a legitimate standalone step.
-        app.seed(
-            rng,
-            PrivateStage {
-                step: steps.0,
-                shared: shared.to_vec(),
-            },
-            witnesses.0,
-        )
+        // prover can instead prove the fragment as a standalone step over its
+        // own staged values, which stays locally valid; only the registered
+        // bundle IDs then distinguish it from a legitimate standalone step.
+        app.seed(rng, steps.0, witnesses.0)
     };
     app.application_bundles = original;
 
@@ -368,59 +465,6 @@ where
         }
     }
     pcd
-}
-
-/// A dishonest fragment with its shared values moved into its own trace.
-/// Its floor plan matches the real fragment, but it claims repeated IDs so
-/// that the lane masks are disabled. The registry's bundle constants must
-/// still reject it.
-struct PrivateStage<S> {
-    step: S,
-    shared: alloc::vec::Vec<Fp>,
-}
-
-impl<S: Step<Pasta>> Step<Pasta> for PrivateStage<S> {
-    const INDEX: Index = S::INDEX;
-    type Shared = ();
-    type Witness<'source> = S::Witness<'source>;
-    type Aux<'source> = S::Aux<'source>;
-    type Left = S::Left;
-    type Right = S::Right;
-    type Output = S::Output;
-
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
-        &self,
-        dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
-        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> Result<(
-        (
-            Encoded<'dr, D, Self::Left, HS>,
-            Encoded<'dr, D, Self::Right, HS>,
-            Encoded<'dr, D, Self::Output, HS>,
-        ),
-        (),
-        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
-    where
-        Self: 'dr,
-    {
-        let allocator = &mut Standard::new();
-        let mut shared = alloc::vec::Vec::with_capacity(self.shared.len());
-        for i in 0..2 * staging::stage_gates(self.shared.len()) {
-            let value = D::just(|| self.shared.get(i).copied().unwrap_or(Fp::ZERO));
-            let element = Element::alloc(dr, allocator, value)?;
-            if i < self.shared.len() {
-                shared.push(element.wire().clone());
-            }
-        }
-        let (headers, gadget, output, aux) =
-            self.step.witness::<_, HS>(dr, witness, left, right)?;
-        crate::step::internal::adapter::bind_shared(dr, &gadget, &shared)?;
-        Ok((headers, (), output, aux))
-    }
 }
 
 /// The commitment of each application slot's polynomial.
@@ -1093,30 +1137,24 @@ fn every_fragment_is_required_through_recursion() {
 
     // Remove each predicate in turn. The remaining predicate is locally
     // valid over the shared stage, but allows an output other than `2x²`.
-    let zeros = shared(Fp::ZERO, Fp::ZERO);
     let without_square = forge_bundle(
         &mut app,
         &mut rng,
         (Finish, Finish),
-        &zeros,
         ((Fp::ZERO, Fp::ONE), (Fp::ZERO, Fp::ONE)),
     );
-    let two_one = shared(Fp::from(2), Fp::ONE);
     let without_finish = forge_bundle(
         &mut app,
         &mut rng,
         (Square, Square),
-        &two_one,
         ((Fp::from(2), Fp::from(5)), (Fp::from(2), Fp::from(5))),
     );
     // Also retain the minimal omitted-predicate counterexample: `n = 1`
     // satisfies both square traces over `(1, 0)`, but the full invariant is 2.
-    let one_zero = shared(Fp::ONE, Fp::ZERO);
     let minimal = forge_bundle(
         &mut app,
         &mut rng,
         (Square, Square),
-        &one_zero,
         ((Fp::ONE, Fp::ONE), (Fp::ONE, Fp::ONE)),
     );
     assert_eq!(*minimal.data(), Fp::ONE);
@@ -1139,13 +1177,115 @@ fn every_unregistered_order_is_rejected_through_recursion() {
 
     // The swapped order contains both valid fragments and a true output
     // statement. The rejection must enforce the registered order itself.
-    let stage = shared(Fp::from(3), Fp::from(9));
     let forged = forge_bundle(
         &mut app,
         &mut rng,
         (Finish, Square),
-        &stage,
         ((Fp::from(3), Fp::from(18)), (Fp::from(3), Fp::from(18))),
     );
+    check_through_recursion(&app, forged, &honest, &mut rng, false);
+}
+
+/// Adds `delta` at gate `gate`'s `a` wire of the proof's shared stage and
+/// refreshes the commitment, as a prover bypassing the API could.
+fn edit_stage<H: Header<Fp>>(
+    app: &App,
+    pcd: Pcd<Pasta, R, H>,
+    gate: usize,
+    delta: Fp,
+) -> Pcd<Pasta, R, H> {
+    use ragu_backend::Backend;
+    let (mut proof, data) = pcd.into_parts();
+    let edit = staging::stage_rx::<_, R>(Fp::ZERO, gate, 1, &[delta]).unwrap();
+    proof.native_application_stage_rx.add_assign(&edit);
+    proof.native_application_stage_commitment =
+        crate::proof::Cached(ReferenceBackend::sparse_commit_to_affine(
+            &proof.native_application_stage_rx,
+            Pasta::host_generators(app.params),
+        ));
+    proof.carry::<H>(data)
+}
+
+/// Every proof's lane claims constrain the shared stage, whether its slots
+/// hold a split bundle or one standalone step repeated: an edit past every
+/// circuit's gates lands outside the stage's block and is rejected by the
+/// stage mask, through recursion in both child positions.
+#[test]
+fn every_proof_constrains_the_shared_stage() {
+    let app = app();
+    let mut rng = StdRng::seed_from_u64(89515);
+    let honest = honest(&app, &mut rng);
+    let gate = R::n() - 1;
+    let delta = Fp::from(5);
+
+    let (unit, ()) = app.seed(&mut rng, Unit, ()).unwrap();
+    check(&app, &edit_stage(&app, unit, gate, delta), &mut rng, false);
+    let (carried, ()) = app
+        .fuse(&mut rng, Carry, (), honest.clone(), honest.clone())
+        .unwrap();
+    let edited = edit_stage(&app, carried, gate, delta);
+    check_through_recursion(&app, edited, &honest, &mut rng, false);
+
+    let edited = edit_stage(&app, honest.clone(), gate, delta);
+    check_through_recursion(&app, edited, &honest, &mut rng, false);
+}
+
+/// A trace of `Known` with `product = 7` beside an honest `Factors`, the host
+/// equality check bypassed, is rejected by both verifiers and through
+/// recursion: its third wire, past the first reserved gate, is bound to the
+/// stage's `6`.
+#[test]
+fn shared_wires_past_the_first_gate_are_bound() {
+    let app = builder()
+        .register_bundle((Square, Finish))
+        .unwrap()
+        .register(Carry)
+        .unwrap()
+        .register_bundle((Factors, Known))
+        .unwrap()
+        .finalize(crate::pasta::baked())
+        .unwrap();
+    assert_eq!(app.shared_size, 3);
+    let mut rng = StdRng::seed_from_u64(89516);
+    let factors = (Fp::from(2), Fp::from(3));
+
+    let six = Fp::from(6);
+    let (honest, ()) = app
+        .seed_bundle(&mut rng, (Factors, Known), (factors, (six, six)))
+        .unwrap();
+    assert_eq!(*honest.data(), six);
+    check_through_recursion(&app, honest.clone(), &honest, &mut rng, true);
+    // `Known` carries the honest number but takes `product = 7` on trust;
+    // the headers agree and only the connection differs.
+    let dishonest = (Fp::from(7), six);
+    assert!(
+        app.seed_bundle(&mut rng, (Factors, Known), (factors, dishonest))
+            .is_err(),
+        "the host refuses disagreeing connections"
+    );
+
+    let left = app.bootstrap_pcd();
+    let right = app.bootstrap_pcd();
+    let (first, mut second) = prepare::<_, _, HEADER_SIZE>(
+        &app,
+        &mut rng,
+        Preparation::Sequential,
+        (Factors, Known),
+        (factors, dishonest),
+        &left,
+        &right,
+    );
+    assert_eq!(first.0.shared, [2, 3, 6].map(Fp::from));
+    assert_eq!(second.shared, [2, 3, 7].map(Fp::from));
+    second.shared.clone_from(&first.0.shared);
+    let (forged, ()) = app
+        .fuse_prepared::<_, Factors>(
+            &mut rng,
+            first,
+            left.into_parts().0,
+            right.into_parts().0,
+            alloc::vec![second],
+        )
+        .unwrap();
     check_through_recursion(&app, forged, &honest, &mut rng, false);
 }

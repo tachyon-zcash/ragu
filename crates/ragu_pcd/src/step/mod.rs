@@ -148,9 +148,11 @@ impl Index {
 /// applications do not supply a shared size, positional inputs, or connecting
 /// equality constraints.
 ///
-/// Steps can prepare their witnesses in either order, or independently
-/// when the computation allows it. The registered slot order is fixed, and
-/// the shared gadget does not designate a producer or consumer.
+/// The shared gadget designates no producer or consumer: each step binds
+/// its own wires to the stage, so a prover may evaluate the steps' witnesses
+/// in either order when the computation allows it;
+/// [`fuse_bundle`](crate::Application::fuse_bundle) evaluates both. The
+/// registered slot order is fixed either way.
 ///
 /// A step that stages nothing declares `Shared = ()` and returns an empty
 /// gadget. Registration determines whether a step fills the proof's

@@ -97,7 +97,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         let y = C::CircuitField::random(|bytes| rng.fill_bytes(bytes));
         let z = C::CircuitField::random(|bytes| rng.fill_bytes(bytes));
 
-        // The proof's circuit_id selects which wiring polynomial the verifier
+        // Each of the proof's circuit IDs selects which wiring polynomial the verifier
         // checks against, and every domain point carries one, so an in-domain id
         // is always well defined. It need not name a circuit: the domain also
         // holds registered bonding polynomials and, at unassigned points, the

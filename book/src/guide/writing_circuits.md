@@ -328,9 +328,10 @@ their fields have identical shapes.
 Each step must still constrain its own computation and return the actual
 values it uses. The shared type describes which values agree; it does not
 derive application mathematics or determine whether a connection is needed.
-The steps can prepare their witnesses sequentially, in either order, or
-independently in parallel when their data dependencies allow it. This does
-not change their registered slot order or the prover's current scheduling.
+The shared type designates no producer or consumer, so the steps' witnesses
+can be prepared in either order when their data dependencies allow it;
+`fuse_bundle` evaluates both, and the registered slot order is fixed either
+way.
 
 Recursive and terminal verification enforce the common stage, including
 proofs built outside the Rust API. The [protocol chapter](../protocol/recursion/public_inputs.md)
