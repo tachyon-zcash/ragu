@@ -8,8 +8,13 @@ that breaks an invariant, over the parts of the system no proof reaches yet.
 The harness lives in `qa/fuzz`, built on
 [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz). It is its own workspace
 root, so the nightly toolchain and libFuzzer flags it needs stay out of the
-main build. There are 24 targets, plus a tool that extracts Ragu's field
-constants into a fuzzer dictionary.
+main build. There are 28 targets, plus tools for extracting Ragu's field
+constants into a fuzzer dictionary and linting circuit source without execution.
+
+The harness enables `ragu_pcd`'s `unstable-fuzzing` feature in its own
+`Cargo.toml`. This exposes `ragu_pcd::fuzzing`, the internal proof-corruption
+and circuit-patcher interface. It is not part of the stable public API;
+ordinary application dependencies do not need this feature.
 
 ## The shared substrate
 
@@ -34,6 +39,7 @@ that reaches deep circuit structure in one target reaches it in the others.
 ## Running it
 
 ```bash
+cd qa/fuzz             # from the repository root
 ./fuzz.sh              # every target, 30s each, sequentially
 ./fuzz.sh 300 -j       # five minutes each, in parallel
 ./fuzz.sh regress      # replay every committed crash regression

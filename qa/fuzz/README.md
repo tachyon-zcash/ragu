@@ -13,6 +13,12 @@ scheduled.
 
 ## Quick start
 
+Run the following commands from `qa/fuzz`. This workspace already enables
+`ragu_pcd/unstable-fuzzing` in its dependency declaration. That feature
+exposes the internal `ragu_pcd::fuzzing` proof-corruption and circuit-patcher
+interface; it is not part of the stable public API and is unnecessary for
+ordinary application dependencies.
+
 ```bash
 # Run every target for 30 seconds, sequentially. ASAN off by default
 # (~70% throughput win on simulator-heavy targets).
