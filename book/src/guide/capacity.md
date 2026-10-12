@@ -1,5 +1,12 @@
 # Step Capacity and Proving Cost
 
+```admonish warning
+The current production rank is `R<14>`, with 4,096 gates and 16,384 polynomial
+coefficients. The historical measurements below have not been rerun at that
+rank. Rerunning them is tracked in
+[#900](https://github.com/tachyon-zcash/ragu/issues/900).
+```
+
 Designing a PCD application means answering two separate questions: how much
 work fits inside a step, and how that work affects proving time. The answers
 are not interchangeable, and the second is less intuitive than the first.
@@ -9,10 +16,6 @@ which permits 2,048 gates and 8,192 constraints. The capacity sweeps used a
 two-element header; the proving-time and witness sweeps used a four-element
 header. Gate tables report complete registered-circuit counts, including fixed
 synthesis overhead, so differences between rows isolate the added operation.
-
-The current production rank is `R<14>`, with 4,096 gates and 16,384 polynomial
-coefficients. The historical measurements below have not been rerun at that
-rank.
 
 Structural counts do not depend on the machine that ran them, though they do
 depend on the circuit implementation and configuration. The wall-clock figures

@@ -24,7 +24,7 @@
     - [Simulator](guide/primitives/simulator.md) <!-- todo -->
   - [Writing Circuits](guide/writing_circuits.md) <!-- todo -->
   - [Configuration](guide/configuration.md) <!-- todo -->
-  - [Step Capacity and Proving Cost](guide/capacity.md)
+  - [Step Capacity and Proving Cost](guide/capacity.md) <!-- todo -->
 - [Part II: Protocol Design]()
   - [Overview](protocol/index.md) <!-- todo -->
   - [Preliminaries]()
