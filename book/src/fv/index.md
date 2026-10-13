@@ -62,6 +62,11 @@ parameters made concrete.
   form.
 - **Nonzero banks** at three arities, and the core multiplication gate.
 
+Normalization, denormalization, initialization, digit selectors, and unchecked
+triple-and-add are subcircuits of the registered endoscalar instances. Their
+traces are checked through those parent instances; they have no standalone
+extraction instances.
+
 Every one of these is proved without `sorry`, and the Lean build runs with
 `--wfail` so that an admitted goal fails CI rather than passing quietly. The
 axioms each theorem depends on can be listed with `#print axioms`; the

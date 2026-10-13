@@ -32,6 +32,8 @@ abbrev numDigits : ℕ := 47
 /-! `omega` treats the two abbreviations as atoms, so the index bounds the
 walk needs are proved once, over the literals. -/
 
+/-- The walk has a final digit; this supplies the last fold index without
+asking arithmetic automation to unfold the width abbreviations. -/
 lemma numDigits_pred_lt : numDigits - 1 < numDigits := by decide
 
 /-- The three bit indices of digit `i` lie in the endoscalar. -/
@@ -66,10 +68,16 @@ the original under `(x, y) ↦ (c² x, c³ y)`. -/
 def twist (curveParams : CurveParams p) (c : F p) : CurveParams p :=
   { b := c ^ 6 * curveParams.b, ζ := curveParams.ζ, h_small_order := curveParams.h_small_order }
 
+/-- The scale factor and equal coordinate of the normalized base, used by
+both the walk and its inverse change of coordinates. -/
+structure Normalization (F : Type) where
+  c : F
+  r : F
+
 /-- `c = x / y` and `r = c² x`: the normalization that moves a point to
 `(r, r)`. -/
-def normalizeNative (pt : Point (F p)) : F p × F p :=
-  (pt.x / pt.y, (pt.x / pt.y) ^ 2 * pt.x)
+def normalizeNative (pt : Point (F p)) : Normalization (F p) :=
+  { c := pt.x / pt.y, r := (pt.x / pt.y) ^ 2 * pt.x }
 
 /-- The unsigned digit point `{P̂, φP̂, φ²P̂, P̂ - φP̂}[e₁, e₂]` on the
 normalized base `P̂ = (r, r)`, `none` only if `P̂ - φP̂` is degenerate, which
@@ -122,8 +130,8 @@ Stated with `Option.map` rather than a `match`, so that no tactic is tempted
 to reduce it by unrolling the `numDigits`-deep recursion of `accAfter`. -/
 def groupScaleNative (curveParams : CurveParams p) (pt : Point (F p))
     (bits : Vector (F p) numBits) : Option (Point (F p)) :=
-  (accAfter curveParams (normalizeNative pt).2 bits numDigits).map fun acc =>
-    ⟨acc.x / (normalizeNative pt).1 ^ 2, acc.y / (normalizeNative pt).1 ^ 3⟩
+  (accAfter curveParams (normalizeNative pt).r bits numDigits).map fun acc =>
+    ⟨acc.x / (normalizeNative pt).c ^ 2, acc.y / (normalizeNative pt).c ^ 3⟩
 
 /-! ## Curve membership along the walk -/
 
@@ -137,12 +145,16 @@ lemma zeta_quadratic (curveParams : CurveParams p) (hζ : curveParams.ζ ≠ 1) 
   · exact absurd (sub_eq_zero.mp h) hζ
   · exact h
 
+/-- The cube-root endomorphism preserves the curve equation, letting each
+endomorphism-selected digit inherit the base point's membership. -/
 lemma endo_isOnCurve (curveParams : CurveParams p) (pt : Point (F p))
     (h : pt.isOnCurve curveParams) : (pt.endo curveParams).isOnCurve curveParams := by
   simp only [Point.isOnCurve, Point.endo] at h ⊢
   rw [mul_pow, curveParams.h_small_order, one_mul]
   exact h
 
+/-- Negation preserves curve membership, so choosing a digit's sign
+preserves the curve used by the walk invariant. -/
 lemma negate_isOnCurve (curveParams : CurveParams p) (pt : Point (F p))
     (h : pt.isOnCurve curveParams) : pt.negate.isOnCurve curveParams := by
   simp only [Point.isOnCurve, Point.negate] at h ⊢
@@ -152,8 +164,8 @@ lemma negate_isOnCurve (curveParams : CurveParams p) (pt : Point (F p))
 /-- The normalized base lies on the twisted curve. -/
 lemma normalized_isOnCurve (curveParams : CurveParams p) (pt : Point (F p))
     (h : pt.isOnCurve curveParams) (hy : pt.y ≠ 0) :
-    (⟨(normalizeNative pt).2, (normalizeNative pt).2⟩ : Point (F p)).isOnCurve
-      (twist curveParams (normalizeNative pt).1) := by
+    (⟨(normalizeNative pt).r, (normalizeNative pt).r⟩ : Point (F p)).isOnCurve
+      (twist curveParams (normalizeNative pt).c) := by
   simp only [Point.isOnCurve, normalizeNative, twist] at h ⊢
   field_simp
   linear_combination (pt.x ^ 6) * h
@@ -191,6 +203,8 @@ lemma digitPoint_isOnCurve (curveParams : CurveParams p) (r s e1 e2 : F p) (d : 
   · exact negate_isOnCurve curveParams _ hu'
   · exact hu'
 
+/-- A successful step stays on the curve when its base and accumulator lie
+there, providing the inductive membership step for the walk. -/
 lemma stepNative_isOnCurve (curveParams : CurveParams p) (r : F p) (acc out : Point (F p))
     (s e1 e2 : F p)
     (hbase : (⟨r, r⟩ : Point (F p)).isOnCurve curveParams)
@@ -203,6 +217,8 @@ lemma stepNative_isOnCurve (curveParams : CurveParams p) (r : F p) (acc out : Po
     exact Point.TripleAndAddIncompleteUnchecked.tripleAddNative_isOnCurve curveParams acc d out
       hacc (digitPoint_isOnCurve curveParams r s e1 e2 d hbase hd) h
 
+/-- An on-curve base with no order-two points yields an on-curve initial
+accumulator when initialization succeeds, seeding the walk invariant. -/
 lemma initNative_isOnCurve [NeZero (2 : F p)] (curveParams : CurveParams p) (r s0 e0 : F p)
     (out : Point (F p))
     (hbase : (⟨r, r⟩ : Point (F p)).isOnCurve curveParams)
@@ -290,6 +306,8 @@ lemma base_sub_endo (curveParams : CurveParams p) (r : F p) (hr : r ≠ 0)
 
 /-! ## Non-degeneracy along the walk -/
 
+/-- A failed prefix cannot recover in the partial walk; a successful final
+result therefore rules out every earlier failure. -/
 lemma accAfter_none_persists (curveParams : CurveParams p) (r : F p)
     (bits : Vector (F p) numBits) :
     ∀ k m, k ≤ m → accAfter curveParams r bits k = none →
@@ -304,6 +322,8 @@ lemma accAfter_none_persists (curveParams : CurveParams p) (r : F p)
     · have : k = m + 1 := by omega
       rw [this] at h_none; exact h_none
 
+/-- Success of the full walk implies success of every prefix, supplying
+the per-step non-degeneracy obligations used by both circuit proofs. -/
 lemma all_accAfter_ne (curveParams : CurveParams p) (r : F p) (bits : Vector (F p) numBits)
     (h : accAfter curveParams r bits numDigits ≠ none) :
     ∀ m ≤ numDigits, accAfter curveParams r bits m ≠ none := by
@@ -325,7 +345,7 @@ lemma accAfter_succ_of_some (curveParams : CurveParams p) (r : F p)
 normalized base. -/
 lemma accAfter_ne_of_groupScale (curveParams : CurveParams p) (pt : Point (F p))
     (bits : Vector (F p) numBits) (h : groupScaleNative curveParams pt bits ≠ none) :
-    accAfter curveParams (normalizeNative pt).2 bits numDigits ≠ none := by
+    accAfter curveParams (normalizeNative pt).r bits numDigits ≠ none := by
   intro h_none
   apply h
   simp only [groupScaleNative, h_none]

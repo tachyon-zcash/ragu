@@ -126,14 +126,12 @@ Most child verifier assumptions are `True`. The nontrivial paths are:
 | Product wires are the products of their bits | `HoistedLift` and `HoistedGroupScale` receive it as an assumption; it is `EnforceProducts`'s postcondition. |
 | A nontrivial cube root of unity | Passed from the parent (`Lift`, the walks, and their digit and step children), where the `(1, 1)` digit's affine value `2 + λ²` is `1 - λ` only modulo `λ² + λ + 1 = 0`. |
 
-Two caller-visible residual assumptions remain deliberate:
+The caller-visible residual assumptions are:
 
 - `Point.Consistent` receives `curveParams.nonzeroCoordinates` externally.
 - `Endoscalar.GroupScale` and `HoistedGroupScale` receive
-  `groupScaleNative != none`, representing the no-collision/non-degeneracy
-  argument in (Bowe–Grigg–Hopwood,
-  <a href="https://eprint.iacr.org/2019/1021">Recursive Proof Composition
-  without a Trusted Setup</a>, Appendix C), adapted to the radix-3 walk.
+  `groupScaleNative != none`, the no-collision/non-degeneracy obligation for
+  the radix-3 walk.
   `Ragu.Lemmas.EndoscalarProof.groupScale_collision_combinations_ne_zero`
   proves its integer core: the accumulator's Eisenstein norm never drops
   below 4 while a digit point's is at most 3. The curve-side step relating
@@ -159,7 +157,7 @@ Three checks enforce this boundary:
    qualified `.main` references anywhere in the circuit modules. CI runs this
    before the Lean build.
 3. `Ragu.Meta.ContractCompositionCheck` scans the elaborated environment for
-   every definition whose final result is `Circuit`, pins all 50 builders, and
+   every definition whose final result is `Circuit`, pins all 62 builders, and
    rejects direct semantic references to a different circuit's `main` or to
    the raw `FormalCircuitBase.main` projection.
 

@@ -125,9 +125,10 @@ pub(crate) fn endoscalar_from_bits<'dr, D: Driver<'dr>>(
 /// emitting any operation.
 ///
 /// This adds neither Boolean constraints nor the product constraints; the
-/// hoisted instances require `IsBool` for every input wire through their
-/// Lean `Assumptions`, and the products' relation to the bits is the
-/// `EnforceProducts` instance's own contract.
+/// hoisted instances require `IsBool` for the endoscalar bits through their
+/// Lean `Assumptions`. The products' relation to those bits is the
+/// `EnforceProducts` instance's own contract; the hoisted consumers assume
+/// the relations they use.
 ///
 /// # Errors
 ///

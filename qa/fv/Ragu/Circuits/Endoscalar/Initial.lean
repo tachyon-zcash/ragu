@@ -81,6 +81,8 @@ private lemma double_rr (r : F p) (hr : r ≠ 0) :
     Point.Spec.Point.mk.injEq]
   exact ⟨by ring, by ring⟩
 
+/-- For boolean initial bits and a nonzero normalized coordinate, the four
+gates produce the doubled, signed endomorphism image that starts the walk. -/
 theorem soundness (curveParams : Point.Spec.CurveParams p) :
     Soundness (F p) (Input := Input) (Output := Point.Spec.Point) (main curveParams)
       (Assumptions curveParams) (Spec curveParams) := by
@@ -97,6 +99,8 @@ theorem soundness (curveParams : Point.Spec.CurveParams p) :
     exact ⟨by ring, by ring⟩
 
 omit [NeZero (2 : F p)] in
+/-- Honest evaluation satisfies the initial-accumulator gates under the
+caller's bit and normalization preconditions, seeding the walk proof. -/
 theorem completeness (curveParams : Point.Spec.CurveParams p) :
     Completeness (F p) (Input := Input) (Output := Point.Spec.Point) (main curveParams)
       (Assumptions curveParams) := by

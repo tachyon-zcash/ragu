@@ -54,6 +54,8 @@ instance elaborated : ElaboratedCircuit (F p) Input unit main where
   subcircuitsConsistent input offset := by
     simp +arith [main, circuit_norm, Boolean.And.circuit]
 
+/-- Given boolean digit bits, the two equalities pin both hoisted products
+to their intended values for use by the lift and walk selectors. -/
 theorem soundness : FormalAssertion.Soundness (F p) (Input := Input) main Assumptions Spec := by
   circuit_proof_start [Boolean.And.circuit, Boolean.And.Assumptions, Boolean.And.Spec,
     Boolean.And.output]
@@ -72,6 +74,8 @@ theorem soundness : FormalAssertion.Soundness (F p) (Input := Input) main Assump
   refine ⟨h_e1e2, ?_⟩
   rw [← hq]; linear_combination -h_eq2
 
+/-- Boolean digit bits with correct products admit the honest AND witnesses,
+so enforcing the product contract preserves valid stage inputs. -/
 theorem completeness : FormalAssertion.Completeness (F p) (Input := Input) main Assumptions Spec := by
   circuit_proof_start [Boolean.And.circuit, Boolean.And.Assumptions, Boolean.And.Spec,
     Boolean.And.output]
@@ -141,6 +145,8 @@ instance elaborated : ElaboratedCircuit (F p) Input unit main where
   channelsLawful := by
     simp +arith [main, circuit_norm, Digit.circuit, Digit.elaborated]
 
+/-- Given boolean endoscalar bits, satisfying assignments establish all product
+relations that the hoisted consumers require from the stage owner. -/
 theorem soundness : FormalAssertion.Soundness (F p) (Input := Input) main Assumptions Spec := by
   circuit_proof_start [main, Digit.circuit, Digit.Assumptions, Digit.Spec, Digit.elaborated]
   obtain ⟨h_bits_eval, h_products_eval⟩ := h_input
@@ -161,6 +167,8 @@ theorem soundness : FormalAssertion.Soundness (F p) (Input := Input) main Assump
   simp only [h_bits_eq, h_prod_eq] at h
   exact h ⟨h_bool _ _, h_bool _ _, h_bool _ _⟩
 
+/-- An endoscalar with boolean bits and correct products satisfies every
+per-digit check, allowing the stage owner to enforce the full contract. -/
 theorem completeness : FormalAssertion.Completeness (F p) (Input := Input) main Assumptions Spec := by
   circuit_proof_start [main, Digit.circuit, Digit.Assumptions, Digit.Spec, Digit.elaborated]
   obtain ⟨h_bits_eval, h_products_eval⟩ := h_input

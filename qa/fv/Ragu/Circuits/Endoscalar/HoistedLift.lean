@@ -67,6 +67,8 @@ instance elaborated (curveParams : Point.Spec.CurveParams p)
     rcases input with ⟨s, e1, e2, e1e2⟩
     simp [main, output, circuit_norm, Element.Mul.circuit]
 
+/-- Given boolean digit bits and the caller-established product relation, the
+sign gate computes the native digit at a nontrivial cube root. -/
 theorem soundness (curveParams : Point.Spec.CurveParams p) :
     Soundness (F p) (Input := Input) (Output := field) (main curveParams)
       (Assumptions curveParams) (Spec curveParams) := by
@@ -78,6 +80,8 @@ theorem soundness (curveParams : Point.Spec.CurveParams p) :
   · ring
   · ring
 
+/-- The hoisted digit's multiplication witness satisfies its constraint under
+the caller obligations, enabling composition of the lift. -/
 theorem completeness (curveParams : Point.Spec.CurveParams p) :
     Completeness (F p) (Input := Input) (Output := field) (main curveParams)
       (Assumptions curveParams) := by
@@ -136,6 +140,8 @@ instance elaborated (curveParams : Point.Spec.CurveParams p)
   subcircuitsConsistent input offset := by
     simp +arith [main, circuit_norm, Boolean.And.circuit, Digit.circuit, Digit.elaborated]
 
+/-- Given boolean bits and the product relations supplied by `EnforceProducts`,
+the hoisted fold computes the native scalar at a nontrivial cube root. -/
 theorem soundness (curveParams : Point.Spec.CurveParams p) :
     Soundness (F p) (Input := Input) (Output := field) (main curveParams)
       (Assumptions curveParams) (Spec curveParams) := by
@@ -178,6 +184,8 @@ theorem soundness (curveParams : Point.Spec.CurveParams p) :
   intro acc i
   rw [h_digit i]
 
+/-- The caller's boolean bits and valid products admit honest witnesses for
+the initial AND and every digit multiplication in the hoisted lift. -/
 theorem completeness (curveParams : Point.Spec.CurveParams p) :
     Completeness (F p) (Input := Input) (Output := field) (main curveParams)
       (Assumptions curveParams) := by

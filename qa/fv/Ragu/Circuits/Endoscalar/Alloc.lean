@@ -44,11 +44,15 @@ instance elaborated
   subcircuitsConsistent _ _ := by
     simp [main, circuit_norm, Boolean.Alloc.circuit]
 
+/-- Every satisfying allocation exposes 143 boolean wires, so callers can use
+them as endoscalar bits without an additional range constraint. -/
 theorem soundness
     : GeneralFormalCircuit.WithHint.Soundness (F p) (Input := (UnconstrainedNative (BitVec 143))) (Output := (fields 143)) main Assumptions Spec := by
   circuit_proof_start [Boolean.Alloc.circuit, Boolean.Alloc.Assumptions, Boolean.Alloc.Spec]
   exact h_holds
 
+/-- For any 143-bit hint, honest allocation satisfies the constraints and
+places its bits on the output wires in Rust serialization order. -/
 theorem completeness
     : GeneralFormalCircuit.WithHint.Completeness (F p) (Input := (UnconstrainedNative (BitVec 143))) (Output := (fields 143)) main
         ProverAssumptions ProverSpec := by

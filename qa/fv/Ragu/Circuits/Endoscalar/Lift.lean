@@ -111,6 +111,8 @@ lemma unsigned_eq (ζ e1 e2 : F p) (hq : ζ ^ 2 + ζ + 1 = 0) (he1 : IsBool e1) 
   · ring
   · linear_combination hq
 
+/-- With boolean bits and a nontrivial cube root, the AND and sign gates
+compute the signed digit selected from the native radix-3 table. -/
 theorem soundness (curveParams : Point.Spec.CurveParams p) :
     Soundness (F p) (Input := Input) (Output := field) (main curveParams)
       (Assumptions curveParams) (Spec curveParams) := by
@@ -126,6 +128,8 @@ theorem soundness (curveParams : Point.Spec.CurveParams p) :
   · ring
   · ring
 
+/-- Boolean digit inputs admit honest AND and multiplication witnesses, so
+each digit lift composes into the full endoscalar lift. -/
 theorem completeness (curveParams : Point.Spec.CurveParams p) :
     Completeness (F p) (Input := Input) (Output := field) (main curveParams)
       (Assumptions curveParams) := by
@@ -215,6 +219,8 @@ lemma eval_foldl (env : Environment (F p)) (n : ℕ)
     simp only [Expression.eval]
     rw [ih (fun i => d i.castSucc) init]
 
+/-- For boolean bits and a nontrivial cube root, the constrained digit values
+and affine fold compute the native radix-3 scalar. -/
 theorem soundness (curveParams : Point.Spec.CurveParams p) :
     Soundness (F p) (Input := Input) (Output := field) (main curveParams)
       (Assumptions curveParams) (Spec curveParams) := by
@@ -253,6 +259,8 @@ theorem soundness (curveParams : Point.Spec.CurveParams p) :
   intro acc i
   rw [h_digit i]
 
+/-- The caller's boolean bits admit honest witnesses for the initial product
+and every digit, yielding a satisfying full lift. -/
 theorem completeness (curveParams : Point.Spec.CurveParams p) :
     Completeness (F p) (Input := Input) (Output := field) (main curveParams)
       (Assumptions curveParams) := by

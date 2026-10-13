@@ -65,6 +65,7 @@ import Ragu.Circuits.Poseidon.Permutation
 import Ragu.Circuits.Poseidon.Round
 import Ragu.Circuits.Poseidon.Sbox
 import Ragu.Circuits.Poseidon.Sponge
+import Ragu.Lemmas.EndoscalarProof
 
 /-!
 # Ragu formal-verification trust boundary
@@ -298,6 +299,15 @@ census_axioms Ragu.Circuits.Element.Mul.soundness
 census_axioms Ragu.Circuits.Element.Mul.completeness
 census_axioms Ragu.Circuits.Element.Square.soundness
 census_axioms Ragu.Circuits.Element.Square.completeness
+
+/-! ## Endoscalar integer bounds
+
+These named results are cited by the radix-3 model and its contract documentation.
+Pin them directly even though their names are not automatic census endpoints. -/
+
+census_axioms Ragu.Lemmas.EndoscalarProof.endoscaleN_injective_of_characteristicBound_lt
+census_axioms Ragu.Lemmas.EndoscalarProof.four_le_eisensteinNorm_accIndex
+census_axioms Ragu.Lemmas.EndoscalarProof.groupScale_collision_combinations_ne_zero
 
 /-! ## Endoscalar, Horner, and nonzero-bank circuits -/
 

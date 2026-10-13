@@ -173,6 +173,8 @@ instance elaborated (curveParams : Point.Spec.CurveParams p)
       Point.TripleAndAddIncompleteUnchecked.circuit]
 
 omit [NeZero (2 : F p)] in
+/-- Under the bit, product, and non-degeneracy obligations, the hoisted
+selectors and unchecked triple-and-add compute the native walk step. -/
 theorem soundness (curveParams : Point.Spec.CurveParams p) :
     Soundness (F p) (Input := Input) (Output := Point.Spec.Point) (main curveParams)
       (Assumptions curveParams) (Spec curveParams) := by
@@ -197,6 +199,8 @@ theorem soundness (curveParams : Point.Spec.CurveParams p) :
   exact h_tri h_step
 
 omit [NeZero (2 : F p)] in
+/-- Correct products and a successful native step admit honest witnesses
+for the selectors and unchecked addition constraints. -/
 theorem completeness (curveParams : Point.Spec.CurveParams p) :
     Completeness (F p) (Input := Input) (Output := Point.Spec.Point) (main curveParams)
       (Assumptions curveParams) := by
@@ -289,6 +293,9 @@ instance elaborated (curveParams : Point.Spec.CurveParams p)
     simp +arith [main, circuit_norm, Point.Normalize.circuit, Initial.circuit,
       Initial.elaborated, Step.circuit, Step.elaborated, Point.Denormalize.circuit]
 
+/-- For an on-curve base and boolean bits, the product and curve preconditions
+make the constrained result equal the native walk. Soundness remains
+conditional on the caller's no-collision obligation. -/
 theorem soundness (curveParams : Point.Spec.CurveParams p)
     : Soundness (F p) (Input := Input) (Output := Point.Spec.Point) (main curveParams)
         (Assumptions curveParams) (Spec curveParams) := by
@@ -370,6 +377,8 @@ theorem soundness (curveParams : Point.Spec.CurveParams p)
     rw [h_ox, h_oy]
     exact denormalize_isOnCurve curveParams c hc _ h_final
 
+/-- The caller's product, curve, booleanity, and no-collision obligations
+provide honest witnesses throughout the normalized hoisted walk. -/
 theorem completeness (curveParams : Point.Spec.CurveParams p)
     : Completeness (F p) (Input := Input) (Output := Point.Spec.Point) (main curveParams)
         (Assumptions curveParams) := by

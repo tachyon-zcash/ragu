@@ -211,6 +211,9 @@ private lemma wire_facts (env : Environment (F p)) (i₀ : ℕ)
     rw [← h_r2x]; exact h_ne3
   exact ⟨h_ne1, h_t1, h_ne2w, h_q2, h_ne3w⟩
 
+/-- When the native unchecked chain is defined, the constraints force its
+output. The caller supplies the distinct-coordinate guarantees because
+this gadget emits no nonzero-bank discharge. -/
 theorem soundness :
     Soundness (F p) (Input := Inputs) (Output := Spec.Point) main Assumptions Spec := by
   circuit_proof_start [Element.Divide.circuit, Element.Divide.Assumptions, Element.Divide.Spec,
@@ -237,6 +240,8 @@ theorem soundness :
       (by linear_combination (id h_yterm : @Eq (F p) _ _))
   simp only [tripleAddNative, h_add1, h_add2, h_add3]
 
+/-- A defined native chain supplies nonzero denominators for its honest
+witnesses, satisfying the unchecked triple-and-add constraints. -/
 theorem completeness :
     Completeness (F p) (Input := Inputs) (Output := Spec.Point) main Assumptions := by
   circuit_proof_start [Element.Divide.circuit, Element.Divide.ProverAssumptions,

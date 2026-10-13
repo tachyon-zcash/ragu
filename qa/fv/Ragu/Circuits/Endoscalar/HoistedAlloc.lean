@@ -50,12 +50,16 @@ instance elaborated
   subcircuitsConsistent _ _ := by
     simp [main, circuit_norm, Boolean.Alloc.circuit]
 
+/-- Allocation constrains every bit and product wire to be boolean. Consumers
+obtain the product relations separately from `EnforceProducts`. -/
 theorem soundness
     : GeneralFormalCircuit.WithHint.Soundness (F p) (Input := (UnconstrainedNative (BitVec numBits)))
         (Output := (fields numWires)) main Assumptions Spec := by
   circuit_proof_start [Boolean.Alloc.circuit, Boolean.Alloc.Assumptions, Boolean.Alloc.Spec]
   exact h_holds
 
+/-- Any 143-bit hint yields a satisfying allocation of its bits and honestly
+computed digit products, in the gadget's output order. -/
 theorem completeness
     : GeneralFormalCircuit.WithHint.Completeness (F p) (Input := (UnconstrainedNative (BitVec numBits)))
         (Output := (fields numWires)) main ProverAssumptions ProverSpec := by

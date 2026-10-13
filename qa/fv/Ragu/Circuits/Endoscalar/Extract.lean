@@ -56,6 +56,8 @@ instance elaborated (n : ℕ) (h_cap : 2 ^ n < p) (h_len : 143 ≤ n)
   subcircuitsConsistent _ _ := by
     simp [main, circuit_norm, Boolean.Decompose.circuit]
 
+/-- The decomposition constraints enforce the challenge range and identify its
+low 143 canonical bits; the capacity bound rules out modular aliases. -/
 theorem soundness (n : ℕ) (h_cap : 2 ^ n < p) (h_len : 143 ≤ n) :
     GeneralFormalCircuit.Soundness (F p) (Input := field) (Output := (fields 143)) (main n h_cap h_len) (fun _ _ => True) (Spec n) := by
   circuit_proof_start [Boolean.Decompose.circuit, Boolean.Decompose.Spec]
@@ -65,6 +67,8 @@ theorem soundness (n : ℕ) (h_cap : 2 ^ n < p) (h_len : 143 ≤ n) :
   simp only [Vector.getElem_map, fieldToBits, toBits, Vector.getElem_mapRange] at h_i
   simpa [Vector.getElem_ofFn] using h_i
 
+/-- An in-range challenge admits the honest decomposition used by extraction,
+provided the capacity contains all 143 output bits. -/
 theorem completeness (n : ℕ) (h_cap : 2 ^ n < p) (h_len : 143 ≤ n) :
     GeneralFormalCircuit.Completeness (F p) (Input := field) (Output := (fields 143)) (main n h_cap h_len) (ProverAssumptions n)
       (fun _ _ _ => True) := by

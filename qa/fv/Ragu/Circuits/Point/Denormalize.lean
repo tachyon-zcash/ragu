@@ -44,6 +44,8 @@ instance elaborated : ElaboratedCircuit (F p) Input Spec.Point main where
     rcases input with ⟨⟨X, Y⟩, c, c2⟩
     simp [main, circuit_norm, Element.Divide.circuit, Element.Mul.circuit]
 
+/-- A nonzero scale and its correct square make both divisions unique,
+recovering the point in the original coordinates. -/
 theorem soundness :
     Soundness (F p) (Input := Input) (Output := Spec.Point) main Assumptions Spec := by
   circuit_proof_start [Element.Divide.circuit, Element.Divide.Assumptions, Element.Divide.Spec,
@@ -58,6 +60,8 @@ theorem soundness :
   · rw [h_x (Or.inl h_c2_ne), h_c2]
   · rw [h_y (Or.inl h_c3_ne), h_c3, h_c2]; ring
 
+/-- Given the nonzero scale and its square, honest division witnesses
+satisfy the constraints returning the walk to the original coordinates. -/
 theorem completeness :
     Completeness (F p) (Input := Input) (Output := Spec.Point) main Assumptions := by
   circuit_proof_start [Element.Divide.circuit, Element.Divide.ProverAssumptions,

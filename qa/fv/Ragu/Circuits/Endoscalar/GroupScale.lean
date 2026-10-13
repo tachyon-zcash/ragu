@@ -193,6 +193,8 @@ instance elaborated (curveParams : Point.Spec.CurveParams p)
       Point.TripleAndAddIncompleteUnchecked.circuit]
 
 omit [NeZero (2 : F p)] in
+/-- Under the boolean-selector and non-degeneracy obligations, the selected
+digit and unchecked triple-and-add compute one native walk step. -/
 theorem soundness (curveParams : Point.Spec.CurveParams p) :
     Soundness (F p) (Input := Input) (Output := Point.Spec.Point) (main curveParams)
       (Assumptions curveParams) (Spec curveParams) := by
@@ -218,6 +220,8 @@ theorem soundness (curveParams : Point.Spec.CurveParams p) :
   exact h_tri h_step
 
 omit [NeZero (2 : F p)] in
+/-- When the native step succeeds and the selector preconditions hold, honest
+witnesses satisfy the selector and unchecked addition constraints. -/
 theorem completeness (curveParams : Point.Spec.CurveParams p) :
     Completeness (F p) (Input := Input) (Output := Point.Spec.Point) (main curveParams)
       (Assumptions curveParams) := by
@@ -280,9 +284,11 @@ def main (curveParams : Point.Spec.CurveParams p) (input : Var Input (F p))
 
 /-- Caller obligations. `groupScaleNative ≠ none` is the no-collision
 condition: the unchecked additions emit no distinct-x constraints, so
-soundness is conditional on it. For transcript-derived endoscalars on the
-Pasta curves this holds by the magnitude argument in
-`Endoscalar::group_scale`. -/
+soundness is conditional on it. The caller must establish the
+non-degeneracy asserted by `Endoscalar::group_scale`.
+`EndoscalarProof.groupScale_collision_combinations_ne_zero` proves the
+integer bound, but its connection to the affine curve walk is not yet
+formalized. -/
 def Assumptions (curveParams : Point.Spec.CurveParams p) (input : Input (F p)) :=
   input.pt.isOnCurve curveParams ∧
   curveParams.nonzeroCoordinates ∧
@@ -317,7 +323,7 @@ lemma normalization_facts (curveParams : Point.Spec.CurveParams p)
     (h_curve : (⟨x, y⟩ : Point.Spec.Point (F p)).isOnCurve curveParams)
     (h_nz : curveParams.nonzeroCoordinates)
     (h_c : c = x / y) (h_c2 : c2 = c ^ 2) (h_r : r = c2 * x) :
-    y ≠ 0 ∧ c ≠ 0 ∧ r ≠ 0 ∧ c = (normalizeNative ⟨x, y⟩).1 ∧ r = (normalizeNative ⟨x, y⟩).2 := by
+    y ≠ 0 ∧ c ≠ 0 ∧ r ≠ 0 ∧ c = (normalizeNative ⟨x, y⟩).c ∧ r = (normalizeNative ⟨x, y⟩).r := by
   have hy : y ≠ 0 := h_nz.2 _ h_curve
   have hx : x ≠ 0 := h_nz.1 _ h_curve
   have hc : c ≠ 0 := by rw [h_c]; exact div_ne_zero hx hy
@@ -326,6 +332,9 @@ lemma normalization_facts (curveParams : Point.Spec.CurveParams p)
   · simp only [normalizeNative]; exact h_c
   · simp only [normalizeNative]; rw [h_r, h_c2, h_c]
 
+/-- For an on-curve base, boolean bits, and the curve and no-collision
+preconditions, the constraints compute the native walk on the original curve.
+This does not discharge the caller's no-collision obligation. -/
 theorem soundness (curveParams : Point.Spec.CurveParams p)
     : Soundness (F p) (Input := Input) (Output := Point.Spec.Point) (main curveParams)
         (Assumptions curveParams) (Spec curveParams) := by
@@ -399,6 +408,8 @@ theorem soundness (curveParams : Point.Spec.CurveParams p)
     rw [h_ox, h_oy]
     exact denormalize_isOnCurve curveParams c hc _ h_final
 
+/-- The caller's curve, booleanity, and no-collision assumptions make each
+normalized step defined, yielding honest witnesses for the full circuit. -/
 theorem completeness (curveParams : Point.Spec.CurveParams p)
     : Completeness (F p) (Input := Input) (Output := Point.Spec.Point) (main curveParams)
         (Assumptions curveParams) := by

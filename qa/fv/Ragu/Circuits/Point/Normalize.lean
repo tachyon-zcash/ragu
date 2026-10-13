@@ -52,6 +52,8 @@ instance elaborated : ElaboratedCircuit (F p) Spec.Point Output main where
     simp [main, circuit_norm, Element.Divide.circuit, Element.Square.circuit,
       Element.Mul.circuit]
 
+/-- A nonzero input y-coordinate makes the division unique, so satisfying
+wires describe the scale and equal-coordinate base used by the walk. -/
 theorem soundness :
     Soundness (F p) (Input := Spec.Point) (Output := Output) main Assumptions Spec := by
   circuit_proof_start [Element.Divide.circuit, Element.Divide.Assumptions, Element.Divide.Spec,
@@ -60,6 +62,8 @@ theorem soundness :
   obtain ⟨h_div, h_sq, h_mul⟩ := h_holds
   exact ⟨h_div (Or.inl h_assumptions), h_sq, h_mul⟩
 
+/-- With nonzero input y, honest division and multiplication witnesses
+satisfy the normalization constraints. -/
 theorem completeness :
     Completeness (F p) (Input := Spec.Point) (Output := Output) main Assumptions := by
   circuit_proof_start [Element.Divide.circuit, Element.Divide.ProverAssumptions,
