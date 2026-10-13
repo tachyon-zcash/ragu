@@ -72,6 +72,11 @@ impl Suffix {
         }
     }
 
+    /// Returns true if this is an internal [`Header`] suffix.
+    pub(crate) const fn is_internal(&self) -> bool {
+        matches!(self.suffix, HeaderSuffix::Internal(_))
+    }
+
     /// Creates a new internal-defined [`Header`] suffix. Only called internally
     /// by Ragu.
     pub(crate) const fn internal(value: usize) -> Self {
@@ -94,7 +99,8 @@ impl Suffix {
 /// guide for usage patterns and examples.
 pub trait Header<F: Field>: Send + Sync + Any {
     /// Each header should use a unique suffix to distinguish itself from other
-    /// headers.
+    /// headers. Application headers must use [`Suffix::new`]; only `()` may
+    /// use a reserved internal suffix.
     const SUFFIX: Suffix;
 
     /// The witness input needed to encode a header.

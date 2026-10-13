@@ -181,8 +181,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// # Errors
     ///
     /// Returns an error if the step's index is not the next sequential index,
-    /// or if any of the step's header suffixes conflict with an
-    /// already-registered header type.
+    /// if a non-unit header uses a reserved internal suffix, or if any of the
+    /// step's header suffixes conflict with an already-registered header type.
     pub fn register<S: Step<C> + 'params>(mut self, step: S) -> Result<Self> {
         const {
             assert!(
@@ -328,6 +328,13 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// input suffix is a witness wire — today only `Rerandomize`, via uniform
     /// encoding — must instead constrain that wire away from `Dummy`
     /// itself; see `ProofInputs::is_dummy_input`.
+    ///
+    /// No explicit allowed-suffix set is needed: application steps encode
+    /// suffixes as constants, [`Encoded::new_uniform`](step::Encoded::new_uniform)
+    /// excludes `Dummy` and rerandomization preserves the input header, internal
+    /// circuits end in a zero suffix that no application header can use, and
+    /// only `Bootstrap` declares `Dummy` inputs. An internal step with a
+    /// witnessed suffix must preserve these restrictions.
     fn register_internal_step<S: Step<C> + 'params>(mut self, step: S) -> Result<Self> {
         const {
             assert!(
@@ -347,6 +354,12 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     }
 
     fn prevent_duplicate_suffixes<H: Header<C::CircuitField>>(&mut self) -> Result<()> {
+        if H::SUFFIX.is_internal() && TypeId::of::<H>() != TypeId::of::<()>() {
+            return Err(Error::Initialization(
+                "only the unit Header () may use a reserved internal suffix".into(),
+            ));
+        }
+
         match self.header_map.get(&H::SUFFIX) {
             Some(ty) => {
                 if *ty != TypeId::of::<H>() {
