@@ -34,6 +34,8 @@ baked = ["alloc", "dep:bento", "dep:lazy_static"]
 default = ["alloc"]
 multicore = ["maybe-rayon/threads", "ragu_acceleration/multicore", "ragu_backend/multicore", "ragu_circuits/multicore", "std"]
 std = ["alloc", "ragu_core/std"]
+# `serde::{Serialize, Deserialize}` for `MinimalProof`, as its wire bytes.
+serde = ["dep:serde"]
 # Exposes the hidden `fuzzing` module — proof corruption and the patcher seam
 # over the internal recursion circuits — used by the fuzz harness and the
 # crate's own tests. Not part of the stable public API.
@@ -60,9 +62,11 @@ ragu_circuits = { path = "../ragu_circuits", version = "0.0.0", default-features
 ragu_core = { path = "../ragu_core", version = "0.0.0", default-features = false, features = ["alloc"] }
 rand = { workspace = true }
 ragu_primitives = { path = "../ragu_primitives", version = "0.0.0", default-features = false, features = ["alloc"] }
+serde = { version = "1", default-features = false, features = ["alloc"], optional = true }
 
 [dev-dependencies]
 blake2b_simd = { workspace = true }
+serde_json = "1"
 rand = { workspace = true, features = ["thread_rng"] }
 criterion = { workspace = true }
 ragu_circuits = { path = "../ragu_circuits", version = "0.0.0", default-features = false, features = ["alloc", "test-utils"] }
@@ -111,3 +115,10 @@ name = "registry_tags"
 
 [[test]]
 name = "rerandomization"
+
+[[test]]
+name = "wire"
+
+[[test]]
+name = "serde"
+required-features = ["serde"]
