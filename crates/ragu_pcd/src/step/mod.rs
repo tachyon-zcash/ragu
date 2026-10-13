@@ -110,6 +110,18 @@ impl Index {
             StepIndex::Internal(_) => panic!("step should be application-defined"),
         }
     }
+
+    /// The fixed bundle containing this step. Internal steps are standalone.
+    pub(crate) fn bundle(
+        &self,
+        application_bundles: &[[CircuitIndex; crate::APPLICATION_SLOTS]],
+    ) -> Result<[CircuitIndex; crate::APPLICATION_SLOTS]> {
+        let circuit = self.circuit_index(application_bundles.len())?;
+        Ok(match self.index {
+            StepIndex::Internal(_) => [circuit; crate::APPLICATION_SLOTS],
+            StepIndex::Application(i) => application_bundles[i],
+        })
+    }
 }
 
 /// Represents a node in the computational graph (or the proof-carrying data

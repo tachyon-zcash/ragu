@@ -1,8 +1,9 @@
-//! Evaluate the [`Step`] circuit.
+//! Evaluate the [`Step`] circuit and fill the application slots.
 //!
 //! This creates a witness for the step circuit given the two input [`Pcd`]s and
-//! the step witness and fills the proof's application polynomials: the step's
-//! own trace and the application stage, committed once per fuse. This sets the
+//! the step witness and fills the proof's application polynomials: the
+//! application stage, committed once per fuse, and the slots. A step
+//! registered on its own fills every slot with its one claim. This sets the
 //! application fields on the [`ProofBuilder`] and returns the child proofs
 //! along with the output data from the step circuit.
 
@@ -14,7 +15,7 @@ use udon::field::Field;
 
 use crate::{
     Application, Header, Pcd, Proof,
-    proof::ProofBuilder,
+    proof::{ProofBuilder, builder::ApplicationRxs},
     step::{Step, internal::adapter::Adapter},
 };
 
@@ -35,10 +36,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         <S::Output as Header<C::CircuitField>>::Data,
         S::Aux<'source>,
     )> {
+        let bundle = S::INDEX.bundle(&self.application_bundles)?;
         let (left_proof, left_data) = left.into_parts();
         let (right_proof, right_data) = right.into_parts();
         let circuit = S::INDEX.circuit_index(self.num_application_steps)?;
-        let (trace, aux) = Adapter::<C, S, R, HEADER_SIZE>::new(step, self.shared_size)?
+        let (trace, aux) = Adapter::<C, S, R, HEADER_SIZE>::new(step, bundle, self.shared_size)?
             .trace((left_data, right_data, witness))?
             .into_parts();
         let rx = self.native_registry.assemble(&trace, circuit, &mut *rng)?;
@@ -59,10 +61,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &shared,
         )?;
 
-        builder.set_circuit_id(circuit);
+        builder.set_circuit_ids(bundle);
         builder.set_left_header(left_header.into_inner());
         builder.set_right_header(right_header.into_inner());
-        builder.set_native_application_rx(rx);
+        builder.set_native_application_rxs(ApplicationRxs::Repeated(rx));
         builder.set_native_application_stage_rx(stage_rx);
 
         Ok((left_proof, right_proof, output_data, step_aux))

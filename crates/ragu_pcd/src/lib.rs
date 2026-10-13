@@ -50,11 +50,12 @@ use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 pub use compress::{CompressedPcd, CompressedProof};
 use header::Header;
+pub use internal::native::APPLICATION_SLOTS;
 pub use proof::{Pcd, Proof};
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
     polynomials::Rank,
-    registry::{Registry, RegistryBuilder, Tag},
+    registry::{CircuitIndex, Registry, RegistryBuilder, Tag},
     staging,
 };
 use ragu_core::{Cycle, Error, Result};
@@ -70,7 +71,7 @@ use step::{Step, internal::adapter::Adapter};
 ///
 /// The prover and all verifier paths must agree on this tag. Changing it breaks
 /// compatibility with existing proofs.
-pub(crate) const RAGU_TAG: &[u8] = b"ragu-pcd-v2";
+pub(crate) const RAGU_TAG: &[u8] = b"ragu-pcd-v3";
 
 pub use backend::SelectableBackend;
 
@@ -131,6 +132,7 @@ pub struct ApplicationBuilder<
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
     application_circuits: Vec<ApplicationRegistration<'params, C, R>>,
     num_application_steps: usize,
+    application_bundles: Vec<[CircuitIndex; APPLICATION_SLOTS]>,
     /// The largest shared gadget size among the registered steps.
     shared_size: usize,
     header_map: BTreeMap<header::Suffix, TypeId>,
@@ -155,6 +157,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             nested_registry: RegistryBuilder::new(),
             application_circuits: Vec::new(),
             num_application_steps: 0,
+            application_bundles: Vec::new(),
             shared_size: 0,
             header_map: BTreeMap::new(),
             _marker: PhantomData,
@@ -189,15 +192,18 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             nested_registry: self.nested_registry,
             application_circuits: self.application_circuits,
             num_application_steps: self.num_application_steps,
+            application_bundles: self.application_bundles,
             shared_size: self.shared_size,
             header_map: self.header_map,
             _marker: PhantomData,
         }
     }
 
-    /// Register a new application-defined [`Step`] in this context. The
-    /// provided [`Step`]'s [`INDEX`](Step::INDEX) must be the next sequential
-    /// index that has not been inserted yet.
+    /// Register an application-defined [`Step`] as the fixed bundle `[S, S]`:
+    /// its one claim fills every application slot of the proof, so the step
+    /// is traced and committed once. The provided [`Step`]'s
+    /// [`INDEX`](Step::INDEX) must be the next sequential index that has not
+    /// been inserted yet.
     ///
     /// The step's [`Shared`](Step::Shared) gadget sizes the proof's
     /// application stage: every proof carries one stage of the largest
@@ -250,10 +256,17 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         }
         self.shared_size = shared_size;
 
+        let circuit = S::INDEX.circuit_index(self.num_application_steps + 1)?;
+        let bundle = [circuit; APPLICATION_SLOTS];
         self.application_circuits
             .push(Box::new(move |registry, shared_size| {
-                registry.register_circuit(Adapter::<C, S, R, HEADER_SIZE>::new(step, shared_size)?)
+                registry.register_circuit(Adapter::<C, S, R, HEADER_SIZE>::new(
+                    step,
+                    bundle,
+                    shared_size,
+                )?)
             }));
+        self.application_bundles.push(bundle);
         self.num_application_steps += 1;
 
         Ok(self)
@@ -270,6 +283,9 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         for _ in 0..count {
             self.application_circuits
                 .push(Box::new(|registry, _| registry.register_circuit(())));
+            let circuit = step::Index::new(self.num_application_steps)
+                .circuit_index(self.num_application_steps + 1)?;
+            self.application_bundles.push([circuit; APPLICATION_SLOTS]);
             self.num_application_steps += 1;
         }
         Ok(self)
@@ -324,6 +340,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             self.native_registry
                 .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
                     step::internal::bootstrap::Bootstrap::new(),
+                    <step::internal::bootstrap::Bootstrap as Step<C>>::INDEX
+                        .bundle(&self.application_bundles)?,
                     self.shared_size,
                 )?)?;
 
@@ -346,6 +364,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             nested_registry: self.nested_registry.finalize()?,
             params,
             num_application_steps: self.num_application_steps,
+            application_bundles: self.application_bundles,
             shared_size: self.shared_size,
             bootstrap: None,
             seeded_trivial: OnceCell::new(),
@@ -411,6 +430,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             self.native_registry
                 .register_internal_step(Adapter::<C, S, R, HEADER_SIZE>::new(
                     step,
+                    S::INDEX.bundle(&self.application_bundles)?,
                     self.shared_size,
                 )?)?;
 
@@ -455,6 +475,7 @@ pub struct Application<
     nested_registry: Registry<'params, C::ScalarField, R>,
     params: &'params C::Params,
     num_application_steps: usize,
+    application_bundles: Vec<[CircuitIndex; APPLICATION_SLOTS]>,
     /// The application stage's size, in field elements.
     shared_size: usize,
     /// The proof that bootstraps the recursion: a genuine, verifying

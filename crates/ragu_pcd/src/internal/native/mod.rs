@@ -47,6 +47,20 @@ pub const ENDOSCALINGS_PER_STEP: usize = 4;
 /// batch that moves it fails to build here.
 pub const NUM_ENDOSCALING_STEPS: usize = 25;
 
+/// The application circuits a proof carries: the slots a step fills, each
+/// its own circuit with its own claim, all sharing the step's headers and
+/// the proof's shared stage, sized from the registered fragments' shared inputs.
+/// A step registered on its own fills every slot with its one claim, so
+/// every proof carries the same number of application polynomials.
+///
+/// Each slot adds a native polynomial per proof, which both endoscaling
+/// walks fold and every walk step loads from its points stage, and a
+/// circuit id per child, which the first hashing circuit checks. The shared
+/// stage is a third application polynomial: two slots and the stage fill
+/// the nested steps to the gate exactly, and one more polynomial overflows
+/// them and the first hashing circuit, so this is what a proof holds.
+pub const APPLICATION_SLOTS: usize = 2;
+
 const _: () = assert!(
     endoscalar::num_steps::<ENDOSCALINGS_PER_STEP>(NUM_ENDOSCALING_POINTS) == NUM_ENDOSCALING_STEPS,
     "NUM_ENDOSCALING_STEPS is not the number of steps over the nested batch; re-pin it"
@@ -341,12 +355,12 @@ impl<T> InternalCircuitValues<T> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RxIndex {
     // Circuits
-    /// The application step's own rx polynomial.
-    Application,
-    /// The application stage's rx polynomial, which the application claim
-    /// adds to the step's own. The stage mask holds it to the stage's block
-    /// and the application final mask holds the step's own polynomial to zero
-    /// there, so its commitment binds exactly the step's shared gadget.
+    /// An application slot's rx polynomial.
+    Application(u32),
+    /// The application stage's rx polynomial, which every application slot's
+    /// claim adds to its own. The stage mask holds it to the stage's block
+    /// and the application final mask holds every slot's own polynomial to
+    /// zero there, so its commitment binds exactly the step's shared gadget.
     ApplicationStage,
     Hashes1,
     Hashes2,
@@ -386,7 +400,7 @@ pub enum RxIndex {
 
 impl RxIndex {
     /// The number of rx polynomial components.
-    pub const NUM: usize = 20 + NUM_BINDERS + NUM_ENDOSCALING_STEPS;
+    pub const NUM: usize = 19 + APPLICATION_SLOTS + NUM_BINDERS + NUM_ENDOSCALING_STEPS;
 
     /// All variants in canonical order.
     ///
@@ -399,7 +413,13 @@ impl RxIndex {
 
         let mut slots = [None; Self::NUM];
         let mut c = 0;
-        push(&mut slots, &mut c, Self::Application);
+        {
+            let mut slot = 0;
+            while slot < APPLICATION_SLOTS {
+                push(&mut slots, &mut c, Self::Application(slot as u32));
+                slot += 1;
+            }
+        }
         push(&mut slots, &mut c, Self::ApplicationStage);
         push(&mut slots, &mut c, Self::Hashes1);
         push(&mut slots, &mut c, Self::Hashes2);
@@ -445,7 +465,7 @@ impl RxIndex {
 /// [`try_from_fn`](Self::try_from_fn) to construct from a closure.
 #[derive(Clone)]
 pub struct RxValues<T> {
-    pub application: T,
+    pub application: [T; APPLICATION_SLOTS],
     pub application_stage: T,
     pub hashes_1: T,
     pub hashes_2: T,
@@ -474,7 +494,7 @@ impl<T> RxValues<T> {
     pub fn get(&self, id: RxIndex) -> &T {
         use RxIndex::*;
         match id {
-            Application => &self.application,
+            Application(slot) => &self.application[slot as usize],
             ApplicationStage => &self.application_stage,
             Hashes1 => &self.hashes_1,
             Hashes2 => &self.hashes_2,
@@ -515,7 +535,13 @@ impl<T> RxValues<T> {
     ) -> core::result::Result<Self, E> {
         use RxIndex::*;
         Ok(RxValues {
-            application: f(Application)?,
+            application: {
+                let mut out = [(); APPLICATION_SLOTS].map(|()| None);
+                for (slot, out) in out.iter_mut().enumerate() {
+                    *out = Some(f(Application(slot as u32))?);
+                }
+                out.map(|slot| slot.expect("filled"))
+            },
             application_stage: f(ApplicationStage)?,
             hashes_1: f(Hashes1)?,
             hashes_2: f(Hashes2)?,
@@ -573,6 +599,7 @@ pub enum RxComponent {
 /// `compute_v` circuit. Keeping this prefix in one ordered list prevents the
 /// two implementations from drifting independently; the dynamic suffixes are
 /// still driven by [`RxIndex::ALL`] and [`InternalCircuitIndex::ALL`].
+#[derive(Clone, Copy)]
 pub(crate) enum StaticFQuery {
     /// Left child proof $p(u)=v$ check.
     LeftP,
@@ -598,10 +625,12 @@ pub(crate) enum StaticFQuery {
     RegistryWyAtX,
     /// Current registry-xy polynomial queried at the current $w$.
     RegistryXyAtW,
-    /// Current registry-xy polynomial queried at the left child's circuit id.
-    RegistryXyAtLeftCircuitId,
-    /// Current registry-xy polynomial queried at the right child's circuit id.
-    RegistryXyAtRightCircuitId,
+    /// Current registry-xy polynomial queried at the left child's circuit id
+    /// of a slot.
+    RegistryXyAtLeftCircuitId(u32),
+    /// Current registry-xy polynomial queried at the right child's circuit
+    /// id of a slot.
+    RegistryXyAtRightCircuitId(u32),
     /// Left child $a$ polynomial queried at $xz$.
     LeftAbAAtXz,
     /// Left child $b$ polynomial queried at $x$.
@@ -616,29 +645,56 @@ pub(crate) enum StaticFQuery {
     CurrentBAtX,
 }
 
+/// The number of static queries: the registry-xy queries at the children's
+/// circuit ids, one per slot per child, beside the eighteen others.
+pub(crate) const NUM_STATIC_F_QUERIES: usize = 18 + 2 * APPLICATION_SLOTS;
+
 /// Ordered static prefix for fuse quotient polynomial queries.
-pub(crate) const STATIC_F_QUERIES: [StaticFQuery; 20] = [
-    StaticFQuery::LeftP,
-    StaticFQuery::RightP,
-    StaticFQuery::LeftRegistryXyAtW,
-    StaticFQuery::RightRegistryXyAtW,
-    StaticFQuery::RegistryWx0AtLeftY,
-    StaticFQuery::RegistryWx1AtRightY,
-    StaticFQuery::RegistryWx0AtY,
-    StaticFQuery::RegistryWx1AtY,
-    StaticFQuery::RegistryWyAtLeftX,
-    StaticFQuery::RegistryWyAtRightX,
-    StaticFQuery::RegistryWyAtX,
-    StaticFQuery::RegistryXyAtW,
-    StaticFQuery::RegistryXyAtLeftCircuitId,
-    StaticFQuery::RegistryXyAtRightCircuitId,
-    StaticFQuery::LeftAbAAtXz,
-    StaticFQuery::LeftAbBAtX,
-    StaticFQuery::RightAbAAtXz,
-    StaticFQuery::RightAbBAtX,
-    StaticFQuery::CurrentAAtXz,
-    StaticFQuery::CurrentBAtX,
-];
+pub(crate) const STATIC_F_QUERIES: [StaticFQuery; NUM_STATIC_F_QUERIES] =
+    super::const_fns::unwrap_all(static_f_queries());
+
+const fn static_f_queries() -> [Option<StaticFQuery>; NUM_STATIC_F_QUERIES] {
+    use super::const_fns::push;
+
+    let mut slots = [None; NUM_STATIC_F_QUERIES];
+    let mut c = 0;
+    push(&mut slots, &mut c, StaticFQuery::LeftP);
+    push(&mut slots, &mut c, StaticFQuery::RightP);
+    push(&mut slots, &mut c, StaticFQuery::LeftRegistryXyAtW);
+    push(&mut slots, &mut c, StaticFQuery::RightRegistryXyAtW);
+    push(&mut slots, &mut c, StaticFQuery::RegistryWx0AtLeftY);
+    push(&mut slots, &mut c, StaticFQuery::RegistryWx1AtRightY);
+    push(&mut slots, &mut c, StaticFQuery::RegistryWx0AtY);
+    push(&mut slots, &mut c, StaticFQuery::RegistryWx1AtY);
+    push(&mut slots, &mut c, StaticFQuery::RegistryWyAtLeftX);
+    push(&mut slots, &mut c, StaticFQuery::RegistryWyAtRightX);
+    push(&mut slots, &mut c, StaticFQuery::RegistryWyAtX);
+    push(&mut slots, &mut c, StaticFQuery::RegistryXyAtW);
+    {
+        let mut slot = 0;
+        while slot < APPLICATION_SLOTS {
+            push(
+                &mut slots,
+                &mut c,
+                StaticFQuery::RegistryXyAtLeftCircuitId(slot as u32),
+            );
+            push(
+                &mut slots,
+                &mut c,
+                StaticFQuery::RegistryXyAtRightCircuitId(slot as u32),
+            );
+            slot += 1;
+        }
+    }
+    push(&mut slots, &mut c, StaticFQuery::LeftAbAAtXz);
+    push(&mut slots, &mut c, StaticFQuery::LeftAbBAtX);
+    push(&mut slots, &mut c, StaticFQuery::RightAbAAtXz);
+    push(&mut slots, &mut c, StaticFQuery::RightAbBAtX);
+    push(&mut slots, &mut c, StaticFQuery::CurrentAAtXz);
+    push(&mut slots, &mut c, StaticFQuery::CurrentBAtX);
+    assert!(c == NUM_STATIC_F_QUERIES);
+    slots
+}
 
 /// Registers internal native circuits and masks into the provided registry.
 ///
