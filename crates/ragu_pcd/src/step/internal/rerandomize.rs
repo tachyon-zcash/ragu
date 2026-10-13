@@ -152,19 +152,23 @@ mod tests {
             }
         }
 
+        let bundle = <Rerandomize<()> as Step<Pasta>>::INDEX.bundle(&[]).unwrap();
         let circuit_single =
             super::super::adapter::Adapter::<Pasta, Rerandomize<Single>, R, HEADER_SIZE>::new(
                 Rerandomize::new(),
+                bundle,
             );
         let circuit_pair =
             super::super::adapter::Adapter::<Pasta, Rerandomize<Pair>, R, HEADER_SIZE>::new(
                 Rerandomize::new(),
+                bundle,
             );
 
         // `Rerandomize<()>` is the instantiation `finalize` actually registers.
         let circuit_unit =
             super::super::adapter::Adapter::<Pasta, Rerandomize<()>, R, HEADER_SIZE>::new(
                 Rerandomize::new(),
+                bundle,
             );
 
         // A frozen twin of `Rerandomize`, written from primitives: one uniform
@@ -206,8 +210,9 @@ mod tests {
                 ))
             }
         }
-        let circuit_twin =
-            super::super::adapter::Adapter::<Pasta, UnitRight, R, HEADER_SIZE>::new(UnitRight);
+        let circuit_twin = super::super::adapter::Adapter::<Pasta, UnitRight, R, HEADER_SIZE>::new(
+            UnitRight, bundle,
+        );
 
         let mut builder: TestRegistryBuilder<'_, _, R> = TestRegistryBuilder::new();
         let single_h = builder.register_circuit(circuit_single).unwrap();

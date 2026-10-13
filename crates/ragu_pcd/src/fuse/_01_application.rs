@@ -1,16 +1,19 @@
-//! Evaluate the [`Step`] circuit.
+//! Evaluate the [`Step`] circuit and fill the application slots.
 //!
 //! This creates a witness for the step circuit given the two input [`Pcd`]s and
-//! the step witness. This sets the application fields on the [`ProofBuilder`]
-//! and returns the child proofs along with the output data from the step circuit.
+//! the step witness and fills the proof's application polynomials: the shared
+//! stage, committed once per fuse, and the slots. A step registered on its
+//! own fills every slot with its one claim over an empty stage. It returns
+//! the child proofs along with the output data from the step circuit.
 
-use ragu_circuits::{CircuitExt, polynomials::Rank};
+use ragu_circuits::{CircuitExt, polynomials::Rank, staging};
 use ragu_core::{Cycle, Result};
 use rand::CryptoRng;
+use udon::field::Field;
 
 use crate::{
     Application, Header, Pcd, Proof,
-    proof::ProofBuilder,
+    proof::{ProofBuilder, builder::ApplicationRxs},
     step::{Step, internal::adapter::Adapter},
 };
 
@@ -31,9 +34,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         <S::Output as Header<C::CircuitField>>::Data,
         S::Aux<'source>,
     )> {
+        let bundle = S::INDEX.bundle(&self.application_bundles)?;
         let (left_proof, left_data) = left.into_parts();
         let (right_proof, right_data) = right.into_parts();
-        let (trace, aux) = Adapter::<C, S, R, HEADER_SIZE>::new(step)
+        let (trace, aux) = Adapter::<C, S, R, HEADER_SIZE>::new(step, bundle)
             .trace((left_data, right_data, witness))?
             .into_parts();
         let rx = self.native_registry.assemble(
@@ -42,12 +46,22 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             &mut *rng,
         )?;
 
+        // The shared stage, committed once per proof and added to every
+        // slot's claim: empty until a bundle shares data through it.
+        let stage_rx = staging::stage_rx::<_, R>(
+            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
+            1,
+            0,
+            &[],
+        )?;
+
         let ((left_header, right_header), output_data, step_aux) = aux;
 
-        builder.set_circuit_id(S::INDEX.circuit_index(self.num_application_steps)?);
+        builder.set_circuit_ids(bundle);
         builder.set_left_header(left_header.into_inner());
         builder.set_right_header(right_header.into_inner());
-        builder.set_native_application_rx(rx);
+        builder.set_native_application_rxs(ApplicationRxs::Repeated(rx));
+        builder.set_native_application_stage_rx(stage_rx);
 
         Ok((left_proof, right_proof, output_data, step_aux))
     }

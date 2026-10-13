@@ -45,16 +45,17 @@ mod proof;
 pub mod step;
 mod verify;
 
-use alloc::collections::BTreeMap;
+use alloc::{collections::BTreeMap, vec::Vec};
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 pub use compress::{CompressedPcd, CompressedProof};
 use header::Header;
+pub use internal::native::APPLICATION_SLOTS;
 pub use proof::{Pcd, Proof};
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
     polynomials::Rank,
-    registry::{Registry, RegistryBuilder, Tag},
+    registry::{CircuitIndex, Registry, RegistryBuilder, Tag},
 };
 use ragu_core::{Cycle, Error, Result};
 use rand::{CryptoRng, SeedableRng, rngs::StdRng};
@@ -68,7 +69,7 @@ use step::{Step, internal::adapter::Adapter};
 ///
 /// The prover and all verifier paths must agree on this tag. Changing it breaks
 /// compatibility with existing proofs.
-pub(crate) const RAGU_TAG: &[u8] = b"ragu-pcd-v1";
+pub(crate) const RAGU_TAG: &[u8] = b"ragu-pcd-v3";
 
 pub use backend::SelectableBackend;
 
@@ -116,6 +117,7 @@ pub struct ApplicationBuilder<
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
     num_application_steps: usize,
+    application_bundles: Vec<[CircuitIndex; APPLICATION_SLOTS]>,
     header_map: BTreeMap<header::Suffix, TypeId>,
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
@@ -137,6 +139,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             native_registry: RegistryBuilder::new(),
             nested_registry: RegistryBuilder::new(),
             num_application_steps: 0,
+            application_bundles: Vec::new(),
             header_map: BTreeMap::new(),
             _marker: PhantomData,
         }
@@ -169,14 +172,17 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             native_registry: self.native_registry,
             nested_registry: self.nested_registry,
             num_application_steps: self.num_application_steps,
+            application_bundles: self.application_bundles,
             header_map: self.header_map,
             _marker: PhantomData,
         }
     }
 
-    /// Register a new application-defined [`Step`] in this context. The
-    /// provided [`Step`]'s [`INDEX`](Step::INDEX) must be the next sequential
-    /// index that has not been inserted yet.
+    /// Register an application-defined [`Step`] as the fixed bundle `[S, S]`:
+    /// its one claim fills every application slot of the proof, so the step
+    /// is traced and committed once. The provided [`Step`]'s
+    /// [`INDEX`](Step::INDEX) must be the next sequential index that has not
+    /// been inserted yet.
     ///
     /// # Errors
     ///
@@ -201,9 +207,12 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         self.prevent_duplicate_suffixes::<S::Left>()?;
         self.prevent_duplicate_suffixes::<S::Right>()?;
 
+        let circuit = S::INDEX.circuit_index(self.num_application_steps + 1)?;
+        let bundle = [circuit; APPLICATION_SLOTS];
         self.native_registry =
             self.native_registry
-                .register_circuit(Adapter::<C, S, R, HEADER_SIZE>::new(step))?;
+                .register_circuit(Adapter::<C, S, R, HEADER_SIZE>::new(step, bundle))?;
+        self.application_bundles.push(bundle);
         self.num_application_steps += 1;
 
         Ok(self)
@@ -219,6 +228,9 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     pub(crate) fn register_dummy_circuits(mut self, count: usize) -> Result<Self> {
         for _ in 0..count {
             self.native_registry = self.native_registry.register_circuit(())?;
+            let circuit = step::Index::new(self.num_application_steps)
+                .circuit_index(self.num_application_steps + 1)?;
+            self.application_bundles.push([circuit; APPLICATION_SLOTS]);
             self.num_application_steps += 1;
         }
         Ok(self)
@@ -257,6 +269,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             self.native_registry,
             params,
             log2_circuits,
+            // The shared stage is empty until a bundle shares data through it.
+            0,
         )?;
 
         // Then, register internal steps. `Bootstrap` is registered directly
@@ -268,6 +282,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             self.native_registry
                 .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
                     step::internal::bootstrap::Bootstrap::new(),
+                    <step::internal::bootstrap::Bootstrap as Step<C>>::INDEX
+                        .bundle(&self.application_bundles)?,
                 ))?;
 
         assert_eq!(
@@ -289,6 +305,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             nested_registry: self.nested_registry.finalize()?,
             params,
             num_application_steps: self.num_application_steps,
+            application_bundles: self.application_bundles,
             bootstrap: None,
             seeded_trivial: OnceCell::new(),
             _marker: PhantomData,
@@ -341,7 +358,10 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
 
         self.native_registry =
             self.native_registry
-                .register_internal_step(Adapter::<C, S, R, HEADER_SIZE>::new(step))?;
+                .register_internal_step(Adapter::<C, S, R, HEADER_SIZE>::new(
+                    step,
+                    S::INDEX.bundle(&self.application_bundles)?,
+                ))?;
 
         Ok(self)
     }
@@ -376,6 +396,7 @@ pub struct Application<
     nested_registry: Registry<'params, C::ScalarField, R>,
     params: &'params C::Params,
     num_application_steps: usize,
+    application_bundles: Vec<[CircuitIndex; APPLICATION_SLOTS]>,
     /// The proof that bootstraps the recursion: a genuine, verifying
     /// `Pcd<()>` consumed as a child by every [`seed`](Self::seed).
     ///

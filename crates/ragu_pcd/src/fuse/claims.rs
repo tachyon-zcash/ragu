@@ -213,8 +213,12 @@ impl<'rx, C: Cycle, R: Rank> Source for NativeFuseProofSource<'rx, C, R> {
         .into_iter()
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
-        [self.left.circuit_id(), self.right.circuit_id()].into_iter()
+    fn app_circuits(&self, slot: usize) -> impl Iterator<Item = Self::AppCircuitId> {
+        [
+            self.left.circuit_ids()[slot],
+            self.right.circuit_ids()[slot],
+        ]
+        .into_iter()
     }
 }
 
@@ -239,11 +243,12 @@ impl<'m, 'rx, F: Field, R: Rank, B: ragu_backend::Backend>
         self.b.push(Cow::Borrowed(b.poly));
     }
 
-    fn circuit_claim(&mut self, circuit_id: CircuitIndex, rx: Atom<'rx, FoldKey, F, R>) {
-        self.circuit_impl(
-            circuit_id,
-            TrackedPoly::single(Cow::Borrowed(rx.poly), rx.key),
-        );
+    fn circuit_claim(
+        &mut self,
+        circuit_id: CircuitIndex,
+        rxs: impl Iterator<Item = Atom<'rx, FoldKey, F, R>>,
+    ) {
+        self.circuit_impl(circuit_id, TrackedPoly::sum(rxs));
     }
 
     fn internal_circuit_claim(
@@ -285,7 +290,7 @@ impl<'rx, C: Cycle, R: Rank> Source for NestedFuseProofSource<'rx, C, R> {
         [&self.left[component], &self.right[component]].into_iter()
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
+    fn app_circuits(&self, _: usize) -> impl Iterator<Item = Self::AppCircuitId> {
         core::iter::empty()
     }
 }

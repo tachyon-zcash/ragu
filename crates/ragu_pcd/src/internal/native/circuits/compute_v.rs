@@ -261,7 +261,8 @@ struct ChildDenominators<'dr, D: Driver<'dr>> {
     u: Element<'dr, D>,
     y: Element<'dr, D>,
     x: Element<'dr, D>,
-    circuit_id: Element<'dr, D>,
+    /// One per application slot.
+    circuit_ids: Vec<Element<'dr, D>>,
 }
 
 /// Denominators for current step challenge points.
@@ -306,11 +307,21 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
         let left_u = inverter.add(dr, &preamble.left.unified.u)?;
         let left_y = inverter.add(dr, &preamble.left.unified.y)?;
         let left_x = inverter.add(dr, &preamble.left.unified.x)?;
-        let left_circuit_id = inverter.add(dr, &preamble.left.circuit_id)?;
+        let left_circuit_ids = preamble
+            .left
+            .circuit_ids
+            .iter()
+            .map(|id| inverter.add(dr, id))
+            .collect::<Result<Vec<_>>>()?;
         let right_u = inverter.add(dr, &preamble.right.unified.u)?;
         let right_y = inverter.add(dr, &preamble.right.unified.y)?;
         let right_x = inverter.add(dr, &preamble.right.unified.x)?;
-        let right_circuit_id = inverter.add(dr, &preamble.right.circuit_id)?;
+        let right_circuit_ids = preamble
+            .right
+            .circuit_ids
+            .iter()
+            .map(|id| inverter.add(dr, id))
+            .collect::<Result<Vec<_>>>()?;
         let challenges_w = inverter.add(dr, w)?;
         let challenges_x = inverter.add(dr, x)?;
         let challenges_y = inverter.add(dr, y)?;
@@ -326,13 +337,19 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
                 u: inverted[left_u].clone(),
                 y: inverted[left_y].clone(),
                 x: inverted[left_x].clone(),
-                circuit_id: inverted[left_circuit_id].clone(),
+                circuit_ids: left_circuit_ids
+                    .iter()
+                    .map(|&i| inverted[i].clone())
+                    .collect(),
             },
             right: ChildDenominators {
                 u: inverted[right_u].clone(),
                 y: inverted[right_y].clone(),
                 x: inverted[right_x].clone(),
-                circuit_id: inverted[right_circuit_id].clone(),
+                circuit_ids: right_circuit_ids
+                    .iter()
+                    .map(|&i| inverted[i].clone())
+                    .collect(),
             },
             challenges: ChallengeDenominators {
                 w: inverted[challenges_w].clone(),
@@ -375,10 +392,10 @@ impl<'a, 'dr, D: Driver<'dr>> Source for EvaluationSource<'a, 'dr, D> {
         [left, right].into_iter()
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
+    fn app_circuits(&self, slot: usize) -> impl Iterator<Item = Self::AppCircuitId> {
         [
-            &self.left.current_registry_xy_at_child_circuit_id,
-            &self.right.current_registry_xy_at_child_circuit_id,
+            &self.left.current_registry_xy_at_child_circuit_ids[slot],
+            &self.right.current_registry_xy_at_child_circuit_ids[slot],
         ]
         .into_iter()
     }
@@ -435,7 +452,13 @@ impl<'a, 'dr, D: Driver<'dr>> Processor<&'a Element<'dr, D>, &'a Element<'dr, D>
         self.bx.push(b.clone());
     }
 
-    fn circuit_claim(&mut self, sy: &'a Element<'dr, D>, rx: &'a Element<'dr, D>) {
+    fn circuit_claim(
+        &mut self,
+        sy: &'a Element<'dr, D>,
+        rxs: impl Iterator<Item = &'a Element<'dr, D>>,
+    ) {
+        let rx = Element::sum(self.dr, rxs);
+
         // a(xz) = rx(xz)
         self.ax.push(rx.clone());
 
@@ -620,15 +643,15 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HE
         ),
         StaticFQuery::RegistryWyAtX => (&eval.registry_wy, &query.registry_wxy, &d.challenges.x),
         StaticFQuery::RegistryXyAtW => (&eval.registry_xy, &query.registry_wxy, &d.challenges.w),
-        StaticFQuery::RegistryXyAtLeftCircuitId => (
+        StaticFQuery::RegistryXyAtLeftCircuitId(slot) => (
             &eval.registry_xy,
-            &query.left.current_registry_xy_at_child_circuit_id,
-            &d.left.circuit_id,
+            &query.left.current_registry_xy_at_child_circuit_ids[slot as usize],
+            &d.left.circuit_ids[slot as usize],
         ),
-        StaticFQuery::RegistryXyAtRightCircuitId => (
+        StaticFQuery::RegistryXyAtRightCircuitId(slot) => (
             &eval.registry_xy,
-            &query.right.current_registry_xy_at_child_circuit_id,
-            &d.right.circuit_id,
+            &query.right.current_registry_xy_at_child_circuit_ids[slot as usize],
+            &d.right.circuit_ids[slot as usize],
         ),
         StaticFQuery::LeftAbAAtXz => (
             &eval.left.a_poly,

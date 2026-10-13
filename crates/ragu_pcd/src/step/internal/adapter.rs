@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use ragu_circuits::{Circuit, WithAux, polynomials::Rank};
+use ragu_circuits::{Circuit, WithAux, polynomials::Rank, registry::CircuitIndex};
 use ragu_core::{
     Cycle, Result,
     drivers::{Driver, DriverValue},
@@ -14,26 +14,38 @@ use ragu_primitives::{
 };
 
 use super::super::Step;
-use crate::Header;
+use crate::{APPLICATION_SLOTS, Header};
 
-/// Represents triple a length determined at compile time.
-pub struct TripleConstLen<const N: usize>;
+/// The fixed bundle IDs followed by three padded headers.
+pub struct InstanceLen<const N: usize>;
 
-impl<const N: usize> Len for TripleConstLen<N> {
+impl<const N: usize> Len for InstanceLen<N> {
     fn len() -> usize {
-        N * 3
+        APPLICATION_SLOTS + N * 3
     }
 }
 
+/// The circuit of an application [`Step`]: the step's constraints, with the
+/// registered bundle's IDs and the three headers as its public inputs.
 pub(crate) struct Adapter<C, S, R, const HEADER_SIZE: usize> {
     step: S,
+    bundle: [CircuitIndex; APPLICATION_SLOTS],
     _marker: PhantomData<(C, R)>,
 }
 
+/// The witness of an [`Adapter`]: child data and the step's own witness.
+pub(crate) type AdapterWitness<'source, C, S> = (
+    <<S as Step<C>>::Left as Header<<C as Cycle>::CircuitField>>::Data,
+    <<S as Step<C>>::Right as Header<<C as Cycle>::CircuitField>>::Data,
+    <S as Step<C>>::Witness<'source>,
+);
+
 impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Adapter<C, S, R, HEADER_SIZE> {
-    pub fn new(step: S) -> Self {
+    /// The circuit of `step` within `bundle`.
+    pub fn new(step: S, bundle: [CircuitIndex; APPLICATION_SLOTS]) -> Self {
         Adapter {
             step,
+            bundle,
             _marker: PhantomData,
         }
     }
@@ -47,12 +59,8 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
         <S::Output as Header<C::CircuitField>>::Data,
     );
-    type Witness<'source> = (
-        <S::Left as Header<C::CircuitField>>::Data,
-        <S::Right as Header<C::CircuitField>>::Data,
-        S::Witness<'source>,
-    );
-    type Output = Kind![C::CircuitField; FixedVec<Element<'_, _>, TripleConstLen<HEADER_SIZE>>];
+    type Witness<'source> = AdapterWitness<'source, C, S>;
+    type Output = Kind![C::CircuitField; FixedVec<Element<'_, _>, InstanceLen<HEADER_SIZE>>];
     type Aux<'source> = (
         (
             FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
@@ -107,7 +115,17 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
             ))
         })?;
 
-        Ok(WithAux::new(FixedVec::try_from(elements)?, adapter_aux))
+        // These are circuit constants, fixed at registration. Every fragment
+        // attests the entire ordered bundle, so selecting or repeating just
+        // one fragment cannot prove the registered step. The verifier derives
+        // these public inputs from the proof's actual circuit selectors.
+        let instance = self
+            .bundle
+            .map(|id| Element::constant(dr, id.omega_j()))
+            .into_iter()
+            .chain(elements)
+            .collect_fixed()?;
+        Ok(WithAux::new(instance, adapter_aux))
     }
 }
 
@@ -190,10 +208,10 @@ mod tests {
     }
 
     #[test]
-    fn triple_const_len_returns_3n() {
-        assert_eq!(TripleConstLen::<1>::len(), 3);
-        assert_eq!(TripleConstLen::<4>::len(), 12);
-        assert_eq!(TripleConstLen::<10>::len(), 30);
+    fn instance_len_includes_bundle_and_headers() {
+        assert_eq!(InstanceLen::<1>::len(), APPLICATION_SLOTS + 3);
+        assert_eq!(InstanceLen::<4>::len(), APPLICATION_SLOTS + 12);
+        assert_eq!(InstanceLen::<10>::len(), APPLICATION_SLOTS + 30);
     }
 
     #[test]
@@ -201,7 +219,10 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep);
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(
+            TestStep,
+            [CircuitIndex::new(0); APPLICATION_SLOTS],
+        );
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
         let output = adapter
@@ -209,8 +230,8 @@ mod tests {
             .expect("witness should succeed")
             .into_output();
 
-        // Output should have 3 * HEADER_SIZE elements (left + right + output headers)
-        assert_eq!(output.len(), HEADER_SIZE * 3);
+        // The fixed bundle precedes the left, right and output headers.
+        assert_eq!(output.len(), APPLICATION_SLOTS + HEADER_SIZE * 3);
     }
 
     #[test]
@@ -218,7 +239,10 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep);
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(
+            TestStep,
+            [CircuitIndex::new(0); APPLICATION_SLOTS],
+        );
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
         let aux = adapter
