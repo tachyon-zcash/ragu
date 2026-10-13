@@ -8,7 +8,7 @@
 //!   [`verify`](Application::verify) proofs, or
 //!   [`compress`](Application::compress) them and
 //!   [`verify_compressed`](Application::verify_compressed) the result.
-//! - [`step::Step`] — the trait that defines computation nodes (transitions).
+//! - [`step::Step`] — application circuit steps, registered alone or in bundles.
 //! - [`header::Header`] — the trait that defines succinct state representations.
 //! - [`Proof`] / [`Pcd`] — the proof and proof-carrying-data structures.
 //! - [`CompressedProof`] / [`CompressedPcd`] — their compressed forms.
@@ -199,11 +199,13 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         }
     }
 
-    /// Register an application-defined [`Step`] as the fixed bundle `[S, S]`:
-    /// its one claim fills every application slot of the proof, so the step
-    /// is traced and committed once. The provided [`Step`]'s
-    /// [`INDEX`](Step::INDEX) must be the next sequential index that has not
-    /// been inserted yet.
+    /// Register a standalone application-defined [`Step`] as the fixed bundle
+    /// `[S, S]`: [`Application::seed`] and [`Application::fuse`] take it
+    /// alone, and its one claim fills every application slot of the proof. The
+    /// step must establish its output invariant by itself. The provided
+    /// [`Step`]'s [`INDEX`](Step::INDEX) must be the next sequential index
+    /// that has not been inserted yet. Standalone steps declare `Shared = ()`;
+    /// a nonempty shared gadget requires [`Self::register_bundle`].
     ///
     /// The step's [`Shared`](Step::Shared) gadget sizes the proof's
     /// application stage: every proof carries one stage of the largest
@@ -243,13 +245,27 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// circuit IDs as public inputs, enforced by both recursive and terminal
     /// verification.
     ///
+    /// Both steps return the same [`Step::Shared`]
+    /// gadget type. Ragu derives its size and layout, then automatically
+    /// binds all corresponding wires to one common committed stage. The
+    /// application does not supply the stage's size or values. Every bundle
+    /// reserves the largest shared layout registered in the application.
+    ///
+    /// # Cost
+    ///
+    /// Every step reserves `ceil(n / 2)` gates, where `n` is the
+    /// application's largest shared wire count, and adds one connecting
+    /// equality constraint per wire in its own shared gadget; see
+    /// [`Self::register`].
+    ///
     /// # Errors
     ///
     /// Returns the same registration errors as [`Self::register`].
     pub fn register_bundle<S, T>(self, steps: (S, T)) -> Result<Self>
     where
         S: step::Step<C> + 'params,
-        T: step::Step<C, Left = S::Left, Right = S::Right, Output = S::Output> + 'params,
+        T: step::Step<C, Left = S::Left, Right = S::Right, Output = S::Output, Shared = S::Shared>
+            + 'params,
     {
         S::INDEX.assert_index(self.num_application_steps)?;
         T::INDEX.assert_index(self.num_application_steps + 1)?;
@@ -538,7 +554,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// This is the entry point for creating leaf nodes in a PCD tree. The step
     /// is fused against the bootstrap proof built by
     /// [`ApplicationBuilder::finalize`] as both children, so this is an
-    /// ordinary fuse whose child claims are enforced, not a base case.
+    /// ordinary fuse whose child claims are enforced, not a base case. Like
+    /// [`Self::fuse`], it takes a step registered on its own; a bundle is
+    /// seeded with [`Self::seed_bundle`].
     pub fn seed<'source, RNG: CryptoRng, S: Step<C, Left = (), Right = ()>>(
         &self,
         rng: &mut RNG,
@@ -565,7 +583,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     where
         RNG: CryptoRng,
         S: step::Step<C, Left = (), Right = ()>,
-        T: step::Step<C, Left = (), Right = (), Output = S::Output>,
+        T: step::Step<C, Left = (), Right = (), Output = S::Output, Shared = S::Shared>,
     {
         self.fuse_bundle(
             rng,

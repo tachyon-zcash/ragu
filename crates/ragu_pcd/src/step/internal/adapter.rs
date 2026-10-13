@@ -47,7 +47,7 @@ pub(crate) struct Adapter<C, S, R, const HEADER_SIZE: usize> {
     _marker: PhantomData<(C, R)>,
 }
 
-/// The witness of an [`Adapter`]: child data and the step's own witness.
+/// The witness of an [`Adapter`]: child data and the fragment's own witness.
 pub(crate) type AdapterWitness<'source, C, S> = (
     <<S as Step<C>>::Left as Header<<C as Cycle>::CircuitField>>::Data,
     <<S as Step<C>>::Right as Header<<C as Cycle>::CircuitField>>::Data,
@@ -382,10 +382,10 @@ mod tests {
     }
 
     #[test]
-    fn instance_len_includes_bundle_and_headers() {
-        assert_eq!(InstanceLen::<1>::len(), APPLICATION_SLOTS + 3);
-        assert_eq!(InstanceLen::<4>::len(), APPLICATION_SLOTS + 12);
-        assert_eq!(InstanceLen::<10>::len(), APPLICATION_SLOTS + 30);
+    fn triple_const_len_returns_3n() {
+        assert_eq!(TripleConstLen::<1>::len(), 3);
+        assert_eq!(TripleConstLen::<4>::len(), 12);
+        assert_eq!(TripleConstLen::<10>::len(), 30);
     }
 
     #[test]
@@ -406,8 +406,8 @@ mod tests {
             .expect("witness should succeed")
             .into_output();
 
-        // The fixed bundle precedes the left, right and output headers.
-        assert_eq!(output.len(), APPLICATION_SLOTS + HEADER_SIZE * 3);
+        // Output should have 3 * HEADER_SIZE elements (left + right + output headers)
+        assert_eq!(output.len(), HEADER_SIZE * 3);
     }
 
     #[test]
