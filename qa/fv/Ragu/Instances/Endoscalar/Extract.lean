@@ -9,7 +9,7 @@ def p := Core.Primes.p
 def deserializeInput (input : Vector (Expression (F p)) 1) : Var field (F p) :=
   input[0]
 
-def serializeOutput (output : Var (fields 128) (F p)) : Vector (Expression (F p)) 128 :=
+def serializeOutput (output : Var (fields 143) (F p)) : Vector (Expression (F p)) 143 :=
   output
 
 /-- Pinned at `n = 254 = Fp::CAPACITY`: the Pasta moduli are 255-bit, so
@@ -20,6 +20,6 @@ def formal_instance : Core.Statements.FormalInstance where
   serializeOutput
 
   reimplementation :=
-    (Circuits.Endoscalar.Extract.circuit 254 (by decide : 2 ^ 254 < p) (by decide : 128 ≤ 254)).toWithHint
+    (Circuits.Endoscalar.Extract.circuit 254 (by decide : 2 ^ 254 < p) (by decide : 143 ≤ 254)).toWithHint
 
 end Ragu.Instances.Endoscalar.Extract

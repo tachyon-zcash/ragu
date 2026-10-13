@@ -122,6 +122,8 @@ pub enum InternalCircuitIndex {
     OuterErrorFinalStaged,
     EvalFinalStaged,
     PointsWalkFinalStaged,
+    /// The preamble's final mask, under which `bind_beta` ends.
+    PreambleFinalStaged,
 }
 
 /// Compute the total circuit count and log2 domain size from the number of
@@ -136,7 +138,7 @@ pub const fn total_circuit_counts(num_application_steps: usize) -> (usize, u32) 
 impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`],
     /// equal to the number of variants in [`InternalCircuitIndex`].
-    pub const NUM: usize = 22 + NUM_BINDERS + NUM_ENDOSCALING_STEPS;
+    pub const NUM: usize = 23 + NUM_BINDERS + NUM_ENDOSCALING_STEPS;
 
     /// All variants in canonical iteration order.
     ///
@@ -187,6 +189,7 @@ impl InternalCircuitIndex {
         push(&mut slots, &mut c, Self::OuterErrorFinalStaged);
         push(&mut slots, &mut c, Self::EvalFinalStaged);
         push(&mut slots, &mut c, Self::PointsWalkFinalStaged);
+        push(&mut slots, &mut c, Self::PreambleFinalStaged);
         assert!(c == Self::NUM);
         slots
     }
@@ -232,6 +235,7 @@ pub struct InternalCircuitValues<T> {
     pub outer_error_final_staged: T,
     pub eval_final_staged: T,
     pub points_walk_final_staged: T,
+    pub preamble_final_staged: T,
 }
 
 impl<T> InternalCircuitValues<T> {
@@ -263,6 +267,7 @@ impl<T> InternalCircuitValues<T> {
             OuterErrorFinalStaged => &self.outer_error_final_staged,
             EvalFinalStaged => &self.eval_final_staged,
             PointsWalkFinalStaged => &self.points_walk_final_staged,
+            PreambleFinalStaged => &self.preamble_final_staged,
         }
     }
 
@@ -319,6 +324,7 @@ impl<T> InternalCircuitValues<T> {
             outer_error_final_staged: f(OuterErrorFinalStaged)?,
             eval_final_staged: f(EvalFinalStaged)?,
             points_walk_final_staged: f(PointsWalkFinalStaged)?,
+            preamble_final_staged: f(PreambleFinalStaged)?,
         })
     }
 }
@@ -666,6 +672,10 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
             EvalFinalStaged => {
                 registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::final_mask()?)
             }
+            PreambleFinalStaged => {
+                registry
+                    .register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::final_mask()?)
+            }
             PointsBindingStage => {
                 registry.register_bonding(
                     <stages::points::BindingStage<C::NestedCurve> as StageExt<
@@ -757,7 +767,6 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
                     C,
                     R,
                     HEADER_SIZE,
-                    RevdotParameters,
                 >::new(params))?
             }
         };

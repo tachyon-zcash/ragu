@@ -48,6 +48,10 @@ use crate::instances::{
     endoscalar_extract::EndoscalarExtractInstance,
     endoscalar_group_scale::EndoscalarGroupScaleInstance,
     endoscalar_lift::EndoscalarLiftInstance,
+    hoisted_endoscalar_alloc::HoistedEndoscalarAllocInstance,
+    hoisted_endoscalar_enforce_products::HoistedEndoscalarEnforceProductsInstance,
+    hoisted_endoscalar_group_scale::HoistedEndoscalarGroupScaleInstance,
+    hoisted_endoscalar_lift::HoistedEndoscalarLiftInstance,
     horner::{HornerInstanceN3, HornerInstanceN7, HornerInstanceN19, HornerKyInstanceN3},
     nonzero_bank_scope::{
         NonzeroBankScopeInstanceK0, NonzeroBankScopeInstanceK1, NonzeroBankScopeInstanceK2,
@@ -257,6 +261,22 @@ static EXPORT_TARGETS: &[ExportTarget] = &[
     ExportTarget {
         name: "Ragu.Instances.Endoscalar.Lift",
         fingerprint: fingerprint_instance::<EndoscalarLiftInstance>,
+    },
+    ExportTarget {
+        name: "Ragu.Instances.Endoscalar.HoistedAlloc",
+        fingerprint: fingerprint_instance::<HoistedEndoscalarAllocInstance>,
+    },
+    ExportTarget {
+        name: "Ragu.Instances.Endoscalar.HoistedGroupScale",
+        fingerprint: fingerprint_instance::<HoistedEndoscalarGroupScaleInstance>,
+    },
+    ExportTarget {
+        name: "Ragu.Instances.Endoscalar.HoistedLift",
+        fingerprint: fingerprint_instance::<HoistedEndoscalarLiftInstance>,
+    },
+    ExportTarget {
+        name: "Ragu.Instances.Endoscalar.EnforceProducts",
+        fingerprint: fingerprint_instance::<HoistedEndoscalarEnforceProductsInstance>,
     },
     ExportTarget {
         name: "Ragu.Instances.Horner.N3",
@@ -576,7 +596,7 @@ mod tests {
             moduli.insert(fields[3].to_owned());
         }
 
-        assert_eq!(EXPORT_TARGETS.len(), 53);
+        assert_eq!(EXPORT_TARGETS.len(), 57);
         assert_eq!(moduli.len(), 2, "both Pasta fields must remain enrolled");
         assert_eq!(maximum, 1728);
     }

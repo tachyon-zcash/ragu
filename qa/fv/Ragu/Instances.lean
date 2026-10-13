@@ -40,6 +40,10 @@ import Ragu.Instances.Endoscalar.Alloc
 import Ragu.Instances.Endoscalar.Extract
 import Ragu.Instances.Endoscalar.GroupScale
 import Ragu.Instances.Endoscalar.Lift
+import Ragu.Instances.Endoscalar.HoistedAlloc
+import Ragu.Instances.Endoscalar.HoistedGroupScale
+import Ragu.Instances.Endoscalar.HoistedLift
+import Ragu.Instances.Endoscalar.EnforceProducts
 import Ragu.Instances.Horner.N3
 import Ragu.Instances.Horner.N7
 import Ragu.Instances.Horner.N19

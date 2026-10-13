@@ -77,4 +77,4 @@ elab "assert_contract_composition " expected:num : command => do
 
 end Ragu.Meta
 
-assert_contract_composition 50
+assert_contract_composition 62

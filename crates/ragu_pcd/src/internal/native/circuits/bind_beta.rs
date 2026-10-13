@@ -42,10 +42,9 @@
 //!
 //! ## Staging
 //!
-//! Chained through [`outer_error`] to share the final mask of the hash and
-//! outer collapse circuits; the binding stage is loaded unenforced, its
-//! curve membership being `bind_endoscalar`'s, and the preamble's contracts
-//! `compute_v`'s.
+//! Ends at the [`preamble`], under its own final mask; the binding stage is
+//! loaded unenforced, its curve membership being `bind_endoscalar`'s, and
+//! the preamble's contracts `compute_v`'s.
 //!
 //! ## Instance
 //!
@@ -57,7 +56,6 @@
 //! [`nested_p_commitment`]: unified::Output::nested_p_commitment
 //! [`points::BindingStage`]: super::super::stages::points::BindingStage
 //! [`preamble`]: super::super::stages::preamble
-//! [`outer_error`]: super::super::stages::outer_error
 
 use core::marker::PhantomData;
 
@@ -77,12 +75,10 @@ use ragu_primitives::{
 };
 
 use super::super::{
-    stages::{
-        outer_error as native_outer_error, points::BindingStage, preamble as native_preamble,
-    },
+    stages::{points::BindingStage, preamble as native_preamble},
     unified::{self, OutputBuilder},
 };
-use crate::internal::{fold_revdot, nested};
+use crate::internal::nested;
 
 /// The nested-curve generator index the challenge stage commits the lift of
 /// `pre_beta` with.
@@ -97,14 +93,12 @@ pub fn generator_index<C: Cycle, R: Rank>() -> usize {
 /// See the [module-level documentation] for details.
 ///
 /// [module-level documentation]: self
-pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP> {
+pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize> {
     params: &'params C::Params,
-    _marker: PhantomData<(R, FP)>,
+    _marker: PhantomData<R>,
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    Circuit<'params, C, R, HEADER_SIZE, FP>
-{
+impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> Circuit<'params, C, R, HEADER_SIZE> {
     /// Creates a new multi-stage circuit.
     ///
     /// `params` provides the nested-curve generators the challenge stage is
@@ -118,7 +112,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Para
 }
 
 /// Witness for the beta binding circuit.
-pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
+pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     /// The unified instance, for the instance and accumulated coverage.
     pub unified: unified::Instance<C>,
     /// The binding stage: the children's walked commitments that must
@@ -127,17 +121,15 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     /// Witness for the preamble stage (provides the children's `pre_beta`
     /// and exported bindings).
     pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
-    /// Witness for the outer error stage (reserved, unused).
-    pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, FP>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitField, R>
+    for Circuit<'_, C, R, HEADER_SIZE>
 {
-    type Last = native_outer_error::Stage<C, R, HEADER_SIZE, FP>;
+    type Last = native_preamble::Stage<C, R, HEADER_SIZE>;
 
     type Instance<'source> = &'source unified::Instance<C>;
-    type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
+    type Witness<'source> = Witness<'source, C, R, HEADER_SIZE>;
     type Output = unified::InternalOutputKind<C>;
     type Aux<'source> = unified::Instance<C>;
 
@@ -163,13 +155,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let (binding, builder) = builder.add_stage::<BindingStage<C::NestedCurve>>()?;
         let (preamble, builder) =
             builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
-        let (outer_error, builder) =
-            builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();
 
         let binding = binding.unenforced(dr, witness.as_ref().map(|w| w.binding))?;
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
-        let _ = outer_error.unenforced(dr, witness.as_ref().map(|w| w.outer_error_witness))?;
 
         let allocator = &mut Standard::new();
         let unified_output = OutputBuilder::new(witness.map(|w| w.unified));

@@ -59,7 +59,7 @@ use ragu_circuits::{
 };
 use ragu_core::{Cycle, Result};
 use ragu_primitives::{
-    extract_endoscalar, lift_endoscalar,
+    Uendo, extract_endoscalar, lift_endoscalar,
     vec::{FixedVec, Len},
 };
 use udon::field::Field;
@@ -729,7 +729,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     pub(crate) fn compute_endoscaling<RNG: rand::CryptoRng>(
         &self,
         rng: &mut RNG,
-        beta_endo: u128,
+        beta_endo: Uendo,
         points: &[C::HostCurve],
         endoscalar_alpha: C::ScalarField,
         points_alpha: C::ScalarField,
@@ -916,7 +916,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     pub(crate) fn compute_native_endoscaling<RNG: rand::CryptoRng>(
         &self,
         rng: &mut RNG,
-        beta_endo: u128,
+        beta_endo: Uendo,
         inputs: &Inputs<C::NestedCurve>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(C::NestedCurve, native_points::WalkWitness<C::NestedCurve>)> {

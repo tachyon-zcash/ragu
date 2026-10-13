@@ -28,22 +28,21 @@ form.
 
 ## Example: Endoscalar
 
-The [`Endoscalar`][endoscalar-type] gadget represents a 128-bit binary
-challenge string used in elliptic curve scalar multiplication. The
-witness is a `u128`, but the individual bits must each be a
-[`Boolean`][boolean-gadget] gadget so they can be referenced individually
-in constraints. Storing 128 separate `Boolean`s — each carrying its own
-bit-valued witness — would duplicate the data; the endoscalar holds them
-demoted instead and reconstructs the per-bit witness from the `u128` on
-demand.
+The [`Endoscalar`][endoscalar-type] gadget represents a binary challenge
+string of `ENDOSCALAR_BITS` bits used in elliptic curve scalar
+multiplication. The witness is a compact `Uendo` value, but the individual
+bits must each be a [`Boolean`][boolean-gadget] gadget so they can be
+referenced individually in constraints. Storing every bit as a separate
+`Boolean` — each carrying its own bit-valued witness — would duplicate the
+data; the endoscalar holds them demoted instead and reconstructs the per-bit
+witness from the `Uendo` on demand.
 
 Each bit is allocated, immediately demoted, and stored:
 
 ```rust,ignore
-let bits = (0..u128::BITS as usize)
+let bits = (0..ENDOSCALAR_BITS)
     .map(|i| {
-        let bit_value = value.as_ref().map(|v| (*v >> i) & 1u128 == 1u128);
-        let bit = Boolean::alloc(dr, &mut (), bit_value)?;
+        let bit = Boolean::alloc(dr, &mut (), value.as_ref().map(|v| v.bit(i)))?;
         bit.demote()
     })
     .try_collect_fixed()?;
@@ -51,13 +50,14 @@ let bits = (0..u128::BITS as usize)
 
 When a consumer asks for an iterator over the bits, each demoted
 handle is promoted back into a [`Boolean`][boolean-gadget] using the
-corresponding bit extracted from the stored `u128`:
+corresponding bit extracted from the stored `Uendo`:
 
 ```rust,ignore
 pub fn bits(&self) -> impl Iterator<Item = Boolean<'dr, D>> {
-    let mut bits = self.value.as_ref().map(|v| {
-        (0..(u128::BITS as usize)).map(move |i| (*v >> i) & 1u128 == 1u128)
-    });
+    let mut bits = self
+        .value
+        .as_ref()
+        .map(|v| (0..ENDOSCALAR_BITS).map(move |i| v.bit(i)));
 
     self.bits.iter().map(move |demoted_bit| {
         demoted_bit.promote(bits.as_mut().map(|bits| bits.next().unwrap()))

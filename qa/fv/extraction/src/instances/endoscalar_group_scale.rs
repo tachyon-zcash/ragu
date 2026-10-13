@@ -1,5 +1,5 @@
 use ragu_core::pasta::{EpAffine, Fp};
-use ragu_primitives::Point;
+use ragu_primitives::{ENDOSCALAR_BITS, Point};
 use udon::curve::Affine;
 
 use crate::{
@@ -20,14 +20,14 @@ impl CircuitInstance for EndoscalarGroupScaleInstance {
     /// constraints are emitted; the Lean reimplementation carries that
     /// non-degeneracy as an explicit `Assumptions` conjunct.
     ///
-    /// Input wires (in order): `bits[0..128]` (least significant first), then
+    /// Input wires (in order): `bits[0..ENDOSCALAR_BITS]` (least significant first), then
     /// the point's `(x, y)`. Output: the scaled point's `(x, y)`.
     fn circuit<'dr, D>(dr: &mut D) -> ragu_core::Result<Vec<D::Wire>>
     where
         D: InstanceDriver<'dr, F = Fp>,
     {
         let bits: Vec<_> = dr
-            .alloc_input_wires(128)
+            .alloc_input_wires(ENDOSCALAR_BITS)
             .into_iter()
             .map(boolean_from_wire)
             .collect::<ragu_core::Result<_>>()?;

@@ -973,18 +973,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         // stage commitment the binding stage witnessed. The other points
         // in that stage must match the child's transcript and persistent
         // commitment exports too: every binding-stage wire is an output.
-        let bind_beta = native::circuits::bind_beta::Circuit::<
-            C,
-            R,
-            HEADER_SIZE,
-            native::RevdotParameters,
-        >::new(self.params);
+        let bind_beta = native::circuits::bind_beta::Circuit::<C, R, HEADER_SIZE>::new(self.params);
         let bind_beta_witness = || {
             Ok(native::circuits::bind_beta::Witness {
                 unified: make_unified(&builder)?,
                 binding: &native_points.binding,
                 preamble_witness: &preamble_witness,
-                outer_error_witness: &native_outer_error_witness,
             })
         };
         let bind_beta_spec = CircuitSpec {
