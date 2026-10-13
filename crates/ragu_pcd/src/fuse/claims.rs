@@ -222,6 +222,18 @@ impl<'rx, C: Cycle, R: Rank> Source for NativeFuseProofSource<'rx, C, R> {
     }
 }
 
+impl<C: Cycle, R: Rank> crate::internal::native::claims::ApplicationSource
+    for NativeFuseProofSource<'_, C, R>
+{
+    type IsBundle = bool;
+
+    fn is_split_bundle(&self) -> impl Iterator<Item = bool> {
+        [self.left, self.right]
+            .into_iter()
+            .map(|proof| crate::internal::native::is_split_bundle(proof.circuit_ids()))
+    }
+}
+
 /// [`Builder`] specialized for the fuse pipeline, where `A`
 /// polynomials carry [`CommitmentDecomposition`]s via [`TrackedPoly`].
 pub(super) type NativeFuseBuilder<'m, 'rx, F, R, B> =
@@ -265,6 +277,25 @@ impl<'m, 'rx, F: Field, R: Rank, B: ragu_backend::Backend>
         groups: impl Iterator<Item = impl Iterator<Item = Atom<'rx, FoldKey, F, R>>>,
     ) -> Result<()> {
         let folded = fold_revdot::fold(groups.map(TrackedPoly::sum), self.z);
+        self.bonding_impl(id.circuit_index(), folded);
+        Ok(())
+    }
+
+    fn application_bonding_claim(
+        &mut self,
+        id: InternalCircuitIndex,
+        rxs: impl Iterator<Item = (Atom<'rx, FoldKey, F, R>, bool)>,
+    ) -> Result<()> {
+        let folded = fold_revdot::fold(
+            rxs.map(|(rx, is_bundle)| {
+                if is_bundle {
+                    TrackedPoly::single(Cow::Borrowed(rx.poly), rx.key)
+                } else {
+                    TrackedPoly::default()
+                }
+            }),
+            self.z,
+        );
         self.bonding_impl(id.circuit_index(), folded);
         Ok(())
     }

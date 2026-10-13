@@ -202,9 +202,25 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
                 let munu = mu.mul(dr, &nu)?;
                 let mu_prime_nu_prime = mu_prime.mul(dr, &nu_prime)?;
 
+                // These IDs come from the enforced child preamble. A split
+                // fragment binds its complete ordered bundle as public inputs,
+                // so it cannot claim the repeated IDs of a standalone step to
+                // bypass the shared-stage lane checks.
+                let is_split_bundle = [
+                    preamble.left.circuit_ids[0]
+                        .is_equal(dr, allocator, &preamble.left.circuit_ids[1])?
+                        .not(dr)
+                        .element(),
+                    preamble.right.circuit_ids[0]
+                        .is_equal(dr, allocator, &preamble.right.circuit_ids[1])?
+                        .not(dr)
+                        .element(),
+                ];
+
                 compute_axbx::<_, RevdotParameters>(
                     dr,
                     &query,
+                    &is_split_bundle,
                     z.element(),
                     &txz,
                     &mu_inv,
@@ -374,6 +390,15 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
 struct EvaluationSource<'a, 'dr, D: Driver<'dr>> {
     left: &'a ChildEvaluations<'dr, D>,
     right: &'a ChildEvaluations<'dr, D>,
+    is_split_bundle: &'a [Element<'dr, D>; 2],
+}
+
+impl<'a, 'dr, D: Driver<'dr>> claims::ApplicationSource for EvaluationSource<'a, 'dr, D> {
+    type IsBundle = &'a Element<'dr, D>;
+
+    fn is_split_bundle(&self) -> impl Iterator<Item = Self::IsBundle> {
+        self.is_split_bundle.iter()
+    }
 }
 
 impl<'a, 'dr, D: Driver<'dr>> Source for EvaluationSource<'a, 'dr, D> {
@@ -444,7 +469,8 @@ impl<'a, 'dr, D: Driver<'dr>> EvaluationProcessor<'a, 'dr, D> {
     }
 }
 
-impl<'a, 'dr, D: Driver<'dr>> Processor<&'a Element<'dr, D>, &'a Element<'dr, D>>
+impl<'a, 'dr, D: Driver<'dr>>
+    Processor<&'a Element<'dr, D>, &'a Element<'dr, D>, &'a Element<'dr, D>>
     for EvaluationProcessor<'a, 'dr, D>
 {
     fn raw_claim(&mut self, a: &'a Element<'dr, D>, b: &'a Element<'dr, D>) {
@@ -501,6 +527,19 @@ impl<'a, 'dr, D: Driver<'dr>> Processor<&'a Element<'dr, D>, &'a Element<'dr, D>
         self.bx.push(sy.clone());
         Ok(())
     }
+
+    fn application_bonding_claim(
+        &mut self,
+        id: InternalCircuitIndex,
+        rxs: impl Iterator<Item = (&'a Element<'dr, D>, &'a Element<'dr, D>)>,
+    ) -> Result<()> {
+        let selected = rxs
+            .map(|(rx, is_bundle)| rx.mul(self.dr, is_bundle))
+            .collect::<Result<Vec<_>>>()?;
+        self.ax.push(Element::fold(self.dr, &selected, self.z)?);
+        self.bx.push(self.fixed_registry.get(id).clone());
+        Ok(())
+    }
 }
 
 /// Computes the expected values of $a(xz)$ and $b(x)$ by recomputing them from
@@ -537,6 +576,7 @@ impl<'a, 'dr, D: Driver<'dr>> Processor<&'a Element<'dr, D>, &'a Element<'dr, D>
 fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
     dr: &mut D,
     query: &native_query::Output<'dr, D>,
+    is_split_bundle: &[Element<'dr, D>; 2],
     z: &Element<'dr, D>,
     txz: &Element<'dr, D>,
     mu_inv: &Element<'dr, D>,
@@ -549,6 +589,7 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
     let source = EvaluationSource {
         left: &query.left,
         right: &query.right,
+        is_split_bundle,
     };
     let mut processor = EvaluationProcessor::new(dr, z, txz, &query.fixed_registry);
     claims::build(&source, &mut processor)?;

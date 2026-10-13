@@ -666,6 +666,14 @@ mod native {
             core::iter::once(self.proof.circuit_ids()[slot])
         }
     }
+
+    impl<C: Cycle, R: Rank> native_claims::ApplicationSource for SingleProofSource<'_, C, R> {
+        type IsBundle = bool;
+
+        fn is_split_bundle(&self) -> impl Iterator<Item = bool> {
+            core::iter::once(native_internal::is_split_bundle(self.proof.circuit_ids()))
+        }
+    }
 }
 
 mod nested {

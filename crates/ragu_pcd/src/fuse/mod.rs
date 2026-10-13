@@ -199,7 +199,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     ///   [`Step::Left`] header.
     /// * `right`: the right [`Pcd`] to fuse in this step; must correspond to
     ///   the [`Step::Right`] header.
-    pub fn fuse<'source, RNG: CryptoRng, S: Step<C>>(
+    pub fn fuse<'source, RNG: CryptoRng, S: Step<C, Shared = ()>>(
         &self,
         rng: &mut RNG,
         step: S,
@@ -214,8 +214,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     /// [`ApplicationBuilder::register_bundle`](crate::ApplicationBuilder::register_bundle).
     ///
     /// Supply the steps `(A, B)` and their witnesses in the registered
-    /// order. Each step fills one application slot with its own claim; both
-    /// must produce identical headers. Returns the first step's output data
+    /// order. Both steps return the same [`Step::Shared`] gadget
+    /// type. Ragu automatically derives its layout, binds every returned
+    /// wire to the common stage, and refuses mismatching shared values. Each
+    /// step fills one application slot with its own claim; both must
+    /// produce identical headers. Returns the first step's output data
     /// and auxiliary data.
     ///
     /// The remaining parameters are those of [`fuse`](Self::fuse).
@@ -230,7 +233,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     where
         RNG: CryptoRng,
         S: Step<C>,
-        T: Step<C, Left = S::Left, Right = S::Right, Output = S::Output>,
+        T: Step<C, Left = S::Left, Right = S::Right, Output = S::Output, Shared = S::Shared>,
     {
         let second = self
             .slot(
@@ -247,7 +250,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     /// Prove a step with the other fragment's prepared trace.
     ///
     /// Standalone steps use an empty stage and repeat their claim. Split
-    /// bundles require the registered second fragment with matching headers.
+    /// bundles require the registered second fragment with matching headers
+    /// and shared values.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn fuse_with_slots<'source, RNG: CryptoRng, S: Step<C>>(
         &self,

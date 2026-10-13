@@ -61,6 +61,12 @@ pub const NUM_ENDOSCALING_STEPS: usize = 25;
 /// them and the first hashing circuit, so this is what a proof holds.
 pub const APPLICATION_SLOTS: usize = 2;
 
+/// Whether the registered IDs name distinct fragments rather than one
+/// standalone step repeated across the slots.
+pub(crate) fn is_split_bundle(ids: [CircuitIndex; APPLICATION_SLOTS]) -> bool {
+    ids[1..].iter().any(|id| *id != ids[0])
+}
+
 const _: () = assert!(
     endoscalar::num_steps::<ENDOSCALINGS_PER_STEP>(NUM_ENDOSCALING_POINTS) == NUM_ENDOSCALING_STEPS,
     "NUM_ENDOSCALING_STEPS is not the number of steps over the nested batch; re-pin it"

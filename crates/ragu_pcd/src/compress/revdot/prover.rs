@@ -132,6 +132,14 @@ impl<'a, C: Cycle, R: Rank> Source for NativePolys<'a, C, R> {
     }
 }
 
+impl<C: Cycle, R: Rank> native::claims::ApplicationSource for NativePolys<'_, C, R> {
+    type IsBundle = bool;
+
+    fn is_split_bundle(&self) -> impl Iterator<Item = bool> {
+        once(native::is_split_bundle(self.0.circuit_ids()))
+    }
+}
+
 /// The nested counterpart of [`NativePolys`].
 pub(crate) struct NestedPolys<'a, C: Cycle, R: Rank>(pub &'a Proof<C, R>);
 

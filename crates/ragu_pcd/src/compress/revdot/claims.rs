@@ -162,6 +162,14 @@ impl Source for NativeIds {
     }
 }
 
+impl native::claims::ApplicationSource for NativeIds {
+    type IsBundle = bool;
+
+    fn is_split_bundle(&self) -> impl Iterator<Item = bool> {
+        once(native::is_split_bundle(self.circuit_ids))
+    }
+}
+
 /// A [`Source`] over one proof's nested components, by identity.
 struct NestedIds;
 
@@ -239,6 +247,18 @@ impl<Id, F: Field> native::claims::Processor<Id, CircuitIndex> for Shaper<Id, F>
         groups: impl Iterator<Item = impl Iterator<Item = Id>>,
     ) -> Result<()> {
         self.bonding(id.circuit_index(), groups);
+        Ok(())
+    }
+
+    fn application_bonding_claim(
+        &mut self,
+        id: native::InternalCircuitIndex,
+        rxs: impl Iterator<Item = (Id, bool)>,
+    ) -> Result<()> {
+        self.bonding(
+            id.circuit_index(),
+            rxs.map(|(rx, is_bundle)| once(rx).filter(move |_| is_bundle)),
+        );
         Ok(())
     }
 }
