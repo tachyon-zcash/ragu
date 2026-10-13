@@ -189,7 +189,47 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// Returns an error if the step's index is not the next sequential index,
     /// or if any of the step's header suffixes conflict with an
     /// already-registered header type.
-    pub fn register<S: Step<C> + 'params>(mut self, step: S) -> Result<Self> {
+    pub fn register<S: Step<C> + 'params>(self, step: S) -> Result<Self> {
+        S::INDEX.assert_index(self.num_application_steps)?;
+        let circuit = S::INDEX.circuit_index(self.num_application_steps + 1)?;
+        self.register_fragment(step, [circuit; APPLICATION_SLOTS])
+    }
+
+    /// Register two [`Step`]s as one fixed, ordered application bundle,
+    /// with one step in each application slot.
+    ///
+    /// Both must be supplied when proving this bundle, through
+    /// [`Application::seed_bundle`] or [`Application::fuse_bundle`]. Neither
+    /// is registered as a standalone step. Their indices must be the next two
+    /// sequential indices, and they must use the same left, right and output
+    /// header types. Each step's circuit binds the complete tuple of
+    /// circuit IDs as public inputs, enforced by both recursive and terminal
+    /// verification.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same registration errors as [`Self::register`].
+    pub fn register_bundle<S, T>(self, steps: (S, T)) -> Result<Self>
+    where
+        S: step::Step<C> + 'params,
+        T: step::Step<C, Left = S::Left, Right = S::Right, Output = S::Output> + 'params,
+    {
+        S::INDEX.assert_index(self.num_application_steps)?;
+        T::INDEX.assert_index(self.num_application_steps + 1)?;
+        let count = self.num_application_steps + APPLICATION_SLOTS;
+        let bundle = [
+            S::INDEX.circuit_index(count)?,
+            T::INDEX.circuit_index(count)?,
+        ];
+        self.register_fragment(steps.0, bundle)?
+            .register_fragment(steps.1, bundle)
+    }
+
+    fn register_fragment<S: step::Step<C> + 'params>(
+        mut self,
+        step: S,
+        bundle: [CircuitIndex; APPLICATION_SLOTS],
+    ) -> Result<Self> {
         const {
             assert!(
                 <S::Left as Header<C::CircuitField>>::SUFFIX.get()
@@ -207,8 +247,6 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         self.prevent_duplicate_suffixes::<S::Left>()?;
         self.prevent_duplicate_suffixes::<S::Right>()?;
 
-        let circuit = S::INDEX.circuit_index(self.num_application_steps + 1)?;
-        let bundle = [circuit; APPLICATION_SLOTS];
         self.native_registry =
             self.native_registry
                 .register_circuit(Adapter::<C, S, R, HEADER_SIZE>::new(step, bundle))?;
@@ -430,6 +468,28 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             rng,
             step,
             witness,
+            self.bootstrap_pcd(),
+            self.bootstrap_pcd(),
+        )
+    }
+
+    /// Seed a new computation with both steps of a bundle whose steps
+    /// declare `()` for both inputs; see [`Self::fuse_bundle`].
+    pub fn seed_bundle<'source, RNG, S, T>(
+        &self,
+        rng: &mut RNG,
+        steps: (S, T),
+        witnesses: (S::Witness<'source>, T::Witness<'source>),
+    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)>
+    where
+        RNG: CryptoRng,
+        S: step::Step<C, Left = (), Right = ()>,
+        T: step::Step<C, Left = (), Right = (), Output = S::Output>,
+    {
+        self.fuse_bundle(
+            rng,
+            steps,
+            witnesses,
             self.bootstrap_pcd(),
             self.bootstrap_pcd(),
         )
