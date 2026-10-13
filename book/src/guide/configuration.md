@@ -5,7 +5,9 @@ that determine the system's capacity and behavior.
 
 ## Application Parameters
 
-The `ApplicationBuilder` requires three type parameters:
+The `ApplicationBuilder` requires a cycle type, a rank type, and the const
+parameter `HEADER_SIZE`. An optional fourth generic parameter, `B`, selects
+the computational backend and defaults to `ragu_backend::ReferenceBackend`:
 
 ```rust
 ApplicationBuilder::<Pasta, R<13>, 4>::new()
@@ -375,7 +377,7 @@ ApplicationBuilder::<Pasta, R<7>, 4>::new()  // Only 32 gates
 // Exceeds 32!
 ```
 
-**Error**: `GateBoundExceeded(32)` at runtime.
+**Error**: `GateBoundExceeded { limit: 32 }` at runtime.
 
 **Fix**: Switch to `R<13>` or add a larger rank.
 

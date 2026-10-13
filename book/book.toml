@@ -16,7 +16,10 @@ command = "mdbook-admonish"
 assets_version = "3.0.0"
 
 [preprocessor.todo]
-command = "python3 preprocessor-todo.py"
+# Use mdBook's root from stdin rather than the caller's working directory.
+# Explicit renderers bypass the `supports` probe, which receives no context.
+command = '''python3 -c "import json, runpy, sys; context, book = json.load(sys.stdin); process = runpy.run_path(context['root'] + '/preprocessor-todo.py')['process']; json.dump(process(context, book), sys.stdout)"'''
+renderers = ["html"]
 after = ["links"]
 
 [output]

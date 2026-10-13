@@ -38,12 +38,8 @@ def inject_todo_data(items, script_tag):
         inject_todo_data(ch.get("sub_items", []), script_tag)
 
 
-def main():
-    if len(sys.argv) > 1 and sys.argv[1] == "supports":
-        sys.exit(0)
-
-    context, book = json.loads(sys.stdin.read())
-
+def process(context, book):
+    """Inject sidebar metadata using paths relative to the configured book root."""
     root = Path(context["root"])
     src = context["config"]["book"].get("src", "src")
     summary_path = root / src / "SUMMARY.md"
@@ -56,7 +52,15 @@ def main():
         )
         inject_todo_data(book["sections"], script_tag)
 
-    print(json.dumps(book))
+    return book
+
+
+def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "supports":
+        sys.exit(0)
+
+    context, book = json.load(sys.stdin)
+    json.dump(process(context, book), sys.stdout)
 
 
 if __name__ == "__main__":

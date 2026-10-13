@@ -30,9 +30,9 @@ flowchart TB
 ## Core Components
 
 The following diagram is a high-level dependency sketch for the main library
-crates in the Ragu workspace. It omits placeholder and testing crates
-(`ragu_acceleration`, `ragu_backend`, `ragu_gadgets`, `ragu_testing`) as
-well as dev-dependencies. Arrows point
+crates in the Ragu workspace. It omits the placeholder `ragu_gadgets` crate,
+the `ragu_testing` test helpers, dev-dependencies, and most external utility
+dependencies. Arrows point
 from a crate to the crates it depends on. The arithmetic comes from outside
 the workspace: [`udon`](https://docs.rs/crate/zakura-udon/0.1.0/source/) implements the
 Pasta fields, curves, cycle traits, and Poseidon parameter interfaces;
@@ -40,6 +40,10 @@ Pasta fields, curves, cycle traits, and Poseidon parameter interfaces;
 `ragu_primitives` and `ragu_circuits` extend that layer with gadgets and
 protocol logic; and `ragu_pcd` ties those pieces together for recursive proofs
 and owns Ragu's fixed generator derivation and loading.
+`ragu_backend` defines computational kernels and their reference implementations;
+`ragu_acceleration` provides the selectable acceleration implementations.
+The optional `bento` dependency stores the generated points loaded by the
+`ragu_pcd/baked` feature.
 
 ```mermaid
 flowchart BT
@@ -49,7 +53,10 @@ flowchart BT
     prims["ragu_primitives<br/><i>standard library:<br/>gadgets, Poseidon, etc.</i>"]
     circuits["ragu_circuits<br/><i>protocol impl &<br/>circuit building</i>"]
     pcd["ragu_pcd<br/><i>recursive proof circuits,<br/>Ragu generator parameters</i>"]
-    ragu["ragu<br/><i>public API crate</i>"]
+    backend["ragu_backend<br/><i>kernels & reference backend</i>"]
+    acceleration["ragu_acceleration<br/><i>acceleration implementations</i>"]
+    bento["bento<br/><i>generated point storage</i>"]
+    ragu["ragu<br/><i>optional API mock</i>"]
 
     core --> udon
     core --> macros
@@ -63,21 +70,25 @@ flowchart BT
     pcd --> circuits
     pcd --> core
     pcd --> prims
-    ragu --> core
-    ragu --> prims
-    ragu --> circuits
-    ragu --> pcd
+    pcd --> backend
+    pcd --> acceleration
+    pcd -.->|baked| bento
+    backend --> udon
+    backend --> core
+    backend --> circuits
+    acceleration --> udon
+    acceleration --> backend
+    ragu -.->|mock| core
+    ragu -.->|mock| udon
 ```
 
 ## Project Structure
 
 Ragu is developed as a Cargo workspace.
 
-* **`ragu`**: This is the primary crate (at the repository root) that is
-  intended for users to import. Most of the remaining crates are transitive
-  dependencies of `ragu`. This crate aims to present a stable and minimal
-  API for the entire construction, and may deliberately expose less
-  functionality than the other crates are capable of providing.
+* **`ragu`**: The repository-root crate provides an opt-in API mock through
+  its `mock` feature. Applications using the real proof implementation depend
+  on `ragu_pcd` and the circuit and primitive crates they use directly.
 * `crates/`
     * **`ragu_macros`**: Internal crate that contains procedural macros both
       used within the project and exposed to users in other crates.
@@ -95,8 +106,13 @@ Ragu is developed as a Cargo workspace.
       that most circuit code depends on.
     * **`ragu_circuits`**: This crate provides the implementation of the
       Ragu protocol and utilities for building arithmetic circuits in Ragu.
-    * **`ragu_acceleration`**, **`ragu_backend`**, **`ragu_gadgets`**:
-      These are just placeholders, and may be removed in the future.
+    * **`ragu_backend`**: Computational kernel interfaces and reference
+      implementations used by proving and verification.
+    * **`ragu_acceleration`**: Selectable backend implementations, including
+      a prover-only selection that retains reference verification. They
+      currently inherit the reference kernels without overrides.
+    * **`ragu_gadgets`**: Placeholder crate; the implemented gadgets live in
+      `ragu_core` and `ragu_primitives`.
     * **`ragu_pcd`**: Top-level API for proof-carrying data applications,
       providing `ApplicationBuilder`, `Application`, `Step`, `Header`,
       `Proof`, and `Pcd`. Its `pasta` module derives and loads Ragu's fixed

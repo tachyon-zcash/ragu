@@ -20,12 +20,53 @@
 
 * The minimum supported [Rust](https://rust-lang.org/) version is currently **1.97.1**.
 * Ragu requires minimal dependencies and currently strives to avoid using dependencies that are not already used in [Zebra](https://github.com/ZcashFoundation/zebra).
-* Ragu's library crates are [`no_std`]-compatible and only need a global allocator; the default `multicore` crate feature uses [`maybe-rayon`] and pulls in `std`. See the [book][book-no-std] for details.
+* Ragu's library crates are [`no_std`]-compatible and need a global allocator. `ragu_pcd` enables `alloc` by default; its optional `multicore` feature uses [`maybe-rayon`] and enables `std`. The root `ragu` crate's `multicore` feature is a compatibility no-op. See the [book][book-no-std] for per-crate feature details.
 
 [Zebra]: https://github.com/ZcashFoundation/zebra
 [`no_std`]: https://doc.rust-lang.org/reference/names/preludes.html#the-no_std-attribute
 [`maybe-rayon`]: https://crates.io/crates/maybe-rayon
 [book-no-std]: https://tachyon.z.cash/ragu/guide/requirements.html#no-std
+
+## Working on Ragu
+
+Run these commands from the repository root with `just` installed. The
+[justfile](./justfile) defines the local development commands:
+
+| Command | Purpose |
+| --- | --- |
+| `just` | List available recipes. |
+| `just build` | Build the default workspace members. |
+| `just test` | Run workspace tests with all features. |
+| `just lint` | Run Clippy, the formatting check, spelling checks, and the book build. |
+| `just ci_local` | Run the local CI recipe, including backend and bare-metal build checks. |
+
+CI formats Rust with `nightly-2026-05-23` and `rustfmt.nightly.toml`.
+Use the same toolchain and configuration locally:
+
+```sh
+rustup toolchain install nightly-2026-05-23 --profile minimal --component rustfmt
+cargo +nightly-2026-05-23 fmt --all -- --config-path rustfmt.nightly.toml --check
+```
+
+Omit `--check` to apply formatting. A successful formatting check with the
+default toolchain does not establish that the nightly CI check will pass.
+The lint and book recipes install their documentation and spelling tools
+through `cargo-binstall` when needed. The bare-metal checks in `just ci_local`
+also require the `thumbv7em-none-eabihf` target for the workspace toolchain:
+
+```sh
+rustup target add thumbv7em-none-eabihf
+```
+
+Once the book tools are installed, build from the repository root with
+`mdbook build book`, or build and preview from the `book` directory:
+
+```sh
+cd book
+mdbook build
+# Or preview the book locally:
+mdbook serve
+```
 
 ## License
 
