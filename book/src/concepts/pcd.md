@@ -121,11 +121,13 @@ select the base case: its child claims are still enforced.
 During fuse operations, the PCD instances being fused contain large proof
 strings because these proofs do not ordinarily take the form of a succinct
 proof. We refer to this as its **uncompressed** mode. With extra computational
-effort, it is possible to create a **compressed** proof that is orders of
-magnitude smaller and cheaper to verify. Due to the extra cost, compression (and
-the decompression needed to prepare a compressed proof for future fusion) should
-be avoided except at the necessary boundaries of application logic, such as when
-succinct proofs must be communicated to third parties.
+effort, it is possible to create a
+[**compressed**](../protocol/recursion/compression.md) proof that is orders of
+magnitude smaller. Compression is terminal: a compressed proof can be verified
+on its own but cannot be fused further. Like an uncompressed proof, it does
+not yet provide zero knowledge (see below). Due to the extra cost, compression
+should be reserved for the boundaries of application logic, such as when a
+succinct proof must be communicated to a third party.
 
 In its uncompressed form, a PCD can be passed through [`rerandomize`] to produce
 a fresh proof of the same certified data. The current construction does not yet

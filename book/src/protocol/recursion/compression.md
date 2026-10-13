@@ -2,7 +2,9 @@
 
 Compression replaces witness polynomials with commitments, claimed evaluations,
 and one IPA per curve. Below is the interactive form of
-`Application::verify_compressed`; Fiat–Shamir supplies the verifier's challenges.
+`Application::verify_compressed`; Fiat–Shamir supplies the verifier's
+challenges from a transcript domain-separated by `ragu-ipa-v1` (see
+[Transcript](../prelim/transcript.md#domain-separation)).
 
 **Shared inputs:** registry, output header, rank $D=2^k$, and generators
 $G_0,\ldots,G_{D-1},U$ with no known nontrivial discrete-log relations.

@@ -223,8 +223,8 @@ The recursion operates in uncompressed mode, and then a compression
 step is performed at certain boundary conditions for bandwidth
 reasons. For instance, in shielded transaction aggregation,
 broadcasting transaction data in compressed mode optimizes for
-bandwidth. Compressed proofs can be decompressed back to
-accumulation form if further folding is needed.
+bandwidth. A [compressed proof](../protocol/recursion/compression.md) is
+terminal: it can be verified but not folded further.
 
 ### Uncompressed (Split-Accumulation Form)
 
@@ -247,9 +247,8 @@ Compression is applied at _boundary points_ for example, before broadcasting
 a proof onchain where bandwidth matters.
 
 ```admonish tip title="When to Compress"
-Keep proofs uncompressed during intermediate recursion steps. Only compress
-when you need to transmit or store the final result. Compressed proofs can
-be decompressed back to accumulation form if further folding is needed.
+Keep proofs uncompressed during intermediate recursion steps, and compress
+only the final result you need to transmit or store.
 ```
 
 For deeper background, see

@@ -23,3 +23,25 @@ Ragu's transcript construction differs from standard sponge-based approaches:
 
 This hybrid approach leverages both the algebraic properties of Pedersen
 commitments and Poseidon's random oracle properties.
+
+## Domain Separation and Versioning {#domain-separation}
+
+Every transcript starts from a protocol tag absorbed at construction, so
+protocols with different interaction sequences never share a Poseidon state.
+Two tags are in use:
+
+| Tag | Covers |
+| --- | --- |
+| `ragu-pcd-v1` | the fuse protocol, from the preamble through the final stage; replayed by the [decider](../../appendix/terminology.md) and again by the compressed verifier |
+| `ragu-ipa-v1` | [compression](../recursion/compression.md), from the compressed instance through the revdot reductions to the inner-product arguments |
+
+The tags version the protocol, not the crates, and the prover and every
+verifier path must agree on them. Proofs produced under an earlier tag do not
+verify under a later one.
+
+Absorption into the Poseidon state is additive, so absorbing a zero element is
+indistinguishable from absorbing nothing. Ragu length-prefixes only the tag,
+not the messages that follow it, unlike general-purpose transcript libraries.
+The circuit code fixes the number and order of absorbed elements at every
+point, so a prover that inserts or drops an element changes the sequence the
+verifier replays, and the proof is rejected.
