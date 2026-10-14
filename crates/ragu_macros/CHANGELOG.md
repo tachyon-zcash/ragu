@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   witness collection in declaration order, refusing skipped, raw-wire and
   witness-only fields.
 
+### Fixed
+
+- Fixed `Shared` derive compilation for structs with defaulted type or const
+  parameters.
+
 ## [0.0.0] - 2025-07-29
 
 ### Added

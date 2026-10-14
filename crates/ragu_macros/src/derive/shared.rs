@@ -81,6 +81,7 @@ pub fn derive(
     }
     params.push(parse_quote!(#field: #udon_path::field::Field));
     let generics: Generics = parse_quote!(< #(#params),* >);
+    let (impl_generics, _, _) = generics.split_for_impl();
     let (_, args, _) = input.generics.split_for_impl();
     let args: AngleBracketedGenericArguments = parse_quote!(#args);
     let kind_args = driver.kind_subst_arguments(&args);
@@ -89,7 +90,7 @@ pub fn derive(
     let driver_name = &driver.ident;
     Ok(quote! {
         #[automatically_derived]
-        impl #generics #primitives::shared::Shared<#field> for #name #kind_args {
+        impl #impl_generics #primitives::shared::Shared<#field> for #name #kind_args {
             fn num_values() -> #core::Result<usize> {
                 let mut size = 0;
                 #(size = #primitives::shared::add_sizes(size,

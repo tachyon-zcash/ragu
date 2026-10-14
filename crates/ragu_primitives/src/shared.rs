@@ -173,6 +173,12 @@ mod tests {
     }
 
     #[derive(Gadget, Shared)]
+    struct Defaulted<'dr, D: Driver<'dr>, const N: usize = 2, L: Len = ConstLen<3>> {
+        first: FixedVec<Element<'dr, D>, ConstLen<N>>,
+        rest: FixedVec<Element<'dr, D>, L>,
+    }
+
+    #[derive(Gadget, Shared)]
     struct Overflow<'dr, D: Driver<'dr>> {
         enormous: FixedVec<Element<'dr, D>, ConstLen<{ usize::MAX }>>,
         extra: Element<'dr, D>,
@@ -198,6 +204,31 @@ mod tests {
         assert_eq!(values, [7, 9, 11, 12, 13].map(Fp::from));
         assert_eq!(<Kind![Fp; Nested<'_, _, 0>]>::num_values()?, 2);
         assert_eq!(<() as Shared<Fp>>::num_values()?, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn shared_derive_supports_defaulted_type_and_const_parameters() -> Result<()> {
+        let mut dr = Emu::execute();
+        let gadget = Defaulted::<_> {
+            first: (7..9)
+                .map(|n| Element::alloc(&mut dr, &mut (), Emu::just(|| Fp::from(n))))
+                .try_collect_fixed()?,
+            rest: (11..14)
+                .map(|n| Element::alloc(&mut dr, &mut (), Emu::just(|| Fp::from(n))))
+                .try_collect_fixed()?,
+        };
+        type Schema = Kind![Fp; Defaulted<'_, _>];
+        assert_eq!(Schema::num_values()?, gadget.num_wires()?);
+        let mut values = Vec::new();
+        Schema::write_shared(&gadget, &mut values)?;
+        let values: Vec<_> = values.iter().map(|e| *e.value().take()).collect();
+        assert_eq!(values, [7, 8, 11, 12, 13].map(Fp::from));
+        assert_eq!(<Kind![Fp; Defaulted<'_, _, 0>]>::num_values()?, 3);
+        assert_eq!(
+            <Kind![Fp; Defaulted<'_, _, 4, ConstLen<1>>]>::num_values()?,
+            5
+        );
         Ok(())
     }
 
