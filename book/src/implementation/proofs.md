@@ -46,14 +46,14 @@ The type parameters configure the proof system:
 
 ## The `Step` Trait
 
-A `Step` defines a single computation in the PCD graph. Every step
-takes two child proofs as input (which may be trivial) and produces
-a new proof:
+A `Step` defines one application circuit. A fuse evaluates a standalone step
+or a registered bundle of steps over two child proofs and produces a new proof:
 
 ```rust
 pub trait Step<C: Cycle> {
     const INDEX: Index;
 
+    type Shared;
     type Witness<'source>;
     type Aux<'source>;
     type Left: Header;
@@ -61,7 +61,10 @@ pub trait Step<C: Cycle> {
     type Output: Header;
 
     // Simplified signature - actual API includes driver and encoder abstractions
-    fn witness(&self, dr, left, right) -> Result<(HeaderGadget<Left>, HeaderGadget<Right>, HeaderGadget<Output>), Aux>;
+    fn witness(&self, dr, witness, left, right) -> Result<(
+        (HeaderGadget<Left>, HeaderGadget<Right>, HeaderGadget<Output>),
+        SharedGadget, OutputData, Aux,
+    )>;
 }
 ```
 
@@ -69,6 +72,7 @@ The associated types define the step's interface:
 
 * **`INDEX`**: Unique identifier for this step within the application.
 * **`Witness`**: Private data provided by the prover (not visible to verifiers).
+* **`Shared`**: The gadget kind connecting bundled steps; `()` for a standalone step.
 * **`Aux`**: Auxiliary data produced during synthesis, returned alongside the
   output header data. Used for pipelining values to future steps.
 * **`Left`, `Right`**: The header types of the two child proofs.
@@ -82,6 +86,7 @@ Consider a simple application that aggregates values:
 // Step 1: Seed step - introduces a single value
 struct LeafStep { value: u64 }
 impl Step<C> for LeafStep {
+    type Shared = ();
     type Left = ();            // Bootstrap child
     type Right = ();           // Bootstrap child
     type Output = ValueHeader; // Outputs a value commitment
@@ -90,6 +95,7 @@ impl Step<C> for LeafStep {
 // Step 2: DoubleAndAdd step - computes 2*left + right
 struct DoubleAndAddStep;
 impl Step<C> for DoubleAndAddStep {
+    type Shared = ();
     type Left = ValueHeader;   // Left child carries a value
     type Right = ValueHeader;  // Right child carries a value
     type Output = ValueHeader; // Output is 2*left + right
@@ -110,8 +116,7 @@ Creates a new proof from witness data alone, without requiring child proofs.
 This is the entry point for leaf nodes in a PCD tree:
 
 ```rust
-let (proof, aux) = app.seed(&mut rng, MyLeafStep { ... }, witness)?;
-let pcd = proof.carry(aux);
+let (pcd, aux) = app.seed(&mut rng, MyLeafStep { ... }, witness)?;
 ```
 
 Internally, `seed` fuses the step with the application's _bootstrap proof_ as
@@ -136,14 +141,24 @@ enforce their child claims.
 Combines two child proofs using a step's logic:
 
 ```rust
-let (proof, aux) = app.fuse(&mut rng, DoubleAndAddStep, step_witness, left_pcd, right_pcd)?;
-let pcd = proof.carry::<OutputHeader>(aux);
+let (pcd, aux) = app.fuse(&mut rng, DoubleAndAddStep, (), left_pcd, right_pcd)?;
 ```
 
-The `step_witness` parameter provides any additional private data
-the step needs (in our `DoubleAndAddStep` example above, this is
-just `()` since the step doesn't require extra witness data beyond
-the child proofs).
+The `step_witness` parameter provides any additional private data the step
+needs (in our `DoubleAndAddStep` example above, this is just `()` since the
+step doesn't require extra witness data beyond the child proofs). A proof
+carries two application circuits and a shared stage; a standalone step like
+this one is traced once and its claim fills both slots. A bundle registers
+two steps `(A, B)` with `register_bundle` and is proved with
+`fuse_bundle`, which takes both steps and their ordinary witnesses; a
+bundled step cannot be fused on its own. Both steps return the same typed
+shared gadget. Ragu derives its capacity during application setup, binds
+every corresponding wire automatically, and pads smaller bundles internally.
+
+The shared stage is one committed polynomial that both steps' claims add
+to their own. The adapter's equality constraints connect each step's
+actual gadget wires to this common stage, with no hashing. Bonding claims keep the
+stage in its block and the steps' own polynomials out of it.
 
 Within the step's `witness` function, calling `.encode()` on the
 child encoders commits the child proof data to the witness

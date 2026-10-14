@@ -35,6 +35,7 @@ mod registry {
 
     impl<const I: usize> Step<C> for ConstantSeed<I> {
         const INDEX: Index = Index::new(I);
+        type Shared = ();
         type Witness<'source> = ();
         type Aux<'source> = ();
         type Left = ();
@@ -53,6 +54,7 @@ mod registry {
                 Encoded<'dr, D, (), N>,
                 Encoded<'dr, D, Value, N>,
             ),
+            (),
             DriverValue<D, Fp>,
             DriverValue<D, ()>,
         )>
@@ -64,7 +66,12 @@ mod registry {
             let right = Encoded::new(dr, allocator, right)?;
             let output = Element::constant(dr, self.0);
             let data = output.value().map(|v| *v);
-            Ok(((left, right, Encoded::from_gadget(output)), data, D::unit()))
+            Ok((
+                (left, right, Encoded::from_gadget(output)),
+                (),
+                data,
+                D::unit(),
+            ))
         }
     }
 
@@ -284,7 +291,7 @@ mod registry {
             );
         for (name, id) in cases {
             let (mut proof, data) = child.clone().into_parts();
-            proof.circuit_id = id;
+            proof.circuit_ids[0] = id;
             assert!(
                 !app.verify(&proof.carry::<Value>(data), inputs.verifier_rng())?,
                 "{name}"
@@ -299,7 +306,7 @@ mod registry {
             unassigned[selector % unassigned.len()],
         ] {
             let (mut proof, data) = child.clone().into_parts();
-            proof.circuit_id = id;
+            proof.circuit_ids[0] = id;
             let changed = proof.carry::<Value>(data);
             for (position, descendant) in support::descendants(&app, &changed, &sibling, &mut rng)?
             {

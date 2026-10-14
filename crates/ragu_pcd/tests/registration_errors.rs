@@ -63,6 +63,7 @@ impl<F: Field> Header<F> for HSuffixAOther {
 struct Step0;
 impl<C: ragu_core::Cycle> Step<C> for Step0 {
     const INDEX: Index = Index::new(0);
+    type Shared = ();
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = ();
@@ -80,6 +81,7 @@ impl<C: ragu_core::Cycle> Step<C> for Step0 {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
+        (),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
@@ -88,7 +90,7 @@ impl<C: ragu_core::Cycle> Step<C> for Step0 {
         let right = Encoded::new(dr, allocator, right)?;
         let output = Encoded::from_gadget(());
 
-        Ok(((left, right, output), D::unit(), D::unit()))
+        Ok(((left, right, output), (), D::unit(), D::unit()))
     }
 }
 
@@ -96,6 +98,7 @@ impl<C: ragu_core::Cycle> Step<C> for Step0 {
 struct Step1;
 impl<C: ragu_core::Cycle> Step<C> for Step1 {
     const INDEX: Index = Index::new(1);
+    type Shared = ();
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = HSuffixA;
@@ -113,6 +116,7 @@ impl<C: ragu_core::Cycle> Step<C> for Step1 {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
+        (),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
@@ -121,7 +125,7 @@ impl<C: ragu_core::Cycle> Step<C> for Step1 {
         let right = Encoded::new(dr, allocator, right)?;
         let output = Encoded::from_gadget(());
 
-        Ok(((left, right, output), D::unit(), D::unit()))
+        Ok(((left, right, output), (), D::unit(), D::unit()))
     }
 }
 
@@ -129,6 +133,7 @@ impl<C: ragu_core::Cycle> Step<C> for Step1 {
 struct Step1Dup;
 impl<C: ragu_core::Cycle> Step<C> for Step1Dup {
     const INDEX: Index = Index::new(1);
+    type Shared = ();
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = HSuffixA;
@@ -146,6 +151,7 @@ impl<C: ragu_core::Cycle> Step<C> for Step1Dup {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
+        (),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
@@ -154,7 +160,7 @@ impl<C: ragu_core::Cycle> Step<C> for Step1Dup {
         let right = Encoded::new(dr, allocator, right)?;
         let output = Encoded::from_gadget(());
 
-        Ok(((left, right, output), D::unit(), D::unit()))
+        Ok(((left, right, output), (), D::unit(), D::unit()))
     }
 }
 

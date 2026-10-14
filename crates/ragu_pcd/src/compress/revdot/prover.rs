@@ -127,8 +127,16 @@ impl<'a, C: Cycle, R: Rank> Source for NativePolys<'a, C, R> {
         once(&self.0[component])
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = CircuitIndex> {
-        once(self.0.circuit_id())
+    fn app_circuits(&self, slot: usize) -> impl Iterator<Item = CircuitIndex> {
+        once(self.0.circuit_ids()[slot])
+    }
+}
+
+impl<C: Cycle, R: Rank> native::claims::ApplicationSource for NativePolys<'_, C, R> {
+    type IsBundle = bool;
+
+    fn is_split_bundle(&self) -> impl Iterator<Item = bool> {
+        once(native::is_split_bundle(self.0.circuit_ids()))
     }
 }
 
@@ -144,7 +152,7 @@ impl<'a, C: Cycle, R: Rank> Source for NestedPolys<'a, C, R> {
         once(&self.0[component])
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = ()> {
+    fn app_circuits(&self, _: usize) -> impl Iterator<Item = ()> {
         empty()
     }
 }
@@ -401,7 +409,7 @@ pub(crate) fn reduce_native<C: Cycle, R: Rank, B: Backend>(
         .zip(builder.b)
         .chain(masked_claims(|component| &proof[component], masked))
         .collect();
-    let shapes = claims::native_shapes(proof.circuit_id(), z, masked)?;
+    let shapes = claims::native_shapes(proof.circuit_ids(), z, masked)?;
     reduce::<_, R, B, _>(
         &claims,
         &shapes,

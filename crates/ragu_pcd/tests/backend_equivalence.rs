@@ -138,6 +138,7 @@ struct UnitStep;
 impl Step<Pasta> for UnitStep {
     const INDEX: Index = Index::new(0);
 
+    type Shared = ();
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = ();
@@ -156,6 +157,7 @@ impl Step<Pasta> for UnitStep {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
+        (),
         DriverValue<D, ()>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
@@ -164,7 +166,7 @@ impl Step<Pasta> for UnitStep {
         let right = Encoded::new(dr, allocator, right)?;
         let output = Encoded::from_gadget(());
 
-        Ok(((left, right, output), D::unit(), D::unit()))
+        Ok(((left, right, output), (), D::unit(), D::unit()))
     }
 }
 
@@ -308,7 +310,7 @@ fn apply_proof_mutation<C: Cycle, R: Rank>(
         ProofMutation::AbC(value) => proof
             .native_a_poly
             .add_assign(&sparse::Polynomial::from_coeffs(alloc::vec![value])),
-        ProofMutation::CircuitId(id) => proof.circuit_id = CircuitIndex::from_u32(id),
+        ProofMutation::CircuitId(id) => proof.circuit_ids[0] = CircuitIndex::from_u32(id),
         ProofMutation::ChallengeU(value) => proof.u = value,
         ProofMutation::ChallengeX(value) => proof.x = value,
         ProofMutation::ChallengeY(value) => proof.y = value,
@@ -537,7 +539,7 @@ fn check_compressed_proofs_match(
         nested: _,
     } = expected;
     let Instance {
-        circuit_id: _,
+        circuit_ids: _,
         left_header: _,
         right_header: _,
         native: _,
@@ -552,8 +554,8 @@ fn check_compressed_proofs_match(
         v: _,
         nested_c: _,
         nested_v: _,
-        left: Child { x: _, y: _, id: _ },
-        right: Child { x: _, y: _, id: _ },
+        left: Child { x: _, y: _, ids: _ },
+        right: Child { x: _, y: _, ids: _ },
         a_at_u: _,
         b_at_u: _,
         nested_left: NestedChild { x: _, y: _ },
@@ -598,7 +600,7 @@ fn check_compressed_proofs_match(
     }
 
     compare_fields!(
-        instance.circuit_id,
+        instance.circuit_ids,
         instance.left_header,
         instance.right_header,
         instance.native,
@@ -615,10 +617,10 @@ fn check_compressed_proofs_match(
         instance.nested_v,
         instance.left.x,
         instance.left.y,
-        instance.left.id,
+        instance.left.ids,
         instance.right.x,
         instance.right.y,
-        instance.right.id,
+        instance.right.ids,
         instance.a_at_u,
         instance.b_at_u,
         instance.nested_left.x,
@@ -950,8 +952,7 @@ proptest! {
                 UnitStep,
                 (),
                 leaf1.reference,
-                reference_leaf2,
-            )
+                reference_leaf2,)
             .unwrap();
         let (accelerated_node, _) = apps
             .accelerated
@@ -960,8 +961,7 @@ proptest! {
                 UnitStep,
                 (),
                 leaf1.accelerated,
-                accelerated_leaf2,
-            )
+                accelerated_leaf2,)
             .unwrap();
         let (prover_node, _) = apps
             .prover
@@ -1024,10 +1024,11 @@ mod proof_equivalence {
         pub(crate) fn test_mismatch(&self, other: &Self) -> Option<&'static str> {
             let Self {
                 bridge_alpha: _,
-                circuit_id: _,
+                circuit_ids: _,
                 left_header: _,
                 right_header: _,
-                native_application_rx: _,
+                native_application_rxs: _,
+                native_application_stage_rx: _,
                 native_preamble_rx: _,
                 native_inner_error_rx: _,
                 native_outer_error_rx: _,
@@ -1094,7 +1095,8 @@ mod proof_equivalence {
                 alpha: _,
                 u: _,
                 pre_beta: _,
-                native_application_commitment: _,
+                native_application_commitments: _,
+                native_application_stage_commitment: _,
                 native_preamble_commitment: _,
                 native_inner_error_commitment: _,
                 native_outer_error_commitment: _,
@@ -1132,7 +1134,7 @@ mod proof_equivalence {
             if self.bridge_alpha != other.bridge_alpha {
                 return Some("bridge alpha");
             }
-            if self.circuit_id != other.circuit_id {
+            if self.circuit_ids != other.circuit_ids {
                 return Some("circuit id");
             }
             if self.left_header != other.left_header || self.right_header != other.right_header {

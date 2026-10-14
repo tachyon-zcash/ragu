@@ -1898,7 +1898,11 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let baseline = Path::new("qa/fuzz/source-lint-baseline.txt");
         let report = scan_sources(&root, &[], Some(baseline)).unwrap();
-        assert_eq!((report.errors(), report.advisories()), (0, 0));
+        assert_eq!(
+            (report.errors(), report.advisories()),
+            (0, 0),
+            "production source lint found unreviewed or stale findings: {report:#?}",
+        );
         assert!(
             report.diagnostics.is_empty(),
             "production source lint found unreviewed or stale findings: {report:#?}",

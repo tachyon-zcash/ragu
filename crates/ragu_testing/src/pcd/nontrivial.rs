@@ -63,6 +63,7 @@ pub struct Hash2<'params, C: Cycle> {
 
 impl<C: Cycle> Step<C> for Hash2<'_, C> {
     const INDEX: Index = Index::new(1);
+    type Shared = ();
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = LeafNode;
@@ -81,6 +82,7 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
+        (),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
@@ -98,7 +100,7 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
         let output_data = output.value().map(|v| *v);
         let output = Encoded::from_gadget(output);
 
-        Ok(((left, right, output), output_data, D::unit()))
+        Ok(((left, right, output), (), output_data, D::unit()))
     }
 }
 
@@ -114,6 +116,7 @@ pub struct Merge2<'params, C: Cycle> {
 
 impl<C: Cycle> Step<C> for Merge2<'_, C> {
     const INDEX: Index = Index::new(2);
+    type Shared = ();
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = InternalNode;
@@ -132,6 +135,7 @@ impl<C: Cycle> Step<C> for Merge2<'_, C> {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
+        (),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
@@ -149,7 +153,7 @@ impl<C: Cycle> Step<C> for Merge2<'_, C> {
         let output_data = output.value().map(|v| *v);
         let output = Encoded::from_gadget(output);
 
-        Ok(((left, right, output), output_data, D::unit()))
+        Ok(((left, right, output), (), output_data, D::unit()))
     }
 }
 
@@ -162,6 +166,7 @@ pub struct WitnessLeaf<'params, C: Cycle> {
 
 impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
     const INDEX: Index = Index::new(0);
+    type Shared = ();
     type Witness<'source> = C::CircuitField;
     type Aux<'source> = ();
     type Left = ();
@@ -180,6 +185,7 @@ impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
+        (),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
@@ -200,6 +206,7 @@ impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
                 Encoded::from_gadget(()),
                 leaf_encoded,
             ),
+            (),
             leaf_data,
             D::unit(),
         ))
