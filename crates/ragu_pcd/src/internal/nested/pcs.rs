@@ -93,11 +93,17 @@ pub const STATIC_F_QUERIES: [StaticFQuery; 18] = [
     StaticFQuery::CurrentBAtX,
 ];
 
-/// Number of nested-curve points the batch folds into $P_n$: $f_n$, then
-/// for each child its own rx commitments, $a$, $b$, `registry_xy` and $p$,
-/// then the current step's two `registry_wx`, `registry_wy`, $a$, $b$ and
-/// `registry_xy`. See [`Batch::evaluated`] for the order.
-pub const NUM_BATCHED_POINTS: usize = 1 + 2 * (RxIndex::NUM + 4) + 6;
+/// The number of nested-curve points the batch folds into $P_n$ for a nested
+/// batch of `nested_rx` rx polynomials: $f_n$, then for each child its own
+/// rx commitments, $a$, $b$, `registry_xy` and $p$, then the current step's
+/// two `registry_wx`, `registry_wy`, $a$, $b$ and `registry_xy`.
+pub const fn num_batched_points(nested_rx: usize) -> usize {
+    1 + 2 * (nested_rx + 4) + 6
+}
+
+/// Number of nested-curve points the batch folds into $P_n$, per
+/// [`num_batched_points`]. See [`Batch::evaluated`] for the order.
+pub const NUM_BATCHED_POINTS: usize = num_batched_points(RxIndex::NUM);
 
 /// A child's nested-curve commitments in the order the batch walks them:
 /// its rx commitments in [`RxIndex::ALL`] order, then $a$, $b$,

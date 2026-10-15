@@ -26,6 +26,7 @@ use ragu_primitives::vec::ConstLen;
 
 use crate::{
     internal::{endoscalar, fold_revdot::Parameters, nested},
+    profile::{Profile, Standard},
     step,
 };
 
@@ -38,19 +39,25 @@ pub const NUM_ENDOSCALING_POINTS: usize = nested::pcs::NUM_BATCHED_POINTS;
 /// stages it reserves.
 pub const ENDOSCALINGS_PER_STEP: usize = 4;
 
-/// The number of native endoscaling steps.
+/// The number of native endoscaling steps: the standard profile's pin.
 ///
 /// Pinned rather than derived: each side's step polynomials are opened by
 /// the other side's batch, so the two step counts determine each other's
 /// batch sizes, and one of them has to be fixed to break the cycle. The
 /// assertion below checks the pin is the fixed point, so a change to either
-/// batch that moves it fails to build here.
-pub const NUM_ENDOSCALING_STEPS: usize = 25;
+/// batch that moves it fails to build here. The profile's shape rederives
+/// the whole cycle (see [`Shape`](crate::profile::Shape)).
+pub const NUM_ENDOSCALING_STEPS: usize = Standard::NATIVE_ENDOSCALING_STEPS;
 
 const _: () = assert!(
     endoscalar::num_steps::<ENDOSCALINGS_PER_STEP>(NUM_ENDOSCALING_POINTS) == NUM_ENDOSCALING_STEPS,
     "NUM_ENDOSCALING_STEPS is not the number of steps over the nested batch; re-pin it"
 );
+
+/// The native rx polynomials that are not endoscaling steps: the
+/// application's, the five hashing, collapse and compute-v circuits', the
+/// binders', bind-beta's, bind-endoscalar's and the eleven stages'.
+pub const NUM_FIXED_RX: usize = 19 + NUM_BINDERS;
 
 /// Default parameters for native revdot folding
 #[derive(Clone, Copy, Default)]
@@ -366,7 +373,7 @@ pub enum RxIndex {
 
 impl RxIndex {
     /// The number of rx polynomial components.
-    pub const NUM: usize = 19 + NUM_BINDERS + NUM_ENDOSCALING_STEPS;
+    pub const NUM: usize = NUM_FIXED_RX + NUM_ENDOSCALING_STEPS;
 
     /// All variants in canonical order.
     ///
