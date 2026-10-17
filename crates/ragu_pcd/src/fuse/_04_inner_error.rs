@@ -14,7 +14,7 @@
 //! points stage committed before $x$ (see `_06_ab`).
 
 use ragu_circuits::{polynomials::Rank, registry::RegistryAt, staging::StageExt};
-use ragu_core::{Cycle, Result, drivers::Driver, maybe::Maybe};
+use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::{Element, vec::FixedVec};
 use rand::CryptoRng;
 use udon::field::Field;
@@ -29,10 +29,11 @@ use crate::{
         fold_revdot::{self, NumErrorTerms, Parameters},
         native, nested,
     },
+    profile::ProfiledCycle,
     proof::ProofBuilder,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
     pub(super) fn inner_error_terms<'dr, 'rx, D, RNG: CryptoRng>(
@@ -93,7 +94,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 
         let mut native_claims =
             NativeFuseBuilder::<C::CircuitField, R, B>::new(&self.native_registry, y, z);
-        native::claims::build(native_source, &mut native_claims)?;
+        native::claims::build::<C::Profile, _, _>(native_source, &mut native_claims)?;
 
         let native_inner_error_witness =
             native::stages::inner_error::Witness::<C, native::RevdotParameters> {
@@ -160,7 +161,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             nested_y,
             nested_z,
         );
-        nested::claims::build(nested_source, &mut nested_claims)?;
+        nested::claims::build::<C::Profile, _, _>(nested_source, &mut nested_claims)?;
 
         let error_terms =
             fold_revdot::inner_error_terms_with_backend::<B, _, R, nested::RevdotParameters>(
@@ -199,7 +200,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             registry_wy: registry_wy.commitment,
             error_terms,
         };
-        let bridge_rx = nested::stages::inner_error::Stage::<C::HostCurve, R>::rx(
+        let bridge_rx = nested::stages::inner_error::Stage::<C::HostCurve, R, C::Profile>::rx(
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
             &nested_inner_error_witness,
         )?;

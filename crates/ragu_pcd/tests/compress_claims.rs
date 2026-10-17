@@ -101,9 +101,11 @@ fn native_shapes_match_the_decider() {
     );
 
     let mut builder = Builder::<_, Fp, TestR, ReferenceBackend>::new(&app.native_registry, y, z);
-    native::claims::build(&NativePolys(proof), &mut builder).unwrap();
+    native::claims::build::<crate::profile::Standard, _, _>(&NativePolys(proof), &mut builder)
+        .unwrap();
 
-    let shapes = super::native_shapes(proof.circuit_id(), z, &[]).unwrap();
+    let shapes =
+        super::native_shapes::<crate::profile::Standard, _>(proof.circuit_id(), z, &[]).unwrap();
     assert_eq!(shapes[0].kind, Kind::Raw);
     assert_eq!(shapes[1].kind, Kind::Circuit(proof.circuit_id()));
     check(
@@ -129,9 +131,10 @@ fn nested_shapes_match_the_decider() {
     );
 
     let mut builder = Builder::<_, Fq, TestR, ReferenceBackend>::new(&app.nested_registry, y, z);
-    nested::claims::build(&NestedPolys(proof), &mut builder).unwrap();
+    nested::claims::build::<crate::profile::Standard, _, _>(&NestedPolys(proof), &mut builder)
+        .unwrap();
 
-    let shapes = super::nested_shapes(z, &[]).unwrap();
+    let shapes = super::nested_shapes::<crate::profile::Standard, _>(z, &[]).unwrap();
     assert_eq!(shapes[0].kind, Kind::Raw);
     check(
         &shapes,
@@ -156,8 +159,11 @@ fn wire_bindings_follow_the_claims() {
         alloc::vec![Fp::ONE, Fp::ZERO],
         Fp::from(7),
     )];
-    let shapes = super::native_shapes(proof.circuit_id(), z, &masked).unwrap();
-    let unmasked = super::native_shapes(proof.circuit_id(), z, &[]).unwrap();
+    let shapes =
+        super::native_shapes::<crate::profile::Standard, _>(proof.circuit_id(), z, &masked)
+            .unwrap();
+    let unmasked =
+        super::native_shapes::<crate::profile::Standard, _>(proof.circuit_id(), z, &[]).unwrap();
     assert_eq!(shapes.len(), unmasked.len() + 1);
     let last = shapes.last().unwrap();
     assert_eq!(last.kind, Kind::Masked(0));

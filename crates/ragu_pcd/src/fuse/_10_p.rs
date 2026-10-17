@@ -23,7 +23,7 @@ use core::ops::AddAssign;
 
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{Cycle, Result};
-use ragu_primitives::{EndoscalarChallenge, lift_endoscalar};
+use ragu_primitives::{EndoscalarChallenge, lift_endoscalar, vec::Len};
 use udon::field::Field;
 
 use super::{
@@ -38,14 +38,16 @@ use crate::{
         },
         nested::{PointsWitness, pcs},
     },
+    profile::ProfiledCycle,
     proof::ProofBuilder,
 };
 
 /// The native points stages' witnesses: the nested batch's commitments.
-pub(super) type NativeInputs<C> = Inputs<<C as Cycle>::NestedCurve>;
+pub(super) type NativeInputs<C> = Inputs<<C as Cycle>::NestedCurve, <C as ProfiledCycle>::Profile>;
 
 /// The native walk stage's witness: the endoscalar and the walk's outputs.
-pub(super) type NativeWalk<C> = WalkWitness<<C as Cycle>::NestedCurve>;
+pub(super) type NativeWalk<C> =
+    WalkWitness<<C as Cycle>::NestedCurve, <C as ProfiledCycle>::Profile>;
 
 /// Accumulates polynomials with their commitments.
 struct Accumulator<'a, C: Cycle, R: Rank> {
@@ -65,7 +67,7 @@ impl<C: Cycle, R: Rank> Accumulator<'_, C, R> {
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
     /// The nested batch's commitments, $f_n$'s first, in
@@ -92,7 +94,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let points: Vec<C::NestedCurve> = core::iter::once(nested_f.commitment)
             .chain(batch.commitments(current))
             .collect();
-        assert_eq!(points.len(), pcs::NUM_BATCHED_POINTS);
+        assert_eq!(
+            points.len(),
+            crate::internal::native::NumPoints::<C::Profile>::len()
+        );
         Inputs::from_walk(&points)
     }
 
@@ -110,7 +115,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         nested_registry_wy: &NestedRegistryWy<C, R>,
         nested_f: &NestedF<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<(PointsWitness<C::HostCurve>, NativeInputs<C>, NativeWalk<C>)> {
+    ) -> Result<(
+        PointsWitness<C::HostCurve, C::Profile>,
+        NativeInputs<C>,
+        NativeWalk<C>,
+    )> {
         // Extract endoscalar from pre_beta and compute effective beta. Going
         // through the validated `EndoscalarChallenge` makes the
         // `value < 2^CAPACITY` precondition a type invariant rather than an
@@ -160,7 +169,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         registry_wy: &RegistryWy<C, R>,
         f: &NativeF<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<PointsWitness<C::HostCurve>> {
+    ) -> Result<PointsWitness<C::HostCurve, C::Profile>> {
         let mut poly = f.poly.clone();
 
         // Collect commitments for PointsWitness construction.
@@ -181,7 +190,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             };
 
             for proof in [left, right] {
-                for &id in &RxIndex::ALL {
+                for id in RxIndex::all::<C::Profile>() {
                     acc.acc(&proof[id], proof.native_rx_commitment(id));
                 }
                 acc.acc(
@@ -214,7 +223,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         // and delegate to the shared endoscaling helper, which also
         // sets `nested_endoscalar_rx`, `nested_points_rx`, and
         // `nested_endoscaling_step_rxs` on the builder.
-        let mut points = Vec::with_capacity(pcs::NUM_BATCHED_POINTS.max(1));
+        let mut points =
+            Vec::with_capacity(crate::internal::native::NumPoints::<C::Profile>::len().max(1));
         points.push(f.commitment);
         points.extend_from_slice(&commitments);
 

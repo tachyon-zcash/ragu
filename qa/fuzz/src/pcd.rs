@@ -27,6 +27,7 @@ use ragu_pcd::{
         Binding, BridgeCommitment, Challenge, Corruption, NativeCommitment, NativeRx,
         NestedCommitment, NestedRx, RxComponent, Side,
     },
+    profile::Standard,
 };
 use ragu_testing::pcd::nontrivial::{Hash2, InternalNode, LeafNode, Merge2, WitnessLeaf};
 use rand::{SeedableRng, rngs::StdRng};
@@ -378,7 +379,7 @@ pub enum FuzzCorruption {
 /// The native polynomials a corruption can address, in a stable order.
 fn native_components() -> Vec<RxComponent> {
     let mut all = vec![RxComponent::AbA, RxComponent::AbB];
-    all.extend(NativeRx::ALL.map(RxComponent::Rx));
+    all.extend(NativeRx::all::<Standard>().into_iter().map(RxComponent::Rx));
     all
 }
 
@@ -437,10 +438,10 @@ impl FuzzCorruption {
                 (5, which as usize % BridgeCommitment::ALL.len())
             }
             FuzzCorruption::NegateNativeCommitment { which } => {
-                (10, which as usize % NativeCommitment::ALL.len())
+                (10, which as usize % NativeCommitment::num::<Standard>())
             }
             FuzzCorruption::NegateNestedCommitment { which } => {
-                (11, which as usize % NestedCommitment::ALL.len())
+                (11, which as usize % NestedCommitment::num::<Standard>())
             }
             FuzzCorruption::RescaleNativeAccumulator { .. } => (12, 0),
             FuzzCorruption::NegateChallengesPartial => (14, 0),
@@ -463,7 +464,7 @@ impl FuzzCorruption {
                 ..
             } => (
                 9,
-                (index as usize % NestedRx::ALL.len()) << 16 | coeff_index(coeff, bound),
+                (index as usize % NestedRx::num::<Standard>()) << 16 | coeff_index(coeff, bound),
             ),
         }
     }
@@ -498,10 +499,12 @@ impl FuzzCorruption {
             ),
             FuzzCorruption::NegateChallengesPartial => Corruption::NegateChallengesPartial,
             FuzzCorruption::NegateNativeCommitment { which } => Corruption::NegateNativeCommitment(
-                NativeCommitment::ALL[which as usize % NativeCommitment::ALL.len()],
+                NativeCommitment::all::<Standard>()
+                    [which as usize % NativeCommitment::num::<Standard>()],
             ),
             FuzzCorruption::NegateNestedCommitment { which } => Corruption::NegateNestedCommitment(
-                NestedCommitment::ALL[which as usize % NestedCommitment::ALL.len()],
+                NestedCommitment::all::<Standard>()
+                    [which as usize % NestedCommitment::num::<Standard>()],
             ),
             FuzzCorruption::RescaleNativeAccumulator { scale } => {
                 Corruption::RescaleNativeAccumulator(nonzero(scale))
@@ -536,7 +539,7 @@ impl FuzzCorruption {
                 delta,
                 bound,
             } => Corruption::NestedCoeff {
-                index: NestedRx::ALL[index as usize % NestedRx::ALL.len()],
+                index: NestedRx::all::<Standard>()[index as usize % NestedRx::num::<Standard>()],
                 coeff: coeff_index(coeff, bound),
                 delta: nonzero::<NestedField>(delta),
             },

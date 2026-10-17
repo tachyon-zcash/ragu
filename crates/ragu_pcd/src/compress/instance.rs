@@ -39,6 +39,7 @@ use crate::{
         },
     },
     ipa::{CycleTranscript, IpaTranscript},
+    profile::ProfiledCycle,
 };
 
 /// A child's values the current step's query and eval stages are checked
@@ -103,9 +104,12 @@ pub(crate) struct Instance<C: Cycle> {
 type NativePreamble<C, R, const H: usize> = native_stages::preamble::Stage<C, R, H>;
 type NativeQuery<C, R, const H: usize> = native_stages::query::Stage<C, R, H>;
 type NativeEval<C, R, const H: usize> = native_stages::eval::Stage<C, R, H>;
-type NestedPreamble<C, R> = nested_stages::preamble::Stage<<C as Cycle>::HostCurve, R>;
-type NestedQuery<C, R> = nested_stages::query::Stage<<C as Cycle>::HostCurve, R>;
-type NestedEval<C, R> = nested_stages::eval::Stage<<C as Cycle>::HostCurve, R>;
+type NestedPreamble<C, R> =
+    nested_stages::preamble::Stage<<C as Cycle>::HostCurve, R, <C as ProfiledCycle>::Profile>;
+type NestedQuery<C, R> =
+    nested_stages::query::Stage<<C as Cycle>::HostCurve, R, <C as ProfiledCycle>::Profile>;
+type NestedEval<C, R> =
+    nested_stages::eval::Stage<<C as Cycle>::HostCurve, R, <C as ProfiledCycle>::Profile>;
 
 /// The coefficient degrees of the wires `select` picks from stage `S`.
 fn degrees<F: Field, R: Rank, S: ragu_circuits::staging::Stage<F, R> + Default>(
@@ -127,7 +131,7 @@ fn coordinates<P: Affine>(point: P) -> Result<[P::Base; 2]> {
     Ok([x, y])
 }
 
-impl<C: Cycle> Instance<C> {
+impl<C: ProfiledCycle> Instance<C> {
     /// The instance of `proof`, with the values the decider derives computed
     /// from its polynomials and the wires read off its stages.
     pub(crate) fn of<R: Rank, const HEADER_SIZE: usize>(proof: &Proof<C, R>) -> Result<Self> {
@@ -185,12 +189,12 @@ impl<C: Cycle> Instance<C> {
             circuit_id: proof.circuit_id(),
             left_header: proof.left_header().to_vec(),
             right_header: proof.right_header().to_vec(),
-            native: native_components()
+            native: native_components::<C::Profile>()
                 .map(|component| proof.native_commitment(component))
                 .collect(),
             native_registry_xy: proof.native_registry_xy_commitment(),
             native_p: proof.native_p_commitment(),
-            nested: nested_components()
+            nested: nested_components::<C::Profile>()
                 .map(|component| match component {
                     nested::RxComponent::AbA => proof.nested_a_commitment(),
                     nested::RxComponent::AbB => proof.nested_b_commitment(),
@@ -232,12 +236,12 @@ impl<C: Cycle> Instance<C> {
 
     /// A native component's commitment.
     pub(crate) fn native_commitment(&self, component: native::RxComponent) -> C::HostCurve {
-        self.native[native_position(component)]
+        self.native[native_position::<C::Profile>(component)]
     }
 
     /// A nested component's commitment.
     pub(crate) fn nested_commitment(&self, component: nested::RxComponent) -> C::NestedCurve {
-        self.nested[nested_position(component)]
+        self.nested[nested_position::<C::Profile>(component)]
     }
 
     /// A bridge stage's commitment.
@@ -475,7 +479,7 @@ impl<C: Cycle> Instance<C> {
             return Ok(false);
         };
         let (challenge_lifts, beta_lift) = lifts.split_at(nested_stages::challenges::NUM);
-        let challenge_stage = nested_stages::challenges::Stage::<C::HostCurve, R>::rx(
+        let challenge_stage = nested_stages::challenges::Stage::<C::HostCurve, R, C::Profile>::rx(
             C::ScalarField::ZERO,
             &nested_stages::challenges::Witness::new::<_, HEADER_SIZE>(
                 challenge_lifts.try_into().expect("NUM challenge lifts"),
@@ -484,7 +488,7 @@ impl<C: Cycle> Instance<C> {
                 beta_lift[0],
             ),
         )?;
-        let ab_bridge = nested_stages::ab::Stage::<C::HostCurve, R>::rx(
+        let ab_bridge = nested_stages::ab::Stage::<C::HostCurve, R, C::Profile>::rx(
             crate::proof::bridge_alpha_power(self.bridge_alpha, nested::RxIndex::BridgeAB),
             &nested_stages::ab::Witness {
                 a: self.native_commitment(native::RxComponent::AbA),
@@ -541,10 +545,10 @@ impl<C: Cycle> Instance<C> {
         })?;
         let evals = B::registry_wxy_over_domain(registry, x, y);
         let log2_n = registry.log2_domain();
-        let mut values: Vec<_> = native::InternalCircuitIndex::ALL
-            .iter()
+        let mut values: Vec<_> = native::InternalCircuitIndex::all::<C::Profile>()
+            .into_iter()
             .map(|id| {
-                let j = usize::from(id.circuit_index()) as u32;
+                let j = usize::from(id.circuit_index::<C::Profile>()) as u32;
                 evals[bit_reverse(j as usize, log2_n)]
             })
             .collect();
@@ -587,18 +591,20 @@ impl<C: Cycle> Instance<C> {
             ],
         );
 
-        let points_ab = degrees::<_, R, native_stages::points::AbStage<C::NestedCurve>>(|stage| {
-            let mut wires = wires_of(&stage.a)?;
-            wires.extend(wires_of(&stage.b)?);
-            Ok(wires)
-        })?;
+        let points_ab =
+            degrees::<_, R, native_stages::points::AbStage<C::NestedCurve, C::Profile>>(|stage| {
+                let mut wires = wires_of(&stage.a)?;
+                wires.extend(wires_of(&stage.b)?);
+                Ok(wires)
+            })?;
         let [ax, ay] = coordinates(self.nested_commitment(nested::RxComponent::AbA))?;
         let [bx, by] = coordinates(self.nested_commitment(nested::RxComponent::AbB))?;
         let points_ab = claim(Rx(PointsAb), points_ab, vec![ax, ay, bx, by]);
 
-        let points_f = degrees::<_, R, native_stages::points::FStage<C::NestedCurve>>(|stage| {
-            wires_of(&stage.registry_xy)
-        })?;
+        let points_f =
+            degrees::<_, R, native_stages::points::FStage<C::NestedCurve, C::Profile>>(|stage| {
+                wires_of(&stage.registry_xy)
+            })?;
         let [gx, gy] = coordinates(self.nested_registry_xy)?;
         let points_f = claim(Rx(PointsF), points_f, vec![gx, gy]);
 
@@ -647,10 +653,10 @@ impl<C: Cycle> Instance<C> {
         })?;
         let evals = B::registry_wxy_over_domain(registry, x, y);
         let log2_n = registry.log2_domain();
-        let mut values: Vec<_> = nested::InternalCircuitIndex::ALL
-            .iter()
+        let mut values: Vec<_> = nested::InternalCircuitIndex::all::<C::Profile>()
+            .into_iter()
             .map(|id| {
-                let j = usize::from(id.circuit_index()) as u32;
+                let j = usize::from(id.circuit_index::<C::Profile>()) as u32;
                 evals[bit_reverse(j as usize, log2_n)]
             })
             .collect();

@@ -52,6 +52,7 @@ use crate::{
         nested::{self, pcs},
         transcript::Transcript,
     },
+    profile::ProfiledCycle,
     proof::ProofBuilder,
     step::Step,
 };
@@ -101,7 +102,7 @@ struct NestedSPrime<C: Cycle, R: Rank> {
 type NativeFuseEmulator<C> = Emulator<Wireless<Always<()>, <C as Cycle>::CircuitField>>;
 type NestedFuseEmulator<C> = Emulator<Wireless<Always<()>, <C as Cycle>::ScalarField>>;
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
     /// The nested batch this step opens, over the nested polynomials the
@@ -139,10 +140,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<nested::stages::challenges::Witness<C::ScalarField>> {
         challenges.beta = nested::challenge::<C>(pre_beta)?;
-        builder.set_nested_challenges_rx(nested::stages::challenges::Stage::<C::HostCurve, R>::rx(
-            C::ScalarField::ZERO,
-            &challenges,
-        )?);
+        builder.set_nested_challenges_rx(nested::stages::challenges::Stage::<
+            C::HostCurve,
+            R,
+            C::Profile,
+        >::rx(C::ScalarField::ZERO, &challenges)?);
         Ok(challenges)
     }
 
@@ -168,7 +170,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
     /// Fuse two [`Pcd`] into one using a provided [`Step`].

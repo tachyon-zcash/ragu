@@ -134,17 +134,21 @@ fn vocabulary() -> Vec<Corruption<C>> {
     }
     out.push(Corruption::NegateChallengesPartial);
 
-    for which in NativeCommitment::ALL {
+    for which in NativeCommitment::all::<ragu_pcd::profile::Standard>() {
         out.push(Corruption::NegateNativeCommitment(which));
     }
-    for which in NestedCommitment::ALL {
+    for which in NestedCommitment::all::<ragu_pcd::profile::Standard>() {
         out.push(Corruption::NegateNestedCommitment(which));
     }
     out.push(Corruption::RescaleNativeAccumulator(Fp::from(5u64)));
     out.push(Corruption::RescaleNestedAccumulator(Fq::from(5u64)));
 
     let mut components = vec![RxComponent::AbA, RxComponent::AbB];
-    components.extend(NativeRx::ALL.map(RxComponent::Rx));
+    components.extend(
+        NativeRx::all::<ragu_pcd::profile::Standard>()
+            .into_iter()
+            .map(RxComponent::Rx),
+    );
     for component in components {
         for coeff in coeffs {
             out.push(Corruption::NativeCoeff {
@@ -160,7 +164,7 @@ fn vocabulary() -> Vec<Corruption<C>> {
         out.push(Corruption::PCoeff { coeff, delta });
     }
 
-    for index in NestedRx::ALL {
+    for index in NestedRx::all::<ragu_pcd::profile::Standard>() {
         for coeff in coeffs {
             out.push(Corruption::NestedCoeff {
                 index,

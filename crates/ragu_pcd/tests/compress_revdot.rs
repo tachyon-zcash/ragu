@@ -328,17 +328,17 @@ fn point_restriction_matches_the_materialized_one() {
     let circuit_id = app.bootstrap_pcd().proof().circuit_id();
     check(
         &app.native_registry,
-        native::InternalCircuitIndex::ALL
+        native::InternalCircuitIndex::all::<crate::profile::Standard>()
             .iter()
-            .map(|id| id.circuit_index())
+            .map(|id| id.circuit_index::<crate::profile::Standard>())
             .chain([circuit_id]),
         &mut rng,
     );
     check(
         &app.nested_registry,
-        nested::InternalCircuitIndex::ALL
+        nested::InternalCircuitIndex::all::<crate::profile::Standard>()
             .iter()
-            .map(|id| id.circuit_index()),
+            .map(|id| id.circuit_index::<crate::profile::Standard>()),
         &mut rng,
     );
 }

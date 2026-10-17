@@ -66,7 +66,7 @@
 //! Those stored stages, rather than the ephemeral restriction polynomials,
 //! are the corresponding corruption targets.
 
-use alloc::vec;
+use alloc::{vec, vec::Vec};
 
 use ragu_circuits::{
     polynomials::{Rank, sparse},
@@ -75,7 +75,10 @@ use ragu_circuits::{
 use ragu_core::Cycle;
 use udon::field::Field;
 
-use crate::{Application, Proof};
+use crate::{
+    Application, Proof,
+    profile::{Profile, ProfiledCycle},
+};
 
 // The corruption vocabulary names proof components, and the names it uses are
 // the ones `internal` uses. Those enums are *not* re-exported here, and the
@@ -165,27 +168,24 @@ pub enum NativeRx {
 }
 
 impl NativeRx {
-    /// The number of native rx polynomial components.
-    pub const NUM: usize = crate::internal::native::RxIndex::NUM;
+    /// The number of native rx polynomial components in profile `P`.
+    pub fn num<P: Profile>() -> usize {
+        crate::internal::native::RxIndex::num::<P>()
+    }
 
-    /// All variants, in the canonical order `internal` defines.
+    /// All variants, in the canonical order `internal` defines for profile
+    /// `P`.
     ///
-    /// Derived from `internal::native::RxIndex::ALL` rather than restated.
+    /// Derived from `internal::native::RxIndex::all` rather than restated.
     /// That order is not cosmetic — it drives the `Write` impl for `RxValues`
     /// and the evaluation order in `poly_queries` — and a hand-copied list
     /// could drift from it silently, which an exhaustive `match` would not
     /// catch.
-    pub const ALL: [Self; Self::NUM] = Self::derive_all();
-
-    const fn derive_all() -> [Self; Self::NUM] {
-        let src = crate::internal::native::RxIndex::ALL;
-        let mut out = [Self::Application; Self::NUM];
-        let mut i = 0;
-        while i < Self::NUM {
-            out[i] = Self::from_internal(src[i]);
-            i += 1;
-        }
-        out
+    pub fn all<P: Profile>() -> Vec<Self> {
+        crate::internal::native::RxIndex::all::<P>()
+            .into_iter()
+            .map(Self::from_internal)
+            .collect()
     }
 
     const fn from_internal(v: crate::internal::native::RxIndex) -> Self {
@@ -346,23 +346,19 @@ pub enum NativeCommitment {
 }
 
 impl NativeCommitment {
-    /// The number of cached native commitments.
-    pub const NUM: usize = NativeRx::NUM + 4;
+    /// The number of cached native commitments in profile `P`.
+    pub fn num<P: Profile>() -> usize {
+        NativeRx::num::<P>() + 4
+    }
 
-    /// All variants, the rx commitments in [`NativeRx::ALL`] order.
-    pub const ALL: [Self; Self::NUM] = {
-        let mut out = [Self::AbA; Self::NUM];
-        let mut i = 0;
-        while i < NativeRx::NUM {
-            out[i] = Self::Rx(NativeRx::ALL[i]);
-            i += 1;
-        }
-        out[i] = Self::AbA;
-        out[i + 1] = Self::AbB;
-        out[i + 2] = Self::RegistryXy;
-        out[i + 3] = Self::P;
-        out
-    };
+    /// All variants, the rx commitments in [`NativeRx::all`] order.
+    pub fn all<P: Profile>() -> Vec<Self> {
+        NativeRx::all::<P>()
+            .into_iter()
+            .map(Self::Rx)
+            .chain([Self::AbA, Self::AbB, Self::RegistryXy, Self::P])
+            .collect()
+    }
 }
 
 /// Which cached nested commitment of a proof to address: one of its nested
@@ -383,29 +379,23 @@ pub enum NestedCommitment {
 }
 
 impl NestedCommitment {
-    /// The number of cached nested commitments this addresses.
-    pub const NUM: usize = NestedRx::NUM - BridgeCommitment::ALL.len() + 4;
+    /// The number of cached nested commitments this addresses in profile `P`.
+    pub fn num<P: Profile>() -> usize {
+        NestedRx::num::<P>() - BridgeCommitment::ALL.len() + 4
+    }
 
-    /// All variants, the rx commitments in [`NestedRx::ALL`] order with the
+    /// All variants, the rx commitments in [`NestedRx::all`] order with the
     /// bridges skipped.
-    pub const ALL: [Self; Self::NUM] = {
-        let mut out = [Self::AbA; Self::NUM];
-        let mut i = 0;
-        let mut j = 0;
-        while j < NestedRx::NUM {
-            if !NestedRx::ALL[j].is_bridge() {
-                out[i] = Self::Rx(NestedRx::ALL[j]);
-                i += 1;
-            }
-            j += 1;
-        }
-        out[i] = Self::AbA;
-        out[i + 1] = Self::AbB;
-        out[i + 2] = Self::RegistryXy;
-        out[i + 3] = Self::P;
-        assert!(i + 4 == Self::NUM);
-        out
-    };
+    pub fn all<P: Profile>() -> Vec<Self> {
+        let all: Vec<_> = NestedRx::all::<P>()
+            .into_iter()
+            .filter(|rx| !rx.is_bridge())
+            .map(Self::Rx)
+            .chain([Self::AbA, Self::AbB, Self::RegistryXy, Self::P])
+            .collect();
+        assert_eq!(all.len(), Self::num::<P>());
+        all
+    }
 }
 
 /// One of the eight nested-curve commitments the unified instance carries.
@@ -845,7 +835,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
     /// Create the synthesized dummy proof used to bootstrap recursion.
@@ -856,8 +846,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 }
 
 impl NestedRx {
-    /// The number of nested rx components.
-    pub const NUM: usize = crate::internal::nested::RxIndex::NUM;
+    /// The number of nested rx components in profile `P`.
+    pub fn num<P: Profile>() -> usize {
+        crate::internal::nested::RxIndex::num::<P>()
+    }
 
     /// Whether this is a bridge stage's rx, whose commitment
     /// [`BridgeCommitment`] addresses.
@@ -875,23 +867,18 @@ impl NestedRx {
         )
     }
 
-    /// All variants, in the canonical order `internal` defines.
+    /// All variants, in the canonical order `internal` defines for profile
+    /// `P`.
     ///
-    /// Derived from `internal::nested::RxIndex::ALL` for the same reason as
-    /// [`NativeRx::ALL`], and more urgently: this order is pinned by
+    /// Derived from `internal::nested::RxIndex::all` for the same reason as
+    /// [`NativeRx::all`], and more urgently: this order is pinned by
     /// `test_nested_registry_tag`, so restating it by hand would put a
     /// consensus-relevant ordering in two places.
-    pub const ALL: [Self; Self::NUM] = Self::derive_all();
-
-    const fn derive_all() -> [Self; Self::NUM] {
-        let src = crate::internal::nested::RxIndex::ALL;
-        let mut out = [Self::EndoscalarStage; Self::NUM];
-        let mut i = 0;
-        while i < Self::NUM {
-            out[i] = Self::from_internal(src[i]);
-            i += 1;
-        }
-        out
+    pub fn all<P: Profile>() -> Vec<Self> {
+        crate::internal::nested::RxIndex::all::<P>()
+            .into_iter()
+            .map(Self::from_internal)
+            .collect()
     }
 
     const fn from_internal(v: crate::internal::nested::RxIndex) -> Self {

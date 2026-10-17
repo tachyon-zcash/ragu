@@ -1139,7 +1139,7 @@ mod proof_equivalence {
                 return Some("headers");
             }
 
-            if native::RxIndex::ALL
+            if native::RxIndex::all::<crate::profile::Standard>()
                 .into_iter()
                 .any(|index| !polynomial_eq(&self[index], &other[index]))
             {
@@ -1157,7 +1157,7 @@ mod proof_equivalence {
             {
                 return Some("native protocol polynomials");
             }
-            if nested::RxIndex::ALL
+            if nested::RxIndex::all::<crate::profile::Standard>()
                 .into_iter()
                 .any(|index| !polynomial_eq(&self[index], &other[index]))
             {
@@ -1204,7 +1204,7 @@ mod proof_equivalence {
                 return Some("challenges");
             }
 
-            if native::RxIndex::ALL
+            if native::RxIndex::all::<crate::profile::Standard>()
                 .into_iter()
                 .any(|index| self.native_rx_commitment(index) != other.native_rx_commitment(index))
             {

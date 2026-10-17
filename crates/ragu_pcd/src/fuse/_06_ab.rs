@@ -40,7 +40,7 @@
 use alloc::vec::Vec;
 
 use ragu_circuits::polynomials::{Rank, sparse};
-use ragu_core::{Cycle, Result, drivers::Driver, maybe::Maybe};
+use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::{Element, vec::FixedVec};
 use udon::{curve::Affine, field::Field};
 
@@ -51,13 +51,14 @@ use super::{
 use crate::{
     Application,
     internal::{fold_revdot, native, nested},
+    profile::ProfiledCycle,
     proof::ProofBuilder,
 };
 
 type NativeNumGroups = <native::RevdotParameters as fold_revdot::Parameters>::NumGroups;
 type NestedNumGroups = <nested::RevdotParameters as fold_revdot::Parameters>::NumGroups;
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
     #[allow(clippy::too_many_arguments)]

@@ -14,6 +14,8 @@ use ragu_core::{
 use ragu_primitives::{Point, io::Write};
 use udon::curve::EndomorphismAffine as Affine;
 
+use crate::profile::Profile;
+
 /// Number of curve points in this stage.
 const NUM: usize = 3;
 
@@ -42,12 +44,12 @@ pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
 }
 
 #[derive(Default)]
-pub struct Stage<C: Affine, R> {
-    _marker: PhantomData<(C, R)>,
+pub struct Stage<C: Affine, R, P> {
+    _marker: PhantomData<(C, R, P)>,
 }
 
-impl<C: Affine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R> {
-    type Parent = super::outer_error::Stage<C, R>;
+impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R, P> {
+    type Parent = super::outer_error::Stage<C, R, P>;
     type Witness<'source> = &'source Witness<C>;
     type OutputKind = Kind![C::Base; Output<'_, _, C>];
 
@@ -76,10 +78,13 @@ mod tests {
     use ragu_core::pasta::EqAffine;
 
     use super::*;
-    use crate::internal::tests::{R, assert_stage_values};
+    use crate::{
+        internal::tests::{R, assert_stage_values},
+        profile::Standard,
+    };
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<EqAffine, R>::default());
+        assert_stage_values(&Stage::<EqAffine, R, Standard>::default());
     }
 }

@@ -95,9 +95,10 @@ use crate::{
     internal::{
         endoscalar::EndoscalarStage,
         native::{self, stages::points as native_points, total_circuit_counts},
-        nested::{self, EndoscalingStep, EndoscalingStepWitness, NumStepsLen, PointsStage},
+        nested::{self, EndoscalingStep, EndoscalingStepWitness, NumSteps, PointsStage},
         transcript::Transcript,
     },
+    profile::ProfiledCycle,
     proof::ProofBuilder,
     step::Step,
 };
@@ -359,7 +360,7 @@ pub fn capture_internal_circuits<'source, C, R, const HEADER_SIZE: usize, B, RNG
     visitor: &mut V,
 ) -> Result<()>
 where
-    C: Cycle,
+    C: ProfiledCycle,
     R: Rank,
     B: crate::SelectableBackend,
     RNG: CryptoRng,
@@ -387,7 +388,7 @@ pub fn capture_internal_circuits_bootstrap<C, R, const HEADER_SIZE: usize, B, RN
     visitor: &mut V,
 ) -> Result<()>
 where
-    C: Cycle,
+    C: ProfiledCycle,
     R: Rank,
     B: crate::SelectableBackend,
     RNG: CryptoRng,
@@ -404,7 +405,7 @@ where
     )
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
     #[allow(clippy::too_many_arguments)]
@@ -730,7 +731,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             native::RevdotParameters,
         >::new(
             self.params,
-            total_circuit_counts(self.num_application_steps).1,
+            total_circuit_counts::<C::Profile>(self.num_application_steps).1,
         );
         let hashes_1_witness = || {
             Ok(native::circuits::hashes_1::Witness {
@@ -1014,13 +1015,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         type Nested<C> = <C as Cycle>::NestedCurve;
         let native_walk_values: Vec<C::CircuitField> = [
             binding_values.clone(),
-            stage_values::<_, R, native_points::ChildrenStage<Nested<C>>>(&native_points.children)?,
-            stage_values::<_, R, native_points::RegistryWxStage<Nested<C>>>(
+            stage_values::<_, R, native_points::ChildrenStage<Nested<C>, C::Profile>>(
+                &native_points.children,
+            )?,
+            stage_values::<_, R, native_points::RegistryWxStage<Nested<C>, C::Profile>>(
                 &native_points.registry_wx,
             )?,
-            stage_values::<_, R, native_points::AbStage<Nested<C>>>(&native_points.ab)?,
-            stage_values::<_, R, native_points::FStage<Nested<C>>>(&native_points.f)?,
-            stage_values::<_, R, native_points::WalkStage<Nested<C>>>(&native_walk)?,
+            stage_values::<_, R, native_points::AbStage<Nested<C>, C::Profile>>(&native_points.ab)?,
+            stage_values::<_, R, native_points::FStage<Nested<C>, C::Profile>>(&native_points.f)?,
+            stage_values::<_, R, native_points::WalkStage<Nested<C>, C::Profile>>(&native_walk)?,
         ]
         .concat();
 
@@ -1034,9 +1037,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         };
         let bind_endoscalar_spec = CircuitSpec {
             name: "bind_endoscalar".into(),
-            outputs: stage_wire_indices::<C::CircuitField, R, native_points::WalkStage<Nested<C>>>(
-                |walk| wires_of(&walk.endoscalar),
-            )?
+            outputs: stage_wire_indices::<
+                C::CircuitField,
+                R,
+                native_points::WalkStage<Nested<C>, C::Profile>,
+            >(|walk| wires_of(&walk.endoscalar))?
             .into_iter()
             .map(OutputRef::Stage)
             .chain(
@@ -1053,14 +1058,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             bind_endoscalar_witness,
         )?;
 
-        for step in 0..native::NUM_ENDOSCALING_STEPS {
+        for step in 0..native::NumSteps::<C::Profile>::len() {
             let circuit = native::circuits::endoscaling_step::Circuit::<C, R>::new(step);
             let spec = CircuitSpec {
                 name: format!("native_endoscaling_step_{step}"),
                 outputs: stage_wire_indices::<
                     C::CircuitField,
                     R,
-                    native_points::WalkStage<Nested<C>>,
+                    native_points::WalkStage<Nested<C>, C::Profile>,
                 >(|walk| wires_of(&walk.interstitials[step]))?
                 .into_iter()
                 .map(OutputRef::Stage)
@@ -1083,17 +1088,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         // witness, from `compute_p`.
         let endoscaling_values: Vec<C::ScalarField> = [
             stage_values::<C::ScalarField, R, EndoscalarStage>(beta_endo)?,
-            stage_values::<_, R, PointsStage<C::HostCurve>>(&points_witness)?,
+            stage_values::<_, R, PointsStage<C::HostCurve, C::Profile>>(&points_witness)?,
         ]
         .concat();
 
-        for step in 0..NumStepsLen::len() {
-            let circuit = MultiStage::new(EndoscalingStep::<C::HostCurve, R>::new(step));
+        for step in 0..NumSteps::<C::Profile>::len() {
+            let circuit =
+                MultiStage::new(EndoscalingStep::<C::HostCurve, R, C::Profile>::new(step));
             let spec = CircuitSpec {
                 name: format!("endoscaling_step_{step}"),
-                outputs: stage_wire_indices::<C::ScalarField, R, PointsStage<C::HostCurve>>(
-                    |points| wires_of(&points.interstitials[step]),
-                )?
+                outputs: stage_wire_indices::<
+                    C::ScalarField,
+                    R,
+                    PointsStage<C::HostCurve, C::Profile>,
+                >(|points| wires_of(&points.interstitials[step]))?
                 .into_iter()
                 .map(OutputRef::Stage)
                 .collect(),
@@ -1135,27 +1143,31 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         };
         let nested_values: Vec<C::ScalarField> = [
             endoscaling_values,
-            stage_values::<_, R, nested::stages::preamble::Stage<C::HostCurve, R>>(
+            stage_values::<_, R, nested::stages::preamble::Stage<C::HostCurve, R, C::Profile>>(
                 &nested_preamble,
             )?,
-            stage_values::<_, R, nested::stages::s_prime::Stage<C::HostCurve, R>>(
+            stage_values::<_, R, nested::stages::s_prime::Stage<C::HostCurve, R, C::Profile>>(
                 &nested_s_prime_witness,
             )?,
-            stage_values::<_, R, nested::stages::inner_error::Stage<C::HostCurve, R>>(
+            stage_values::<_, R, nested::stages::inner_error::Stage<C::HostCurve, R, C::Profile>>(
                 &nested_inner_error_witness,
             )?,
-            stage_values::<_, R, nested::stages::outer_error::Stage<C::HostCurve, R>>(
+            stage_values::<_, R, nested::stages::outer_error::Stage<C::HostCurve, R, C::Profile>>(
                 &nested_outer_error_witness,
             )?,
-            stage_values::<_, R, nested::stages::ab::Stage<C::HostCurve, R>>(&nested_ab_witness)?,
-            stage_values::<_, R, nested::stages::query::Stage<C::HostCurve, R>>(
+            stage_values::<_, R, nested::stages::ab::Stage<C::HostCurve, R, C::Profile>>(
+                &nested_ab_witness,
+            )?,
+            stage_values::<_, R, nested::stages::query::Stage<C::HostCurve, R, C::Profile>>(
                 &nested_query_witness,
             )?,
-            stage_values::<_, R, nested::stages::f::Stage<C::HostCurve, R>>(&nested_f_witness)?,
-            stage_values::<_, R, nested::stages::eval::Stage<C::HostCurve, R>>(
+            stage_values::<_, R, nested::stages::f::Stage<C::HostCurve, R, C::Profile>>(
+                &nested_f_witness,
+            )?,
+            stage_values::<_, R, nested::stages::eval::Stage<C::HostCurve, R, C::Profile>>(
                 &nested_eval_witness,
             )?,
-            stage_values::<_, R, nested::stages::challenges::Stage<C::HostCurve, R>>(
+            stage_values::<_, R, nested::stages::challenges::Stage<C::HostCurve, R, C::Profile>>(
                 &nested_challenges,
             )?,
         ]
@@ -1205,7 +1217,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 
         // export copies the instance's x, y, u (and its commitments) from
         // stage wires.
-        let export = MultiStage::new(nested::circuits::export::Circuit::<C::HostCurve, R>::new());
+        let export = MultiStage::new(nested::circuits::export::Circuit::<
+            C::HostCurve,
+            R,
+            C::Profile,
+        >::new());
         let export_spec = CircuitSpec {
             name: "nested_export".into(),
             outputs: covered_outputs(&export, nested_witness()?, nested_coverage)?
@@ -1217,8 +1233,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 
         // collapse forces the outer_error stage's collapsed values from the
         // inner error terms and, outside the base case, c_n from those.
-        let collapse =
-            MultiStage::new(nested::circuits::collapse::Circuit::<C::HostCurve, R>::new());
+        let collapse = MultiStage::new(nested::circuits::collapse::Circuit::<
+            C::HostCurve,
+            R,
+            C::Profile,
+        >::new());
         let collapse_covered = if base_case {
             Vec::new()
         } else {
@@ -1233,7 +1252,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                     stage_wire_indices::<
                         C::ScalarField,
                         R,
-                        nested::stages::outer_error::Stage<C::HostCurve, R>,
+                        nested::stages::outer_error::Stage<C::HostCurve, R, C::Profile>,
                     >(|stage| {
                         Ok(stage.collapsed.iter().map(|e| *e.wire()).collect())
                     })?
@@ -1245,8 +1264,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         visitor.visit_nested(&collapse_spec, &collapse, &nested_values, nested_witness)?;
 
         // compute_v derives v_n.
-        let compute_v =
-            MultiStage::new(nested::circuits::compute_v::Circuit::<C::HostCurve, R>::new());
+        let compute_v = MultiStage::new(nested::circuits::compute_v::Circuit::<
+            C::HostCurve,
+            R,
+            C::Profile,
+        >::new());
         let compute_v_spec = CircuitSpec {
             name: "nested_compute_v".into(),
             outputs: covered_outputs(&compute_v, nested_witness()?, nested_coverage)?

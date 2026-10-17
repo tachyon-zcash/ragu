@@ -23,7 +23,7 @@ use ragu_circuits::{
     polynomials::{Rank, sparse},
     staging::StageExt,
 };
-use ragu_core::{Cycle, Result, drivers::Driver, maybe::Maybe};
+use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::Element;
 use rand::CryptoRng;
 use udon::field::Field;
@@ -36,10 +36,11 @@ use crate::{
         native::{RxComponent, RxIndex, STATIC_F_QUERIES, StaticFQuery},
         nested::{self, pcs},
     },
+    profile::ProfiledCycle,
     proof::ProofBuilder,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
     pub(super) fn compute_f<'dr, D, RNG: CryptoRng>(
@@ -99,7 +100,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         native: &NativeF<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
-        let bridge_rx = nested::stages::f::Stage::<C::HostCurve, R>::rx(
+        let bridge_rx = nested::stages::f::Stage::<C::HostCurve, R, C::Profile>::rx(
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
             &nested::stages::f::Witness {
                 native_f: native.commitment,
@@ -138,7 +139,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let alpha = *alpha.value().take();
 
         let omega_j = |idx: native::InternalCircuitIndex| -> C::CircuitField {
-            idx.circuit_index().omega_j()
+            idx.circuit_index::<C::Profile>().omega_j()
         };
 
         let mut iters: Vec<_> = STATIC_F_QUERIES
@@ -209,13 +210,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         // Per-rx evaluations at xz only. The same r_i(xz) values feed
         // into both A(xz) (undilated) and B(x) (Z-dilated).
         for proof in [left, right] {
-            for &id in &RxIndex::ALL {
+            for id in RxIndex::all::<C::Profile>() {
                 iters.push(divide_linear_rev(proof[id].iter_coeffs(), xz));
             }
         }
 
         // m(\omega^j, x, y) evaluations for each internal index j
-        for &id in &native::InternalCircuitIndex::ALL {
+        for id in native::InternalCircuitIndex::all::<C::Profile>() {
             iters.push(divide_linear_rev(
                 builder.native_registry_xy_poly().iter_coeffs(),
                 omega_j(id),

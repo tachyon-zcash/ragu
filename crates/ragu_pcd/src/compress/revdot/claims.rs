@@ -27,7 +27,10 @@ use ragu_circuits::{
 use ragu_core::Result;
 use udon::field::Field;
 
-use crate::internal::{claims::Source, native, nested};
+use crate::{
+    internal::{claims::Source, native, nested},
+    profile::Profile,
+};
 
 /// A claim pinning wires of a committed stage polynomial $Q$ to expected
 /// values: with $E = \sum_j e_j X^{d_j}$ over the wires' degrees and
@@ -212,7 +215,7 @@ impl<Id, F: Field> Shaper<Id, F> {
     }
 }
 
-impl<Id, F: Field> native::claims::Processor<Id, CircuitIndex> for Shaper<Id, F> {
+impl<P: Profile, Id, F: Field> native::claims::Processor<P, Id, CircuitIndex> for Shaper<Id, F> {
     fn raw_claim(&mut self, a: Id, b: Id) {
         self.push(Kind::Raw, vec![(F::ONE, a)], vec![(F::ONE, b)]);
     }
@@ -226,7 +229,7 @@ impl<Id, F: Field> native::claims::Processor<Id, CircuitIndex> for Shaper<Id, F>
         id: native::InternalCircuitIndex,
         rxs: impl Iterator<Item = Id>,
     ) {
-        self.circuit(id.circuit_index(), rxs);
+        self.circuit(id.circuit_index::<P>(), rxs);
     }
 
     fn grouped_bonding_claim(
@@ -234,12 +237,12 @@ impl<Id, F: Field> native::claims::Processor<Id, CircuitIndex> for Shaper<Id, F>
         id: native::InternalCircuitIndex,
         groups: impl Iterator<Item = impl Iterator<Item = Id>>,
     ) -> Result<()> {
-        self.bonding(id.circuit_index(), groups);
+        self.bonding(id.circuit_index::<P>(), groups);
         Ok(())
     }
 }
 
-impl<Id, F: Field> nested::claims::Processor<Id> for Shaper<Id, F> {
+impl<P: Profile, Id, F: Field> nested::claims::Processor<P, Id> for Shaper<Id, F> {
     fn raw_claim(&mut self, a: Id, b: Id) {
         self.push(Kind::Raw, vec![(F::ONE, a)], vec![(F::ONE, b)]);
     }
@@ -249,7 +252,7 @@ impl<Id, F: Field> nested::claims::Processor<Id> for Shaper<Id, F> {
         id: nested::InternalCircuitIndex,
         rxs: impl Iterator<Item = Id>,
     ) {
-        self.circuit(id.circuit_index(), rxs);
+        self.circuit(id.circuit_index::<P>(), rxs);
     }
 
     fn grouped_bonding_claim(
@@ -257,7 +260,7 @@ impl<Id, F: Field> nested::claims::Processor<Id> for Shaper<Id, F> {
         id: nested::InternalCircuitIndex,
         groups: impl Iterator<Item = impl Iterator<Item = Id>>,
     ) -> Result<()> {
-        self.bonding(id.circuit_index(), groups);
+        self.bonding(id.circuit_index::<P>(), groups);
         Ok(())
     }
 }
@@ -275,10 +278,10 @@ fn with_masked<Id: Copy, F: Field>(
     shapes
 }
 
-/// The shapes of the native claims of a proof whose application circuit is
-/// `circuit_id`, in the decider's order, then the `masked` wire claims in
-/// theirs.
-pub(crate) fn native_shapes<F: Field>(
+/// The shapes of the native claims of a proof in profile `P` whose
+/// application circuit is `circuit_id`, in the decider's order, then the
+/// `masked` wire claims in theirs.
+pub(crate) fn native_shapes<P: Profile, F: Field>(
     circuit_id: CircuitIndex,
     z: F,
     masked: &[Masked<native::RxComponent, F>],
@@ -287,13 +290,13 @@ pub(crate) fn native_shapes<F: Field>(
         z,
         shapes: Vec::new(),
     };
-    native::claims::build(&NativeIds { circuit_id }, &mut shaper)?;
+    native::claims::build::<P, _, _>(&NativeIds { circuit_id }, &mut shaper)?;
     Ok(with_masked(shaper.shapes, masked))
 }
 
-/// The shapes of the nested claims of a proof, as [`native_shapes`] lists
-/// them.
-pub(crate) fn nested_shapes<F: Field>(
+/// The shapes of the nested claims of a proof in profile `P`, as
+/// [`native_shapes`] lists them.
+pub(crate) fn nested_shapes<P: Profile, F: Field>(
     z: F,
     masked: &[Masked<nested::RxComponent, F>],
 ) -> Result<Vec<Shape<nested::RxComponent, F>>> {
@@ -301,7 +304,7 @@ pub(crate) fn nested_shapes<F: Field>(
         z,
         shapes: Vec::new(),
     };
-    nested::claims::build(&NestedIds, &mut shaper)?;
+    nested::claims::build::<P, _, _>(&NestedIds, &mut shaper)?;
     Ok(with_masked(shaper.shapes, masked))
 }
 

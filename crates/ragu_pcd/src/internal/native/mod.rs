@@ -2,7 +2,7 @@
 //!
 //! Besides the circuits that verify the native fold and batch, the native
 //! side walks the nested batch's commitments: the endoscaling steps of
-//! [`circuits::endoscaling_step`] fold the [`NUM_ENDOSCALING_POINTS`]
+//! [`circuits::endoscaling_step`] fold the [`NumPoints`]
 //! nested-curve points of [`stages::points`] into $P_n$ by Horner's rule
 //! under $\beta$'s endoscalar, which [`circuits::bind_endoscalar`] ties to
 //! `pre_beta`. The points are committed in stages the transcript absorbs
@@ -15,49 +15,62 @@
 //! the unified instance. [`circuits::bind_beta`] holds the children's walked
 //! points against the children's unified instances.
 
+use alloc::vec::Vec;
+use core::marker::PhantomData;
+
 pub use circuits::bind_challenges::NUM_BINDERS;
 use ragu_circuits::{
     polynomials::Rank,
     registry::{CircuitIndex, RegistryBuilder},
     staging::StageExt,
 };
-use ragu_core::{Cycle, Result};
-use ragu_primitives::vec::ConstLen;
+use ragu_core::Result;
+use ragu_primitives::vec::{ConstLen, Len};
 
 use crate::{
-    internal::{endoscalar, fold_revdot::Parameters, nested},
-    profile::{Profile, Standard},
+    internal::{endoscalar, fold_revdot::Parameters},
+    profile::{Profile, ProfiledCycle, Shape},
     step,
 };
 
-/// The nested-curve points the native endoscaling walks into $P_n$: the
-/// nested batch's commitments, in [`nested::pcs::Batch::evaluated`] order
-/// after $f_n$'s.
-pub const NUM_ENDOSCALING_POINTS: usize = nested::pcs::NUM_BATCHED_POINTS;
+/// Length type for the nested-curve points the native endoscaling walks into
+/// $P_n$: the nested batch's commitments, in `nested::pcs::Batch::evaluated`
+/// order after $f_n$'s. The count is the profile's
+/// [`native_points`](Shape::native_points).
+pub struct NumPoints<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> NumPoints<P> {
+    /// The count, evaluated once per profile.
+    pub const LEN: usize = Shape::of::<P>().native_points;
+}
+
+impl<P: Profile> Len for NumPoints<P> {
+    fn len() -> usize {
+        Self::LEN
+    }
+}
 
 /// The endoscalings a native step performs: what fits a step beside the
 /// stages it reserves.
 pub const ENDOSCALINGS_PER_STEP: usize = 4;
 
-/// The number of native endoscaling steps: the standard profile's pin.
+/// Length type for the native endoscaling steps.
 ///
-/// Pinned rather than derived: each side's step polynomials are opened by
-/// the other side's batch, so the two step counts determine each other's
-/// batch sizes, and one of them has to be fixed to break the cycle. The
-/// assertion below checks the pin is the fixed point, so a change to either
-/// batch that moves it fails to build here. The profile's shape rederives
-/// the whole cycle (see [`Shape`](crate::profile::Shape)).
-pub const NUM_ENDOSCALING_STEPS: usize = Standard::NATIVE_ENDOSCALING_STEPS;
-
-const _: () = assert!(
-    endoscalar::num_steps::<ENDOSCALINGS_PER_STEP>(NUM_ENDOSCALING_POINTS) == NUM_ENDOSCALING_STEPS,
-    "NUM_ENDOSCALING_STEPS is not the number of steps over the nested batch; re-pin it"
-);
+/// Each side's step polynomials are opened by the other side's batch, so the
+/// two step counts determine each other's batch sizes; the profile's
+/// [`Shape`] solves that cycle to its fixed point, and this is the walk over
+/// the batch that fixed point gives.
+pub type NumSteps<P> = endoscalar::NumStepsLen<NumPoints<P>, ENDOSCALINGS_PER_STEP>;
 
 /// The native rx polynomials that are not endoscaling steps: the
 /// application's, the five hashing, collapse and compute-v circuits', the
 /// binders', bind-beta's, bind-endoscalar's and the eleven stages'.
 pub const NUM_FIXED_RX: usize = 19 + NUM_BINDERS;
+
+/// The native internal circuits that are not endoscaling steps: the rx
+/// polynomials' circuits and stages, the application's aside, and the four
+/// final stage masks.
+pub const NUM_FIXED_INTERNAL: usize = NUM_FIXED_RX - 1 + 4;
 
 /// Default parameters for native revdot folding
 #[derive(Clone, Copy, Default)]
@@ -132,77 +145,74 @@ pub enum InternalCircuitIndex {
 }
 
 /// Compute the total circuit count and log2 domain size from the number of
-/// application-defined steps.
-pub const fn total_circuit_counts(num_application_steps: usize) -> (usize, u32) {
+/// application-defined steps, in profile `P`.
+pub fn total_circuit_counts<P: Profile>(num_application_steps: usize) -> (usize, u32) {
     let total_circuits =
-        num_application_steps + step::NUM_INTERNAL_STEPS + InternalCircuitIndex::NUM;
+        num_application_steps + step::NUM_INTERNAL_STEPS + InternalCircuitIndex::num::<P>();
     let log2_circuits = total_circuits.next_power_of_two().trailing_zeros();
     (total_circuits, log2_circuits)
 }
 
 impl InternalCircuitIndex {
-    /// The number of internal circuits registered by [`register_all`],
-    /// equal to the number of variants in [`InternalCircuitIndex`].
-    pub const NUM: usize = 22 + NUM_BINDERS + NUM_ENDOSCALING_STEPS;
+    /// The number of internal circuits registered by [`register_all`] in
+    /// profile `P`, equal to the length of [`all`](Self::all).
+    pub fn num<P: Profile>() -> usize {
+        NUM_FIXED_INTERNAL + NumSteps::<P>::len()
+    }
 
-    /// All variants in canonical iteration order.
+    /// All variants in canonical iteration order, for profile `P`.
     ///
     /// This order must match the registry finalization concatenation order
     /// in [`RegistryBuilder::finalize()`](ragu_circuits::registry::RegistryBuilder::finalize)
     /// (circuits before masks), since [`circuit_index()`](Self::circuit_index)
-    /// derives indices from position in this array.
-    pub const ALL: [Self; Self::NUM] = super::const_fns::unwrap_all(Self::all_slots());
-
-    const fn all_slots() -> [Option<Self>; Self::NUM] {
-        use super::const_fns::push;
-
-        let mut slots = [None; Self::NUM];
-        let mut c = 0;
-        push(&mut slots, &mut c, Self::Hashes1Circuit);
-        push(&mut slots, &mut c, Self::Hashes2Circuit);
-        push(&mut slots, &mut c, Self::InnerCollapseCircuit);
-        push(&mut slots, &mut c, Self::OuterCollapseCircuit);
-        push(&mut slots, &mut c, Self::ComputeVCircuit);
-        {
-            let mut k = 0;
-            while k < NUM_BINDERS {
-                push(&mut slots, &mut c, Self::BindChallengesCircuit(k as u32));
-                k += 1;
-            }
-        }
-        push(&mut slots, &mut c, Self::BindBetaCircuit);
-        push(&mut slots, &mut c, Self::BindEndoscalarCircuit);
-        {
-            let mut step = 0;
-            while step < NUM_ENDOSCALING_STEPS {
-                push(&mut slots, &mut c, Self::EndoscalingStep(step as u32));
-                step += 1;
-            }
-        }
-        push(&mut slots, &mut c, Self::PreambleStage);
-        push(&mut slots, &mut c, Self::InnerErrorStage);
-        push(&mut slots, &mut c, Self::OuterErrorStage);
-        push(&mut slots, &mut c, Self::QueryStage);
-        push(&mut slots, &mut c, Self::EvalStage);
-        push(&mut slots, &mut c, Self::PointsBindingStage);
-        push(&mut slots, &mut c, Self::PointsChildrenStage);
-        push(&mut slots, &mut c, Self::PointsRegistryWxStage);
-        push(&mut slots, &mut c, Self::PointsAbStage);
-        push(&mut slots, &mut c, Self::PointsFStage);
-        push(&mut slots, &mut c, Self::PointsWalkStage);
-        push(&mut slots, &mut c, Self::InnerErrorFinalStaged);
-        push(&mut slots, &mut c, Self::OuterErrorFinalStaged);
-        push(&mut slots, &mut c, Self::EvalFinalStaged);
-        push(&mut slots, &mut c, Self::PointsWalkFinalStaged);
-        assert!(c == Self::NUM);
-        slots
+    /// derives indices from position in this list.
+    pub fn all<P: Profile>() -> Vec<Self> {
+        let all = Self::all_with_steps(NumSteps::<P>::len());
+        assert_eq!(all.len(), Self::num::<P>());
+        all
     }
 
-    pub fn circuit_index(self) -> CircuitIndex {
-        let pos = Self::ALL
+    /// All variants in canonical iteration order, for a walk of `num_steps`
+    /// steps.
+    pub(crate) fn all_with_steps(num_steps: usize) -> Vec<Self> {
+        let mut all = Vec::with_capacity(NUM_FIXED_INTERNAL + num_steps);
+        all.push(Self::Hashes1Circuit);
+        all.push(Self::Hashes2Circuit);
+        all.push(Self::InnerCollapseCircuit);
+        all.push(Self::OuterCollapseCircuit);
+        all.push(Self::ComputeVCircuit);
+        for k in 0..NUM_BINDERS as u32 {
+            all.push(Self::BindChallengesCircuit(k));
+        }
+        all.push(Self::BindBetaCircuit);
+        all.push(Self::BindEndoscalarCircuit);
+        for step in 0..num_steps as u32 {
+            all.push(Self::EndoscalingStep(step));
+        }
+        all.push(Self::PreambleStage);
+        all.push(Self::InnerErrorStage);
+        all.push(Self::OuterErrorStage);
+        all.push(Self::QueryStage);
+        all.push(Self::EvalStage);
+        all.push(Self::PointsBindingStage);
+        all.push(Self::PointsChildrenStage);
+        all.push(Self::PointsRegistryWxStage);
+        all.push(Self::PointsAbStage);
+        all.push(Self::PointsFStage);
+        all.push(Self::PointsWalkStage);
+        all.push(Self::InnerErrorFinalStaged);
+        all.push(Self::OuterErrorFinalStaged);
+        all.push(Self::EvalFinalStaged);
+        all.push(Self::PointsWalkFinalStaged);
+        all
+    }
+
+    /// The registry index of `self` in profile `P`.
+    pub fn circuit_index<P: Profile>(self) -> CircuitIndex {
+        let pos = Self::all::<P>()
             .iter()
             .position(|&v| v == self)
-            .expect("every variant appears in ALL");
+            .expect("every variant appears in all");
         CircuitIndex::from_u32(pos as u32)
     }
 }
@@ -223,7 +233,8 @@ pub struct InternalCircuitValues<T> {
     pub bind_challenges_circuits: [T; NUM_BINDERS],
     pub bind_beta_circuit: T,
     pub bind_endoscalar_circuit: T,
-    pub endoscaling_step_circuits: [T; NUM_ENDOSCALING_STEPS],
+    /// One per endoscaling step of the profile the values were built for.
+    pub endoscaling_step_circuits: Vec<T>,
     pub preamble_stage: T,
     pub inner_error_stage: T,
     pub outer_error_stage: T,
@@ -242,6 +253,67 @@ pub struct InternalCircuitValues<T> {
 }
 
 impl<T> InternalCircuitValues<T> {
+    /// The number of endoscaling steps these values were built for.
+    pub fn num_steps(&self) -> usize {
+        self.endoscaling_step_circuits.len()
+    }
+
+    /// Every value with its index, in [`all`](InternalCircuitIndex::all)
+    /// order.
+    pub fn iter(&self) -> impl Iterator<Item = (InternalCircuitIndex, &T)> {
+        InternalCircuitIndex::all_with_steps(self.num_steps())
+            .into_iter()
+            .map(move |id| (id, self.get(id)))
+    }
+
+    /// Maps every value, in [`all`](InternalCircuitIndex::all) order.
+    pub fn try_map<U, E>(
+        &self,
+        mut f: impl FnMut(InternalCircuitIndex, &T) -> core::result::Result<U, E>,
+    ) -> core::result::Result<InternalCircuitValues<U>, E> {
+        use InternalCircuitIndex::*;
+        Ok(InternalCircuitValues {
+            hashes_1_circuit: f(Hashes1Circuit, &self.hashes_1_circuit)?,
+            hashes_2_circuit: f(Hashes2Circuit, &self.hashes_2_circuit)?,
+            inner_collapse_circuit: f(InnerCollapseCircuit, &self.inner_collapse_circuit)?,
+            outer_collapse_circuit: f(OuterCollapseCircuit, &self.outer_collapse_circuit)?,
+            compute_v_circuit: f(ComputeVCircuit, &self.compute_v_circuit)?,
+            bind_challenges_circuits: {
+                let mut out = [(); NUM_BINDERS].map(|()| None);
+                for (k, slot) in out.iter_mut().enumerate() {
+                    *slot = Some(f(
+                        BindChallengesCircuit(k as u32),
+                        &self.bind_challenges_circuits[k],
+                    )?);
+                }
+                out.map(|slot| slot.expect("filled"))
+            },
+            bind_beta_circuit: f(BindBetaCircuit, &self.bind_beta_circuit)?,
+            bind_endoscalar_circuit: f(BindEndoscalarCircuit, &self.bind_endoscalar_circuit)?,
+            endoscaling_step_circuits: self
+                .endoscaling_step_circuits
+                .iter()
+                .enumerate()
+                .map(|(step, value)| f(EndoscalingStep(step as u32), value))
+                .collect::<core::result::Result<_, E>>()?,
+            preamble_stage: f(PreambleStage, &self.preamble_stage)?,
+            inner_error_stage: f(InnerErrorStage, &self.inner_error_stage)?,
+            outer_error_stage: f(OuterErrorStage, &self.outer_error_stage)?,
+            query_stage: f(QueryStage, &self.query_stage)?,
+            eval_stage: f(EvalStage, &self.eval_stage)?,
+            points_binding_stage: f(PointsBindingStage, &self.points_binding_stage)?,
+            points_children_stage: f(PointsChildrenStage, &self.points_children_stage)?,
+            points_registry_wx_stage: f(PointsRegistryWxStage, &self.points_registry_wx_stage)?,
+            points_ab_stage: f(PointsAbStage, &self.points_ab_stage)?,
+            points_f_stage: f(PointsFStage, &self.points_f_stage)?,
+            points_walk_stage: f(PointsWalkStage, &self.points_walk_stage)?,
+            inner_error_final_staged: f(InnerErrorFinalStaged, &self.inner_error_final_staged)?,
+            outer_error_final_staged: f(OuterErrorFinalStaged, &self.outer_error_final_staged)?,
+            eval_final_staged: f(EvalFinalStaged, &self.eval_final_staged)?,
+            points_walk_final_staged: f(PointsWalkFinalStaged, &self.points_walk_final_staged)?,
+        })
+    }
+
     /// Look up the value for the given internal circuit index.
     pub fn get(&self, id: InternalCircuitIndex) -> &T {
         use InternalCircuitIndex::*;
@@ -273,10 +345,10 @@ impl<T> InternalCircuitValues<T> {
         }
     }
 
-    /// Construct from a closure called once per variant in [`ALL`](InternalCircuitIndex::ALL)
-    /// order.
-    pub fn from_fn(mut f: impl FnMut(InternalCircuitIndex) -> T) -> Self {
-        match Self::try_from_fn(|id| Ok::<_, core::convert::Infallible>(f(id))) {
+    /// Construct from a closure called once per variant in
+    /// [`all`](InternalCircuitIndex::all) order, for profile `P`.
+    pub fn from_fn<P: Profile>(mut f: impl FnMut(InternalCircuitIndex) -> T) -> Self {
+        match Self::try_from_fn::<P, _>(|id| Ok::<_, core::convert::Infallible>(f(id))) {
             Ok(v) => v,
             Err(e) => match e {},
         }
@@ -284,8 +356,9 @@ impl<T> InternalCircuitValues<T> {
 
     /// Fallible construction from a closure called once per variant.
     ///
-    /// The closure is called in [`ALL`](InternalCircuitIndex::ALL) order.
-    pub fn try_from_fn<E>(
+    /// The closure is called in [`all`](InternalCircuitIndex::all) order, for
+    /// profile `P`.
+    pub fn try_from_fn<P: Profile, E>(
         mut f: impl FnMut(InternalCircuitIndex) -> core::result::Result<T, E>,
     ) -> core::result::Result<Self, E> {
         use InternalCircuitIndex::*;
@@ -304,13 +377,9 @@ impl<T> InternalCircuitValues<T> {
             },
             bind_beta_circuit: f(BindBetaCircuit)?,
             bind_endoscalar_circuit: f(BindEndoscalarCircuit)?,
-            endoscaling_step_circuits: {
-                let mut out = [(); NUM_ENDOSCALING_STEPS].map(|()| None);
-                for (step, slot) in out.iter_mut().enumerate() {
-                    *slot = Some(f(EndoscalingStep(step as u32))?);
-                }
-                out.map(|slot| slot.expect("filled"))
-            },
+            endoscaling_step_circuits: (0..NumSteps::<P>::len() as u32)
+                .map(|step| f(EndoscalingStep(step)))
+                .collect::<core::result::Result<_, E>>()?,
             preamble_stage: f(PreambleStage)?,
             inner_error_stage: f(InnerErrorStage)?,
             outer_error_stage: f(OuterErrorStage)?,
@@ -372,55 +441,50 @@ pub enum RxIndex {
 }
 
 impl RxIndex {
-    /// The number of rx polynomial components.
-    pub const NUM: usize = NUM_FIXED_RX + NUM_ENDOSCALING_STEPS;
+    /// The number of rx polynomial components in profile `P`.
+    pub fn num<P: Profile>() -> usize {
+        NUM_FIXED_RX + NumSteps::<P>::len()
+    }
 
-    /// All variants in canonical order.
+    /// All variants in canonical order, for profile `P`.
     ///
     /// This order matches the evaluation order in `poly_queries` (compute_v.rs)
     /// and `_08_f.rs`, and drives the `Write` impl for `RxValues`.
-    pub const ALL: [Self; Self::NUM] = super::const_fns::unwrap_all(Self::all_slots());
+    pub fn all<P: Profile>() -> Vec<Self> {
+        let all = Self::all_with_steps(NumSteps::<P>::len());
+        assert_eq!(all.len(), Self::num::<P>());
+        all
+    }
 
-    const fn all_slots() -> [Option<Self>; Self::NUM] {
-        use super::const_fns::push;
-
-        let mut slots = [None; Self::NUM];
-        let mut c = 0;
-        push(&mut slots, &mut c, Self::Application);
-        push(&mut slots, &mut c, Self::Hashes1);
-        push(&mut slots, &mut c, Self::Hashes2);
-        push(&mut slots, &mut c, Self::InnerCollapse);
-        push(&mut slots, &mut c, Self::OuterCollapse);
-        push(&mut slots, &mut c, Self::ComputeV);
-        {
-            let mut k = 0;
-            while k < NUM_BINDERS {
-                push(&mut slots, &mut c, Self::BindChallenges(k as u32));
-                k += 1;
-            }
+    /// All variants in canonical order, for a walk of `num_steps` steps.
+    pub(crate) fn all_with_steps(num_steps: usize) -> Vec<Self> {
+        let mut all = Vec::with_capacity(NUM_FIXED_RX + num_steps);
+        all.push(Self::Application);
+        all.push(Self::Hashes1);
+        all.push(Self::Hashes2);
+        all.push(Self::InnerCollapse);
+        all.push(Self::OuterCollapse);
+        all.push(Self::ComputeV);
+        for k in 0..NUM_BINDERS as u32 {
+            all.push(Self::BindChallenges(k));
         }
-        push(&mut slots, &mut c, Self::BindBeta);
-        push(&mut slots, &mut c, Self::BindEndoscalar);
-        {
-            let mut step = 0;
-            while step < NUM_ENDOSCALING_STEPS {
-                push(&mut slots, &mut c, Self::EndoscalingStep(step as u32));
-                step += 1;
-            }
+        all.push(Self::BindBeta);
+        all.push(Self::BindEndoscalar);
+        for step in 0..num_steps as u32 {
+            all.push(Self::EndoscalingStep(step));
         }
-        push(&mut slots, &mut c, Self::Preamble);
-        push(&mut slots, &mut c, Self::InnerError);
-        push(&mut slots, &mut c, Self::OuterError);
-        push(&mut slots, &mut c, Self::Query);
-        push(&mut slots, &mut c, Self::Eval);
-        push(&mut slots, &mut c, Self::PointsBinding);
-        push(&mut slots, &mut c, Self::PointsChildren);
-        push(&mut slots, &mut c, Self::PointsRegistryWx);
-        push(&mut slots, &mut c, Self::PointsAb);
-        push(&mut slots, &mut c, Self::PointsF);
-        push(&mut slots, &mut c, Self::PointsWalk);
-        assert!(c == Self::NUM);
-        slots
+        all.push(Self::Preamble);
+        all.push(Self::InnerError);
+        all.push(Self::OuterError);
+        all.push(Self::Query);
+        all.push(Self::Eval);
+        all.push(Self::PointsBinding);
+        all.push(Self::PointsChildren);
+        all.push(Self::PointsRegistryWx);
+        all.push(Self::PointsAb);
+        all.push(Self::PointsF);
+        all.push(Self::PointsWalk);
+        all
     }
 }
 
@@ -440,7 +504,8 @@ pub struct RxValues<T> {
     pub bind_challenges: [T; NUM_BINDERS],
     pub bind_beta: T,
     pub bind_endoscalar: T,
-    pub endoscaling_steps: [T; NUM_ENDOSCALING_STEPS],
+    /// One per endoscaling step of the profile the values were built for.
+    pub endoscaling_steps: Vec<T>,
     pub preamble: T,
     pub inner_error: T,
     pub outer_error: T,
@@ -455,6 +520,60 @@ pub struct RxValues<T> {
 }
 
 impl<T> RxValues<T> {
+    /// The number of endoscaling steps these values were built for.
+    pub fn num_steps(&self) -> usize {
+        self.endoscaling_steps.len()
+    }
+
+    /// Every value with its index, in [`all`](RxIndex::all) order.
+    pub fn iter(&self) -> impl Iterator<Item = (RxIndex, &T)> {
+        RxIndex::all_with_steps(self.num_steps())
+            .into_iter()
+            .map(move |id| (id, self.get(id)))
+    }
+
+    /// Maps every value, in [`all`](RxIndex::all) order.
+    pub fn try_map<U, E>(
+        &self,
+        mut f: impl FnMut(RxIndex, &T) -> core::result::Result<U, E>,
+    ) -> core::result::Result<RxValues<U>, E> {
+        use RxIndex::*;
+        Ok(RxValues {
+            application: f(Application, &self.application)?,
+            hashes_1: f(Hashes1, &self.hashes_1)?,
+            hashes_2: f(Hashes2, &self.hashes_2)?,
+            inner_collapse: f(InnerCollapse, &self.inner_collapse)?,
+            outer_collapse: f(OuterCollapse, &self.outer_collapse)?,
+            compute_v: f(ComputeV, &self.compute_v)?,
+            bind_challenges: {
+                let mut out = [(); NUM_BINDERS].map(|()| None);
+                for (k, slot) in out.iter_mut().enumerate() {
+                    *slot = Some(f(BindChallenges(k as u32), &self.bind_challenges[k])?);
+                }
+                out.map(|slot| slot.expect("filled"))
+            },
+            bind_beta: f(BindBeta, &self.bind_beta)?,
+            bind_endoscalar: f(BindEndoscalar, &self.bind_endoscalar)?,
+            endoscaling_steps: self
+                .endoscaling_steps
+                .iter()
+                .enumerate()
+                .map(|(step, value)| f(EndoscalingStep(step as u32), value))
+                .collect::<core::result::Result<_, E>>()?,
+            preamble: f(Preamble, &self.preamble)?,
+            inner_error: f(InnerError, &self.inner_error)?,
+            outer_error: f(OuterError, &self.outer_error)?,
+            query: f(Query, &self.query)?,
+            eval: f(Eval, &self.eval)?,
+            points_binding: f(PointsBinding, &self.points_binding)?,
+            points_children: f(PointsChildren, &self.points_children)?,
+            points_registry_wx: f(PointsRegistryWx, &self.points_registry_wx)?,
+            points_ab: f(PointsAb, &self.points_ab)?,
+            points_f: f(PointsF, &self.points_f)?,
+            points_walk: f(PointsWalk, &self.points_walk)?,
+        })
+    }
+
     /// Look up the value for the given rx index.
     pub fn get(&self, id: RxIndex) -> &T {
         use RxIndex::*;
@@ -483,9 +602,10 @@ impl<T> RxValues<T> {
         }
     }
 
-    /// Construct from a closure called once per variant in [`ALL`](RxIndex::ALL) order.
-    pub fn from_fn(mut f: impl FnMut(RxIndex) -> T) -> Self {
-        match Self::try_from_fn(|id| Ok::<_, core::convert::Infallible>(f(id))) {
+    /// Construct from a closure called once per variant in
+    /// [`all`](RxIndex::all) order, for profile `P`.
+    pub fn from_fn<P: Profile>(mut f: impl FnMut(RxIndex) -> T) -> Self {
+        match Self::try_from_fn::<P, _>(|id| Ok::<_, core::convert::Infallible>(f(id))) {
             Ok(v) => v,
             Err(e) => match e {},
         }
@@ -493,8 +613,8 @@ impl<T> RxValues<T> {
 
     /// Fallible construction from a closure called once per variant.
     ///
-    /// The closure is called in [`ALL`](RxIndex::ALL) order.
-    pub fn try_from_fn<E>(
+    /// The closure is called in [`all`](RxIndex::all) order, for profile `P`.
+    pub fn try_from_fn<P: Profile, E>(
         mut f: impl FnMut(RxIndex) -> core::result::Result<T, E>,
     ) -> core::result::Result<Self, E> {
         use RxIndex::*;
@@ -514,13 +634,9 @@ impl<T> RxValues<T> {
             },
             bind_beta: f(BindBeta)?,
             bind_endoscalar: f(BindEndoscalar)?,
-            endoscaling_steps: {
-                let mut out = [(); NUM_ENDOSCALING_STEPS].map(|()| None);
-                for (step, slot) in out.iter_mut().enumerate() {
-                    *slot = Some(f(EndoscalingStep(step as u32))?);
-                }
-                out.map(|slot| slot.expect("filled"))
-            },
+            endoscaling_steps: (0..NumSteps::<P>::len() as u32)
+                .map(|step| f(EndoscalingStep(step)))
+                .collect::<core::result::Result<_, E>>()?,
             preamble: f(Preamble)?,
             inner_error: f(InnerError)?,
             outer_error: f(OuterError)?,
@@ -555,7 +671,7 @@ pub enum RxComponent {
 /// These queries are consumed by both the prover-side `compute_f` path and the
 /// `compute_v` circuit. Keeping this prefix in one ordered list prevents the
 /// two implementations from drifting independently; the dynamic suffixes are
-/// still driven by [`RxIndex::ALL`] and [`InternalCircuitIndex::ALL`].
+/// still driven by [`RxIndex::all`] and [`InternalCircuitIndex::all`].
 pub(crate) enum StaticFQuery {
     /// Left child proof $p(u)=v$ check.
     LeftP,
@@ -627,14 +743,14 @@ pub(crate) const STATIC_F_QUERIES: [StaticFQuery; 20] = [
 ///
 /// Does not register internal steps (rerandomize, bootstrap); those are
 /// registered by the caller after this function returns.
-pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
+pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize>(
     mut registry: RegistryBuilder<'params, C::CircuitField, R>,
     params: &'params C::Params,
     log2_circuits: u32,
 ) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
     let initial_internal_circuits = registry.num_internal_circuits();
 
-    for &id in &InternalCircuitIndex::ALL {
+    for id in InternalCircuitIndex::all::<C::Profile>() {
         use InternalCircuitIndex::*;
         registry = match id {
             PreambleStage => {
@@ -683,35 +799,34 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
             }
             PointsChildrenStage => registry.register_bonding(<stages::points::ChildrenStage<
                 C::NestedCurve,
+                C::Profile,
             > as StageExt<C::CircuitField, R>>::mask(
             )?),
             PointsRegistryWxStage => registry.register_bonding(<stages::points::RegistryWxStage<
                 C::NestedCurve,
+                C::Profile,
             > as StageExt<C::CircuitField, R>>::mask(
             )?),
-            PointsAbStage => {
-                registry.register_bonding(<stages::points::AbStage<C::NestedCurve> as StageExt<
-                    C::CircuitField,
-                    R,
-                >>::mask()?)
-            }
-            PointsFStage => {
-                registry.register_bonding(<stages::points::FStage<C::NestedCurve> as StageExt<
-                    C::CircuitField,
-                    R,
-                >>::mask()?)
-            }
+            PointsAbStage => registry.register_bonding(<stages::points::AbStage<
+                C::NestedCurve,
+                C::Profile,
+            > as StageExt<C::CircuitField, R>>::mask(
+            )?),
+            PointsFStage => registry.register_bonding(<stages::points::FStage<
+                C::NestedCurve,
+                C::Profile,
+            > as StageExt<C::CircuitField, R>>::mask(
+            )?),
             PointsWalkStage => registry.register_bonding(<stages::points::WalkStage<
                 C::NestedCurve,
+                C::Profile,
             > as StageExt<C::CircuitField, R>>::mask(
             )?),
-            PointsWalkFinalStaged => {
-                registry
-                    .register_bonding(<stages::points::WalkStage<C::NestedCurve> as StageExt<
-                    C::CircuitField,
-                    R,
-                >>::final_mask()?)
-            }
+            PointsWalkFinalStaged => registry.register_bonding(<stages::points::WalkStage<
+                C::NestedCurve,
+                C::Profile,
+            > as StageExt<C::CircuitField, R>>::final_mask(
+            )?),
             BindEndoscalarCircuit => registry
                 .register_internal_circuit(circuits::bind_endoscalar::Circuit::<C, R>::new())?,
             EndoscalingStep(step) => registry.register_internal_circuit(
@@ -772,7 +887,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
 
     assert_eq!(
         registry.num_internal_circuits(),
-        initial_internal_circuits + InternalCircuitIndex::NUM,
+        initial_internal_circuits + InternalCircuitIndex::num::<C::Profile>(),
         "internal circuit count mismatch"
     );
 

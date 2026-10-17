@@ -162,7 +162,9 @@ fn wire_bindings_hold() {
     // The shapes append the bindings after the decider's claims, each over
     // its stage polynomial alone.
     let z = Fp::random(|bytes| rng.fill_bytes(bytes));
-    let shapes = claims::native_shapes(instance.circuit_id, z, &native).unwrap();
+    let shapes =
+        claims::native_shapes::<crate::profile::Standard, _>(instance.circuit_id, z, &native)
+            .unwrap();
     let tail = &shapes[shapes.len() - native.len()..];
     for ((m, shape), masked) in tail.iter().enumerate().zip(&native) {
         assert_eq!(shape.kind, Kind::Masked(m));

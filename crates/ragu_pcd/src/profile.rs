@@ -15,72 +15,156 @@
 //! The aggregator registry hardcodes the standard registry inside those
 //! circuits; the standard registry knows nothing of the aggregator.
 //!
-//! Today the crate's layout is the standard profile's, spelled out as the
-//! constants of the native and nested internal modules, and [`Shape::of`]
-//! rederives it from the profile's declarations so the two cannot drift.
-//! Making the layout generic over the profile, so one binary holds both
-//! shapes, is the step the decompression circuits need and comes with them.
+//! A cycle names its profile through [`ProfiledCycle`], so every generic item
+//! in this crate reaches the shape through the cycle it already carries, and
+//! a wallet proof and an aggregator proof over the same curves are different
+//! types. [`Pasta`] proves in the standard profile; [`Profiled`] puts a cycle
+//! under any other profile, keeping its curves, generators and Poseidon
+//! instances. The native and nested internal modules size their walks, index
+//! lists and value containers from the profile's [`Shape`], so one binary
+//! holds every profile's layout.
 
-use crate::internal::{endoscalar, native, nested};
+use core::{any::type_name, fmt, marker::PhantomData};
 
-/// A proof profile: what a proof carries beyond the standard fuse.
-///
-/// The declarations are the roots of the proof's [`Shape`]. Each extra rx
-/// polynomial on one side is a point the other side's walk folds, so an
-/// extension lengthens both walks; [`Shape::solve`] works out by how much.
-pub trait Profile: Copy + Default + Send + Sync + 'static {
-    /// The native rx polynomials the profile adds to the standard fuse's: one
-    /// per circuit or stage it registers on the native side.
+use ragu_core::{Cycle, pasta::Pasta};
+
+use crate::{
+    internal::{endoscalar, native, nested},
+    ipa::IpaCycle,
+};
+
+/// The internal circuits a proof carries beyond the fuse's own, as the rx
+/// polynomials they add on each side of the cycle.
+pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
+    /// The native rx polynomials the profile adds.
     const NATIVE_EXTENSION: usize;
-
-    /// The nested rx polynomials the profile adds, likewise one per nested
-    /// circuit or stage.
+    /// The nested rx polynomials the profile adds.
     const NESTED_EXTENSION: usize;
-
-    /// The native walk's step count.
-    ///
-    /// Pinned rather than derived, as the crate's layout pins it: the two
-    /// walks size each other, and fixing one count breaks the cycle.
-    /// [`Shape::of`] checks the pin is the fixed point, so a profile whose
-    /// extensions move it fails to build until it is re-pinned.
-    const NATIVE_ENDOSCALING_STEPS: usize;
 }
 
-/// The standard profile: the fuse alone. What wallets prove in.
+/// The standard profile: the fuse alone.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Standard;
 
 impl Profile for Standard {
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
-    const NATIVE_ENDOSCALING_STEPS: usize = 25;
 }
 
 /// The aggregator profile: the fuse plus the circuits that verify a
 /// [`Standard`] compressed proof in circuit.
 ///
 /// Those circuits do not exist yet, so the profile adds nothing and its shape
-/// is [`Standard`]'s. When they land, their rx polynomial counts go here and
-/// the walk is re-pinned to the fixed point [`Shape::solve`] reports.
+/// is [`Standard`]'s. When they land, their rx polynomial counts go here.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Aggregator;
 
 impl Profile for Aggregator {
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
-    const NATIVE_ENDOSCALING_STEPS: usize = 25;
+}
+
+/// A cycle with a profile: what every item that lays out a proof is generic
+/// over.
+pub trait ProfiledCycle: Cycle {
+    /// The profile of every proof over this cycle.
+    type Profile: Profile;
+}
+
+impl ProfiledCycle for Pasta {
+    type Profile = Standard;
+}
+
+/// A cycle under another profile: `C`'s curves, generators and Poseidon
+/// instances with `P`'s proof shape.
+///
+/// `Profiled<Pasta, Aggregator>` is the aggregator cycle over the Pasta
+/// curves. It is a distinct type from [`Pasta`], so an application over one
+/// never accepts the other's proofs.
+pub struct Profiled<C, P>(PhantomData<(C, P)>);
+
+impl<C, P> Clone for Profiled<C, P> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<C, P> Copy for Profiled<C, P> {}
+
+impl<C, P> Default for Profiled<C, P> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<C, P> fmt::Debug for Profiled<C, P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Profiled<{}, {}>", type_name::<C>(), type_name::<P>())
+    }
+}
+
+impl<C, P> PartialEq for Profiled<C, P> {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl<C, P> Eq for Profiled<C, P> {}
+
+impl<C: Cycle, P: Profile> Cycle for Profiled<C, P> {
+    type CircuitField = C::CircuitField;
+    type ScalarField = C::ScalarField;
+    type NestedCurve = C::NestedCurve;
+    type HostCurve = C::HostCurve;
+    type NestedGenerators = C::NestedGenerators;
+    type HostGenerators = C::HostGenerators;
+    type CircuitPoseidon = C::CircuitPoseidon;
+    type ScalarPoseidon = C::ScalarPoseidon;
+    type Params = C::Params;
+
+    fn nested_generators(params: &Self::Params) -> &Self::NestedGenerators {
+        C::nested_generators(params)
+    }
+
+    fn host_generators(params: &Self::Params) -> &Self::HostGenerators {
+        C::host_generators(params)
+    }
+
+    fn circuit_poseidon(params: &Self::Params) -> &Self::CircuitPoseidon {
+        C::circuit_poseidon(params)
+    }
+
+    fn scalar_poseidon(params: &Self::Params) -> &Self::ScalarPoseidon {
+        C::scalar_poseidon(params)
+    }
+}
+
+impl<C: IpaCycle, P: Profile> IpaCycle for Profiled<C, P> {
+    fn host_u(params: &Self::Params) -> &Self::HostCurve {
+        C::host_u(params)
+    }
+
+    fn nested_u(params: &Self::Params) -> &Self::NestedCurve {
+        C::nested_u(params)
+    }
+}
+
+impl<C: Cycle, P: Profile> ProfiledCycle for Profiled<C, P> {
+    type Profile = P;
 }
 
 /// The shape a profile gives a proof: its rx polynomial counts and the sizes
 /// of the two endoscaling walks.
 ///
-/// The sides size each other. Every native rx polynomial is a point the
-/// nested walk folds, the nested walk's steps are nested rx polynomials, every
-/// nested rx polynomial is a point the native walk folds, and the native
-/// walk's steps are native rx polynomials. Going once around, a native step
-/// adds about a quarter of a native step, so the map from a step count to the
-/// count the batch then needs is a contraction with one fixed point, which
-/// [`Shape::solve`] finds by iteration.
+/// The profile's extensions are the roots: each extra rx polynomial on one
+/// side is a point the other side's walk folds, so an extension lengthens
+/// both walks. The sides size each other. Every native rx polynomial is a
+/// point the nested walk folds, the nested walk's steps are nested rx
+/// polynomials, every nested rx polynomial is a point the native walk folds,
+/// and the native walk's steps are native rx polynomials. Going once around,
+/// a native step adds about a quarter of a native step, so the map from a
+/// step count to the count the batch then needs is a contraction with one
+/// fixed point, which [`Shape::solve`] finds by iteration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Shape {
     /// The native rx polynomials: the fixed ones, the walk's steps and the
@@ -94,25 +178,15 @@ pub struct Shape {
     pub nested_rx: usize,
     /// The host-curve points the native walk folds: the nested batch.
     pub native_points: usize,
-    /// The native walk's steps the batch needs. At the fixed point this is
-    /// the count the native rx polynomials were sized with.
+    /// The native walk's steps: the fixed point, where the count the batch
+    /// needs is the count the native rx polynomials were sized with.
     pub native_steps: usize,
 }
 
 impl Shape {
     /// The shape of profile `P`.
-    ///
-    /// # Panics
-    ///
-    /// Fails to evaluate when `P`'s pinned native step count is not the
-    /// fixed point of its extensions.
     pub const fn of<P: Profile>() -> Self {
-        let shape = Self::solve(P::NATIVE_EXTENSION, P::NESTED_EXTENSION);
-        assert!(
-            shape.native_steps == P::NATIVE_ENDOSCALING_STEPS,
-            "the profile's native step count is not the fixed point of its extensions; re-pin it"
-        );
-        shape
+        Self::solve(P::NATIVE_EXTENSION, P::NESTED_EXTENSION)
     }
 
     /// Solves the walk sizes for the given extensions, iterating the native
@@ -163,24 +237,6 @@ impl Shape {
     }
 }
 
-// The crate's layout is the standard profile's shape. Each constant the
-// layout spells out must agree with the rederivation, so an edit to either
-// side that moves the shape fails here.
-const _: () = {
-    let shape = Shape::of::<Standard>();
-    assert!(shape.native_rx == native::RxIndex::NUM);
-    assert!(shape.nested_points == nested::NUM_ENDOSCALING_POINTS);
-    assert!(shape.nested_steps == nested::NUM_ENDOSCALING_STEPS);
-    assert!(shape.nested_rx == nested::RxIndex::NUM);
-    assert!(shape.native_points == native::NUM_ENDOSCALING_POINTS);
-    assert!(shape.native_steps == native::NUM_ENDOSCALING_STEPS);
-};
-
-// The aggregator's pin must be its fixed point too.
-const _: () = {
-    Shape::of::<Aggregator>();
-};
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,6 +261,18 @@ mod tests {
     #[test]
     fn aggregator_matches_standard_until_its_circuits_land() {
         assert_eq!(Shape::of::<Aggregator>(), Shape::of::<Standard>());
+    }
+
+    #[test]
+    fn pasta_proves_in_the_standard_profile() {
+        assert_eq!(
+            Shape::of::<<Pasta as ProfiledCycle>::Profile>(),
+            Shape::of::<Standard>()
+        );
+        assert_eq!(
+            Shape::of::<<Profiled<Pasta, Aggregator> as ProfiledCycle>::Profile>(),
+            Shape::of::<Aggregator>()
+        );
     }
 
     #[test]
