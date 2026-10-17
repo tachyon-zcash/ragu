@@ -2,7 +2,9 @@
 # defaults and test oracles intentionally call the underlying arithmetic.
 # Clippy resolves the crate's canonical name, not the `udon` dependency alias.
 disallowed-methods = [
+  { path = "ragu_core::for_each_mut", reason = "Route PCD independent work through the selected Backend::for_each_mut" },
   { path = "ragu_core::msm", reason = "Route PCD MSMs through the selected Backend::msm" },
+  { path = "ragu_core::msm_batch", reason = "Route PCD MSM batches through the selected Backend::msm_batch" },
   { path = "zakura_udon::curve::Affine::msm", reason = "Route PCD MSMs through the selected Backend::msm" },
   { path = "ragu_circuits::polynomials::sparse::Polynomial::commit", reason = "Use the selected Backend::sparse_commit" },
   { path = "ragu_circuits::polynomials::sparse::Polynomial::commit_to_affine", reason = "Use the selected Backend::sparse_commit_to_affine" },

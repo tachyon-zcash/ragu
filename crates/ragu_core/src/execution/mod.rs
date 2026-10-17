@@ -4,5 +4,9 @@ mod executor;
 mod fft;
 mod msm;
 
+#[cfg(test)]
+mod tests;
+
+pub use executor::for_each_mut;
 pub use fft::{fft, ifft};
-pub use msm::msm;
+pub use msm::{msm, msm_batch};

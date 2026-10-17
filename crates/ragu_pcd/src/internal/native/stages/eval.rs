@@ -89,15 +89,15 @@ impl<P: udon::curve::EndomorphismAffine> BindingPartials<P> {
         let bases: alloc::vec::Vec<P> = (0..scalars.len())
             .map(|i| generators.g()[generator_index::<C, R>(i)])
             .collect();
-        let projective = core::array::from_fn::<_, NUM_BINDERS, _>(|k| {
+        let projective = B::msm_batch(core::array::from_fn::<_, NUM_BINDERS, _>(|k| {
             // The last sum includes the sign term.
             let n = if k + 1 == NUM_BINDERS {
                 scalars.len()
             } else {
                 2 * (k + 1)
             };
-            B::msm(scalars[..n].iter(), bases[..n].iter())
-        });
+            (scalars[..n].iter(), bases[..n].iter())
+        }));
         let mut sums = [P::identity(); NUM_BINDERS];
         P::batch_to_affine(&projective, &mut sums);
         let (partials, binding) = sums.split_at(NUM_BINDERS - 1);
@@ -145,8 +145,11 @@ impl<F: Field> ChildEvaluationsWitness<F> {
         proof: &Proof<C, R>,
         u: F,
     ) -> Self {
+        let mut rx = B::map(RxIndex::ALL.into_iter().map(|id| &proof[id]), |poly| {
+            B::sparse_eval(poly, u)
+        });
         ChildEvaluationsWitness {
-            rx: RxValues::from_fn(|id| B::sparse_eval(&proof[id], u)),
+            rx: RxValues::from_fn(|_| rx.next().expect("one evaluation per rx")),
             a_poly: B::sparse_eval(&proof[RxComponent::AbA], u),
             b_poly: B::sparse_eval(&proof[RxComponent::AbB], u),
             registry_xy_poly: B::sparse_eval(proof.native_registry_xy_poly(), u),

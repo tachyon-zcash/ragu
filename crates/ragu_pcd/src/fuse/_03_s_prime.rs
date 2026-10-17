@@ -75,10 +75,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let host_gen = C::host_generators(self.params);
         let mut commitments = [<C::HostCurve as Affine>::identity(); 2];
         <C::HostCurve as Affine>::batch_to_affine(
-            &[
-                B::sparse_commit(&registry_wx0_poly, host_gen),
-                B::sparse_commit(&registry_wx1_poly, host_gen),
-            ],
+            &B::sparse_commit_batch([&registry_wx0_poly, &registry_wx1_poly], host_gen),
             &mut commitments,
         );
         let [registry_wx0_commitment, registry_wx1_commitment] = commitments;
@@ -105,10 +102,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let nested_gen = C::nested_generators(self.params);
         let mut commitments = [<C::NestedCurve as Affine>::identity(); 2];
         <C::NestedCurve as Affine>::batch_to_affine(
-            &[
-                B::sparse_commit(&registry_wx0_poly, nested_gen),
-                B::sparse_commit(&registry_wx1_poly, nested_gen),
-            ],
+            &B::sparse_commit_batch([&registry_wx0_poly, &registry_wx1_poly], nested_gen),
             &mut commitments,
         );
         let [registry_wx0_commitment, registry_wx1_commitment] = commitments;

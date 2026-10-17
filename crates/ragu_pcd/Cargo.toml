@@ -82,6 +82,7 @@ harness = false
 name = "criterion_fuse"
 path = "benches/criterion/fuse.rs"
 harness = false
+required-features = ["multicore"]
 
 [[bench]]
 name = "criterion_registry"
@@ -92,6 +93,12 @@ harness = false
 name = "criterion_verify"
 path = "benches/criterion/verify.rs"
 harness = false
+
+[[bench]]
+name = "criterion_compress"
+path = "benches/criterion/compress.rs"
+harness = false
+required-features = ["multicore"]
 
 [[test]]
 name = "corruption"

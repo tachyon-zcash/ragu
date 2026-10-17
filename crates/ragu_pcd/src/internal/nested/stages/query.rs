@@ -20,7 +20,7 @@ use ragu_core::{
 use ragu_primitives::{
     Element, Point,
     io::Write,
-    vec::{FixedVec, Len},
+    vec::{CollectFixed, FixedVec, Len},
 };
 use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
@@ -63,7 +63,11 @@ impl<F: Field> ChildEvaluationsWitness<F> {
     ) -> Result<Self> {
         let child_x = nested::challenge::<C>(proof.x())?;
         Ok(ChildEvaluationsWitness {
-            rx: FixedVec::from_fn(|i| B::sparse_eval(&proof[RxIndex::ALL[i]], xz)),
+            rx: B::map(RxIndex::ALL.into_iter().map(|id| &proof[id]), |poly| {
+                B::sparse_eval(poly, xz)
+            })
+            .collect_fixed()
+            .expect("one evaluation per rx"),
             a_poly_at_xz: B::sparse_eval(&proof[RxComponent::AbA], xz),
             b_poly_at_x: B::sparse_eval(&proof[RxComponent::AbB], x),
             child_registry_xy_at_current_w: B::sparse_eval(proof.nested_registry_xy_poly(), w),

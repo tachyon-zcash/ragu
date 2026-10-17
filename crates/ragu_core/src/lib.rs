@@ -44,7 +44,7 @@ pub mod routines;
 
 pub use drivers::Coeff;
 pub use errors::{Error, Result};
-pub use execution::{fft, ifft, msm};
+pub use execution::{fft, for_each_mut, ifft, msm, msm_batch};
 pub use udon::{
     cycle::{Cycle, FixedGenerators},
     poseidon::PoseidonPermutation,

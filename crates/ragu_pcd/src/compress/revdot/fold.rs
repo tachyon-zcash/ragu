@@ -242,13 +242,6 @@ pub(crate) fn commitments<C: Affine, B: Backend, Id: Copy>(
     commitment: impl Fn(Id) -> C,
     fold: &Fold<C>,
 ) -> Vec<C> {
-    let derive = |terms: Vec<(C::Scalar, Id)>| -> C {
-        let (scalars, points): (Vec<_>, Vec<_>) = terms
-            .into_iter()
-            .map(|(weight, id)| (weight, commitment(id)))
-            .unzip();
-        B::msm(&scalars, &points).into()
-    };
     let weighted = |side: fn(&Shape<Id, C::Scalar>) -> &[(C::Scalar, Id)],
                     weight: fn(&Weights<C::Scalar>, usize) -> C::Scalar,
                     kinds: fn(Kind) -> bool| {
@@ -263,19 +256,29 @@ pub(crate) fn commitments<C: Affine, B: Backend, Id: Copy>(
             })
             .collect::<Vec<_>>()
     };
-    vec![
-        derive(weighted(|shape| &shape.a, Weights::a, |_| true)),
-        derive(weighted(
+    // All three commitments depend only on the replayed weights. Keep their
+    // jobs and results in Derived order, including an empty raw polynomial.
+    let inputs = [
+        weighted(|shape| &shape.a, Weights::a, |_| true),
+        weighted(
             |shape| &shape.a,
             Weights::b,
             |kind| matches!(kind, Kind::Circuit(_)),
-        )),
-        derive(weighted(
+        ),
+        weighted(
             |shape| &shape.b,
             Weights::b,
             |kind| matches!(kind, Kind::Raw),
-        )),
-        fold.inner,
-        fold.outer,
+        ),
     ]
+    .map(|terms| {
+        let (scalars, points): (Vec<_>, Vec<_>) = terms
+            .into_iter()
+            .map(|(weight, id)| (weight, commitment(id)))
+            .unzip();
+        (scalars, points)
+    });
+    let [a, dilated, b] =
+        B::msm_batch(inputs.each_ref().map(|(scalars, points)| (scalars, points))).map(C::from);
+    vec![a, dilated, b, fold.inner, fold.outer]
 }

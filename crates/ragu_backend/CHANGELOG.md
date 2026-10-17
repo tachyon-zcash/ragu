@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added the correctness-first `Backend` trait and `ReferenceBackend`.
+- Added `Backend::msm_batch`, with an ordered fallback to separate `Backend::msm`
+  calls that preserves individual MSM overrides.
+- Added `Backend::for_each_mut`, with a serial default for independent work.
+- Added `Backend::sparse_commit_batch` for independent polynomial commitments
+  and `Backend::map` for ordered independent work with a lazy serial default.
 - Added correctness-first sparse polynomial evaluation, reverse-dot,
   commitment, and registry evaluation backend methods.
 

@@ -401,6 +401,7 @@ name = "ragu_acceleration"
 version = "0.0.0"
 dependencies = [
  "ragu_backend",
+ "ragu_core",
  "zakura-udon",
 ]
 

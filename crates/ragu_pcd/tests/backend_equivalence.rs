@@ -16,7 +16,11 @@ use ragu_core::{
 use ragu_primitives::allocator::Standard;
 use ragu_testing::strategies::{bounded_edge_usize, edge_u64, nonzero_prime_field_element};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
-use udon::{curve::Affine, fft::Domain, field::Field};
+use udon::{
+    curve::{Affine, Projective},
+    fft::Domain,
+    field::Field,
+};
 
 use crate::{
     Application, ApplicationBuilder, CompressedPcd, CompressedProof, Pcd, Proof, SelectableBackend,
@@ -33,8 +37,12 @@ use crate::{
 static TRACKING_MSM_CALLS: AtomicUsize = AtomicUsize::new(0);
 static TRACKING_FFT_CALLS: AtomicUsize = AtomicUsize::new(0);
 static TRACKING_IFFT_CALLS: AtomicUsize = AtomicUsize::new(0);
+static TRACKING_WORK_CALLS: AtomicUsize = AtomicUsize::new(0);
+static TRACKING_MSM_PAIRS: AtomicUsize = AtomicUsize::new(0);
+static TRACKING_MSM_TRIPLES: AtomicUsize = AtomicUsize::new(0);
 
-/// Test backend that records MSM and transform dispatch, including worker threads.
+/// Test backend that records MSM, transform and independent-work dispatch,
+/// including worker threads.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct TrackingBackend;
 
@@ -43,18 +51,33 @@ impl TrackingBackend {
         TRACKING_MSM_CALLS.store(0, Ordering::Relaxed);
         TRACKING_FFT_CALLS.store(0, Ordering::Relaxed);
         TRACKING_IFFT_CALLS.store(0, Ordering::Relaxed);
+        TRACKING_WORK_CALLS.store(0, Ordering::Relaxed);
+        TRACKING_MSM_PAIRS.store(0, Ordering::Relaxed);
+        TRACKING_MSM_TRIPLES.store(0, Ordering::Relaxed);
     }
 
-    fn calls() -> [usize; 3] {
+    fn calls() -> [usize; 4] {
         [
             TRACKING_MSM_CALLS.load(Ordering::Relaxed),
             TRACKING_FFT_CALLS.load(Ordering::Relaxed),
             TRACKING_IFFT_CALLS.load(Ordering::Relaxed),
+            TRACKING_WORK_CALLS.load(Ordering::Relaxed),
         ]
     }
 }
 
 impl Backend for TrackingBackend {
+    fn map<I: IntoIterator, T: Send>(
+        inputs: I,
+        work: impl Fn(I::Item) -> T + Sync,
+    ) -> impl Iterator<Item = T>
+    where
+        I::Item: Send,
+    {
+        TRACKING_WORK_CALLS.fetch_add(1, Ordering::Relaxed);
+        ReferenceBackend::map(inputs, work)
+    }
+
     fn msm<
         'a,
         C: udon::curve::Affine,
@@ -71,6 +94,30 @@ impl Backend for TrackingBackend {
         ReferenceBackend::msm(coeffs, bases)
     }
 
+    fn msm_batch<
+        'a,
+        C: Affine,
+        A: IntoIterator<Item = &'a C::Scalar>,
+        Bases: IntoIterator<Item = &'a C>,
+        const N: usize,
+    >(
+        inputs: [(A, Bases); N],
+    ) -> [C::Projective; N]
+    where
+        Bases::IntoIter: Clone + Sync,
+    {
+        match N {
+            2 => {
+                TRACKING_MSM_PAIRS.fetch_add(1, Ordering::Relaxed);
+            }
+            3 => {
+                TRACKING_MSM_TRIPLES.fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {}
+        }
+        inputs.map(|(coeffs, bases)| Self::msm(coeffs, bases))
+    }
+
     fn fft<F: Field>(domain: Domain<F>, values: &mut Vec<F>) {
         TRACKING_FFT_CALLS.fetch_add(1, Ordering::Relaxed);
         ReferenceBackend::fft(domain, values);
@@ -79,6 +126,11 @@ impl Backend for TrackingBackend {
     fn ifft<F: Field>(domain: Domain<F>, values: &mut Vec<F>) {
         TRACKING_IFFT_CALLS.fetch_add(1, Ordering::Relaxed);
         ReferenceBackend::ifft(domain, values);
+    }
+
+    fn for_each_mut<T: Send>(values: &mut [T], work: impl Fn(usize, &mut T) + Sync) {
+        TRACKING_WORK_CALLS.fetch_add(1, Ordering::Relaxed);
+        ReferenceBackend::for_each_mut(values, work);
     }
 }
 
@@ -722,6 +774,144 @@ fn check_compressed_pcd_equivalence(
     Ok(())
 }
 
+static CALLS: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Clone, Copy, Debug, Default)]
+struct CustomBackend;
+
+impl Backend for CustomBackend {
+    fn msm<
+        'a,
+        C: Affine,
+        A: IntoIterator<Item = &'a C::Scalar>,
+        Bases: IntoIterator<Item = &'a C>,
+    >(
+        coeffs: A,
+        bases: Bases,
+    ) -> C::Projective
+    where
+        Bases::IntoIter: Clone + Sync,
+    {
+        CALLS.fetch_add(1, Ordering::Relaxed);
+        ReferenceBackend::msm(coeffs, bases)
+    }
+}
+
+#[test]
+fn batch_preserves_truncation_order_and_default_msm_override() {
+    fn check<C: Affine>() {
+        let scalars = [
+            C::Scalar::ONE,
+            C::Scalar::from(2),
+            C::Scalar::from(3),
+            C::Scalar::ZERO,
+        ];
+        let generator = C::generator();
+        let bases = [generator, -generator];
+        let inputs = [
+            (&scalars[..], &bases[..]),
+            (&scalars[..1], &bases[..]),
+            (&scalars[..0], &bases[..]),
+            (&scalars[..], &bases[..0]),
+            (&scalars[3..], &bases[..]),
+        ];
+        let expected = inputs.map(|(scalars, bases)| ReferenceBackend::msm(scalars, bases));
+        assert_eq!(ReferenceBackend::msm_batch(inputs), expected);
+        assert_eq!(AcceleratedBackend::msm_batch(inputs), expected);
+        assert_eq!(AcceleratedProver::msm_batch(inputs), expected);
+        CALLS.store(0, Ordering::Relaxed);
+        assert_eq!(CustomBackend::msm_batch(inputs), expected);
+        assert_eq!(CALLS.load(Ordering::Relaxed), inputs.len());
+        assert!(expected[2..].iter().all(|point| point.is_identity()));
+
+        let empty: [(&[C::Scalar], &[C]); 0] = [];
+        assert_eq!(ReferenceBackend::msm_batch(empty), []);
+        assert_eq!(AcceleratedBackend::msm_batch(empty), []);
+        assert_eq!(AcceleratedProver::msm_batch(empty), []);
+    }
+
+    check::<ragu_core::pasta::EpAffine>();
+    check::<ragu_core::pasta::EqAffine>();
+}
+
+#[test]
+fn serial_map_prepares_one_input_at_a_time() {
+    let completed = AtomicUsize::new(0);
+    let inputs = (0..5).inspect(|&index| {
+        assert_eq!(completed.load(Ordering::Relaxed), index);
+    });
+    let results = ReferenceBackend::map(inputs, |index| {
+        completed.fetch_add(1, Ordering::Relaxed);
+        index * 7
+    });
+    assert_eq!(completed.load(Ordering::Relaxed), 0);
+    assert_eq!(results.collect::<Vec<_>>(), [0, 7, 14, 21, 28]);
+    assert_eq!(completed.load(Ordering::Relaxed), 5);
+}
+
+#[test]
+fn backend_map_preserves_owned_inputs_and_result_order() {
+    fn check<B: Backend>(count: usize) {
+        let calls: Vec<_> = (0..count).map(|_| AtomicUsize::new(0)).collect();
+        // Non-Copy inputs and outputs exercise ownership across worker threads.
+        let inputs = (0..count).map(|index| alloc::vec![index]);
+        let results: Vec<_> = B::map(inputs, |mut input| {
+            let index = input[0];
+            calls[index].fetch_add(1, Ordering::Relaxed);
+            input.push(index * 7);
+            input
+        })
+        .collect();
+        let expected: Vec<_> = (0..count)
+            .map(|index| alloc::vec![index, index * 7])
+            .collect();
+        assert_eq!(results, expected);
+        assert!(calls.iter().all(|calls| calls.load(Ordering::Relaxed) == 1));
+    }
+    for workers in [1, 4] {
+        maybe_rayon::ThreadPoolBuilder::new()
+            .num_threads(workers)
+            .build()
+            .unwrap()
+            .install(|| {
+                for count in [0, 1, 17, 100] {
+                    check::<ReferenceBackend>(count);
+                    check::<AcceleratedBackend>(count);
+                    check::<AcceleratedProver>(count);
+                }
+            });
+    }
+}
+
+/// The default iterator must not prepare a parallel work buffer in Fuse.
+#[derive(Clone, Copy, Debug, Default)]
+struct SerialFuseBackend;
+
+impl Backend for SerialFuseBackend {
+    fn for_each_mut<T: Send>(_values: &mut [T], _work: impl Fn(usize, &mut T) + Sync) {
+        panic!("the serial Fuse path must retain its original iterators")
+    }
+}
+
+impl crate::backend::TestSealed for SerialFuseBackend {
+    type Verifier = ReferenceBackend;
+}
+
+#[test]
+fn serial_fuse_keeps_individual_msms_and_original_iteration() {
+    let app = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
+        .with_backend::<SerialFuseBackend>()
+        .register(UnitStep)
+        .unwrap()
+        .finalize(ragu_pcd::pasta::baked())
+        .unwrap();
+    let mut rng = StdRng::seed_from_u64(0);
+    let (left, ()) = app.seed(&mut rng, UnitStep, ()).unwrap();
+    let (right, ()) = app.seed(&mut rng, UnitStep, ()).unwrap();
+    let (fused, ()) = app.fuse(&mut rng, UnitStep, (), left, right).unwrap();
+    assert!(app.verify(&fused, &mut rng).unwrap());
+}
+
 #[test]
 fn selected_backend_dispatch_reaches_protocol_phases() {
     let app = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
@@ -750,24 +940,53 @@ fn selected_backend_dispatch_reaches_protocol_phases() {
     TrackingBackend::reset_calls();
     let (fused, ()) = app.fuse(&mut rng, UnitStep, (), left, right).unwrap();
     // Fuse interpolates registry restrictions with IFFT; it needs no FFT.
-    let [msm, _, ifft] = TrackingBackend::calls();
-    assert_dispatch("Fuse", &[("MSM", msm), ("IFFT", ifft)]);
+    let [msm, _, ifft, work] = TrackingBackend::calls();
+    assert_dispatch(
+        "Fuse",
+        &[("MSM", msm), ("IFFT", ifft), ("independent work", work)],
+    );
+    assert_eq!(
+        TRACKING_MSM_PAIRS.load(Ordering::Relaxed),
+        2,
+        "Fuse registry commitment pairs"
+    );
 
     TrackingBackend::reset_calls();
     assert!(app.verify(&fused, &mut rng).unwrap());
-    let [msm, _, _] = TrackingBackend::calls();
+    let [msm, _, _, _] = TrackingBackend::calls();
     assert_dispatch("uncompressed verification", &[("MSM", msm)]);
 
     TrackingBackend::reset_calls();
     let compressed = app.compress(&fused, &mut rng).unwrap();
-    let [msm, fft, ifft] = TrackingBackend::calls();
-    assert_dispatch("compression", &[("MSM", msm), ("FFT", fft), ("IFFT", ifft)]);
+    let [msm, fft, ifft, work] = TrackingBackend::calls();
+    assert_dispatch(
+        "compression",
+        &[
+            ("MSM", msm),
+            ("FFT", fft),
+            ("IFFT", ifft),
+            ("independent work", work),
+        ],
+    );
 
     // Compressed verification needs MSMs but does not require transforms.
     TrackingBackend::reset_calls();
     assert!(app.verify_compressed(&compressed).unwrap());
-    let [msm, _, _] = TrackingBackend::calls();
-    assert_dispatch("compressed verification", &[("MSM", msm)]);
+    let [msm, _, _, work] = TrackingBackend::calls();
+    assert_dispatch(
+        "compressed verification",
+        &[("MSM", msm), ("independent work", work)],
+    );
+    assert_eq!(
+        TRACKING_MSM_PAIRS.load(Ordering::Relaxed),
+        1,
+        "stage commitments"
+    );
+    assert_eq!(
+        TRACKING_MSM_TRIPLES.load(Ordering::Relaxed),
+        2,
+        "folded commitments on both curves"
+    );
 }
 
 /// The transcript's bridge commitments go through the selected backend, so a
@@ -1267,6 +1486,98 @@ mod proof_equivalence {
             }
 
             None
+        }
+    }
+}
+
+mod independent_polynomials {
+    use alloc::vec::Vec;
+
+    use ragu_acceleration::{AcceleratedBackend, AcceleratedProver};
+    use ragu_backend::ReferenceBackend;
+    use ragu_circuits::polynomials::TestRank;
+    use ragu_core::{Cycle, pasta::Pasta};
+
+    use super::*;
+
+    fn evaluate<B: Backend, F: Field, R: Rank, const N: usize>(
+        inputs: [(&sparse::Polynomial<F, R>, F); N],
+    ) -> Vec<F> {
+        B::map(inputs, |(poly, point)| B::sparse_eval(poly, point)).collect()
+    }
+
+    fn check<C: Affine>(generators: &impl FixedGenerators<C>) {
+        let polys: [_; 3] = core::array::from_fn(|i| {
+            sparse::Polynomial::<C::Scalar, TestRank>::from_coeffs(
+                (0..TestRank::num_coeffs())
+                    .map(|degree| {
+                        if i == 1 || (degree + i) % 3 == 0 {
+                            C::Scalar::ZERO
+                        } else {
+                            C::Scalar::from((degree * 7 + i + 1) as u64)
+                        }
+                    })
+                    .collect(),
+            )
+        });
+        let expected = polys
+            .each_ref()
+            .map(|poly| ReferenceBackend::sparse_commit(poly, generators));
+        assert_eq!(
+            ReferenceBackend::sparse_commit_batch(polys.each_ref(), generators),
+            expected
+        );
+        assert_eq!(
+            AcceleratedBackend::sparse_commit_batch(polys.each_ref(), generators),
+            expected
+        );
+        assert_eq!(
+            AcceleratedProver::sparse_commit_batch(polys.each_ref(), generators),
+            expected
+        );
+        let empty: [&sparse::Polynomial<C::Scalar, TestRank>; 0] = [];
+        assert_eq!(
+            AcceleratedBackend::sparse_commit_batch(empty, generators),
+            []
+        );
+
+        let inputs = [
+            (&polys[2], C::Scalar::from(7)),
+            (&polys[0], C::Scalar::ZERO),
+            (&polys[1], C::Scalar::ONE),
+            (&polys[2], C::Scalar::from(2)),
+        ];
+        // A dense Horner evaluation is independent of the sparse evaluator.
+        let expected = inputs.map(|(poly, point)| {
+            let coefficients: Vec<_> = poly.iter_coeffs().collect();
+            coefficients
+                .into_iter()
+                .rev()
+                .fold(C::Scalar::ZERO, |sum, coefficient| {
+                    sum * point + coefficient
+                })
+        });
+        assert_eq!(evaluate::<ReferenceBackend, _, _, 4>(inputs), expected);
+        assert_eq!(evaluate::<AcceleratedBackend, _, _, 4>(inputs), expected);
+        assert_eq!(evaluate::<AcceleratedProver, _, _, 4>(inputs), expected);
+        assert_eq!(
+            evaluate::<AcceleratedBackend, C::Scalar, TestRank, 0>([]),
+            []
+        );
+    }
+
+    #[test]
+    fn independent_polynomials_preserve_results_and_order() {
+        let params = crate::pasta::baked();
+        for workers in [1, std::thread::available_parallelism().unwrap().get()] {
+            maybe_rayon::ThreadPoolBuilder::new()
+                .num_threads(workers)
+                .build()
+                .unwrap()
+                .install(|| {
+                    check::<ragu_core::pasta::EqAffine>(Pasta::host_generators(params));
+                    check::<ragu_core::pasta::EpAffine>(Pasta::nested_generators(params));
+                });
         }
     }
 }
