@@ -21,6 +21,7 @@ use ragu_core::{
 use udon::field::Field;
 
 #[cfg(feature = "unstable-fuzzing")]
+#[path = "../../tests/hoisted_products.rs"]
 mod hoisted_products;
 
 pub fn assert_stage_values<F, R, S>(stage: &S)
