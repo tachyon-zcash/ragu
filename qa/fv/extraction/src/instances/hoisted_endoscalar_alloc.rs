@@ -1,19 +1,22 @@
+use core::marker::PhantomData;
+
 use ragu_core::pasta::Fp;
 use ragu_primitives::{HoistedEndoscalar, Uendo};
+use udon::field::Field;
 
 use crate::instance::{CircuitInstance, InstanceDriver, WireCollector};
 
-pub struct HoistedEndoscalarAllocInstance;
+pub struct HoistedEndoscalarAllocInstance<F = Fp>(PhantomData<F>);
 
-impl CircuitInstance for HoistedEndoscalarAllocInstance {
-    type Field = Fp;
+impl<F: Field> CircuitInstance for HoistedEndoscalarAllocInstance<F> {
+    type Field = F;
 
     /// Drives the real `HoistedEndoscalar::alloc`: the `ENDOSCALAR_BITS` bit
     /// wires followed by the `ENDOSCALAR_PRODUCTS` product wires, every one a
     /// `Boolean::alloc`. Output: all of them, in that order.
     fn circuit<'dr, D>(dr: &mut D) -> ragu_core::Result<Vec<D::Wire>>
     where
-        D: InstanceDriver<'dr, F = Fp>,
+        D: InstanceDriver<'dr, F = F>,
     {
         // MaybeKind = Empty: the value closure threaded into the per-wire
         // `Boolean::alloc` calls is never executed under extraction.

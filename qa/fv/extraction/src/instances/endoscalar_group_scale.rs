@@ -1,16 +1,18 @@
-use ragu_core::pasta::{EpAffine, Fp};
+use core::marker::PhantomData;
+
+use ragu_core::pasta::EpAffine;
 use ragu_primitives::{ENDOSCALAR_BITS, Point};
-use udon::curve::Affine;
+use udon::curve::EndomorphismAffine as Affine;
 
 use crate::{
     instance::{CircuitInstance, InstanceDriver, WireCollector, WireDeserializer},
     wire_remap::{boolean_from_wire, endoscalar_from_bits},
 };
 
-pub struct EndoscalarGroupScaleInstance;
+pub struct EndoscalarGroupScaleInstance<C = EpAffine>(PhantomData<C>);
 
-impl CircuitInstance for EndoscalarGroupScaleInstance {
-    type Field = Fp;
+impl<C: Affine> CircuitInstance for EndoscalarGroupScaleInstance<C> {
+    type Field = C::Base;
 
     /// Drives the real `Endoscalar::group_scale` on an `Endoscalar` assembled
     /// from the bit input wires (see [`boolean_from_wire`] and
@@ -24,7 +26,7 @@ impl CircuitInstance for EndoscalarGroupScaleInstance {
     /// the point's `(x, y)`. Output: the scaled point's `(x, y)`.
     fn circuit<'dr, D>(dr: &mut D) -> ragu_core::Result<Vec<D::Wire>>
     where
-        D: InstanceDriver<'dr, F = Fp>,
+        D: InstanceDriver<'dr, F = C::Base>,
     {
         let bits: Vec<_> = dr
             .alloc_input_wires(ENDOSCALAR_BITS)
@@ -34,7 +36,7 @@ impl CircuitInstance for EndoscalarGroupScaleInstance {
         let point_wires = dr.alloc_input_wires(2);
 
         let endo = endoscalar_from_bits(&bits)?;
-        let point_template = Point::constant(dr, EpAffine::generator())?;
+        let point_template = Point::constant(dr, C::generator())?;
         let p = WireDeserializer::new(point_wires).into_gadget(&point_template)?;
 
         let acc = endo.group_scale(dr, &p)?;

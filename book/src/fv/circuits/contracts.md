@@ -248,8 +248,12 @@ Closing this contract requires all of the following:
 The recursive substitution tests currently exercise stage-bit, product,
 and challenge substitutions through two generations, with honest controls.
 PR CI replays the saved cases and a fresh case for the selected properties.
-These are finite integration checks. They do not establish this contract,
-and passing them does not discharge any of the proof obligations above.
+Separate owner-circuit regressions change every hoisted product at native
+`bind_endoscalar` and nested `export`, at bootstrap and at an ordinary fuse.
+They isolate each product equation and reject malformed stage values without
+depending on the walk's constraints. These are finite checks. They do not
+establish this contract, and passing them does not discharge any of the proof
+obligations above.
 
 ## Robustness and enforcement
 

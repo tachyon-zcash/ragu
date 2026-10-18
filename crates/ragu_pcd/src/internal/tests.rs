@@ -20,6 +20,9 @@ use ragu_core::{
 };
 use udon::field::Field;
 
+#[cfg(feature = "unstable-fuzzing")]
+mod hoisted_products;
+
 pub fn assert_stage_values<F, R, S>(stage: &S)
 where
     F: Field,

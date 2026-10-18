@@ -42,7 +42,7 @@ theorem initial_eq (ζ s e : F p) :
   all_goals simp [Lift.initValue, initIndex, indexValue, hs, he]
 
 /-- A digit's lift value is the field evaluation of its `digitIndex`, using
-`ζ² + ζ + 1 = 0` for the `(1, 1)` digit: the per-digit case of
+`ζ² + ζ + 1 = 0` for the `(0, 1)` digit: the per-digit case of
 `liftNative_eq_endoscaleN`. -/
 theorem digit_eq (ζ s e1 e2 : F p) (hζ : ζ ^ 2 + ζ + 1 = 0) :
     Lift.digitValue ζ s e1 e2 = indexValue ζ

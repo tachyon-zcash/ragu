@@ -37,7 +37,7 @@ this part.
 
 ## What is verified today
 
-Verification currently covers the gadget layer: 57 concrete circuit instances,
+Verification currently covers the gadget layer: 65 concrete circuit instances,
 each one a specific instantiation at a fixed prime field with all compile-time
 parameters made concrete.
 
@@ -53,6 +53,7 @@ parameters made concrete.
 - **Endoscalars** — allocation, extraction, lifting, and radix-3 group
   scaling, in both the plain form and the hoisted form that reads its digit
   products from stage wires, plus the contract that pins those product wires.
+  All eight extraction instances are enrolled over both Pasta fields.
   The integer non-collision bounds are connected to the complete curve group
   and the affine walk. Concrete soundness and completeness endpoints on both
   Pasta curves derive walk success from the certified prime group orders.

@@ -1,15 +1,18 @@
+use core::marker::PhantomData;
+
 use ragu_core::pasta::Fp;
 use ragu_primitives::{ENDOSCALAR_BITS, ENDOSCALAR_PRODUCTS};
+use udon::field::Field;
 
 use crate::{
     instance::{CircuitInstance, InstanceDriver, WireCollector},
     wire_remap::{boolean_from_wire, hoisted_endoscalar_from_bits},
 };
 
-pub struct HoistedEndoscalarLiftInstance;
+pub struct HoistedEndoscalarLiftInstance<F = Fp>(PhantomData<F>);
 
-impl CircuitInstance for HoistedEndoscalarLiftInstance {
-    type Field = Fp;
+impl<F: Field> CircuitInstance for HoistedEndoscalarLiftInstance<F> {
+    type Field = F;
 
     /// Drives the real `HoistedEndoscalar::lift` on a gadget assembled from
     /// the bit and product input wires (see [`boolean_from_wire`] and
@@ -19,7 +22,7 @@ impl CircuitInstance for HoistedEndoscalarLiftInstance {
     /// `products[0..ENDOSCALAR_PRODUCTS]`. Output: the lifted element.
     fn circuit<'dr, D>(dr: &mut D) -> ragu_core::Result<Vec<D::Wire>>
     where
-        D: InstanceDriver<'dr, F = Fp>,
+        D: InstanceDriver<'dr, F = F>,
     {
         let bits: Vec<_> = dr
             .alloc_input_wires(ENDOSCALAR_BITS)
