@@ -12,6 +12,8 @@
 //! - [`header::Header`] — the trait that defines succinct state representations.
 //! - [`Proof`] / [`Pcd`] — the proof and proof-carrying-data structures.
 //! - [`CompressedProof`] / [`CompressedPcd`] — their compressed forms.
+//! - [`profile`] — the proof shapes: the standard profile wallets prove in,
+//!   and the aggregator profile that will carry decompression.
 //! - [`pasta`] — Ragu's fixed generators, derived and embedded at build time
 //!   with the `baked` feature.
 
@@ -41,6 +43,7 @@ mod internal;
 pub mod ipa;
 mod multicore;
 pub mod pasta;
+pub mod profile;
 mod proof;
 pub mod step;
 mod verify;

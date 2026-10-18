@@ -38,17 +38,23 @@ pub mod circuits {
 
 use crate::internal::{endoscalar, fold_revdot::Parameters};
 
+/// The number of curve points the nested walk folds for a native batch of
+/// `native_rx` rx polynomials: `f`'s commitment, then for each child its
+/// native rx commitments, $a$, $b$, `registry_xy` and $p$, then the current
+/// step's two `registry_wx`, `registry_wy`, $a$, $b$ and `registry_xy`.
+pub const fn num_endoscaling_points(native_rx: usize) -> usize {
+    1 + 2 * (native_rx + 4) + 6
+}
+
 /// Number of curve points accumulated during `compute_p` for nested field
-/// endoscaling verification: the native batch's commitments.
-///
-/// This is `f`'s commitment, then for each child its native rx commitments,
-/// $a$, $b$, `registry_xy` and $p$, then the current step's two
-/// `registry_wx`, `registry_wy`, $a$, $b$ and `registry_xy`. See `_10_p`
-/// for the canonical accumulation order.
+/// endoscaling verification: the native batch's commitments, per
+/// [`num_endoscaling_points`]. See `_10_p` for the canonical accumulation
+/// order.
 ///
 /// The endoscaling circuits process these points across
 /// [`NUM_ENDOSCALING_STEPS`] steps.
-pub const NUM_ENDOSCALING_POINTS: usize = 1 + 2 * (crate::internal::native::RxIndex::NUM + 4) + 6;
+pub const NUM_ENDOSCALING_POINTS: usize =
+    num_endoscaling_points(crate::internal::native::RxIndex::NUM);
 
 /// The endoscalings a nested step performs: what fits a step beside the
 /// stages it reserves, which hold every point the walk consumes.
@@ -56,7 +62,7 @@ pub const ENDOSCALINGS_PER_STEP: usize = 4;
 
 /// Number of endoscaling steps, derived from [`NUM_ENDOSCALING_POINTS`] via
 /// [`endoscalar::num_steps`].
-const NUM_ENDOSCALING_STEPS: usize =
+pub(crate) const NUM_ENDOSCALING_STEPS: usize =
     endoscalar::num_steps::<ENDOSCALINGS_PER_STEP>(NUM_ENDOSCALING_POINTS);
 
 /// The nested points stage, over the native batch's commitments.
@@ -84,6 +90,16 @@ pub type NumStepsLen = endoscalar::NumStepsLen<NUM_ENDOSCALING_POINTS, ENDOSCALI
 /// The number of circuits whose public input is the nested [`unified`]
 /// instance: export, collapse and compute-v.
 pub const NUM_INSTANCE_CIRCUITS: usize = 3;
+
+/// The nested rx polynomials that are not endoscaling steps: the instance
+/// circuits', the endoscalar and points stages', the eight bridge stages'
+/// and the challenge stage's.
+pub const NUM_FIXED_RX: usize = NUM_INSTANCE_CIRCUITS + 11;
+
+/// The nested internal circuits that are not endoscaling steps: the rx
+/// polynomials' circuits and stages, the two final stage masks and the
+/// loading circuit.
+pub const NUM_FIXED_INTERNAL: usize = NUM_FIXED_RX + 3;
 
 /// Parameters for folding the children's nested-field revdot claims.
 ///
@@ -221,7 +237,7 @@ pub enum InternalCircuitIndex {
 impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`],
     /// equal to the number of entries in [`InternalCircuitIndex::ALL`].
-    pub const NUM: usize = NUM_ENDOSCALING_STEPS + NUM_INSTANCE_CIRCUITS + 14;
+    pub const NUM: usize = NUM_ENDOSCALING_STEPS + NUM_FIXED_INTERNAL;
 
     /// The circuits whose public input is the nested [`unified`] instance,
     /// in claim order.
@@ -324,7 +340,7 @@ pub enum RxIndex {
 impl RxIndex {
     /// The number of rx components in the nested field,
     /// equal to the number of entries in [`RxIndex::ALL`].
-    pub const NUM: usize = NUM_ENDOSCALING_STEPS + NUM_INSTANCE_CIRCUITS + 11;
+    pub const NUM: usize = NUM_ENDOSCALING_STEPS + NUM_FIXED_RX;
 
     /// The rx polynomials of the instance circuits, in
     /// [`InternalCircuitIndex::INSTANCE`] order.

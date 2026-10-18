@@ -52,6 +52,16 @@ const _: () = assert!(
     "NUM_ENDOSCALING_STEPS is not the number of steps over the nested batch; re-pin it"
 );
 
+/// The native rx polynomials that are not endoscaling steps: the
+/// application's, the five hashing, collapse and compute-v circuits', the
+/// binders', bind-beta's, bind-endoscalar's and the eleven stages'.
+pub const NUM_FIXED_RX: usize = 19 + NUM_BINDERS;
+
+/// The native internal circuits that are not endoscaling steps: the rx
+/// polynomials' circuits and stages, the application's aside, and the four
+/// final stage masks.
+pub const NUM_FIXED_INTERNAL: usize = NUM_FIXED_RX - 1 + 4;
+
 /// Default parameters for native revdot folding
 #[derive(Clone, Copy, Default)]
 pub struct RevdotParameters;
@@ -136,7 +146,7 @@ pub const fn total_circuit_counts(num_application_steps: usize) -> (usize, u32) 
 impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`],
     /// equal to the number of variants in [`InternalCircuitIndex`].
-    pub const NUM: usize = 22 + NUM_BINDERS + NUM_ENDOSCALING_STEPS;
+    pub const NUM: usize = NUM_FIXED_INTERNAL + NUM_ENDOSCALING_STEPS;
 
     /// All variants in canonical iteration order.
     ///
@@ -366,7 +376,7 @@ pub enum RxIndex {
 
 impl RxIndex {
     /// The number of rx polynomial components.
-    pub const NUM: usize = 19 + NUM_BINDERS + NUM_ENDOSCALING_STEPS;
+    pub const NUM: usize = NUM_FIXED_RX + NUM_ENDOSCALING_STEPS;
 
     /// All variants in canonical order.
     ///
