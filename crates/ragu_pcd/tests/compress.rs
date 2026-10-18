@@ -61,6 +61,7 @@ struct Seed;
 
 impl Step<Pasta> for Seed {
     const INDEX: Index = Index::new(0);
+    type Shared = ();
     type Witness<'source> = Fp;
     type Aux<'source> = ();
     type Left = ();
@@ -79,6 +80,7 @@ impl Step<Pasta> for Seed {
             Encoded<'dr, D, Self::Right, HS>,
             Encoded<'dr, D, Self::Output, HS>,
         ),
+        (),
         DriverValue<D, Fp>,
         DriverValue<D, ()>,
     )>
@@ -92,6 +94,7 @@ impl Step<Pasta> for Seed {
                 Encoded::new(dr, allocator, right)?,
                 Encoded::new(dr, allocator, witness.clone())?,
             ),
+            (),
             witness,
             D::unit(),
         ))

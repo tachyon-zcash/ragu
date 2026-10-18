@@ -19,7 +19,7 @@ pub use circuits::bind_challenges::NUM_BINDERS;
 use ragu_circuits::{
     polynomials::Rank,
     registry::{CircuitIndex, RegistryBuilder},
-    staging::StageExt,
+    staging::{self, StageExt},
 };
 use ragu_core::{Cycle, Result};
 use ragu_primitives::vec::ConstLen;
@@ -122,6 +122,12 @@ pub enum InternalCircuitIndex {
     OuterErrorFinalStaged,
     EvalFinalStaged,
     PointsWalkFinalStaged,
+    // Application masks
+    /// The mask of the application stage.
+    ApplicationStage,
+    /// The final mask of application step circuits, which load the
+    /// application stage as their only stage.
+    ApplicationFinalStaged,
 }
 
 /// Compute the total circuit count and log2 domain size from the number of
@@ -136,7 +142,7 @@ pub const fn total_circuit_counts(num_application_steps: usize) -> (usize, u32) 
 impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`],
     /// equal to the number of variants in [`InternalCircuitIndex`].
-    pub const NUM: usize = 22 + NUM_BINDERS + NUM_ENDOSCALING_STEPS;
+    pub const NUM: usize = 24 + NUM_BINDERS + NUM_ENDOSCALING_STEPS;
 
     /// All variants in canonical iteration order.
     ///
@@ -187,6 +193,8 @@ impl InternalCircuitIndex {
         push(&mut slots, &mut c, Self::OuterErrorFinalStaged);
         push(&mut slots, &mut c, Self::EvalFinalStaged);
         push(&mut slots, &mut c, Self::PointsWalkFinalStaged);
+        push(&mut slots, &mut c, Self::ApplicationStage);
+        push(&mut slots, &mut c, Self::ApplicationFinalStaged);
         assert!(c == Self::NUM);
         slots
     }
@@ -232,6 +240,8 @@ pub struct InternalCircuitValues<T> {
     pub outer_error_final_staged: T,
     pub eval_final_staged: T,
     pub points_walk_final_staged: T,
+    pub application_stage: T,
+    pub application_final_staged: T,
 }
 
 impl<T> InternalCircuitValues<T> {
@@ -263,6 +273,8 @@ impl<T> InternalCircuitValues<T> {
             OuterErrorFinalStaged => &self.outer_error_final_staged,
             EvalFinalStaged => &self.eval_final_staged,
             PointsWalkFinalStaged => &self.points_walk_final_staged,
+            ApplicationStage => &self.application_stage,
+            ApplicationFinalStaged => &self.application_final_staged,
         }
     }
 
@@ -319,6 +331,8 @@ impl<T> InternalCircuitValues<T> {
             outer_error_final_staged: f(OuterErrorFinalStaged)?,
             eval_final_staged: f(EvalFinalStaged)?,
             points_walk_final_staged: f(PointsWalkFinalStaged)?,
+            application_stage: f(ApplicationStage)?,
+            application_final_staged: f(ApplicationFinalStaged)?,
         })
     }
 }
@@ -327,7 +341,13 @@ impl<T> InternalCircuitValues<T> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RxIndex {
     // Circuits
+    /// The application step's own rx polynomial.
     Application,
+    /// The application stage's rx polynomial, which the application claim
+    /// adds to the step's own. The stage mask holds it to the stage's block
+    /// and the application final mask holds the step's own polynomial to zero
+    /// there, so its commitment binds exactly the step's shared gadget.
+    ApplicationStage,
     Hashes1,
     Hashes2,
     InnerCollapse,
@@ -366,7 +386,7 @@ pub enum RxIndex {
 
 impl RxIndex {
     /// The number of rx polynomial components.
-    pub const NUM: usize = 19 + NUM_BINDERS + NUM_ENDOSCALING_STEPS;
+    pub const NUM: usize = 20 + NUM_BINDERS + NUM_ENDOSCALING_STEPS;
 
     /// All variants in canonical order.
     ///
@@ -380,6 +400,7 @@ impl RxIndex {
         let mut slots = [None; Self::NUM];
         let mut c = 0;
         push(&mut slots, &mut c, Self::Application);
+        push(&mut slots, &mut c, Self::ApplicationStage);
         push(&mut slots, &mut c, Self::Hashes1);
         push(&mut slots, &mut c, Self::Hashes2);
         push(&mut slots, &mut c, Self::InnerCollapse);
@@ -425,6 +446,7 @@ impl RxIndex {
 #[derive(Clone)]
 pub struct RxValues<T> {
     pub application: T,
+    pub application_stage: T,
     pub hashes_1: T,
     pub hashes_2: T,
     pub inner_collapse: T,
@@ -453,6 +475,7 @@ impl<T> RxValues<T> {
         use RxIndex::*;
         match id {
             Application => &self.application,
+            ApplicationStage => &self.application_stage,
             Hashes1 => &self.hashes_1,
             Hashes2 => &self.hashes_2,
             InnerCollapse => &self.inner_collapse,
@@ -493,6 +516,7 @@ impl<T> RxValues<T> {
         use RxIndex::*;
         Ok(RxValues {
             application: f(Application)?,
+            application_stage: f(ApplicationStage)?,
             hashes_1: f(Hashes1)?,
             hashes_2: f(Hashes2)?,
             inner_collapse: f(InnerCollapse)?,
@@ -620,16 +644,27 @@ pub(crate) const STATIC_F_QUERIES: [StaticFQuery; 20] = [
 ///
 /// Does not register internal steps (rerandomize, bootstrap); those are
 /// registered by the caller after this function returns.
+///
+/// `shared_size` is the largest registered shared gadget size, which fixes
+/// the layout of the application masks.
 pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
     mut registry: RegistryBuilder<'params, C::CircuitField, R>,
     params: &'params C::Params,
     log2_circuits: u32,
+    shared_size: usize,
 ) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
     let initial_internal_circuits = registry.num_internal_circuits();
+
+    // The application stage follows the SYSTEM gate in every step circuit.
+    let shared_gates = staging::stage_gates(shared_size);
 
     for &id in &InternalCircuitIndex::ALL {
         use InternalCircuitIndex::*;
         registry = match id {
+            ApplicationStage => registry.register_bonding(staging::stage_mask(1, shared_gates)?),
+            ApplicationFinalStaged => {
+                registry.register_bonding(staging::final_stage_mask(1 + shared_gates)?)
+            }
             PreambleStage => {
                 registry.register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)
             }

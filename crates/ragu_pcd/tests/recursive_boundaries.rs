@@ -35,6 +35,7 @@ mod registry {
 
     impl<const I: usize> Step<C> for ConstantSeed<I> {
         const INDEX: Index = Index::new(I);
+        type Shared = ();
         type Witness<'source> = ();
         type Aux<'source> = ();
         type Left = ();
@@ -53,6 +54,7 @@ mod registry {
                 Encoded<'dr, D, (), N>,
                 Encoded<'dr, D, Value, N>,
             ),
+            (),
             DriverValue<D, Fp>,
             DriverValue<D, ()>,
         )>
@@ -64,7 +66,12 @@ mod registry {
             let right = Encoded::new(dr, allocator, right)?;
             let output = Element::constant(dr, self.0);
             let data = output.value().map(|v| *v);
-            Ok(((left, right, Encoded::from_gadget(output)), data, D::unit()))
+            Ok((
+                (left, right, Encoded::from_gadget(output)),
+                (),
+                data,
+                D::unit(),
+            ))
         }
     }
 
@@ -232,6 +239,8 @@ mod registry {
             OuterErrorFinalStaged,
             EvalFinalStaged,
             PointsWalkFinalStaged,
+            ApplicationStage,
+            ApplicationFinalStaged,
         ]
         .into_iter()
         .map(InternalCircuitIndex::circuit_index)

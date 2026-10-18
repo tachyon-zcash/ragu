@@ -122,6 +122,8 @@ pub enum RxComponent {
 pub enum NativeRx {
     /// The application circuit's rx polynomial.
     Application,
+    /// The application stage's rx polynomial.
+    ApplicationStage,
     /// The `hashes_1` circuit's rx polynomial.
     Hashes1,
     /// The `hashes_2` circuit's rx polynomial.
@@ -192,6 +194,7 @@ impl NativeRx {
         use crate::internal::native::RxIndex as I;
         match v {
             I::Application => Self::Application,
+            I::ApplicationStage => Self::ApplicationStage,
             I::Hashes1 => Self::Hashes1,
             I::Hashes2 => Self::Hashes2,
             I::InnerCollapse => Self::InnerCollapse,
