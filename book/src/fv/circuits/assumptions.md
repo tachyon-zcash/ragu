@@ -47,16 +47,18 @@ The Ragu Formal Verification relies on some assumptions.
 
 - The logical foundation is not contradictory
     - The Lean kernel theory and implementation are sound.
-    - The axioms we use do not turn false propositions to be provable. After a
-      theorem, the command `#print axioms <theoremName>` prints the axioms the
-      theorem transitively depends on. Typically the axioms reported are
-      `propext`, `Classical.choice`, `Quot.sound`, `Lean.ofReduceBool`,
-      `Lean.trustCompiler`, and `Ragu.Core.Primes.p_prime`. There is a chance
-      that `Lean.trustCompiler` and `Lean.ofReduceBool` can be used to prove
-      falsehood, so there is a possibility that these axioms are used somewhere
-      to prove something that is not true. Moreover, it is unknown whether the
-      commonly used axioms `propext`, `Classical.choice`, and `Quot.sound` can
-      be used to prove falsehood.
+    - Each theorem's transitive axioms stay within its declared trust budget.
+      `#print axioms <theoremName>` lists them, and `Ragu.Meta.TrustBoundary`
+      enforces the budget during the build. The standard theorem tier permits
+      `propext`, `Classical.choice`, and `Quot.sound`.
+    - The concrete Pasta endoscaling theorems additionally reuse the existing
+      CompElliptic group-order certificates `Pallas.q_nsmul_Gpt` and
+      `Vesta.p_nsmul_Gpt`, as appropriate for the curve. Those certificates
+      use `native_decide` and therefore trust compiled evaluation. Each
+      dependent endpoint names the exact certificate it uses. The integer
+      bounds and affine/group bridge introduce no additional native
+      certificates or axioms. The Pasta primality results are proved theorems,
+      not assumed primality axioms.
 
 ## Assumptions for the Ragu Formal Verification to be useful
 

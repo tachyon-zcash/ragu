@@ -122,24 +122,37 @@ Most child verifier assumptions are `True`. The nontrivial paths are:
 | Point inputs lie on the curve | Passed from the parent assumption or established by a prior point child spec. |
 | Point doubling has no order-two input | Derived from `curveParams.noOrderTwoPoints`, giving the nonzero denominator. |
 | An unchecked triple-and-add chain succeeds | `GroupScale.Step` and `HoistedGroupScale.Step` pass `stepNative != none` on; `Point.TripleAndAddIncompleteUnchecked` unpacks it into the chain's three distinct-x conditions. |
-| Every group-scale step succeeds | `GroupScale` and `HoistedGroupScale` thread `groupScaleNative != none` through the 47-step invariant. |
+| Every group-scale step succeeds | `WalkGroup` proves the 47-step affine/group invariant; `WalkPasta` discharges `groupScaleNative != none` for both Pasta curves. Generic curve contracts still carry the premise. |
 | Product wires are the products of their bits | `HoistedLift` and `HoistedGroupScale` receive it as an assumption; it is `EnforceProducts`'s postcondition. |
 | A nontrivial cube root of unity | Passed from the parent (`Lift`, the walks, and their digit and step children), where the `(1, 1)` digit's affine value `2 + λ²` is `1 - λ` only modulo `λ² + λ + 1 = 0`. |
 
 The caller-visible residual assumptions are:
 
 - `Point.Consistent` receives `curveParams.nonzeroCoordinates` externally.
-- `Endoscalar.GroupScale` and `HoistedGroupScale` receive
-  `groupScaleNative != none`, the no-collision/non-degeneracy obligation for
-  the radix-3 walk.
-  `Ragu.Lemmas.EndoscalarProof.groupScale_collision_combinations_ne_zero`
-  proves its integer core: the accumulator's Eisenstein norm never drops
-  below 4 while a digit point's is at most 3. The curve-side step relating
-  the affine accumulator to the scalar multiple remains outside the gadget
-  proof, which does not manufacture the premise.
+- Generic `Endoscalar.GroupScale` and `HoistedGroupScale` contracts receive
+  `groupScaleNative != none`. Their concrete `ep_soundness`, `eq_soundness`,
+  `ep_completeness`, and `eq_completeness` endpoints derive it and require
+  only `PastaAssumptions`: an on-curve affine point, boolean bits, and, for
+  the hoisted walk, the product-wire relation.
 - `HoistedLift` and `HoistedGroupScale` receive the product-wire relation,
   which `EnforceProducts` establishes once per endoscalar stage at the
   circuit that pins the stage.
+
+The non-degeneracy proof connects the integer bounds to the actual affine
+walk. `CoordinateMap` proves that normalization preserves complete addition
+and group order. `Point.Group` identifies the partial affine formulas with
+the complete group law. `WalkGroup.accAfter_exists` proves that each
+accumulator is `a · φ(P) + b · P` for its integer Eisenstein index. If an
+exceptional combination vanished, its positive norm would annihilate the
+base point. `EndoscalarGroup` excludes that because the norm is below the
+prime group order. This argument uses `φ²(P) + φ(P) + P = 0` directly and
+does not assume an endomorphism eigenvalue certificate.
+
+The Pallas and Vesta instantiations reuse CompElliptic's existing group-order
+certificates. Their exact native-certificate dependencies are declared in
+`Ragu.Meta.TrustBoundary`; the bridge adds no new axioms or native certificates.
+This closes the affine non-degeneracy obligation, not the recursive protocol's
+soundness proof.
 
 Verifier and prover contracts remain distinct. For example,
 `Element.Alloc.Spec` is intentionally `True` because an arbitrary fresh

@@ -43,6 +43,8 @@ import Ragu.Circuits.Endoscalar.HoistedLift
 import Ragu.Circuits.Endoscalar.Initial
 import Ragu.Circuits.Endoscalar.Lift
 import Ragu.Circuits.Endoscalar.Walk
+import Ragu.Circuits.Endoscalar.WalkGroup
+import Ragu.Circuits.Endoscalar.WalkPasta
 import Ragu.Circuits.Horner.Ky
 import Ragu.Circuits.NonzeroBank.Scope
 import Ragu.Circuits.Point.AddIncomplete
@@ -55,6 +57,7 @@ import Ragu.Circuits.Point.Denormalize
 import Ragu.Circuits.Point.Double
 import Ragu.Circuits.Point.DoubleAndAddIncomplete
 import Ragu.Circuits.Point.DoubleAndAddIncompleteUnchecked
+import Ragu.Circuits.Point.Group
 import Ragu.Circuits.Point.Normalize
 import Ragu.Circuits.Point.Spec
 import Ragu.Circuits.Point.TripleAndAddIncompleteUnchecked
@@ -66,6 +69,8 @@ import Ragu.Circuits.Poseidon.Round
 import Ragu.Circuits.Poseidon.Sbox
 import Ragu.Circuits.Poseidon.Sponge
 import Ragu.Lemmas.EndoscalarProof
+import Ragu.Lemmas.EndoscalarGroup
+import Ragu.Foundation.Pasta.CoordinateMap
 
 /-!
 # Ragu formal-verification trust boundary
@@ -307,7 +312,55 @@ Pin them directly even though their names are not automatic census endpoints. -/
 
 census_axioms Ragu.Lemmas.EndoscalarProof.endoscaleN_injective_of_characteristicBound_lt
 census_axioms Ragu.Lemmas.EndoscalarProof.four_le_eisensteinNorm_accIndex
+census_axioms Ragu.Lemmas.EndoscalarProof.groupScale_collision_norm_bounds
 census_axioms Ragu.Lemmas.EndoscalarProof.groupScale_collision_combinations_ne_zero
+
+/-! ## Endoscalar curve bridge
+
+The abstract group and affine proofs use only the standard theorem tier.
+The concrete Pasta results reuse the two group-order certificates already
+listed above; no new native certificate is introduced by this bridge. -/
+
+census_axioms Ragu.Foundation.Pasta.CoordinateMap.coords_add
+census_axioms Ragu.Foundation.Pasta.CoordinateMap.card_curve
+census_axioms Ragu.Foundation.Pasta.CoordinateMap.endo_quadratic
+census_axioms Ragu.Lemmas.EndoscalarGroup.zsmul_ne_zero_of_prime_card
+census_axioms Ragu.Lemmas.EndoscalarGroup.norm_zsmul_eq_zero
+census_axioms Ragu.Lemmas.EndoscalarGroup.eval_ne_zero
+census_axioms Ragu.Lemmas.EndoscalarGroup.collision_combinations_ne_zero
+census_axioms Ragu.Circuits.Point.Group.embed_add
+census_axioms Ragu.Circuits.Point.Group.embed_double
+census_axioms Ragu.Circuits.Point.Group.tripleAdd_exists
+census_axioms Ragu.Circuits.Endoscalar.WalkGroup.accAfter_exists
+census_axioms Ragu.Circuits.Endoscalar.WalkGroup.groupScaleNative_ne_none
+census_axioms Ragu.Circuits.Endoscalar.WalkPasta.ep_groupScaleNative_ne_none +native(
+  CompElliptic.Curves.Pasta.Pallas.q_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.WalkPasta.eq_groupScaleNative_ne_none +native(
+  CompElliptic.Curves.Pasta.Vesta.p_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.GroupScale.ep_assumptions +native(
+  CompElliptic.Curves.Pasta.Pallas.q_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.GroupScale.eq_assumptions +native(
+  CompElliptic.Curves.Pasta.Vesta.p_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.GroupScale.ep_soundness +native(
+  CompElliptic.Curves.Pasta.Pallas.q_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.GroupScale.eq_soundness +native(
+  CompElliptic.Curves.Pasta.Vesta.p_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.GroupScale.ep_completeness +native(
+  CompElliptic.Curves.Pasta.Pallas.q_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.GroupScale.eq_completeness +native(
+  CompElliptic.Curves.Pasta.Vesta.p_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.HoistedGroupScale.ep_assumptions +native(
+  CompElliptic.Curves.Pasta.Pallas.q_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.HoistedGroupScale.eq_assumptions +native(
+  CompElliptic.Curves.Pasta.Vesta.p_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.HoistedGroupScale.ep_soundness +native(
+  CompElliptic.Curves.Pasta.Pallas.q_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.HoistedGroupScale.eq_soundness +native(
+  CompElliptic.Curves.Pasta.Vesta.p_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.HoistedGroupScale.ep_completeness +native(
+  CompElliptic.Curves.Pasta.Pallas.q_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.HoistedGroupScale.eq_completeness +native(
+  CompElliptic.Curves.Pasta.Vesta.p_nsmul_Gpt)
 
 /-! ## Endoscalar, Horner, and nonzero-bank circuits -/
 

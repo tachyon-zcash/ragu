@@ -38,6 +38,15 @@ use crate::{
     },
 };
 
+#[test]
+fn persisted_regressions_are_loaded() {
+    support::assert_regression_seeds(
+        support::config(),
+        file!(),
+        include_str!("recursive_bindings.proptest-regressions"),
+    );
+}
+
 fn native_commit(app: &support::App, poly: &sparse::Polynomial<Fp, R>) -> EqAffine {
     ReferenceBackend::sparse_commit_to_affine(poly, C::host_generators(app.params))
 }

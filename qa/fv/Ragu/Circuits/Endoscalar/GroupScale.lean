@@ -6,6 +6,7 @@ import Mathlib.Tactic.LinearCombination
 import Ragu.Circuits.Element.Mul
 import Ragu.Circuits.Endoscalar.Initial
 import Ragu.Circuits.Endoscalar.Walk
+import Ragu.Circuits.Endoscalar.WalkPasta
 import Ragu.Circuits.Point.Denormalize
 import Ragu.Circuits.Point.Normalize
 import Ragu.Circuits.Point.Spec
@@ -33,9 +34,10 @@ Non-degeneracy: the deployed gadget creates its `NonzeroBank` with
 emitted: every incomplete addition's distinct-x condition rests on the
 magnitude argument in `Endoscalar::group_scale`, not on the constraint
 system. This reimpl models exactly that via the unchecked triple-and-add,
-and carries the non-degeneracy as the explicit caller obligation
-`groupScaleNative ≠ none` in `Assumptions`; soundness is conditional on it,
-which is the honest statement about the circuit that ships.
+and carries `groupScaleNative ≠ none` in the generic `Assumptions`.
+`WalkGroup` proves the magnitude argument in the complete curve group and
+connects it to every affine step. The concrete Pasta soundness and
+completeness endpoints below discharge this premise.
 -/
 
 namespace Ragu.Circuits.Endoscalar.GroupScale
@@ -282,13 +284,11 @@ def main (curveParams : Point.Spec.CurveParams p) (input : Var Input (F p))
       simp only [circuit_norm, Step.circuit, Step.elaborated])
   Point.Denormalize.circuit ⟨acc, norm.c, norm.c2⟩
 
-/-- Caller obligations. `groupScaleNative ≠ none` is the no-collision
-condition: the unchecked additions emit no distinct-x constraints, so
-soundness is conditional on it. The caller must establish the
-non-degeneracy asserted by `Endoscalar::group_scale`.
-`EndoscalarProof.groupScale_collision_combinations_ne_zero` proves the
-integer bound, but its connection to the affine curve walk is not yet
-formalized. -/
+/-- Generic caller obligations. The unchecked additions emit no distinct-x
+constraints. `WalkGroup.groupScaleNative_ne_none` derives their non-degeneracy
+from the integer norm bound and the complete group's prime order;
+`WalkPasta` discharges it for both Pasta curves. The concrete `ep_soundness`
+and `eq_soundness` endpoints below therefore require only `PastaAssumptions`. -/
 def Assumptions (curveParams : Point.Spec.CurveParams p) (input : Input (F p)) :=
   input.pt.isOnCurve curveParams ∧
   curveParams.nonzeroCoordinates ∧
@@ -334,7 +334,7 @@ lemma normalization_facts (curveParams : Point.Spec.CurveParams p)
 
 /-- For an on-curve base, boolean bits, and the curve and no-collision
 preconditions, the constraints compute the native walk on the original curve.
-This does not discharge the caller's no-collision obligation. -/
+The concrete Pasta endpoints below discharge the no-collision obligation. -/
 theorem soundness (curveParams : Point.Spec.CurveParams p)
     : Soundness (F p) (Input := Input) (Output := Point.Spec.Point) (main curveParams)
         (Assumptions curveParams) (Spec curveParams) := by
@@ -486,5 +486,50 @@ def circuit (curveParams : Point.Spec.CurveParams p) : FormalCircuit (F p) Input
     Spec := Spec curveParams
     soundness := soundness curveParams
     completeness := completeness curveParams }
+
+end Ragu.Circuits.Endoscalar.GroupScale
+
+namespace Ragu.Circuits.Endoscalar.GroupScale
+
+open Point.Spec Walk Core.Primes
+
+/-- Valid Pasta inputs: an affine on-curve point and boolean scalar bits.
+Walk success and curve certificates are derived by the concrete endpoints. -/
+def PastaAssumptions {p : ℕ} [Fact p.Prime] (cp : CurveParams p) (input : Input (F p)) :=
+  input.pt.isOnCurve cp ∧ ∀ i : Fin numBits, IsBool input.bits[i]
+
+theorem ep_assumptions (input : Input (F p)) (h : PastaAssumptions EpAffineParams input) :
+    Assumptions EpAffineParams input :=
+  ⟨h.1, epAffineParams_nonzeroCoordinates, by decide, by decide, h.2,
+    WalkPasta.ep_groupScaleNative_ne_none input.pt h.1 input.bits⟩
+
+theorem eq_assumptions (input : Input (F q)) (h : PastaAssumptions EqAffineParams input) :
+    Assumptions EqAffineParams input :=
+  ⟨h.1, eqAffineParams_nonzeroCoordinates, by decide, by decide, h.2,
+    WalkPasta.eq_groupScaleNative_ne_none input.pt h.1 input.bits⟩
+
+/-- Pallas soundness with the affine-success premise discharged. -/
+theorem ep_soundness : Soundness (F p) (Input := Input) (Output := Point)
+    (main EpAffineParams) (PastaAssumptions EpAffineParams) (Spec EpAffineParams) := by
+  intro offset env vars input hin hass
+  exact soundness EpAffineParams offset env vars input hin (ep_assumptions input hass)
+
+/-- Vesta soundness with the affine-success premise discharged. -/
+theorem eq_soundness : Soundness (F q) (Input := Input) (Output := Point)
+    (main EqAffineParams) (PastaAssumptions EqAffineParams) (Spec EqAffineParams) := by
+  intro offset env vars input hin hass
+  exact soundness EqAffineParams offset env vars input hin (eq_assumptions input hass)
+
+/-- Every valid Pallas input admits honest witnesses for the full walk. -/
+theorem ep_completeness : Completeness (F p) (Input := Input) (Output := Point)
+    (main EpAffineParams) (PastaAssumptions EpAffineParams) := by
+  intro offset env vars henv input hin hass
+  exact completeness EpAffineParams offset env vars henv input hin (ep_assumptions input hass)
+
+/-- Every valid Vesta input admits honest witnesses for the full walk. -/
+theorem eq_completeness : Completeness (F q) (Input := Input) (Output := Point)
+    (main EqAffineParams) (PastaAssumptions EqAffineParams) := by
+  intro offset env vars henv input hin hass
+  exact completeness EqAffineParams offset env vars henv input hin (eq_assumptions input hass)
 
 end Ragu.Circuits.Endoscalar.GroupScale

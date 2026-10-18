@@ -53,6 +53,9 @@ parameters made concrete.
 - **Endoscalars** — allocation, extraction, lifting, and radix-3 group
   scaling, in both the plain form and the hoisted form that reads its digit
   products from stage wires, plus the contract that pins those product wires.
+  The integer non-collision bounds are connected to the complete curve group
+  and the affine walk. Concrete soundness and completeness endpoints on both
+  Pasta curves derive walk success from the certified prime group orders.
 - **Poseidon** — the permutation at the deployed Pasta parameters on both
   fields, and the sponge in several distinct control-flow shapes:
   single-block hashing on each field, uniform blocks across a rate boundary,

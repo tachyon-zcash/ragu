@@ -343,9 +343,10 @@ This section proves all of these are nonzero in `F` whenever the
 characteristic exceeds `groupScaleCollisionBound`: the accumulator's
 Eisenstein norm is at least `4` throughout while a digit's is at most `3`, so
 none vanishes in `ℤ[ω]`, and their norms are far below the characteristic.
-The connection between the affine accumulator and `[u·λ + v]P̂` via the
-group law is not proved here. The circuit contracts retain
-`groupScaleNative ≠ none` as a caller obligation. -/
+`EndoscalarGroup` applies the same integer norm bounds directly to the
+complete curve group, and `Circuits.Endoscalar.WalkGroup` proves the affine
+accumulator invariant. `WalkPasta` discharges `groupScaleNative ≠ none` for
+both Pasta curves using their certified prime orders. -/
 
 /-- Step-point indices: the digit point `D ∈ ±{P̂, φP̂, φ²P̂, P̂ - φP̂}` has the
 index of its digit. -/
@@ -441,11 +442,53 @@ private theorem combination_ne_zero_int {u v δu δv : ℤ} (hacc : 4 ≤ eisens
   rw [hku, hkv, eisensteinNorm_neg] at h
   nlinarith [eisensteinNorm_nonneg u v]
 
+/-- Positive, uniformly bounded norms for the exceptional combinations.
+This integer statement is shared by the scalar-field theorem and the
+complete-curve-group proof; the latter does not need to choose an eigenvalue. -/
+theorem groupScale_collision_norm_bounds
+    (s0 e0 : Bool) (digits : List Digit) (h_len : digits.length ≤ 46)
+    (d : Digit) (k : ℤ) (hk1 : 1 ≤ k) (hk3 : k ≤ 3)
+    (σ : ℤ) (hσ : σ = 1 ∨ σ = -1) :
+    let acc := accIndex (initIndex s0 e0) digits
+    let N := eisensteinNorm (k * acc.a + σ * (digitIndex d).a)
+      (k * acc.b + σ * (digitIndex d).b)
+    0 < N ∧ N ≤ (groupScaleCollisionBound : ℤ) := by
+  intro acc
+  dsimp only
+  have hacc := four_le_eisensteinNorm_accIndex s0 e0 digits
+  have hδ3 := (eisensteinNorm_digitIndex_le d).2
+  obtain ⟨hδu, hδv⟩ := abs_digitIndex_le d
+  obtain ⟨hu, hv⟩ := accIndex_bound digits _ 0 (abs_initIndex_le _ _).1 (abs_initIndex_le _ _).2
+  simp only [Nat.zero_add] at hu hv
+  have hpow : (3 : ℤ) ^ digits.length ≤ 3 ^ 46 := pow_le_pow_right₀ (by norm_num) h_len
+  have h46 : (3 : ℤ) ^ 46 = 8862938119652501095929 := by norm_num
+  rw [h46] at hpow
+  have hσ' : eisensteinNorm (σ * (digitIndex d).a) (σ * (digitIndex d).b) ≤ 3 := by
+    rcases hσ with rfl | rfl
+    · simpa using hδ3
+    · rw [eisensteinNorm_smul, neg_one_sq, one_mul]; exact hδ3
+  have hne := combination_ne_zero_int hacc hσ' hk1
+  constructor
+  · have hn := eisensteinNorm_nonneg (k * acc.a + σ * (digitIndex d).a)
+      (k * acc.b + σ * (digitIndex d).b)
+    have hnz : eisensteinNorm (k * acc.a + σ * (digitIndex d).a)
+        (k * acc.b + σ * (digitIndex d).b) ≠ 0 :=
+      fun h => hne ((eisensteinNorm_eq_zero_iff _ _).mp h)
+    omega
+  · have hσabs : |σ| = 1 := by rcases hσ with rfl | rfl <;> norm_num
+    have hc1 : |k * acc.a + σ * (digitIndex d).a| ≤ 5 * 26588814358957503287787 := by
+      have := abs_add_le (k * acc.a) (σ * (digitIndex d).a)
+      rw [abs_mul, abs_mul, hσabs, abs_of_pos (by linarith : (0 : ℤ) < k)] at this
+      nlinarith [abs_nonneg acc.a, abs_nonneg (digitIndex d).a]
+    have hc2 : |k * acc.b + σ * (digitIndex d).b| ≤ 5 * 26588814358957503287787 := by
+      have := abs_add_le (k * acc.b) (σ * (digitIndex d).b)
+      rw [abs_mul, abs_mul, hσabs, abs_of_pos (by linarith : (0 : ℤ) < k)] at this
+      nlinarith [abs_nonneg acc.b, abs_nonneg (digitIndex d).b]
+    exact (eisensteinNorm_le_of_abs_le hc1 hc2).trans_eq (by norm_num [groupScaleCollisionBound])
+
 /-- The radix-3 no-collision integer core for `group_scale`'s 47-step walk:
 for any prefix of at most 46 digits and any step index `δ`, the four
-exceptional-case combinations — accumulator equals `D` (`(u − δu, v − δv)`),
-accumulator equals `−D` (`(u + δu, v + δv)`), `2A + D = 0` and `3A + D = 0` —
-are all nonzero in characteristic above `groupScaleCollisionBound`. -/
+exceptional-case combinations are nonzero in characteristic above the bound. -/
 theorem groupScale_collision_combinations_ne_zero
     {F : Type*} [Field F] {q : ℕ} [CharP F q] {ζ : F}
     (hζ : orderOf ζ = 3) (hq : groupScaleCollisionBound < q)
@@ -459,41 +502,14 @@ theorem groupScale_collision_combinations_ne_zero
   intro acc
   obtain ⟨d, rfl⟩ := hδ
   have hζpoly := zeta_sq_add_zeta_add_one_eq_zero_of_orderOf_three hζ
-  have hacc := four_le_eisensteinNorm_accIndex s0 e0 digits
-  obtain ⟨hδ1, hδ3⟩ := eisensteinNorm_digitIndex_le d
-  obtain ⟨hδu, hδv⟩ := abs_digitIndex_le d
-  -- Magnitudes: components of the accumulator are below `(5·3^46)/2`.
-  obtain ⟨hu, hv⟩ := accIndex_bound digits _ 0 (abs_initIndex_le _ _).1 (abs_initIndex_le _ _).2
-  simp only [Nat.zero_add] at hu hv
-  have hpow : (3 : ℤ) ^ digits.length ≤ 3 ^ 46 := pow_le_pow_right₀ (by norm_num) h_len
-  have h46 : (3 : ℤ) ^ 46 = 8862938119652501095929 := by norm_num
-  have h47 : (3 : ℤ) ^ 47 = 26588814358957503287787 := by norm_num
-  have hM : ((groupScaleCollisionBound : ℕ) : ℤ) = 3 * (5 * 3 ^ 47) ^ 2 := by
-    norm_num [groupScaleCollisionBound]
-  have hq' : ((groupScaleCollisionBound : ℕ) : ℤ) < q := by exact_mod_cast hq
-  rw [hM, h47] at hq'
-  rw [h46] at hpow
-  -- Each combination: nonzero in `ℤ[ω]`, with norm below the characteristic.
   have key : ∀ (k : ℤ), 1 ≤ k → k ≤ 3 → ∀ (σ : ℤ), σ = 1 ∨ σ = -1 →
       ((k * acc.a + σ * (digitIndex d).a : ℤ) : F) * ζ +
         ((k * acc.b + σ * (digitIndex d).b : ℤ) : F) ≠ 0 := by
     intro k hk1 hk3 σ hσ
-    have hσ' : eisensteinNorm (σ * (digitIndex d).a) (σ * (digitIndex d).b) ≤ 3 := by
-      rcases hσ with rfl | rfl
-      · simpa using hδ3
-      · rw [eisensteinNorm_smul, neg_one_sq, one_mul]; exact hδ3
-    refine index_ne_zero_of_norm_lt hζpoly (combination_ne_zero_int hacc hσ' hk1) ?_
-    have hσabs : |σ| = 1 := by rcases hσ with rfl | rfl <;> norm_num
-    have hc1 : |k * acc.a + σ * (digitIndex d).a| ≤ 5 * 26588814358957503287787 := by
-      have := abs_add_le (k * acc.a) (σ * (digitIndex d).a)
-      rw [abs_mul, abs_mul, hσabs, abs_of_pos (by linarith : (0 : ℤ) < k)] at this
-      nlinarith [abs_nonneg acc.a, abs_nonneg (digitIndex d).a]
-    have hc2 : |k * acc.b + σ * (digitIndex d).b| ≤ 5 * 26588814358957503287787 := by
-      have := abs_add_le (k * acc.b) (σ * (digitIndex d).b)
-      rw [abs_mul, abs_mul, hσabs, abs_of_pos (by linarith : (0 : ℤ) < k)] at this
-      nlinarith [abs_nonneg acc.b, abs_nonneg (digitIndex d).b]
-    have := eisensteinNorm_le_of_abs_le hc1 hc2
-    omega
+    obtain ⟨hpos, hbound⟩ := groupScale_collision_norm_bounds s0 e0 digits h_len d k hk1 hk3 σ hσ
+    refine index_ne_zero_of_norm_lt hζpoly ?_ (hbound.trans_lt (by exact_mod_cast hq))
+    rintro ⟨ha, hb⟩
+    exact (ne_of_gt hpos) ((eisensteinNorm_eq_zero_iff _ _).mpr ⟨ha, hb⟩)
   refine ⟨?_, ?_, ?_, ?_⟩
   · have := key 1 (by norm_num) (by norm_num) (-1) (by norm_num)
     simpa [sub_eq_add_neg] using this

@@ -13,8 +13,9 @@ pub(crate) mod builder;
 // These regression suites edit proof fields directly. Keep their sources
 // grouped by subject in tests/ and their access confined to the test build.
 // Their properties prove tens of production-rank proofs each, so they are
-// `#[ignore]`d: the PR gate compiles and skips them, and the scheduled
-// heavy-tests run picks them up with `cargo test -- --ignored`.
+// `#[ignore]`d in the platform matrix. Rust CI explicitly replays the two
+// properties with saved recursion failures, and the scheduled heavy-tests
+// run picks up the full suites with `cargo test -- --ignored`.
 #[cfg(test)]
 #[path = "../../tests/base_case_combinations.rs"]
 mod base_case_combinations_tests;

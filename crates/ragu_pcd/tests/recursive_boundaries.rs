@@ -2,6 +2,15 @@
 
 use super::recursive_propagation_tests::support;
 
+#[test]
+fn persisted_regressions_are_loaded() {
+    support::assert_regression_seeds(
+        support::config(),
+        file!(),
+        include_str!("recursive_boundaries.proptest-regressions"),
+    );
+}
+
 mod registry {
     //! Registry contents and circuit slots must stay bound through recursive proofs.
     //!

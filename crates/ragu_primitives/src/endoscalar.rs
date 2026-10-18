@@ -480,10 +480,11 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
     /// The eight digits are the eight nonzero residues of $\mathbb{Z}[\lambda]$
     /// modulo $3$, so a radix-3 expansion decodes uniquely from its residues
     /// and the map from bit strings to $k \in \mathbb{Z}[\lambda]$ is
-    /// injective. Two distinct encodings differ by an element of norm below
-    /// $33 \cdot 9^{n}$, about $2^{154}$ here, which no prime above that
-    /// divides, so they stay distinct in the scalar field of the Pasta
-    /// curves.
+    /// injective. Lean's `endoscaleCharacteristicBound` bounds the norm of
+    /// the difference between two encodings by $3 (5 \cdot 3^{n} - 1)^2$,
+    /// which is below $75 \cdot 9^{n}$, about $2^{155.2}$ here. No prime
+    /// above that bound divides a nonzero difference norm, so distinct
+    /// encodings stay distinct in the scalar fields of the Pasta curves.
     ///
     /// The point is first moved to the isomorphic curve on which it has
     /// coordinates $(r, r)$, by $(x, y) \mapsto (c^2 x, c^3 y)$ for
@@ -507,6 +508,10 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
     /// $d = -2a$, $a + d = 0$ or $3a + d = 0$ holds in $\mathbb{Z}[\lambda]$.
     /// All of these have norm far below the group order, so none holds
     /// modulo it either.
+    /// Lean's `WalkPasta` proves that every affine on-curve Pasta input
+    /// admits the complete walk: the integer norm bounds exclude the
+    /// exceptional group combinations, and `WalkGroup.accAfter_exists`
+    /// connects each affine accumulator to that group argument.
     ///
     /// # Soundness
     ///
@@ -791,6 +796,9 @@ impl<'dr, D: Driver<'dr>> HoistedEndoscalar<'dr, D> {
 
     /// Lifts this endoscalar to a field element, reading each digit's
     /// $e_1 e_2$ from the hoisted products so that a digit costs one gate.
+    /// The sign times the unsigned digit still needs a multiplication:
+    /// $e_1 e_2$ and $e_1 e_2 s$ do not supply $s e_1$ or $s e_2$.
+    /// Including the initial accumulator, this costs $1 + n = 48$ gates.
     ///
     /// # Soundness
     ///

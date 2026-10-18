@@ -61,8 +61,10 @@ and the walk is $A_0 = [2] (-1)^{s_0} \phi^{e_0}(G)$, $A_{i+1} = [3] A_i +
 [d_i] G$ over $n = 47$ digits. The eight digits are exactly the nonzero
 residues of $\mathbb{Z}[\lambda]$ modulo $3$, so an expansion decodes uniquely
 digit by digit and the map from bit strings to scalars is injective. Any two
-distinct encodings differ by an element of norm below $33 \cdot 9^{n}$, far
-below the Pasta group orders, so they remain distinct in the scalar field.
+distinct encodings differ by an element whose norm is at most
+$3 (5 \cdot 3^{n} - 1)^2 < 75 \cdot 9^{n}$, the sufficient bound used by
+Lean's `endoscaleCharacteristicBound`. At $n = 47$ this is about $2^{155.2}$,
+far below the Pasta group orders, so they remain distinct in the scalar field.
 The effective scalar, which $\mathsf{lift}$ computes, is
 
 $$
@@ -95,6 +97,28 @@ per digit, $9 n + 10$ per endoscaling, and the lift in the nested
 the same steps that held $128$ bits of the radix-2 walk: $433$ gates per
 endoscaling in a step against $455$ before, with the ten binder challenges
 widened to the same $143$ bits on the plain three-gate selector.
+
+The hoisted lift still multiplies each unsigned digit by its sign. Its
+$e_1 e_2$ and $e_1 e_2 s$ wires do not supply $s e_1$ or $s e_2$, so the
+lift costs $n + 1 = 48$ gates including initialization. The nested
+`EndoscalarStage` grows from 64 to 119 gates, and the nested `compute_v`
+circuit grows from 1661 to 1700 gates. Hoisting saves work in the walk;
+it does not make the lift linear in the stage wires.
+
+The constraint census uses production rank `R<13>`, a 103-element header,
+and 6000 placeholder application circuits. In that fixture the largest
+`bind_challenges` variant uses 2046 of 2048 gates, leaving two gates of
+headroom. The census tests pin that count; extending the binder requires
+rechecking its capacity.
+
+The unchecked additions are justified by the
+[affine-walk proof](../../fv/circuits/contracts.md): `WalkGroup` identifies
+each affine accumulator with its Eisenstein action in the complete curve
+group, and the positive norm bounds rule out every exceptional addition.
+`WalkPasta` derives success for both Pasta curves from their certified prime
+group orders. The concrete gadget contracts therefore require curve
+membership, Boolean selector bits, and (when hoisted) the product-wire
+relations, without a separate walk-success premise.
 
 Consider a random verifier challenge $\alpha\in\F_p$ produced in a circuit over
 $\F_p$ where we want to compute $\alpha\cdot G\in\G_1$.

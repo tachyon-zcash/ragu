@@ -4,6 +4,7 @@ import Clean.Gadgets.Boolean
 import Mathlib.Tactic.IntervalCases
 import Mathlib.Tactic.LinearCombination
 import Ragu.Circuits.Element.Mul
+import Ragu.Circuits.Endoscalar.EnforceProducts
 import Ragu.Circuits.Endoscalar.GroupScale
 import Ragu.Circuits.Endoscalar.Initial
 import Ragu.Circuits.Endoscalar.Walk
@@ -466,5 +467,51 @@ def circuit (curveParams : Point.Spec.CurveParams p) : FormalCircuit (F p) Input
     Spec := Spec curveParams
     soundness := soundness curveParams
     completeness := completeness curveParams }
+
+end Ragu.Circuits.Endoscalar.HoistedGroupScale
+
+namespace Ragu.Circuits.Endoscalar.HoistedGroupScale
+
+open Point.Spec Walk Core.Primes
+
+/-- Valid Pasta inputs, including the product relation supplied by
+`EnforceProducts`; no affine-success assumption is needed. -/
+def PastaAssumptions {p : ℕ} [Fact p.Prime] (cp : CurveParams p) (input : Input (F p)) :=
+  input.pt.isOnCurve cp ∧ (∀ i : Fin numBits, IsBool input.bits[i]) ∧
+    EnforceProducts.Spec ⟨input.bits, input.products⟩
+
+theorem ep_assumptions (input : Input (F p)) (h : PastaAssumptions EpAffineParams input) :
+    Assumptions EpAffineParams input :=
+  ⟨h.1, epAffineParams_nonzeroCoordinates, by decide, by decide, h.2.1, h.2.2,
+    WalkPasta.ep_groupScaleNative_ne_none input.pt h.1 input.bits⟩
+
+theorem eq_assumptions (input : Input (F q)) (h : PastaAssumptions EqAffineParams input) :
+    Assumptions EqAffineParams input :=
+  ⟨h.1, eqAffineParams_nonzeroCoordinates, by decide, by decide, h.2.1, h.2.2,
+    WalkPasta.eq_groupScaleNative_ne_none input.pt h.1 input.bits⟩
+
+/-- Pallas hoisted-walk soundness with non-degeneracy proved from the curve. -/
+theorem ep_soundness : Soundness (F p) (Input := Input) (Output := Point)
+    (main EpAffineParams) (PastaAssumptions EpAffineParams) (Spec EpAffineParams) := by
+  intro offset env vars input hin hass
+  exact soundness EpAffineParams offset env vars input hin (ep_assumptions input hass)
+
+/-- Vesta hoisted-walk soundness with non-degeneracy proved from the curve. -/
+theorem eq_soundness : Soundness (F q) (Input := Input) (Output := Point)
+    (main EqAffineParams) (PastaAssumptions EqAffineParams) (Spec EqAffineParams) := by
+  intro offset env vars input hin hass
+  exact soundness EqAffineParams offset env vars input hin (eq_assumptions input hass)
+
+/-- Honest witnesses exist for every valid Pallas hoisted-walk input. -/
+theorem ep_completeness : Completeness (F p) (Input := Input) (Output := Point)
+    (main EpAffineParams) (PastaAssumptions EpAffineParams) := by
+  intro offset env vars henv input hin hass
+  exact completeness EpAffineParams offset env vars henv input hin (ep_assumptions input hass)
+
+/-- Honest witnesses exist for every valid Vesta hoisted-walk input. -/
+theorem eq_completeness : Completeness (F q) (Input := Input) (Output := Point)
+    (main EqAffineParams) (PastaAssumptions EqAffineParams) := by
+  intro offset env vars henv input hin hass
+  exact completeness EqAffineParams offset env vars henv input hin (eq_assumptions input hass)
 
 end Ragu.Circuits.Endoscalar.HoistedGroupScale

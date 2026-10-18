@@ -1,11 +1,13 @@
 name: Heavy tests
 
-# Runs the recursion regression suites that the PR gate compiles but skips.
+# Runs the full recursion regression suites beyond the PR gate's seed replays.
 # The properties in `crates/ragu_pcd/tests/{recursive_bindings,
 # recursive_propagation, recursive_boundaries, base_case_combinations}.rs`
 # and the proof-producing properties in `tests/pcs.rs` use production-rank
-# proofs and are marked `#[ignore]`, so `rust.yml` reports them as ignored on
-# every platform. The PCS denominator gadget test stays in the PR gate.
+# proofs and are marked `#[ignore]` in the platform matrix. Rust CI also
+# replays the saved recursive-boundary and recursive-binding failures with
+# one fresh case per affected property. The PCS denominator gadget test
+# stays in the PR gate.
 # This workflow runs them with `--ignored`, one job per suite, at eight
 # cases per property. The suites assert proof bindings, which depend on
 # neither the platform nor the prover's scheduling, so they run once, with
