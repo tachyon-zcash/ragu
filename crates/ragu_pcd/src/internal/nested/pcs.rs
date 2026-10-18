@@ -14,17 +14,17 @@
 
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{Cycle, Result};
-use ragu_primitives::vec::ConstLen;
 use udon::field::Field;
 
 use super::{InternalCircuitIndex, RxComponent, RxIndex, challenge};
-use crate::Proof;
+use crate::{Proof, profile::ProfiledCycle};
 
-/// Length type for a proof's nested rx components.
-pub type OwnRxLen = ConstLen<{ RxIndex::NUM }>;
+/// Length type for a proof's nested rx components in profile `P`.
+pub type OwnRxLen<P> = super::NumRx<P>;
 
-/// Length type for the nested internal circuits, one registry index each.
-pub type InternalLen = ConstLen<{ InternalCircuitIndex::NUM }>;
+/// Length type for the nested internal circuits in profile `P`, one registry
+/// index each.
+pub type InternalLen<P> = super::NumInternal<P>;
 
 /// Static prefix of the nested polynomial-query order used to construct the
 /// nested quotient polynomial $f_n(X)$.
@@ -106,14 +106,14 @@ pub const fn num_batched_points(nested_rx: usize) -> usize {
 pub const NUM_BATCHED_POINTS: usize = num_batched_points(RxIndex::NUM);
 
 /// A child's nested-curve commitments in the order the batch walks them:
-/// its rx commitments in [`RxIndex::ALL`] order, then $a$, $b$,
+/// its rx commitments in [`RxIndex::all`] order, then $a$, $b$,
 /// `registry_xy` and $p$.
-pub fn child_commitments<C: Cycle, R: Rank>(
+pub fn child_commitments<C: ProfiledCycle, R: Rank>(
     proof: &Proof<C, R>,
 ) -> impl Iterator<Item = C::NestedCurve> + '_ {
-    RxIndex::ALL
-        .iter()
-        .map(move |&id| proof.nested_rx_commitment(id))
+    RxIndex::all::<C::Profile>()
+        .into_iter()
+        .map(move |id| proof.nested_rx_commitment(id))
         .chain([
             proof.nested_a_commitment(),
             proof.nested_b_commitment(),
@@ -172,7 +172,7 @@ pub struct Batch<'a, C: Cycle, R: Rank> {
     pub b: &'a sparse::Polynomial<C::ScalarField, R>,
 }
 
-impl<'a, C: Cycle, R: Rank> Batch<'a, C, R> {
+impl<'a, C: ProfiledCycle, R: Rank> Batch<'a, C, R> {
     /// Every opening the quotient polynomial $f_n$ covers, as
     /// `(polynomial, point)` pairs, in the order that fixes each one's weight
     /// in $\alpha_n$: the static prefix, then each child's own rx polynomials
@@ -185,7 +185,9 @@ impl<'a, C: Cycle, R: Rank> Batch<'a, C, R> {
     {
         let (left, right) = (self.left, self.right);
         let xz = ch.x * ch.z;
-        let omega_j = |id: InternalCircuitIndex| -> C::ScalarField { id.circuit_index().omega_j() };
+        let omega_j = |id: InternalCircuitIndex| -> C::ScalarField {
+            id.circuit_index::<C::Profile>().omega_j()
+        };
 
         STATIC_F_QUERIES
             .iter()
@@ -209,15 +211,15 @@ impl<'a, C: Cycle, R: Rank> Batch<'a, C, R> {
                 StaticFQuery::CurrentAAtXz => (self.a, xz),
                 StaticFQuery::CurrentBAtX => (self.b, ch.x),
             })
-            .chain(
-                [left, right]
+            .chain([left, right].into_iter().flat_map(move |proof| {
+                RxIndex::all::<C::Profile>()
                     .into_iter()
-                    .flat_map(move |proof| RxIndex::ALL.iter().map(move |&id| (&proof[id], xz))),
-            )
+                    .map(move |id| (&proof[id], xz))
+            }))
             .chain(
-                InternalCircuitIndex::ALL
-                    .iter()
-                    .map(move |&id| (self.registry_xy, omega_j(id))),
+                InternalCircuitIndex::all::<C::Profile>()
+                    .into_iter()
+                    .map(move |id| (self.registry_xy, omega_j(id))),
             )
     }
 
@@ -235,12 +237,15 @@ impl<'a, C: Cycle, R: Rank> Batch<'a, C, R> {
         [self.left, self.right]
             .into_iter()
             .flat_map(|proof| {
-                RxIndex::ALL.iter().map(move |&id| &proof[id]).chain([
-                    &proof[RxComponent::AbA],
-                    &proof[RxComponent::AbB],
-                    proof.nested_registry_xy_poly(),
-                    proof.nested_p_poly(),
-                ])
+                RxIndex::all::<C::Profile>()
+                    .into_iter()
+                    .map(move |id| &proof[id])
+                    .chain([
+                        &proof[RxComponent::AbA],
+                        &proof[RxComponent::AbB],
+                        proof.nested_registry_xy_poly(),
+                        proof.nested_p_poly(),
+                    ])
             })
             .chain([
                 self.registry_wx0,

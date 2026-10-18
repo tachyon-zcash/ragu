@@ -24,7 +24,10 @@ use ragu_core::{Error, Result};
 use udon::{curve::Affine, field::Field};
 
 use self::fold::{Derived, Fold};
-use crate::internal::{native, nested};
+use crate::{
+    internal::{native, nested},
+    profile::Profile,
+};
 
 pub(crate) mod claims;
 pub(crate) mod fold;
@@ -70,25 +73,25 @@ pub(crate) struct Reduction<C: Affine> {
     pub q_at_r: C::Scalar,
 }
 
-/// The native components in the order the instance lists their
-/// commitments.
-pub(crate) fn native_components() -> impl Iterator<Item = native::RxComponent> {
+/// The native components of profile `P` in the order the instance lists
+/// their commitments.
+pub(crate) fn native_components<P: Profile>() -> impl Iterator<Item = native::RxComponent> {
     [native::RxComponent::AbA, native::RxComponent::AbB]
         .into_iter()
         .chain(
-            native::RxIndex::ALL
+            native::RxIndex::all::<P>()
                 .into_iter()
                 .map(native::RxComponent::Rx),
         )
 }
 
 /// The position of a native component in [`native_components`].
-pub(crate) fn native_position(component: native::RxComponent) -> usize {
+pub(crate) fn native_position<P: Profile>(component: native::RxComponent) -> usize {
     match component {
         native::RxComponent::AbA => 0,
         native::RxComponent::AbB => 1,
         native::RxComponent::Rx(index) => {
-            2 + native::RxIndex::ALL
+            2 + native::RxIndex::all::<P>()
                 .iter()
                 .position(|&listed| listed == index)
                 .expect("every native index is listed")
@@ -96,25 +99,25 @@ pub(crate) fn native_position(component: native::RxComponent) -> usize {
     }
 }
 
-/// The nested components in the order the instance lists their
-/// commitments.
-pub(crate) fn nested_components() -> impl Iterator<Item = nested::RxComponent> {
+/// The nested components of profile `P` in the order the instance lists
+/// their commitments.
+pub(crate) fn nested_components<P: Profile>() -> impl Iterator<Item = nested::RxComponent> {
     [nested::RxComponent::AbA, nested::RxComponent::AbB]
         .into_iter()
         .chain(
-            nested::RxIndex::ALL
+            nested::RxIndex::all::<P>()
                 .into_iter()
                 .map(nested::RxComponent::Rx),
         )
 }
 
 /// The position of a nested component in [`nested_components`].
-pub(crate) fn nested_position(component: nested::RxComponent) -> usize {
+pub(crate) fn nested_position<P: Profile>(component: nested::RxComponent) -> usize {
     match component {
         nested::RxComponent::AbA => 0,
         nested::RxComponent::AbB => 1,
         nested::RxComponent::Rx(index) => {
-            2 + nested::RxIndex::ALL
+            2 + nested::RxIndex::all::<P>()
                 .iter()
                 .position(|&listed| listed == index)
                 .expect("every nested index is listed")

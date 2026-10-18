@@ -7,7 +7,7 @@ use ragu_circuits::{
     polynomials::Rank,
     registry::{CircuitIndex, Registry},
 };
-use ragu_core::{Cycle, Error, Result};
+use ragu_core::{Error, Result};
 use udon::{curve::Affine, field::Field};
 
 use super::{
@@ -22,6 +22,7 @@ use crate::{
         native, nested,
     },
     ipa::IpaTranscript,
+    profile::ProfiledCycle,
 };
 
 /// One claim evaluated at $r$: $a(r)$, $b(r)$ and the target $k(y)$.
@@ -159,7 +160,7 @@ fn public<F: Field, R: Rank, Id>(
 /// The verifier's native side: `commitment` gives each component's
 /// commitment, `registry` the native registry, and `targets` the claims'
 /// $k(y)$ values; the registry is read through the backend `B`.
-pub(crate) fn verify_native<C: Cycle, R: Rank, B: Backend>(
+pub(crate) fn verify_native<C: ProfiledCycle, R: Rank, B: Backend>(
     circuit_id: CircuitIndex,
     commitment: impl Fn(native::RxComponent) -> C::HostCurve,
     registry: &Registry<'_, C::CircuitField, R>,
@@ -170,11 +171,11 @@ pub(crate) fn verify_native<C: Cycle, R: Rank, B: Backend>(
     reduction: &Reduction<C::HostCurve>,
     transcript: &mut impl IpaTranscript<C::HostCurve>,
 ) -> Result<Option<Openings<C::HostCurve>>> {
-    let shapes = claims::native_shapes(circuit_id, z, masked)?;
+    let shapes = claims::native_shapes::<C::Profile, _>(circuit_id, z, masked)?;
     let restriction = |circuit: CircuitIndex, r| B::registry_wxy(registry, circuit.omega_j(), r, y);
     verify::<_, R, B, _>(
         &shapes,
-        native::claims::ky_values(targets),
+        native::claims::ky_values::<C::Profile, _>(targets),
         commitment,
         |kind, r| public::<_, R, _>(kind, r, z, &|circuit| restriction(circuit, r), masked),
         reduction,
@@ -184,7 +185,7 @@ pub(crate) fn verify_native<C: Cycle, R: Rank, B: Backend>(
 }
 
 /// The verifier's nested side, as [`verify_native`] takes its inputs.
-pub(crate) fn verify_nested<C: Cycle, R: Rank, B: Backend>(
+pub(crate) fn verify_nested<C: ProfiledCycle, R: Rank, B: Backend>(
     commitment: impl Fn(nested::RxComponent) -> C::NestedCurve,
     registry: &Registry<'_, C::ScalarField, R>,
     y: C::ScalarField,
@@ -194,11 +195,11 @@ pub(crate) fn verify_nested<C: Cycle, R: Rank, B: Backend>(
     reduction: &Reduction<C::NestedCurve>,
     transcript: &mut impl IpaTranscript<C::NestedCurve>,
 ) -> Result<Option<Openings<C::NestedCurve>>> {
-    let shapes = claims::nested_shapes(z, masked)?;
+    let shapes = claims::nested_shapes::<C::Profile, _>(z, masked)?;
     let restriction = |circuit: CircuitIndex, r| B::registry_wxy(registry, circuit.omega_j(), r, y);
     verify::<_, R, B, _>(
         &shapes,
-        nested::claims::ky_values(targets),
+        nested::claims::ky_values::<C::Profile, _>(targets),
         commitment,
         |kind, r| public::<_, R, _>(kind, r, z, &|circuit| restriction(circuit, r), masked),
         reduction,

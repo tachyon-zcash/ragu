@@ -58,6 +58,7 @@ use crate::{
     SelectableBackend,
     header::Header,
     ipa::{CycleTranscript, IPA_TAG, IpaProof, IpaTranscript},
+    profile::ProfiledCycle,
 };
 
 pub(crate) mod batch;
@@ -88,7 +89,7 @@ pub struct CompressedProof<C: Cycle> {
     pub(crate) nested: Messages<C::NestedCurve>,
 }
 
-impl<C: Cycle> CompressedProof<C> {
+impl<C: ProfiledCycle> CompressedProof<C> {
     /// Attaches the data the proof attests, producing [`CompressedPcd`].
     pub fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> CompressedPcd<C, H> {
         CompressedPcd { proof: self, data }
@@ -106,8 +107,8 @@ impl<C: Cycle> CompressedProof<C> {
                 && messages.batch.evaluations.len() == derived + 2 + instance::OPENED
                 && messages.opening.rounds.len() == R::RANK as usize
         }
-        self.instance.native.len() == native_components().count()
-            && self.instance.nested.len() == nested_components().count()
+        self.instance.native.len() == native_components::<C::Profile>().count()
+            && self.instance.nested.len() == nested_components::<C::Profile>().count()
             && side::<_, R>(&self.native)
             && side::<_, R>(&self.nested)
     }
@@ -170,7 +171,7 @@ impl<F> Sampled<F> {
 
 /// The compression's transcript with the statement absorbed: the instance,
 /// then the output header.
-fn transcript<'params, C: Cycle, B: SelectableBackend>(
+fn transcript<'params, C: ProfiledCycle, B: SelectableBackend>(
     params: &'params C::Params,
     instance: &Instance<C>,
     output_header: &[C::CircuitField],

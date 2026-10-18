@@ -15,7 +15,7 @@ use ragu_circuits::{
     staging::{Stage as StageTrait, StageExt},
 };
 use ragu_core::{
-    Cycle, Result,
+    Result,
     drivers::{Driver, emulator::Emulator},
     maybe::Maybe,
 };
@@ -35,13 +35,14 @@ use crate::{
         native::stages::outer_error::{ChildKyValues, KyValues},
         nested,
     },
+    profile::ProfiledCycle,
     proof::ProofBuilder,
 };
 
 type NativeNumGroups = <native::RevdotParameters as fold_revdot::Parameters>::NumGroups;
 type NestedNumGroups = <nested::RevdotParameters as Parameters>::NumGroups;
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
     pub(super) fn outer_error_terms<'dr, 'rx, D, RNG: CryptoRng>(
@@ -56,7 +57,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         nested_inner_error_witness: &nested::stages::inner_error::Witness<C::HostCurve>,
         nested_claims: NestedFuseBuilder<'_, 'rx, C::ScalarField, R, B>,
         nested_source: &NestedFuseProofSource<'rx, C, R>,
-        nested_preamble: &nested::stages::preamble::Witness<C::HostCurve>,
+        nested_preamble: &nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
         y: &Element<'dr, D>,
         mu: &Element<'dr, D>,
         nu: &Element<'dr, D>,
@@ -130,7 +131,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                     &left_ky,
                     &right_ky,
                 );
-                let mut ky = native::claims::ky_values(&ky_source);
+                let mut ky = native::claims::ky_values::<C::Profile, _>(&ky_source);
 
                 let fold_products = fold_revdot::ClaimFolder::new(dr, &mu, &nu)?;
 
@@ -239,7 +240,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         nested_inner_error_witness: &nested::stages::inner_error::Witness<C::HostCurve>,
         nested_claims: NestedFuseBuilder<'_, '_, C::ScalarField, R, B>,
         nested_source: &NestedFuseProofSource<'_, C, R>,
-        nested_preamble: &nested::stages::preamble::Witness<C::HostCurve>,
+        nested_preamble: &nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
         native_y: C::CircuitField,
         native_mu: C::CircuitField,
         native_nu: C::CircuitField,
@@ -287,8 +288,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 let (left_c, right_c) = cs.cast();
                 let allocator = &mut ();
 
-                let preamble = nested::stages::preamble::Stage::<C::HostCurve, R>::default()
-                    .witness(dr, nested_preamble.as_ref().map(|w| *w))?;
+                let preamble =
+                    nested::stages::preamble::Stage::<C::HostCurve, R, C::Profile>::default()
+                        .witness(dr, nested_preamble.as_ref().map(|w| *w))?;
 
                 let nested_y = Element::alloc(dr, allocator, nested_y)?;
                 let nested_mu = Element::alloc(dr, allocator, nested_mu)?;
@@ -310,7 +312,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                     left_unified,
                     right_unified,
                 );
-                let mut ky = nested::claims::ky_values(&ky_source);
+                let mut ky = nested::claims::ky_values::<C::Profile, _>(&ky_source);
 
                 let fold_products = fold_revdot::ClaimFolder::new(dr, &nested_mu, &nested_nu)?;
 
@@ -337,7 +339,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             error_terms,
             collapsed,
         };
-        let bridge_rx = nested::stages::outer_error::Stage::<C::HostCurve, R>::rx(
+        let bridge_rx = nested::stages::outer_error::Stage::<C::HostCurve, R, C::Profile>::rx(
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
             &bridge,
         )?;

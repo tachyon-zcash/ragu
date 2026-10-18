@@ -24,6 +24,7 @@ use crate::{
         native, nested,
     },
     ipa::IpaTranscript,
+    profile::ProfiledCycle,
 };
 
 /// The product of two coefficient vectors of $n$ coefficients, as its $2n -
@@ -384,7 +385,7 @@ fn masked_claims<'a, F: Field, R: Rank, Id: Copy>(
 }
 
 /// The prover's native reduction of `proof`'s claims at `y` and `z`.
-pub(crate) fn reduce_native<C: Cycle, R: Rank, B: Backend>(
+pub(crate) fn reduce_native<C: ProfiledCycle, R: Rank, B: Backend>(
     proof: &Proof<C, R>,
     registry: &Registry<'_, C::CircuitField, R>,
     generators: &C::HostGenerators,
@@ -394,14 +395,14 @@ pub(crate) fn reduce_native<C: Cycle, R: Rank, B: Backend>(
     transcript: &mut impl IpaTranscript<C::HostCurve>,
 ) -> Result<(Reduction<C::HostCurve>, Witness<C::HostCurve, R>)> {
     let mut builder = Builder::<_, C::CircuitField, R, B>::new(registry, y, z);
-    native::claims::build(&NativePolys(proof), &mut builder)?;
+    native::claims::build::<C::Profile, _, _>(&NativePolys(proof), &mut builder)?;
     let claims: Vec<_> = builder
         .a
         .into_iter()
         .zip(builder.b)
         .chain(masked_claims(|component| &proof[component], masked))
         .collect();
-    let shapes = claims::native_shapes(proof.circuit_id(), z, masked)?;
+    let shapes = claims::native_shapes::<C::Profile, _>(proof.circuit_id(), z, masked)?;
     reduce::<_, R, B, _>(
         &claims,
         &shapes,
@@ -415,7 +416,7 @@ pub(crate) fn reduce_native<C: Cycle, R: Rank, B: Backend>(
 
 /// The prover's nested reduction of `proof`'s claims at the nested `y` and
 /// `z`.
-pub(crate) fn reduce_nested<C: Cycle, R: Rank, B: Backend>(
+pub(crate) fn reduce_nested<C: ProfiledCycle, R: Rank, B: Backend>(
     proof: &Proof<C, R>,
     registry: &Registry<'_, C::ScalarField, R>,
     generators: &C::NestedGenerators,
@@ -425,14 +426,14 @@ pub(crate) fn reduce_nested<C: Cycle, R: Rank, B: Backend>(
     transcript: &mut impl IpaTranscript<C::NestedCurve>,
 ) -> Result<(Reduction<C::NestedCurve>, Witness<C::NestedCurve, R>)> {
     let mut builder = Builder::<_, C::ScalarField, R, B>::new(registry, y, z);
-    nested::claims::build(&NestedPolys(proof), &mut builder)?;
+    nested::claims::build::<C::Profile, _, _>(&NestedPolys(proof), &mut builder)?;
     let claims: Vec<_> = builder
         .a
         .into_iter()
         .zip(builder.b)
         .chain(masked_claims(|component| &proof[component], masked))
         .collect();
-    let shapes = claims::nested_shapes(z, masked)?;
+    let shapes = claims::nested_shapes::<C::Profile, _>(z, masked)?;
     reduce::<_, R, B, _>(
         &claims,
         &shapes,

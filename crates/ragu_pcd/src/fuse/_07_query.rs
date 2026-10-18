@@ -15,7 +15,7 @@
 //! $u$ (see `_08_f`).
 
 use ragu_circuits::{polynomials::Rank, staging::StageExt};
-use ragu_core::{Cycle, Result, drivers::Driver, maybe::Maybe};
+use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::{Element, vec::FixedVec};
 use rand::CryptoRng;
 use udon::{fft::bit_reverse, field::Field};
@@ -25,10 +25,11 @@ use crate::{
     Application, Proof,
     internal::{native, nested},
     multicore::par_join,
+    profile::ProfiledCycle,
     proof::ProofBuilder,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
     pub(super) fn compute_query<'dr, D, RNG: CryptoRng>(
@@ -45,7 +46,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
         native::stages::query::Witness<C>,
-        nested::stages::query::Evaluations<C::ScalarField>,
+        nested::stages::query::Evaluations<C::ScalarField, C::Profile>,
     )>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -80,8 +81,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let registry_xy_evals = B::registry_wxy_over_domain(&self.native_registry, x, y);
         let log2_n = self.native_registry.log2_domain();
 
-        let fixed_registry = native::InternalCircuitValues::from_fn(|id| {
-            let i = usize::from(id.circuit_index()) as u32;
+        let fixed_registry = native::InternalCircuitValues::from_fn::<C::Profile>(|id| {
+            let i = usize::from(id.circuit_index::<C::Profile>()) as u32;
             registry_xy_evals[bit_reverse(i as usize, log2_n)]
         });
         let registry_xy_poly = B::registry_interpolate_xy(&self.native_registry, registry_xy_evals);
@@ -142,7 +143,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         left: &Proof<C, R>,
         right: &Proof<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<nested::stages::query::Evaluations<C::ScalarField>>
+    ) -> Result<nested::stages::query::Evaluations<C::ScalarField, C::Profile>>
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
@@ -154,9 +155,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let registry_xy_evals = B::registry_wxy_over_domain(&self.nested_registry, x, y);
         let log2_n = self.nested_registry.log2_domain();
 
+        let all = nested::InternalCircuitIndex::all::<C::Profile>();
         let fixed_registry = FixedVec::from_fn(|i| {
-            let id = nested::InternalCircuitIndex::ALL[i];
-            let j = usize::from(id.circuit_index()) as u32;
+            let id = all[i];
+            let j = usize::from(id.circuit_index::<C::Profile>()) as u32;
             registry_xy_evals[bit_reverse(j as usize, log2_n)]
         });
         let registry_xy_poly = B::registry_interpolate_xy(&self.nested_registry, registry_xy_evals);
@@ -188,7 +190,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 
         builder.set_nested_registry_xy_poly(registry_xy_poly);
 
-        let bridge_rx = nested::stages::query::Stage::<C::HostCurve, R>::rx(
+        let bridge_rx = nested::stages::query::Stage::<C::HostCurve, R, C::Profile>::rx(
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
             &nested::stages::query::Witness {
                 native_query: builder.native_query_commitment(),

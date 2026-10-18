@@ -45,10 +45,13 @@ fn check_targets<H: Header<Fp>>(
     let mut transcript = CycleTranscript::<Pasta>::new(crate::pasta::baked(), RAGU_TAG).unwrap();
     let challenges = instance.challenges(&mut transcript).unwrap().unwrap();
     let header = ky::output_header::<Pasta, H, HEADER_SIZE>(pcd.data().clone()).unwrap();
-    let native_count = claims::native_shapes(instance.circuit_id, Fp::ONE, &[])
+    let native_count =
+        claims::native_shapes::<crate::profile::Standard, _>(instance.circuit_id, Fp::ONE, &[])
+            .unwrap()
+            .len();
+    let nested_count = claims::nested_shapes::<crate::profile::Standard, _>(Fq::ONE, &[])
         .unwrap()
         .len();
-    let nested_count = claims::nested_shapes(Fq::ONE, &[]).unwrap().len();
 
     for (y, nested_y) in [
         (Fp::ZERO, Fq::ZERO),
@@ -80,19 +83,20 @@ fn check_targets<H: Header<Fp>>(
 
         // Compare the finite target lists consumed by the claim builders,
         // including the raw claim's position relative to the circuit claims.
-        let targets: Vec<_> = native::claims::ky_values(&native)
+        let targets: Vec<_> = native::claims::ky_values::<crate::profile::Standard, _>(&native)
             .take(native_count)
             .collect();
-        let decider_targets: Vec<_> = native::claims::ky_values(&expected)
-            .take(native_count - 1)
-            .collect();
+        let decider_targets: Vec<_> =
+            native::claims::ky_values::<crate::profile::Standard, _>(&expected)
+                .take(native_count - 1)
+                .collect();
         assert_eq!(targets[0], pcd.proof().native_c(), "{label}");
         assert_eq!(&targets[1..], decider_targets.as_slice(), "{label}");
         assert_eq!(
-            nested::claims::ky_values(&nested)
+            nested::claims::ky_values::<crate::profile::Standard, _>(&nested)
                 .take(nested_count)
                 .collect::<Vec<_>>(),
-            nested::claims::ky_values(&expected_nested)
+            nested::claims::ky_values::<crate::profile::Standard, _>(&expected_nested)
                 .take(nested_count)
                 .collect::<Vec<_>>(),
             "{label}"
@@ -330,7 +334,10 @@ fn raw_fuse_challenges(instance: &Instance<Pasta>) -> Vec<Fp> {
     for (id, count) in fuse_schedule() {
         transcript
             .nested()
-            .write_point(instance.nested[nested_position(nested::RxComponent::Rx(id))])
+            .write_point(
+                instance.nested
+                    [nested_position::<crate::profile::Standard>(nested::RxComponent::Rx(id))],
+            )
             .unwrap();
         for _ in 0..count {
             challenges.push(transcript.host().squeeze_challenge().unwrap());
@@ -388,7 +395,7 @@ fn every_fuse_input_is_bound_before_compression_challenges() {
         let mut prefix = 0;
         for (id, draws) in fuse_schedule() {
             let mut changed = instance.clone();
-            let position = nested_position(nested::RxComponent::Rx(id));
+            let position = nested_position::<crate::profile::Standard>(nested::RxComponent::Rx(id));
             changed.nested[position] = -changed.nested[position];
             let changed_fuse = raw_fuse_challenges(&changed);
             assert_eq!(&changed_fuse[..prefix], &baseline_fuse[..prefix], "{id:?}");

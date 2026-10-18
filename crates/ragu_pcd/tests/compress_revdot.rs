@@ -330,7 +330,7 @@ fn point_restriction_matches_the_materialized_one() {
         &app.native_registry,
         native::InternalCircuitIndex::ALL
             .iter()
-            .map(|id| id.circuit_index())
+            .map(|id| id.circuit_index::<crate::profile::Standard>())
             .chain([circuit_id]),
         &mut rng,
     );
@@ -338,7 +338,7 @@ fn point_restriction_matches_the_materialized_one() {
         &app.nested_registry,
         nested::InternalCircuitIndex::ALL
             .iter()
-            .map(|id| id.circuit_index()),
+            .map(|id| id.circuit_index::<crate::profile::Standard>()),
         &mut rng,
     );
 }

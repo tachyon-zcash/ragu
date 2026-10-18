@@ -10,14 +10,14 @@
 //! carries, so they are fixed before $y$ is squeezed.
 
 use ragu_circuits::{polynomials::Rank, registry::RegistryAt, staging::StageExt};
-use ragu_core::{Cycle, Result};
+use ragu_core::Result;
 use rand::CryptoRng;
 use udon::{curve::Affine, field::Field};
 
 use super::{NativeSPrime, NestedSPrime};
-use crate::{Application, Proof, internal::nested, proof::ProofBuilder};
+use crate::{Application, Proof, internal::nested, profile::ProfiledCycle, proof::ProofBuilder};
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
     pub(super) fn compute_s_prime<RNG: CryptoRng>(
@@ -47,7 +47,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         native: &NativeSPrime<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
-        let bridge_rx = nested::stages::s_prime::Stage::<C::HostCurve, R>::rx(
+        let bridge_rx = nested::stages::s_prime::Stage::<C::HostCurve, R, C::Profile>::rx(
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
             &nested::stages::s_prime::Witness {
                 registry_wx0: native.registry_wx0_commitment,

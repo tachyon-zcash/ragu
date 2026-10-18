@@ -58,11 +58,12 @@ type Query = query::Stage<Pasta, R, HEADER_SIZE>;
 type Eval = eval::Stage<Pasta, R, HEADER_SIZE>;
 type NestedCurve = <Pasta as ragu_core::Cycle>::NestedCurve;
 type PointsBinding = native::stages::points::BindingStage<NestedCurve>;
-type PointsChildren = native::stages::points::ChildrenStage<NestedCurve>;
-type PointsRegistryWx = native::stages::points::RegistryWxStage<NestedCurve>;
-type PointsAb = native::stages::points::AbStage<NestedCurve>;
-type PointsF = native::stages::points::FStage<NestedCurve>;
-type PointsWalk = native::stages::points::WalkStage<NestedCurve>;
+type PointsChildren = native::stages::points::ChildrenStage<NestedCurve, crate::profile::Standard>;
+type PointsRegistryWx =
+    native::stages::points::RegistryWxStage<NestedCurve, crate::profile::Standard>;
+type PointsAb = native::stages::points::AbStage<NestedCurve, crate::profile::Standard>;
+type PointsF = native::stages::points::FStage<NestedCurve, crate::profile::Standard>;
+type PointsWalk = native::stages::points::WalkStage<NestedCurve, crate::profile::Standard>;
 
 fn synthesis_counts(circuit: impl Circuit<Fp>) -> (usize, usize) {
     let counts = ragu_circuits::testing::synthesis_counts(&circuit).unwrap();
@@ -77,7 +78,8 @@ fn try_internal_circuit_counts(variant: InternalCircuitIndex) -> Result<(usize, 
         Ok((counts.num_gates, counts.num_constraints))
     }
     let pasta = crate::pasta::baked();
-    let (_, log2_circuits) = native::total_circuit_counts(NUM_APP_STEPS);
+    let (_, log2_circuits) =
+        native::total_circuit_counts::<crate::profile::Standard>(NUM_APP_STEPS);
     match variant {
         InternalCircuitIndex::Hashes1Circuit => counts(native::circuits::hashes_1::Circuit::<
             Pasta,
@@ -131,7 +133,8 @@ fn try_internal_circuit_counts(variant: InternalCircuitIndex) -> Result<(usize, 
 
 fn internal_circuit_counts(variant: InternalCircuitIndex) -> (usize, usize) {
     let pasta = crate::pasta::baked();
-    let (_, log2_circuits) = native::total_circuit_counts(NUM_APP_STEPS);
+    let (_, log2_circuits) =
+        native::total_circuit_counts::<crate::profile::Standard>(NUM_APP_STEPS);
 
     match variant {
         InternalCircuitIndex::Hashes1Circuit => {
@@ -374,31 +377,39 @@ fn nested_circuit_counts(variant: nested::InternalCircuitIndex) -> (usize, usize
         (counts.num_gates, counts.num_constraints)
     }
     match variant {
-        nested::InternalCircuitIndex::EndoscalingStep(step) => counts(MultiStage::new(
-            nested::EndoscalingStep::<EqAffine, R>::new(step as usize),
-        )),
+        nested::InternalCircuitIndex::EndoscalingStep(step) => {
+            counts(MultiStage::new(nested::EndoscalingStep::<
+                EqAffine,
+                R,
+                crate::profile::Standard,
+            >::new(step as usize)))
+        }
         nested::InternalCircuitIndex::Export => {
             counts(MultiStage::new(nested::circuits::export::Circuit::<
                 EqAffine,
                 R,
+                crate::profile::Standard,
             >::new()))
         }
         nested::InternalCircuitIndex::Collapse => {
             counts(MultiStage::new(nested::circuits::collapse::Circuit::<
                 EqAffine,
                 R,
+                crate::profile::Standard,
             >::new()))
         }
         nested::InternalCircuitIndex::ComputeV => {
             counts(MultiStage::new(nested::circuits::compute_v::Circuit::<
                 EqAffine,
                 R,
+                crate::profile::Standard,
             >::new()))
         }
         nested::InternalCircuitIndex::Loading => {
             counts(MultiStage::new(nested::circuits::loading::Circuit::<
                 EqAffine,
                 R,
+                crate::profile::Standard,
             >::new()))
         }
         _ => panic!("constraint counts only apply to nested circuits"),
@@ -460,16 +471,16 @@ fn test_nested_stage_parameters() {
     }
 
     check_stage!(endoscalar::EndoscalarStage,                          skip =   1, num =  64);
-    check_stage!(nested::PointsStage<EqAffine>,                        skip =  65, num = 141);
-    check_stage!(stages::preamble::Stage<EqAffine, R>,                 skip = 206, num = 114);
-    check_stage!(stages::s_prime::Stage<EqAffine, R>,                  skip = 320, num =   3);
-    check_stage!(stages::inner_error::Stage<EqAffine, R>,              skip = 323, num = 254);
-    check_stage!(stages::outer_error::Stage<EqAffine, R>,              skip = 577, num =  73);
-    check_stage!(stages::ab::Stage<EqAffine, R>,                       skip = 650, num =   3);
-    check_stage!(stages::query::Stage<EqAffine, R>,                    skip = 653, num =  71);
-    check_stage!(stages::f::Stage<EqAffine, R>,                        skip = 724, num =   2);
-    check_stage!(stages::eval::Stage<EqAffine, R>,                     skip = 726, num =  50);
-    check_stage!(stages::challenges::Stage<EqAffine, R>,               skip = 776, num =  12);
+    check_stage!(nested::PointsStage<EqAffine, crate::profile::Standard>,                        skip =  65, num = 141);
+    check_stage!(stages::preamble::Stage<EqAffine, R, crate::profile::Standard>,                 skip = 206, num = 114);
+    check_stage!(stages::s_prime::Stage<EqAffine, R, crate::profile::Standard>,                  skip = 320, num =   3);
+    check_stage!(stages::inner_error::Stage<EqAffine, R, crate::profile::Standard>,              skip = 323, num = 254);
+    check_stage!(stages::outer_error::Stage<EqAffine, R, crate::profile::Standard>,              skip = 577, num =  73);
+    check_stage!(stages::ab::Stage<EqAffine, R, crate::profile::Standard>,                       skip = 650, num =   3);
+    check_stage!(stages::query::Stage<EqAffine, R, crate::profile::Standard>,                    skip = 653, num =  71);
+    check_stage!(stages::f::Stage<EqAffine, R, crate::profile::Standard>,                        skip = 724, num =   2);
+    check_stage!(stages::eval::Stage<EqAffine, R, crate::profile::Standard>,                     skip = 726, num =  50);
+    check_stage!(stages::challenges::Stage<EqAffine, R, crate::profile::Standard>,               skip = 776, num =  12);
 }
 
 /// Helper test to print the nested circuits' current counts and the nested
@@ -501,16 +512,16 @@ fn print_nested_circuit_constraint_counts() {
     }
     println!("\n// Copy-paste into test_nested_stage_parameters:");
     print_stage!("endoscalar", endoscalar::EndoscalarStage);
-    print_stage!("points", nested::PointsStage<EqAffine>);
-    print_stage!("preamble", stages::preamble::Stage<EqAffine, R>);
-    print_stage!("s_prime", stages::s_prime::Stage<EqAffine, R>);
-    print_stage!("inner_error", stages::inner_error::Stage<EqAffine, R>);
-    print_stage!("outer_error", stages::outer_error::Stage<EqAffine, R>);
-    print_stage!("ab", stages::ab::Stage<EqAffine, R>);
-    print_stage!("query", stages::query::Stage<EqAffine, R>);
-    print_stage!("f", stages::f::Stage<EqAffine, R>);
-    print_stage!("eval", stages::eval::Stage<EqAffine, R>);
-    print_stage!("challenges", stages::challenges::Stage<EqAffine, R>);
+    print_stage!("points", nested::PointsStage<EqAffine, crate::profile::Standard>);
+    print_stage!("preamble", stages::preamble::Stage<EqAffine, R, crate::profile::Standard>);
+    print_stage!("s_prime", stages::s_prime::Stage<EqAffine, R, crate::profile::Standard>);
+    print_stage!("inner_error", stages::inner_error::Stage<EqAffine, R, crate::profile::Standard>);
+    print_stage!("outer_error", stages::outer_error::Stage<EqAffine, R, crate::profile::Standard>);
+    print_stage!("ab", stages::ab::Stage<EqAffine, R, crate::profile::Standard>);
+    print_stage!("query", stages::query::Stage<EqAffine, R, crate::profile::Standard>);
+    print_stage!("f", stages::f::Stage<EqAffine, R, crate::profile::Standard>);
+    print_stage!("eval", stages::eval::Stage<EqAffine, R, crate::profile::Standard>);
+    print_stage!("challenges", stages::challenges::Stage<EqAffine, R, crate::profile::Standard>);
 }
 
 /// Checks that only step slots can satisfy an application instance.
@@ -671,7 +682,7 @@ fn print_registry_tags() {
 #[test]
 fn test_internal_circuit_index_all_exhaustive() {
     let mut collected = alloc::vec::Vec::new();
-    let _values = InternalCircuitValues::from_fn(|id| {
+    let _values = InternalCircuitValues::from_fn::<crate::profile::Standard>(|id| {
         collected.push(id);
     });
     assert_eq!(collected.as_slice(), InternalCircuitIndex::ALL);
@@ -680,8 +691,25 @@ fn test_internal_circuit_index_all_exhaustive() {
 #[test]
 fn test_rx_index_all_exhaustive() {
     let mut collected = alloc::vec::Vec::new();
-    let _values = RxValues::from_fn(|id| {
+    let _values = RxValues::from_fn::<crate::profile::Standard>(|id| {
         collected.push(id);
     });
     assert_eq!(collected.as_slice(), RxIndex::ALL);
+}
+
+/// The generic lists resize the constant ones, so in the standard profile
+/// they are the constant ones.
+#[test]
+fn test_standard_lists_are_the_constants() {
+    use crate::profile::Standard;
+    assert_eq!(
+        InternalCircuitIndex::all::<Standard>(),
+        InternalCircuitIndex::ALL
+    );
+    assert_eq!(RxIndex::all::<Standard>(), RxIndex::ALL);
+    assert_eq!(
+        nested::InternalCircuitIndex::all::<Standard>(),
+        nested::InternalCircuitIndex::ALL
+    );
+    assert_eq!(nested::RxIndex::all::<Standard>(), nested::RxIndex::ALL);
 }

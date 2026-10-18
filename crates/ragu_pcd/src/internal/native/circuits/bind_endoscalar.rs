@@ -42,6 +42,7 @@ use super::super::{
     },
     unified::{self, OutputBuilder},
 };
+use crate::profile::ProfiledCycle;
 
 /// Circuit binding the walk stage's endoscalar bits to `pre_beta`, the
 /// points stages to the curve and the persistent polynomial commitments
@@ -50,7 +51,7 @@ pub struct Circuit<C: Cycle, R> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: Cycle, R: Rank> Circuit<C, R> {
+impl<C: ProfiledCycle, R: Rank> Circuit<C, R> {
     pub fn new() -> MultiStage<C::CircuitField, R, Self> {
         MultiStage::new(Circuit {
             _marker: PhantomData,
@@ -59,17 +60,17 @@ impl<C: Cycle, R: Rank> Circuit<C, R> {
 }
 
 /// Witness for the binding circuit.
-pub struct Witness<'a, C: Cycle> {
+pub struct Witness<'a, C: ProfiledCycle> {
     /// The unified instance, for `pre_beta`.
     pub unified: unified::Instance<C>,
     /// The points stages' values.
-    pub inputs: &'a Inputs<C::NestedCurve>,
+    pub inputs: &'a Inputs<C::NestedCurve, C::Profile>,
     /// The walk stage's value.
-    pub walk: &'a WalkWitness<C::NestedCurve>,
+    pub walk: &'a WalkWitness<C::NestedCurve, C::Profile>,
 }
 
-impl<C: Cycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circuit<C, R> {
-    type Last = WalkStage<C::NestedCurve>;
+impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circuit<C, R> {
+    type Last = WalkStage<C::NestedCurve, C::Profile>;
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C>;
     type Output = unified::InternalOutputKind<C>;
@@ -95,11 +96,13 @@ impl<C: Cycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circuit<C, R> 
         Self: 'dr,
     {
         let (binding, builder) = builder.add_stage::<BindingStage<C::NestedCurve>>()?;
-        let (children, builder) = builder.add_stage::<ChildrenStage<C::NestedCurve>>()?;
-        let (registry_wx, builder) = builder.add_stage::<RegistryWxStage<C::NestedCurve>>()?;
-        let (ab, builder) = builder.add_stage::<AbStage<C::NestedCurve>>()?;
-        let (f, builder) = builder.add_stage::<FStage<C::NestedCurve>>()?;
-        let (walk, builder) = builder.add_stage::<WalkStage<C::NestedCurve>>()?;
+        let (children, builder) =
+            builder.add_stage::<ChildrenStage<C::NestedCurve, C::Profile>>()?;
+        let (registry_wx, builder) =
+            builder.add_stage::<RegistryWxStage<C::NestedCurve, C::Profile>>()?;
+        let (ab, builder) = builder.add_stage::<AbStage<C::NestedCurve, C::Profile>>()?;
+        let (f, builder) = builder.add_stage::<FStage<C::NestedCurve, C::Profile>>()?;
+        let (walk, builder) = builder.add_stage::<WalkStage<C::NestedCurve, C::Profile>>()?;
         let dr = builder.finish();
 
         // Enforced: every point the walk consumes lies on the curve.

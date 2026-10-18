@@ -26,6 +26,7 @@ use crate::{
     Pcd,
     header::Header,
     internal::nested::{self, InternalCircuitIndex, RxIndex, pcs},
+    profile::ProfiledCycle,
     proof::recursive_propagation_tests::support::{self, C, R},
 };
 
@@ -37,7 +38,7 @@ type Evaluation<'a> = (String, &'a Poly, Commitment);
 fn expected_rx_order() -> Vec<RxIndex> {
     use RxIndex::*;
 
-    (0..nested::NumStepsLen::len())
+    (0..nested::NumSteps::<crate::profile::Standard>::len())
         .map(|step| EndoscalingStep(step.try_into().unwrap()))
         .chain([
             Export,
@@ -61,7 +62,7 @@ fn expected_rx_order() -> Vec<RxIndex> {
 fn expected_circuit_order() -> Vec<InternalCircuitIndex> {
     use InternalCircuitIndex::*;
 
-    (0..nested::NumStepsLen::len())
+    (0..nested::NumSteps::<crate::profile::Standard>::len())
         .map(|step| EndoscalingStep(step.try_into().unwrap()))
         .chain([
             Export,
@@ -195,7 +196,11 @@ fn check_batch<H: Header<Fp>>(
     for (index, id) in circuits.into_iter().enumerate() {
         // Derive each expected domain point from its position in the test's
         // circuit list, so a reordered production table cannot relabel it.
-        assert_eq!(usize::from(id.circuit_index()), index, "{id:?}");
+        assert_eq!(
+            usize::from(id.circuit_index::<crate::profile::Standard>()),
+            index,
+            "{id:?}"
+        );
         queries.push((
             format!("xy@{id:?}"),
             batch.registry_xy,
@@ -243,9 +248,9 @@ fn check_batch<H: Header<Fp>>(
 
     // Check the production eval bridge's stored wires against direct
     // polynomial evaluations. The first two values hold native_eval.
-    let values = stage_values::<nested::stages::eval::Stage<<C as Cycle>::HostCurve, R>>(
-        &parent.bridge_eval_rx,
-    );
+    let values = stage_values::<
+        nested::stages::eval::Stage<<C as Cycle>::HostCurve, R, <C as ProfiledCycle>::Profile>,
+    >(&parent.bridge_eval_rx);
     assert_eq!(values.len(), 2 + evaluated.len());
     for (value, (tag, poly, _)) in values[2..].iter().zip(&evaluated) {
         assert_eq!(*value, poly.eval(u), "eval bridge: {tag}");
@@ -353,6 +358,7 @@ mod folding {
             fold_revdot::{self, ClaimFolder},
             nested::{self, claims::KySource},
         },
+        profile::ProfiledCycle,
     };
 
     type P = nested::RevdotParameters;
@@ -398,7 +404,10 @@ mod folding {
         z: Fq,
     ) -> Result<(Claims<'a>, ChildValues)> {
         let mut nested_claims = claims::Builder::new(&app.nested_registry, y, z);
-        nested::claims::build(&NestedFuseProofSource { left, right }, &mut nested_claims)?;
+        nested::claims::build::<crate::profile::Standard, _, _>(
+            &NestedFuseProofSource { left, right },
+            &mut nested_claims,
+        )?;
         let unified_ky = |proof: &Proof<C, R>| -> Result<Fq> {
             NestedFuseEmulator::<C>::emulate_wireless(
                 (proof.nested_instance()?, y),
@@ -432,9 +441,11 @@ mod folding {
         z: Fq,
     ) -> Result<bool> {
         let (nested_claims, children) = child_claims(app, left, right, y, z)?;
-        Ok(nested::claims::ky_values(&children)
-            .zip(nested_claims.a.iter().zip(nested_claims.b.iter()))
-            .all(|(ky, (a, b))| a.revdot(b) == ky))
+        Ok(
+            nested::claims::ky_values::<crate::profile::Standard, _>(&children)
+                .zip(nested_claims.a.iter().zip(nested_claims.b.iter()))
+                .all(|(ky, (a, b))| a.revdot(b) == ky),
+        )
     }
 
     pub(super) fn check(
@@ -463,7 +474,7 @@ mod folding {
         assert_eq!(nested_claims.a.len(), 2 + 2 * circuits + bonding_kinds);
 
         // 1. Every nested claim of the children holds at the derived challenges.
-        for (i, (ky, (a, b))) in nested::claims::ky_values(&children)
+        for (i, (ky, (a, b))) in nested::claims::ky_values::<crate::profile::Standard, _>(&children)
             .zip(nested_claims.a.iter().zip(nested_claims.b.iter()))
             .enumerate()
         {
@@ -508,7 +519,11 @@ mod folding {
         // The inner stage starts with two curve points (four coordinates),
         // followed by the error terms in group-major order.
         let inner_values = stage_values::<
-            nested::stages::inner_error::Stage<<C as Cycle>::HostCurve, R>,
+            nested::stages::inner_error::Stage<
+                <C as Cycle>::HostCurve,
+                R,
+                <C as ProfiledCycle>::Profile,
+            >,
         >(&parent.bridge_inner_error_rx);
         assert!(
             inner_values[4..]
@@ -520,7 +535,11 @@ mod folding {
         // The outer stage starts with one curve point, followed by the outer
         // error terms and then one collapsed value per group.
         let outer_values = stage_values::<
-            nested::stages::outer_error::Stage<<C as Cycle>::HostCurve, R>,
+            nested::stages::outer_error::Stage<
+                <C as Cycle>::HostCurve,
+                R,
+                <C as ProfiledCycle>::Profile,
+            >,
         >(&parent.bridge_outer_error_rx);
         let (stored_outer_errors, stored_collapsed) =
             outer_values[2..].split_at(outer_errors.len());
@@ -603,7 +622,7 @@ mod folding {
                     left_unified,
                     right_unified,
                 );
-                let mut ky = nested::claims::ky_values(&ky_source);
+                let mut ky = nested::claims::ky_values::<crate::profile::Standard, _>(&ky_source);
 
                 let layer1 = ClaimFolder::new(dr, &mu, &nu)?;
                 let collapsed = FixedVec::try_from_fn(|i| {
@@ -899,9 +918,10 @@ mod challenge_stage {
             );
         }
 
-        let pad = stage_wire_indices::<_, R, challenges::Stage<EqAffine, R>>(|stage| {
-            wires_of(&stage.base_case.zero)
-        })?[0];
+        let pad =
+            stage_wire_indices::<_, R, challenges::Stage<EqAffine, R, crate::profile::Standard>>(
+                |stage| wires_of(&stage.base_case.zero),
+            )?[0];
         let mut stale = child.proof().clone();
         assert_eq!(
             StageReader::new(&stale.nested_challenges_rx).read(pad),

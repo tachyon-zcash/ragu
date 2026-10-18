@@ -16,15 +16,26 @@
 //! aggregator depends on it; the standard profile knows nothing of the
 //! aggregator.
 //!
-//! Today the internal modules spell out the standard profile's layout as
-//! constants, and [`Shape::of`] rederives it from the profile's declarations;
-//! a compile-time check pins the two together so neither drifts. Making the
-//! layout generic over the profile, so one binary holds both shapes, is the
-//! next step.
+//! A cycle names its profile through [`ProfiledCycle`], so every generic item
+//! in this crate reaches the shape through the cycle it already carries, and
+//! a wallet proof and an aggregator proof over the same curves are different
+//! types. [`Pasta`] proves in the standard profile; [`Profiled`] puts a cycle
+//! under any other profile, keeping its curves, generators and Poseidon
+//! instances. The native and nested internal modules size their walks, index
+//! lists and value containers from the profile's [`Shape`], so one binary
+//! holds every profile's layout. The standard profile's layout is also the
+//! internal modules' constant one, pinned to its shape at compile time.
 
-use core::fmt;
+use core::{any::type_name, fmt, marker::PhantomData};
 
-use crate::internal::{endoscalar, native, nested};
+#[cfg(feature = "baked")]
+use ragu_core::pasta::Pasta;
+use ragu_core::Cycle;
+
+use crate::{
+    internal::{endoscalar, native, nested},
+    ipa::IpaCycle,
+};
 
 /// The internal circuits a proof carries beyond the fuse's own, as the rx
 /// polynomials they add on each side of the cycle.
@@ -55,6 +66,99 @@ pub struct Aggregator;
 impl Profile for Aggregator {
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
+}
+
+/// A cycle with a profile: what every item that lays out a proof is generic
+/// over.
+pub trait ProfiledCycle: Cycle {
+    /// The profile of every proof over this cycle.
+    type Profile: Profile;
+}
+
+// The base cycle supplies the IPA's generators to the profile's circuits,
+// which for the Pasta cycle the baked parameters provide; without them the
+// Pasta cycle proves in no profile.
+#[cfg(feature = "baked")]
+impl ProfiledCycle for Pasta {
+    type Profile = Standard;
+}
+
+/// A cycle under another profile: `C`'s curves, generators and Poseidon
+/// instances with `P`'s proof shape.
+///
+/// `Profiled<Pasta, Aggregator>` is the aggregator cycle over the Pasta
+/// curves. It is a distinct type from [`Pasta`], so an application over one
+/// never accepts the other's proofs.
+pub struct Profiled<C, P>(PhantomData<(C, P)>);
+
+impl<C, P> Clone for Profiled<C, P> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<C, P> Copy for Profiled<C, P> {}
+
+impl<C, P> Default for Profiled<C, P> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<C, P> fmt::Debug for Profiled<C, P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Profiled<{}, {}>", type_name::<C>(), type_name::<P>())
+    }
+}
+
+impl<C, P> PartialEq for Profiled<C, P> {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl<C, P> Eq for Profiled<C, P> {}
+
+impl<C: Cycle, P: Profile> Cycle for Profiled<C, P> {
+    type CircuitField = C::CircuitField;
+    type ScalarField = C::ScalarField;
+    type NestedCurve = C::NestedCurve;
+    type HostCurve = C::HostCurve;
+    type NestedGenerators = C::NestedGenerators;
+    type HostGenerators = C::HostGenerators;
+    type CircuitPoseidon = C::CircuitPoseidon;
+    type ScalarPoseidon = C::ScalarPoseidon;
+    type Params = C::Params;
+
+    fn nested_generators(params: &Self::Params) -> &Self::NestedGenerators {
+        C::nested_generators(params)
+    }
+
+    fn host_generators(params: &Self::Params) -> &Self::HostGenerators {
+        C::host_generators(params)
+    }
+
+    fn circuit_poseidon(params: &Self::Params) -> &Self::CircuitPoseidon {
+        C::circuit_poseidon(params)
+    }
+
+    fn scalar_poseidon(params: &Self::Params) -> &Self::ScalarPoseidon {
+        C::scalar_poseidon(params)
+    }
+}
+
+impl<C: IpaCycle, P: Profile> IpaCycle for Profiled<C, P> {
+    fn host_u(params: &Self::Params) -> &Self::HostCurve {
+        C::host_u(params)
+    }
+
+    fn nested_u(params: &Self::Params) -> &Self::NestedCurve {
+        C::nested_u(params)
+    }
+}
+
+impl<C: Cycle, P: Profile> ProfiledCycle for Profiled<C, P> {
+    type Profile = P;
 }
 
 /// The shape a profile gives a proof: its rx polynomial counts and the sizes
@@ -179,6 +283,18 @@ mod tests {
     #[test]
     fn aggregator_matches_standard_until_its_circuits_land() {
         assert_eq!(Shape::of::<Aggregator>(), Shape::of::<Standard>());
+    }
+
+    #[test]
+    fn pasta_proves_in_the_standard_profile() {
+        assert_eq!(
+            Shape::of::<<Pasta as ProfiledCycle>::Profile>(),
+            Shape::of::<Standard>()
+        );
+        assert_eq!(
+            Shape::of::<<Profiled<Pasta, Aggregator> as ProfiledCycle>::Profile>(),
+            Shape::of::<Aggregator>()
+        );
     }
 
     #[test]

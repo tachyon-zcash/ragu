@@ -73,10 +73,11 @@ use crate::{
             stages::points::{self as native_points, Inputs},
         },
         nested::{
-            self, EndoscalingStep, EndoscalingStepWitness, NUM_ENDOSCALING_POINTS, NumStepsLen,
-            PointsStage, PointsWitness,
+            self, EndoscalingStep, EndoscalingStepWitness, NumPoints, NumSteps, PointsStage,
+            PointsWitness,
         },
     },
+    profile::ProfiledCycle,
 };
 
 /// A newtype marking a field as derived/cacheable.
@@ -712,7 +713,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     crate::Application<'_, C, R, HEADER_SIZE, B>
 {
     /// Runs endoscaling over the host-curve commitments that feed
@@ -734,20 +735,22 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         endoscalar_alpha: C::ScalarField,
         points_alpha: C::ScalarField,
         builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<(C::HostCurve, PointsWitness<C::HostCurve>)> {
-        assert_eq!(points.len(), NUM_ENDOSCALING_POINTS);
+    ) -> Result<(C::HostCurve, PointsWitness<C::HostCurve, C::Profile>)> {
+        assert_eq!(points.len(), NumPoints::<C::Profile>::len());
 
-        let witness = PointsWitness::<C::HostCurve>::new(beta_endo, points);
+        let witness = PointsWitness::<C::HostCurve, C::Profile>::new(beta_endo, points);
 
         let endoscalar_rx =
             <EndoscalarStage as StageExt<C::ScalarField, R>>::rx(endoscalar_alpha, beta_endo)?;
-        let points_rx =
-            <PointsStage<C::HostCurve> as StageExt<C::ScalarField, R>>::rx(points_alpha, &witness)?;
+        let points_rx = <PointsStage<C::HostCurve, C::Profile> as StageExt<C::ScalarField, R>>::rx(
+            points_alpha,
+            &witness,
+        )?;
 
-        let num_steps = NumStepsLen::len();
+        let num_steps = NumSteps::<C::Profile>::len();
         let mut step_rxs = Vec::with_capacity(num_steps);
         for step in 0..num_steps {
-            let step_circuit = EndoscalingStep::<C::HostCurve, R>::new(step);
+            let step_circuit = EndoscalingStep::<C::HostCurve, R, C::Profile>::new(step);
             let staged = MultiStage::new(step_circuit);
             let step_trace = staged
                 .trace(EndoscalingStepWitness {
@@ -757,7 +760,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 .into_output();
             let step_rx = self.nested_registry.assemble(
                 &step_trace,
-                nested::InternalCircuitIndex::EndoscalingStep(step as u32).circuit_index(),
+                nested::InternalCircuitIndex::EndoscalingStep(step as u32)
+                    .circuit_index::<C::Profile>(),
                 rng,
             )?;
             step_rxs.push(step_rx);
@@ -770,7 +774,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let p_commitment = *witness
             .interstitials
             .last()
-            .expect("NUM_ENDOSCALING_POINTS guarantees at least one interstitial");
+            .expect("every walk has at least one interstitial");
         Ok((p_commitment, witness))
     }
 
@@ -784,7 +788,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         right: &Proof<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
-        let (binding, children) = native_points::children_witnesses(
+        let (binding, children) = native_points::children_witnesses::<_, C::Profile>(
             &nested::pcs::child_commitments(left).collect::<Vec<_>>(),
             &nested::pcs::child_commitments(right).collect::<Vec<_>>(),
         );
@@ -794,12 +798,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 &binding,
             )?,
         );
-        builder.set_native_points_children_rx(
-            <native_points::ChildrenStage<C::NestedCurve> as StageExt<C::CircuitField, R>>::rx(
-                C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-                &children,
-            )?,
-        );
+        builder.set_native_points_children_rx(<native_points::ChildrenStage<
+            C::NestedCurve,
+            C::Profile,
+        > as StageExt<C::CircuitField, R>>::rx(
+            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
+            &children,
+        )?);
         Ok(())
     }
 
@@ -817,12 +822,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             registry_wx0,
             registry_wx1,
         };
-        builder.set_native_points_registry_wx_rx(
-            <native_points::RegistryWxStage<C::NestedCurve> as StageExt<C::CircuitField, R>>::rx(
-                C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-                &witness,
-            )?,
-        );
+        builder.set_native_points_registry_wx_rx(<native_points::RegistryWxStage<
+            C::NestedCurve,
+            C::Profile,
+        > as StageExt<C::CircuitField, R>>::rx(
+            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
+            &witness,
+        )?);
         Ok(())
     }
 
@@ -838,7 +844,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         let witness = native_points::AbWitness { registry_wy, a, b };
-        builder.set_native_points_ab_rx(<native_points::AbStage<C::NestedCurve> as StageExt<
+        builder.set_native_points_ab_rx(<native_points::AbStage<C::NestedCurve, C::Profile> as StageExt<
             C::CircuitField,
             R,
         >>::rx(
@@ -859,7 +865,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         let witness = native_points::FWitness { registry_xy, f };
-        builder.set_native_points_f_rx(<native_points::FStage<C::NestedCurve> as StageExt<
+        builder.set_native_points_f_rx(<native_points::FStage<C::NestedCurve, C::Profile> as StageExt<
             C::CircuitField,
             R,
         >>::rx(
@@ -874,7 +880,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     fn commit_native_points_stages<RNG: rand::CryptoRng>(
         &self,
         rng: &mut RNG,
-        inputs: &Inputs<C::NestedCurve>,
+        inputs: &Inputs<C::NestedCurve, C::Profile>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         builder.set_native_points_binding_rx(
@@ -883,12 +889,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 &inputs.binding,
             )?,
         );
-        builder.set_native_points_children_rx(
-            <native_points::ChildrenStage<C::NestedCurve> as StageExt<C::CircuitField, R>>::rx(
-                C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-                &inputs.children,
-            )?,
-        );
+        builder.set_native_points_children_rx(<native_points::ChildrenStage<
+            C::NestedCurve,
+            C::Profile,
+        > as StageExt<C::CircuitField, R>>::rx(
+            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
+            &inputs.children,
+        )?);
         self.commit_native_points_registry_wx(
             rng,
             inputs.registry_wx.registry_wx0,
@@ -917,38 +924,44 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         &self,
         rng: &mut RNG,
         beta_endo: u128,
-        inputs: &Inputs<C::NestedCurve>,
+        inputs: &Inputs<C::NestedCurve, C::Profile>,
         builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<(C::NestedCurve, native_points::WalkWitness<C::NestedCurve>)> {
+    ) -> Result<(
+        C::NestedCurve,
+        native_points::WalkWitness<C::NestedCurve, C::Profile>,
+    )> {
         use native_points::{WalkStage, WalkWitness};
 
         let walk = WalkWitness::new(
             beta_endo,
             crate::internal::endoscalar::PointsWitness::<
                 C::NestedCurve,
-                { native::NUM_ENDOSCALING_POINTS },
+                native::NumPoints<C::Profile>,
                 { native::ENDOSCALINGS_PER_STEP },
             >::new(beta_endo, &inputs.walk()),
         );
 
-        let walk_rx = <WalkStage<C::NestedCurve> as StageExt<C::CircuitField, R>>::rx(
+        let walk_rx = <WalkStage<C::NestedCurve, C::Profile> as StageExt<C::CircuitField, R>>::rx(
             C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
             &walk,
         )?;
 
-        let mut step_rxs = Vec::with_capacity(native::NUM_ENDOSCALING_STEPS);
-        for step in 0..native::NUM_ENDOSCALING_STEPS {
+        let mut step_rxs = Vec::with_capacity(native::NumSteps::<C::Profile>::len());
+        for step in 0..native::NumSteps::<C::Profile>::len() {
             let trace = native::circuits::endoscaling_step::Circuit::<C, R>::new(step)
                 .trace(native::circuits::endoscaling_step::Witness {
                     inputs,
                     walk: &walk,
                 })?
                 .into_output();
-            step_rxs.push(self.native_registry.assemble(
-                &trace,
-                native::InternalCircuitIndex::EndoscalingStep(step as u32).circuit_index(),
-                &mut *rng,
-            )?);
+            step_rxs.push(
+                self.native_registry.assemble(
+                    &trace,
+                    native::InternalCircuitIndex::EndoscalingStep(step as u32)
+                        .circuit_index::<C::Profile>(),
+                    &mut *rng,
+                )?,
+            );
         }
 
         builder.set_native_points_walk_rx(walk_rx);
@@ -1096,9 +1109,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             let nested_commitment =
                 B::sparse_commit_to_affine(&ones_nested, C::nested_generators(self.params));
             let registry_xy_commitment = builder.nested_registry_xy_commitment();
-            let mut points = Vec::with_capacity(native::NUM_ENDOSCALING_POINTS);
+            let mut points = Vec::with_capacity(native::NumPoints::<C::Profile>::len());
             let mut polys: Vec<&sparse::Polynomial<C::ScalarField, R>> =
-                Vec::with_capacity(native::NUM_ENDOSCALING_POINTS);
+                Vec::with_capacity(native::NumPoints::<C::Profile>::len());
             let mut push = |point, poly| {
                 points.push(point);
                 polys.push(poly);
@@ -1106,7 +1119,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             let registry_xy = builder.nested_registry_xy_poly();
             push(nested_commitment, &ones_nested); // f_n
             for _ in 0..2 {
-                for _ in &nested::RxIndex::ALL {
+                for _ in nested::RxIndex::all::<C::Profile>() {
                     push(nested_commitment, &ones_nested);
                 }
                 push(nested_commitment, &ones_nested); // a
@@ -1134,7 +1147,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         // Commit the same synthetic challenge witness used for the binding
         // partials above, without blinding.
         builder.set_nested_challenges_rx(
-            nested::stages::challenges::Stage::<C::HostCurve, R>::rx(
+            nested::stages::challenges::Stage::<C::HostCurve, R, C::Profile>::rx(
                 C::ScalarField::ZERO,
                 &nested_challenges,
             )
@@ -1155,7 +1168,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         // ChildWitness.p), then native_p_poly.
         let nested_gen = C::nested_generators(self.params);
         {
-            let rx = nested::stages::s_prime::Stage::<C::HostCurve, R>::rx(
+            let rx = nested::stages::s_prime::Stage::<C::HostCurve, R, C::Profile>::rx(
                 C::ScalarField::ONE,
                 &nested::stages::s_prime::Witness {
                     registry_wx0: host_commitment,
@@ -1168,7 +1181,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             builder.set_bridge_s_prime_rx(rx, commitment);
         }
         {
-            let rx = nested::stages::inner_error::Stage::<C::HostCurve, R>::rx(
+            let rx = nested::stages::inner_error::Stage::<C::HostCurve, R, C::Profile>::rx(
                 C::ScalarField::ONE,
                 &nested::stages::inner_error::Witness {
                     native_inner_error: host_commitment,
@@ -1183,7 +1196,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             builder.set_bridge_inner_error_rx(rx, commitment);
         }
         {
-            let rx = nested::stages::outer_error::Stage::<C::HostCurve, R>::rx(
+            let rx = nested::stages::outer_error::Stage::<C::HostCurve, R, C::Profile>::rx(
                 C::ScalarField::ONE,
                 &nested::stages::outer_error::Witness {
                     native_outer_error: builder.native_outer_error_commitment(),
@@ -1196,7 +1209,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             builder.set_bridge_outer_error_rx(rx, commitment);
         }
         {
-            let rx = nested::stages::query::Stage::<C::HostCurve, R>::rx(
+            let rx = nested::stages::query::Stage::<C::HostCurve, R, C::Profile>::rx(
                 C::ScalarField::ONE,
                 &nested::stages::query::Witness {
                     native_query: builder.native_query_commitment(),
@@ -1209,7 +1222,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             builder.set_bridge_query_rx(rx, commitment);
         }
         {
-            let rx = nested::stages::f::Stage::<C::HostCurve, R>::rx(
+            let rx = nested::stages::f::Stage::<C::HostCurve, R, C::Profile>::rx(
                 C::ScalarField::ONE,
                 &nested::stages::f::Witness {
                     native_f: host_commitment,
@@ -1221,7 +1234,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             builder.set_bridge_f_rx(rx, commitment);
         }
         {
-            let rx = nested::stages::eval::Stage::<C::HostCurve, R>::rx(
+            let rx = nested::stages::eval::Stage::<C::HostCurve, R, C::Profile>::rx(
                 C::ScalarField::ONE,
                 &nested::stages::eval::Witness {
                     native_eval: builder.native_eval_commitment(),
@@ -1240,9 +1253,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         // polynomial this proof holds, p is their beta-fold, and P is the
         // walk's result, which is then p's commitment.
         let (p_poly, p_commitment) = {
-            let mut points = Vec::with_capacity(NUM_ENDOSCALING_POINTS);
+            let mut points = Vec::with_capacity(NumPoints::<C::Profile>::len());
             let mut polys: Vec<&sparse::Polynomial<C::CircuitField, R>> =
-                Vec::with_capacity(NUM_ENDOSCALING_POINTS);
+                Vec::with_capacity(NumPoints::<C::Profile>::len());
             let mut push = |point, poly| {
                 points.push(point);
                 polys.push(poly);
@@ -1257,7 +1270,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             // `host_commitment` (ones_host), except registry_xy which
             // has its own commitment.
             for _ in 0..2 {
-                for _ in &RxIndex::ALL {
+                for _ in RxIndex::all::<C::Profile>() {
                     push(host_commitment, &ones_host);
                 }
                 push(host_commitment, &ones_host); // AbA
@@ -1305,7 +1318,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 bind_challenges: [host_commitment; native::NUM_BINDERS],
                 bind_beta: host_commitment,
                 bind_endoscalar: host_commitment,
-                endoscaling_steps: [host_commitment; native::NUM_ENDOSCALING_STEPS],
+                endoscaling_steps: FixedVec::from_fn(|_| host_commitment),
                 points_walk: host_commitment,
                 stashed_preamble: host_commitment,
                 stashed_inner_error: host_commitment,
@@ -1331,7 +1344,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                     u: nested_one,
                 },
             };
-            let rx = nested::stages::preamble::Stage::<C::HostCurve, R>::rx(
+            let rx = nested::stages::preamble::Stage::<C::HostCurve, R, C::Profile>::rx(
                 C::ScalarField::ONE,
                 &nested::stages::preamble::Witness {
                     native_preamble: host_commitment,

@@ -18,7 +18,7 @@ use ragu_circuits::{
 use ragu_core::{Cycle, Result};
 
 use super::{Cached, Proof};
-use crate::internal::nested;
+use crate::{internal::nested, profile::ProfiledCycle};
 
 /// Produces `pub(crate) fn $name(&mut self, v: $ty)` that sets an `Option`
 /// field, panicking on double-set.
@@ -183,7 +183,7 @@ macro_rules! cached_bridge {
             if let Some(rx) = self.$rx.get() {
                 return Ok(rx);
             }
-            let rx = nested::stages::$stage::Stage::<C::HostCurve, R>::rx(
+            let rx = nested::stages::$stage::Stage::<C::HostCurve, R, C::Profile>::rx(
                 self.bridge_alpha_power($idx),
                 &nested::stages::$stage::Witness {
                     $($wit_field: self.$getter()),*
@@ -356,7 +356,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     bridge_ab_commitment: OnceCell<C::NestedCurve>,
 }
 
-impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
+impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
     /// Create a new empty builder with the given `bridge_alpha` source for
     /// deriving cached bridge polynomial alphas.
     pub(crate) fn new(params: &'params C::Params, bridge_alpha: C::ScalarField) -> Self {

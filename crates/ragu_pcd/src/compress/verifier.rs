@@ -9,13 +9,14 @@ use crate::{
     header::Header,
     internal::ky,
     ipa::{CycleTranscript, IpaCycle},
+    profile::ProfiledCycle,
 };
 
 /// The backend whose kernels [`Application::verify_compressed`] consults for
 /// the selected backend `B`, as [`Application::verify`] does.
 type Verifier<B> = <B as SelectableBackend>::Verifier;
 
-impl<C: IpaCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
+impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
     /// Verifies some [`CompressedPcd`] for the provided [`Header`].

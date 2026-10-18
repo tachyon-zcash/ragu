@@ -75,7 +75,7 @@ use super::super::{
     },
     unified::{self, OutputBuilder},
 };
-use crate::internal::fold_revdot;
+use crate::{internal::fold_revdot, profile::ProfiledCycle};
 
 /// Circuit that verifies layer 1 of the two-layer revdot reduction.
 ///
@@ -87,7 +87,7 @@ pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Param
     _marker: PhantomData<(C, R, FP)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     Circuit<C, R, HEADER_SIZE, FP>
 {
     /// Creates a new multi-stage circuit for layer 1 revdot verification.
@@ -110,7 +110,7 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     MultiStageCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, FP>
 {
     type Last = native_inner_error::Stage<C, R, HEADER_SIZE, FP>;
@@ -174,7 +174,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             &outer_error.left,
             &outer_error.right,
         );
-        let mut ky = ky_values(&ky);
+        let mut ky = ky_values::<C::Profile, _>(&ky);
 
         // Verify each group's layer 1 reduction. For each group, fold the
         // inner error terms with the corresponding k(y) values and enforce the

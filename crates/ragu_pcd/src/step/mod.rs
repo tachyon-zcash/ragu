@@ -11,7 +11,7 @@ use ragu_core::{
 };
 
 use super::header::Header;
-use crate::internal::native::InternalCircuitIndex;
+use crate::{internal::native::InternalCircuitIndex, profile::Profile};
 
 #[derive(Copy, Clone)]
 #[repr(usize)]
@@ -58,12 +58,15 @@ impl Index {
     /// Pass the known number of application steps to validate and compute the
     /// final index of this step. Returns an error if an application step index
     /// exceeds the number of registered steps.
-    pub(crate) fn circuit_index(&self, num_application_steps: usize) -> Result<CircuitIndex> {
+    pub(crate) fn circuit_index<P: Profile>(
+        &self,
+        num_application_steps: usize,
+    ) -> Result<CircuitIndex> {
         match self.index {
             StepIndex::Internal(i) => {
                 // Internal steps come after internal circuits
                 Ok(CircuitIndex::from_u32(
-                    InternalCircuitIndex::NUM as u32 + i as u32,
+                    InternalCircuitIndex::num::<P>() as u32 + i as u32,
                 ))
             }
             StepIndex::Application(i) => {
@@ -74,7 +77,7 @@ impl Index {
                 }
 
                 Ok(CircuitIndex::new(
-                    NUM_INTERNAL_STEPS + InternalCircuitIndex::NUM + i,
+                    NUM_INTERNAL_STEPS + InternalCircuitIndex::num::<P>() + i,
                 ))
             }
         }
@@ -165,30 +168,37 @@ mod tests {
 
     #[test]
     fn test_index_map() -> Result<()> {
+        use crate::profile::Standard;
         let num_application_steps = 10;
         let app_offset = NUM_INTERNAL_STEPS + InternalCircuitIndex::NUM;
 
         // Internal steps come after internal circuits
         assert_eq!(
-            Index::internal(InternalStepIndex::Rerandomize).circuit_index(num_application_steps)?,
+            Index::internal(InternalStepIndex::Rerandomize)
+                .circuit_index::<Standard>(num_application_steps)?,
             CircuitIndex::new(InternalCircuitIndex::NUM)
         );
         assert_eq!(
-            Index::internal(InternalStepIndex::Bootstrap).circuit_index(num_application_steps)?,
+            Index::internal(InternalStepIndex::Bootstrap)
+                .circuit_index::<Standard>(num_application_steps)?,
             CircuitIndex::new(InternalCircuitIndex::NUM + 1)
         );
 
         // Application steps occupy indices (InternalCircuitIndex::NUM + NUM_INTERNAL_STEPS)..
         assert_eq!(
-            Index::new(0).circuit_index(num_application_steps)?,
+            Index::new(0).circuit_index::<Standard>(num_application_steps)?,
             CircuitIndex::new(app_offset)
         );
         assert_eq!(
-            Index::new(1).circuit_index(num_application_steps)?,
+            Index::new(1).circuit_index::<Standard>(num_application_steps)?,
             CircuitIndex::new(app_offset + 1)
         );
         Index::new(999).assert_index(999)?;
-        assert!(Index::new(10).circuit_index(num_application_steps).is_err());
+        assert!(
+            Index::new(10)
+                .circuit_index::<Standard>(num_application_steps)
+                .is_err()
+        );
 
         Ok(())
     }

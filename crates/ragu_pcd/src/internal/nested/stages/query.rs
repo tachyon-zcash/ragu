@@ -30,6 +30,7 @@ use crate::{
         self, RxComponent, RxIndex,
         pcs::{InternalLen, OwnRxLen},
     },
+    profile::{Profile, ProfiledCycle},
 };
 
 /// Number of curve points in this stage.
@@ -37,10 +38,10 @@ const NUM: usize = 2;
 
 /// Witness for a child proof's nested polynomial evaluations.
 #[derive(Clone)]
-pub struct ChildEvaluationsWitness<F> {
+pub struct ChildEvaluationsWitness<F, P: Profile> {
     /// The child's nested rx polynomials at $x_n z_n$, in
-    /// [`RxIndex::ALL`] order.
-    pub rx: FixedVec<F, OwnRxLen>,
+    /// [`RxIndex::all`] order.
+    pub rx: FixedVec<F, OwnRxLen<P>>,
     /// The child's nested $a$ polynomial at $x_n z_n$.
     pub a_poly_at_xz: F,
     /// The child's nested $b$ polynomial at $x_n$.
@@ -51,10 +52,14 @@ pub struct ChildEvaluationsWitness<F> {
     pub current_registry_wy_at_child_x: F,
 }
 
-impl<F: Field> ChildEvaluationsWitness<F> {
+impl<F: Field, P: Profile> ChildEvaluationsWitness<F, P> {
     /// Evaluates a child proof's nested polynomials at the given nested
     /// points.
-    pub fn from_proof<C: Cycle<ScalarField = F>, R: Rank, B: ragu_backend::Backend>(
+    pub fn from_proof<
+        C: Cycle<ScalarField = F> + ProfiledCycle<Profile = P>,
+        R: Rank,
+        B: ragu_backend::Backend,
+    >(
         proof: &Proof<C, R>,
         w: F,
         x: F,
@@ -63,7 +68,10 @@ impl<F: Field> ChildEvaluationsWitness<F> {
     ) -> Result<Self> {
         let child_x = nested::challenge::<C>(proof.x())?;
         Ok(ChildEvaluationsWitness {
-            rx: FixedVec::from_fn(|i| B::sparse_eval(&proof[RxIndex::ALL[i]], xz)),
+            rx: {
+                let all = RxIndex::all::<P>();
+                FixedVec::from_fn(|i| B::sparse_eval(&proof[all[i]], xz))
+            },
             a_poly_at_xz: B::sparse_eval(&proof[RxComponent::AbA], xz),
             b_poly_at_x: B::sparse_eval(&proof[RxComponent::AbB], x),
             child_registry_xy_at_current_w: B::sparse_eval(proof.nested_registry_xy_poly(), w),
@@ -74,21 +82,21 @@ impl<F: Field> ChildEvaluationsWitness<F> {
 
 /// The nested query values carried by this stage.
 #[derive(Clone)]
-pub struct Evaluations<F> {
+pub struct Evaluations<F, P: Profile> {
     /// The current `registry_xy` at each nested internal circuit's
-    /// $\omega^j$, in [`InternalCircuitIndex::ALL`] order.
+    /// $\omega^j$, in [`InternalCircuitIndex::all`] order.
     ///
-    /// [`InternalCircuitIndex::ALL`]: nested::InternalCircuitIndex::ALL
-    pub fixed_registry: FixedVec<F, InternalLen>,
+    /// [`InternalCircuitIndex::all`]: nested::InternalCircuitIndex::all
+    pub fixed_registry: FixedVec<F, InternalLen<P>>,
     /// $m_n(w_n, x_n, y_n)$.
     pub registry_wxy: F,
     /// Left child proof evaluations.
-    pub left: ChildEvaluationsWitness<F>,
+    pub left: ChildEvaluationsWitness<F, P>,
     /// Right child proof evaluations.
-    pub right: ChildEvaluationsWitness<F>,
+    pub right: ChildEvaluationsWitness<F, P>,
 }
 
-impl<F: Field> Evaluations<F> {
+impl<F: Field, P: Profile> Evaluations<F, P> {
     /// All-zero values, for proofs that open nothing (the dummy proof).
     pub fn zero() -> Self {
         let child = || ChildEvaluationsWitness {
@@ -108,18 +116,18 @@ impl<F: Field> Evaluations<F> {
 }
 
 /// Witness data for this bridge stage.
-pub struct Witness<C: Affine> {
+pub struct Witness<C: Affine, P: Profile> {
     pub native_query: C,
     pub registry_xy: C,
     /// The nested query values.
-    pub nested: Evaluations<C::Base>,
+    pub nested: Evaluations<C::Base, P>,
 }
 
 /// Gadget for a child proof's nested polynomial evaluations.
 #[derive(Gadget, Write)]
-pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
+pub struct ChildEvaluations<'dr, D: Driver<'dr>, P: Profile> {
     #[ragu(gadget)]
-    pub rx: FixedVec<Element<'dr, D>, OwnRxLen>,
+    pub rx: FixedVec<Element<'dr, D>, OwnRxLen<P>>,
     #[ragu(gadget)]
     pub a_poly_at_xz: Element<'dr, D>,
     #[ragu(gadget)]
@@ -130,8 +138,11 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
     pub current_registry_wy_at_child_x: Element<'dr, D>,
 }
 
-impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
-    fn alloc(dr: &mut D, witness: DriverValue<D, &ChildEvaluationsWitness<D::F>>) -> Result<Self> {
+impl<'dr, D: Driver<'dr>, P: Profile> ChildEvaluations<'dr, D, P> {
+    fn alloc(
+        dr: &mut D,
+        witness: DriverValue<D, &ChildEvaluationsWitness<D::F, P>>,
+    ) -> Result<Self> {
         let allocator = &mut ();
         Ok(ChildEvaluations {
             rx: FixedVec::try_from_fn(|i| {
@@ -155,15 +166,15 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
 
 /// Gadget for the nested query values.
 #[derive(Gadget, Write)]
-pub struct EvaluationsOutput<'dr, D: Driver<'dr>> {
+pub struct EvaluationsOutput<'dr, D: Driver<'dr>, P: Profile> {
     #[ragu(gadget)]
-    pub fixed_registry: FixedVec<Element<'dr, D>, InternalLen>,
+    pub fixed_registry: FixedVec<Element<'dr, D>, InternalLen<P>>,
     #[ragu(gadget)]
     pub registry_wxy: Element<'dr, D>,
     #[ragu(gadget)]
-    pub left: ChildEvaluations<'dr, D>,
+    pub left: ChildEvaluations<'dr, D, P>,
     #[ragu(gadget)]
-    pub right: ChildEvaluations<'dr, D>,
+    pub right: ChildEvaluations<'dr, D, P>,
 }
 
 /// Prover-internal output gadget for this bridge stage.
@@ -171,29 +182,29 @@ pub struct EvaluationsOutput<'dr, D: Driver<'dr>> {
 /// This is stage communication data, not part of the circuit's
 /// public instance.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
+pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     #[ragu(gadget)]
     pub native_query: Point<'dr, D, C>,
     #[ragu(gadget)]
     pub registry_xy: Point<'dr, D, C>,
     /// The nested query values.
     #[ragu(gadget)]
-    pub nested: EvaluationsOutput<'dr, D>,
+    pub nested: EvaluationsOutput<'dr, D, P>,
 }
 
 #[derive(Default)]
-pub struct Stage<C: Affine, R> {
-    _marker: PhantomData<(C, R)>,
+pub struct Stage<C: Affine, R, P> {
+    _marker: PhantomData<(C, R, P)>,
 }
 
-impl<C: Affine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R> {
-    type Parent = super::ab::Stage<C, R>;
-    type Witness<'source> = &'source Witness<C>;
-    type OutputKind = Kind![C::Base; Output<'_, _, C>];
+impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R, P> {
+    type Parent = super::ab::Stage<C, R, P>;
+    type Witness<'source> = &'source Witness<C, P>;
+    type OutputKind = Kind![C::Base; Output<'_, _, C, P>];
 
     fn values() -> usize {
         // (x, y) per point + fixed registry + registry_wxy + 2 children
-        NUM * 2 + InternalLen::len() + 1 + 2 * (OwnRxLen::len() + 4)
+        NUM * 2 + InternalLen::<P>::len() + 1 + 2 * (OwnRxLen::<P>::len() + 4)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -237,10 +248,13 @@ mod tests {
     use ragu_core::pasta::EqAffine;
 
     use super::*;
-    use crate::internal::tests::{R, assert_stage_values};
+    use crate::{
+        internal::tests::{R, assert_stage_values},
+        profile::Standard,
+    };
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<EqAffine, R>::default());
+        assert_stage_values(&Stage::<EqAffine, R, Standard>::default());
     }
 }

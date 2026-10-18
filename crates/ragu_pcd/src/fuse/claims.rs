@@ -32,6 +32,7 @@ use crate::{
         native::{InternalCircuitIndex, RxComponent, claims::Processor},
         nested,
     },
+    profile::Profile,
 };
 
 /// Tracks how a polynomial decomposes as a linear combination of source
@@ -229,8 +230,8 @@ pub(super) type NativeFuseBuilder<'m, 'rx, F, R, B> =
 /// records how it decomposes as a linear combination of child-proof
 /// polynomials (and therefore their commitments). The decomposition is
 /// consumed in `_06_ab` to compute `a_commitment` via MSM.
-impl<'m, 'rx, F: Field, R: Rank, B: ragu_backend::Backend>
-    Processor<Atom<'rx, FoldKey, F, R>, CircuitIndex>
+impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
+    Processor<P, Atom<'rx, FoldKey, F, R>, CircuitIndex>
     for Builder<'m, 'rx, TrackedPoly<'rx, FoldKey, F, R>, F, R, B>
 {
     fn raw_claim(&mut self, a: Atom<'rx, FoldKey, F, R>, b: Atom<'rx, FoldKey, F, R>) {
@@ -251,7 +252,7 @@ impl<'m, 'rx, F: Field, R: Rank, B: ragu_backend::Backend>
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = Atom<'rx, FoldKey, F, R>>,
     ) {
-        self.circuit_impl(id.circuit_index(), TrackedPoly::sum(rxs));
+        self.circuit_impl(id.circuit_index::<P>(), TrackedPoly::sum(rxs));
     }
 
     fn grouped_bonding_claim(
@@ -260,7 +261,7 @@ impl<'m, 'rx, F: Field, R: Rank, B: ragu_backend::Backend>
         groups: impl Iterator<Item = impl Iterator<Item = Atom<'rx, FoldKey, F, R>>>,
     ) -> Result<()> {
         let folded = fold_revdot::fold(groups.map(TrackedPoly::sum), self.z);
-        self.bonding_impl(id.circuit_index(), folded);
+        self.bonding_impl(id.circuit_index::<P>(), folded);
         Ok(())
     }
 }

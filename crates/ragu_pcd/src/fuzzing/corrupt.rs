@@ -75,7 +75,7 @@ use ragu_circuits::{
 use ragu_core::Cycle;
 use udon::field::Field;
 
-use crate::{Application, Proof};
+use crate::{Application, Proof, profile::ProfiledCycle};
 
 // The corruption vocabulary names proof components, and the names it uses are
 // the ones `internal` uses. Those enums are *not* re-exported here, and the
@@ -845,7 +845,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
     /// Create the synthesized dummy proof used to bootstrap recursion.
