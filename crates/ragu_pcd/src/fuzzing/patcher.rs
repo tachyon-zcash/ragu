@@ -993,7 +993,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         visitor.visit(
             &bind_beta_spec,
             &bind_beta,
-            &preamble_outer_error,
+            &preamble_values,
             bind_beta_witness,
         )?;
 
