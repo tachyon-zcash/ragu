@@ -48,7 +48,7 @@
 //! [`sx`]: super::sx
 //! [`Driver::enforce_zero`]: ragu_core::drivers::Driver::enforce_zero
 
-use alloc::collections::BTreeMap;
+use alloc::{collections::BTreeMap, vec::Vec};
 
 use ragu_core::{
     Coeff, Error, Result,
@@ -273,56 +273,75 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         // Invocations of a routine with the same constraints differ here only
         // by their segment's offset and their input wires.
         self.current_routine += 1;
-        let seg = &self.floor_plan[self.current_routine];
+        let index = self.current_routine;
+        let seg = &self.floor_plan[index];
         let gate_start = seg.gate_start;
         let constraint_start = seg.constraint_start;
 
-        // Extract fingerprint from the segment record for this routine.
-        let fingerprint = match self.segment_records[self.current_routine].identity() {
-            RoutineIdentity::Routine(fp) => *fp,
-            RoutineIdentity::Root => unreachable!("routine segments are never Root"),
+        // Memoization bookkeeping. Invocations are counted per fingerprint so
+        // that this call's canonical position can be looked up. Only top-level
+        // routines are memoized; a cached entry covers the whole subtree.
+        let memo = match (self.type_floor_plan, self.memo_cache.is_some()) {
+            (Some(plan), true) => {
+                let fingerprint = self.fingerprint_at(index);
+                let invocation_index = self.count_invocation(fingerprint);
+                (self.routine_depth == 0)
+                    .then(|| plan.get_invocation(&fingerprint, invocation_index))
+                    .flatten()
+                    .map(|pos| (fingerprint, pos))
+            }
+            _ => None,
         };
-        let invocation_index = *self.invocation_counts.get(&fingerprint).unwrap_or(&0);
-        self.invocation_counts
-            .entry(fingerprint)
-            .and_modify(|c| *c += 1)
-            .or_insert(1);
 
-        // Check for cache hit (only at top-level routines, depth == 0)
-        let can_memoize =
-            self.routine_depth == 0 && self.type_floor_plan.is_some() && self.memo_cache.is_some();
+        // The input gadget's wires appear in the routine's constraints, so an
+        // entry is only reusable for the same inputs (see the `memo` module).
+        let input_wires = match memo {
+            Some(_) => extract_wires(&input, |w: &F| *w)?,
+            None => Vec::new(),
+        };
 
-        if can_memoize {
-            let type_floor_plan = self.type_floor_plan.unwrap();
-            if let Some(canonical_pos) =
-                type_floor_plan.get_invocation(&fingerprint, invocation_index)
-            {
-                // SAFETY: We just checked memo_cache.is_some()
-                let cache = self.memo_cache.as_ref().unwrap();
-                if let Some(cached) = cache.get(&fingerprint, canonical_pos) {
-                    // Cache hit: reconstruct output without re-executing routine
-                    let y_pow_constraint_start = self.y.pow_u64(constraint_start as u64);
-                    self.scope.sum += y_pow_constraint_start * cached.contribution;
+        if let Some((fingerprint, canonical_pos)) = memo {
+            let cache = self.memo_cache.as_mut().expect("memo implies a cache");
+            if let Some(cached) = cache.lookup(
+                &fingerprint,
+                canonical_pos,
+                gate_start,
+                constraint_start,
+                &input_wires,
+            ) {
+                let contribution = cached.contribution;
+                let num_segments = cached.num_segments;
 
-                    // Reconstruct output gadget from cached wires:
-                    // 1. Execute with wireless emulator to get a template with unit wires
-                    // 2. Use WireInjector to convert unit wires to cached wire values
-                    type W<F> = Emulator<Wireless<Empty, F>>;
+                // Cache hit: reconstruct the output gadget from the cached
+                // wires instead of re-executing the routine.
+                // 1. Execute on a wireless emulator to get a template with unit wires.
+                // 2. Use WireInjector to replace the unit wires with the cached values.
+                type W<F> = Emulator<Wireless<Empty, F>>;
 
-                    let aux = Emulator::predict(&routine, &input)?.into_aux();
+                let aux = Emulator::predict(&routine, &input)?.into_aux();
+                let wireless_input = StripWires::<Self>::remap(&input)?;
+                let template = routine.execute(&mut W::<F>::wireless(), wireless_input, aux)?;
 
-                    let wireless_input = StripWires::<Self>::remap(&input)?;
-                    let template = routine.execute(&mut W::<F>::wireless(), wireless_input, aux)?;
+                let mut injector = WireInjector::<_, W<F>, Self>::new(&cached.output_wires);
+                let output = Ro::Output::map_gadget(&template, &mut injector)?;
+                debug_assert!(
+                    injector.is_exhausted(),
+                    "wire cache should be fully consumed"
+                );
 
-                    let mut injector = WireInjector::<_, W<F>, Self>::new(&cached.output_wires);
-                    let output = Ro::Output::map_gadget(&template, &mut injector)?;
-                    debug_assert!(
-                        injector.is_exhausted(),
-                        "wire cache should be fully consumed"
-                    );
-
-                    return Ok(output);
+                // The entry already includes the nested sub-routines: skip
+                // their segments and count their invocations as execution
+                // would have.
+                self.scope.sum += contribution;
+                let records = self.segment_records;
+                for record in &records[index + 1..index + num_segments] {
+                    if let RoutineIdentity::Routine(fp) = record.identity() {
+                        self.count_invocation(*fp);
+                    }
                 }
+                self.current_routine += num_segments - 1;
+
+                return Ok(output);
             }
         }
 
@@ -365,38 +384,49 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         // Position the routine's local Horner result at its absolute Y offset,
         // then combine with any nested child contributions.
         let y_pow_constraint_start = self.y.pow_u64(constraint_start as u64);
-        let routine_contribution = self.scope.result + self.scope.sum;
+        let routine_contribution =
+            y_pow_constraint_start.mul_add(&self.scope.result, &self.scope.sum);
 
-        // Store in cache if memoization is enabled
-        if can_memoize {
-            let type_floor_plan = self.type_floor_plan.unwrap();
-            if let Some(canonical_pos) =
-                type_floor_plan.get_invocation(&fingerprint, invocation_index)
-            {
-                // Extract output wires for caching
-                if let Ok(ref output) = exec_result {
-                    let output_wires = extract_wires(output, |w: &F| *w)?;
-
-                    let entry = CachedRoutine {
-                        contribution: routine_contribution,
-                        num_gates: seg.num_gates,
-                        num_constraints: seg.num_constraints,
-                        output_wires,
-                    };
-
-                    // SAFETY: We checked memo_cache.is_some() above
-                    self.memo_cache
-                        .as_mut()
-                        .unwrap()
-                        .insert(fingerprint, canonical_pos, entry);
-                }
-            }
+        if let Some((fingerprint, canonical_pos)) = memo
+            && let Ok(output) = &exec_result
+        {
+            let entry = CachedRoutine {
+                gate_start,
+                constraint_start,
+                input_wires,
+                contribution: routine_contribution,
+                output_wires: extract_wires(output, |w: &F| *w)?,
+                num_segments: self.current_routine - index + 1,
+            };
+            self.memo_cache
+                .as_mut()
+                .expect("memo implies a cache")
+                .insert(fingerprint, canonical_pos, entry);
         }
 
         self.scope = saved;
-        self.scope.sum += y_pow_constraint_start * routine_contribution;
+        self.scope.sum += routine_contribution;
 
         exec_result
+    }
+}
+
+impl<F: Field, R: Rank> Evaluator<'_, F, R> {
+    /// Fingerprint recorded for the routine segment at `index`.
+    fn fingerprint_at(&self, index: usize) -> DeepFingerprint {
+        match self.segment_records[index].identity() {
+            RoutineIdentity::Routine(fp) => *fp,
+            RoutineIdentity::Root => unreachable!("routine segments are never Root"),
+        }
+    }
+
+    /// Records one more invocation of `fingerprint`, returning its index among
+    /// invocations of that fingerprint in this circuit.
+    fn count_invocation(&mut self, fingerprint: DeepFingerprint) -> usize {
+        let count = self.invocation_counts.entry(fingerprint).or_insert(0);
+        let index = *count;
+        *count += 1;
+        index
     }
 }
 

@@ -5,6 +5,25 @@
 //! its canonical position in the [`FloorPlan`](crate::floor_plan::FloorPlan).
 //! On a cache hit, [`WireInjector`] rebuilds the output gadget from the cached
 //! wire values without re-executing the routine.
+//!
+//! # What a cached value depends on
+//!
+//! The cached scalar is the routine's *absolute* contribution to $s(x, y)$,
+//! including its nested sub-routines. Besides the routine's structure (bound
+//! by the [`DeepFingerprint`]), that value depends on:
+//!
+//! - the segment's absolute gate offset, which fixes the $X$-monomials of
+//!   every wire allocated inside the routine;
+//! - the segment's absolute constraint offset, which fixes the $Y$-powers;
+//! - the values of the input gadget's wires, which appear in the routine's
+//!   interface constraints (the book's *interface contribution*).
+//!
+//! The canonical position is a planning key: it groups invocations that the
+//! floor planner *intends* to align, but the per-circuit floor plan still
+//! places segments by DFS order. Until segments are actually relocated and
+//! interface terms are separated from the cached value, an entry is only
+//! valid for an invocation with the same offsets and the same input wires, so
+//! [`MemoCache::lookup`] checks those before reporting a hit.
 
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::marker::PhantomData;
@@ -14,34 +33,44 @@ use udon::field::Field;
 
 use crate::{DeepFingerprint, floor_plan::RegistryPosition};
 
-/// Cached polynomial contribution from a routine at a canonical floor plan position.
+/// Cached contribution of one top-level routine invocation (including its
+/// nested sub-routines) at a canonical floor plan position.
 ///
 /// On cache hit, the `output_wires` can be used to reconstruct the output gadget
 /// without re-executing the routine, enabling full memoization.
 #[derive(Clone, Debug)]
 pub(crate) struct CachedRoutine<F> {
-    /// The routine's contribution to the polynomial evaluation.
+    /// Absolute gate offset of the segment the entry was recorded at.
+    pub(crate) gate_start: usize,
+
+    /// Absolute constraint offset of the segment the entry was recorded at.
+    pub(crate) constraint_start: usize,
+
+    /// Values of the input gadget's wires at recording time.
+    pub(crate) input_wires: Vec<F>,
+
+    /// The routine's absolute contribution to $s(x, y)$, nested
+    /// sub-routines included.
     pub(crate) contribution: F,
-
-    /// Number of gates consumed by this routine.
-    #[allow(dead_code)]
-    pub(crate) num_gates: usize,
-
-    /// Number of constraints consumed by this routine.
-    #[allow(dead_code)]
-    pub(crate) num_constraints: usize,
 
     /// Output wire values for reconstructing the output gadget on cache hit.
     pub(crate) output_wires: Vec<F>,
+
+    /// Number of DFS segments spanned by the routine and its sub-routines.
+    /// A cache hit skips this many segments of the floor plan.
+    pub(crate) num_segments: usize,
 }
 
 /// Cache for routine contributions, keyed by `(DeepFingerprint, canonical_position)`.
 ///
 /// Used for inter-circuit memoization: when evaluating multiple circuits,
 /// routines at the same canonical position can reuse cached contributions.
+/// See the [module documentation](self) for the conditions under which an
+/// entry is reusable.
 #[derive(Clone)]
 pub(crate) struct MemoCache<F> {
     entries: BTreeMap<(DeepFingerprint, RegistryPosition), CachedRoutine<F>>,
+    hits: usize,
 }
 
 impl<F> Default for MemoCache<F> {
@@ -55,19 +84,26 @@ impl<F> MemoCache<F> {
     pub(crate) fn new() -> Self {
         Self {
             entries: BTreeMap::new(),
+            hits: 0,
         }
     }
 
-    /// Retrieves a cached routine contribution by canonical position.
-    pub(crate) fn get(
-        &self,
-        fingerprint: &DeepFingerprint,
-        canonical_position: RegistryPosition,
-    ) -> Option<&CachedRoutine<F>> {
-        self.entries.get(&(*fingerprint, canonical_position))
+    /// Number of successful lookups so far.
+    #[cfg(test)]
+    pub(crate) fn hits(&self) -> usize {
+        self.hits
+    }
+
+    /// Number of stored entries.
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
     }
 
     /// Stores a routine contribution in the cache.
+    ///
+    /// Keeps the first entry recorded for a key; later invocations at the
+    /// same canonical position with a different layout are not cached.
     pub(crate) fn insert(
         &mut self,
         fingerprint: DeepFingerprint,
@@ -75,7 +111,36 @@ impl<F> MemoCache<F> {
         entry: CachedRoutine<F>,
     ) {
         self.entries
-            .insert((fingerprint, canonical_position), entry);
+            .entry((fingerprint, canonical_position))
+            .or_insert(entry);
+    }
+}
+
+impl<F: Field> MemoCache<F> {
+    /// Looks up a reusable entry for an invocation of `fingerprint` at
+    /// `canonical_position`.
+    ///
+    /// Returns `None` unless the stored entry was recorded at the same
+    /// absolute offsets with the same input wires; see the
+    /// [module documentation](self).
+    pub(crate) fn lookup(
+        &mut self,
+        fingerprint: &DeepFingerprint,
+        canonical_position: RegistryPosition,
+        gate_start: usize,
+        constraint_start: usize,
+        input_wires: &[F],
+    ) -> Option<&CachedRoutine<F>> {
+        let entry = self.entries.get(&(*fingerprint, canonical_position))?;
+        let reusable = entry.gate_start == gate_start
+            && entry.constraint_start == constraint_start
+            && entry.input_wires == input_wires;
+        if reusable {
+            self.hits += 1;
+            Some(entry)
+        } else {
+            None
+        }
     }
 }
 
