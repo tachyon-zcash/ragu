@@ -4,7 +4,7 @@ use native::{
 };
 use ragu_circuits::{
     Circuit,
-    staging::{Stage, StageExt},
+    staging::{MultiStage, MultiStageCircuit, Stage, StageExt},
 };
 use ragu_core::pasta::{Fp, Fq, Pasta};
 
@@ -345,6 +345,12 @@ fn claimed_stages_lie_on_each_circuits_chain() {
         )
     }
 
+    /// The gate a circuit's own gates start at: every stage on the chain its
+    /// `Last` stage closes occupies gates below it.
+    fn staged_gates<S: MultiStageCircuit<Fp, R>>(_: &MultiStage<Fp, R, S>) -> usize {
+        <S::Last as Stage<Fp, R>>::skip_gates() + <S::Last as StageExt<Fp, R>>::num_gates()
+    }
+
     /// A stage's gate range, or `None` for a circuit's own polynomial.
     fn stage_range(index: RxIndex) -> Option<(usize, usize)> {
         Some(match index {
@@ -409,47 +415,65 @@ fn claimed_stages_lie_on_each_circuits_chain() {
         let (last, staged_gates) = match variant {
             Hashes1Circuit => (
                 RxIndex::OuterError,
-                circuits::hashes_1::Circuit::<Pasta, R, HEADER_SIZE, RevdotParameters>::new(
-                    pasta,
-                    log2_circuits,
-                )
-                .staged_gates(),
+                staged_gates(&circuits::hashes_1::Circuit::<
+                    Pasta,
+                    R,
+                    HEADER_SIZE,
+                    RevdotParameters,
+                >::new(pasta, log2_circuits)),
             ),
             Hashes2Circuit => (
                 RxIndex::OuterError,
-                circuits::hashes_2::Circuit::<Pasta, R, HEADER_SIZE, RevdotParameters>::new(pasta)
-                    .staged_gates(),
+                staged_gates(&circuits::hashes_2::Circuit::<
+                    Pasta,
+                    R,
+                    HEADER_SIZE,
+                    RevdotParameters,
+                >::new(pasta)),
             ),
             InnerCollapseCircuit => (
                 RxIndex::InnerError,
-                circuits::inner_collapse::Circuit::<Pasta, R, HEADER_SIZE, RevdotParameters>::new()
-                    .staged_gates(),
+                staged_gates(&circuits::inner_collapse::Circuit::<
+                    Pasta,
+                    R,
+                    HEADER_SIZE,
+                    RevdotParameters,
+                >::new()),
             ),
             OuterCollapseCircuit => (
                 RxIndex::OuterError,
-                circuits::outer_collapse::Circuit::<Pasta, R, HEADER_SIZE, RevdotParameters>::new()
-                    .staged_gates(),
+                staged_gates(&circuits::outer_collapse::Circuit::<
+                    Pasta,
+                    R,
+                    HEADER_SIZE,
+                    RevdotParameters,
+                >::new()),
             ),
             ComputeVCircuit => (
                 RxIndex::Eval,
-                circuits::compute_v::Circuit::<Pasta, R, HEADER_SIZE>::new().staged_gates(),
+                staged_gates(&circuits::compute_v::Circuit::<Pasta, R, HEADER_SIZE>::new()),
             ),
             BindChallengesCircuit(k) => (
                 RxIndex::Eval,
-                crate::with_binder!(k, Pasta, R, HEADER_SIZE, pasta, |circuit| circuit
-                    .staged_gates()),
+                crate::with_binder!(k, Pasta, R, HEADER_SIZE, pasta, |circuit| staged_gates(
+                    &circuit
+                )),
             ),
             BindBetaCircuit => (
                 RxIndex::Preamble,
-                circuits::bind_beta::Circuit::<Pasta, R, HEADER_SIZE>::new(pasta).staged_gates(),
+                staged_gates(&circuits::bind_beta::Circuit::<Pasta, R, HEADER_SIZE>::new(
+                    pasta,
+                )),
             ),
             BindEndoscalarCircuit => (
                 RxIndex::PointsWalk,
-                circuits::bind_endoscalar::Circuit::<Pasta, R>::new().staged_gates(),
+                staged_gates(&circuits::bind_endoscalar::Circuit::<Pasta, R>::new()),
             ),
             EndoscalingStep(step) => (
                 RxIndex::PointsWalk,
-                circuits::endoscaling_step::Circuit::<Pasta, R>::new(step as usize).staged_gates(),
+                staged_gates(&circuits::endoscaling_step::Circuit::<Pasta, R>::new(
+                    step as usize,
+                )),
             ),
             other => panic!("{other:?} is not a circuit"),
         };
