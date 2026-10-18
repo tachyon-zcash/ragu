@@ -54,6 +54,7 @@ a new proof:
 pub trait Step<C: Cycle> {
     const INDEX: Index;
 
+    type Shared;
     type Witness<'source>;
     type Aux<'source>;
     type Left: Header;
@@ -61,7 +62,10 @@ pub trait Step<C: Cycle> {
     type Output: Header;
 
     // Simplified signature - actual API includes driver and encoder abstractions
-    fn witness(&self, dr, left, right) -> Result<(HeaderGadget<Left>, HeaderGadget<Right>, HeaderGadget<Output>), Aux>;
+    fn witness(&self, dr, witness, left, right) -> Result<(
+        (HeaderGadget<Left>, HeaderGadget<Right>, HeaderGadget<Output>),
+        SharedGadget, OutputData, Aux,
+    )>;
 }
 ```
 
@@ -69,6 +73,7 @@ The associated types define the step's interface:
 
 * **`INDEX`**: Unique identifier for this step within the application.
 * **`Witness`**: Private data provided by the prover (not visible to verifiers).
+* **`Shared`**: The gadget kind the step stages; `()` for a step that stages nothing.
 * **`Aux`**: Auxiliary data produced during synthesis, returned alongside the
   output header data. Used for pipelining values to future steps.
 * **`Left`, `Right`**: The header types of the two child proofs.
@@ -82,6 +87,7 @@ Consider a simple application that aggregates values:
 // Step 1: Seed step - introduces a single value
 struct LeafStep { value: u64 }
 impl Step<C> for LeafStep {
+    type Shared = ();
     type Left = ();            // Bootstrap child
     type Right = ();           // Bootstrap child
     type Output = ValueHeader; // Outputs a value commitment
@@ -90,6 +96,7 @@ impl Step<C> for LeafStep {
 // Step 2: DoubleAndAdd step - computes 2*left + right
 struct DoubleAndAddStep;
 impl Step<C> for DoubleAndAddStep {
+    type Shared = ();
     type Left = ValueHeader;   // Left child carries a value
     type Right = ValueHeader;  // Right child carries a value
     type Output = ValueHeader; // Output is 2*left + right

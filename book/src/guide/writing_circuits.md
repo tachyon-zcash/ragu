@@ -24,6 +24,7 @@ Every Step must implement this core structure:
 ```rust
 pub trait Step<C: Cycle> {
     const INDEX: Index;
+    type Shared: Shared<C::CircuitField>;
     type Witness<'source>;
     type Aux<'source>;
     type Left: Header<C::CircuitField>;
@@ -42,6 +43,7 @@ pub trait Step<C: Cycle> {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
+        Bound<'dr, D, Self::Shared>,
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>;
@@ -68,6 +70,11 @@ distinct index starting from 0.
 type Witness<'source> = FieldElement;  // What the prover knows
 ```
 
+**Shared**: The gadget this step stages, described under
+[Staging part of the witness](#staging-part-of-the-witness). A step that
+stages nothing declares `type Shared = ();` and returns `()` in the shared
+gadget position.
+
 **Aux**: Auxiliary data returned alongside the output header value (e.g., for pipelining to future steps)
 ```rust
 type Aux<'source> = FieldElement;  // What to return
@@ -90,7 +97,7 @@ This is where the circuit logic is implemented. The function:
 1. Receives witness data from the prover
 2. Receives left/right header data as `DriverValue`s
 3. Performs computation (constraints)
-4. Returns encoded proofs and auxiliary output
+4. Returns encoded headers, the shared gadget, output data, and auxiliary output
 
 ## Two Types of Steps
 
@@ -195,6 +202,62 @@ Usage:
 ```rust
 let (proof, aux) = app.fuse(&mut rng, CombineNodes { ... }, (), left_pcd, right_pcd)?;
 ```
+
+### Staging part of the witness
+
+A step can commit to part of its witness separately from the rest of its
+trace, the way the internal recursion circuits stage their inputs. The values
+it returns as its `Shared` gadget are bound, wire by wire, to the proof's
+*application stage*: one committed polynomial, held to its own block of gates,
+whose commitment the proof carries beside the step's own. Derive `Gadget` and
+`Shared` on a named struct of the values to stage:
+
+```rust
+use ragu_core::{drivers::Driver, gadgets::{Gadget, Kind}};
+use ragu_primitives::{Element, shared::Shared};
+
+#[derive(Gadget, Shared)]
+struct Staged<'dr, D: Driver<'dr>> {
+    input: Element<'dr, D>,
+    intermediate_state: Element<'dr, D>,
+}
+
+impl Step<Pasta> for MyStep {
+    type Shared = Kind![Fp; Staged<'_, _>];
+    // INDEX, Witness, Left, Right, Output, Aux as for any Step.
+
+    fn witness<'dr, 'source: 'dr, D, const HEADER_SIZE: usize>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, LeftData>,
+        right: DriverValue<D, RightData>,
+    ) -> Result<...> {
+        // Allocate or compute these values in this circuit's normal logic.
+        let input = ...;
+        let intermediate_state = ...;
+        let staged = Staged { input, intermediate_state };
+        Ok(((left_header, right_header, output_header), staged, output_data, aux))
+    }
+}
+```
+
+Ragu derives the stage's layout from the gadget type and adds one connecting
+equality constraint per wire; no stage size, positional array, or manual
+binding is supplied. The derive includes every gadget field, supports fixed
+vectors and nested shared structs, and refuses skipped, raw-wire, or
+witness-only fields. The step still constrains the staged values itself:
+staging only makes a binding commitment to them available to the proof
+system.
+
+Every proof carries one application stage, sized by the largest `Shared`
+gadget registered in the application and constructed during `finalize`.
+Each step circuit, including the internal bootstrap and rerandomization
+steps, reserves `ceil(n / 2)` gates for a stage of `n` elements, so an
+application whose steps all declare `Shared = ()` reserves nothing.
+Recursive and terminal verification hold the stage to its block and the
+step's own polynomial out of it, including for proofs built outside the Rust
+API.
 
 ### Pattern 3: Stateful Steps
 
