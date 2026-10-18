@@ -139,6 +139,8 @@ def digitPrefix (bits : Vector (F p) numBits) : ℕ → List Digit
         (bits[3 + 3 * m]'(by omega)) (bits[4 + 3 * m]'h)]
     else digitPrefix bits m
 
+/-- A prefix of `m ≤ numDigits` digits has length `m`, supplying the
+`≤ 46` length bound the collision lemma needs at every step. -/
 theorem digitPrefix_length (bits : Vector (F p) numBits) (m : ℕ) (hm : m ≤ numDigits) :
     (digitPrefix bits m).length = m := by
   induction m with

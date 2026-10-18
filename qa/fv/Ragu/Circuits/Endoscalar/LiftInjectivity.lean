@@ -33,11 +33,17 @@ def decode (bits : Vector (F p) numBits) : EndoscaleInput numDigits where
 /-- Evaluate an Eisenstein index in the target scalar field. -/
 def indexValue (ζ : F p) (v : Index) : F p := (v.a : F p) * ζ + v.b
 
+/-- The lift's initial accumulator is the field evaluation of the integer
+model's `initIndex` at the same two bits: the base case of
+`liftNative_eq_endoscaleN`. -/
 theorem initial_eq (ζ s e : F p) :
     Lift.initValue ζ s e = indexValue ζ (initIndex (decide (s = 1)) (decide (e = 1))) := by
   by_cases hs : s = 1 <;> by_cases he : e = 1
   all_goals simp [Lift.initValue, initIndex, indexValue, hs, he]
 
+/-- A digit's lift value is the field evaluation of its `digitIndex`, using
+`ζ² + ζ + 1 = 0` for the `(1, 1)` digit: the per-digit case of
+`liftNative_eq_endoscaleN`. -/
 theorem digit_eq (ζ s e1 e2 : F p) (hζ : ζ ^ 2 + ζ + 1 = 0) :
     Lift.digitValue ζ s e1 e2 = indexValue ζ
       (digitIndex ⟨decide (s = 1), decide (e1 = 1), decide (e2 = 1)⟩) := by
@@ -72,6 +78,8 @@ theorem liftNative_eq_endoscaleN (cp : CurveParams p) (hζ : cp.ζ ≠ 1)
   intro acc i
   rw [digit_eq cp.ζ _ _ _ (zeta_quadratic cp hζ)]
 
+/-- Two Boolean field elements with the same `= 1` test are equal, which
+inverts `decode` one bit at a time. -/
 private theorem bool_eq_of_decide_eq (a b : F p) (ha : IsBool a) (hb : IsBool b)
     (h : decide (a = 1) = decide (b = 1)) : a = b := by
   rcases ha with ha | ha <;> rcases hb with hb | hb <;> simp_all
@@ -140,11 +148,11 @@ theorem injective_soundness (cp : CurveParams p)
     (hbound : endoscaleCharacteristicBound numDigits < p) :
     Soundness (F p) (Input := Input) (Output := field)
       (main cp) (Assumptions cp) (fun input => UniqueLift cp.ζ input.bits) := by
-  intro offset env vars input hin hass hholds
-  obtain ⟨hspec, hreq⟩ := Lift.soundness cp offset env vars input hin hass hholds
+  intro offset env vars input hin hassume hholds
+  obtain ⟨hspec, hreq⟩ := Lift.soundness cp offset env vars input hin hassume hholds
   refine ⟨⟨hspec, ?_⟩, hreq⟩
   intro other hother heq
-  exact liftNative_injective cp hass.1 hbound hother hass.2 (heq.trans hspec)
+  exact liftNative_injective cp hassume.1 hbound hother hassume.2 (heq.trans hspec)
 
 /-- Plain lift uniqueness for the deployed Fp parameters. -/
 theorem ep_injective_soundness : Soundness (F Core.Primes.p) (Input := Input) (Output := field)
@@ -171,11 +179,11 @@ theorem injective_soundness (cp : CurveParams p)
     (hbound : endoscaleCharacteristicBound numDigits < p) :
     Soundness (F p) (Input := Input) (Output := field)
       (main cp) (Assumptions cp) (fun input => UniqueLift cp.ζ input.bits) := by
-  intro offset env vars input hin hass hholds
-  obtain ⟨hspec, hreq⟩ := soundness cp offset env vars input hin hass hholds
+  intro offset env vars input hin hassume hholds
+  obtain ⟨hspec, hreq⟩ := soundness cp offset env vars input hin hassume hholds
   refine ⟨⟨hspec, ?_⟩, hreq⟩
   intro other hother heq
-  exact liftNative_injective cp hass.1 hbound hother hass.2.1 (heq.trans hspec)
+  exact liftNative_injective cp hassume.1 hbound hother hassume.2.1 (heq.trans hspec)
 
 /-- Hoisted lift uniqueness for the deployed Fp parameters. -/
 theorem ep_injective_soundness :

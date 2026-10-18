@@ -493,25 +493,25 @@ theorem eq_assumptions (input : Input (F q)) (h : PastaAssumptions EqAffineParam
 /-- Pallas hoisted-walk soundness with non-degeneracy proved from the curve. -/
 theorem ep_soundness : Soundness (F p) (Input := Input) (Output := Point)
     (main EpAffineParams) (PastaAssumptions EpAffineParams) (Spec EpAffineParams) := by
-  intro offset env vars input hin hass
-  exact soundness EpAffineParams offset env vars input hin (ep_assumptions input hass)
+  intro offset env vars input hin hassume
+  exact soundness EpAffineParams offset env vars input hin (ep_assumptions input hassume)
 
 /-- Vesta hoisted-walk soundness with non-degeneracy proved from the curve. -/
 theorem eq_soundness : Soundness (F q) (Input := Input) (Output := Point)
     (main EqAffineParams) (PastaAssumptions EqAffineParams) (Spec EqAffineParams) := by
-  intro offset env vars input hin hass
-  exact soundness EqAffineParams offset env vars input hin (eq_assumptions input hass)
+  intro offset env vars input hin hassume
+  exact soundness EqAffineParams offset env vars input hin (eq_assumptions input hassume)
 
 /-- Honest witnesses exist for every valid Pallas hoisted-walk input. -/
 theorem ep_completeness : Completeness (F p) (Input := Input) (Output := Point)
     (main EpAffineParams) (PastaAssumptions EpAffineParams) := by
-  intro offset env vars henv input hin hass
-  exact completeness EpAffineParams offset env vars henv input hin (ep_assumptions input hass)
+  intro offset env vars henv input hin hassume
+  exact completeness EpAffineParams offset env vars henv input hin (ep_assumptions input hassume)
 
 /-- Honest witnesses exist for every valid Vesta hoisted-walk input. -/
 theorem eq_completeness : Completeness (F q) (Input := Input) (Output := Point)
     (main EqAffineParams) (PastaAssumptions EqAffineParams) := by
-  intro offset env vars henv input hin hass
-  exact completeness EqAffineParams offset env vars henv input hin (eq_assumptions input hass)
+  intro offset env vars henv input hin hassume
+  exact completeness EqAffineParams offset env vars henv input hin (eq_assumptions input hassume)
 
 end Ragu.Circuits.Endoscalar.HoistedGroupScale

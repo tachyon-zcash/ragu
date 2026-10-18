@@ -118,10 +118,14 @@ inputs this preserves every bit; the native models use the same `= 1` test. -/
 def scalarBits (q : ℕ) [Fact q.Prime] (bits : Vector (F p) numBits) : Vector (F q) numBits :=
   bits.map fun b => if b = 1 then 1 else 0
 
+/-- Reinterpreting a bit in the opposite field preserves its `= 1` test. -/
 private theorem decide_scalarBit {q : ℕ} [Fact q.Prime] (b : F p) :
     decide ((if b = 1 then (1 : F q) else 0) = 1) = decide (b = 1) := by
   by_cases hb : b = 1 <;> simp [hb]
 
+/-- The lift in the opposite field reads the same digits as the walk's
+selector bits, which lets `groupScaleNative_eq_lift` apply the scalar-field
+lift to base-field wires. -/
 theorem decode_scalarBits {q : ℕ} [Fact q.Prime] (bits : Vector (F p) numBits) :
     decode (scalarBits q bits) = decode bits := by
   apply EndoscaleInput.ext
@@ -203,17 +207,17 @@ open Core.Primes Point.Spec
 theorem ep_scalar_soundness : Soundness (F p) (Input := Input) (Output := Point)
     (main EpAffineParams) (PastaAssumptions EpAffineParams)
     (fun input out => WalkScalar.EpScalarSpec input.pt input.bits out) := by
-  intro offset env vars input hin hass hholds
-  obtain ⟨hspec, hreq⟩ := ep_soundness offset env vars input hin hass hholds
-  exact ⟨WalkScalar.ep_spec _ _ _ hass.1 hspec.1, hreq⟩
+  intro offset env vars input hin hassume hholds
+  obtain ⟨hspec, hreq⟩ := ep_soundness offset env vars input hin hassume hholds
+  exact ⟨WalkScalar.ep_spec _ _ _ hassume.1 hspec.1, hreq⟩
 
 /-- The verified plain Vesta circuit computes multiplication by the Fp lift. -/
 theorem eq_scalar_soundness : Soundness (F q) (Input := Input) (Output := Point)
     (main EqAffineParams) (PastaAssumptions EqAffineParams)
     (fun input out => WalkScalar.EqScalarSpec input.pt input.bits out) := by
-  intro offset env vars input hin hass hholds
-  obtain ⟨hspec, hreq⟩ := eq_soundness offset env vars input hin hass hholds
-  exact ⟨WalkScalar.eq_spec _ _ _ hass.1 hspec.1, hreq⟩
+  intro offset env vars input hin hassume hholds
+  obtain ⟨hspec, hreq⟩ := eq_soundness offset env vars input hin hassume hholds
+  exact ⟨WalkScalar.eq_spec _ _ _ hassume.1 hspec.1, hreq⟩
 
 end Ragu.Circuits.Endoscalar.GroupScale
 
@@ -225,16 +229,16 @@ open Core.Primes Point.Spec
 theorem ep_scalar_soundness : Soundness (F p) (Input := Input) (Output := Point)
     (main EpAffineParams) (PastaAssumptions EpAffineParams)
     (fun input out => WalkScalar.EpScalarSpec input.pt input.bits out) := by
-  intro offset env vars input hin hass hholds
-  obtain ⟨hspec, hreq⟩ := ep_soundness offset env vars input hin hass hholds
-  exact ⟨WalkScalar.ep_spec _ _ _ hass.1 hspec.1, hreq⟩
+  intro offset env vars input hin hassume hholds
+  obtain ⟨hspec, hreq⟩ := ep_soundness offset env vars input hin hassume hholds
+  exact ⟨WalkScalar.ep_spec _ _ _ hassume.1 hspec.1, hreq⟩
 
 /-- The verified hoisted Vesta circuit computes multiplication by the Fp lift. -/
 theorem eq_scalar_soundness : Soundness (F q) (Input := Input) (Output := Point)
     (main EqAffineParams) (PastaAssumptions EqAffineParams)
     (fun input out => WalkScalar.EqScalarSpec input.pt input.bits out) := by
-  intro offset env vars input hin hass hholds
-  obtain ⟨hspec, hreq⟩ := eq_soundness offset env vars input hin hass hholds
-  exact ⟨WalkScalar.eq_spec _ _ _ hass.1 hspec.1, hreq⟩
+  intro offset env vars input hin hassume hholds
+  obtain ⟨hspec, hreq⟩ := eq_soundness offset env vars input hin hassume hholds
+  exact ⟨WalkScalar.eq_spec _ _ _ hassume.1 hspec.1, hreq⟩
 
 end Ragu.Circuits.Endoscalar.HoistedGroupScale

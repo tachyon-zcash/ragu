@@ -33,11 +33,14 @@ theorem embed_ne_zero (P : Point (F p)) (hP : P.isOnCurve cp) :
   rw [hp] at hc
   exact origin_not_on_curve E hc
 
+/-- Affine negation is group negation under the embedding. -/
 theorem embed_negate (P : Point (F p)) (hP : P.isOnCurve cp)
     (hneg : P.negate.isOnCurve cp) :
     embed E hA cp hB P.negate hneg = -embed E hA cp hB P hP :=
   SWPoint.ext_pair rfl
 
+/-- The affine endomorphism `(x, y) ↦ (ζx, y)` is `CoordinateMap.endo`
+under the embedding. -/
 theorem embed_endo (P : Point (F p)) (hP : P.isOnCurve cp)
     (he : (P.endo cp).isOnCurve cp) :
     embed E hA cp hB (P.endo cp) he =

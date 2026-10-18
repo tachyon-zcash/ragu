@@ -29,16 +29,12 @@ theorem eq_nsmul_of_generator {G : Type*} [AddCommGroup G] {q : ℕ} [Fact q.Pri
   obtain ⟨n, hn⟩ := AddSubgroup.mem_zmultiples_iff.mp hmem
   rw [← hn, map_zsmul, hgen, smul_comm]
 
-set_option maxRecDepth 100000 in
-set_option maxHeartbeats 2000000 in
 /-- Kernel-checked orientation of Pallas's coordinate endomorphism. -/
 theorem pallas_generator :
     CoordinateMap.endo Pallas.curve rfl EpAffineParams.ζ EpAffineParams.h_small_order Pallas.Gpt =
       EqAffineParams.ζ.val • Pallas.Gpt := by
   decide +kernel
 
-set_option maxRecDepth 100000 in
-set_option maxHeartbeats 2000000 in
 /-- Kernel-checked orientation of Vesta's coordinate endomorphism. -/
 theorem vesta_generator :
     CoordinateMap.endo Vesta.curve rfl EqAffineParams.ζ EqAffineParams.h_small_order Vesta.Gpt =

@@ -19,9 +19,13 @@ variable {K : Type*} [Field K]
 /-- Scale a coordinate pair, preserving the identity sentinel. -/
 def coords (c : K) (P : K × K) : K × K := (c ^ 2 * P.1, c ^ 3 * P.2)
 
+/-- The coordinate change fixes the identity sentinel `(0, 0)`, so `hom`
+maps zero to zero. -/
 @[simp] theorem coords_zero (c : K) : coords c (0, 0) = (0, 0) := by
   simp [coords]
 
+/-- A nonzero scale factor is injective on coordinate pairs: the injective
+half of `hom_bijective`. -/
 theorem coords_injective {c : K} (hc : c ≠ 0) : Function.Injective (coords c) := by
   rintro ⟨x, y⟩ ⟨x', y'⟩ h
   have hx := congrArg Prod.fst h
@@ -110,6 +114,8 @@ theorem hom_bijective [DecidableEq K] (E : SWCurve K) (hA : E.A = 0)
     change (c ^ 2 * (Q.x / c ^ 2), c ^ 3 * (Q.y / c ^ 3)) = (Q.x, Q.y)
     apply Prod.ext <;> field_simp
 
+/-- Normalization preserves the complete group's cardinality, so a
+prime-order certificate transfers to the normalized curve. -/
 theorem card_curve [DecidableEq K] (E : SWCurve K) (hA : E.A = 0)
     (c : K) (hc : c ≠ 0) : Nat.card (SWPoint (curve E c hc)) = Nat.card (SWPoint E) :=
   (Nat.card_congr (Equiv.ofBijective _ (hom_bijective E hA c hc))).symm
