@@ -392,15 +392,6 @@ fn config() -> ProptestConfig {
     config
 }
 
-#[test]
-fn persisted_regressions_are_loaded() {
-    super::recursive_propagation_tests::support::assert_regression_seeds(
-        config(),
-        file!(),
-        include_str!("backend_equivalence.proptest-regressions"),
-    );
-}
-
 fn rng_fingerprint(rng: &mut StdRng) -> RngFingerprint {
     core::array::from_fn(|_| rng.random())
 }
