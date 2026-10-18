@@ -176,7 +176,10 @@ adds the concrete `ep_scalar_soundness` and `eq_scalar_soundness` endpoints
 to both walk gadgets, proving $\endo{s}\cdot G = [\mathsf{lift}(\endo{s})]G$.
 These are gadget contracts: they do not formalize the internal circuits'
 sharing of staged wires, the binding of `pre_beta` and $\beta$, or the
-recursive protocol's soundness reduction.
+recursive protocol's soundness reduction. The
+[open endoscalar stage-binding contract](../../fv/circuits/contracts.md#endoscalar-stage-binding)
+names the owners, consumers, parent and terminal checks, and the proof
+obligations for that broader formalization.
 
 ### Challenge accounting
 

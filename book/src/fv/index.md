@@ -85,6 +85,12 @@ Everything above the gadget layer. The internal recursion circuits, the
 accumulation scheme, the staging system, and the protocol as a whole have no
 Lean theorems about them.
 
+The [open endoscalar stage-binding contract](circuits/contracts.md#endoscalar-stage-binding)
+specifies how the product owners, consuming walks and lifts, transcript,
+parent checks, and terminal verifier must be connected. The gadget results
+do not assume this contract as an axiom; proving it is work for the broader
+recursive formalization.
+
 Some of the gadget layer has nothing to verify rather than something unproved,
 and the distinction matters when reading the list above as a coverage claim.
 Demotion (`promotion.rs`) strips witness data through a driver whose every

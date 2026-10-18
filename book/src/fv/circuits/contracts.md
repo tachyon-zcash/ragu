@@ -172,20 +172,84 @@ point. The resulting plain and hoisted `ep_scalar_soundness` and
 `eq_scalar_soundness` endpoints state multiplication by `Lift.liftNative`
 in the opposite field, not just agreement with the affine evaluator.
 
-The cross-circuit layer remains outside these proofs. Rust's native
-`bind_endoscalar` pins bits to `pre_beta` and pins products; nested `export`
-pins Booleanity and products, and nested `compute_v` pins the lift to the
-challenge stage's beta. Stage sharing, the parent's commitment check, and
-the root check must bind those values across circuits. The recursive
-substitution tests exercise this layer, including product corruption on
-both sides through two generations. They are finite regression evidence,
-not a formal composition or recursive soundness theorem.
-
 Verifier and prover contracts remain distinct. For example,
 `Element.Alloc.Spec` is intentionally `True` because an arbitrary fresh
 allocation has no verifier-visible relationship to its private hint;
 `ProverSpec` records the honest-witness relationship. Similar hint obligations
 belong only to completeness.
+
+## Open contract: endoscalar stage binding {#endoscalar-stage-binding}
+
+**Status: open protocol proof obligation.** The arithmetic gadget theorems
+above do not establish this contract. It belongs to the broader recursive
+formalization; it is not an additional Lean axiom or an assumed theorem.
+
+The target relation is that, for each logical proof step, there is one
+143-bit Boolean encoding $s$ with the following properties:
+
+1. $s$ is the canonical extraction of that step's transcript-derived,
+   in-range `pre_beta`. The transcript includes the prescribed commitments
+   in their prescribed order.
+2. Each owner and consumer uses that same encoding. Across the 47 digits,
+   the 94 hoisted product wires satisfy $p_i=e_{1,i}e_{2,i}$ and
+   $q_i=p_i s_i$. This includes every walk step and the nested lift.
+3. The two fields' beta values are their respective lifts of $s$. This
+   requires equality of the Boolean encoding across fields; it does not
+   equate elements of different fields. Nested `compute_v`'s beta wire is
+   the value authenticated by the challenge-stage commitment.
+4. The commitments opened, folded, exported to the unified instance, and
+   checked by the next parent or terminal verifier refer to these same
+   stages and walk results. The recursive argument covers both child
+   positions and every recursion depth, with an explicit base-case relation
+   for the bootstrap path and its sign convention.
+
+An eventual soundness reduction must derive this relation from acceptance
+for adversarial witnesses, or reduce its failure to explicitly defined and
+bounded cryptographic failure events. Those events must follow from the
+stated commitment, accumulation, and challenge assumptions; naming a stage
+mismatch as a bad event supplies neither a reduction nor a probability bound.
+
+The implementation responsibilities to connect are:
+
+| Producer or contract owner | Value or relation established | Consumer or binding check |
+| --- | --- | --- |
+| Native `hashes_2` | Transcript-derived `pre_beta` in the unified instance | Native `compute_v`, native `bind_endoscalar`, and the parent's `bind_beta` |
+| Native `bind_endoscalar` | Walk bits equal extracted bits, products are pinned, input points are on curve, and the walked result is exported | Native walk steps and the parent's checks of the walked commitments |
+| Nested `export` | Endoscalar stage bits are Boolean and both products per digit are pinned | Nested walk steps and nested `compute_v` |
+| Nested `compute_v` | The staged bits' lift equals the challenge stage's beta | Nested evaluation folding and the walk's scalar interpretation |
+| Native `bind_challenges`, then the parent's `bind_beta` | The nested challenge-stage commitment matches the transcript-derived lifts, sign, and beta term | Nested stage openings and all consumers of those challenges |
+| Stage commitments, native/nested claims, and bonding masks | Owner and consumer constraints refer to the same staged values and exported commitments | The recursive accumulation and terminal verification checks |
+
+The parent step is essential: `pre_beta` is sampled after the native
+`eval` commitment, so the proof's own challenge binders export a partial
+commitment without its beta term. The parent's `bind_beta` completes that
+term using the child's exported `pre_beta` and compares the result with the
+child's walked challenge-stage commitment. At the terminal proof, the
+verifier reconstructs the challenge-stage polynomial and compares its
+coefficients, checks cached commitments against the retained polynomials,
+and replays the transcript. A proof must cover this terminal path as well
+as the inductive parent path.
+
+Closing this contract requires all of the following:
+
+1. Model the relevant internal circuits and their actual stage layouts,
+   unified-instance slots, claim chains, and final masks. Connect those
+   models to the deployed implementation under the stated refinement boundary.
+2. Derive the equality of owner and consumer values from their shared
+   commitments, openings, claims, and bonding. Supplying stage equality
+   as a premise leaves this obligation open.
+3. Prove the parent/child and terminal bindings, including transcript
+   timing, in-range extraction, child positions, and base cases. State the
+   binding assumptions and account for their failure events and repeated
+   Fiat–Shamir trials in the broader reduction.
+4. Compose the result with `EnforceProducts`, `LiftInjectivity`, and
+   `WalkScalar`, and include the resulting endpoints in the trust census.
+
+The recursive substitution tests currently exercise stage-bit, product,
+and challenge substitutions through two generations, with honest controls.
+PR CI replays the saved cases and a fresh case for the selected properties.
+These are finite integration checks. They do not establish this contract,
+and passing them does not discharge any of the proof obligations above.
 
 ## Robustness and enforcement
 
