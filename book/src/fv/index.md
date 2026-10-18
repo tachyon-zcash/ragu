@@ -56,6 +56,10 @@ parameters made concrete.
   The integer non-collision bounds are connected to the complete curve group
   and the affine walk. Concrete soundness and completeness endpoints on both
   Pasta curves derive walk success from the certified prime group orders.
+  Lift injectivity is connected to the verified circuit outputs, with the
+  bounds instantiated for both fields. The deployed endomorphism roots are
+  matched to their scalar-field eigenvalues, and the plain and hoisted
+  walks are proved to compute multiplication by the corresponding lift.
 - **Poseidon** — the permutation at the deployed Pasta parameters on both
   fields, and the sponge in several distinct control-flow shapes:
   single-block hashing on each field, uniform blocks across a rate boundary,

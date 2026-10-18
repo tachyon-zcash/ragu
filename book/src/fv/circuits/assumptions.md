@@ -56,7 +56,8 @@ The Ragu Formal Verification relies on some assumptions.
       `Vesta.p_nsmul_Gpt`, as appropriate for the curve. Those certificates
       use `native_decide` and therefore trust compiled evaluation. Each
       dependent endpoint names the exact certificate it uses. The integer
-      bounds and affine/group bridge introduce no additional native
+      bounds, lift-injectivity bridge, root-orientation checks, and
+      affine/scalar bridge introduce no additional native
       certificates or axioms. The Pasta primality results are proved theorems,
       not assumed primality axioms.
 

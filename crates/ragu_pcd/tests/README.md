@@ -10,12 +10,13 @@ a fresh checkout by traversing a missing `proptest-regressions/..` directory.
 
 Keep the saved seeds. Each property in a file replays all its seeds before
 generating fresh cases. To replay the two recursive properties that originally
-failed, plus one fresh case each:
+failed and the hoisted-product corruption property, plus one fresh case each:
 
 ```sh
 PROPTEST_CASES=1 cargo test --release -p ragu_pcd --locked --all-features --lib \
   -- --ignored --test-threads=1 \
   proof::recursive_boundary_tests::stages::same_lift_bit_substitutions_reject_through_two_generations \
+  proof::recursive_boundary_tests::stages::corrupted_hoisted_products_reject_through_two_generations \
   proof::recursive_binding_tests::challenge_binding::partial_and_pre_beta_substitutions_reject_through_two_generations
 ```
 

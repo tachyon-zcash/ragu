@@ -21,6 +21,22 @@
 //! the nonzero residues of $\mathbb{Z}[\lambda]$ modulo $3$, so the encoding
 //! stays injective, and a tripling costs fewer gates per bit than a doubling.
 //! See [`Endoscalar::group_scale`] for the layout and the scalar it maps to.
+//!
+//! # Protocol requirements
+//!
+//! Use endoscalars for public transcript challenges. Do not use them for
+//! blinding factors or other scalars whose secrecy is required: the radix
+//! decomposition permits a meet-in-the-middle search for a secret scalar
+//! from its group multiple in roughly the square root of the encoding space.
+//!
+//! The base point must be a valid nonidentity point on the supported curve.
+//! Normalization needs nonzero x and y coordinates; Pasta has neither
+//! nontrivial 2-torsion nor 3-torsion, and every affine point has both
+//! coordinates nonzero. The scalar field's `ZETA` must be the eigenvalue of
+//! the base field's coordinate endomorphism, with the matching choice of
+//! cube root. The Pasta parameter proofs and the two-curve consistency test
+//! check this pairing. Hoisted product wires must satisfy the owning stage's
+//! [`HoistedEndoscalar::enforce_products`] contract before a walk consumes them.
 
 use alloc::boxed::Box;
 

@@ -125,6 +125,8 @@ Most child verifier assumptions are `True`. The nontrivial paths are:
 | Every group-scale step succeeds | `WalkGroup` proves the 47-step affine/group invariant; `WalkPasta` discharges `groupScaleNative != none` for both Pasta curves. Generic curve contracts still carry the premise. |
 | Product wires are the products of their bits | `HoistedLift` and `HoistedGroupScale` receive it as an assumption; it is `EnforceProducts`'s postcondition. |
 | A nontrivial cube root of unity | Passed from the parent (`Lift`, the walks, and their digit and step children), where the `(1, 1)` digit's affine value `2 + λ²` is `1 - λ` only modulo `λ² + λ + 1 = 0`. |
+| Lift output uniquely determines Boolean bits | `LiftInjectivity` connects `Lift.liftNative` to `endoscaleN`, discharges both Pasta characteristic bounds, and strengthens the plain and hoisted circuit soundness endpoints. |
+| The coordinate root and scalar root have matching orientation | `Point.Endomorphism` checks the scalar action on `(-1, 2)` by kernel reduction and extends it to all points using each curve's certified prime order. |
 
 The caller-visible residual assumptions are:
 
@@ -151,8 +153,33 @@ does not assume an endomorphism eigenvalue certificate.
 The Pallas and Vesta instantiations reuse CompElliptic's existing group-order
 certificates. Their exact native-certificate dependencies are declared in
 `Ragu.Meta.TrustBoundary`; the bridge adds no new axioms or native certificates.
-This closes the affine non-degeneracy obligation, not the recursive protocol's
-soundness proof.
+`WalkPasta.collisionBound_lt_p` and `collisionBound_lt_q` name the concrete
+inequalities used by both walk-success proofs.
+
+`LiftInjectivity.liftNative_eq_endoscaleN` connects the field-vector model to
+the integer model, including initial bits, every digit, and fold order.
+`decode_injective` proves the conversion loses no Boolean bits. The plain
+and hoisted `ep_injective_soundness` and `eq_injective_soundness` endpoints
+then prove output uniqueness about the same builders used by extraction.
+Their numeric bounds and theorem dependencies use the standard theorem tier.
+
+`WalkScalar` transports the accumulator's group action back through
+denormalization and connects its index to the lift encoding.
+`Point.Endomorphism.pallas_generator` and `vesta_generator` fix the deployed
+root orientation using `decide +kernel`; neither introduces a native
+certificate. The prime-order certificates extend the identity to every
+point. The resulting plain and hoisted `ep_scalar_soundness` and
+`eq_scalar_soundness` endpoints state multiplication by `Lift.liftNative`
+in the opposite field, not just agreement with the affine evaluator.
+
+The cross-circuit layer remains outside these proofs. Rust's native
+`bind_endoscalar` pins bits to `pre_beta` and pins products; nested `export`
+pins Booleanity and products, and nested `compute_v` pins the lift to the
+challenge stage's beta. Stage sharing, the parent's commitment check, and
+the root check must bind those values across circuits. The recursive
+substitution tests exercise this layer, including product corruption on
+both sides through two generations. They are finite regression evidence,
+not a formal composition or recursive soundness theorem.
 
 Verifier and prover contracts remain distinct. For example,
 `Element.Alloc.Spec` is intentionally `True` because an arbitrary fresh
