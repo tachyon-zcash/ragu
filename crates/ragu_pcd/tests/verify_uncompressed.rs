@@ -47,6 +47,7 @@ struct UnitSeed;
 impl Step<Pasta> for UnitSeed {
     const INDEX: Index = Index::new(0);
 
+    type Shared = ();
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = ();
@@ -70,6 +71,7 @@ impl Step<Pasta> for UnitSeed {
             Encoded<'dr, D, Self::Right, HS>,
             Encoded<'dr, D, Self::Output, HS>,
         ),
+        (),
         DriverValue<D, ()>,
         DriverValue<D, ()>,
     )>
@@ -82,6 +84,7 @@ impl Step<Pasta> for UnitSeed {
                 Encoded::from_gadget(()),
                 Encoded::from_gadget(()),
             ),
+            (),
             D::unit(),
             D::unit(),
         ))
@@ -94,6 +97,7 @@ struct UnitStep;
 impl Step<Pasta> for UnitStep {
     const INDEX: Index = Index::new(1);
 
+    type Shared = ();
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = ();
@@ -117,6 +121,7 @@ impl Step<Pasta> for UnitStep {
             Encoded<'dr, D, Self::Right, HS>,
             Encoded<'dr, D, Self::Output, HS>,
         ),
+        (),
         DriverValue<D, ()>,
         DriverValue<D, ()>,
     )>
@@ -130,6 +135,7 @@ impl Step<Pasta> for UnitStep {
                 Encoded::new(dr, allocator, right)?,
                 Encoded::from_gadget(()),
             ),
+            (),
             D::unit(),
             D::unit(),
         ))

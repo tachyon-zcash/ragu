@@ -74,9 +74,10 @@ pub trait Processor<P: Profile, Rx, AppCircuitId> {
     /// ($k(y) = c$).
     fn raw_claim(&mut self, a: Rx, b: Rx);
 
-    /// Process a single-trace application circuit claim
+    /// Process an application circuit claim whose trace is the sum of the
+    /// given rxs: the step's own polynomial and the application stage's
     /// ($k(y) = \text{application\_ky}$).
-    fn circuit_claim(&mut self, app_id: AppCircuitId, rx: Rx);
+    fn circuit_claim(&mut self, app_id: AppCircuitId, rxs: impl Iterator<Item = Rx>);
 
     /// Process an internal circuit claim whose trace is the sum of the given
     /// rxs ($k(y) = \text{internal\_ky}$).
@@ -121,8 +122,12 @@ impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
         self.b.push(Cow::Borrowed(b));
     }
 
-    fn circuit_claim(&mut self, circuit_id: CircuitIndex, rx: &'rx sparse::Polynomial<F, R>) {
-        self.circuit_impl(circuit_id, Cow::Borrowed(rx));
+    fn circuit_claim(
+        &mut self,
+        circuit_id: CircuitIndex,
+        rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
+    ) {
+        self.circuit_impl(circuit_id, sum_polynomials(rxs));
     }
 
     fn internal_circuit_claim(
@@ -152,6 +157,8 @@ impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
 /// The ordering is: for each claim type, add claims for all proofs before
 /// moving to the next claim type. This produces an interleaved order:
 /// `[L_raw, R_raw, L_app, R_app, L_h1, R_h1, ...]` for two-proof sources.
+/// Each application claim's trace is the step's own polynomial plus the
+/// application stage's.
 ///
 /// This ordering must match the $k(y)$ ordering in
 /// [`collapse`](crate::internal::native::circuits::collapse)
@@ -169,9 +176,13 @@ where
         processor.raw_claim(a, b);
     }
 
-    // App circuits (interleaved per proof)
-    for (app_id, rx) in source.app_circuits().zip(source.rx(Rx(Application))) {
-        processor.circuit_claim(app_id, rx);
+    // App circuits (interleaved per proof), each over the step's own
+    // polynomial and the proof's application stage.
+    let rxs = source
+        .rx(Rx(Application))
+        .zip(source.rx(Rx(ApplicationStage)));
+    for (app_id, (own, stage)) in source.app_circuits().zip(rxs) {
+        processor.circuit_claim(app_id, [own, stage].into_iter());
     }
 
     // Internal circuits and stages in canonical order.
@@ -397,6 +408,16 @@ where
                             .flat_map(|step| source.rx(Rx(RxIndex::EndoscalingStep(step)))),
                     ),
                 )?;
+            }
+
+            // The application stage stays in its block, and the step's own
+            // polynomial outside it, so the stage commitment binds exactly
+            // the step's shared gadget.
+            ApplicationStage => {
+                processor.bonding_claim(id, source.rx(Rx(RxIndex::ApplicationStage)))?;
+            }
+            ApplicationFinalStaged => {
+                processor.bonding_claim(id, source.rx(Rx(Application)))?;
             }
         }
     }

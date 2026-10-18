@@ -54,6 +54,7 @@ impl Header<Fp> for HeaderWithData {
 struct StepWithData;
 impl Step<Pasta> for StepWithData {
     const INDEX: Index = Index::new(0);
+    type Shared = ();
     type Witness<'source> = Fp;
     type Aux<'source> = ();
     type Left = ();
@@ -71,6 +72,7 @@ impl Step<Pasta> for StepWithData {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
+        (),
         DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
@@ -78,7 +80,7 @@ impl Step<Pasta> for StepWithData {
         let left = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
         let output = Encoded::new(dr, allocator, witness.clone())?;
-        Ok(((left, right, output), witness, D::unit()))
+        Ok(((left, right, output), (), witness, D::unit()))
     }
 }
 
@@ -86,6 +88,7 @@ impl Step<Pasta> for StepWithData {
 struct Step0;
 impl<C: Cycle> Step<C> for Step0 {
     const INDEX: Index = Index::new(0);
+    type Shared = ();
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = ();
@@ -103,6 +106,7 @@ impl<C: Cycle> Step<C> for Step0 {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
+        (),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
@@ -110,13 +114,14 @@ impl<C: Cycle> Step<C> for Step0 {
         let left = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
         let output = Encoded::from_gadget(());
-        Ok(((left, right, output), D::unit(), D::unit()))
+        Ok(((left, right, output), (), D::unit(), D::unit()))
     }
 }
 
 struct Step1;
 impl<C: Cycle> Step<C> for Step1 {
     const INDEX: Index = Index::new(1);
+    type Shared = ();
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = HeaderA;
@@ -134,6 +139,7 @@ impl<C: Cycle> Step<C> for Step1 {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
+        (),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
@@ -141,7 +147,7 @@ impl<C: Cycle> Step<C> for Step1 {
         let left = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
         let output = Encoded::from_gadget(());
-        Ok(((left, right, output), D::unit(), D::unit()))
+        Ok(((left, right, output), (), D::unit(), D::unit()))
     }
 }
 

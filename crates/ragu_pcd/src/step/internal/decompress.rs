@@ -71,6 +71,7 @@ impl<H> Decompress<H> {
 impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
     const INDEX: Index = Index::internal(INTERNAL_ID);
 
+    type Shared = ();
     /// The header data of the decompressed proof.
     type Witness<'source> = H::Data;
     type Aux<'source> = ();
@@ -91,6 +92,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
+        (),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
@@ -101,7 +103,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
         // registered circuit; the suffix is a witness wire constrained away
         // from `Dummy` (see `Encoded::new_uniform`).
         let output = Encoded::new_uniform(dr, allocator, witness.clone())?;
-        Ok(((left, right, output), witness, D::unit()))
+        Ok(((left, right, output), (), witness, D::unit()))
     }
 }
 
@@ -162,19 +164,26 @@ mod tests {
             }
         }
 
+        // No application stage: the twins stage nothing either way.
         let circuit_single =
             super::super::adapter::Adapter::<Pasta, Decompress<Single>, R, HEADER_SIZE>::new(
                 Decompress::new(),
-            );
+                0,
+            )
+            .unwrap();
         let circuit_pair =
             super::super::adapter::Adapter::<Pasta, Decompress<Pair>, R, HEADER_SIZE>::new(
                 Decompress::new(),
-            );
+                0,
+            )
+            .unwrap();
         // `Decompress<()>` is the instantiation `finalize` registers.
         let circuit_unit =
             super::super::adapter::Adapter::<Pasta, Decompress<()>, R, HEADER_SIZE>::new(
                 Decompress::new(),
-            );
+                0,
+            )
+            .unwrap();
 
         // A frozen twin of `Decompress`, written from primitives: the
         // standard unit encoding for both inputs and one uniform wire set for
@@ -182,6 +191,7 @@ mod tests {
         struct Twin;
         impl Step<Pasta> for Twin {
             const INDEX: Index = Index::internal(INTERNAL_ID);
+            type Shared = ();
             type Witness<'source> = ();
             type Aux<'source> = ();
             type Left = ();
@@ -199,6 +209,7 @@ mod tests {
                     Encoded<'dr, D, (), HS>,
                     Encoded<'dr, D, (), HS>,
                 ),
+                (),
                 DriverValue<D, ()>,
                 DriverValue<D, ()>,
             )> {
@@ -207,10 +218,11 @@ mod tests {
                 let right = Encoded::<'dr, D, (), HS>::new(dr, allocator, right)?;
                 let output =
                     Encoded::<'dr, D, (), HS>::new_uniform(dr, allocator, witness.clone())?;
-                Ok(((left, right, output), witness, D::unit()))
+                Ok(((left, right, output), (), witness, D::unit()))
             }
         }
-        let circuit_twin = super::super::adapter::Adapter::<Pasta, Twin, R, HEADER_SIZE>::new(Twin);
+        let circuit_twin =
+            super::super::adapter::Adapter::<Pasta, Twin, R, HEADER_SIZE>::new(Twin, 0).unwrap();
 
         let mut builder: TestRegistryBuilder<'_, _, R> = TestRegistryBuilder::new();
         let single_h = builder.register_circuit(circuit_single).unwrap();

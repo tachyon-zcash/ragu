@@ -46,6 +46,7 @@ struct Consume;
 
 impl Step<C> for Consume {
     const INDEX: Index = Index::new(0);
+    type Shared = ();
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = Value;
@@ -64,6 +65,7 @@ impl Step<C> for Consume {
             Encoded<'dr, D, (), HS>,
             Encoded<'dr, D, Value, HS>,
         ),
+        (),
         DriverValue<D, Fp>,
         DriverValue<D, ()>,
     )>
@@ -80,6 +82,7 @@ impl Step<C> for Consume {
                 right,
                 Encoded::from_gadget(left),
             ),
+            (),
             data,
             D::unit(),
         ))

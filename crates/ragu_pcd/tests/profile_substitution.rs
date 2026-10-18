@@ -66,6 +66,7 @@ fn copy_proof_payload<
             left_header,
             right_header,
             native_application_rx,
+            native_application_stage_rx,
             native_preamble_rx,
             native_inner_error_rx,
             native_outer_error_rx,
@@ -134,6 +135,7 @@ fn copy_proof_payload<
             u,
             pre_beta,
             native_application_commitment,
+            native_application_stage_commitment,
             native_preamble_commitment,
             native_inner_error_commitment,
             native_outer_error_commitment,
@@ -229,6 +231,7 @@ struct Seed {
 
 impl<Cy: Cycle<CircuitField = Fp>> Step<Cy> for Seed {
     const INDEX: Index = Index::new(0);
+    type Shared = ();
     type Witness<'source> = Fp;
     type Aux<'source> = ();
     type Left = ();
@@ -247,6 +250,7 @@ impl<Cy: Cycle<CircuitField = Fp>> Step<Cy> for Seed {
             Encoded<'dr, D, (), HS>,
             Encoded<'dr, D, Value, HS>,
         ),
+        (),
         DriverValue<D, Fp>,
         DriverValue<D, ()>,
     )>
@@ -264,6 +268,7 @@ impl<Cy: Cycle<CircuitField = Fp>> Step<Cy> for Seed {
                 Encoded::from_gadget(()),
                 Encoded::from_gadget(value),
             ),
+            (),
             witness,
             D::unit(),
         ))
@@ -275,6 +280,7 @@ struct Sum;
 
 impl<Cy: Cycle<CircuitField = Fp>> Step<Cy> for Sum {
     const INDEX: Index = Index::new(1);
+    type Shared = ();
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = Value;
@@ -293,6 +299,7 @@ impl<Cy: Cycle<CircuitField = Fp>> Step<Cy> for Sum {
             Encoded<'dr, D, Value, HS>,
             Encoded<'dr, D, Value, HS>,
         ),
+        (),
         DriverValue<D, Fp>,
         DriverValue<D, ()>,
     )>
@@ -310,6 +317,7 @@ impl<Cy: Cycle<CircuitField = Fp>> Step<Cy> for Sum {
                 Encoded::from_gadget(right),
                 Encoded::from_gadget(output),
             ),
+            (),
             data,
             D::unit(),
         ))

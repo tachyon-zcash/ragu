@@ -430,7 +430,13 @@ impl<'a, 'dr, D: Driver<'dr>, P: Profile> Processor<P, &'a Element<'dr, D>, &'a 
         self.bx.push(b.clone());
     }
 
-    fn circuit_claim(&mut self, sy: &'a Element<'dr, D>, rx: &'a Element<'dr, D>) {
+    fn circuit_claim(
+        &mut self,
+        sy: &'a Element<'dr, D>,
+        rxs: impl Iterator<Item = &'a Element<'dr, D>>,
+    ) {
+        let rx = Element::sum(self.dr, rxs);
+
         // a(xz) = rx(xz)
         self.ax.push(rx.clone());
 

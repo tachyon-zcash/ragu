@@ -45,6 +45,7 @@ struct UnitStep;
 impl Step<C> for UnitStep {
     const INDEX: Index = Index::new(0);
 
+    type Shared = ();
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = ();
@@ -63,6 +64,7 @@ impl Step<C> for UnitStep {
             Encoded<'dr, D, Self::Right, N>,
             Encoded<'dr, D, Self::Output, N>,
         ),
+        (),
         DriverValue<D, ()>,
         DriverValue<D, ()>,
     )>
@@ -76,6 +78,7 @@ impl Step<C> for UnitStep {
                 Encoded::new(dr, allocator, right)?,
                 Encoded::from_gadget(()),
             ),
+            (),
             D::unit(),
             D::unit(),
         ))

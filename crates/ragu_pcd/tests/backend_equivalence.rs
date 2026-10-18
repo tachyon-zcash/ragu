@@ -193,6 +193,7 @@ struct UnitStep;
 impl Step<Pasta> for UnitStep {
     const INDEX: Index = Index::new(0);
 
+    type Shared = ();
     type Witness<'source> = ();
     type Aux<'source> = ();
     type Left = ();
@@ -211,6 +212,7 @@ impl Step<Pasta> for UnitStep {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
+        (),
         DriverValue<D, ()>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
@@ -219,7 +221,7 @@ impl Step<Pasta> for UnitStep {
         let right = Encoded::new(dr, allocator, right)?;
         let output = Encoded::from_gadget(());
 
-        Ok(((left, right, output), D::unit(), D::unit()))
+        Ok(((left, right, output), (), D::unit(), D::unit()))
     }
 }
 
@@ -1315,6 +1317,7 @@ mod proof_equivalence {
                 left_header: _,
                 right_header: _,
                 native_application_rx: _,
+                native_application_stage_rx: _,
                 native_preamble_rx: _,
                 native_inner_error_rx: _,
                 native_outer_error_rx: _,
@@ -1383,6 +1386,7 @@ mod proof_equivalence {
                 u: _,
                 pre_beta: _,
                 native_application_commitment: _,
+                native_application_stage_commitment: _,
                 native_preamble_commitment: _,
                 native_inner_error_commitment: _,
                 native_outer_error_commitment: _,

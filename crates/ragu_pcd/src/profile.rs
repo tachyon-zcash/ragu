@@ -162,7 +162,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The circuits and stages the profile adds on the native side.
     ///
     /// The challenge binders load a native extension's stages, and at the
-    /// production rank their largest variant sits fifteen gates under the
+    /// production rank their largest variant sits nine gates under the
     /// gate budget with the standard header: an extension stage costing more
     /// needs a smaller header or a cheaper binder. The internal census tests
     /// pin that count.
@@ -1020,6 +1020,7 @@ pub(crate) mod testing {
 
     impl<C: Cycle> Step<C> for UnitStep {
         const INDEX: Index = Index::new(0);
+        type Shared = ();
         type Witness<'source> = ();
         type Aux<'source> = ();
         type Left = ();
@@ -1043,6 +1044,7 @@ pub(crate) mod testing {
                 Encoded<'dr, D, (), HEADER_SIZE>,
                 Encoded<'dr, D, (), HEADER_SIZE>,
             ),
+            (),
             DriverValue<D, ()>,
             DriverValue<D, ()>,
         )> {
@@ -1051,6 +1053,7 @@ pub(crate) mod testing {
             let right = Encoded::new(dr, allocator, right)?;
             Ok((
                 (left, right, Encoded::from_gadget(())),
+                (),
                 D::unit(),
                 D::unit(),
             ))
@@ -2367,15 +2370,15 @@ mod tests {
         assert_eq!(
             shape,
             Shape {
-                native_rx: 45,
-                nested_points: 105,
-                nested_steps: 26,
-                nested_rx: 39,
-                native_points: 93,
-                native_steps: 23,
+                native_rx: 47,
+                nested_points: 109,
+                nested_steps: 27,
+                nested_rx: 40,
+                native_points: 95,
+                native_steps: 24,
             }
         );
-        assert_eq!(shape.polynomials(), 92);
+        assert_eq!(shape.polynomials(), 95);
     }
 
     #[test]

@@ -49,6 +49,7 @@ impl<H> Rerandomize<H> {
 impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
     const INDEX: Index = Index::internal(INTERNAL_ID);
 
+    type Shared = ();
     type Witness<'source> = ();
     type Aux<'source> = ();
 
@@ -68,6 +69,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
+        (),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
@@ -94,6 +96,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         // Return left's data as the output data - this preserves it!
         Ok((
             (left_encoded.clone(), right_encoded, left_encoded),
+            (),
             left,
             D::unit(),
         ))
@@ -157,17 +160,23 @@ mod tests {
         let circuit_single =
             super::super::adapter::Adapter::<Pasta, Rerandomize<Single>, R, HEADER_SIZE>::new(
                 Rerandomize::new(),
-            );
+                0,
+            )
+            .unwrap();
         let circuit_pair =
             super::super::adapter::Adapter::<Pasta, Rerandomize<Pair>, R, HEADER_SIZE>::new(
                 Rerandomize::new(),
-            );
+                0,
+            )
+            .unwrap();
 
         // `Rerandomize<()>` is the instantiation `finalize` actually registers.
         let circuit_unit =
             super::super::adapter::Adapter::<Pasta, Rerandomize<()>, R, HEADER_SIZE>::new(
                 Rerandomize::new(),
-            );
+                0,
+            )
+            .unwrap();
 
         // A frozen twin of `Rerandomize`, written from primitives: one uniform
         // wire set shared by the left input and output, plus the standard unit
@@ -177,6 +186,7 @@ mod tests {
         struct UnitRight;
         impl Step<Pasta> for UnitRight {
             const INDEX: Index = Index::internal(INTERNAL_ID);
+            type Shared = ();
             type Witness<'source> = ();
             type Aux<'source> = ();
             type Left = ();
@@ -194,6 +204,7 @@ mod tests {
                     Encoded<'dr, D, (), HS>,
                     Encoded<'dr, D, (), HS>,
                 ),
+                (),
                 DriverValue<D, ()>,
                 DriverValue<D, ()>,
             )> {
@@ -203,13 +214,15 @@ mod tests {
                 let right_encoded = Encoded::<'dr, D, (), HS>::new(dr, allocator, right)?;
                 Ok((
                     (left_encoded.clone(), right_encoded, left_encoded),
+                    (),
                     left,
                     D::unit(),
                 ))
             }
         }
         let circuit_twin =
-            super::super::adapter::Adapter::<Pasta, UnitRight, R, HEADER_SIZE>::new(UnitRight);
+            super::super::adapter::Adapter::<Pasta, UnitRight, R, HEADER_SIZE>::new(UnitRight, 0)
+                .unwrap();
 
         let mut builder: TestRegistryBuilder<'_, _, R> = TestRegistryBuilder::new();
         let single_h = builder.register_circuit(circuit_single).unwrap();
