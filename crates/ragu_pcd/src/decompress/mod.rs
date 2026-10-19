@@ -52,42 +52,51 @@
 //!    as a gadget. *Done.* $s(X)$ as a stage polynomial is item 7's.
 //! 5. [`transcript`]: the compression's transcript over the allocated
 //!    instance and messages, squeezing the native challenges. *Done*,
-//!    with the bridges allocated; binding them is the integration's.
+//!    with the bridges allocated; binding them is the first of what
+//!    remains, below.
 //! 6. [`derive`](mod@derive): the derived commitments, $\[H\]$ and the IPA's final
 //!    check as endoscalar chains over the other curve's points, the
 //!    compression's challenges squeezed as endoscalars for them. *Done.*
 //! 7. [`circuit`]: the verifier assembled from the gadgets as the two
 //!    circuits of the cycle, with the witness both allocate prepared from
 //!    a compressed proof, and tested end to end under the simulators.
-//!    *Done* up to the proof system's integration, below, with $G'$ the
-//!    one open gap.
+//!    *Done* up to the proof system's integration, below.
+//! 8. [`program`], [`stages`], [`run`], [`side`] and [`chunk`]: each side
+//!    cut into chunk circuits under the gate budget, every chunk loading
+//!    the compressed proof's data from stages and leaving its results in
+//!    a work stage for later chunks, with the prover's native run of the
+//!    same program filling the stages. *Done*: every chunk of both sides
+//!    fits the production rank's budget and is satisfied on a real
+//!    compressed proof, and a tampered stage fails some chunk.
 //!
 //! # Integration
 //!
-//! [`circuit`] is the complete verifier as circuit code: every check the
-//! native verifier makes runs on one side or the other, and what passes
-//! between the sides is listed. Making it a proof the fuse takes as a
-//! child is the integration this branch stops at, since it changes the
-//! fuse's circuit set:
+//! [`chunk`] is the complete verifier as circuits: every check the native
+//! verifier makes runs in some chunk of one side or the other, over the
+//! four stages of [`stages`]. Making it a proof the fuse takes as a child
+//! is what remains, since it changes the fuse's circuit set:
 //!
-//! - **Circuits on both registries.** A circuit of a rank holds
-//!   [`n`](ragu_circuits::polynomials::Rank::n) gates, $2^{11}$ for the
-//!   production rank, and each side runs to hundreds of thousands, so the
-//!   two sides split into internal circuits registered on both registries
-//!   beside the fuse's, with a native fuse step that declares a compressed
-//!   child. The transcript's saved state and the sides' partial sums cross
-//!   circuits as the fuse's `bind_challenges` partials do.
-//! - **The shared values as stages.** The [`Witness`](circuit::Witness)
-//!   carries what the sides share: the challenges' endoscalars, the
-//!   full-width scalars' digits, the scalar field's values the
-//!   circuit-field transcript absorbs through bridges, and the registry's
-//!   evaluations. Each becomes a stage held by the side that computes or
-//!   checks it, bound to the other by the stage's commitment, which also
-//!   fixes the compression's bridge layout: today its transcript commits a
-//!   point's two coordinates to the first two nested generators and a
-//!   scalar to the first, and the stage's layout must become the bridge's.
-//!   The registry's evaluations are the decider's to check against the
-//!   registry, as the fuse's query stage is.
+//! - **Circuits on both registries.** The chunk circuits and their stages
+//!   are the aggregator profile's extension (see [`profile`](crate::profile)):
+//!   registered on both registries beside the fuse's, with a native fuse
+//!   step that declares a compressed child. Every chunk then runs in every
+//!   proof of that profile, so the fuse folds one claim per chunk per
+//!   child, hundreds beside its own, which its two-layer revdot fold and
+//!   the collapse circuits that check it are not sized for.
+//! - **The stages' bindings.** The instance stage holds the compressed
+//!   proof's statement and the messages stage its messages; the transcript
+//!   stage holds the bridges the compression's transcript absorbs. Binding
+//!   those bridges to the stage's commitment fixes the compression's bridge
+//!   layout: today its transcript commits a point's two coordinates to the
+//!   first two nested generators and a scalar to the first, and the stage's
+//!   layout must become the bridge's. The registry's evaluations the chunks
+//!   read from the work stage are the decider's to check against the wallet
+//!   registry, as the fuse's query stage is, and no such check exists yet:
+//!   the chunks take the values a prover writes there, so a prover who
+//!   writes false ones has them accept a proof the wallet's verifier would
+//!   reject. The check needs the decider to recompute the evaluations at
+//!   the decompressed proof's challenges, through the polynomial-query
+//!   hooks #821 proposes, as $G'$ below does.
 //! - **$G'$, the open gap.** The IPA's final check takes $G' = \langle s,
 //!   G \rangle$ as a witness point, so as the circuits stand that check
 //!   binds nothing: a prover who chooses $G'$ satisfies it for any
@@ -116,10 +125,15 @@ use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::Element;
 
 pub(crate) mod batch;
+pub(crate) mod chunk;
 pub(crate) mod circuit;
 pub(crate) mod derive;
 pub(crate) mod ipa;
+pub(crate) mod program;
 pub(crate) mod revdot;
+pub(crate) mod run;
+pub(crate) mod side;
+pub(crate) mod stages;
 pub(crate) mod transcript;
 
 #[cfg(test)]
