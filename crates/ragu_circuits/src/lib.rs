@@ -21,7 +21,6 @@ extern crate alloc;
 extern crate std;
 
 mod blind;
-pub mod floor_plan;
 pub mod floor_planner;
 pub mod horner;
 mod ky;
@@ -217,20 +216,18 @@ pub(crate) trait WiringObject<F: Field, R: Rank>: Send + Sync {
 
     /// Evaluates $s(x, y)$ with memoization cache for inter-circuit sharing.
     ///
-    /// Routines at the same canonical position across circuits can share
+    /// Routines with the same placement and inputs across circuits can share
     /// cached contributions, avoiding redundant computation.
     ///
     /// # Arguments
     ///
     /// - `floor_plan`: Per-circuit absolute offsets for monomial computation.
-    /// - `type_floor_plan`: Canonical positions for cache keys (inter-circuit sharing).
     /// - `cache`: Shared cache populated/consulted during evaluation.
     fn sxy_with_cache(
         &self,
         x: F,
         y: F,
         floor_plan: &[floor_planner::ConstraintSegment],
-        type_floor_plan: &floor_plan::FloorPlan,
         cache: &mut wiring::MemoCache<F>,
     ) -> F;
 
@@ -329,7 +326,6 @@ where
             x: F,
             y: F,
             floor_plan: &[floor_planner::ConstraintSegment],
-            type_floor_plan: &floor_plan::FloorPlan,
             cache: &mut wiring::MemoCache<F>,
         ) -> F {
             wiring::sxy::eval_with_cache::<_, _, R>(
@@ -338,7 +334,6 @@ where
                 y,
                 floor_plan,
                 &self.metrics.segments,
-                type_floor_plan,
                 cache,
             )
             .expect("should succeed if metrics succeeded")

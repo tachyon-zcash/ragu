@@ -249,7 +249,6 @@ impl<F: Field, R: Rank> WiringObject<F, R> for Stripped<'_, F, R> {
         x: F,
         y: F,
         floor_plan: &[ConstraintSegment],
-        _type_floor_plan: &crate::floor_plan::FloorPlan,
         _cache: &mut crate::wiring::MemoCache<F>,
     ) -> F {
         // Bonding polynomials don't share the memoization cache.

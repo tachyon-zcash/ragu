@@ -12,10 +12,8 @@ use udon::field::Field;
 
 use super::{RoutineCircuit, RoutineLayout, consistency_checks};
 use crate::{
-    SegmentRecord,
-    floor_plan::FloorPlan,
     floor_planner, into_wiring_object,
-    polynomials::{Rank, TestRank},
+    polynomials::TestRank,
     registry::{CircuitIndex, Registry, RegistryBuilder},
     wiring::MemoCache,
 };
@@ -113,15 +111,13 @@ fn cache_reuse_requires_identical_layout_and_inputs() -> Result<()> {
         .iter()
         .map(|(layout, _)| into_wiring_object::<Fp, _, TestRank>(RoutineCircuit(*layout)))
         .collect::<Result<Vec<_>>>()?;
-    let records: Vec<&[SegmentRecord]> = objs.iter().map(|o| o.segment_records()).collect();
-    let type_floor_plan = FloorPlan::from_segment_records(&records, TestRank::n());
 
     let (x, y) = (random(), random());
     let mut cache = MemoCache::new();
     let mut hits = 0;
     for (obj, (layout, expected_hits)) in objs.iter().zip(sequence) {
         let plan = floor_planner::floor_plan(obj.segment_records());
-        let memoized = obj.sxy_with_cache(x, y, &plan, &type_floor_plan, &mut cache);
+        let memoized = obj.sxy_with_cache(x, y, &plan, &mut cache);
         assert_eq!(memoized, obj.sxy(x, y, &plan), "{layout:?}");
         assert_eq!(cache.hits() - hits, expected_hits, "{layout:?}");
         hits = cache.hits();

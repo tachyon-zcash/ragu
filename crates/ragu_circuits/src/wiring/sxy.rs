@@ -48,7 +48,7 @@
 //! [`sx`]: super::sx
 //! [`Driver::enforce_zero`]: ragu_core::drivers::Driver::enforce_zero
 
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::vec::Vec;
 
 use ragu_core::{
     Coeff, Error, Result,
@@ -63,10 +63,10 @@ use ragu_core::{
 };
 use udon::field::Field;
 
-use super::memo::{CachedRoutine, MemoCache, WireInjector};
+use super::memo::{CachedRoutine, MemoCache, Placement, WireInjector};
 use crate::{
-    DeepFingerprint, DriverScope, RoutineIdentity, SegmentRecord, floor_plan::FloorPlan,
-    floor_planner::ConstraintSegment, polynomials::Rank, raw::RawCircuit,
+    DeepFingerprint, DriverScope, RoutineIdentity, SegmentRecord, floor_planner::ConstraintSegment,
+    polynomials::Rank, raw::RawCircuit,
 };
 
 /// Per-routine state saved and restored across routine boundaries.
@@ -141,14 +141,8 @@ struct Evaluator<'fp, F, R> {
     /// Global monotonic DFS counter for routine entries.
     current_routine: usize,
 
-    /// Canonical floor plan for inter-circuit memoization (optional).
-    type_floor_plan: Option<&'fp FloorPlan>,
-
     /// Cache for memoized routine contributions (optional).
     memo_cache: Option<&'fp mut MemoCache<F>>,
-
-    /// Per-fingerprint invocation counters for cache key computation.
-    invocation_counts: BTreeMap<DeepFingerprint, usize>,
 
     /// Routine nesting depth; memoization only applies at depth 0.
     routine_depth: usize,
@@ -278,19 +272,13 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         let gate_start = seg.gate_start;
         let constraint_start = seg.constraint_start;
 
-        // Memoization bookkeeping. Invocations are counted per fingerprint so
-        // that this call's canonical position can be looked up. Only top-level
-        // routines are memoized; a cached entry covers the whole subtree.
-        let memo = match (self.type_floor_plan, self.memo_cache.is_some()) {
-            (Some(plan), true) => {
-                let fingerprint = self.fingerprint_at(index);
-                let invocation_index = self.count_invocation(fingerprint);
-                (self.routine_depth == 0)
-                    .then(|| plan.get_invocation(&fingerprint, invocation_index))
-                    .flatten()
-                    .map(|pos| (fingerprint, pos))
-            }
-            _ => None,
+        // Only top-level routines are memoized; a cached entry covers the
+        // whole subtree.
+        let memo = (self.routine_depth == 0 && self.memo_cache.is_some())
+            .then(|| self.fingerprint_at(index));
+        let placement = Placement {
+            gate_start,
+            constraint_start,
         };
 
         // The input gadget's wires appear in the routine's constraints, so an
@@ -300,15 +288,9 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
             None => Vec::new(),
         };
 
-        if let Some((fingerprint, canonical_pos)) = memo {
+        if let Some(fingerprint) = memo {
             let cache = self.memo_cache.as_mut().expect("memo implies a cache");
-            if let Some(cached) = cache.lookup(
-                &fingerprint,
-                canonical_pos,
-                gate_start,
-                constraint_start,
-                &input_wires,
-            ) {
+            if let Some(cached) = cache.lookup(&fingerprint, placement, &input_wires) {
                 let contribution = cached.contribution;
                 let num_segments = cached.num_segments;
 
@@ -329,16 +311,9 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
                     "wire cache should be fully consumed"
                 );
 
-                // The entry already includes the nested sub-routines: skip
-                // their segments and count their invocations as execution
-                // would have.
+                // The entry already includes the nested sub-routines, so
+                // skip their segments.
                 self.scope.sum += contribution;
-                let records = self.segment_records;
-                for record in &records[index + 1..index + num_segments] {
-                    if let RoutineIdentity::Routine(fp) = record.identity() {
-                        self.count_invocation(*fp);
-                    }
-                }
                 self.current_routine += num_segments - 1;
 
                 return Ok(output);
@@ -387,12 +362,10 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         let routine_contribution =
             y_pow_constraint_start.mul_add(&self.scope.result, &self.scope.sum);
 
-        if let Some((fingerprint, canonical_pos)) = memo
+        if let Some(fingerprint) = memo
             && let Ok(output) = &exec_result
         {
             let entry = CachedRoutine {
-                gate_start,
-                constraint_start,
                 input_wires,
                 contribution: routine_contribution,
                 output_wires: extract_wires(output, |w: &F| *w)?,
@@ -401,7 +374,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
             self.memo_cache
                 .as_mut()
                 .expect("memo implies a cache")
-                .insert(fingerprint, canonical_pos, entry);
+                .insert(fingerprint, placement, entry);
         }
 
         self.scope = saved;
@@ -418,15 +391,6 @@ impl<F: Field, R: Rank> Evaluator<'_, F, R> {
             RoutineIdentity::Routine(fp) => *fp,
             RoutineIdentity::Root => unreachable!("routine segments are never Root"),
         }
-    }
-
-    /// Records one more invocation of `fingerprint`, returning its index among
-    /// invocations of that fingerprint in this circuit.
-    fn count_invocation(&mut self, fingerprint: DeepFingerprint) -> usize {
-        let count = self.invocation_counts.entry(fingerprint).or_insert(0);
-        let index = *count;
-        *count += 1;
-        index
     }
 }
 
@@ -449,14 +413,15 @@ pub fn eval<F: Field, RC: RawCircuit<F>, R: Rank>(
     floor_plan: &[ConstraintSegment],
     segment_records: &[SegmentRecord],
 ) -> Result<F> {
-    eval_inner::<F, RC, R>(circuit, x, y, floor_plan, segment_records, None, None)
+    eval_inner::<F, RC, R>(circuit, x, y, floor_plan, segment_records, None)
 }
 
 /// Evaluates $s(x, y)$ with inter-circuit memoization.
 ///
 /// Like [`eval`], but caches routine contributions for reuse across circuits.
-/// Routines at the same canonical position (via `type_floor_plan`) share
-/// cached results when the same `cache` is passed to multiple calls.
+/// Routines with the same placement and inputs share cached results when the
+/// same `cache` is passed to multiple calls; see the [`memo`](super::memo)
+/// module.
 ///
 /// # Arguments
 ///
@@ -465,7 +430,6 @@ pub fn eval<F: Field, RC: RawCircuit<F>, R: Rank>(
 /// - `y`: The evaluation point for the $Y$ variable.
 /// - `floor_plan`: Per-routine absolute offsets (per-circuit).
 /// - `segment_records`: Per-segment constraint records for fingerprint lookup.
-/// - `type_floor_plan`: Canonical routine positions for cache keys.
 /// - `cache`: Shared cache for inter-circuit memoization.
 pub(crate) fn eval_with_cache<F: Field, RC: RawCircuit<F>, R: Rank>(
     circuit: &RC,
@@ -473,18 +437,9 @@ pub(crate) fn eval_with_cache<F: Field, RC: RawCircuit<F>, R: Rank>(
     y: F,
     floor_plan: &[ConstraintSegment],
     segment_records: &[SegmentRecord],
-    type_floor_plan: &FloorPlan,
     cache: &mut MemoCache<F>,
 ) -> Result<F> {
-    eval_inner::<F, RC, R>(
-        circuit,
-        x,
-        y,
-        floor_plan,
-        segment_records,
-        Some(type_floor_plan),
-        Some(cache),
-    )
+    eval_inner::<F, RC, R>(circuit, x, y, floor_plan, segment_records, Some(cache))
 }
 
 fn eval_inner<F: Field, RC: RawCircuit<F>, R: Rank>(
@@ -493,7 +448,6 @@ fn eval_inner<F: Field, RC: RawCircuit<F>, R: Rank>(
     y: F,
     floor_plan: &[ConstraintSegment],
     segment_records: &[SegmentRecord],
-    type_floor_plan: Option<&FloorPlan>,
     memo_cache: Option<&mut MemoCache<F>>,
 ) -> Result<F> {
     // At x = 0 every monomial other than x^0 vanishes; the d[0] ONE wire
@@ -534,9 +488,7 @@ fn eval_inner<F: Field, RC: RawCircuit<F>, R: Rank>(
         floor_plan,
         segment_records,
         current_routine: 0,
-        type_floor_plan,
         memo_cache,
-        invocation_counts: BTreeMap::new(),
         routine_depth: 0,
         _marker: core::marker::PhantomData,
     };

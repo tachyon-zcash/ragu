@@ -214,19 +214,6 @@ impl DeepFingerprint {
     pub(crate) fn eval(&self) -> u64 {
         self.base.eval
     }
-
-    /// Creates a fingerprint with synthetic values for testing.
-    #[cfg(test)]
-    pub(crate) fn test(eval: u64, num_gates: usize, num_constraints: usize) -> Self {
-        Self {
-            base: BaseFingerprint {
-                num_gates,
-                num_constraints,
-                eval,
-            },
-            deep: eval,
-        }
-    }
 }
 
 /// Constraint counts for one segment of the circuit.
@@ -288,20 +275,6 @@ impl SegmentRecord {
     /// The structural identity of this routine invocation.
     pub(crate) fn identity(&self) -> &RoutineIdentity {
         &self.identity
-    }
-
-    /// Creates a segment record with synthetic values for testing.
-    #[cfg(test)]
-    pub(crate) fn test(
-        num_gates: usize,
-        num_constraints: usize,
-        identity: RoutineIdentity,
-    ) -> Self {
-        Self {
-            num_gates,
-            num_constraints,
-            identity,
-        }
     }
 }
 

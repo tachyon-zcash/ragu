@@ -2,9 +2,9 @@
 //!
 //! [`MemoCache`] stores a routine's evaluated contribution together with the
 //! values of its output-gadget wires, keyed by the routine's fingerprint and
-//! its canonical position in the [`FloorPlan`](crate::floor_plan::FloorPlan).
-//! On a cache hit, [`WireInjector`] rebuilds the output gadget from the cached
-//! wire values without re-executing the routine.
+//! the [`Placement`] of its segment. On a cache hit, [`WireInjector`] rebuilds
+//! the output gadget from the cached wire values without re-executing the
+//! routine.
 //!
 //! # What a cached value depends on
 //!
@@ -18,12 +18,11 @@
 //! - the values of the input gadget's wires, which appear in the routine's
 //!   interface constraints (the book's *interface contribution*).
 //!
-//! The canonical position is a planning key: it groups invocations that the
-//! floor planner *intends* to align, but the per-circuit floor plan still
-//! places segments by DFS order. Until segments are actually relocated and
-//! interface terms are separated from the cached value, an entry is only
-//! valid for an invocation with the same offsets and the same input wires, so
-//! [`MemoCache::lookup`] checks those before reporting a hit.
+//! The first two form the cache key; [`MemoCache::lookup`] checks the third
+//! before reporting a hit. Reuse therefore requires an identical placement,
+//! which the per-circuit floor plan only produces for circuits that emit the
+//! same prefix. Position-independent caching (factoring the placement out and
+//! computing interface terms per invocation) is future work.
 
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::marker::PhantomData;
@@ -31,21 +30,24 @@ use core::marker::PhantomData;
 use ragu_core::{Error, Result, convert::WireMap, drivers::DriverTypes};
 use udon::field::Field;
 
-use crate::{DeepFingerprint, floor_plan::RegistryPosition};
+use crate::DeepFingerprint;
+
+/// Absolute offsets of a routine's segment in the polynomial layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct Placement {
+    /// Gate index where the segment begins.
+    pub(crate) gate_start: usize,
+    /// Constraint index where the segment begins.
+    pub(crate) constraint_start: usize,
+}
 
 /// Cached contribution of one top-level routine invocation (including its
-/// nested sub-routines) at a canonical floor plan position.
+/// nested sub-routines) at a given [`Placement`].
 ///
 /// On cache hit, the `output_wires` can be used to reconstruct the output gadget
 /// without re-executing the routine, enabling full memoization.
 #[derive(Clone, Debug)]
 pub(crate) struct CachedRoutine<F> {
-    /// Absolute gate offset of the segment the entry was recorded at.
-    pub(crate) gate_start: usize,
-
-    /// Absolute constraint offset of the segment the entry was recorded at.
-    pub(crate) constraint_start: usize,
-
     /// Values of the input gadget's wires at recording time.
     pub(crate) input_wires: Vec<F>,
 
@@ -61,15 +63,15 @@ pub(crate) struct CachedRoutine<F> {
     pub(crate) num_segments: usize,
 }
 
-/// Cache for routine contributions, keyed by `(DeepFingerprint, canonical_position)`.
+/// Cache for routine contributions, keyed by `(DeepFingerprint, Placement)`.
 ///
 /// Used for inter-circuit memoization: when evaluating multiple circuits,
-/// routines at the same canonical position can reuse cached contributions.
-/// See the [module documentation](self) for the conditions under which an
-/// entry is reusable.
+/// routines with the same placement can reuse cached contributions. See the
+/// [module documentation](self) for the conditions under which an entry is
+/// reusable.
 #[derive(Clone)]
 pub(crate) struct MemoCache<F> {
-    entries: BTreeMap<(DeepFingerprint, RegistryPosition), CachedRoutine<F>>,
+    entries: BTreeMap<(DeepFingerprint, Placement), CachedRoutine<F>>,
     hits: usize,
 }
 
@@ -103,39 +105,33 @@ impl<F> MemoCache<F> {
     /// Stores a routine contribution in the cache.
     ///
     /// Keeps the first entry recorded for a key; later invocations at the
-    /// same canonical position with a different layout are not cached.
+    /// same placement with different inputs are not cached.
     pub(crate) fn insert(
         &mut self,
         fingerprint: DeepFingerprint,
-        canonical_position: RegistryPosition,
+        placement: Placement,
         entry: CachedRoutine<F>,
     ) {
         self.entries
-            .entry((fingerprint, canonical_position))
+            .entry((fingerprint, placement))
             .or_insert(entry);
     }
 }
 
 impl<F: Field> MemoCache<F> {
     /// Looks up a reusable entry for an invocation of `fingerprint` at
-    /// `canonical_position`.
+    /// `placement`.
     ///
-    /// Returns `None` unless the stored entry was recorded at the same
-    /// absolute offsets with the same input wires; see the
-    /// [module documentation](self).
+    /// Returns `None` unless the stored entry was recorded with the same
+    /// input wires; see the [module documentation](self).
     pub(crate) fn lookup(
         &mut self,
         fingerprint: &DeepFingerprint,
-        canonical_position: RegistryPosition,
-        gate_start: usize,
-        constraint_start: usize,
+        placement: Placement,
         input_wires: &[F],
     ) -> Option<&CachedRoutine<F>> {
-        let entry = self.entries.get(&(*fingerprint, canonical_position))?;
-        let reusable = entry.gate_start == gate_start
-            && entry.constraint_start == constraint_start
-            && entry.input_wires == input_wires;
-        if reusable {
+        let entry = self.entries.get(&(*fingerprint, placement))?;
+        if entry.input_wires == input_wires {
             self.hits += 1;
             Some(entry)
         } else {
