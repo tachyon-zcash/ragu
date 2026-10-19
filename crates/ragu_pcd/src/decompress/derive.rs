@@ -15,7 +15,7 @@
 //! field binds to the scalars it computes.
 
 use alloc::vec::Vec;
-use core::iter::once;
+use core::{iter::once, ops::Range};
 
 use ragu_circuits::registry::CircuitIndex;
 use ragu_core::{
@@ -385,14 +385,43 @@ pub(crate) struct Digits<'dr, D: Driver<'dr>> {
 }
 
 impl<'dr, D: Driver<'dr>> Digits<'dr, D> {
+    /// The digit count of a scalar of the field `S`: one more than its
+    /// capacity.
+    pub(crate) fn width<S: Field>() -> usize {
+        S::CAPACITY as usize + 1
+    }
+
     /// The digits of `scalar`, a value of the field `S`.
     pub(crate) fn alloc<S: Field>(dr: &mut D, scalar: DriverValue<D, S>) -> Result<Self> {
-        let n = S::CAPACITY as usize + 1;
+        Self::alloc_range(dr, scalar, 0..Self::width::<S>())
+    }
+
+    /// The digits of `scalar` at the positions `range`, for a scaling cut
+    /// across circuits.
+    pub(crate) fn alloc_range<S: Field>(
+        dr: &mut D,
+        scalar: DriverValue<D, S>,
+        range: Range<usize>,
+    ) -> Result<Self> {
         let bits = scalar.map(Self::bits);
-        (0..n)
+        range
             .map(|i| Boolean::alloc(dr, &mut (), bits.as_ref().map(|bits| bits[i])))
             .collect::<Result<Vec<_>>>()
             .map(|bits| Digits { bits })
+    }
+
+    /// The number of digits held.
+    pub(crate) fn len(&self) -> usize {
+        self.bits.len()
+    }
+
+    /// Binds the digits of the element `k` of this circuit's own field to it
+    /// and keeps none of them: the other side allocates the same bits from
+    /// the value and scales by them, so here only the binding matters.
+    pub(crate) fn bind(dr: &mut D, k: &Element<'dr, D>) -> Result<()> {
+        let digits = Self::alloc_bound(dr, k)?;
+        debug_assert_eq!(digits.len(), Self::width::<D::F>());
+        Ok(())
     }
 
     /// The digits of the element `k` of this circuit's own field, bound to
@@ -427,11 +456,57 @@ impl<'dr, D: Driver<'dr>> Digits<'dr, D> {
     }
 }
 
-/// $k P$ for the full-width scalar `digits` represent: the signed-digit
-/// chain $\text{acc} = 2 \text{acc} \pm P$ from the top digit down. The
-/// chain starts from the fixed point `offset`, independent of $P$, so
-/// that no partial sum is $\pm P$, which the incomplete additions cannot
-/// take, and ends by removing the offset's $2^{n-1}$ multiple.
+/// The signed-digit chain $\text{acc} = 2 \text{acc} \pm P$ over `digits`
+/// from the top digit down, continuing from `init`, or starting from the
+/// fixed point `offset` plus the top digit's term when there is none. The
+/// offset is independent of $P$, so that no partial sum is $\pm P$, which
+/// the incomplete additions cannot take. A full-width scalar's chain may
+/// be cut across circuits: each part continues from the last part's
+/// accumulator, and [`scale_shift`] ends it.
+pub(crate) fn scale_chain<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
+    dr: &mut D,
+    point: &Point<'dr, D, C>,
+    digits: &Digits<'dr, D>,
+    init: Option<Point<'dr, D, C>>,
+    offset: C,
+    bank: &mut NonzeroBank<'dr, D>,
+) -> Result<Point<'dr, D, C>> {
+    let mut bits = digits.bits.iter().rev();
+    let mut acc = match init {
+        Some(acc) => acc,
+        None => {
+            let top = bits
+                .next()
+                .ok_or_else(|| Error::InvalidWitness("a scalar has a digit".into()))?;
+            let negate = top.not(dr);
+            let term = point.conditional_negate(dr, &negate)?;
+            Point::constant(dr, offset)?.add_incomplete(dr, &term, bank)?
+        }
+    };
+    for bit in bits {
+        let negate = bit.not(dr);
+        let term = point.conditional_negate(dr, &negate)?;
+        acc = acc.double_and_add_incomplete(dr, &term, bank)?;
+    }
+    Ok(acc)
+}
+
+/// Ends a signed-digit chain of `n` digits: removes the offset's $2^{n-1}$
+/// multiple from `acc`.
+pub(crate) fn scale_shift<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
+    dr: &mut D,
+    acc: Point<'dr, D, C>,
+    offset: C,
+    n: usize,
+    bank: &mut NonzeroBank<'dr, D>,
+) -> Result<Point<'dr, D, C>> {
+    let doubled = C::Scalar::ONE.double().pow_u64((n - 1) as u64);
+    let shift = Point::constant(dr, (offset * doubled).to_affine())?.negate(dr);
+    acc.add_incomplete(dr, &shift, bank)
+}
+
+/// $k P$ for the full-width scalar `digits` represent: the whole
+/// signed-digit chain from `offset`, ended.
 pub(crate) fn scale<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
     dr: &mut D,
     point: &Point<'dr, D, C>,
@@ -439,23 +514,8 @@ pub(crate) fn scale<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
     offset: C,
     bank: &mut NonzeroBank<'dr, D>,
 ) -> Result<Point<'dr, D, C>> {
-    let n = digits.bits.len();
-    let mut bits = digits.bits.iter().rev();
-    let top = bits
-        .next()
-        .ok_or_else(|| Error::InvalidWitness("a scalar has a digit".into()))?;
-    let negate = top.not(dr);
-    let term = point.conditional_negate(dr, &negate)?;
-    let start = Point::constant(dr, offset)?;
-    let mut acc = start.add_incomplete(dr, &term, bank)?;
-    for bit in bits {
-        let negate = bit.not(dr);
-        let term = point.conditional_negate(dr, &negate)?;
-        acc = acc.double_and_add_incomplete(dr, &term, bank)?;
-    }
-    let doubled = C::Scalar::ONE.double().pow_u64((n - 1) as u64);
-    let shift = Point::constant(dr, (offset * doubled).to_affine())?.negate(dr);
-    acc.add_incomplete(dr, &shift, bank)
+    let acc = scale_chain(dr, point, digits, None, offset, bank)?;
+    scale_shift(dr, acc, offset, digits.len(), bank)
 }
 
 /// The fixed points of the IPA's final check: the generators $G_0$ and $U$

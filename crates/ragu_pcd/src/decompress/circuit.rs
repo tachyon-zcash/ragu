@@ -95,6 +95,30 @@ pub(crate) struct Squeezed<F> {
 }
 
 impl<F: Field> Squeezed<F> {
+    /// Every challenge in the compression's order.
+    pub(crate) fn in_order(&self) -> Vec<F> {
+        let Sampled { w, y, z, sigma } = self.sampled;
+        let mut all = vec![
+            w,
+            y,
+            z,
+            sigma,
+            self.weights.mu,
+            self.weights.nu,
+            self.weights.mu_prime,
+            self.weights.nu_prime,
+            self.rho,
+            self.r,
+            self.alpha,
+            self.u,
+            self.beta,
+            self.xi,
+            self.ipa_z,
+        ];
+        all.extend(self.rounds.iter().copied());
+        all
+    }
+
     /// Reads one curve's challenges off `t`, standing where the curve's
     /// reduction starts, with the curve's `sampled` challenges already
     /// read.
@@ -562,13 +586,13 @@ fn ab_terms<C: ProfiledCycle<Profile = Standard>, R: Rank>(
 
 /// The native targets as elements, for
 /// [`ky_values`](native::claims::ky_values).
-struct NativeTargets<'dr, D: Driver<'dr>> {
-    c: Element<'dr, D>,
-    application: Element<'dr, D>,
-    unified_bridge: Element<'dr, D>,
-    unified: Element<'dr, D>,
-    one: Element<'dr, D>,
-    zero: Element<'dr, D>,
+pub(crate) struct NativeTargets<'dr, D: Driver<'dr>> {
+    pub c: Element<'dr, D>,
+    pub application: Element<'dr, D>,
+    pub unified_bridge: Element<'dr, D>,
+    pub unified: Element<'dr, D>,
+    pub one: Element<'dr, D>,
+    pub zero: Element<'dr, D>,
 }
 
 impl<'dr, D: Driver<'dr>> NativeKySource for NativeTargets<'dr, D> {
@@ -611,11 +635,11 @@ impl<'dr, D: Driver<'dr>> NativeKySource for NativeTargets<'dr, D> {
 }
 
 /// The nested targets as elements.
-struct NestedTargets<'dr, D: Driver<'dr>> {
-    c: Element<'dr, D>,
-    unified: Element<'dr, D>,
-    one: Element<'dr, D>,
-    zero: Element<'dr, D>,
+pub(crate) struct NestedTargets<'dr, D: Driver<'dr>> {
+    pub c: Element<'dr, D>,
+    pub unified: Element<'dr, D>,
+    pub one: Element<'dr, D>,
+    pub zero: Element<'dr, D>,
 }
 
 impl<'dr, D: Driver<'dr>> NestedKySource for NestedTargets<'dr, D> {
@@ -970,72 +994,35 @@ where
     {
         use nested::RxIndex::*;
         let out = &proof_inputs.unified;
-        for (ours, theirs) in [
-            (bridge_at(BridgePreamble), &out.bridge_preamble_commitment),
-            (bridge_at(BridgeSPrime), &out.bridge_s_prime_commitment),
-            (
-                bridge_at(BridgeInnerError),
-                &out.bridge_inner_error_commitment,
-            ),
-            (
-                bridge_at(BridgeOuterError),
-                &out.bridge_outer_error_commitment,
-            ),
-            (bridge_at(BridgeAB), &out.bridge_ab_commitment),
-            (bridge_at(BridgeQuery), &out.bridge_query_commitment),
-            (bridge_at(BridgeF), &out.bridge_f_commitment),
-            (bridge_at(BridgeEval), &out.bridge_eval_commitment),
-            (
-                &allocated.nested_challenges_partial,
-                &out.nested_challenges_partial,
-            ),
-            (&allocated.nested_p, &out.nested_p_commitment),
-            (
-                nested_at(nested::RxComponent::AbA),
-                &out.nested_a_commitment,
-            ),
-            (
-                nested_at(nested::RxComponent::AbB),
-                &out.nested_b_commitment,
-            ),
-            (
-                &allocated.nested_registry_xy,
-                &out.nested_registry_xy_commitment,
-            ),
-        ] {
-            ours.enforce_equal(dr, theirs)?;
-        }
-        for (ours, theirs) in fuse.iter().zip([
-            &out.w,
-            &out.y,
-            &out.z,
-            &out.mu,
-            &out.mu_prime,
-            &out.x,
-            &out.alpha,
-            &out.u,
-            &out.pre_beta,
-        ]) {
-            ours.raw.enforce_equal(dr, theirs)?;
-        }
+        bridge_at(BridgePreamble).enforce_equal(dr, &out.bridge_preamble_commitment)?;
+        bridge_at(BridgeSPrime).enforce_equal(dr, &out.bridge_s_prime_commitment)?;
+        bridge_at(BridgeInnerError).enforce_equal(dr, &out.bridge_inner_error_commitment)?;
+        bridge_at(BridgeOuterError).enforce_equal(dr, &out.bridge_outer_error_commitment)?;
+        bridge_at(BridgeAB).enforce_equal(dr, &out.bridge_ab_commitment)?;
+        bridge_at(BridgeQuery).enforce_equal(dr, &out.bridge_query_commitment)?;
+        bridge_at(BridgeF).enforce_equal(dr, &out.bridge_f_commitment)?;
+        bridge_at(BridgeEval).enforce_equal(dr, &out.bridge_eval_commitment)?;
+        fuse[0].raw.enforce_equal(dr, &out.w)?;
+        fuse[1].raw.enforce_equal(dr, &out.y)?;
+        fuse[2].raw.enforce_equal(dr, &out.z)?;
+        fuse[3].raw.enforce_equal(dr, &out.mu)?;
+        fuse[4].raw.enforce_equal(dr, &out.mu_prime)?;
+        fuse[5].raw.enforce_equal(dr, &out.x)?;
+        fuse[6].raw.enforce_equal(dr, &out.alpha)?;
+        fuse[7].raw.enforce_equal(dr, &out.u)?;
+        fuse[8].raw.enforce_equal(dr, &out.pre_beta)?;
         allocated.c.enforce_equal(dr, &out.c)?;
         allocated.v.enforce_equal(dr, &out.v)?;
         allocated
             .circuit_id
             .enforce_equal(dr, &proof_inputs.circuit_id)?;
-        for (ours, theirs) in allocated
-            .left_header
-            .iter()
-            .zip(proof_inputs.children.left.iter())
-            .chain(
-                allocated
-                    .right_header
-                    .iter()
-                    .zip(proof_inputs.children.right.iter()),
-            )
-            .chain(header.iter().zip(proof_inputs.output_header.iter()))
-        {
-            ours.enforce_equal(dr, theirs)?;
+        // Indexed by the constant rather than zipped over the allocated
+        // headers, so that the loop's bound is visibly fixed.
+        #[allow(clippy::needless_range_loop)]
+        for i in 0..HEADER_SIZE {
+            allocated.left_header[i].enforce_equal(dr, &proof_inputs.children.left[i])?;
+            allocated.right_header[i].enforce_equal(dr, &proof_inputs.children.right[i])?;
+            header[i].enforce_equal(dr, &proof_inputs.output_header[i])?;
         }
     }
 
@@ -1191,9 +1178,9 @@ where
         )?;
         // The digits the scalar-field side scales by, bound here to the
         // values this side computed.
-        Digits::alloc_bound(dr, &checks.v)?;
-        Digits::alloc_bound(dr, &checks.c)?;
-        Digits::alloc_bound(dr, &checks.cbz)?;
+        Digits::bind(dr, &checks.v)?;
+        Digits::bind(dr, &checks.c)?;
+        Digits::bind(dr, &checks.cbz)?;
     }
 
     // The nested curve's point checks, under its challenges' endoscalars.
@@ -1491,9 +1478,9 @@ where
             &evaluations,
             &c,
         )?;
-        Digits::alloc_bound(dr, &checks.v)?;
-        Digits::alloc_bound(dr, &checks.c)?;
-        Digits::alloc_bound(dr, &checks.cbz)?;
+        Digits::bind(dr, &checks.v)?;
+        Digits::bind(dr, &checks.c)?;
+        Digits::bind(dr, &checks.cbz)?;
 
         // The ab bridge's coordinates and blinding, whose digits the other
         // side scales generators by, bound here to the exported points and
@@ -1523,7 +1510,7 @@ where
                 AbValue::PointsAb(_) => &py,
                 AbValue::Alpha => &alpha,
             };
-            Digits::alloc_bound(dr, value)?;
+            Digits::bind(dr, value)?;
         }
     }
 
