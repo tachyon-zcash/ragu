@@ -6,16 +6,16 @@
 
 use alloc::vec::Vec;
 
-use ragu_core::{Result, pasta::Fp};
-use rand::Rng;
-use udon::field::Field;
-
 use ragu_core::{
+    Result,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Kind},
+    pasta::Fp,
     routines::{Prediction, Routine},
 };
 use ragu_primitives::{Element, allocator::Standard};
+use rand::Rng;
+use udon::field::Field;
 
 use super::{RoutineCircuit, RoutineLayout, consistency_checks};
 use crate::{
