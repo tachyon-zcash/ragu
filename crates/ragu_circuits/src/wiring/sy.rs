@@ -667,7 +667,13 @@ pub fn eval<F: Field, RC: RawCircuit<F>, R: Rank>(
         return Ok(view.build());
     }
 
-    let total_gates: usize = floor_plan.iter().map(|s| s.num_gates).sum();
+    // Segments may be placed with gaps between them, so the view spans the
+    // furthest gate any segment reaches.
+    let total_gates: usize = floor_plan
+        .iter()
+        .map(|s| s.gate_start + s.num_gates)
+        .max()
+        .unwrap_or(0);
 
     // Circuit-scope segment's constraint count (for initial current_y).
     // This segment always has at least the ONE constraint.

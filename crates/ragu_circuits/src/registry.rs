@@ -267,11 +267,12 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
             .chain(self.application_steps)
             .collect();
 
-        // Compute floor plans for each circuit.
-        let floor_plans: Vec<Vec<ConstraintSegment>> = circuits
-            .iter()
-            .map(|circuit| crate::floor_planner::floor_plan(circuit.segment_records()))
-            .collect();
+        // Plan all circuits together so routines that recur across circuits
+        // are aligned; the last constraint slot stays reserved for the tag.
+        let records: Vec<&[crate::SegmentRecord]> =
+            circuits.iter().map(|c| c.segment_records()).collect();
+        let floor_plans =
+            crate::floor_planner::plan_registry(&records, R::n(), R::num_coeffs() - 1);
 
         let tag = Tag::derive(&circuits, &floor_plans);
         #[cfg(any(test, feature = "test-utils"))]
@@ -521,6 +522,18 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
     /// Returns the number of circuits in this registry.
     pub fn num_circuits(&self) -> usize {
         self.circuits.len()
+    }
+
+    /// The registered wiring objects, in index order.
+    #[cfg(test)]
+    pub(crate) fn circuits(&self) -> &[Box<dyn WiringObject<F, R> + '_>] {
+        &self.circuits
+    }
+
+    /// The per-circuit floor plans, in index order.
+    #[cfg(test)]
+    pub(crate) fn floor_plans(&self) -> &[Vec<ConstraintSegment>] {
+        &self.floor_plans
     }
 
     /// Converts between a domain position and its circuit index: circuit `i`

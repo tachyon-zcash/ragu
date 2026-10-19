@@ -214,6 +214,19 @@ impl DeepFingerprint {
     pub(crate) fn eval(&self) -> u64 {
         self.base.eval
     }
+
+    /// Creates a fingerprint with synthetic values for testing.
+    #[cfg(test)]
+    pub(crate) fn test(eval: u64, num_gates: usize, num_constraints: usize) -> Self {
+        Self {
+            base: BaseFingerprint {
+                num_gates,
+                num_constraints,
+                eval,
+            },
+            deep: eval,
+        }
+    }
 }
 
 /// Constraint counts for one segment of the circuit.
@@ -258,6 +271,9 @@ pub struct SegmentRecord {
     num_gates: usize,
     num_constraints: usize,
     identity: RoutineIdentity,
+    /// Routine nesting depth: `0` for the root segment, `1` for routines
+    /// invoked at circuit scope, and so on.
+    depth: usize,
 }
 
 impl SegmentRecord {
@@ -275,6 +291,28 @@ impl SegmentRecord {
     /// The structural identity of this routine invocation.
     pub(crate) fn identity(&self) -> &RoutineIdentity {
         &self.identity
+    }
+
+    /// Routine nesting depth: `0` for the root segment, `1` for routines
+    /// invoked at circuit scope, and so on.
+    pub(crate) fn depth(&self) -> usize {
+        self.depth
+    }
+
+    /// Creates a segment record with synthetic values for testing.
+    #[cfg(test)]
+    pub(crate) fn test(
+        num_gates: usize,
+        num_constraints: usize,
+        identity: RoutineIdentity,
+        depth: usize,
+    ) -> Self {
+        Self {
+            num_gates,
+            num_constraints,
+            identity,
+            depth,
+        }
     }
 }
 
@@ -307,6 +345,9 @@ pub struct CircuitMetrics {
 struct CounterScope<F> {
     /// Index into [`Counter::segments`] for the current routine.
     current_segment: usize,
+
+    /// Routine nesting depth of the current segment.
+    depth: usize,
 
     /// Running monomial for $a$ wires: $x_0^{i+1}$ at gate $i$.
     current_a: F,
@@ -445,6 +486,7 @@ impl<F: Field> Counter<F> {
         Self {
             scope: CounterScope {
                 current_segment: 0,
+                depth: 0,
                 current_a: x0,
                 current_b: x1,
                 current_c: x2,
@@ -459,6 +501,7 @@ impl<F: Field> Counter<F> {
                 num_gates: 0,
                 num_constraints: 0,
                 identity: RoutineIdentity::Root,
+                depth: 0,
             }],
             x0,
             x1,
@@ -534,10 +577,12 @@ impl<'dr, F: Field> Driver<'dr> for Counter<F> {
         input: Bound<'dr, Self, Ro::Input>,
     ) -> Result<Bound<'dr, Self, Ro::Output>> {
         // Push a new segment with placeholder identity (overwritten at exit).
+        let depth = self.scope.depth + 1;
         self.segments.push(SegmentRecord {
             num_gates: 0,
             num_constraints: 0,
             identity: RoutineIdentity::Root,
+            depth,
         });
         let segment_idx = self.segments.len() - 1;
 
@@ -546,6 +591,7 @@ impl<'dr, F: Field> Driver<'dr> for Counter<F> {
             &mut self.scope,
             CounterScope {
                 current_segment: segment_idx,
+                depth,
                 current_a: self.x0,
                 current_b: self.x1,
                 current_c: self.x2,

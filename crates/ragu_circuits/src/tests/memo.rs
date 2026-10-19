@@ -12,8 +12,8 @@ use udon::field::Field;
 
 use super::{RoutineCircuit, RoutineLayout, consistency_checks};
 use crate::{
-    floor_planner, into_wiring_object,
-    polynomials::TestRank,
+    CircuitExt, floor_planner, into_wiring_object,
+    polynomials::{Rank, TestRank},
     registry::{CircuitIndex, Registry, RegistryBuilder},
     wiring::MemoCache,
 };
@@ -97,6 +97,70 @@ fn wxy_combined_matches_wxy_across_layouts() -> Result<()> {
     Ok(())
 }
 
+/// Output of a [`RoutineCircuit`] for witness `w`, by plain arithmetic.
+fn expected_output(layout: RoutineLayout, w: Fp) -> Fp {
+    let pow2 = |v: Fp, times: usize| (0..times).fold(v, |acc, _| acc.square());
+    match layout {
+        RoutineLayout::Single | RoutineLayout::FeedFirst | RoutineLayout::FeedSecond => pow2(w, 2),
+        RoutineLayout::Shifted(gates) => pow2(w, gates + 2),
+        RoutineLayout::Nested => pow2(w, 5),
+        RoutineLayout::Repeated => pow2(w, 4),
+    }
+}
+
+/// With the registry's aligned floor plans: shared routines sit at the same
+/// offsets in every circuit, the three evaluators still agree, and the trace
+/// assembled against the plan satisfies the revdot identity against `s(X, y)`.
+#[test]
+fn aligned_plans_are_consistent() -> Result<()> {
+    use RoutineLayout::*;
+    let layouts = [
+        Single,
+        Shifted(2),
+        Nested,
+        FeedSecond,
+        Repeated,
+        Nested,
+        Single,
+    ];
+    let registry = registry(&layouts)?;
+    let plans = registry.floor_plans();
+
+    // `DoubleSquare` at circuit scope: Single[1], Shifted[1], FeedSecond[1],
+    // Repeated[1] share one slot; Repeated[2] follows it.
+    let slot = (plans[0][1].gate_start, plans[0][1].constraint_start);
+    for i in [1, 3] {
+        assert_eq!((plans[i][1].gate_start, plans[i][1].constraint_start), slot);
+    }
+    assert_eq!((plans[4][1].gate_start, plans[4][1].constraint_start), slot);
+    assert_eq!(plans[4][2].gate_start, slot.0 + plans[0][1].num_gates);
+    // The two `Nested` circuits share their block, nested segment included.
+    assert_eq!(plans[2][1].gate_start, plans[5][1].gate_start);
+    assert_eq!(plans[2][2].gate_start, plans[5][2].gate_start);
+    assert_eq!(
+        plans[2][2].gate_start,
+        plans[2][1].gate_start + plans[2][1].num_gates
+    );
+
+    let (x, y, z) = (random(), random(), random());
+    for ((layout, circuit), plan) in layouts.iter().zip(registry.circuits()).zip(plans) {
+        let sxy = circuit.sxy(x, y, plan);
+        assert_eq!(sxy, circuit.sx(x, plan).eval(y), "{layout:?}");
+        assert_eq!(sxy, circuit.sy(y, plan).eval(x), "{layout:?}");
+
+        let w = random();
+        let trace = RoutineCircuit(*layout).trace(w)?.into_output();
+        let a = trace.assemble::<TestRank>(plan, Fp::ZERO)?;
+        let mut b = a.clone();
+        b.dilate(z);
+        b.add_assign(&circuit.sy(y, plan));
+        b.add_assign(&TestRank::tz(z));
+        let expected = RoutineCircuit(*layout).ky(expected_output(*layout, w), y)?;
+        assert_eq!(a.revdot(&b), expected, "{layout:?}");
+    }
+    Ok(())
+}
+
 /// The domain evaluation behind `xy` memoizes across circuits; it must agree
 /// with the per-circuit Lagrange evaluation `wxy`, which does not.
 #[test]
@@ -160,5 +224,6 @@ fn recordings_replay_at_any_placement() -> Result<()> {
         hits = cache.hits();
     }
     assert!(cache.len() > 0);
+
     Ok(())
 }
