@@ -68,6 +68,10 @@ pub struct ChildWitness<C: Affine, P: Profile> {
     pub bind_endoscalar: C,
     /// Commitments from the child's native endoscaling steps.
     pub endoscaling_steps: FixedVec<C, native::NumSteps<P>>,
+    /// Commitments from the circuits of the child's native extension.
+    pub extension_circuits: FixedVec<C, native::NumExtensionCircuits<P>>,
+    /// Commitments from the stages of the child's native extension.
+    pub extension_stages: FixedVec<C, native::NumExtensionStages<P>>,
     /// Commitment from the child's native walk stage.
     pub points_walk: C,
 
@@ -145,6 +149,12 @@ impl<C: Affine, P: Profile> ChildWitness<C, P> {
             endoscaling_steps: FixedVec::from_fn(|step| {
                 proof.native_rx_commitment(RxIndex::EndoscalingStep(step as u32))
             }),
+            extension_circuits: FixedVec::from_fn(|k| {
+                proof.native_rx_commitment(RxIndex::ExtensionCircuit(k as u32))
+            }),
+            extension_stages: FixedVec::from_fn(|k| {
+                proof.native_rx_commitment(RxIndex::ExtensionStage(k as u32))
+            }),
             points_walk: proof.native_rx_commitment(RxIndex::PointsWalk),
             stashed_preamble: proof.native_rx_commitment(RxIndex::Preamble),
             stashed_inner_error: proof.native_rx_commitment(RxIndex::InnerError),
@@ -221,6 +231,12 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> 
     /// Point commitments from the child's native endoscaling steps.
     #[ragu(gadget)]
     pub endoscaling_steps: FixedVec<Point<'dr, D, C>, native::NumSteps<P>>,
+    /// Point commitments from the circuits of the child's native extension.
+    #[ragu(gadget)]
+    pub extension_circuits: FixedVec<Point<'dr, D, C>, native::NumExtensionCircuits<P>>,
+    /// Point commitments from the stages of the child's native extension.
+    #[ragu(gadget)]
+    pub extension_stages: FixedVec<Point<'dr, D, C>, native::NumExtensionStages<P>>,
     /// Point commitment from the child's native walk stage.
     #[ragu(gadget)]
     pub points_walk: Point<'dr, D, C>,
@@ -337,6 +353,8 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> core::ops::Index<R
             BindBeta => &self.bind_beta,
             BindEndoscalar => &self.bind_endoscalar,
             EndoscalingStep(step) => &self.endoscaling_steps[step as usize],
+            ExtensionCircuit(k) => &self.extension_circuits[k as usize],
+            ExtensionStage(k) => &self.extension_stages[k as usize],
             Preamble => &self.stashed_preamble,
             InnerError => &self.stashed_inner_error,
             OuterError => &self.stashed_outer_error,
@@ -368,6 +386,12 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
             bind_endoscalar: Point::alloc(dr, witness.as_ref().map(|w| w.bind_endoscalar))?,
             endoscaling_steps: FixedVec::try_from_fn(|step| {
                 Point::alloc(dr, witness.as_ref().map(|w| w.endoscaling_steps[step]))
+            })?,
+            extension_circuits: FixedVec::try_from_fn(|k| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.extension_circuits[k]))
+            })?,
+            extension_stages: FixedVec::try_from_fn(|k| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.extension_stages[k]))
             })?,
             points_walk: Point::alloc(dr, witness.as_ref().map(|w| w.points_walk))?,
             stashed_preamble: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_preamble))?,

@@ -191,6 +191,10 @@ pub struct Proof<C: Cycle, R: Rank> {
     // holding the endoscalar's bits and the interstitials.
     pub(crate) native_bind_endoscalar_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_endoscaling_step_rxs: Vec<sparse::Polynomial<C::CircuitField, R>>,
+    /// The rx polynomials of the circuits of the profile's native extension.
+    pub(crate) native_extension_circuit_rxs: Vec<sparse::Polynomial<C::CircuitField, R>>,
+    /// The rx polynomials of the stages of the profile's native extension.
+    pub(crate) native_extension_stage_rxs: Vec<sparse::Polynomial<C::CircuitField, R>>,
     pub(crate) native_points_binding_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_points_children_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_points_registry_wx_rx: sparse::Polynomial<C::CircuitField, R>,
@@ -212,6 +216,10 @@ pub struct Proof<C: Cycle, R: Rank> {
 
     // Nested endoscaling data (ScalarField, NestedCurve commitment)
     pub(crate) nested_endoscaling_step_rxs: Vec<sparse::Polynomial<C::ScalarField, R>>,
+    /// The rx polynomials of the circuits of the profile's nested extension.
+    pub(crate) nested_extension_circuit_rxs: Vec<sparse::Polynomial<C::ScalarField, R>>,
+    /// The rx polynomials of the stages of the profile's nested extension.
+    pub(crate) nested_extension_stage_rxs: Vec<sparse::Polynomial<C::ScalarField, R>>,
     pub(crate) nested_endoscalar_rx: sparse::Polynomial<C::ScalarField, R>,
     pub(crate) nested_points_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
 
@@ -245,6 +253,8 @@ pub struct Proof<C: Cycle, R: Rank> {
 
     // Nested endoscaling commitment caches
     nested_endoscaling_step_commitments: Vec<Cached<C::NestedCurve>>,
+    nested_extension_circuit_commitments: Vec<Cached<C::NestedCurve>>,
+    nested_extension_stage_commitments: Vec<Cached<C::NestedCurve>>,
     nested_endoscalar_commitment: Cached<C::NestedCurve>,
     nested_points_commitment: Cached<C::NestedCurve>,
 
@@ -297,6 +307,8 @@ pub struct Proof<C: Cycle, R: Rank> {
     native_bind_beta_commitment: Cached<C::HostCurve>,
     native_bind_endoscalar_commitment: Cached<C::HostCurve>,
     native_endoscaling_step_commitments: Vec<Cached<C::HostCurve>>,
+    native_extension_circuit_commitments: Vec<Cached<C::HostCurve>>,
+    native_extension_stage_commitments: Vec<Cached<C::HostCurve>>,
     native_points_binding_commitment: Cached<C::HostCurve>,
     native_points_children_commitment: Cached<C::HostCurve>,
     native_points_registry_wx_commitment: Cached<C::HostCurve>,
@@ -337,6 +349,8 @@ impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
             BindBeta => &self.native_bind_beta_rx,
             BindEndoscalar => &self.native_bind_endoscalar_rx,
             EndoscalingStep(step) => &self.native_endoscaling_step_rxs[step as usize],
+            ExtensionCircuit(k) => &self.native_extension_circuit_rxs[k as usize],
+            ExtensionStage(k) => &self.native_extension_stage_rxs[k as usize],
             PointsBinding => &self.native_points_binding_rx,
             PointsChildren => &self.native_points_children_rx,
             PointsRegistryWx => &self.native_points_registry_wx_rx,
@@ -364,6 +378,8 @@ impl<C: Cycle, R: Rank> core::ops::Index<nested::RxIndex> for Proof<C, R> {
         use nested::RxIndex::*;
         match idx {
             EndoscalingStep(step) => &self.nested_endoscaling_step_rxs[step as usize],
+            ExtensionCircuit(k) => &self.nested_extension_circuit_rxs[k as usize],
+            ExtensionStage(k) => &self.nested_extension_stage_rxs[k as usize],
             Export => &self.nested_export_rx,
             Collapse => &self.nested_collapse_rx,
             ComputeV => &self.nested_compute_v_rx,
@@ -603,6 +619,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             BindBeta => self.native_bind_beta_commitment.0,
             BindEndoscalar => self.native_bind_endoscalar_commitment.0,
             EndoscalingStep(step) => self.native_endoscaling_step_commitments[step as usize].0,
+            ExtensionCircuit(k) => self.native_extension_circuit_commitments[k as usize].0,
+            ExtensionStage(k) => self.native_extension_stage_commitments[k as usize].0,
             PointsBinding => self.native_points_binding_commitment.0,
             PointsChildren => self.native_points_children_commitment.0,
             PointsRegistryWx => self.native_points_registry_wx_commitment.0,
@@ -695,6 +713,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         use nested::RxIndex::*;
         match idx {
             EndoscalingStep(step) => self.nested_endoscaling_step_commitment(step),
+            ExtensionCircuit(k) => self.nested_extension_circuit_commitments[k as usize].0,
+            ExtensionStage(k) => self.nested_extension_stage_commitments[k as usize].0,
             EndoscalarStage => self.nested_endoscalar_commitment(),
             PointsStage => self.nested_points_commitment(),
             BridgePreamble => self.bridge_preamble_commitment,
@@ -1083,6 +1103,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_native_bind_challenges_rxs(vec![ones_host.clone(); native::NUM_BINDERS]);
         builder.set_native_bind_beta_rx(ones_host.clone());
         builder.set_native_bind_endoscalar_rx(ones_host.clone());
+        // The dummy carries the profile's extension polynomials as the fuse
+        // does; no profile has any, and the fuse refuses one before a dummy
+        // is consumed.
+        builder.set_native_extension_circuit_rxs(Vec::new());
+        builder.set_native_extension_stage_rxs(Vec::new());
 
         // Nested accumulator: a trivial claim (all-ones traces), so that a
         // dummy child contributes a well-formed raw claim to its parent's
@@ -1156,6 +1181,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_nested_export_rx(ones_nested.clone());
         builder.set_nested_collapse_rx(ones_nested.clone());
         builder.set_nested_compute_v_rx(ones_nested);
+        builder.set_nested_extension_circuit_rxs(Vec::new());
+        builder.set_nested_extension_stage_rxs(Vec::new());
 
         // Bridge polynomials: compute via Stage::rx() with trivial witnesses
         // so that traces are valid for their witnesses (not just ones).
@@ -1318,6 +1345,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 bind_challenges: [host_commitment; native::NUM_BINDERS],
                 bind_beta: host_commitment,
                 bind_endoscalar: host_commitment,
+                extension_circuits: FixedVec::from_fn(|_| host_commitment),
+                extension_stages: FixedVec::from_fn(|_| host_commitment),
                 endoscaling_steps: FixedVec::from_fn(|_| host_commitment),
                 points_walk: host_commitment,
                 stashed_preamble: host_commitment,

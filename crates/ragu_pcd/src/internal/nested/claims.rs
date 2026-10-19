@@ -166,6 +166,43 @@ where
                     processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
+            // An extension circuit: its rx and the extension stages it loads
+            // (k(y) = 1).
+            ExtensionCircuit(k) => {
+                let extension = P::nested_extension();
+                let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
+                for index in [RxIndex::ExtensionCircuit(k)].into_iter().chain(
+                    extension.circuits[k as usize]
+                        .iter()
+                        .map(|&stage| RxIndex::ExtensionStage(stage)),
+                ) {
+                    for (i, rx) in source.rx(Rx(index)).enumerate() {
+                        if per_proof.len() <= i {
+                            per_proof.push(Vec::new());
+                        }
+                        per_proof[i].push(rx);
+                    }
+                }
+                for rxs in per_proof {
+                    processor.internal_circuit_claim(id, rxs.into_iter());
+                }
+            }
+            // An extension bonding: a stage's mask over its rx, or a final
+            // mask over its circuits' rxs.
+            ExtensionBonding(j) => {
+                let extension = P::nested_extension();
+                if (j as usize) < extension.stages {
+                    processor.bonding_claim(id, source.rx(Rx(RxIndex::ExtensionStage(j))))?;
+                } else {
+                    processor.bonding_claim(
+                        id,
+                        extension
+                            .final_mask(j as usize)
+                            .iter()
+                            .flat_map(|&k| source.rx(Rx(RxIndex::ExtensionCircuit(k)))),
+                    )?;
+                }
+            }
             EndoscalarStage => {
                 processor.bonding_claim(id, source.rx(Rx(RxIndex::EndoscalarStage)))?;
             }
@@ -263,6 +300,7 @@ pub trait KySource {
 ///   checks, interleaved across proofs exactly as [`build`] emits them)
 /// - `NUM_INSTANCE_CIRCUITS` copies of the per-proof unified $k(y)$ values
 ///   (for the instance circuit checks, interleaved the same way)
+/// - One copy of the per-proof ones per extension circuit of profile `P`
 /// - Infinite zeros (for stage checks)
 pub fn ky_values<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
     let num_steps = super::NumSteps::<P>::len();
@@ -271,6 +309,7 @@ pub fn ky_values<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
         .raw_c()
         .chain(core::iter::repeat_n(source.ones(), num_steps).flatten())
         .chain(core::iter::repeat_n(source.unified_ky(), NUM_INSTANCE_CIRCUITS).flatten())
+        .chain(core::iter::repeat_n(source.ones(), P::nested_extension().circuits.len()).flatten())
         .chain(core::iter::repeat(source.zero()))
 }
 

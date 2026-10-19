@@ -191,6 +191,9 @@ impl NativeRx {
     const fn from_internal(v: crate::internal::native::RxIndex) -> Self {
         use crate::internal::native::RxIndex as I;
         match v {
+            I::ExtensionCircuit(_) | I::ExtensionStage(_) => {
+                panic!("the fuzzing vocabulary is the standard profile's")
+            }
             I::Application => Self::Application,
             I::Hashes1 => Self::Hashes1,
             I::Hashes2 => Self::Hashes2,
@@ -897,6 +900,9 @@ impl NestedRx {
     const fn from_internal(v: crate::internal::nested::RxIndex) -> Self {
         use crate::internal::nested::RxIndex as I;
         match v {
+            I::ExtensionCircuit(_) | I::ExtensionStage(_) => {
+                panic!("the fuzzing vocabulary is the standard profile's")
+            }
             I::EndoscalingStep(n) => Self::EndoscalingStep(n),
             I::Export => Self::Export,
             I::Collapse => Self::Collapse,

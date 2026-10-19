@@ -83,6 +83,24 @@ const _: () = assert!(
 /// [`NUM_ENDOSCALING_STEPS`].
 pub type NumSteps<P> = endoscalar::NumStepsLen<NumPoints<P>, ENDOSCALINGS_PER_STEP>;
 
+/// Length type for the circuits of the profile's native extension.
+pub struct NumExtensionCircuits<P: Profile>(core::marker::PhantomData<P>);
+
+impl<P: Profile> Len for NumExtensionCircuits<P> {
+    fn len() -> usize {
+        P::native_extension().circuits.len()
+    }
+}
+
+/// Length type for the stages of the profile's native extension.
+pub struct NumExtensionStages<P: Profile>(core::marker::PhantomData<P>);
+
+impl<P: Profile> Len for NumExtensionStages<P> {
+    fn len() -> usize {
+        P::native_extension().stages
+    }
+}
+
 /// The native rx polynomials that are not endoscaling steps: the
 /// application's, the five hashing, collapse and compute-v circuits', the
 /// binders', bind-beta's, bind-endoscalar's and the eleven stages'.
@@ -146,6 +164,9 @@ pub enum InternalCircuitIndex {
     /// A native endoscaling step (see
     /// [`endoscaling_step`](circuits::endoscaling_step)).
     EndoscalingStep(u32),
+    /// A circuit of the profile's native extension (see
+    /// [`Extension`](crate::profile::Extension)).
+    ExtensionCircuit(u32),
     // Native stages
     PreambleStage,
     InnerErrorStage,
@@ -163,6 +184,10 @@ pub enum InternalCircuitIndex {
     OuterErrorFinalStaged,
     EvalFinalStaged,
     PointsWalkFinalStaged,
+    /// A bonding of the profile's native extension, a stage's mask or a
+    /// final mask, in [`Extension::bondings`](crate::profile::Extension::bondings)
+    /// order.
+    ExtensionBonding(u32),
 }
 
 /// Compute the total circuit count and log2 domain size from the number of
@@ -185,7 +210,8 @@ impl InternalCircuitIndex {
     /// in [`RegistryBuilder::finalize()`](ragu_circuits::registry::RegistryBuilder::finalize)
     /// (circuits before masks), since [`circuit_index()`](Self::circuit_index)
     /// derives indices from position in this array. This is the standard
-    /// profile's list; [`all`](Self::all) resizes its walk for any other.
+    /// profile's list; [`all`](Self::all) resizes its walk and adds the
+    /// extension for any other.
     pub const ALL: [Self; Self::NUM] = super::const_fns::unwrap_all(Self::all_slots());
 
     const fn all_slots() -> [Option<Self>; Self::NUM] {
@@ -236,29 +262,39 @@ impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`] in
     /// profile `P`, equal to the length of [`all`](Self::all).
     pub fn num<P: Profile>() -> usize {
-        NUM_FIXED_INTERNAL + NumSteps::<P>::len()
+        NUM_FIXED_INTERNAL + NumSteps::<P>::len() + P::native_extension().internal()
     }
 
     /// All variants in canonical iteration order, for profile `P`:
-    /// [`ALL`](Self::ALL) with the walk resized to the profile's steps.
+    /// [`ALL`](Self::ALL) with the walk resized to the profile's steps, the
+    /// profile's extension circuits after the walk and its bondings last.
     pub fn all<P: Profile>() -> Vec<Self> {
-        let all = Self::all_with_steps(NumSteps::<P>::len());
+        let extension = P::native_extension();
+        let all = Self::all_with(
+            NumSteps::<P>::len(),
+            extension.circuits.len(),
+            extension.bondings(),
+        );
         assert_eq!(all.len(), Self::num::<P>());
         all
     }
 
-    /// [`ALL`](Self::ALL) with the walk resized to `num_steps` steps.
-    pub(crate) fn all_with_steps(num_steps: usize) -> Vec<Self> {
-        let mut all = Vec::with_capacity(NUM_FIXED_INTERNAL + num_steps);
+    /// [`ALL`](Self::ALL) with the walk resized to `num_steps` steps,
+    /// `circuits` extension circuits after it and `bondings` extension
+    /// bondings after the fuse's masks.
+    pub(crate) fn all_with(num_steps: usize, circuits: usize, bondings: usize) -> Vec<Self> {
+        let mut all = Vec::with_capacity(NUM_FIXED_INTERNAL + num_steps + circuits + bondings);
         for &id in &Self::ALL {
             match id {
                 Self::EndoscalingStep(0) => {
-                    all.extend((0..num_steps as u32).map(Self::EndoscalingStep))
+                    all.extend((0..num_steps as u32).map(Self::EndoscalingStep));
+                    all.extend((0..circuits as u32).map(Self::ExtensionCircuit));
                 }
                 Self::EndoscalingStep(_) => {}
                 id => all.push(id),
             }
         }
+        all.extend((0..bondings as u32).map(Self::ExtensionBonding));
         all
     }
 
@@ -290,6 +326,8 @@ pub struct InternalCircuitValues<T> {
     pub bind_endoscalar_circuit: T,
     /// One per endoscaling step of the profile the values were built for.
     pub endoscaling_step_circuits: Vec<T>,
+    /// One per circuit of the profile's native extension.
+    pub extension_circuits: Vec<T>,
     pub preamble_stage: T,
     pub inner_error_stage: T,
     pub outer_error_stage: T,
@@ -305,6 +343,8 @@ pub struct InternalCircuitValues<T> {
     pub outer_error_final_staged: T,
     pub eval_final_staged: T,
     pub points_walk_final_staged: T,
+    /// One per bonding of the profile's native extension.
+    pub extension_bondings: Vec<T>,
 }
 
 impl<T> InternalCircuitValues<T> {
@@ -316,9 +356,13 @@ impl<T> InternalCircuitValues<T> {
     /// Every value with its index, in [`all`](InternalCircuitIndex::all)
     /// order.
     pub fn iter(&self) -> impl Iterator<Item = (InternalCircuitIndex, &T)> {
-        InternalCircuitIndex::all_with_steps(self.num_steps())
-            .into_iter()
-            .map(move |id| (id, self.get(id)))
+        InternalCircuitIndex::all_with(
+            self.num_steps(),
+            self.extension_circuits.len(),
+            self.extension_bondings.len(),
+        )
+        .into_iter()
+        .map(move |id| (id, self.get(id)))
     }
 
     /// Maps every value, in [`all`](InternalCircuitIndex::all) order.
@@ -351,6 +395,12 @@ impl<T> InternalCircuitValues<T> {
                 .enumerate()
                 .map(|(step, value)| f(EndoscalingStep(step as u32), value))
                 .collect::<core::result::Result<_, E>>()?,
+            extension_circuits: self
+                .extension_circuits
+                .iter()
+                .enumerate()
+                .map(|(k, value)| f(ExtensionCircuit(k as u32), value))
+                .collect::<core::result::Result<_, E>>()?,
             preamble_stage: f(PreambleStage, &self.preamble_stage)?,
             inner_error_stage: f(InnerErrorStage, &self.inner_error_stage)?,
             outer_error_stage: f(OuterErrorStage, &self.outer_error_stage)?,
@@ -366,6 +416,12 @@ impl<T> InternalCircuitValues<T> {
             outer_error_final_staged: f(OuterErrorFinalStaged, &self.outer_error_final_staged)?,
             eval_final_staged: f(EvalFinalStaged, &self.eval_final_staged)?,
             points_walk_final_staged: f(PointsWalkFinalStaged, &self.points_walk_final_staged)?,
+            extension_bondings: self
+                .extension_bondings
+                .iter()
+                .enumerate()
+                .map(|(j, value)| f(ExtensionBonding(j as u32), value))
+                .collect::<core::result::Result<_, E>>()?,
         })
     }
 
@@ -382,6 +438,7 @@ impl<T> InternalCircuitValues<T> {
             BindBetaCircuit => &self.bind_beta_circuit,
             BindEndoscalarCircuit => &self.bind_endoscalar_circuit,
             EndoscalingStep(step) => &self.endoscaling_step_circuits[step as usize],
+            ExtensionCircuit(k) => &self.extension_circuits[k as usize],
             PreambleStage => &self.preamble_stage,
             InnerErrorStage => &self.inner_error_stage,
             OuterErrorStage => &self.outer_error_stage,
@@ -397,6 +454,7 @@ impl<T> InternalCircuitValues<T> {
             OuterErrorFinalStaged => &self.outer_error_final_staged,
             EvalFinalStaged => &self.eval_final_staged,
             PointsWalkFinalStaged => &self.points_walk_final_staged,
+            ExtensionBonding(j) => &self.extension_bondings[j as usize],
         }
     }
 
@@ -435,6 +493,9 @@ impl<T> InternalCircuitValues<T> {
             endoscaling_step_circuits: (0..NumSteps::<P>::len() as u32)
                 .map(|step| f(EndoscalingStep(step)))
                 .collect::<core::result::Result<_, E>>()?,
+            extension_circuits: (0..P::native_extension().circuits.len() as u32)
+                .map(|k| f(ExtensionCircuit(k)))
+                .collect::<core::result::Result<_, E>>()?,
             preamble_stage: f(PreambleStage)?,
             inner_error_stage: f(InnerErrorStage)?,
             outer_error_stage: f(OuterErrorStage)?,
@@ -450,6 +511,9 @@ impl<T> InternalCircuitValues<T> {
             outer_error_final_staged: f(OuterErrorFinalStaged)?,
             eval_final_staged: f(EvalFinalStaged)?,
             points_walk_final_staged: f(PointsWalkFinalStaged)?,
+            extension_bondings: (0..P::native_extension().bondings() as u32)
+                .map(|j| f(ExtensionBonding(j)))
+                .collect::<core::result::Result<_, E>>()?,
         })
     }
 }
@@ -472,6 +536,8 @@ pub enum RxIndex {
     BindEndoscalar,
     /// A native endoscaling step's rx polynomial.
     EndoscalingStep(u32),
+    /// The rx polynomial of a circuit of the profile's native extension.
+    ExtensionCircuit(u32),
     // Stages
     Preamble,
     InnerError,
@@ -493,6 +559,8 @@ pub enum RxIndex {
     PointsF,
     /// The walk's stage: the endoscalar's bits and the interstitials.
     PointsWalk,
+    /// The rx polynomial of a stage of the profile's native extension.
+    ExtensionStage(u32),
 }
 
 impl RxIndex {
@@ -503,8 +571,8 @@ impl RxIndex {
     ///
     /// This order matches the evaluation order in `poly_queries` (compute_v.rs)
     /// and `_08_f.rs`, and drives the `Write` impl for `RxValues`. This is the
-    /// standard profile's list; [`all`](Self::all) resizes its walk for any
-    /// other.
+    /// standard profile's list; [`all`](Self::all) resizes its walk and adds
+    /// the extension for any other.
     pub const ALL: [Self; Self::NUM] = super::const_fns::unwrap_all(Self::all_slots());
 
     const fn all_slots() -> [Option<Self>; Self::NUM] {
@@ -551,20 +619,28 @@ impl RxIndex {
 
     /// The number of rx polynomial components in profile `P`.
     pub fn num<P: Profile>() -> usize {
-        NUM_FIXED_RX + NumSteps::<P>::len()
+        NUM_FIXED_RX + NumSteps::<P>::len() + P::NATIVE_EXTENSION
     }
 
     /// All variants in canonical order, for profile `P`: [`ALL`](Self::ALL)
-    /// with the walk resized to the profile's steps.
+    /// with the walk resized to the profile's steps, then the profile's
+    /// extension circuits' and stages' polynomials.
     pub fn all<P: Profile>() -> Vec<Self> {
-        let all = Self::all_with_steps(NumSteps::<P>::len());
+        let extension = P::native_extension();
+        let all = Self::all_with(
+            NumSteps::<P>::len(),
+            extension.circuits.len(),
+            extension.stages,
+        );
         assert_eq!(all.len(), Self::num::<P>());
         all
     }
 
-    /// [`ALL`](Self::ALL) with the walk resized to `num_steps` steps.
-    pub(crate) fn all_with_steps(num_steps: usize) -> Vec<Self> {
-        let mut all = Vec::with_capacity(NUM_FIXED_RX + num_steps);
+    /// [`ALL`](Self::ALL) with the walk resized to `num_steps` steps, then
+    /// `circuits` extension circuits' and `stages` extension stages'
+    /// polynomials.
+    pub(crate) fn all_with(num_steps: usize, circuits: usize, stages: usize) -> Vec<Self> {
+        let mut all = Vec::with_capacity(NUM_FIXED_RX + num_steps + circuits + stages);
         for &id in &Self::ALL {
             match id {
                 Self::EndoscalingStep(0) => {
@@ -574,6 +650,8 @@ impl RxIndex {
                 id => all.push(id),
             }
         }
+        all.extend((0..circuits as u32).map(Self::ExtensionCircuit));
+        all.extend((0..stages as u32).map(Self::ExtensionStage));
         all
     }
 }
@@ -607,6 +685,10 @@ pub struct RxValues<T> {
     pub points_ab: T,
     pub points_f: T,
     pub points_walk: T,
+    /// One per circuit of the profile's native extension.
+    pub extension_circuits: Vec<T>,
+    /// One per stage of the profile's native extension.
+    pub extension_stages: Vec<T>,
 }
 
 impl<T> RxValues<T> {
@@ -617,9 +699,13 @@ impl<T> RxValues<T> {
 
     /// Every value with its index, in [`all`](RxIndex::all) order.
     pub fn iter(&self) -> impl Iterator<Item = (RxIndex, &T)> {
-        RxIndex::all_with_steps(self.num_steps())
-            .into_iter()
-            .map(move |id| (id, self.get(id)))
+        RxIndex::all_with(
+            self.num_steps(),
+            self.extension_circuits.len(),
+            self.extension_stages.len(),
+        )
+        .into_iter()
+        .map(move |id| (id, self.get(id)))
     }
 
     /// Maps every value, in [`all`](RxIndex::all) order.
@@ -661,6 +747,18 @@ impl<T> RxValues<T> {
             points_ab: f(PointsAb, &self.points_ab)?,
             points_f: f(PointsF, &self.points_f)?,
             points_walk: f(PointsWalk, &self.points_walk)?,
+            extension_circuits: self
+                .extension_circuits
+                .iter()
+                .enumerate()
+                .map(|(k, value)| f(ExtensionCircuit(k as u32), value))
+                .collect::<core::result::Result<_, E>>()?,
+            extension_stages: self
+                .extension_stages
+                .iter()
+                .enumerate()
+                .map(|(k, value)| f(ExtensionStage(k as u32), value))
+                .collect::<core::result::Result<_, E>>()?,
         })
     }
 
@@ -689,6 +787,8 @@ impl<T> RxValues<T> {
             PointsAb => &self.points_ab,
             PointsF => &self.points_f,
             PointsWalk => &self.points_walk,
+            ExtensionCircuit(k) => &self.extension_circuits[k as usize],
+            ExtensionStage(k) => &self.extension_stages[k as usize],
         }
     }
 
@@ -738,6 +838,12 @@ impl<T> RxValues<T> {
             points_ab: f(PointsAb)?,
             points_f: f(PointsF)?,
             points_walk: f(PointsWalk)?,
+            extension_circuits: (0..P::native_extension().circuits.len() as u32)
+                .map(|k| f(ExtensionCircuit(k)))
+                .collect::<core::result::Result<_, E>>()?,
+            extension_stages: (0..P::native_extension().stages as u32)
+                .map(|k| f(ExtensionStage(k)))
+                .collect::<core::result::Result<_, E>>()?,
         })
     }
 }
@@ -838,11 +944,18 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
     params: &'params C::Params,
     log2_circuits: u32,
 ) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
+    C::Profile::check()?;
     let initial_internal_circuits = registry.num_internal_circuits();
 
     for id in InternalCircuitIndex::all::<C::Profile>() {
         use InternalCircuitIndex::*;
         registry = match id {
+            ExtensionCircuit(k) => C::Profile::register_native_circuit::<C, R, HEADER_SIZE>(
+                k as usize, registry, params,
+            )?,
+            ExtensionBonding(j) => C::Profile::register_native_bonding::<C, R, HEADER_SIZE>(
+                j as usize, registry, params,
+            )?,
             PreambleStage => {
                 registry.register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)
             }

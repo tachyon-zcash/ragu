@@ -249,6 +249,9 @@ pub enum InternalCircuitIndex {
     Collapse,
     /// Circuit computing the nested batch evaluation $v_n$.
     ComputeV,
+    /// A circuit of the profile's nested extension (see
+    /// [`Extension`](crate::profile::Extension)).
+    ExtensionCircuit(u32),
     /// `EndoscalarStage` stage mask.
     EndoscalarStage,
     /// `PointsStage` stage mask.
@@ -278,6 +281,10 @@ pub enum InternalCircuitIndex {
     ChallengeFinalStaged,
     /// Loading circuit over all nested stages.
     Loading,
+    /// A bonding of the profile's nested extension, a stage's mask or a
+    /// final mask, in [`Extension::bondings`](crate::profile::Extension::bondings)
+    /// order.
+    ExtensionBonding(u32),
 }
 
 impl InternalCircuitIndex {
@@ -296,7 +303,8 @@ impl InternalCircuitIndex {
     /// in [`RegistryBuilder::finalize()`](ragu_circuits::registry::RegistryBuilder::finalize)
     /// (circuits before masks), since [`circuit_index()`](Self::circuit_index)
     /// derives indices from position in this array. This is the standard
-    /// profile's list; [`all`](Self::all) resizes its walk for any other.
+    /// profile's list; [`all`](Self::all) resizes its walk and adds the
+    /// extension for any other.
     pub const ALL: [Self; Self::NUM] = super::const_fns::unwrap_all(Self::all_slots());
 
     const fn all_slots() -> [Option<Self>; Self::NUM] {
@@ -335,13 +343,16 @@ impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`] in
     /// profile `P`, equal to the length of [`all`](Self::all).
     pub fn num<P: Profile>() -> usize {
-        NumSteps::<P>::len() + NUM_FIXED_INTERNAL
+        NumSteps::<P>::len() + NUM_FIXED_INTERNAL + P::nested_extension().internal()
     }
 
     /// All variants in canonical iteration order, for profile `P`:
-    /// [`ALL`](Self::ALL) with the walk resized to the profile's steps.
+    /// [`ALL`](Self::ALL) with the walk resized to the profile's steps, the
+    /// profile's extension circuits after the instance circuits and its
+    /// bondings last.
     pub fn all<P: Profile>() -> Vec<Self> {
         let num_steps = NumSteps::<P>::len();
+        let extension = P::nested_extension();
         let mut all = Vec::with_capacity(Self::num::<P>());
         for &id in &Self::ALL {
             match id {
@@ -349,9 +360,14 @@ impl InternalCircuitIndex {
                     all.extend((0..num_steps as u32).map(Self::EndoscalingStep))
                 }
                 Self::EndoscalingStep(_) => {}
+                Self::ComputeV => {
+                    all.push(id);
+                    all.extend((0..extension.circuits.len() as u32).map(Self::ExtensionCircuit));
+                }
                 id => all.push(id),
             }
         }
+        all.extend((0..extension.bondings() as u32).map(Self::ExtensionBonding));
         assert_eq!(all.len(), Self::num::<P>());
         all
     }
@@ -384,6 +400,8 @@ pub enum RxIndex {
     Collapse,
     /// Compute-v circuit rx polynomial.
     ComputeV,
+    /// The rx polynomial of a circuit of the profile's nested extension.
+    ExtensionCircuit(u32),
     /// EndoscalarStage rx polynomial.
     EndoscalarStage,
     /// PointsStage rx polynomial.
@@ -406,6 +424,8 @@ pub enum RxIndex {
     BridgeEval,
     /// Challenge stage rx polynomial.
     ChallengeStage,
+    /// The rx polynomial of a stage of the profile's nested extension.
+    ExtensionStage(u32),
 }
 
 impl RxIndex {
@@ -434,8 +454,8 @@ impl RxIndex {
     ///
     /// Must maintain the same ordering convention as
     /// [`native::RxIndex::ALL`](super::native::RxIndex::ALL). This is the
-    /// standard profile's list; [`all`](Self::all) resizes its walk for any
-    /// other.
+    /// standard profile's list; [`all`](Self::all) resizes its walk and adds
+    /// the extension for any other.
     pub const ALL: [Self; Self::NUM] = super::const_fns::unwrap_all(Self::all_slots());
 
     const fn all_slots() -> [Option<Self>; Self::NUM] {
@@ -471,13 +491,15 @@ impl RxIndex {
     /// The number of rx components in the nested field in profile `P`,
     /// equal to the length of [`all`](Self::all).
     pub fn num<P: Profile>() -> usize {
-        NumSteps::<P>::len() + NUM_FIXED_RX
+        NumSteps::<P>::len() + NUM_FIXED_RX + P::NESTED_EXTENSION
     }
 
     /// All variants in canonical order (circuits, then stages), for profile
-    /// `P`: [`ALL`](Self::ALL) with the walk resized to the profile's steps.
+    /// `P`: [`ALL`](Self::ALL) with the walk resized to the profile's steps,
+    /// then the profile's extension circuits' and stages' polynomials.
     pub fn all<P: Profile>() -> Vec<Self> {
         let num_steps = NumSteps::<P>::len();
+        let extension = P::nested_extension();
         let mut all = Vec::with_capacity(Self::num::<P>());
         for &id in &Self::ALL {
             match id {
@@ -488,6 +510,8 @@ impl RxIndex {
                 id => all.push(id),
             }
         }
+        all.extend((0..extension.circuits.len() as u32).map(Self::ExtensionCircuit));
+        all.extend((0..extension.stages as u32).map(Self::ExtensionStage));
         assert_eq!(all.len(), Self::num::<P>());
         all
     }
@@ -536,7 +560,9 @@ pub mod stages {
 /// before application steps.
 pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
     mut registry: RegistryBuilder<'params, C::ScalarField, R>,
+    params: &'params C::Params,
 ) -> Result<RegistryBuilder<'params, C::ScalarField, R>> {
+    C::Profile::check()?;
     let initial_internal_circuits = registry.num_internal_circuits();
 
     // Circuits first, then masks — matching RegistryBuilder::finalize()
@@ -615,6 +641,12 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
             Loading => {
                 let circuit = circuits::loading::Circuit::<C::HostCurve, R, C::Profile>::new();
                 registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)
+            }
+            ExtensionCircuit(k) => {
+                C::Profile::register_nested_circuit::<C, R>(k as usize, registry, params)?
+            }
+            ExtensionBonding(j) => {
+                C::Profile::register_nested_bonding::<C, R>(j as usize, registry, params)?
             }
         };
     }

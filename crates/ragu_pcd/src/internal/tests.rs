@@ -713,3 +713,204 @@ fn test_standard_lists_are_the_constants() {
     );
     assert_eq!(nested::RxIndex::all::<Standard>(), nested::RxIndex::ALL);
 }
+
+/// An extension circuit's claim takes its rx and the stages it loads per
+/// proof, an extension stage's bonding its rx across proofs, and a final
+/// mask's the circuits it names, with the circuits' $k(y)$ one.
+#[test]
+fn test_extension_claims_follow_the_declaration() {
+    use alloc::vec::Vec;
+
+    use ragu_circuits::registry::CircuitIndex;
+    use ragu_primitives::vec::Len;
+
+    use crate::{
+        internal::{
+            claims::Source,
+            native::{
+                RxComponent::{self, Rx},
+                RxIndex::{ExtensionCircuit, ExtensionStage},
+                claims::{KySource, Processor, build, ky_values},
+            },
+        },
+        profile::{Profile, testing::Wider},
+    };
+
+    /// Two proofs' components, each tagged with its proof.
+    struct TwoProofs;
+
+    impl Source for TwoProofs {
+        type RxComponent = RxComponent;
+        type Rx = (usize, RxComponent);
+        type AppCircuitId = CircuitIndex;
+
+        fn rx(&self, component: RxComponent) -> impl Iterator<Item = Self::Rx> {
+            [(0, component), (1, component)].into_iter()
+        }
+
+        fn app_circuits(&self) -> impl Iterator<Item = CircuitIndex> {
+            [CircuitIndex::new(0), CircuitIndex::new(1)].into_iter()
+        }
+    }
+
+    type Claim = (InternalCircuitIndex, Vec<(usize, RxComponent)>);
+
+    #[derive(Default)]
+    struct Recorder {
+        circuits: Vec<Claim>,
+        bondings: Vec<Claim>,
+    }
+
+    impl Processor<Wider, (usize, RxComponent), CircuitIndex> for Recorder {
+        fn raw_claim(&mut self, _: (usize, RxComponent), _: (usize, RxComponent)) {}
+
+        fn circuit_claim(&mut self, _: CircuitIndex, _: (usize, RxComponent)) {}
+
+        fn internal_circuit_claim(
+            &mut self,
+            id: InternalCircuitIndex,
+            rxs: impl Iterator<Item = (usize, RxComponent)>,
+        ) {
+            self.circuits.push((id, rxs.collect()));
+        }
+
+        fn grouped_bonding_claim(
+            &mut self,
+            id: InternalCircuitIndex,
+            groups: impl Iterator<Item = impl Iterator<Item = (usize, RxComponent)>>,
+        ) -> Result<()> {
+            self.bondings.push((id, groups.flatten().collect()));
+            Ok(())
+        }
+    }
+
+    let mut recorder = Recorder::default();
+    build::<Wider, _, _>(&TwoProofs, &mut recorder).unwrap();
+
+    let extension = Wider::native_extension();
+    let circuits = &recorder.circuits;
+    let tail = circuits.len() - 2 * extension.circuits.len();
+    assert!(
+        matches!(
+            circuits[tail - 1].0,
+            InternalCircuitIndex::EndoscalingStep(_)
+        ),
+        "the extension circuits follow the walk"
+    );
+    for (k, loads) in extension.circuits.iter().enumerate() {
+        for proof in 0..2 {
+            let (id, rxs) = &circuits[tail + 2 * k + proof];
+            assert_eq!(*id, InternalCircuitIndex::ExtensionCircuit(k as u32));
+            let expected: Vec<_> = [Rx(ExtensionCircuit(k as u32))]
+                .into_iter()
+                .chain(loads.iter().map(|&stage| Rx(ExtensionStage(stage))))
+                .map(|component| (proof, component))
+                .collect();
+            assert_eq!(*rxs, expected);
+        }
+    }
+
+    let bondings = &recorder.bondings;
+    let tail = bondings.len() - extension.bondings();
+    for stage in 0..extension.stages {
+        let (id, rxs) = &bondings[tail + stage];
+        assert_eq!(*id, InternalCircuitIndex::ExtensionBonding(stage as u32));
+        let expected = [
+            (0, Rx(ExtensionStage(stage as u32))),
+            (1, Rx(ExtensionStage(stage as u32))),
+        ];
+        assert_eq!(*rxs, expected);
+    }
+    for (mask, named) in extension.final_masks.iter().enumerate() {
+        let (id, rxs) = &bondings[tail + extension.stages + mask];
+        assert_eq!(
+            *id,
+            InternalCircuitIndex::ExtensionBonding((extension.stages + mask) as u32)
+        );
+        let expected: Vec<_> = named
+            .iter()
+            .flat_map(|&k| [(0, Rx(ExtensionCircuit(k))), (1, Rx(ExtensionCircuit(k)))])
+            .collect();
+        assert_eq!(*rxs, expected);
+    }
+
+    /// $k(y)$ values that tell the sources apart.
+    struct Tagged;
+
+    impl KySource for Tagged {
+        type Ky = u32;
+
+        fn raw_c(&self) -> impl Iterator<Item = u32> {
+            [10, 11].into_iter()
+        }
+
+        fn application_ky(&self) -> impl Iterator<Item = u32> {
+            [20, 21].into_iter()
+        }
+
+        fn unified_bridge_ky(&self) -> impl Iterator<Item = u32> {
+            [30, 31].into_iter()
+        }
+
+        fn unified_ky(&self) -> impl Iterator<Item = u32> + Clone {
+            [40, 41].into_iter()
+        }
+
+        fn ones(&self) -> impl Iterator<Item = u32> + Clone {
+            [1, 1].into_iter()
+        }
+
+        fn zero(&self) -> u32 {
+            0
+        }
+    }
+
+    let targets: Vec<u32> = ky_values::<Wider, _>(&Tagged)
+        .take(recorder.circuits.len() + 6)
+        .collect();
+    let ones = targets.iter().filter(|&&ky| ky == 1).count();
+    let steps = native::NumSteps::<Wider>::len();
+    assert_eq!(ones, 2 * (steps + extension.circuits.len()));
+    let first_one = targets.iter().position(|&ky| ky == 1).unwrap();
+    assert!(
+        targets[first_one..first_one + ones]
+            .iter()
+            .all(|&ky| ky == 1)
+    );
+    assert!(targets[first_one + ones..].iter().all(|&ky| ky == 0));
+}
+
+/// The hooks register a profile's extension, and an application over a
+/// profile with an extension exceeds the gate budget, since the fuse's own
+/// circuits grow with every polynomial a proof carries.
+#[test]
+fn test_extension_hooks_register_and_the_fuse_overflows() {
+    use ragu_circuits::registry::RegistryBuilder;
+
+    use crate::profile::{Profile, Profiled, testing::Hooked};
+
+    type C = Profiled<Pasta, Hooked>;
+    let params = crate::pasta::baked();
+
+    let registry = RegistryBuilder::<Fp, R>::new();
+    let registry =
+        Hooked::register_native_circuit::<C, R, HEADER_SIZE>(0, registry, params).unwrap();
+    assert_eq!(registry.num_internal_circuits(), 1);
+    let registry =
+        Hooked::register_native_bonding::<C, R, HEADER_SIZE>(0, registry, params).unwrap();
+    let registry =
+        Hooked::register_native_bonding::<C, R, HEADER_SIZE>(1, registry, params).unwrap();
+    assert_eq!(registry.num_internal_circuits(), 3);
+
+    let registry = RegistryBuilder::<Fq, R>::new();
+    let registry = Hooked::register_nested_circuit::<C, R>(0, registry, params).unwrap();
+    let registry = Hooked::register_nested_bonding::<C, R>(0, registry, params).unwrap();
+    let registry = Hooked::register_nested_bonding::<C, R>(1, registry, params).unwrap();
+    assert_eq!(registry.num_internal_circuits(), 3);
+
+    let result = ApplicationBuilder::<C, R, HEADER_SIZE>::new().finalize(params);
+    assert!(
+        matches!(result, Err(Error::GateBoundExceeded { .. })),
+        "two polynomials per side already overflow a fuse circuit"
+    );
+}

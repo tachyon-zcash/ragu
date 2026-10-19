@@ -1,13 +1,13 @@
 use alloc::vec::Vec;
 
 use ragu_circuits::{CircuitExt, polynomials::Rank, staging::MultiStage};
-use ragu_core::Result;
+use ragu_core::{Error, Result};
 use rand::CryptoRng;
 
 use crate::{
     Application,
     internal::{native, native::total_circuit_counts, nested},
-    profile::ProfiledCycle,
+    profile::{Profile, ProfiledCycle},
     proof::ProofBuilder,
 };
 
@@ -237,6 +237,17 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_native_bind_beta_rx(bind_beta_rx);
         builder.set_native_bind_endoscalar_rx(bind_endoscalar_rx);
 
+        // The profile's extension has no prover yet: the fuse's own circuits
+        // sit within a few percent of the gate budget, so no profile can add
+        // polynomials until they scale (see `profile::Aggregator`).
+        if !C::Profile::native_extension().is_empty() {
+            return Err(Error::Initialization(
+                "the profile's native extension cannot be proved yet".into(),
+            ));
+        }
+        builder.set_native_extension_circuit_rxs(Vec::new());
+        builder.set_native_extension_stage_rxs(Vec::new());
+
         Ok(())
     }
 
@@ -347,6 +358,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_nested_export_rx(export_rx);
         builder.set_nested_collapse_rx(collapse_rx);
         builder.set_nested_compute_v_rx(compute_v_rx);
+
+        if !C::Profile::nested_extension().is_empty() {
+            return Err(Error::Initialization(
+                "the profile's nested extension cannot be proved yet".into(),
+            ));
+        }
+        builder.set_nested_extension_circuit_rxs(Vec::new());
+        builder.set_nested_extension_stage_rxs(Vec::new());
 
         Ok(())
     }

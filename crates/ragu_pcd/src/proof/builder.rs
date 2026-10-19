@@ -240,6 +240,8 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     native_bind_beta_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_bind_endoscalar_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_endoscaling_step_rxs: Option<Vec<sparse::Polynomial<C::CircuitField, R>>>,
+    native_extension_circuit_rxs: Option<Vec<sparse::Polynomial<C::CircuitField, R>>>,
+    native_extension_stage_rxs: Option<Vec<sparse::Polynomial<C::CircuitField, R>>>,
     native_points_binding_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_points_children_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_points_registry_wx_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
@@ -271,6 +273,8 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
 
     // Nested endoscaling data
     nested_endoscaling_step_rxs: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
+    nested_extension_circuit_rxs: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
+    nested_extension_stage_rxs: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
     nested_endoscalar_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
     nested_points_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
 
@@ -293,6 +297,8 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
 
     // Nested endoscaling commitment caches (lazily computed from polynomials)
     nested_endoscaling_step_commitments: OnceCell<Vec<C::NestedCurve>>,
+    nested_extension_circuit_commitments: OnceCell<Vec<C::NestedCurve>>,
+    nested_extension_stage_commitments: OnceCell<Vec<C::NestedCurve>>,
     nested_endoscalar_commitment: OnceCell<C::NestedCurve>,
     nested_points_commitment: OnceCell<C::NestedCurve>,
 
@@ -345,6 +351,8 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     native_bind_beta_commitment: OnceCell<C::HostCurve>,
     native_bind_endoscalar_commitment: OnceCell<C::HostCurve>,
     native_endoscaling_step_commitments: OnceCell<Vec<C::HostCurve>>,
+    native_extension_circuit_commitments: OnceCell<Vec<C::HostCurve>>,
+    native_extension_stage_commitments: OnceCell<Vec<C::HostCurve>>,
     native_points_binding_commitment: OnceCell<C::HostCurve>,
     native_points_children_commitment: OnceCell<C::HostCurve>,
     native_points_registry_wx_commitment: OnceCell<C::HostCurve>,
@@ -386,6 +394,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_bind_beta_rx: None,
             native_bind_endoscalar_rx: None,
             native_endoscaling_step_rxs: None,
+            native_extension_circuit_rxs: None,
+            native_extension_stage_rxs: None,
             native_points_binding_rx: None,
             native_points_children_rx: None,
             native_points_registry_wx_rx: None,
@@ -408,6 +418,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             bridge_eval_commitment: None,
             bridge_ab_rx: OnceCell::new(),
             nested_endoscaling_step_rxs: None,
+            nested_extension_circuit_rxs: None,
+            nested_extension_stage_rxs: None,
             nested_endoscalar_rx: None,
             nested_points_rx: None,
             nested_a_poly: None,
@@ -420,6 +432,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             nested_collapse_rx: None,
             nested_compute_v_rx: None,
             nested_endoscaling_step_commitments: OnceCell::new(),
+            nested_extension_circuit_commitments: OnceCell::new(),
+            nested_extension_stage_commitments: OnceCell::new(),
             nested_endoscalar_commitment: OnceCell::new(),
             nested_points_commitment: OnceCell::new(),
             nested_a_commitment: OnceCell::new(),
@@ -460,6 +474,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_bind_beta_commitment: OnceCell::new(),
             native_bind_endoscalar_commitment: OnceCell::new(),
             native_endoscaling_step_commitments: OnceCell::new(),
+            native_extension_circuit_commitments: OnceCell::new(),
+            native_extension_stage_commitments: OnceCell::new(),
             native_points_binding_commitment: OnceCell::new(),
             native_points_children_commitment: OnceCell::new(),
             native_points_registry_wx_commitment: OnceCell::new(),
@@ -565,6 +581,44 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         native_endoscaling_step_rxs,
         Vec<sparse::Polynomial<C::CircuitField, R>>
     );
+    setter!(
+        set_native_extension_circuit_rxs,
+        native_extension_circuit_rxs,
+        Vec<sparse::Polynomial<C::CircuitField, R>>
+    );
+    setter!(
+        set_native_extension_stage_rxs,
+        native_extension_stage_rxs,
+        Vec<sparse::Polynomial<C::CircuitField, R>>
+    );
+
+    /// Lazily computes and caches the commitments of the native extension
+    /// circuits' rx polynomials. Returns the cached slice.
+    pub(crate) fn native_extension_circuit_commitments(&self) -> &[C::HostCurve] {
+        self.native_extension_circuit_commitments.get_or_init(|| {
+            let host_gen = C::host_generators(self.params);
+            self.native_extension_circuit_rxs
+                .as_ref()
+                .expect("native_extension_circuit_rxs not set")
+                .iter()
+                .map(|rx| B::sparse_commit_to_affine(rx, host_gen))
+                .collect()
+        })
+    }
+
+    /// Lazily computes and caches the commitments of the native extension
+    /// stages' rx polynomials. Returns the cached slice.
+    pub(crate) fn native_extension_stage_commitments(&self) -> &[C::HostCurve] {
+        self.native_extension_stage_commitments.get_or_init(|| {
+            let host_gen = C::host_generators(self.params);
+            self.native_extension_stage_rxs
+                .as_ref()
+                .expect("native_extension_stage_rxs not set")
+                .iter()
+                .map(|rx| B::sparse_commit_to_affine(rx, host_gen))
+                .collect()
+        })
+    }
 
     /// Lazily computes and caches the commitments of the native endoscaling
     /// steps' rx polynomials. Returns the cached slice.
@@ -771,6 +825,45 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_points_ab: native_points_ab_commitment()
         }
     );
+
+    setter!(
+        set_nested_extension_circuit_rxs,
+        nested_extension_circuit_rxs,
+        Vec<sparse::Polynomial<C::ScalarField, R>>
+    );
+    setter!(
+        set_nested_extension_stage_rxs,
+        nested_extension_stage_rxs,
+        Vec<sparse::Polynomial<C::ScalarField, R>>
+    );
+
+    /// Lazily computes and caches the commitments of the nested extension
+    /// circuits' rx polynomials. Returns the cached slice.
+    pub(crate) fn nested_extension_circuit_commitments(&self) -> &[C::NestedCurve] {
+        self.nested_extension_circuit_commitments.get_or_init(|| {
+            let nested_gen = C::nested_generators(self.params);
+            self.nested_extension_circuit_rxs
+                .as_ref()
+                .expect("nested_extension_circuit_rxs not set")
+                .iter()
+                .map(|rx| B::sparse_commit_to_affine(rx, nested_gen))
+                .collect()
+        })
+    }
+
+    /// Lazily computes and caches the commitments of the nested extension
+    /// stages' rx polynomials. Returns the cached slice.
+    pub(crate) fn nested_extension_stage_commitments(&self) -> &[C::NestedCurve] {
+        self.nested_extension_stage_commitments.get_or_init(|| {
+            let nested_gen = C::nested_generators(self.params);
+            self.nested_extension_stage_rxs
+                .as_ref()
+                .expect("nested_extension_stage_rxs not set")
+                .iter()
+                .map(|rx| B::sparse_commit_to_affine(rx, nested_gen))
+                .collect()
+        })
+    }
 
     setter!(
         set_nested_endoscaling_step_rxs,
@@ -1000,6 +1093,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         self.native_bind_beta_commitment();
         self.native_bind_endoscalar_commitment();
         self.native_endoscaling_step_commitments();
+        self.native_extension_circuit_commitments();
+        self.native_extension_stage_commitments();
         self.native_points_binding_commitment();
         self.native_points_children_commitment();
         self.native_points_registry_wx_commitment();
@@ -1012,6 +1107,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
 
         // Ensure nested endoscaling commitment caches are populated.
         self.nested_endoscaling_step_commitments();
+        self.nested_extension_circuit_commitments();
+        self.nested_extension_stage_commitments();
         self.nested_endoscalar_commitment();
         self.nested_points_commitment();
 
@@ -1067,6 +1164,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_bind_beta_rx: take!(native_bind_beta_rx),
             native_bind_endoscalar_rx: take!(native_bind_endoscalar_rx),
             native_endoscaling_step_rxs: take!(native_endoscaling_step_rxs),
+            native_extension_circuit_rxs: take!(native_extension_circuit_rxs),
+            native_extension_stage_rxs: take!(native_extension_stage_rxs),
             native_points_binding_rx: take!(native_points_binding_rx),
             native_points_children_rx: take!(native_points_children_rx),
             native_points_registry_wx_rx: take!(native_points_registry_wx_rx),
@@ -1093,6 +1192,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             bridge_ab_commitment: cached!(bridge_ab_commitment),
 
             nested_endoscaling_step_rxs: take!(nested_endoscaling_step_rxs),
+            nested_extension_circuit_rxs: take!(nested_extension_circuit_rxs),
+            nested_extension_stage_rxs: take!(nested_extension_stage_rxs),
             nested_endoscalar_rx: take!(nested_endoscalar_rx),
             nested_points_rx: take!(nested_points_rx),
             nested_a_poly: take!(nested_a_poly),
@@ -1109,6 +1210,20 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
                 .nested_endoscaling_step_commitments
                 .take()
                 .expect("nested_endoscaling_step_commitments not set")
+                .into_iter()
+                .map(Cached)
+                .collect(),
+            nested_extension_circuit_commitments: self
+                .nested_extension_circuit_commitments
+                .take()
+                .expect("nested_extension_circuit_commitments not set")
+                .into_iter()
+                .map(Cached)
+                .collect(),
+            nested_extension_stage_commitments: self
+                .nested_extension_stage_commitments
+                .take()
+                .expect("nested_extension_stage_commitments not set")
                 .into_iter()
                 .map(Cached)
                 .collect(),
@@ -1163,6 +1278,20 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
                 .native_endoscaling_step_commitments
                 .take()
                 .expect("native_endoscaling_step_commitments not set")
+                .into_iter()
+                .map(Cached)
+                .collect(),
+            native_extension_circuit_commitments: self
+                .native_extension_circuit_commitments
+                .take()
+                .expect("native_extension_circuit_commitments not set")
+                .into_iter()
+                .map(Cached)
+                .collect(),
+            native_extension_stage_commitments: self
+                .native_extension_stage_commitments
+                .take()
+                .expect("native_extension_stage_commitments not set")
                 .into_iter()
                 .map(Cached)
                 .collect(),

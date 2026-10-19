@@ -298,6 +298,45 @@ where
                 }
             }
 
+            // An extension circuit: its rx and the extension stages it loads
+            // (k(y) = 1)
+            ExtensionCircuit(k) => {
+                let extension = P::native_extension();
+                let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
+                for index in [RxIndex::ExtensionCircuit(k)].into_iter().chain(
+                    extension.circuits[k as usize]
+                        .iter()
+                        .map(|&stage| RxIndex::ExtensionStage(stage)),
+                ) {
+                    for (i, rx) in source.rx(Rx(index)).enumerate() {
+                        if per_proof.len() <= i {
+                            per_proof.push(Vec::new());
+                        }
+                        per_proof[i].push(rx);
+                    }
+                }
+                for rxs in per_proof {
+                    processor.internal_circuit_claim(id, rxs.into_iter());
+                }
+            }
+
+            // An extension bonding: a stage's mask over its rx, or a final
+            // mask over its circuits' rxs
+            ExtensionBonding(j) => {
+                let extension = P::native_extension();
+                if (j as usize) < extension.stages {
+                    processor.bonding_claim(id, source.rx(Rx(RxIndex::ExtensionStage(j))))?;
+                } else {
+                    processor.bonding_claim(
+                        id,
+                        extension
+                            .final_mask(j as usize)
+                            .iter()
+                            .flat_map(|&k| source.rx(Rx(RxIndex::ExtensionCircuit(k)))),
+                    )?;
+                }
+            }
+
             // Native stages (aggregated across all proofs)
             PreambleStage => {
                 processor.bonding_claim(id, source.rx(Rx(Preamble)))?;
@@ -404,8 +443,8 @@ pub trait KySource {
 ///
 /// Chains the $k(y)$ sources in the order required by [`build`],
 /// with `unified_ky` repeated [`NUM_UNIFIED_CIRCUITS`] times and `ones`
-/// once per endoscaling step of profile `P`, followed by infinite zeros for
-/// stage claims.
+/// once per endoscaling step and per extension circuit of profile `P`,
+/// followed by infinite zeros for stage claims.
 ///
 /// The `unified_ky` and `unified_bridge_ky` values are computed by
 /// [`ProofInputs::unified_ky_values`](super::stages::preamble::ProofInputs::unified_ky_values)
@@ -416,7 +455,13 @@ pub fn ky_values<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
         .chain(source.application_ky())
         .chain(source.unified_bridge_ky())
         .chain(repeat_n(source.unified_ky(), NUM_UNIFIED_CIRCUITS).flatten())
-        .chain(repeat_n(source.ones(), NumSteps::<P>::len()).flatten())
+        .chain(
+            repeat_n(
+                source.ones(),
+                NumSteps::<P>::len() + P::native_extension().circuits.len(),
+            )
+            .flatten(),
+        )
         .chain(core::iter::repeat(source.zero()))
 }
 

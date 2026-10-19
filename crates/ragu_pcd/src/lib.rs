@@ -286,7 +286,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         );
 
         // Register nested internal circuits (no application steps, no headers).
-        self.nested_registry = internal::nested::register_all::<C, R>(self.nested_registry)?;
+        self.nested_registry =
+            internal::nested::register_all::<C, R>(self.nested_registry, params)?;
 
         let mut app = Application {
             native_registry: self.native_registry.finalize()?,
