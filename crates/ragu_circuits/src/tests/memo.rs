@@ -10,9 +10,16 @@ use ragu_core::{Result, pasta::Fp};
 use rand::Rng;
 use udon::field::Field;
 
+use ragu_core::{
+    drivers::{Driver, DriverValue},
+    gadgets::{Bound, Kind},
+    routines::{Prediction, Routine},
+};
+use ragu_primitives::{Element, allocator::Standard};
+
 use super::{RoutineCircuit, RoutineLayout, consistency_checks};
 use crate::{
-    CircuitExt, floor_planner, into_wiring_object,
+    Circuit, CircuitExt, WithAux, floor_planner, into_wiring_object,
     polynomials::{Rank, TestRank},
     registry::{CircuitIndex, Registry, RegistryBuilder},
     wiring::MemoCache,
@@ -94,6 +101,111 @@ fn wxy_combined_matches_wxy_across_layouts() -> Result<()> {
             );
         }
     }
+    Ok(())
+}
+
+/// Returns its input unchanged: no gates, no constraints.
+#[derive(Clone)]
+struct PassThrough;
+
+impl Routine<Fp> for PassThrough {
+    type Input = Kind![Fp; Element<'_, _>];
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        input: Bound<'dr, D, Self::Input>,
+        _aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Ok(input)
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        _input: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::unit()))
+    }
+}
+
+/// `PassThrough(in)` when `false`, `PassThrough(in + in)` when `true`.
+#[derive(Clone)]
+struct FeedChild(bool);
+
+impl Routine<Fp> for FeedChild {
+    type Input = Kind![Fp; Element<'_, _>];
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        input: Bound<'dr, D, Self::Input>,
+        _aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        let fed = if self.0 { input.add(dr, &input) } else { input };
+        dr.routine(PassThrough, fed)
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        _input: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::unit()))
+    }
+}
+
+/// Feeding a child a different linear combination of the caller's wires
+/// emits no constraint, but it changes the caller's output, so the deep
+/// fingerprints must differ; otherwise one recording would be replayed for
+/// the other.
+#[test]
+fn child_input_map_is_bound_by_the_deep_fingerprint() -> Result<()> {
+    struct Feed(bool);
+    impl Circuit<Fp> for Feed {
+        type Instance<'i> = Fp;
+        type Output = Kind![Fp; Element<'_, _>];
+        type Witness<'w> = Fp;
+        type Aux<'w> = ();
+        fn instance<'dr, 'i: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            instance: DriverValue<D, Self::Instance<'i>>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            Element::alloc(dr, &mut Standard::new(), instance)
+        }
+        fn witness<'dr, 'w: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            witness: DriverValue<D, Self::Witness<'w>>,
+        ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'w>>>> {
+            let w = Element::alloc(dr, &mut Standard::new(), witness)?;
+            Ok(WithAux::new(dr.routine(FeedChild(self.0), w)?, D::unit()))
+        }
+    }
+
+    let fingerprint = |doubled: bool| {
+        let metrics = crate::metrics::eval::<Fp, _>(&Feed(doubled)).unwrap();
+        match metrics.segments[1].identity() {
+            crate::RoutineIdentity::Routine(fp) => *fp,
+            crate::RoutineIdentity::Root => unreachable!(),
+        }
+    };
+    assert_eq!(fingerprint(true).base(), fingerprint(false).base());
+    assert_ne!(fingerprint(true), fingerprint(false));
+
+    let registry = {
+        let mut builder = RegistryBuilder::<Fp, TestRank>::new();
+        builder = builder.register_circuit(Feed(true))?;
+        builder = builder.register_circuit(Feed(false))?;
+        builder.finalize()?
+    };
+    let (w, x, y) = (random(), random(), random());
+    assert_eq!(registry.xy(x, y).eval(w), registry.wxy(w, x, y));
     Ok(())
 }
 

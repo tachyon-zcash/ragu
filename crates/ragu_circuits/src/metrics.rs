@@ -153,7 +153,7 @@ const DEEP_HASH_PERSONAL: &[u8; 16] = b"ragu_deep_hash__";
 
 impl DeepFingerprint {
     /// Builds a [`DeepFingerprint`] from a routine's base segment shape,
-    /// output-gadget wire values, and direct child deep hashes.
+    /// output-gadget wire values, and direct child routines.
     ///
     /// The deep hash absorbs, in order:
     ///
@@ -163,18 +163,23 @@ impl DeepFingerprint {
     ///    concatenation ambiguity on the subsequent stream) followed by
     ///    each output wire's raw field-element value in canonical byte
     ///    repr;
-    /// 3. the number of direct child routines (length-bound) followed by
-    ///    each child's deep hash.
+    /// 3. the number of direct child routines (length-bound) followed by,
+    ///    for each child, the number of its input wires and their raw values
+    ///    as seen in this routine's frame, then the child's deep hash.
     ///
     /// Hashing output-wire values directly (rather than collapsing them
     /// to a single scalar first) keeps the hash sensitive to wire-order
-    /// permutations that leave the output gadget tuple-equal. The stored
-    /// `deep` is the first 8 bytes of the BLAKE2b digest interpreted as a
-    /// little-endian `u64`.
+    /// permutations that leave the output gadget tuple-equal. A child's
+    /// input values bind the linear map this routine applies to its own
+    /// wires before handing them on — `child(2·in)` and `child(in)` emit
+    /// no constraint that would tell them apart, yet their output wires
+    /// differ, which matters once a recording of one is replayed for the
+    /// other. The stored `deep` is the first 8 bytes of the BLAKE2b digest
+    /// interpreted as a little-endian `u64`.
     fn new<F: Field, Ro: Routine<F>>(
         base: BaseFingerprint,
         output_wires: &[F],
-        children: &[u64],
+        children: &[ChildDigest<F>],
     ) -> Self {
         let _ = core::marker::PhantomData::<Ro>;
         let mut state = blake2b_simd::Params::new()
@@ -189,7 +194,11 @@ impl DeepFingerprint {
         }
         state.update(&(children.len() as u64).to_le_bytes());
         for child in children {
-            state.update(&child.to_le_bytes());
+            state.update(&(child.inputs.len() as u64).to_le_bytes());
+            for w in &child.inputs {
+                state.update(w.to_bytes().as_ref());
+            }
+            state.update(&child.deep.to_le_bytes());
         }
         let bytes = state.finalize();
         let bytes = bytes.as_array();
@@ -371,9 +380,17 @@ struct CounterScope<F> {
     /// `F::ZERO` on every scope push.
     result: F,
 
-    /// Deep hashes of direct child routines, collected during execution.
-    /// Folded into this scope's own `DeepFingerprint` on exit.
-    child_deep_hashes: Vec<u64>,
+    /// Direct child routines, collected during execution and folded into
+    /// this scope's own `DeepFingerprint` on exit.
+    children: Vec<ChildDigest<F>>,
+}
+
+/// What a routine's deep fingerprint records about one direct child call.
+struct ChildDigest<F> {
+    /// The child's input wires, as seen in the calling routine's frame.
+    inputs: Vec<F>,
+    /// The child's deep hash.
+    deep: u64,
 }
 
 /// A [`WireMap`] that mints each source wire as a fresh value from an
@@ -493,7 +510,7 @@ impl<F: Field> Counter<F> {
                 current_d: x3,
                 remap: ReinitWires::new(x_remap),
                 result: F::ZERO,
-                child_deep_hashes: Vec::new(),
+                children: Vec::new(),
             },
             num_constraints: 0,
             num_gates: 0,
@@ -598,7 +615,7 @@ impl<'dr, F: Field> Driver<'dr> for Counter<F> {
                 current_d: self.x3,
                 remap: ReinitWires::new(self.x_remap),
                 result: F::ZERO,
-                child_deep_hashes: Vec::new(),
+                children: Vec::new(),
             },
         );
 
@@ -606,7 +623,9 @@ impl<'dr, F: Field> Driver<'dr> for Counter<F> {
         // geometric sequences so the fingerprint captures only internal
         // structure, not caller context. Uses the child scope's fresh
         // `ReinitWires`, so wires observe the same positional prefix every
-        // invocation.
+        // invocation. The parent-frame values are kept for the parent's own
+        // deep hash, which is what binds how the parent feeds this child.
+        let child_inputs = extract_wires(&input, |w: &F| *w)?;
         let new_input = Ro::Input::map_gadget(&input, &mut self.scope.remap)?;
 
         // Predict and execute the routine on this driver.
@@ -623,15 +642,17 @@ impl<'dr, F: Field> Driver<'dr> for Counter<F> {
         // deep hashes.
         let seg = &self.segments[segment_idx];
         let base = BaseFingerprint::new(self.scope.result, seg.num_gates, seg.num_constraints);
-        let fingerprint =
-            DeepFingerprint::new::<F, Ro>(base, &output_wires, &self.scope.child_deep_hashes);
+        let fingerprint = DeepFingerprint::new::<F, Ro>(base, &output_wires, &self.scope.children);
         self.segments[segment_idx].identity = RoutineIdentity::Routine(fingerprint);
 
         // Restore parent scope, then record this child's deep hash so the
         // parent's own deep fingerprint (computed when the parent itself
         // returns) binds it.
         self.scope = saved;
-        self.scope.child_deep_hashes.push(fingerprint.deep);
+        self.scope.children.push(ChildDigest {
+            inputs: child_inputs,
+            deep: fingerprint.deep,
+        });
 
         // Remap child output wires as fresh tokens in the parent context.
         // The child's geometric sequences share bases with the parent
@@ -768,7 +789,7 @@ pub(crate) mod tests {
         Ok(RoutineIdentity::Routine(DeepFingerprint::new::<F, Ro>(
             base,
             &output_wires,
-            &counter.scope.child_deep_hashes,
+            &counter.scope.children,
         )))
     }
 
