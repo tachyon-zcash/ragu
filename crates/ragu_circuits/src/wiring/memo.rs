@@ -1,77 +1,31 @@
-//! Memoization scaffolding for routine contributions to $s(x, y)$.
+//! Memoization of routine contributions to $s(x, y)$.
 //!
-//! [`MemoCache`] stores a routine's evaluated contribution together with the
-//! values of its output-gadget wires, keyed by the routine's fingerprint and
-//! the [`Placement`] of its segment. On a cache hit, [`WireInjector`] rebuilds
-//! the output gadget from the cached wire values without re-executing the
-//! routine.
+//! [`MemoCache`] stores, per routine fingerprint, the position-free
+//! [`Recorded`] contribution produced by the [`record`](super::record)
+//! module. Because a recording is relative to the routine's own placement and
+//! symbolic in its inputs, it can be replayed for any invocation with the
+//! same [`DeepFingerprint`] — at a different offset, with different inputs,
+//! within one circuit or across circuits — by evaluating
+//! $y^{\ell}(x^m g_{+} + x^{-m} g_{-} + g_1 + \sum_j h_j w_j)$ at the new
+//! placement. On a cache hit, [`WireInjector`] rebuilds the output gadget
+//! from the replayed output wires without re-executing the routine.
 //!
-//! # What a cached value depends on
-//!
-//! The cached scalar is the routine's *absolute* contribution to $s(x, y)$,
-//! including its nested sub-routines. Besides the routine's structure (bound
-//! by the [`DeepFingerprint`]), that value depends on:
-//!
-//! - the segment's absolute gate offset, which fixes the $X$-monomials of
-//!   every wire allocated inside the routine;
-//! - the segment's absolute constraint offset, which fixes the $Y$-powers;
-//! - the values of the input gadget's wires, which appear in the routine's
-//!   interface constraints (the book's *interface contribution*).
-//!
-//! The first two form the cache key; [`MemoCache::lookup`] checks the third
-//! before reporting a hit. Reuse therefore requires an identical placement,
-//! which the per-circuit floor plan only produces for circuits that emit the
-//! same prefix. Position-independent caching (factoring the placement out and
-//! computing interface terms per invocation) is future work.
+//! Only top-level routines are memoized; an entry covers the routine's whole
+//! subtree, which is what deep-fingerprint equality guarantees to match.
 
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::collections::BTreeMap;
 use core::marker::PhantomData;
 
 use ragu_core::{Error, Result, convert::WireMap, drivers::DriverTypes};
 use udon::field::Field;
 
+use super::record::Recorded;
 use crate::DeepFingerprint;
 
-/// Absolute offsets of a routine's segment in the polynomial layout.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct Placement {
-    /// Gate index where the segment begins.
-    pub(crate) gate_start: usize,
-    /// Constraint index where the segment begins.
-    pub(crate) constraint_start: usize,
-}
-
-/// Cached contribution of one top-level routine invocation (including its
-/// nested sub-routines) at a given [`Placement`].
-///
-/// On cache hit, the `output_wires` can be used to reconstruct the output gadget
-/// without re-executing the routine, enabling full memoization.
-#[derive(Clone, Debug)]
-pub(crate) struct CachedRoutine<F> {
-    /// Values of the input gadget's wires at recording time.
-    pub(crate) input_wires: Vec<F>,
-
-    /// The routine's absolute contribution to $s(x, y)$, nested
-    /// sub-routines included.
-    pub(crate) contribution: F,
-
-    /// Output wire values for reconstructing the output gadget on cache hit.
-    pub(crate) output_wires: Vec<F>,
-
-    /// Number of DFS segments spanned by the routine and its sub-routines.
-    /// A cache hit skips this many segments of the floor plan.
-    pub(crate) num_segments: usize,
-}
-
-/// Cache for routine contributions, keyed by `(DeepFingerprint, Placement)`.
-///
-/// Used for inter-circuit memoization: when evaluating multiple circuits,
-/// routines with the same placement can reuse cached contributions. See the
-/// [module documentation](self) for the conditions under which an entry is
-/// reusable.
+/// Cache of recorded routine contributions, keyed by [`DeepFingerprint`].
 #[derive(Clone)]
 pub(crate) struct MemoCache<F> {
-    entries: BTreeMap<(DeepFingerprint, Placement), CachedRoutine<F>>,
+    entries: BTreeMap<DeepFingerprint, Recorded<F>>,
     hits: usize,
 }
 
@@ -102,53 +56,33 @@ impl<F> MemoCache<F> {
         self.entries.len()
     }
 
-    /// Stores a routine contribution in the cache.
-    ///
-    /// Keeps the first entry recorded for a key; later invocations at the
-    /// same placement with different inputs are not cached.
-    pub(crate) fn insert(
-        &mut self,
-        fingerprint: DeepFingerprint,
-        placement: Placement,
-        entry: CachedRoutine<F>,
-    ) {
-        self.entries
-            .entry((fingerprint, placement))
-            .or_insert(entry);
+    /// Returns the recording for `fingerprint`, counting a hit if present.
+    pub(crate) fn lookup(&mut self, fingerprint: &DeepFingerprint) -> Option<&Recorded<F>> {
+        let entry = self.entries.get(fingerprint)?;
+        self.hits += 1;
+        Some(entry)
+    }
+
+    /// Returns the recording for `fingerprint` without counting a hit.
+    pub(crate) fn get(&self, fingerprint: &DeepFingerprint) -> Option<&Recorded<F>> {
+        self.entries.get(fingerprint)
+    }
+
+    /// Stores a recording for `fingerprint`.
+    pub(crate) fn insert(&mut self, fingerprint: DeepFingerprint, recorded: Recorded<F>) {
+        self.entries.insert(fingerprint, recorded);
     }
 }
 
-impl<F: Field> MemoCache<F> {
-    /// Looks up a reusable entry for an invocation of `fingerprint` at
-    /// `placement`.
-    ///
-    /// Returns `None` unless the stored entry was recorded with the same
-    /// input wires; see the [module documentation](self).
-    pub(crate) fn lookup(
-        &mut self,
-        fingerprint: &DeepFingerprint,
-        placement: Placement,
-        input_wires: &[F],
-    ) -> Option<&CachedRoutine<F>> {
-        let entry = self.entries.get(&(*fingerprint, placement))?;
-        if entry.input_wires == input_wires {
-            self.hits += 1;
-            Some(entry)
-        } else {
-            None
-        }
-    }
-}
-
-/// Injects cached wire values into a gadget template.
+/// Injects replayed wire values into a gadget template.
 ///
 /// Where [`extract_wires`](ragu_core::convert::extract_wires) captures wires
-/// from a gadget into a cache, the injector reconstructs a gadget from cached
-/// wires. Used on cache hit to avoid re-executing routines.
+/// from a gadget, the injector reconstructs a gadget from a wire stream. Used
+/// on cache hit to avoid re-executing routines.
 ///
 /// The injector implements [`WireMap`] to convert from a wire-erased driver
-/// (with `Wire = ()`) to a target driver with `Wire = F`, popping cached wires
-/// in the same order that [`map_gadget`] visits them.
+/// (with `Wire = ()`) to a target driver with `Wire = F`, popping wires in
+/// the same order that [`map_gadget`] visits them.
 ///
 /// [`map_gadget`]: ragu_core::gadgets::GadgetKind::map_gadget
 pub(crate) struct WireInjector<'a, F, Src: DriverTypes, Dst: DriverTypes> {
@@ -157,7 +91,7 @@ pub(crate) struct WireInjector<'a, F, Src: DriverTypes, Dst: DriverTypes> {
 }
 
 impl<'a, F, Src: DriverTypes, Dst: DriverTypes> WireInjector<'a, F, Src, Dst> {
-    /// Creates a new wire injector from a slice of cached wires.
+    /// Creates a new wire injector from a slice of wire values.
     pub(crate) fn new(wires: &'a [F]) -> Self {
         Self {
             wires: wires.iter(),
@@ -165,7 +99,7 @@ impl<'a, F, Src: DriverTypes, Dst: DriverTypes> WireInjector<'a, F, Src, Dst> {
         }
     }
 
-    /// Returns true if all cached wires have been consumed.
+    /// Returns true if all wires have been consumed.
     pub(crate) fn is_exhausted(&self) -> bool {
         self.wires.len() == 0
     }

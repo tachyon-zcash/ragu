@@ -63,7 +63,10 @@ use ragu_core::{
 };
 use udon::field::Field;
 
-use super::memo::{CachedRoutine, MemoCache, Placement, WireInjector};
+use super::{
+    memo::{MemoCache, WireInjector},
+    record,
+};
 use crate::{
     DeepFingerprint, DriverScope, RoutineIdentity, SegmentRecord, floor_planner::ConstraintSegment,
     polynomials::Rank, raw::RawCircuit,
@@ -272,55 +275,76 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         let gate_start = seg.gate_start;
         let constraint_start = seg.constraint_start;
 
-        // Only top-level routines are memoized; a cached entry covers the
-        // whole subtree.
+        // Only top-level routines are memoized; a recording covers the whole
+        // subtree. On a miss the routine is recorded in a position-free frame
+        // (see the `record` module); either way its contribution and output
+        // wires are replayed at this placement.
         let memo = (self.routine_depth == 0 && self.memo_cache.is_some())
             .then(|| self.fingerprint_at(index));
-        let placement = Placement {
-            gate_start,
-            constraint_start,
-        };
-
-        // The input gadget's wires appear in the routine's constraints, so an
-        // entry is only reusable for the same inputs (see the `memo` module).
-        let input_wires = match memo {
-            Some(_) => extract_wires(&input, |w: &F| *w)?,
-            None => Vec::new(),
-        };
 
         if let Some(fingerprint) = memo {
             let cache = self.memo_cache.as_mut().expect("memo implies a cache");
-            if let Some(cached) = cache.lookup(&fingerprint, placement, &input_wires) {
-                let contribution = cached.contribution;
-                let num_segments = cached.num_segments;
+            let inputs = match cache.lookup(&fingerprint) {
+                Some(_) => extract_wires(&input, |w: &F| *w)?,
+                None => {
+                    let (recorded, inputs) = record::record(
+                        &routine,
+                        &input,
+                        self.record_params(),
+                        self.floor_plan,
+                        index,
+                    )?;
+                    self.memo_cache
+                        .as_mut()
+                        .expect("memo implies a cache")
+                        .insert(fingerprint, recorded);
+                    inputs
+                }
+            };
 
-                // Cache hit: reconstruct the output gadget from the cached
-                // wires instead of re-executing the routine.
-                // 1. Execute on a wireless emulator to get a template with unit wires.
-                // 2. Use WireInjector to replace the unit wires with the cached values.
-                type W<F> = Emulator<Wireless<Empty, F>>;
+            // Replay at this segment's placement.
+            let xm = self.x.pow_u64(gate_start as u64);
+            let xm_inv = self.x_inv.pow_u64(gate_start as u64);
+            let y_pow_constraint_start = self.y.pow_u64(constraint_start as u64);
+            let recorded = self
+                .memo_cache
+                .as_ref()
+                .and_then(|cache| cache.get(&fingerprint))
+                .expect("recording was just looked up or inserted");
+            let contribution =
+                y_pow_constraint_start * recorded.pieces.evaluate(xm, xm_inv, &inputs);
+            let output_wires: Vec<F> = recorded
+                .outputs
+                .iter()
+                .map(|form| form.evaluate(xm, xm_inv, &inputs))
+                .collect();
+            let num_segments = recorded.num_segments;
 
-                let aux = Emulator::predict(&routine, &input)?.into_aux();
-                let wireless_input = StripWires::<Self>::remap(&input)?;
-                let template = routine.execute(&mut W::<F>::wireless(), wireless_input, aux)?;
+            // Reconstruct the output gadget from the replayed wires:
+            // 1. Execute on a wireless emulator to get a template with unit wires.
+            // 2. Use WireInjector to replace the unit wires with the values.
+            type W<F> = Emulator<Wireless<Empty, F>>;
 
-                let mut injector = WireInjector::<_, W<F>, Self>::new(&cached.output_wires);
-                let output = Ro::Output::map_gadget(&template, &mut injector)?;
-                debug_assert!(
-                    injector.is_exhausted(),
-                    "wire cache should be fully consumed"
-                );
+            let aux = Emulator::predict(&routine, &input)?.into_aux();
+            let wireless_input = StripWires::<Self>::remap(&input)?;
+            let template = routine.execute(&mut W::<F>::wireless(), wireless_input, aux)?;
 
-                // The entry already includes the nested sub-routines, so
-                // skip their segments.
-                self.scope.sum += contribution;
-                self.current_routine += num_segments - 1;
+            let mut injector = WireInjector::<_, W<F>, Self>::new(&output_wires);
+            let output = Ro::Output::map_gadget(&template, &mut injector)?;
+            debug_assert!(
+                injector.is_exhausted(),
+                "replayed wires should be fully consumed"
+            );
 
-                return Ok(output);
-            }
+            // The recording already includes the nested sub-routines, so
+            // skip their segments.
+            self.scope.sum += contribution;
+            self.current_routine += num_segments - 1;
+
+            return Ok(output);
         }
 
-        // Cache miss: jump to this routine's absolute position in the polynomial;
+        // Jump to this routine's absolute position in the polynomial;
         // see "Polynomial Encoding and Scope Jumps" in the `s` module doc.
         let x_pow = self.x.pow_u64(gate_start as u64);
         let x_inv_pow = self.x_inv.pow_u64(gate_start as u64);
@@ -362,21 +386,6 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
         let routine_contribution =
             y_pow_constraint_start.mul_add(&self.scope.result, &self.scope.sum);
 
-        if let Some(fingerprint) = memo
-            && let Ok(output) = &exec_result
-        {
-            let entry = CachedRoutine {
-                input_wires,
-                contribution: routine_contribution,
-                output_wires: extract_wires(output, |w: &F| *w)?,
-                num_segments: self.current_routine - index + 1,
-            };
-            self.memo_cache
-                .as_mut()
-                .expect("memo implies a cache")
-                .insert(fingerprint, placement, entry);
-        }
-
         self.scope = saved;
         self.scope.sum += routine_contribution;
 
@@ -390,6 +399,19 @@ impl<F: Field, R: Rank> Evaluator<'_, F, R> {
         match self.segment_records[index].identity() {
             RoutineIdentity::Routine(fp) => *fp,
             RoutineIdentity::Root => unreachable!("routine segments are never Root"),
+        }
+    }
+
+    /// Evaluation-point data shared with the routine recorder.
+    fn record_params(&self) -> record::Params<F> {
+        record::Params {
+            x: self.x,
+            x_inv: self.x_inv,
+            y: self.y,
+            base_a_x: self.base_a_x,
+            base_b_x: self.base_b_x,
+            base_c_x: self.base_c_x,
+            a_to_d: self.a_to_d,
         }
     }
 }
@@ -418,10 +440,10 @@ pub fn eval<F: Field, RC: RawCircuit<F>, R: Rank>(
 
 /// Evaluates $s(x, y)$ with inter-circuit memoization.
 ///
-/// Like [`eval`], but caches routine contributions for reuse across circuits.
-/// Routines with the same placement and inputs share cached results when the
-/// same `cache` is passed to multiple calls; see the [`memo`](super::memo)
-/// module.
+/// Like [`eval`], but records each top-level routine's contribution in a
+/// position-free form and replays it for every later invocation with the same
+/// fingerprint, within this circuit and across circuits that share `cache`;
+/// see the [`memo`](super::memo) and [`record`] modules.
 ///
 /// # Arguments
 ///

@@ -96,6 +96,7 @@
 
 mod memo;
 pub mod monomials;
+mod record;
 pub mod sx;
 pub mod sxy;
 pub mod sy;

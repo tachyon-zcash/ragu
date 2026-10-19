@@ -1,8 +1,8 @@
 //! Memoized $s(x, y)$ evaluation must agree with the plain evaluators.
 //!
 //! The circuits here place the same routines at different absolute offsets,
-//! with different input wires, and nested inside other routines, so that the
-//! memoized path is exercised on both reusable and non-reusable cache entries.
+//! with different input wires, repeated within one circuit, and nested inside
+//! other routines, so that recordings are replayed under every kind of shift.
 
 use alloc::vec::Vec;
 
@@ -18,12 +18,13 @@ use crate::{
     wiring::MemoCache,
 };
 
-const LAYOUTS: [RoutineLayout; 5] = [
+const LAYOUTS: [RoutineLayout; 6] = [
     RoutineLayout::Single,
     RoutineLayout::Shifted(2),
     RoutineLayout::Nested,
     RoutineLayout::FeedFirst,
     RoutineLayout::FeedSecond,
+    RoutineLayout::Repeated,
 ];
 
 fn random() -> Fp {
@@ -49,20 +50,30 @@ fn routine_circuits_consistency() -> Result<()> {
     Ok(())
 }
 
-/// `wxy_combined` equals `wxy` whether or not cache entries are reusable.
+/// `wxy_combined` equals `wxy` under every kind of replay.
 #[test]
 fn wxy_combined_matches_wxy_across_layouts() -> Result<()> {
     use RoutineLayout::*;
     let cases: &[&[RoutineLayout]] = &[
-        // Identical layout: every top-level routine is a cache hit.
+        // Identical layout.
         &[Single, Single],
-        // Same fingerprint and invocation index, different gate offset.
+        // Same routine, different gate offset.
         &[Single, Shifted(2)],
         // Same layout, different input wire.
         &[FeedFirst, FeedSecond],
         // A hit on a routine with a nested call must skip the nested segment.
         &[Nested, Nested],
-        &[Nested, Single, Shifted(1), Nested, FeedSecond, FeedFirst],
+        // The same routine twice within one circuit.
+        &[Repeated, Single],
+        &[
+            Nested,
+            Single,
+            Shifted(1),
+            Repeated,
+            Nested,
+            FeedSecond,
+            FeedFirst,
+        ],
     ];
 
     for layouts in cases {
@@ -86,25 +97,27 @@ fn wxy_combined_matches_wxy_across_layouts() -> Result<()> {
     Ok(())
 }
 
-/// A shared cache is reused exactly when the routine sits at the same
-/// offsets with the same input wires, and the memoized value always equals
-/// the plain evaluation.
+/// A recording is replayed for every later invocation with the same
+/// fingerprint — shifted, with other inputs, within the same circuit — and
+/// the memoized value always equals the plain evaluation.
 #[test]
-fn cache_reuse_requires_identical_layout_and_inputs() -> Result<()> {
+fn recordings_replay_at_any_placement() -> Result<()> {
     use RoutineLayout::*;
     // (layout, expected new hits when evaluated in this order)
     let sequence = [
         (Single, 0),
         // Identical to the first circuit.
         (Single, 1),
-        // Same fingerprint, shifted gate offset.
-        (Shifted(2), 0),
+        // Same routine, shifted gate offset.
+        (Shifted(2), 1),
         // Same offsets as `Single`, but the routine reads a different wire.
-        (FeedSecond, 0),
-        // Both the nested routine and the one after it are new entries.
+        (FeedSecond, 1),
+        // Both the nested routine and the one after it are new recordings.
         (Nested, 0),
-        // Both reusable; the hit on the nested routine skips its child segment.
+        // Both replayed; the hit on the nested routine skips its child segment.
         (Nested, 2),
+        // Two invocations in one circuit: both replayed.
+        (Repeated, 2),
     ];
 
     let objs = sequence

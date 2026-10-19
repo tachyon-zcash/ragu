@@ -4,6 +4,7 @@ mod error_swallowing;
 mod identity;
 mod known_routine_soundness;
 mod memo;
+mod memo_proptest;
 mod segment_order;
 
 use ragu_core::{
@@ -521,6 +522,9 @@ pub(crate) enum RoutineLayout {
     /// Allocates `u` and `v`, then `DoubleSquare(v)`: the layout of
     /// [`FeedFirst`](Self::FeedFirst) with a different input wire.
     FeedSecond,
+    /// `w ↦ DoubleSquare(DoubleSquare(w))`: the same routine twice at the
+    /// top level of one circuit.
+    Repeated,
 }
 
 /// A circuit built from the routines above according to a [`RoutineLayout`].
@@ -562,6 +566,11 @@ impl Circuit<Fp> for RoutineCircuit {
                 let w = Element::alloc(dr, allocator, witness)?;
                 let a = dr.routine(NestedDoubleSquare, w)?;
                 dr.routine(SingleSquare, a)?
+            }
+            RoutineLayout::Repeated => {
+                let w = Element::alloc(dr, allocator, witness)?;
+                let a = dr.routine(DoubleSquare, w)?;
+                dr.routine(DoubleSquare, a)?
             }
             RoutineLayout::FeedFirst | RoutineLayout::FeedSecond => {
                 let copy = witness.as_ref().map(|w| *w);
