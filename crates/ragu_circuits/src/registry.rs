@@ -53,7 +53,7 @@
 //!
 //! [registry chapter]: https://tachyon.z.cash/ragu/protocol/construction/registry.html
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 
 use blake2b_simd::Params;
 use ragu_core::{Error, Result};
@@ -66,7 +66,7 @@ use crate::{
     BondingObject, Circuit, WiringObject,
     floor_planner::ConstraintSegment,
     polynomials::{Rank, sparse},
-    wiring::MemoCache,
+    wiring::{MemoCache, Placement},
 };
 
 /// Represents a simple numeric index of a circuit in the registry.
@@ -810,7 +810,7 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
         &self,
         cache: &LagrangeCache<F>,
         init: impl FnOnce() -> T,
-        add_poly: impl Fn(&dyn WiringObject<F, R>, &[ConstraintSegment], F, &mut T),
+        mut add_poly: impl FnMut(&dyn WiringObject<F, R>, &[ConstraintSegment], F, &mut T),
     ) -> T {
         let mut result = init();
 
@@ -1011,25 +1011,55 @@ impl<F: Field, R: Rank> RegistryAt<'_, F, R> {
     }
 
     /// Evaluate the registry polynomial restricted at $W$ and $Y$, unrestricted at $X$.
+    ///
+    /// Routine contributions are memoized across the circuits, as in
+    /// [`wxy_over_domain`](Registry::wxy_over_domain).
     pub fn y(&self, y: F) -> sparse::Polynomial<F, R> {
         self.restriction(y, false)
     }
 
     /// Evaluate the registry polynomial restricted at $W$ and $X$, unrestricted at $Y$.
+    ///
+    /// Routine contributions are memoized across the circuits, as in
+    /// [`wxy_over_domain`](Registry::wxy_over_domain).
     pub fn x(&self, x: F) -> sparse::Polynomial<F, R> {
         self.restriction(x, true)
     }
 
     /// The restriction at $X$ = `point` when `fix_x` is set, and at $Y$ =
-    /// `point` otherwise.
+    /// `point` otherwise, memoizing routine contributions across the
+    /// circuits.
     fn restriction(&self, point: F, fix_x: bool) -> sparse::Polynomial<F, R> {
-        let poly = self.registry.w_cached(
+        let mut cache = MemoCache::new().with_sharing();
+        let mut shared: BTreeMap<(crate::DeepFingerprint, Placement), F> = BTreeMap::new();
+        let mut poly = self.registry.w_cached(
             &self.cache,
             sparse::Polynomial::default,
             |circuit, floor_plan, coefficient, result| {
-                add_restriction(circuit, floor_plan, point, fix_x, coefficient, result);
+                let part = if fix_x {
+                    circuit.sx_with_cache(point, floor_plan, &mut cache)
+                } else {
+                    circuit.sy_with_cache(point, floor_plan, &mut cache)
+                };
+                result.add_scaled_assign(&part, coefficient);
+                for block in cache.take_shared() {
+                    *shared.entry(block).or_insert(F::ZERO) += coefficient;
+                }
             },
         );
+
+        // Each shared block's position-independent part, once per placement,
+        // scaled by the Lagrange coefficients of the circuits carrying it.
+        for ((fingerprint, placement), coefficient) in shared {
+            let recorded = cache.get(&fingerprint).expect("noted blocks were recorded");
+            let block = if fix_x {
+                crate::wiring::sx::shared_block::<F, R>(recorded, placement, point, coefficient)
+            } else {
+                crate::wiring::sy::shared_block::<F, R>(recorded, placement, point, coefficient)
+            };
+            poly.add_assign(&block);
+        }
+
         self.finish_restriction(poly, point)
     }
 

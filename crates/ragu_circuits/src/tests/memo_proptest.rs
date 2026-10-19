@@ -188,6 +188,12 @@ proptest! {
         for (x, y) in [(random(), random()), (Fp::ZERO, random()), (random(), Fp::ZERO)] {
             let mut cache = MemoCache::new();
             prop_assert_eq!(obj.sxy_with_cache(x, y, &plan, &mut cache), obj.sxy(x, y, &plan));
+            let mut cache = MemoCache::new();
+            let memoized = obj.sx_with_cache(x, &plan, &mut cache);
+            prop_assert!(memoized.iter_coeffs().eq(obj.sx(x, &plan).iter_coeffs()));
+            let mut cache = MemoCache::new();
+            let memoized = obj.sy_with_cache(y, &plan, &mut cache);
+            prop_assert!(memoized.iter_coeffs().eq(obj.sy(y, &plan).iter_coeffs()));
         }
     }
 
@@ -219,6 +225,8 @@ proptest! {
         let w_in_domain = CircuitIndex::new(1).omega_j::<Fp>();
         for (w, x, y) in [(w, x, y), (w_in_domain, x, y), (w, Fp::ZERO, y), (w, x, Fp::ZERO)] {
             prop_assert_eq!(registry.wxy(w, x, y), registry.wxy_combined(w, x, y));
+            prop_assert_eq!(registry.wx(w, x).eval(y), registry.wxy(w, x, y));
+            prop_assert_eq!(registry.wy(w, y).eval(x), registry.wxy(w, x, y));
         }
     }
 }

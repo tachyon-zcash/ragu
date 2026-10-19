@@ -101,4 +101,4 @@ pub mod sx;
 pub mod sxy;
 pub mod sy;
 
-pub(crate) use memo::MemoCache;
+pub(crate) use memo::{MemoCache, Placement};

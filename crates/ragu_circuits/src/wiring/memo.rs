@@ -12,8 +12,19 @@
 //!
 //! Only top-level routines are memoized; an entry covers the routine's whole
 //! subtree, which is what deep-fingerprint equality guarantees to match.
+//!
+//! # Sharing across circuits
+//!
+//! When the registry evaluates many circuits at the same point, blocks that
+//! sit at the same [`Placement`] in several circuits (the floor planner aligns
+//! them on purpose) contribute the same position-independent vector to each.
+//! In *sharing* mode the `sx`/`sy` evaluators leave that part out of their
+//! per-circuit result and note the block instead; the registry then adds the
+//! vector once, scaled by the sum of the circuits' Lagrange coefficients. The
+//! interface part depends on each circuit's own input wires and stays
+//! per-circuit.
 
-use alloc::collections::BTreeMap;
+use alloc::{collections::BTreeMap, vec::Vec};
 use core::marker::PhantomData;
 
 use ragu_core::{Error, Result, convert::WireMap, drivers::DriverTypes};
@@ -22,11 +33,26 @@ use udon::field::Field;
 use super::record::Recorded;
 use crate::DeepFingerprint;
 
+/// Absolute offsets of a routine block's segment in the polynomial layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct Placement {
+    /// Gate index where the block begins.
+    pub(crate) gate_start: usize,
+    /// Constraint index where the block begins.
+    pub(crate) constraint_start: usize,
+}
+
 /// Cache of recorded routine contributions, keyed by [`DeepFingerprint`].
 #[derive(Clone)]
 pub(crate) struct MemoCache<F> {
     entries: BTreeMap<DeepFingerprint, Recorded<F>>,
     hits: usize,
+    /// Whether evaluators leave blocks' position-independent parts to the
+    /// registry; see the [module documentation](self).
+    sharing: bool,
+    /// Blocks replayed since the last [`take_shared`](Self::take_shared),
+    /// in sharing mode.
+    shared: Vec<(DeepFingerprint, Placement)>,
 }
 
 impl<F> Default for MemoCache<F> {
@@ -41,7 +67,30 @@ impl<F> MemoCache<F> {
         Self {
             entries: BTreeMap::new(),
             hits: 0,
+            sharing: false,
+            shared: Vec::new(),
         }
+    }
+
+    /// Enables sharing mode; see the [module documentation](self).
+    pub(crate) fn with_sharing(mut self) -> Self {
+        self.sharing = true;
+        self
+    }
+
+    /// Whether sharing mode is on.
+    pub(crate) fn is_sharing(&self) -> bool {
+        self.sharing
+    }
+
+    /// Notes a block whose position-independent part was left out.
+    pub(crate) fn note_shared(&mut self, fingerprint: DeepFingerprint, placement: Placement) {
+        self.shared.push((fingerprint, placement));
+    }
+
+    /// Takes the blocks noted since the previous call.
+    pub(crate) fn take_shared(&mut self) -> Vec<(DeepFingerprint, Placement)> {
+        core::mem::take(&mut self.shared)
     }
 
     /// Number of successful lookups so far.
@@ -81,18 +130,18 @@ impl<F> MemoCache<F> {
 /// on cache hit to avoid re-executing routines.
 ///
 /// The injector implements [`WireMap`] to convert from a wire-erased driver
-/// (with `Wire = ()`) to a target driver with `Wire = F`, popping wires in
-/// the same order that [`map_gadget`] visits them.
+/// (with `Wire = ()`) to a target driver with wires of type `W`, popping
+/// wires in the same order that [`map_gadget`] visits them.
 ///
 /// [`map_gadget`]: ragu_core::gadgets::GadgetKind::map_gadget
-pub(crate) struct WireInjector<'a, F, Src: DriverTypes, Dst: DriverTypes> {
-    wires: core::slice::Iter<'a, F>,
+pub(crate) struct WireInjector<'a, W, Src: DriverTypes, Dst: DriverTypes> {
+    wires: core::slice::Iter<'a, W>,
     _marker: PhantomData<(Src, Dst)>,
 }
 
-impl<'a, F, Src: DriverTypes, Dst: DriverTypes> WireInjector<'a, F, Src, Dst> {
-    /// Creates a new wire injector from a slice of wire values.
-    pub(crate) fn new(wires: &'a [F]) -> Self {
+impl<'a, W, Src: DriverTypes, Dst: DriverTypes> WireInjector<'a, W, Src, Dst> {
+    /// Creates a new wire injector from a slice of wires.
+    pub(crate) fn new(wires: &'a [W]) -> Self {
         Self {
             wires: wires.iter(),
             _marker: PhantomData,
@@ -105,19 +154,20 @@ impl<'a, F, Src: DriverTypes, Dst: DriverTypes> WireInjector<'a, F, Src, Dst> {
     }
 }
 
-impl<F, Src, Dst> WireMap<F> for WireInjector<'_, F, Src, Dst>
+impl<F, W, Src, Dst> WireMap<F> for WireInjector<'_, W, Src, Dst>
 where
     F: Field,
+    W: Clone,
     Src: DriverTypes<ImplField = F, ImplWire = ()>,
-    Dst: DriverTypes<ImplField = F, ImplWire = F>,
+    Dst: DriverTypes<ImplField = F, ImplWire = W>,
 {
     type Src = Src;
     type Dst = Dst;
 
-    fn convert_wire(&mut self, _wire: &()) -> Result<F> {
+    fn convert_wire(&mut self, _wire: &()) -> Result<W> {
         self.wires
             .next()
-            .copied()
+            .cloned()
             .ok_or_else(|| Error::InvalidWitness("wire cache underflow".into()))
     }
 }

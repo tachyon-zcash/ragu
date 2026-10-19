@@ -118,6 +118,9 @@ struct Evaluator<'fp, F, R> {
     /// The evaluation point $y$, used for Horner accumulation.
     y: F,
 
+    /// $y^{-1}$ (or zero when $y = 0$), used by the routine recorder.
+    y_inv: F,
+
     /// Base monomial $x^{2n}$, used to compute routine starting monomials.
     base_a_x: F,
 
@@ -293,6 +296,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
                         self.record_params(),
                         self.floor_plan,
                         index,
+                        |w: &F| *w,
                     )?;
                     self.memo_cache
                         .as_mut()
@@ -408,6 +412,7 @@ impl<F: Field, R: Rank> Evaluator<'_, F, R> {
             x: self.x,
             x_inv: self.x_inv,
             y: self.y,
+            y_inv: self.y_inv,
             base_a_x: self.base_a_x,
             base_b_x: self.base_b_x,
             base_c_x: self.base_c_x,
@@ -489,6 +494,11 @@ fn eval_inner<F: Field, RC: RawCircuit<F>, R: Rank>(
     let base_c_x = xn4 * x_inv; // x^(4n - 1)
     let xn_inv = x_inv.pow_u64(R::n() as u64); // x^(-n), or 0 if x = 0
     let base_a_x_inv = xn_inv.square(); // x^(-2n), or 0 if x = 0
+    let y_inv = if y == F::ZERO {
+        F::ZERO
+    } else {
+        y.invert().expect("y is not zero")
+    };
 
     let mut evaluator = Evaluator::<F, R> {
         scope: SxyScope {
@@ -503,6 +513,7 @@ fn eval_inner<F: Field, RC: RawCircuit<F>, R: Rank>(
         x,
         x_inv,
         y,
+        y_inv,
         base_a_x,
         base_b_x,
         base_c_x,

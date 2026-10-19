@@ -1,4 +1,4 @@
-//! Position-free recording of a routine's contribution to $s(x, y)$.
+//! Position-free recording of a routine's contribution to $s(X, Y)$.
 //!
 //! A routine's constraints reference four classes of wires (see the book's
 //! routines page): wires it allocates itself, the caller's input gadget
@@ -18,10 +18,19 @@
 //! are symbolic. Nested routines run in the same frame at their DFS-relative
 //! offsets, so a recording covers the whole subtree.
 //!
+//! One run of the recorder produces every view the wiring evaluators need,
+//! since a memo cache only ever lives for one fixed evaluation point:
+//!
+//! - `sxy`: the Horner-folded [`Pieces`];
+//! - `sx`: every constraint's [`Form`] in emission order, per segment, since
+//!   $s(x, Y)$ has one coefficient per constraint;
+//! - `sy`: one scalar per wire, $\sum_k c_k y^{\text{power}(k)}$ with powers
+//!   relative to the block, since $s(X, y)$ has one coefficient per wire.
+//!
 //! A [`Recorded`] routine can then be replayed at any placement with any
 //! inputs, which is what makes it reusable within and across circuits.
 
-use alloc::vec::Vec;
+use alloc::{collections::BTreeMap, vec::Vec};
 use core::marker::PhantomData;
 
 use ragu_core::{
@@ -39,6 +48,19 @@ use udon::field::Field;
 
 use crate::floor_planner::ConstraintSegment;
 
+/// A wire allocated inside a recorded block, by relative gate index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum WireRef {
+    /// The $a$ wire of relative gate `i`.
+    A(usize),
+    /// The $b$ wire of relative gate `i`.
+    B(usize),
+    /// The $c$ wire of relative gate `i`.
+    C(usize),
+    /// The $d$ wire of relative gate `i`.
+    D(usize),
+}
+
 /// A wire inside a recorded routine, as a linear form over the
 /// position-free basis.
 #[derive(Clone, Debug)]
@@ -51,6 +73,8 @@ pub(crate) struct Form<F> {
     one: F,
     /// Coefficients of the input gadget's wires, sorted by input index.
     interface: Vec<(usize, F)>,
+    /// Coefficients of the block's own wires, sorted by wire.
+    positional: Vec<(WireRef, F)>,
 }
 
 impl<F: Field> Form<F> {
@@ -60,6 +84,7 @@ impl<F: Field> Form<F> {
         minus: F::ZERO,
         one: F::ONE,
         interface: Vec::new(),
+        positional: Vec::new(),
     };
 
     fn zero() -> Self {
@@ -68,44 +93,33 @@ impl<F: Field> Form<F> {
             minus: F::ZERO,
             one: F::ZERO,
             interface: Vec::new(),
+            positional: Vec::new(),
         }
     }
 
-    fn plus(value: F) -> Self {
+    /// A wire of the $x^{+m}$ family with monomial `value`.
+    fn plus(wire: WireRef, value: F) -> Self {
         Self {
             plus: value,
-            minus: F::ZERO,
-            one: F::ZERO,
-            interface: Vec::new(),
+            positional: alloc::vec![(wire, F::ONE)],
+            ..Self::zero()
         }
     }
 
-    fn minus(value: F) -> Self {
+    /// A wire of the $x^{-m}$ family with monomial `value`.
+    fn minus(wire: WireRef, value: F) -> Self {
         Self {
-            plus: F::ZERO,
             minus: value,
-            one: F::ZERO,
-            interface: Vec::new(),
+            positional: alloc::vec![(wire, F::ONE)],
+            ..Self::zero()
         }
     }
 
     fn interface(index: usize) -> Self {
         Self {
-            plus: F::ZERO,
-            minus: F::ZERO,
-            one: F::ZERO,
             interface: alloc::vec![(index, F::ONE)],
+            ..Self::zero()
         }
-    }
-
-    fn scaled(mut self, s: F) -> Self {
-        self.plus *= s;
-        self.minus *= s;
-        self.one *= s;
-        for (_, v) in &mut self.interface {
-            *v *= s;
-        }
-        self
     }
 
     /// `self += s * other`.
@@ -119,17 +133,55 @@ impl<F: Field> Form<F> {
                 Err(pos) => self.interface.insert(pos, (index, v * s)),
             }
         }
+        for &(wire, v) in &other.positional {
+            match self.positional.binary_search_by_key(&wire, |(w, _)| *w) {
+                Ok(pos) => self.positional[pos].1 += v * s,
+                Err(pos) => self.positional.insert(pos, (wire, v * s)),
+            }
+        }
     }
 
     /// Evaluates the form at a placement with gate offset $m$ (`xm` $= x^m$,
     /// `xm_inv` $= x^{-m}$) and the given input wire values.
     pub(crate) fn evaluate(&self, xm: F, xm_inv: F, inputs: &[F]) -> F {
-        let mut value = self.plus * xm + self.minus * xm_inv + self.one;
+        self.evaluate_internal(xm, xm_inv) + self.evaluate_interface(inputs)
+    }
+
+    /// The part of the form that depends only on the placement: the block's
+    /// own wires and `ONE`.
+    pub(crate) fn evaluate_internal(&self, xm: F, xm_inv: F) -> F {
+        self.plus * xm + self.minus * xm_inv + self.one
+    }
+
+    /// The part of the form that depends on the caller's input wires.
+    pub(crate) fn evaluate_interface(&self, inputs: &[F]) -> F {
+        let mut value = F::ZERO;
         for &(index, v) in &self.interface {
             value += v * inputs[index];
         }
         value
     }
+
+    /// The form's terms by wire identity: the block's own wires, then the
+    /// `ONE` wire if referenced, then input wires by index. Used to rebuild
+    /// a wire handle at a placement.
+    pub(crate) fn terms(&self) -> impl Iterator<Item = (Term, F)> + '_ {
+        let own = self.positional.iter().map(|&(w, v)| (Term::Wire(w), v));
+        let one = (self.one != F::ZERO).then_some((Term::One, self.one));
+        let inputs = self.interface.iter().map(|&(j, v)| (Term::Input(j), v));
+        own.chain(one).chain(inputs)
+    }
+}
+
+/// A term of a [`Form`] by wire identity.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Term {
+    /// One of the block's own wires.
+    Wire(WireRef),
+    /// The `ONE` wire.
+    One,
+    /// The caller's `j`-th input wire.
+    Input(usize),
 }
 
 /// Accumulator for linear combinations of [`Form`] wires.
@@ -217,24 +269,52 @@ impl<F: Field> Pieces<F> {
     }
 }
 
+/// The constraint forms of one segment of a recorded block.
+#[derive(Clone, Debug)]
+pub(crate) struct SegmentForms<F> {
+    /// Constraint offset relative to the block's origin.
+    pub(crate) constraint_start: usize,
+    /// One form per constraint, in emission order.
+    pub(crate) forms: Vec<Form<F>>,
+}
+
+/// Per-wire coefficients of $s(X, y)$ for a recorded block, with $Y$-powers
+/// relative to the block's constraint offset.
+#[derive(Clone, Debug)]
+pub(crate) struct WireSums<F> {
+    /// The block's own wires.
+    pub(crate) own: Vec<(WireRef, F)>,
+    /// The `ONE` wire.
+    pub(crate) one: F,
+    /// The input wires, by index.
+    pub(crate) inputs: Vec<F>,
+}
+
 /// A routine's recorded, position-free contribution and output wires.
 #[derive(Clone, Debug)]
 pub(crate) struct Recorded<F> {
     /// Contribution of the routine and its nested sub-routines, relative to
-    /// the routine's own placement.
+    /// the routine's own placement (`sxy` view).
     pub(crate) pieces: Pieces<F>,
+    /// Every segment's constraints (`sx` view).
+    pub(crate) constraints: Vec<SegmentForms<F>>,
+    /// Per-wire coefficients (`sy` view).
+    pub(crate) wires: WireSums<F>,
     /// Output gadget wires as forms, in gadget traversal order.
     pub(crate) outputs: Vec<Form<F>>,
     /// Number of DFS segments spanned by the routine and its sub-routines.
     pub(crate) num_segments: usize,
 }
 
-/// Evaluation-point data the recorder shares with the `sxy` evaluator.
+/// Evaluation-point data the recorder shares with the wiring evaluators.
+/// An evaluator that fixes only one variable passes zero for the other; the
+/// corresponding view of the recording is then unused.
 #[derive(Clone, Copy)]
 pub(crate) struct Params<F> {
     pub(crate) x: F,
     pub(crate) x_inv: F,
     pub(crate) y: F,
+    pub(crate) y_inv: F,
     /// $x^{2n}$: starting $a$-wire monomial.
     pub(crate) base_a_x: F,
     /// $x^{2n-1}$: starting $b$-wire monomial.
@@ -251,12 +331,18 @@ struct Scope<F> {
     current_a: F,
     current_b: F,
     current_c: F,
+    /// $y$-power of the next constraint, relative to the block.
+    current_y: F,
     gates: usize,
     constraints: usize,
+    /// Constraint offset of this scope relative to the block's origin.
+    constraint_start: usize,
     /// Horner accumulator over this scope's own constraints.
     acc: Pieces<F>,
     /// Positioned contributions of nested routines.
     sum: Pieces<F>,
+    /// Constraint forms of this scope, in emission order.
+    forms: Vec<Form<F>>,
 }
 
 /// A [`Driver`] that evaluates one top-level routine in the relative frame
@@ -272,6 +358,27 @@ pub(crate) struct Recorder<'fp, F> {
     /// Index into `floor_plan` of the segment being executed.
     current_routine: usize,
     num_inputs: usize,
+    /// Constraint forms of every finished nested segment.
+    segments: Vec<SegmentForms<F>>,
+    /// Per-wire $s(X, y)$ coefficients of the whole block.
+    own_wires: BTreeMap<WireRef, F>,
+    one_wire: F,
+    input_wires: Vec<F>,
+}
+
+impl<F: Field> Recorder<'_, F> {
+    /// $y$-power of the first constraint of a segment with `num_constraints`
+    /// constraints starting at `constraint_start` (relative): constraints are
+    /// emitted from the highest power down.
+    fn first_power(&self, constraint_start: usize, num_constraints: usize) -> F {
+        if num_constraints == 0 {
+            F::ZERO
+        } else {
+            self.params
+                .y
+                .pow_u64((constraint_start + num_constraints - 1) as u64)
+        }
+    }
 }
 
 impl<F: Field> DriverTypes for Recorder<'_, F> {
@@ -280,27 +387,37 @@ impl<F: Field> DriverTypes for Recorder<'_, F> {
     type LCenforce = FormSum<F>;
     type ImplField = F;
     type ImplWire = Form<F>;
-    type Extra = Form<F>;
+    /// Relative gate index and the $a$-wire monomial of that gate.
+    type Extra = (usize, F);
 
     fn gate(
         &mut self,
         _: impl Fn() -> Result<(Coeff<F>, Coeff<F>, Coeff<F>)>,
-    ) -> Result<(Form<F>, Form<F>, Form<F>, Form<F>)> {
+    ) -> Result<(Form<F>, Form<F>, Form<F>, (usize, F))> {
+        let index = self.scope.gates;
         self.scope.gates += 1;
 
-        let a = Form::plus(self.scope.current_a);
-        let b = Form::minus(self.scope.current_b);
-        let c = Form::minus(self.scope.current_c);
+        let a_monomial = self.scope.current_a;
+        let a = Form::plus(WireRef::A(index), a_monomial);
+        let b = Form::minus(WireRef::B(index), self.scope.current_b);
+        let c = Form::minus(WireRef::C(index), self.scope.current_c);
 
         self.scope.current_a *= self.params.x;
         self.scope.current_b *= self.params.x_inv;
         self.scope.current_c *= self.params.x_inv;
 
-        Ok((a.clone(), b, c, a))
+        Ok((a, b, c, (index, a_monomial)))
     }
 
-    fn assign_extra(&mut self, a: Form<F>, _: impl Fn() -> Result<Coeff<F>>) -> Result<Form<F>> {
-        Ok(a.scaled(self.params.a_to_d))
+    fn assign_extra(
+        &mut self,
+        (index, a_monomial): (usize, F),
+        _: impl Fn() -> Result<Coeff<F>>,
+    ) -> Result<Form<F>> {
+        Ok(Form::plus(
+            WireRef::D(index),
+            a_monomial * self.params.a_to_d,
+        ))
     }
 }
 
@@ -317,7 +434,23 @@ impl<'dr, F: Field> Driver<'dr> for Recorder<'_, F> {
     fn enforce_zero(&mut self, lc: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {
         self.scope.constraints += 1;
         let form = lc(FormSum::default()).form;
+
+        // sxy view: Horner over this scope.
         self.scope.acc.step(self.params.y, &form);
+
+        // sy view: this constraint's power times each wire's coefficient.
+        let power = self.scope.current_y;
+        for &(wire, v) in &form.positional {
+            *self.own_wires.entry(wire).or_insert(F::ZERO) += v * power;
+        }
+        self.one_wire += form.one * power;
+        for &(index, v) in &form.interface {
+            self.input_wires[index] += v * power;
+        }
+        self.scope.current_y *= self.params.y_inv;
+
+        // sx view: the form itself.
+        self.scope.forms.push(form);
         Ok(())
     }
 
@@ -337,10 +470,13 @@ impl<'dr, F: Field> Driver<'dr> for Recorder<'_, F> {
             current_a: self.params.base_a_x * x_pow,
             current_b: self.params.base_b_x * x_inv_pow,
             current_c: self.params.base_c_x * x_inv_pow,
+            current_y: self.first_power(constraint_start, seg.num_constraints),
             gates: gate_start,
             constraints: constraint_start,
+            constraint_start,
             acc: Pieces::zero(self.num_inputs),
             sum: Pieces::zero(self.num_inputs),
+            forms: Vec::with_capacity(seg.num_constraints),
         };
 
         let saved = core::mem::replace(&mut self.scope, init_scope);
@@ -366,27 +502,35 @@ impl<'dr, F: Field> Driver<'dr> for Recorder<'_, F> {
         let child = core::mem::replace(&mut self.scope, saved);
         self.scope.sum.add_scaled(&child.acc, y_pow);
         self.scope.sum.add_scaled(&child.sum, F::ONE);
+        self.segments.push(SegmentForms {
+            constraint_start: child.constraint_start,
+            forms: child.forms,
+        });
 
         exec_result
     }
 }
 
-/// Maps a caller's wires onto interface basis elements, remembering their
-/// values in input order.
-struct InterfaceMap<'fp, F, Src> {
-    inputs: Vec<F>,
-    _marker: PhantomData<(&'fp (), Src)>,
+/// Maps a caller's wires onto interface basis elements, remembering a
+/// caller-chosen projection of each in input order.
+struct InterfaceMap<'fp, F, Src, V, Conv> {
+    inputs: Vec<V>,
+    conv: Conv,
+    _marker: PhantomData<(&'fp (), F, Src)>,
 }
 
-impl<'fp, F: Field, Src: DriverTypes<ImplField = F, ImplWire = F>> WireMap<F>
-    for InterfaceMap<'fp, F, Src>
+impl<'fp, F, Src, V, Conv> WireMap<F> for InterfaceMap<'fp, F, Src, V, Conv>
+where
+    F: Field,
+    Src: DriverTypes<ImplField = F>,
+    Conv: Fn(&Src::ImplWire) -> V,
 {
     type Src = Src;
     type Dst = Recorder<'fp, F>;
 
-    fn convert_wire(&mut self, wire: &F) -> Result<Form<F>> {
+    fn convert_wire(&mut self, wire: &Src::ImplWire) -> Result<Form<F>> {
         let index = self.inputs.len();
-        self.inputs.push(*wire);
+        self.inputs.push((self.conv)(wire));
         Ok(Form::interface(index))
     }
 }
@@ -408,24 +552,26 @@ impl<'fp, F: Field> WireMap<F> for FormExtractor<'fp, F> {
 }
 
 /// Records the top-level routine whose segment is `floor_plan[index]`,
-/// returning its position-free contribution and the values of its input
-/// wires as seen by the caller.
-pub(crate) fn record<'src, 'fp, F, Src, Ro>(
+/// returning its position-free contribution and `conv` applied to each of
+/// its input wires, in input order.
+pub(crate) fn record<'src, 'fp, F, Src, Ro, V>(
     routine: &Ro,
     input: &Bound<'src, Src, Ro::Input>,
     params: Params<F>,
     floor_plan: &'fp [ConstraintSegment],
     index: usize,
-) -> Result<(Recorded<F>, Vec<F>)>
+    conv: impl Fn(&Src::ImplWire) -> V,
+) -> Result<(Recorded<F>, Vec<V>)>
 where
     F: Field,
-    Src: Driver<'src, F = F, Wire = F, MaybeKind = Empty>,
+    Src: Driver<'src, F = F, MaybeKind = Empty>,
     Ro: Routine<F>,
 {
     let seg = &floor_plan[index];
 
-    let mut interface = InterfaceMap::<'fp, F, Src> {
+    let mut interface = InterfaceMap::<'fp, F, Src, V, _> {
         inputs: Vec::new(),
+        conv,
         _marker: PhantomData,
     };
     let recorder_input = Ro::Input::map_gadget(input, &mut interface)?;
@@ -437,17 +583,25 @@ where
             current_a: params.base_a_x,
             current_b: params.base_b_x,
             current_c: params.base_c_x,
+            current_y: F::ZERO,
             gates: 0,
             constraints: 0,
+            constraint_start: 0,
             acc: Pieces::zero(num_inputs),
             sum: Pieces::zero(num_inputs),
+            forms: Vec::with_capacity(seg.num_constraints),
         },
         params,
         floor_plan,
         origin: (seg.gate_start, seg.constraint_start),
         current_routine: index,
         num_inputs,
+        segments: Vec::new(),
+        own_wires: BTreeMap::new(),
+        one_wire: F::ZERO,
+        input_wires: alloc::vec![F::ZERO; num_inputs],
     };
+    recorder.scope.current_y = recorder.first_power(0, seg.num_constraints);
 
     let aux = Emulator::predict(routine, input)?.into_aux();
     let output = routine.execute(&mut recorder, recorder_input, aux)?;
@@ -467,14 +621,29 @@ where
     };
     Ro::Output::map_gadget(&output, &mut extractor)?;
 
-    let mut pieces = recorder.scope.acc;
-    pieces.add_scaled(&recorder.scope.sum, F::ONE);
+    let num_segments = recorder.current_routine - index + 1;
+    let Scope {
+        acc, sum, forms, ..
+    } = recorder.scope;
+    let mut pieces = acc;
+    pieces.add_scaled(&sum, F::ONE);
+    let mut constraints = recorder.segments;
+    constraints.push(SegmentForms {
+        constraint_start: 0,
+        forms,
+    });
 
     Ok((
         Recorded {
             pieces,
+            constraints,
+            wires: WireSums {
+                own: recorder.own_wires.into_iter().collect(),
+                one: recorder.one_wire,
+                inputs: recorder.input_wires,
+            },
             outputs: extractor.forms,
-            num_segments: recorder.current_routine - index + 1,
+            num_segments,
         },
         inputs,
     ))

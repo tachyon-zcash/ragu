@@ -337,5 +337,79 @@ fn recordings_replay_at_any_placement() -> Result<()> {
     }
     assert!(cache.len() > 0);
 
+    // The same recordings serve `s(x, Y)` and `s(X, y)`: one cache each
+    // across all objects.
+    let mut cache = MemoCache::new();
+    for (obj, (layout, _)) in objs.iter().zip(sequence) {
+        let plan = floor_planner::floor_plan(obj.segment_records());
+        let memoized = obj.sx_with_cache(x, &plan, &mut cache);
+        assert!(
+            memoized.iter_coeffs().eq(obj.sx(x, &plan).iter_coeffs()),
+            "{layout:?}"
+        );
+    }
+    assert_eq!(cache.hits(), hits);
+    let mut cache = MemoCache::new();
+    for (obj, (layout, _)) in objs.iter().zip(sequence) {
+        let plan = floor_planner::floor_plan(obj.segment_records());
+        let memoized = obj.sy_with_cache(y, &plan, &mut cache);
+        assert!(
+            memoized.iter_coeffs().eq(obj.sy(y, &plan).iter_coeffs()),
+            "{layout:?}"
+        );
+    }
+    assert_eq!(cache.hits(), hits);
+    Ok(())
+}
+
+/// `wy` memoizes across circuits; it must agree with the per-circuit
+/// evaluation `wxy` at every `x`.
+#[test]
+fn wy_matches_wxy() -> Result<()> {
+    use RoutineLayout::*;
+    let registry = registry(&[
+        Nested,
+        Single,
+        Shifted(1),
+        Repeated,
+        Nested,
+        FeedSecond,
+        FeedFirst,
+    ])?;
+    let (w, x, y) = (random(), random(), random());
+    let w_in_domain = CircuitIndex::new(2).omega_j::<Fp>();
+    for w in [w, w_in_domain] {
+        assert_eq!(registry.wy(w, y).eval(x), registry.wxy(w, x, y));
+        assert_eq!(
+            registry.wy(w, Fp::ZERO).eval(x),
+            registry.wxy(w, x, Fp::ZERO)
+        );
+    }
+    Ok(())
+}
+
+/// `wx` memoizes across circuits; it must agree with the per-circuit
+/// evaluation `wxy` at every `y`.
+#[test]
+fn wx_matches_wxy() -> Result<()> {
+    use RoutineLayout::*;
+    let registry = registry(&[
+        Nested,
+        Single,
+        Shifted(1),
+        Repeated,
+        Nested,
+        FeedSecond,
+        FeedFirst,
+    ])?;
+    let (w, x, y) = (random(), random(), random());
+    let w_in_domain = CircuitIndex::new(2).omega_j::<Fp>();
+    for w in [w, w_in_domain] {
+        assert_eq!(registry.wx(w, x).eval(y), registry.wxy(w, x, y));
+        assert_eq!(
+            registry.wx(w, Fp::ZERO).eval(y),
+            registry.wxy(w, Fp::ZERO, y)
+        );
+    }
     Ok(())
 }
