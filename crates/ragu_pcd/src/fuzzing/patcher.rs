@@ -690,8 +690,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             }
         };
 
-        type OuterError<C, R, const HEADER_SIZE: usize> =
-            native::stages::outer_error::Stage<C, R, HEADER_SIZE, native::RevdotParameters>;
+        type OuterError<C, R, P, const HEADER_SIZE: usize> =
+            native::stages::outer_error::Stage<C, R, HEADER_SIZE, native::RevdotParameters<P>>;
 
         // The honest stage values, per stage, for the overlay: each circuit's
         // chain is the concatenation in `add_stage` order (a skipped stage is
@@ -707,12 +707,18 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             )?,
         ]
         .concat();
-        let outer_error_values =
-            stage_values::<_, R, OuterError<C, R, HEADER_SIZE>>(&native_outer_error_witness)?;
+        let outer_error_values = stage_values::<_, R, OuterError<C, R, C::Profile, HEADER_SIZE>>(
+            &native_outer_error_witness,
+        )?;
         let inner_error_values = stage_values::<
             _,
             R,
-            native::stages::inner_error::Stage<C, R, HEADER_SIZE, native::RevdotParameters>,
+            native::stages::inner_error::Stage<
+                C,
+                R,
+                HEADER_SIZE,
+                native::RevdotParameters<C::Profile>,
+            >,
         >(&native_inner_error_witness)?;
         let query_values =
             stage_values::<_, R, native::stages::query::Stage<C, R, HEADER_SIZE>>(&query_witness)?;
@@ -728,7 +734,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C,
             R,
             HEADER_SIZE,
-            native::RevdotParameters,
+            native::RevdotParameters<C::Profile>,
         >::new(
             self.params,
             total_circuit_counts::<C::Profile>(self.num_application_steps).1,
@@ -754,7 +760,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .into_iter()
             .map(OutputRef::Instance)
             .chain(
-                stage_wire_indices::<_, R, OuterError<C, R, HEADER_SIZE>>(|stage| {
+                stage_wire_indices::<_, R, OuterError<C, R, C::Profile, HEADER_SIZE>>(|stage| {
                     let mut wires: Vec<_> = stage
                         .sponge_state
                         .into_elements()
@@ -786,7 +792,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C,
             R,
             HEADER_SIZE,
-            native::RevdotParameters,
+            native::RevdotParameters<C::Profile>,
         >::new(self.params);
         let hashes_2_witness = || {
             Ok(native::circuits::hashes_2::Witness {
@@ -825,7 +831,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C,
             R,
             HEADER_SIZE,
-            native::RevdotParameters,
+            native::RevdotParameters<C::Profile>,
         >::new();
         let inner_collapse_witness = || {
             Ok(native::circuits::inner_collapse::Witness {
@@ -837,9 +843,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         };
         let inner_collapse_spec = CircuitSpec {
             name: "inner_collapse".into(),
-            outputs: stage_wire_indices::<_, R, OuterError<C, R, HEADER_SIZE>>(|stage| {
-                Ok(stage.collapsed.iter().map(|e| *e.wire()).collect())
-            })?
+            outputs: stage_wire_indices::<_, R, OuterError<C, R, C::Profile, HEADER_SIZE>>(
+                |stage| Ok(stage.collapsed.iter().map(|e| *e.wire()).collect()),
+            )?
             .into_iter()
             .map(OutputRef::Stage)
             .collect(),
@@ -859,7 +865,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C,
             R,
             HEADER_SIZE,
-            native::RevdotParameters,
+            native::RevdotParameters<C::Profile>,
         >::new();
         let outer_collapse_witness = || {
             Ok(native::circuits::outer_collapse::Witness {
@@ -881,13 +887,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 .into_iter()
                 .map(OutputRef::Instance)
                 .chain(
-                    stage_wire_indices::<_, R, OuterError<C, R, HEADER_SIZE>>(|stage| {
-                        Ok([&stage.left, &stage.right]
-                            .into_iter()
-                            .map(|child| &child.application)
-                            .map(|e| *e.wire())
-                            .collect())
-                    })?
+                    stage_wire_indices::<_, R, OuterError<C, R, C::Profile, HEADER_SIZE>>(
+                        |stage| {
+                            Ok([&stage.left, &stage.right]
+                                .into_iter()
+                                .map(|child| &child.application)
+                                .map(|e| *e.wire())
+                                .collect())
+                        },
+                    )?
                     .into_iter()
                     .map(OutputRef::Stage),
                 )
@@ -978,7 +986,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C,
             R,
             HEADER_SIZE,
-            native::RevdotParameters,
+            native::RevdotParameters<C::Profile>,
         >::new(self.params);
         let bind_beta_witness = || {
             Ok(native::circuits::bind_beta::Witness {

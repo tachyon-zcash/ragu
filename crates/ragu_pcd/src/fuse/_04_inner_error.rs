@@ -47,10 +47,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_source: &NestedFuseProofSource<'rx, C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
-        native::stages::inner_error::Witness<C, native::RevdotParameters>,
+        native::stages::inner_error::Witness<C, native::RevdotParameters<C::Profile>>,
         NativeFuseBuilder<'_, 'rx, C::CircuitField, R, B>,
         RegistryWy<C, R>,
-        nested::stages::inner_error::Witness<C::HostCurve>,
+        nested::stages::inner_error::Witness<C::HostCurve, C::Profile>,
         NestedFuseBuilder<'_, 'rx, C::ScalarField, R, B>,
         NestedRegistryWy<C, R>,
     )>
@@ -82,7 +82,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         native_source: &NativeFuseProofSource<'rx, C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
-        native::stages::inner_error::Witness<C, native::RevdotParameters>,
+        native::stages::inner_error::Witness<C, native::RevdotParameters<C::Profile>>,
         NativeFuseBuilder<'_, 'rx, C::CircuitField, R, B>,
         RegistryWy<C, R>,
     )>
@@ -97,19 +97,23 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         native::claims::build::<C::Profile, _, _>(native_source, &mut native_claims)?;
 
         let native_inner_error_witness =
-            native::stages::inner_error::Witness::<C, native::RevdotParameters> {
+            native::stages::inner_error::Witness::<C, native::RevdotParameters<C::Profile>> {
                 error_terms: fold_revdot::inner_error_terms_with_backend::<
                     B,
                     _,
                     R,
-                    native::RevdotParameters,
+                    native::RevdotParameters<C::Profile>,
                 >(&native_claims.a, &native_claims.b),
             };
-        let native_rx =
-            native::stages::inner_error::Stage::<C, R, HEADER_SIZE, native::RevdotParameters>::rx(
-                C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-                &native_inner_error_witness,
-            )?;
+        let native_rx = native::stages::inner_error::Stage::<
+            C,
+            R,
+            HEADER_SIZE,
+            native::RevdotParameters<C::Profile>,
+        >::rx(
+            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
+            &native_inner_error_witness,
+        )?;
 
         builder.set_native_inner_error_rx(native_rx);
 
@@ -143,9 +147,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         FixedVec<
             FixedVec<
                 C::ScalarField,
-                NumErrorTerms<<nested::RevdotParameters as Parameters>::GroupSize>,
+                NumErrorTerms<<nested::RevdotParameters<C::Profile> as Parameters>::GroupSize>,
             >,
-            <nested::RevdotParameters as Parameters>::NumGroups,
+            <nested::RevdotParameters<C::Profile> as Parameters>::NumGroups,
         >,
         NestedFuseBuilder<'_, 'rx, C::ScalarField, R, B>,
         NestedRegistryWy<C, R>,
@@ -163,11 +167,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         );
         nested::claims::build::<C::Profile, _, _>(nested_source, &mut nested_claims)?;
 
-        let error_terms =
-            fold_revdot::inner_error_terms_with_backend::<B, _, R, nested::RevdotParameters>(
-                &nested_claims.a,
-                &nested_claims.b,
-            );
+        let error_terms = fold_revdot::inner_error_terms_with_backend::<
+            B,
+            _,
+            R,
+            nested::RevdotParameters<C::Profile>,
+        >(&nested_claims.a, &nested_claims.b);
 
         let nested_registry_wy_poly = B::registry_at_y(nested_registry, nested_y);
         let nested_registry_wy_commitment =
@@ -189,12 +194,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         error_terms: FixedVec<
             FixedVec<
                 C::ScalarField,
-                NumErrorTerms<<nested::RevdotParameters as Parameters>::GroupSize>,
+                NumErrorTerms<<nested::RevdotParameters<C::Profile> as Parameters>::GroupSize>,
             >,
-            <nested::RevdotParameters as Parameters>::NumGroups,
+            <nested::RevdotParameters<C::Profile> as Parameters>::NumGroups,
         >,
         builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<nested::stages::inner_error::Witness<C::HostCurve>> {
+    ) -> Result<nested::stages::inner_error::Witness<C::HostCurve, C::Profile>> {
         let nested_inner_error_witness = nested::stages::inner_error::Witness {
             native_inner_error: builder.native_inner_error_commitment(),
             registry_wy: registry_wy.commitment,

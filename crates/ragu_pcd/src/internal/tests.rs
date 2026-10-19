@@ -52,8 +52,10 @@ pub const HEADER_SIZE: usize = 103;
 const NUM_APP_STEPS: usize = 6000;
 
 type Preamble = preamble::Stage<Pasta, R, HEADER_SIZE>;
-type OuterError = outer_error::Stage<Pasta, R, HEADER_SIZE, RevdotParameters>;
-type InnerError = inner_error::Stage<Pasta, R, HEADER_SIZE, RevdotParameters>;
+type OuterError =
+    outer_error::Stage<Pasta, R, HEADER_SIZE, RevdotParameters<crate::profile::Standard>>;
+type InnerError =
+    inner_error::Stage<Pasta, R, HEADER_SIZE, RevdotParameters<crate::profile::Standard>>;
 type Query = query::Stage<Pasta, R, HEADER_SIZE>;
 type Eval = eval::Stage<Pasta, R, HEADER_SIZE>;
 type NestedCurve = <Pasta as ragu_core::Cycle>::NestedCurve;
@@ -85,20 +87,20 @@ fn try_internal_circuit_counts(variant: InternalCircuitIndex) -> Result<(usize, 
             Pasta,
             R,
             HEADER_SIZE,
-            RevdotParameters,
+            RevdotParameters<crate::profile::Standard>,
         >::new(pasta, log2_circuits)),
         InternalCircuitIndex::Hashes2Circuit => counts(native::circuits::hashes_2::Circuit::<
             Pasta,
             R,
             HEADER_SIZE,
-            RevdotParameters,
+            RevdotParameters<crate::profile::Standard>,
         >::new(pasta)),
         InternalCircuitIndex::InnerCollapseCircuit => {
             counts(native::circuits::inner_collapse::Circuit::<
                 Pasta,
                 R,
                 HEADER_SIZE,
-                RevdotParameters,
+                RevdotParameters<crate::profile::Standard>,
             >::new())
         }
         InternalCircuitIndex::OuterCollapseCircuit => {
@@ -106,7 +108,7 @@ fn try_internal_circuit_counts(variant: InternalCircuitIndex) -> Result<(usize, 
                 Pasta,
                 R,
                 HEADER_SIZE,
-                RevdotParameters,
+                RevdotParameters<crate::profile::Standard>,
             >::new())
         }
         InternalCircuitIndex::ComputeVCircuit => {
@@ -119,7 +121,7 @@ fn try_internal_circuit_counts(variant: InternalCircuitIndex) -> Result<(usize, 
             Pasta,
             R,
             HEADER_SIZE,
-            RevdotParameters,
+            RevdotParameters<crate::profile::Standard>,
         >::new(pasta)),
         InternalCircuitIndex::BindEndoscalarCircuit => {
             counts(native::circuits::bind_endoscalar::Circuit::<Pasta, R>::new())
@@ -142,7 +144,7 @@ fn internal_circuit_counts(variant: InternalCircuitIndex) -> (usize, usize) {
                 Pasta,
                 R,
                 HEADER_SIZE,
-                RevdotParameters,
+                RevdotParameters<crate::profile::Standard>,
             >::new(pasta, log2_circuits))
         }
         InternalCircuitIndex::Hashes2Circuit => {
@@ -150,7 +152,7 @@ fn internal_circuit_counts(variant: InternalCircuitIndex) -> (usize, usize) {
                 Pasta,
                 R,
                 HEADER_SIZE,
-                RevdotParameters,
+                RevdotParameters<crate::profile::Standard>,
             >::new(pasta))
         }
         InternalCircuitIndex::InnerCollapseCircuit => {
@@ -158,7 +160,7 @@ fn internal_circuit_counts(variant: InternalCircuitIndex) -> (usize, usize) {
                 Pasta,
                 R,
                 HEADER_SIZE,
-                RevdotParameters,
+                RevdotParameters<crate::profile::Standard>,
             >::new())
         }
         InternalCircuitIndex::OuterCollapseCircuit => {
@@ -166,7 +168,7 @@ fn internal_circuit_counts(variant: InternalCircuitIndex) -> (usize, usize) {
                 Pasta,
                 R,
                 HEADER_SIZE,
-                RevdotParameters,
+                RevdotParameters<crate::profile::Standard>,
             >::new())
         }
         InternalCircuitIndex::ComputeVCircuit => {
@@ -182,7 +184,7 @@ fn internal_circuit_counts(variant: InternalCircuitIndex) -> (usize, usize) {
                 Pasta,
                 R,
                 HEADER_SIZE,
-                RevdotParameters,
+                RevdotParameters<crate::profile::Standard>,
             >::new(crate::pasta::baked()))
         }
         InternalCircuitIndex::BindEndoscalarCircuit => {
@@ -913,4 +915,41 @@ fn test_extension_hooks_register_and_the_fuse_overflows() {
         matches!(result, Err(Error::GateBoundExceeded { .. })),
         "two polynomials per side already overflow a fuse circuit"
     );
+}
+
+/// The fold's groups are the standard profile's for the standard profile,
+/// pinned, and grow with a profile's claims so that every claim has a slot.
+#[test]
+fn test_fold_groups_follow_the_profile() {
+    use ragu_primitives::vec::Len;
+
+    use crate::{
+        internal::fold_revdot::Parameters,
+        profile::{Standard, testing::Wider},
+    };
+
+    assert_eq!(native::num_claims::<Standard>(), 93);
+    assert_eq!(nested::num_claims::<Standard>(), 78);
+    assert_eq!(
+        native::NumFoldGroups::<Standard>::len(),
+        native::NUM_FOLD_GROUPS
+    );
+    assert_eq!(
+        nested::NumFoldGroups::<Standard>::len(),
+        nested::NUM_FOLD_GROUPS
+    );
+
+    fn capacity<FP: Parameters>() -> usize {
+        FP::NumGroups::len() * FP::GroupSize::len()
+    }
+    assert!(capacity::<native::RevdotParameters<Standard>>() >= native::num_claims::<Standard>());
+    assert!(capacity::<nested::RevdotParameters<Standard>>() >= nested::num_claims::<Standard>());
+
+    // Wider adds two native circuits and four bondings, one nested circuit
+    // and two bondings, and lengthens both walks by a few steps.
+    assert!(native::num_claims::<Wider>() > native::num_claims::<Standard>() + 7);
+    assert!(nested::num_claims::<Wider>() > nested::num_claims::<Standard>() + 4);
+    assert!(capacity::<native::RevdotParameters<Wider>>() >= native::num_claims::<Wider>());
+    assert!(capacity::<nested::RevdotParameters<Wider>>() >= nested::num_claims::<Wider>());
+    assert!(nested::NumFoldGroups::<Wider>::len() > nested::NUM_FOLD_GROUPS);
 }

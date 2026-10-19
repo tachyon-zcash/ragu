@@ -361,7 +361,7 @@ mod folding {
         profile::ProfiledCycle,
     };
 
-    type P = nested::RevdotParameters;
+    type P = nested::RevdotParameters<crate::profile::Standard>;
 
     /// The two children's `k(y)` values as plain scalars.
     struct ChildValues {

@@ -147,19 +147,65 @@ pub const NUM_FIXED_RX: usize = NUM_INSTANCE_CIRCUITS + 11;
 /// loading circuit.
 pub const NUM_FIXED_INTERNAL: usize = NUM_FIXED_RX + 3;
 
-/// Parameters for folding the children's nested-field revdot claims.
-///
-/// Two children contribute one raw accumulator claim each, one circuit claim
-/// each per endoscaling step and per instance circuit, and one bonding claim
-/// per bonding kind (each bonding kind is $z$-folded across both children):
-/// 78 claims today, over twenty-eight steps, three instance circuits and
-/// fourteen bonding kinds. `12 x 7` leaves a little room.
-#[derive(Clone, Copy, Default)]
-pub struct RevdotParameters;
+/// The groups the standard profile's nested claims fold into. Two children
+/// contribute one raw accumulator claim each, one circuit claim each per
+/// endoscaling step and per instance circuit, and one bonding claim per
+/// bonding kind (each bonding kind is $z$-folded across both children): 78
+/// claims, over twenty-eight steps, three instance circuits and fourteen
+/// bonding kinds, in 12 groups of 7, which leaves a little room.
+pub const NUM_FOLD_GROUPS: usize = 12;
 
-impl Parameters for RevdotParameters {
-    type NumGroups = ConstLen<12>;
-    type GroupSize = ConstLen<7>;
+/// The nested revdot claims of profile `P` the fuse folds: two children's
+/// raw claims, each internal circuit's claim per child, and each bonding's
+/// claim across both.
+pub fn num_claims<P: Profile>() -> usize {
+    let (circuits, bondings) =
+        InternalCircuitIndex::all::<P>()
+            .into_iter()
+            .fold((0, 0), |(circuits, bondings), id| {
+                if id.is_bonding() {
+                    (circuits, bondings + 1)
+                } else {
+                    (circuits + 1, bondings)
+                }
+            });
+    2 + 2 * circuits + bondings
+}
+
+/// Length type for the nested fold's groups in profile `P`: the standard
+/// profile's [`NUM_FOLD_GROUPS`], or as many groups of
+/// [`FOLD_GROUP_SIZE`](super::native::FOLD_GROUP_SIZE) as the profile's
+/// [`num_claims`] need, whichever is more.
+pub struct NumFoldGroups<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for NumFoldGroups<P> {
+    fn len() -> usize {
+        NUM_FOLD_GROUPS.max(num_claims::<P>().div_ceil(super::native::FOLD_GROUP_SIZE))
+    }
+}
+
+/// Parameters for folding the children's nested revdot claims in profile
+/// `P`: [`NumFoldGroups`] groups of
+/// [`FOLD_GROUP_SIZE`](super::native::FOLD_GROUP_SIZE).
+pub struct RevdotParameters<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Clone for RevdotParameters<P> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<P: Profile> Copy for RevdotParameters<P> {}
+
+impl<P: Profile> Default for RevdotParameters<P> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<P: Profile> Parameters for RevdotParameters<P> {
+    type NumGroups = NumFoldGroups<P>;
+    type GroupSize = ConstLen<{ super::native::FOLD_GROUP_SIZE }>;
 }
 
 /// Derives the nested-field counterpart of a native Fiat-Shamir challenge.
@@ -382,6 +428,19 @@ impl InternalCircuitIndex {
             .position(|&v| v == self)
             .expect("every variant appears in all");
         CircuitIndex::new(pos)
+    }
+
+    /// Whether `self` is registered as a bonding, a stage's mask, a final
+    /// mask or the loading circuit's, rather than as a circuit.
+    pub fn is_bonding(self) -> bool {
+        use InternalCircuitIndex::*;
+        match self {
+            EndoscalingStep(_) | Export | Collapse | ComputeV | ExtensionCircuit(_) => false,
+            EndoscalarStage | PointsStage | PointsFinalStaged | BridgePreamble | BridgeSPrime
+            | BridgeInnerError | BridgeOuterError | BridgeAB | BridgeQuery | BridgeF
+            | BridgeEval | ChallengeStage | ChallengeFinalStaged | Loading
+            | ExtensionBonding(_) => true,
+        }
     }
 }
 

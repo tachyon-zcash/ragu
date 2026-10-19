@@ -142,8 +142,8 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             claims::build::<P, _, _>(&source, &mut processor)?;
             let (ax, bx) = processor.build();
             (
-                fold_two_layer::<_, RevdotParameters>(dr, &ax, &mu_inv, &mu_prime_inv)?,
-                fold_two_layer::<_, RevdotParameters>(dr, &bx, &mu_nu, &mu_prime_nu_prime)?,
+                fold_two_layer::<_, RevdotParameters<P>>(dr, &ax, &mu_inv, &mu_prime_inv)?,
+                fold_two_layer::<_, RevdotParameters<P>>(dr, &bx, &mu_nu, &mu_prime_nu_prime)?,
             )
         };
 

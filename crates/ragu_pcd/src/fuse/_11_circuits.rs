@@ -27,11 +27,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         preamble_witness: &native::stages::preamble::Witness<'_, C, R, HEADER_SIZE>,
         native_outer_error_witness: &native::stages::outer_error::Witness<
             C,
-            native::RevdotParameters,
+            native::RevdotParameters<C::Profile>,
         >,
         native_inner_error_witness: &native::stages::inner_error::Witness<
             C,
-            native::RevdotParameters,
+            native::RevdotParameters<C::Profile>,
         >,
         query_witness: &native::stages::query::Witness<C>,
         eval_witness: &native::stages::eval::Witness<C>,
@@ -73,7 +73,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C,
             R,
             HEADER_SIZE,
-            native::RevdotParameters,
+            native::RevdotParameters<C::Profile>,
         >::new(
             self.params,
             total_circuit_counts::<C::Profile>(self.num_application_steps).1,
@@ -94,7 +94,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C,
             R,
             HEADER_SIZE,
-            native::RevdotParameters,
+            native::RevdotParameters<C::Profile>,
         >::new(self.params)
         .trace(native::circuits::hashes_2::Witness {
             unified,
@@ -111,7 +111,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C,
             R,
             HEADER_SIZE,
-            native::RevdotParameters,
+            native::RevdotParameters<C::Profile>,
         >::new()
         .trace(native::circuits::inner_collapse::Witness {
             preamble_witness,
@@ -130,7 +130,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C,
             R,
             HEADER_SIZE,
-            native::RevdotParameters,
+            native::RevdotParameters<C::Profile>,
         >::new()
         .trace(native::circuits::outer_collapse::Witness {
             unified,
@@ -195,7 +195,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C,
             R,
             HEADER_SIZE,
-            native::RevdotParameters,
+            native::RevdotParameters<C::Profile>,
         >::new(self.params)
         .trace(native::circuits::bind_beta::Witness {
             unified,
@@ -265,8 +265,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_points: &nested::PointsWitness<C::HostCurve, C::Profile>,
         nested_preamble_witness: &nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
         nested_s_prime_witness: &nested::stages::s_prime::Witness<C::HostCurve>,
-        nested_inner_error_witness: &nested::stages::inner_error::Witness<C::HostCurve>,
-        nested_outer_error_witness: &nested::stages::outer_error::Witness<C::HostCurve>,
+        nested_inner_error_witness: &nested::stages::inner_error::Witness<C::HostCurve, C::Profile>,
+        nested_outer_error_witness: &nested::stages::outer_error::Witness<C::HostCurve, C::Profile>,
         nested_ab_witness: &nested::stages::ab::Witness<C::HostCurve>,
         nested_query_witness: &nested::stages::query::Witness<C::HostCurve, C::Profile>,
         nested_f_witness: &nested::stages::f::Witness<C::HostCurve>,

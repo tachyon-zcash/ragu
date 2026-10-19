@@ -205,7 +205,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
                 let munu = mu.mul(dr, &nu)?;
                 let mu_prime_nu_prime = mu_prime.mul(dr, &nu_prime)?;
 
-                compute_axbx::<_, C::Profile, RevdotParameters>(
+                compute_axbx::<_, C::Profile, RevdotParameters<C::Profile>>(
                     dr,
                     &query,
                     z.element(),

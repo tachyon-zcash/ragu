@@ -39,11 +39,11 @@ use crate::{
 /// Number of curve points in this stage.
 const NUM: usize = 2;
 
-type NumGroups = <RevdotParameters as Parameters>::NumGroups;
-type GroupSize = <RevdotParameters as Parameters>::GroupSize;
+type NumGroups<P> = <RevdotParameters<P> as Parameters>::NumGroups;
+type GroupSize<P> = <RevdotParameters<P> as Parameters>::GroupSize;
 
 /// Witness data for this bridge stage.
-pub struct Witness<C: Affine> {
+pub struct Witness<C: Affine, P: Profile> {
     pub native_inner_error: C,
     pub registry_wy: C,
     /// Layer-1 error terms of the nested revdot fold.
@@ -52,7 +52,7 @@ pub struct Witness<C: Affine> {
     /// products, in [`inner_error_terms_with_backend`] order.
     ///
     /// [`inner_error_terms_with_backend`]: crate::internal::fold_revdot::inner_error_terms_with_backend
-    pub error_terms: FixedVec<FixedVec<C::Base, NumErrorTerms<GroupSize>>, NumGroups>,
+    pub error_terms: FixedVec<FixedVec<C::Base, NumErrorTerms<GroupSize<P>>>, NumGroups<P>>,
 }
 
 /// Prover-internal output gadget for this bridge stage.
@@ -60,14 +60,14 @@ pub struct Witness<C: Affine> {
 /// This is stage communication data, not part of the circuit's
 /// public instance.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
+pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     #[ragu(gadget)]
     pub native_inner_error: Point<'dr, D, C>,
     #[ragu(gadget)]
     pub registry_wy: Point<'dr, D, C>,
     /// Layer-1 error terms of the nested revdot fold.
     #[ragu(gadget)]
-    pub error_terms: FixedVec<FixedVec<Element<'dr, D>, NumErrorTerms<GroupSize>>, NumGroups>,
+    pub error_terms: FixedVec<FixedVec<Element<'dr, D>, NumErrorTerms<GroupSize<P>>>, NumGroups<P>>,
 }
 
 #[derive(Default)]
@@ -77,12 +77,12 @@ pub struct Stage<C: Affine, R, P> {
 
 impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R, P> {
     type Parent = super::s_prime::Stage<C, R, P>;
-    type Witness<'source> = &'source Witness<C>;
-    type OutputKind = Kind![C::Base; Output<'_, _, C>];
+    type Witness<'source> = &'source Witness<C, P>;
+    type OutputKind = Kind![C::Base; Output<'_, _, C, P>];
 
     fn values() -> usize {
         // (x, y) per point + N * (M² - M) error terms
-        NUM * 2 + NumGroups::len() * NumErrorTerms::<GroupSize>::len()
+        NUM * 2 + NumGroups::<P>::len() * NumErrorTerms::<GroupSize<P>>::len()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(

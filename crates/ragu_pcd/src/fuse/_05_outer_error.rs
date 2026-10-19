@@ -39,8 +39,8 @@ use crate::{
     proof::ProofBuilder,
 };
 
-type NativeNumGroups = <native::RevdotParameters as fold_revdot::Parameters>::NumGroups;
-type NestedNumGroups = <nested::RevdotParameters as Parameters>::NumGroups;
+type NativeNumGroups<P> = <native::RevdotParameters<P> as fold_revdot::Parameters>::NumGroups;
+type NestedNumGroups<P> = <nested::RevdotParameters<P> as Parameters>::NumGroups;
 
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
@@ -51,10 +51,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         preamble_witness: &native::stages::preamble::Witness<'_, C, R, HEADER_SIZE>,
         native_inner_error_witness: &native::stages::inner_error::Witness<
             C,
-            native::RevdotParameters,
+            native::RevdotParameters<C::Profile>,
         >,
         native_claims: NativeFuseBuilder<'_, 'rx, C::CircuitField, R, B>,
-        nested_inner_error_witness: &nested::stages::inner_error::Witness<C::HostCurve>,
+        nested_inner_error_witness: &nested::stages::inner_error::Witness<C::HostCurve, C::Profile>,
         nested_claims: NestedFuseBuilder<'_, 'rx, C::ScalarField, R, B>,
         nested_source: &NestedFuseProofSource<'rx, C, R>,
         nested_preamble: &nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
@@ -67,12 +67,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         >,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
-        native::stages::outer_error::Witness<C, native::RevdotParameters>,
-        FixedVec<TrackedPoly<'rx, FoldKey, C::CircuitField, R>, NativeNumGroups>,
-        FixedVec<sparse::Polynomial<C::CircuitField, R>, NativeNumGroups>,
-        nested::stages::outer_error::Witness<C::HostCurve>,
-        FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
-        FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
+        native::stages::outer_error::Witness<C, native::RevdotParameters<C::Profile>>,
+        FixedVec<TrackedPoly<'rx, FoldKey, C::CircuitField, R>, NativeNumGroups<C::Profile>>,
+        FixedVec<sparse::Polynomial<C::CircuitField, R>, NativeNumGroups<C::Profile>>,
+        nested::stages::outer_error::Witness<C::HostCurve, C::Profile>,
+        FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
+        FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
     )>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -82,10 +82,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let nu = *nu.value().take();
         let mu_inv = mu.invert().expect("mu must be non-zero");
         let mu_nu = mu * nu;
-        let native_a =
-            fold_revdot::fold_inner::<_, _, native::RevdotParameters>(&native_claims.a, mu_inv);
-        let native_b =
-            fold_revdot::fold_inner::<_, _, native::RevdotParameters>(&native_claims.b, mu_nu);
+        let native_a = fold_revdot::fold_inner::<_, _, native::RevdotParameters<C::Profile>>(
+            &native_claims.a,
+            mu_inv,
+        );
+        let native_b = fold_revdot::fold_inner::<_, _, native::RevdotParameters<C::Profile>>(
+            &native_claims.b,
+            mu_nu,
+        );
         drop(native_claims);
 
         let (ky, collapsed) = Emulator::emulate_wireless(
@@ -141,8 +145,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     })?;
                     let ky = FixedVec::from_fn(|_| ky.next().unwrap());
 
-                    let v =
-                        fold_products.fold_inner::<native::RevdotParameters>(dr, &errors, &ky)?;
+                    let v = fold_products
+                        .fold_inner::<native::RevdotParameters<C::Profile>>(dr, &errors, &ky)?;
                     Ok(*v.value().take())
                 })?;
 
@@ -163,13 +167,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             },
         )?;
 
-        let error_terms =
-            fold_revdot::outer_error_terms_with_backend::<B, _, R, native::RevdotParameters>(
-                &native_a, &native_b,
-            );
+        let error_terms = fold_revdot::outer_error_terms_with_backend::<
+            B,
+            _,
+            R,
+            native::RevdotParameters<C::Profile>,
+        >(&native_a, &native_b);
 
         let native_outer_error_witness =
-            native::stages::outer_error::Witness::<C, native::RevdotParameters> {
+            native::stages::outer_error::Witness::<C, native::RevdotParameters<C::Profile>> {
                 error_terms,
                 collapsed,
                 ky,
@@ -206,15 +212,19 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         rng: &mut RNG,
         native_outer_error_witness: &native::stages::outer_error::Witness<
             C,
-            native::RevdotParameters,
+            native::RevdotParameters<C::Profile>,
         >,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
-        let rx =
-            native::stages::outer_error::Stage::<C, R, HEADER_SIZE, native::RevdotParameters>::rx(
-                C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-                native_outer_error_witness,
-            )?;
+        let rx = native::stages::outer_error::Stage::<
+            C,
+            R,
+            HEADER_SIZE,
+            native::RevdotParameters<C::Profile>,
+        >::rx(
+            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
+            native_outer_error_witness,
+        )?;
 
         builder.set_native_outer_error_rx(rx);
 
@@ -237,7 +247,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     fn compute_nested_outer_error<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        nested_inner_error_witness: &nested::stages::inner_error::Witness<C::HostCurve>,
+        nested_inner_error_witness: &nested::stages::inner_error::Witness<C::HostCurve, C::Profile>,
         nested_claims: NestedFuseBuilder<'_, '_, C::ScalarField, R, B>,
         nested_source: &NestedFuseProofSource<'_, C, R>,
         nested_preamble: &nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
@@ -246,9 +256,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         native_nu: C::CircuitField,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
-        nested::stages::outer_error::Witness<C::HostCurve>,
-        FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
-        FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
+        nested::stages::outer_error::Witness<C::HostCurve, C::Profile>,
+        FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
+        FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
     )> {
         let nested_y = nested::challenge::<C>(native_y)?;
         let nested_mu = nested::challenge::<C>(native_mu)?;
@@ -259,12 +269,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let a = fold_revdot::fold_inner::<
             sparse::Polynomial<C::ScalarField, R>,
             _,
-            nested::RevdotParameters,
+            nested::RevdotParameters<C::Profile>,
         >(&nested_claims.a, nested_mu_inv);
         let b = fold_revdot::fold_inner::<
             sparse::Polynomial<C::ScalarField, R>,
             _,
-            nested::RevdotParameters,
+            nested::RevdotParameters<C::Profile>,
         >(&nested_claims.b, nested_mu_nu);
         drop(nested_claims);
 
@@ -322,17 +332,19 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     })?;
                     let ky = FixedVec::from_fn(|_| ky.next().unwrap());
 
-                    let v =
-                        fold_products.fold_inner::<nested::RevdotParameters>(dr, &errors, &ky)?;
+                    let v = fold_products
+                        .fold_inner::<nested::RevdotParameters<C::Profile>>(dr, &errors, &ky)?;
                     Ok(*v.value().take())
                 })
             },
         )?;
 
-        let error_terms =
-            fold_revdot::outer_error_terms_with_backend::<B, _, R, nested::RevdotParameters>(
-                &a, &b,
-            );
+        let error_terms = fold_revdot::outer_error_terms_with_backend::<
+            B,
+            _,
+            R,
+            nested::RevdotParameters<C::Profile>,
+        >(&a, &b);
 
         let bridge = nested::stages::outer_error::Witness {
             native_outer_error: builder.native_outer_error_commitment(),

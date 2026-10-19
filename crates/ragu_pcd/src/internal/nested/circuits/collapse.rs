@@ -143,7 +143,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             .zip(stages.outer_error.collapsed.iter())
         {
             let ky = FixedVec::from_fn(|_| ky.next().expect("ky_values is infinite"));
-            fold.fold_inner::<RevdotParameters>(dr, error_terms, &ky)?
+            fold.fold_inner::<RevdotParameters<P>>(dr, error_terms, &ky)?
                 .enforce_equal(dr, collapsed)?;
         }
 
@@ -154,7 +154,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             &lifts[challenges::MU_PRIME].lift,
             &lifts[challenges::NU_PRIME].lift,
         )?;
-        let computed_c = fold.fold_outer::<RevdotParameters>(
+        let computed_c = fold.fold_outer::<RevdotParameters<P>>(
             dr,
             &stages.outer_error.error_terms,
             &stages.outer_error.collapsed,

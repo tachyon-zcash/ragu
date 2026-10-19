@@ -111,13 +111,64 @@ pub const NUM_FIXED_RX: usize = 19 + NUM_BINDERS;
 /// final stage masks.
 pub const NUM_FIXED_INTERNAL: usize = NUM_FIXED_RX - 1 + 4;
 
-/// Default parameters for native revdot folding
-#[derive(Clone, Copy, Default)]
-pub struct RevdotParameters;
+/// The groups the standard profile's native claims fold into: two raw and
+/// two application claims, two per internal circuit and one per bonding,
+/// 93 claims in 19 groups of 7. Fourteen would hold them; the count is
+/// pinned at the layout's own, so the standard proof is unchanged.
+pub const NUM_FOLD_GROUPS: usize = 19;
 
-impl Parameters for RevdotParameters {
-    type NumGroups = ConstLen<19>;
-    type GroupSize = ConstLen<7>;
+/// The claims in a fold group on either side.
+pub const FOLD_GROUP_SIZE: usize = 7;
+
+/// The native revdot claims of profile `P` the fuse folds: two children's
+/// raw and application claims, each internal circuit's claim per child,
+/// and each bonding's claim across both.
+pub fn num_claims<P: Profile>() -> usize {
+    let (circuits, bondings) =
+        InternalCircuitIndex::all::<P>()
+            .into_iter()
+            .fold((0, 0), |(circuits, bondings), id| {
+                if id.is_bonding() {
+                    (circuits, bondings + 1)
+                } else {
+                    (circuits + 1, bondings)
+                }
+            });
+    2 + 2 + 2 * circuits + bondings
+}
+
+/// Length type for the native fold's groups in profile `P`: the standard
+/// profile's [`NUM_FOLD_GROUPS`], or as many groups of [`FOLD_GROUP_SIZE`]
+/// as the profile's [`num_claims`] need, whichever is more.
+pub struct NumFoldGroups<P: Profile>(core::marker::PhantomData<P>);
+
+impl<P: Profile> Len for NumFoldGroups<P> {
+    fn len() -> usize {
+        NUM_FOLD_GROUPS.max(num_claims::<P>().div_ceil(FOLD_GROUP_SIZE))
+    }
+}
+
+/// Parameters for folding the children's native revdot claims in profile
+/// `P`: [`NumFoldGroups`] groups of [`FOLD_GROUP_SIZE`].
+pub struct RevdotParameters<P: Profile>(core::marker::PhantomData<P>);
+
+impl<P: Profile> Clone for RevdotParameters<P> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<P: Profile> Copy for RevdotParameters<P> {}
+
+impl<P: Profile> Default for RevdotParameters<P> {
+    fn default() -> Self {
+        Self(core::marker::PhantomData)
+    }
+}
+
+impl<P: Profile> Parameters for RevdotParameters<P> {
+    type NumGroups = NumFoldGroups<P>;
+    type GroupSize = ConstLen<FOLD_GROUP_SIZE>;
 }
 
 pub mod stages {
@@ -305,6 +356,40 @@ impl InternalCircuitIndex {
             .position(|&v| v == self)
             .expect("every variant appears in all");
         CircuitIndex::from_u32(pos as u32)
+    }
+
+    /// Whether `self` is registered as a bonding, a stage's mask or a final
+    /// mask, rather than as a circuit.
+    pub fn is_bonding(self) -> bool {
+        use InternalCircuitIndex::*;
+        match self {
+            Hashes1Circuit
+            | Hashes2Circuit
+            | InnerCollapseCircuit
+            | OuterCollapseCircuit
+            | ComputeVCircuit
+            | BindChallengesCircuit(_)
+            | BindBetaCircuit
+            | BindEndoscalarCircuit
+            | EndoscalingStep(_)
+            | ExtensionCircuit(_) => false,
+            PreambleStage
+            | InnerErrorStage
+            | OuterErrorStage
+            | QueryStage
+            | EvalStage
+            | PointsBindingStage
+            | PointsChildrenStage
+            | PointsRegistryWxStage
+            | PointsAbStage
+            | PointsFStage
+            | PointsWalkStage
+            | InnerErrorFinalStaged
+            | OuterErrorFinalStaged
+            | EvalFinalStaged
+            | PointsWalkFinalStaged
+            | ExtensionBonding(_) => true,
+        }
     }
 }
 
@@ -963,13 +1048,13 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
                 C,
                 R,
                 HEADER_SIZE,
-                RevdotParameters,
+                RevdotParameters<C::Profile>,
             >::mask()?),
             OuterErrorStage => registry.register_bonding(stages::outer_error::Stage::<
                 C,
                 R,
                 HEADER_SIZE,
-                RevdotParameters,
+                RevdotParameters<C::Profile>,
             >::mask()?),
             QueryStage => {
                 registry.register_bonding(stages::query::Stage::<C, R, HEADER_SIZE>::mask()?)
@@ -981,13 +1066,13 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
                 C,
                 R,
                 HEADER_SIZE,
-                RevdotParameters,
+                RevdotParameters<C::Profile>,
             >::final_mask()?),
             OuterErrorFinalStaged => registry.register_bonding(stages::outer_error::Stage::<
                 C,
                 R,
                 HEADER_SIZE,
-                RevdotParameters,
+                RevdotParameters<C::Profile>,
             >::final_mask()?),
             EvalFinalStaged => {
                 registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::final_mask()?)
@@ -1040,21 +1125,21 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
                     C,
                     R,
                     HEADER_SIZE,
-                    RevdotParameters,
+                    RevdotParameters<C::Profile>,
                 >::new(params, log2_circuits))?
             }
             Hashes2Circuit => registry.register_internal_circuit(circuits::hashes_2::Circuit::<
                 C,
                 R,
                 HEADER_SIZE,
-                RevdotParameters,
+                RevdotParameters<C::Profile>,
             >::new(params))?,
             InnerCollapseCircuit => {
                 registry.register_internal_circuit(circuits::inner_collapse::Circuit::<
                     C,
                     R,
                     HEADER_SIZE,
-                    RevdotParameters,
+                    RevdotParameters<C::Profile>,
                 >::new())?
             }
             OuterCollapseCircuit => {
@@ -1062,7 +1147,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
                     C,
                     R,
                     HEADER_SIZE,
-                    RevdotParameters,
+                    RevdotParameters<C::Profile>,
                 >::new())?
             }
             ComputeVCircuit => {
@@ -1077,14 +1162,13 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
                     registry.register_internal_circuit(circuit)?
                 })
             }
-            BindBetaCircuit => {
-                registry.register_internal_circuit(circuits::bind_beta::Circuit::<
-                    C,
-                    R,
-                    HEADER_SIZE,
-                    RevdotParameters,
-                >::new(params))?
-            }
+            BindBetaCircuit => registry
+                .register_internal_circuit(circuits::bind_beta::Circuit::<
+                C,
+                R,
+                HEADER_SIZE,
+                RevdotParameters<C::Profile>,
+            >::new(params))?,
         };
     }
 

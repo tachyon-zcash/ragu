@@ -194,6 +194,11 @@ mod tests {
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }, RevdotParameters>::default());
+        assert_stage_values(&Stage::<
+            Pasta,
+            R,
+            { HEADER_SIZE },
+            RevdotParameters<crate::profile::Standard>,
+        >::default());
     }
 }

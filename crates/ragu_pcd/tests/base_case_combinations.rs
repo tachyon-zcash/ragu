@@ -527,7 +527,7 @@ fn check_proof_guards(
                 C,
                 R,
                 HEADER_SIZE,
-                native::RevdotParameters,
+                native::RevdotParameters<crate::profile::Standard>,
             >::new(),
             &native_trace,
             native_c_position(),
