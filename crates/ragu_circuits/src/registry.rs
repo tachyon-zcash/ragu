@@ -561,6 +561,11 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
     /// domain. Every entry includes the $W$-independent tag term (positions
     /// with no registered circuit hold it alone), and masking circuits also
     /// carry the shared global term.
+    ///
+    /// Routine contributions are memoized across the circuits: each distinct
+    /// routine (by deep fingerprint) is evaluated once and replayed wherever
+    /// it recurs. The result equals evaluating every circuit independently,
+    /// as [`wxy`](Self::wxy) does.
     pub fn wxy_over_domain(&self, x: F, y: F) -> Vec<F> {
         // The tag term k * (XY)^{4n-1} has no W factor, so it adds the same
         // scalar to every domain evaluation.
@@ -568,8 +573,16 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
         let global_xy = crate::staging::mask::global_mask::<F, R>(x, y);
 
         let mut evals = alloc::vec![tag_scalar; self.domain.size()];
-        for i in 0..self.circuits.len() {
-            evals[self.bitreversed_index(i)] += self.circuit_sxy(i, x, y, global_xy);
+        let mut cache = MemoCache::new();
+        // Masking polynomials return only -notch from sxy(); add the shared
+        // global term to each mask slot inline.
+        for (i, circuit) in self.circuits.iter().enumerate() {
+            let j = self.bitreversed_index(i);
+            let mut v = circuit.sxy_with_cache(x, y, &self.floor_plans[i], &mut cache);
+            if circuit.is_mask() {
+                v += global_xy;
+            }
+            evals[j] += v;
         }
         evals
     }

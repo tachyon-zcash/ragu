@@ -249,10 +249,10 @@ impl<F: Field, R: Rank> WiringObject<F, R> for Stripped<'_, F, R> {
         x: F,
         y: F,
         floor_plan: &[ConstraintSegment],
-        _cache: &mut crate::wiring::MemoCache<F>,
+        cache: &mut crate::wiring::MemoCache<F>,
     ) -> F {
-        // Bonding polynomials don't share the memoization cache.
-        self.sxy(x, y, floor_plan)
+        // Remove the ONE wire contribution, as in `sxy`.
+        self.0.sxy_with_cache(x, y, floor_plan, cache) - F::ONE
     }
 
     fn sx(&self, x: F, floor_plan: &[ConstraintSegment]) -> sparse::Polynomial<F, R> {

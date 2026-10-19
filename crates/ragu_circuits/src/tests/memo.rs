@@ -97,6 +97,30 @@ fn wxy_combined_matches_wxy_across_layouts() -> Result<()> {
     Ok(())
 }
 
+/// The domain evaluation behind `xy` memoizes across circuits; it must agree
+/// with the per-circuit Lagrange evaluation `wxy`, which does not.
+#[test]
+fn domain_evaluation_matches_wxy() -> Result<()> {
+    use RoutineLayout::*;
+    let registry = registry(&[
+        Nested,
+        Single,
+        Shifted(1),
+        Repeated,
+        Nested,
+        FeedSecond,
+        FeedFirst,
+    ])?;
+    let (w, x, y) = (random(), random(), random());
+    assert_eq!(registry.xy(x, y).eval(w), registry.wxy(w, x, y));
+    let w_in_domain = CircuitIndex::new(3).omega_j::<Fp>();
+    assert_eq!(
+        registry.xy(x, y).eval(w_in_domain),
+        registry.wxy(w_in_domain, x, y)
+    );
+    Ok(())
+}
+
 /// A recording is replayed for every later invocation with the same
 /// fingerprint — shifted, with other inputs, within the same circuit — and
 /// the memoized value always equals the plain evaluation.
