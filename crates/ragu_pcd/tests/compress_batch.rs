@@ -209,8 +209,8 @@ where
 }
 
 /// Derives the batched claim from `messages` and checks `opening` against it
-/// with the IPA.
-fn check<C, T>(
+/// with the IPA at rank `R`.
+fn check<C, R, T>(
     openings: &Openings<C>,
     messages: &Batch<C>,
     opening: &IpaProof<C>,
@@ -220,6 +220,7 @@ fn check<C, T>(
 ) -> bool
 where
     C: Affine,
+    R: Rank,
     T: IpaTranscript<C>,
 {
     let claim = verify::<_, ReferenceBackend, _>(
@@ -229,7 +230,7 @@ where
         transcript,
     )
     .unwrap();
-    let params = Params::with_k(generators, u, TestR::RANK);
+    let params = Params::with_k(generators, u, R::RANK);
     let mut msm = MSM::new(&params);
     msm.append_term(C::Scalar::ONE, claim.commitment);
     ipa::verify_proof(&params, msm, transcript, opening, claim.point, claim.value)
@@ -319,7 +320,7 @@ fn native_batch_opens_through_the_ipa() {
     // The IPA proves it, on a verifier transcript replayed from the
     // reduction.
     let (mut verifier, _) = native_verifier(&app, proof, y, z, &targets, &reduction);
-    assert!(check(
+    assert!(check::<_, TestR, _>(
         &openings,
         &proved.batch,
         &proved.opening,
@@ -333,7 +334,7 @@ fn native_batch_opens_through_the_ipa() {
     let mut tampered = proved.batch.clone();
     tampered.evaluations[3] += Fp::ONE;
     let (mut verifier, _) = native_verifier(&app, proof, y, z, &targets, &reduction);
-    assert!(!check(
+    assert!(!check::<_, TestR, _>(
         &openings,
         &tampered,
         &proved.opening,
@@ -346,7 +347,7 @@ fn native_batch_opens_through_the_ipa() {
     let mut tampered = proved.batch.clone();
     tampered.f = openings.commitments[0];
     let (mut verifier, _) = native_verifier(&app, proof, y, z, &targets, &reduction);
-    assert!(!check(
+    assert!(!check::<_, TestR, _>(
         &openings,
         &tampered,
         &proved.opening,
@@ -372,7 +373,7 @@ fn native_batch_opens_through_the_ipa() {
     );
     assert_eq!(at_zero.point, Fp::ZERO);
     assert_ne!(at_zero.value, honest.value);
-    assert!(!check(
+    assert!(!check::<_, TestR, _>(
         &wrong_openings,
         &proved.batch,
         &proved.opening,
@@ -449,7 +450,7 @@ fn nested_batch_opens_through_the_ipa() {
     );
 
     let (mut verifier, _) = nested_verifier();
-    assert!(check(
+    assert!(check::<_, TestR, _>(
         &openings,
         &proved.batch,
         &proved.opening,
@@ -461,7 +462,7 @@ fn nested_batch_opens_through_the_ipa() {
     let mut tampered = proved.batch.clone();
     tampered.evaluations[0] += Fq::ONE;
     let (mut verifier, _) = nested_verifier();
-    assert!(!check(
+    assert!(!check::<_, TestR, _>(
         &openings,
         &tampered,
         &proved.opening,

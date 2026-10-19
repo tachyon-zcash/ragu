@@ -8,15 +8,14 @@
 
 pub use ragu_core::pasta::{Pasta, PastaParams};
 
-/// Log2 of the number of Pallas generators: enough for the rank above the
-/// production one, where a profile with an extension proves. The vector
-/// generators are derived by index, so a proof at a lower rank uses the
-/// same first generators it always did. The build script's derivation
-/// carries its own copy of these counts; Bento checks the artifact lengths
-/// against the consumer's array types at compile time.
-pub const DEFAULT_EP_K: usize = 14;
+/// Log2 of the number of Pallas generators: enough for the aggregator rank.
+/// The vector generators are derived by index, so a proof at a lower rank
+/// uses the same first generators it always did. The build script's
+/// derivation carries its own copy of these counts; Bento checks the
+/// artifact lengths against the consumer's array types at compile time.
+pub const DEFAULT_EP_K: usize = 15;
 /// Log2 of the number of Vesta generators.
-pub const DEFAULT_EQ_K: usize = 14;
+pub const DEFAULT_EQ_K: usize = 15;
 
 #[cfg(feature = "baked")]
 mod baked;
