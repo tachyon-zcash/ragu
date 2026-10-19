@@ -64,15 +64,23 @@ use core::cell::{RefCell, RefMut};
 
 use ragu_core::{
     Coeff, Error, Result,
-    drivers::{Driver, DriverTypes, LinearExpression, emulator::Emulator},
-    gadgets::Bound,
+    convert::{StripWires, WireMap},
+    drivers::{
+        Driver, DriverTypes, LinearExpression,
+        emulator::{Emulator, Wireless},
+    },
+    gadgets::{Bound, GadgetKind as _},
     maybe::Empty,
     routines::Routine,
 };
 use udon::field::Field;
 
+use super::{
+    memo::{MemoCache, Placement, WireInjector},
+    record::{self, Recorded, Term, WireRef},
+};
 use crate::{
-    DriverScope,
+    DeepFingerprint, DriverScope, RoutineIdentity, SegmentRecord,
     floor_planner::ConstraintSegment,
     polynomials::{Rank, sparse},
     raw::RawCircuit,
@@ -384,6 +392,15 @@ struct Evaluator<'table, 'sy, 'fp, F: Field, R: Rank> {
     /// Global monotonic DFS counter for routine entries.
     current_routine: usize,
 
+    /// Per-segment constraint records (from metrics), used to extract fingerprints.
+    segment_records: &'fp [SegmentRecord],
+
+    /// Cache for memoized routine contributions (optional).
+    memo_cache: Option<&'fp mut MemoCache<F>>,
+
+    /// Routine nesting depth; memoization only applies at depth 0.
+    routine_depth: usize,
+
     /// Marker for the rank type parameter.
     _marker: core::marker::PhantomData<R>,
 }
@@ -467,6 +484,99 @@ impl<'table, 'sy, F: Field, R: Rank> LinearExpression<Wire<'table, 'sy, F, R>, F
     fn gain(mut self, coeff: Coeff<F>) -> Self {
         self.1 = self.1 * coeff;
         self
+    }
+}
+
+/// Collects a gadget's wire indices.
+struct IndexExtractor<Src> {
+    indices: Vec<WireIndex>,
+    _marker: core::marker::PhantomData<Src>,
+}
+
+impl<'table, 'sy: 'table, F, R, Src> WireMap<F> for IndexExtractor<Src>
+where
+    F: Field,
+    R: Rank,
+    Src: DriverTypes<ImplField = F, ImplWire = Wire<'table, 'sy, F, R>>,
+{
+    type Src = Src;
+    type Dst = Emulator<Wireless<Empty, F>>;
+
+    fn convert_wire(&mut self, wire: &Wire<'table, 'sy, F, R>) -> Result<()> {
+        self.indices.push(wire.index);
+        Ok(())
+    }
+}
+
+impl<'table, 'sy, F: Field, R: Rank> Evaluator<'table, 'sy, '_, F, R> {
+    /// Fingerprint recorded for the routine segment at `index`.
+    fn fingerprint_at(&self, index: usize) -> DeepFingerprint {
+        match self.segment_records[index].identity() {
+            RoutineIdentity::Routine(fp) => *fp,
+            RoutineIdentity::Root => unreachable!("routine segments are never Root"),
+        }
+    }
+
+    /// Evaluation-point data shared with the routine recorder. `s(X, y)`
+    /// has no fixed `x`; the recorder's `x`-dependent views are unused here.
+    fn record_params(&self) -> record::Params<F> {
+        record::Params {
+            x: F::ZERO,
+            x_inv: F::ZERO,
+            y: self.y,
+            y_inv: self.y_inv,
+            base_a_x: F::ZERO,
+            base_b_x: F::ZERO,
+            base_c_x: F::ZERO,
+            a_to_d: F::ZERO,
+        }
+    }
+
+    /// Builds the wire handle a replayed output form denotes at gate offset
+    /// `m`, given the caller's input wire indices: a plain handle for a
+    /// single wire, otherwise a virtual wire over the form's terms.
+    fn materialize(
+        &self,
+        form: &record::Form<F>,
+        m: usize,
+        inputs: &[WireIndex],
+    ) -> Wire<'table, 'sy, F, R> {
+        let terms: Vec<(WireIndex, Coeff<F>)> = form
+            .terms()
+            .map(|(term, v)| {
+                let index = match term {
+                    Term::Wire(WireRef::A(i)) => WireIndex::A(m + i),
+                    Term::Wire(WireRef::B(i)) => WireIndex::B(m + i),
+                    Term::Wire(WireRef::C(i)) => WireIndex::C(m + i),
+                    Term::Wire(WireRef::D(i)) => WireIndex::D(m + i),
+                    Term::One => WireIndex::D(0),
+                    Term::Input(j) => inputs[j],
+                };
+                (index, Coeff::Arbitrary(v))
+            })
+            .collect();
+
+        if let [(index, Coeff::Arbitrary(v))] = terms.as_slice()
+            && *v == F::ONE
+        {
+            let wire = Wire::new(*index, self.virtual_table);
+            wire.increment_refcount();
+            return wire;
+        }
+
+        let mut table = self.virtual_table.borrow_mut();
+        let wire = table.alloc();
+        for (index, _) in &terms {
+            if let WireIndex::Virtual(i) = index {
+                table.wires[*i].refcount += 1;
+            }
+        }
+        table.update(wire, terms);
+        drop(table);
+        Wire {
+            index: wire,
+            table: Some(self.virtual_table),
+        }
     }
 }
 
@@ -597,7 +707,123 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, '
         input: Bound<'table, Self, Ro::Input>,
     ) -> Result<Bound<'table, Self, Ro::Output>> {
         self.current_routine += 1;
-        let seg = &self.floor_plan[self.current_routine];
+        let index = self.current_routine;
+        let seg = &self.floor_plan[index];
+
+        // Only top-level routines are memoized; a recording covers the whole
+        // subtree. On a miss the routine is recorded in a position-free frame
+        // (see the `record` module); either way its per-wire coefficients and
+        // output wires are replayed at this placement.
+        let memo = (self.routine_depth == 0 && self.memo_cache.is_some())
+            .then(|| self.fingerprint_at(index));
+
+        if let Some(fingerprint) = memo {
+            let cache = self.memo_cache.as_mut().expect("memo implies a cache");
+            let inputs: Vec<WireIndex> = match cache.lookup(&fingerprint) {
+                Some(_) => {
+                    let mut extractor = IndexExtractor::<Self> {
+                        indices: Vec::new(),
+                        _marker: core::marker::PhantomData,
+                    };
+                    Ro::Input::map_gadget(&input, &mut extractor)?;
+                    extractor.indices
+                }
+                None => {
+                    let (recorded, inputs) = record::record(
+                        &routine,
+                        &input,
+                        self.record_params(),
+                        self.floor_plan,
+                        index,
+                        |w: &Wire<'table, 'sy, F, R>| w.index,
+                    )?;
+                    self.memo_cache
+                        .as_mut()
+                        .expect("memo implies a cache")
+                        .insert(fingerprint, recorded);
+                    inputs
+                }
+            };
+
+            // Replay: every wire's coefficient, scaled to this block's
+            // constraint offset, lands on the wire's absolute index.
+            let m = seg.gate_start;
+            let y_pow = self.y.pow_u64(seg.constraint_start as u64);
+            let sharing = self
+                .memo_cache
+                .as_ref()
+                .is_some_and(|cache| cache.is_sharing());
+            let recorded = self
+                .memo_cache
+                .as_ref()
+                .and_then(|cache| cache.get(&fingerprint))
+                .expect("recording was just looked up or inserted");
+            {
+                let mut table = self.virtual_table.borrow_mut();
+                // In sharing mode the registry adds the block's own wires and
+                // `ONE` once for every circuit with this block here.
+                if !sharing {
+                    for &(wire, h) in &recorded.wires.own {
+                        let index = match wire {
+                            WireRef::A(i) => WireIndex::A(m + i),
+                            WireRef::B(i) => WireIndex::B(m + i),
+                            WireRef::C(i) => WireIndex::C(m + i),
+                            WireRef::D(i) => WireIndex::D(m + i),
+                        };
+                        table.add(index, Coeff::Arbitrary(y_pow * h));
+                    }
+                    if recorded.wires.one != F::ZERO {
+                        table.add(
+                            WireIndex::D(0),
+                            Coeff::Arbitrary(y_pow * recorded.wires.one),
+                        );
+                    }
+                }
+                for (j, h) in recorded.wires.inputs.iter().enumerate() {
+                    if *h != F::ZERO {
+                        table.add(inputs[j], Coeff::Arbitrary(y_pow * *h));
+                    }
+                }
+            }
+            let output_wires: Vec<Wire<'table, 'sy, F, R>> = recorded
+                .outputs
+                .iter()
+                .map(|form| self.materialize(form, m, &inputs))
+                .collect();
+            let num_segments = recorded.num_segments;
+            if sharing {
+                let placement = Placement {
+                    gate_start: seg.gate_start,
+                    constraint_start: seg.constraint_start,
+                };
+                self.memo_cache
+                    .as_mut()
+                    .expect("memo implies a cache")
+                    .note_shared(fingerprint, placement);
+            }
+
+            // Reconstruct the output gadget from the replayed wires:
+            // 1. Execute on a wireless emulator to get a template with unit wires.
+            // 2. Use WireInjector to replace the unit wires with the handles.
+            type W<F> = Emulator<Wireless<Empty, F>>;
+
+            let aux = Emulator::predict(&routine, &input)?.into_aux();
+            let wireless_input = StripWires::<Self>::remap(&input)?;
+            let template = routine.execute(&mut W::<F>::wireless(), wireless_input, aux)?;
+
+            let mut injector = WireInjector::<_, W<F>, Self>::new(&output_wires);
+            let output = Ro::Output::map_gadget(&template, &mut injector)?;
+            debug_assert!(
+                injector.is_exhausted(),
+                "replayed wires should be fully consumed"
+            );
+
+            // The recording already includes the nested sub-routines, so
+            // skip their segments.
+            self.current_routine += num_segments - 1;
+
+            return Ok(output);
+        }
 
         // Jump to this routine's absolute position in the polynomial;
         // see "Polynomial Encoding and Scope Jumps" in the `s` module doc.
@@ -615,7 +841,8 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, '
             constraints: seg.constraint_start,
         };
 
-        self.with_scope(init_scope, |this| {
+        self.routine_depth += 1;
+        let result = self.with_scope(init_scope, |this| {
             let aux = Emulator::predict(&routine, &input)?.into_aux();
             let result = routine.execute(this, input, aux)?;
 
@@ -632,7 +859,9 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, '
             );
 
             Ok(result)
-        })
+        });
+        self.routine_depth -= 1;
+        result
     }
 }
 
@@ -650,10 +879,77 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, '
 ///   [`floor_plan()`](crate::floor_planner::floor_plan). The root segment's
 ///   `num_constraints` determines the initial `current_y = y^{q-1}`
 ///   for reverse Horner iteration.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn eval<F: Field, RC: RawCircuit<F>, R: Rank>(
     circuit: &RC,
     y: F,
     floor_plan: &[ConstraintSegment],
+    segment_records: &[SegmentRecord],
+) -> Result<sparse::Polynomial<F, R>> {
+    eval_inner::<F, RC, R>(circuit, y, floor_plan, segment_records, None)
+}
+
+/// Evaluates $s(X, y)$ with routine memoization.
+///
+/// Like [`eval`], but records each top-level routine's per-wire coefficients
+/// in a position-free form and replays them for every later invocation with
+/// the same fingerprint, within this circuit and across circuits that share
+/// `cache`; see the [`memo`](super::memo) and [`record`] modules.
+pub(crate) fn eval_with_cache<F: Field, RC: RawCircuit<F>, R: Rank>(
+    circuit: &RC,
+    y: F,
+    floor_plan: &[ConstraintSegment],
+    segment_records: &[SegmentRecord],
+    cache: &mut MemoCache<F>,
+) -> Result<sparse::Polynomial<F, R>> {
+    eval_inner::<F, RC, R>(circuit, y, floor_plan, segment_records, Some(cache))
+}
+
+/// The position-independent part of a recorded block placed at `placement`,
+/// as a polynomial in $X$ at this $y$, scaled by `scale`. This is what the
+/// evaluators leave out in sharing mode; see [`MemoCache`].
+pub(crate) fn shared_block<F: Field, R: Rank>(
+    recorded: &Recorded<F>,
+    placement: Placement,
+    y: F,
+    scale: F,
+) -> sparse::Polynomial<F, R> {
+    let m = placement.gate_start;
+    let y_pow = y.pow_u64(placement.constraint_start as u64) * scale;
+
+    let extent = recorded
+        .wires
+        .own
+        .iter()
+        .map(|(wire, _)| match wire {
+            WireRef::A(i) | WireRef::B(i) | WireRef::C(i) | WireRef::D(i) => m + i + 1,
+        })
+        .max()
+        .unwrap_or(0)
+        .max(1);
+    let mut view = sparse::View::<_, R, _>::wiring();
+    view.a.resize(extent, F::ZERO);
+    view.b.resize(extent, F::ZERO);
+    view.c.resize(extent, F::ZERO);
+    view.d.resize(extent, F::ZERO);
+    for &(wire, h) in &recorded.wires.own {
+        match wire {
+            WireRef::A(i) => view.a[m + i] += y_pow * h,
+            WireRef::B(i) => view.b[m + i] += y_pow * h,
+            WireRef::C(i) => view.c[m + i] += y_pow * h,
+            WireRef::D(i) => view.d[m + i] += y_pow * h,
+        }
+    }
+    view.d[0] += y_pow * recorded.wires.one;
+    view.build()
+}
+
+fn eval_inner<F: Field, RC: RawCircuit<F>, R: Rank>(
+    circuit: &RC,
+    y: F,
+    floor_plan: &[ConstraintSegment],
+    segment_records: &[SegmentRecord],
+    memo_cache: Option<&mut MemoCache<F>>,
 ) -> Result<sparse::Polynomial<F, R>> {
     let mut view = sparse::View::wiring();
 
@@ -664,7 +960,13 @@ pub fn eval<F: Field, RC: RawCircuit<F>, R: Rank>(
         return Ok(view.build());
     }
 
-    let total_gates: usize = floor_plan.iter().map(|s| s.num_gates).sum();
+    // Segments may be placed with gaps between them, so the view spans the
+    // furthest gate any segment reaches.
+    let total_gates: usize = floor_plan
+        .iter()
+        .map(|s| s.gate_start + s.num_gates)
+        .max()
+        .unwrap_or(0);
 
     // Circuit-scope segment's constraint count (for initial current_y).
     // This segment always has at least the ONE constraint.
@@ -707,6 +1009,9 @@ pub fn eval<F: Field, RC: RawCircuit<F>, R: Rank>(
                 virtual_table: &virtual_table,
                 floor_plan,
                 current_routine: 0,
+                segment_records,
+                memo_cache,
+                routine_depth: 0,
                 _marker: core::marker::PhantomData,
             };
 
