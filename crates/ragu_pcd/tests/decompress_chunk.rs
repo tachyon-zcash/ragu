@@ -13,11 +13,12 @@ use ragu_circuits::{
     staging::{MultiStage, MultiStageCircuit, StageExt},
 };
 use ragu_core::pasta::{Fp, Fq, Pasta};
+use ragu_primitives::vec::{ConstLen, FixedVec};
 use ragu_testing::registry::TestRegistryBuilder;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use udon::field::Field;
 
-use super::{Circuit, TranscriptCircuit, is_transcript};
+use super::{Circuit, StatementCircuit, TranscriptCircuit, is_transcript};
 use crate::decompress::{
     program::{Chunk, Schedule},
     run::{Prepared, Sides},
@@ -270,5 +271,59 @@ fn rejects_tampered_stages() {
     assert!(
         !rejected(&sides.native) && !rejected(&sides.nested),
         "restored, both accept"
+    );
+}
+
+/// The statement circuit exposes the instance stage's output header as its
+/// public output: at the aggregator rank its trace satisfies the circuit
+/// at that header's $k(y)$ and at no other's.
+#[test]
+fn statement_circuit_exposes_the_output_header() {
+    type Instance = InstanceStage<Pasta, Native, TestR, AggregatorRank, HEADER_SIZE>;
+    let setup = Setup::new();
+    let sides = sides::<AggregatorRank>(&setup);
+    let prepared = &sides.native;
+    let schedule = circuit_schedule::<Native, AggregatorRank>();
+    let circuit = StatementCircuit::<Pasta, Native, TestR, AggregatorRank, HEADER_SIZE>::new(
+        schedule.clone(),
+    );
+    let gates = ragu_circuits::testing::synthesis_counts(&circuit)
+        .unwrap()
+        .num_gates;
+    assert!(gates <= AggregatorRank::n());
+
+    let span = schedule.layout.instance.output_header;
+    let header: Vec<Fp> = span
+        .positions()
+        .map(|position| prepared.instance.elements[position])
+        .collect();
+    let trace = circuit.trace(prepared).unwrap().into_parts().0;
+    let mut builder = TestRegistryBuilder::<Fp, AggregatorRank>::new();
+    let handle = builder.register_circuit(circuit.clone()).unwrap();
+    let mask =
+        builder.register_bonding(<Instance as StageExt<Fp, AggregatorRank>>::mask().unwrap());
+    let final_mask =
+        builder.register_bonding(<Instance as StageExt<Fp, AggregatorRank>>::final_mask().unwrap());
+    let registry = builder.finalize().unwrap();
+    let mut rng = StdRng::seed_from_u64(13);
+    let y = Fp::random(|bytes| rng.fill_bytes(bytes));
+
+    let stage =
+        <Instance as StageExt<Fp, AggregatorRank>>::rx(Fp::ZERO, &prepared.instance).unwrap();
+    assert_eq!(stage.revdot(&registry.y(mask, y)), Fp::ZERO);
+    let mut rx = registry.assemble(&trace, handle, Fp::ZERO).unwrap();
+    assert_eq!(rx.revdot(&registry.y(final_mask, y)), Fp::ZERO);
+    rx.add_assign(&stage);
+    let own: FixedVec<Fp, ConstLen<HEADER_SIZE>> = FixedVec::try_from(header.clone()).unwrap();
+    assert_eq!(
+        rx.revdot(&registry.y(handle, y)),
+        circuit.ky(own, y).unwrap()
+    );
+    let mut other = header;
+    other[0] += Fp::ONE;
+    let other: FixedVec<Fp, ConstLen<HEADER_SIZE>> = FixedVec::try_from(other).unwrap();
+    assert_ne!(
+        rx.revdot(&registry.y(handle, y)),
+        circuit.ky(other, y).unwrap()
     );
 }

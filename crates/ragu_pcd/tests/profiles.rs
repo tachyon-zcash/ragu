@@ -2,9 +2,10 @@
 //! at the production rank and an aggregator-profile application over the
 //! same curves at the aggregator rank, each proving, verifying and
 //! compressing its own proofs, the aggregator's with the decompression
-//! circuits over the wallet application's canonical compressed proof. The
-//! cycles are distinct types, so neither application accepts the other's
-//! proofs.
+//! circuits over the wallet application's canonical compressed proof. A
+//! wallet's compressed proof enters the aggregator through its
+//! decompression step, as a child its own steps fuse. The cycles are
+//! distinct types, so neither application accepts the other's proofs.
 
 use ragu_circuits::polynomials::{AggregatorRank, ProductionRank, Rank};
 use ragu_core::{
@@ -66,5 +67,21 @@ fn both_profiles_prove_in_one_binary() -> Result<()> {
         .register(WitnessLeaf { poseidon_params })?
         .register(Hash2 { poseidon_params })?
         .finalize_with(pasta, decompression)?;
-    prove_verify_compress(&aggregator, 3)
+    prove_verify_compress(&aggregator, 3)?;
+
+    // A wallet's compressed proof enters the aggregator: decompressed, it
+    // verifies as a proof of the aggregator, fuses as a child of the
+    // aggregator's own step, and the result compresses.
+    let wallet = aggregator.context().wallet();
+    let (leaf, _) = wallet.seed(&mut rng, WitnessLeaf { poseidon_params }, Fp::from(7))?;
+    let compressed = wallet.compress(&leaf, &mut rng)?;
+    let node = aggregator.decompress(&mut rng, &compressed)?;
+    assert_eq!(node.data(), leaf.data());
+    assert!(aggregator.verify(&node, &mut rng)?);
+    let (parent, _) =
+        aggregator.fuse(&mut rng, Hash2 { poseidon_params }, (), node.clone(), node)?;
+    assert!(aggregator.verify(&parent, &mut rng)?);
+    let compressed = aggregator.compress(&parent, &mut rng)?;
+    assert!(aggregator.verify_compressed(&compressed)?);
+    Ok(())
 }

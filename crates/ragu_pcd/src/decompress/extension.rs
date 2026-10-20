@@ -5,9 +5,13 @@
 //! circuits, one per chunk of its schedule, over its four stages: the
 //! instance, messages and work stages every chunk loads, and the transcript
 //! stage the transcript chunks load after them. Two final masks bind the
-//! chunks by their last stage. On the nested side it is the scalar-field
-//! side's chunks over its instance, messages and work stages under one
-//! final mask; that side's transcript stage is empty and stays out.
+//! chunks by their last stage. After the chunks comes the statement
+//! circuit, which loads the instance stage alone and exposes the output
+//! header the chunks verified as its public output, under a third final
+//! mask (see [`chunk::StatementCircuit`]). On the nested side it is the
+//! scalar-field side's chunks over its instance, messages and work stages
+//! under one final mask; that side's transcript stage is empty and stays
+//! out.
 //!
 //! The chunk circuits verify a standard-profile compressed proof at rank
 //! `K` as circuits at the profile's rank `R`, so the hooks take the base
@@ -49,10 +53,12 @@ pub(crate) const NATIVE_STAGES: usize = 4;
 pub(crate) const NESTED_STAGES: usize = 3;
 
 /// The native layout of `chunks` chunks whose first `transcript` are the
-/// transcript chunks, as the schedule orders them: every chunk loads the
-/// instance, messages and work stages, a transcript chunk the transcript
-/// stage after them, and a final mask binds each kind by its last stage,
-/// the work stage's first.
+/// transcript chunks, as the schedule orders them, and the statement
+/// circuit after them: every chunk loads the instance, messages and work
+/// stages, a transcript chunk the transcript stage after them, and the
+/// statement circuit the instance stage alone. A final mask binds each
+/// kind by its last stage: the work stage's, the transcript stage's, then
+/// the instance stage's.
 ///
 /// # Panics
 ///
@@ -62,7 +68,8 @@ pub(crate) fn native_layout(chunks: usize, transcript: usize) -> Extension {
         transcript <= chunks,
         "the transcript chunks are among the chunks"
     );
-    let mut circuits = Vec::with_capacity(chunks);
+    let statement = chunks as u32;
+    let mut circuits = Vec::with_capacity(chunks + 1);
     circuits.extend(repeat_n(
         vec![INSTANCE, MESSAGES, WORK, TRANSCRIPT],
         transcript,
@@ -71,14 +78,16 @@ pub(crate) fn native_layout(chunks: usize, transcript: usize) -> Extension {
         vec![INSTANCE, MESSAGES, WORK],
         chunks - transcript,
     ));
+    circuits.push(vec![INSTANCE]);
     Extension {
         circuits,
         stages: NATIVE_STAGES,
         final_masks: vec![
-            (transcript as u32..chunks as u32).collect(),
+            (transcript as u32..statement).collect(),
             (0..transcript as u32).collect(),
+            vec![statement],
         ],
-        statement: None,
+        statement: Some(statement),
         binding: None,
     }
 }
@@ -220,7 +229,8 @@ where
 /// Registers bonding `bonding` of side `S`: the stages' masks in stage
 /// order, then the final mask of the chunks whose last stage is the work
 /// stage and, on a side with a transcript stage, of those whose last is
-/// the transcript stage.
+/// the transcript stage and of the statement circuit, whose last is the
+/// instance stage.
 fn register_bonding<'params, C, S, K, R, const HEADER_SIZE: usize>(
     bonding: usize,
     registry: RegistryBuilder<'params, S::F, R>,
@@ -250,13 +260,17 @@ where
         index if index == stages + 1 && with_transcript => {
             <Transcript<C, S, K, R, HEADER_SIZE> as StageExt<S::F, R>>::final_mask()?
         }
+        index if index == stages + 2 && with_transcript => {
+            <Instance<C, S, K, R, HEADER_SIZE> as StageExt<S::F, R>>::final_mask()?
+        }
         _ => return Err(Error::Initialization("no such bonding".into())),
     };
     Ok(registry.register_bonding(mask))
 }
 
-/// Registers native chunk `circuit` of a side declared at `pinned` chunks
-/// and transcript chunks; see [`native`] for the layout.
+/// Registers native circuit `circuit` of a side declared at `pinned` chunks
+/// and transcript chunks: a chunk, or at the index past the chunks the
+/// statement circuit; see [`native`] for the layout.
 pub(crate) fn register_native_circuit<'params, C, K, R, const HEADER_SIZE: usize>(
     circuit: usize,
     pinned: (usize, usize),
@@ -268,6 +282,21 @@ where
     K: Rank,
     R: Rank,
 {
+    if circuit == pinned.0 {
+        if native_counts::<C, K, R, HEADER_SIZE>()? != pinned {
+            return Err(Error::Initialization(
+                "the schedule's chunks are not the declared ones".into(),
+            ));
+        }
+        let schedule = Arc::new(<Native as Side<C>>::schedule::<K, R, HEADER_SIZE>()?);
+        return registry.register_internal_circuit(chunk::StatementCircuit::<
+            C,
+            Native,
+            K,
+            R,
+            HEADER_SIZE,
+        >::new(schedule));
+    }
     register_circuit::<C, Native, K, R, HEADER_SIZE>(circuit, pinned, registry, params)
 }
 
