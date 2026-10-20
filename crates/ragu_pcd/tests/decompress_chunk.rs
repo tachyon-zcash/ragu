@@ -1,9 +1,9 @@
 //! The chunk circuits on a real compressed proof, as the prover and the
-//! decider would see them: every chunk of both sides fits the gate budget
-//! with its stages loaded, at the proof's own rank and at the aggregator
-//! rank, its stage polynomials are well formed under their masks, its
-//! trace satisfies the circuit with the honest stages, and a stage value
-//! tampered with after the prover's run fails some chunk.
+//! decider would see them: every circuit of both sides fits the gate
+//! budget with its stages loaded, at the proof's own rank and at the
+//! aggregator rank, its stage polynomials are well formed under their
+//! masks, its trace satisfies the circuit with the honest stages, and a
+//! stage value tampered with after the prover's run fails some circuit.
 
 use alloc::{format, string::String, sync::Arc, vec::Vec};
 
@@ -37,6 +37,29 @@ fn sides<R: Rank>(setup: &Setup) -> Sides<Pasta> {
 /// registry would build them.
 fn circuit_schedule<S: Side<Pasta>, R: Rank>() -> Arc<Schedule> {
     Arc::new(S::schedule::<TestR, R, HEADER_SIZE>().unwrap())
+}
+
+/// The kinds of the chunks circuit `index` runs, as `kind+kind×n`.
+fn describe(schedule: &Schedule, index: usize) -> String {
+    let mut parts: Vec<(&'static str, usize)> = Vec::new();
+    for chunk in &schedule.chunks[schedule.circuits[index].chunks.clone()] {
+        let kind = kind(chunk);
+        match parts.last_mut() {
+            Some((last, count)) if *last == kind => *count += 1,
+            _ => parts.push((kind, 1)),
+        }
+    }
+    parts
+        .iter()
+        .map(|(kind, count)| {
+            if *count > 1 {
+                format!("{kind}×{count}")
+            } else {
+                String::from(*kind)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("+")
 }
 
 fn kind(chunk: &Chunk) -> &'static str {
@@ -106,8 +129,8 @@ where
     Ok(Report { gates, satisfied })
 }
 
-/// Runs chunk `index` of side `S` at rank `R` over `prepared`.
-fn run_chunk<S: Side<Pasta>, R: Rank>(
+/// Runs circuit `index` of side `S` at rank `R` over `prepared`.
+fn run_circuit<S: Side<Pasta>, R: Rank>(
     schedule: &Arc<Schedule>,
     index: usize,
     prepared: &Prepared<Pasta, S>,
@@ -150,40 +173,41 @@ fn run_chunk<S: Side<Pasta>, R: Rank>(
     }
 }
 
-/// Every chunk of side `S` at rank `R` fits the budget and is satisfied by
-/// `prepared`, reporting every chunk that is not.
+/// Every circuit of side `S` at rank `R` fits the budget and is satisfied
+/// by `prepared`, reporting every circuit that is not.
 fn check_side<S: Side<Pasta>, R: Rank>(prepared: &Prepared<Pasta, S>) {
     let schedule = circuit_schedule::<S, R>();
     let mut rng = StdRng::seed_from_u64(7);
     let mut failures: Vec<String> = Vec::new();
-    let mut largest: Vec<(&'static str, usize, usize)> = Vec::new();
-    for index in 0..schedule.chunks.len() {
-        let kind = kind(&schedule.chunks[index]);
-        match run_chunk::<S, R>(&schedule, index, prepared, &mut rng) {
+    let mut largest: Vec<(String, usize, usize)> = Vec::new();
+    for index in 0..schedule.circuits.len() {
+        let kind = describe(&schedule, index);
+        match run_circuit::<S, R>(&schedule, index, prepared, &mut rng) {
             Ok(report) => {
                 if report.gates > R::n() {
                     failures.push(format!(
-                        "chunk {index} ({kind}) uses {} gates of {}",
+                        "circuit {index} ({kind}) uses {} gates of {}",
                         report.gates,
                         R::n()
                     ));
                 }
                 if !report.satisfied {
-                    failures.push(format!("chunk {index} ({kind}) is not satisfied"));
+                    failures.push(format!("circuit {index} ({kind}) is not satisfied"));
                 }
                 match largest.iter_mut().find(|(k, _, _)| *k == kind) {
                     Some(entry) if entry.2 >= report.gates => {}
-                    Some(entry) => *entry = (kind, index, report.gates),
-                    None => largest.push((kind, index, report.gates)),
+                    Some(entry) => *entry = (kind.clone(), index, report.gates),
+                    None => largest.push((kind.clone(), index, report.gates)),
                 }
             }
-            Err(e) => failures.push(format!("chunk {index} ({kind}) fails: {e:?}")),
+            Err(e) => failures.push(format!("circuit {index} ({kind}) fails: {e:?}")),
         }
     }
     std::println!(
-        "{} at rank {}: {} chunks, {} work elements, {} work points, {} states; largest per kind of {} gates:",
+        "{} at rank {}: {} circuits over {} chunks, {} work elements, {} work points, {} states; largest per kind of {} gates:",
         S::NAME,
         R::RANK,
+        schedule.circuits.len(),
         schedule.chunks.len(),
         schedule.elements,
         schedule.points,
@@ -191,7 +215,7 @@ fn check_side<S: Side<Pasta>, R: Rank>(prepared: &Prepared<Pasta, S>) {
         R::n()
     );
     for (kind, index, gates) in &largest {
-        std::println!("  {kind}: chunk {index} at {gates} gates");
+        std::println!("  {kind}: circuit {index} at {gates} gates");
     }
     assert!(
         failures.is_empty(),
@@ -219,12 +243,12 @@ fn every_chunk_fits_at_the_aggregator_rank() {
     check_side::<Nested, AggregatorRank>(&sides.nested);
 }
 
-/// Some chunk of side `S` rejects `prepared`.
+/// Some circuit of side `S` rejects `prepared`.
 fn rejected<S: Side<Pasta>>(prepared: &Prepared<Pasta, S>) -> bool {
     let schedule = circuit_schedule::<S, TestR>();
     let mut rng = StdRng::seed_from_u64(11);
-    (0..schedule.chunks.len()).any(|index| {
-        !run_chunk::<S, TestR>(&schedule, index, prepared, &mut rng)
+    (0..schedule.circuits.len()).any(|index| {
+        !run_circuit::<S, TestR>(&schedule, index, prepared, &mut rng)
             .is_ok_and(|report| report.satisfied)
     })
 }

@@ -435,6 +435,7 @@ where
             state_in,
             ops,
             state_out,
+            ..
         } => {
             let mut sponge = match state_in {
                 Some(first) => {

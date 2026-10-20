@@ -44,10 +44,10 @@ RAGU005|crates/ragu_pcd/src/decompress/run.rs|390|A Horner step with or without 
 RAGU005|crates/ragu_pcd/src/decompress/run.rs|400|Whether a term is scaled is fixed by the schedule's chunk descriptor.
 RAGU005|crates/ragu_pcd/src/decompress/run.rs|406|The first term seeds the accumulator; later terms add once each, per the schedule's chunk descriptor.
 RAGU005|crates/ragu_pcd/src/decompress/run.rs|433|The chunk kind is the schedule's constant descriptor; each chunk circuit runs the one at its index.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|439|Whether a transcript chunk resumes a saved sponge state is fixed by the schedule.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|447|The transcript's operation list is a constant of the schedule.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|459|Whether a transcript chunk saves the sponge state is fixed by the schedule.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|583|Whether a scaling's digits come from bits or from an element is fixed by the schedule.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|595|Whether a scaling part is the last, and so removes the offset, is fixed by the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|440|Whether a transcript chunk resumes a saved sponge state is fixed by the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|448|The transcript's operation list is a constant of the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|460|Whether a transcript chunk saves the sponge state is fixed by the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|584|Whether a scaling's digits come from bits or from an element is fixed by the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|596|Whether a scaling part is the last, and so removes the offset, is fixed by the schedule.
 RAGU005|crates/ragu_pcd/src/internal/native/stages/preamble.rs|167|The profile's extension is a constant of the profile: without a statement circuit nothing is computed and the value is absent, with one the same gates run for every proof.
 RAGU005|crates/ragu_pcd/src/internal/ky.rs|184|Whether a profile's extension binds, and so has points, is a constant of the profile: without one nothing is computed and the value is absent, with one the same gates run for every proof.

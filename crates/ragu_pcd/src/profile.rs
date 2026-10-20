@@ -695,11 +695,11 @@ impl Profile for Standard {
 /// budget. At four times the budget the fuse carries the extension, and
 /// the hooks refuse any other rank.
 ///
-/// A profile's declaration is a constant, so the chunk counts are pinned
-/// per header size ([`native_chunks`](Self::native_chunks)) rather than
-/// computed from the schedule, and the hooks check the pins against the
-/// schedule they register. A header size without a pin does not compile;
-/// pin it from the counts the schedule's tests report.
+/// A profile's declaration is a constant, so the circuit counts are
+/// pinned per header size ([`native_circuits`](Self::native_circuits))
+/// rather than computed from the schedule, and the hooks check the pins
+/// against the schedule they register. A header size without a pin does
+/// not compile; pin it from the counts the schedule's tests report.
 ///
 /// Every proof of the profile carries the chunk circuits' polynomials, so
 /// every fuse runs the chunks over a compressed proof. The application
@@ -715,25 +715,31 @@ impl Profile for Standard {
 pub struct Aggregator<const HEADER_SIZE: usize>;
 
 impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
-    /// The native chunks of the decompression for `header_size`-element
-    /// headers, and how many of them, first among them, are transcript
-    /// chunks. The compression's transcript absorbs the three headers, so
-    /// the transcript chunks grow with the header size.
+    /// The native chunk circuits of the decompression for
+    /// `header_size`-element headers, and how many of them, first among
+    /// them, run transcript chunks. The compression's transcript absorbs
+    /// the three headers, so those grow with the header size.
     ///
     /// # Panics
     ///
     /// Panics, in constant evaluation, for a header size without a pin.
-    pub const fn native_chunks(header_size: usize) -> (usize, usize) {
+    pub const fn native_circuits(header_size: usize) -> (usize, usize) {
         match header_size {
-            4 => (64, 9),
-            103 => (68, 13),
-            _ => panic!("the aggregator profile pins no chunk counts for this header size"),
+            4 => (38, 8),
+            103 => (43, 13),
+            _ => panic!("the aggregator profile pins no circuit counts for this header size"),
         }
     }
 
-    /// The nested chunks of the decompression, the same for every header
-    /// size.
-    pub const NESTED_CHUNKS: usize = 45;
+    /// The nested chunk circuits of the decompression, the same for every
+    /// header size.
+    pub const NESTED_CIRCUITS: usize = 29;
+
+    /// The endoscalings a step of either walk performs: what fits a step at
+    /// the aggregator rank beside the stages it reserves, which cuts the
+    /// walks and with them the proof's polynomials by more than the ratio
+    /// to the production rank's four, since the sides size each other.
+    pub const ENDOSCALINGS_PER_STEP: usize = 14;
 
     /// Checks that the hooks register at the aggregator rank for the
     /// profile's header size.
@@ -754,10 +760,13 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
 
 impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     const NAME: &'static str = "aggregator";
-    // The chunks, the statement circuit and the stages.
+    // The chunk circuits, the statement circuit and the stages.
     const NATIVE_EXTENSION: usize =
-        Self::native_chunks(HEADER_SIZE).0 + 1 + extension::NATIVE_STAGES;
-    const NESTED_EXTENSION: usize = Self::NESTED_CHUNKS + extension::NESTED_STAGES;
+        Self::native_circuits(HEADER_SIZE).0 + 1 + extension::NATIVE_STAGES;
+    const NESTED_EXTENSION: usize = Self::NESTED_CIRCUITS + extension::NESTED_STAGES;
+
+    const NATIVE_ENDOSCALINGS_PER_STEP: usize = Self::ENDOSCALINGS_PER_STEP;
+    const NESTED_ENDOSCALINGS_PER_STEP: usize = Self::ENDOSCALINGS_PER_STEP;
 
     type Context<'params, Base, R, B>
         = Decompression<'params, Base, R, HEADER_SIZE, B>
@@ -767,12 +776,12 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         B: SelectableBackend;
 
     fn native_extension() -> Extension {
-        let (chunks, transcript) = Self::native_chunks(HEADER_SIZE);
+        let (chunks, transcript) = Self::native_circuits(HEADER_SIZE);
         extension::native_layout(chunks, transcript)
     }
 
     fn nested_extension() -> Extension {
-        extension::nested_layout(Self::NESTED_CHUNKS)
+        extension::nested_layout(Self::NESTED_CIRCUITS)
     }
 
     fn register_native_circuit<'params, Base, R: Rank, const H: usize>(
@@ -786,7 +795,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         Self::accepts::<R>(H)?;
         extension::register_native_circuit::<Base, ProductionRank, R, H>(
             circuit,
-            Self::native_chunks(HEADER_SIZE),
+            Self::native_circuits(HEADER_SIZE),
             registry,
             params,
         )
@@ -815,7 +824,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         Self::accepts::<R>(HEADER_SIZE)?;
         extension::register_nested_circuit::<Base, ProductionRank, R, HEADER_SIZE>(
             circuit,
-            Self::NESTED_CHUNKS,
+            Self::NESTED_CIRCUITS,
             registry,
             params,
         )
@@ -2251,11 +2260,15 @@ mod tests {
     #[test]
     fn aggregator_declares_the_decompression() {
         let shape = Shape::of::<Aggregator<4>>();
-        assert_eq!(shape, Shape::solve(64 + 1 + 4, 45 + 3, 4, 4));
+        let per_step = Aggregator::<4>::ENDOSCALINGS_PER_STEP;
+        assert_eq!(shape, Shape::solve(38 + 1 + 4, 29 + 3, per_step, per_step));
         assert_eq!(
             Shape::of::<Aggregator<103>>(),
-            Shape::solve(68 + 1 + 4, 45 + 3, 4, 4)
+            Shape::solve(43 + 1 + 4, 29 + 3, per_step, per_step)
         );
+        // The knob: at the production rank's four per step the walks are
+        // far longer.
+        assert!(shape.polynomials() < Shape::solve(38 + 1 + 4, 29 + 3, 4, 4).polynomials());
         assert!(shape.polynomials() > Shape::of::<Standard>().polynomials());
         std::println!(
             "aggregator at header size 4: {shape:?}, {} polynomials",

@@ -57,7 +57,7 @@ fn pinned_layout_is_the_schedules() {
     );
 
     let native = P::native_extension();
-    let (chunks, transcript) = P::native_chunks(HEADER_SIZE);
+    let (chunks, transcript) = P::native_circuits(HEADER_SIZE);
     assert_eq!(native.circuits.len(), chunks + 1);
     assert_eq!(native.stages, 4);
     assert!(
@@ -79,7 +79,7 @@ fn pinned_layout_is_the_schedules() {
     assert!(native.is_consistent());
 
     let nested = P::nested_extension();
-    assert_eq!(nested.circuits.len(), P::NESTED_CHUNKS);
+    assert_eq!(nested.circuits.len(), P::NESTED_CIRCUITS);
     assert_eq!(nested.stages, 3);
     assert!(nested.circuits.iter().all(|c| c == &[0, 1, 2]));
     assert_eq!(nested.final_masks.len(), 1);
@@ -151,7 +151,10 @@ fn the_fuse_fits_at_the_aggregator_rank() {
         shape.native_rx,
         standard.native_rx + P::NATIVE_EXTENSION + shape.native_steps - standard.native_steps
     );
-    assert!(shape.nested_steps > standard.nested_steps);
+    // The walks fold more points at fewer steps per the profile's
+    // endoscalings per step.
+    assert!(shape.nested_points > standard.nested_points);
+    assert!(shape.nested_steps < standard.nested_steps);
 
     let setup = Setup::new();
     let mut rng = StdRng::seed_from_u64(5);

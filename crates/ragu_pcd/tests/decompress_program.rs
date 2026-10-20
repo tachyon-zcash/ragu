@@ -72,6 +72,7 @@ fn check(schedule: &Schedule) {
                 state_in,
                 ops,
                 state_out,
+                ..
             } => {
                 if let Some(state) = state_in {
                     for i in 0..STATE {
@@ -234,7 +235,8 @@ fn aggregator_rank_schedules_are_consistent() {
 }
 
 /// The production rank's limits are the fitted ones; the aggregator rank's
-/// hold four times the work, a full-width scaling in one chunk.
+/// hold twice the work per chunk, a full-width scaling in one chunk, and
+/// pack circuits to seven eighths of the budget.
 #[test]
 fn limits_scale_with_the_rank() {
     assert_eq!(Limits::at::<ProductionRank>(), Limits::FITTED);
@@ -242,13 +244,14 @@ fn limits_scale_with_the_rank() {
     assert_eq!(
         Limits::at::<AggregatorRank>(),
         Limits {
-            scalings: 4 * fitted.scalings,
-            permutations: 4 * fitted.permutations,
-            lifts: 4 * fitted.lifts,
-            checks: 4 * fitted.checks,
-            sums: 4 * fitted.sums,
-            digits: 4 * fitted.digits,
+            scalings: 2 * fitted.scalings,
+            permutations: 2 * fitted.permutations,
+            lifts: 2 * fitted.lifts,
+            checks: 2 * fitted.checks,
+            sums: 2 * fitted.sums,
+            digits: 2 * fitted.digits,
             scale_parts: 1,
+            fill: AggregatorRank::n() / 8 * 7,
         }
     );
 }
@@ -269,4 +272,60 @@ fn native_counts_follow_the_header_size() {
     );
     assert!(native_large > native_small);
     assert_eq!(nested_large, nested_small);
+}
+
+/// The circuits partition the chunks in order, the transcript circuits
+/// first and holding transcript chunks alone, and the counts are reported.
+fn circuits_pack_the_chunks<R: Rank>() {
+    for (name, schedule) in [
+        (
+            "native",
+            native_schedule::<Pasta, ProductionRank, R, HEADER_SIZE>().unwrap(),
+        ),
+        (
+            "nested",
+            nested_schedule::<Pasta, ProductionRank, R, HEADER_SIZE>().unwrap(),
+        ),
+    ] {
+        let mut next = 0;
+        let mut transcript_done = false;
+        for circuit in &schedule.circuits {
+            assert_eq!(circuit.chunks.start, next, "{name}: consecutive");
+            assert!(!circuit.chunks.is_empty(), "{name}: no empty circuit");
+            next = circuit.chunks.end;
+            let kinds: Vec<bool> = schedule.chunks[circuit.chunks.clone()]
+                .iter()
+                .map(|chunk| matches!(chunk, Chunk::Transcript { .. }))
+                .collect();
+            assert!(
+                kinds
+                    .iter()
+                    .all(|&transcript| transcript == circuit.transcript),
+                "{name}: transcript chunks keep to themselves"
+            );
+            if circuit.transcript {
+                assert!(!transcript_done, "{name}: transcript circuits first");
+            } else {
+                transcript_done = true;
+            }
+        }
+        assert_eq!(next, schedule.chunks.len(), "{name}: every chunk");
+        let transcript = schedule.circuits.iter().filter(|c| c.transcript).count();
+        std::println!(
+            "{name} at rank {}: {} circuits ({transcript} transcript) over {} chunks",
+            R::RANK,
+            schedule.circuits.len(),
+            schedule.chunks.len()
+        );
+    }
+}
+
+#[test]
+fn production_rank_circuits_pack_the_chunks() {
+    circuits_pack_the_chunks::<ProductionRank>();
+}
+
+#[test]
+fn aggregator_rank_circuits_pack_the_chunks() {
+    circuits_pack_the_chunks::<AggregatorRank>();
 }
