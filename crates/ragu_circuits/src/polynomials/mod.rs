@@ -17,8 +17,8 @@ pub trait Rank:
     private::Sealed + Clone + Send + Sync + 'static + PartialEq + Eq + core::fmt::Debug + Default
 {
     /// The rank can range from $2$ to $28$ (to avoid overflows on 32-bit
-    /// architectures), but only [`ProductionRank`] and [`TestRank`] are
-    /// currently implemented.
+    /// architectures), but only [`ProductionRank`], [`TestRank`] and
+    /// `R<14>` are currently implemented.
     const RANK: u32;
 
     /// Returns the $2^\text{RANK}$ number of coefficients in the polynomials
@@ -115,7 +115,8 @@ pub trait Rank:
 
 /// `R<N>` implements [`Rank`] for supported values of $N$. The type aliases
 /// [`ProductionRank`] ($N = 13$) and [`TestRank`] ($N = 7$) are provided for
-/// convenience. Additional implementations can be added to `impl_rank_for_R!` as needed.
+/// convenience; `R<14>` serves the tests of what the production rank cannot
+/// hold. Additional implementations can be added to `impl_rank_for_R!` as needed.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct R<const RANK: u32>;
 
@@ -143,7 +144,7 @@ macro_rules! impl_rank_for_R {
     };
 }
 
-impl_rank_for_R! {7, 13}
+impl_rank_for_R! {7, 13, 14}
 
 #[cfg(test)]
 mod tests {

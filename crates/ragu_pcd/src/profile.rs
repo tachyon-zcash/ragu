@@ -699,7 +699,17 @@ const _: () = {
 pub(crate) mod testing {
     use alloc::vec;
 
-    use ragu_circuits::staging::{MultiStage, StageExt};
+    use ragu_circuits::{
+        Circuit, CircuitExt, WithAux,
+        registry::CircuitIndex,
+        staging::{MultiStage, StageExt},
+    };
+    use ragu_core::{
+        Coeff,
+        drivers::{Driver, DriverValue},
+        gadgets::Bound,
+    };
+    use ragu_primitives::Element;
 
     use super::*;
 
@@ -869,6 +879,143 @@ pub(crate) mod testing {
                 _ => unreachable!("two bondings"),
             };
             Ok(registry.register_bonding(mask))
+        }
+    }
+
+    /// One boolean wire: a circuit over any field, with no instance, that
+    /// [`Proving`]'s hooks register on each side.
+    pub(crate) struct Trivial<F>(PhantomData<fn() -> F>);
+
+    impl<F> Trivial<F> {
+        pub(crate) const fn new() -> Self {
+            Trivial(PhantomData)
+        }
+    }
+
+    impl<F: Field> Circuit<F> for Trivial<F> {
+        type Instance<'source> = ();
+        type Witness<'source> = ();
+        type Output = ();
+        type Aux<'source> = ();
+
+        fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+            &self,
+            _: &mut D,
+            _: DriverValue<D, Self::Instance<'source>>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            Ok(())
+        }
+
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+            &self,
+            dr: &mut D,
+            _: DriverValue<D, Self::Witness<'source>>,
+        ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>>
+        {
+            let (bit, square) = Element::alloc_square(dr, D::just(|| F::ONE))?;
+            bit.add_coeff(dr, &square, Coeff::NegativeOne)
+                .enforce_zero(dr)?;
+            Ok(WithAux::new((), D::unit()))
+        }
+    }
+
+    /// The rx polynomial of a [`Trivial`] circuit at `circuit` in
+    /// `registry`, as an extension's only polynomial.
+    fn trivial_rxs<F: Field, R: Rank>(
+        registry: &Registry<'_, F, R>,
+        circuit: CircuitIndex,
+        rng: &mut impl CryptoRng,
+    ) -> Result<ExtensionRxs<F, R>> {
+        let (trace, ()) = Trivial::<F>::new().trace(())?.into_parts();
+        Ok(ExtensionRxs {
+            circuits: vec![registry.assemble(&trace, circuit, rng)?],
+            stages: Vec::new(),
+        })
+    }
+
+    /// One [`Trivial`] circuit and no stage on each side, with the hooks
+    /// that register and prove it: the profile whose extension proves, at
+    /// a rank above the production one, where the fuse has room for its
+    /// two polynomials.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub(crate) struct Proving;
+
+    impl Profile for Proving {
+        const NATIVE_EXTENSION: usize = 1;
+        const NESTED_EXTENSION: usize = 1;
+
+        type Context<'params, Base, R, B>
+            = ()
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+            R: Rank,
+            B: SelectableBackend;
+
+        fn native_extension() -> Extension {
+            Extension {
+                circuits: vec![vec![]],
+                stages: 0,
+                final_masks: vec![],
+                statement: None,
+            }
+        }
+
+        fn nested_extension() -> Extension {
+            Self::native_extension()
+        }
+
+        fn register_native_circuit<'params, Base, R: Rank, const HEADER_SIZE: usize>(
+            circuit: usize,
+            registry: RegistryBuilder<'params, Base::CircuitField, R>,
+            _: &'params Base::Params,
+        ) -> Result<RegistryBuilder<'params, Base::CircuitField, R>>
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        {
+            assert_eq!(circuit, 0);
+            registry.register_internal_circuit(Trivial::<Base::CircuitField>::new())
+        }
+
+        fn register_nested_circuit<'params, Base, R: Rank>(
+            circuit: usize,
+            registry: RegistryBuilder<'params, Base::ScalarField, R>,
+            _: &'params Base::Params,
+        ) -> Result<RegistryBuilder<'params, Base::ScalarField, R>>
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        {
+            assert_eq!(circuit, 0);
+            registry.register_internal_circuit(Trivial::<Base::ScalarField>::new())
+        }
+
+        fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
+            _: &Self::Context<'params, Base, R, B>,
+            registry: &Registry<'params, Base::CircuitField, R>,
+            rng: &mut RNG,
+        ) -> Result<ExtensionRxs<Base::CircuitField, R>>
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+            R: Rank,
+            B: SelectableBackend,
+            RNG: CryptoRng,
+        {
+            let circuit = native::InternalCircuitIndex::ExtensionCircuit(0);
+            trivial_rxs(registry, circuit.circuit_index::<Self>(), rng)
+        }
+
+        fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
+            _: &Self::Context<'params, Base, R, B>,
+            registry: &Registry<'params, Base::ScalarField, R>,
+            rng: &mut RNG,
+        ) -> Result<ExtensionRxs<Base::ScalarField, R>>
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+            R: Rank,
+            B: SelectableBackend,
+            RNG: CryptoRng,
+        {
+            let circuit = nested::InternalCircuitIndex::ExtensionCircuit(0);
+            trivial_rxs(registry, circuit.circuit_index::<Self>(), rng)
         }
     }
 }
@@ -1150,5 +1297,80 @@ mod tests {
             (150..=250).contains(&extra),
             "100 native polynomials cost {extra} overall"
         );
+    }
+
+    /// An extension proves: an application in the [`Proving`] profile,
+    /// one trivial circuit on each side, seeds, fuses, verifies and
+    /// compresses at the rank above the production one, where the fuse
+    /// has room for the two polynomials.
+    #[test]
+    fn an_extension_proves_verifies_and_compresses() -> Result<()> {
+        use ragu_circuits::polynomials::R;
+        use ragu_core::drivers::{Driver, DriverValue};
+        use ragu_primitives::allocator;
+        use rand::{SeedableRng, rngs::StdRng};
+
+        use super::testing::Proving;
+        use crate::{
+            ApplicationBuilder,
+            step::{Encoded, Index, Step},
+        };
+
+        /// A step with unit headers and no witness.
+        struct UnitStep;
+
+        impl<C: Cycle> Step<C> for UnitStep {
+            const INDEX: Index = Index::new(0);
+            type Witness<'source> = ();
+            type Aux<'source> = ();
+            type Left = ();
+            type Right = ();
+            type Output = ();
+
+            fn witness<
+                'dr,
+                'source: 'dr,
+                D: Driver<'dr, F = C::CircuitField>,
+                const HEADER_SIZE: usize,
+            >(
+                &self,
+                dr: &mut D,
+                _: DriverValue<D, ()>,
+                left: DriverValue<D, ()>,
+                right: DriverValue<D, ()>,
+            ) -> Result<(
+                (
+                    Encoded<'dr, D, (), HEADER_SIZE>,
+                    Encoded<'dr, D, (), HEADER_SIZE>,
+                    Encoded<'dr, D, (), HEADER_SIZE>,
+                ),
+                DriverValue<D, ()>,
+                DriverValue<D, ()>,
+            )> {
+                let allocator = &mut allocator::Standard::new();
+                let left = Encoded::new(dr, allocator, left)?;
+                let right = Encoded::new(dr, allocator, right)?;
+                Ok((
+                    (left, right, Encoded::from_gadget(())),
+                    D::unit(),
+                    D::unit(),
+                ))
+            }
+        }
+
+        const HEADER_SIZE: usize = 4;
+        assert_ne!(Shape::of::<Proving>(), Shape::of::<Standard>());
+
+        let app = ApplicationBuilder::<Profiled<Pasta, Proving>, R<14>, HEADER_SIZE>::new()
+            .register(UnitStep)?
+            .finalize(crate::pasta::baked())?;
+        let mut rng = StdRng::seed_from_u64(14);
+        let (left, ()) = app.seed(&mut rng, UnitStep, ())?;
+        let (right, ()) = app.seed(&mut rng, UnitStep, ())?;
+        let (fused, ()) = app.fuse(&mut rng, UnitStep, (), left, right)?;
+        assert!(app.verify(&fused, &mut rng)?);
+        let compressed = app.compress(&fused, &mut rng)?;
+        assert!(app.verify_compressed(&compressed)?);
+        Ok(())
     }
 }
