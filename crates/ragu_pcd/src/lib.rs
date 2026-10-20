@@ -298,6 +298,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// Like [`finalize`](Self::finalize), with the profile's prover
     /// context: what its prover holds across proofs beyond the proof under
     /// construction (see [`Profile::Context`]).
+    /// An [`Aggregator`](profile::Aggregator) application takes a
+    /// [`Decompression`](profile::Decompression) of the wallet application
+    /// it aggregates.
     ///
     /// # Errors
     ///
@@ -482,7 +485,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     Application<'params, C, R, HEADER_SIZE, B>
 {
     /// The profile's prover context, as given to
-    /// [`finalize_with`](ApplicationBuilder::finalize_with).
+    /// [`finalize_with`](ApplicationBuilder::finalize_with): for an
+    /// aggregator application, the [`Decompression`](profile::Decompression)
+    /// holding the wallet application it aggregates.
     pub fn context(&self) -> &<C::Profile as Profile>::Context<'params, C::Base, R, B> {
         &self.context
     }

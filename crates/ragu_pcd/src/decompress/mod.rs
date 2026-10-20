@@ -72,8 +72,15 @@
 //!    fails some chunk. The chunk circuits take two ranks, the compressed
 //!    proof's and their own, so that an aggregator at
 //!    [`AggregatorRank`](ragu_circuits::polynomials::AggregatorRank) can
-//!    decompress a wallet's production-rank proof in a third as many
-//!    circuits.
+//!    cut a wallet's production-rank proof into about a third as many
+//!    chunks, which pack into 38 native and 29 nested circuits at the
+//!    tests' header size.
+//! 9. [`extension`] and [`prover`]: the chunk circuits as the aggregator
+//!    profile's extension, declared from pinned counts and registered
+//!    through the profile's hooks, and their polynomials for every proof
+//!    from the canonical compressed proof the application holds. *Done*:
+//!    an aggregator application proves, verifies and compresses at the
+//!    aggregator rank.
 //!
 //! # Integration
 //!
@@ -85,14 +92,17 @@
 //! - **Circuits on both registries.** [`extension`] lays the chunk circuits
 //!   and their stages out as a profile's extension (see
 //!   [`profile`](crate::profile)) and registers them through the profile's
-//!   hooks beside the fuse's circuits, on both registries. The aggregator
-//!   profile declares it, at the aggregator rank: every chunk then runs in
-//!   every proof of that profile, so each child carries a hundred more
-//!   polynomials for the fuse to hash, evaluate and fold, which the fuse's
-//!   circuits carry at four times the production rank's budget. Proving
-//!   the extension, filling its stages from the prover's native run, and
-//!   a native fuse step that declares a compressed child, binding the
-//!   child's statement to the instance stage, are the fuse's to add.
+//!   hooks beside the fuse's circuits, on both registries; [`prover`]
+//!   fills their polynomials for every proof from a compressed proof's
+//!   prepared sides. The aggregator profile declares it, at the aggregator
+//!   rank: every chunk then runs in every proof of that profile, over the
+//!   canonical compressed proof the application's
+//!   [`Decompression`](crate::profile::Decompression) holds, so each child
+//!   carries a hundred more polynomials for the fuse to hash, evaluate and
+//!   fold, which the fuse's circuits carry at four times the production
+//!   rank's budget. A native fuse step that decompresses a wallet's proof
+//!   of its own, running the chunks over it and binding its statement to
+//!   the instance stage, is the fuse's to add.
 //! - **The stages' bindings.** The instance stage holds the compressed
 //!   proof's statement and the messages stage its messages; the transcript
 //!   stage holds the bridges the compression's transcript absorbs. Binding
@@ -142,6 +152,7 @@ pub(crate) mod derive;
 pub(crate) mod extension;
 pub(crate) mod ipa;
 pub(crate) mod program;
+pub(crate) mod prover;
 pub(crate) mod revdot;
 pub(crate) mod run;
 pub(crate) mod side;

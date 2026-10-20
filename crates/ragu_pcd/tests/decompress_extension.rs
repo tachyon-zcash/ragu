@@ -2,7 +2,9 @@
 //! pinned layout is the schedules', the hooks register every chunk and
 //! stage at the aggregator rank and refuse the production rank, and an
 //! application over the profile builds at the aggregator rank, where
-//! every fuse circuit fits with the extension's polynomials.
+//! every fuse circuit fits with the extension's polynomials, and its
+//! bootstrap proof verifies with the chunks run over the wallet
+//! application's canonical compressed proof.
 
 use ragu_circuits::{
     polynomials::{AggregatorRank, ProductionRank},
@@ -12,12 +14,13 @@ use ragu_core::{
     Error,
     pasta::{Fp, Fq, Pasta},
 };
+use rand::{SeedableRng, rngs::StdRng};
 
 use super::{native, nested};
 use crate::{
     ApplicationBuilder,
-    decompress::support::{HEADER_SIZE, TestR},
-    profile::{Aggregator, Profile, Profiled, Shape, Standard},
+    decompress::support::{HEADER_SIZE, Setup, TestR},
+    profile::{Aggregator, Decompression, Profile, Profiled, Shape, Standard},
 };
 
 type P = Aggregator<HEADER_SIZE>;
@@ -124,10 +127,10 @@ fn hooks_register_every_chunk_and_stage() {
 }
 
 /// The profile's shape is wider than the standard one, and an application
-/// over it builds its registries at the aggregator rank: every fuse
-/// circuit fits the budget with the extension's polynomials, and every
-/// chunk circuit registers beside them. Finalizing then proves the
-/// bootstrap, which stops at the extension's prover, the next step.
+/// over it builds at the aggregator rank: every fuse circuit fits the
+/// budget with the extension's polynomials, every chunk circuit registers
+/// beside them, and the bootstrap proof, with the chunks run over the
+/// wallet application's canonical compressed proof, verifies.
 #[test]
 fn the_fuse_fits_at_the_aggregator_rank() {
     let standard = Shape::of::<Standard>();
@@ -138,10 +141,12 @@ fn the_fuse_fits_at_the_aggregator_rank() {
     );
     assert!(shape.nested_steps > standard.nested_steps);
 
-    let result = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
-        .finalize(crate::pasta::baked());
-    assert!(
-        matches!(result, Err(Error::Initialization(_))),
-        "the registries build and the bootstrap stops at the extension's prover"
-    );
+    let setup = Setup::new();
+    let mut rng = StdRng::seed_from_u64(5);
+    let decompression = Decompression::new(setup.app, &mut rng).unwrap();
+    let app = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
+        .finalize_with(crate::pasta::baked(), decompression)
+        .unwrap();
+    let bootstrap = app.bootstrap.clone().expect("finalized").carry::<()>(());
+    assert!(app.verify(&bootstrap, &mut rng).unwrap());
 }
