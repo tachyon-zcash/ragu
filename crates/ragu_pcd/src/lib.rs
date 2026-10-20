@@ -72,6 +72,11 @@ use step::{Step, internal::adapter::Adapter};
 ///
 /// The prover and all verifier paths must agree on this tag. Changing it breaks
 /// compatibility with existing proofs.
+///
+/// TODO: if adding explicit profile domains, retain this tag for Standard and
+/// select the outer proof's tag consistently in proving and verification.
+/// Decompression must replay an inner Standard proof with Standard's tag;
+/// see [`profile`]'s isolation follow-up, including the compression domain.
 pub(crate) const RAGU_TAG: &[u8] = b"ragu-pcd-v1";
 
 pub use backend::SelectableBackend;
@@ -158,6 +163,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// application, including the public parameters supplied to [`Self::finalize`].
     /// This method stores the final values without validating their origin.
     /// Production callers must not use a test key.
+    ///
+    /// TODO: enforce the selected profile's association with its versioned setup
+    /// and registry tags; see [`profile`]'s isolation follow-up.
     pub fn with_registry_tags(mut self, tags: RegistryTags<C>) -> Self {
         self.native_registry = self.native_registry.with_tag(tags.native);
         self.nested_registry = self.nested_registry.with_tag(tags.nested);

@@ -38,6 +38,41 @@
 //! to what the extension verified, and a binding circuit, whose claim
 //! binds its side's view of the other side's stages to their commitments.
 //! No profile declares an extension yet; [`Aggregator`] says why.
+//!
+//! # Profile isolation follow-up
+//!
+//! Track these requirements as profiles and their circuits evolve:
+//!
+//! - TODO: preserve Standard's setup, wire layout and transcript domains when
+//!   adding isolation. Pin proof bytes and RNG consumption against main so any
+//!   wallet protocol change is explicit and reviewed separately.
+//! - TODO: commit each profile setup's full versioned description, including the
+//!   profile, ordered circuits, ranks, capacities, public parameters and
+//!   transcript rules/domain tags. Give Aggregator a distinct setup and sample
+//!   fresh native/nested registry tags after fixing the description, following
+//!   [`Tag`](ragu_circuits::registry::Tag)'s setup contract. Changed descriptions
+//!   require new tags even when the profile's name stays the same.
+//! - TODO: enforce the profile-to-setup association in the application API, with
+//!   the expected setup fixed by the verifier. Rust profile types and unchecked
+//!   caller-supplied tags do not establish this association on their own.
+//! - TODO: carry that binding through proving, recursive verification and
+//!   ordinary and compressed verification. Registry-tag binding may supply the
+//!   separation; explicit profile transcript domains are an additional option.
+//!   If added, preserve Standard's tags and give the outer Aggregator proof
+//!   distinct fuse and compression/IPA domains. The inner Standard proof must
+//!   still be verified with Standard's setup and transcript domains.
+//! - TODO: retain the profile and fixed wire shape in internal gadget types, so
+//!   allocation, traversal and equality cannot mix layouts or silently
+//!   truncate values from another profile.
+//! - TODO: test proof substitution between profiles in both directions, including
+//!   profiles with identical shapes, changing each registry tag independently.
+//!   Cover ordinary/compressed verification, recursive parents/grandparents
+//!   and the decompression circuits' inner-proof verification. Keep the
+//!   intended Standard-to-Aggregator decompression as a positive control;
+//!   substituting either proof role must fail.
+//!
+//! TODO: review new verifier circuits independently; profile isolation does
+//! not establish the soundness of decompression's outstanding checks.
 
 use alloc::vec::Vec;
 use core::{any::type_name, fmt, marker::PhantomData};
