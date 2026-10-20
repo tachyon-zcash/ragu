@@ -1,16 +1,16 @@
-//! The chunk circuits: one circuit per [`Chunk`] of
-//! a side's schedule, loading the side's stages and holding the chunk's
-//! results to their wires.
+//! The chunk circuits: one circuit per run of chunks of a side's schedule
+//! ([`Schedule::circuits`]), loading the side's stages and holding the
+//! chunks' results to their wires.
 //!
 //! Every chunk circuit of a side has the same shape: the stages loaded
-//! unenforced, as the fuse's endoscaling steps load theirs, then the
-//! chunk's own gates. A [`Circuit`] loads the instance, messages and work
-//! stages; a [`TranscriptCircuit`], for a transcript chunk, loads the
-//! transcript stage after them as well, so that only the transcript chunks
-//! pay for the bridges and the sponge states. Which chunk a circuit runs
-//! is fixed by its index into the schedule, so the family of chunk
-//! circuits is as fixed as the schedule, and the stages' masks bind the
-//! layout the chunks read.
+//! unenforced, as the fuse's endoscaling steps load theirs, then its
+//! chunks' own gates, in order. A [`Circuit`] loads the instance, messages
+//! and work stages; a [`TranscriptCircuit`], for transcript chunks, loads
+//! the transcript stage after them as well, so that only the transcript
+//! chunks pay for the bridges and the sponge states. Which chunks a
+//! circuit runs is fixed by its index into the schedule, so the family of
+//! chunk circuits is as fixed as the schedule, and the stages' masks bind
+//! the layout the chunks read.
 //!
 //! A chunk circuit at rank `R` verifies a compressed proof at rank `K`:
 //! its schedule is cut for `R`'s gate budget, and what it loads and checks
@@ -42,16 +42,16 @@ use ragu_primitives::{
 };
 
 use super::{
-    program::{Chunk, Schedule},
+    program::Schedule,
     run::{self, Ctx, Loaded, Prepared, View},
     side::Side,
     stages::{InstanceStage, MessagesStage, TranscriptStage, WorkStage},
 };
 
-/// Whether the chunk at `index` of `schedule` is a transcript chunk, run
-/// by a [`TranscriptCircuit`] rather than a [`Circuit`].
+/// Whether circuit `index` of `schedule` runs transcript chunks, as a
+/// [`TranscriptCircuit`] rather than a [`Circuit`].
 pub(crate) fn is_transcript(schedule: &Schedule, index: usize) -> bool {
-    matches!(schedule.chunks[index], Chunk::Transcript { .. })
+    schedule.circuits[index].transcript
 }
 
 /// What both circuit types hold.
@@ -74,9 +74,9 @@ impl<C: Cycle> Clone for Inner<'_, C> {
 impl<'p, C: Cycle> Inner<'p, C> {
     fn new(index: usize, schedule: Arc<Schedule>, params: &'p C::Params) -> Self {
         assert!(
-            index < schedule.chunks.len(),
-            "chunk {index} is within the schedule's {}",
-            schedule.chunks.len()
+            index < schedule.circuits.len(),
+            "circuit {index} is within the schedule's {}",
+            schedule.circuits.len()
         );
         Inner {
             index,
@@ -85,7 +85,8 @@ impl<'p, C: Cycle> Inner<'p, C> {
         }
     }
 
-    /// Runs the chunk over the loaded stages and holds its writes.
+    /// Runs the circuit's chunks over the loaded stages, in order, and
+    /// holds their writes.
     fn synthesize<'dr, D, S, K, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
@@ -106,14 +107,17 @@ impl<'p, C: Cycle> Inner<'p, C> {
             poseidon: S::poseidon(self.params),
             witness,
         };
-        let writes =
-            run::execute::<_, C, S, K, HEADER_SIZE>(dr, &self.schedule.chunks[self.index], &ctx)?;
-        run::enforce(dr, loaded, writes)
+        let plan = &self.schedule.circuits[self.index];
+        for chunk in &self.schedule.chunks[plan.chunks.clone()] {
+            let writes = run::execute::<_, C, S, K, HEADER_SIZE>(dr, chunk, &ctx)?;
+            run::enforce(dr, loaded, writes)?;
+        }
+        Ok(())
     }
 }
 
-/// The chunk circuit at an index of side `S`'s schedule, for a chunk
-/// other than a transcript chunk.
+/// The chunk circuit at an index of side `S`'s schedule, for chunks
+/// other than transcript chunks.
 pub(crate) struct Circuit<'p, C: Cycle, S, K, R, const HEADER_SIZE: usize> {
     inner: Inner<'p, C>,
     _marker: PhantomData<fn() -> (S, K, R)>,
@@ -131,12 +135,12 @@ impl<C: Cycle, S, K, R, const HEADER_SIZE: usize> Clone for Circuit<'_, C, S, K,
 impl<'p, C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>
     Circuit<'p, C, S, K, R, HEADER_SIZE>
 {
-    /// The circuit running chunk `index` of `schedule`.
+    /// The circuit at `index` of `schedule`.
     ///
     /// # Panics
     ///
-    /// Panics if `index` is not a chunk of the schedule, or is a
-    /// transcript chunk.
+    /// Panics if `index` is not a circuit of the schedule, or runs
+    /// transcript chunks.
     pub(crate) fn new(
         index: usize,
         schedule: Arc<Schedule>,
@@ -144,7 +148,7 @@ impl<'p, C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>
     ) -> MultiStage<S::F, R, Self> {
         assert!(
             !is_transcript(&schedule, index),
-            "chunk {index} is a transcript chunk"
+            "circuit {index} runs transcript chunks"
         );
         MultiStage::new(Circuit {
             inner: Inner::new(index, schedule, params),
@@ -198,8 +202,8 @@ impl<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize> MultiStag
     }
 }
 
-/// The chunk circuit at an index of side `S`'s schedule, for a transcript
-/// chunk: loads the transcript stage as well.
+/// The chunk circuit at an index of side `S`'s schedule, for transcript
+/// chunks: loads the transcript stage as well.
 pub(crate) struct TranscriptCircuit<'p, C: Cycle, S, K, R, const HEADER_SIZE: usize> {
     inner: Inner<'p, C>,
     _marker: PhantomData<fn() -> (S, K, R)>,
@@ -219,11 +223,12 @@ impl<C: Cycle, S, K, R, const HEADER_SIZE: usize> Clone
 impl<'p, C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>
     TranscriptCircuit<'p, C, S, K, R, HEADER_SIZE>
 {
-    /// The circuit running the transcript chunk `index` of `schedule`.
+    /// The circuit at `index` of `schedule`, which runs transcript chunks.
     ///
     /// # Panics
     ///
-    /// Panics if `index` is not a transcript chunk of the schedule.
+    /// Panics if `index` is not a circuit of the schedule running
+    /// transcript chunks.
     pub(crate) fn new(
         index: usize,
         schedule: Arc<Schedule>,
@@ -231,7 +236,7 @@ impl<'p, C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>
     ) -> MultiStage<S::F, R, Self> {
         assert!(
             is_transcript(&schedule, index),
-            "chunk {index} is not a transcript chunk"
+            "circuit {index} does not run transcript chunks"
         );
         MultiStage::new(TranscriptCircuit {
             inner: Inner::new(index, schedule, params),
