@@ -146,8 +146,8 @@ where
         let prepared = &self.sides(source).native;
         let schedule = Arc::new(prepared.schedule.clone());
         let params = self.wallet.params;
-        let mut circuits = Vec::with_capacity(schedule.chunks.len() + 1);
-        for index in 0..schedule.chunks.len() {
+        let mut circuits = Vec::with_capacity(schedule.circuits.len() + 1);
+        for index in 0..schedule.circuits.len() {
             let trace = if is_transcript(&schedule, index) {
                 chunk::TranscriptCircuit::<C, Native, ProductionRank, R, HEADER_SIZE>::new(
                     index,
@@ -177,7 +177,7 @@ where
         .into_parts()
         .0;
         let statement =
-            native::InternalCircuitIndex::ExtensionCircuit(schedule.chunks.len() as u32);
+            native::InternalCircuitIndex::ExtensionCircuit(schedule.circuits.len() as u32);
         circuits.push(registry.assemble(&trace, statement.circuit_index::<P>(), rng)?);
         type Instance<C, R, const H: usize> = InstanceStage<C, Native, ProductionRank, R, H>;
         type Messages<C, R, const H: usize> = MessagesStage<C, Native, ProductionRank, R, H>;
@@ -208,8 +208,8 @@ where
         let prepared: &Prepared<C, Nested> = &self.sides(source).nested;
         let schedule = Arc::new(prepared.schedule.clone());
         let params = self.wallet.params;
-        let mut circuits = Vec::with_capacity(schedule.chunks.len());
-        for index in 0..schedule.chunks.len() {
+        let mut circuits = Vec::with_capacity(schedule.circuits.len());
+        for index in 0..schedule.circuits.len() {
             let trace = chunk::Circuit::<C, Nested, ProductionRank, R, HEADER_SIZE>::new(
                 index,
                 schedule.clone(),
