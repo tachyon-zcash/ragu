@@ -448,6 +448,17 @@ impl<T> InternalCircuitValues<T> {
         self.endoscaling_step_circuits.len()
     }
 
+    /// The lengths of the parts the profile sizes: the endoscaling steps,
+    /// the extension circuits and the extension bondings. Two values pair
+    /// up wire for wire only if their shapes agree.
+    pub fn shape(&self) -> (usize, usize, usize) {
+        (
+            self.endoscaling_step_circuits.len(),
+            self.extension_circuits.len(),
+            self.extension_bondings.len(),
+        )
+    }
+
     /// Every value with its index, in [`all`](InternalCircuitIndex::all)
     /// order.
     pub fn iter(&self) -> impl Iterator<Item = (InternalCircuitIndex, &T)> {
@@ -790,6 +801,17 @@ impl<T> RxValues<T> {
     /// The number of endoscaling steps these values were built for.
     pub fn num_steps(&self) -> usize {
         self.endoscaling_steps.len()
+    }
+
+    /// The lengths of the parts the profile sizes: the endoscaling steps,
+    /// the extension circuits and the extension stages. Two values pair up
+    /// wire for wire only if their shapes agree.
+    pub fn shape(&self) -> (usize, usize, usize) {
+        (
+            self.endoscaling_steps.len(),
+            self.extension_circuits.len(),
+            self.extension_stages.len(),
+        )
     }
 
     /// Every value with its index, in [`all`](RxIndex::all) order.

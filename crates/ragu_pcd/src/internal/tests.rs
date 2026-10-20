@@ -700,6 +700,26 @@ fn test_rx_index_all_exhaustive() {
     assert_eq!(collected.as_slice(), RxIndex::ALL);
 }
 
+/// Values with the same step count can still differ in the extension's
+/// parts. The shape tells them apart, which is what the conservative
+/// equality of two values asserts before pairing their wires.
+#[test]
+fn test_values_shapes_follow_the_profile() {
+    use crate::profile::Standard;
+
+    let standard = InternalCircuitValues::from_fn::<Standard>(|_| ());
+    let mut wider = InternalCircuitValues::from_fn::<Standard>(|_| ());
+    wider.extension_circuits.push(());
+    assert_eq!(standard.num_steps(), wider.num_steps());
+    assert_ne!(standard.shape(), wider.shape());
+
+    let standard = RxValues::from_fn::<Standard>(|_| ());
+    let mut wider = RxValues::from_fn::<Standard>(|_| ());
+    wider.extension_stages.push(());
+    assert_eq!(standard.num_steps(), wider.num_steps());
+    assert_ne!(standard.shape(), wider.shape());
+}
+
 /// The generic lists resize the constant ones, so in the standard profile
 /// they are the constant ones.
 #[test]

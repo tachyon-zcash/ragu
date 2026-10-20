@@ -141,7 +141,7 @@ unsafe impl<F: Field> ragu_core::gadgets::GadgetKind<F>
         a: &InternalCircuitValues<Element<'dr, D2>>,
         b: &InternalCircuitValues<Element<'dr, D2>>,
     ) -> Result<()> {
-        assert_eq!(a.num_steps(), b.num_steps());
+        assert_eq!(a.shape(), b.shape());
         for ((_, a), (_, b)) in a.iter().zip(b.iter()) {
             eq.enforce_conservative_equal_gadget(a, b)?;
         }
@@ -180,7 +180,7 @@ unsafe impl<F: Field> ragu_core::gadgets::GadgetKind<F>
         a: &RxValues<Element<'dr, D2>>,
         b: &RxValues<Element<'dr, D2>>,
     ) -> Result<()> {
-        assert_eq!(a.num_steps(), b.num_steps());
+        assert_eq!(a.shape(), b.shape());
         for ((_, a), (_, b)) in a.iter().zip(b.iter()) {
             eq.enforce_conservative_equal_gadget(a, b)?;
         }
