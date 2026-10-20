@@ -1166,3 +1166,173 @@ fn test_fold_groups_follow_the_profile() {
     assert!(capacity::<nested::RevdotParameters<Wider>>() >= nested::num_claims::<Wider>());
     assert!(nested::NumFoldGroups::<Wider>::len() > nested::NUM_FOLD_GROUPS);
 }
+
+/// The gates of every fuse circuit of profile `P` over cycle `C` at rank
+/// `R` with `H`-element headers, by side, each with its index's name: the
+/// extension's circuits and the bondings aside.
+macro_rules! fuse_gates {
+    ($C:ty, $R:ty, $H:expr, $P:ty) => {{
+        use ragu_circuits::staging::MultiStage;
+
+        use crate::internal::{
+            native::{self, InternalCircuitIndex as Native},
+            nested::{self, InternalCircuitIndex as Nested},
+        };
+        type Host = <$C as ragu_core::Cycle>::HostCurve;
+        fn gates<F: Field>(circuit: &impl Circuit<F>) -> usize {
+            ragu_circuits::testing::synthesis_counts(circuit)
+                .unwrap()
+                .num_gates
+        }
+        let pasta = crate::pasta::baked();
+        let (_, log2_circuits) = native::total_circuit_counts::<$P>(NUM_APP_STEPS);
+        let mut native_gates: alloc::vec::Vec<(alloc::string::String, usize)> =
+            alloc::vec::Vec::new();
+        for variant in Native::all::<$P>() {
+            let gates = match variant {
+                Native::Hashes1Circuit => gates(&native::circuits::hashes_1::Circuit::<
+                    $C,
+                    $R,
+                    $H,
+                    RevdotParameters<$P>,
+                >::new(pasta, log2_circuits)),
+                Native::Hashes2Circuit => gates(&native::circuits::hashes_2::Circuit::<
+                    $C,
+                    $R,
+                    $H,
+                    RevdotParameters<$P>,
+                >::new(pasta)),
+                Native::InnerCollapseCircuit => {
+                    gates(&native::circuits::inner_collapse::Circuit::<
+                        $C,
+                        $R,
+                        $H,
+                        RevdotParameters<$P>,
+                    >::new())
+                }
+                Native::OuterCollapseCircuit => {
+                    gates(&native::circuits::outer_collapse::Circuit::<
+                        $C,
+                        $R,
+                        $H,
+                        RevdotParameters<$P>,
+                    >::new())
+                }
+                Native::ComputeVCircuit => {
+                    gates(&native::circuits::compute_v::Circuit::<$C, $R, $H>::new())
+                }
+                Native::BindChallengesCircuit(k) => {
+                    crate::with_binder!(k, $C, $R, $H, pasta, |circuit| gates(&circuit))
+                }
+                Native::BindBetaCircuit => gates(&native::circuits::bind_beta::Circuit::<
+                    $C,
+                    $R,
+                    $H,
+                    RevdotParameters<$P>,
+                >::new(pasta)),
+                Native::BindEndoscalarCircuit => {
+                    gates(&native::circuits::bind_endoscalar::Circuit::<$C, $R>::new())
+                }
+                Native::EndoscalingStep(step) => gates(
+                    &native::circuits::endoscaling_step::Circuit::<$C, $R>::new(step as usize),
+                ),
+                _ => continue,
+            };
+            native_gates.push((alloc::format!("{variant:?}"), gates));
+        }
+        let mut nested_gates: alloc::vec::Vec<(alloc::string::String, usize)> =
+            alloc::vec::Vec::new();
+        for variant in Nested::all::<$P>() {
+            let gates = match variant {
+                Nested::EndoscalingStep(step) => gates(&MultiStage::new(
+                    nested::EndoscalingStep::<Host, $R, $P>::new(step as usize),
+                )),
+                Nested::Export => gates(&MultiStage::new(nested::circuits::export::Circuit::<
+                    Host,
+                    $R,
+                    $P,
+                >::new())),
+                Nested::Collapse => gates(&MultiStage::new(nested::circuits::collapse::Circuit::<
+                    Host,
+                    $R,
+                    $P,
+                >::new())),
+                Nested::ComputeV => {
+                    gates(&MultiStage::new(nested::circuits::compute_v::Circuit::<
+                        Host,
+                        $R,
+                        $P,
+                    >::new()))
+                }
+                Nested::Loading => gates(&MultiStage::new(nested::circuits::loading::Circuit::<
+                    Host,
+                    $R,
+                    $P,
+                >::new())),
+                _ => continue,
+            };
+            nested_gates.push((alloc::format!("{variant:?}"), gates));
+        }
+        (native_gates, nested_gates)
+    }};
+}
+
+/// Reports `gates`, every circuit but the endoscaling steps and the
+/// largest step, against `budget`, and returns the circuits over it.
+fn report_fuse_gates(
+    side: &str,
+    gates: &[(alloc::string::String, usize)],
+    budget: usize,
+) -> alloc::vec::Vec<(alloc::string::String, usize)> {
+    let steps = gates
+        .iter()
+        .filter(|(name, _)| name.starts_with("EndoscalingStep"));
+    let largest_step = steps.max_by_key(|(_, gates)| *gates);
+    std::println!("{side}: {} circuits of {budget} gates", gates.len());
+    for (name, gates) in gates
+        .iter()
+        .filter(|(name, _)| !name.starts_with("EndoscalingStep"))
+        .chain(largest_step)
+    {
+        std::println!("  {name}: {gates}");
+    }
+    gates
+        .iter()
+        .filter(|(_, gates)| *gates > budget)
+        .cloned()
+        .collect()
+}
+
+/// Every fuse circuit of the aggregator profile fits the aggregator rank's
+/// budget with the decompression extension's polynomials, for the test
+/// header size and for this module's.
+#[test]
+fn test_aggregator_fuse_fits_the_budget() {
+    use ragu_circuits::polynomials::AggregatorRank;
+
+    use crate::profile::{Aggregator, Profiled};
+
+    let budget = AggregatorRank::n();
+    let mut over = alloc::vec::Vec::new();
+    {
+        type C = Profiled<Pasta, Aggregator<4>>;
+        let (native, nested) = fuse_gates!(C, AggregatorRank, 4, Aggregator<4>);
+        over.extend(report_fuse_gates("native, header size 4", &native, budget));
+        over.extend(report_fuse_gates("nested, header size 4", &nested, budget));
+    }
+    {
+        type C = Profiled<Pasta, Aggregator<HEADER_SIZE>>;
+        let (native, nested) = fuse_gates!(C, AggregatorRank, HEADER_SIZE, Aggregator<HEADER_SIZE>);
+        over.extend(report_fuse_gates(
+            "native, header size 103",
+            &native,
+            budget,
+        ));
+        over.extend(report_fuse_gates(
+            "nested, header size 103",
+            &nested,
+            budget,
+        ));
+    }
+    assert!(over.is_empty(), "over the budget: {over:?}");
+}

@@ -4,10 +4,12 @@
 
 use alloc::vec::Vec;
 
-use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::{AggregatorRank, ProductionRank, Rank};
 use ragu_core::{Cycle, PoseidonPermutation, pasta::Pasta};
 
-use super::{Chunk, ElementSrc, Op, PointSrc, Schedule, Step, native_schedule, nested_schedule};
+use super::{
+    Chunk, ElementSrc, Limits, Op, PointSrc, Schedule, Step, native_schedule, nested_schedule,
+};
 
 const HEADER_SIZE: usize = 4;
 /// The sponge state's width.
@@ -175,10 +177,11 @@ fn check(schedule: &Schedule) {
     );
 }
 
-#[test]
-fn schedules_are_consistent() {
-    let native = native_schedule::<Pasta, ProductionRank, HEADER_SIZE>().unwrap();
-    let nested = nested_schedule::<Pasta, ProductionRank, HEADER_SIZE>().unwrap();
+/// Both sides' schedules for a production-rank proof in chunk circuits at
+/// rank `R` are consistent, and their counts are reported.
+fn schedules_are_consistent<R: Rank>() {
+    let native = native_schedule::<Pasta, ProductionRank, R, HEADER_SIZE>().unwrap();
+    let nested = nested_schedule::<Pasta, ProductionRank, R, HEADER_SIZE>().unwrap();
     check(&native);
     check(&nested);
     let kinds = |schedule: &Schedule| {
@@ -209,7 +212,8 @@ fn schedules_are_consistent() {
     };
     for (name, schedule) in [("native", &native), ("nested", &nested)] {
         std::println!(
-            "{name}: {} chunks, {} work elements, {} work points, {} states: {:?}",
+            "{name} at rank {}: {} chunks, {} work elements, {} work points, {} states: {:?}",
+            R::RANK,
             schedule.chunks.len(),
             schedule.elements,
             schedule.points,
@@ -217,4 +221,52 @@ fn schedules_are_consistent() {
             kinds(schedule)
         );
     }
+}
+
+#[test]
+fn production_rank_schedules_are_consistent() {
+    schedules_are_consistent::<ProductionRank>();
+}
+
+#[test]
+fn aggregator_rank_schedules_are_consistent() {
+    schedules_are_consistent::<AggregatorRank>();
+}
+
+/// The production rank's limits are the fitted ones; the aggregator rank's
+/// hold four times the work, a full-width scaling in one chunk.
+#[test]
+fn limits_scale_with_the_rank() {
+    assert_eq!(Limits::at::<ProductionRank>(), Limits::FITTED);
+    let fitted = Limits::FITTED;
+    assert_eq!(
+        Limits::at::<AggregatorRank>(),
+        Limits {
+            scalings: 4 * fitted.scalings,
+            permutations: 4 * fitted.permutations,
+            lifts: 4 * fitted.lifts,
+            checks: 4 * fitted.checks,
+            sums: 4 * fitted.sums,
+            digits: 4 * fitted.digits,
+            scale_parts: 1,
+        }
+    );
+}
+
+/// The native chunk count grows with the header size, since the
+/// compression's transcript absorbs the three headers; the nested count
+/// does not, so a profile pinning the counts pins them per header size.
+#[test]
+fn native_counts_follow_the_header_size() {
+    use super::chunk_counts;
+    let (native_small, nested_small) =
+        chunk_counts::<Pasta, ProductionRank, AggregatorRank, 4>().unwrap();
+    let (native_large, nested_large) =
+        chunk_counts::<Pasta, ProductionRank, AggregatorRank, 103>().unwrap();
+    std::println!(
+        "aggregator rank: {native_small}/{nested_small} chunks at header size 4, \
+         {native_large}/{nested_large} at 103"
+    );
+    assert!(native_large > native_small);
+    assert_eq!(nested_large, nested_small);
 }

@@ -11,6 +11,12 @@
 //! is fixed by its index into the schedule, so the family of chunk
 //! circuits is as fixed as the schedule, and the stages' masks bind the
 //! layout the chunks read.
+//!
+//! A chunk circuit at rank `R` verifies a compressed proof at rank `K`:
+//! its schedule is cut for `R`'s gate budget, and what it loads and checks
+//! is sized by `K`. An aggregator runs the chunks at
+//! [`AggregatorRank`](ragu_circuits::polynomials::AggregatorRank) over
+//! wallets' proofs at the production rank.
 
 use alloc::sync::Arc;
 use core::marker::PhantomData;
@@ -72,7 +78,7 @@ impl<'p, C: Cycle> Inner<'p, C> {
     }
 
     /// Runs the chunk over the loaded stages and holds its writes.
-    fn synthesize<'dr, D, S, R, const HEADER_SIZE: usize>(
+    fn synthesize<'dr, D, S, K, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
         loaded: Loaded<'_, 'dr, D, S::P>,
@@ -82,7 +88,7 @@ impl<'p, C: Cycle> Inner<'p, C> {
         'p: 'dr,
         D: Driver<'dr, F = S::F>,
         S: Side<C>,
-        R: Rank,
+        K: Rank,
     {
         let ctx = Ctx {
             loaded,
@@ -93,19 +99,19 @@ impl<'p, C: Cycle> Inner<'p, C> {
             witness,
         };
         let writes =
-            run::execute::<_, C, S, R, HEADER_SIZE>(dr, &self.schedule.chunks[self.index], &ctx)?;
+            run::execute::<_, C, S, K, HEADER_SIZE>(dr, &self.schedule.chunks[self.index], &ctx)?;
         run::enforce(dr, loaded, writes)
     }
 }
 
 /// The chunk circuit at an index of side `S`'s schedule, for a chunk
 /// other than a transcript chunk.
-pub(crate) struct Circuit<'p, C: Cycle, S, R, const HEADER_SIZE: usize> {
+pub(crate) struct Circuit<'p, C: Cycle, S, K, R, const HEADER_SIZE: usize> {
     inner: Inner<'p, C>,
-    _marker: PhantomData<fn() -> (S, R)>,
+    _marker: PhantomData<fn() -> (S, K, R)>,
 }
 
-impl<C: Cycle, S, R, const HEADER_SIZE: usize> Clone for Circuit<'_, C, S, R, HEADER_SIZE> {
+impl<C: Cycle, S, K, R, const HEADER_SIZE: usize> Clone for Circuit<'_, C, S, K, R, HEADER_SIZE> {
     fn clone(&self) -> Self {
         Circuit {
             inner: self.inner.clone(),
@@ -114,8 +120,8 @@ impl<C: Cycle, S, R, const HEADER_SIZE: usize> Clone for Circuit<'_, C, S, R, HE
     }
 }
 
-impl<'p, C: Cycle, S: Side<C>, R: Rank, const HEADER_SIZE: usize>
-    Circuit<'p, C, S, R, HEADER_SIZE>
+impl<'p, C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>
+    Circuit<'p, C, S, K, R, HEADER_SIZE>
 {
     /// The circuit running chunk `index` of `schedule`.
     ///
@@ -139,10 +145,10 @@ impl<'p, C: Cycle, S: Side<C>, R: Rank, const HEADER_SIZE: usize>
     }
 }
 
-impl<C: Cycle, S: Side<C>, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<S::F, R>
-    for Circuit<'_, C, S, R, HEADER_SIZE>
+impl<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<S::F, R>
+    for Circuit<'_, C, S, K, R, HEADER_SIZE>
 {
-    type Last = WorkStage<C, S, R, HEADER_SIZE>;
+    type Last = WorkStage<C, S, K, R, HEADER_SIZE>;
     type Instance<'source> = ();
     type Witness<'source> = &'source Prepared<C, S>;
     type Output = S::Output;
@@ -164,9 +170,9 @@ impl<C: Cycle, S: Side<C>, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<
     where
         Self: 'dr,
     {
-        let (instance, dr) = dr.add_stage::<InstanceStage<C, S, R, HEADER_SIZE>>()?;
-        let (messages, dr) = dr.add_stage::<MessagesStage<C, S, R, HEADER_SIZE>>()?;
-        let (work, dr) = dr.add_stage::<WorkStage<C, S, R, HEADER_SIZE>>()?;
+        let (instance, dr) = dr.add_stage::<InstanceStage<C, S, K, R, HEADER_SIZE>>()?;
+        let (messages, dr) = dr.add_stage::<MessagesStage<C, S, K, R, HEADER_SIZE>>()?;
+        let (work, dr) = dr.add_stage::<WorkStage<C, S, K, R, HEADER_SIZE>>()?;
         let dr = dr.finish();
 
         let instance = instance.unenforced(dr, witness.as_ref().map(|w| &w.instance))?;
@@ -179,20 +185,20 @@ impl<C: Cycle, S: Side<C>, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<
             transcript: View::empty(),
         };
         self.inner
-            .synthesize::<_, S, R, HEADER_SIZE>(dr, loaded, witness)?;
+            .synthesize::<_, S, K, HEADER_SIZE>(dr, loaded, witness)?;
         Ok(WithAux::new(S::output(dr), D::unit()))
     }
 }
 
 /// The chunk circuit at an index of side `S`'s schedule, for a transcript
 /// chunk: loads the transcript stage as well.
-pub(crate) struct TranscriptCircuit<'p, C: Cycle, S, R, const HEADER_SIZE: usize> {
+pub(crate) struct TranscriptCircuit<'p, C: Cycle, S, K, R, const HEADER_SIZE: usize> {
     inner: Inner<'p, C>,
-    _marker: PhantomData<fn() -> (S, R)>,
+    _marker: PhantomData<fn() -> (S, K, R)>,
 }
 
-impl<C: Cycle, S, R, const HEADER_SIZE: usize> Clone
-    for TranscriptCircuit<'_, C, S, R, HEADER_SIZE>
+impl<C: Cycle, S, K, R, const HEADER_SIZE: usize> Clone
+    for TranscriptCircuit<'_, C, S, K, R, HEADER_SIZE>
 {
     fn clone(&self) -> Self {
         TranscriptCircuit {
@@ -202,8 +208,8 @@ impl<C: Cycle, S, R, const HEADER_SIZE: usize> Clone
     }
 }
 
-impl<'p, C: Cycle, S: Side<C>, R: Rank, const HEADER_SIZE: usize>
-    TranscriptCircuit<'p, C, S, R, HEADER_SIZE>
+impl<'p, C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>
+    TranscriptCircuit<'p, C, S, K, R, HEADER_SIZE>
 {
     /// The circuit running the transcript chunk `index` of `schedule`.
     ///
@@ -226,10 +232,10 @@ impl<'p, C: Cycle, S: Side<C>, R: Rank, const HEADER_SIZE: usize>
     }
 }
 
-impl<C: Cycle, S: Side<C>, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<S::F, R>
-    for TranscriptCircuit<'_, C, S, R, HEADER_SIZE>
+impl<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<S::F, R>
+    for TranscriptCircuit<'_, C, S, K, R, HEADER_SIZE>
 {
-    type Last = TranscriptStage<C, S, R, HEADER_SIZE>;
+    type Last = TranscriptStage<C, S, K, R, HEADER_SIZE>;
     type Instance<'source> = ();
     type Witness<'source> = &'source Prepared<C, S>;
     type Output = S::Output;
@@ -251,10 +257,10 @@ impl<C: Cycle, S: Side<C>, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<
     where
         Self: 'dr,
     {
-        let (instance, dr) = dr.add_stage::<InstanceStage<C, S, R, HEADER_SIZE>>()?;
-        let (messages, dr) = dr.add_stage::<MessagesStage<C, S, R, HEADER_SIZE>>()?;
-        let (work, dr) = dr.add_stage::<WorkStage<C, S, R, HEADER_SIZE>>()?;
-        let (transcript, dr) = dr.add_stage::<TranscriptStage<C, S, R, HEADER_SIZE>>()?;
+        let (instance, dr) = dr.add_stage::<InstanceStage<C, S, K, R, HEADER_SIZE>>()?;
+        let (messages, dr) = dr.add_stage::<MessagesStage<C, S, K, R, HEADER_SIZE>>()?;
+        let (work, dr) = dr.add_stage::<WorkStage<C, S, K, R, HEADER_SIZE>>()?;
+        let (transcript, dr) = dr.add_stage::<TranscriptStage<C, S, K, R, HEADER_SIZE>>()?;
         let dr = dr.finish();
 
         let instance = instance.unenforced(dr, witness.as_ref().map(|w| &w.instance))?;
@@ -268,7 +274,7 @@ impl<C: Cycle, S: Side<C>, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<
             transcript: View::new(&transcript),
         };
         self.inner
-            .synthesize::<_, S, R, HEADER_SIZE>(dr, loaded, witness)?;
+            .synthesize::<_, S, K, HEADER_SIZE>(dr, loaded, witness)?;
         Ok(WithAux::new(S::output(dr), D::unit()))
     }
 }

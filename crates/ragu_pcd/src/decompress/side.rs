@@ -83,9 +83,11 @@ pub(crate) trait Side<C: Cycle>: Copy + Default + Send + Sync + 'static {
     /// The IPA's $U$ on `P`.
     fn u(params: &C::Params) -> Self::P;
     fn poseidon(params: &C::Params) -> &Self::Poseidon;
-    fn layout<R: Rank, const HEADER_SIZE: usize>() -> Layout;
-    /// The side's chunk schedule.
-    fn schedule<R: Rank, const HEADER_SIZE: usize>() -> Result<Schedule>;
+    /// The side's stage layout for a proof at rank `K`.
+    fn layout<K: Rank, const HEADER_SIZE: usize>() -> Layout;
+    /// The side's chunk schedule for a proof at rank `K`, cut for chunk
+    /// circuits at rank `R`.
+    fn schedule<K: Rank, R: Rank, const HEADER_SIZE: usize>() -> Result<Schedule>;
     /// The instance stage's values.
     fn instance(
         params: &C::Params,
@@ -116,7 +118,7 @@ pub(crate) trait Side<C: Cycle>: Copy + Default + Send + Sync + 'static {
     /// The targets chunk: allocates the side's unified instance, binds it
     /// to the stages and returns the claims' base targets in the
     /// schedule's [`Regions::targets`](program::Regions::targets) order.
-    fn targets<'dr, D: Driver<'dr, F = Self::F>, R: Rank, const HEADER_SIZE: usize>(
+    fn targets<'dr, D: Driver<'dr, F = Self::F>, K: Rank, const HEADER_SIZE: usize>(
         dr: &mut D,
         ctx: &Ctx<'_, '_, 'dr, D, C, Self>,
     ) -> Result<Vec<Element<'dr, D>>>;
@@ -175,12 +177,12 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
         C::circuit_poseidon(params)
     }
 
-    fn layout<R: Rank, const HEADER_SIZE: usize>() -> Layout {
-        Layout::native::<R, HEADER_SIZE>()
+    fn layout<K: Rank, const HEADER_SIZE: usize>() -> Layout {
+        Layout::native::<K, HEADER_SIZE>()
     }
 
-    fn schedule<R: Rank, const HEADER_SIZE: usize>() -> Result<Schedule> {
-        program::native_schedule::<C, R, HEADER_SIZE>()
+    fn schedule<K: Rank, R: Rank, const HEADER_SIZE: usize>() -> Result<Schedule> {
+        program::native_schedule::<C, K, R, HEADER_SIZE>()
     }
 
     fn instance(
@@ -307,7 +309,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
         WithSuffix::new((), Element::zero(dr))
     }
 
-    fn targets<'dr, D: Driver<'dr, F = Self::F>, R: Rank, const HEADER_SIZE: usize>(
+    fn targets<'dr, D: Driver<'dr, F = Self::F>, K: Rank, const HEADER_SIZE: usize>(
         dr: &mut D,
         ctx: &Ctx<'_, '_, 'dr, D, C, Self>,
     ) -> Result<Vec<Element<'dr, D>>> {
@@ -450,12 +452,12 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
         C::scalar_poseidon(params)
     }
 
-    fn layout<R: Rank, const HEADER_SIZE: usize>() -> Layout {
-        Layout::nested::<R>()
+    fn layout<K: Rank, const HEADER_SIZE: usize>() -> Layout {
+        Layout::nested::<K>()
     }
 
-    fn schedule<R: Rank, const HEADER_SIZE: usize>() -> Result<Schedule> {
-        program::nested_schedule::<C, R, HEADER_SIZE>()
+    fn schedule<K: Rank, R: Rank, const HEADER_SIZE: usize>() -> Result<Schedule> {
+        program::nested_schedule::<C, K, R, HEADER_SIZE>()
     }
 
     fn instance(
@@ -528,7 +530,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
 
     fn output<'dr, D: Driver<'dr, F = Self::F>>(_: &mut D) -> Bound<'dr, D, Self::Output> {}
 
-    fn targets<'dr, D: Driver<'dr, F = Self::F>, R: Rank, const HEADER_SIZE: usize>(
+    fn targets<'dr, D: Driver<'dr, F = Self::F>, K: Rank, const HEADER_SIZE: usize>(
         dr: &mut D,
         ctx: &Ctx<'_, '_, 'dr, D, C, Self>,
     ) -> Result<Vec<Element<'dr, D>>> {

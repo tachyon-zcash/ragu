@@ -66,8 +66,14 @@
 //!    the compressed proof's data from stages and leaving its results in
 //!    a work stage for later chunks, with the prover's native run of the
 //!    same program filling the stages. *Done*: every chunk of both sides
-//!    fits the production rank's budget and is satisfied on a real
-//!    compressed proof, and a tampered stage fails some chunk.
+//!    fits the gate budget with its stages loaded, at the production rank
+//!    and, with the chunks' limits scaled to its budget, at the aggregator
+//!    rank, and is satisfied on a real compressed proof; a tampered stage
+//!    fails some chunk. The chunk circuits take two ranks, the compressed
+//!    proof's and their own, so that an aggregator at
+//!    [`AggregatorRank`](ragu_circuits::polynomials::AggregatorRank) can
+//!    decompress a wallet's production-rank proof in a third as many
+//!    circuits.
 //!
 //! # Integration
 //!
@@ -76,13 +82,17 @@
 //! four stages of [`stages`]. Making it a proof the fuse takes as a child
 //! is what remains, since it changes the fuse's circuit set:
 //!
-//! - **Circuits on both registries.** The chunk circuits and their stages
-//!   are the aggregator profile's extension (see [`profile`](crate::profile)):
-//!   registered on both registries beside the fuse's, with a native fuse
-//!   step that declares a compressed child. Every chunk then runs in every
-//!   proof of that profile, so the fuse folds one claim per chunk per
-//!   child, hundreds beside its own, which its two-layer revdot fold and
-//!   the collapse circuits that check it are not sized for.
+//! - **Circuits on both registries.** [`extension`] lays the chunk circuits
+//!   and their stages out as a profile's extension (see
+//!   [`profile`](crate::profile)) and registers them through the profile's
+//!   hooks beside the fuse's circuits, on both registries. The aggregator
+//!   profile declares it, at the aggregator rank: every chunk then runs in
+//!   every proof of that profile, so each child carries a hundred more
+//!   polynomials for the fuse to hash, evaluate and fold, which the fuse's
+//!   circuits carry at four times the production rank's budget. Proving
+//!   the extension, filling its stages from the prover's native run, and
+//!   a native fuse step that declares a compressed child, binding the
+//!   child's statement to the instance stage, are the fuse's to add.
 //! - **The stages' bindings.** The instance stage holds the compressed
 //!   proof's statement and the messages stage its messages; the transcript
 //!   stage holds the bridges the compression's transcript absorbs. Binding
@@ -106,14 +116,15 @@
 //!   same generators, so the fix is to witness $s$ as a polynomial of the
 //!   decompression proof, take its commitment as $G'$, and defer one
 //!   evaluation claim, $s$ at a fresh point against [`ipa::s_at`], to the
-//!   fuse that consumes the proof. The hooks of
-//!   [#783](https://github.com/tachyon-zcash/ragu/pull/783) and
-//!   [#821](https://github.com/tachyon-zcash/ragu/pull/821),
+//!   fuse that consumes the proof. The hooks
+//!   [#821](https://github.com/tachyon-zcash/ragu/pull/821) proposes,
 //!   `witness_polynomial`, `derive_challenge` and `enforce_poly_query`,
-//!   are exactly that for a circuit-field polynomial, which covers the
-//!   host curve's $G'$. The nested curve's $G'$ is the commitment to a
-//!   scalar-field polynomial on the nested curve, which those hooks do not
-//!   reach, so it needs the same mechanism on the nested side.
+//!   first drafted in [#783](https://github.com/tachyon-zcash/ragu/pull/783)
+//!   and since closed, are exactly that for a circuit-field polynomial,
+//!   which covers the host curve's $G'$; the binding waits for #821 to
+//!   land. The nested curve's $G'$ is the commitment to a scalar-field
+//!   polynomial on the nested curve, which those hooks do not reach, so it
+//!   needs the same mechanism on the nested side.
 
 // The gadgets have no caller until the decompression step assembles them,
 // so until then only their tests use them.
@@ -128,6 +139,7 @@ pub(crate) mod batch;
 pub(crate) mod chunk;
 pub(crate) mod circuit;
 pub(crate) mod derive;
+pub(crate) mod extension;
 pub(crate) mod ipa;
 pub(crate) mod program;
 pub(crate) mod revdot;

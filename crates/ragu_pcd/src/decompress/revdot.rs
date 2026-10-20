@@ -74,7 +74,7 @@ impl<'dr, D: Driver<'dr>> Binding<'dr, D> {
 
     /// $M(r) = \sum_j \sigma^j r^{N - 1 - d_j}$, with `sigma` holding the
     /// powers of $\sigma$.
-    fn mask_at<R: Rank>(
+    fn mask_at<K: Rank>(
         &self,
         dr: &mut D,
         powers: &Powers<'dr, D>,
@@ -82,7 +82,7 @@ impl<'dr, D: Driver<'dr>> Binding<'dr, D> {
     ) -> Result<Element<'dr, D>> {
         let mut terms = Vec::with_capacity(self.degrees.len());
         for (j, &degree) in self.degrees.iter().enumerate() {
-            let power = powers.pow(dr, R::num_coeffs() - 1 - degree)?;
+            let power = powers.pow(dr, K::num_coeffs() - 1 - degree)?;
             terms.push(sigma[j].mul(dr, &power)?);
         }
         Ok(Element::sum(dr, &terms))
@@ -162,7 +162,7 @@ impl<'dr, D: Driver<'dr>> Folded<'dr, D> {
     /// Each layer's $W(r)$, formed as $r^{N - K}$ times the Horner sum of
     /// the $K$ weights at $r$, since the mirrored polynomial holds weight
     /// $k$ at degree $N - 1 - k$: the first layer's, then the second's.
-    fn at_r<R: Rank>(
+    fn at_r<K: Rank>(
         &self,
         dr: &mut D,
         weights: &Weights<Element<'dr, D>>,
@@ -182,7 +182,7 @@ impl<'dr, D: Driver<'dr>> Folded<'dr, D> {
             outer.push(self.mu_prime[g].mul(dr, &self.nu_prime[h])?);
         }
         let mirrored = |dr: &mut D, weights: Vec<Element<'dr, D>>| -> Result<Element<'dr, D>> {
-            let shift = powers.pow(dr, R::num_coeffs() - weights.len())?;
+            let shift = powers.pow(dr, K::num_coeffs() - weights.len())?;
             Element::fold(dr, &weights, r)?.mul(dr, &shift)
         };
         Ok((mirrored(dr, inner)?, mirrored(dr, outer)?))
@@ -200,23 +200,23 @@ pub(crate) struct AtR<'dr, D: Driver<'dr>> {
 
 /// The weights phase of the reduction: each layer's $W(r)$ from the
 /// fold's weights, $t(r, z)$, and $1/r$, over `claims` claims.
-pub(crate) fn weights<'dr, D: Driver<'dr>, R: Rank>(
+pub(crate) fn weights<'dr, D: Driver<'dr>, K: Rank>(
     dr: &mut D,
     claims: usize,
     challenges: &Challenges<'dr, D>,
 ) -> Result<AtR<'dr, D>> {
     let layout = Layout::new(claims);
     let r = &challenges.r;
-    let powers = Powers::new(dr, r, R::RANK + 1)?;
+    let powers = Powers::new(dr, r, K::RANK + 1)?;
     let r_invertible = r.enforce_invertible(dr)?;
     let z_invertible = challenges.z.enforce_invertible(dr)?;
     let tz_at_r = dr.routine(
-        txz::Evaluate::<R>::new(),
+        txz::Evaluate::<K>::new(),
         (r_invertible.clone(), z_invertible),
     )?;
     let folded = Folded::new(dr, &challenges.weights, &layout)?;
     let (inner_at_r, outer_at_r) =
-        folded.at_r::<R>(dr, &challenges.weights, &layout, r, &powers)?;
+        folded.at_r::<K>(dr, &challenges.weights, &layout, r, &powers)?;
     Ok(AtR {
         inner_at_r,
         outer_at_r,
@@ -234,13 +234,13 @@ pub(crate) struct BindingAt<'dr, D: Driver<'dr>> {
 
 /// The bindings phase of the reduction: each binding's expected value and
 /// mask at $r$, the wires weighted by the powers of `sigma`.
-pub(crate) fn bindings_at<'dr, D: Driver<'dr>, R: Rank>(
+pub(crate) fn bindings_at<'dr, D: Driver<'dr>, K: Rank>(
     dr: &mut D,
     bindings: &[Binding<'dr, D>],
     sigma: &Element<'dr, D>,
     r: &Element<'dr, D>,
 ) -> Result<Vec<BindingAt<'dr, D>>> {
-    let powers = Powers::new(dr, r, R::RANK + 1)?;
+    let powers = Powers::new(dr, r, K::RANK + 1)?;
     let wires = bindings
         .iter()
         .map(|binding| binding.degrees.len())
@@ -252,7 +252,7 @@ pub(crate) fn bindings_at<'dr, D: Driver<'dr>, R: Rank>(
         .map(|binding| {
             Ok(BindingAt {
                 expected: binding.expected_at(dr, &powers)?,
-                mask: binding.mask_at::<R>(dr, &powers, &sigma)?,
+                mask: binding.mask_at::<K>(dr, &powers, &sigma)?,
             })
         })
         .collect()
@@ -268,7 +268,7 @@ pub(crate) fn bindings_at<'dr, D: Driver<'dr>, R: Rank>(
 /// `bindings_at` one entry per binding, and `messages` one opening per
 /// derived polynomial: the shapes are fixed by the protocol and the
 /// messages' shape is checked before allocation.
-pub(crate) fn public<'dr, D: Driver<'dr>, R: Rank>(
+pub(crate) fn public<'dr, D: Driver<'dr>, K: Rank>(
     dr: &mut D,
     public: &Public<'dr, D>,
     challenges: &Challenges<'dr, D>,
@@ -276,7 +276,7 @@ pub(crate) fn public<'dr, D: Driver<'dr>, R: Rank>(
     at_r: &AtR<'dr, D>,
     bindings_at: &[BindingAt<'dr, D>],
 ) -> Result<Element<'dr, D>> {
-    let n = R::num_coeffs();
+    let n = K::num_coeffs();
     let claims = public.kinds.len();
     assert_eq!(public.targets.len(), claims, "one target per claim");
     assert_eq!(
@@ -291,7 +291,7 @@ pub(crate) fn public<'dr, D: Driver<'dr>, R: Rank>(
     );
     let layout = Layout::new(claims);
     let r = &challenges.r;
-    let powers = Powers::new(dr, r, R::RANK + 1)?;
+    let powers = Powers::new(dr, r, K::RANK + 1)?;
     let folded = Folded::new(dr, &challenges.weights, &layout)?;
 
     // The public parts of the folded claim's a and b, and its target.
@@ -408,20 +408,20 @@ pub(crate) fn openings<'dr, D: Driver<'dr>>(
 /// Enforces the reduction on one curve and returns the opening claims it
 /// leaves for the batch: the weights, bindings and public phases and the
 /// openings, as one circuit.
-pub(crate) fn verify<'dr, D: Driver<'dr>, R: Rank>(
+pub(crate) fn verify<'dr, D: Driver<'dr>, K: Rank>(
     dr: &mut D,
     public_parts: &Public<'dr, D>,
     challenges: &Challenges<'dr, D>,
     messages: &Messages<'dr, D>,
 ) -> Result<Vec<OpeningClaim<Element<'dr, D>>>> {
-    let at_r = weights::<_, R>(dr, public_parts.kinds.len(), challenges)?;
-    let bound = bindings_at::<_, R>(
+    let at_r = weights::<_, K>(dr, public_parts.kinds.len(), challenges)?;
+    let bound = bindings_at::<_, K>(
         dr,
         &public_parts.bindings,
         &public_parts.sigma,
         &challenges.r,
     )?;
-    let target = public::<_, R>(dr, public_parts, challenges, messages, &at_r, &bound)?;
+    let target = public::<_, K>(dr, public_parts, challenges, messages, &at_r, &bound)?;
     openings(dr, challenges, messages, &at_r.inverse_r, target)
 }
 

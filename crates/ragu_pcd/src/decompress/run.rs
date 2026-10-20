@@ -416,7 +416,7 @@ where
 }
 
 /// Runs one chunk of side `S`, returning what it writes.
-pub(crate) fn execute<'dr, D, C, S, R, const HEADER_SIZE: usize>(
+pub(crate) fn execute<'dr, D, C, S, K, const HEADER_SIZE: usize>(
     dr: &mut D,
     chunk: &Chunk,
     ctx: &Ctx<'_, '_, 'dr, D, C, S>,
@@ -425,7 +425,7 @@ where
     D: Driver<'dr>,
     C: Cycle,
     S: Side<C, F = D::F>,
-    R: Rank,
+    K: Rank,
 {
     let regions = &ctx.schedule.regions;
     let layout = &ctx.schedule.layout;
@@ -472,7 +472,7 @@ where
             }
         }
         Chunk::Targets { out } => {
-            let targets = S::targets::<D, R, HEADER_SIZE>(dr, ctx)?;
+            let targets = S::targets::<D, K, HEADER_SIZE>(dr, ctx)?;
             assert_eq!(targets.len(), out.len(), "one target per slot");
             for (&slot, target) in out.iter().zip(targets) {
                 writes.push(Write::Element(slot, target));
@@ -480,7 +480,7 @@ where
         }
         Chunk::RevdotWeights { out } => {
             let challenges = ctx.revdot_challenges();
-            let at_r = revdot::weights::<_, R>(dr, ctx.schedule.claims.len(), &challenges)?;
+            let at_r = revdot::weights::<_, K>(dr, ctx.schedule.claims.len(), &challenges)?;
             for (slot, value) in out.iter().zip([
                 at_r.inner_at_r,
                 at_r.outer_at_r,
@@ -494,7 +494,7 @@ where
             let bindings = ctx.bindings(dr)?;
             let sigma = ctx.work(regions.lifts[squeezed::SIGMA]);
             let r = ctx.work(regions.lifts[squeezed::R]);
-            let at_r = revdot::bindings_at::<_, R>(dr, &bindings, &sigma, &r)?;
+            let at_r = revdot::bindings_at::<_, K>(dr, &bindings, &sigma, &r)?;
             assert_eq!(at_r.len(), out.len(), "one evaluation per binding");
             for (slots, at) in out.iter().zip(at_r) {
                 writes.push(Write::Element(slots[0], at.expected));
@@ -518,7 +518,7 @@ where
                     mask: ctx.work(slots[1]),
                 })
                 .collect();
-            let target = revdot::public::<_, R>(
+            let target = revdot::public::<_, K>(
                 dr,
                 &public,
                 &ctx.revdot_challenges(),
@@ -735,14 +735,15 @@ fn bits<F: Field>(raw: &[F]) -> Result<Vec<u128>> {
 }
 
 impl<C: Cycle, S: Side<C>> Prepared<C, S> {
-    /// Prepares side `S` from the prepared `witness` and runs its chunks
-    /// natively to fill the work and transcript stages.
-    pub(crate) fn new<R: Rank, const HEADER_SIZE: usize>(
+    /// Prepares side `S` from the prepared `witness` for chunk circuits at
+    /// rank `R` and runs its chunks natively to fill the work and
+    /// transcript stages.
+    pub(crate) fn new<K: Rank, R: Rank, const HEADER_SIZE: usize>(
         params: &C::Params,
         witness: &Witness<C>,
     ) -> Result<Self> {
         let instance = &witness.proof.instance;
-        let schedule = S::schedule::<R, HEADER_SIZE>()?;
+        let schedule = S::schedule::<K, R, HEADER_SIZE>()?;
         // The schedule reads the ab bridge's layout off the stage's wires and
         // the witness off the stage polynomial; they name the same generators.
         let mut layout = schedule.ab_terms.clone();
@@ -779,12 +780,12 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
             transcript,
             aux,
         };
-        prepared.run::<R, HEADER_SIZE>(params)?;
+        prepared.run::<K, HEADER_SIZE>(params)?;
         Ok(prepared)
     }
 
     /// Runs every chunk natively, storing what each writes.
-    fn run<R: Rank, const HEADER_SIZE: usize>(&mut self, params: &C::Params) -> Result<()> {
+    fn run<K: Rank, const HEADER_SIZE: usize>(&mut self, params: &C::Params) -> Result<()> {
         for k in 0..self.schedule.chunks.len() {
             let mut dr = Executor::<S::F>::execute();
             let allocated = Allocated::alloc(
@@ -800,7 +801,7 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
                     poseidon: S::poseidon(params),
                     witness: Executor::<S::F>::just(|| &*self),
                 };
-                execute::<_, C, S, R, HEADER_SIZE>(&mut dr, &self.schedule.chunks[k], &ctx)?
+                execute::<_, C, S, K, HEADER_SIZE>(&mut dr, &self.schedule.chunks[k], &ctx)?
             };
             for write in writes {
                 match write {
@@ -827,14 +828,15 @@ pub(crate) struct Sides<C: IpaCycle + ProfiledCycle<Profile = Standard>> {
 }
 
 impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Sides<C> {
-    /// Prepares both sides for `pcd` under `app`.
+    /// Prepares both sides for `pcd` under `app`, for chunk circuits at
+    /// rank `R`.
     ///
     /// # Errors
     ///
     /// Fails if the native verifier would reject the proof, or on an
     /// internal error.
-    pub(crate) fn prepare<R: Rank, const HEADER_SIZE: usize, B: SelectableBackend, H>(
-        app: &Application<'_, C, R, HEADER_SIZE, B>,
+    pub(crate) fn prepare<K: Rank, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend, H>(
+        app: &Application<'_, C, K, HEADER_SIZE, B>,
         pcd: &CompressedPcd<C, H>,
     ) -> Result<Self>
     where
@@ -842,8 +844,8 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Sides<C> {
     {
         let witness = Witness::prepare(app, pcd)?;
         Ok(Sides {
-            native: Prepared::new::<R, HEADER_SIZE>(app.params, &witness)?,
-            nested: Prepared::new::<R, HEADER_SIZE>(app.params, &witness)?,
+            native: Prepared::new::<K, R, HEADER_SIZE>(app.params, &witness)?,
+            nested: Prepared::new::<K, R, HEADER_SIZE>(app.params, &witness)?,
         })
     }
 }

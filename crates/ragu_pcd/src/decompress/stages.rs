@@ -66,8 +66,8 @@ pub(crate) const MESSAGE_SCALARS: usize =
 
 /// One curve's point messages: the fold's two, $p$, $q$, $f$, $\[S\]$ and
 /// the IPA's rounds.
-pub(crate) const fn message_points<R: Rank>() -> usize {
-    6 + 2 * R::RANK as usize
+pub(crate) const fn message_points<K: Rank>() -> usize {
+    6 + 2 * K::RANK as usize
 }
 
 /// Positions of the circuit field's instance values within the
@@ -216,7 +216,7 @@ pub(crate) struct Layout {
 
 impl Layout {
     /// The circuit-field side's layout.
-    pub(crate) fn native<R: Rank, const HEADER_SIZE: usize>() -> Self {
+    pub(crate) fn native<K: Rank, const HEADER_SIZE: usize>() -> Self {
         let mut points = Spans::default();
         let mut elements = Spans::default();
         let instance = InstanceLayout {
@@ -232,19 +232,19 @@ impl Layout {
         let transcript = TranscriptLayout {
             commitment_bridges: points.next(NATIVE_POINTS),
             bridged: points.next(NESTED_SCALARS),
-            point_bridges: points.next(message_points::<R>()),
+            point_bridges: points.next(message_points::<K>()),
             scalar_bridges: points.next(MESSAGE_SCALARS),
             points: points.0,
         };
         Layout {
             instance,
-            messages: Self::messages::<R>(),
+            messages: Self::messages::<K>(),
             transcript,
         }
     }
 
     /// The scalar-field side's layout.
-    pub(crate) fn nested<R: Rank>() -> Self {
+    pub(crate) fn nested<K: Rank>() -> Self {
         let mut points = Spans::default();
         let mut elements = Spans::default();
         let instance = InstanceLayout {
@@ -256,18 +256,18 @@ impl Layout {
         };
         Layout {
             instance,
-            messages: Self::messages::<R>(),
+            messages: Self::messages::<K>(),
             transcript: TranscriptLayout::default(),
         }
     }
 
     /// Both sides' messages layout: the side's curve's point messages and
     /// the other curve's scalar messages.
-    fn messages<R: Rank>() -> MessagesLayout {
+    fn messages<K: Rank>() -> MessagesLayout {
         let mut points = Spans::default();
         let mut elements = Spans::default();
         MessagesLayout {
-            points_of_curve: points.next(message_points::<R>()),
+            points_of_curve: points.next(message_points::<K>()),
             scalars: elements.next(MESSAGE_SCALARS),
             points: points.0,
             elements: elements.0,
@@ -383,7 +383,7 @@ pub(crate) struct Output<'dr, D: Driver<'dr>, P: Affine<Base = D::F>, LP: Len, L
 }
 
 /// A stage of one side holding `LP` points and `LE` elements after
-/// `Parent`.
+/// `Parent`, as a stage of chunk circuits at rank `R`.
 pub(crate) struct ValuesStage<C, S, R, Parent, LP, LE>(
     PhantomData<fn() -> (C, S, R, Parent, LP, LE)>,
 );
@@ -440,8 +440,8 @@ pub(crate) struct Sizes {
 }
 
 impl Sizes {
-    pub(crate) fn of<C: Cycle, S: Side<C>, R: Rank, const HEADER_SIZE: usize>() -> Self {
-        let schedule = S::schedule::<R, HEADER_SIZE>()
+    pub(crate) fn of<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>() -> Self {
+        let schedule = S::schedule::<K, R, HEADER_SIZE>()
             .expect("the schedule is a function of the proof system's constants");
         Sizes {
             work_points: schedule.points,
@@ -454,16 +454,18 @@ impl Sizes {
 macro_rules! len {
     ($(#[$doc:meta])* $name:ident, |$layout:ident, $sizes:ident| $len:expr) => {
         $(#[$doc])*
-        pub(crate) struct $name<C, S, R, const HEADER_SIZE: usize>(PhantomData<fn() -> (C, S, R)>);
+        pub(crate) struct $name<C, S, K, R, const HEADER_SIZE: usize>(
+            PhantomData<fn() -> (C, S, K, R)>,
+        );
 
-        impl<C: Cycle, S: Side<C>, R: Rank, const HEADER_SIZE: usize> Len
-            for $name<C, S, R, HEADER_SIZE>
+        impl<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize> Len
+            for $name<C, S, K, R, HEADER_SIZE>
         {
             fn len() -> usize {
                 #[allow(unused_variables)]
-                let $layout = S::layout::<R, HEADER_SIZE>();
+                let $layout = S::layout::<K, HEADER_SIZE>();
                 #[allow(unused_variables)]
-                let $sizes = || Sizes::of::<C, S, R, HEADER_SIZE>();
+                let $sizes = || Sizes::of::<C, S, K, R, HEADER_SIZE>();
                 $len
             }
         }
@@ -505,42 +507,42 @@ len!(
 );
 
 /// The instance stage of side `S`.
-pub(crate) type InstanceStage<C, S, R, const HEADER_SIZE: usize> = ValuesStage<
+pub(crate) type InstanceStage<C, S, K, R, const HEADER_SIZE: usize> = ValuesStage<
     C,
     S,
     R,
     (),
-    InstancePoints<C, S, R, HEADER_SIZE>,
-    InstanceElements<C, S, R, HEADER_SIZE>,
+    InstancePoints<C, S, K, R, HEADER_SIZE>,
+    InstanceElements<C, S, K, R, HEADER_SIZE>,
 >;
 
 /// The messages stage of side `S`, after the instance stage.
-pub(crate) type MessagesStage<C, S, R, const HEADER_SIZE: usize> = ValuesStage<
+pub(crate) type MessagesStage<C, S, K, R, const HEADER_SIZE: usize> = ValuesStage<
     C,
     S,
     R,
-    InstanceStage<C, S, R, HEADER_SIZE>,
-    MessagePoints<C, S, R, HEADER_SIZE>,
-    MessageElements<C, S, R, HEADER_SIZE>,
+    InstanceStage<C, S, K, R, HEADER_SIZE>,
+    MessagePoints<C, S, K, R, HEADER_SIZE>,
+    MessageElements<C, S, K, R, HEADER_SIZE>,
 >;
 
 /// The work stage of side `S`, after the messages stage.
-pub(crate) type WorkStage<C, S, R, const HEADER_SIZE: usize> = ValuesStage<
+pub(crate) type WorkStage<C, S, K, R, const HEADER_SIZE: usize> = ValuesStage<
     C,
     S,
     R,
-    MessagesStage<C, S, R, HEADER_SIZE>,
-    WorkPoints<C, S, R, HEADER_SIZE>,
-    WorkElements<C, S, R, HEADER_SIZE>,
+    MessagesStage<C, S, K, R, HEADER_SIZE>,
+    WorkPoints<C, S, K, R, HEADER_SIZE>,
+    WorkElements<C, S, K, R, HEADER_SIZE>,
 >;
 
 /// The transcript stage of side `S`, after the work stage: loaded by the
 /// transcript chunks alone.
-pub(crate) type TranscriptStage<C, S, R, const HEADER_SIZE: usize> = ValuesStage<
+pub(crate) type TranscriptStage<C, S, K, R, const HEADER_SIZE: usize> = ValuesStage<
     C,
     S,
     R,
-    WorkStage<C, S, R, HEADER_SIZE>,
-    TranscriptPoints<C, S, R, HEADER_SIZE>,
-    TranscriptElements<C, S, R, HEADER_SIZE>,
+    WorkStage<C, S, K, R, HEADER_SIZE>,
+    TranscriptPoints<C, S, K, R, HEADER_SIZE>,
+    TranscriptElements<C, S, K, R, HEADER_SIZE>,
 >;

@@ -235,8 +235,8 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
     ///
     /// Fails if the native verifier would reject the proof, or on an
     /// internal error.
-    pub(crate) fn prepare<R: Rank, const HEADER_SIZE: usize, B: SelectableBackend, H>(
-        app: &Application<'_, C, R, HEADER_SIZE, B>,
+    pub(crate) fn prepare<K: Rank, const HEADER_SIZE: usize, B: SelectableBackend, H>(
+        app: &Application<'_, C, K, HEADER_SIZE, B>,
         pcd: &CompressedPcd<C, H>,
     ) -> Result<Self>
     where
@@ -265,7 +265,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
 
         let native = {
             let registry = &app.native_registry;
-            let masked = instance.native_bindings::<R, Verifier<B>, HEADER_SIZE>(
+            let masked = instance.native_bindings::<K, Verifier<B>, HEADER_SIZE>(
                 &fuse,
                 registry,
                 native_sampled.sigma,
@@ -276,7 +276,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
                 &masked,
             )?;
             let kinds = shapes.iter().map(|shape| shape.kind).collect();
-            let mut openings = crate::compress::revdot::verify_native::<C, R, Verifier<B>>(
+            let mut openings = crate::compress::revdot::verify_native::<C, K, Verifier<B>>(
                 instance.circuit_id,
                 |component| instance.native_commitment(component),
                 registry,
@@ -288,7 +288,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
                 &mut Lifted(lifted.host()),
             )?
             .ok_or_else(|| Error::InvalidWitness("the native reduction fails".into()))?;
-            let (commitments, claims) = instance.native_openings::<R, Verifier<B>>(
+            let (commitments, claims) = instance.native_openings::<K, Verifier<B>>(
                 &fuse,
                 registry,
                 native_sampled.w,
@@ -297,7 +297,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
             openings.commitments.extend(commitments);
             openings.claims.extend(claims);
             let restriction_at_w = openings.claims[Derived::ALL.len() + 2].value;
-            side_witness::<C::HostCurve, R, Verifier<B>>(
+            side_witness::<C::HostCurve, K, Verifier<B>>(
                 SideInputs {
                     sampled: native_sampled,
                     raw_sampled: native_raw_sampled,
@@ -319,7 +319,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
                     params: Params::with_k(
                         C::host_generators(app.params),
                         *C::host_u(app.params),
-                        R::RANK,
+                        K::RANK,
                     ),
                 },
                 &mut Lifted(lifted.host()),
@@ -329,14 +329,14 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
 
         let nested = {
             let registry = &app.nested_registry;
-            let masked = instance.nested_bindings::<R, Verifier<B>>(
+            let masked = instance.nested_bindings::<K, Verifier<B>>(
                 &fuse,
                 registry,
                 nested_sampled.sigma,
             )?;
             let shapes = claims::nested_shapes::<Standard, _>(nested_sampled.z, &masked)?;
             let kinds = shapes.iter().map(|shape| shape.kind).collect();
-            let mut openings = crate::compress::revdot::verify_nested::<C, R, Verifier<B>>(
+            let mut openings = crate::compress::revdot::verify_nested::<C, K, Verifier<B>>(
                 |component| instance.nested_commitment(component),
                 registry,
                 nested_sampled.y,
@@ -347,7 +347,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
                 &mut Lifted(lifted.nested()),
             )?
             .ok_or_else(|| Error::InvalidWitness("the nested reduction fails".into()))?;
-            let (commitments, claims) = instance.nested_openings::<R, Verifier<B>>(
+            let (commitments, claims) = instance.nested_openings::<K, Verifier<B>>(
                 &fuse,
                 registry,
                 nested_sampled.w,
@@ -356,7 +356,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
             openings.commitments.extend(commitments);
             openings.claims.extend(claims);
             let restriction_at_w = openings.claims[Derived::ALL.len() + 2].value;
-            side_witness::<C::NestedCurve, R, Verifier<B>>(
+            side_witness::<C::NestedCurve, K, Verifier<B>>(
                 SideInputs {
                     sampled: nested_sampled,
                     raw_sampled: nested_raw_sampled,
@@ -378,7 +378,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
                     params: Params::with_k(
                         C::nested_generators(app.params),
                         *C::nested_u(app.params),
-                        R::RANK,
+                        K::RANK,
                     ),
                 },
                 &mut Lifted(lifted.nested()),
@@ -386,7 +386,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
             )?
         };
 
-        let ab_terms = ab_terms::<C, R>(instance)?;
+        let ab_terms = ab_terms::<C, K>(instance)?;
 
         Ok(Witness {
             proof,
@@ -400,12 +400,12 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
 }
 
 /// What [`side_witness`] takes for one curve.
-struct SideInputs<'a, P: Affine, R: Rank> {
+struct SideInputs<'a, P: Affine, K: Rank> {
     sampled: Sampled<P::Scalar>,
     raw_sampled: Sampled<P::Scalar>,
     messages: &'a Messages<P>,
     openings: &'a Openings<P>,
-    registry: &'a Registry<'a, P::Scalar, R>,
+    registry: &'a Registry<'a, P::Scalar, K>,
     masked: Vec<(usize, Vec<usize>, Vec<P::Scalar>)>,
     kinds: Vec<Kind>,
     restriction_at_w: P::Scalar,
@@ -416,8 +416,8 @@ struct SideInputs<'a, P: Affine, R: Rank> {
 /// reduction, as the verifier leaves it, and `raw` where the reduction
 /// starts: the batch and the IPA run on the lifted view, the whole side on
 /// the raw one.
-fn side_witness<P: Affine, R: Rank, B: SelectableBackend + Backend>(
-    inputs: SideInputs<'_, P, R>,
+fn side_witness<P: Affine, K: Rank, B: SelectableBackend + Backend>(
+    inputs: SideInputs<'_, P, K>,
     lifted: &mut impl IpaTranscript<P>,
     raw: &mut impl IpaTranscript<P>,
 ) -> Result<SideWitness<P>> {
@@ -538,14 +538,14 @@ fn side_witness<P: Affine, R: Rank, B: SelectableBackend + Backend>(
 /// The `ab` bridge stage's nonzero coefficients, read off the stage
 /// polynomial the native verifier recomputes: its layout is the stage's,
 /// so the circuit learns it from the polynomial rather than restating it.
-fn ab_terms<C: ProfiledCycle<Profile = Standard>, R: Rank>(
+fn ab_terms<C: ProfiledCycle<Profile = Standard>, K: Rank>(
     instance: &Instance<C>,
 ) -> Result<Vec<(usize, AbValue)>> {
     let a = instance.native_commitment(native::RxComponent::AbA);
     let b = instance.native_commitment(native::RxComponent::AbB);
     let points_ab = instance.native_commitment(native::RxComponent::Rx(native::RxIndex::PointsAb));
     let alpha = bridge_alpha_power(instance.bridge_alpha, nested::RxIndex::BridgeAB);
-    let stage = nested::stages::ab::Stage::<C::HostCurve, R, Standard>::rx(
+    let stage = nested::stages::ab::Stage::<C::HostCurve, K, Standard>::rx(
         alpha,
         &nested::stages::ab::Witness {
             a,
@@ -786,7 +786,7 @@ struct ScalarChecks<'dr, D: Driver<'dr>> {
 
 /// One side's scalar checks: the reduction, the instance's openings, the
 /// batch and the IPA's scalars, over the challenges' lifts.
-fn scalar_checks<'dr, D: Driver<'dr>, R: Rank>(
+fn scalar_checks<'dr, D: Driver<'dr>, K: Rank>(
     dr: &mut D,
     public: &revdot::Public<'dr, D>,
     challenges: &transcript::Challenges<'dr, D>,
@@ -806,7 +806,7 @@ fn scalar_checks<'dr, D: Driver<'dr>, R: Rank>(
         rho: challenges.rho.lift.clone(),
         r: challenges.r.lift.clone(),
     };
-    let mut claims = revdot::verify::<_, R>(dr, public, &lifts, reduction)?;
+    let mut claims = revdot::verify::<_, K>(dr, public, &lifts, reduction)?;
     claims.extend(extra);
     let polys = Derived::ALL.len() + 2 + crate::compress::instance::OPENED;
     let batched = batch::verify(
@@ -876,7 +876,7 @@ fn point_checks<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
 }
 
 /// The circuit-field side of the decompressed verifier.
-pub(crate) fn circuit_field_side<'dr, D, C, R, const HEADER_SIZE: usize>(
+pub(crate) fn circuit_field_side<'dr, D, C, K, const HEADER_SIZE: usize>(
     dr: &mut D,
     params: &'dr C::Params,
     witness: &Witness<C>,
@@ -884,7 +884,7 @@ pub(crate) fn circuit_field_side<'dr, D, C, R, const HEADER_SIZE: usize>(
 where
     D: Driver<'dr, F = C::CircuitField>,
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    R: Rank,
+    K: Rank,
 {
     let poseidon = C::circuit_poseidon(params);
     let instance = &witness.proof.instance;
@@ -1171,7 +1171,7 @@ where
             &allocated.a_at_u,
             &allocated.b_at_u,
         );
-        let checks = scalar_checks::<_, R>(
+        let checks = scalar_checks::<_, K>(
             dr,
             &public,
             &native_challenges,
@@ -1254,7 +1254,7 @@ where
     // the ab bridge from its coordinates' digits.
     NonzeroBank::scope(dr, |dr, bank| {
         let g = nested_generators.g();
-        let generator = |dr: &mut D, i: usize| Point::constant(dr, g[generator_index::<C, R>(i)]);
+        let generator = |dr: &mut D, i: usize| Point::constant(dr, g[generator_index::<C, K>(i)]);
         let mut acc: Option<Point<'dr, D, C::NestedCurve>> = None;
         for (i, challenge) in fuse.iter().take(challenge_stage::NUM).enumerate() {
             let base = generator(dr, i)?;
@@ -1318,11 +1318,11 @@ where
 }
 
 /// The scalar-field side of the decompressed verifier.
-pub(crate) fn scalar_field_side<'dr, D, C, R>(dr: &mut D, witness: &Witness<C>) -> Result<()>
+pub(crate) fn scalar_field_side<'dr, D, C, K>(dr: &mut D, witness: &Witness<C>) -> Result<()>
 where
     D: Driver<'dr, F = C::ScalarField>,
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    R: Rank,
+    K: Rank,
 {
     let instance = &witness.proof.instance;
     let side = &witness.nested;
@@ -1473,7 +1473,7 @@ where
         );
         let evaluations = elements(dr, m.batch.evaluations.iter().copied())?;
         let c = element(dr, m.opening.c)?;
-        let checks = scalar_checks::<_, R>(
+        let checks = scalar_checks::<_, K>(
             dr,
             &public,
             &challenges,
