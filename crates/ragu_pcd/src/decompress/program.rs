@@ -14,6 +14,13 @@
 //! `R`, the chunk circuits', sets how much work a chunk takes
 //! ([`Limits`]).
 //!
+//! A circuit runs a run of consecutive chunks: the chunks are cut to
+//! pieces of half a circuit's budget, then packed in order into circuits
+//! by an estimate of their gates ([`gates`]) up to the budget's fill
+//! ([`Limits::fill`]), transcript chunks among themselves since they load
+//! a stage the others do not ([`Schedule::circuits`]). The estimate is
+//! pessimistic; the chunk tests measure the circuits.
+//!
 //! The chunks' kinds mirror the verifier's parts: the two transcripts,
 //! sliced at the sponge's permutation boundaries; the challenges' lifts;
 //! the targets, the reduction, the batch and the IPA's scalars; the
@@ -167,6 +174,8 @@ pub(crate) enum Chunk {
         state_in: Option<usize>,
         ops: Vec<Op>,
         state_out: Option<usize>,
+        /// The permutations the chunk performs, the saved state's included.
+        permutations: usize,
     },
     /// Lifts of challenges into work element slots.
     Lift {
@@ -313,6 +322,9 @@ pub(crate) struct Regions {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Schedule {
     pub chunks: Vec<Chunk>,
+    /// The circuits: each a run of consecutive chunks, in order, every
+    /// chunk in exactly one, the transcript chunks' circuits first.
+    pub circuits: Vec<CircuitPlan>,
     pub layout: Layout,
     /// The work stage's element and point counts.
     pub elements: usize,
@@ -328,6 +340,92 @@ pub(crate) struct Schedule {
     /// lands on, in the side's foreign scalars' order after $v$, $c$ and
     /// $c b z$.
     pub ab_terms: Vec<(usize, AbValue)>,
+}
+
+/// The circuit a run of chunks makes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CircuitPlan {
+    /// The chunks' indices, consecutive.
+    pub chunks: core::ops::Range<usize>,
+    /// Whether the chunks are transcript chunks, which load the transcript
+    /// stage.
+    pub transcript: bool,
+}
+
+/// The gates a circuit pays before its chunks: loading the stages, with
+/// room for the estimate's error.
+const OVERHEAD: usize = 400;
+
+/// The gates a chunk's work takes, estimated from each kind's measured
+/// cost per item, over the circuit's [`OVERHEAD`]. Pessimistic by a few
+/// percent, so that circuits packed to the fill by it stay within the
+/// budget; the chunk tests measure the circuits.
+pub(crate) fn gates(chunk: &Chunk) -> usize {
+    match chunk {
+        Chunk::Transcript {
+            ops, permutations, ..
+        } => 100 + 320 * permutations + 4 * ops.len(),
+        Chunk::Lift { pairs } => 330 * pairs.len(),
+        Chunk::Targets { .. } => 200,
+        Chunk::RevdotWeights { .. } => 1500,
+        Chunk::Bindings { .. } => 1150,
+        Chunk::RevdotPublic { .. } => 400,
+        Chunk::BatchIpa { .. } => 150,
+        Chunk::Digits { scalars } => 220 * scalars.len(),
+        Chunk::Sums { sums } => {
+            60 + sums
+                .iter()
+                .map(|(_, terms)| 10 + 6 * terms.len())
+                .sum::<usize>()
+        }
+        Chunk::Chain(chain) => {
+            50 + chain
+                .steps
+                .iter()
+                .map(|step| match step {
+                    Step::Horner { .. } => 730,
+                    Step::AddScaled {
+                        scale_by: Some(_), ..
+                    } => 730,
+                    Step::AddScaled { scale_by: None, .. } => 20,
+                })
+                .sum::<usize>()
+        }
+        Chunk::Checks { checks } => 730 * checks.len(),
+        Chunk::Scale { digits, .. } => 150 + 10 * (digits.1 - digits.0),
+        Chunk::Sign { .. } => 60,
+        Chunk::Equal { .. } => 40,
+    }
+}
+
+/// Packs `chunks`, in order, into circuits of at most `fill` gates by
+/// [`gates`], a chunk that exceeds the fill alone in its circuit, and
+/// transcript chunks never with others.
+fn pack(chunks: &[Chunk], fill: usize) -> Vec<CircuitPlan> {
+    let transcript = |chunk: &Chunk| matches!(chunk, Chunk::Transcript { .. });
+    let mut circuits = Vec::new();
+    let mut start = 0;
+    let mut used = OVERHEAD;
+    for (index, chunk) in chunks.iter().enumerate() {
+        let cost = gates(chunk);
+        if index > start && (transcript(chunk) != transcript(&chunks[start]) || used + cost > fill)
+        {
+            circuits.push(CircuitPlan {
+                chunks: start..index,
+                transcript: transcript(&chunks[start]),
+            });
+            start = index;
+            used = OVERHEAD;
+        }
+        used += cost;
+    }
+    if start < chunks.len() {
+        circuits.push(CircuitPlan {
+            chunks: start..chunks.len(),
+            transcript: transcript(&chunks[start]),
+        });
+    }
+    circuits
 }
 
 /// Allocates work slots.
@@ -364,12 +462,14 @@ impl Slots {
     }
 }
 
-/// How much of each kind of work a chunk takes.
+/// How much of each kind of work a chunk takes, and how full a circuit
+/// packs.
 ///
 /// [`FITTED`](Self::FITTED) fits a circuit of [`FITTED_GATES`] gates with
 /// its stages loaded. Every kind's cost is linear in its count, so a
-/// schedule for chunk circuits at rank `R` takes [`at`](Self::at), the
-/// fitted limits scaled to `R`'s budget.
+/// schedule for chunk circuits at rank `R` takes [`at`](Self::at): the
+/// fitted limits scaled to half of `R`'s budget, so that a circuit packs
+/// several chunks, up to [`fill`](Self::fill).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Limits {
     /// Endoscalings per chain chunk.
@@ -386,11 +486,20 @@ pub(crate) struct Limits {
     pub digits: usize,
     /// The parts a full-width scaling is cut into.
     pub scale_parts: usize,
+    /// The gates a circuit's chunks are packed up to, as [`gates`]
+    /// estimates them.
+    pub fill: usize,
 }
 
 /// The gate budget [`Limits::FITTED`] is fitted to: the production rank's
 /// $2^{11}$.
 const FITTED_GATES: usize = 1 << 11;
+
+/// The part of a budget a circuit packs up to: the rest covers the
+/// estimate's error.
+const fn fill_of(budget: usize) -> usize {
+    budget / 8 * 7
+}
 
 impl Limits {
     /// The limits fitted to [`FITTED_GATES`].
@@ -402,14 +511,15 @@ impl Limits {
         sums: 24,
         digits: 3,
         scale_parts: 2,
+        fill: fill_of(FITTED_GATES),
     };
 
     /// The limits for chunk circuits at rank `R`: the fitted limits times
-    /// the budget's multiple of [`FITTED_GATES`], a scaling cut into that
-    /// many times fewer parts. A budget below the fitted one keeps the
-    /// fitted limits.
+    /// the multiple of [`FITTED_GATES`] in half the budget, a scaling cut
+    /// into that many times fewer parts, and the fill of the budget. A
+    /// budget below twice the fitted one keeps the fitted limits.
     pub(crate) fn at<R: Rank>() -> Self {
-        let scale = (R::n() / FITTED_GATES).max(1);
+        let scale = (R::n() / (2 * FITTED_GATES)).max(1);
         let fitted = Self::FITTED;
         Limits {
             scalings: fitted.scalings * scale,
@@ -419,6 +529,7 @@ impl Limits {
             sums: fitted.sums * scale,
             digits: fitted.digits * scale,
             scale_parts: fitted.scale_parts.div_ceil(scale),
+            fill: fill_of(R::n()),
         }
     }
 }
@@ -509,6 +620,7 @@ fn transcript_chunks<P: PoseidonPermutation<F>, F: Field>(
                 state_in,
                 ops: core::mem::take(&mut current),
                 state_out: Some(state_out),
+                permutations: permutations + 1,
             });
             state_in = Some(state_out);
             // Saving the state permutes once, after which the resumed
@@ -553,6 +665,7 @@ fn transcript_chunks<P: PoseidonPermutation<F>, F: Field>(
             state_in,
             ops: current,
             state_out: None,
+            permutations,
         });
     }
     chunks
@@ -1005,8 +1118,10 @@ impl Builder {
         bindings: Vec<BindingPlan>,
         ab_terms: Vec<(usize, AbValue)>,
     ) -> Schedule {
+        let circuits = pack(&self.chunks, self.limits.fill);
         Schedule {
             chunks: self.chunks,
+            circuits,
             layout: self.layout,
             elements: self.slots.elements,
             points: self.slots.points,
@@ -1636,7 +1751,7 @@ pub(crate) fn nested_schedule<
 }
 
 /// The number of chunks of each side for a proof at rank `K` in chunk
-/// circuits at rank `R`, for the registries.
+/// circuits at rank `R`.
 pub(crate) fn chunk_counts<
     C: ProfiledCycle<Profile = Standard>,
     K: Rank,

@@ -2,7 +2,7 @@
 //! profile declares to carry them and the hooks that register them.
 //!
 //! On the native side the extension is the circuit-field side's chunk
-//! circuits, one per chunk of its schedule, over its four stages: the
+//! circuits, one per run of chunks of its schedule, over its four stages: the
 //! instance, messages and work stages every chunk loads, and the transcript
 //! stage the transcript chunks load after them. Two final masks bind the
 //! chunks by their last stage. After the chunks comes the statement
@@ -52,13 +52,13 @@ pub(crate) const NATIVE_STAGES: usize = 4;
 /// The nested extension's stages: the instance, messages and work stages.
 pub(crate) const NESTED_STAGES: usize = 3;
 
-/// The native layout of `chunks` chunks whose first `transcript` are the
-/// transcript chunks, as the schedule orders them, and the statement
-/// circuit after them: every chunk loads the instance, messages and work
-/// stages, a transcript chunk the transcript stage after them, and the
-/// statement circuit the instance stage alone. A final mask binds each
-/// kind by its last stage: the work stage's, the transcript stage's, then
-/// the instance stage's.
+/// The native layout of `chunks` chunk circuits whose first `transcript`
+/// run the transcript chunks, as the schedule orders them, and the
+/// statement circuit after them: every chunk circuit loads the instance,
+/// messages and work stages, a transcript one the transcript stage after
+/// them, and the statement circuit the instance stage alone. A final mask
+/// binds each kind by its last stage: the work stage's, the transcript
+/// stage's, then the instance stage's.
 ///
 /// # Panics
 ///
@@ -92,8 +92,8 @@ pub(crate) fn native_layout(chunks: usize, transcript: usize) -> Extension {
     }
 }
 
-/// The nested layout of `chunks` chunks: every chunk loads the instance,
-/// messages and work stages, under one final mask.
+/// The nested layout of `chunks` chunk circuits: every one loads the
+/// instance, messages and work stages, under one final mask.
 pub(crate) fn nested_layout(chunks: usize) -> Extension {
     Extension {
         circuits: vec![vec![INSTANCE, MESSAGES, WORK]; chunks],
@@ -104,13 +104,13 @@ pub(crate) fn nested_layout(chunks: usize) -> Extension {
     }
 }
 
-/// The chunk counts of side `S`'s schedule: its chunks and, first among
-/// them, its transcript chunks.
+/// The circuit counts of side `S`'s schedule: its chunk circuits and,
+/// first among them, those running transcript chunks.
 ///
 /// # Errors
 ///
-/// Fails if a transcript chunk follows a chunk of another kind, which the
-/// layouts do not represent.
+/// Fails if a transcript circuit follows a circuit of another kind, which
+/// the layouts do not represent.
 fn counts<C, S, K, R, const HEADER_SIZE: usize>() -> Result<(usize, usize)>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -119,21 +119,21 @@ where
     R: Rank,
 {
     let schedule = S::schedule::<K, R, HEADER_SIZE>()?;
-    let chunks = schedule.chunks.len();
-    let transcript = (0..chunks)
+    let circuits = schedule.circuits.len();
+    let transcript = (0..circuits)
         .take_while(|&index| is_transcript(&schedule, index))
         .count();
-    if (transcript..chunks).any(|index| is_transcript(&schedule, index)) {
+    if (transcript..circuits).any(|index| is_transcript(&schedule, index)) {
         return Err(Error::Initialization(
-            "a transcript chunk after the other chunks".into(),
+            "a transcript circuit after the other circuits".into(),
         ));
     }
-    Ok((chunks, transcript))
+    Ok((circuits, transcript))
 }
 
-/// The native chunk counts for proofs over `C` at rank `K` with
-/// `HEADER_SIZE` headers, as chunk circuits at rank `R`: the chunks and,
-/// first among them, the transcript chunks.
+/// The native circuit counts for proofs over `C` at rank `K` with
+/// `HEADER_SIZE` headers, as chunk circuits at rank `R`: the chunk
+/// circuits and, first among them, those running transcript chunks.
 pub(crate) fn native_counts<C, K, R, const HEADER_SIZE: usize>() -> Result<(usize, usize)>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -143,12 +143,12 @@ where
     counts::<C, Native, K, R, HEADER_SIZE>()
 }
 
-/// The nested chunk count, as [`native_counts`].
+/// The nested circuit count, as [`native_counts`].
 ///
 /// # Errors
 ///
-/// Fails if the nested schedule has a transcript chunk, which its side has
-/// no stage for.
+/// Fails if the nested schedule has a transcript circuit, which its side
+/// has no stage for.
 pub(crate) fn nested_counts<C, K, R, const HEADER_SIZE: usize>() -> Result<usize>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -158,7 +158,7 @@ where
     let (chunks, transcript) = counts::<C, Nested, K, R, HEADER_SIZE>()?;
     if transcript > 0 {
         return Err(Error::Initialization(
-            "a transcript chunk on a side without a transcript stage".into(),
+            "a transcript circuit on a side without a transcript stage".into(),
         ));
     }
     Ok(chunks)
@@ -188,11 +188,12 @@ where
     Ok(nested_layout(nested_counts::<C, K, R, HEADER_SIZE>()?))
 }
 
-/// Registers chunk `circuit` of side `S` into `slot`: a transcript chunk
-/// as a [`chunk::TranscriptCircuit`], any other as a [`chunk::Circuit`]. `pinned` is the count the profile
-/// declared the side's chunks at, with its transcript chunks, which the
-/// schedule must cut into: the declaration and the circuits are the same
-/// list, or the proof carries chunks that never run.
+/// Registers chunk circuit `circuit` of side `S` into `slot`: one running
+/// transcript chunks as a [`chunk::TranscriptCircuit`], any other as a
+/// [`chunk::Circuit`]. `pinned` is the count the profile declared the
+/// side's chunk circuits at, with its transcript ones, which the schedule
+/// must pack into: the declaration and the circuits are the same list, or
+/// the proof carries circuits that never run.
 fn register_circuit<'params, C, S, K, R, const HEADER_SIZE: usize>(
     circuit: usize,
     pinned: (usize, usize),
@@ -207,12 +208,12 @@ where
 {
     if counts::<C, S, K, R, HEADER_SIZE>()? != pinned {
         return Err(Error::Initialization(
-            "the schedule's chunks are not the declared ones".into(),
+            "the schedule's circuits are not the declared ones".into(),
         ));
     }
     let schedule = Arc::new(S::schedule::<K, R, HEADER_SIZE>()?);
-    if circuit >= schedule.chunks.len() {
-        return Err(Error::Initialization("no such chunk".into()));
+    if circuit >= schedule.circuits.len() {
+        return Err(Error::Initialization("no such circuit".into()));
     }
     if is_transcript(&schedule, circuit) {
         slot.register(chunk::TranscriptCircuit::<C, S, K, R, HEADER_SIZE>::new(
@@ -267,9 +268,9 @@ where
     Ok(slot.register(mask))
 }
 
-/// Registers native circuit `circuit` of a side declared at `pinned` chunks
-/// and transcript chunks: a chunk, or at the index past the chunks the
-/// statement circuit; see [`native`] for the layout.
+/// Registers native circuit `circuit` of a side declared at `pinned` chunk
+/// circuits and transcript ones: a chunk circuit, or at the index past
+/// them the statement circuit; see [`native`] for the layout.
 pub(crate) fn register_native_circuit<'params, C, K, R, const HEADER_SIZE: usize>(
     circuit: usize,
     pinned: (usize, usize),
@@ -284,7 +285,7 @@ where
     if circuit == pinned.0 {
         if native_counts::<C, K, R, HEADER_SIZE>()? != pinned {
             return Err(Error::Initialization(
-                "the schedule's chunks are not the declared ones".into(),
+                "the schedule's circuits are not the declared ones".into(),
             ));
         }
         let schedule = Arc::new(<Native as Side<C>>::schedule::<K, R, HEADER_SIZE>()?);
@@ -307,8 +308,8 @@ where
     register_bonding::<C, Native, K, R, HEADER_SIZE>(bonding, slot, true)
 }
 
-/// Registers nested chunk `circuit` of a side declared at `pinned`
-/// chunks; see [`nested`] for the layout.
+/// Registers nested chunk circuit `circuit` of a side declared at
+/// `pinned` chunk circuits; see [`nested`] for the layout.
 pub(crate) fn register_nested_circuit<'params, C, K, R, const HEADER_SIZE: usize>(
     circuit: usize,
     pinned: usize,
