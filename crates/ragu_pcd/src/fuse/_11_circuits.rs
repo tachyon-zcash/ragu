@@ -237,16 +237,21 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_native_bind_beta_rx(bind_beta_rx);
         builder.set_native_bind_endoscalar_rx(bind_endoscalar_rx);
 
-        // The profile's extension has no prover yet: the fuse's own circuits
-        // sit within a few percent of the gate budget, so no profile can add
-        // polynomials until they scale (see `profile::Aggregator`).
-        if !C::Profile::native_extension().is_empty() {
+        // The profile's extension: its prover fills every circuit's and
+        // stage's polynomial over the context the application holds.
+        let extension = C::Profile::native_extension();
+        let rxs = C::Profile::native_extension_rxs::<C::Base, R, HEADER_SIZE, B, RNG>(
+            &self.context,
+            &self.native_registry,
+            rng,
+        )?;
+        if rxs.circuits.len() != extension.circuits.len() || rxs.stages.len() != extension.stages {
             return Err(Error::Initialization(
-                "the profile's native extension cannot be proved yet".into(),
+                "the profile's prover did not fill its native extension".into(),
             ));
         }
-        builder.set_native_extension_circuit_rxs(Vec::new());
-        builder.set_native_extension_stage_rxs(Vec::new());
+        builder.set_native_extension_circuit_rxs(rxs.circuits);
+        builder.set_native_extension_stage_rxs(rxs.stages);
 
         Ok(())
     }
@@ -359,13 +364,19 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_nested_collapse_rx(collapse_rx);
         builder.set_nested_compute_v_rx(compute_v_rx);
 
-        if !C::Profile::nested_extension().is_empty() {
+        let extension = C::Profile::nested_extension();
+        let rxs = C::Profile::nested_extension_rxs::<C::Base, R, HEADER_SIZE, B, RNG>(
+            &self.context,
+            &self.nested_registry,
+            rng,
+        )?;
+        if rxs.circuits.len() != extension.circuits.len() || rxs.stages.len() != extension.stages {
             return Err(Error::Initialization(
-                "the profile's nested extension cannot be proved yet".into(),
+                "the profile's prover did not fill its nested extension".into(),
             ));
         }
-        builder.set_nested_extension_circuit_rxs(Vec::new());
-        builder.set_nested_extension_stage_rxs(Vec::new());
+        builder.set_nested_extension_circuit_rxs(rxs.circuits);
+        builder.set_nested_extension_stage_rxs(rxs.stages);
 
         Ok(())
     }

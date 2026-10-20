@@ -53,7 +53,7 @@ use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 pub use compress::{CompressedPcd, CompressedProof};
 use header::Header;
-use profile::ProfiledCycle;
+use profile::{Profile, ProfiledCycle};
 pub use proof::{Pcd, Proof};
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
@@ -246,8 +246,26 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// Returns an error if internal circuit registration, registry
     /// finalization, or the bootstrap fuse fails.
     pub fn finalize(
+        self,
+        params: &'params C::Params,
+    ) -> Result<Application<'params, C, R, HEADER_SIZE, B>>
+    where
+        <C::Profile as Profile>::Context<'params, C::Base, R, B>: Default,
+    {
+        self.finalize_with(params, Default::default())
+    }
+
+    /// Like [`finalize`](Self::finalize), with the profile's prover
+    /// context: what its prover holds across proofs beyond the proof under
+    /// construction (see [`Profile::Context`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`finalize`](Self::finalize).
+    pub fn finalize_with(
         mut self,
         params: &'params C::Params,
+        context: <C::Profile as Profile>::Context<'params, C::Base, R, B>,
     ) -> Result<Application<'params, C, R, HEADER_SIZE, B>> {
         // Build the native registry:
         // 1. Application circuits (already registered)
@@ -296,6 +314,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             num_application_steps: self.num_application_steps,
             bootstrap: None,
             seeded_trivial: OnceCell::new(),
+            context,
             _marker: PhantomData,
         };
 
@@ -387,7 +406,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
 /// The recursion context that is used to create and verify proof-carrying data.
 pub struct Application<
     'params,
-    C: Cycle,
+    C: ProfiledCycle,
     R: Rank,
     const HEADER_SIZE: usize,
     B: SelectableBackend = ReferenceBackend,
@@ -396,6 +415,9 @@ pub struct Application<
     nested_registry: Registry<'params, C::ScalarField, R>,
     params: &'params C::Params,
     num_application_steps: usize,
+    /// The profile's prover context: what its prover holds across proofs
+    /// (see [`Profile::Context`]).
+    context: <C::Profile as Profile>::Context<'params, C::Base, R, B>,
     /// The proof that bootstraps the recursion: a genuine, verifying
     /// `Pcd<()>` consumed as a child by every [`seed`](Self::seed).
     ///
@@ -409,9 +431,15 @@ pub struct Application<
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
-impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
+    Application<'params, C, R, HEADER_SIZE, B>
 {
+    /// The profile's prover context, as given to
+    /// [`finalize_with`](ApplicationBuilder::finalize_with).
+    pub fn context(&self) -> &<C::Profile as Profile>::Context<'params, C::Base, R, B> {
+        &self.context
+    }
+
     /// Seed a new computation by running a [`Step`] declaring `()` for both of
     /// its inputs.
     ///

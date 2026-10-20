@@ -77,7 +77,7 @@ use crate::{
             PointsWitness,
         },
     },
-    profile::ProfiledCycle,
+    profile::{Profile, ProfiledCycle},
 };
 
 /// A newtype marking a field as derived/cacheable.
@@ -1103,11 +1103,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_native_bind_challenges_rxs(vec![ones_host.clone(); native::NUM_BINDERS]);
         builder.set_native_bind_beta_rx(ones_host.clone());
         builder.set_native_bind_endoscalar_rx(ones_host.clone());
-        // The dummy carries the profile's extension polynomials as the fuse
-        // does; no profile has any, and the fuse refuses one before a dummy
-        // is consumed.
-        builder.set_native_extension_circuit_rxs(Vec::new());
-        builder.set_native_extension_stage_rxs(Vec::new());
+        // The dummy carries the profile's extension polynomials as it does
+        // the fuse's own circuits', as all-ones traces.
+        let extension = C::Profile::native_extension();
+        builder.set_native_extension_circuit_rxs(vec![ones_host.clone(); extension.circuits.len()]);
+        builder.set_native_extension_stage_rxs(vec![ones_host.clone(); extension.stages]);
 
         // Nested accumulator: a trivial claim (all-ones traces), so that a
         // dummy child contributes a well-formed raw claim to its parent's
@@ -1180,9 +1180,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         );
         builder.set_nested_export_rx(ones_nested.clone());
         builder.set_nested_collapse_rx(ones_nested.clone());
-        builder.set_nested_compute_v_rx(ones_nested);
-        builder.set_nested_extension_circuit_rxs(Vec::new());
-        builder.set_nested_extension_stage_rxs(Vec::new());
+        builder.set_nested_compute_v_rx(ones_nested.clone());
+        let extension = C::Profile::nested_extension();
+        builder
+            .set_nested_extension_circuit_rxs(vec![ones_nested.clone(); extension.circuits.len()]);
+        builder.set_nested_extension_stage_rxs(vec![ones_nested; extension.stages]);
 
         // Bridge polynomials: compute via Stage::rx() with trivial witnesses
         // so that traces are valid for their witnesses (not just ones).

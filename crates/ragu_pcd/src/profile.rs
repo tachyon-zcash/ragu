@@ -36,12 +36,18 @@
 use alloc::vec::Vec;
 use core::{any::type_name, fmt, marker::PhantomData};
 
-use ragu_circuits::{polynomials::Rank, registry::RegistryBuilder};
+use ragu_circuits::{
+    polynomials::{Rank, sparse},
+    registry::{Registry, RegistryBuilder},
+};
 #[cfg(feature = "baked")]
 use ragu_core::pasta::Pasta;
 use ragu_core::{Cycle, Error, Result};
+use rand::CryptoRng;
+use udon::field::Field;
 
 use crate::{
+    SelectableBackend,
     internal::{endoscalar, native, nested},
     ipa::IpaCycle,
 };
@@ -64,6 +70,17 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     const NATIVE_EXTENSION: usize;
     /// The nested rx polynomials the profile adds: its nested extension's.
     const NESTED_EXTENSION: usize;
+
+    /// What the profile's prover holds across proofs beyond the proof
+    /// under construction: the extension's witness source, which an
+    /// application takes at
+    /// [`finalize_with`](crate::ApplicationBuilder::finalize_with). Nothing
+    /// for a profile without an extension.
+    type Context<'params, Base, R, B>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend;
 
     /// The circuits and stages the profile adds on the native side.
     fn native_extension() -> Extension {
@@ -157,6 +174,61 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         ))
     }
 
+    /// The native extension's polynomials for one proof: each circuit's,
+    /// assembled against `registry` at the circuit's index in the layout,
+    /// then each stage's, blinded from `rng`.
+    ///
+    /// # Errors
+    ///
+    /// The default fills an empty extension and fails for any other.
+    fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
+        context: &Self::Context<'params, Base, R, B>,
+        registry: &Registry<'params, Base::CircuitField, R>,
+        rng: &mut RNG,
+    ) -> Result<ExtensionRxs<Base::CircuitField, R>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+        RNG: CryptoRng,
+    {
+        let _ = (context, registry, rng);
+        if Self::native_extension().is_empty() {
+            Ok(ExtensionRxs::default())
+        } else {
+            Err(Error::Initialization(
+                "the profile's native extension has no prover".into(),
+            ))
+        }
+    }
+
+    /// The nested counterpart of
+    /// [`native_extension_rxs`](Self::native_extension_rxs).
+    ///
+    /// # Errors
+    ///
+    /// The default fills an empty extension and fails for any other.
+    fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
+        context: &Self::Context<'params, Base, R, B>,
+        registry: &Registry<'params, Base::ScalarField, R>,
+        rng: &mut RNG,
+    ) -> Result<ExtensionRxs<Base::ScalarField, R>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+        RNG: CryptoRng,
+    {
+        let _ = (context, registry, rng);
+        if Self::nested_extension().is_empty() {
+            Ok(ExtensionRxs::default())
+        } else {
+            Err(Error::Initialization(
+                "the profile's nested extension has no prover".into(),
+            ))
+        }
+    }
+
     /// Checks that the constants agree with the extensions.
     ///
     /// # Errors
@@ -179,6 +251,25 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
             }
         }
         Ok(())
+    }
+}
+
+/// An extension's polynomials for one proof: its circuits' rx polynomials
+/// in circuit order, then its stages' in stage order.
+#[derive(Clone, Debug)]
+pub struct ExtensionRxs<F: Field, R: Rank> {
+    /// The circuits' polynomials.
+    pub circuits: Vec<sparse::Polynomial<F, R>>,
+    /// The stages' polynomials.
+    pub stages: Vec<sparse::Polynomial<F, R>>,
+}
+
+impl<F: Field, R: Rank> Default for ExtensionRxs<F, R> {
+    fn default() -> Self {
+        ExtensionRxs {
+            circuits: Vec::new(),
+            stages: Vec::new(),
+        }
     }
 }
 
@@ -262,6 +353,13 @@ pub struct Standard;
 impl Profile for Standard {
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
+
+    type Context<'params, Base, R, B>
+        = ()
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend;
 }
 
 /// The aggregator profile: the fuse plus the circuits that verify a
@@ -284,6 +382,13 @@ pub struct Aggregator;
 impl Profile for Aggregator {
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
+
+    type Context<'params, Base, R, B>
+        = ()
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend;
 }
 
 /// A cycle with a profile: what every item that lays out a proof is generic
@@ -515,6 +620,13 @@ pub(crate) mod testing {
         const NATIVE_EXTENSION: usize = 4;
         const NESTED_EXTENSION: usize = 2;
 
+        type Context<'params, Base, R, B>
+            = ()
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+            R: Rank,
+            B: SelectableBackend;
+
         fn native_extension() -> Extension {
             Extension {
                 circuits: vec![vec![0], vec![0, 1]],
@@ -539,6 +651,13 @@ pub(crate) mod testing {
     impl Profile for Mismatched {
         const NATIVE_EXTENSION: usize = 1;
         const NESTED_EXTENSION: usize = 0;
+
+        type Context<'params, Base, R, B>
+            = ()
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+            R: Rank,
+            B: SelectableBackend;
     }
 
     /// One circuit over one stage under one final mask on each side, with
@@ -549,6 +668,13 @@ pub(crate) mod testing {
     impl Profile for Hooked {
         const NATIVE_EXTENSION: usize = 2;
         const NESTED_EXTENSION: usize = 2;
+
+        type Context<'params, Base, R, B>
+            = ()
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+            R: Rank,
+            B: SelectableBackend;
 
         fn native_extension() -> Extension {
             Extension {

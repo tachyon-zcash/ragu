@@ -19,23 +19,33 @@ use rand::{SeedableRng, rngs::StdRng};
 type R = ProductionRank;
 const HEADER_SIZE: usize = 4;
 
-fn application<C>() -> Result<Application<'static, C, R, HEADER_SIZE>>
-where
-    C: Cycle<Params = PastaParams, CircuitField = Fp> + ProfiledCycle + IpaCycle,
-{
+/// The standard-profile application over `Pasta`.
+fn wallet() -> Result<Application<'static, Pasta, R, HEADER_SIZE>> {
     let pasta = ragu_pcd::pasta::baked();
-    let poseidon_params = C::circuit_poseidon(pasta);
-    ApplicationBuilder::<C, R, HEADER_SIZE>::new()
+    let poseidon_params = Pasta::circuit_poseidon(pasta);
+    ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
         .register(WitnessLeaf { poseidon_params })?
         .register(Hash2 { poseidon_params })?
         .finalize(pasta)
 }
 
-fn prove_verify_compress<C>(seed: u64) -> Result<()>
+/// The aggregator cycle over the Pasta curves.
+type Agg = Profiled<Pasta, Aggregator>;
+
+/// The aggregator-profile application over the same curves.
+fn aggregator() -> Result<Application<'static, Agg, R, HEADER_SIZE>> {
+    let pasta = ragu_pcd::pasta::baked();
+    let poseidon_params = Agg::circuit_poseidon(pasta);
+    ApplicationBuilder::<Agg, R, HEADER_SIZE>::new()
+        .register(WitnessLeaf { poseidon_params })?
+        .register(Hash2 { poseidon_params })?
+        .finalize(pasta)
+}
+
+fn prove_verify_compress<C>(app: &Application<'_, C, R, HEADER_SIZE>, seed: u64) -> Result<()>
 where
     C: Cycle<Params = PastaParams, CircuitField = Fp> + ProfiledCycle + IpaCycle,
 {
-    let app = application::<C>()?;
     let mut rng = StdRng::seed_from_u64(seed);
     let poseidon_params = C::circuit_poseidon(ragu_pcd::pasta::baked());
     let (leaf, _) = app.seed(&mut rng, WitnessLeaf { poseidon_params }, Fp::from(42))?;
@@ -50,6 +60,6 @@ where
 fn both_profiles_prove_in_one_binary() -> Result<()> {
     // Until the aggregator's circuits land, its shape is the standard one.
     assert_eq!(Shape::of::<Aggregator>(), Shape::of::<Standard>());
-    prove_verify_compress::<Pasta>(1)?;
-    prove_verify_compress::<Profiled<Pasta, Aggregator>>(2)
+    prove_verify_compress(&wallet()?, 1)?;
+    prove_verify_compress(&aggregator()?, 2)
 }
