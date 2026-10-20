@@ -362,6 +362,7 @@ fn native_batch_opens_through_the_ipa() {
         unified: targets.unified,
         unified_bridge: targets.unified_bridge,
         application: targets.application + Fp::ONE,
+        statement: targets.statement,
     };
     let (mut verifier, wrong_openings) = native_verifier(&app, proof, y, z, &wrong, &reduction);
     let (at_zero, honest) = (

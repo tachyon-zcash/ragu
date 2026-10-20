@@ -75,7 +75,10 @@ use super::super::{
     },
     unified::{self, OutputBuilder},
 };
-use crate::{internal::fold_revdot, profile::ProfiledCycle};
+use crate::{
+    internal::fold_revdot,
+    profile::{Profile, ProfiledCycle},
+};
 
 /// Circuit that verifies layer 1 of the two-layer revdot reduction.
 ///
@@ -167,12 +170,28 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
         // Sources include:
         // - Child c values from preamble (the children's final revdot claims)
         // - Application and unified k(y) evaluations from outer_error
+        // The statement circuit's k(y) values come straight from the
+        // preamble, as the application ones do in `outer_collapse`. A
+        // profile without a statement circuit computes nothing here, and
+        // reads nothing: its circuit is the one it had.
+        let (left_statement, right_statement) =
+            if C::Profile::native_extension().statement.is_some() {
+                let y = unified_output.y.read(dr, allocator)?;
+                (
+                    preamble.left.statement_ky::<C::Profile>(dr, &y)?,
+                    preamble.right.statement_ky::<C::Profile>(dr, &y)?,
+                )
+            } else {
+                (None, None)
+            };
         let ky = TwoProofKySource::new(
             dr,
             preamble.left.unified.c.clone(),
             preamble.right.unified.c.clone(),
             &outer_error.left,
             &outer_error.right,
+            left_statement,
+            right_statement,
         );
         let mut ky = ky_values::<C::Profile, _>(&ky);
 

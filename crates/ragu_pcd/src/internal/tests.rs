@@ -862,6 +862,10 @@ fn test_extension_claims_follow_the_declaration() {
             [1, 1].into_iter()
         }
 
+        fn statement_ky(&self) -> impl Iterator<Item = u32> + Clone {
+            [60, 61].into_iter()
+        }
+
         fn zero(&self) -> u32 {
             0
         }

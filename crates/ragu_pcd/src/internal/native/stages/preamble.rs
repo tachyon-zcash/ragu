@@ -22,8 +22,9 @@ use ragu_primitives::{
 use crate::{
     Proof,
     header::{Header, Suffix},
-    internal::native::unified,
-    step::internal::padded,
+    internal::{ky, native::unified},
+    profile::Profile,
+    step::{InternalStepIndex, internal::padded},
 };
 
 type HeaderVec<'dr, D, const HEADER_SIZE: usize> = FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>;
@@ -140,6 +141,49 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         self.children.right.write(dr, &mut ky)?;
         self.output_header.write(dr, &mut ky)?;
         ky.finish_ky(dr)
+    }
+
+    /// The statement circuit's $k(y)$ for this child, when profile `P`'s
+    /// native extension has one: the $k(y)$ of the header the extension
+    /// verified, which is the child's own output header for a proof of the
+    /// decompression step and the unit header for a proof of any other
+    /// step, so a profile's prover verifies a proof with the unit header,
+    /// such as an application's bootstrap, outside that step. `None` for a
+    /// profile without a statement circuit, which computes nothing and
+    /// which [`ky_values`] never asks for.
+    ///
+    /// The decompression step's output header is a witness wire set, so
+    /// this is what binds it: a proof of that step whose output header is
+    /// not the decompressed statement's has a false claim on the statement
+    /// circuit.
+    ///
+    /// [`ky_values`]: crate::internal::native::claims::ky_values
+    pub fn statement_ky<P: Profile>(
+        &self,
+        dr: &mut D,
+        y: &Element<'dr, D>,
+    ) -> Result<Option<Element<'dr, D>>> {
+        if P::native_extension().statement.is_none() {
+            return Ok(None);
+        }
+        let decompress = InternalStepIndex::Decompress.circuit_index::<P>()?;
+        let decompress = Element::constant(dr, decompress.omega_j());
+        let is_decompress = self.circuit_id.is_equal(dr, &mut (), &decompress)?;
+        let own = {
+            let mut ky = Horner::new(y);
+            self.output_header.write(dr, &mut ky)?;
+            ky.finish_ky(dr)?
+        };
+        let canonical = {
+            let mut ky = Horner::new(y);
+            for value in ky::output_header::<C, (), HEADER_SIZE>(())? {
+                Element::constant(dr, value).write(dr, &mut ky)?;
+            }
+            ky.finish_ky(dr)?
+        };
+        is_decompress
+            .conditional_select(dr, &canonical, &own)
+            .map(Some)
     }
 
     /// Returns true when the current step declared a [`Dummy`] input for

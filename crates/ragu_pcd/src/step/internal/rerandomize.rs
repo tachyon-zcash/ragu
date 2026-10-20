@@ -7,9 +7,11 @@
 //! a witness wire rather than a constant. The right header is the unit header
 //! carried by the cached proof.
 //!
-//! That witnessed suffix is the one place outside the bootstrap step where a
-//! prover could try to present the [`Dummy`] suffix and take the base case.
-//! Two things stop it. The left input and output are the *same* wires, so the
+//! That witnessed suffix is the one input suffix outside the bootstrap step
+//! that a prover chooses, and so the one place a prover could try to
+//! present the [`Dummy`] suffix and take the base case: the decompression
+//! step witnesses its output's suffix, but its inputs are constants. Two
+//! things stop it. The left input and output are the *same* wires, so the
 //! output header is pinned equal to the input (no relabelling on the way
 //! through); `test_rerandomize_consistency` pins that structurally. And the
 //! right input is the constant unit header, so both inputs cannot be `Dummy`.

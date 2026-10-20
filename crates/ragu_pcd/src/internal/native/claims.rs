@@ -298,8 +298,9 @@ where
                 }
             }
 
-            // An extension circuit: its rx and the extension stages it loads
-            // (k(y) = 1)
+            // An extension circuit: its rx and the extension stages it loads.
+            // Its k(y) is 1, or the statement's for the statement circuit
+            // (see `ky_values`).
             ExtensionCircuit(k) => {
                 let extension = P::native_extension();
                 let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
@@ -435,6 +436,12 @@ pub trait KySource {
     /// for `repeat_n` in [`ky_values`].
     fn ones(&self) -> impl Iterator<Item = Self::Ky> + Clone;
 
+    /// One value per proof for the statement circuit of the profile's
+    /// native extension: the $k(y)$ of the output header it exposes, as
+    /// [`statement_ky`](super::stages::preamble::ProofInputs::statement_ky)
+    /// computes it, and none for a profile without one.
+    fn statement_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
+
     /// The zero value for stage claims.
     fn zero(&self) -> Self::Ky;
 }
@@ -443,8 +450,9 @@ pub trait KySource {
 ///
 /// Chains the $k(y)$ sources in the order required by [`build`],
 /// with `unified_ky` repeated [`NUM_UNIFIED_CIRCUITS`] times and `ones`
-/// once per endoscaling step and per extension circuit of profile `P`,
-/// followed by infinite zeros for stage claims.
+/// once per endoscaling step and per extension circuit of profile `P` but
+/// its statement circuit, which takes `statement_ky`, followed by infinite
+/// zeros for stage claims.
 ///
 /// The `unified_ky` and `unified_bridge_ky` values are computed by
 /// [`ProofInputs::unified_ky_values`](super::stages::preamble::ProofInputs::unified_ky_values)
@@ -455,13 +463,23 @@ pub fn ky_values<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
         .chain(source.application_ky())
         .chain(source.unified_bridge_ky())
         .chain(repeat_n(source.unified_ky(), NUM_UNIFIED_CIRCUITS).flatten())
-        .chain(
-            repeat_n(
-                source.ones(),
-                NumSteps::<P>::len() + P::native_extension().circuits.len(),
-            )
-            .flatten(),
-        )
+        .chain(repeat_n(source.ones(), NumSteps::<P>::len()).flatten())
+        .chain({
+            let extension = P::native_extension();
+            let ones: Vec<S::Ky> = source.ones().collect();
+            let statement: Vec<S::Ky> = source.statement_ky().collect();
+            assert!(
+                extension.statement.is_none() || statement.len() == ones.len(),
+                "a profile with a statement circuit takes one statement value per proof"
+            );
+            (0..extension.circuits.len() as u32).flat_map(move |circuit| {
+                if extension.statement == Some(circuit) {
+                    statement.clone()
+                } else {
+                    ones.clone()
+                }
+            })
+        })
         .chain(core::iter::repeat(source.zero()))
 }
 
@@ -474,18 +492,24 @@ pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
     pub right_bridge: Element<'dr, D>,
     pub left_unified: Element<'dr, D>,
     pub right_unified: Element<'dr, D>,
+    pub left_statement: Option<Element<'dr, D>>,
+    pub right_statement: Option<Element<'dr, D>>,
     pub one: Element<'dr, D>,
     pub zero: Element<'dr, D>,
 }
 
 impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
-    /// Create a [`TwoProofKySource`] from child k(y) outputs and raw c values.
+    /// Create a [`TwoProofKySource`] from child k(y) outputs, raw c values
+    /// and the statement circuit's k(y) values, `None` for a profile without
+    /// one.
     pub fn new(
         dr: &mut D,
         left_raw_c: Element<'dr, D>,
         right_raw_c: Element<'dr, D>,
         left_ky: &super::stages::outer_error::ChildKyOutputs<'dr, D>,
         right_ky: &super::stages::outer_error::ChildKyOutputs<'dr, D>,
+        left_statement: Option<Element<'dr, D>>,
+        right_statement: Option<Element<'dr, D>>,
     ) -> Self {
         Self {
             left_raw_c,
@@ -496,6 +520,8 @@ impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
             right_bridge: right_ky.unified_bridge.clone(),
             left_unified: left_ky.unified.clone(),
             right_unified: right_ky.unified.clone(),
+            left_statement,
+            right_statement,
             one: Element::one(),
             zero: Element::zero(dr),
         }
@@ -523,6 +549,13 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
 
     fn ones(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
         once(self.one.clone()).chain(once(self.one.clone()))
+    }
+
+    fn statement_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
+        self.left_statement
+            .iter()
+            .chain(self.right_statement.iter())
+            .cloned()
     }
 
     fn zero(&self) -> Element<'dr, D> {

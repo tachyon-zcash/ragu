@@ -128,12 +128,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 let nu = Element::alloc(dr, allocator, nu)?;
 
                 // Build k(y) values in claim order.
+                let left_statement = preamble.left.statement_ky::<C::Profile>(dr, &y)?;
+                let right_statement = preamble.right.statement_ky::<C::Profile>(dr, &y)?;
                 let ky_source = native::claims::TwoProofKySource::new(
                     dr,
                     preamble.left.unified.c.clone(),
                     preamble.right.unified.c.clone(),
                     &left_ky,
                     &right_ky,
+                    left_statement,
+                    right_statement,
                 );
                 let mut ky = native::claims::ky_values::<C::Profile, _>(&ky_source);
 

@@ -27,11 +27,15 @@
 //! internal modules' constant one, pinned to its shape at compile time.
 //!
 //! A profile declares what it adds as an [`Extension`] per side, circuits
-//! with the stages they load, and registers them through its hooks. The
-//! internal modules place the circuits after the fuse's endoscaling steps
-//! and the bondings after the fuse's masks, fold a circuit's claim as a
-//! step's, and the proof carries the polynomials. No profile declares an
-//! extension yet; [`Aggregator`] says why.
+//! with the stages they load, registers them through its hooks, and fills
+//! their polynomials for every proof through its prover hooks, over the
+//! [`Context`](Profile::Context) the application holds. The internal
+//! modules place the circuits after the fuse's endoscaling steps and the
+//! bondings after the fuse's masks, fold a circuit's claim as a step's,
+//! and the proof carries the polynomials. An extension may name a
+//! statement circuit, whose claim binds an internal step's output header
+//! to what the extension verified. No profile declares an extension yet;
+//! [`Aggregator`] says why.
 
 use alloc::vec::Vec;
 use core::{any::type_name, fmt, marker::PhantomData};
@@ -176,7 +180,8 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
 
     /// The native extension's polynomials for one proof: each circuit's,
     /// assembled against `registry` at the circuit's index in the layout,
-    /// then each stage's, blinded from `rng`.
+    /// then each stage's, blinded from `rng`, over the context the
+    /// application holds.
     ///
     /// # Errors
     ///
@@ -229,12 +234,16 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         }
     }
 
-    /// Checks that the constants agree with the extensions.
+    /// Checks that the constants agree with the extensions and that the
+    /// extensions are well formed.
     ///
     /// # Errors
     ///
     /// Fails if an extension's rx count differs from its constant, so that a
-    /// profile declaring one without the other does not lay out a proof.
+    /// profile declaring one without the other does not lay out a proof; if
+    /// either extension is not [consistent](Extension::is_consistent); or if
+    /// the nested extension names a statement circuit, which only the native
+    /// side carries.
     fn check() -> Result<()> {
         for (side, declared, extension) in [
             ("native", Self::NATIVE_EXTENSION, Self::native_extension()),
@@ -249,6 +258,16 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
                     .into(),
                 ));
             }
+            if !extension.is_consistent() {
+                return Err(Error::Initialization(
+                    alloc::format!("the profile's {side} extension is not well formed").into(),
+                ));
+            }
+        }
+        if Self::nested_extension().statement.is_some() {
+            return Err(Error::Initialization(
+                "only the native extension carries a statement circuit".into(),
+            ));
         }
         Ok(())
     }
@@ -279,11 +298,12 @@ impl<F: Field, R: Rank> Default for ExtensionRxs<F, R> {
 /// The circuits are registered as internal circuits after the fuse's and
 /// the bondings, the stages' masks then the final masks, after the fuse's
 /// masks, so that the registry's order stays circuits first. Each circuit
-/// and each stage has an rx polynomial in the proof; a final mask binds the
-/// rx polynomials of the circuits it names, as the fuse's final masks do,
-/// and has none. A circuit's claim takes its own rx polynomial and the
-/// stages it loads, with $k(y) = 1$ as the fuse's steps have: an extension
-/// circuit carries no instance of its own.
+/// and each stage has an rx polynomial in the proof; a final mask, the
+/// final mask of its circuits' last stage, binds the rx polynomials of the
+/// circuits it names, as the fuse's final masks do, and has none. A circuit's claim takes its own rx polynomial and the
+/// stages it loads, with $k(y) = 1$ as the fuse's steps have, since an
+/// extension circuit carries no instance of its own; the statement
+/// circuit's $k(y)$ is instead the output header it exposes.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Extension {
     /// Each circuit's stages, by index among the stages, in the order the
@@ -291,8 +311,15 @@ pub struct Extension {
     pub circuits: Vec<Vec<u32>>,
     /// The number of stages.
     pub stages: usize,
-    /// Each final mask's circuits, by index among the circuits.
+    /// Each final mask's circuits, by index among the circuits, all with the
+    /// same last stage.
     pub final_masks: Vec<Vec<u32>>,
+    /// The statement circuit, by index among the circuits, for an extension
+    /// that verifies a compressed proof: the circuit whose public output is
+    /// the output header of the proof it verified, so that its claim's
+    /// $k(y)$ binds the proof's own output header to it. `None` for any
+    /// other extension, and always on the nested side.
+    pub statement: Option<u32>,
 }
 
 impl Extension {
@@ -301,6 +328,7 @@ impl Extension {
         circuits: Vec::new(),
         stages: 0,
         final_masks: Vec::new(),
+        statement: None,
     };
 
     /// Whether the extension adds nothing.
@@ -332,9 +360,24 @@ impl Extension {
         &self.final_masks[bonding - self.stages]
     }
 
-    /// Whether every index the circuits and final masks name exists.
+    /// Whether the declaration is well formed: every index the circuits,
+    /// final masks and statement name exists; neither a circuit nor a final
+    /// mask names anything twice; every circuit that loads a stage is named
+    /// by exactly one final mask and a circuit that loads none by no final
+    /// mask; and a final mask's circuits share their last stage. A stage's
+    /// final mask confines the traces of the circuits whose last stage it is
+    /// to the gates after it, so a circuit under no final mask has a trace
+    /// that can reach into the stages it loads, and one under another
+    /// stage's is checked against the wrong gates.
     pub fn is_consistent(&self) -> bool {
-        self.circuits
+        fn distinct(values: &[u32]) -> bool {
+            values
+                .iter()
+                .enumerate()
+                .all(|(i, value)| !values[..i].contains(value))
+        }
+        let in_range = self
+            .circuits
             .iter()
             .flatten()
             .all(|&stage| (stage as usize) < self.stages)
@@ -343,6 +386,27 @@ impl Extension {
                 .iter()
                 .flatten()
                 .all(|&circuit| (circuit as usize) < self.circuits.len())
+            && self
+                .statement
+                .is_none_or(|circuit| (circuit as usize) < self.circuits.len());
+        in_range
+            && self.circuits.iter().all(|stages| distinct(stages))
+            && self.final_masks.iter().all(|mask| distinct(mask))
+            && self.circuits.iter().enumerate().all(|(circuit, stages)| {
+                let masks = self
+                    .final_masks
+                    .iter()
+                    .filter(|mask| mask.contains(&(circuit as u32)))
+                    .count();
+                masks == usize::from(!stages.is_empty())
+            })
+            && self.final_masks.iter().all(|mask| {
+                let mut last = mask
+                    .iter()
+                    .map(|&circuit| self.circuits[circuit as usize].last());
+                last.next()
+                    .is_some_and(|first| last.all(|stage| stage == first))
+            })
     }
 }
 
@@ -632,6 +696,7 @@ pub(crate) mod testing {
                 circuits: vec![vec![0], vec![0, 1]],
                 stages: 2,
                 final_masks: vec![vec![0], vec![1]],
+                statement: None,
             }
         }
 
@@ -640,6 +705,33 @@ pub(crate) mod testing {
                 circuits: vec![vec![0]],
                 stages: 1,
                 final_masks: vec![vec![0]],
+                statement: None,
+            }
+        }
+    }
+
+    /// [`Wider`]'s native side with its second circuit declared the
+    /// statement circuit, so that the profile registers the statement step.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub(crate) struct Stated;
+
+    impl Profile for Stated {
+        const NATIVE_EXTENSION: usize = 4;
+        const NESTED_EXTENSION: usize = 0;
+
+        type Context<'params, Base, R, B>
+            = ()
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+            R: Rank,
+            B: SelectableBackend;
+
+        fn native_extension() -> Extension {
+            Extension {
+                circuits: vec![vec![0], vec![0, 1]],
+                stages: 2,
+                final_masks: vec![vec![0], vec![1]],
+                statement: Some(1),
             }
         }
     }
@@ -681,6 +773,7 @@ pub(crate) mod testing {
                 circuits: vec![vec![0]],
                 stages: 1,
                 final_masks: vec![vec![0]],
+                statement: None,
             }
         }
 
@@ -766,6 +859,107 @@ mod tests {
         assert!(Wider::native_extension().is_consistent());
         assert!(Wider::nested_extension().is_consistent());
         assert!(Mismatched::check().is_err());
+    }
+
+    /// A declaration is well formed only with every index in range, nothing
+    /// named twice, and every staged circuit under exactly one final mask,
+    /// its last stage's.
+    #[test]
+    fn consistency_binds_every_staged_circuit() {
+        use alloc::vec;
+
+        let extension = |circuits, stages, final_masks, statement| Extension {
+            circuits,
+            stages,
+            final_masks,
+            statement,
+        };
+        // Two staged circuits, each under its last stage's final mask, one
+        // without stages under none, and a statement circuit.
+        assert!(
+            extension(
+                vec![vec![0], vec![0, 1], vec![]],
+                2,
+                vec![vec![0], vec![1]],
+                Some(1)
+            )
+            .is_consistent()
+        );
+        // A stage, a circuit or a statement circuit out of range.
+        assert!(!extension(vec![vec![2]], 2, vec![vec![0]], None).is_consistent());
+        assert!(!extension(vec![vec![0]], 1, vec![vec![1]], None).is_consistent());
+        assert!(!extension(vec![vec![0]], 1, vec![vec![0]], Some(1)).is_consistent());
+        // A staged circuit under no final mask, or under two.
+        assert!(!extension(vec![vec![0], vec![0]], 1, vec![vec![0]], None).is_consistent());
+        assert!(!extension(vec![vec![0]], 1, vec![vec![0], vec![0]], None).is_consistent());
+        // A circuit without stages under a final mask, and an empty one.
+        assert!(!extension(vec![vec![]], 1, vec![vec![0]], None).is_consistent());
+        assert!(!extension(vec![vec![0]], 1, vec![vec![0], vec![]], None).is_consistent());
+        // One final mask over circuits with different last stages.
+        assert!(!extension(vec![vec![0], vec![0, 1]], 2, vec![vec![0, 1]], None).is_consistent());
+        // A stage or a circuit named twice.
+        assert!(!extension(vec![vec![0, 0]], 1, vec![vec![0]], None).is_consistent());
+        assert!(!extension(vec![vec![0]], 1, vec![vec![0, 0]], None).is_consistent());
+    }
+
+    /// The profile's checks refuse a malformed extension and a statement
+    /// circuit on the nested side.
+    #[test]
+    fn malformed_declarations_are_refused() {
+        use alloc::vec;
+
+        /// A statement circuit past the circuits.
+        #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+        struct StrayStatement;
+
+        impl Profile for StrayStatement {
+            const NATIVE_EXTENSION: usize = 2;
+            const NESTED_EXTENSION: usize = 0;
+
+            type Context<'params, Base, R, B>
+                = ()
+            where
+                Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+                R: Rank,
+                B: SelectableBackend;
+
+            fn native_extension() -> Extension {
+                Extension {
+                    circuits: vec![vec![0]],
+                    stages: 1,
+                    final_masks: vec![vec![0]],
+                    statement: Some(1),
+                }
+            }
+        }
+
+        /// A statement circuit on the nested side.
+        #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+        struct NestedStatement;
+
+        impl Profile for NestedStatement {
+            const NATIVE_EXTENSION: usize = 0;
+            const NESTED_EXTENSION: usize = 2;
+
+            type Context<'params, Base, R, B>
+                = ()
+            where
+                Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+                R: Rank,
+                B: SelectableBackend;
+
+            fn nested_extension() -> Extension {
+                Extension {
+                    circuits: vec![vec![0]],
+                    stages: 1,
+                    final_masks: vec![vec![0]],
+                    statement: Some(0),
+                }
+            }
+        }
+
+        assert!(StrayStatement::check().is_err());
+        assert!(NestedStatement::check().is_err());
     }
 
     #[test]

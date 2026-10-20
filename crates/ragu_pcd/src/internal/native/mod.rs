@@ -245,7 +245,7 @@ pub enum InternalCircuitIndex {
 /// application-defined steps, in profile `P`.
 pub fn total_circuit_counts<P: Profile>(num_application_steps: usize) -> (usize, u32) {
     let total_circuits =
-        num_application_steps + step::NUM_INTERNAL_STEPS + InternalCircuitIndex::num::<P>();
+        num_application_steps + step::num_internal_steps::<P>() + InternalCircuitIndex::num::<P>();
     let log2_circuits = total_circuits.next_power_of_two().trailing_zeros();
     (total_circuits, log2_circuits)
 }

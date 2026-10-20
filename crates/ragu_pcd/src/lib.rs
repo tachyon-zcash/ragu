@@ -291,6 +291,13 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
                 .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
                     step::internal::bootstrap::Bootstrap::new(),
                 ))?;
+        // The decompression step, for a profile whose extension verifies a
+        // compressed proof: the one step whose output header is that
+        // proof's statement (see `step::internal::decompress`).
+        if C::Profile::native_extension().statement.is_some() {
+            self =
+                self.register_internal_step(step::internal::decompress::Decompress::<()>::new())?;
+        }
 
         assert_eq!(
             self.native_registry.log2_circuits(),

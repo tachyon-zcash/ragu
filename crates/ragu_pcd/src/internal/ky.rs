@@ -22,7 +22,7 @@ use super::{
     },
     nested::{self, unified as nested_unified},
 };
-use crate::{Pcd, Proof, header::Header};
+use crate::{Pcd, Proof, header::Header, profile::ProfiledCycle};
 
 /// The targets of one proof's native revdot claims at one $y$.
 ///
@@ -45,6 +45,9 @@ pub struct NativeKy<F> {
     pub unified_bridge: F,
     /// The application circuit's $k(y)$.
     pub application: F,
+    /// The statement circuit's $k(y)$, for a profile whose native extension
+    /// has one; `None` for a profile without one.
+    pub statement: Option<F>,
 }
 
 impl<F: Field> native::claims::KySource for NativeKy<F> {
@@ -68,6 +71,10 @@ impl<F: Field> native::claims::KySource for NativeKy<F> {
 
     fn ones(&self) -> impl Iterator<Item = F> + Clone {
         once(F::ONE)
+    }
+
+    fn statement_ky(&self) -> impl Iterator<Item = F> + Clone {
+        self.statement.into_iter()
     }
 
     fn zero(&self) -> F {
@@ -107,7 +114,12 @@ impl<F: Field> nested::claims::KySource for NestedKy<F> {
 
 /// The native $k(y)$ values of `pcd` at `y`, read off the proof's public
 /// data and the header data.
-pub fn native_ky<C: Cycle, R: Rank, H: Header<C::CircuitField>, const HEADER_SIZE: usize>(
+pub fn native_ky<
+    C: ProfiledCycle,
+    R: Rank,
+    H: Header<C::CircuitField>,
+    const HEADER_SIZE: usize,
+>(
     pcd: &Pcd<C, R, H>,
     y: C::CircuitField,
 ) -> Result<NativeKy<C::CircuitField>> {
@@ -119,11 +131,13 @@ pub fn native_ky<C: Cycle, R: Rank, H: Header<C::CircuitField>, const HEADER_SIZ
 
         let (unified, unified_bridge) = proof_inputs.unified_ky_values(dr, &y)?;
         let application = proof_inputs.application_ky(dr, &y)?;
+        let statement = proof_inputs.statement_ky::<C::Profile>(dr, &y)?;
         Ok(NativeKy {
             c: None,
             unified: *unified.value().take(),
             unified_bridge: *unified_bridge.value().take(),
             application: *application.value().take(),
+            statement: statement.map(|ky| *ky.value().take()),
         })
     })
 }
@@ -171,7 +185,7 @@ pub struct NativeParts<'a, C: Cycle> {
 
 /// The native $k(y)$ values at `y` from an instance's parts, as
 /// [`native_ky`] computes them from a proof.
-pub fn native_ky_of<C: Cycle, const HEADER_SIZE: usize>(
+pub fn native_ky_of<C: ProfiledCycle, const HEADER_SIZE: usize>(
     parts: NativeParts<'_, C>,
     y: C::CircuitField,
 ) -> Result<NativeKy<C::CircuitField>> {
@@ -189,11 +203,13 @@ pub fn native_ky_of<C: Cycle, const HEADER_SIZE: usize>(
 
         let (unified, unified_bridge) = proof_inputs.unified_ky_values(dr, &y)?;
         let application = proof_inputs.application_ky(dr, &y)?;
+        let statement = proof_inputs.statement_ky::<C::Profile>(dr, &y)?;
         Ok(NativeKy {
             c: None,
             unified: *unified.value().take(),
             unified_bridge: *unified_bridge.value().take(),
             application: *application.value().take(),
+            statement: statement.map(|ky| *ky.value().take()),
         })
     })
 }
