@@ -896,18 +896,18 @@ fn test_extension_hooks_register_and_the_fuse_overflows() {
 
     let registry = RegistryBuilder::<Fp, R>::new();
     let registry =
-        Hooked::register_native_circuit::<C, R, HEADER_SIZE>(0, registry, params).unwrap();
+        Hooked::register_native_circuit::<Pasta, R, HEADER_SIZE>(0, registry, params).unwrap();
     assert_eq!(registry.num_internal_circuits(), 1);
     let registry =
-        Hooked::register_native_bonding::<C, R, HEADER_SIZE>(0, registry, params).unwrap();
+        Hooked::register_native_bonding::<Pasta, R, HEADER_SIZE>(0, registry, params).unwrap();
     let registry =
-        Hooked::register_native_bonding::<C, R, HEADER_SIZE>(1, registry, params).unwrap();
+        Hooked::register_native_bonding::<Pasta, R, HEADER_SIZE>(1, registry, params).unwrap();
     assert_eq!(registry.num_internal_circuits(), 3);
 
     let registry = RegistryBuilder::<Fq, R>::new();
-    let registry = Hooked::register_nested_circuit::<C, R>(0, registry, params).unwrap();
-    let registry = Hooked::register_nested_bonding::<C, R>(0, registry, params).unwrap();
-    let registry = Hooked::register_nested_bonding::<C, R>(1, registry, params).unwrap();
+    let registry = Hooked::register_nested_circuit::<Pasta, R>(0, registry, params).unwrap();
+    let registry = Hooked::register_nested_bonding::<Pasta, R>(0, registry, params).unwrap();
+    let registry = Hooked::register_nested_bonding::<Pasta, R>(1, registry, params).unwrap();
     assert_eq!(registry.num_internal_circuits(), 3);
 
     let result = ApplicationBuilder::<C, R, HEADER_SIZE>::new().finalize(params);
@@ -915,6 +915,31 @@ fn test_extension_hooks_register_and_the_fuse_overflows() {
         matches!(result, Err(Error::GateBoundExceeded { .. })),
         "two polynomials per side already overflow a fuse circuit"
     );
+}
+
+/// A profile's registration hook must register exactly one entry, so that
+/// the layout's indices stay the registry's: a hook registering none or
+/// two is refused.
+#[test]
+fn test_a_hook_registers_exactly_one_entry() {
+    use ragu_circuits::registry::RegistryBuilder;
+
+    use crate::profile::{Profile, testing::Hooked};
+
+    let params = crate::pasta::baked();
+    let one =
+        |registry| Hooked::register_native_circuit::<Pasta, R, HEADER_SIZE>(0, registry, params);
+
+    let registry = RegistryBuilder::<Fp, R>::new();
+    let registry = super::register_one(registry, "native", "circuit", 0, one).unwrap();
+    assert_eq!(registry.num_internal_circuits(), 1);
+
+    let registry = RegistryBuilder::<Fp, R>::new();
+    assert!(super::register_one(registry, "native", "circuit", 0, Ok).is_err());
+
+    let registry = RegistryBuilder::<Fp, R>::new();
+    let two = |registry| one(registry).and_then(one);
+    assert!(super::register_one(registry, "nested", "bonding", 1, two).is_err());
 }
 
 /// The fold's groups are the standard profile's for the standard profile,

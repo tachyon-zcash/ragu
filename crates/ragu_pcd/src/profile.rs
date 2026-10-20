@@ -76,18 +76,20 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     }
 
     /// Registers circuit `circuit` of the native extension as an internal
-    /// circuit of `registry`.
+    /// circuit of `registry`, over the base cycle the profile extends (see
+    /// [`ProfiledCycle::Base`]): the extension's circuits verify proofs in
+    /// the standard profile over the same curves.
     ///
     /// # Errors
     ///
     /// The default declares no circuit and fails.
-    fn register_native_circuit<'params, C, R: Rank, const HEADER_SIZE: usize>(
+    fn register_native_circuit<'params, Base, R: Rank, const HEADER_SIZE: usize>(
         circuit: usize,
-        registry: RegistryBuilder<'params, C::CircuitField, R>,
-        params: &'params C::Params,
-    ) -> Result<RegistryBuilder<'params, C::CircuitField, R>>
+        registry: RegistryBuilder<'params, Base::CircuitField, R>,
+        params: &'params Base::Params,
+    ) -> Result<RegistryBuilder<'params, Base::CircuitField, R>>
     where
-        C: ProfiledCycle<Profile = Self>,
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
         let _ = (circuit, registry, params);
         Err(Error::Initialization(
@@ -101,13 +103,13 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// # Errors
     ///
     /// The default declares no bonding and fails.
-    fn register_native_bonding<'params, C, R: Rank, const HEADER_SIZE: usize>(
+    fn register_native_bonding<'params, Base, R: Rank, const HEADER_SIZE: usize>(
         bonding: usize,
-        registry: RegistryBuilder<'params, C::CircuitField, R>,
-        params: &'params C::Params,
-    ) -> Result<RegistryBuilder<'params, C::CircuitField, R>>
+        registry: RegistryBuilder<'params, Base::CircuitField, R>,
+        params: &'params Base::Params,
+    ) -> Result<RegistryBuilder<'params, Base::CircuitField, R>>
     where
-        C: ProfiledCycle<Profile = Self>,
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
         let _ = (bonding, registry, params);
         Err(Error::Initialization(
@@ -121,13 +123,13 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// # Errors
     ///
     /// The default declares no circuit and fails.
-    fn register_nested_circuit<'params, C, R: Rank>(
+    fn register_nested_circuit<'params, Base, R: Rank>(
         circuit: usize,
-        registry: RegistryBuilder<'params, C::ScalarField, R>,
-        params: &'params C::Params,
-    ) -> Result<RegistryBuilder<'params, C::ScalarField, R>>
+        registry: RegistryBuilder<'params, Base::ScalarField, R>,
+        params: &'params Base::Params,
+    ) -> Result<RegistryBuilder<'params, Base::ScalarField, R>>
     where
-        C: ProfiledCycle<Profile = Self>,
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
         let _ = (circuit, registry, params);
         Err(Error::Initialization(
@@ -141,13 +143,13 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// # Errors
     ///
     /// The default declares no bonding and fails.
-    fn register_nested_bonding<'params, C, R: Rank>(
+    fn register_nested_bonding<'params, Base, R: Rank>(
         bonding: usize,
-        registry: RegistryBuilder<'params, C::ScalarField, R>,
-        params: &'params C::Params,
-    ) -> Result<RegistryBuilder<'params, C::ScalarField, R>>
+        registry: RegistryBuilder<'params, Base::ScalarField, R>,
+        params: &'params Base::Params,
+    ) -> Result<RegistryBuilder<'params, Base::ScalarField, R>>
     where
-        C: ProfiledCycle<Profile = Self>,
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
         let _ = (bonding, registry, params);
         Err(Error::Initialization(
@@ -289,6 +291,23 @@ impl Profile for Aggregator {
 pub trait ProfiledCycle: Cycle {
     /// The profile of every proof over this cycle.
     type Profile: Profile;
+
+    /// The cycle this one extends: the same curves, generators and Poseidon
+    /// instances in the standard profile, whose proofs the profile's
+    /// circuits verify. The standard cycle is its own base.
+    type Base: IpaCycle
+        + ProfiledCycle<
+            Profile = Standard,
+            CircuitField = Self::CircuitField,
+            ScalarField = Self::ScalarField,
+            NestedCurve = Self::NestedCurve,
+            HostCurve = Self::HostCurve,
+            NestedGenerators = Self::NestedGenerators,
+            HostGenerators = Self::HostGenerators,
+            CircuitPoseidon = Self::CircuitPoseidon,
+            ScalarPoseidon = Self::ScalarPoseidon,
+            Params = Self::Params,
+        >;
 }
 
 // The base cycle supplies the IPA's generators to the profile's circuits,
@@ -297,6 +316,7 @@ pub trait ProfiledCycle: Cycle {
 #[cfg(feature = "baked")]
 impl ProfiledCycle for Pasta {
     type Profile = Standard;
+    type Base = Pasta;
 }
 
 /// A cycle under another profile: `C`'s curves, generators and Poseidon
@@ -373,8 +393,9 @@ impl<C: IpaCycle, P: Profile> IpaCycle for Profiled<C, P> {
     }
 }
 
-impl<C: Cycle, P: Profile> ProfiledCycle for Profiled<C, P> {
+impl<C: IpaCycle + ProfiledCycle<Profile = Standard>, P: Profile> ProfiledCycle for Profiled<C, P> {
     type Profile = P;
+    type Base = C;
 }
 
 /// The shape a profile gives a proof: its rx polynomial counts and the sizes
@@ -541,63 +562,62 @@ pub(crate) mod testing {
             Self::native_extension()
         }
 
-        fn register_native_circuit<'params, C, R: Rank, const HEADER_SIZE: usize>(
+        fn register_native_circuit<'params, Base, R: Rank, const HEADER_SIZE: usize>(
             circuit: usize,
-            registry: RegistryBuilder<'params, C::CircuitField, R>,
-            _: &'params C::Params,
-        ) -> Result<RegistryBuilder<'params, C::CircuitField, R>>
+            registry: RegistryBuilder<'params, Base::CircuitField, R>,
+            _: &'params Base::Params,
+        ) -> Result<RegistryBuilder<'params, Base::CircuitField, R>>
         where
-            C: ProfiledCycle<Profile = Self>,
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         {
             assert_eq!(circuit, 0);
-            registry.register_internal_circuit(native::circuits::bind_endoscalar::Circuit::<
-                C,
-                R,
-            >::new())
+            registry.register_internal_circuit(
+                native::circuits::bind_endoscalar::Circuit::<Base, R>::new(),
+            )
         }
 
-        fn register_native_bonding<'params, C, R: Rank, const HEADER_SIZE: usize>(
+        fn register_native_bonding<'params, Base, R: Rank, const HEADER_SIZE: usize>(
             bonding: usize,
-            registry: RegistryBuilder<'params, C::CircuitField, R>,
-            _: &'params C::Params,
-        ) -> Result<RegistryBuilder<'params, C::CircuitField, R>>
+            registry: RegistryBuilder<'params, Base::CircuitField, R>,
+            _: &'params Base::Params,
+        ) -> Result<RegistryBuilder<'params, Base::CircuitField, R>>
         where
-            C: ProfiledCycle<Profile = Self>,
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         {
             type Stage<C, R, const H: usize> = native::stages::eval::Stage<C, R, H>;
             let mask = match bonding {
-                0 => Stage::<C, R, HEADER_SIZE>::mask()?,
-                1 => Stage::<C, R, HEADER_SIZE>::final_mask()?,
+                0 => Stage::<Base, R, HEADER_SIZE>::mask()?,
+                1 => Stage::<Base, R, HEADER_SIZE>::final_mask()?,
                 _ => unreachable!("two bondings"),
             };
             Ok(registry.register_bonding(mask))
         }
 
-        fn register_nested_circuit<'params, C, R: Rank>(
+        fn register_nested_circuit<'params, Base, R: Rank>(
             circuit: usize,
-            registry: RegistryBuilder<'params, C::ScalarField, R>,
-            _: &'params C::Params,
-        ) -> Result<RegistryBuilder<'params, C::ScalarField, R>>
+            registry: RegistryBuilder<'params, Base::ScalarField, R>,
+            _: &'params Base::Params,
+        ) -> Result<RegistryBuilder<'params, Base::ScalarField, R>>
         where
-            C: ProfiledCycle<Profile = Self>,
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         {
             assert_eq!(circuit, 0);
-            let circuit = nested::circuits::export::Circuit::<C::HostCurve, R, Self>::new();
+            let circuit = nested::circuits::export::Circuit::<Base::HostCurve, R, Standard>::new();
             registry.register_internal_circuit(MultiStage::new(circuit))
         }
 
-        fn register_nested_bonding<'params, C, R: Rank>(
+        fn register_nested_bonding<'params, Base, R: Rank>(
             bonding: usize,
-            registry: RegistryBuilder<'params, C::ScalarField, R>,
-            _: &'params C::Params,
-        ) -> Result<RegistryBuilder<'params, C::ScalarField, R>>
+            registry: RegistryBuilder<'params, Base::ScalarField, R>,
+            _: &'params Base::Params,
+        ) -> Result<RegistryBuilder<'params, Base::ScalarField, R>>
         where
-            C: ProfiledCycle<Profile = Self>,
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         {
-            type Stage<C, R> = nested::stages::eval::Stage<<C as Cycle>::HostCurve, R, Hooked>;
+            type Stage<C, R> = nested::stages::eval::Stage<<C as Cycle>::HostCurve, R, Standard>;
             let mask = match bonding {
-                0 => Stage::<C, R>::mask()?,
-                1 => Stage::<C, R>::final_mask()?,
+                0 => Stage::<Base, R>::mask()?,
+                1 => Stage::<Base, R>::final_mask()?,
                 _ => unreachable!("two bondings"),
             };
             Ok(registry.register_bonding(mask))

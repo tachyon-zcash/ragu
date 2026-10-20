@@ -702,10 +702,14 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
                 registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)
             }
             ExtensionCircuit(k) => {
-                C::Profile::register_nested_circuit::<C, R>(k as usize, registry, params)?
+                super::register_one(registry, "nested", "circuit", k, |registry| {
+                    C::Profile::register_nested_circuit::<C::Base, R>(k as usize, registry, params)
+                })?
             }
             ExtensionBonding(j) => {
-                C::Profile::register_nested_bonding::<C, R>(j as usize, registry, params)?
+                super::register_one(registry, "nested", "bonding", j, |registry| {
+                    C::Profile::register_nested_bonding::<C::Base, R>(j as usize, registry, params)
+                })?
             }
         };
     }

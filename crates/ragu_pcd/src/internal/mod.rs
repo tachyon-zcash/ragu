@@ -30,11 +30,44 @@ pub mod native;
 pub mod nested;
 pub mod transcript;
 
+use ragu_circuits::{polynomials::Rank, registry::RegistryBuilder};
+use ragu_core::{Error, Result};
+use udon::field::Field;
+
 /// Identifies which of the two child proofs a component came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Side {
     Left,
     Right,
+}
+
+/// Runs `hook`, a profile's registration hook for the `index`-th `what` of
+/// its `side` extension, and checks that it registered exactly one entry,
+/// so that the layout's indices stay the registry's.
+///
+/// # Errors
+///
+/// Propagates the hook's error, or fails if the hook registered other than
+/// one entry.
+pub(crate) fn register_one<'params, F: Field, R: Rank>(
+    registry: RegistryBuilder<'params, F, R>,
+    side: &str,
+    what: &str,
+    index: u32,
+    hook: impl FnOnce(RegistryBuilder<'params, F, R>) -> Result<RegistryBuilder<'params, F, R>>,
+) -> Result<RegistryBuilder<'params, F, R>> {
+    let expected = registry.num_internal_circuits() + 1;
+    let registry = hook(registry)?;
+    let registered = registry.num_internal_circuits();
+    if registered != expected {
+        return Err(Error::Initialization(
+            alloc::format!(
+                "the profile's {side} extension hook for {what} {index} left {registered} internal entries registered, not {expected}"
+            )
+            .into(),
+        ));
+    }
+    Ok(registry)
 }
 
 #[cfg(test)]
