@@ -9,7 +9,7 @@
 //! one relabelled on the way fails.
 
 use ragu_circuits::{
-    polynomials::{AggregatorRank, ProductionRank},
+    polynomials::{AggregatorRank, ProductionRank, Rank},
     registry::RegistryBuilder,
 };
 use ragu_core::{
@@ -290,5 +290,209 @@ fn decompresses_a_wallet_proof() {
     assert!(
         !matches!(app.verify_uncompressed(&relabelled, &mut rng), Ok(true)),
         "a relabelled decompression fails"
+    );
+}
+
+/// A step fusing two [`Value`] headers into their sum.
+struct Join;
+
+impl<C: Cycle<CircuitField = Fp>> Step<C> for Join {
+    const INDEX: Index = Index::new(1);
+    type Witness<'source> = ();
+    type Aux<'source> = ();
+    type Left = Value;
+    type Right = Value;
+    type Output = Value;
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const H: usize>(
+        &self,
+        dr: &mut D,
+        _: DriverValue<D, ()>,
+        left: DriverValue<D, Fp>,
+        right: DriverValue<D, Fp>,
+    ) -> Result<(
+        (
+            Encoded<'dr, D, Value, H>,
+            Encoded<'dr, D, Value, H>,
+            Encoded<'dr, D, Value, H>,
+        ),
+        DriverValue<D, Fp>,
+        DriverValue<D, ()>,
+    )> {
+        let allocator = &mut ragu_primitives::allocator::Standard::new();
+        let left_element = Element::alloc(dr, allocator, left)?;
+        let right_element = Element::alloc(dr, allocator, right)?;
+        let sum = left_element.add(dr, &right_element);
+        let data = sum.value().map(|v| *v);
+        Ok((
+            (
+                Encoded::from_gadget(left_element),
+                Encoded::from_gadget(right_element),
+                Encoded::from_gadget(sum),
+            ),
+            data,
+            D::unit(),
+        ))
+    }
+}
+
+/// The points and scalars one curve's messages carry: the fold's two
+/// commitments and two epsilons, p and q, the openings; the batch's f and
+/// evaluations; the IPA's s, rounds and c.
+fn messages_size<P: udon::curve::Affine>(
+    messages: &crate::compress::Messages<P>,
+) -> (usize, usize) {
+    let points = 2 + 2 + 1 + 1 + 2 * messages.opening.rounds.len();
+    let scalars = 2 + messages.reduction.openings.len() + messages.batch.evaluations.len() + 1;
+    (points, scalars)
+}
+
+/// The points and scalars a compressed proof carries over the cycle.
+fn compressed_size<C: Cycle>(proof: &crate::CompressedProof<C>) -> (usize, usize) {
+    let instance = &proof.instance;
+    let points = instance.native.len() + 2 + instance.nested.len() + 3;
+    let scalars = instance.left_header.len() + instance.right_header.len() + 1 + 4 + 1 + 6 + 4 + 4;
+    let native = messages_size(&proof.native);
+    let nested = messages_size(&proof.nested);
+    (points + native.0 + nested.0, scalars + native.1 + nested.1)
+}
+
+/// The coefficients an uncompressed proof stores: its sparse rx
+/// polynomials' blocks, `registry_xy` and `p` on each side, and the two
+/// accumulators per side taken as dense.
+fn stored_coefficients<C: crate::profile::ProfiledCycle, R: Rank>(
+    proof: &crate::Proof<C, R>,
+) -> usize {
+    use crate::internal::{native, nested};
+    let mut stored = 0;
+    for index in native::RxIndex::all::<C::Profile>() {
+        stored += proof[index].iter_stored_coeffs().count();
+    }
+    for index in nested::RxIndex::all::<C::Profile>() {
+        stored += proof[index].iter_stored_coeffs().count();
+    }
+    stored += proof.native_registry_xy_poly().iter_stored_coeffs().count();
+    stored += proof.native_p_poly().iter_stored_coeffs().count();
+    stored += proof.nested_registry_xy_poly().iter_stored_coeffs().count();
+    stored += proof.nested_p_poly().iter_stored_coeffs().count();
+    stored + 4 * R::num_coeffs()
+}
+
+/// Timings and sizes of both roles, printed; run alone on an idle machine
+/// with `--ignored --nocapture`.
+#[test]
+#[ignore]
+fn timings() {
+    use std::time::Instant;
+
+    let pasta = crate::pasta::baked();
+    let mut rng = StdRng::seed_from_u64(21);
+    macro_rules! timed {
+        ($label:expr, $e:expr) => {{
+            let start = Instant::now();
+            let value = $e;
+            std::println!("{:<40} {:>8.2} s", $label, start.elapsed().as_secs_f64());
+            value
+        }};
+    }
+    let report = |role: &str,
+                  polynomials: usize,
+                  rank: u32,
+                  stored: usize,
+                  (points, scalars): (usize, usize)| {
+        std::println!(
+            "{role}: {polynomials} polynomials of 2^{rank} coefficients ({:.1} MB dense, {:.1} MB stored); compressed proof {points} points + {scalars} scalars ({:.1} KB at 32 bytes each)",
+            polynomials as f64 * (1u64 << rank) as f64 * 32.0 / 1e6,
+            stored as f64 * 32.0 / 1e6,
+            (points + scalars) as f64 * 32.0 / 1e3
+        );
+    };
+
+    // The wallet.
+    let wallet = timed!(
+        "wallet finalize (registries + bootstrap)",
+        ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
+            .register(Leaf)
+            .unwrap()
+            .register(Join)
+            .unwrap()
+            .finalize(pasta)
+            .unwrap()
+    );
+    let (leaf_a, _) = timed!(
+        "wallet seed (one fuse)",
+        wallet.seed(&mut rng, Leaf, Fp::from(1)).unwrap()
+    );
+    let (leaf_b, _) = wallet.seed(&mut rng, Leaf, Fp::from(2)).unwrap();
+    let (node, _) = timed!(
+        "wallet fuse (two children)",
+        wallet.fuse(&mut rng, Join, (), leaf_a, leaf_b).unwrap()
+    );
+    assert!(timed!(
+        "wallet verify (uncompressed)",
+        wallet.verify_uncompressed(&node, &mut rng).unwrap()
+    ));
+    let compressed = timed!("wallet compress", wallet.compress(&node, &mut rng).unwrap());
+    assert!(timed!(
+        "wallet verify_compressed",
+        wallet.verify_compressed(&compressed).unwrap()
+    ));
+    report(
+        "wallet",
+        Shape::of::<Standard>().polynomials(),
+        ProductionRank::RANK,
+        stored_coefficients(node.proof()),
+        compressed_size(compressed.proof()),
+    );
+
+    // The aggregator.
+    let decompression = timed!(
+        "aggregator canonical decompression",
+        Decompression::new(wallet, &mut rng).unwrap()
+    );
+    let aggregator = timed!(
+        "aggregator finalize (registries + bootstrap)",
+        ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
+            .register(Leaf)
+            .unwrap()
+            .register(Join)
+            .unwrap()
+            .finalize_with(pasta, decompression)
+            .unwrap()
+    );
+    let _ = timed!(
+        "aggregator prepare (native chunk run)",
+        aggregator.context().prepare(&compressed).unwrap()
+    );
+    let node_a = timed!(
+        "aggregator decompress (prepare + fuse)",
+        aggregator.decompress(&mut rng, &compressed).unwrap()
+    );
+    let node_b = aggregator.decompress(&mut rng, &compressed).unwrap();
+    let parent = timed!(
+        "aggregator fuse (two children)",
+        aggregator
+            .fuse(&mut rng, Join, (), node_a, node_b)
+            .unwrap()
+            .0
+    );
+    assert!(timed!(
+        "aggregator verify (uncompressed)",
+        aggregator.verify_uncompressed(&parent, &mut rng).unwrap()
+    ));
+    let compressed = timed!(
+        "aggregator compress",
+        aggregator.compress(&parent, &mut rng).unwrap()
+    );
+    assert!(timed!(
+        "aggregator verify_compressed",
+        aggregator.verify_compressed(&compressed).unwrap()
+    ));
+    report(
+        "aggregator",
+        Shape::of::<P>().polynomials(),
+        AggregatorRank::RANK,
+        stored_coefficients(parent.proof()),
+        compressed_size(compressed.proof()),
     );
 }
