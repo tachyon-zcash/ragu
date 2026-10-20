@@ -83,19 +83,30 @@ impl<P: Profile> Len for NumPoints<P> {
     }
 }
 
-/// The endoscalings a nested step performs: what fits a step beside the
-/// stages it reserves, which hold every point the walk consumes.
+/// The endoscalings a nested step performs in the standard profile: what
+/// fits a step beside the stages it reserves, which hold every point the
+/// walk consumes, at the production rank. A profile sets its own
+/// ([`Profile::NESTED_ENDOSCALINGS_PER_STEP`]).
 pub const ENDOSCALINGS_PER_STEP: usize = 4;
+
+/// Length type for the endoscalings a nested step performs in profile `P`.
+pub struct Endoscalings<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for Endoscalings<P> {
+    fn len() -> usize {
+        P::NESTED_ENDOSCALINGS_PER_STEP
+    }
+}
 
 /// Number of endoscaling steps, derived from [`NUM_ENDOSCALING_POINTS`] via
 /// [`endoscalar::num_steps`].
 pub(crate) const NUM_ENDOSCALING_STEPS: usize =
-    endoscalar::num_steps::<ENDOSCALINGS_PER_STEP>(NUM_ENDOSCALING_POINTS);
+    endoscalar::num_steps(ENDOSCALINGS_PER_STEP, NUM_ENDOSCALING_POINTS);
 
 /// Length type for the nested endoscaling steps in profile `P`, derived from
 /// [`NumPoints`] via [`endoscalar::num_steps`]. The standard profile's is
 /// [`NUM_ENDOSCALING_STEPS`].
-pub type NumSteps<P> = endoscalar::NumStepsLen<NumPoints<P>, ENDOSCALINGS_PER_STEP>;
+pub type NumSteps<P> = endoscalar::NumStepsLen<NumPoints<P>, Endoscalings<P>>;
 
 /// Length type for the nested rx polynomials, [`RxIndex::num`].
 pub struct NumRx<P: Profile>(PhantomData<P>);
@@ -117,21 +128,21 @@ impl<P: Profile> Len for NumInternal<P> {
 
 /// The nested points stage, over the native batch's commitments, for host
 /// curve `C` in profile `P`.
-pub type PointsStage<C, P> = endoscalar::PointsStage<C, NumPoints<P>, ENDOSCALINGS_PER_STEP>;
+pub type PointsStage<C, P> = endoscalar::PointsStage<C, NumPoints<P>, Endoscalings<P>>;
 
 /// The nested points stage's witness.
-pub type PointsWitness<C, P> = endoscalar::PointsWitness<C, NumPoints<P>, ENDOSCALINGS_PER_STEP>;
+pub type PointsWitness<C, P> = endoscalar::PointsWitness<C, NumPoints<P>, Endoscalings<P>>;
 
 /// The nested points stage's output gadget.
-pub type Points<'dr, D, C, P> = endoscalar::Points<'dr, D, C, NumPoints<P>, ENDOSCALINGS_PER_STEP>;
+pub type Points<'dr, D, C, P> = endoscalar::Points<'dr, D, C, NumPoints<P>, Endoscalings<P>>;
 
 /// A nested endoscaling step.
 pub type EndoscalingStep<C, R, P> =
-    endoscalar::EndoscalingStep<C, R, NumPoints<P>, ENDOSCALINGS_PER_STEP>;
+    endoscalar::EndoscalingStep<C, R, NumPoints<P>, Endoscalings<P>>;
 
 /// A nested endoscaling step's witness.
 pub type EndoscalingStepWitness<'source, C, P> =
-    endoscalar::EndoscalingStepWitness<'source, C, NumPoints<P>, ENDOSCALINGS_PER_STEP>;
+    endoscalar::EndoscalingStepWitness<'source, C, NumPoints<P>, Endoscalings<P>>;
 
 /// The number of circuits whose public input is the nested [`unified`]
 /// instance: export, collapse and compute-v.

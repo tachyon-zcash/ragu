@@ -441,7 +441,8 @@ fn test_nested_circuit_constraint_counts() {
     // The native batch has one point more than a multiple of four, so every
     // endoscaling step walks four points and lays out the same; the pins
     // below are per variant.
-    let steps = crate::internal::endoscalar::num_steps::<{ nested::ENDOSCALINGS_PER_STEP }>(
+    let steps = crate::internal::endoscalar::num_steps(
+        nested::ENDOSCALINGS_PER_STEP,
         nested::NUM_ENDOSCALING_POINTS,
     );
     let mut expected = alloc::vec::Vec::new();

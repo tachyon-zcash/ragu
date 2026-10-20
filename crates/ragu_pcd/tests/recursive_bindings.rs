@@ -455,7 +455,7 @@ fn install_walk(
         PointsWitness::<
             EpAffine,
             native::NumPoints<crate::profile::Standard>,
-            { native::ENDOSCALINGS_PER_STEP },
+            native::Endoscalings<crate::profile::Standard>,
         >::new(bits, &walked),
     );
     assert_eq!(walk.p(), proof.nested_p_commitment());

@@ -55,9 +55,19 @@ impl<P: Profile> Len for NumPoints<P> {
     }
 }
 
-/// The endoscalings a native step performs: what fits a step beside the
-/// stages it reserves.
+/// The endoscalings a native step performs in the standard profile: what
+/// fits a step beside the stages it reserves at the production rank. A
+/// profile sets its own ([`Profile::NATIVE_ENDOSCALINGS_PER_STEP`]).
 pub const ENDOSCALINGS_PER_STEP: usize = 4;
+
+/// Length type for the endoscalings a native step performs in profile `P`.
+pub struct Endoscalings<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for Endoscalings<P> {
+    fn len() -> usize {
+        P::NATIVE_ENDOSCALINGS_PER_STEP
+    }
+}
 
 /// The number of native endoscaling steps: the standard profile's pin.
 ///
@@ -70,7 +80,7 @@ pub const ENDOSCALINGS_PER_STEP: usize = 4;
 pub const NUM_ENDOSCALING_STEPS: usize = 25;
 
 const _: () = assert!(
-    endoscalar::num_steps::<ENDOSCALINGS_PER_STEP>(NUM_ENDOSCALING_POINTS) == NUM_ENDOSCALING_STEPS,
+    endoscalar::num_steps(ENDOSCALINGS_PER_STEP, NUM_ENDOSCALING_POINTS) == NUM_ENDOSCALING_STEPS,
     "NUM_ENDOSCALING_STEPS is not the number of steps over the nested batch; re-pin it"
 );
 
@@ -81,7 +91,7 @@ const _: () = assert!(
 /// [`Shape`] solves that cycle to its fixed point, and this is the walk over
 /// the batch that fixed point gives. The standard profile's is
 /// [`NUM_ENDOSCALING_STEPS`].
-pub type NumSteps<P> = endoscalar::NumStepsLen<NumPoints<P>, ENDOSCALINGS_PER_STEP>;
+pub type NumSteps<P> = endoscalar::NumStepsLen<NumPoints<P>, Endoscalings<P>>;
 
 /// Length type for the circuits of the profile's native extension.
 pub struct NumExtensionCircuits<P: Profile>(core::marker::PhantomData<P>);

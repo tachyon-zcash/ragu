@@ -1,6 +1,8 @@
 //! The native endoscaling steps: the Horner walk over the nested-curve
 //! commitments the nested batch folds into $P_n$,
-//! [`ENDOSCALINGS_PER_STEP`] points per step.
+//! the profile's endoscalings per step
+//! ([`NATIVE_ENDOSCALINGS_PER_STEP`](crate::profile::Profile::NATIVE_ENDOSCALINGS_PER_STEP))
+//! points per step.
 //!
 //! The mirror of the nested [`EndoscalingStep`] for the split points layout
 //! of [`stages::points`]: step $k$ starts from the previous interstitial (or
@@ -40,14 +42,14 @@ use ragu_core::{
 };
 use ragu_primitives::{Element, GadgetExt, NonzeroBank, WithSuffix, vec::Len};
 
-use super::super::{
-    ENDOSCALINGS_PER_STEP,
-    stages::points::{
-        AbStage, BindingStage, ChildrenStage, FStage, Inputs, NumInputs, NumSteps, RegistryWxStage,
-        WalkInputs, WalkStage, WalkWitness,
-    },
+use super::super::stages::points::{
+    AbStage, BindingStage, ChildrenStage, FStage, Inputs, NumInputs, NumSteps, RegistryWxStage,
+    WalkInputs, WalkStage, WalkWitness,
 };
-use crate::{internal::endoscalar::input_range, profile::ProfiledCycle};
+use crate::{
+    internal::endoscalar::input_range,
+    profile::{Profile, ProfiledCycle},
+};
 
 /// One step of the native endoscaling walk.
 #[derive(Clone)]
@@ -133,7 +135,11 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
             .unwrap_or(walk.initial())
             .clone();
 
-        let range = input_range::<ENDOSCALINGS_PER_STEP>(self.step, NumInputs::<C::Profile>::len());
+        let range = input_range(
+            C::Profile::NATIVE_ENDOSCALINGS_PER_STEP,
+            self.step,
+            NumInputs::<C::Profile>::len(),
+        );
         assert!(!range.is_empty());
 
         let acc = NonzeroBank::scope(dr, |dr, bank| {

@@ -1,8 +1,9 @@
 //! Proof profiles.
 //!
 //! A profile is the set of internal circuits a proof carries beyond the
-//! fuse's own, and so the shape of the proof: how many polynomials it holds
-//! and how long the two endoscaling walks over them run. Every proof an
+//! fuse's own, with the points an endoscaling step folds, and so the shape
+//! of the proof: how many polynomials it holds and how long the two
+//! endoscaling walks over them run. Every proof an
 //! application makes has its profile's shape, and a proof is verified against
 //! the registry it was made for, so the profile is fixed per application.
 //!
@@ -74,6 +75,15 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     const NATIVE_EXTENSION: usize;
     /// The nested rx polynomials the profile adds: its nested extension's.
     const NESTED_EXTENSION: usize;
+
+    /// The endoscalings a native endoscaling step performs: what fits a
+    /// step beside the stages it reserves at the profile's rank. The walk
+    /// over the nested batch takes a step per so many points, so more per
+    /// step is fewer steps and fewer polynomials, and the other side's walk
+    /// shortens with them. The standard profile's is the production rank's.
+    const NATIVE_ENDOSCALINGS_PER_STEP: usize = native::ENDOSCALINGS_PER_STEP;
+    /// The endoscalings a nested endoscaling step performs, likewise.
+    const NESTED_ENDOSCALINGS_PER_STEP: usize = nested::ENDOSCALINGS_PER_STEP;
 
     /// What the profile's prover holds across proofs beyond the proof
     /// under construction: the extension's witness source, which an
@@ -429,17 +439,18 @@ impl Profile for Standard {
 /// The aggregator profile: the fuse plus the circuits that verify a
 /// [`Standard`] compressed proof in circuit.
 ///
-/// Those circuits are the decompression's, which lands separately; the
-/// profile declares nothing yet and its shape is
-/// [`Standard`]'s: every circuit of the fuse sits within a few percent of
-/// the gate budget, and each polynomial a profile adds is one more
-/// commitment its hashing circuits absorb, one more evaluation its
+/// Those circuits are the decompression's, which lands separately; until
+/// it does, the profile declares nothing and its shape is [`Standard`]'s.
+/// At the production rank every circuit of the fuse sits within a few
+/// percent of the gate budget, and each polynomial a profile adds is one
+/// more commitment its hashing circuits absorb, one more evaluation its
 /// compute-v circuit takes, two more claims its collapse circuits fold and
-/// a longer walk whose every step loads the longer points stage. Two
+/// a longer walk whose every step loads the longer points stage: two
 /// polynomials per side already push a nested endoscaling step past the
-/// budget. The fuse's own circuits have to scale with the profile before
-/// an extension can be proved; the extension's declaration, registration
-/// and claims are in place for when they do.
+/// budget. The decompression is therefore declared at a larger rank,
+/// where the fuse has room for it; the declaration, registration, claims,
+/// prover hooks, statement and endoscalings per step it needs are in
+/// place.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Aggregator;
 
@@ -575,10 +586,11 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>, P: Profile> ProfiledCycle 
 /// both walks. The sides size each other. Every native rx polynomial is a
 /// point the nested walk folds, the nested walk's steps are nested rx
 /// polynomials, every nested rx polynomial is a point the native walk folds,
-/// and the native walk's steps are native rx polynomials. Going once around,
-/// a native step adds about a quarter of a native step, so the map from a
-/// step count to the count the batch then needs is a contraction with one
-/// fixed point, which [`Shape::solve`] finds by iteration.
+/// and the native walk's steps are native rx polynomials. Going once around
+/// at four endoscalings per step, a native step adds about a quarter of a
+/// native step, so the map from a step count to the count the batch then
+/// needs is a contraction with one fixed point, which [`Shape::solve`] finds
+/// by iteration; more endoscalings per step contract faster.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Shape {
     /// The native rx polynomials: the fixed ones, the walk's steps and the
@@ -600,16 +612,33 @@ pub struct Shape {
 impl Shape {
     /// The shape of profile `P`.
     pub const fn of<P: Profile>() -> Self {
-        Self::solve(P::NATIVE_EXTENSION, P::NESTED_EXTENSION)
+        Self::solve(
+            P::NATIVE_EXTENSION,
+            P::NESTED_EXTENSION,
+            P::NATIVE_ENDOSCALINGS_PER_STEP,
+            P::NESTED_ENDOSCALINGS_PER_STEP,
+        )
     }
 
-    /// Solves the walk sizes for the given extensions, iterating the native
-    /// step count to its fixed point.
-    pub const fn solve(native_extension: usize, nested_extension: usize) -> Self {
+    /// Solves the walk sizes for the given extensions at the given
+    /// endoscalings per native and nested step, iterating the native step
+    /// count to its fixed point.
+    pub const fn solve(
+        native_extension: usize,
+        nested_extension: usize,
+        native_endoscalings: usize,
+        nested_endoscalings: usize,
+    ) -> Self {
         let mut native_steps = 1;
         let mut rounds = 0;
         loop {
-            let shape = Self::with_native_steps(native_steps, native_extension, nested_extension);
+            let shape = Self::with_native_steps(
+                native_steps,
+                native_extension,
+                nested_extension,
+                native_endoscalings,
+                nested_endoscalings,
+            );
             if shape.native_steps == native_steps {
                 return shape;
             }
@@ -625,15 +654,15 @@ impl Shape {
         native_steps: usize,
         native_extension: usize,
         nested_extension: usize,
+        native_endoscalings: usize,
+        nested_endoscalings: usize,
     ) -> Self {
         let native_rx = native::NUM_FIXED_RX + native_steps + native_extension;
         let nested_points = nested::num_endoscaling_points(native_rx);
-        let nested_steps =
-            endoscalar::num_steps::<{ nested::ENDOSCALINGS_PER_STEP }>(nested_points);
+        let nested_steps = endoscalar::num_steps(nested_endoscalings, nested_points);
         let nested_rx = nested::NUM_FIXED_RX + nested_steps + nested_extension;
         let native_points = nested::pcs::num_batched_points(nested_rx);
-        let native_steps =
-            endoscalar::num_steps::<{ native::ENDOSCALINGS_PER_STEP }>(native_points);
+        let native_steps = endoscalar::num_steps(native_endoscalings, native_points);
         Shape {
             native_rx,
             nested_points,
@@ -1041,7 +1070,7 @@ mod tests {
 
     #[test]
     fn shape_follows_the_declared_extension() {
-        assert_eq!(Shape::of::<Wider>(), Shape::solve(4, 2));
+        assert_eq!(Shape::of::<Wider>(), Shape::solve(4, 2, 4, 4));
         assert_ne!(Shape::of::<Wider>(), Shape::of::<Standard>());
         assert_eq!(
             native::RxIndex::num::<Wider>(),
@@ -1092,9 +1121,14 @@ mod tests {
         for (native_extension, nested_extension) in
             [(0, 0), (1, 0), (0, 1), (10, 10), (134, 116), (300, 300)]
         {
-            let shape = Shape::solve(native_extension, nested_extension);
-            let again =
-                Shape::with_native_steps(shape.native_steps, native_extension, nested_extension);
+            let shape = Shape::solve(native_extension, nested_extension, 4, 4);
+            let again = Shape::with_native_steps(
+                shape.native_steps,
+                native_extension,
+                nested_extension,
+                4,
+                4,
+            );
             assert_eq!(
                 again, shape,
                 "({native_extension}, {nested_extension}) is not fixed"
@@ -1107,8 +1141,8 @@ mod tests {
         // Each extra rx polynomial is two points in the other walk (one per
         // child), so a step there per two, and a quarter of a step back: an
         // extension costs about twice its own count in polynomials overall.
-        let base = Shape::solve(0, 0);
-        let wider = Shape::solve(100, 0);
+        let base = Shape::solve(0, 0, 4, 4);
+        let wider = Shape::solve(100, 0, 4, 4);
         assert!(wider.nested_steps > base.nested_steps);
         assert!(wider.native_steps > base.native_steps);
         let extra = wider.polynomials() - base.polynomials();

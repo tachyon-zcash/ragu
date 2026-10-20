@@ -265,7 +265,7 @@ impl<C: Affine, P: Profile> WalkWitness<C, P> {
     /// The walk's outputs under `endoscalar`, from a simulated walk.
     pub fn new(
         endoscalar: u128,
-        walk: PointsWitness<C, NumPoints<P>, { super::super::ENDOSCALINGS_PER_STEP }>,
+        walk: PointsWitness<C, NumPoints<P>, super::super::Endoscalings<P>>,
     ) -> Self {
         Self {
             endoscalar,

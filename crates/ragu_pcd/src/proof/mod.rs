@@ -957,7 +957,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             crate::internal::endoscalar::PointsWitness::<
                 C::NestedCurve,
                 native::NumPoints<C::Profile>,
-                { native::ENDOSCALINGS_PER_STEP },
+                native::Endoscalings<C::Profile>,
             >::new(beta_endo, &inputs.walk()),
         );
 
