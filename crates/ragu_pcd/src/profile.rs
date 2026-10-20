@@ -70,6 +70,11 @@ use crate::{
 /// final mask as the final mask of its circuits' last stage. Nothing checks
 /// the registered circuits and bondings against the declaration, so a
 /// profile pins the two together in its tests.
+///
+/// A profile is part of an application's setup description, so its
+/// registries take their own [`RegistryTags`](crate::RegistryTags): the
+/// standard profile's tags are not another profile's, even over the same
+/// curves and steps.
 pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The native rx polynomials the profile adds: its native extension's.
     const NATIVE_EXTENSION: usize;

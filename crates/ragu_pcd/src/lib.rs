@@ -84,6 +84,11 @@ pub use backend::SelectableBackend;
 /// [`Tag`]'s [sampling requirement](Tag#sampling-requirement) for the complete
 /// setup of both registries. Production consumers must not use a fixed test key.
 ///
+/// The profile is part of the setup the tags are sampled for (see
+/// [`Profile`]): an application in another profile
+/// is another setup, with its own manifest digest and its own tags, even
+/// over the same curves and steps.
+///
 /// To supply the final field elements from your setup procedure, wrap each
 /// value with [`Tag::new`] and set [`Self::native`] and [`Self::nested`].
 /// [`Self::from_beacon`] is an optional helper for deriving those values from
