@@ -12,10 +12,11 @@
 //! - **Transcript.** The native verifier squeezes its challenges from a
 //!   Poseidon transcript over the instance and its messages. The circuit
 //!   replays it with the [`Transcript`](crate::internal::transcript::Transcript)
-//!   gadget over the allocated messages; host-curve points, whose
-//!   coordinates lie in the other field, enter through bridges as the
-//!   fuse's do, though unlike the fuse's nothing binds them yet (see
-//!   *What remains*).
+//!   gadget over the allocated messages; host-curve points and scalar-field
+//!   values, which lie in the other field, enter through bridges as the
+//!   fuse's do, each the value at its position in a stage of the other
+//!   side, so that the bridges sum to that stage's commitment (see
+//!   [`stages`]).
 //! - **Field identities.** The fold's weights and $W(r)$, the public parts
 //!   of the folded claims, the split identity, the batch's $f(u)$ and $v$
 //!   and the IPA's $b$ are arithmetic in one field: [`Element`] arithmetic
@@ -52,9 +53,7 @@
 //!    as a gadget. *Done.* Binding $G'$ through $s(X)$ is in *What
 //!    remains*, below.
 //! 5. [`transcript`]: the compression's transcript over the allocated
-//!    instance and messages, squeezing the native challenges. *Done*,
-//!    with the bridges allocated; binding them is the first of what
-//!    remains, below.
+//!    instance and messages, squeezing the native challenges. *Done*.
 //! 6. [`derive`](mod@derive): the derived commitments, $\[H\]$ and the IPA's final
 //!    check as endoscalar chains over the other curve's points, the
 //!    compression's challenges squeezed as endoscalars for them. *Done.*
@@ -67,15 +66,15 @@
 //!    the compressed proof's data from stages and leaving its results in
 //!    a work stage for later chunks, with the prover's native run of the
 //!    same program filling the stages. *Done*: every chunk of both sides
-//!    fits the gate budget with its stages loaded, at the production rank
-//!    and, with the chunks' limits scaled to its budget, at the aggregator
-//!    rank, and is satisfied on a real compressed proof; a tampered stage
-//!    fails some chunk. The chunk circuits take two ranks, the compressed
-//!    proof's and their own, so that an aggregator at
+//!    fits the gate budget with its stages loaded, at the smallest rank
+//!    the digits stage leaves room at and, with the chunks' limits scaled
+//!    to its budget, at the aggregator rank, and is satisfied on a real
+//!    compressed proof; a tampered stage fails some chunk. The chunk
+//!    circuits take two ranks, the compressed proof's and their own, so
+//!    that an aggregator at
 //!    [`AggregatorRank`](ragu_circuits::polynomials::AggregatorRank) can
-//!    cut a wallet's production-rank proof into about a third as many
-//!    chunks, which pack into 37 native and 29 nested circuits at the
-//!    tests' header size.
+//!    cut a wallet's production-rank proof into fewer chunks, which pack
+//!    into 51 native and 32 nested circuits at the tests' header size.
 //! 9. [`extension`] and [`prover`]: the chunk circuits as the aggregator
 //!    profile's extension, declared from pinned counts and registered
 //!    through the profile's hooks, and their polynomials for every proof
@@ -95,62 +94,49 @@
 //!
 //! [`chunk`] is the complete verifier as circuits: every check the native
 //! verifier makes runs in some chunk of one side or the other, over the
-//! four stages of [`stages`]. [`extension`] lays the chunk circuits and
-//! their stages out as a profile's extension (see
-//! [`profile`](crate::profile)) and registers them through the profile's
-//! hooks beside the fuse's circuits, on both registries; [`prover`] fills
-//! their polynomials for every proof from a compressed proof's prepared
-//! sides. The aggregator profile declares it, at the aggregator rank:
-//! every chunk then runs in every proof of that profile, over the
-//! canonical compressed proof the application's
-//! [`Decompression`](crate::profile::Decompression) holds, so each child
-//! carries 75 more polynomials at the tests' header size for the fuse to
-//! hash, evaluate and fold, which the fuse's circuits carry at four times
-//! the production rank's budget. The decompression step runs the chunks over the
-//! wallet's proof it is given and outputs that proof's header, which the
-//! statement circuit's claim holds to the header the chunks verified.
+//! stages of [`stages`]. [`extension`] lays the chunk circuits and their
+//! stages out as a profile's extension (see [`profile`](crate::profile))
+//! and registers them through the profile's hooks beside the fuse's
+//! circuits, on both registries; [`prover`] fills their polynomials for
+//! every proof from a compressed proof's prepared sides. The aggregator
+//! profile declares it, at the aggregator rank: every chunk then runs in
+//! every proof of that profile, over the canonical compressed proof the
+//! application's [`Decompression`](crate::profile::Decompression) holds,
+//! so each child carries 98 more polynomials at the tests' header size
+//! for the fuse to hash, evaluate and fold, which the fuse's circuits
+//! carry at four times the production rank's budget. The decompression
+//! step runs the chunks over the wallet's proof it is given and outputs
+//! that proof's header, which the statement circuit's claim holds to the
+//! header the chunks verified.
+//!
+//! # What binds the two sides
+//!
+//! Everything that passes between the sides, the challenges the
+//! scalar-field side lifts from their bits, the digits of the full-width
+//! scalars each side scales the other curve's points by, and the bridges
+//! through which the circuit-field transcript absorbs the scalar field's
+//! values and the host curve's points, is a witness the receiving side
+//! allocates. What holds it to the sending side is the fuse's design: the
+//! sending side holds the value as wires of an unblinded stage, the
+//! receiving side recomputes that stage's commitment from the witness it
+//! took, and its binding circuit exposes the recomputation for the
+//! proof's consumer to hold to the stage's actual commitment, through the
+//! circuit's claim (see [`stages`] for the stages,
+//! [`chunk::BindingCircuit`] for the circuit and
+//! [`Binding`](crate::profile::Binding) for the consumer's check). A
+//! prover who prepares the two sides from different compressed proofs,
+//! each consistent with itself, fails that claim.
 //!
 //! # What remains
 //!
 //! The decompression proof is sound for an honest prover, which is what
 //! the end-to-end tests and the measurements cover, and not yet against a
-//! dishonest one: three of the native verifier's checks are not enforced
-//! on it, and a prover who skips any one of them has the aggregator
-//! accept a compressed proof the wallet's verifier would reject. No tamper
-//! test reaches such a prover: each alters one input and leaves the rest
-//! as the honest preparation made it, so no test prepares the two sides
-//! from different proofs. In the verifier's order:
+//! dishonest one: two of the native verifier's checks are not enforced
+//! on it, and a prover who skips either has the aggregator accept a
+//! compressed proof the wallet's verifier would reject. In the verifier's
+//! order:
 //!
-//! 1. **The two sides are not bound to each other.** Everything that
-//!    passes between the sides is a witness the receiving side allocates
-//!    or loads (the [`run`] module's `Aux` and the transcript stage): the
-//!    challenges the scalar-field side lifts from their endoscalars' bits,
-//!    the digits of the full-width scalars each side scales the other
-//!    curve's points by, and the bridges through which the circuit-field
-//!    transcript absorbs the scalar field's values and the host curve's
-//!    points. Each side therefore verifies a proof of its own: the
-//!    circuit-field side the one whose transcript binds the statement,
-//!    the scalar-field side one of the prover's choosing, with the
-//!    challenges and scalars its point checks need chosen to pass; so
-//!    nothing holds either curve's point checks to its scalar identities.
-//!    The design is the fuse's: the side that computes a value holds it
-//!    as stage wires, and the other side's view of it is bound by that
-//!    stage's commitment, which the other side recomputes from the
-//!    value's bits as the fuse's challenge binders do and exposes for the
-//!    proof's consumer to hold to the stage's actual commitment, as
-//!    `stages_match` holds the fuse's own challenge stage. That takes
-//!    three pieces: the bits and digits as stage wires with their
-//!    commitments recomputed on the other side; the bridges as stage
-//!    commitments, which means the compression's transcript absorbs one
-//!    stage-shaped bridge per stage, laid out and blinded as the fuse's
-//!    bridge stages are, in place of a scalar at the first nested
-//!    generator and a point's coordinates at the first two, a change to
-//!    `compress` and `verify_compressed` and to every wallet proof's
-//!    challenges though not to its size; and an
-//!    [`Extension`](crate::profile::Extension) hook for the consumer's
-//!    check, in the fuse's circuits and in `verify_compressed`. None of
-//!    it waits on another PR.
-//! 2. **The registry's evaluations are unchecked.** The native verifier
+//! 1. **The registry's evaluations are unchecked.** The native verifier
 //!    evaluates the wallet registry at $(w, r, y)$ and at the circuits'
 //!    $\omega_c$ itself; the chunks read these evaluations from the work
 //!    stage and take the values a prover writes there. The design is the
@@ -167,7 +153,7 @@
 //!    makes the wallet application part of what a verifier of aggregator
 //!    proofs builds. Pinning a digest of the wallet registry in the
 //!    aggregator's registry tag is the alternative, still to decide.
-//! 3. **$G'$ is unbound.** The IPA's final check takes $G' = \langle s,
+//! 2. **$G'$ is unbound.** The IPA's final check takes $G' = \langle s,
 //!    G \rangle$ as a witness point, so as the circuits stand that check
 //!    binds nothing: a prover who chooses $G'$ satisfies it for any
 //!    left-hand side. Everything before the IPA's final check is bound.
@@ -185,8 +171,13 @@
 //!    those hooks do not reach, so it needs the same mechanism on the
 //!    nested side. Waits on #821 and a nested counterpart.
 //!
-//! The three are independent and land in any order; the aggregator's
-//! proofs are sound against a dishonest prover once all three have.
+//! The two are independent and land in either order; the aggregator's
+//! proofs are sound against a dishonest prover once both have.
+//!
+//! TODO: complete [`profile`](crate::profile)'s isolation follow-up: enforce the
+//! outer aggregator's and inner wallet's expected setups, preserve Standard's
+//! transcript domains, and test proof substitution through the recursive and
+//! compressed verifiers. Setup identity does not replace the checks above.
 
 // The chunk circuits use the gadgets piecewise. The whole-side verifier in
 // `circuit` and the entry points only it calls, such as the transcript

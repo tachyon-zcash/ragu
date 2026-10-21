@@ -6,52 +6,89 @@
 //! Each side's stages form a chain of [`ValuesStage`]s, each holding
 //! points of the side's curve and elements of its field: the instance
 //! stage holds the compressed proof's instance, the messages stage the two
-//! reductions' messages, the work stage what passes between chunks, and
-//! the transcript stage what only the transcript chunks need, the bridges
-//! the compression's transcript absorbs and the sponge's saved states. A
-//! chunk loads the stages up to the last it needs, so the transcript
-//! stage's cost falls on the transcript chunks alone. A [`Layout`] names
-//! where in the instance, messages and transcript stages each part of the
-//! proof sits; the [`Schedule`](super::program::Schedule) assigns the work
+//! reductions' messages, the lifts stage the lifts of the challenges the
+//! side's field checks use, the work stage what passes between chunks, the
+//! transcript stage what only the transcript chunks need, the bridges the
+//! compression's transcript absorbs and the sponge's saved states, and the
+//! digits stage the signed digits of the full-width scalars the other side
+//! scales by. A chunk loads the stages up to the last it needs, so the
+//! transcript and digits stages' cost falls on the chunks that fill them.
+//! A [`Layout`] names where in the instance, messages and transcript
+//! stages each part of the proof sits and how many lifts and digits the
+//! side holds; the [`Schedule`](super::program::Schedule) assigns the work
 //! stage's slots and the sponge states'.
 //!
 //! The circuit-field side holds the nested curve's points as points and
 //! the host curve's points and the scalar field's values through their
-//! bridges, the commitments over the first nested generators the
-//! compression's transcript absorbs; the scalar-field side holds the host
-//! curve's points as points and the scalar field's values as elements,
-//! and its transcript stage is empty.
+//! bridges; the scalar-field side holds the host curve's points as points
+//! and the scalar field's values as elements, and its transcript stage is
+//! empty.
+//!
+//! # What binds the sides
+//!
+//! Four kinds of stage are committed unblinded so that the other side can
+//! recompute their commitments from the values it holds, which its binding
+//! circuit exposes for the proof's consumer to hold to the stages' actual
+//! commitments (see [`Binding`](crate::profile::Binding)):
+//!
+//! - the scalar-field side's instance and messages stages, whose
+//!   commitments the compression's transcript absorbs piecewise: each
+//!   bridge is the value at its position in the stage
+//!   ([`bridge_positions`]), so the circuit-field side's sum of the bridges
+//!   it absorbed is the stage's commitment;
+//! - the scalar-field side's lifts stage, which holds the lifts of every
+//!   challenge the circuit-field side squeezed, as the fuse's challenge
+//!   stage holds its lifts, so the circuit-field side recomputes it by
+//!   endoscaling the lifts' generators by the squeezed bits
+//!   ([`lifts_degrees`]);
+//! - each side's digits stage, which holds the signed digits of the
+//!   full-width scalars the other side scales by, so the other side
+//!   recomputes it as the signed sum of the digits' generators while it
+//!   scales by them ([`digits_degrees`]).
+//!
+//! The digits stage comes after the work stage, so its generators depend
+//! on the work stage's size, which the side's schedule sets, and the
+//! other side's schedule names those generators: the stages' lengths
+//! therefore take each side's schedule built for its sizes alone
+//! ([`Side::sizes`]), which no other side's schedule enters, and the
+//! full schedules build on them (see the [`program`](super::program)
+//! module).
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use ragu_circuits::{polynomials::Rank, staging::Stage};
+use ragu_circuits::{
+    polynomials::{AggregatorRank, Rank},
+    staging::{Stage, stage_wire_indices, wire_degree, wires_of},
+};
 use ragu_core::{
-    Cycle, FixedGenerators, Result,
+    Cycle, Error, FixedGenerators, Result,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
 use ragu_primitives::{
     Element, Point,
-    vec::{FixedVec, Len},
+    vec::{ConstLen, FixedVec, Len},
 };
 use udon::{
     curve::{Affine as _, EndomorphismAffine as Affine, Projective},
     field::Field,
 };
 
-use super::side::Side;
+use super::{derive::digit_width, program::challenges_per_curve, side::Side};
 use crate::{
     compress::{Messages, instance::OPENED, revdot::fold::Derived},
     internal::{native, nested},
+    ipa::BridgePositions,
+    profile::Profile,
 };
 
 /// The nested commitments the instance lists, then the nested registry
 /// restriction's, $p$'s and the challenge stage's partial.
 pub(crate) const NESTED_POINTS: usize = 2 + nested::RxIndex::NUM + 3;
 /// The native commitments the instance lists, then the native registry
-/// restriction's and $p$'s.
+/// restriction's and $p$'s: the standard profile's [`native_points_of`].
 pub(crate) const NATIVE_POINTS: usize = 2 + native::RxIndex::NUM + 2;
 /// The scalar field's values the instance carries, in
 /// [`nested_scalars`] order.
@@ -63,6 +100,18 @@ pub(crate) const NATIVE_SCALARS: usize = 11;
 /// $p(1/r)$ and $q(r)$, the batch's values and the IPA's $c$.
 pub(crate) const MESSAGE_SCALARS: usize =
     2 + Derived::ALL.len() + 2 + (Derived::ALL.len() + 2 + OPENED) + 1;
+/// The scalar field's values beyond $v$, $c$ and $c b z$ whose digits the
+/// circuit-field side scales generators by: the `ab` bridge stage's
+/// coefficients, the coordinates of three host-curve commitments and the
+/// blinding (see [`ab_layout`](super::program::ab_layout)).
+pub(crate) const AB_TERMS: usize = 7;
+
+/// The native commitments a proof in profile `P` lists, then its native
+/// registry restriction's and $p$'s: the host-curve points the
+/// scalar-field side's instance stage holds.
+pub(crate) fn native_points_of<P: Profile>() -> usize {
+    2 + native::RxIndex::num::<P>() + 2
+}
 
 /// One curve's point messages: the fold's two, $p$, $q$, $f$, $\[S\]$ and
 /// the IPA's rounds.
@@ -212,11 +261,21 @@ pub(crate) struct Layout {
     pub instance: InstanceLayout,
     pub messages: MessagesLayout,
     pub transcript: TranscriptLayout,
+    /// The lifts stage's elements: the lifts of the challenges the side's
+    /// field checks use, in the schedule's
+    /// [`Regions::lifts`](super::program::Regions::lifts) order.
+    pub lifts: usize,
+    /// The digits stage's elements: the signed digits of the full-width
+    /// scalars of this field the other side scales by, [`digit_width`] per
+    /// scalar, in the other side's foreign scalars' order.
+    pub digits: usize,
 }
 
 impl Layout {
-    /// The circuit-field side's layout.
-    pub(crate) fn native<K: Rank, const HEADER_SIZE: usize>() -> Self {
+    /// The circuit-field side's layout, over the circuit field `F`: it
+    /// lifts the host curve's compression challenges and holds the digits
+    /// of its $v$, $c$ and $c b z$ for the scalar-field side.
+    pub(crate) fn native<F: Field, K: Rank, const HEADER_SIZE: usize>() -> Self {
         let mut points = Spans::default();
         let mut elements = Spans::default();
         let instance = InstanceLayout {
@@ -240,15 +299,21 @@ impl Layout {
             instance,
             messages: Self::messages::<K>(),
             transcript,
+            lifts: challenges_per_curve::<K>(),
+            digits: 3 * digit_width::<F>(),
         }
     }
 
-    /// The scalar-field side's layout.
-    pub(crate) fn nested<K: Rank>() -> Self {
+    /// The scalar-field side's layout, over the scalar field `F`, for a
+    /// proof in profile `P`: it lifts both curves' compression challenges
+    /// and the fuse's $x$, $y$ and $u$, all squeezed on the other side,
+    /// and holds the digits of its $v$, $c$ and $c b z$ and of the `ab`
+    /// bridge's coefficients for the circuit-field side.
+    pub(crate) fn nested<F: Field, P: Profile, K: Rank>() -> Self {
         let mut points = Spans::default();
         let mut elements = Spans::default();
         let instance = InstanceLayout {
-            commitments: points.next(NATIVE_POINTS),
+            commitments: points.next(native_points_of::<P>()),
             scalars: elements.next(NESTED_SCALARS),
             points: points.0,
             elements: elements.0,
@@ -258,6 +323,8 @@ impl Layout {
             instance,
             messages: Self::messages::<K>(),
             transcript: TranscriptLayout::default(),
+            lifts: 2 * challenges_per_curve::<K>() + 3,
+            digits: (3 + AB_TERMS) * digit_width::<F>(),
         }
     }
 
@@ -273,25 +340,6 @@ impl Layout {
             elements: elements.0,
         }
     }
-}
-
-/// The bridge of scalar-field `values`, as the compression's transcript
-/// forms it: their commitment over the first nested generators.
-pub(crate) fn bridge<C: Cycle>(params: &C::Params, values: &[C::ScalarField]) -> C::NestedCurve {
-    let g = C::nested_generators(params).g();
-    let mut acc = g[0] * values[0];
-    for (value, base) in values.iter().zip(g).skip(1) {
-        acc += *base * *value;
-    }
-    acc.to_affine()
-}
-
-/// The bridge of a host-curve point: of its coordinates.
-pub(crate) fn bridge_point<C: Cycle>(params: &C::Params, point: C::HostCurve) -> C::NestedCurve {
-    let (x, y) = point
-        .coordinates()
-        .expect("a commitment is not the identity");
-    bridge::<C>(params, &[x, y])
 }
 
 /// The scalar messages of one curve in [`MessageScalars`] order.
@@ -382,36 +430,37 @@ pub(crate) struct Output<'dr, D: Driver<'dr>, P: Affine<Base = D::F>, LP: Len, L
     pub elements: FixedVec<Element<'dr, D>, LE>,
 }
 
-/// A stage of one side holding `LP` points and `LE` elements after
-/// `Parent`, as a stage of chunk circuits at rank `R`.
-pub(crate) struct ValuesStage<C, S, R, Parent, LP, LE>(
-    PhantomData<fn() -> (C, S, R, Parent, LP, LE)>,
+/// A stage holding `LP` points of the curve `P` and `LE` elements of its
+/// base field `F` after `Parent`, as a stage of circuits at rank `R`: the
+/// points' coordinates first, then the elements, each at one wire.
+pub(crate) struct ValuesStage<F, P, R, Parent, LP, LE>(
+    PhantomData<fn() -> (F, P, R, Parent, LP, LE)>,
 );
 
-impl<C, S, R, Parent, LP, LE> Default for ValuesStage<C, S, R, Parent, LP, LE> {
+impl<F, P, R, Parent, LP, LE> Default for ValuesStage<F, P, R, Parent, LP, LE> {
     fn default() -> Self {
         ValuesStage(PhantomData)
     }
 }
 
-impl<C, S, R, Parent, LP, LE> Stage<S::F, R> for ValuesStage<C, S, R, Parent, LP, LE>
+impl<F, P, R, Parent, LP, LE> Stage<F, R> for ValuesStage<F, P, R, Parent, LP, LE>
 where
-    C: Cycle,
-    S: Side<C>,
+    F: Field,
+    P: Affine<Base = F>,
     R: Rank,
-    Parent: Stage<S::F, R>,
+    Parent: Stage<F, R>,
     LP: Len,
     LE: Len,
 {
     type Parent = Parent;
-    type Witness<'source> = &'source Values<S::F, S::P>;
-    type OutputKind = Kind![S::F; Output<'_, _, S::P, LP, LE>];
+    type Witness<'source> = &'source Values<F, P>;
+    type OutputKind = Kind![F; Output<'_, _, P, LP, LE>];
 
     fn values() -> usize {
         2 * LP::len() + LE::len()
     }
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = S::F>>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
@@ -430,9 +479,38 @@ where
     }
 }
 
+/// The generators a values stage's wires land on at rank `R`: each
+/// point's $x$ and $y$, then each element, as its rx polynomial places
+/// them.
+fn degrees<F, P, R, Parent, LP, LE>() -> Result<(Vec<[usize; 2]>, Vec<usize>)>
+where
+    F: Field,
+    P: Affine<Base = F>,
+    R: Rank,
+    Parent: Stage<F, R>,
+    LP: Len,
+    LE: Len,
+{
+    let wires = stage_wire_indices::<F, R, ValuesStage<F, P, R, Parent, LP, LE>>(|out| {
+        let mut wires = wires_of(&out.points)?;
+        wires.extend(wires_of(&out.elements)?);
+        Ok(wires)
+    })?;
+    let (points, elements) = wires.split_at(2 * LP::len());
+    Ok((
+        points
+            .chunks(2)
+            .map(|xy| [wire_degree::<R>(xy[0]), wire_degree::<R>(xy[1])])
+            .collect(),
+        elements.iter().map(|&i| wire_degree::<R>(i)).collect(),
+    ))
+}
+
 /// The sizes the schedule fixes: the work stage's points and elements and
 /// the transcript stage's elements, the sponge states. The same for every
-/// application circuit, so computed for a placeholder.
+/// application circuit, so computed for a placeholder, and from the
+/// schedule built for its sizes alone ([`Side::sizes`]), which the digits
+/// stage's layout needs before the other side's schedule exists.
 pub(crate) struct Sizes {
     pub work_points: usize,
     pub work_elements: usize,
@@ -441,7 +519,7 @@ pub(crate) struct Sizes {
 
 impl Sizes {
     pub(crate) fn of<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>() -> Self {
-        let schedule = S::schedule::<K, R, HEADER_SIZE>()
+        let schedule = S::sizes::<K, R, HEADER_SIZE>()
             .expect("the schedule is a function of the proof system's constants");
         Sizes {
             work_points: schedule.points,
@@ -489,6 +567,10 @@ len!(
     MessageElements, |layout, sizes| layout.messages.elements
 );
 len!(
+    /// The lifts stage's element count of side `S`: the layout's lifts.
+    LiftsElements, |layout, sizes| layout.lifts
+);
+len!(
     /// The work stage's point count of side `S`: the schedule's.
     WorkPoints, |layout, sizes| sizes().work_points
 );
@@ -505,9 +587,18 @@ len!(
     /// the schedule saves.
     TranscriptElements, |layout, sizes| sizes().states
 );
+len!(
+    /// The digits stage's element count of side `S`: the layout's digits.
+    DigitsElements, |layout, sizes| layout.digits
+);
+
+/// A stage of side `S` holding `LP` points and `LE` elements after
+/// `Parent`, as a stage of chunk circuits at rank `R`.
+type SideStage<C, S, R, Parent, LP, LE> =
+    ValuesStage<<S as Side<C>>::F, <S as Side<C>>::P, R, Parent, LP, LE>;
 
 /// The instance stage of side `S`.
-pub(crate) type InstanceStage<C, S, K, R, const HEADER_SIZE: usize> = ValuesStage<
+pub(crate) type InstanceStage<C, S, K, R, const HEADER_SIZE: usize> = SideStage<
     C,
     S,
     R,
@@ -517,7 +608,7 @@ pub(crate) type InstanceStage<C, S, K, R, const HEADER_SIZE: usize> = ValuesStag
 >;
 
 /// The messages stage of side `S`, after the instance stage.
-pub(crate) type MessagesStage<C, S, K, R, const HEADER_SIZE: usize> = ValuesStage<
+pub(crate) type MessagesStage<C, S, K, R, const HEADER_SIZE: usize> = SideStage<
     C,
     S,
     R,
@@ -526,19 +617,31 @@ pub(crate) type MessagesStage<C, S, K, R, const HEADER_SIZE: usize> = ValuesStag
     MessageElements<C, S, K, R, HEADER_SIZE>,
 >;
 
-/// The work stage of side `S`, after the messages stage.
-pub(crate) type WorkStage<C, S, K, R, const HEADER_SIZE: usize> = ValuesStage<
+/// The lifts stage of side `S`, after the messages stage: elements only,
+/// committed unblinded on the scalar-field side, whose lifts the
+/// circuit-field side recomputes.
+pub(crate) type LiftsStage<C, S, K, R, const HEADER_SIZE: usize> = SideStage<
     C,
     S,
     R,
     MessagesStage<C, S, K, R, HEADER_SIZE>,
+    ConstLen<0>,
+    LiftsElements<C, S, K, R, HEADER_SIZE>,
+>;
+
+/// The work stage of side `S`, after the lifts stage.
+pub(crate) type WorkStage<C, S, K, R, const HEADER_SIZE: usize> = SideStage<
+    C,
+    S,
+    R,
+    LiftsStage<C, S, K, R, HEADER_SIZE>,
     WorkPoints<C, S, K, R, HEADER_SIZE>,
     WorkElements<C, S, K, R, HEADER_SIZE>,
 >;
 
 /// The transcript stage of side `S`, after the work stage: loaded by the
 /// transcript chunks alone.
-pub(crate) type TranscriptStage<C, S, K, R, const HEADER_SIZE: usize> = ValuesStage<
+pub(crate) type TranscriptStage<C, S, K, R, const HEADER_SIZE: usize> = SideStage<
     C,
     S,
     R,
@@ -546,3 +649,237 @@ pub(crate) type TranscriptStage<C, S, K, R, const HEADER_SIZE: usize> = ValuesSt
     TranscriptPoints<C, S, K, R, HEADER_SIZE>,
     TranscriptElements<C, S, K, R, HEADER_SIZE>,
 >;
+
+/// The digits stage of side `S`, after the work stage: elements only,
+/// committed unblinded, loaded by the digits chunks alone and recomputed
+/// by the other side.
+pub(crate) type DigitsStage<C, S, K, R, const HEADER_SIZE: usize> = SideStage<
+    C,
+    S,
+    R,
+    WorkStage<C, S, K, R, HEADER_SIZE>,
+    ConstLen<0>,
+    DigitsElements<C, S, K, R, HEADER_SIZE>,
+>;
+
+/// The generator of side `S`'s curve each lift of its lifts stage lands
+/// on at rank `R`, by lift: what the other side's circuits endoscale by
+/// the challenge's bits to recompute the stage's commitment.
+pub(crate) fn lifts_degrees<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>()
+-> Result<Vec<usize>> {
+    let (_, elements) = degrees::<
+        S::F,
+        S::P,
+        R,
+        MessagesStage<C, S, K, R, HEADER_SIZE>,
+        ConstLen<0>,
+        LiftsElements<C, S, K, R, HEADER_SIZE>,
+    >()?;
+    Ok(elements)
+}
+
+/// The generator of side `S`'s curve each digit of its digits stage lands
+/// on at rank `R`, by digit: what the other side's circuits add or
+/// subtract, by the digit's sign, to recompute the stage's commitment.
+pub(crate) fn digits_degrees<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>()
+-> Result<Vec<usize>> {
+    let (_, elements) = degrees::<
+        S::F,
+        S::P,
+        R,
+        WorkStage<C, S, K, R, HEADER_SIZE>,
+        ConstLen<0>,
+        DigitsElements<C, S, K, R, HEADER_SIZE>,
+    >()?;
+    Ok(elements)
+}
+
+/// The rank the compression's bridges are laid out at: the aggregator's,
+/// whose decompression stages they commit to (see [`bridge_positions`]).
+pub(crate) type BridgeRank = AggregatorRank;
+
+/// The host-curve points the scalar-field side's instance stage holds for
+/// a proof in profile `P`: [`native_points_of`].
+pub(crate) struct BridgeInstancePoints<P>(PhantomData<fn() -> P>);
+
+impl<P: Profile> Len for BridgeInstancePoints<P> {
+    fn len() -> usize {
+        native_points_of::<P>()
+    }
+}
+
+/// The host-curve point messages the scalar-field side's messages stage
+/// holds for a proof at rank `K`: [`message_points()`].
+pub(crate) struct BridgeMessagePoints<K>(PhantomData<fn() -> K>);
+
+impl<K: Rank> Len for BridgeMessagePoints<K> {
+    fn len() -> usize {
+        message_points::<K>()
+    }
+}
+
+/// The scalar-field side's instance stage of the decompression of a proof
+/// in profile `P`, at the [`BridgeRank`]: the host-curve commitments the
+/// instance lists, then the scalar field's instance values.
+type NestedInstanceBridge<C, P> = ValuesStage<
+    <C as Cycle>::ScalarField,
+    <C as Cycle>::HostCurve,
+    BridgeRank,
+    (),
+    BridgeInstancePoints<P>,
+    ConstLen<NESTED_SCALARS>,
+>;
+
+/// The scalar-field side's messages stage, after its instance stage: the
+/// host curve's point messages, then the nested curve's scalar messages.
+type NestedMessagesBridge<C, P, K> = ValuesStage<
+    <C as Cycle>::ScalarField,
+    <C as Cycle>::HostCurve,
+    BridgeRank,
+    NestedInstanceBridge<C, P>,
+    BridgeMessagePoints<K>,
+    ConstLen<MESSAGE_SCALARS>,
+>;
+
+/// Where the compression's transcript bridges each host-curve point and
+/// scalar-field value of a proof in profile `P` at rank `K`: the nested
+/// generators the value's wires land on in the scalar-field side's
+/// instance and messages stages of the proof's decompression at the
+/// [`BridgeRank`], in absorption order, so that the sum of the bridges
+/// of a stage's values is the stage's commitment, unblinded.
+///
+/// The positions are a function of the profile and the rank alone, so a
+/// proof's bridges are laid out for the decompression of its profile
+/// whether or not one exists: every profile's are formed the same way.
+pub(crate) fn bridge_positions<C: Cycle, P: Profile, K: Rank>() -> Result<BridgePositions> {
+    let (mut points, mut scalars) = degrees::<
+        C::ScalarField,
+        C::HostCurve,
+        BridgeRank,
+        (),
+        BridgeInstancePoints<P>,
+        ConstLen<NESTED_SCALARS>,
+    >()?;
+    let (message_points, message_scalars) = degrees::<
+        C::ScalarField,
+        C::HostCurve,
+        BridgeRank,
+        NestedInstanceBridge<C, P>,
+        BridgeMessagePoints<K>,
+        ConstLen<MESSAGE_SCALARS>,
+    >()?;
+    points.extend(message_points);
+    scalars.extend(message_scalars);
+    Ok(BridgePositions::new(points, scalars))
+}
+
+/// Forms the compression's bridges as [`bridge_positions`] places them,
+/// one value after another in absorption order: a host-curve point's
+/// coordinates and a scalar-field value each at their generators.
+pub(crate) struct Bridger<'a, C: Cycle> {
+    g: &'a [C::NestedCurve],
+    positions: BridgePositions,
+}
+
+impl<'a, C: Cycle> Bridger<'a, C> {
+    /// A bridger at the start of the absorption order, for a proof in
+    /// profile `P` at rank `K`.
+    pub(crate) fn new<P: Profile, K: Rank>(params: &'a C::Params) -> Result<Self> {
+        Ok(Bridger {
+            g: C::nested_generators(params).g(),
+            positions: bridge_positions::<C, P, K>()?,
+        })
+    }
+
+    /// The bridge of the next host-curve point: its coordinates at their
+    /// generators.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `point` is the identity, which has no coordinates, or past
+    /// the last position.
+    pub(crate) fn point(&mut self, point: C::HostCurve) -> Result<C::NestedCurve> {
+        let (x, y) = point
+            .coordinates()
+            .ok_or_else(|| Error::InvalidWitness("a commitment is the identity".into()))?;
+        let [dx, dy] = self.positions.point()?;
+        Ok((self.g[dx] * x + self.g[dy] * y).to_affine())
+    }
+
+    /// The bridge of the next scalar-field value: the value at its
+    /// generator.
+    ///
+    /// # Errors
+    ///
+    /// Fails past the last position.
+    pub(crate) fn scalar(&mut self, value: C::ScalarField) -> Result<C::NestedCurve> {
+        let d = self.positions.scalar()?;
+        Ok((self.g[d] * value).to_affine())
+    }
+}
+
+/// The standard profile's bridge layout is the decompression's: the
+/// scalar-field side's instance and messages stages at the aggregator
+/// rank land on the generators the bridges do.
+#[cfg(test)]
+pub(crate) fn nested_stage_degrees<C: Cycle, K: Rank, const HEADER_SIZE: usize>()
+-> Result<BridgePositions>
+where
+    super::side::Nested: Side<C, F = C::ScalarField, P = C::HostCurve>,
+{
+    type Nested = super::side::Nested;
+    let (mut points, mut scalars) = degrees::<
+        C::ScalarField,
+        C::HostCurve,
+        BridgeRank,
+        (),
+        InstancePoints<C, Nested, K, BridgeRank, HEADER_SIZE>,
+        InstanceElements<C, Nested, K, BridgeRank, HEADER_SIZE>,
+    >()?;
+    let (message_points, message_scalars) = degrees::<
+        C::ScalarField,
+        C::HostCurve,
+        BridgeRank,
+        InstanceStage<C, Nested, K, BridgeRank, HEADER_SIZE>,
+        MessagePoints<C, Nested, K, BridgeRank, HEADER_SIZE>,
+        MessageElements<C, Nested, K, BridgeRank, HEADER_SIZE>,
+    >()?;
+    points.extend(message_points);
+    scalars.extend(message_scalars);
+    Ok(BridgePositions::new(points, scalars))
+}
+
+#[cfg(test)]
+mod tests {
+    use ragu_circuits::polynomials::ProductionRank;
+    use ragu_core::pasta::Pasta;
+
+    use super::*;
+    use crate::profile::Standard;
+
+    /// The compression bridges a standard-profile proof's values at the
+    /// generators the decompression's scalar-field side holds them at, so
+    /// the circuit-field side's sums of the bridges are the stages'
+    /// commitments.
+    #[test]
+    fn bridge_positions_are_the_nested_stages() {
+        let bridges = bridge_positions::<Pasta, Standard, ProductionRank>().unwrap();
+        let stages = nested_stage_degrees::<Pasta, ProductionRank, 4>().unwrap();
+        assert_eq!(bridges.points(), stages.points());
+        assert_eq!(bridges.scalars(), stages.scalars());
+        assert_eq!(
+            bridges.points().len(),
+            NATIVE_POINTS + message_points::<ProductionRank>()
+        );
+        assert_eq!(bridges.scalars().len(), NESTED_SCALARS + MESSAGE_SCALARS);
+        // Every position is a distinct generator.
+        let mut all: Vec<usize> = bridges.points().iter().flatten().copied().collect();
+        all.extend(bridges.scalars());
+        all.sort_unstable();
+        all.dedup();
+        assert_eq!(
+            all.len(),
+            2 * bridges.points().len() + bridges.scalars().len()
+        );
+    }
+}

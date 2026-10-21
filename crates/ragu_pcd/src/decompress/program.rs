@@ -25,10 +25,30 @@
 //! sliced at the sponge's permutation boundaries; the challenges' lifts;
 //! the targets, the reduction, the batch and the IPA's scalars; the
 //! claims' points; the fold, batch and IPA chains as Horner steps; the
-//! full-width scalings; and the recomputed stages. The two sides share
-//! everything from the targets on ([`body`]); they differ in how they
-//! obtain their challenges and in the stages the circuit-field side
-//! recomputes.
+//! full-width scalings; the recomputed stages; and the digits of the
+//! scalars the other side scales by. The two sides share everything from
+//! the targets on ([`body`]); they differ in how they obtain their
+//! challenges and in the stages each recomputes of the other's: the
+//! circuit-field side sums the bridges it absorbed into the scalar-field
+//! side's instance and messages stage commitments, endoscales the lifts
+//! stage's generators by the challenges it squeezed, and, as it scales by
+//! the scalar-field side's digits, sums their generators by sign into the
+//! digits stage's commitment; the scalar-field side does the last for the
+//! circuit-field side's digits. Each side's recomputations end in work
+//! slots its binding circuit exposes ([`Regions::exposed`]).
+//!
+//! Each side's schedule names the generators of the other side's digits
+//! stage, which comes after that side's work stage, whose size that
+//! side's schedule sets: taken literally, each schedule would wait on the
+//! other. The generators only fill the scaling chunks' [`Bind`]s; no slot
+//! depends on them, so a schedule built from the count of the other
+//! side's scalars alone ([`Foreign::Scalars`]) has every slot the full one
+//! has. The stages' lengths take that build ([`Side::sizes`]), the digits
+//! stage's generators follow from it, and only the full schedules
+//! ([`Side::schedule`]) ask across.
+//!
+//! [`Side::sizes`]: super::side::Side::sizes
+//! [`Side::schedule`]: super::side::Side::schedule
 
 use alloc::{vec, vec::Vec};
 use core::iter::once;
@@ -43,7 +63,11 @@ use udon::field::Field;
 
 use super::{
     circuit::AbValue,
-    stages::{Layout, MESSAGE_SCALARS, native_scalars, nested_scalars},
+    side::{Native, Nested},
+    stages::{
+        AB_TERMS, Layout, MESSAGE_SCALARS, digits_degrees, lifts_degrees, native_scalars,
+        nested_scalars,
+    },
 };
 use crate::{
     RAGU_TAG,
@@ -60,7 +84,7 @@ use crate::{
         native::{self, stages::eval::generator_index},
         nested::{self, stages::challenges as challenge_stage},
     },
-    ipa::IPA_TAG,
+    ipa::{IPA_TAG, IpaCycle},
     profile::{ProfiledCycle, Standard},
 };
 
@@ -93,6 +117,8 @@ pub(crate) enum ElementSrc {
     Message(usize),
     /// A work stage element slot.
     Work(usize),
+    /// A lifts stage element slot: a challenge's lift.
+    Lift(usize),
     /// A coordinate of a point, $x$ for 0 and $y$ for 1.
     Coordinate(PointSrc, u8),
     /// The square of an instance stage element: the `ab` bridge's
@@ -177,7 +203,7 @@ pub(crate) enum Chunk {
         /// The permutations the chunk performs, the saved state's included.
         permutations: usize,
     },
-    /// Lifts of challenges into work element slots.
+    /// Lifts of challenges into lifts stage slots.
     Lift {
         pairs: Vec<(ChallengeRef, usize)>,
     },
@@ -204,9 +230,10 @@ pub(crate) enum Chunk {
     BatchIpa {
         out: [usize; 2],
     },
-    /// The digits of full-width elements of this field, bound to them.
+    /// The signed digits of full-width elements of this field, bound to
+    /// them, into the digits stage from the slot each names.
     Digits {
-        scalars: Vec<ElementSrc>,
+        scalars: Vec<(ElementSrc, usize)>,
     },
     /// Sums of points into work point slots.
     Sums {
@@ -220,7 +247,9 @@ pub(crate) enum Chunk {
     /// One part of $k P$ for the full-width `scalar`: the signed-digit
     /// chain over the digits `digits` names, from the accumulator at
     /// `init`, or from `offset` when the part is the first, ended by the
-    /// offset's removal when `finish`, into `out`.
+    /// offset's removal when `finish`, into `out`; and, for a scalar of
+    /// the other field, the same digits' part of the other side's digits
+    /// stage commitment (`bind`).
     Scale {
         point: PointSrc,
         scalar: ScalarRef,
@@ -229,6 +258,7 @@ pub(crate) enum Chunk {
         init: Option<usize>,
         finish: bool,
         out: usize,
+        bind: Option<Bind>,
     },
     /// The base-case sign's term of the challenge stage: the generator,
     /// negated unless both headers are the dummy's.
@@ -241,6 +271,51 @@ pub(crate) enum Chunk {
         left: PointSrc,
         right: PointSrc,
     },
+}
+
+/// One part of the other side's digits stage commitment, over the digits
+/// of one scalar a [`Chunk::Scale`] scales by: the signed sum, by the
+/// digits' bits, of `generators`, the generator of each digit's wire in
+/// the other side's digits stage, from the accumulator at `init` or from
+/// nothing, into `out`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Bind {
+    pub generators: Vec<usize>,
+    pub init: Option<usize>,
+    pub out: usize,
+}
+
+/// The last stage a chunk needs, which sets the circuit kind it is packed
+/// into: every chunk loads the instance, messages, lifts and work stages,
+/// the transcript chunks and the bridge sums the transcript stage after
+/// them, and the digits chunks the digits stage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Last {
+    Work,
+    Transcript,
+    Digits,
+}
+
+impl Chunk {
+    /// The last stage the chunk needs.
+    pub(crate) fn last(&self) -> Last {
+        match self {
+            Chunk::Transcript { .. } => Last::Transcript,
+            Chunk::Digits { .. } => Last::Digits,
+            Chunk::Sums { sums } => {
+                if sums
+                    .iter()
+                    .flat_map(|(_, terms)| terms)
+                    .any(|term| matches!(term, PointSrc::Bridge(_)))
+                {
+                    Last::Transcript
+                } else {
+                    Last::Work
+                }
+            }
+            _ => Last::Work,
+        }
+    }
 }
 
 /// A claim's structure: its kind, the groups of commitment positions its
@@ -273,10 +348,17 @@ pub(crate) struct Regions {
     /// Circuit-field side: the nested curve's, likewise.
     pub other_squeezed: Vec<usize>,
     /// The lifts of the compression challenges of the curve whose
-    /// reduction this side checks, in [`squeezed`] order.
+    /// reduction this side checks, in [`squeezed`] order: lifts stage
+    /// slots.
     pub lifts: Vec<usize>,
-    /// Scalar-field side: the lifts of the fuse's $x$, $y$ and $u$.
+    /// Scalar-field side: the lifts of the fuse's $x$, $y$ and $u$, after
+    /// [`lifts`](Self::lifts) in the lifts stage.
     pub fuse_lifts: Vec<usize>,
+    /// Scalar-field side: the lifts of the host curve's compression
+    /// challenges, whose points it checks, after
+    /// [`fuse_lifts`](Self::fuse_lifts) in the lifts stage; the
+    /// circuit-field side recomputes the stage in that order.
+    pub point_lifts: Vec<usize>,
     /// The claims' base targets: application, unified bridge, unified on
     /// the circuit-field side; unified alone on the scalar-field side.
     pub targets: Vec<usize>,
@@ -315,6 +397,19 @@ pub(crate) struct Regions {
     /// `ab` bridge commitment.
     pub challenge_stage: usize,
     pub ab_bridge: usize,
+    /// Circuit-field side: the sums of the bridges of the scalar-field
+    /// side's instance and messages stages' values, its recomputation of
+    /// those stages' commitments.
+    pub bridge_sums: [usize; 2],
+    /// Circuit-field side: the recomputed commitment of the scalar-field
+    /// side's lifts stage.
+    pub lifts_sum: usize,
+    /// The recomputed commitment of the other side's digits stage.
+    pub digits_sum: usize,
+    /// The work points the side's binding circuit exposes, in the order
+    /// the profile's [`Binding`](crate::profile::Binding) names the
+    /// stages they recompute.
+    pub exposed: Vec<usize>,
 }
 
 /// One side's schedule: its chunks, the stage layout, the work stage's
@@ -323,7 +418,8 @@ pub(crate) struct Regions {
 pub(crate) struct Schedule {
     pub chunks: Vec<Chunk>,
     /// The circuits: each a run of consecutive chunks, in order, every
-    /// chunk in exactly one, the transcript chunks' circuits first.
+    /// chunk in exactly one, the transcript chunks' circuits first and
+    /// the digits chunks' last.
     pub circuits: Vec<CircuitPlan>,
     pub layout: Layout,
     /// The work stage's element and point counts.
@@ -347,13 +443,14 @@ pub(crate) struct Schedule {
 pub(crate) struct CircuitPlan {
     /// The chunks' indices, consecutive.
     pub chunks: core::ops::Range<usize>,
-    /// Whether the chunks are transcript chunks, which load the transcript
-    /// stage.
-    pub transcript: bool,
+    /// The last stage the chunks need, which every chunk of the run
+    /// shares.
+    pub last: Last,
 }
 
-/// The gates a circuit pays before its chunks: loading the stages, with
-/// room for the estimate's error.
+/// The gates a circuit pays before its chunks: loading the stages every
+/// chunk loads, with room for the estimate's error. A digits circuit pays
+/// its digits stage on top ([`pack`]).
 const OVERHEAD: usize = 400;
 
 /// The gates a chunk's work takes, estimated from each kind's measured
@@ -371,7 +468,7 @@ pub(crate) fn gates(chunk: &Chunk) -> usize {
         Chunk::Bindings { .. } => 1150,
         Chunk::RevdotPublic { .. } => 400,
         Chunk::BatchIpa { .. } => 150,
-        Chunk::Digits { scalars } => 220 * scalars.len(),
+        Chunk::Digits { scalars } => 420 * scalars.len(),
         Chunk::Sums { sums } => {
             60 + sums
                 .iter()
@@ -392,7 +489,9 @@ pub(crate) fn gates(chunk: &Chunk) -> usize {
                 .sum::<usize>()
         }
         Chunk::Checks { checks } => 730 * checks.len(),
-        Chunk::Scale { digits, .. } => 150 + 10 * (digits.1 - digits.0),
+        Chunk::Scale { digits, bind, .. } => {
+            150 + (10 + if bind.is_some() { 8 } else { 0 }) * (digits.1 - digits.0)
+        }
         Chunk::Sign { .. } => 60,
         Chunk::Equal { .. } => 40,
     }
@@ -400,40 +499,46 @@ pub(crate) fn gates(chunk: &Chunk) -> usize {
 
 /// Packs `chunks`, in order, into circuits of at most `fill` gates by
 /// [`gates`], a chunk that exceeds the fill alone in its circuit, and
-/// transcript chunks never with others.
-fn pack(chunks: &[Chunk], fill: usize) -> Vec<CircuitPlan> {
-    let transcript = |chunk: &Chunk| matches!(chunk, Chunk::Transcript { .. });
+/// chunks of different last stages never together. A digits circuit
+/// reserves its digits stage's gates, `digits` wires at two per gate,
+/// which the others do not.
+fn pack(chunks: &[Chunk], fill: usize, digits: usize) -> Vec<CircuitPlan> {
+    let overhead = |last: Last| match last {
+        Last::Digits => OVERHEAD + digits.div_ceil(2),
+        Last::Work | Last::Transcript => OVERHEAD,
+    };
     let mut circuits = Vec::new();
     let mut start = 0;
-    let mut used = OVERHEAD;
+    let mut used = overhead(chunks[0].last());
     for (index, chunk) in chunks.iter().enumerate() {
         let cost = gates(chunk);
-        if index > start && (transcript(chunk) != transcript(&chunks[start]) || used + cost > fill)
-        {
+        if index > start && (chunk.last() != chunks[start].last() || used + cost > fill) {
             circuits.push(CircuitPlan {
                 chunks: start..index,
-                transcript: transcript(&chunks[start]),
+                last: chunks[start].last(),
             });
             start = index;
-            used = OVERHEAD;
+            used = overhead(chunk.last());
         }
         used += cost;
     }
     if start < chunks.len() {
         circuits.push(CircuitPlan {
             chunks: start..chunks.len(),
-            transcript: transcript(&chunks[start]),
+            last: chunks[start].last(),
         });
     }
     circuits
 }
 
-/// Allocates work slots.
+/// Allocates work slots, and the lifts, transcript and digits stages'.
 #[derive(Default)]
 struct Slots {
     elements: usize,
     points: usize,
     states: usize,
+    lifts: usize,
+    digits: usize,
 }
 
 impl Slots {
@@ -441,6 +546,19 @@ impl Slots {
     fn state(&mut self, width: usize) -> usize {
         self.states += width;
         self.states - width
+    }
+
+    /// `n` consecutive lifts stage slots.
+    fn lifts(&mut self, n: usize) -> Vec<usize> {
+        let first = self.lifts;
+        self.lifts += n;
+        (first..first + n).collect()
+    }
+
+    /// `n` consecutive digits stage slots, returning the first.
+    fn digits(&mut self, n: usize) -> usize {
+        self.digits += n;
+        self.digits - n
     }
 
     fn element(&mut self) -> usize {
@@ -846,41 +964,101 @@ pub(crate) fn nested_claims() -> Result<Vec<ClaimPlan>> {
     Ok(planner.claims)
 }
 
+/// What a schedule knows of the other side's digits stage: the generator
+/// each of its digits lands on, value by value, a scalar's width of them
+/// per value in the side's foreign scalars' order, or only how many
+/// scalars it holds. A schedule built from the count alone has every
+/// slot the full one has and no generator
+/// ([`Side::sizes`](super::side::Side::sizes)): the stages'
+/// lengths take it, so that the other side's digits stage, which comes
+/// after its work stage, can be laid out from it without the two sides'
+/// schedules each waiting on the other.
+pub(crate) enum Foreign {
+    Scalars(usize),
+    Degrees(Vec<usize>),
+}
+
 /// Builds one side's schedule.
 struct Builder {
     layout: Layout,
     /// The digit count of a full-width scalar of the other field.
     scalar_bits: usize,
+    foreign: Foreign,
     limits: Limits,
     slots: Slots,
     regions: Regions,
     chunks: Vec<Chunk>,
+    /// Each foreign scalar's part of the other side's digits stage
+    /// commitment, by the scalar's index, as the scalings leave them.
+    bound: Vec<Option<usize>>,
 }
 
 impl Builder {
-    fn new(layout: Layout, scalar_bits: usize, limits: Limits) -> Self {
+    fn new(layout: Layout, scalar_bits: usize, foreign: Foreign, limits: Limits) -> Self {
+        let scalars = match &foreign {
+            Foreign::Scalars(scalars) => *scalars,
+            Foreign::Degrees(degrees) => {
+                assert_eq!(
+                    degrees.len() % scalar_bits,
+                    0,
+                    "the other side holds whole scalars' digits"
+                );
+                degrees.len() / scalar_bits
+            }
+        };
         Builder {
             layout,
             scalar_bits,
+            foreign,
             limits,
             slots: Slots::default(),
             regions: Regions::default(),
             chunks: Vec::new(),
+            bound: alloc::vec![None; scalars],
         }
     }
 
     /// $k P$ for a full-width scalar, as [`Limits::scale_parts`] chunks
     /// over consecutive runs of its digits, from the top down, into `out`.
+    /// A scalar of the other field is scaled by once: its digits' part of
+    /// the other side's digits stage commitment rides along, into a slot
+    /// [`digits_sum`](Self::digits_sum) takes.
     fn scale(&mut self, point: PointSrc, scalar: ScalarRef, offset: PointSrc, out: usize) {
         let n = self.scalar_bits;
         let parts = self.limits.scale_parts;
+        let bound = match scalar {
+            ScalarRef::Bits(id) => {
+                assert!(
+                    self.bound[id].is_none(),
+                    "a foreign scalar binds its digits once"
+                );
+                let slot = self.slots.point();
+                self.bound[id] = Some(slot);
+                Some((id, slot))
+            }
+            ScalarRef::Element(_) => None,
+        };
         let mut init = None;
+        let mut bind_init = None;
         for part in 0..parts {
             // Part `p` covers the digits of the `p`-th run from the top.
             let hi = n - part * n / parts;
             let lo = n - (part + 1) * n / parts;
             let last = part + 1 == parts;
             let slot = if last { out } else { self.slots.point() };
+            let bind = bound.map(|(id, out)| {
+                let slot = if last { out } else { self.slots.point() };
+                let bind = Bind {
+                    generators: match &self.foreign {
+                        Foreign::Degrees(degrees) => degrees[id * n + lo..id * n + hi].to_vec(),
+                        Foreign::Scalars(_) => Vec::new(),
+                    },
+                    init: bind_init,
+                    out: slot,
+                };
+                bind_init = Some(slot);
+                bind
+            });
             self.chunks.push(Chunk::Scale {
                 point,
                 scalar,
@@ -889,8 +1067,41 @@ impl Builder {
                 init,
                 finish: last,
                 out: slot,
+                bind,
             });
             init = Some(slot);
+        }
+    }
+
+    /// The other side's digits stage commitment: the sum of every foreign
+    /// scalar's part, each scaling having left one, into
+    /// [`Regions::digits_sum`].
+    fn digits_sum(&mut self) {
+        let terms: Vec<PointSrc> = self
+            .bound
+            .iter()
+            .map(|slot| PointSrc::Work(slot.expect("every foreign scalar was scaled by")))
+            .collect();
+        self.regions.digits_sum = self.slots.point();
+        self.chunks.push(Chunk::Sums {
+            sums: vec![(self.regions.digits_sum, terms)],
+        });
+    }
+
+    /// The signed digits of this side's full-width `scalars`, bound to
+    /// them, into the digits stage in order: the other side's foreign
+    /// scalars, which it scales by their digits.
+    fn digits(&mut self, scalars: Vec<ElementSrc>) {
+        let width = self.layout.digits / scalars.len();
+        assert_eq!(width * scalars.len(), self.layout.digits);
+        let scalars: Vec<(ElementSrc, usize)> = scalars
+            .into_iter()
+            .map(|src| (src, self.slots.digits(width)))
+            .collect();
+        for batch in scalars.chunks(self.limits.digits) {
+            self.chunks.push(Chunk::Digits {
+                scalars: batch.to_vec(),
+            });
         }
     }
 
@@ -1118,7 +1329,15 @@ impl Builder {
         bindings: Vec<BindingPlan>,
         ab_terms: Vec<(usize, AbValue)>,
     ) -> Schedule {
-        let circuits = pack(&self.chunks, self.limits.fill);
+        assert_eq!(
+            self.slots.lifts, self.layout.lifts,
+            "the lifts stage holds every lift"
+        );
+        assert_eq!(
+            self.slots.digits, self.layout.digits,
+            "the digits stage holds every digit"
+        );
+        let circuits = pack(&self.chunks, self.limits.fill, self.layout.digits);
         Schedule {
             chunks: self.chunks,
             circuits,
@@ -1158,8 +1377,10 @@ struct Body<'a> {
 
 /// The chunks both sides share: the targets, the reduction, the batch and
 /// the IPA's scalars in this side's field, then the claims, the folds, the
-/// batched commitment and the IPA's points on this side's curve.
-fn body<K: Rank>(b: &mut Builder, body: Body<'_>) -> Vec<BindingPlan> {
+/// batched commitment and the IPA's points on this side's curve. Returns
+/// the wire bindings' plans and the elements whose digits this side holds
+/// for the other, which the side's schedule ends with ([`Builder::digits`]).
+fn body<K: Rank>(b: &mut Builder, body: Body<'_>) -> (Vec<BindingPlan>, Vec<ElementSrc>) {
     let rounds = K::RANK as usize;
     let layout = b.layout;
     let message_scalar = |i: usize| ElementSrc::Message(layout.messages.scalars.at(i));
@@ -1211,11 +1432,6 @@ fn body<K: Rank>(b: &mut Builder, body: Body<'_>) -> Vec<BindingPlan> {
         ElementSrc::Work(b.regions.batch[1]),
     ];
     digits.extend(body.extra_digits);
-    for batch in digits.chunks(b.limits.digits) {
-        b.chunks.push(Chunk::Digits {
-            scalars: batch.to_vec(),
-        });
-    }
 
     // The point checks of this side's curve under its reduction's
     // challenges.
@@ -1281,7 +1497,7 @@ fn body<K: Rank>(b: &mut Builder, body: Body<'_>) -> Vec<BindingPlan> {
         |j| challenge(squeezed::ROUNDS + j),
         [ScalarRef::Bits(0), ScalarRef::Bits(1), ScalarRef::Bits(2)],
     );
-    bindings
+    (bindings, digits)
 }
 
 /// The `ab` bridge stage's layout: the generator index each of its
@@ -1328,16 +1544,45 @@ fn blinding_degree<K: Rank>() -> usize {
 /// The circuit-field side's schedule for a proof at rank `K`, cut for
 /// chunk circuits at rank `R`.
 pub(crate) fn native_schedule<
-    C: ProfiledCycle<Profile = Standard>,
+    C: IpaCycle + ProfiledCycle<Profile = Standard>,
     K: Rank,
     R: Rank,
     const HEADER_SIZE: usize,
 >() -> Result<Schedule> {
+    native_schedule_with::<C, K, R, HEADER_SIZE>(Foreign::Degrees(digits_degrees::<
+        C,
+        Nested,
+        K,
+        R,
+        HEADER_SIZE,
+    >()?))
+}
+
+/// The circuit-field side's schedule for its sizes alone (see
+/// [`Foreign`]).
+pub(crate) fn native_sizes<
+    C: IpaCycle + ProfiledCycle<Profile = Standard>,
+    K: Rank,
+    R: Rank,
+    const HEADER_SIZE: usize,
+>() -> Result<Schedule> {
+    native_schedule_with::<C, K, R, HEADER_SIZE>(Foreign::Scalars(3 + AB_TERMS))
+}
+
+fn native_schedule_with<
+    C: IpaCycle + ProfiledCycle<Profile = Standard>,
+    K: Rank,
+    R: Rank,
+    const HEADER_SIZE: usize,
+>(
+    foreign: Foreign,
+) -> Result<Schedule> {
     type P<C> = <C as Cycle>::CircuitPoseidon;
-    let layout = Layout::native::<K, HEADER_SIZE>();
+    let layout = Layout::native::<C::CircuitField, K, HEADER_SIZE>();
     let mut b = Builder::new(
         layout,
         C::ScalarField::CAPACITY as usize + 1,
+        foreign,
         Limits::at::<R>(),
     );
     let claims = native_claims()?;
@@ -1480,9 +1725,34 @@ pub(crate) fn native_schedule<
         b.chunks.extend(chunks);
     }
 
+    // The bridges summed by the stage of the scalar-field side they commit
+    // to: the instance stage's, the host commitments' and the scalar
+    // field's instance values', then the messages stage's, the host point
+    // messages' and the scalar field's message values'.
+    b.regions.bridge_sums = [b.slots.point(), b.slots.point()];
+    for (out, spans) in [
+        (
+            b.regions.bridge_sums[0],
+            [transcript.commitment_bridges, transcript.bridged],
+        ),
+        (
+            b.regions.bridge_sums[1],
+            [transcript.point_bridges, transcript.scalar_bridges],
+        ),
+    ] {
+        let terms: Vec<PointSrc> = spans
+            .into_iter()
+            .flat_map(|span| span.positions())
+            .map(PointSrc::Bridge)
+            .collect();
+        b.chunks.push(Chunk::Sums {
+            sums: vec![(out, terms)],
+        });
+    }
+
     // The lifts of the host curve's challenges, whose reduction this side
     // checks.
-    b.regions.lifts = b.slots.elements(per_curve);
+    b.regions.lifts = b.slots.lifts(per_curve);
     for batch in (0..per_curve).collect::<Vec<_>>().chunks(b.limits.lifts) {
         b.chunks.push(Chunk::Lift {
             pairs: batch
@@ -1547,7 +1817,7 @@ pub(crate) fn native_schedule<
     };
 
     let other_squeezed = b.regions.other_squeezed.clone();
-    let bindings = body::<K>(
+    let (bindings, digits) = body::<K>(
         &mut b,
         Body {
             scalar_claims: &claims,
@@ -1635,21 +1905,100 @@ pub(crate) fn native_schedule<
         });
     }
 
+    // The scalar-field side's lifts stage: each lift's generator scaled
+    // by the challenge's bits, in the stage's order, the nested curve's
+    // compression challenges, the fuse's x, y and u, then the host
+    // curve's.
+    b.regions.lifts_sum = b.slots.point();
+    {
+        let generators = lifts_degrees::<C, Nested, K, R, HEADER_SIZE>()?;
+        let raw: Vec<usize> = b
+            .regions
+            .other_squeezed
+            .clone()
+            .into_iter()
+            .chain([fuse::X, fuse::Y, fuse::U].map(|i| b.regions.fuse[i]))
+            .chain(b.regions.squeezed.clone())
+            .collect();
+        assert_eq!(generators.len(), raw.len(), "one lift per challenge");
+        let mut terms: Vec<(PointSrc, Option<ChallengeRef>)> = generators
+            .iter()
+            .zip(&raw)
+            .map(|(&generator, &slot)| {
+                (
+                    PointSrc::Generator(generator),
+                    Some(ChallengeRef::Raw(slot)),
+                )
+            })
+            .collect();
+        // A chain cannot start from a scaling, so the first lift's term is
+        // its own chunk's output.
+        let (point, scale_by) = terms.remove(0);
+        let first = b.slots.point();
+        b.chunks.push(Chunk::Chain(ChainChunk {
+            init: None,
+            steps: vec![Step::AddScaled { point, scale_by }],
+            out: first,
+        }));
+        let out = b.regions.lifts_sum;
+        b.sum(PointSrc::Work(first), &terms, out);
+    }
+
+    // The scalar-field side's digits stage, from the scalings' parts, and
+    // this side's digits for it, last of all.
+    b.digits_sum();
+    b.regions.exposed = vec![
+        b.regions.bridge_sums[0],
+        b.regions.bridge_sums[1],
+        b.regions.lifts_sum,
+        b.regions.digits_sum,
+    ];
+    b.digits(digits);
+
     Ok(b.finish(claims, bindings, ab_terms))
 }
 
 /// The scalar-field side's schedule for a proof at rank `K`, cut for
 /// chunk circuits at rank `R`.
 pub(crate) fn nested_schedule<
-    C: ProfiledCycle<Profile = Standard>,
+    C: IpaCycle + ProfiledCycle<Profile = Standard>,
     K: Rank,
     R: Rank,
     const HEADER_SIZE: usize,
 >() -> Result<Schedule> {
-    let layout = Layout::nested::<K>();
+    nested_schedule_with::<C, K, R, HEADER_SIZE>(Foreign::Degrees(digits_degrees::<
+        C,
+        Native,
+        K,
+        R,
+        HEADER_SIZE,
+    >()?))
+}
+
+/// The scalar-field side's schedule for its sizes alone (see
+/// [`Foreign`]).
+pub(crate) fn nested_sizes<
+    C: IpaCycle + ProfiledCycle<Profile = Standard>,
+    K: Rank,
+    R: Rank,
+    const HEADER_SIZE: usize,
+>() -> Result<Schedule> {
+    nested_schedule_with::<C, K, R, HEADER_SIZE>(Foreign::Scalars(3))
+}
+
+fn nested_schedule_with<
+    C: IpaCycle + ProfiledCycle<Profile = Standard>,
+    K: Rank,
+    R: Rank,
+    const HEADER_SIZE: usize,
+>(
+    foreign: Foreign,
+) -> Result<Schedule> {
+    let layout = Layout::nested::<C::ScalarField, Standard, K>();
     let mut b = Builder::new(
         layout,
         C::CircuitField::CAPACITY as usize + 1,
+        foreign,
         Limits::at::<R>(),
     );
     let claims = nested_claims()?;
@@ -1659,14 +2008,23 @@ pub(crate) fn nested_schedule<
     let commitment = |p: usize| PointSrc::Instance(instance.commitments.at(p));
     let scalar = |i: usize| ElementSrc::Instance(instance.scalars.at(i));
 
-    // The lifts: the nested curve's compression challenges and the fuse's
-    // x, y and u, all squeezed on the other side, from their bits.
-    b.regions.lifts = b.slots.elements(per_curve);
-    b.regions.fuse_lifts = b.slots.elements(3);
+    // The lifts: the nested curve's compression challenges, the fuse's x,
+    // y and u and the host curve's compression challenges, all squeezed on
+    // the other side, from their bits, into the lifts stage in that order,
+    // which the other side recomputes.
+    b.regions.lifts = b.slots.lifts(per_curve);
+    b.regions.fuse_lifts = b.slots.lifts(3);
+    b.regions.point_lifts = b.slots.lifts(per_curve);
     {
         let pairs: Vec<(ChallengeRef, usize)> = (0..per_curve)
             .map(|i| (ChallengeRef::Bits(i), b.regions.lifts[i]))
             .chain((0..3).map(|i| (ChallengeRef::Bits(per_curve + i), b.regions.fuse_lifts[i])))
+            .chain((0..per_curve).map(|i| {
+                (
+                    ChallengeRef::Bits(per_curve + 3 + i),
+                    b.regions.point_lifts[i],
+                )
+            }))
             .collect();
         for batch in pairs.chunks(b.limits.lifts) {
             b.chunks.push(Chunk::Lift {
@@ -1675,7 +2033,7 @@ pub(crate) fn nested_schedule<
         }
     }
     b.regions.opening = vec![
-        ElementSrc::Work(b.regions.fuse_lifts[2]),
+        ElementSrc::Lift(b.regions.fuse_lifts[2]),
         scalar(nested_scalars::V),
         scalar(nested_scalars::A_AT_U),
         scalar(nested_scalars::B_AT_U),
@@ -1730,7 +2088,7 @@ pub(crate) fn nested_schedule<
             .collect()
     };
 
-    let bindings = body::<K>(
+    let (bindings, digits) = body::<K>(
         &mut b,
         Body {
             scalar_claims: &claims,
@@ -1747,13 +2105,24 @@ pub(crate) fn nested_schedule<
         },
     );
 
+    // The circuit-field side's digits stage, from the scalings' parts, and
+    // this side's digits for it, last of all.
+    b.digits_sum();
+    b.regions.exposed = vec![b.regions.digits_sum];
+    assert_eq!(
+        digits.len(),
+        3 + AB_TERMS,
+        "the ab bridge's terms are pinned"
+    );
+    b.digits(digits);
+
     Ok(b.finish(claims, bindings, ab_terms))
 }
 
 /// The number of chunks of each side for a proof at rank `K` in chunk
 /// circuits at rank `R`.
 pub(crate) fn chunk_counts<
-    C: ProfiledCycle<Profile = Standard>,
+    C: IpaCycle + ProfiledCycle<Profile = Standard>,
     K: Rank,
     R: Rank,
     const HEADER_SIZE: usize,

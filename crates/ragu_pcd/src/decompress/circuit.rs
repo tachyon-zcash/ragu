@@ -16,14 +16,14 @@
 //! Between the sides pass the endoscalars of every challenge, the digits
 //! of the full-width scalars each side's IPA check needs the other to
 //! scale by, and the scalar field's values the circuit-field transcript
-//! absorbs through bridges. The design makes each a stage: the side that
-//! computes the value holds it as wires, and the other side's view is
-//! bound by the stage's commitment, as the fuse binds its challenge
-//! stage. Today the [`Witness`] carries them and the two sides allocate
-//! them from it, unbound, in the decompression proof as here; the
-//! registry's evaluations likewise arrive as wires nothing yet checks,
-//! and each side's IPA takes its $G'$ as a witness point nothing yet
-//! binds. The module's *What remains* records all three.
+//! absorbs through bridges. The chunk circuits make each a stage the
+//! other side recomputes (see [`stages`]); here, in the
+//! whole-side circuits the tests run, the [`Witness`] carries them and
+//! the two sides allocate them from it, with each side's own $v$ and
+//! $c b z$ held to the witness's. The registry's evaluations arrive as
+//! wires nothing yet checks, and each side's IPA takes its $G'$ as a
+//! witness point nothing yet binds; the module's *What remains* records
+//! both.
 
 use alloc::{vec, vec::Vec};
 use core::iter::once;
@@ -44,7 +44,9 @@ use udon::{
 use super::{
     batch, derive,
     derive::{Digits, Fixed},
-    ipa, revdot, transcript,
+    ipa, revdot, stages,
+    stages::Bridger,
+    transcript,
     transcript::{Absorb, Challenge, RawChallenge},
 };
 use crate::{
@@ -254,8 +256,9 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
 
         // The compression's transcript twice over: lifted, as the verifier
         // reads it, and raw, for the endoscalars.
-        let mut lifted = compression_transcript::<C, Verifier<B>>(app.params, instance, &header)?;
-        let mut raw = compression_transcript::<C, Verifier<B>>(app.params, instance, &header)?;
+        let mut lifted =
+            compression_transcript::<C, Verifier<B>, K>(app.params, instance, &header)?;
+        let mut raw = compression_transcript::<C, Verifier<B>, K>(app.params, instance, &header)?;
         let native_sampled = Sampled::squeeze(&mut Lifted(lifted.host()))?;
         let nested_sampled = Sampled::squeeze(&mut Lifted(lifted.nested()))?;
         let native_raw_sampled = Sampled::squeeze(&mut raw.host())?;
@@ -294,9 +297,11 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
                 native_sampled.w,
                 openings.commitments.len(),
             );
+            // The registry restriction at w: the first instance claim's
+            // value.
+            let restriction_at_w = claims[0].value;
             openings.commitments.extend(commitments);
             openings.claims.extend(claims);
-            let restriction_at_w = openings.claims[Derived::ALL.len() + 2].value;
             side_witness::<C::HostCurve, K, Verifier<B>>(
                 SideInputs {
                     sampled: native_sampled,
@@ -353,9 +358,9 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
                 nested_sampled.w,
                 openings.commitments.len(),
             )?;
+            let restriction_at_w = claims[0].value;
             openings.commitments.extend(commitments);
             openings.claims.extend(claims);
-            let restriction_at_w = openings.claims[Derived::ALL.len() + 2].value;
             side_witness::<C::NestedCurve, K, Verifier<B>>(
                 SideInputs {
                     sampled: nested_sampled,
@@ -891,41 +896,62 @@ where
     let nested_generators = C::nested_generators(params);
 
     // The instance, allocated as the transcript absorbs it: the scalar
-    // field's values through the bridges the native transcript forms.
-    let bridge = |dr: &mut D, point: C::HostCurve| -> Result<Point<'dr, D, C::NestedCurve>> {
-        let (x, y) = point
-            .coordinates()
-            .ok_or_else(|| Error::InvalidWitness("a commitment is the identity".into()))?;
-        let g = nested_generators.g();
-        let commitment: C::NestedCurve = (g[0] * x + (g[1] * y)).to_affine();
-        Point::alloc(dr, D::just(|| commitment))
-    };
-    let bridged = |dr: &mut D, scalar: C::ScalarField| -> Result<Point<'dr, D, C::NestedCurve>> {
-        let g = nested_generators.g();
-        let commitment: C::NestedCurve = (g[0] * scalar).to_affine();
-        Point::alloc(dr, D::just(|| commitment))
-    };
+    // field's values through the bridges the native transcript forms,
+    // each at its position in the scalar-field side's stages, in
+    // absorption order.
+    let mut bridger = Bridger::<C>::new::<Standard, K>(params)?;
     let mut native_bridges = Vec::with_capacity(instance.native.len());
     for &commitment in &instance.native {
-        native_bridges.push(bridge(dr, commitment)?);
+        native_bridges.push(point(dr, bridger.point(commitment)?)?);
     }
+    let native_registry_xy = point(dr, bridger.point(instance.native_registry_xy)?)?;
+    let native_p = point(dr, bridger.point(instance.native_p)?)?;
+    let [
+        bridge_alpha,
+        nested_c,
+        nested_v,
+        nested_left_x,
+        nested_left_y,
+        nested_right_x,
+        nested_right_y,
+        nested_a_at_u,
+        nested_b_at_u,
+    ] = {
+        let mut bridged = Vec::with_capacity(stages::NESTED_SCALARS);
+        for value in [
+            instance.bridge_alpha,
+            instance.nested_c,
+            instance.nested_v,
+            instance.nested_left.x,
+            instance.nested_left.y,
+            instance.nested_right.x,
+            instance.nested_right.y,
+            instance.nested_a_at_u,
+            instance.nested_b_at_u,
+        ] {
+            bridged.push(point(dr, bridger.scalar(value)?)?);
+        }
+        bridged
+            .try_into()
+            .map_err(|_| Error::InvalidWitness("nine bridged values".into()))?
+    };
     let nested_points = points(dr, instance.nested.iter().copied())?;
     let allocated = transcript::Instance {
         circuit_id: element(dr, instance.circuit_id.omega_j())?,
         left_header: elements(dr, instance.left_header.iter().copied())?,
         right_header: elements(dr, instance.right_header.iter().copied())?,
         native: native_bridges,
-        native_registry_xy: bridge(dr, instance.native_registry_xy)?,
-        native_p: bridge(dr, instance.native_p)?,
+        native_registry_xy,
+        native_p,
         nested: nested_points,
         nested_registry_xy: point(dr, instance.nested_registry_xy)?,
         nested_p: point(dr, instance.nested_p)?,
         nested_challenges_partial: point(dr, instance.nested_challenges_partial)?,
-        bridge_alpha: bridged(dr, instance.bridge_alpha)?,
+        bridge_alpha,
         c: element(dr, instance.c)?,
         v: element(dr, instance.v)?,
-        nested_c: bridged(dr, instance.nested_c)?,
-        nested_v: bridged(dr, instance.nested_v)?,
+        nested_c,
+        nested_v,
         left: transcript::Child {
             x: element(dr, instance.left.x)?,
             y: element(dr, instance.left.y)?,
@@ -939,15 +965,15 @@ where
         a_at_u: element(dr, instance.a_at_u)?,
         b_at_u: element(dr, instance.b_at_u)?,
         nested_left: transcript::NestedChild {
-            x: bridged(dr, instance.nested_left.x)?,
-            y: bridged(dr, instance.nested_left.y)?,
+            x: nested_left_x,
+            y: nested_left_y,
         },
         nested_right: transcript::NestedChild {
-            x: bridged(dr, instance.nested_right.x)?,
-            y: bridged(dr, instance.nested_right.y)?,
+            x: nested_right_x,
+            y: nested_right_y,
         },
-        nested_a_at_u: bridged(dr, instance.nested_a_at_u)?,
-        nested_b_at_u: bridged(dr, instance.nested_b_at_u)?,
+        nested_a_at_u,
+        nested_b_at_u,
     };
     let header = elements(dr, witness.header.iter().copied())?;
     let nested_at = |component| &allocated.nested[nested_position::<Standard>(component)];
@@ -1027,59 +1053,73 @@ where
     }
 
     // The compression's transcript over the statement and both curves'
-    // messages.
+    // messages, the host curve's points and the scalar field's values
+    // bridged in the order the transcript absorbs them.
     let native_messages = {
         let m = &witness.proof.native;
+        let inner = point(dr, bridger.point(m.reduction.fold.inner)?)?;
+        let outer = point(dr, bridger.point(m.reduction.fold.outer)?)?;
+        let p = point(dr, bridger.point(m.reduction.p)?)?;
+        let q = point(dr, bridger.point(m.reduction.q)?)?;
+        let f = point(dr, bridger.point(m.batch.f)?)?;
+        let s_commitment = point(dr, bridger.point(m.opening.s_commitment)?)?;
         let mut rounds = Vec::with_capacity(m.opening.rounds.len());
         for &(l, r) in &m.opening.rounds {
-            rounds.push((bridge(dr, l)?, bridge(dr, r)?));
+            let l = point(dr, bridger.point(l)?)?;
+            let r = point(dr, bridger.point(r)?)?;
+            rounds.push((l, r));
         }
         transcript::Messages {
-            inner: bridge(dr, m.reduction.fold.inner)?,
-            outer: bridge(dr, m.reduction.fold.outer)?,
+            inner,
+            outer,
             inner_epsilon: element(dr, m.reduction.fold.inner_epsilon)?,
             outer_epsilon: element(dr, m.reduction.fold.outer_epsilon)?,
-            p: bridge(dr, m.reduction.p)?,
-            q: bridge(dr, m.reduction.q)?,
+            p,
+            q,
             openings: elements(dr, m.reduction.openings.iter().copied())?,
             p_at_inverse_r: element(dr, m.reduction.p_at_inverse_r)?,
             q_at_r: element(dr, m.reduction.q_at_r)?,
-            f: bridge(dr, m.batch.f)?,
+            f,
             evaluations: elements(dr, m.batch.evaluations.iter().copied())?,
-            s_commitment: bridge(dr, m.opening.s_commitment)?,
+            s_commitment,
             rounds,
             c: element(dr, m.opening.c)?,
         }
     };
     let nested_messages = {
         let m = &witness.proof.nested;
+        let inner_epsilon = point(dr, bridger.scalar(m.reduction.fold.inner_epsilon)?)?;
+        let outer_epsilon = point(dr, bridger.scalar(m.reduction.fold.outer_epsilon)?)?;
+        let mut openings = Vec::with_capacity(m.reduction.openings.len());
+        for &opened in &m.reduction.openings {
+            openings.push(point(dr, bridger.scalar(opened)?)?);
+        }
+        let p_at_inverse_r = point(dr, bridger.scalar(m.reduction.p_at_inverse_r)?)?;
+        let q_at_r = point(dr, bridger.scalar(m.reduction.q_at_r)?)?;
+        let mut evaluations = Vec::with_capacity(m.batch.evaluations.len());
+        for &value in &m.batch.evaluations {
+            evaluations.push(point(dr, bridger.scalar(value)?)?);
+        }
+        let c = point(dr, bridger.scalar(m.opening.c)?)?;
         let mut rounds = Vec::with_capacity(m.opening.rounds.len());
         for &(l, r) in &m.opening.rounds {
             rounds.push((point(dr, l)?, point(dr, r)?));
         }
-        let mut openings = Vec::with_capacity(m.reduction.openings.len());
-        for &opened in &m.reduction.openings {
-            openings.push(bridged(dr, opened)?);
-        }
-        let mut evaluations = Vec::with_capacity(m.batch.evaluations.len());
-        for &value in &m.batch.evaluations {
-            evaluations.push(bridged(dr, value)?);
-        }
         transcript::Messages {
             inner: point(dr, m.reduction.fold.inner)?,
             outer: point(dr, m.reduction.fold.outer)?,
-            inner_epsilon: bridged(dr, m.reduction.fold.inner_epsilon)?,
-            outer_epsilon: bridged(dr, m.reduction.fold.outer_epsilon)?,
+            inner_epsilon,
+            outer_epsilon,
             p: point(dr, m.reduction.p)?,
             q: point(dr, m.reduction.q)?,
             openings,
-            p_at_inverse_r: bridged(dr, m.reduction.p_at_inverse_r)?,
-            q_at_r: bridged(dr, m.reduction.q_at_r)?,
+            p_at_inverse_r,
+            q_at_r,
             f: point(dr, m.batch.f)?,
             evaluations,
             s_commitment: point(dr, m.opening.s_commitment)?,
             rounds,
-            c: bridged(dr, m.opening.c)?,
+            c,
         }
     };
     let (native_challenges, nested_challenges) = transcript::replay(
@@ -1177,10 +1217,16 @@ where
             &native_messages.c,
         )?;
         // The digits the scalar-field side scales by, bound here to the
-        // values this side computed.
+        // values this side computed, which are held to the witness's, the
+        // native verifier's: the circuit's v and c b z reach no other
+        // check, so this is what tests them.
         Digits::bind(dr, &checks.v)?;
         Digits::bind(dr, &checks.c)?;
         Digits::bind(dr, &checks.cbz)?;
+        let expected_v = element(dr, side.v)?;
+        checks.v.enforce_equal(dr, &expected_v)?;
+        let expected_cbz = element(dr, side.cbz)?;
+        checks.cbz.enforce_equal(dr, &expected_cbz)?;
     }
 
     // The nested curve's point checks, under its challenges' endoscalars.
@@ -1481,6 +1527,10 @@ where
         Digits::bind(dr, &checks.v)?;
         Digits::bind(dr, &checks.c)?;
         Digits::bind(dr, &checks.cbz)?;
+        let expected_v = element(dr, side.v)?;
+        checks.v.enforce_equal(dr, &expected_v)?;
+        let expected_cbz = element(dr, side.cbz)?;
+        checks.cbz.enforce_equal(dr, &expected_cbz)?;
 
         // The ab bridge's coordinates and blinding, whose digits the other
         // side scales generators by, bound here to the exported points and

@@ -72,7 +72,7 @@ impl Setup {
     /// The compression's transcript with the statement absorbed, before
     /// any challenge is sampled.
     pub fn absorbed(&self) -> Transcript {
-        transcript::<Pasta, ReferenceBackend>(
+        transcript::<Pasta, ReferenceBackend, TestR>(
             crate::pasta::baked(),
             &self.proof.instance,
             &self.header,
