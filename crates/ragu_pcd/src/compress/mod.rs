@@ -203,14 +203,23 @@ impl<C: Affine, T: IpaTranscript<C>> IpaTranscript<C> for Lifted<T> {
     }
 }
 
-/// The compression's transcript with the statement absorbed: the instance,
-/// then the output header.
-pub(crate) fn transcript<'params, C: ProfiledCycle, B: SelectableBackend>(
+/// The compression's transcript for a proof at rank `R` with the statement
+/// absorbed: the instance, then the output header. Every host-curve point
+/// and scalar-field value it bridges lands at its position in the
+/// scalar-field side's stages of the proof's decompression
+/// ([`bridge_positions`](crate::decompress::stages::bridge_positions)), so
+/// that the decompression's circuit-field side can sum the bridges it
+/// absorbed into those stages' commitments.
+pub(crate) fn transcript<'params, C: ProfiledCycle, B: SelectableBackend, R: Rank>(
     params: &'params C::Params,
     instance: &Instance<C>,
     output_header: &[C::CircuitField],
 ) -> Result<CycleTranscript<'params, C, B>> {
-    let mut transcript = CycleTranscript::<C, B>::new(params, IPA_TAG)?;
+    let mut transcript = CycleTranscript::<C, B>::positioned(
+        params,
+        IPA_TAG,
+        crate::decompress::stages::bridge_positions::<C, C::Profile, R>()?,
+    )?;
     instance.absorb(&mut transcript)?;
     for &element in output_header {
         transcript.host().write_scalar(element)?;

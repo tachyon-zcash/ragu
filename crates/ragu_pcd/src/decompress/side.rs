@@ -33,8 +33,8 @@ use super::{
     program::{self, Schedule, squeezed},
     run::Ctx,
     stages::{
-        self, Layout, Values, bridge, bridge_point, message_points_of, message_scalars,
-        native_scalars, nested_scalars,
+        self, Bridger, Layout, Values, message_points_of, message_scalars, native_scalars,
+        nested_scalars,
     },
 };
 use crate::{
@@ -77,6 +77,10 @@ pub(crate) trait Side<C: Cycle>: Copy + Default + Send + Sync + 'static {
     type Output: GadgetKind<Self::F> + Write<Self::F>;
 
     const NAME: &'static str;
+    /// The points the side's binding circuit exposes: its recomputations
+    /// of the other side's stage commitments, in the order the profile's
+    /// [`Binding`](crate::profile::Binding) names the stages.
+    const EXPOSED: usize;
 
     /// The fixed generators of `P`.
     fn generators(params: &C::Params) -> &[Self::P];
@@ -88,6 +92,9 @@ pub(crate) trait Side<C: Cycle>: Copy + Default + Send + Sync + 'static {
     /// The side's chunk schedule for a proof at rank `K`, cut for chunk
     /// circuits at rank `R`.
     fn schedule<K: Rank, R: Rank, const HEADER_SIZE: usize>() -> Result<Schedule>;
+    /// The side's schedule for its sizes alone, which the stages' lengths
+    /// take (see [`Foreign`](program::Foreign)).
+    fn sizes<K: Rank, R: Rank, const HEADER_SIZE: usize>() -> Result<Schedule>;
     /// The instance stage's values.
     fn instance(
         params: &C::Params,
@@ -96,13 +103,17 @@ pub(crate) trait Side<C: Cycle>: Copy + Default + Send + Sync + 'static {
     ) -> Values<Self::F, Self::P>;
     /// The messages stage's values.
     fn messages(params: &C::Params, proof: &CompressedProof<C>) -> Values<Self::F, Self::P>;
-    /// The transcript stage's points, the bridges; its elements, the sponge
-    /// states, the prover's run fills.
-    fn transcript(
+    /// The transcript stage's points, the bridges of a proof at rank `K`;
+    /// its elements, the sponge states, the prover's run fills.
+    ///
+    /// # Errors
+    ///
+    /// Fails if a bridged point is the identity.
+    fn transcript<K: Rank>(
         params: &C::Params,
         instance: &Instance<C>,
         proof: &CompressedProof<C>,
-    ) -> Values<Self::F, Self::P>;
+    ) -> Result<Values<Self::F, Self::P>>;
     /// The witness of the reduction the side checks in its field.
     fn own(witness: &Witness<C>) -> &SideWitness<Self::Q>;
     /// The witness of the reduction whose points the side checks.
@@ -164,6 +175,8 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
     type Output = Kind![C::CircuitField; WithSuffix<'_, _, ()>];
 
     const NAME: &'static str = "circuit-field";
+    // The scalar-field side's instance, messages, lifts and digits stages.
+    const EXPOSED: usize = 4;
 
     fn generators(params: &C::Params) -> &[Self::P] {
         C::nested_generators(params).g()
@@ -178,11 +191,15 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
     }
 
     fn layout<K: Rank, const HEADER_SIZE: usize>() -> Layout {
-        Layout::native::<K, HEADER_SIZE>()
+        Layout::native::<C::CircuitField, K, HEADER_SIZE>()
     }
 
     fn schedule<K: Rank, R: Rank, const HEADER_SIZE: usize>() -> Result<Schedule> {
         program::native_schedule::<C, K, R, HEADER_SIZE>()
+    }
+
+    fn sizes<K: Rank, R: Rank, const HEADER_SIZE: usize>() -> Result<Schedule> {
+        program::native_sizes::<C, K, R, HEADER_SIZE>()
     }
 
     fn instance(
@@ -223,38 +240,39 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
         }
     }
 
-    fn transcript(
+    fn transcript<K: Rank>(
         params: &C::Params,
         instance: &Instance<C>,
         proof: &CompressedProof<C>,
-    ) -> Values<Self::F, Self::P> {
-        let mut points: Vec<C::NestedCurve> = instance
+    ) -> Result<Values<Self::F, Self::P>> {
+        // The bridges as the compression forms them, each value at its
+        // position in the scalar-field side's stages: the host
+        // commitments and the scalar field's instance values in the
+        // instance stage, the host point messages and the scalar field's
+        // message values in the messages stage.
+        let mut bridger = Bridger::<C>::new::<Standard, K>(params)?;
+        let mut points: Vec<C::NestedCurve> = Vec::new();
+        for point in instance
             .native
             .iter()
             .copied()
             .chain([instance.native_registry_xy, instance.native_p])
-            .map(|point| bridge_point::<C>(params, point))
-            .collect();
-        points.extend(
-            Nested::instance(params, instance, &[])
-                .elements
-                .into_iter()
-                .map(|value| bridge::<C>(params, &[value])),
-        );
-        points.extend(
-            message_points_of(&proof.native)
-                .into_iter()
-                .map(|point| bridge_point::<C>(params, point)),
-        );
-        points.extend(
-            message_scalars(&proof.nested)
-                .into_iter()
-                .map(|value| bridge::<C>(params, &[value])),
-        );
-        Values {
+        {
+            points.push(bridger.point(point)?);
+        }
+        for value in Nested::instance(params, instance, &[]).elements {
+            points.push(bridger.scalar(value)?);
+        }
+        for point in message_points_of(&proof.native) {
+            points.push(bridger.point(point)?);
+        }
+        for value in message_scalars(&proof.nested) {
+            points.push(bridger.scalar(value)?);
+        }
+        Ok(Values {
             points,
             elements: Vec::new(),
-        }
+        })
     }
 
     fn own(witness: &Witness<C>) -> &SideWitness<Self::Q> {
@@ -403,7 +421,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
                 elements[position].enforce_equal(dr, theirs)?;
             }
         }
-        let y = ctx.work(regions.lifts[squeezed::Y]);
+        let y = ctx.lift(regions.lifts[squeezed::Y]);
         let (unified, bridge) = inputs.unified_ky_values(dr, &y)?;
         let application = inputs.application_ky(dr, &y)?;
         Ok(alloc::vec![application, bridge, unified])
@@ -439,6 +457,8 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
     type Output = Kind![C::ScalarField; ()];
 
     const NAME: &'static str = "scalar-field";
+    // The circuit-field side's digits stage.
+    const EXPOSED: usize = 1;
 
     fn generators(params: &C::Params) -> &[Self::P] {
         C::host_generators(params).g()
@@ -453,11 +473,15 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
     }
 
     fn layout<K: Rank, const HEADER_SIZE: usize>() -> Layout {
-        Layout::nested::<K>()
+        Layout::nested::<C::ScalarField, Standard, K>()
     }
 
     fn schedule<K: Rank, R: Rank, const HEADER_SIZE: usize>() -> Result<Schedule> {
         program::nested_schedule::<C, K, R, HEADER_SIZE>()
+    }
+
+    fn sizes<K: Rank, R: Rank, const HEADER_SIZE: usize>() -> Result<Schedule> {
+        program::nested_sizes::<C, K, R, HEADER_SIZE>()
     }
 
     fn instance(
@@ -490,15 +514,15 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
         }
     }
 
-    fn transcript(
+    fn transcript<K: Rank>(
         _: &C::Params,
         _: &Instance<C>,
         _: &CompressedProof<C>,
-    ) -> Values<Self::F, Self::P> {
-        Values {
+    ) -> Result<Values<Self::F, Self::P>> {
+        Ok(Values {
             points: Vec::new(),
             elements: Vec::new(),
-        }
+        })
     }
 
     fn own(witness: &Witness<C>) -> &SideWitness<Self::Q> {
@@ -548,7 +572,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
             .iter()
             .zip([&output.x, &output.y, &output.u])
         {
-            ours.enforce_equal(dr, &ctx.work(*slot))?;
+            ours.enforce_equal(dr, &ctx.lift(*slot))?;
         }
         output
             .c
@@ -579,7 +603,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
         for (position, theirs) in exported.iter().zip(output.exported.iter()) {
             points[layout.commitments.at(*position)].enforce_equal(dr, theirs)?;
         }
-        let y = ctx.work(regions.lifts[squeezed::Y]);
+        let y = ctx.lift(regions.lifts[squeezed::Y]);
         Ok(alloc::vec![output.ky(dr, &y)?])
     }
 

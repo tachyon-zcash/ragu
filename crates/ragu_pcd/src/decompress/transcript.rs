@@ -10,8 +10,9 @@
 //! nested generators and absorbs that bridge commitment. In the circuit
 //! over the circuit field the same sponge runs over allocated elements and
 //! points, each bridge commitment an allocated point: what the bridge
-//! commits to is bound elsewhere, by a stage over the other field that
-//! holds those values, which is the roadmap's fifth item. Each challenge
+//! commits to is bound elsewhere, by the stage over the other field that
+//! holds those values, whose commitment the bridges of its values sum to
+//! (see [`stages`](super::stages)). Each challenge
 //! is read as the compression reads it: the squeezed element constrained
 //! into the endoscalar range, its endoscalar, which scales points, and the
 //! endoscalar's lift into the circuit field, which the field checks over

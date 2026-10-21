@@ -66,7 +66,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         // evaluate `v` and `v_n` at the replayed `u`.
         let challenges = proof.challenges();
         let output_header = ky::output_header::<C, H, HEADER_SIZE>(pcd.data().clone())?;
-        let mut transcript = transcript::<C, B>(self.params, &instance, &output_header)?;
+        let mut transcript = transcript::<C, B, R>(self.params, &instance, &output_header)?;
         let native_sampled = Sampled::squeeze(&mut Lifted(transcript.host()))?;
         let nested_sampled = Sampled::squeeze(&mut Lifted(transcript.nested()))?;
 

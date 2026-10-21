@@ -28,10 +28,11 @@ use rand::CryptoRng;
 use udon::field::Field;
 
 use super::{
-    chunk::{self, is_transcript},
+    chunk::{self, last},
+    program::Last,
     run::{Prepared, Sides},
-    side::{Native, Nested},
-    stages::{InstanceStage, MessagesStage, TranscriptStage, WorkStage},
+    side::{Native, Nested, Side},
+    stages::{DigitsStage, InstanceStage, LiftsStage, MessagesStage, TranscriptStage, WorkStage},
 };
 use crate::{
     Application, CompressedPcd, Pcd, SelectableBackend,
@@ -46,7 +47,7 @@ use crate::{
 /// filled from the prover's native run of the chunks over it, which the
 /// decompression step's fuse runs the chunk circuits over in place of the
 /// canonical proof.
-pub struct Decompressed<C: IpaCycle + ProfiledCycle<Profile = Standard>>(Sides<C>);
+pub struct Decompressed<C: IpaCycle + ProfiledCycle<Profile = Standard>>(pub(crate) Sides<C>);
 
 /// The aggregator's prover context: the wallet application whose proofs
 /// the aggregator decompresses and a canonical decompression, prepared
@@ -129,9 +130,10 @@ where
 
     /// The native extension's polynomials for profile `P` over `source`,
     /// or over the canonical decompression without: every chunk circuit's
-    /// trace and the statement circuit's assembled against `registry` at
-    /// their index in `P`'s layout, and the four stages' polynomials, each
-    /// blinded from `rng`.
+    /// trace, the statement circuit's and the binding circuit's assembled
+    /// against `registry` at their index in `P`'s layout, and the six
+    /// stages' polynomials, each blinded from `rng` but the digits
+    /// stage's, which the scalar-field side recomputes.
     ///
     /// # Errors
     ///
@@ -146,27 +148,10 @@ where
         let prepared = &self.sides(source).native;
         let schedule = Arc::new(prepared.schedule.clone());
         let params = self.wallet.params;
-        let mut circuits = Vec::with_capacity(schedule.circuits.len() + 1);
+        let mut circuits = Vec::with_capacity(schedule.circuits.len() + 2);
         for index in 0..schedule.circuits.len() {
-            let trace = if is_transcript(&schedule, index) {
-                chunk::TranscriptCircuit::<C, Native, ProductionRank, R, HEADER_SIZE>::new(
-                    index,
-                    schedule.clone(),
-                    params,
-                )
-                .trace(prepared)?
-                .into_parts()
-                .0
-            } else {
-                chunk::Circuit::<C, Native, ProductionRank, R, HEADER_SIZE>::new(
-                    index,
-                    schedule.clone(),
-                    params,
-                )
-                .trace(prepared)?
-                .into_parts()
-                .0
-            };
+            let trace =
+                chunk_trace::<C, Native, R, HEADER_SIZE>(&schedule, index, prepared, params)?;
             let circuit = native::InternalCircuitIndex::ExtensionCircuit(index as u32);
             circuits.push(registry.assemble(&trace, circuit.circuit_index::<P>(), rng)?);
         }
@@ -179,22 +164,37 @@ where
         let statement =
             native::InternalCircuitIndex::ExtensionCircuit(schedule.circuits.len() as u32);
         circuits.push(registry.assemble(&trace, statement.circuit_index::<P>(), rng)?);
+        let trace = chunk::BindingCircuit::<C, Native, ProductionRank, R, HEADER_SIZE>::new(
+            schedule.clone(),
+        )
+        .trace(prepared)?
+        .into_parts()
+        .0;
+        let binding =
+            native::InternalCircuitIndex::ExtensionCircuit(schedule.circuits.len() as u32 + 1);
+        circuits.push(registry.assemble(&trace, binding.circuit_index::<P>(), rng)?);
         type Instance<C, R, const H: usize> = InstanceStage<C, Native, ProductionRank, R, H>;
         type Messages<C, R, const H: usize> = MessagesStage<C, Native, ProductionRank, R, H>;
+        type Lifts<C, R, const H: usize> = LiftsStage<C, Native, ProductionRank, R, H>;
         type Work<C, R, const H: usize> = WorkStage<C, Native, ProductionRank, R, H>;
         type Transcript<C, R, const H: usize> = TranscriptStage<C, Native, ProductionRank, R, H>;
+        type Digits<C, R, const H: usize> = DigitsStage<C, Native, ProductionRank, R, H>;
         let stages = alloc::vec![
             Instance::<C, R, HEADER_SIZE>::rx(blinding(rng), &prepared.instance)?,
             Messages::<C, R, HEADER_SIZE>::rx(blinding(rng), &prepared.messages)?,
+            Lifts::<C, R, HEADER_SIZE>::rx(blinding(rng), &prepared.lifts)?,
             Work::<C, R, HEADER_SIZE>::rx(blinding(rng), &prepared.work)?,
             Transcript::<C, R, HEADER_SIZE>::rx(blinding(rng), &prepared.transcript)?,
+            Digits::<C, R, HEADER_SIZE>::rx(C::CircuitField::ZERO, &prepared.digits)?,
         ];
         Ok(ExtensionRxs { circuits, stages })
     }
 
     /// The nested extension's polynomials for profile `P`, as
-    /// [`native_rxs`](Self::native_rxs): every chunk circuit's and the
-    /// three stages'.
+    /// [`native_rxs`](Self::native_rxs): every chunk circuit's, the
+    /// binding circuit's and the five stages', the instance, messages,
+    /// lifts and digits stages' unblinded, which the circuit-field side
+    /// recomputes.
     ///
     /// # Errors
     ///
@@ -208,29 +208,84 @@ where
         let prepared: &Prepared<C, Nested> = &self.sides(source).nested;
         let schedule = Arc::new(prepared.schedule.clone());
         let params = self.wallet.params;
-        let mut circuits = Vec::with_capacity(schedule.circuits.len());
+        let mut circuits = Vec::with_capacity(schedule.circuits.len() + 1);
         for index in 0..schedule.circuits.len() {
-            let trace = chunk::Circuit::<C, Nested, ProductionRank, R, HEADER_SIZE>::new(
+            let trace =
+                chunk_trace::<C, Nested, R, HEADER_SIZE>(&schedule, index, prepared, params)?;
+            let circuit = nested::InternalCircuitIndex::ExtensionCircuit(index as u32);
+            circuits.push(registry.assemble(&trace, circuit.circuit_index::<P>(), rng)?);
+        }
+        let trace = chunk::BindingCircuit::<C, Nested, ProductionRank, R, HEADER_SIZE>::new(
+            schedule.clone(),
+        )
+        .trace(prepared)?
+        .into_parts()
+        .0;
+        let binding =
+            nested::InternalCircuitIndex::ExtensionCircuit(schedule.circuits.len() as u32);
+        circuits.push(registry.assemble(&trace, binding.circuit_index::<P>(), rng)?);
+        type Instance<C, R, const H: usize> = InstanceStage<C, Nested, ProductionRank, R, H>;
+        type Messages<C, R, const H: usize> = MessagesStage<C, Nested, ProductionRank, R, H>;
+        type Lifts<C, R, const H: usize> = LiftsStage<C, Nested, ProductionRank, R, H>;
+        type Work<C, R, const H: usize> = WorkStage<C, Nested, ProductionRank, R, H>;
+        type Digits<C, R, const H: usize> = DigitsStage<C, Nested, ProductionRank, R, H>;
+        let zero = C::ScalarField::ZERO;
+        let stages = alloc::vec![
+            Instance::<C, R, HEADER_SIZE>::rx(zero, &prepared.instance)?,
+            Messages::<C, R, HEADER_SIZE>::rx(zero, &prepared.messages)?,
+            Lifts::<C, R, HEADER_SIZE>::rx(zero, &prepared.lifts)?,
+            Work::<C, R, HEADER_SIZE>::rx(blinding(rng), &prepared.work)?,
+            Digits::<C, R, HEADER_SIZE>::rx(zero, &prepared.digits)?,
+        ];
+        Ok(ExtensionRxs { circuits, stages })
+    }
+}
+
+/// The trace of chunk circuit `index` of side `S` over `prepared`, by the
+/// kind of chunks it runs.
+fn chunk_trace<C, S, R, const HEADER_SIZE: usize>(
+    schedule: &Arc<super::program::Schedule>,
+    index: usize,
+    prepared: &Prepared<C, S>,
+    params: &C::Params,
+) -> Result<ragu_circuits::Trace<S::F>>
+where
+    C: IpaCycle + ProfiledCycle<Profile = Standard>,
+    S: Side<C>,
+    R: Rank,
+{
+    Ok(match last(schedule, index) {
+        Last::Transcript => {
+            chunk::TranscriptCircuit::<C, S, ProductionRank, R, HEADER_SIZE>::new(
                 index,
                 schedule.clone(),
                 params,
             )
             .trace(prepared)?
             .into_parts()
-            .0;
-            let circuit = nested::InternalCircuitIndex::ExtensionCircuit(index as u32);
-            circuits.push(registry.assemble(&trace, circuit.circuit_index::<P>(), rng)?);
+            .0
         }
-        type Instance<C, R, const H: usize> = InstanceStage<C, Nested, ProductionRank, R, H>;
-        type Messages<C, R, const H: usize> = MessagesStage<C, Nested, ProductionRank, R, H>;
-        type Work<C, R, const H: usize> = WorkStage<C, Nested, ProductionRank, R, H>;
-        let stages = alloc::vec![
-            Instance::<C, R, HEADER_SIZE>::rx(blinding(rng), &prepared.instance)?,
-            Messages::<C, R, HEADER_SIZE>::rx(blinding(rng), &prepared.messages)?,
-            Work::<C, R, HEADER_SIZE>::rx(blinding(rng), &prepared.work)?,
-        ];
-        Ok(ExtensionRxs { circuits, stages })
-    }
+        Last::Digits => {
+            chunk::DigitsCircuit::<C, S, ProductionRank, R, HEADER_SIZE>::new(
+                index,
+                schedule.clone(),
+                params,
+            )
+            .trace(prepared)?
+            .into_parts()
+            .0
+        }
+        Last::Work => {
+            chunk::Circuit::<C, S, ProductionRank, R, HEADER_SIZE>::new(
+                index,
+                schedule.clone(),
+                params,
+            )
+            .trace(prepared)?
+            .into_parts()
+            .0
+        }
+    })
 }
 
 /// A stage polynomial's blinding.

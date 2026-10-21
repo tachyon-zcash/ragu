@@ -98,7 +98,10 @@ use ragu_primitives::{Element, WithSuffix};
 use rand::CryptoRng;
 use udon::field::Field;
 
-pub use crate::decompress::prover::{Decompressed, Decompression};
+pub use crate::decompress::{
+    extension::Counts,
+    prover::{Decompressed, Decompression},
+};
 use crate::{
     SelectableBackend,
     decompress::extension,
@@ -710,30 +713,46 @@ impl Profile for Standard {
 /// ([`decompress`](crate::Application::decompress)) and outputs that
 /// proof's header. The extension's statement circuit exposes the header
 /// the chunks verified, and its claim's $k(y)$ holds a proof of the
-/// decompression step to it.
+/// decompression step to it; each side's binding circuit exposes its
+/// recomputation of the other side's stages, and its claim's $k(y)$ holds
+/// the two sides to one compressed proof.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Aggregator<const HEADER_SIZE: usize>;
 
 impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
     /// The native chunk circuits of the decompression for
-    /// `header_size`-element headers, and how many of them, first among
-    /// them, run transcript chunks. The compression's transcript absorbs
-    /// the three headers, so those grow with the header size.
+    /// `header_size`-element headers, and how many of them run transcript
+    /// chunks, first among them, and digits chunks, last. The
+    /// compression's transcript absorbs the three headers, so the
+    /// transcript ones grow with the header size.
     ///
     /// # Panics
     ///
     /// Panics, in constant evaluation, for a header size without a pin.
-    pub const fn native_circuits(header_size: usize) -> (usize, usize) {
+    pub const fn native_circuits(header_size: usize) -> Counts {
         match header_size {
-            4 => (38, 8),
-            103 => (43, 13),
+            4 => Counts {
+                chunks: 52,
+                transcript: 8,
+                digits: 1,
+            },
+            103 => Counts {
+                chunks: 57,
+                transcript: 13,
+                digits: 1,
+            },
             _ => panic!("the aggregator profile pins no circuit counts for this header size"),
         }
     }
 
     /// The nested chunk circuits of the decompression, the same for every
-    /// header size.
-    pub const NESTED_CIRCUITS: usize = 29;
+    /// header size: none run transcript chunks, and the digits chunks come
+    /// last.
+    pub const NESTED_CIRCUITS: Counts = Counts {
+        chunks: 32,
+        transcript: 0,
+        digits: 1,
+    };
 
     /// The endoscalings a step of either walk performs: what fits a step at
     /// the aggregator rank beside the stages it reserves, which cuts the
@@ -760,10 +779,12 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
 
 impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     const NAME: &'static str = "aggregator";
-    // The chunk circuits, the statement circuit and the stages.
+    // The chunk circuits, the statement and binding circuits and the
+    // stages on the native side; the chunk circuits, the binding circuit
+    // and the stages on the nested side.
     const NATIVE_EXTENSION: usize =
-        Self::native_circuits(HEADER_SIZE).0 + 1 + extension::NATIVE_STAGES;
-    const NESTED_EXTENSION: usize = Self::NESTED_CIRCUITS + extension::NESTED_STAGES;
+        Self::native_circuits(HEADER_SIZE).chunks + 2 + extension::NATIVE_STAGES;
+    const NESTED_EXTENSION: usize = Self::NESTED_CIRCUITS.chunks + 1 + extension::NESTED_STAGES;
 
     const NATIVE_ENDOSCALINGS_PER_STEP: usize = Self::ENDOSCALINGS_PER_STEP;
     const NESTED_ENDOSCALINGS_PER_STEP: usize = Self::ENDOSCALINGS_PER_STEP;
@@ -776,8 +797,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         B: SelectableBackend;
 
     fn native_extension() -> Extension {
-        let (chunks, transcript) = Self::native_circuits(HEADER_SIZE);
-        extension::native_layout(chunks, transcript)
+        extension::native_layout(Self::native_circuits(HEADER_SIZE))
     }
 
     fn nested_extension() -> Extension {
@@ -2261,14 +2281,17 @@ mod tests {
     fn aggregator_declares_the_decompression() {
         let shape = Shape::of::<Aggregator<4>>();
         let per_step = Aggregator::<4>::ENDOSCALINGS_PER_STEP;
-        assert_eq!(shape, Shape::solve(38 + 1 + 4, 29 + 3, per_step, per_step));
+        assert_eq!(
+            shape,
+            Shape::solve(52 + 2 + 6, 32 + 1 + 5, per_step, per_step)
+        );
         assert_eq!(
             Shape::of::<Aggregator<103>>(),
-            Shape::solve(43 + 1 + 4, 29 + 3, per_step, per_step)
+            Shape::solve(57 + 2 + 6, 32 + 1 + 5, per_step, per_step)
         );
         // The knob: at the production rank's four per step the walks are
         // far longer.
-        assert!(shape.polynomials() < Shape::solve(38 + 1 + 4, 29 + 3, 4, 4).polynomials());
+        assert!(shape.polynomials() < Shape::solve(52 + 2 + 6, 32 + 1 + 5, 4, 4).polynomials());
         assert!(shape.polynomials() > Shape::of::<Standard>().polynomials());
         std::println!(
             "aggregator at header size 4: {shape:?}, {} polynomials",

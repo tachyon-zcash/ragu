@@ -348,15 +348,29 @@ fn raw_fuse_challenges(instance: &Instance<Pasta>) -> Vec<Fp> {
 }
 
 fn first_ipa_challenge(instance: &Instance<Pasta>, header: &[Fp]) -> Fp {
-    super::transcript::<_, ReferenceBackend>(crate::pasta::baked(), instance, header)
-        .unwrap()
-        .host()
-        .squeeze_challenge()
-        .unwrap()
+    super::transcript::<_, ReferenceBackend, ProductionRank>(
+        crate::pasta::baked(),
+        instance,
+        header,
+    )
+    .unwrap()
+    .host()
+    .squeeze_challenge()
+    .unwrap()
 }
 
 fn statement_challenge(tag: &[u8], instance: &Instance<Pasta>, header: &[Fp]) -> Fp {
-    let mut transcript = CycleTranscript::<Pasta>::new(crate::pasta::baked(), tag).unwrap();
+    let mut transcript = CycleTranscript::<Pasta>::positioned(
+        crate::pasta::baked(),
+        tag,
+        crate::decompress::stages::bridge_positions::<
+            Pasta,
+            crate::profile::Standard,
+            ProductionRank,
+        >()
+        .unwrap(),
+    )
+    .unwrap();
     instance.absorb(&mut transcript).unwrap();
     for &value in header {
         transcript.host().write_scalar(value).unwrap();

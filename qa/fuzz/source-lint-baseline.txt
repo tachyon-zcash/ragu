@@ -23,31 +23,33 @@ RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|217|The public-rate threshold
 RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|254|Save behavior is selected by structural sponge mode at an explicit API boundary.
 RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|257|Pending-value count is structural sponge state, not a circuit witness.
 RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|325|ALPHA is a type-level permutation parameter and unsupported values panic before synthesis.
-RAGU005|crates/ragu_pcd/src/decompress/circuit.rs|1252|The first challenge's term seeds the accumulator; later terms add one structural point each.
-RAGU005|crates/ragu_pcd/src/decompress/circuit.rs|1297|The first coefficient's term seeds the accumulator; later terms add one structural point each.
-RAGU005|crates/ragu_pcd/src/decompress/circuit.rs|1373|A commitment the nested export stage already allocated is reused; which positions those are is the fixed native component list.
-RAGU005|crates/ragu_pcd/src/decompress/derive.rs|65|Absent points are fixed by the claim structure, not the witness; the Horner chain scales alone past them.
-RAGU005|crates/ragu_pcd/src/decompress/derive.rs|475|A chain either continues a part the schedule cut or starts from the fixed offset; which is a constant of the call site.
+RAGU005|crates/ragu_pcd/src/decompress/circuit.rs|1308|The first challenge's term seeds the accumulator; later terms add one structural point each.
+RAGU005|crates/ragu_pcd/src/decompress/circuit.rs|1353|The first coefficient's term seeds the accumulator; later terms add one structural point each.
+RAGU005|crates/ragu_pcd/src/decompress/circuit.rs|1429|A commitment the nested export stage already allocated is reused; which positions those are is the fixed native component list.
+RAGU005|crates/ragu_pcd/src/decompress/derive.rs|66|Absent points are fixed by the claim structure, not the witness; the Horner chain scales alone past them.
+RAGU005|crates/ragu_pcd/src/decompress/derive.rs|487|A chain either continues a part the schedule cut or starts from the fixed offset; which is a constant of the call site.
 RAGU005|crates/ragu_pcd/src/decompress/ipa.rs|68|The first factor seeds the product; later factors multiply once each.
-RAGU005|crates/ragu_pcd/src/decompress/mod.rs|233|The first square is the base itself; each later one squares the previous.
-RAGU005|crates/ragu_pcd/src/decompress/mod.rs|261|The exponent is a constant of the rank; its set bits fix which squares multiply.
-RAGU005|crates/ragu_pcd/src/decompress/mod.rs|262|The exponent is a constant of the rank; its first set bit seeds the product.
-RAGU005|crates/ragu_pcd/src/decompress/mod.rs|280|The first two powers are one and the base; later ones multiply once each.
+RAGU005|crates/ragu_pcd/src/decompress/mod.rs|224|The first square is the base itself; each later one squares the previous.
+RAGU005|crates/ragu_pcd/src/decompress/mod.rs|252|The exponent is a constant of the rank; its set bits fix which squares multiply.
+RAGU005|crates/ragu_pcd/src/decompress/mod.rs|253|The exponent is a constant of the rank; its first set bit seeds the product.
+RAGU005|crates/ragu_pcd/src/decompress/mod.rs|271|The first two powers are one and the base; later ones multiply once each.
 RAGU005|crates/ragu_pcd/src/decompress/revdot.rs|303|A claim's kind is fixed by the protocol's claim list, never by the witness.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|163|A point source is a constant of the schedule, a pure function of the proof system's constants.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|175|An element source is a constant of the schedule, a pure function of the proof system's constants.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|208|Which challenges a side squeezes and which it takes from bits is fixed by the schedule.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|373|A challenge's endoscalar is read once per chain chunk; the chunk's challenge list is a constant of the schedule.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|381|Whether a chain continues a work slot is fixed by the schedule's chunk descriptor.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|386|A Horner step with or without an addend is fixed by the schedule's chunk descriptor.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|390|A Horner step with or without an addend is fixed by the schedule's chunk descriptor.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|400|Whether a term is scaled is fixed by the schedule's chunk descriptor.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|406|The first term seeds the accumulator; later terms add once each, per the schedule's chunk descriptor.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|433|The chunk kind is the schedule's constant descriptor; each chunk circuit runs the one at its index.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|440|Whether a transcript chunk resumes a saved sponge state is fixed by the schedule.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|448|The transcript's operation list is a constant of the schedule.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|460|Whether a transcript chunk saves the sponge state is fixed by the schedule.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|584|Whether a scaling's digits come from bits or from an element is fixed by the schedule.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|596|Whether a scaling part is the last, and so removes the offset, is fixed by the schedule.
-RAGU005|crates/ragu_pcd/src/internal/native/stages/preamble.rs|167|The profile's extension is a constant of the profile: without a statement circuit nothing is computed and the value is absent, with one the same gates run for every proof.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|171|A point source is a constant of the schedule, a pure function of the proof system's constants.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|183|An element source is a constant of the schedule, a pure function of the proof system's constants.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|222|Which challenges a side squeezes and which it takes from bits is fixed by the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|387|A challenge's endoscalar is read once per chain chunk; the chunk's challenge list is a constant of the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|395|Whether a chain continues a work slot is fixed by the schedule's chunk descriptor.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|400|A Horner step with or without an addend is fixed by the schedule's chunk descriptor.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|404|A Horner step with or without an addend is fixed by the schedule's chunk descriptor.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|414|Whether a term is scaled is fixed by the schedule's chunk descriptor.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|420|The first term seeds the accumulator; later terms add once each, per the schedule's chunk descriptor.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|447|The chunk kind is the schedule's constant descriptor; each chunk circuit runs the one at its index.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|454|Whether a transcript chunk resumes a saved sponge state is fixed by the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|462|The transcript's operation list is a constant of the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|474|Whether a transcript chunk saves the sponge state is fixed by the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|609|Whether a scaling's digits come from bits or from an element is fixed by the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|621|Whether a scaling part is the last, and so removes the offset, is fixed by the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|631|Whether a scaling part sums its digits' generators for the other side's digits stage is fixed by the schedule's chunk descriptor.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|643|The first digit's term seeds the sum; later digits add once each, over the schedule's fixed digit range.
 RAGU005|crates/ragu_pcd/src/internal/ky.rs|184|Whether a profile's extension binds, and so has points, is a constant of the profile: without one nothing is computed and the value is absent, with one the same gates run for every proof.
+RAGU005|crates/ragu_pcd/src/internal/native/stages/preamble.rs|167|The profile's extension is a constant of the profile: without a statement circuit nothing is computed and the value is absent, with one the same gates run for every proof.

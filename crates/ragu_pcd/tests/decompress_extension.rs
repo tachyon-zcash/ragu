@@ -1,12 +1,13 @@
 //! The decompression circuits as the aggregator profile's extension: the
 //! pinned layout is the schedules', the hooks register every chunk, the
-//! statement circuit and every stage at the aggregator rank and refuse the
-//! production rank, and an application over the profile builds at the
-//! aggregator rank, where every fuse circuit fits with the extension's
-//! polynomials, and its bootstrap proof verifies with the chunks run over
-//! the wallet application's canonical compressed proof. A wallet proof
-//! decompresses into a proof of the aggregator carrying its header, and
-//! one relabelled on the way fails.
+//! statement and binding circuits and every stage at the aggregator rank
+//! and refuse the production rank, and an application over the profile
+//! builds at the aggregator rank, where every fuse circuit fits with the
+//! extension's polynomials, and its bootstrap proof verifies with the
+//! chunks run over the wallet application's canonical compressed proof. A
+//! wallet proof decompresses into a proof of the aggregator carrying its
+//! header; one relabelled on the way fails, and so does one whose two
+//! sides were prepared from different compressed proofs.
 
 use ragu_circuits::{
     polynomials::{AggregatorRank, ProductionRank, Rank},
@@ -22,10 +23,14 @@ use ragu_core::{
 use ragu_primitives::{Element, allocator::Allocator};
 use rand::{SeedableRng, rngs::StdRng};
 
-use super::{native, nested};
+use super::{native, native_counts, nested, nested_counts};
 use crate::{
     Application, ApplicationBuilder,
-    decompress::support::{HEADER_SIZE, Setup, TestR},
+    decompress::{
+        prover::Decompressed,
+        run::Sides,
+        support::{HEADER_SIZE, Setup, TestR},
+    },
     header::{Header, Suffix},
     profile::{Aggregator, Decompression, Profile, Profiled, Shape, Standard},
     step::{Encoded, Index, Step, internal::decompress::Decompress},
@@ -35,10 +40,26 @@ type P = Aggregator<HEADER_SIZE>;
 
 /// The pinned layouts are the schedules' at the aggregator rank, for the
 /// test header size and for the internal tests', and lay out as the
-/// module says: transcript chunks first, over four native stages and
-/// three nested ones.
+/// module says: transcript chunks first and digits chunks last, over six
+/// native stages and five nested ones, with the statement and binding
+/// circuits after the chunks.
 #[test]
 fn pinned_layout_is_the_schedules() {
+    assert_eq!(
+        P::native_circuits(HEADER_SIZE),
+        native_counts::<Pasta, ProductionRank, AggregatorRank, HEADER_SIZE>().unwrap(),
+        "the native pins for the test header size"
+    );
+    assert_eq!(
+        P::NESTED_CIRCUITS,
+        nested_counts::<Pasta, ProductionRank, AggregatorRank, HEADER_SIZE>().unwrap(),
+        "the nested pins"
+    );
+    assert_eq!(
+        Aggregator::<103>::native_circuits(103),
+        native_counts::<Pasta, ProductionRank, AggregatorRank, 103>().unwrap(),
+        "the native pins for the internal tests' header size"
+    );
     assert_eq!(
         P::native_extension(),
         native::<Pasta, ProductionRank, AggregatorRank, HEADER_SIZE>().unwrap()
@@ -57,34 +78,66 @@ fn pinned_layout_is_the_schedules() {
     );
 
     let native = P::native_extension();
-    let (chunks, transcript) = P::native_circuits(HEADER_SIZE);
-    assert_eq!(native.circuits.len(), chunks + 1);
-    assert_eq!(native.stages, 4);
+    let counts = P::native_circuits(HEADER_SIZE);
+    let (chunks, transcript, digits) = (counts.chunks, counts.transcript, counts.digits);
+    assert_eq!(native.circuits.len(), chunks + 2);
+    assert_eq!(native.stages, 6);
     assert!(
         native.circuits[..transcript]
+            .iter()
+            .all(|c| c == &[0, 1, 2, 3, 4])
+    );
+    assert!(
+        native.circuits[transcript..chunks - digits]
             .iter()
             .all(|c| c == &[0, 1, 2, 3])
     );
     assert!(
-        native.circuits[transcript..chunks]
+        native.circuits[chunks - digits..chunks]
             .iter()
-            .all(|c| c == &[0, 1, 2])
+            .all(|c| c == &[0, 1, 2, 3, 5])
     );
     assert_eq!(native.circuits[chunks], [0]);
+    assert_eq!(native.circuits[chunks + 1], [0, 1, 2, 3]);
     assert_eq!(native.statement, Some(chunks as u32));
-    assert_eq!(native.final_masks.len(), 3);
-    assert_eq!(native.final_masks[0].len(), chunks - transcript);
+    let binding = native.binding.as_ref().expect("the native side binds");
+    assert_eq!(binding.circuit, chunks as u32 + 1);
+    assert_eq!(binding.stages, [0, 1, 2, 4]);
+    assert_eq!(native.final_masks.len(), 4);
+    assert_eq!(
+        native.final_masks[0].len(),
+        chunks - transcript - digits + 1
+    );
     assert_eq!(native.final_masks[1].len(), transcript);
-    assert_eq!(native.final_masks[2], [chunks as u32]);
+    assert_eq!(native.final_masks[2].len(), digits);
+    assert_eq!(native.final_masks[3], [chunks as u32]);
     assert!(native.is_consistent());
 
     let nested = P::nested_extension();
-    assert_eq!(nested.circuits.len(), P::NESTED_CIRCUITS);
-    assert_eq!(nested.stages, 3);
-    assert!(nested.circuits.iter().all(|c| c == &[0, 1, 2]));
-    assert_eq!(nested.final_masks.len(), 1);
+    let counts = P::NESTED_CIRCUITS;
+    let (chunks, digits) = (counts.chunks, counts.digits);
+    assert_eq!(nested.circuits.len(), chunks + 1);
+    assert_eq!(nested.stages, 5);
+    assert!(
+        nested.circuits[..chunks - digits]
+            .iter()
+            .all(|c| c == &[0, 1, 2, 3])
+    );
+    assert!(
+        nested.circuits[chunks - digits..chunks]
+            .iter()
+            .all(|c| c == &[0, 1, 2, 3, 4])
+    );
+    assert_eq!(nested.circuits[chunks], [0, 1, 2, 3]);
+    assert_eq!(nested.final_masks.len(), 2);
+    assert_eq!(nested.final_masks[0].len(), chunks - digits + 1);
+    assert_eq!(nested.final_masks[1].len(), digits);
     assert_eq!(nested.statement, None);
+    let binding = nested.binding.as_ref().expect("the nested side binds");
+    assert_eq!(binding.circuit, chunks as u32);
+    assert_eq!(binding.stages, [5]);
     assert!(nested.is_consistent());
+    P::check().unwrap();
 }
 
 /// Every chunk and bonding of both sides registers through the hooks at
@@ -264,6 +317,58 @@ fn decompresses_a_wallet_proof() {
     assert!(
         !matches!(app.verify(&relabelled, &mut rng), Ok(true)),
         "a relabelled decompression fails"
+    );
+}
+
+/// A decompression whose circuit-field side was prepared from one
+/// compression of a wallet proof and whose scalar-field side from another
+/// fails: each side is consistent with itself, and every chunk of both
+/// accepts, but the binding circuits' claims hold each side's view of
+/// the other to that side's actual stages, which the two compressions'
+/// challenges, scalars and messages do not share. Without the binding the
+/// proof verifies, with each side verifying a compressed proof of its
+/// own.
+#[test]
+fn sides_from_different_proofs_are_rejected() {
+    let pasta = crate::pasta::baked();
+    let mut rng = StdRng::seed_from_u64(23);
+    let wallet = wallet();
+    let (leaf, _) = wallet.seed(&mut rng, Leaf, Fp::from(42)).unwrap();
+    let first = wallet.compress(&leaf, &mut rng).unwrap();
+    let second = wallet.compress(&leaf, &mut rng).unwrap();
+    assert!(wallet.verify_compressed(&first).unwrap());
+    assert!(wallet.verify_compressed(&second).unwrap());
+
+    let decompression = Decompression::new(wallet, &mut rng).unwrap();
+    let app = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
+        .register(Leaf)
+        .unwrap()
+        .finalize_with(pasta, decompression)
+        .unwrap();
+    let first = app.context().prepare(&first).unwrap();
+    let second = app.context().prepare(&second).unwrap();
+    let mixed = Decompressed(Sides {
+        native: first.0.native,
+        nested: second.0.nested,
+    });
+    let (node, ()) = app
+        .fuse_with_source(
+            &mut rng,
+            Decompress::<Value>::new(),
+            Fp::from(42),
+            app.bootstrap_pcd(),
+            app.bootstrap_pcd(),
+            Some(&mixed),
+        )
+        .unwrap();
+    assert!(
+        !matches!(app.verify(&node, &mut rng), Ok(true)),
+        "a decompression of two proofs fails"
+    );
+    let compressed = app.compress(&node, &mut rng).unwrap();
+    assert!(
+        !matches!(app.verify_compressed(&compressed), Ok(true)),
+        "and so does its compression"
     );
 }
 

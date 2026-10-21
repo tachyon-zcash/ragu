@@ -7,50 +7,76 @@
 
 use alloc::vec::Vec;
 
-use ragu_backend::{Backend, ReferenceBackend};
 use ragu_core::{
-    Cycle, FixedGenerators, Result,
+    Cycle, Result,
     drivers::Driver,
     maybe::Maybe,
     pasta::{Fp, Fq, Pasta},
 };
 use ragu_primitives::{Element, Point, Simulator, extract_endoscalar, lift_endoscalar};
-use udon::{
-    curve::{Affine, Projective},
-    field::Field,
-};
+use udon::field::Field;
 
 use super::{Challenges, Child, Instance, Messages, NestedChild, replay};
 use crate::{
     compress::{self, Sampled},
-    decompress::support::{
-        EpAffine, EqAffine, Setup, alloc, alloc_all, replay_batch, replay_ipa, replay_reduction,
+    decompress::{
+        side::{Native as NativeSide, Side},
+        stages::{Layout, MessageScalars, message_points, nested_scalars},
+        support::{
+            EpAffine, EqAffine, HEADER_SIZE, Setup, TestR, alloc, alloc_all, replay_batch,
+            replay_ipa, replay_reduction,
+        },
     },
 };
 
 type Dr = Simulator<Fp>;
 
-/// The native transcript's bridge of `values`: their commitment over the
-/// nested generators.
-fn bridge(values: &[Fq]) -> EpAffine {
-    let g = Pasta::nested_generators(crate::pasta::baked()).g();
-    ReferenceBackend::msm(values, &g[..values.len()]).to_affine()
+/// The bridges the native transcript forms for `proof`, as the
+/// circuit-field side's transcript stage holds them, by the layout's
+/// spans.
+struct Bridges {
+    points: Vec<EpAffine>,
+    layout: Layout,
 }
 
-/// The bridge of a host-curve point: of its coordinates.
-fn bridge_point(point: EqAffine) -> EpAffine {
-    let (x, y) = point
-        .coordinates()
-        .expect("a commitment is not the identity");
-    bridge(&[x, y])
+impl Bridges {
+    fn of(proof: &compress::CompressedProof<Pasta>) -> Self {
+        Bridges {
+            points: <NativeSide as Side<Pasta>>::transcript::<TestR>(
+                crate::pasta::baked(),
+                &proof.instance,
+                proof,
+            )
+            .unwrap()
+            .points,
+            layout: <NativeSide as Side<Pasta>>::layout::<TestR, HEADER_SIZE>(),
+        }
+    }
+
+    /// The bridge of the `i`-th host commitment.
+    fn commitment(&self, i: usize) -> EpAffine {
+        self.points[self.layout.transcript.commitment_bridges.at(i)]
+    }
+
+    /// The bridge of the `i`-th scalar-field instance value.
+    fn scalar(&self, i: usize) -> EpAffine {
+        self.points[self.layout.transcript.bridged.at(i)]
+    }
+
+    /// The bridge of the `i`-th host point message.
+    fn message_point(&self, i: usize) -> EpAffine {
+        self.points[self.layout.transcript.point_bridges.at(i)]
+    }
+
+    /// The bridges of the nested curve's scalar messages, by name.
+    fn message_scalars(&self) -> MessageScalars<'_, EpAffine> {
+        let span = self.layout.transcript.scalar_bridges;
+        MessageScalars(&self.points[span.start..span.start + span.len])
+    }
 }
 
 fn point(dr: &mut Dr, point: EpAffine) -> Result<Point<'static, Dr, EpAffine>> {
     Point::alloc(dr, <Dr as Driver>::just(|| point))
-}
-
-fn bridged(dr: &mut Dr, scalar: Fq) -> Result<Point<'static, Dr, EpAffine>> {
-    point(dr, bridge(&[scalar]))
 }
 
 fn points(
@@ -64,6 +90,7 @@ fn points(
 fn instance(
     dr: &mut Dr,
     instance: &compress::instance::Instance<Pasta>,
+    bridges: &Bridges,
 ) -> Result<Instance<'static, Dr, EpAffine>> {
     let child = |dr: &mut Dr, child: compress::instance::Child<Fp>| {
         Ok::<_, ragu_core::Error>(Child {
@@ -72,36 +99,37 @@ fn instance(
             id: alloc(dr, child.id)?,
         })
     };
-    let nested_child = |dr: &mut Dr, child: compress::instance::NestedChild<Fq>| {
-        Ok::<_, ragu_core::Error>(NestedChild {
-            x: bridged(dr, child.x)?,
-            y: bridged(dr, child.y)?,
-        })
-    };
+    let listed = instance.native.len();
     Ok(Instance {
         circuit_id: alloc(dr, instance.circuit_id.omega_j())?,
         left_header: alloc_all(dr, instance.left_header.iter().copied())?,
         right_header: alloc_all(dr, instance.right_header.iter().copied())?,
-        native: points(dr, instance.native.iter().map(|&p| bridge_point(p)))?,
-        native_registry_xy: point(dr, bridge_point(instance.native_registry_xy))?,
-        native_p: point(dr, bridge_point(instance.native_p))?,
+        native: points(dr, (0..listed).map(|i| bridges.commitment(i)))?,
+        native_registry_xy: point(dr, bridges.commitment(listed))?,
+        native_p: point(dr, bridges.commitment(listed + 1))?,
         nested: points(dr, instance.nested.iter().copied())?,
         nested_registry_xy: point(dr, instance.nested_registry_xy)?,
         nested_p: point(dr, instance.nested_p)?,
         nested_challenges_partial: point(dr, instance.nested_challenges_partial)?,
-        bridge_alpha: bridged(dr, instance.bridge_alpha)?,
+        bridge_alpha: point(dr, bridges.scalar(nested_scalars::BRIDGE_ALPHA))?,
         c: alloc(dr, instance.c)?,
         v: alloc(dr, instance.v)?,
-        nested_c: bridged(dr, instance.nested_c)?,
-        nested_v: bridged(dr, instance.nested_v)?,
+        nested_c: point(dr, bridges.scalar(nested_scalars::C))?,
+        nested_v: point(dr, bridges.scalar(nested_scalars::V))?,
         left: child(dr, instance.left)?,
         right: child(dr, instance.right)?,
         a_at_u: alloc(dr, instance.a_at_u)?,
         b_at_u: alloc(dr, instance.b_at_u)?,
-        nested_left: nested_child(dr, instance.nested_left)?,
-        nested_right: nested_child(dr, instance.nested_right)?,
-        nested_a_at_u: bridged(dr, instance.nested_a_at_u)?,
-        nested_b_at_u: bridged(dr, instance.nested_b_at_u)?,
+        nested_left: NestedChild {
+            x: point(dr, bridges.scalar(nested_scalars::LEFT_X))?,
+            y: point(dr, bridges.scalar(nested_scalars::LEFT_Y))?,
+        },
+        nested_right: NestedChild {
+            x: point(dr, bridges.scalar(nested_scalars::RIGHT_X))?,
+            y: point(dr, bridges.scalar(nested_scalars::RIGHT_Y))?,
+        },
+        nested_a_at_u: point(dr, bridges.scalar(nested_scalars::A_AT_U))?,
+        nested_b_at_u: point(dr, bridges.scalar(nested_scalars::B_AT_U))?,
     })
 }
 
@@ -110,25 +138,30 @@ fn instance(
 fn native_messages(
     dr: &mut Dr,
     messages: &compress::Messages<EqAffine>,
+    bridges: &Bridges,
 ) -> Result<Messages<Element<'static, Dr>, Point<'static, Dr, EpAffine>>> {
+    use message_points::*;
     let reduction = &messages.reduction;
     let mut rounds = Vec::with_capacity(messages.opening.rounds.len());
-    for &(l, r) in &messages.opening.rounds {
-        rounds.push((point(dr, bridge_point(l))?, point(dr, bridge_point(r))?));
+    for j in 0..messages.opening.rounds.len() {
+        rounds.push((
+            point(dr, bridges.message_point(l(j)))?,
+            point(dr, bridges.message_point(r(j)))?,
+        ));
     }
     Ok(Messages {
-        inner: point(dr, bridge_point(reduction.fold.inner))?,
-        outer: point(dr, bridge_point(reduction.fold.outer))?,
+        inner: point(dr, bridges.message_point(INNER))?,
+        outer: point(dr, bridges.message_point(OUTER))?,
         inner_epsilon: alloc(dr, reduction.fold.inner_epsilon)?,
         outer_epsilon: alloc(dr, reduction.fold.outer_epsilon)?,
-        p: point(dr, bridge_point(reduction.p))?,
-        q: point(dr, bridge_point(reduction.q))?,
+        p: point(dr, bridges.message_point(P))?,
+        q: point(dr, bridges.message_point(Q))?,
         openings: alloc_all(dr, reduction.openings.iter().copied())?,
         p_at_inverse_r: alloc(dr, reduction.p_at_inverse_r)?,
         q_at_r: alloc(dr, reduction.q_at_r)?,
-        f: point(dr, bridge_point(messages.batch.f))?,
+        f: point(dr, bridges.message_point(F))?,
         evaluations: alloc_all(dr, messages.batch.evaluations.iter().copied())?,
-        s_commitment: point(dr, bridge_point(messages.opening.s_commitment))?,
+        s_commitment: point(dr, bridges.message_point(S_COMMITMENT))?,
         rounds,
         c: alloc(dr, messages.opening.c)?,
     })
@@ -139,35 +172,31 @@ fn native_messages(
 fn nested_messages(
     dr: &mut Dr,
     messages: &compress::Messages<EpAffine>,
+    bridges: &Bridges,
 ) -> Result<Messages<Point<'static, Dr, EpAffine>, Point<'static, Dr, EpAffine>>> {
     let reduction = &messages.reduction;
+    let scalars = bridges.message_scalars();
     let mut rounds = Vec::with_capacity(messages.opening.rounds.len());
     for &(l, r) in &messages.opening.rounds {
         rounds.push((point(dr, l)?, point(dr, r)?));
     }
-    let mut openings = Vec::with_capacity(reduction.openings.len());
-    for &opened in &reduction.openings {
-        openings.push(bridged(dr, opened)?);
-    }
-    let mut evaluations = Vec::with_capacity(messages.batch.evaluations.len());
-    for &value in &messages.batch.evaluations {
-        evaluations.push(bridged(dr, value)?);
-    }
+    let openings = points(dr, scalars.openings().iter().copied())?;
+    let evaluations = points(dr, scalars.evaluations().iter().copied())?;
     Ok(Messages {
         inner: point(dr, reduction.fold.inner)?,
         outer: point(dr, reduction.fold.outer)?,
-        inner_epsilon: bridged(dr, reduction.fold.inner_epsilon)?,
-        outer_epsilon: bridged(dr, reduction.fold.outer_epsilon)?,
+        inner_epsilon: point(dr, *scalars.inner_epsilon())?,
+        outer_epsilon: point(dr, *scalars.outer_epsilon())?,
         p: point(dr, reduction.p)?,
         q: point(dr, reduction.q)?,
         openings,
-        p_at_inverse_r: bridged(dr, reduction.p_at_inverse_r)?,
-        q_at_r: bridged(dr, reduction.q_at_r)?,
+        p_at_inverse_r: point(dr, *scalars.p_at_inverse_r())?,
+        q_at_r: point(dr, *scalars.q_at_r())?,
         f: point(dr, messages.batch.f)?,
         evaluations,
         s_commitment: point(dr, messages.opening.s_commitment)?,
         rounds,
-        c: bridged(dr, messages.opening.c)?,
+        c: point(dr, *scalars.c())?,
     })
 }
 
@@ -257,11 +286,12 @@ fn check(setup: &Setup, proof: &compress::CompressedProof<Pasta>) {
         replay_ipa(&proof.nested.opening, &mut t.nested()),
     );
 
+    let bridges = Bridges::of(proof);
     let dr = Simulator::simulate((), |dr, _| {
-        let instance = instance(dr, &proof.instance)?;
+        let instance = instance(dr, &proof.instance, &bridges)?;
         let header = alloc_all(dr, setup.header.iter().copied())?;
-        let native_messages = native_messages(dr, &proof.native)?;
-        let nested_messages = nested_messages(dr, &proof.nested)?;
+        let native_messages = native_messages(dr, &proof.native, &bridges)?;
+        let nested_messages = nested_messages(dr, &proof.nested, &bridges)?;
         let (host, scalar) = replay(
             dr,
             Pasta::circuit_poseidon(crate::pasta::baked()),
