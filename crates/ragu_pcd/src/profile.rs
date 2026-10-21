@@ -51,7 +51,11 @@
 //!   transcript rules/domain tags. Give Aggregator a distinct setup and sample
 //!   fresh native/nested registry tags after fixing the description, following
 //!   [`Tag`](ragu_circuits::registry::Tag)'s setup contract. Changed descriptions
-//!   require new tags even when the profile's name stays the same.
+//!   require new tags even when the profile's name stays the same. The
+//!   [`from_beacon`](crate::RegistryTags::from_beacon) labels name every
+//!   profile but Standard, so one beacon output and manifest digest never
+//!   give two profiles the same tags; they do not stand in for a description
+//!   of the profile's own.
 //! - TODO: enforce the profile-to-setup association in the application API, with
 //!   the expected setup fixed by the verifier. Rust profile types and unchecked
 //!   caller-supplied tags do not establish this association on their own.
@@ -110,8 +114,18 @@ use crate::{
 /// A profile is part of an application's setup description, so its
 /// registries take their own [`RegistryTags`](crate::RegistryTags): the
 /// standard profile's tags are not another profile's, even over the same
-/// curves and steps.
+/// curves and steps. [`from_beacon`](crate::RegistryTags::from_beacon)
+/// names every profile but the standard one in the labels it derives the
+/// tags under, so one beacon output and manifest digest give each profile
+/// its own tags.
 pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
+    /// The profile's name, which
+    /// [`from_beacon`](crate::RegistryTags::from_beacon) puts in the labels
+    /// it derives the setup tags under, for every profile but the standard
+    /// one, whose labels its ceremony fixed. Distinct across profiles and
+    /// fixed: a renamed profile derives other tags.
+    const NAME: &'static str;
+
     /// The native rx polynomials the profile adds: its native extension's.
     const NATIVE_EXTENSION: usize;
     /// The nested rx polynomials the profile adds: its nested extension's.
@@ -517,6 +531,7 @@ impl Extension {
 pub struct Standard;
 
 impl Profile for Standard {
+    const NAME: &'static str = "standard";
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
 
@@ -547,6 +562,7 @@ impl Profile for Standard {
 pub struct Aggregator;
 
 impl Profile for Aggregator {
+    const NAME: &'static str = "aggregator";
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
 
@@ -860,6 +876,7 @@ pub(crate) mod testing {
     pub(crate) struct Wider;
 
     impl Profile for Wider {
+        const NAME: &'static str = "wider";
         const NATIVE_EXTENSION: usize = 4;
         const NESTED_EXTENSION: usize = 2;
 
@@ -897,6 +914,7 @@ pub(crate) mod testing {
     pub(crate) struct Stated;
 
     impl Profile for Stated {
+        const NAME: &'static str = "stated";
         const NATIVE_EXTENSION: usize = 4;
         const NESTED_EXTENSION: usize = 0;
 
@@ -923,6 +941,7 @@ pub(crate) mod testing {
     pub(crate) struct Mismatched;
 
     impl Profile for Mismatched {
+        const NAME: &'static str = "mismatched";
         const NATIVE_EXTENSION: usize = 1;
         const NESTED_EXTENSION: usize = 0;
 
@@ -940,6 +959,7 @@ pub(crate) mod testing {
     pub(crate) struct Hooked;
 
     impl Profile for Hooked {
+        const NAME: &'static str = "hooked";
         const NATIVE_EXTENSION: usize = 2;
         const NESTED_EXTENSION: usize = 2;
 
@@ -1085,6 +1105,7 @@ pub(crate) mod testing {
     pub(crate) struct Proving;
 
     impl Profile for Proving {
+        const NAME: &'static str = "proving";
         const NATIVE_EXTENSION: usize = 1;
         const NESTED_EXTENSION: usize = 1;
 
@@ -1340,6 +1361,7 @@ pub(crate) mod testing {
     pub(crate) struct Crossing;
 
     impl Profile for Crossing {
+        const NAME: &'static str = "crossing";
         const NATIVE_EXTENSION: usize = 1;
         const NESTED_EXTENSION: usize = 2;
 
@@ -1535,6 +1557,7 @@ mod tests {
         struct StrayStatement;
 
         impl Profile for StrayStatement {
+            const NAME: &'static str = "stray statement";
             const NATIVE_EXTENSION: usize = 2;
             const NESTED_EXTENSION: usize = 0;
 
@@ -1561,6 +1584,7 @@ mod tests {
         struct NestedStatement;
 
         impl Profile for NestedStatement {
+            const NAME: &'static str = "nested statement";
             const NATIVE_EXTENSION: usize = 0;
             const NESTED_EXTENSION: usize = 2;
 

@@ -277,6 +277,10 @@ requires a new set of tags.
 `RegistryTags::from_beacon` is an optional helper that derives both tags from
 caller-supplied beacon bytes and `manifest_digest`. It hashes each registry's
 label, the manifest digest, and the beacon output together with length prefixes.
+The standard profile's labels are `ragu_pcd native registry` and
+`ragu_pcd nested registry`; another profile's labels follow those with the
+profile's name in parentheses, so one beacon output and manifest digest give
+each profile its own tags.
 Consumers can instead supply the final field elements directly through
 `with_registry_tags`. When using the helper, a canonical, versioned manifest
 records the complete description. Hash the manifest and the actual contents of
