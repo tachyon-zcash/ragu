@@ -3,16 +3,16 @@
 //! the prover's native run that fills them.
 //!
 //! [`execute`] runs one chunk of a side and returns what it writes; a
-//! chunk circuit enforces those writes equal to the work and transcript
-//! stages' wires, and [`Prepared::run`] stores them. The chunk kinds are
-//! the same on both sides; what differs, the targets and their order, goes
-//! through the [`Side`].
+//! chunk circuit enforces those writes equal to the work, lifts,
+//! transcript and digits stages' wires, and [`Prepared::run`] stores them.
+//! The chunk kinds are the same on both sides; what differs, the targets
+//! and their order, goes through the [`Side`].
 
 use alloc::vec::Vec;
 
 use ragu_circuits::{polynomials::Rank, registry::CircuitIndex};
 use ragu_core::{
-    Cycle, Error, Result,
+    Coeff, Cycle, Error, Result,
     drivers::{
         Driver, DriverValue,
         emulator::{Emulator, Wireless},
@@ -55,12 +55,15 @@ use crate::{
     profile::{ProfiledCycle, Standard},
 };
 
-/// A chunk's result: the value a slot of the work stage, or of the
-/// transcript stage for a sponge state, must hold.
+/// A chunk's result: the value a slot of the work stage, of the lifts
+/// stage for a lift, of the transcript stage for a sponge state, or of the
+/// digits stage for a digit, must hold.
 pub(crate) enum Write<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> {
     Element(usize, Element<'dr, D>),
     Point(usize, Point<'dr, D, P>),
+    Lift(usize, Element<'dr, D>),
     State(usize, Element<'dr, D>),
+    Digit(usize, Element<'dr, D>),
 }
 
 /// One stage's wires as a chunk sees them.
@@ -98,8 +101,10 @@ impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Copy for View<'_, 'dr, D, P> {
 pub(crate) struct Loaded<'a, 'dr, D: Driver<'dr>, P: Affine<Base = D::F>> {
     pub instance: View<'a, 'dr, D, P>,
     pub messages: View<'a, 'dr, D, P>,
+    pub lifts: View<'a, 'dr, D, P>,
     pub work: View<'a, 'dr, D, P>,
     pub transcript: View<'a, 'dr, D, P>,
+    pub digits: View<'a, 'dr, D, P>,
 }
 
 impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Clone for Loaded<'_, 'dr, D, P> {
@@ -125,14 +130,17 @@ pub(crate) struct Aux<G> {
     pub foreign: Vec<G>,
 }
 
-/// Everything a side's chunks need: the stages' values, the work and
-/// transcript stages filled, the auxiliary witnesses and the schedule.
+/// Everything a side's chunks need: the stages' values, the lifts, work,
+/// transcript and digits stages filled, the auxiliary witnesses and the
+/// schedule.
 pub(crate) struct Prepared<C: Cycle, S: Side<C>> {
     pub schedule: Schedule,
     pub instance: Values<S::F, S::P>,
     pub messages: Values<S::F, S::P>,
+    pub lifts: Values<S::F, S::P>,
     pub work: Values<S::F, S::P>,
     pub transcript: Values<S::F, S::P>,
+    pub digits: Values<S::F, S::P>,
     pub aux: Aux<S::Other>,
     pub extra: S::Extra,
 }
@@ -177,6 +185,7 @@ where
             ElementSrc::Instance(i) => l.instance.elements[i].clone(),
             ElementSrc::Message(i) => l.messages.elements[i].clone(),
             ElementSrc::Work(slot) => l.work.elements[slot].clone(),
+            ElementSrc::Lift(slot) => l.lifts.elements[slot].clone(),
             ElementSrc::Coordinate(point, which) => {
                 let point = self.point(dr, point)?;
                 let mut coordinates = Vec::with_capacity(2);
@@ -192,6 +201,11 @@ where
         self.loaded.work.elements[slot].clone()
     }
 
+    /// The lifts stage element at `slot`: a challenge's lift.
+    pub(crate) fn lift(&self, slot: usize) -> Element<'dr, D> {
+        self.loaded.lifts.elements[slot].clone()
+    }
+
     /// The transcript stage element at `slot`: part of a saved sponge
     /// state.
     fn state(&self, slot: usize) -> Element<'dr, D> {
@@ -204,7 +218,13 @@ where
     }
 
     /// A challenge's endoscalar: read off the squeezed element,
-    /// constrained into range, or allocated from its bits.
+    /// constrained into range, or allocated from its bits and held, by
+    /// its lift, to the challenge's lifts stage slot
+    /// ([`Regions::bits_lifts`](super::program::Regions::bits_lifts)),
+    /// which the other side's recomputation of that stage binds to the
+    /// challenge it squeezed. The bits are the chunk's own witnesses, so
+    /// every chunk that scales by a challenge from bits pays for the lift
+    /// that holds them.
     fn endoscalar(&self, dr: &mut D, challenge: ChallengeRef) -> Result<Endoscalar<'dr, D>> {
         Ok(match challenge {
             ChallengeRef::Raw(slot) => Endoscalar::extract(EndoscalarChallenge::from_element(
@@ -213,10 +233,20 @@ where
                 self.work(slot),
             )?),
             ChallengeRef::Bits(id) => {
-                let bits = self.witness.as_ref().map(|w| w.aux.challenge_bits[id]);
-                Endoscalar::alloc(dr, bits)?
+                let endoscalar = self.bits(dr, id)?;
+                let slot = self.schedule.regions.bits_lifts[id];
+                endoscalar.lift(dr)?.enforce_equal(dr, &self.lift(slot))?;
+                endoscalar
             }
         })
+    }
+
+    /// The endoscalar of the challenge at `id` of the side's challenge
+    /// bits, allocated from them and held to nothing: what the lift chunk
+    /// lifts into the lifts stage slot every other use holds its bits to.
+    fn bits(&self, dr: &mut D, id: usize) -> Result<Endoscalar<'dr, D>> {
+        let bits = self.witness.as_ref().map(|w| w.aux.challenge_bits[id]);
+        Endoscalar::alloc(dr, bits)
     }
 
     /// A fixed point's value, for a scaling's offset.
@@ -232,15 +262,15 @@ where
     fn revdot_challenges(&self) -> revdot::Challenges<'dr, D> {
         let lifts = &self.schedule.regions.lifts;
         revdot::Challenges {
-            z: self.work(lifts[squeezed::Z]),
+            z: self.lift(lifts[squeezed::Z]),
             weights: Weights {
-                mu: self.work(lifts[squeezed::MU]),
-                nu: self.work(lifts[squeezed::NU]),
-                mu_prime: self.work(lifts[squeezed::MU_PRIME]),
-                nu_prime: self.work(lifts[squeezed::NU_PRIME]),
+                mu: self.lift(lifts[squeezed::MU]),
+                nu: self.lift(lifts[squeezed::NU]),
+                mu_prime: self.lift(lifts[squeezed::MU_PRIME]),
+                nu_prime: self.lift(lifts[squeezed::NU_PRIME]),
             },
-            rho: self.work(lifts[squeezed::RHO]),
-            r: self.work(lifts[squeezed::R]),
+            rho: self.lift(lifts[squeezed::RHO]),
+            r: self.lift(lifts[squeezed::R]),
         }
     }
 
@@ -297,7 +327,7 @@ where
             targets,
             restrictions,
             bindings: self.bindings(dr)?,
-            sigma: self.work(regions.lifts[squeezed::SIGMA]),
+            sigma: self.lift(regions.lifts[squeezed::SIGMA]),
         })
     }
 
@@ -327,7 +357,7 @@ where
         claims.extend([
             claim(
                 base,
-                &self.work(lifts[squeezed::W]),
+                &self.lift(lifts[squeezed::W]),
                 self.work(regions.restriction_at_w),
             ),
             claim(base + 1, &u, v),
@@ -340,9 +370,9 @@ where
             &claims,
             base + OPENED,
             &batch::Challenges {
-                alpha: self.work(lifts[squeezed::ALPHA]),
-                u: self.work(lifts[squeezed::U]),
-                beta: self.work(lifts[squeezed::BETA]),
+                alpha: self.lift(lifts[squeezed::ALPHA]),
+                u: self.lift(lifts[squeezed::U]),
+                beta: self.lift(lifts[squeezed::BETA]),
             },
             &batch::Messages {
                 evaluations: m.evaluations().to_vec(),
@@ -350,15 +380,15 @@ where
         )?;
         let rounds: Vec<Element<'dr, D>> = lifts[squeezed::ROUNDS..]
             .iter()
-            .map(|&slot| self.work(slot))
+            .map(|&slot| self.lift(slot))
             .collect();
         let scalars = ipa::verify(
             dr,
             &batched.point,
             &batched.value,
             &ipa::Challenges {
-                xi: self.work(lifts[squeezed::XI]),
-                z: self.work(lifts[squeezed::IPA_Z]),
+                xi: self.lift(lifts[squeezed::XI]),
+                z: self.lift(lifts[squeezed::IPA_Z]),
                 rounds,
             },
             &ipa::Messages { c: m.c().clone() },
@@ -469,8 +499,14 @@ where
         }
         Chunk::Lift { pairs } => {
             for &(challenge, out) in pairs {
-                let endoscalar = ctx.endoscalar(dr, challenge)?;
-                writes.push(Write::Element(out, endoscalar.lift(dr)?));
+                // The lift chunk fills the slot every other use of a
+                // challenge from bits holds its lift to, so it allocates
+                // the bits alone and lets the write hold them.
+                let endoscalar = match challenge {
+                    ChallengeRef::Raw(_) => ctx.endoscalar(dr, challenge)?,
+                    ChallengeRef::Bits(id) => ctx.bits(dr, id)?,
+                };
+                writes.push(Write::Lift(out, endoscalar.lift(dr)?));
             }
         }
         Chunk::Targets { out } => {
@@ -494,8 +530,8 @@ where
         }
         Chunk::Bindings { out } => {
             let bindings = ctx.bindings(dr)?;
-            let sigma = ctx.work(regions.lifts[squeezed::SIGMA]);
-            let r = ctx.work(regions.lifts[squeezed::R]);
+            let sigma = ctx.lift(regions.lifts[squeezed::SIGMA]);
+            let r = ctx.lift(regions.lifts[squeezed::R]);
             let at_r = revdot::bindings_at::<_, K>(dr, &bindings, &sigma, &r)?;
             assert_eq!(at_r.len(), out.len(), "one evaluation per binding");
             for (slots, at) in out.iter().zip(at_r) {
@@ -536,9 +572,19 @@ where
             writes.push(Write::Element(out[1], cbz));
         }
         Chunk::Digits { scalars } => {
-            for &src in scalars {
+            // Each scalar's digits, bound to it, as the signed digits
+            // 2b - 1 the other side scales by, into the digits stage.
+            for &(src, first) in scalars {
                 let element = ctx.element(dr, src)?;
-                Digits::bind(dr, &element)?;
+                let digits = Digits::alloc_bound(dr, &element)?;
+                for (i, bit) in digits.bits().iter().enumerate() {
+                    let digit = bit.element().scale(dr, Coeff::Two).add_coeff(
+                        dr,
+                        &Element::one(),
+                        Coeff::NegativeOne,
+                    );
+                    writes.push(Write::Digit(first + i, digit));
+                }
             }
         }
         Chunk::Sums { sums } => {
@@ -579,6 +625,7 @@ where
             init,
             finish,
             out,
+            bind,
         } => {
             let width = Digits::<'dr, D>::width::<S::Other>();
             let point = ctx.point(dr, *point)?;
@@ -601,6 +648,30 @@ where
                 }
             })?;
             writes.push(Write::Point(*out, scaled));
+            // The same digits' part of the other side's digits stage
+            // commitment: each digit's generator, added or subtracted by
+            // its bit, over the digits scaled by.
+            if let Some(bind) = bind {
+                assert_eq!(
+                    bind.generators.len(),
+                    digits.len(),
+                    "one generator per digit"
+                );
+                let mut acc = bind.init.map(|slot| ctx.loaded.work.points[slot].clone());
+                let sum = NonzeroBank::scope(dr, |dr, bank| {
+                    for (bit, &generator) in digits.bits().iter().zip(&bind.generators) {
+                        let base = Point::constant(dr, ctx.generators[generator])?;
+                        let negate = bit.not(dr);
+                        let term = base.conditional_negate(dr, &negate)?;
+                        acc = Some(match acc.take() {
+                            None => term,
+                            Some(acc) => acc.add_incomplete(dr, &term, bank)?,
+                        });
+                    }
+                    acc.ok_or_else(|| Error::InvalidWitness("a scalar has a digit".into()))
+                })?;
+                writes.push(Write::Point(bind.out, sum));
+            }
         }
         Chunk::Sign { generator, out } => {
             let dummy = Element::constant(dr, D::F::from(Suffix::internal(2).get()));
@@ -623,7 +694,8 @@ where
     Ok(writes)
 }
 
-/// Holds a chunk's writes to the work and transcript stages' wires.
+/// Holds a chunk's writes to the work, lifts, transcript and digits
+/// stages' wires.
 pub(crate) fn enforce<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
     dr: &mut D,
     loaded: Loaded<'_, 'dr, D, P>,
@@ -635,8 +707,14 @@ pub(crate) fn enforce<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
                 element.enforce_equal(dr, &loaded.work.elements[slot])?
             }
             Write::Point(slot, point) => point.enforce_equal(dr, &loaded.work.points[slot])?,
+            Write::Lift(slot, element) => {
+                element.enforce_equal(dr, &loaded.lifts.elements[slot])?
+            }
             Write::State(slot, element) => {
                 element.enforce_equal(dr, &loaded.transcript.elements[slot])?
+            }
+            Write::Digit(slot, element) => {
+                element.enforce_equal(dr, &loaded.digits.elements[slot])?
             }
         }
     }
@@ -646,12 +724,12 @@ pub(crate) fn enforce<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
 /// The stages allocated as witnesses under a driver, for the prover's
 /// native run.
 struct Allocated<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> {
-    stages: [(Vec<Point<'dr, D, P>>, Vec<Element<'dr, D>>); 4],
+    stages: [(Vec<Point<'dr, D, P>>, Vec<Element<'dr, D>>); 6],
 }
 
 impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Allocated<'dr, D, P> {
-    fn alloc(dr: &mut D, values: [&Values<D::F, P>; 4]) -> Result<Self> {
-        let mut stages = Vec::with_capacity(4);
+    fn alloc(dr: &mut D, values: [&Values<D::F, P>; 6]) -> Result<Self> {
+        let mut stages = Vec::with_capacity(6);
         for values in values {
             let points = values
                 .points
@@ -668,7 +746,7 @@ impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Allocated<'dr, D, P> {
         Ok(Allocated {
             stages: stages
                 .try_into()
-                .map_err(|_| Error::InvalidWitness("four stages".into()))?,
+                .map_err(|_| Error::InvalidWitness("six stages".into()))?,
         })
     }
 
@@ -680,8 +758,10 @@ impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Allocated<'dr, D, P> {
         Loaded {
             instance: view(0),
             messages: view(1),
-            work: view(2),
-            transcript: view(3),
+            lifts: view(2),
+            work: view(3),
+            transcript: view(4),
+            digits: view(5),
         }
     }
 }
@@ -752,11 +832,13 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
         layout.sort_by_key(|term| term.0);
         let mut actual = witness.ab_terms.clone();
         actual.sort_by_key(|term| term.0);
-        assert_eq!(
-            layout, actual,
-            "the ab bridge layout is the stage polynomial's"
-        );
-        let mut work = Values::blank(schedule.points, schedule.elements, S::generators(params)[0]);
+        if layout != actual {
+            return Err(Error::InvalidWitness(
+                "the ab bridge stage's coefficients are not at the wires the schedule names".into(),
+            ));
+        }
+        let placeholder = S::generators(params)[0];
+        let mut work = Values::blank(schedule.points, schedule.elements, placeholder);
         supply(
             &schedule,
             instance.circuit_id,
@@ -764,7 +846,9 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
             S::other(witness),
             &mut work,
         );
-        let mut transcript = S::transcript(params, instance, &witness.proof);
+        let lifts = Values::blank(0, schedule.layout.lifts, placeholder);
+        let digits = Values::blank(0, schedule.layout.digits, placeholder);
+        let mut transcript = S::transcript::<K>(params, instance, &witness.proof)?;
         transcript.elements = alloc::vec![S::F::ZERO; schedule.states];
         let mut challenge_bits = bits(&S::own(witness).raw.in_order())?;
         challenge_bits.extend(bits(&[witness.fuse.x, witness.fuse.y, witness.fuse.u])?);
@@ -778,8 +862,10 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
             messages: S::messages(params, &witness.proof),
             extra: S::extra(witness)?,
             schedule,
+            lifts,
             work,
             transcript,
+            digits,
             aux,
         };
         prepared.run::<K, HEADER_SIZE>(params)?;
@@ -787,12 +873,22 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
     }
 
     /// Runs every chunk natively, storing what each writes.
-    fn run<K: Rank, const HEADER_SIZE: usize>(&mut self, params: &C::Params) -> Result<()> {
+    pub(crate) fn run<K: Rank, const HEADER_SIZE: usize>(
+        &mut self,
+        params: &C::Params,
+    ) -> Result<()> {
         for k in 0..self.schedule.chunks.len() {
             let mut dr = Executor::<S::F>::execute();
             let allocated = Allocated::alloc(
                 &mut dr,
-                [&self.instance, &self.messages, &self.work, &self.transcript],
+                [
+                    &self.instance,
+                    &self.messages,
+                    &self.lifts,
+                    &self.work,
+                    &self.transcript,
+                    &self.digits,
+                ],
             )?;
             let writes = {
                 let ctx = Ctx {
@@ -813,8 +909,14 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
                     Write::Point(slot, point) => {
                         self.work.points[slot] = point.value().take();
                     }
+                    Write::Lift(slot, element) => {
+                        self.lifts.elements[slot] = *element.value().take();
+                    }
                     Write::State(slot, element) => {
                         self.transcript.elements[slot] = *element.value().take();
+                    }
+                    Write::Digit(slot, element) => {
+                        self.digits.elements[slot] = *element.value().take();
                     }
                 }
             }

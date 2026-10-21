@@ -8,7 +8,7 @@ use ragu_circuits::polynomials::{AggregatorRank, ProductionRank, Rank};
 use ragu_core::{Cycle, PoseidonPermutation, pasta::Pasta};
 
 use super::{
-    Chunk, ElementSrc, Limits, Op, PointSrc, Schedule, Step, native_schedule, nested_schedule,
+    Chunk, ElementSrc, Last, Limits, Op, PointSrc, Schedule, Step, native_schedule, nested_schedule,
 };
 
 const HEADER_SIZE: usize = 4;
@@ -18,13 +18,26 @@ const STATE: usize =
 
 /// Every work slot a chunk reads was written by an earlier chunk, or is
 /// prover-supplied, every slot is written at most once, every sponge
-/// state is saved before it is resumed, and every stage position read is
+/// state is saved before it is resumed, every lift and digit is written,
+/// every exposed point is written, and every stage position read is
 /// within the layout.
 fn check(schedule: &Schedule) {
     let layout = &schedule.layout;
     let mut elements = alloc::vec![false; schedule.elements];
     let mut points = alloc::vec![false; schedule.points];
     let mut states = alloc::vec![false; schedule.states];
+    let mut lifts = alloc::vec![false; layout.lifts];
+    let mut digits = alloc::vec![false; layout.digits];
+    let digit_scalars: usize = schedule
+        .chunks
+        .iter()
+        .map(|chunk| match chunk {
+            Chunk::Digits { scalars } => scalars.len(),
+            _ => 0,
+        })
+        .sum();
+    let width = layout.digits / digit_scalars;
+    assert_eq!(width * digit_scalars, layout.digits, "whole scalars");
     let regions = &schedule.regions;
     for &slot in regions
         .restrictions
@@ -45,19 +58,21 @@ fn check(schedule: &Schedule) {
         PointSrc::Bridge(p) => assert!(*p < layout.transcript.points),
         PointSrc::Generator(_) | PointSrc::U => {}
     };
-    let read_element = |src: &ElementSrc, elements: &[bool], points: &[bool]| match src {
-        ElementSrc::Work(slot) => {
-            assert!(elements[*slot], "element slot {slot} read before written")
-        }
-        ElementSrc::Instance(p) | ElementSrc::InstanceSquared(p) => {
-            assert!(*p < layout.instance.elements)
-        }
-        ElementSrc::Message(p) => assert!(*p < layout.messages.elements),
-        ElementSrc::Coordinate(point, which) => {
-            assert!(*which < 2);
-            read_point(point, points);
-        }
-    };
+    let read_element =
+        |src: &ElementSrc, elements: &[bool], points: &[bool], lifts: &[bool]| match src {
+            ElementSrc::Work(slot) => {
+                assert!(elements[*slot], "element slot {slot} read before written")
+            }
+            ElementSrc::Lift(slot) => assert!(lifts[*slot], "lift slot {slot} read before written"),
+            ElementSrc::Instance(p) | ElementSrc::InstanceSquared(p) => {
+                assert!(*p < layout.instance.elements)
+            }
+            ElementSrc::Message(p) => assert!(*p < layout.messages.elements),
+            ElementSrc::Coordinate(point, which) => {
+                assert!(*which < 2);
+                read_point(point, points);
+            }
+        };
     let write_element = |slot: usize, elements: &mut [bool]| {
         assert!(!elements[slot], "element slot {slot} written twice");
         elements[slot] = true;
@@ -81,7 +96,7 @@ fn check(schedule: &Schedule) {
                 }
                 for op in ops {
                     match op {
-                        Op::Absorb(src) => read_element(src, &elements, &points),
+                        Op::Absorb(src) => read_element(src, &elements, &points, &lifts),
                         Op::AbsorbConst(_) => {}
                         Op::Squeeze(slot) => write_element(*slot, &mut elements),
                     }
@@ -95,7 +110,8 @@ fn check(schedule: &Schedule) {
             }
             Chunk::Lift { pairs } => {
                 for (_, out) in pairs {
-                    write_element(*out, &mut elements);
+                    assert!(!lifts[*out], "lift slot {out} written twice");
+                    lifts[*out] = true;
                 }
             }
             Chunk::Targets { out } => {
@@ -122,8 +138,12 @@ fn check(schedule: &Schedule) {
                 }
             }
             Chunk::Digits { scalars } => {
-                for src in scalars {
-                    read_element(src, &elements, &points);
+                for (src, first) in scalars {
+                    read_element(src, &elements, &points, &lifts);
+                    for (slot, written) in digits.iter_mut().enumerate().skip(*first).take(width) {
+                        assert!(!*written, "digit slot {slot} written twice");
+                        *written = true;
+                    }
                 }
             }
             Chunk::Sums { sums } => {
@@ -157,13 +177,25 @@ fn check(schedule: &Schedule) {
                 }
             }
             Chunk::Scale {
-                point, init, out, ..
+                point,
+                init,
+                out,
+                digits: (lo, hi),
+                bind,
+                ..
             } => {
                 read_point(point, &points);
                 if let Some(init) = init {
                     assert!(points[*init], "a scaling continues a written part");
                 }
                 write_point(*out, &mut points);
+                if let Some(bind) = bind {
+                    assert_eq!(bind.generators.len(), hi - lo, "one generator per digit");
+                    if let Some(init) = bind.init {
+                        assert!(points[init], "a binding continues a written part");
+                    }
+                    write_point(bind.out, &mut points);
+                }
             }
             Chunk::Sign { out, .. } => write_point(*out, &mut points),
             Chunk::Equal { left, right } => {
@@ -176,6 +208,17 @@ fn check(schedule: &Schedule) {
         states.iter().all(|&saved| saved),
         "every state slot is saved"
     );
+    assert!(
+        lifts.iter().all(|&written| written),
+        "every lift is written"
+    );
+    assert!(
+        digits.iter().all(|&written| written),
+        "every digit is written"
+    );
+    for &slot in &regions.exposed {
+        assert!(points[slot], "exposed point {slot} is written");
+    }
 }
 
 /// Both sides' schedules for a production-rank proof in chunk circuits at
@@ -288,33 +331,37 @@ fn circuits_pack_the_chunks<R: Rank>() {
         ),
     ] {
         let mut next = 0;
-        let mut transcript_done = false;
+        let mut seen = Last::Transcript;
         for circuit in &schedule.circuits {
             assert_eq!(circuit.chunks.start, next, "{name}: consecutive");
             assert!(!circuit.chunks.is_empty(), "{name}: no empty circuit");
             next = circuit.chunks.end;
-            let kinds: Vec<bool> = schedule.chunks[circuit.chunks.clone()]
-                .iter()
-                .map(|chunk| matches!(chunk, Chunk::Transcript { .. }))
-                .collect();
             assert!(
-                kinds
+                schedule.chunks[circuit.chunks.clone()]
                     .iter()
-                    .all(|&transcript| transcript == circuit.transcript),
-                "{name}: transcript chunks keep to themselves"
+                    .all(|chunk| chunk.last() == circuit.last),
+                "{name}: a circuit's chunks share their last stage"
             );
-            if circuit.transcript {
-                assert!(!transcript_done, "{name}: transcript circuits first");
-            } else {
-                transcript_done = true;
-            }
+            // Transcript circuits first, then work, then digits.
+            let order = |last: Last| match last {
+                Last::Transcript => 0,
+                Last::Work => 1,
+                Last::Digits => 2,
+            };
+            assert!(
+                order(circuit.last) >= order(seen),
+                "{name}: circuits in transcript, work, digits order"
+            );
+            seen = circuit.last;
         }
         assert_eq!(next, schedule.chunks.len(), "{name}: every chunk");
-        let transcript = schedule.circuits.iter().filter(|c| c.transcript).count();
+        let count = |last: Last| schedule.circuits.iter().filter(|c| c.last == last).count();
         std::println!(
-            "{name} at rank {}: {} circuits ({transcript} transcript) over {} chunks",
+            "{name} at rank {}: {} circuits ({} transcript, {} digits) over {} chunks",
             R::RANK,
             schedule.circuits.len(),
+            count(Last::Transcript),
+            count(Last::Digits),
             schedule.chunks.len()
         );
     }

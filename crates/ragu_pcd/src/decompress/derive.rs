@@ -12,7 +12,8 @@
 //! point that $u_j$ scales back to $L_j$, and the final check's three
 //! full-width scalars, $v$, $c$ and $c b z$, scale their points by a
 //! signed-digit chain over witness bits, which the circuit over the scalar
-//! field binds to the scalars it computes.
+//! field binds to the scalars it computes and holds as a digits stage the
+//! chain's circuit recomputes (see [`stages`](super::stages)).
 
 use alloc::vec::Vec;
 use core::{iter::once, ops::Range};
@@ -384,11 +385,22 @@ pub(crate) struct Digits<'dr, D: Driver<'dr>> {
     bits: Vec<Boolean<'dr, D>>,
 }
 
+/// The digit count of a scalar of the field `S`: one more than its
+/// capacity, so that every scalar is a signed-digit sum
+/// $\sum_{i < n} (2 b_i - 1) 2^i$ of that many bits.
+pub(crate) fn digit_width<S: Field>() -> usize {
+    S::CAPACITY as usize + 1
+}
+
 impl<'dr, D: Driver<'dr>> Digits<'dr, D> {
-    /// The digit count of a scalar of the field `S`: one more than its
-    /// capacity.
+    /// The digit count of a scalar of the field `S`: [`digit_width`].
     pub(crate) fn width<S: Field>() -> usize {
-        S::CAPACITY as usize + 1
+        digit_width::<S>()
+    }
+
+    /// The digits' bits, in order: $b_i$ for the digit $2 b_i - 1$.
+    pub(crate) fn bits(&self) -> &[Boolean<'dr, D>] {
+        &self.bits
     }
 
     /// The digits of `scalar`, a value of the field `S`.
@@ -403,7 +415,7 @@ impl<'dr, D: Driver<'dr>> Digits<'dr, D> {
         scalar: DriverValue<D, S>,
         range: Range<usize>,
     ) -> Result<Self> {
-        let bits = scalar.map(Self::bits);
+        let bits = scalar.map(Self::bits_of);
         range
             .map(|i| Boolean::alloc(dr, &mut (), bits.as_ref().map(|bits| bits[i])))
             .collect::<Result<Vec<_>>>()
@@ -447,7 +459,7 @@ impl<'dr, D: Driver<'dr>> Digits<'dr, D> {
     }
 
     /// The bits of $B = (k + 2^n - 1) / 2$ for the scalar $k$.
-    fn bits<S: Field>(scalar: S) -> Vec<bool> {
+    fn bits_of<S: Field>(scalar: S) -> Vec<bool> {
         let n = S::CAPACITY as usize + 1;
         let two = S::ONE.double();
         let b =

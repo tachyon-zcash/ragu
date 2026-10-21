@@ -81,7 +81,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         }
 
         let output_header = ky::output_header::<C, H, HEADER_SIZE>(pcd.data().clone())?;
-        let mut transcript = proof_check!(transcript::<C, Verifier<B>>(
+        let mut transcript = proof_check!(transcript::<C, Verifier<B>, R>(
             self.params,
             instance,
             &output_header,
