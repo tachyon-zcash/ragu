@@ -446,6 +446,9 @@ impl<C: ProfiledCycle> Instance<C> {
         nested_y: C::ScalarField,
     ) -> Result<(NativeKy<C::CircuitField>, NestedKy<C::ScalarField>)> {
         let unified = self.unified(challenges);
+        let nested_bound = ky::native_bound::<C::Profile, _>(|index| {
+            self.nested_commitment(nested::RxComponent::Rx(index))
+        });
         let native = NativeKy {
             c: Some(self.c),
             ..ky::native_ky_of::<C, HEADER_SIZE>(
@@ -455,13 +458,18 @@ impl<C: ProfiledCycle> Instance<C> {
                     output_header,
                     circuit_id: self.circuit_id,
                     unified: &unified,
+                    nested_bound: &nested_bound,
                 },
                 y,
             )?
         };
+        let native_bound = ky::nested_bound::<C::Profile, _>(|index| {
+            self.native_commitment(native::RxComponent::Rx(index))
+        });
         let nested = NestedKy {
             c: self.nested_c,
             unified: ky::nested_ky_of::<C>(&self.nested_unified(challenges)?, nested_y)?,
+            binding: ky::binding_ky_of(&native_bound, nested_y)?,
         };
         Ok((native, nested))
     }

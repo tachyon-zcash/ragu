@@ -13,7 +13,7 @@
 //!
 //! | stage | holds | fixed before | carried by |
 //! |---|---|---|---|
-//! | [`BindingStage`] | the children's bridge and challenge-stage commitments, $A_n$, $B_n$, `registry_xy` and $P_n$ | $w$ | `preamble` bridge |
+//! | [`BindingStage`] | the children's bridge and challenge-stage commitments, $A_n$, $B_n$, `registry_xy`, $P_n$ and nested extension stages | $w$ | `preamble` bridge |
 //! | [`ChildrenStage`] | the rest of the children's nested commitments | $w$ | `preamble` bridge |
 //! | [`RegistryWxStage`] | $m_n(w_n, x_{i,n}, Y)$ | $y$ | `s_prime` bridge |
 //! | [`AbStage`] | $m_n(w_n, X, y_n)$, $A_n$, $B_n$ | $x$ | `ab` bridge |
@@ -29,7 +29,11 @@
 //! [`bind_beta`](super::super::circuits::bind_beta) hold the points it
 //! walks against what the children exported through their unified
 //! instances: their bridge commitments, completed challenge bindings and
-//! persistent polynomial commitments. [`WalkStage`], committed after
+//! persistent polynomial commitments; and what lets
+//! [`inner_collapse`](super::super::circuits::inner_collapse) take the
+//! children's nested extension stage commitments, which it holds the
+//! children's binding circuits to through their claims' $k(y)$ (see
+//! [`Binding`](crate::profile::Binding)). [`WalkStage`], committed after
 //! $\beta$, holds the endoscalar's
 //! bits and the walk's interstitials and closes the steps' chain; its last
 //! interstitial is this step's $P_n$, which
@@ -80,14 +84,18 @@ pub fn num_child_points<P: Profile>() -> usize {
 /// Length type for a child's bridge commitments, in transcript order.
 pub type BridgesLen = ConstLen<{ nested::RxIndex::BRIDGES.len() }>;
 
-/// Each child's bridge and challenge commitments, plus its four persistent
-/// polynomial commitments, are tied to its unified instance.
-const NUM_CHILD_BINDINGS: usize = nested::RxIndex::BRIDGES.len() + 5;
+/// The points of [`BindingStage`] per child in profile `P`: its bridge and
+/// challenge commitments and its four persistent polynomial commitments,
+/// tied to its unified instance, and its nested extension stages, tied to
+/// its binding circuit.
+pub fn num_child_bindings<P: Profile>() -> usize {
+    nested::RxIndex::BRIDGES.len() + 5 + nested::NumExtensionStages::<P>::len()
+}
 
 /// The points of [`ChildrenStage`] in profile `P`: each child's points in
-/// walk order, except the ones [`BindingStage`] ties to its unified instance.
+/// walk order, except the ones [`BindingStage`] holds.
 pub fn num_children_points<P: Profile>() -> usize {
-    2 * (num_child_points::<P>() - NUM_CHILD_BINDINGS)
+    2 * (num_child_points::<P>() - num_child_bindings::<P>())
 }
 
 /// Length type for the [`ChildrenStage`] points.
@@ -128,6 +136,9 @@ pub enum InputSource {
     ChildB(Side),
     /// A child's persistent registry restriction commitment.
     ChildRegistryXy(Side),
+    /// A child's nested extension stage commitment, by stage, in
+    /// [`BindingStage`].
+    Extension(Side, usize),
     /// A point of [`ChildrenStage`], by position.
     Children(usize),
     /// One of the two points of [`RegistryWxStage`].
@@ -184,15 +195,18 @@ pub fn input_source<P: Profile>(i: usize) -> InputSource {
         {
             return InputSource::Bridge(side, i);
         }
-        let offset = all[..k]
-            .iter()
-            .filter(|&&id| {
-                id != nested::RxIndex::ChallengeStage && !nested::RxIndex::BRIDGES.contains(&id)
-            })
-            .count();
+        if let nested::RxIndex::ExtensionStage(j) = id {
+            return InputSource::Extension(side, j as usize);
+        }
+        let bound = |id: nested::RxIndex| {
+            id == nested::RxIndex::ChallengeStage
+                || nested::RxIndex::BRIDGES.contains(&id)
+                || matches!(id, nested::RxIndex::ExtensionStage(_))
+        };
+        let offset = all[..k].iter().filter(|&&id| !bound(id)).count();
         let base = match side {
             Side::Left => 0,
-            Side::Right => num_child_points - NUM_CHILD_BINDINGS,
+            Side::Right => num_child_points - num_child_bindings::<P>(),
         };
         return InputSource::Children(base + offset);
     }
@@ -207,22 +221,26 @@ pub fn input_source<P: Profile>(i: usize) -> InputSource {
     }
 }
 
-/// A child's points tied to its native unified instance.
-#[derive(Clone, Copy)]
-pub struct ChildBindingWitness<C: Affine> {
+/// A child's points tied to its native unified instance, and its nested
+/// extension stages, tied to its binding circuit.
+#[derive(Clone)]
+pub struct ChildBindingWitness<C: Affine, P: Profile> {
     pub bridges: [C; nested::RxIndex::BRIDGES.len()],
     pub challenges: C,
     pub a: C,
     pub b: C,
     pub registry_xy: C,
     pub p: C,
+    /// The child's nested extension stage commitments, by stage.
+    pub extension: FixedVec<C, nested::NumExtensionStages<P>>,
 }
 
-/// Witness of [`BindingStage`]: the points tied to each child's instance.
-#[derive(Clone, Copy)]
-pub struct BindingWitness<C: Affine> {
-    pub left: ChildBindingWitness<C>,
-    pub right: ChildBindingWitness<C>,
+/// Witness of [`BindingStage`]: the points tied to each child's instance
+/// and binding circuit.
+#[derive(Clone)]
+pub struct BindingWitness<C: Affine, P: Profile> {
+    pub left: ChildBindingWitness<C, P>,
+    pub right: ChildBindingWitness<C, P>,
 }
 
 /// Witness of [`ChildrenStage`].
@@ -292,7 +310,7 @@ impl<C: Affine, P: Profile> WalkWitness<C, P> {
 pub fn children_witnesses<C: Affine, P: Profile>(
     left: &[C],
     right: &[C],
-) -> (BindingWitness<C>, ChildrenWitness<C, P>) {
+) -> (BindingWitness<C, P>, ChildrenWitness<C, P>) {
     let num_child_points = num_child_points::<P>();
     let nested_rx = nested::RxIndex::num::<P>();
     assert_eq!(left.len(), num_child_points);
@@ -304,6 +322,9 @@ pub fn children_witnesses<C: Affine, P: Profile>(
         b: points[nested_rx + 1],
         registry_xy: points[nested_rx + 2],
         p: points[child_p::<P>()],
+        extension: FixedVec::from_fn(|j| {
+            points[nested::RxIndex::ExtensionStage(j as u32).position::<P>()]
+        }),
     };
     let rest = |points: &[C]| {
         points
@@ -330,7 +351,7 @@ pub fn children_witnesses<C: Affine, P: Profile>(
 /// that commit them.
 #[derive(Clone)]
 pub struct Inputs<C: Affine, P: Profile> {
-    pub binding: BindingWitness<C>,
+    pub binding: BindingWitness<C, P>,
     pub children: ChildrenWitness<C, P>,
     pub registry_wx: RegistryWxWitness<C>,
     pub ab: AbWitness<C>,
@@ -388,6 +409,7 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
             InputSource::ChildA(side) => child(side).a,
             InputSource::ChildB(side) => child(side).b,
             InputSource::ChildRegistryXy(side) => child(side).registry_xy,
+            InputSource::Extension(side, j) => child(side).extension[j],
             InputSource::Children(k) => self.children.points[k],
             InputSource::RegistryWx(0) => self.registry_wx.registry_wx0,
             InputSource::RegistryWx(_) => self.registry_wx.registry_wx1,
@@ -406,9 +428,11 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
     }
 }
 
-/// A child's walked points that must match its native unified instance.
+/// A child's walked points that must match its native unified instance,
+/// and its nested extension stages, which must match its binding circuit's
+/// output.
 #[derive(Gadget, Consistent)]
-pub struct ChildBinding<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
+pub struct ChildBinding<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     #[ragu(gadget)]
     pub bridges: FixedVec<Point<'dr, D, C>, BridgesLen>,
     #[ragu(gadget)]
@@ -421,10 +445,13 @@ pub struct ChildBinding<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     pub registry_xy: Point<'dr, D, C>,
     #[ragu(gadget)]
     pub p: Point<'dr, D, C>,
+    /// The child's nested extension stage commitments, by stage.
+    #[ragu(gadget)]
+    pub extension: FixedVec<Point<'dr, D, C>, nested::NumExtensionStages<P>>,
 }
 
-impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> ChildBinding<'dr, D, C> {
-    fn alloc(dr: &mut D, witness: DriverValue<D, &ChildBindingWitness<C>>) -> Result<Self> {
+impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildBinding<'dr, D, C, P> {
+    fn alloc(dr: &mut D, witness: DriverValue<D, &ChildBindingWitness<C, P>>) -> Result<Self> {
         Ok(Self {
             bridges: FixedVec::try_from_fn(|i| {
                 Point::alloc(dr, witness.as_ref().map(|w| w.bridges[i]))
@@ -434,17 +461,20 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> ChildBinding<'dr, D, C> {
             b: Point::alloc(dr, witness.as_ref().map(|w| w.b))?,
             registry_xy: Point::alloc(dr, witness.as_ref().map(|w| w.registry_xy))?,
             p: Point::alloc(dr, witness.as_ref().map(|w| w.p))?,
+            extension: FixedVec::try_from_fn(|j| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.extension[j]))
+            })?,
         })
     }
 }
 
 /// Output gadget of [`BindingStage`].
 #[derive(Gadget, Consistent)]
-pub struct Binding<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
+pub struct Binding<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     #[ragu(gadget)]
-    pub left: ChildBinding<'dr, D, C>,
+    pub left: ChildBinding<'dr, D, C, P>,
     #[ragu(gadget)]
-    pub right: ChildBinding<'dr, D, C>,
+    pub right: ChildBinding<'dr, D, C, P>,
 }
 
 /// Output gadget of [`ChildrenStage`].
@@ -503,7 +533,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> Walk<'dr, D, C, P>
 
 /// The loaded input stages, viewed as the walk's inputs.
 pub struct WalkInputs<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
-    pub binding: &'a Binding<'dr, D, C>,
+    pub binding: &'a Binding<'dr, D, C, P>,
     pub children: &'a Children<'dr, D, C, P>,
     pub registry_wx: &'a RegistryWx<'dr, D, C>,
     pub ab: &'a Ab<'dr, D, C>,
@@ -529,6 +559,7 @@ impl<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> WalkInputs<'a,
             InputSource::ChildA(side) => &child(side).a,
             InputSource::ChildB(side) => &child(side).b,
             InputSource::ChildRegistryXy(side) => &child(side).registry_xy,
+            InputSource::Extension(side, j) => &child(side).extension[j],
             InputSource::Children(k) => &self.children.points[k],
             InputSource::RegistryWx(0) => &self.registry_wx.registry_wx0,
             InputSource::RegistryWx(_) => &self.registry_wx.registry_wx1,
@@ -579,17 +610,18 @@ macro_rules! points_stage {
 }
 
 /// The root of the native stage tree: the children's walked commitments
-/// tied to their native unified instances, committed before $w$.
+/// tied to their native unified instances and to their binding circuits,
+/// committed before $w$.
 #[derive(Default)]
-pub struct BindingStage<C: Affine>(PhantomData<C>);
+pub struct BindingStage<C: Affine, P: Profile>(PhantomData<(C, P)>);
 
-impl<C: Affine, R: Rank> staging::Stage<C::Base, R> for BindingStage<C> {
+impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for BindingStage<C, P> {
     type Parent = ();
-    type Witness<'source> = &'source BindingWitness<C>;
-    type OutputKind = Kind![C::Base; Binding<'_, _, C>];
+    type Witness<'source> = &'source BindingWitness<C, P>;
+    type OutputKind = Kind![C::Base; Binding<'_, _, C, P>];
 
     fn values() -> usize {
-        4 * NUM_CHILD_BINDINGS
+        4 * num_child_bindings::<P>()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -612,7 +644,7 @@ impl<C: Affine, R: Rank> staging::Stage<C::Base, R> for BindingStage<C> {
 pub struct ChildrenStage<C: Affine, P: Profile>(PhantomData<(C, P)>);
 
 impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for ChildrenStage<C, P> {
-    type Parent = BindingStage<C>;
+    type Parent = BindingStage<C, P>;
     type Witness<'source> = &'source ChildrenWitness<C, P>;
     type OutputKind = Kind![C::Base; Children<'_, _, C, P>];
 
@@ -705,7 +737,7 @@ mod tests {
     #[test]
     fn stage_values_match_wire_counts() {
         let _: PhantomData<EpAffine> = PhantomData::<C>;
-        assert_stage_values::<_, R, _>(&BindingStage::<C>::default());
+        assert_stage_values::<_, R, _>(&BindingStage::<C, Standard>::default());
         assert_stage_values::<_, R, _>(&ChildrenStage::<C, Standard>::default());
         assert_stage_values::<_, R, _>(&RegistryWxStage::<C, Standard>::default());
         assert_stage_values::<_, R, _>(&AbStage::<C, Standard>::default());
@@ -746,7 +778,8 @@ mod tests {
                 | InputSource::P(_)
                 | InputSource::ChildA(_)
                 | InputSource::ChildB(_)
-                | InputSource::ChildRegistryXy(_) => bindings += 1,
+                | InputSource::ChildRegistryXy(_)
+                | InputSource::Extension(..) => bindings += 1,
                 InputSource::Children(k) => {
                     assert!(!children[k], "child point {k} sourced twice");
                     children[k] = true;
@@ -754,7 +787,7 @@ mod tests {
                 _ => {}
             }
         }
-        assert_eq!(bindings, 2 * NUM_CHILD_BINDINGS);
+        assert_eq!(bindings, 2 * num_child_bindings::<Standard>());
         assert!(children.iter().all(|&c| c));
     }
 

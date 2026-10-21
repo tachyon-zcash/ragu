@@ -59,7 +59,7 @@ type InnerError =
 type Query = query::Stage<Pasta, R, HEADER_SIZE>;
 type Eval = eval::Stage<Pasta, R, HEADER_SIZE>;
 type NestedCurve = <Pasta as ragu_core::Cycle>::NestedCurve;
-type PointsBinding = native::stages::points::BindingStage<NestedCurve>;
+type PointsBinding = native::stages::points::BindingStage<NestedCurve, crate::profile::Standard>;
 type PointsChildren = native::stages::points::ChildrenStage<NestedCurve, crate::profile::Standard>;
 type PointsRegistryWx =
     native::stages::points::RegistryWxStage<NestedCurve, crate::profile::Standard>;
@@ -885,6 +885,10 @@ fn test_extension_claims_follow_the_declaration() {
 
         fn statement_ky(&self) -> impl Iterator<Item = u32> + Clone {
             [60, 61].into_iter()
+        }
+
+        fn binding_ky(&self) -> impl Iterator<Item = u32> + Clone {
+            [70, 71].into_iter()
         }
 
         fn zero(&self) -> u32 {

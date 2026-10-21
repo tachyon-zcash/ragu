@@ -414,10 +414,11 @@ fn install_walk(
     fn alpha(poly: &sparse::Polynomial<Fp, R>) -> Fp {
         poly.iter_coeffs().nth(2 * R::n() - 1).unwrap()
     }
-    proof.native_points_binding_rx = <points::BindingStage<EpAffine> as StageExt<Fp, R>>::rx(
-        alpha(&proof.native_points_binding_rx),
-        &inputs.binding,
-    )?;
+    proof.native_points_binding_rx =
+        <points::BindingStage<EpAffine, crate::profile::Standard> as StageExt<Fp, R>>::rx(
+            alpha(&proof.native_points_binding_rx),
+            &inputs.binding,
+        )?;
     proof.native_points_binding_commitment.0 = native_commit(app, &proof.native_points_binding_rx);
     proof.native_points_f_rx = <points::FStage<EpAffine, crate::profile::Standard> as StageExt<
         Fp,

@@ -95,7 +95,7 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
     where
         Self: 'dr,
     {
-        let (binding, builder) = builder.add_stage::<BindingStage<C::NestedCurve>>()?;
+        let (binding, builder) = builder.add_stage::<BindingStage<C::NestedCurve, C::Profile>>()?;
         let (children, builder) =
             builder.add_stage::<ChildrenStage<C::NestedCurve, C::Profile>>()?;
         let (registry_wx, builder) =

@@ -98,6 +98,7 @@ use super::super::{
 use crate::{
     RAGU_TAG,
     internal::{fold_revdot, transcript::Transcript},
+    profile::ProfiledCycle,
 };
 
 /// Public output of the first hash circuit.
@@ -134,7 +135,7 @@ pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revd
     _marker: PhantomData<(R, FP)>,
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
+impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     Circuit<'params, C, R, HEADER_SIZE, FP>
 {
     /// Creates a new multi-stage circuit.
@@ -180,7 +181,7 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, FP>
 {
     type Last = native_outer_error::Stage<C, R, HEADER_SIZE, FP>;
@@ -209,8 +210,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     where
         Self: 'dr,
     {
-        let builder =
-            builder.skip_stage::<super::super::stages::points::BindingStage<C::NestedCurve>>()?;
+        let builder = builder
+            .skip_stage::<super::super::stages::points::BindingStage<C::NestedCurve, C::Profile>>(
+            )?;
         let (preamble, builder) =
             builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
         let (outer_error, builder) =

@@ -812,12 +812,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested::pcs::child_commitments(left).collect::<Vec<_>>(),
             &nested::pcs::child_commitments(right).collect::<Vec<_>>(),
         );
-        builder.set_native_points_binding_rx(
-            <native_points::BindingStage<C::NestedCurve> as StageExt<C::CircuitField, R>>::rx(
-                C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-                &binding,
-            )?,
-        );
+        builder.set_native_points_binding_rx(<native_points::BindingStage<
+            C::NestedCurve,
+            C::Profile,
+        > as StageExt<C::CircuitField, R>>::rx(
+            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
+            &binding,
+        )?);
         builder.set_native_points_children_rx(<native_points::ChildrenStage<
             C::NestedCurve,
             C::Profile,
@@ -903,12 +904,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         inputs: &Inputs<C::NestedCurve, C::Profile>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
-        builder.set_native_points_binding_rx(
-            <native_points::BindingStage<C::NestedCurve> as StageExt<C::CircuitField, R>>::rx(
-                C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-                &inputs.binding,
-            )?,
-        );
+        builder.set_native_points_binding_rx(<native_points::BindingStage<
+            C::NestedCurve,
+            C::Profile,
+        > as StageExt<C::CircuitField, R>>::rx(
+            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
+            &inputs.binding,
+        )?);
         builder.set_native_points_children_rx(<native_points::ChildrenStage<
             C::NestedCurve,
             C::Profile,

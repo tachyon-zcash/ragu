@@ -288,6 +288,12 @@ pub trait KySource {
     /// bound is required for `repeat_n`.
     fn unified_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
 
+    /// One value per proof for the binding circuit of the profile's nested
+    /// extension: the $k(y)$ of the native extension stage commitments it
+    /// recomputes, as [`binding_ky`](crate::internal::ky::binding_ky)
+    /// computes it, and none for a profile without one.
+    fn binding_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
+
     /// Returns 0 for stage checks.
     fn zero(&self) -> Self::Ky;
 }
@@ -301,6 +307,7 @@ pub trait KySource {
 /// - `NUM_INSTANCE_CIRCUITS` copies of the per-proof unified $k(y)$ values
 ///   (for the instance circuit checks, interleaved the same way)
 /// - One copy of the per-proof ones per extension circuit of profile `P`
+///   but its binding circuit, which takes the per-proof binding values
 /// - Infinite zeros (for stage checks)
 pub fn ky_values<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
     let num_steps = super::NumSteps::<P>::len();
@@ -309,38 +316,63 @@ pub fn ky_values<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
         .raw_c()
         .chain(core::iter::repeat_n(source.ones(), num_steps).flatten())
         .chain(core::iter::repeat_n(source.unified_ky(), NUM_INSTANCE_CIRCUITS).flatten())
-        .chain(core::iter::repeat_n(source.ones(), P::nested_extension().circuits.len()).flatten())
+        .chain({
+            let extension = P::nested_extension();
+            let ones: Vec<S::Ky> = source.ones().collect();
+            let binding: Vec<S::Ky> = source.binding_ky().collect();
+            assert!(
+                extension.binding.is_none() || binding.len() == ones.len(),
+                "a profile with a binding circuit takes one binding value per proof"
+            );
+            let bound = extension.binding.as_ref().map(|binding| binding.circuit);
+            (0..extension.circuits.len() as u32).flat_map(move |circuit| {
+                if bound == Some(circuit) {
+                    binding.clone()
+                } else {
+                    ones.clone()
+                }
+            })
+        })
         .chain(core::iter::repeat(source.zero()))
 }
 
 /// [`KySource`] for the two child proofs of a fuse step, inside a driver.
 ///
-/// Carries each child's raw accumulator value $c$ and nested unified $k(y)$
-/// as elements, and the constant one and zero the other checks take.
+/// Carries each child's raw accumulator value $c$, nested unified $k(y)$
+/// and binding circuit's $k(y)$ as elements, and the constant one and
+/// zero the other checks take.
 pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
     pub left_raw_c: Element<'dr, D>,
     pub right_raw_c: Element<'dr, D>,
     pub left_unified: Element<'dr, D>,
     pub right_unified: Element<'dr, D>,
+    pub left_binding: Option<Element<'dr, D>>,
+    pub right_binding: Option<Element<'dr, D>>,
     pub one: Element<'dr, D>,
     pub zero: Element<'dr, D>,
 }
 
 impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
-    /// Create a [`TwoProofKySource`] from the children's raw `c` values and
-    /// unified $k(y)$ values.
+    /// Create a [`TwoProofKySource`] from the children's raw `c` values,
+    /// unified $k(y)$ values and binding circuit's $k(y)$ values, `None`
+    /// for a profile without one.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         dr: &mut D,
         left_raw_c: Element<'dr, D>,
         right_raw_c: Element<'dr, D>,
         left_unified: Element<'dr, D>,
         right_unified: Element<'dr, D>,
+        left_binding: Option<Element<'dr, D>>,
+        right_binding: Option<Element<'dr, D>>,
     ) -> Self {
         Self {
             left_raw_c,
             right_raw_c,
             left_unified,
             right_unified,
+            left_binding,
+            right_binding,
             one: Element::one(),
             zero: Element::zero(dr),
         }
@@ -360,6 +392,13 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
 
     fn unified_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
         once(self.left_unified.clone()).chain(once(self.right_unified.clone()))
+    }
+
+    fn binding_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
+        self.left_binding
+            .iter()
+            .chain(self.right_binding.iter())
+            .cloned()
     }
 
     fn zero(&self) -> Element<'dr, D> {

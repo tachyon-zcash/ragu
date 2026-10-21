@@ -108,6 +108,15 @@ pub(crate) const NUM_ENDOSCALING_STEPS: usize =
 /// [`NUM_ENDOSCALING_STEPS`].
 pub type NumSteps<P> = endoscalar::NumStepsLen<NumPoints<P>, Endoscalings<P>>;
 
+/// Length type for the stages of the profile's nested extension.
+pub struct NumExtensionStages<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for NumExtensionStages<P> {
+    fn len() -> usize {
+        P::nested_extension().stages
+    }
+}
+
 /// Length type for the nested rx polynomials, [`RxIndex::num`].
 pub struct NumRx<P: Profile>(PhantomData<P>);
 

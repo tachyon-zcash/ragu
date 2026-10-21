@@ -31,11 +31,11 @@ use crate::{
     Application,
     internal::{
         fold_revdot::{self, Parameters},
-        native,
+        ky, native,
         native::stages::outer_error::{ChildKyValues, KyValues},
         nested,
     },
-    profile::ProfiledCycle,
+    profile::{Profile, ProfiledCycle},
     proof::ProofBuilder,
 };
 
@@ -130,6 +130,23 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 // Build k(y) values in claim order.
                 let left_statement = preamble.left.statement_ky::<C::Profile>(dr, &y)?;
                 let right_statement = preamble.right.statement_ky::<C::Profile>(dr, &y)?;
+                // The binding circuit's, over the children's nested
+                // extension stages its binding names: in the circuit the
+                // parent walks them, here they are read off the proofs.
+                let bound = |proof: &crate::Proof<C, R>| {
+                    ky::native_bound::<C::Profile, _>(|index| proof.nested_rx_commitment(index))
+                };
+                let left_bound = preamble_witness.as_ref().map(|w| bound(w.left.proof));
+                let right_bound = preamble_witness.as_ref().map(|w| bound(w.right.proof));
+                let count = left_bound.as_ref().map(|b| b.len()).take();
+                let left_binding =
+                    ky::binding_ky_alloc(dr, &y, count, left_bound.as_ref().map(|b| b.as_slice()))?;
+                let right_binding = ky::binding_ky_alloc(
+                    dr,
+                    &y,
+                    count,
+                    right_bound.as_ref().map(|b| b.as_slice()),
+                )?;
                 let ky_source = native::claims::TwoProofKySource::new(
                     dr,
                     preamble.left.unified.c.clone(),
@@ -138,6 +155,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     &right_ky,
                     left_statement,
                     right_statement,
+                    left_binding,
+                    right_binding,
                 );
                 let mut ky = native::claims::ky_values::<C::Profile, _>(&ky_source);
 
@@ -318,6 +337,24 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 let left_unified = preamble.left.nested_instance().ky(dr, &nested_y)?;
                 let right_unified = preamble.right.nested_instance().ky(dr, &nested_y)?;
 
+                // The binding circuit's k(y), over the children's native
+                // extension stages the bridge preamble holds.
+                let binding = C::Profile::nested_extension().binding;
+                let left_binding = ky::binding_ky(
+                    dr,
+                    &nested_y,
+                    &ky::bound(binding.as_ref(), |j| {
+                        preamble.left.extension_stages[j as usize].clone()
+                    }),
+                )?;
+                let right_binding = ky::binding_ky(
+                    dr,
+                    &nested_y,
+                    &ky::bound(binding.as_ref(), |j| {
+                        preamble.right.extension_stages[j as usize].clone()
+                    }),
+                )?;
+
                 // Build k(y) values in nested claim order.
                 let ky_source = nested::claims::TwoProofKySource::new(
                     dr,
@@ -325,6 +362,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     right_c,
                     left_unified,
                     right_unified,
+                    left_binding,
+                    right_binding,
                 );
                 let mut ky = nested::claims::ky_values::<C::Profile, _>(&ky_source);
 

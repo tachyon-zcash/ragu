@@ -5,14 +5,17 @@
 use alloc::vec::Vec;
 use core::iter::once;
 
-use ragu_circuits::{polynomials::Rank, registry::CircuitIndex};
+use ragu_circuits::{horner::Horner, polynomials::Rank, registry::CircuitIndex};
 use ragu_core::{
     Cycle, Result,
-    drivers::emulator::{Emulator, Wireless},
+    drivers::{
+        Driver, DriverValue,
+        emulator::{Emulator, Wireless},
+    },
     maybe::{Always, Maybe},
 };
-use ragu_primitives::Element;
-use udon::field::Field;
+use ragu_primitives::{Element, GadgetExt, Point};
+use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
 use super::{
     native::{
@@ -22,7 +25,11 @@ use super::{
     },
     nested::{self, unified as nested_unified},
 };
-use crate::{Pcd, Proof, header::Header, profile::ProfiledCycle};
+use crate::{
+    Pcd, Proof,
+    header::Header,
+    profile::{Binding, Profile, ProfiledCycle},
+};
 
 /// The targets of one proof's native revdot claims at one $y$.
 ///
@@ -48,6 +55,9 @@ pub struct NativeKy<F> {
     /// The statement circuit's $k(y)$, for a profile whose native extension
     /// has one; `None` for a profile without one.
     pub statement: Option<F>,
+    /// The binding circuit's $k(y)$, for a profile whose native extension
+    /// has one; `None` for a profile without one.
+    pub binding: Option<F>,
 }
 
 impl<F: Field> native::claims::KySource for NativeKy<F> {
@@ -77,6 +87,10 @@ impl<F: Field> native::claims::KySource for NativeKy<F> {
         self.statement.into_iter()
     }
 
+    fn binding_ky(&self) -> impl Iterator<Item = F> + Clone {
+        self.binding.into_iter()
+    }
+
     fn zero(&self) -> F {
         F::ZERO
     }
@@ -90,6 +104,9 @@ pub struct NestedKy<F> {
     pub c: F,
     /// The nested unified instance's $k(y)$.
     pub unified: F,
+    /// The binding circuit's $k(y)$, for a profile whose nested extension
+    /// has one; `None` for a profile without one.
+    pub binding: Option<F>,
 }
 
 impl<F: Field> nested::claims::KySource for NestedKy<F> {
@@ -107,9 +124,82 @@ impl<F: Field> nested::claims::KySource for NestedKy<F> {
         once(self.unified)
     }
 
+    fn binding_ky(&self) -> impl Iterator<Item = F> + Clone {
+        self.binding.into_iter()
+    }
+
     fn zero(&self) -> F {
         F::ZERO
     }
+}
+
+/// The values a binding names, by stage: `stage` at each of the binding's
+/// stage indices, in its order, and none for a profile without a binding.
+pub fn bound<T>(binding: Option<&Binding>, stage: impl Fn(u32) -> T) -> Vec<T> {
+    binding.map_or_else(Vec::new, |binding| {
+        binding.stages.iter().map(|&j| stage(j)).collect()
+    })
+}
+
+/// The commitments the native binding circuit of a proof in profile `P`
+/// recomputes: the nested extension stages its binding names, as
+/// `commitment` gives them.
+pub fn native_bound<P: Profile, T>(commitment: impl Fn(nested::RxIndex) -> T) -> Vec<T> {
+    bound(P::native_extension().binding.as_ref(), |j| {
+        commitment(nested::RxIndex::ExtensionStage(j))
+    })
+}
+
+/// The commitments the nested binding circuit of a proof in profile `P`
+/// recomputes: the native extension stages its binding names, as
+/// `commitment` gives them.
+pub fn nested_bound<P: Profile, T>(commitment: impl Fn(native::RxIndex) -> T) -> Vec<T> {
+    bound(P::nested_extension().binding.as_ref(), |j| {
+        commitment(native::RxIndex::ExtensionStage(j))
+    })
+}
+
+/// A binding circuit's $k(y)$ in circuit: the $k(y)$ of its public output,
+/// the points it exposes, which the verifier computes over `points`, the
+/// commitments the circuit must have recomputed, so that the claim holds
+/// only if it did. `None` for no points, which a profile without a binding
+/// has.
+pub fn binding_ky<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
+    dr: &mut D,
+    y: &Element<'dr, D>,
+    points: &[Point<'dr, D, P>],
+) -> Result<Option<Element<'dr, D>>> {
+    if points.is_empty() {
+        return Ok(None);
+    }
+    let mut ky = Horner::new(y);
+    for point in points {
+        GadgetExt::write(point, dr, &mut ky)?;
+    }
+    ky.finish_ky(dr).map(Some)
+}
+
+/// [`binding_ky`] over points allocated from `points`, `count` of them.
+pub fn binding_ky_alloc<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
+    dr: &mut D,
+    y: &Element<'dr, D>,
+    count: usize,
+    points: DriverValue<D, &[P]>,
+) -> Result<Option<Element<'dr, D>>> {
+    let points = (0..count)
+        .map(|i| Point::alloc(dr, points.as_ref().map(|p| p[i])))
+        .collect::<Result<Vec<_>>>()?;
+    binding_ky(dr, y, &points)
+}
+
+/// [`binding_ky`] natively, at `y`.
+pub fn binding_ky_of<F: Field, P: Affine<Base = F>>(points: &[P], y: F) -> Result<Option<F>> {
+    Emulator::emulate_wireless((points, y), |dr, witness| {
+        let (points, y) = witness.cast();
+        let y = Element::alloc(dr, &mut (), y)?;
+        let count = points.as_ref().map(|p| p.len()).take();
+        Ok(binding_ky_alloc(dr, &y, count, points)?.map(|ky| *ky.value().take()))
+    })
 }
 
 /// The native $k(y)$ values of `pcd` at `y`, read off the proof's public
@@ -126,18 +216,24 @@ pub fn native_ky<
     Emulator::emulate_wireless((pcd.proof(), pcd.data().clone(), y), |dr, witness| {
         let (proof, data, y) = witness.cast();
         let y = Element::alloc(dr, &mut (), y)?;
+        let bound = proof
+            .as_ref()
+            .map(|proof| native_bound::<C::Profile, _>(|index| proof.nested_rx_commitment(index)));
         let proof_inputs =
             ProofInputs::<_, C, HEADER_SIZE>::alloc_for_verify::<R, H>(dr, proof, data)?;
 
         let (unified, unified_bridge) = proof_inputs.unified_ky_values(dr, &y)?;
         let application = proof_inputs.application_ky(dr, &y)?;
         let statement = proof_inputs.statement_ky::<C::Profile>(dr, &y)?;
+        let count = bound.as_ref().map(|bound| bound.len()).take();
+        let binding = binding_ky_alloc(dr, &y, count, bound.as_ref().map(|b| b.as_slice()))?;
         Ok(NativeKy {
             c: None,
             unified: *unified.value().take(),
             unified_bridge: *unified_bridge.value().take(),
             application: *application.value().take(),
             statement: statement.map(|ky| *ky.value().take()),
+            binding: binding.map(|ky| *ky.value().take()),
         })
     })
 }
@@ -181,6 +277,9 @@ pub struct NativeParts<'a, C: Cycle> {
     pub output_header: &'a [C::CircuitField],
     pub circuit_id: CircuitIndex,
     pub unified: &'a native_unified::Instance<C>,
+    /// The nested extension stage commitments the native binding circuit
+    /// recomputes, in its output order; none for a profile without one.
+    pub nested_bound: &'a [C::NestedCurve],
 }
 
 /// The native $k(y)$ values at `y` from an instance's parts, as
@@ -204,12 +303,15 @@ pub fn native_ky_of<C: ProfiledCycle, const HEADER_SIZE: usize>(
         let (unified, unified_bridge) = proof_inputs.unified_ky_values(dr, &y)?;
         let application = proof_inputs.application_ky(dr, &y)?;
         let statement = proof_inputs.statement_ky::<C::Profile>(dr, &y)?;
+        let count = parts.as_ref().map(|p| p.nested_bound.len()).take();
+        let binding = binding_ky_alloc(dr, &y, count, parts.as_ref().map(|p| p.nested_bound))?;
         Ok(NativeKy {
             c: None,
             unified: *unified.value().take(),
             unified_bridge: *unified_bridge.value().take(),
             application: *application.value().take(),
             statement: statement.map(|ky| *ky.value().take()),
+            binding: binding.map(|ky| *ky.value().take()),
         })
     })
 }

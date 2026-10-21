@@ -697,9 +697,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // chain is the concatenation in `add_stage` order (a skipped stage is
         // reserved all the same, so it is included). The binding stage roots
         // every chain.
-        let binding_values = stage_values::<_, R, native_points::BindingStage<C::NestedCurve>>(
-            &native_points.binding,
-        )?;
+        let binding_values =
+            stage_values::<_, R, native_points::BindingStage<C::NestedCurve, C::Profile>>(
+                &native_points.binding,
+            )?;
         let preamble_values = [
             binding_values.as_slice(),
             &stage_values::<_, R, native::stages::preamble::Stage<C, R, HEADER_SIZE>>(
@@ -835,6 +836,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         >::new();
         let inner_collapse_witness = || {
             Ok(native::circuits::inner_collapse::Witness {
+                binding: &native_points.binding,
                 preamble_witness: &preamble_witness,
                 unified: make_unified(&builder)?,
                 outer_error_witness: &native_outer_error_witness,
@@ -998,9 +1000,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         };
         let bind_beta_spec = CircuitSpec {
             name: "bind_beta".into(),
-            outputs: stage_wire_indices::<_, R, native_points::BindingStage<C::NestedCurve>>(
-                |stage| wires_of(&stage),
-            )?
+            outputs: stage_wire_indices::<
+                _,
+                R,
+                native_points::BindingStage<C::NestedCurve, C::Profile>,
+            >(|stage| wires_of(&stage))?
             .into_iter()
             .map(OutputRef::Stage)
             .collect(),

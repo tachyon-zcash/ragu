@@ -114,6 +114,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             native::RevdotParameters<C::Profile>,
         >::new()
         .trace(native::circuits::inner_collapse::Witness {
+            binding: &native_points.binding,
             preamble_witness,
             unified,
             outer_error_witness: native_outer_error_witness,

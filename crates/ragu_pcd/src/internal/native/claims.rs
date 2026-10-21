@@ -197,15 +197,25 @@ where
                 }
             }
 
-            // inner_collapse: InnerCollapse + Preamble + InnerError + OuterError
+            // inner_collapse: InnerCollapse + Preamble + InnerError + OuterError,
+            // and PointsBinding for a profile whose native extension binds,
+            // whose binding k(y) the circuit takes from that stage.
             InnerCollapseCircuit => {
-                for (((pc, pre), em), en) in source
+                let bound = P::native_extension().binding.is_some();
+                for ((((pc, pb), pre), em), en) in source
                     .rx(Rx(InnerCollapse))
+                    .zip(source.rx(Rx(PointsBinding)))
                     .zip(source.rx(Rx(Preamble)))
                     .zip(source.rx(Rx(InnerError)))
                     .zip(source.rx(Rx(OuterError)))
                 {
-                    processor.internal_circuit_claim(id, [pc, pre, em, en].into_iter());
+                    let mut rxs = Vec::with_capacity(5);
+                    rxs.push(pc);
+                    if bound {
+                        rxs.push(pb);
+                    }
+                    rxs.extend([pre, em, en]);
+                    processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
 
@@ -442,6 +452,12 @@ pub trait KySource {
     /// computes it, and none for a profile without one.
     fn statement_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
 
+    /// One value per proof for the binding circuit of the profile's native
+    /// extension: the $k(y)$ of the nested extension stage commitments it
+    /// recomputes, as [`binding_ky`](crate::internal::ky::binding_ky)
+    /// computes it, and none for a profile without one.
+    fn binding_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
+
     /// The zero value for stage claims.
     fn zero(&self) -> Self::Ky;
 }
@@ -451,8 +467,9 @@ pub trait KySource {
 /// Chains the $k(y)$ sources in the order required by [`build`],
 /// with `unified_ky` repeated [`NUM_UNIFIED_CIRCUITS`] times and `ones`
 /// once per endoscaling step and per extension circuit of profile `P` but
-/// its statement circuit, which takes `statement_ky`, followed by infinite
-/// zeros for stage claims.
+/// its statement circuit, which takes `statement_ky`, and its binding
+/// circuit, which takes `binding_ky`, followed by infinite zeros for stage
+/// claims.
 ///
 /// The `unified_ky` and `unified_bridge_ky` values are computed by
 /// [`ProofInputs::unified_ky_values`](super::stages::preamble::ProofInputs::unified_ky_values)
@@ -468,13 +485,21 @@ pub fn ky_values<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
             let extension = P::native_extension();
             let ones: Vec<S::Ky> = source.ones().collect();
             let statement: Vec<S::Ky> = source.statement_ky().collect();
+            let binding: Vec<S::Ky> = source.binding_ky().collect();
             assert!(
                 extension.statement.is_none() || statement.len() == ones.len(),
                 "a profile with a statement circuit takes one statement value per proof"
             );
+            assert!(
+                extension.binding.is_none() || binding.len() == ones.len(),
+                "a profile with a binding circuit takes one binding value per proof"
+            );
+            let bound = extension.binding.as_ref().map(|binding| binding.circuit);
             (0..extension.circuits.len() as u32).flat_map(move |circuit| {
                 if extension.statement == Some(circuit) {
                     statement.clone()
+                } else if bound == Some(circuit) {
+                    binding.clone()
                 } else {
                     ones.clone()
                 }
@@ -494,14 +519,17 @@ pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
     pub right_unified: Element<'dr, D>,
     pub left_statement: Option<Element<'dr, D>>,
     pub right_statement: Option<Element<'dr, D>>,
+    pub left_binding: Option<Element<'dr, D>>,
+    pub right_binding: Option<Element<'dr, D>>,
     pub one: Element<'dr, D>,
     pub zero: Element<'dr, D>,
 }
 
 impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
     /// Create a [`TwoProofKySource`] from child k(y) outputs, raw c values
-    /// and the statement circuit's k(y) values, `None` for a profile without
-    /// one.
+    /// and the statement and binding circuits' k(y) values, `None` for a
+    /// profile without one.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         dr: &mut D,
         left_raw_c: Element<'dr, D>,
@@ -510,6 +538,8 @@ impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
         right_ky: &super::stages::outer_error::ChildKyOutputs<'dr, D>,
         left_statement: Option<Element<'dr, D>>,
         right_statement: Option<Element<'dr, D>>,
+        left_binding: Option<Element<'dr, D>>,
+        right_binding: Option<Element<'dr, D>>,
     ) -> Self {
         Self {
             left_raw_c,
@@ -522,6 +552,8 @@ impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
             right_unified: right_ky.unified.clone(),
             left_statement,
             right_statement,
+            left_binding,
+            right_binding,
             one: Element::one(),
             zero: Element::zero(dr),
         }
@@ -555,6 +587,13 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
         self.left_statement
             .iter()
             .chain(self.right_statement.iter())
+            .cloned()
+    }
+
+    fn binding_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
+        self.left_binding
+            .iter()
+            .chain(self.right_binding.iter())
             .cloned()
     }
 

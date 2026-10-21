@@ -91,7 +91,7 @@ use super::super::{
     stages::{outer_error, preamble},
     unified::{self, OutputBuilder},
 };
-use crate::internal::fold_revdot;
+use crate::{internal::fold_revdot, profile::ProfiledCycle};
 
 /// Circuit that verifies layer 2 of the two-layer revdot reduction.
 ///
@@ -103,7 +103,7 @@ pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Param
     _marker: PhantomData<(C, R, FP)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     Circuit<C, R, HEADER_SIZE, FP>
 {
     /// Creates a new multi-stage circuit for layer 2 revdot verification.
@@ -139,7 +139,7 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     pub outer_error_witness: &'a outer_error::Witness<C, FP>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     MultiStageCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, FP>
 {
     type Last = outer_error::Stage<C, R, HEADER_SIZE, FP>;
@@ -168,8 +168,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     where
         Self: 'dr,
     {
-        let builder =
-            builder.skip_stage::<super::super::stages::points::BindingStage<C::NestedCurve>>()?;
+        let builder = builder
+            .skip_stage::<super::super::stages::points::BindingStage<C::NestedCurve, C::Profile>>(
+            )?;
         let (preamble, builder) = builder.add_stage::<preamble::Stage<C, R, HEADER_SIZE>>()?;
         let (outer_error, builder) =
             builder.add_stage::<outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;

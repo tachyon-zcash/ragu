@@ -66,6 +66,7 @@ fn check_targets<H: Header<Fp>>(
         let expected_nested = ky::NestedKy {
             c: pcd.proof().nested_c(),
             unified: ky::nested_ky(pcd.proof(), nested_y).unwrap(),
+            binding: None,
         };
         let (native, nested) = instance
             .targets::<HEADER_SIZE>(&challenges, &header, y, nested_y)

@@ -103,7 +103,7 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
         dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
-        let (binding, dr) = dr.add_stage::<BindingStage<C::NestedCurve>>()?;
+        let (binding, dr) = dr.add_stage::<BindingStage<C::NestedCurve, C::Profile>>()?;
         let (children, dr) = dr.add_stage::<ChildrenStage<C::NestedCurve, C::Profile>>()?;
         let (registry_wx, dr) = dr.add_stage::<RegistryWxStage<C::NestedCurve, C::Profile>>()?;
         let (ab, dr) = dr.add_stage::<AbStage<C::NestedCurve, C::Profile>>()?;

@@ -165,6 +165,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             // the proof (c_n and v_n derived from its polynomials), and the
             // claims bind it to those circuits' traces.
             let nested_ky = ky::nested_ky(pcd.proof(), y_nested)?;
+            let native_bound =
+                ky::nested_bound::<C::Profile, _>(|index| pcd.proof().native_rx_commitment(index));
             let ky_source = ky::NestedKy {
                 // The nested accumulator's claim is tautological here: its
                 // k(y) is derived from the very polynomials the claim checks.
@@ -175,6 +177,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                     &pcd.proof()[NestedRxComponent::AbB],
                 ),
                 unified: nested_ky,
+                // The nested binding circuit's claim holds its recomputation
+                // of the native extension stages it names to their
+                // commitments.
+                binding: ky::binding_ky_of(&native_bound, y_nested)?,
             };
             nested::ky_values::<C::Profile, _>(&ky_source)
                 .zip(nested_builder.a.iter().zip(nested_builder.b.iter()))

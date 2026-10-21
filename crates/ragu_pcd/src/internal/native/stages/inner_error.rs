@@ -17,7 +17,10 @@ use ragu_primitives::{
     vec::{FixedVec, Len},
 };
 
-use crate::internal::fold_revdot::{self, NumErrorTerms};
+use crate::{
+    internal::fold_revdot::{self, NumErrorTerms},
+    profile::ProfiledCycle,
+};
 
 /// Witness data for the inner error stage (layer 1).
 ///
@@ -47,7 +50,7 @@ pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Paramet
     _marker: PhantomData<(C, R, FP)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, FP>
 {
     type Parent = super::outer_error::Stage<C, R, HEADER_SIZE, FP>;

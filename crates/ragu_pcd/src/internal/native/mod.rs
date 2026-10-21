@@ -1117,14 +1117,11 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
             EvalFinalStaged => {
                 registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::final_mask()?)
             }
-            PointsBindingStage => {
-                registry.register_bonding(
-                    <stages::points::BindingStage<C::NestedCurve> as StageExt<
-                        C::CircuitField,
-                        R,
-                    >>::mask()?,
-                )
-            }
+            PointsBindingStage => registry.register_bonding(<stages::points::BindingStage<
+                C::NestedCurve,
+                C::Profile,
+            > as StageExt<C::CircuitField, R>>::mask(
+            )?),
             PointsChildrenStage => registry.register_bonding(<stages::points::ChildrenStage<
                 C::NestedCurve,
                 C::Profile,

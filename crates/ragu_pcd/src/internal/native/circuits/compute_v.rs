@@ -149,8 +149,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
     {
         // Set up multi-stage circuit pipeline: preamble -> query -> eval.
         // Each stage provides data needed for the v computation.
-        let builder =
-            builder.skip_stage::<super::super::stages::points::BindingStage<C::NestedCurve>>()?;
+        let builder = builder
+            .skip_stage::<super::super::stages::points::BindingStage<C::NestedCurve, C::Profile>>(
+            )?;
         let (preamble, builder) =
             builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
         let (query, builder) = builder.add_stage::<native_query::Stage<C, R, HEADER_SIZE>>()?;

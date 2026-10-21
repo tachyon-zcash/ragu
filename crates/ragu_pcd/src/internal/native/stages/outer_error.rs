@@ -18,7 +18,10 @@ use ragu_primitives::{
     vec::{CollectFixed, FixedVec, Len},
 };
 
-use crate::internal::fold_revdot::{self, NumErrorTerms};
+use crate::{
+    internal::fold_revdot::{self, NumErrorTerms},
+    profile::ProfiledCycle,
+};
 
 /// $k(Y)$ evaluation values for a single child proof.
 pub struct ChildKyValues<F> {
@@ -108,7 +111,7 @@ pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Paramet
     _marker: PhantomData<(C, R, FP)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, FP>
 {
     type Parent = super::preamble::Stage<C, R, HEADER_SIZE>;

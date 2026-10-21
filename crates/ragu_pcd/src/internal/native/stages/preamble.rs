@@ -23,7 +23,7 @@ use crate::{
     Proof,
     header::{Header, Suffix},
     internal::{ky, native::unified},
-    profile::Profile,
+    profile::{Profile, ProfiledCycle},
     step::{InternalStepIndex, internal::padded},
 };
 
@@ -355,13 +355,13 @@ pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
     for Stage<C, R, HEADER_SIZE>
 {
     // The native stage tree is rooted at the binding stage of the
     // endoscaling walk, so the preamble chain reserves it too (see
     // `stages::points`).
-    type Parent = super::points::BindingStage<C::NestedCurve>;
+    type Parent = super::points::BindingStage<C::NestedCurve, C::Profile>;
     type Witness<'source> = &'source Witness<'source, C, R, HEADER_SIZE>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _, C, HEADER_SIZE>];
 

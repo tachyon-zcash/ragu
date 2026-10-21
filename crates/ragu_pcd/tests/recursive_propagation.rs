@@ -462,26 +462,28 @@ pub(crate) mod support {
             coordinates(child.native_p_commitment()),
             "{side:?}: copied native endpoint"
         );
-        let nested = stage_wire_indices::<_, R, BindingStage<EpAffine>>(|stage| {
-            let child = match side {
-                Side::Left => &stage.left,
-                Side::Right => &stage.right,
-            };
-            let mut wires = Vec::new();
-            for point in [
-                &child.p,
-                &child.a,
-                &child.b,
-                &child.registry_xy,
-                &child.challenges,
-            ]
-            .into_iter()
-            .chain(child.bridges.iter())
-            {
-                wires.extend(wires_of(point)?);
-            }
-            Ok(wires)
-        })?;
+        let nested = stage_wire_indices::<_, R, BindingStage<EpAffine, crate::profile::Standard>>(
+            |stage| {
+                let child = match side {
+                    Side::Left => &stage.left,
+                    Side::Right => &stage.right,
+                };
+                let mut wires = Vec::new();
+                for point in [
+                    &child.p,
+                    &child.a,
+                    &child.b,
+                    &child.registry_xy,
+                    &child.challenges,
+                ]
+                .into_iter()
+                .chain(child.bridges.iter())
+                {
+                    wires.extend(wires_of(point)?);
+                }
+                Ok(wires)
+            },
+        )?;
         let reader = StageReader::new(&parent.native_points_binding_rx);
         let expected: Vec<_> = [
             child.nested_p_commitment(),
@@ -1570,7 +1572,10 @@ mod commitments {
 
         // The root stage, wire by wire, against the children's caches.
         let binding = StageReader::<ragu_core::pasta::Fp, R>::new(&parent[RxIndex::PointsBinding]);
-        let wires = stage_wire_indices::<_, R, BindingStage<Nested>>(|stage| wires_of(&stage))?;
+        let wires =
+            stage_wire_indices::<_, R, BindingStage<Nested, crate::profile::Standard>>(|stage| {
+                wires_of(&stage)
+            })?;
         let held: alloc::vec::Vec<ragu_core::pasta::Fp> =
             wires.iter().map(|&i| binding.read(i)).collect();
         let expected: alloc::vec::Vec<ragu_core::pasta::Fp> = [left, right]

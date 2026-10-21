@@ -122,12 +122,18 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revd
 }
 
 /// Witness for the beta binding circuit.
-pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
+pub struct Witness<
+    'a,
+    C: ProfiledCycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    FP: fold_revdot::Parameters,
+> {
     /// The unified instance, for the instance and accumulated coverage.
     pub unified: unified::Instance<C>,
     /// The binding stage: the children's walked commitments that must
     /// match their unified instances.
-    pub binding: &'a super::super::stages::points::BindingWitness<C::NestedCurve>,
+    pub binding: &'a super::super::stages::points::BindingWitness<C::NestedCurve, C::Profile>,
     /// Witness for the preamble stage (provides the children's `pre_beta`
     /// and exported bindings).
     pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
@@ -164,7 +170,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
     where
         Self: 'dr,
     {
-        let (binding, builder) = builder.add_stage::<BindingStage<C::NestedCurve>>()?;
+        let (binding, builder) = builder.add_stage::<BindingStage<C::NestedCurve, C::Profile>>()?;
         let (preamble, builder) =
             builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
         let (outer_error, builder) =

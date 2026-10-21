@@ -386,6 +386,10 @@ mod folding {
             [self.left_unified, self.right_unified].into_iter()
         }
 
+        fn binding_ky(&self) -> impl Iterator<Item = Fq> + Clone {
+            core::iter::empty()
+        }
+
         fn zero(&self) -> Fq {
             Fq::ZERO
         }
@@ -622,6 +626,8 @@ mod folding {
                     right_c,
                     left_unified,
                     right_unified,
+                    None,
+                    None,
                 );
                 let mut ky = nested::claims::ky_values::<crate::profile::Standard, _>(&ky_source);
 

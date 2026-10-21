@@ -35,8 +35,9 @@
 //! bondings after the fuse's masks, fold a circuit's claim as a step's,
 //! and the proof carries the polynomials. An extension may name a
 //! statement circuit, whose claim binds an internal step's output header
-//! to what the extension verified. No profile declares an extension yet;
-//! [`Aggregator`] says why.
+//! to what the extension verified, and a binding circuit, whose claim
+//! binds its side's view of the other side's stages to their commitments.
+//! No profile declares an extension yet; [`Aggregator`] says why.
 
 use alloc::vec::Vec;
 use core::{any::type_name, fmt, marker::PhantomData};
@@ -256,13 +257,16 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     ///
     /// Fails if an extension's rx count differs from its constant, so that a
     /// profile declaring one without the other does not lay out a proof; if
-    /// either extension is not [consistent](Extension::is_consistent); or if
+    /// either extension is not [consistent](Extension::is_consistent); if
     /// the nested extension names a statement circuit, which only the native
-    /// side carries.
+    /// side carries; or if an extension's binding names a stage the other
+    /// extension does not have.
     fn check() -> Result<()> {
-        for (side, declared, extension) in [
-            ("native", Self::NATIVE_EXTENSION, Self::native_extension()),
-            ("nested", Self::NESTED_EXTENSION, Self::nested_extension()),
+        let native = Self::native_extension();
+        let nested = Self::nested_extension();
+        for (side, declared, extension, other) in [
+            ("native", Self::NATIVE_EXTENSION, &native, &nested),
+            ("nested", Self::NESTED_EXTENSION, &nested, &native),
         ] {
             if declared != extension.rx() {
                 return Err(Error::Initialization(
@@ -278,8 +282,21 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
                     alloc::format!("the profile's {side} extension is not well formed").into(),
                 ));
             }
+            if let Some(binding) = &extension.binding
+                && binding
+                    .stages
+                    .iter()
+                    .any(|&stage| (stage as usize) >= other.stages)
+            {
+                return Err(Error::Initialization(
+                    alloc::format!(
+                        "the profile's {side} extension binds a stage the other side does not have"
+                    )
+                    .into(),
+                ));
+            }
         }
-        if Self::nested_extension().statement.is_some() {
+        if nested.statement.is_some() {
             return Err(Error::Initialization(
                 "only the native extension carries a statement circuit".into(),
             ));
@@ -318,7 +335,8 @@ impl<F: Field, R: Rank> Default for ExtensionRxs<F, R> {
 /// circuits it names, as the fuse's final masks do, and has none. A circuit's claim takes its own rx polynomial and the
 /// stages it loads, with $k(y) = 1$ as the fuse's steps have, since an
 /// extension circuit carries no instance of its own; the statement
-/// circuit's $k(y)$ is instead the output header it exposes.
+/// circuit's $k(y)$ is instead the output header it exposes, and the
+/// binding circuit's the other side's stage commitments it exposes.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Extension {
     /// Each circuit's stages, by index among the stages, in the order the
@@ -335,6 +353,29 @@ pub struct Extension {
     /// $k(y)$ binds the proof's own output header to it. `None` for any
     /// other extension, and always on the nested side.
     pub statement: Option<u32>,
+    /// The binding circuit, for an extension whose circuits take values the
+    /// other side's extension computes: the circuit whose public output is
+    /// its recomputation of the other side's stages, so that its claim's
+    /// $k(y)$ holds it to the commitments the proof carries for them.
+    /// `None` for an extension that binds nothing.
+    pub binding: Option<Binding>,
+}
+
+/// An extension's binding circuit: the circuit, by index among the
+/// extension's circuits, whose public output is one point per stage of
+/// `stages`, the other side's extension stages by index in that extension,
+/// each the circuit's recomputation of that stage's commitment. The
+/// claim's $k(y)$ is the $k(y)$ of those stages' commitments as the proof
+/// carries them, so the claim holds only if the recomputation matches: the
+/// values the circuit's side took from the other side are the ones the
+/// other side's stages hold.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Binding {
+    /// The binding circuit, by index among the extension's circuits.
+    pub circuit: u32,
+    /// The other side's extension stages the circuit's output points
+    /// recompute, by index among that extension's stages, in output order.
+    pub stages: Vec<u32>,
 }
 
 impl Extension {
@@ -344,6 +385,7 @@ impl Extension {
         stages: 0,
         final_masks: Vec::new(),
         statement: None,
+        binding: None,
     };
 
     /// Whether the extension adds nothing.
@@ -376,14 +418,18 @@ impl Extension {
     }
 
     /// Whether the declaration is well formed: every index the circuits,
-    /// final masks and statement name exists; neither a circuit nor a final
-    /// mask names anything twice; every circuit that loads a stage is named
+    /// final masks, statement and binding name exists; neither a circuit
+    /// nor a final mask names anything twice, nor the binding a stage
+    /// twice; the statement and binding circuits differ and the binding
+    /// names at least one stage; every circuit that loads a stage is named
     /// by exactly one final mask and a circuit that loads none by no final
     /// mask; and a final mask's circuits share their last stage. A stage's
     /// final mask confines the traces of the circuits whose last stage it is
     /// to the gates after it, so a circuit under no final mask has a trace
     /// that can reach into the stages it loads, and one under another
-    /// stage's is checked against the wrong gates.
+    /// stage's is checked against the wrong gates. Whether the binding's
+    /// stages exist is the other extension's to say, which
+    /// [`Profile::check`] asks.
     pub fn is_consistent(&self) -> bool {
         fn distinct(values: &[u32]) -> bool {
             values
@@ -403,7 +449,13 @@ impl Extension {
                 .all(|&circuit| (circuit as usize) < self.circuits.len())
             && self
                 .statement
-                .is_none_or(|circuit| (circuit as usize) < self.circuits.len());
+                .is_none_or(|circuit| (circuit as usize) < self.circuits.len())
+            && self.binding.as_ref().is_none_or(|binding| {
+                (binding.circuit as usize) < self.circuits.len()
+                    && self.statement != Some(binding.circuit)
+                    && !binding.stages.is_empty()
+                    && distinct(&binding.stages)
+            });
         in_range
             && self.circuits.iter().all(|stages| distinct(stages))
             && self.final_masks.iter().all(|mask| distinct(mask))
@@ -707,16 +759,64 @@ pub(crate) mod testing {
     use ragu_circuits::{
         Circuit, CircuitExt, WithAux,
         registry::CircuitIndex,
-        staging::{MultiStage, StageExt},
+        staging::{MultiStage, MultiStageCircuit, Stage, StageBuilder, StageExt},
     };
     use ragu_core::{
         Coeff,
         drivers::{Driver, DriverValue},
-        gadgets::Bound,
+        gadgets::{Bound, Kind},
+        maybe::Maybe,
     };
-    use ragu_primitives::Element;
+    use ragu_primitives::{
+        Boolean, Element, NonzeroBank, Point, allocator,
+        vec::{ConstLen, FixedVec},
+    };
+    use udon::curve::EndomorphismAffine as Affine;
 
     use super::*;
+    use crate::step::{Encoded, Index, Step};
+
+    /// A step with unit headers and no witness.
+    pub(crate) struct UnitStep;
+
+    impl<C: Cycle> Step<C> for UnitStep {
+        const INDEX: Index = Index::new(0);
+        type Witness<'source> = ();
+        type Aux<'source> = ();
+        type Left = ();
+        type Right = ();
+        type Output = ();
+
+        fn witness<
+            'dr,
+            'source: 'dr,
+            D: Driver<'dr, F = C::CircuitField>,
+            const HEADER_SIZE: usize,
+        >(
+            &self,
+            dr: &mut D,
+            _: DriverValue<D, ()>,
+            left: DriverValue<D, ()>,
+            right: DriverValue<D, ()>,
+        ) -> Result<(
+            (
+                Encoded<'dr, D, (), HEADER_SIZE>,
+                Encoded<'dr, D, (), HEADER_SIZE>,
+                Encoded<'dr, D, (), HEADER_SIZE>,
+            ),
+            DriverValue<D, ()>,
+            DriverValue<D, ()>,
+        )> {
+            let allocator = &mut allocator::Standard::new();
+            let left = Encoded::new(dr, allocator, left)?;
+            let right = Encoded::new(dr, allocator, right)?;
+            Ok((
+                (left, right, Encoded::from_gadget(())),
+                D::unit(),
+                D::unit(),
+            ))
+        }
+    }
 
     /// Two native circuits over two stages, each under its last stage's
     /// final mask, and one nested circuit over one stage under one final
@@ -741,6 +841,7 @@ pub(crate) mod testing {
                 stages: 2,
                 final_masks: vec![vec![0], vec![1]],
                 statement: None,
+                binding: None,
             }
         }
 
@@ -750,6 +851,7 @@ pub(crate) mod testing {
                 stages: 1,
                 final_masks: vec![vec![0]],
                 statement: None,
+                binding: None,
             }
         }
     }
@@ -776,6 +878,7 @@ pub(crate) mod testing {
                 stages: 2,
                 final_masks: vec![vec![0], vec![1]],
                 statement: Some(1),
+                binding: None,
             }
         }
     }
@@ -818,6 +921,7 @@ pub(crate) mod testing {
                 stages: 1,
                 final_masks: vec![vec![0]],
                 statement: None,
+                binding: None,
             }
         }
 
@@ -962,6 +1066,7 @@ pub(crate) mod testing {
                 stages: 0,
                 final_masks: vec![],
                 statement: None,
+                binding: None,
             }
         }
 
@@ -1023,12 +1128,311 @@ pub(crate) mod testing {
             trivial_rxs(registry, circuit.circuit_index::<Self>(), rng)
         }
     }
+
+    /// The digits [`Crossing`] sends across the cycle: few, so that summing
+    /// their generators is a few gates.
+    pub(crate) const DIGITS: usize = 4;
+
+    /// The nested side's one stage under [`Crossing`]: the signed digits,
+    /// each $\pm 1$.
+    pub(crate) struct DigitsStage<F, R>(PhantomData<fn() -> (F, R)>);
+
+    impl<F, R> Default for DigitsStage<F, R> {
+        fn default() -> Self {
+            DigitsStage(PhantomData)
+        }
+    }
+
+    impl<F: Field, R: Rank> Stage<F, R> for DigitsStage<F, R> {
+        type Parent = ();
+        type Witness<'source> = &'source [F; DIGITS];
+        type OutputKind = Kind![F; FixedVec<Element<'_, _>, ConstLen<DIGITS>>];
+
+        fn values() -> usize {
+            DIGITS
+        }
+
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+            &self,
+            dr: &mut D,
+            witness: DriverValue<D, Self::Witness<'source>>,
+        ) -> Result<Bound<'dr, D, Self::OutputKind>>
+        where
+            Self: 'dr,
+        {
+            FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, &mut (), witness.as_ref().map(|digits| digits[i]))
+            })
+        }
+    }
+
+    /// The nested side's one circuit under [`Crossing`]: over the digits
+    /// stage, holding each digit to $\pm 1$.
+    pub(crate) struct DigitsCircuit<F, R>(PhantomData<fn() -> (F, R)>);
+
+    impl<F: Field, R: Rank> MultiStageCircuit<F, R> for DigitsCircuit<F, R> {
+        type Last = DigitsStage<F, R>;
+        type Instance<'source> = ();
+        type Witness<'source> = &'source [F; DIGITS];
+        type Output = Kind![F; ()];
+        type Aux<'source> = ();
+
+        fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+            &self,
+            _: &mut D,
+            _: DriverValue<D, Self::Instance<'source>>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            Ok(())
+        }
+
+        fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+            &self,
+            dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
+            witness: DriverValue<D, Self::Witness<'source>>,
+        ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>>
+        where
+            Self: 'dr,
+        {
+            let (digits, dr) = dr.add_stage::<DigitsStage<F, R>>()?;
+            let dr = dr.finish();
+            let digits = digits.unenforced(dr, witness)?;
+            for digit in digits.iter() {
+                digit
+                    .square(dr)?
+                    .add_coeff(dr, &Element::one(), Coeff::NegativeOne)
+                    .enforce_zero(dr)?;
+            }
+            Ok(WithAux::new((), D::unit()))
+        }
+    }
+
+    /// The native side's one circuit under [`Crossing`], its binding
+    /// circuit: its public output is the digits stage's commitment
+    /// recomputed from the bits it is given, the digits' generators summed
+    /// by sign, as the other side's digit $2b - 1$ scales its generator.
+    pub(crate) struct BitsCircuit<P> {
+        /// Each digit's generator: the digits stage's commitment with that
+        /// digit one and the others zero.
+        generators: Vec<P>,
+    }
+
+    impl<P: Affine> BitsCircuit<P> {
+        /// The circuit over the digits stage's generators at rank `R`.
+        fn new<C, R>(params: &C::Params) -> Result<Self>
+        where
+            C: IpaCycle<NestedCurve = P>,
+            P: Affine<Scalar = C::ScalarField>,
+            R: Rank,
+        {
+            let generators = C::nested_generators(params);
+            let zeros = [C::ScalarField::ZERO; DIGITS];
+            let commit = |digits: &[C::ScalarField; DIGITS]| {
+                DigitsStage::<C::ScalarField, R>::rx(C::ScalarField::ZERO, digits)
+                    .map(|rx| rx.commit_to_affine(generators))
+            };
+            assert!(
+                commit(&zeros)?.coordinates().is_none(),
+                "the digits stage has no term beyond the digits"
+            );
+            let generators = (0..DIGITS)
+                .map(|i| {
+                    let mut digits = zeros;
+                    digits[i] = C::ScalarField::ONE;
+                    commit(&digits)
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok(BitsCircuit { generators })
+        }
+    }
+
+    impl<P: Affine> Circuit<P::Base> for BitsCircuit<P> {
+        type Instance<'source> = P;
+        type Witness<'source> = &'source [bool; DIGITS];
+        type Output = Kind![P::Base; Point<'_, _, P>];
+        type Aux<'source> = ();
+
+        fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = P::Base>>(
+            &self,
+            dr: &mut D,
+            instance: DriverValue<D, Self::Instance<'source>>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            Point::alloc(dr, instance)
+        }
+
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = P::Base>>(
+            &self,
+            dr: &mut D,
+            witness: DriverValue<D, Self::Witness<'source>>,
+        ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>>
+        {
+            let sum = NonzeroBank::scope(dr, |dr, bank| {
+                let mut sum: Option<Point<'dr, D, P>> = None;
+                for (i, &generator) in self.generators.iter().enumerate() {
+                    let bit = Boolean::alloc(dr, &mut (), witness.as_ref().map(|bits| bits[i]))?;
+                    let negate = bit.not(dr);
+                    let term = Point::constant(dr, generator)?.conditional_negate(dr, &negate)?;
+                    sum = Some(match sum {
+                        None => term,
+                        Some(sum) => sum.add_incomplete(dr, &term, bank)?,
+                    });
+                }
+                sum.ok_or_else(|| Error::InvalidWitness("a digit".into()))
+            })?;
+            Ok(WithAux::new(sum, D::unit()))
+        }
+    }
+
+    /// What [`Crossing`]'s prover holds: the parameters, for the digits'
+    /// generators, and each side's bits, so that a test can hand the two
+    /// sides different values.
+    pub(crate) struct CrossingContext<'params, Base: Cycle> {
+        pub(crate) params: &'params Base::Params,
+        pub(crate) native: [bool; DIGITS],
+        pub(crate) nested: [bool; DIGITS],
+    }
+
+    /// The signed digits of `bits`: $2b - 1$ each.
+    fn signed<F: Field>(bits: &[bool; DIGITS]) -> [F; DIGITS] {
+        bits.map(|bit| if bit { F::ONE } else { -F::ONE })
+    }
+
+    /// One binding circuit and no stage on the native side, exposing the
+    /// digits stage's commitment recomputed from the native bits, and one
+    /// circuit over the digits stage on the nested side, holding the
+    /// nested bits' signed digits: the profile whose two sides a test can
+    /// make agree or disagree, at a rank above the production one.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub(crate) struct Crossing;
+
+    impl Profile for Crossing {
+        const NATIVE_EXTENSION: usize = 1;
+        const NESTED_EXTENSION: usize = 2;
+
+        type Context<'params, Base, R, B>
+            = CrossingContext<'params, Base>
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+            R: Rank,
+            B: SelectableBackend;
+
+        fn native_extension() -> Extension {
+            Extension {
+                circuits: vec![vec![]],
+                stages: 0,
+                final_masks: vec![],
+                statement: None,
+                binding: Some(Binding {
+                    circuit: 0,
+                    stages: vec![0],
+                }),
+            }
+        }
+
+        fn nested_extension() -> Extension {
+            Extension {
+                circuits: vec![vec![0]],
+                stages: 1,
+                final_masks: vec![vec![0]],
+                statement: None,
+                binding: None,
+            }
+        }
+
+        fn register_native_circuit<'params, Base, R: Rank, const HEADER_SIZE: usize>(
+            circuit: usize,
+            registry: RegistryBuilder<'params, Base::CircuitField, R>,
+            params: &'params Base::Params,
+        ) -> Result<RegistryBuilder<'params, Base::CircuitField, R>>
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        {
+            assert_eq!(circuit, 0);
+            registry.register_internal_circuit(BitsCircuit::new::<Base, R>(params)?)
+        }
+
+        fn register_nested_circuit<'params, Base, R: Rank>(
+            circuit: usize,
+            registry: RegistryBuilder<'params, Base::ScalarField, R>,
+            _: &'params Base::Params,
+        ) -> Result<RegistryBuilder<'params, Base::ScalarField, R>>
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        {
+            assert_eq!(circuit, 0);
+            registry.register_internal_circuit(MultiStage::new(
+                DigitsCircuit::<Base::ScalarField, R>(PhantomData),
+            ))
+        }
+
+        fn register_nested_bonding<'params, Base, R: Rank>(
+            bonding: usize,
+            registry: RegistryBuilder<'params, Base::ScalarField, R>,
+            _: &'params Base::Params,
+        ) -> Result<RegistryBuilder<'params, Base::ScalarField, R>>
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        {
+            let mask = match bonding {
+                0 => DigitsStage::<Base::ScalarField, R>::mask()?,
+                1 => DigitsStage::<Base::ScalarField, R>::final_mask()?,
+                _ => unreachable!("two bondings"),
+            };
+            Ok(registry.register_bonding(mask))
+        }
+
+        fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
+            context: &Self::Context<'params, Base, R, B>,
+            registry: &Registry<'params, Base::CircuitField, R>,
+            rng: &mut RNG,
+        ) -> Result<ExtensionRxs<Base::CircuitField, R>>
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+            R: Rank,
+            B: SelectableBackend,
+            RNG: CryptoRng,
+        {
+            let (trace, ()) = BitsCircuit::new::<Base, R>(context.params)?
+                .trace(&context.native)?
+                .into_parts();
+            let circuit = native::InternalCircuitIndex::ExtensionCircuit(0);
+            Ok(ExtensionRxs {
+                circuits: vec![registry.assemble(&trace, circuit.circuit_index::<Self>(), rng)?],
+                stages: Vec::new(),
+            })
+        }
+
+        fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
+            context: &Self::Context<'params, Base, R, B>,
+            registry: &Registry<'params, Base::ScalarField, R>,
+            rng: &mut RNG,
+        ) -> Result<ExtensionRxs<Base::ScalarField, R>>
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+            R: Rank,
+            B: SelectableBackend,
+            RNG: CryptoRng,
+        {
+            let digits = signed::<Base::ScalarField>(&context.nested);
+            let (trace, ()) = MultiStage::new(DigitsCircuit::<Base::ScalarField, R>(PhantomData))
+                .trace(&digits)?
+                .into_parts();
+            let circuit = nested::InternalCircuitIndex::ExtensionCircuit(0);
+            Ok(ExtensionRxs {
+                circuits: vec![registry.assemble(&trace, circuit.circuit_index::<Self>(), rng)?],
+                // Unblinded, so that the native side can recompute it.
+                stages: vec![DigitsStage::<Base::ScalarField, R>::rx(
+                    Base::ScalarField::ZERO,
+                    &digits,
+                )?],
+            })
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        testing::{Mismatched, Wider},
+        testing::{Crossing, Mismatched, Wider},
         *,
     };
 
@@ -1037,6 +1441,7 @@ mod tests {
         Standard::check().unwrap();
         Aggregator::check().unwrap();
         Wider::check().unwrap();
+        Crossing::check().unwrap();
         assert!(Wider::native_extension().is_consistent());
         assert!(Wider::nested_extension().is_consistent());
         assert!(Mismatched::check().is_err());
@@ -1054,6 +1459,7 @@ mod tests {
             stages,
             final_masks,
             statement,
+            binding: None,
         };
         // Two staged circuits, each under its last stage's final mask, one
         // without stages under none, and a statement circuit.
@@ -1110,6 +1516,7 @@ mod tests {
                     stages: 1,
                     final_masks: vec![vec![0]],
                     statement: Some(1),
+                    binding: None,
                 }
             }
         }
@@ -1135,6 +1542,7 @@ mod tests {
                     stages: 1,
                     final_masks: vec![vec![0]],
                     statement: Some(0),
+                    binding: None,
                 }
             }
         }
@@ -1311,57 +1719,10 @@ mod tests {
     #[test]
     fn an_extension_proves_verifies_and_compresses() -> Result<()> {
         use ragu_circuits::polynomials::R;
-        use ragu_core::drivers::{Driver, DriverValue};
-        use ragu_primitives::allocator;
         use rand::{SeedableRng, rngs::StdRng};
 
-        use super::testing::Proving;
-        use crate::{
-            ApplicationBuilder,
-            step::{Encoded, Index, Step},
-        };
-
-        /// A step with unit headers and no witness.
-        struct UnitStep;
-
-        impl<C: Cycle> Step<C> for UnitStep {
-            const INDEX: Index = Index::new(0);
-            type Witness<'source> = ();
-            type Aux<'source> = ();
-            type Left = ();
-            type Right = ();
-            type Output = ();
-
-            fn witness<
-                'dr,
-                'source: 'dr,
-                D: Driver<'dr, F = C::CircuitField>,
-                const HEADER_SIZE: usize,
-            >(
-                &self,
-                dr: &mut D,
-                _: DriverValue<D, ()>,
-                left: DriverValue<D, ()>,
-                right: DriverValue<D, ()>,
-            ) -> Result<(
-                (
-                    Encoded<'dr, D, (), HEADER_SIZE>,
-                    Encoded<'dr, D, (), HEADER_SIZE>,
-                    Encoded<'dr, D, (), HEADER_SIZE>,
-                ),
-                DriverValue<D, ()>,
-                DriverValue<D, ()>,
-            )> {
-                let allocator = &mut allocator::Standard::new();
-                let left = Encoded::new(dr, allocator, left)?;
-                let right = Encoded::new(dr, allocator, right)?;
-                Ok((
-                    (left, right, Encoded::from_gadget(())),
-                    D::unit(),
-                    D::unit(),
-                ))
-            }
-        }
+        use super::testing::{Proving, UnitStep};
+        use crate::ApplicationBuilder;
 
         const HEADER_SIZE: usize = 4;
         assert_ne!(Shape::of::<Proving>(), Shape::of::<Standard>());
@@ -1376,6 +1737,56 @@ mod tests {
         assert!(app.verify(&fused, &mut rng)?);
         let compressed = app.compress(&fused, &mut rng)?;
         assert!(app.verify_compressed(&compressed)?);
+        Ok(())
+    }
+
+    /// A binding circuit's claim holds only if its side's values are the
+    /// ones the other side's stage holds: a proof whose two sides disagree
+    /// fails the decider and the compressed verifier, and so does a parent
+    /// over it.
+    #[test]
+    fn a_binding_holds_the_sides_to_each_other() -> Result<()> {
+        use ragu_circuits::polynomials::R;
+        use rand::{SeedableRng, rngs::StdRng};
+
+        use super::testing::{Crossing, CrossingContext, UnitStep};
+        use crate::ApplicationBuilder;
+
+        let params = crate::pasta::baked();
+        let application = |native, nested| {
+            ApplicationBuilder::<Profiled<Pasta, Crossing>, R<14>, 4>::new()
+                .register(UnitStep)?
+                .finalize_with(
+                    params,
+                    CrossingContext {
+                        params,
+                        native,
+                        nested,
+                    },
+                )
+        };
+        let bits = [true, false, false, true];
+        let mut other = bits;
+        other[1] = !other[1];
+
+        let honest = application(bits, bits)?;
+        let mut rng = StdRng::seed_from_u64(15);
+        let (left, ()) = honest.seed(&mut rng, UnitStep, ())?;
+        let (right, ()) = honest.seed(&mut rng, UnitStep, ())?;
+        let (fused, ()) = honest.fuse(&mut rng, UnitStep, (), left.clone(), right)?;
+        assert!(honest.verify(&fused, &mut rng)?);
+        let compressed = honest.compress(&fused, &mut rng)?;
+        assert!(honest.verify_compressed(&compressed)?);
+
+        // The same circuits, with the native side given other bits than the
+        // digits the nested side holds.
+        let disagreeing = application(bits, other)?;
+        let (leaf, ()) = disagreeing.seed(&mut rng, UnitStep, ())?;
+        assert!(!honest.verify(&leaf, &mut rng)?);
+        let compressed = honest.compress(&leaf, &mut rng)?;
+        assert!(!honest.verify_compressed(&compressed)?);
+        let (parent, ()) = honest.fuse(&mut rng, UnitStep, (), leaf, left)?;
+        assert!(!honest.verify(&parent, &mut rng)?);
         Ok(())
     }
 }
