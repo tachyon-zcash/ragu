@@ -739,7 +739,10 @@ fn test_standard_lists_are_the_constants() {
 
 /// An extension circuit's claim takes its rx and the stages it loads per
 /// proof, an extension stage's bonding its rx across proofs, and a final
-/// mask's the circuits it names, with the circuits' $k(y)$ one.
+/// mask's the circuits it names, with the circuits' $k(y)$ one but the
+/// statement and binding circuits', which take their own values at their
+/// circuits on either side; and the inner collapse claim loads the binding
+/// stage for a profile whose native extension binds.
 #[test]
 fn test_extension_claims_follow_the_declaration() {
     use alloc::vec::Vec;
@@ -752,11 +755,17 @@ fn test_extension_claims_follow_the_declaration() {
             claims::Source,
             native::{
                 RxComponent::{self, Rx},
-                RxIndex::{ExtensionCircuit, ExtensionStage},
+                RxIndex::{
+                    ExtensionCircuit, ExtensionStage, InnerCollapse, InnerError, OuterError,
+                    PointsBinding, Preamble,
+                },
                 claims::{KySource, Processor, build, ky_values},
             },
         },
-        profile::{Profile, testing::Wider},
+        profile::{
+            Profile,
+            testing::{Crossing, CrossingBack, Stated, Wider},
+        },
     };
 
     /// Two proofs' components, each tagged with its proof.
@@ -784,7 +793,7 @@ fn test_extension_claims_follow_the_declaration() {
         bondings: Vec<Claim>,
     }
 
-    impl Processor<Wider, (usize, RxComponent), CircuitIndex> for Recorder {
+    impl<P: Profile> Processor<P, (usize, RxComponent), CircuitIndex> for Recorder {
         fn raw_claim(&mut self, _: (usize, RxComponent), _: (usize, RxComponent)) {}
 
         fn circuit_claim(&mut self, _: CircuitIndex, _: (usize, RxComponent)) {}
@@ -909,6 +918,112 @@ fn test_extension_claims_follow_the_declaration() {
             .all(|&ky| ky == 1)
     );
     assert!(targets[first_one + ones..].iter().all(|&ky| ky == 0));
+
+    // The statement and binding circuits take their own values at their
+    // circuits, after the walk's ones and before the stages' zeros.
+    fn native_targets<P: Profile>() -> Vec<u32> {
+        let steps = native::NumSteps::<P>::len();
+        let circuits = P::native_extension().circuits.len();
+        let targets: Vec<u32> = ky_values::<P, _>(&Tagged)
+            .take(2 * InternalCircuitIndex::num::<P>() + 8)
+            .collect();
+        let walk = targets.iter().position(|&ky| ky == 1).unwrap();
+        let extension = walk + 2 * steps;
+        assert!(targets[walk..extension].iter().all(|&ky| ky == 1));
+        assert!(
+            targets[extension + 2 * circuits..]
+                .iter()
+                .all(|&ky| ky == 0)
+        );
+        targets[extension..extension + 2 * circuits].to_vec()
+    }
+    assert_eq!(native_targets::<Wider>(), [1, 1, 1, 1]);
+    assert_eq!(native_targets::<Stated>(), [1, 1, 60, 61]);
+    assert_eq!(native_targets::<Crossing>(), [70, 71]);
+    assert_eq!(native_targets::<CrossingBack>(), [1, 1]);
+
+    /// Nested $k(y)$ values that tell the sources apart.
+    struct NestedTagged;
+
+    impl nested::claims::KySource for NestedTagged {
+        type Ky = u32;
+
+        fn raw_c(&self) -> impl Iterator<Item = u32> {
+            [10, 11].into_iter()
+        }
+
+        fn ones(&self) -> impl Iterator<Item = u32> + Clone {
+            [1, 1].into_iter()
+        }
+
+        fn unified_ky(&self) -> impl Iterator<Item = u32> + Clone {
+            [40, 41].into_iter()
+        }
+
+        fn binding_ky(&self) -> impl Iterator<Item = u32> + Clone {
+            [70, 71].into_iter()
+        }
+
+        fn zero(&self) -> u32 {
+            0
+        }
+    }
+
+    fn nested_targets<P: Profile>() -> Vec<u32> {
+        let steps = nested::NumSteps::<P>::len();
+        let circuits = P::nested_extension().circuits.len();
+        let extension = 2 + 2 * steps + 2 * nested::NUM_INSTANCE_CIRCUITS;
+        let targets: Vec<u32> = nested::claims::ky_values::<P, _>(&NestedTagged)
+            .take(extension + 2 * circuits + 8)
+            .collect();
+        assert!(targets[2..2 + 2 * steps].iter().all(|&ky| ky == 1));
+        assert!(
+            targets[extension + 2 * circuits..]
+                .iter()
+                .all(|&ky| ky == 0)
+        );
+        targets[extension..extension + 2 * circuits].to_vec()
+    }
+    assert_eq!(nested_targets::<Wider>(), [1, 1]);
+    assert_eq!(nested_targets::<Crossing>(), [1, 1]);
+    assert_eq!(nested_targets::<CrossingBack>(), [70, 71]);
+
+    // The inner collapse claim loads the binding stage for a profile whose
+    // native extension binds, and not otherwise.
+    let collapse = |circuits: &[Claim]| -> Vec<Vec<(usize, RxComponent)>> {
+        circuits
+            .iter()
+            .filter(|(id, _)| *id == InternalCircuitIndex::InnerCollapseCircuit)
+            .map(|(_, rxs)| rxs.clone())
+            .collect()
+    };
+    for (proof, rxs) in collapse(&recorder.circuits).into_iter().enumerate() {
+        assert_eq!(
+            rxs,
+            [
+                Rx(InnerCollapse),
+                Rx(Preamble),
+                Rx(InnerError),
+                Rx(OuterError)
+            ]
+            .map(|component| (proof, component))
+        );
+    }
+    let mut bound = Recorder::default();
+    build::<Crossing, _, _>(&TwoProofs, &mut bound).unwrap();
+    for (proof, rxs) in collapse(&bound.circuits).into_iter().enumerate() {
+        assert_eq!(
+            rxs,
+            [
+                Rx(InnerCollapse),
+                Rx(PointsBinding),
+                Rx(Preamble),
+                Rx(InnerError),
+                Rx(OuterError)
+            ]
+            .map(|component| (proof, component))
+        );
+    }
 }
 
 /// The hooks register a profile's extension, and an application over a

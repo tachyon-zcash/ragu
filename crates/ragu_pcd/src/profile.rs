@@ -418,6 +418,15 @@ pub struct Extension {
 /// carries them, so the claim holds only if the recomputation matches: the
 /// values the circuit's side took from the other side are the ones the
 /// other side's stages hold.
+///
+/// The circuit recomputes a commitment from the stage's values, so the
+/// other side commits a bound stage unblinded, and the commitment then
+/// hides nothing of the values, or the circuit takes the stage's blinding
+/// as a witness and adds its term. Nothing checks the circuit's output
+/// against the declaration: a circuit exposing other points, or the stages
+/// in another order, fails the claim for every proof rather than passing
+/// one it should not, since the $k(y)$ is computed from the commitments
+/// the proof carries either way.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Binding {
     /// The binding circuit, by index among the extension's circuits.
@@ -813,7 +822,7 @@ pub(crate) mod testing {
         staging::{MultiStage, MultiStageCircuit, Stage, StageBuilder, StageExt},
     };
     use ragu_core::{
-        Coeff,
+        Coeff, FixedGenerators,
         drivers::{Driver, DriverValue},
         gadgets::{Bound, Kind},
         maybe::Maybe,
@@ -1262,10 +1271,11 @@ pub(crate) mod testing {
         }
     }
 
-    /// The native side's one circuit under [`Crossing`], its binding
-    /// circuit: its public output is the digits stage's commitment
-    /// recomputed from the bits it is given, the digits' generators summed
-    /// by sign, as the other side's digit $2b - 1$ scales its generator.
+    /// The binding circuit under [`Crossing`] and [`CrossingBack`], on the
+    /// side without the digits stage: its public output is the digits
+    /// stage's commitment recomputed from the bits it is given, the digits'
+    /// generators summed by sign, as the other side's digit $2b - 1$ scales
+    /// its generator.
     pub(crate) struct BitsCircuit<P> {
         /// Each digit's generator: the digits stage's commitment with that
         /// digit one and the others zero.
@@ -1273,17 +1283,13 @@ pub(crate) mod testing {
     }
 
     impl<P: Affine> BitsCircuit<P> {
-        /// The circuit over the digits stage's generators at rank `R`.
-        fn new<C, R>(params: &C::Params) -> Result<Self>
-        where
-            C: IpaCycle<NestedCurve = P>,
-            P: Affine<Scalar = C::ScalarField>,
-            R: Rank,
-        {
-            let generators = C::nested_generators(params);
-            let zeros = [C::ScalarField::ZERO; DIGITS];
-            let commit = |digits: &[C::ScalarField; DIGITS]| {
-                DigitsStage::<C::ScalarField, R>::rx(C::ScalarField::ZERO, digits)
+        /// The circuit over the digits stage's generators at rank `R`, the
+        /// stage committed with `generators`: the other side's, the nested
+        /// ones for a native circuit and the host ones for a nested one.
+        fn new<R: Rank>(generators: &impl FixedGenerators<P>) -> Result<Self> {
+            let zeros = [P::Scalar::ZERO; DIGITS];
+            let commit = |digits: &[P::Scalar; DIGITS]| {
+                DigitsStage::<P::Scalar, R>::rx(P::Scalar::ZERO, digits)
                     .map(|rx| rx.commit_to_affine(generators))
             };
             assert!(
@@ -1293,7 +1299,7 @@ pub(crate) mod testing {
             let generators = (0..DIGITS)
                 .map(|i| {
                     let mut digits = zeros;
-                    digits[i] = C::ScalarField::ONE;
+                    digits[i] = P::Scalar::ONE;
                     commit(&digits)
                 })
                 .collect::<Result<Vec<_>>>()?;
@@ -1404,7 +1410,9 @@ pub(crate) mod testing {
             Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         {
             assert_eq!(circuit, 0);
-            registry.register_internal_circuit(BitsCircuit::new::<Base, R>(params)?)
+            let generators = Base::nested_generators(params);
+            registry
+                .register_internal_circuit(BitsCircuit::<Base::NestedCurve>::new::<R>(generators)?)
         }
 
         fn register_nested_circuit<'params, Base, R: Rank>(
@@ -1448,7 +1456,8 @@ pub(crate) mod testing {
             B: SelectableBackend,
             RNG: CryptoRng,
         {
-            let (trace, ()) = BitsCircuit::new::<Base, R>(context.params)?
+            let generators = Base::nested_generators(context.params);
+            let (trace, ()) = BitsCircuit::<Base::NestedCurve>::new::<R>(generators)?
                 .trace(&context.native)?
                 .into_parts();
             let circuit = native::InternalCircuitIndex::ExtensionCircuit(0);
@@ -1484,12 +1493,151 @@ pub(crate) mod testing {
             })
         }
     }
+
+    /// [`Crossing`] the other way round: one circuit over the digits stage
+    /// on the native side, holding the native bits' signed digits, and one
+    /// binding circuit and no stage on the nested side, exposing that
+    /// stage's commitment recomputed from the nested bits, so that the
+    /// nested side binds.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub(crate) struct CrossingBack;
+
+    impl Profile for CrossingBack {
+        const NAME: &'static str = "crossing back";
+        const NATIVE_EXTENSION: usize = 2;
+        const NESTED_EXTENSION: usize = 1;
+
+        type Context<'params, Base, R, B>
+            = CrossingContext<'params, Base>
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+            R: Rank,
+            B: SelectableBackend;
+
+        fn native_extension() -> Extension {
+            Extension {
+                circuits: vec![vec![0]],
+                stages: 1,
+                final_masks: vec![vec![0]],
+                statement: None,
+                binding: None,
+            }
+        }
+
+        fn nested_extension() -> Extension {
+            Extension {
+                circuits: vec![vec![]],
+                stages: 0,
+                final_masks: vec![],
+                statement: None,
+                binding: Some(Binding {
+                    circuit: 0,
+                    stages: vec![0],
+                }),
+            }
+        }
+
+        fn register_native_circuit<'params, Base, R: Rank, const HEADER_SIZE: usize>(
+            circuit: usize,
+            registry: RegistryBuilder<'params, Base::CircuitField, R>,
+            _: &'params Base::Params,
+        ) -> Result<RegistryBuilder<'params, Base::CircuitField, R>>
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        {
+            assert_eq!(circuit, 0);
+            registry
+                .register_internal_circuit(MultiStage::new(DigitsCircuit::<Base::CircuitField, R>(
+                    PhantomData,
+                )))
+        }
+
+        fn register_native_bonding<'params, Base, R: Rank, const HEADER_SIZE: usize>(
+            bonding: usize,
+            registry: RegistryBuilder<'params, Base::CircuitField, R>,
+            _: &'params Base::Params,
+        ) -> Result<RegistryBuilder<'params, Base::CircuitField, R>>
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        {
+            let mask = match bonding {
+                0 => DigitsStage::<Base::CircuitField, R>::mask()?,
+                1 => DigitsStage::<Base::CircuitField, R>::final_mask()?,
+                _ => unreachable!("two bondings"),
+            };
+            Ok(registry.register_bonding(mask))
+        }
+
+        fn register_nested_circuit<'params, Base, R: Rank>(
+            circuit: usize,
+            registry: RegistryBuilder<'params, Base::ScalarField, R>,
+            params: &'params Base::Params,
+        ) -> Result<RegistryBuilder<'params, Base::ScalarField, R>>
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        {
+            assert_eq!(circuit, 0);
+            let generators = Base::host_generators(params);
+            registry
+                .register_internal_circuit(BitsCircuit::<Base::HostCurve>::new::<R>(generators)?)
+        }
+
+        fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
+            context: &Self::Context<'params, Base, R, B>,
+            registry: &Registry<'params, Base::CircuitField, R>,
+            rng: &mut RNG,
+        ) -> Result<ExtensionRxs<Base::CircuitField, R>>
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+            R: Rank,
+            B: SelectableBackend,
+            RNG: CryptoRng,
+        {
+            let digits = signed::<Base::CircuitField>(&context.native);
+            let (trace, ()) = MultiStage::new(DigitsCircuit::<Base::CircuitField, R>(PhantomData))
+                .trace(&digits)?
+                .into_parts();
+            let circuit = native::InternalCircuitIndex::ExtensionCircuit(0);
+            Ok(ExtensionRxs {
+                circuits: vec![registry.assemble(&trace, circuit.circuit_index::<Self>(), rng)?],
+                // Unblinded, so that the nested side can recompute it.
+                stages: vec![DigitsStage::<Base::CircuitField, R>::rx(
+                    Base::CircuitField::ZERO,
+                    &digits,
+                )?],
+            })
+        }
+
+        fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
+            context: &Self::Context<'params, Base, R, B>,
+            registry: &Registry<'params, Base::ScalarField, R>,
+            rng: &mut RNG,
+        ) -> Result<ExtensionRxs<Base::ScalarField, R>>
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+            R: Rank,
+            B: SelectableBackend,
+            RNG: CryptoRng,
+        {
+            let generators = Base::host_generators(context.params);
+            let (trace, ()) = BitsCircuit::<Base::HostCurve>::new::<R>(generators)?
+                .trace(&context.nested)?
+                .into_parts();
+            let circuit = nested::InternalCircuitIndex::ExtensionCircuit(0);
+            Ok(ExtensionRxs {
+                circuits: vec![registry.assemble(&trace, circuit.circuit_index::<Self>(), rng)?],
+                stages: Vec::new(),
+            })
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use ragu_circuits::polynomials::R;
+
     use super::{
-        testing::{Crossing, Mismatched, Wider},
+        testing::{Crossing, CrossingBack, CrossingContext, Mismatched, Wider},
         *,
     };
 
@@ -1499,14 +1647,16 @@ mod tests {
         Aggregator::check().unwrap();
         Wider::check().unwrap();
         Crossing::check().unwrap();
+        CrossingBack::check().unwrap();
         assert!(Wider::native_extension().is_consistent());
         assert!(Wider::nested_extension().is_consistent());
         assert!(Mismatched::check().is_err());
     }
 
     /// A declaration is well formed only with every index in range, nothing
-    /// named twice, and every staged circuit under exactly one final mask,
-    /// its last stage's.
+    /// named twice, every staged circuit under exactly one final mask, its
+    /// last stage's, and a binding circuit other than the statement circuit
+    /// naming at least one stage, none twice.
     #[test]
     fn consistency_binds_every_staged_circuit() {
         use alloc::vec;
@@ -1544,10 +1694,29 @@ mod tests {
         // A stage or a circuit named twice.
         assert!(!extension(vec![vec![0, 0]], 1, vec![vec![0]], None).is_consistent());
         assert!(!extension(vec![vec![0]], 1, vec![vec![0, 0]], None).is_consistent());
+
+        // Two circuits without stages, the first the statement circuit and
+        // the second binding the other side's stages, which the other side
+        // is to have.
+        let binding = |circuit, stages| Extension {
+            circuits: vec![vec![], vec![]],
+            stages: 0,
+            final_masks: vec![],
+            statement: Some(0),
+            binding: Some(Binding { circuit, stages }),
+        };
+        assert!(binding(1, vec![1, 0]).is_consistent());
+        // The binding circuit out of range, or the statement circuit.
+        assert!(!binding(2, vec![0]).is_consistent());
+        assert!(!binding(0, vec![0]).is_consistent());
+        // The binding naming no stage, or one twice.
+        assert!(!binding(1, vec![]).is_consistent());
+        assert!(!binding(1, vec![0, 0]).is_consistent());
     }
 
-    /// The profile's checks refuse a malformed extension and a statement
-    /// circuit on the nested side.
+    /// The profile's checks refuse a malformed extension, a statement
+    /// circuit on the nested side, and a binding naming a stage the other
+    /// side does not have, from either side.
     #[test]
     fn malformed_declarations_are_refused() {
         use alloc::vec;
@@ -1606,8 +1775,80 @@ mod tests {
             }
         }
 
+        /// [`Crossing`] with its native binding naming one nested stage
+        /// past the one the nested side has.
+        #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+        struct StrayBinding;
+
+        impl Profile for StrayBinding {
+            const NAME: &'static str = "stray binding";
+            const NATIVE_EXTENSION: usize = 1;
+            const NESTED_EXTENSION: usize = 2;
+
+            type Context<'params, Base, R, B>
+                = ()
+            where
+                Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+                R: Rank,
+                B: SelectableBackend;
+
+            fn native_extension() -> Extension {
+                Extension {
+                    circuits: vec![vec![]],
+                    stages: 0,
+                    final_masks: vec![],
+                    statement: None,
+                    binding: Some(Binding {
+                        circuit: 0,
+                        stages: vec![0, 1],
+                    }),
+                }
+            }
+
+            fn nested_extension() -> Extension {
+                Crossing::nested_extension()
+            }
+        }
+
+        /// [`CrossingBack`] with its nested binding naming one native stage
+        /// past the one the native side has.
+        #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+        struct StrayNestedBinding;
+
+        impl Profile for StrayNestedBinding {
+            const NAME: &'static str = "stray nested binding";
+            const NATIVE_EXTENSION: usize = 2;
+            const NESTED_EXTENSION: usize = 1;
+
+            type Context<'params, Base, R, B>
+                = ()
+            where
+                Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+                R: Rank,
+                B: SelectableBackend;
+
+            fn native_extension() -> Extension {
+                CrossingBack::native_extension()
+            }
+
+            fn nested_extension() -> Extension {
+                Extension {
+                    circuits: vec![vec![]],
+                    stages: 0,
+                    final_masks: vec![],
+                    statement: None,
+                    binding: Some(Binding {
+                        circuit: 0,
+                        stages: vec![1],
+                    }),
+                }
+            }
+        }
+
         assert!(StrayStatement::check().is_err());
         assert!(NestedStatement::check().is_err());
+        assert!(StrayBinding::check().is_err());
+        assert!(StrayNestedBinding::check().is_err());
     }
 
     #[test]
@@ -1777,7 +2018,6 @@ mod tests {
     /// has room for the two polynomials.
     #[test]
     fn an_extension_proves_verifies_and_compresses() -> Result<()> {
-        use ragu_circuits::polynomials::R;
         use rand::{SeedableRng, rngs::StdRng};
 
         use super::testing::{Proving, UnitStep};
@@ -1802,18 +2042,25 @@ mod tests {
     /// A binding circuit's claim holds only if its side's values are the
     /// ones the other side's stage holds: a proof whose two sides disagree
     /// fails the decider and the compressed verifier, and so does a parent
-    /// over it.
-    #[test]
-    fn a_binding_holds_the_sides_to_each_other() -> Result<()> {
-        use ragu_circuits::polynomials::R;
+    /// over it. Under `P`, with the two sides given their bits through a
+    /// [`CrossingContext`].
+    fn a_binding_holds_the_sides_to_each_other_under<P>() -> Result<()>
+    where
+        P: Profile<
+            Context<'static, Pasta, R<14>, ragu_backend::ReferenceBackend> = CrossingContext<
+                'static,
+                Pasta,
+            >,
+        >,
+    {
         use rand::{SeedableRng, rngs::StdRng};
 
-        use super::testing::{Crossing, CrossingContext, UnitStep};
+        use super::testing::UnitStep;
         use crate::ApplicationBuilder;
 
         let params = crate::pasta::baked();
         let application = |native, nested| {
-            ApplicationBuilder::<Profiled<Pasta, Crossing>, R<14>, 4>::new()
+            ApplicationBuilder::<Profiled<Pasta, P>, R<14>, 4>::new()
                 .register(UnitStep)?
                 .finalize_with(
                     params,
@@ -1847,5 +2094,19 @@ mod tests {
         let (parent, ()) = honest.fuse(&mut rng, UnitStep, (), leaf, left)?;
         assert!(!honest.verify(&parent, &mut rng)?);
         Ok(())
+    }
+
+    /// The native side binds: [`Crossing`]'s native binding circuit holds
+    /// the native bits to the nested digits stage.
+    #[test]
+    fn a_native_binding_holds_the_sides_to_each_other() -> Result<()> {
+        a_binding_holds_the_sides_to_each_other_under::<Crossing>()
+    }
+
+    /// The nested side binds: [`CrossingBack`]'s nested binding circuit
+    /// holds the nested bits to the native digits stage.
+    #[test]
+    fn a_nested_binding_holds_the_sides_to_each_other() -> Result<()> {
+        a_binding_holds_the_sides_to_each_other_under::<CrossingBack>()
     }
 }
