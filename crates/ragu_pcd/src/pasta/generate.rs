@@ -16,8 +16,8 @@ const DOMAIN_PREFIX: &str = "Ragu-Parameters";
 // Copies of `pasta::DEFAULT_EP_K` and `pasta::DEFAULT_EQ_K`, which the build
 // script cannot import. Bento checks the artifact lengths against the
 // consumer's array types, so a mismatch is rejected at compile time.
-const DEFAULT_EP_K: usize = 14;
-const DEFAULT_EQ_K: usize = 14;
+const DEFAULT_EP_K: usize = 15;
+const DEFAULT_EQ_K: usize = 15;
 
 /// `n` vector generators from `0 || i`, then the blinding generator from `1`,
 /// then the IPA's generator from `2`.

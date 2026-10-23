@@ -52,7 +52,7 @@ use crate::{
         nested::{self, pcs},
         transcript::Transcript,
     },
-    profile::ProfiledCycle,
+    profile::{Decompressed, ProfiledCycle},
     proof::ProofBuilder,
     step::Step,
 };
@@ -199,6 +199,21 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         witness: S::Witness<'source>,
         left: Pcd<C, R, S::Left>,
         right: Pcd<C, R, S::Right>,
+    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
+        self.fuse_with_source(rng, step, witness, left, right, None)
+    }
+
+    /// [`fuse`](Self::fuse) with `source`, the compressed proof the
+    /// profile's extension decompresses when the step decompresses one;
+    /// without, the extension runs over the context's canonical proof.
+    pub(crate) fn fuse_with_source<'source, RNG: CryptoRng, S: Step<C>>(
+        &self,
+        rng: &mut RNG,
+        step: S,
+        witness: S::Witness<'source>,
+        left: Pcd<C, R, S::Left>,
+        right: Pcd<C, R, S::Right>,
+        source: Option<&Decompressed<C::Base>>,
     ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
         let mut builder = ProofBuilder::<C, R, B>::new(
             self.params,
@@ -447,6 +462,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &eval_witness,
             &native_points,
             &native_walk,
+            source,
             &mut builder,
         )?;
 
@@ -487,6 +503,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested_f_witness,
             &nested_eval_witness,
             &nested_challenges,
+            source,
             &mut builder,
         )?;
 

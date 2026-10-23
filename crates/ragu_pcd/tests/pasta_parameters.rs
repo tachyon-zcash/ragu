@@ -29,7 +29,7 @@ fn canonical_blob(vector: usize) -> Vec<u8> {
 
 /// The production rank's generators, the first $2^{13}$ of each table and
 /// the blinding generator, are the original ones: a proof at that rank is
-/// unchanged by the tables growing for the rank above.
+/// unchanged by the tables growing for the aggregator rank.
 #[test]
 fn baked_points_match_original_parameters() {
     let loaded = canonical_blob(1 << 13);
@@ -44,17 +44,17 @@ fn baked_points_match_original_parameters() {
     );
 }
 
-/// The whole tables, $2^{14}$ vector generators per curve for the rank
-/// above the production one, pinned the same way.
+/// The whole tables, $2^{15}$ vector generators per curve for the aggregator
+/// rank, pinned the same way.
 #[test]
-fn baked_points_are_pinned_in_full() {
-    let loaded = canonical_blob(1 << 14);
-    assert_eq!(loaded.len(), 32_770 * 64);
+fn baked_points_are_pinned_for_the_aggregator_rank() {
+    let loaded = canonical_blob(1 << 15);
+    assert_eq!(loaded.len(), 65_538 * 64);
 
     let digest = blake2b_simd::Params::new().hash_length(32).hash(&loaded);
     assert_eq!(
         digest.to_hex().as_str(),
-        "fd59c12496d26b073f7fa397b8ea25832e430bac8d8c3b8c52d867220e44d0ec"
+        "a2d16c4588ec5814cf2ceb17af275f42729d5357ce7ca991ab01cfb5493a8db3"
     );
 }
 

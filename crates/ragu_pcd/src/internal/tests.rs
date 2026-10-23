@@ -527,8 +527,8 @@ fn print_nested_circuit_constraint_counts() {
     print_stage!("challenges", stages::challenges::Stage<EqAffine, R, crate::profile::Standard>);
 }
 
-/// Checks that only step slots can satisfy an application instance, in the
-/// standard profile and in profiles with extension circuits.
+/// Asserts that only step slots of `app`'s native registry can satisfy an
+/// application instance.
 ///
 /// The application `circuit_id` is only checked for registry-domain
 /// membership, so a prover may point it at any native slot. Every slot other
@@ -539,57 +539,58 @@ fn print_nested_circuit_constraint_counts() {
 /// the circuit slot for an extension circuit, so that row has no wires and
 /// contributes zero for every trace, while an application instance's linear
 /// coefficient is its output header suffix, which is never zero.
-#[test]
-fn test_non_step_slots_reject_application_instances() {
+pub(crate) fn assert_only_steps_satisfy_application_instances<
+    C: crate::profile::ProfiledCycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+>(
+    app: &Application<'_, C, R, HEADER_SIZE>,
+) {
     use alloc::{format, string::String, vec::Vec};
 
     use ragu_circuits::registry::CircuitIndex;
     use rand::{Rng, SeedableRng, rngs::StdRng};
     use udon::field::Field;
 
+    use crate::profile::Profile;
+
+    let registry = &app.native_registry;
+    let x = C::CircuitField::random(|bytes| StdRng::seed_from_u64(0).fill_bytes(bytes));
+    let all = InternalCircuitIndex::all::<C::Profile>();
+    let steps = all.len()..registry.num_circuits();
+    let unprotected: Vec<String> = (0..registry.num_circuits().next_power_of_two())
+        .filter(|slot| !steps.contains(slot))
+        .filter(|&slot| {
+            let sx = registry.wx(CircuitIndex::new(slot).omega_j(), x);
+            let mut coeffs = sx.iter_coeffs();
+            let constant = coeffs.next().unwrap();
+            let linear = coeffs.next().unwrap();
+            constant != C::CircuitField::ZERO && linear != C::CircuitField::ZERO
+        })
+        .map(|slot| match all.get(slot) {
+            Some(id) => format!("{id:?}"),
+            None => format!("slot {slot}"),
+        })
+        .collect();
+    assert!(
+        unprotected.is_empty(),
+        "non-step slots of {} that can satisfy an application instance: {unprotected:?}",
+        C::Profile::NAME
+    );
+}
+
+/// Only step slots satisfy an application instance, in the standard profile
+/// and in profiles with extension circuits; see
+/// [`assert_only_steps_satisfy_application_instances`].
+#[test]
+fn test_non_step_slots_reject_application_instances() {
     use crate::profile::{
-        Profile, Profiled, ProfiledCycle,
+        Profiled,
         testing::{Crossing, CrossingBack, CrossingContext, Proving},
     };
 
-    /// The non-step slots of `app`'s native registry that can satisfy an
-    /// application instance.
-    fn unprotected<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize>(
-        app: &Application<'_, C, R, HEADER_SIZE>,
-    ) -> Vec<String> {
-        let registry = &app.native_registry;
-        let x = C::CircuitField::random(|bytes| StdRng::seed_from_u64(0).fill_bytes(bytes));
-        let all = InternalCircuitIndex::all::<C::Profile>();
-        let steps = all.len()..registry.num_circuits();
-        (0..registry.num_circuits().next_power_of_two())
-            .filter(|slot| !steps.contains(slot))
-            .filter(|&slot| {
-                let sx = registry.wx(CircuitIndex::new(slot).omega_j(), x);
-                let mut coeffs = sx.iter_coeffs();
-                let constant = coeffs.next().unwrap();
-                let linear = coeffs.next().unwrap();
-                constant != C::CircuitField::ZERO && linear != C::CircuitField::ZERO
-            })
-            .map(|slot| match all.get(slot) {
-                Some(id) => format!("{id:?}"),
-                None => format!("slot {slot}"),
-            })
-            .collect()
-    }
-
-    fn check<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize>(
-        app: &Application<'_, C, R, HEADER_SIZE>,
-    ) {
-        let unprotected = unprotected(app);
-        assert!(
-            unprotected.is_empty(),
-            "non-step slots of {} that can satisfy an application instance: {unprotected:?}",
-            C::Profile::NAME
-        );
-    }
-
     let params = crate::pasta::baked();
-    check(
+    assert_only_steps_satisfy_application_instances(
         &ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
             .finalize(params)
             .unwrap(),
@@ -597,7 +598,7 @@ fn test_non_step_slots_reject_application_instances() {
 
     // Profiles with extension circuits, at the rank where they fit.
     type Wide = ragu_circuits::polynomials::R<14>;
-    check(
+    assert_only_steps_satisfy_application_instances(
         &ApplicationBuilder::<Profiled<Pasta, Proving>, Wide, 4>::new()
             .finalize(params)
             .unwrap(),
@@ -607,12 +608,12 @@ fn test_non_step_slots_reject_application_instances() {
         native: [true; 4],
         nested: [true; 4],
     };
-    check(
+    assert_only_steps_satisfy_application_instances(
         &ApplicationBuilder::<Profiled<Pasta, Crossing>, Wide, 4>::new()
             .finalize_with(params, context())
             .unwrap(),
     );
-    check(
+    assert_only_steps_satisfy_application_instances(
         &ApplicationBuilder::<Profiled<Pasta, CrossingBack>, Wide, 4>::new()
             .finalize_with(params, context())
             .unwrap(),
@@ -1165,4 +1166,174 @@ fn test_fold_groups_follow_the_profile() {
     assert!(capacity::<native::RevdotParameters<Wider>>() >= native::num_claims::<Wider>());
     assert!(capacity::<nested::RevdotParameters<Wider>>() >= nested::num_claims::<Wider>());
     assert!(nested::NumFoldGroups::<Wider>::len() > nested::NUM_FOLD_GROUPS);
+}
+
+/// The gates of every fuse circuit of profile `P` over cycle `C` at rank
+/// `R` with `H`-element headers, by side, each with its index's name: the
+/// extension's circuits and the bondings aside.
+macro_rules! fuse_gates {
+    ($C:ty, $R:ty, $H:expr, $P:ty) => {{
+        use ragu_circuits::staging::MultiStage;
+
+        use crate::internal::{
+            native::{self, InternalCircuitIndex as Native},
+            nested::{self, InternalCircuitIndex as Nested},
+        };
+        type Host = <$C as ragu_core::Cycle>::HostCurve;
+        fn gates<F: Field>(circuit: &impl Circuit<F>) -> usize {
+            ragu_circuits::testing::synthesis_counts(circuit)
+                .unwrap()
+                .num_gates
+        }
+        let pasta = crate::pasta::baked();
+        let (_, log2_circuits) = native::total_circuit_counts::<$P>(NUM_APP_STEPS);
+        let mut native_gates: alloc::vec::Vec<(alloc::string::String, usize)> =
+            alloc::vec::Vec::new();
+        for variant in Native::all::<$P>() {
+            let gates = match variant {
+                Native::Hashes1Circuit => gates(&native::circuits::hashes_1::Circuit::<
+                    $C,
+                    $R,
+                    $H,
+                    RevdotParameters<$P>,
+                >::new(pasta, log2_circuits)),
+                Native::Hashes2Circuit => gates(&native::circuits::hashes_2::Circuit::<
+                    $C,
+                    $R,
+                    $H,
+                    RevdotParameters<$P>,
+                >::new(pasta)),
+                Native::InnerCollapseCircuit => {
+                    gates(&native::circuits::inner_collapse::Circuit::<
+                        $C,
+                        $R,
+                        $H,
+                        RevdotParameters<$P>,
+                    >::new())
+                }
+                Native::OuterCollapseCircuit => {
+                    gates(&native::circuits::outer_collapse::Circuit::<
+                        $C,
+                        $R,
+                        $H,
+                        RevdotParameters<$P>,
+                    >::new())
+                }
+                Native::ComputeVCircuit => {
+                    gates(&native::circuits::compute_v::Circuit::<$C, $R, $H>::new())
+                }
+                Native::BindChallengesCircuit(k) => {
+                    crate::with_binder!(k, $C, $R, $H, pasta, |circuit| gates(&circuit))
+                }
+                Native::BindBetaCircuit => gates(&native::circuits::bind_beta::Circuit::<
+                    $C,
+                    $R,
+                    $H,
+                    RevdotParameters<$P>,
+                >::new(pasta)),
+                Native::BindEndoscalarCircuit => {
+                    gates(&native::circuits::bind_endoscalar::Circuit::<$C, $R>::new())
+                }
+                Native::EndoscalingStep(step) => gates(
+                    &native::circuits::endoscaling_step::Circuit::<$C, $R>::new(step as usize),
+                ),
+                _ => continue,
+            };
+            native_gates.push((alloc::format!("{variant:?}"), gates));
+        }
+        let mut nested_gates: alloc::vec::Vec<(alloc::string::String, usize)> =
+            alloc::vec::Vec::new();
+        for variant in Nested::all::<$P>() {
+            let gates = match variant {
+                Nested::EndoscalingStep(step) => gates(&MultiStage::new(
+                    nested::EndoscalingStep::<Host, $R, $P>::new(step as usize),
+                )),
+                Nested::Export => gates(&MultiStage::new(nested::circuits::export::Circuit::<
+                    Host,
+                    $R,
+                    $P,
+                >::new())),
+                Nested::Collapse => gates(&MultiStage::new(nested::circuits::collapse::Circuit::<
+                    Host,
+                    $R,
+                    $P,
+                >::new())),
+                Nested::ComputeV => {
+                    gates(&MultiStage::new(nested::circuits::compute_v::Circuit::<
+                        Host,
+                        $R,
+                        $P,
+                    >::new()))
+                }
+                Nested::Loading => gates(&MultiStage::new(nested::circuits::loading::Circuit::<
+                    Host,
+                    $R,
+                    $P,
+                >::new())),
+                _ => continue,
+            };
+            nested_gates.push((alloc::format!("{variant:?}"), gates));
+        }
+        (native_gates, nested_gates)
+    }};
+}
+
+/// Reports `gates`, every circuit but the endoscaling steps and the
+/// largest step, against `budget`, and returns the circuits over it.
+fn report_fuse_gates(
+    side: &str,
+    gates: &[(alloc::string::String, usize)],
+    budget: usize,
+) -> alloc::vec::Vec<(alloc::string::String, usize)> {
+    let steps = gates
+        .iter()
+        .filter(|(name, _)| name.starts_with("EndoscalingStep"));
+    let largest_step = steps.max_by_key(|(_, gates)| *gates);
+    std::println!("{side}: {} circuits of {budget} gates", gates.len());
+    for (name, gates) in gates
+        .iter()
+        .filter(|(name, _)| !name.starts_with("EndoscalingStep"))
+        .chain(largest_step)
+    {
+        std::println!("  {name}: {gates}");
+    }
+    gates
+        .iter()
+        .filter(|(_, gates)| *gates > budget)
+        .cloned()
+        .collect()
+}
+
+/// Every fuse circuit of the aggregator profile fits the aggregator rank's
+/// budget with the decompression extension's polynomials, for the test
+/// header size and for this module's.
+#[test]
+fn test_aggregator_fuse_fits_the_budget() {
+    use ragu_circuits::polynomials::AggregatorRank;
+
+    use crate::profile::{Aggregator, Profiled};
+
+    let budget = AggregatorRank::n();
+    let mut over = alloc::vec::Vec::new();
+    {
+        type C = Profiled<Pasta, Aggregator<4>>;
+        let (native, nested) = fuse_gates!(C, AggregatorRank, 4, Aggregator<4>);
+        over.extend(report_fuse_gates("native, header size 4", &native, budget));
+        over.extend(report_fuse_gates("nested, header size 4", &nested, budget));
+    }
+    {
+        type C = Profiled<Pasta, Aggregator<HEADER_SIZE>>;
+        let (native, nested) = fuse_gates!(C, AggregatorRank, HEADER_SIZE, Aggregator<HEADER_SIZE>);
+        over.extend(report_fuse_gates(
+            "native, header size 103",
+            &native,
+            budget,
+        ));
+        over.extend(report_fuse_gates(
+            "nested, header size 103",
+            &nested,
+            budget,
+        ));
+    }
+    assert!(over.is_empty(), "over the budget: {over:?}");
 }

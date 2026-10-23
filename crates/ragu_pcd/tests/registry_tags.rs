@@ -52,7 +52,7 @@ fn profiles_derive_distinct_tags() {
     let (beacon, manifest_digest) = ([0x42; 32], [0x24; 20]);
     let standard = RegistryTags::<Pasta>::from_beacon(&beacon, &manifest_digest);
     let aggregator =
-        RegistryTags::<Profiled<Pasta, Aggregator>>::from_beacon(&beacon, &manifest_digest);
+        RegistryTags::<Profiled<Pasta, Aggregator<4>>>::from_beacon(&beacon, &manifest_digest);
     assert_ne!(standard.native.value(), aggregator.native.value());
     assert_ne!(standard.nested.value(), aggregator.nested.value());
 

@@ -13,7 +13,7 @@
 //! - [`Proof`] / [`Pcd`] — the proof and proof-carrying-data structures.
 //! - [`CompressedProof`] / [`CompressedPcd`] — their compressed forms.
 //! - [`profile`] — the proof shapes: the standard profile wallets prove in,
-//!   and the aggregator profile that will carry decompression.
+//!   and the aggregator profile, which carries decompression.
 //! - [`pasta`] — Ragu's fixed generators, derived and embedded at build time
 //!   with the `baked` feature.
 
@@ -33,6 +33,7 @@ extern crate std;
 
 mod backend;
 mod compress;
+mod decompress;
 mod fuse;
 // The fuzzing surface. Gates itself behind `unstable-fuzzing` with an inner
 // `#![cfg]` and hides itself from the docs, so no feature attribute appears
@@ -297,6 +298,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// Like [`finalize`](Self::finalize), with the profile's prover
     /// context: what its prover holds across proofs beyond the proof under
     /// construction (see [`Profile::Context`]).
+    /// An [`Aggregator`](profile::Aggregator) application takes a
+    /// [`Decompression`](profile::Decompression) of the wallet application
+    /// it aggregates.
     ///
     /// # Errors
     ///
@@ -481,7 +485,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     Application<'params, C, R, HEADER_SIZE, B>
 {
     /// The profile's prover context, as given to
-    /// [`finalize_with`](ApplicationBuilder::finalize_with).
+    /// [`finalize_with`](ApplicationBuilder::finalize_with): for an
+    /// aggregator application, the [`Decompression`](profile::Decompression)
+    /// holding the wallet application it aggregates.
     pub fn context(&self) -> &<C::Profile as Profile>::Context<'params, C::Base, R, B> {
         &self.context
     }

@@ -3,7 +3,7 @@
 use ragu_circuits::polynomials::Rank;
 use ragu_core::{Error, Result};
 
-use super::{CompressedPcd, Sampled, batch, revdot, transcript};
+use super::{CompressedPcd, Lifted, Sampled, batch, revdot, transcript};
 use crate::{
     Application, RAGU_TAG, SelectableBackend,
     header::Header,
@@ -76,13 +76,13 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         }
 
         let output_header = ky::output_header::<C, H, HEADER_SIZE>(pcd.data().clone())?;
-        let mut transcript = proof_check!(transcript::<C, Verifier<B>>(
+        let mut transcript = proof_check!(transcript::<C, Verifier<B>, R>(
             self.params,
             instance,
             &output_header,
         ));
-        let native_sampled = proof_check!(Sampled::squeeze(&mut transcript.host()));
-        let nested_sampled = proof_check!(Sampled::squeeze(&mut transcript.nested()));
+        let native_sampled = proof_check!(Sampled::squeeze(&mut Lifted(transcript.host())));
+        let nested_sampled = proof_check!(Sampled::squeeze(&mut Lifted(transcript.nested())));
         let (native_targets, nested_targets) = instance.targets::<HEADER_SIZE>(
             &challenges,
             &output_header,
@@ -107,7 +107,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 &native_targets,
                 &masked,
                 &proof.native.reduction,
-                &mut transcript.host(),
+                &mut Lifted(transcript.host()),
             )) else {
                 return Ok(false);
             };
@@ -125,7 +125,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 &proof.native.opening,
                 C::host_generators(self.params),
                 *C::host_u(self.params),
-                &mut transcript.host(),
+                &mut Lifted(transcript.host()),
             ))
         };
         if !native {
@@ -145,7 +145,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 &nested_targets,
                 &masked,
                 &proof.nested.reduction,
-                &mut transcript.nested(),
+                &mut Lifted(transcript.nested()),
             )) else {
                 return Ok(false);
             };
@@ -163,7 +163,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 &proof.nested.opening,
                 C::nested_generators(self.params),
                 *C::nested_u(self.params),
-                &mut transcript.nested(),
+                &mut Lifted(transcript.nested()),
             ))
         };
         Ok(nested)

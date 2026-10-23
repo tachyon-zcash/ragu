@@ -37,7 +37,8 @@
 //! statement circuit, whose claim binds an internal step's output header
 //! to what the extension verified, and a binding circuit, whose claim
 //! binds its side's view of the other side's stages to their commitments.
-//! No profile declares an extension yet; [`Aggregator`] says why.
+//! [`Aggregator`] declares the decompression circuits, at the rank with
+//! the room for them.
 //!
 //! # Profile isolation follow-up
 //!
@@ -83,7 +84,7 @@ use core::{any::type_name, fmt, marker::PhantomData};
 
 use ragu_circuits::{
     BondingObject, Circuit, WithAux,
-    polynomials::{Rank, sparse},
+    polynomials::{AggregatorRank, ProductionRank, Rank, sparse},
     registry::{Registry, RegistryBuilder},
 };
 #[cfg(feature = "baked")]
@@ -97,8 +98,13 @@ use ragu_primitives::{Element, WithSuffix};
 use rand::CryptoRng;
 use udon::field::Field;
 
+pub use crate::decompress::{
+    extension::Counts,
+    prover::{Decompressed, Decompression},
+};
 use crate::{
     SelectableBackend,
+    decompress::extension,
     internal::{endoscalar, native, nested},
     ipa::IpaCycle,
 };
@@ -255,14 +261,15 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
 
     /// The native extension's polynomials for one proof: each circuit's,
     /// assembled against `registry` at the circuit's index in the layout,
-    /// then each stage's, blinded from `rng`, over the context the
-    /// application holds.
+    /// then each stage's, blinded from `rng`, over `source`, the proof the
+    /// step decompresses, or over the context's canonical proof without.
     ///
     /// # Errors
     ///
     /// The default fills an empty extension and fails for any other.
     fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
         context: &Self::Context<'params, Base, R, B>,
+        source: Option<&Decompressed<Base>>,
         registry: &Registry<'params, Base::CircuitField, R>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -272,7 +279,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         B: SelectableBackend,
         RNG: CryptoRng,
     {
-        let _ = (context, registry, rng);
+        let _ = (context, source, registry, rng);
         if Self::native_extension().is_empty() {
             Ok(ExtensionRxs::default())
         } else {
@@ -290,6 +297,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The default fills an empty extension and fails for any other.
     fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
         context: &Self::Context<'params, Base, R, B>,
+        source: Option<&Decompressed<Base>>,
         registry: &Registry<'params, Base::ScalarField, R>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -299,7 +307,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         B: SelectableBackend,
         RNG: CryptoRng,
     {
-        let _ = (context, registry, rng);
+        let _ = (context, source, registry, rng);
         if Self::nested_extension().is_empty() {
             Ok(ExtensionRxs::default())
         } else {
@@ -677,34 +685,214 @@ impl Profile for Standard {
 }
 
 /// The aggregator profile: the fuse plus the circuits that verify a
-/// [`Standard`] compressed proof in circuit.
+/// [`Standard`] compressed proof in circuit, for wallet proofs over
+/// [`Pasta`] at the production rank with `HEADER_SIZE`-element headers.
 ///
-/// Those circuits are the decompression's, which lands separately; until
-/// it does, the profile declares nothing and its shape is [`Standard`]'s.
-/// At the production rank every circuit of the fuse sits within a few
-/// percent of the gate budget, and each polynomial a profile adds is one
-/// more commitment its hashing circuits absorb, one more evaluation its
-/// compute-v circuit takes, two more claims its collapse circuits fold and
-/// a longer walk whose every step loads the longer points stage: two
+/// The circuits are the decompression module's chunk circuits, laid out as
+/// its extension, which an aggregator proves at [`AggregatorRank`]: each
+/// polynomial a profile adds is one more commitment the fuse's hashing
+/// circuits absorb, one more evaluation its compute-v circuit takes, two
+/// more claims its collapse circuits fold and a longer walk whose every
+/// step loads the longer points stage, and at the production rank two
 /// polynomials per side already push a nested endoscaling step past the
-/// budget. The decompression is therefore declared at a larger rank,
-/// where the fuse has room for it; the declaration, registration, claims,
-/// prover hooks, statement and endoscalings per step it needs are in
-/// place.
+/// budget. At four times the budget the fuse carries the extension, and
+/// the hooks refuse any other rank.
+///
+/// A profile's declaration is a constant, so the circuit counts are
+/// pinned per header size ([`native_circuits`](Self::native_circuits))
+/// rather than computed from the schedule, and the hooks check the pins
+/// against the schedule they register. A header size without a pin does
+/// not compile; pin it from the counts the schedule's tests report.
+///
+/// Every proof of the profile carries the chunk circuits' polynomials, so
+/// every fuse runs the chunks over a compressed proof. The application
+/// holds a [`Decompression`] of the wallet application it aggregates, taken
+/// at [`finalize_with`](crate::ApplicationBuilder::finalize_with), whose
+/// canonical compressed proof every fuse decompresses, except the
+/// decompression step: it decompresses the wallet proof it is given
+/// ([`decompress`](crate::Application::decompress)) and outputs that
+/// proof's header. The extension's statement circuit exposes the header
+/// the chunks verified, and its claim's $k(y)$ holds a proof of the
+/// decompression step to it; each side's binding circuit exposes its
+/// recomputation of the other side's stages, and its claim's $k(y)$ holds
+/// the two sides to one compressed proof.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Aggregator;
+pub struct Aggregator<const HEADER_SIZE: usize>;
 
-impl Profile for Aggregator {
+impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
+    /// The native chunk circuits of the decompression for
+    /// `header_size`-element headers, and how many of them run transcript
+    /// chunks, first among them, and digits chunks, last. The
+    /// compression's transcript absorbs the three headers, so the
+    /// transcript ones grow with the header size.
+    ///
+    /// # Panics
+    ///
+    /// Panics, in constant evaluation, for a header size without a pin.
+    pub const fn native_circuits(header_size: usize) -> Counts {
+        match header_size {
+            4 => Counts {
+                chunks: 52,
+                transcript: 8,
+                digits: 1,
+            },
+            103 => Counts {
+                chunks: 57,
+                transcript: 13,
+                digits: 1,
+            },
+            _ => panic!("the aggregator profile pins no circuit counts for this header size"),
+        }
+    }
+
+    /// The nested chunk circuits of the decompression, the same for every
+    /// header size: none run transcript chunks, and the digits chunks come
+    /// last.
+    pub const NESTED_CIRCUITS: Counts = Counts {
+        chunks: 32,
+        transcript: 0,
+        digits: 1,
+    };
+
+    /// The endoscalings a step of either walk performs: what fits a step at
+    /// the aggregator rank beside the stages it reserves, which cuts the
+    /// walks and with them the proof's polynomials by more than the ratio
+    /// to the production rank's four, since the sides size each other.
+    pub const ENDOSCALINGS_PER_STEP: usize = 14;
+
+    /// Checks that the hooks register at the aggregator rank for the
+    /// profile's header size.
+    fn accepts<R: Rank>(header_size: usize) -> Result<()> {
+        if R::RANK != AggregatorRank::RANK {
+            return Err(Error::Initialization(
+                "the aggregator profile proves at the aggregator rank".into(),
+            ));
+        }
+        if header_size != HEADER_SIZE {
+            return Err(Error::Initialization(
+                "the aggregator profile's header size is not the application's".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     const NAME: &'static str = "aggregator";
-    const NATIVE_EXTENSION: usize = 0;
-    const NESTED_EXTENSION: usize = 0;
+    // The chunk circuits, the statement and binding circuits and the
+    // stages on the native side; the chunk circuits, the binding circuit
+    // and the stages on the nested side.
+    const NATIVE_EXTENSION: usize =
+        Self::native_circuits(HEADER_SIZE).chunks + 2 + extension::NATIVE_STAGES;
+    const NESTED_EXTENSION: usize = Self::NESTED_CIRCUITS.chunks + 1 + extension::NESTED_STAGES;
+
+    const NATIVE_ENDOSCALINGS_PER_STEP: usize = Self::ENDOSCALINGS_PER_STEP;
+    const NESTED_ENDOSCALINGS_PER_STEP: usize = Self::ENDOSCALINGS_PER_STEP;
 
     type Context<'params, Base, R, B>
-        = ()
+        = Decompression<'params, Base, R, HEADER_SIZE, B>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         R: Rank,
         B: SelectableBackend;
+
+    fn native_extension() -> Extension {
+        extension::native_layout(Self::native_circuits(HEADER_SIZE))
+    }
+
+    fn nested_extension() -> Extension {
+        extension::nested_layout(Self::NESTED_CIRCUITS)
+    }
+
+    fn register_native_circuit<'params, Base, R: Rank, const H: usize>(
+        circuit: usize,
+        slot: CircuitSlot<'params, Base::CircuitField, R>,
+        params: &'params Base::Params,
+    ) -> Result<Registered<'params, Base::CircuitField, R>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+    {
+        Self::accepts::<R>(H)?;
+        extension::register_native_circuit::<Base, ProductionRank, R, H>(
+            circuit,
+            Self::native_circuits(HEADER_SIZE),
+            slot,
+            params,
+        )
+    }
+
+    fn register_native_bonding<'params, Base, R: Rank, const H: usize>(
+        bonding: usize,
+        slot: BondingSlot<'params, Base::CircuitField, R>,
+        _: &'params Base::Params,
+    ) -> Result<Registered<'params, Base::CircuitField, R>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+    {
+        Self::accepts::<R>(H)?;
+        extension::register_native_bonding::<Base, ProductionRank, R, H>(bonding, slot)
+    }
+
+    fn register_nested_circuit<'params, Base, R: Rank>(
+        circuit: usize,
+        slot: CircuitSlot<'params, Base::ScalarField, R>,
+        params: &'params Base::Params,
+    ) -> Result<Registered<'params, Base::ScalarField, R>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+    {
+        Self::accepts::<R>(HEADER_SIZE)?;
+        extension::register_nested_circuit::<Base, ProductionRank, R, HEADER_SIZE>(
+            circuit,
+            Self::NESTED_CIRCUITS,
+            slot,
+            params,
+        )
+    }
+
+    fn register_nested_bonding<'params, Base, R: Rank>(
+        bonding: usize,
+        slot: BondingSlot<'params, Base::ScalarField, R>,
+        _: &'params Base::Params,
+    ) -> Result<Registered<'params, Base::ScalarField, R>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+    {
+        Self::accepts::<R>(HEADER_SIZE)?;
+        extension::register_nested_bonding::<Base, ProductionRank, R, HEADER_SIZE>(bonding, slot)
+    }
+
+    fn native_extension_rxs<'params, Base, R, const H: usize, B, RNG>(
+        context: &Self::Context<'params, Base, R, B>,
+        source: Option<&Decompressed<Base>>,
+        registry: &Registry<'params, Base::CircuitField, R>,
+        rng: &mut RNG,
+    ) -> Result<ExtensionRxs<Base::CircuitField, R>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+        RNG: CryptoRng,
+    {
+        Self::accepts::<R>(H)?;
+        context.native_rxs::<Self>(source, registry, rng)
+    }
+
+    fn nested_extension_rxs<'params, Base, R, const H: usize, B, RNG>(
+        context: &Self::Context<'params, Base, R, B>,
+        source: Option<&Decompressed<Base>>,
+        registry: &Registry<'params, Base::ScalarField, R>,
+        rng: &mut RNG,
+    ) -> Result<ExtensionRxs<Base::ScalarField, R>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+        RNG: CryptoRng,
+    {
+        Self::accepts::<R>(H)?;
+        context.nested_rxs::<Self>(source, registry, rng)
+    }
 }
 
 /// A cycle with a profile: what every item that lays out a proof is generic
@@ -743,9 +931,9 @@ impl ProfiledCycle for Pasta {
 /// A cycle under another profile: `C`'s curves, generators and Poseidon
 /// instances with `P`'s proof shape.
 ///
-/// `Profiled<Pasta, Aggregator>` is the aggregator cycle over the Pasta
-/// curves. It is a distinct type from [`Pasta`], so an application over one
-/// never accepts the other's proofs.
+/// `Profiled<Pasta, Aggregator<H>>` is the aggregator cycle over the Pasta
+/// curves for wallet headers of `H` elements. It is a distinct type from
+/// [`Pasta`], so an application over one never accepts the other's proofs.
 pub struct Profiled<C, P>(PhantomData<(C, P)>);
 
 impl<C, P> Clone for Profiled<C, P> {
@@ -1287,6 +1475,7 @@ pub(crate) mod testing {
 
         fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             _: &Self::Context<'params, Base, R, B>,
+            _: Option<&Decompressed<Base>>,
             registry: &Registry<'params, Base::CircuitField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -1302,6 +1491,7 @@ pub(crate) mod testing {
 
         fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             _: &Self::Context<'params, Base, R, B>,
+            _: Option<&Decompressed<Base>>,
             registry: &Registry<'params, Base::ScalarField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -1568,6 +1758,7 @@ pub(crate) mod testing {
 
         fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
+            _: Option<&Decompressed<Base>>,
             registry: &Registry<'params, Base::CircuitField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -1590,6 +1781,7 @@ pub(crate) mod testing {
 
         fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
+            _: Option<&Decompressed<Base>>,
             registry: &Registry<'params, Base::ScalarField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -1703,6 +1895,7 @@ pub(crate) mod testing {
 
         fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
+            _: Option<&Decompressed<Base>>,
             registry: &Registry<'params, Base::CircuitField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -1729,6 +1922,7 @@ pub(crate) mod testing {
 
         fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
+            _: Option<&Decompressed<Base>>,
             registry: &Registry<'params, Base::ScalarField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -1763,7 +1957,10 @@ mod tests {
     #[test]
     fn declared_extensions_check() {
         Standard::check().unwrap();
-        Aggregator::check().unwrap();
+        Aggregator::<4>::check().unwrap();
+        Aggregator::<103>::check().unwrap();
+        assert!(Aggregator::<4>::native_extension().is_consistent());
+        assert!(Aggregator::<4>::nested_extension().is_consistent());
         Wider::check().unwrap();
         Crossing::check().unwrap();
         CrossingBack::check().unwrap();
@@ -2078,9 +2275,57 @@ mod tests {
         assert_eq!(shape.polynomials(), 99);
     }
 
+    /// The aggregator's shape follows its pinned circuits, and grows with
+    /// the header size through the transcript circuits.
     #[test]
-    fn aggregator_matches_standard_until_its_circuits_land() {
-        assert_eq!(Shape::of::<Aggregator>(), Shape::of::<Standard>());
+    fn aggregator_declares_the_decompression() {
+        let shape = Shape::of::<Aggregator<4>>();
+        let per_step = Aggregator::<4>::ENDOSCALINGS_PER_STEP;
+        assert_eq!(
+            shape,
+            Shape::solve(52 + 2 + 6, 32 + 1 + 5, per_step, per_step)
+        );
+        assert_eq!(
+            Shape::of::<Aggregator<103>>(),
+            Shape::solve(57 + 2 + 6, 32 + 1 + 5, per_step, per_step)
+        );
+        // The knob: at the production rank's four per step the walks are
+        // far longer.
+        assert!(shape.polynomials() < Shape::solve(52 + 2 + 6, 32 + 1 + 5, 4, 4).polynomials());
+        assert!(shape.polynomials() > Shape::of::<Standard>().polynomials());
+        std::println!(
+            "aggregator at header size 4: {shape:?}, {} polynomials",
+            shape.polynomials()
+        );
+    }
+
+    /// The hooks register only at the aggregator rank, and only for the
+    /// profile's header size.
+    #[test]
+    fn aggregator_hooks_refuse_other_parameters() {
+        let params = crate::pasta::baked();
+        let at_production_rank = Aggregator::<4>::register_native_circuit::<Pasta, ProductionRank, 4>(
+            0,
+            CircuitSlot::new(RegistryBuilder::new()),
+            params,
+        );
+        assert!(matches!(at_production_rank, Err(Error::Initialization(_))));
+        let other_header = Aggregator::<4>::register_native_circuit::<Pasta, AggregatorRank, 103>(
+            0,
+            CircuitSlot::new(RegistryBuilder::new()),
+            params,
+        );
+        assert!(matches!(other_header, Err(Error::Initialization(_))));
+        let nested_at_production_rank = Aggregator::<4>::register_nested_circuit::<
+            Pasta,
+            ProductionRank,
+        >(
+            0, CircuitSlot::new(RegistryBuilder::new()), params
+        );
+        assert!(matches!(
+            nested_at_production_rank,
+            Err(Error::Initialization(_))
+        ));
     }
 
     #[test]
@@ -2090,8 +2335,8 @@ mod tests {
             Shape::of::<Standard>()
         );
         assert_eq!(
-            Shape::of::<<Profiled<Pasta, Aggregator> as ProfiledCycle>::Profile>(),
-            Shape::of::<Aggregator>()
+            Shape::of::<<Profiled<Pasta, Aggregator<4>> as ProfiledCycle>::Profile>(),
+            Shape::of::<Aggregator<4>>()
         );
     }
 
