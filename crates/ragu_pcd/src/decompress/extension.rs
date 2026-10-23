@@ -29,7 +29,7 @@
 use alloc::{sync::Arc, vec, vec::Vec};
 use core::iter::repeat_n;
 
-use ragu_circuits::{polynomials::Rank, registry::RegistryBuilder, staging::StageExt};
+use ragu_circuits::{polynomials::Rank, staging::StageExt};
 use ragu_core::{Error, Result};
 
 use super::{
@@ -40,7 +40,7 @@ use super::{
 };
 use crate::{
     ipa::IpaCycle,
-    profile::{Binding, Extension, ProfiledCycle, Standard},
+    profile::{Binding, BondingSlot, CircuitSlot, Extension, ProfiledCycle, Registered, Standard},
 };
 
 /// The instance stage's index among a side's extension stages.
@@ -299,16 +299,16 @@ where
     Ok(Arc::new(S::schedule::<K, R, HEADER_SIZE>()?))
 }
 
-/// Registers chunk circuit `circuit` of side `S` as an internal circuit
-/// of `registry`, by the kind of chunks it runs: a
+/// Registers chunk circuit `circuit` of side `S` into `slot`, by the kind
+/// of chunks it runs: a
 /// [`chunk::TranscriptCircuit`], a [`chunk::DigitsCircuit`] or a
 /// [`chunk::Circuit`].
 fn register_circuit<'params, C, S, K, R, const HEADER_SIZE: usize>(
     circuit: usize,
     pinned: Counts,
-    registry: RegistryBuilder<'params, S::F, R>,
+    slot: CircuitSlot<'params, S::F, R>,
     params: &'params C::Params,
-) -> Result<RegistryBuilder<'params, S::F, R>>
+) -> Result<Registered<'params, S::F, R>>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
     S: Side<C>,
@@ -320,19 +320,15 @@ where
         return Err(Error::Initialization("no such circuit".into()));
     }
     match last(&schedule, circuit) {
-        Last::Transcript => {
-            registry.register_internal_circuit(
-                chunk::TranscriptCircuit::<C, S, K, R, HEADER_SIZE>::new(circuit, schedule, params),
-            )
-        }
-        Last::Digits => {
-            registry.register_internal_circuit(
-                chunk::DigitsCircuit::<C, S, K, R, HEADER_SIZE>::new(circuit, schedule, params),
-            )
-        }
-        Last::Work => registry.register_internal_circuit(
-            chunk::Circuit::<C, S, K, R, HEADER_SIZE>::new(circuit, schedule, params),
+        Last::Transcript => slot.register(
+            chunk::TranscriptCircuit::<C, S, K, R, HEADER_SIZE>::new(circuit, schedule, params),
         ),
+        Last::Digits => slot.register(chunk::DigitsCircuit::<C, S, K, R, HEADER_SIZE>::new(
+            circuit, schedule, params,
+        )),
+        Last::Work => slot.register(chunk::Circuit::<C, S, K, R, HEADER_SIZE>::new(
+            circuit, schedule, params,
+        )),
     }
 }
 
@@ -344,9 +340,9 @@ where
 /// the instance stage.
 fn register_bonding<'params, C, S, K, R, const HEADER_SIZE: usize>(
     bonding: usize,
-    registry: RegistryBuilder<'params, S::F, R>,
+    slot: BondingSlot<'params, S::F, R>,
     with_transcript: bool,
-) -> Result<RegistryBuilder<'params, S::F, R>>
+) -> Result<Registered<'params, S::F, R>>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
     S: Side<C>,
@@ -392,7 +388,7 @@ where
         }
         _ => return Err(Error::Initialization("no such bonding".into())),
     };
-    Ok(registry.register_bonding(mask))
+    Ok(slot.register(mask))
 }
 
 /// Registers native circuit `circuit` of a side declared at `pinned`
@@ -402,9 +398,9 @@ where
 pub(crate) fn register_native_circuit<'params, C, K, R, const HEADER_SIZE: usize>(
     circuit: usize,
     pinned: Counts,
-    registry: RegistryBuilder<'params, C::CircuitField, R>,
+    slot: CircuitSlot<'params, C::CircuitField, R>,
     params: &'params C::Params,
-) -> Result<RegistryBuilder<'params, C::CircuitField, R>>
+) -> Result<Registered<'params, C::CircuitField, R>>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
     K: Rank,
@@ -412,38 +408,29 @@ where
 {
     if circuit == pinned.chunks {
         let schedule = pinned_schedule::<C, Native, K, R, HEADER_SIZE>(pinned)?;
-        return registry.register_internal_circuit(chunk::StatementCircuit::<
-            C,
-            Native,
-            K,
-            R,
-            HEADER_SIZE,
-        >::new(schedule));
+        return slot
+            .register(chunk::StatementCircuit::<C, Native, K, R, HEADER_SIZE>::new(schedule));
     }
     if circuit == pinned.chunks + 1 {
         let schedule = pinned_schedule::<C, Native, K, R, HEADER_SIZE>(pinned)?;
-        return registry.register_internal_circuit(chunk::BindingCircuit::<
-            C,
-            Native,
-            K,
-            R,
-            HEADER_SIZE,
-        >::new(schedule));
+        return slot.register(chunk::BindingCircuit::<C, Native, K, R, HEADER_SIZE>::new(
+            schedule,
+        ));
     }
-    register_circuit::<C, Native, K, R, HEADER_SIZE>(circuit, pinned, registry, params)
+    register_circuit::<C, Native, K, R, HEADER_SIZE>(circuit, pinned, slot, params)
 }
 
 /// Registers native bonding `bonding`; see [`native`] for the layout.
 pub(crate) fn register_native_bonding<'params, C, K, R, const HEADER_SIZE: usize>(
     bonding: usize,
-    registry: RegistryBuilder<'params, C::CircuitField, R>,
-) -> Result<RegistryBuilder<'params, C::CircuitField, R>>
+    slot: BondingSlot<'params, C::CircuitField, R>,
+) -> Result<Registered<'params, C::CircuitField, R>>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
     K: Rank,
     R: Rank,
 {
-    register_bonding::<C, Native, K, R, HEADER_SIZE>(bonding, registry, true)
+    register_bonding::<C, Native, K, R, HEADER_SIZE>(bonding, slot, true)
 }
 
 /// Registers nested circuit `circuit` of a side declared at `pinned`
@@ -452,9 +439,9 @@ where
 pub(crate) fn register_nested_circuit<'params, C, K, R, const HEADER_SIZE: usize>(
     circuit: usize,
     pinned: Counts,
-    registry: RegistryBuilder<'params, C::ScalarField, R>,
+    slot: CircuitSlot<'params, C::ScalarField, R>,
     params: &'params C::Params,
-) -> Result<RegistryBuilder<'params, C::ScalarField, R>>
+) -> Result<Registered<'params, C::ScalarField, R>>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
     K: Rank,
@@ -462,28 +449,24 @@ where
 {
     if circuit == pinned.chunks {
         let schedule = pinned_schedule::<C, Nested, K, R, HEADER_SIZE>(pinned)?;
-        return registry.register_internal_circuit(chunk::BindingCircuit::<
-            C,
-            Nested,
-            K,
-            R,
-            HEADER_SIZE,
-        >::new(schedule));
+        return slot.register(chunk::BindingCircuit::<C, Nested, K, R, HEADER_SIZE>::new(
+            schedule,
+        ));
     }
-    register_circuit::<C, Nested, K, R, HEADER_SIZE>(circuit, pinned, registry, params)
+    register_circuit::<C, Nested, K, R, HEADER_SIZE>(circuit, pinned, slot, params)
 }
 
 /// Registers nested bonding `bonding`; see [`nested`] for the layout.
 pub(crate) fn register_nested_bonding<'params, C, K, R, const HEADER_SIZE: usize>(
     bonding: usize,
-    registry: RegistryBuilder<'params, C::ScalarField, R>,
-) -> Result<RegistryBuilder<'params, C::ScalarField, R>>
+    slot: BondingSlot<'params, C::ScalarField, R>,
+) -> Result<Registered<'params, C::ScalarField, R>>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
     K: Rank,
     R: Rank,
 {
-    register_bonding::<C, Nested, K, R, HEADER_SIZE>(bonding, registry, false)
+    register_bonding::<C, Nested, K, R, HEADER_SIZE>(bonding, slot, false)
 }
 
 #[cfg(test)]

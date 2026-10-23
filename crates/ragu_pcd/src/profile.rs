@@ -806,9 +806,9 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
 
     fn register_native_circuit<'params, Base, R: Rank, const H: usize>(
         circuit: usize,
-        registry: RegistryBuilder<'params, Base::CircuitField, R>,
+        slot: CircuitSlot<'params, Base::CircuitField, R>,
         params: &'params Base::Params,
-    ) -> Result<RegistryBuilder<'params, Base::CircuitField, R>>
+    ) -> Result<Registered<'params, Base::CircuitField, R>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
@@ -816,28 +816,28 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         extension::register_native_circuit::<Base, ProductionRank, R, H>(
             circuit,
             Self::native_circuits(HEADER_SIZE),
-            registry,
+            slot,
             params,
         )
     }
 
     fn register_native_bonding<'params, Base, R: Rank, const H: usize>(
         bonding: usize,
-        registry: RegistryBuilder<'params, Base::CircuitField, R>,
+        slot: BondingSlot<'params, Base::CircuitField, R>,
         _: &'params Base::Params,
-    ) -> Result<RegistryBuilder<'params, Base::CircuitField, R>>
+    ) -> Result<Registered<'params, Base::CircuitField, R>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
         Self::accepts::<R>(H)?;
-        extension::register_native_bonding::<Base, ProductionRank, R, H>(bonding, registry)
+        extension::register_native_bonding::<Base, ProductionRank, R, H>(bonding, slot)
     }
 
     fn register_nested_circuit<'params, Base, R: Rank>(
         circuit: usize,
-        registry: RegistryBuilder<'params, Base::ScalarField, R>,
+        slot: CircuitSlot<'params, Base::ScalarField, R>,
         params: &'params Base::Params,
-    ) -> Result<RegistryBuilder<'params, Base::ScalarField, R>>
+    ) -> Result<Registered<'params, Base::ScalarField, R>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
@@ -845,23 +845,21 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         extension::register_nested_circuit::<Base, ProductionRank, R, HEADER_SIZE>(
             circuit,
             Self::NESTED_CIRCUITS,
-            registry,
+            slot,
             params,
         )
     }
 
     fn register_nested_bonding<'params, Base, R: Rank>(
         bonding: usize,
-        registry: RegistryBuilder<'params, Base::ScalarField, R>,
+        slot: BondingSlot<'params, Base::ScalarField, R>,
         _: &'params Base::Params,
-    ) -> Result<RegistryBuilder<'params, Base::ScalarField, R>>
+    ) -> Result<Registered<'params, Base::ScalarField, R>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
         Self::accepts::<R>(HEADER_SIZE)?;
-        extension::register_nested_bonding::<Base, ProductionRank, R, HEADER_SIZE>(
-            bonding, registry,
-        )
+        extension::register_nested_bonding::<Base, ProductionRank, R, HEADER_SIZE>(bonding, slot)
     }
 
     fn native_extension_rxs<'params, Base, R, const H: usize, B, RNG>(
@@ -1897,6 +1895,7 @@ pub(crate) mod testing {
 
         fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
+            _: Option<&Decompressed<Base>>,
             registry: &Registry<'params, Base::CircuitField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -1923,6 +1922,7 @@ pub(crate) mod testing {
 
         fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
+            _: Option<&Decompressed<Base>>,
             registry: &Registry<'params, Base::ScalarField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -2306,20 +2306,22 @@ mod tests {
         let params = crate::pasta::baked();
         let at_production_rank = Aggregator::<4>::register_native_circuit::<Pasta, ProductionRank, 4>(
             0,
-            RegistryBuilder::new(),
+            CircuitSlot::new(RegistryBuilder::new()),
             params,
         );
         assert!(matches!(at_production_rank, Err(Error::Initialization(_))));
         let other_header = Aggregator::<4>::register_native_circuit::<Pasta, AggregatorRank, 103>(
             0,
-            RegistryBuilder::new(),
+            CircuitSlot::new(RegistryBuilder::new()),
             params,
         );
         assert!(matches!(other_header, Err(Error::Initialization(_))));
         let nested_at_production_rank = Aggregator::<4>::register_nested_circuit::<
             Pasta,
             ProductionRank,
-        >(0, RegistryBuilder::new(), params);
+        >(
+            0, CircuitSlot::new(RegistryBuilder::new()), params
+        );
         assert!(matches!(
             nested_at_production_rank,
             Err(Error::Initialization(_))

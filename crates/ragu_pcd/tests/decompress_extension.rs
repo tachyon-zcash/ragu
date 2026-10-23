@@ -32,7 +32,9 @@ use crate::{
         support::{HEADER_SIZE, Setup, TestR},
     },
     header::{Header, Suffix},
-    profile::{Aggregator, Decompression, Profile, Profiled, Shape, Standard},
+    profile::{
+        Aggregator, BondingSlot, CircuitSlot, Decompression, Profile, Profiled, Shape, Standard,
+    },
     step::{Encoded, Index, Step, internal::decompress::Decompress},
 };
 
@@ -150,43 +152,67 @@ fn hooks_register_every_chunk_and_stage() {
     let mut registry = RegistryBuilder::<Fp, AggregatorRank>::new();
     for circuit in 0..native.circuits.len() {
         registry = P::register_native_circuit::<Pasta, AggregatorRank, HEADER_SIZE>(
-            circuit, registry, params,
+            circuit,
+            CircuitSlot::new(registry),
+            params,
         )
-        .unwrap();
+        .unwrap()
+        .into_registry();
     }
     for bonding in 0..native.bondings() {
         registry = P::register_native_bonding::<Pasta, AggregatorRank, HEADER_SIZE>(
-            bonding, registry, params,
+            bonding,
+            BondingSlot::new(registry),
+            params,
         )
-        .unwrap();
+        .unwrap()
+        .into_registry();
     }
     assert_eq!(registry.num_internal_circuits(), native.internal());
     assert!(matches!(
         P::register_native_bonding::<Pasta, AggregatorRank, HEADER_SIZE>(
             native.bondings(),
-            registry,
+            BondingSlot::new(registry),
             params
         ),
         Err(Error::Initialization(_))
     ));
     assert!(matches!(
-        P::register_native_circuit::<Pasta, TestR, HEADER_SIZE>(0, RegistryBuilder::new(), params),
+        P::register_native_circuit::<Pasta, TestR, HEADER_SIZE>(
+            0,
+            CircuitSlot::new(RegistryBuilder::new()),
+            params
+        ),
         Err(Error::Initialization(_))
     ));
 
     let nested = P::nested_extension();
     let mut registry = RegistryBuilder::<Fq, AggregatorRank>::new();
     for circuit in 0..nested.circuits.len() {
-        registry =
-            P::register_nested_circuit::<Pasta, AggregatorRank>(circuit, registry, params).unwrap();
+        registry = P::register_nested_circuit::<Pasta, AggregatorRank>(
+            circuit,
+            CircuitSlot::new(registry),
+            params,
+        )
+        .unwrap()
+        .into_registry();
     }
     for bonding in 0..nested.bondings() {
-        registry =
-            P::register_nested_bonding::<Pasta, AggregatorRank>(bonding, registry, params).unwrap();
+        registry = P::register_nested_bonding::<Pasta, AggregatorRank>(
+            bonding,
+            BondingSlot::new(registry),
+            params,
+        )
+        .unwrap()
+        .into_registry();
     }
     assert_eq!(registry.num_internal_circuits(), nested.internal());
     assert!(matches!(
-        P::register_nested_circuit::<Pasta, TestR>(0, RegistryBuilder::new(), params),
+        P::register_nested_circuit::<Pasta, TestR>(
+            0,
+            CircuitSlot::new(RegistryBuilder::new()),
+            params
+        ),
         Err(Error::Initialization(_))
     ));
 }
@@ -194,8 +220,9 @@ fn hooks_register_every_chunk_and_stage() {
 /// The profile's shape is wider than the standard one, and an application
 /// over it builds at the aggregator rank: every fuse circuit fits the
 /// budget with the extension's polynomials, every chunk circuit registers
-/// beside them, and the bootstrap proof, with the chunks run over the
-/// wallet application's canonical compressed proof, verifies.
+/// beside them and none can stand in for an application circuit, and the
+/// bootstrap proof, with the chunks run over the wallet application's
+/// canonical compressed proof, verifies.
 #[test]
 fn the_fuse_fits_at_the_aggregator_rank() {
     let standard = Shape::of::<Standard>();
@@ -215,6 +242,7 @@ fn the_fuse_fits_at_the_aggregator_rank() {
     let app = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
         .finalize_with(crate::pasta::baked(), decompression)
         .unwrap();
+    crate::internal::tests::assert_only_steps_satisfy_application_instances(&app);
     let bootstrap = app.bootstrap.clone().expect("finalized").carry::<()>(());
     assert!(app.verify(&bootstrap, &mut rng).unwrap());
 }
