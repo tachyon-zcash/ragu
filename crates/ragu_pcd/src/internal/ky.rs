@@ -159,11 +159,23 @@ pub fn nested_bound<P: Profile, T>(commitment: impl Fn(native::RxIndex) -> T) ->
     })
 }
 
+/// Finishes `ky`, the Horner evaluation of an extension circuit's public
+/// output, as the circuit's $k(y)$: the constant zero its registry slot
+/// appends to the output (see [`CircuitSlot`](crate::profile::CircuitSlot)),
+/// then the trailing one. A circuit without an output keeps $k(y) = 1$.
+pub fn finish_extension_ky<'dr, D: Driver<'dr>>(
+    mut ky: Horner<'_, 'dr, D>,
+    dr: &mut D,
+) -> Result<Element<'dr, D>> {
+    Element::zero(dr).write(dr, &mut ky)?;
+    ky.finish_ky(dr)
+}
+
 /// A binding circuit's $k(y)$ in circuit: the $k(y)$ of its public output,
-/// the points it exposes, which the verifier computes over `points`, the
-/// commitments the circuit must have recomputed, so that the claim holds
-/// only if it did. `None` for no points, which a profile without a binding
-/// has.
+/// the points it exposes and the zero its slot appends, which the verifier
+/// computes over `points`, the commitments the circuit must have
+/// recomputed, so that the claim holds only if it did. `None` for no
+/// points, which a profile without a binding has.
 pub fn binding_ky<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
     dr: &mut D,
     y: &Element<'dr, D>,
@@ -176,7 +188,7 @@ pub fn binding_ky<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
     for point in points {
         GadgetExt::write(point, dr, &mut ky)?;
     }
-    ky.finish_ky(dr).map(Some)
+    finish_extension_ky(ky, dr).map(Some)
 }
 
 /// [`binding_ky`] over points allocated from `points`, `count` of them.

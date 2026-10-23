@@ -527,17 +527,18 @@ fn print_nested_circuit_constraint_counts() {
     print_stage!("challenges", stages::challenges::Stage<EqAffine, R, crate::profile::Standard>);
 }
 
-/// Checks that only step slots can satisfy an application instance.
+/// Checks that only step slots can satisfy an application instance, in the
+/// standard profile and in profiles with extension circuits.
 ///
 /// The application `circuit_id` is only checked for registry-domain
 /// membership, so a prover may point it at any native slot. Every slot other
 /// than a step must fail an application instance for every trace. Stage masks
 /// and unassigned slots fail on the constant term: their wiring polynomial has
 /// no `ONE` row. Internal circuits fail on the linear term: their last public
-/// output is the zero suffix appended by the unified output builder, so that
-/// row has no wires and contributes zero for every trace, while an application
-/// instance's linear coefficient is its output header suffix, which is never
-/// zero.
+/// output is the zero suffix appended by the unified output builder, and by
+/// the circuit slot for an extension circuit, so that row has no wires and
+/// contributes zero for every trace, while an application instance's linear
+/// coefficient is its output header suffix, which is never zero.
 #[test]
 fn test_non_step_slots_reject_application_instances() {
     use alloc::{format, string::String, vec::Vec};
@@ -546,31 +547,75 @@ fn test_non_step_slots_reject_application_instances() {
     use rand::{Rng, SeedableRng, rngs::StdRng};
     use udon::field::Field;
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
-        .finalize(crate::pasta::baked())
-        .unwrap();
-    let registry = &app.native_registry;
-    let x = Fp::random(|bytes| StdRng::seed_from_u64(0).fill_bytes(bytes));
+    use crate::profile::{
+        Profile, Profiled, ProfiledCycle,
+        testing::{Crossing, CrossingBack, CrossingContext, Proving},
+    };
 
-    let steps = InternalCircuitIndex::NUM..registry.num_circuits();
-    let unprotected: Vec<String> = (0..registry.num_circuits().next_power_of_two())
-        .filter(|slot| !steps.contains(slot))
-        .filter(|&slot| {
-            let sx = registry.wx(CircuitIndex::new(slot).omega_j(), x);
-            let mut coeffs = sx.iter_coeffs();
-            let constant = coeffs.next().unwrap();
-            let linear = coeffs.next().unwrap();
-            constant != Fp::ZERO && linear != Fp::ZERO
-        })
-        .map(|slot| match InternalCircuitIndex::ALL.get(slot) {
-            Some(id) => format!("{id:?}"),
-            None => format!("slot {slot}"),
-        })
-        .collect();
+    /// The non-step slots of `app`'s native registry that can satisfy an
+    /// application instance.
+    fn unprotected<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize>(
+        app: &Application<'_, C, R, HEADER_SIZE>,
+    ) -> Vec<String> {
+        let registry = &app.native_registry;
+        let x = C::CircuitField::random(|bytes| StdRng::seed_from_u64(0).fill_bytes(bytes));
+        let all = InternalCircuitIndex::all::<C::Profile>();
+        let steps = all.len()..registry.num_circuits();
+        (0..registry.num_circuits().next_power_of_two())
+            .filter(|slot| !steps.contains(slot))
+            .filter(|&slot| {
+                let sx = registry.wx(CircuitIndex::new(slot).omega_j(), x);
+                let mut coeffs = sx.iter_coeffs();
+                let constant = coeffs.next().unwrap();
+                let linear = coeffs.next().unwrap();
+                constant != C::CircuitField::ZERO && linear != C::CircuitField::ZERO
+            })
+            .map(|slot| match all.get(slot) {
+                Some(id) => format!("{id:?}"),
+                None => format!("slot {slot}"),
+            })
+            .collect()
+    }
 
-    assert!(
-        unprotected.is_empty(),
-        "non-step slots that can satisfy an application instance: {unprotected:?}"
+    fn check<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize>(
+        app: &Application<'_, C, R, HEADER_SIZE>,
+    ) {
+        let unprotected = unprotected(app);
+        assert!(
+            unprotected.is_empty(),
+            "non-step slots of {} that can satisfy an application instance: {unprotected:?}",
+            C::Profile::NAME
+        );
+    }
+
+    let params = crate::pasta::baked();
+    check(
+        &ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
+            .finalize(params)
+            .unwrap(),
+    );
+
+    // Profiles with extension circuits, at the rank where they fit.
+    type Wide = ragu_circuits::polynomials::R<14>;
+    check(
+        &ApplicationBuilder::<Profiled<Pasta, Proving>, Wide, 4>::new()
+            .finalize(params)
+            .unwrap(),
+    );
+    let context = || CrossingContext {
+        params,
+        native: [true; 4],
+        nested: [true; 4],
+    };
+    check(
+        &ApplicationBuilder::<Profiled<Pasta, Crossing>, Wide, 4>::new()
+            .finalize_with(params, context())
+            .unwrap(),
+    );
+    check(
+        &ApplicationBuilder::<Profiled<Pasta, CrossingBack>, Wide, 4>::new()
+            .finalize_with(params, context())
+            .unwrap(),
     );
 }
 
@@ -1033,25 +1078,49 @@ fn test_extension_claims_follow_the_declaration() {
 fn test_extension_hooks_register_and_the_fuse_overflows() {
     use ragu_circuits::registry::RegistryBuilder;
 
-    use crate::profile::{Profile, Profiled, testing::Hooked};
+    use crate::profile::{BondingSlot, CircuitSlot, Profile, Profiled, testing::Hooked};
 
     type C = Profiled<Pasta, Hooked>;
     let params = crate::pasta::baked();
 
     let registry = RegistryBuilder::<Fp, R>::new();
-    let registry =
-        Hooked::register_native_circuit::<Pasta, R, HEADER_SIZE>(0, registry, params).unwrap();
+    let registry = Hooked::register_native_circuit::<Pasta, R, HEADER_SIZE>(
+        0,
+        CircuitSlot::new(registry),
+        params,
+    )
+    .unwrap()
+    .into_registry();
     assert_eq!(registry.num_internal_circuits(), 1);
-    let registry =
-        Hooked::register_native_bonding::<Pasta, R, HEADER_SIZE>(0, registry, params).unwrap();
-    let registry =
-        Hooked::register_native_bonding::<Pasta, R, HEADER_SIZE>(1, registry, params).unwrap();
+    let registry = Hooked::register_native_bonding::<Pasta, R, HEADER_SIZE>(
+        0,
+        BondingSlot::new(registry),
+        params,
+    )
+    .unwrap()
+    .into_registry();
+    let registry = Hooked::register_native_bonding::<Pasta, R, HEADER_SIZE>(
+        1,
+        BondingSlot::new(registry),
+        params,
+    )
+    .unwrap()
+    .into_registry();
     assert_eq!(registry.num_internal_circuits(), 3);
 
     let registry = RegistryBuilder::<Fq, R>::new();
-    let registry = Hooked::register_nested_circuit::<Pasta, R>(0, registry, params).unwrap();
-    let registry = Hooked::register_nested_bonding::<Pasta, R>(0, registry, params).unwrap();
-    let registry = Hooked::register_nested_bonding::<Pasta, R>(1, registry, params).unwrap();
+    let registry =
+        Hooked::register_nested_circuit::<Pasta, R>(0, CircuitSlot::new(registry), params)
+            .unwrap()
+            .into_registry();
+    let registry =
+        Hooked::register_nested_bonding::<Pasta, R>(0, BondingSlot::new(registry), params)
+            .unwrap()
+            .into_registry();
+    let registry =
+        Hooked::register_nested_bonding::<Pasta, R>(1, BondingSlot::new(registry), params)
+            .unwrap()
+            .into_registry();
     assert_eq!(registry.num_internal_circuits(), 3);
 
     let result = ApplicationBuilder::<C, R, HEADER_SIZE>::new().finalize(params);
@@ -1059,31 +1128,6 @@ fn test_extension_hooks_register_and_the_fuse_overflows() {
         matches!(result, Err(Error::GateBoundExceeded { .. })),
         "two polynomials per side already overflow a fuse circuit"
     );
-}
-
-/// A profile's registration hook must register exactly one entry, so that
-/// the layout's indices stay the registry's: a hook registering none or
-/// two is refused.
-#[test]
-fn test_a_hook_registers_exactly_one_entry() {
-    use ragu_circuits::registry::RegistryBuilder;
-
-    use crate::profile::{Profile, testing::Hooked};
-
-    let params = crate::pasta::baked();
-    let one =
-        |registry| Hooked::register_native_circuit::<Pasta, R, HEADER_SIZE>(0, registry, params);
-
-    let registry = RegistryBuilder::<Fp, R>::new();
-    let registry = super::register_one(registry, "native", "circuit", 0, one).unwrap();
-    assert_eq!(registry.num_internal_circuits(), 1);
-
-    let registry = RegistryBuilder::<Fp, R>::new();
-    assert!(super::register_one(registry, "native", "circuit", 0, Ok).is_err());
-
-    let registry = RegistryBuilder::<Fp, R>::new();
-    let two = |registry| one(registry).and_then(one);
-    assert!(super::register_one(registry, "nested", "bonding", 1, two).is_err());
 }
 
 /// The fold's groups are the standard profile's for the standard profile,

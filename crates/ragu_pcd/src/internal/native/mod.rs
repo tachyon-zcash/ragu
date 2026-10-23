@@ -29,7 +29,7 @@ use ragu_primitives::vec::{ConstLen, Len};
 
 use crate::{
     internal::{endoscalar, fold_revdot::Parameters, nested},
-    profile::{Profile, ProfiledCycle, Shape},
+    profile::{BondingSlot, CircuitSlot, Profile, ProfiledCycle, Shape},
     step,
 };
 
@@ -1067,20 +1067,18 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
     for id in InternalCircuitIndex::all::<C::Profile>() {
         use InternalCircuitIndex::*;
         registry = match id {
-            ExtensionCircuit(k) => {
-                super::register_one(registry, "native", "circuit", k, |registry| {
-                    C::Profile::register_native_circuit::<C::Base, R, HEADER_SIZE>(
-                        k as usize, registry, params,
-                    )
-                })?
-            }
-            ExtensionBonding(j) => {
-                super::register_one(registry, "native", "bonding", j, |registry| {
-                    C::Profile::register_native_bonding::<C::Base, R, HEADER_SIZE>(
-                        j as usize, registry, params,
-                    )
-                })?
-            }
+            ExtensionCircuit(k) => C::Profile::register_native_circuit::<C::Base, R, HEADER_SIZE>(
+                k as usize,
+                CircuitSlot::new(registry),
+                params,
+            )?
+            .into_registry(),
+            ExtensionBonding(j) => C::Profile::register_native_bonding::<C::Base, R, HEADER_SIZE>(
+                j as usize,
+                BondingSlot::new(registry),
+                params,
+            )?
+            .into_registry(),
             PreambleStage => {
                 registry.register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)
             }

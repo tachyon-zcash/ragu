@@ -145,8 +145,9 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
 
     /// The statement circuit's $k(y)$ for this child, when profile `P`'s
     /// native extension has one: the $k(y)$ of the header the extension
-    /// verified, which is the child's own output header for a proof of the
-    /// decompression step and the unit header for a proof of any other
+    /// verified, followed by the zero the circuit's slot appends to its
+    /// output. The header is the child's own output header for a proof of
+    /// the decompression step and the unit header for a proof of any other
     /// step, so a profile's prover verifies a proof with the unit header,
     /// such as an application's bootstrap, outside that step. `None` for a
     /// profile without a statement circuit, which computes nothing and
@@ -172,14 +173,14 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         let own = {
             let mut ky = Horner::new(y);
             self.output_header.write(dr, &mut ky)?;
-            ky.finish_ky(dr)?
+            ky::finish_extension_ky(ky, dr)?
         };
         let canonical = {
             let mut ky = Horner::new(y);
             for value in ky::output_header::<C, (), HEADER_SIZE>(())? {
                 Element::constant(dr, value).write(dr, &mut ky)?;
             }
-            ky.finish_ky(dr)?
+            ky::finish_extension_ky(ky, dr)?
         };
         is_decompress
             .conditional_select(dr, &canonical, &own)

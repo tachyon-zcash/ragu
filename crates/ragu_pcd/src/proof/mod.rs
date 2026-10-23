@@ -1409,3 +1409,59 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.build().expect("dummy proof construction failed")
     }
 }
+
+#[cfg(test)]
+impl<C: Cycle, R: Rank> Proof<C, R> {
+    /// Doubles the native extension polynomial at `index` and recommits it,
+    /// so that a test can check that the polynomial itself is bound and not
+    /// only its cache.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index` is not an extension circuit's or stage's.
+    pub(crate) fn double_native_extension_rx(&mut self, params: &C::Params, index: RxIndex) {
+        use ragu_backend::{Backend, ReferenceBackend};
+
+        let (rx, commitment) = match index {
+            RxIndex::ExtensionCircuit(k) => (
+                &mut self.native_extension_circuit_rxs[k as usize],
+                &mut self.native_extension_circuit_commitments[k as usize],
+            ),
+            RxIndex::ExtensionStage(k) => (
+                &mut self.native_extension_stage_rxs[k as usize],
+                &mut self.native_extension_stage_commitments[k as usize],
+            ),
+            _ => panic!("{index:?} is not an extension polynomial"),
+        };
+        rx.scale(C::CircuitField::ONE + C::CircuitField::ONE);
+        commitment.0 = ReferenceBackend::sparse_commit_to_affine(rx, C::host_generators(params));
+    }
+
+    /// The nested counterpart of
+    /// [`double_native_extension_rx`](Self::double_native_extension_rx).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index` is not an extension circuit's or stage's.
+    pub(crate) fn double_nested_extension_rx(
+        &mut self,
+        params: &C::Params,
+        index: nested::RxIndex,
+    ) {
+        use ragu_backend::{Backend, ReferenceBackend};
+
+        let (rx, commitment) = match index {
+            nested::RxIndex::ExtensionCircuit(k) => (
+                &mut self.nested_extension_circuit_rxs[k as usize],
+                &mut self.nested_extension_circuit_commitments[k as usize],
+            ),
+            nested::RxIndex::ExtensionStage(k) => (
+                &mut self.nested_extension_stage_rxs[k as usize],
+                &mut self.nested_extension_stage_commitments[k as usize],
+            ),
+            _ => panic!("{index:?} is not an extension polynomial"),
+        };
+        rx.scale(C::ScalarField::ONE + C::ScalarField::ONE);
+        commitment.0 = ReferenceBackend::sparse_commit_to_affine(rx, C::nested_generators(params));
+    }
+}
