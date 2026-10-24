@@ -3,7 +3,15 @@
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::any::TypeId;
 
-use ragu_core::{Error, Result};
+use ragu_core::{
+    Error, Result,
+    drivers::{
+        Driver as _,
+        emulator::{Emulator, Wireless},
+    },
+    maybe::{Always, Maybe as _},
+    pasta::{Fp, PastaParams},
+};
 use rand::CryptoRng;
 
 use super::{
@@ -23,9 +31,13 @@ pub struct ApplicationBuilder {
 
 /// Mocks `ragu_pcd::Application`.
 #[derive(Clone, Debug)]
-pub struct Application {
+pub struct Application<'params> {
+    params: &'params PastaParams,
     num_application_steps: usize,
 }
+
+/// Native driver used to execute mock steps with real gadget assignments.
+type NativeDriver = Emulator<Wireless<Always<()>, Fp>>;
 
 impl ApplicationBuilder {
     #[must_use]
@@ -51,8 +63,11 @@ impl ApplicationBuilder {
         Ok(self)
     }
 
-    pub fn finalize(self) -> Result<Application> {
+    /// Finalizes the application with the generators used for polynomial
+    /// commitments and Poseidon challenges.
+    pub fn finalize<'params>(self, params: &'params PastaParams) -> Result<Application<'params>> {
         Ok(Application {
+            params,
             num_application_steps: self.num_application_steps,
         })
     }
@@ -73,7 +88,7 @@ impl ApplicationBuilder {
     }
 }
 
-impl Application {
+impl Application<'_> {
     /// Mirrors `ragu_pcd::Application::seed`: runs a unit-input step over the
     /// bootstrap proof as both children, via [`fuse`](Self::fuse).
     pub fn seed<'source, RNG: CryptoRng, S: Step<Left = (), Right = ()>>(
@@ -101,12 +116,20 @@ impl Application {
         proof::compute_header_hash(S::Left::SUFFIX, &S::Left::encode(&left.data))?;
         proof::compute_header_hash(S::Right::SUFFIX, &S::Right::encode(&right.data))?;
 
-        let mut hooks = FrameworkHooks::new();
-        let mut ctx = StepCtx::new(&mut hooks);
-        let (output_data, aux) = step.witness(&mut ctx, witness, left.data, right.data)?;
-
-        // TODO just like the real crate :D
-        let _claims = hooks.into_outputs();
+        let mut dr = NativeDriver::execute();
+        let mut hooks = FrameworkHooks::new(self.params);
+        let (output_data, aux) = {
+            let mut ctx = StepCtx::new(&mut dr, &mut hooks);
+            step.witness(
+                &mut ctx,
+                NativeDriver::just(|| witness),
+                NativeDriver::just(|| left.data),
+                NativeDriver::just(|| right.data),
+            )?
+        };
+        let output_data = output_data.take();
+        let aux = aux.take();
+        let _poly_queries = hooks.into_outputs().take();
 
         let encoded = S::Output::encode(&output_data);
 

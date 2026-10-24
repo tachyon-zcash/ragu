@@ -2,10 +2,12 @@ use alloc::vec::Vec;
 
 use ragu_core::{
     Result,
+    drivers::{Driver, DriverValue},
     pasta::{Ep, Eq, Fp, Fq},
 };
 use rand::{SeedableRng as _, rngs::StdRng};
 
+use super::test_params;
 use crate::{
     Application, ApplicationBuilder, Header, Index, PROOF_SIZE_COMPRESSED, Pcd, Proof, Step,
     StepCtx, Suffix,
@@ -41,23 +43,29 @@ impl Step for ValueSeedStep {
 
     const INDEX: Index = Index::new(0);
 
-    fn witness<'source>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
         &self,
-        _ctx: &mut StepCtx<'_>,
-        witness: Self::Witness<'source>,
-        _left: <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        Ok((witness, ()))
+        _ctx: &mut StepCtx<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        _left: DriverValue<D, <Self::Left as Header>::Data>,
+        _right: DriverValue<D, <Self::Right as Header>::Data>,
+    ) -> Result<(
+        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        Ok((witness, D::unit()))
     }
 }
 
 /// Application with [`ValueSeedStep`] registered.
-fn value_app() -> Application {
+fn value_app() -> Application<'static> {
     ApplicationBuilder::new()
         .register(ValueSeedStep)
         .expect("register")
-        .finalize()
+        .finalize(test_params())
         .expect("finalize")
 }
 

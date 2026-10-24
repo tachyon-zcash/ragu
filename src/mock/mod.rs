@@ -7,6 +7,7 @@
 pub use application::{Application, ApplicationBuilder};
 pub use ctx::StepCtx;
 pub use header::{Header, Suffix};
+pub use poly_commitment::PolyHandle;
 pub use proof::{PROOF_SIZE_COMPRESSED, Pcd, Proof};
 pub use step::{Index, Step};
 
@@ -14,6 +15,7 @@ mod application;
 mod ctx;
 mod header;
 mod hooks;
+mod poly_commitment;
 mod proof;
 mod step;
 

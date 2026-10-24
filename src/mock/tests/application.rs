@@ -1,12 +1,17 @@
 use alloc::vec::Vec;
 
+use ragu_circuits::polynomials::{TestRank, sparse};
 use ragu_core::{
     Error, Result,
+    drivers::{Driver, DriverValue},
+    maybe::Maybe as _,
     pasta::{Ep, Eq, Fp, Fq},
 };
+use ragu_primitives::Element;
 use rand::{SeedableRng as _, rngs::StdRng};
 use udon::curve::Projective;
 
+use super::test_params;
 use crate::{
     Application, ApplicationBuilder, Header, Index, PROOF_SIZE_COMPRESSED, Pcd, Proof, Step,
     StepCtx, Suffix,
@@ -45,14 +50,66 @@ impl Step for SeedStep {
 
     const INDEX: Index = Index::new(0);
 
-    fn witness<'source>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
         &self,
-        _ctx: &mut StepCtx<'_>,
-        witness: Self::Witness<'source>,
-        _left: <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        Ok((TestHeaderData { value: witness }, ()))
+        _ctx: &mut StepCtx<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        _left: DriverValue<D, <Self::Left as Header>::Data>,
+        _right: DriverValue<D, <Self::Right as Header>::Data>,
+    ) -> Result<(
+        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        Ok(witness.map(|value| (TestHeaderData { value }, ())).cast())
+    }
+}
+
+struct EvaluationHeader;
+
+impl Header for EvaluationHeader {
+    type Data = Fp;
+
+    const SUFFIX: Suffix = Suffix::new(2);
+
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+        (alloc::vec![*data], Vec::new(), Vec::new(), Vec::new())
+    }
+}
+
+struct PolynomialSeedStep;
+
+impl Step for PolynomialSeedStep {
+    type Aux<'source> = ();
+    type Left = ();
+    type Output = EvaluationHeader;
+    type Right = ();
+    type Witness<'source> = sparse::Polynomial<Fp, TestRank>;
+
+    const INDEX: Index = Index::new(0);
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        ctx: &mut StepCtx<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        _left: DriverValue<D, <Self::Left as Header>::Data>,
+        _right: DriverValue<D, <Self::Right as Header>::Data>,
+    ) -> Result<(
+        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let handle = ctx.witness_polynomial(witness)?;
+        let x = Fp::from(2u64);
+        let evaluation = ctx.evaluate(&handle, D::just(|| x))?;
+        let x_gadget = Element::constant(ctx.dr, x);
+        let y_gadget = Element::alloc(ctx.dr, &mut (), evaluation.clone())?;
+        ctx.enforce_poly_query(&handle, x_gadget, y_gadget)?;
+        Ok((evaluation, D::unit()))
     }
 }
 
@@ -67,19 +124,28 @@ impl Step for MergeStep {
 
     const INDEX: Index = Index::new(1);
 
-    fn witness<'source>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
         &self,
-        _ctx: &mut StepCtx<'_>,
-        _witness: Self::Witness<'source>,
-        left: <Self::Left as Header>::Data,
-        right: <Self::Right as Header>::Data,
-    ) -> Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        Ok((
-            TestHeaderData {
-                value: left.value + right.value,
-            },
-            (),
-        ))
+        _ctx: &mut StepCtx<'_, 'dr, D>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header>::Data>,
+        right: DriverValue<D, <Self::Right as Header>::Data>,
+    ) -> Result<(
+        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        Ok(D::just(|| {
+            (
+                TestHeaderData {
+                    value: left.take().value + right.take().value,
+                },
+                (),
+            )
+        })
+        .cast())
     }
 }
 
@@ -89,7 +155,7 @@ fn seed_then_verify() {
     let app = ApplicationBuilder::new()
         .register(SeedStep)
         .expect("register should succeed")
-        .finalize()
+        .finalize(test_params())
         .expect("finalize should succeed");
 
     let (pcd, ()) = app
@@ -101,12 +167,34 @@ fn seed_then_verify() {
 }
 
 #[test]
+fn seed_executes_polynomial_hooks() {
+    let mut rng = StdRng::seed_from_u64(0);
+    let app = ApplicationBuilder::new()
+        .register(PolynomialSeedStep)
+        .expect("register should succeed")
+        .finalize(test_params())
+        .expect("finalize should succeed");
+    let polynomial = sparse::Polynomial::<Fp, TestRank>::from_coeffs(alloc::vec![
+        Fp::from(3u64),
+        Fp::from(1u64),
+        Fp::from(4u64),
+    ]);
+
+    let (pcd, ()) = app
+        .seed(&mut rng, PolynomialSeedStep, polynomial)
+        .expect("a valid polynomial opening should seed");
+
+    assert_eq!(*pcd.data(), Fp::from(21u64));
+    assert!(app.verify(&pcd, &mut rng).expect("verify should succeed"));
+}
+
+#[test]
 fn verify_rejects_wrong_data() {
     let mut rng = StdRng::seed_from_u64(0);
     let app = ApplicationBuilder::new()
         .register(SeedStep)
         .expect("register should succeed")
-        .finalize()
+        .finalize(test_params())
         .expect("finalize should succeed");
 
     let (pcd, ()) = app
@@ -128,7 +216,7 @@ fn fuse_then_verify() {
         .expect("register should succeed")
         .register(MergeStep)
         .expect("register should succeed")
-        .finalize()
+        .finalize(test_params())
         .expect("finalize should succeed");
 
     let (pcd_a, ()) = app.seed(&mut rng, SeedStep, 10u64).expect("seed a");
@@ -152,7 +240,7 @@ fn fuse_rejects_wrong_sum() {
         .expect("register")
         .register(MergeStep)
         .expect("register")
-        .finalize()
+        .finalize(test_params())
         .expect("finalize");
 
     let (pcd_a, ()) = app.seed(&mut rng, SeedStep, 10u64).expect("seed a");
@@ -177,7 +265,7 @@ fn deep_fuse_chain() {
         .expect("register")
         .register(MergeStep)
         .expect("register")
-        .finalize()
+        .finalize(test_params())
         .expect("finalize");
 
     let mut pcds = Vec::new();
@@ -224,7 +312,7 @@ fn different_merge_trees_same_header() {
         .expect("register")
         .register(MergeStep)
         .expect("register")
-        .finalize()
+        .finalize(test_params())
         .expect("finalize");
 
     let (pa, ()) = app.seed(&mut rng, SeedStep, 1u64).expect("seed a");
@@ -266,15 +354,25 @@ impl Step for AuxSeedStep {
 
     const INDEX: Index = Index::new(0);
 
-    fn witness<'source>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
         &self,
-        _ctx: &mut StepCtx<'_>,
-        witness: Self::Witness<'source>,
-        _left: <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        let squared = witness * witness;
-        Ok((TestHeaderData { value: squared }, alloc::vec![squared]))
+        _ctx: &mut StepCtx<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        _left: DriverValue<D, <Self::Left as Header>::Data>,
+        _right: DriverValue<D, <Self::Right as Header>::Data>,
+    ) -> Result<(
+        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        Ok(witness
+            .map(|witness| {
+                let squared = witness * witness;
+                (TestHeaderData { value: squared }, alloc::vec![squared])
+            })
+            .cast())
     }
 }
 
@@ -289,22 +387,31 @@ impl Step for AuxMergeStep {
 
     const INDEX: Index = Index::new(1);
 
-    fn witness<'source>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
         &self,
-        _ctx: &mut StepCtx<'_>,
-        witness: Self::Witness<'source>,
-        left: <Self::Left as Header>::Data,
-        right: <Self::Right as Header>::Data,
-    ) -> Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        let (left_aux, right_aux) = witness;
-        let mut combined = left_aux;
-        combined.extend(right_aux);
-        Ok((
-            TestHeaderData {
-                value: left.value + right.value,
-            },
-            combined,
-        ))
+        _ctx: &mut StepCtx<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header>::Data>,
+        right: DriverValue<D, <Self::Right as Header>::Data>,
+    ) -> Result<(
+        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        Ok(D::just(|| {
+            let (left_aux, right_aux) = witness.take();
+            let mut combined = left_aux;
+            combined.extend(right_aux);
+            (
+                TestHeaderData {
+                    value: left.take().value + right.take().value,
+                },
+                combined,
+            )
+        })
+        .cast())
     }
 }
 
@@ -316,7 +423,7 @@ fn aux_data_flows_through_seed_and_fuse() {
         .expect("register")
         .register(AuxMergeStep)
         .expect("register")
-        .finalize()
+        .finalize(test_params())
         .expect("finalize");
 
     let (pcd_a, aux_a) = app.seed(&mut rng, AuxSeedStep, 3u64).expect("seed a");
@@ -342,7 +449,7 @@ fn serialized_proof_still_verifies() {
     let app = ApplicationBuilder::new()
         .register(SeedStep)
         .expect("register should succeed")
-        .finalize()
+        .finalize(test_params())
         .expect("finalize should succeed");
 
     let (pcd, ()) = app
@@ -366,7 +473,7 @@ fn serialized_proof_rejects_mismatched_header_data() {
     let app = ApplicationBuilder::new()
         .register(SeedStep)
         .expect("register should succeed")
-        .finalize()
+        .finalize(test_params())
         .expect("finalize should succeed");
 
     let (pcd, ()) = app
@@ -392,7 +499,7 @@ fn tampered_serialized_proof_fails_to_deserialize() {
     let app = ApplicationBuilder::new()
         .register(SeedStep)
         .expect("register should succeed")
-        .finalize()
+        .finalize(test_params())
         .expect("finalize should succeed");
 
     let (pcd, ()) = app
@@ -413,7 +520,7 @@ fn rerandomize_preserves_validity() {
     let app = ApplicationBuilder::new()
         .register(SeedStep)
         .expect("register should succeed")
-        .finalize()
+        .finalize(test_params())
         .expect("finalize should succeed");
 
     let (pcd, ()) = app
@@ -465,14 +572,20 @@ impl Step for DuplicateIndexStep {
 
     const INDEX: Index = Index::new(0);
 
-    fn witness<'source>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
         &self,
-        _ctx: &mut StepCtx<'_>,
-        _witness: Self::Witness<'source>,
-        _left: <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        Ok((TestHeaderData { value: 0 }, ()))
+        _ctx: &mut StepCtx<'_, 'dr, D>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
+        _left: DriverValue<D, <Self::Left as Header>::Data>,
+        _right: DriverValue<D, <Self::Right as Header>::Data>,
+    ) -> Result<(
+        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        Ok(D::just(|| (TestHeaderData { value: 0 }, ())).cast())
     }
 }
 
@@ -489,14 +602,20 @@ impl Step for SuffixCollisionStep {
 
     const INDEX: Index = Index::new(1);
 
-    fn witness<'source>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
         &self,
-        _ctx: &mut StepCtx<'_>,
-        _witness: Self::Witness<'source>,
-        _left: <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        Ok((TestHeaderData { value: 0 }, ()))
+        _ctx: &mut StepCtx<'_, 'dr, D>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
+        _left: DriverValue<D, <Self::Left as Header>::Data>,
+        _right: DriverValue<D, <Self::Right as Header>::Data>,
+    ) -> Result<(
+        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        Ok(D::just(|| (TestHeaderData { value: 0 }, ())).cast())
     }
 }
 
@@ -554,14 +673,20 @@ fn internal_step_index_rejects_registration() {
 
         const INDEX: Index = Index::internal(0);
 
-        fn witness<'source>(
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
             &self,
-            _ctx: &mut StepCtx<'_>,
-            _witness: Self::Witness<'source>,
-            _left: <Self::Left as Header>::Data,
-            _right: <Self::Right as Header>::Data,
-        ) -> Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-            Ok((TestHeaderData { value: 0 }, ()))
+            _ctx: &mut StepCtx<'_, 'dr, D>,
+            _witness: DriverValue<D, Self::Witness<'source>>,
+            _left: DriverValue<D, <Self::Left as Header>::Data>,
+            _right: DriverValue<D, <Self::Right as Header>::Data>,
+        ) -> Result<(
+            DriverValue<D, <Self::Output as Header>::Data>,
+            DriverValue<D, Self::Aux<'source>>,
+        )>
+        where
+            Self: 'dr,
+        {
+            Ok(D::just(|| (TestHeaderData { value: 0 }, ())).cast())
         }
     }
 
@@ -578,7 +703,7 @@ fn verify_rejects_unregistered_step_index() {
     let app = ApplicationBuilder::new()
         .register(SeedStep)
         .expect("register should succeed")
-        .finalize()
+        .finalize(test_params())
         .expect("finalize should succeed");
 
     let encoded = TestHeader::encode(&TestHeaderData { value: 42 });
@@ -623,7 +748,7 @@ fn verify_rejects_swapped_header_type() {
     let app = ApplicationBuilder::new()
         .register(SeedStep)
         .expect("register should succeed")
-        .finalize()
+        .finalize(test_params())
         .expect("finalize should succeed");
 
     let (pcd, ()) = app
@@ -678,19 +803,22 @@ impl Step for PointSeedStep {
 
     const INDEX: Index = Index::new(0);
 
-    fn witness<'source>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
         &self,
-        _ctx: &mut StepCtx<'_>,
-        witness: Self::Witness<'source>,
-        _left: <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        Ok((
-            PointHeaderData {
-                commitment: witness,
-            },
-            (),
-        ))
+        _ctx: &mut StepCtx<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        _left: DriverValue<D, <Self::Left as Header>::Data>,
+        _right: DriverValue<D, <Self::Right as Header>::Data>,
+    ) -> Result<(
+        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        Ok(witness
+            .map(|commitment| (PointHeaderData { commitment }, ()))
+            .cast())
     }
 }
 
@@ -706,23 +834,29 @@ impl Step for PointConsumeStep {
 
     const INDEX: Index = Index::new(1);
 
-    fn witness<'source>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
         &self,
-        _ctx: &mut StepCtx<'_>,
-        _witness: Self::Witness<'source>,
-        _left: <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        Ok((TestHeaderData { value: 1 }, ()))
+        _ctx: &mut StepCtx<'_, 'dr, D>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
+        _left: DriverValue<D, <Self::Left as Header>::Data>,
+        _right: DriverValue<D, <Self::Right as Header>::Data>,
+    ) -> Result<(
+        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        Ok(D::just(|| (TestHeaderData { value: 1 }, ())).cast())
     }
 }
 
 /// Application with [`PointSeedStep`] registered.
-fn point_app() -> Application {
+fn point_app() -> Application<'static> {
     ApplicationBuilder::new()
         .register(PointSeedStep)
         .expect("register")
-        .finalize()
+        .finalize(test_params())
         .expect("finalize")
 }
 
@@ -759,7 +893,7 @@ fn identity_point_in_input_header_fails_fuse() {
         .expect("register")
         .register(PointConsumeStep)
         .expect("register")
-        .finalize()
+        .finalize(test_params())
         .expect("finalize");
 
     let bad_left = Proof::bootstrap().carry::<PointHeader>(PointHeaderData {

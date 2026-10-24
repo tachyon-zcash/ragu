@@ -1,6 +1,10 @@
 //! Mock PCD step — mirrors `ragu_pcd::Step`.
 
-use ragu_core::{Error, Result};
+use ragu_core::{
+    Error, Result,
+    drivers::{Driver, DriverValue},
+    pasta::Fp,
+};
 
 use super::{ctx::StepCtx, header::Header};
 
@@ -102,11 +106,20 @@ pub trait Step: Sized + Send + Sync {
     type Right: Header;
     type Output: Header;
 
-    fn witness<'source>(
+    /// Emits this step's constraints using real ragu drivers and gadgets.
+    ///
+    /// Unlike real ragu, the mock lets the application encode the returned
+    /// header data natively rather than returning three encoded header gadgets.
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
         &self,
-        ctx: &mut StepCtx<'_>,
-        witness: Self::Witness<'source>,
-        left: <Self::Left as Header>::Data,
-        right: <Self::Right as Header>::Data,
-    ) -> Result<(<Self::Output as Header>::Data, Self::Aux<'source>)>;
+        ctx: &mut StepCtx<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header>::Data>,
+        right: DriverValue<D, <Self::Right as Header>::Data>,
+    ) -> Result<(
+        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr;
 }
