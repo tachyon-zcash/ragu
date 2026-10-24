@@ -69,7 +69,9 @@ use super::super::{
     },
     unified::{self, OutputBuilder},
 };
-use crate::internal::nested;
+use ragu_primitives::vec::Len;
+
+use crate::{framework_hooks::HookConfig, internal::nested};
 
 /// The number of binding circuits: two challenges each over the ten the
 /// challenge stage holds.
@@ -110,13 +112,13 @@ fn read_challenge<'dr, D: Driver<'dr>, A: Allocator<'dr, D>, C: Cycle<CircuitFie
 /// See the [module-level documentation] for details.
 ///
 /// [module-level documentation]: self
-pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, const K: usize> {
+pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, J, const K: usize> {
     params: &'params C::Params,
-    _marker: PhantomData<R>,
+    _marker: PhantomData<(R, J)>,
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
-    Circuit<'params, C, R, HEADER_SIZE, K>
+impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, const K: usize>
+    Circuit<'params, C, R, HEADER_SIZE, J, K>
 {
     /// Creates a new multi-stage circuit.
     ///
@@ -131,8 +133,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
     }
 }
 
-/// Witness for a binding circuit.
-pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+/// Witness for a binding circuit, for a poly count `L`.
+pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, L: Len> {
     /// The unified instance containing the challenges and accumulated
     /// coverage.
     pub unified: unified::Instance<C>,
@@ -142,16 +144,16 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     /// Witness for the query stage (reserved, unused).
     pub query_witness: &'a native_query::Witness<C>,
     /// Witness for the eval stage (provides the binding partials).
-    pub eval_witness: &'a native_eval::Witness<C>,
+    pub eval_witness: &'a native_eval::Witness<C, L>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
-    MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, K>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, const K: usize>
+    MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, J, K>
 {
-    type Last = native_eval::Stage<C, R, HEADER_SIZE>;
+    type Last = native_eval::Stage<C, R, HEADER_SIZE, J>;
 
     type Instance<'source> = &'source unified::Instance<C>;
-    type Witness<'source> = Witness<'source, C, R, HEADER_SIZE>;
+    type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, J::PolyWitnesses>;
     type Output = unified::InternalOutputKind<C>;
     type Aux<'source> = unified::Instance<C>;
 
@@ -176,9 +178,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
     {
         let builder = builder.skip_stage::<BindingStage<C::NestedCurve>>()?;
         let (preamble, builder) =
-            builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
-        let (query, builder) = builder.add_stage::<native_query::Stage<C, R, HEADER_SIZE>>()?;
-        let (eval, builder) = builder.add_stage::<native_eval::Stage<C, R, HEADER_SIZE>>()?;
+            builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE, J>>()?;
+        let (query, builder) = builder.add_stage::<native_query::Stage<C, R, HEADER_SIZE, J>>()?;
+        let (eval, builder) = builder.add_stage::<native_eval::Stage<C, R, HEADER_SIZE, J>>()?;
         let dr = builder.finish();
 
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
@@ -199,7 +201,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
             let challenge = EndoscalarChallenge::from_element(dr, allocator, challenge)?;
             let bits = Endoscalar::extract(challenge);
 
-            let generator = generators.g()[native_eval::generator_index::<C, R>(i)];
+            let generator =
+                generators.g()[native_eval::generator_index::<C, R, J::PolyWitnesses>(i)];
             let generator = Point::constant(dr, generator)?;
             let term = bits.group_scale(dr, &generator)?;
 
@@ -219,8 +222,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
         // partial.
         if K + 1 == NUM_BINDERS {
             let is_base_case = preamble.is_base_case(dr, allocator)?;
-            let generator = generators.g()
-                [native_eval::generator_index::<C, R>(nested::stages::challenges::SIGN_INDEX)];
+            let generator = generators.g()[native_eval::generator_index::<C, R, J::PolyWitnesses>(
+                nested::stages::challenges::SIGN_INDEX,
+            )];
             let generator = Point::constant(dr, generator)?;
             let negate = is_base_case.not(dr);
             let term = generator.conditional_negate(dr, &negate)?;
@@ -242,27 +246,27 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
 /// the runtime index `$k`.
 #[macro_export]
 macro_rules! with_binder {
-    ($k:expr, $C:ty, $R:ty, $H:expr, $params:expr, |$circuit:ident| $body:expr) => {{
+    ($k:expr, $C:ty, $R:ty, $H:expr, $J:ty, $params:expr, |$circuit:ident| $body:expr) => {{
         use $crate::internal::native::circuits::bind_challenges::Circuit;
         match $k {
             0 => {
-                let $circuit = Circuit::<$C, $R, $H, 0>::new($params);
+                let $circuit = Circuit::<$C, $R, $H, $J, 0>::new($params);
                 $body
             }
             1 => {
-                let $circuit = Circuit::<$C, $R, $H, 1>::new($params);
+                let $circuit = Circuit::<$C, $R, $H, $J, 1>::new($params);
                 $body
             }
             2 => {
-                let $circuit = Circuit::<$C, $R, $H, 2>::new($params);
+                let $circuit = Circuit::<$C, $R, $H, $J, 2>::new($params);
                 $body
             }
             3 => {
-                let $circuit = Circuit::<$C, $R, $H, 3>::new($params);
+                let $circuit = Circuit::<$C, $R, $H, $J, 3>::new($params);
                 $body
             }
             4 => {
-                let $circuit = Circuit::<$C, $R, $H, 4>::new($params);
+                let $circuit = Circuit::<$C, $R, $H, $J, 4>::new($params);
                 $body
             }
             _ => panic!("no binding circuit {}", $k),

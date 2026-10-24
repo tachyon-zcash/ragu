@@ -40,18 +40,20 @@ use ragu_core::{
     gadgets::Bound,
     maybe::Maybe,
 };
-use ragu_primitives::{Endoscalar, GadgetExt as _, allocator::Standard, consistent::Consistent};
+use ragu_primitives::{
+    Endoscalar, GadgetExt as _, allocator::Standard, consistent::Consistent, vec::Len,
+};
 use udon::curve::EndomorphismAffine as Affine;
 
 use super::common;
 use crate::internal::nested::{stages, unified};
 
 /// Export circuit pinning the nested unified instance to the stages.
-pub struct Circuit<C: Affine, R: Rank> {
-    _marker: PhantomData<(C, R)>,
+pub struct Circuit<C: Affine, R: Rank, L: Len> {
+    _marker: PhantomData<(C, R, L)>,
 }
 
-impl<C: Affine, R: Rank> Circuit<C, R> {
+impl<C: Affine, R: Rank, L: Len> Circuit<C, R, L> {
     pub fn new() -> Self {
         Self {
             _marker: PhantomData,
@@ -59,11 +61,11 @@ impl<C: Affine, R: Rank> Circuit<C, R> {
     }
 }
 
-impl<C: Affine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
-    type Last = stages::challenges::Stage<C, R>;
+impl<C: Affine, R: Rank, L: Len> MultiStageCircuit<C::Base, R> for Circuit<C, R, L> {
+    type Last = stages::challenges::Stage<C, R, L>;
     type Instance<'source> = &'source unified::Instance<C>;
-    type Witness<'source> = common::Witness<'source, C>;
-    type Output = unified::OutputKind<C>;
+    type Witness<'source> = common::Witness<'source, C, L>;
+    type Output = unified::OutputKind<C, L>;
     type Aux<'source> = unified::Instance<C>;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -116,7 +118,7 @@ impl<C: Affine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
             .points
             .interstitials
             .last()
-            .expect("NUM_ENDOSCALING_POINTS guarantees >= 1 interstitial");
+            .expect("`num_steps` floors at one, so there is always an interstitial");
         let held = [
             &stages.preamble.native_preamble,
             &stages.inner_error.native_inner_error,
@@ -132,8 +134,13 @@ impl<C: Affine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
             &stages.s_prime.native_points_registry_wx,
             &stages.ab.native_points_ab,
             &stages.f.native_points_f,
+            &stages.preamble.native_challenges,
         ];
+        // Then the commitments of the polynomials this step witnessed, which
+        // the eval stage holds and a parent accumulates.
+        let held = held.into_iter().chain(stages.eval.witness_polys.iter());
         let exported = unified.exported.receive(dr, allocator)?;
+        assert_eq!(exported.len(), held.clone().count());
         for (instance, stage) in exported.iter().zip(held) {
             instance.enforce_equal(dr, stage)?;
         }

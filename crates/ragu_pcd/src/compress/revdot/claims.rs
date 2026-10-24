@@ -27,6 +27,7 @@ use ragu_circuits::{
 use ragu_core::Result;
 use udon::field::Field;
 
+use super::super::POLYS;
 use crate::internal::{claims::Source, native, nested};
 
 /// A claim pinning wires of a committed stage polynomial $Q$ to expected
@@ -226,7 +227,7 @@ impl<Id, F: Field> native::claims::Processor<Id, CircuitIndex> for Shaper<Id, F>
         id: native::InternalCircuitIndex,
         rxs: impl Iterator<Item = Id>,
     ) {
-        self.circuit(id.circuit_index(), rxs);
+        self.circuit(id.circuit_index(POLYS), rxs);
     }
 
     fn grouped_bonding_claim(
@@ -234,7 +235,7 @@ impl<Id, F: Field> native::claims::Processor<Id, CircuitIndex> for Shaper<Id, F>
         id: native::InternalCircuitIndex,
         groups: impl Iterator<Item = impl Iterator<Item = Id>>,
     ) -> Result<()> {
-        self.bonding(id.circuit_index(), groups);
+        self.bonding(id.circuit_index(POLYS), groups);
         Ok(())
     }
 }
@@ -249,7 +250,7 @@ impl<Id, F: Field> nested::claims::Processor<Id> for Shaper<Id, F> {
         id: nested::InternalCircuitIndex,
         rxs: impl Iterator<Item = Id>,
     ) {
-        self.circuit(id.circuit_index(), rxs);
+        self.circuit(id.circuit_index(POLYS), rxs);
     }
 
     fn grouped_bonding_claim(
@@ -257,7 +258,7 @@ impl<Id, F: Field> nested::claims::Processor<Id> for Shaper<Id, F> {
         id: nested::InternalCircuitIndex,
         groups: impl Iterator<Item = impl Iterator<Item = Id>>,
     ) -> Result<()> {
-        self.bonding(id.circuit_index(), groups);
+        self.bonding(id.circuit_index(POLYS), groups);
         Ok(())
     }
 }
@@ -287,7 +288,7 @@ pub(crate) fn native_shapes<F: Field>(
         z,
         shapes: Vec::new(),
     };
-    native::claims::build(&NativeIds { circuit_id }, &mut shaper)?;
+    native::claims::build(&NativeIds { circuit_id }, &mut shaper, POLYS)?;
     Ok(with_masked(shaper.shapes, masked))
 }
 
@@ -301,7 +302,7 @@ pub(crate) fn nested_shapes<F: Field>(
         z,
         shapes: Vec::new(),
     };
-    nested::claims::build(&NestedIds, &mut shaper)?;
+    nested::claims::build(&NestedIds, &mut shaper, POLYS)?;
     Ok(with_masked(shaper.shapes, masked))
 }
 

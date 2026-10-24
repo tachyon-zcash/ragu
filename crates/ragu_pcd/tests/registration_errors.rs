@@ -11,7 +11,7 @@ use ragu_core::{
 use ragu_pcd::{
     ApplicationBuilder,
     header::{Header, Suffix},
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Step, StepCtx},
 };
 use ragu_primitives::{
     Element,
@@ -76,7 +76,7 @@ impl<C: ragu_core::Cycle> Step<C> for Step0 {
     type Output = HSuffixA;
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -89,6 +89,7 @@ impl<C: ragu_core::Cycle> Step<C> for Step0 {
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
+        let dr = &mut *ctx.dr;
         let allocator = &mut Standard::new();
         let left = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
@@ -109,7 +110,7 @@ impl<C: ragu_core::Cycle> Step<C> for Step1 {
     type Output = HSuffixB;
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -122,6 +123,7 @@ impl<C: ragu_core::Cycle> Step<C> for Step1 {
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
+        let dr = &mut *ctx.dr;
         let allocator = &mut Standard::new();
         let left = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
@@ -142,7 +144,7 @@ impl<C: ragu_core::Cycle> Step<C> for Step1Dup {
     type Output = HSuffixAOther;
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -155,6 +157,7 @@ impl<C: ragu_core::Cycle> Step<C> for Step1Dup {
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
+        let dr = &mut *ctx.dr;
         let allocator = &mut Standard::new();
         let left = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
@@ -167,18 +170,18 @@ impl<C: ragu_core::Cycle> Step<C> for Step1Dup {
 #[test]
 fn register_steps_success_and_finalize() {
     let pasta = ragu_pcd::pasta::baked();
-    let builder = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let builder = ApplicationBuilder::<Pasta, ProductionRank, 4>::new(pasta)
         .register(Step0)
         .unwrap()
         .register(Step1)
         .unwrap();
-    builder.finalize(pasta).unwrap();
+    builder.finalize().unwrap();
 }
 
 #[test]
 #[should_panic(expected = "steps must be registered in sequential order")]
 fn register_steps_out_of_order_should_fail() {
-    ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    ApplicationBuilder::<Pasta, ProductionRank, 4>::new(ragu_pcd::pasta::baked())
         .register(Step1)
         .unwrap();
 }
@@ -186,7 +189,7 @@ fn register_steps_out_of_order_should_fail() {
 #[test]
 #[should_panic(expected = "two different Header implementations using the same suffix")]
 fn register_steps_duplicate_suffix_should_fail() {
-    ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    ApplicationBuilder::<Pasta, ProductionRank, 4>::new(ragu_pcd::pasta::baked())
         .register(Step0)
         .unwrap()
         .register(Step1Dup)
@@ -222,7 +225,7 @@ impl<L: Header<Fp>, R: Header<Fp>, O: Header<Fp>> Step<Pasta> for HeaderStep<L, 
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, L::Data>,
         right: DriverValue<D, R::Data>,
@@ -235,6 +238,7 @@ impl<L: Header<Fp>, R: Header<Fp>, O: Header<Fp>> Step<Pasta> for HeaderStep<L, 
         DriverValue<D, O::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
+        let dr = &mut *ctx.dr;
         let allocator = &mut Standard::new();
         let left = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
@@ -244,9 +248,8 @@ impl<L: Header<Fp>, R: Header<Fp>, O: Header<Fp>> Step<Pasta> for HeaderStep<L, 
 }
 
 fn rejects_reserved_suffix<L: Header<Fp>, R: Header<Fp>, O: Header<Fp>>() {
-    let result =
-        ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
-            .register(HeaderStep::<L, R, O>(PhantomData));
+    let result = ApplicationBuilder::<Pasta, ProductionRank, 4>::new(ragu_pcd::pasta::baked())
+        .register(HeaderStep::<L, R, O>(PhantomData));
     assert!(matches!(
         result,
         Err(Error::Initialization(message))
@@ -268,7 +271,7 @@ fn register_rejects_reserved_suffix_in_each_header_position() {
 
 #[test]
 fn register_accepts_unit_in_every_header_position() {
-    ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    ApplicationBuilder::<Pasta, ProductionRank, 4>::new(ragu_pcd::pasta::baked())
         .register(HeaderStep::<(), (), ()>(PhantomData))
         .unwrap();
 }

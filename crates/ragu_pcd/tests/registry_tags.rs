@@ -12,7 +12,7 @@ fn application(
     tags: RegistryTags<Pasta>,
 ) -> Result<Application<'static, Pasta, ProductionRank, 4>> {
     let pasta = ragu_pcd::pasta::baked();
-    ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    ApplicationBuilder::<Pasta, ProductionRank, 4>::new(pasta)
         .register(WitnessLeaf {
             poseidon_params: Pasta::circuit_poseidon(pasta),
         })?
@@ -20,7 +20,7 @@ fn application(
             poseidon_params: Pasta::circuit_poseidon(pasta),
         })?
         .with_registry_tags(tags)
-        .finalize(pasta)
+        .finalize()
 }
 
 #[test]

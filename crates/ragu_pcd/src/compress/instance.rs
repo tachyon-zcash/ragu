@@ -25,9 +25,12 @@ use ragu_core::{Cycle, Error, Result};
 use ragu_primitives::extract_endoscalar;
 use udon::{curve::Affine, fft::bit_reverse, field::Field};
 
-use super::revdot::{
-    OpeningClaim, claims::Masked, native_components, native_position, nested_components,
-    nested_position,
+use super::{
+    HookLen, Hooks, POLYS,
+    revdot::{
+        OpeningClaim, claims::Masked, native_components, native_position, nested_components,
+        nested_position,
+    },
 };
 use crate::{
     Proof, SelectableBackend,
@@ -100,12 +103,12 @@ pub(crate) struct Instance<C: Cycle> {
     pub nested_b_at_u: C::ScalarField,
 }
 
-type NativePreamble<C, R, const H: usize> = native_stages::preamble::Stage<C, R, H>;
-type NativeQuery<C, R, const H: usize> = native_stages::query::Stage<C, R, H>;
-type NativeEval<C, R, const H: usize> = native_stages::eval::Stage<C, R, H>;
-type NestedPreamble<C, R> = nested_stages::preamble::Stage<<C as Cycle>::HostCurve, R>;
-type NestedQuery<C, R> = nested_stages::query::Stage<<C as Cycle>::HostCurve, R>;
-type NestedEval<C, R> = nested_stages::eval::Stage<<C as Cycle>::HostCurve, R>;
+type NativePreamble<C, R, const H: usize> = native_stages::preamble::Stage<C, R, H, Hooks>;
+type NativeQuery<C, R, const H: usize> = native_stages::query::Stage<C, R, H, Hooks>;
+type NativeEval<C, R, const H: usize> = native_stages::eval::Stage<C, R, H, Hooks>;
+type NestedPreamble<C, R> = nested_stages::preamble::Stage<<C as Cycle>::HostCurve, R, HookLen>;
+type NestedQuery<C, R> = nested_stages::query::Stage<<C as Cycle>::HostCurve, R, HookLen>;
+type NestedEval<C, R> = nested_stages::eval::Stage<<C as Cycle>::HostCurve, R, HookLen>;
 
 /// The coefficient degrees of the wires `select` picks from stage `S`.
 fn degrees<F: Field, R: Rank, S: ragu_circuits::staging::Stage<F, R> + Default>(
@@ -427,7 +430,9 @@ impl<C: Cycle> Instance<C> {
                 self.native_commitment(Rx(PointsRegistryWx)),
                 self.native_commitment(Rx(PointsAb)),
                 self.native_commitment(Rx(PointsF)),
-            ],
+                self.native_commitment(Rx(Challenges)),
+            ]
+            .to_vec(),
             coverage: Default::default(),
         })
     }
@@ -444,11 +449,14 @@ impl<C: Cycle> Instance<C> {
         let unified = self.unified(challenges);
         let native = NativeKy {
             c: Some(self.c),
-            ..ky::native_ky_of::<C, HEADER_SIZE>(
+            ..ky::native_ky_of::<C, HEADER_SIZE, Hooks>(
                 ky::NativeParts {
                     left_header: &self.left_header,
                     right_header: &self.right_header,
                     output_header,
+                    witness_polys: &[],
+                    poly_queries: &[],
+                    challenges: &[],
                     circuit_id: self.circuit_id,
                     unified: &unified,
                 },
@@ -457,7 +465,7 @@ impl<C: Cycle> Instance<C> {
         };
         let nested = NestedKy {
             c: self.nested_c,
-            unified: ky::nested_ky_of::<C>(&self.nested_unified(challenges)?, nested_y)?,
+            unified: ky::nested_ky_of::<C, HookLen>(&self.nested_unified(challenges)?, nested_y)?,
         };
         Ok((native, nested))
     }
@@ -475,7 +483,7 @@ impl<C: Cycle> Instance<C> {
             return Ok(false);
         };
         let (challenge_lifts, beta_lift) = lifts.split_at(nested_stages::challenges::NUM);
-        let challenge_stage = nested_stages::challenges::Stage::<C::HostCurve, R>::rx(
+        let challenge_stage = nested_stages::challenges::Stage::<C::HostCurve, R, HookLen>::rx(
             C::ScalarField::ZERO,
             &nested_stages::challenges::Witness::new::<_, HEADER_SIZE>(
                 challenge_lifts.try_into().expect("NUM challenge lifts"),
@@ -484,7 +492,7 @@ impl<C: Cycle> Instance<C> {
                 beta_lift[0],
             ),
         )?;
-        let ab_bridge = nested_stages::ab::Stage::<C::HostCurve, R>::rx(
+        let ab_bridge = nested_stages::ab::Stage::<C::HostCurve, R, HookLen>::rx(
             crate::proof::bridge_alpha_power(self.bridge_alpha, nested::RxIndex::BridgeAB),
             &nested_stages::ab::Witness {
                 a: self.native_commitment(native::RxComponent::AbA),
@@ -541,10 +549,9 @@ impl<C: Cycle> Instance<C> {
         })?;
         let evals = B::registry_wxy_over_domain(registry, x, y);
         let log2_n = registry.log2_domain();
-        let mut values: Vec<_> = native::InternalCircuitIndex::ALL
-            .iter()
+        let mut values: Vec<_> = native::InternalCircuitIndex::all(POLYS)
             .map(|id| {
-                let j = usize::from(id.circuit_index()) as u32;
+                let j = usize::from(id.circuit_index(POLYS)) as u32;
                 evals[bit_reverse(j as usize, log2_n)]
             })
             .collect();
@@ -587,18 +594,20 @@ impl<C: Cycle> Instance<C> {
             ],
         );
 
-        let points_ab = degrees::<_, R, native_stages::points::AbStage<C::NestedCurve>>(|stage| {
-            let mut wires = wires_of(&stage.a)?;
-            wires.extend(wires_of(&stage.b)?);
-            Ok(wires)
-        })?;
+        let points_ab =
+            degrees::<_, R, native_stages::points::AbStage<C::NestedCurve, HookLen>>(|stage| {
+                let mut wires = wires_of(&stage.a)?;
+                wires.extend(wires_of(&stage.b)?);
+                Ok(wires)
+            })?;
         let [ax, ay] = coordinates(self.nested_commitment(nested::RxComponent::AbA))?;
         let [bx, by] = coordinates(self.nested_commitment(nested::RxComponent::AbB))?;
         let points_ab = claim(Rx(PointsAb), points_ab, vec![ax, ay, bx, by]);
 
-        let points_f = degrees::<_, R, native_stages::points::FStage<C::NestedCurve>>(|stage| {
-            wires_of(&stage.registry_xy)
-        })?;
+        let points_f =
+            degrees::<_, R, native_stages::points::FStage<C::NestedCurve, HookLen>>(|stage| {
+                wires_of(&stage.registry_xy)
+            })?;
         let [gx, gy] = coordinates(self.nested_registry_xy)?;
         let points_f = claim(Rx(PointsF), points_f, vec![gx, gy]);
 
@@ -647,10 +656,9 @@ impl<C: Cycle> Instance<C> {
         })?;
         let evals = B::registry_wxy_over_domain(registry, x, y);
         let log2_n = registry.log2_domain();
-        let mut values: Vec<_> = nested::InternalCircuitIndex::ALL
-            .iter()
+        let mut values: Vec<_> = nested::InternalCircuitIndex::all(POLYS)
             .map(|id| {
-                let j = usize::from(id.circuit_index()) as u32;
+                let j = usize::from(id.circuit_index(POLYS)) as u32;
                 evals[bit_reverse(j as usize, log2_n)]
             })
             .collect();

@@ -47,23 +47,23 @@ use super::super::{
         WalkInputs, WalkStage, WalkWitness,
     },
 };
-use crate::internal::endoscalar::input_range;
+use crate::{framework_hooks::HookConfig, internal::endoscalar::input_range};
 
 /// One step of the native endoscaling walk.
 #[derive(Clone)]
-pub struct Circuit<C: Cycle, R: Rank> {
+pub struct Circuit<C: Cycle, R: Rank, J> {
     step: usize,
-    _marker: PhantomData<(C, R)>,
+    _marker: PhantomData<(C, R, J)>,
 }
 
-impl<C: Cycle, R: Rank> Circuit<C, R> {
+impl<C: Cycle, R: Rank, J: HookConfig> Circuit<C, R, J> {
     /// Creates step `step`.
     ///
     /// # Panics
     ///
     /// Panics if `step` is not a step of the walk.
     pub fn new(step: usize) -> MultiStage<C::CircuitField, R, Self> {
-        let num_steps = NumSteps::len();
+        let num_steps = NumSteps::<J::PolyWitnesses>::len();
         assert!(
             step < num_steps,
             "step {step} exceeds available steps ({num_steps})"
@@ -76,15 +76,15 @@ impl<C: Cycle, R: Rank> Circuit<C, R> {
 }
 
 /// Witness for one step: every points stage.
-pub struct Witness<'a, C: Cycle> {
-    pub inputs: &'a Inputs<C::NestedCurve>,
-    pub walk: &'a WalkWitness<C::NestedCurve>,
+pub struct Witness<'a, C: Cycle, J: HookConfig> {
+    pub inputs: &'a Inputs<C::NestedCurve, J::PolyWitnesses>,
+    pub walk: &'a WalkWitness<C::NestedCurve, J::PolyWitnesses>,
 }
 
-impl<C: Cycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circuit<C, R> {
-    type Last = WalkStage<C::NestedCurve>;
+impl<C: Cycle, R: Rank, J: HookConfig> MultiStageCircuit<C::CircuitField, R> for Circuit<C, R, J> {
+    type Last = WalkStage<C::NestedCurve, J::PolyWitnesses>;
     type Instance<'source> = ();
-    type Witness<'source> = Witness<'source, C>;
+    type Witness<'source> = Witness<'source, C, J>;
     type Output = Kind![C::CircuitField; WithSuffix<'_, _, ()>];
     type Aux<'source> = ();
 
@@ -102,11 +102,12 @@ impl<C: Cycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circuit<C, R> 
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
         let (binding, dr) = dr.add_stage::<BindingStage<C::NestedCurve>>()?;
-        let (children, dr) = dr.add_stage::<ChildrenStage<C::NestedCurve>>()?;
-        let (registry_wx, dr) = dr.add_stage::<RegistryWxStage<C::NestedCurve>>()?;
-        let (ab, dr) = dr.add_stage::<AbStage<C::NestedCurve>>()?;
-        let (f, dr) = dr.add_stage::<FStage<C::NestedCurve>>()?;
-        let (walk, dr) = dr.add_stage::<WalkStage<C::NestedCurve>>()?;
+        let (children, dr) = dr.add_stage::<ChildrenStage<C::NestedCurve, J::PolyWitnesses>>()?;
+        let (registry_wx, dr) =
+            dr.add_stage::<RegistryWxStage<C::NestedCurve, J::PolyWitnesses>>()?;
+        let (ab, dr) = dr.add_stage::<AbStage<C::NestedCurve, J::PolyWitnesses>>()?;
+        let (f, dr) = dr.add_stage::<FStage<C::NestedCurve, J::PolyWitnesses>>()?;
+        let (walk, dr) = dr.add_stage::<WalkStage<C::NestedCurve, J::PolyWitnesses>>()?;
         let dr = dr.finish();
 
         let inputs = witness.as_ref().map(|w| w.inputs);
@@ -133,7 +134,8 @@ impl<C: Cycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circuit<C, R> 
             .unwrap_or(walk.initial())
             .clone();
 
-        let range = input_range::<ENDOSCALINGS_PER_STEP>(self.step, NumInputs::len());
+        let range =
+            input_range::<ENDOSCALINGS_PER_STEP>(self.step, NumInputs::<J::PolyWitnesses>::len());
         assert!(!range.is_empty());
 
         let acc = NonzeroBank::scope(dr, |dr, bank| {

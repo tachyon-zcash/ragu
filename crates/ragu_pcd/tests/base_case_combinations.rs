@@ -18,7 +18,7 @@ use ragu_core::{
     pasta::{EqAffine, Fp, Fq},
     routines::Routine,
 };
-use ragu_primitives::{GadgetExt, allocator::Standard, io::Write};
+use ragu_primitives::{GadgetExt, allocator::Standard, io::Write, vec::ConstLen};
 use ragu_testing::strategies;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use udon::{
@@ -36,7 +36,7 @@ use crate::{
         Side, native,
         nested::{self, stages::challenges},
     },
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Step, StepCtx},
 };
 
 /// Preserve ordinary unit headers through successive fuses.
@@ -53,7 +53,7 @@ impl Step<C> for UnitStep {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
         _: DriverValue<D, ()>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -69,6 +69,7 @@ impl Step<C> for UnitStep {
     where
         Self: 'dr,
     {
+        let dr = &mut *ctx.dr;
         let allocator = &mut Standard::new();
         Ok((
             (
@@ -163,9 +164,10 @@ fn check_signs(app: &support::App, inputs: &support::Inputs) -> Result<()> {
             .0,
         ),
     ];
-    let sign_wire = stage_wire_indices::<_, R, challenges::Stage<EqAffine, R>>(|stage| {
-        wires_of(&stage.base_case.lift)
-    })?[0];
+    let sign_wire =
+        stage_wire_indices::<_, R, challenges::Stage<EqAffine, R, ConstLen<0>>>(|stage| {
+            wires_of(&stage.base_case.lift)
+        })?[0];
     // Only Dummy x Dummy selects +1. In particular, one Dummy input or
     // ordinary unit headers must not select the exception.
     let suffixes = [
@@ -526,6 +528,7 @@ fn check_proof_guards(
                 C,
                 R,
                 HEADER_SIZE,
+                crate::NoHooks,
                 native::RevdotParameters,
             >::new(),
             &native_trace,
@@ -539,7 +542,11 @@ fn check_proof_guards(
 
     assert_eq!(
         accepts_wrong_c(
-            MultiStage::new(nested::circuits::collapse::Circuit::<EqAffine, R>::new()),
+            MultiStage::new(nested::circuits::collapse::Circuit::<
+                EqAffine,
+                R,
+                ConstLen<0>,
+            >::new()),
             &nested_collapse_trace(proof),
             0, // c_n is the first slot in the nested unified instance.
             proof.nested_c(),
@@ -567,12 +574,13 @@ fn nested_collapse_uses_challenge_stage_y_even_in_bootstrap() -> Result<()> {
         assert!(app.verify(&bootstrap, StdRng::seed_from_u64(873009))?);
         assert!(app.verify(&ordinary, StdRng::seed_from_u64(873010))?);
 
-        let stage_wires = stage_wire_indices::<_, R, challenges::Stage<EqAffine, R>>(|stage| {
-            Ok(vec![
-                *stage.pairs[challenges::Y].lift.wire(),
-                *stage.base_case.lift.wire(),
-            ])
-        })?;
+        let stage_wires =
+            stage_wire_indices::<_, R, challenges::Stage<EqAffine, R, ConstLen<0>>>(|stage| {
+                Ok(vec![
+                    *stage.pairs[challenges::Y].lift.wire(),
+                    *stage.base_case.lift.wire(),
+                ])
+            })?;
         let y_degree = wire_degree::<R>(stage_wires[0]);
         let sign_degree = wire_degree::<R>(stage_wires[1]);
 
@@ -584,8 +592,11 @@ fn nested_collapse_uses_challenge_stage_y_even_in_bootstrap() -> Result<()> {
                 gates: 1,
                 linear: Vec::new(),
             };
-            let circuit =
-                MultiStage::new(nested::circuits::collapse::Circuit::<EqAffine, R>::new());
+            let circuit = MultiStage::new(nested::circuits::collapse::Circuit::<
+                EqAffine,
+                R,
+                ConstLen<0>,
+            >::new());
             let (output, _) = circuit.witness(&mut constraints, Empty)?.into_parts();
             let instance_y = output.y.wire();
             assert_eq!(instance_y.constant, Fq::ZERO);
@@ -700,10 +711,10 @@ fn check_guards(
 #[test]
 #[ignore = "recursion regression suite: run by the scheduled heavy-tests workflow"]
 fn noncanonical_unit_children_reject_through_two_generations() {
-    let app = ApplicationBuilder::<C, R, HEADER_SIZE>::new()
+    let app = ApplicationBuilder::<C, R, HEADER_SIZE>::new(crate::pasta::baked())
         .register(UnitStep)
         .expect("register unit step")
-        .finalize(crate::pasta::baked())
+        .finalize()
         .expect("build unit application");
     let mut rng = StdRng::seed_from_u64(873003);
     let honest = app.bootstrap_pcd();

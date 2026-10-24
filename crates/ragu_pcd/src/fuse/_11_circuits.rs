@@ -2,6 +2,7 @@ use alloc::vec::Vec;
 
 use ragu_circuits::{CircuitExt, polynomials::Rank, staging::MultiStage};
 use ragu_core::{Cycle, Result};
+use ragu_primitives::vec::Len;
 use rand::CryptoRng;
 
 use crate::{
@@ -10,8 +11,13 @@ use crate::{
     proof::ProofBuilder,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    J: crate::framework_hooks::HookConfig,
+    B: crate::SelectableBackend,
+> Application<'_, C, R, HEADER_SIZE, J, B>
 {
     /// Traces this step's native internal circuits, assembles their Rx
     /// polynomials, and stores them in the proof builder.
@@ -33,11 +39,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             native::RevdotParameters,
         >,
         query_witness: &native::stages::query::Witness<C>,
-        eval_witness: &native::stages::eval::Witness<C>,
-        native_points: &super::NativeInputs<C>,
-        native_walk: &super::_10_p::NativeWalk<C>,
-        builder: &mut ProofBuilder<'_, C, R, B>,
+        eval_witness: &native::stages::eval::Witness<C, J::PolyWitnesses>,
+        native_points: &super::NativeInputs<C, J>,
+        native_walk: &super::_10_p::NativeWalk<C, J>,
+        builder: &mut ProofBuilder<'_, C, R, J, B>,
     ) -> Result<()> {
+        let polys = J::PolyWitnesses::len();
         let unified = native::unified::Instance {
             bridge_preamble_commitment: builder.bridge_preamble_commitment(),
             w: builder.w(),
@@ -72,10 +79,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             C,
             R,
             HEADER_SIZE,
+            J,
             native::RevdotParameters,
         >::new(
             self.params,
-            total_circuit_counts(self.num_application_steps).1,
+            total_circuit_counts(self.num_application_steps, polys).1,
         )
         .trace(native::circuits::hashes_1::Witness {
             unified,
@@ -85,7 +93,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         .into_parts();
         let hashes_1_rx = self.native_registry.assemble(
             &hashes_1_trace,
-            native::InternalCircuitIndex::Hashes1Circuit.circuit_index(),
+            native::InternalCircuitIndex::Hashes1Circuit.circuit_index(polys),
             &mut *rng,
         )?;
 
@@ -93,6 +101,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             C,
             R,
             HEADER_SIZE,
+            J,
             native::RevdotParameters,
         >::new(self.params)
         .trace(native::circuits::hashes_2::Witness {
@@ -102,7 +111,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         .into_parts();
         let hashes_2_rx = self.native_registry.assemble(
             &hashes_2_trace,
-            native::InternalCircuitIndex::Hashes2Circuit.circuit_index(),
+            native::InternalCircuitIndex::Hashes2Circuit.circuit_index(polys),
             &mut *rng,
         )?;
 
@@ -110,6 +119,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             C,
             R,
             HEADER_SIZE,
+            J,
             native::RevdotParameters,
         >::new()
         .trace(native::circuits::inner_collapse::Witness {
@@ -121,7 +131,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         .into_parts();
         let inner_collapse_rx = self.native_registry.assemble(
             &inner_collapse_trace,
-            native::InternalCircuitIndex::InnerCollapseCircuit.circuit_index(),
+            native::InternalCircuitIndex::InnerCollapseCircuit.circuit_index(polys),
             &mut *rng,
         )?;
 
@@ -129,6 +139,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             C,
             R,
             HEADER_SIZE,
+            J,
             native::RevdotParameters,
         >::new()
         .trace(native::circuits::outer_collapse::Witness {
@@ -139,12 +150,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         .into_parts();
         let outer_collapse_rx = self.native_registry.assemble(
             &outer_collapse_trace,
-            native::InternalCircuitIndex::OuterCollapseCircuit.circuit_index(),
+            native::InternalCircuitIndex::OuterCollapseCircuit.circuit_index(polys),
             &mut *rng,
         )?;
 
         let (compute_v_trace, unified) =
-            native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new()
+            native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE, J>::new()
                 .trace(native::circuits::compute_v::Witness {
                     unified,
                     preamble_witness,
@@ -154,7 +165,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 .into_parts();
         let compute_v_rx = self.native_registry.assemble(
             &compute_v_trace,
-            native::InternalCircuitIndex::ComputeVCircuit.circuit_index(),
+            native::InternalCircuitIndex::ComputeVCircuit.circuit_index(polys),
+            &mut *rng,
+        )?;
+
+        let (challenge_binding_trace, unified) =
+            native::circuits::challenge_binding::Circuit::<C, R, HEADER_SIZE, J>::new(self.params)
+                .trace(native::circuits::challenge_binding::Witness {
+                    unified,
+                    preamble_witness,
+                })?
+                .into_parts();
+        let challenge_binding_rx = self.native_registry.assemble(
+            &challenge_binding_trace,
+            native::InternalCircuitIndex::ChallengeBindingCircuit.circuit_index(polys),
             &mut *rng,
         )?;
 
@@ -163,7 +187,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let mut bind_challenges_rxs = Vec::with_capacity(native::NUM_BINDERS);
         for k in 0..native::NUM_BINDERS {
             let (trace, updated) =
-                crate::with_binder!(k, C, R, HEADER_SIZE, self.params, |circuit| {
+                crate::with_binder!(k, C, R, HEADER_SIZE, J, self.params, |circuit| {
                     circuit
                         .trace(native::circuits::bind_challenges::Witness {
                             unified,
@@ -176,7 +200,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             unified = updated;
             bind_challenges_rxs.push(self.native_registry.assemble(
                 &trace,
-                native::InternalCircuitIndex::BindChallengesCircuit(k as u32).circuit_index(),
+                native::InternalCircuitIndex::BindChallengesCircuit(k as u32).circuit_index(polys),
                 &mut *rng,
             )?);
         }
@@ -191,6 +215,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             C,
             R,
             HEADER_SIZE,
+            J,
             native::RevdotParameters,
         >::new(self.params)
         .trace(native::circuits::bind_beta::Witness {
@@ -202,14 +227,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         .into_parts();
         let bind_beta_rx = self.native_registry.assemble(
             &bind_beta_trace,
-            native::InternalCircuitIndex::BindBetaCircuit.circuit_index(),
+            native::InternalCircuitIndex::BindBetaCircuit.circuit_index(polys),
             &mut *rng,
         )?;
 
         // The native walk's inputs: the bits the endoscaling steps walked
         // with are pre_beta's, and the points lie on the curve.
         let (bind_endoscalar_trace, unified) =
-            native::circuits::bind_endoscalar::Circuit::<C, R>::new()
+            native::circuits::bind_endoscalar::Circuit::<C, R, J>::new()
                 .trace(native::circuits::bind_endoscalar::Witness {
                     unified,
                     inputs: native_points,
@@ -218,7 +243,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 .into_parts();
         let bind_endoscalar_rx = self.native_registry.assemble(
             &bind_endoscalar_trace,
-            native::InternalCircuitIndex::BindEndoscalarCircuit.circuit_index(),
+            native::InternalCircuitIndex::BindEndoscalarCircuit.circuit_index(polys),
             &mut *rng,
         )?;
 
@@ -229,6 +254,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         unified.assert_complete();
 
         builder.set_native_compute_v_rx(compute_v_rx);
+        builder.set_native_challenge_binding_rx(challenge_binding_rx);
         builder.set_native_bind_challenges_rxs(bind_challenges_rxs);
         builder.set_native_bind_beta_rx(bind_beta_rx);
         builder.set_native_bind_endoscalar_rx(bind_endoscalar_rx);
@@ -247,18 +273,25 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         &self,
         rng: &mut RNG,
         nested_endoscalar: u128,
-        nested_points: &nested::PointsWitness<C::HostCurve>,
-        nested_preamble_witness: &nested::stages::preamble::Witness<C::HostCurve>,
+        nested_points: &nested::PointsWitness<C::HostCurve, J::PolyWitnesses>,
+        nested_preamble_witness: &nested::stages::preamble::Witness<C::HostCurve, J::PolyWitnesses>,
         nested_s_prime_witness: &nested::stages::s_prime::Witness<C::HostCurve>,
-        nested_inner_error_witness: &nested::stages::inner_error::Witness<C::HostCurve>,
-        nested_outer_error_witness: &nested::stages::outer_error::Witness<C::HostCurve>,
+        nested_inner_error_witness: &nested::stages::inner_error::Witness<
+            C::HostCurve,
+            J::PolyWitnesses,
+        >,
+        nested_outer_error_witness: &nested::stages::outer_error::Witness<
+            C::HostCurve,
+            J::PolyWitnesses,
+        >,
         nested_ab_witness: &nested::stages::ab::Witness<C::HostCurve>,
-        nested_query_witness: &nested::stages::query::Witness<C::HostCurve>,
+        nested_query_witness: &nested::stages::query::Witness<C::HostCurve, J::PolyWitnesses>,
         nested_f_witness: &nested::stages::f::Witness<C::HostCurve>,
-        nested_eval_witness: &nested::stages::eval::Witness<C::HostCurve>,
+        nested_eval_witness: &nested::stages::eval::Witness<C::HostCurve, J::PolyWitnesses>,
         nested_challenges_witness: &nested::stages::challenges::Witness<C::ScalarField>,
-        builder: &mut ProofBuilder<'_, C, R, B>,
+        builder: &mut ProofBuilder<'_, C, R, J, B>,
     ) -> Result<()> {
+        let polys = J::PolyWitnesses::len();
         let instance = nested::unified::Instance {
             c: builder.nested_c(),
             v: builder.nested_v()?,
@@ -280,7 +313,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 builder.native_points_registry_wx_commitment(),
                 builder.native_points_ab_commitment(),
                 builder.native_points_f_commitment(),
-            ],
+                builder.native_challenges_commitment(),
+            ]
+            .into_iter()
+            .chain(builder.witness_poly_commitments().iter().copied())
+            .collect(),
             coverage: Default::default(),
         };
         let witness = |instance| nested::circuits::common::Witness {
@@ -298,33 +335,42 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             challenges: nested_challenges_witness,
         };
 
-        let (export_trace, instance) =
-            MultiStage::new(nested::circuits::export::Circuit::<C::HostCurve, R>::new())
-                .trace(witness(instance))?
-                .into_parts();
+        let (export_trace, instance) = MultiStage::new(nested::circuits::export::Circuit::<
+            C::HostCurve,
+            R,
+            J::PolyWitnesses,
+        >::new())
+        .trace(witness(instance))?
+        .into_parts();
         let export_rx = self.nested_registry.assemble(
             &export_trace,
-            nested::InternalCircuitIndex::Export.circuit_index(),
+            nested::InternalCircuitIndex::Export.circuit_index(polys),
             &mut *rng,
         )?;
 
-        let (collapse_trace, instance) =
-            MultiStage::new(nested::circuits::collapse::Circuit::<C::HostCurve, R>::new())
-                .trace(witness(instance))?
-                .into_parts();
+        let (collapse_trace, instance) = MultiStage::new(nested::circuits::collapse::Circuit::<
+            C::HostCurve,
+            R,
+            J::PolyWitnesses,
+        >::new())
+        .trace(witness(instance))?
+        .into_parts();
         let collapse_rx = self.nested_registry.assemble(
             &collapse_trace,
-            nested::InternalCircuitIndex::Collapse.circuit_index(),
+            nested::InternalCircuitIndex::Collapse.circuit_index(polys),
             &mut *rng,
         )?;
 
-        let (compute_v_trace, instance) =
-            MultiStage::new(nested::circuits::compute_v::Circuit::<C::HostCurve, R>::new())
-                .trace(witness(instance))?
-                .into_parts();
+        let (compute_v_trace, instance) = MultiStage::new(nested::circuits::compute_v::Circuit::<
+            C::HostCurve,
+            R,
+            J::PolyWitnesses,
+        >::new())
+        .trace(witness(instance))?
+        .into_parts();
         let compute_v_rx = self.nested_registry.assemble(
             &compute_v_trace,
-            nested::InternalCircuitIndex::ComputeV.circuit_index(),
+            nested::InternalCircuitIndex::ComputeV.circuit_index(polys),
             &mut *rng,
         )?;
 

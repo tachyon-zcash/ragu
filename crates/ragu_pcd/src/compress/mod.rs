@@ -44,9 +44,14 @@
 //!
 //! Like an uncompressed proof, a compressed proof is not hiding: the
 //! openings it carries are evaluations of the witness polynomials.
+//!
+//! Compression covers only applications whose steps witness no polynomials
+//! ([`NoHooks`](crate::NoHooks)): its instance and openings are laid out for
+//! that shape, and [`refuse_hooks`] turns any other layout away at both entry
+//! points.
 
 use ragu_circuits::polynomials::Rank;
-use ragu_core::{Cycle, Result};
+use ragu_core::{Cycle, Error, Result};
 use udon::curve::Affine;
 
 use self::{
@@ -56,9 +61,34 @@ use self::{
 };
 use crate::{
     SelectableBackend,
+    framework_hooks::HookConfig,
     header::Header,
     ipa::{CycleTranscript, IPA_TAG, IpaProof, IpaTranscript},
 };
+
+/// The hook layout compression is laid out for: no witnessed polynomials.
+pub(crate) type Hooks = crate::NoHooks;
+
+/// [`Hooks`]' polynomial count, as the length type the stages take.
+pub(crate) type HookLen = <Hooks as HookConfig>::PolyWitnesses;
+
+/// [`Hooks`]' polynomial count.
+pub(crate) const POLYS: usize = 0;
+
+/// Refuses an application whose layout is not [`Hooks`]'.
+///
+/// # Errors
+///
+/// Returns [`Error::Initialization`] if `J` declares any hook.
+pub(crate) fn refuse_hooks<J: HookConfig>() -> Result<()> {
+    if J::layout() == Hooks::layout() {
+        Ok(())
+    } else {
+        Err(Error::Initialization(
+            "compression supports only applications without hooks".into(),
+        ))
+    }
+}
 
 pub(crate) mod batch;
 pub(crate) mod instance;

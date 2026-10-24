@@ -444,11 +444,11 @@ fn patcher_captures_internal_circuits() -> Result<()> {
     let merge2 = || Merge2 {
         poseidon_params: Pasta::circuit_poseidon(pasta),
     };
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new(pasta)
         .register(leaf_step())?
         .register(hash2())?
         .register(merge2())?
-        .finalize(pasta)?;
+        .finalize()?;
     let mut rng = StdRng::seed_from_u64(1234);
 
     // The base case: the internal bootstrap step over two dummy children.

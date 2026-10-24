@@ -12,19 +12,34 @@
 //!
 //! [`compute_v`]: super::circuits::compute_v
 
+use core::marker::PhantomData;
+
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{Cycle, Result};
-use ragu_primitives::vec::ConstLen;
+use ragu_primitives::vec::Len;
 use udon::field::Field;
 
-use super::{InternalCircuitIndex, RxComponent, RxIndex, challenge};
-use crate::Proof;
+use super::{InternalCircuitIndex, RxComponent, RxIndex, challenge, num_endoscaling_steps_at};
+use crate::{Proof, internal::native};
 
-/// Length type for a proof's nested rx components.
-pub type OwnRxLen = ConstLen<{ RxIndex::NUM }>;
+/// Length type for a proof's nested rx components, for a poly count `L`.
+pub struct OwnRxLen<L: Len>(PhantomData<L>);
 
-/// Length type for the nested internal circuits, one registry index each.
-pub type InternalLen = ConstLen<{ InternalCircuitIndex::NUM }>;
+impl<L: Len> Len for OwnRxLen<L> {
+    fn len() -> usize {
+        RxIndex::num(L::len())
+    }
+}
+
+/// Length type for the nested internal circuits, one registry index each,
+/// for a poly count `L`.
+pub struct InternalLen<L: Len>(PhantomData<L>);
+
+impl<L: Len> Len for InternalLen<L> {
+    fn len() -> usize {
+        InternalCircuitIndex::num(L::len())
+    }
+}
 
 /// Static prefix of the nested polynomial-query order used to construct the
 /// nested quotient polynomial $f_n(X)$.
@@ -93,21 +108,32 @@ pub const STATIC_F_QUERIES: [StaticFQuery; 18] = [
     StaticFQuery::CurrentBAtX,
 ];
 
-/// Number of nested-curve points the batch folds into $P_n$: $f_n$, then
-/// for each child its own rx commitments, $a$, $b$, `registry_xy` and $p$,
-/// then the current step's two `registry_wx`, `registry_wy`, $a$, $b$ and
-/// `registry_xy`. See [`Batch::evaluated`] for the order.
-pub const NUM_BATCHED_POINTS: usize = 1 + 2 * (RxIndex::NUM + 4) + 6;
+/// Number of nested-curve points the batch folds into $P_n$ for a native
+/// walk of `native_steps` steps: $f_n$, then for each child its own rx
+/// commitments, $a$, $b$, `registry_xy` and $p$, then the current step's two
+/// `registry_wx`, `registry_wy`, $a$, $b$ and `registry_xy`. See
+/// [`Batch::evaluated`] for the order.
+///
+/// The native walk's step count is a parameter rather than derived from
+/// `polys`, since the native side solves for it through this function.
+pub const fn num_batched_points_at(polys: usize, native_steps: usize) -> usize {
+    1 + 2 * (RxIndex::num_with_steps(num_endoscaling_steps_at(polys, native_steps)) + 4) + 6
+}
+
+/// [`num_batched_points_at`] at the native walk `polys` fixes.
+pub const fn num_batched_points(polys: usize) -> usize {
+    num_batched_points_at(polys, native::num_endoscaling_steps(polys))
+}
 
 /// A child's nested-curve commitments in the order the batch walks them:
-/// its rx commitments in [`RxIndex::ALL`] order, then $a$, $b$,
+/// its rx commitments in [`RxIndex::all`] order, then $a$, $b$,
 /// `registry_xy` and $p$.
 pub fn child_commitments<C: Cycle, R: Rank>(
     proof: &Proof<C, R>,
+    polys: usize,
 ) -> impl Iterator<Item = C::NestedCurve> + '_ {
-    RxIndex::ALL
-        .iter()
-        .map(move |&id| proof.nested_rx_commitment(id))
+    RxIndex::all(polys)
+        .map(move |id| proof.nested_rx_commitment(id))
         .chain([
             proof.nested_a_commitment(),
             proof.nested_b_commitment(),
@@ -150,6 +176,9 @@ pub struct Challenges<F> {
 /// Everything one fuse step's nested batch opens: the two children and the
 /// current step's committed nested polynomials.
 pub struct Batch<'a, C: Cycle, R: Rank> {
+    /// The polynomials the application witnesses per step, which fix how
+    /// many nested rx polynomials each child carries.
+    pub polys: usize,
     pub left: &'a Proof<C, R>,
     pub right: &'a Proof<C, R>,
     /// Current $m_n(w_n, x_0, Y)$.
@@ -178,8 +207,10 @@ impl<'a, C: Cycle, R: Rank> Batch<'a, C, R> {
     ) -> impl Iterator<Item = (&'a sparse::Polynomial<C::ScalarField, R>, C::ScalarField)> + '_
     {
         let (left, right) = (self.left, self.right);
+        let polys = self.polys;
         let xz = ch.x * ch.z;
-        let omega_j = |id: InternalCircuitIndex| -> C::ScalarField { id.circuit_index().omega_j() };
+        let omega_j =
+            move |id: InternalCircuitIndex| -> C::ScalarField { id.circuit_index(polys).omega_j() };
 
         STATIC_F_QUERIES
             .iter()
@@ -206,13 +237,9 @@ impl<'a, C: Cycle, R: Rank> Batch<'a, C, R> {
             .chain(
                 [left, right]
                     .into_iter()
-                    .flat_map(move |proof| RxIndex::ALL.iter().map(move |&id| (&proof[id], xz))),
+                    .flat_map(move |proof| RxIndex::all(polys).map(move |id| (&proof[id], xz))),
             )
-            .chain(
-                InternalCircuitIndex::ALL
-                    .iter()
-                    .map(move |&id| (self.registry_xy, omega_j(id))),
-            )
+            .chain(InternalCircuitIndex::all(polys).map(move |id| (self.registry_xy, omega_j(id))))
     }
 
     /// The polynomials the batch evaluates at $u_n$ and folds into $p_n$
@@ -226,10 +253,11 @@ impl<'a, C: Cycle, R: Rank> Batch<'a, C, R> {
     pub fn evaluated(
         &self,
     ) -> impl Iterator<Item = &'a sparse::Polynomial<C::ScalarField, R>> + '_ {
+        let polys = self.polys;
         [self.left, self.right]
             .into_iter()
-            .flat_map(|proof| {
-                RxIndex::ALL.iter().map(move |&id| &proof[id]).chain([
+            .flat_map(move |proof| {
+                RxIndex::all(polys).map(move |id| &proof[id]).chain([
                     &proof[RxComponent::AbA],
                     &proof[RxComponent::AbB],
                     proof.nested_registry_xy_poly(),
@@ -252,9 +280,10 @@ impl<'a, C: Cycle, R: Rank> Batch<'a, C, R> {
         &self,
         current: CurrentCommitments<C::NestedCurve>,
     ) -> impl Iterator<Item = C::NestedCurve> + '_ {
+        let polys = self.polys;
         [self.left, self.right]
             .into_iter()
-            .flat_map(|proof| child_commitments(proof))
+            .flat_map(move |proof| child_commitments(proof, polys))
             .chain([
                 current.registry_wx0,
                 current.registry_wx1,

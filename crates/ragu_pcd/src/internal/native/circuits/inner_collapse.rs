@@ -65,7 +65,11 @@ use ragu_core::{
     gadgets::Bound,
     maybe::Maybe,
 };
-use ragu_primitives::{GadgetExt as _, allocator::Standard, vec::FixedVec};
+use ragu_primitives::{
+    GadgetExt as _,
+    allocator::Standard,
+    vec::{FixedVec, Len},
+};
 
 use super::super::{
     claims::{TwoProofKySource, ky_values},
@@ -75,7 +79,7 @@ use super::super::{
     },
     unified::{self, OutputBuilder},
 };
-use crate::internal::fold_revdot;
+use crate::{framework_hooks::HookConfig, internal::fold_revdot};
 
 /// Circuit that verifies layer 1 of the two-layer revdot reduction.
 ///
@@ -83,12 +87,18 @@ use crate::internal::fold_revdot;
 /// performed by this circuit.
 ///
 /// [module-level documentation]: self
-pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
-    _marker: PhantomData<(C, R, FP)>,
+pub struct Circuit<
+    C: Cycle,
+    R,
+    const HEADER_SIZE: usize,
+    J: HookConfig,
+    FP: fold_revdot::Parameters,
+> {
+    _marker: PhantomData<(C, R, J, FP)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    Circuit<C, R, HEADER_SIZE, FP>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, FP: fold_revdot::Parameters>
+    Circuit<C, R, HEADER_SIZE, J, FP>
 {
     /// Creates a new multi-stage circuit for layer 1 revdot verification.
     pub fn new() -> MultiStage<C::CircuitField, R, Self> {
@@ -110,10 +120,10 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    MultiStageCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, FP>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, FP: fold_revdot::Parameters>
+    MultiStageCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, J, FP>
 {
-    type Last = native_inner_error::Stage<C, R, HEADER_SIZE, FP>;
+    type Last = native_inner_error::Stage<C, R, HEADER_SIZE, J, FP>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
@@ -142,11 +152,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let builder =
             builder.skip_stage::<super::super::stages::points::BindingStage<C::NestedCurve>>()?;
         let (preamble, builder) =
-            builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
+            builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE, J>>()?;
         let (outer_error, builder) =
-            builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
+            builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, J, FP>>()?;
         let (inner_error, builder) =
-            builder.add_stage::<native_inner_error::Stage<C, R, HEADER_SIZE, FP>>()?;
+            builder.add_stage::<native_inner_error::Stage<C, R, HEADER_SIZE, J, FP>>()?;
         let dr = builder.finish();
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
         let outer_error =
@@ -174,7 +184,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             &outer_error.left,
             &outer_error.right,
         );
-        let mut ky = ky_values(&ky);
+        let mut ky = ky_values(&ky, J::PolyWitnesses::len());
 
         // Verify each group's layer 1 reduction. For each group, fold the
         // inner error terms with the corresponding k(y) values and enforce the

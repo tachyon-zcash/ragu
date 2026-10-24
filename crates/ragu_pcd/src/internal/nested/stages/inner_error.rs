@@ -36,11 +36,11 @@ use crate::internal::{
 /// Number of curve points in this stage.
 const NUM: usize = 2;
 
-type NumGroups = <RevdotParameters as Parameters>::NumGroups;
-type GroupSize = <RevdotParameters as Parameters>::GroupSize;
+type NumGroups<L> = <RevdotParameters<L> as Parameters>::NumGroups;
+type GroupSize<L> = <RevdotParameters<L> as Parameters>::GroupSize;
 
-/// Witness data for this bridge stage.
-pub struct Witness<C: Affine> {
+/// Witness data for this bridge stage, for a poly count `L`.
+pub struct Witness<C: Affine, L: Len> {
     pub native_inner_error: C,
     pub registry_wy: C,
     /// Layer-1 error terms of the nested revdot fold.
@@ -49,7 +49,7 @@ pub struct Witness<C: Affine> {
     /// products, in [`inner_error_terms_with_backend`] order.
     ///
     /// [`inner_error_terms_with_backend`]: crate::internal::fold_revdot::inner_error_terms_with_backend
-    pub error_terms: FixedVec<FixedVec<C::Base, NumErrorTerms<GroupSize>>, NumGroups>,
+    pub error_terms: FixedVec<FixedVec<C::Base, NumErrorTerms<GroupSize<L>>>, NumGroups<L>>,
 }
 
 /// Prover-internal output gadget for this bridge stage.
@@ -57,29 +57,36 @@ pub struct Witness<C: Affine> {
 /// This is stage communication data, not part of the circuit's
 /// public instance.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
+pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, L: Len> {
     #[ragu(gadget)]
     pub native_inner_error: Point<'dr, D, C>,
     #[ragu(gadget)]
     pub registry_wy: Point<'dr, D, C>,
     /// Layer-1 error terms of the nested revdot fold.
     #[ragu(gadget)]
-    pub error_terms: FixedVec<FixedVec<Element<'dr, D>, NumErrorTerms<GroupSize>>, NumGroups>,
+    pub error_terms: FixedVec<FixedVec<Element<'dr, D>, NumErrorTerms<GroupSize<L>>>, NumGroups<L>>,
 }
 
-#[derive(Default)]
-pub struct Stage<C: Affine, R> {
-    _marker: PhantomData<(C, R)>,
+pub struct Stage<C: Affine, R, L> {
+    _marker: PhantomData<(C, R, L)>,
 }
 
-impl<C: Affine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R> {
-    type Parent = super::s_prime::Stage<C, R>;
-    type Witness<'source> = &'source Witness<C>;
-    type OutputKind = Kind![C::Base; Output<'_, _, C>];
+impl<C: Affine, R, L> Default for Stage<C, R, L> {
+    fn default() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<C: Affine, R: Rank, L: Len> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R, L> {
+    type Parent = super::s_prime::Stage<C, R, L>;
+    type Witness<'source> = &'source Witness<C, L>;
+    type OutputKind = Kind![C::Base; Output<'_, _, C, L>];
 
     fn values() -> usize {
         // (x, y) per point + N * (M² - M) error terms
-        NUM * 2 + NumGroups::len() * NumErrorTerms::<GroupSize>::len()
+        NUM * 2 + NumGroups::<L>::len() * NumErrorTerms::<GroupSize<L>>::len()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -116,6 +123,6 @@ mod tests {
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<EqAffine, R>::default());
+        assert_stage_values(&Stage::<EqAffine, R, ragu_primitives::vec::ConstLen<0>>::default());
     }
 }

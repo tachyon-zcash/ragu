@@ -111,3 +111,13 @@ name = "registry_tags"
 
 [[test]]
 name = "rerandomization"
+
+[[test]]
+name = "collections"
+
+[[test]]
+name = "multi_poly"
+
+[[test]]
+name = "poly_query"
+

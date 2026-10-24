@@ -16,7 +16,7 @@ pub(super) const HEADER_SIZE: usize = 4;
 pub(super) fn app() -> Application<'static, C, R, HEADER_SIZE> {
     let pasta = ragu_pcd::pasta::baked();
     let poseidon = Pasta::circuit_poseidon(pasta);
-    ApplicationBuilder::<C, R, HEADER_SIZE>::new()
+    ApplicationBuilder::<C, R, HEADER_SIZE>::new(pasta)
         .register(WitnessLeaf {
             poseidon_params: poseidon,
         })
@@ -30,7 +30,7 @@ pub(super) fn app() -> Application<'static, C, R, HEADER_SIZE> {
                 poseidon_params: poseidon,
             })
         })
-        .and_then(|b| b.finalize(pasta))
+        .and_then(|b| b.finalize())
         .expect("the application must build")
 }
 
