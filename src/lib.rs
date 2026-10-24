@@ -80,12 +80,11 @@ extern crate alloc;
 #[cfg(feature = "mock")]
 extern crate self as ragu;
 
-#[cfg(feature = "mock")]
-pub use ragu_core::*;
-
 /// Real polynomial APIs available to mock steps.
 #[cfg(feature = "mock")]
 pub use ragu_circuits::polynomials;
+#[cfg(feature = "mock")]
+pub use ragu_core::*;
 
 /// Real gadget APIs available to mock steps.
 #[cfg(feature = "mock")]

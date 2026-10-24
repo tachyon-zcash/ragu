@@ -8,7 +8,11 @@ use ragu_core::{
     maybe::Maybe as _,
     pasta::{EpAffine, Fp, Pasta},
 };
-use ragu_primitives::{Element, Point, Simulator, io::{Buffer, Write}, poseidon::Sponge};
+use ragu_primitives::{
+    Element, Point, Simulator,
+    io::{Buffer, Write},
+    poseidon::Sponge,
+};
 use udon::{curve::Affine as _, field::Field};
 
 use super::{super::hooks::FrameworkHooks, assert_invalid_witness, test_params};
@@ -69,12 +73,8 @@ fn derive_challenge_absorbs_real_gadgets() {
     let mut ctx = StepCtx::new(&mut dr, &mut hooks);
 
     let scalar_value = Fp::from(7u64);
-    let scalar = Element::alloc(
-        ctx.dr,
-        &mut (),
-        Simulator::<Fp>::just(|| scalar_value),
-    )
-    .expect("the scalar input should be allocated");
+    let scalar = Element::alloc(ctx.dr, &mut (), Simulator::<Fp>::just(|| scalar_value))
+        .expect("the scalar input should be allocated");
     let gates_before = ctx.dr.num_gates();
     let constraints_before = ctx.dr.num_constraints();
     let scalar_challenge = ctx
@@ -93,11 +93,8 @@ fn derive_challenge_absorbs_real_gadgets() {
         expected_challenge(&[scalar_value])
     );
 
-    let point = Point::<'_, _, EpAffine>::alloc(
-        ctx.dr,
-        Simulator::<Fp>::just(EpAffine::generator),
-    )
-    .expect("the generator should be a valid point gadget");
+    let point = Point::<'_, _, EpAffine>::alloc(ctx.dr, Simulator::<Fp>::just(EpAffine::generator))
+        .expect("the generator should be a valid point gadget");
     let (x, y) = point
         .value()
         .take()
@@ -116,18 +113,10 @@ fn derive_challenge_accepts_composite_and_empty_inputs() {
     let mut ctx = StepCtx::new(&mut dr, &mut hooks);
     let first_value = Fp::from(3u64);
     let second_value = Fp::from(11u64);
-    let first = Element::alloc(
-        ctx.dr,
-        &mut (),
-        Simulator::<Fp>::just(|| first_value),
-    )
-    .expect("the first composite input should be allocated");
-    let second = Element::alloc(
-        ctx.dr,
-        &mut (),
-        Simulator::<Fp>::just(|| second_value),
-    )
-    .expect("the second composite input should be allocated");
+    let first = Element::alloc(ctx.dr, &mut (), Simulator::<Fp>::just(|| first_value))
+        .expect("the first composite input should be allocated");
+    let second = Element::alloc(ctx.dr, &mut (), Simulator::<Fp>::just(|| second_value))
+        .expect("the second composite input should be allocated");
     let pair = Pair {
         first: first.clone(),
         second: second.clone(),
@@ -258,11 +247,7 @@ fn poly_query_checks_the_committed_polynomial() {
         vec![
             (expected_commitment.to_projective(), x, y),
             (expected_commitment.to_projective(), x, y),
-            (
-                expected_commitment.to_projective(),
-                later_x,
-                later_y,
-            ),
+            (expected_commitment.to_projective(), later_x, later_y,),
         ],
         "valid repeated queries should remain in invocation order and the bad query should not append"
     );
@@ -398,7 +383,11 @@ fn identity_polynomial_commitment_is_accepted() {
     let evaluation = ctx
         .evaluate(&handle, Simulator::<Fp>::just(|| x))
         .expect("the zero polynomial should be evaluable");
-    assert_eq!(evaluation.take(), Fp::ZERO, "zero evaluates independently to zero");
+    assert_eq!(
+        evaluation.take(),
+        Fp::ZERO,
+        "zero evaluates independently to zero"
+    );
 
     let x_gadget = Element::constant(ctx.dr, x);
     let zero_gadget = Element::constant(ctx.dr, Fp::ZERO);
@@ -419,12 +408,10 @@ fn real_point_identity_constant_is_rejected() {
 #[test]
 fn real_point_identity_allocation_is_rejected() {
     let mut dr = Simulator::<Fp>::new();
-    let error = match Point::<'_, _, EpAffine>::alloc(
-        &mut dr,
-        Simulator::<Fp>::just(EpAffine::identity),
-    ) {
-        Ok(_) => panic!("a real point allocation at identity must be rejected"),
-        Err(error) => error,
-    };
+    let error =
+        match Point::<'_, _, EpAffine>::alloc(&mut dr, Simulator::<Fp>::just(EpAffine::identity)) {
+            Ok(_) => panic!("a real point allocation at identity must be rejected"),
+            Err(error) => error,
+        };
     assert_invalid_witness(error, "point at infinity cannot be witnessed");
 }

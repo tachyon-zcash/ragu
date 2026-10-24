@@ -167,8 +167,7 @@ impl Step for GateCheckSeedStep {
     where
         Self: 'dr,
     {
-        ctx.dr
-            .mul(|| Ok((Coeff::One, Coeff::One, Coeff::Zero)))?;
+        ctx.dr.mul(|| Ok((Coeff::One, Coeff::One, Coeff::Zero)))?;
         Ok(D::just(|| (TestHeaderData { value: 0 }, ())).cast())
     }
 }
