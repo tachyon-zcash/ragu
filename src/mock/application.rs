@@ -5,13 +5,11 @@ use core::any::TypeId;
 
 use ragu_core::{
     Error, Result,
-    drivers::{
-        Driver as _,
-        emulator::{Emulator, Wireless},
-    },
-    maybe::{Always, Maybe as _},
+    drivers::Driver as _,
+    maybe::Maybe as _,
     pasta::{Fp, PastaParams},
 };
+use ragu_primitives::Simulator;
 use rand::CryptoRng;
 
 use super::{
@@ -37,7 +35,7 @@ pub struct Application<'params> {
 }
 
 /// Native driver used to execute mock steps with real gadget assignments.
-type NativeDriver = Emulator<Wireless<Always<()>, Fp>>;
+type NativeDriver = Simulator<Fp>;
 
 impl ApplicationBuilder {
     #[must_use]
@@ -116,7 +114,7 @@ impl Application<'_> {
         proof::compute_header_hash(S::Left::SUFFIX, &S::Left::encode(&left.data))?;
         proof::compute_header_hash(S::Right::SUFFIX, &S::Right::encode(&right.data))?;
 
-        let mut dr = NativeDriver::execute();
+        let mut dr = NativeDriver::new();
         let mut hooks = FrameworkHooks::new(self.params);
         let (output_data, aux) = {
             let mut ctx = StepCtx::new(&mut dr, &mut hooks);

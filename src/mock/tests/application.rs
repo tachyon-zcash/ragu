@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use ragu_circuits::polynomials::{TestRank, sparse};
 use ragu_core::{
-    Error, Result,
+    Coeff, Error, Result,
     drivers::{Driver, DriverValue},
     maybe::Maybe as _,
     pasta::{Ep, Eq, Fp, Fq},
@@ -11,7 +11,7 @@ use ragu_primitives::Element;
 use rand::{SeedableRng as _, rngs::StdRng};
 use udon::curve::Projective;
 
-use super::test_params;
+use super::{assert_invalid_witness, test_params};
 use crate::{
     Application, ApplicationBuilder, Header, Index, PROOF_SIZE_COMPRESSED, Pcd, Proof, Step,
     StepCtx, Suffix,
@@ -113,6 +113,98 @@ impl Step for PolynomialSeedStep {
     }
 }
 
+struct ConstrainedSeedStep;
+
+impl Step for ConstrainedSeedStep {
+    type Aux<'source> = ();
+    type Left = ();
+    type Output = TestHeader;
+    type Right = ();
+    type Witness<'source> = Fp;
+
+    const INDEX: Index = Index::new(0);
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        ctx: &mut StepCtx<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        _left: DriverValue<D, <Self::Left as Header>::Data>,
+        _right: DriverValue<D, <Self::Right as Header>::Data>,
+    ) -> Result<(
+        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let value = Element::alloc(ctx.dr, &mut (), witness)?;
+        value.enforce_zero(ctx.dr)?;
+        Ok(D::just(|| (TestHeaderData { value: 0 }, ())).cast())
+    }
+}
+
+struct GateCheckSeedStep;
+
+impl Step for GateCheckSeedStep {
+    type Aux<'source> = ();
+    type Left = ();
+    type Output = TestHeader;
+    type Right = ();
+    type Witness<'source> = ();
+
+    const INDEX: Index = Index::new(0);
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        ctx: &mut StepCtx<'_, 'dr, D>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
+        _left: DriverValue<D, <Self::Left as Header>::Data>,
+        _right: DriverValue<D, <Self::Right as Header>::Data>,
+    ) -> Result<(
+        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        ctx.dr
+            .mul(|| Ok((Coeff::One, Coeff::One, Coeff::Zero)))?;
+        Ok(D::just(|| (TestHeaderData { value: 0 }, ())).cast())
+    }
+}
+
+struct BadPolynomialQuerySeedStep;
+
+impl Step for BadPolynomialQuerySeedStep {
+    type Aux<'source> = ();
+    type Left = ();
+    type Output = TestHeader;
+    type Right = ();
+    type Witness<'source> = sparse::Polynomial<Fp, TestRank>;
+
+    const INDEX: Index = Index::new(0);
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        ctx: &mut StepCtx<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        _left: DriverValue<D, <Self::Left as Header>::Data>,
+        _right: DriverValue<D, <Self::Right as Header>::Data>,
+    ) -> Result<(
+        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let handle = ctx.witness_polynomial(witness)?;
+        let x_gadget = Element::constant(ctx.dr, Fp::from(2u64));
+        let incorrect_y = Element::constant(ctx.dr, Fp::from(22u64));
+        ctx.enforce_poly_query(&handle, x_gadget, incorrect_y)?;
+        Ok(D::just(|| (TestHeaderData { value: 0 }, ())).cast())
+    }
+}
+
 struct MergeStep;
 
 impl Step for MergeStep {
@@ -186,6 +278,54 @@ fn seed_executes_polynomial_hooks() {
 
     assert_eq!(*pcd.data(), Fp::from(21u64));
     assert!(app.verify(&pcd, &mut rng).expect("verify should succeed"));
+}
+
+#[test]
+fn application_execution_checks_constraints_and_polynomial_queries() {
+    let mut rng = StdRng::seed_from_u64(0);
+    let constrained_app = ApplicationBuilder::new()
+        .register(ConstrainedSeedStep)
+        .expect("register should succeed")
+        .finalize(test_params())
+        .expect("finalize should succeed");
+    constrained_app
+        .seed(&mut rng, ConstrainedSeedStep, Fp::from(0u64))
+        .expect("an allocated zero constrained to zero should succeed");
+    let error = match constrained_app.seed(&mut rng, ConstrainedSeedStep, Fp::from(1u64)) {
+        Ok(_) => panic!("an allocated one constrained to zero should fail"),
+        Err(error) => error,
+    };
+    assert_invalid_witness(error, "constraint failed");
+
+    let gate_app = ApplicationBuilder::new()
+        .register(GateCheckSeedStep)
+        .expect("register should succeed")
+        .finalize(test_params())
+        .expect("finalize should succeed");
+    let error = match gate_app.seed(&mut rng, GateCheckSeedStep, ()) {
+        Ok(_) => panic!("a gate assigned (1, 1, 0) should fail"),
+        Err(error) => error,
+    };
+    assert_invalid_witness(error, "gate check failed");
+
+    let polynomial_app = ApplicationBuilder::new()
+        .register(BadPolynomialQuerySeedStep)
+        .expect("register should succeed")
+        .finalize(test_params())
+        .expect("finalize should succeed");
+    let polynomial = sparse::Polynomial::<Fp, TestRank>::from_coeffs(alloc::vec![
+        Fp::from(3u64),
+        Fp::from(1u64),
+        Fp::from(4u64),
+    ]);
+    let error = match polynomial_app.seed(&mut rng, BadPolynomialQuerySeedStep, polynomial) {
+        Ok(_) => panic!("an incorrect polynomial query through seed should fail"),
+        Err(error) => error,
+    };
+    assert_invalid_witness(
+        error,
+        "poly-query rejected: the polynomial does not evaluate to the claimed value at the claimed point",
+    );
 }
 
 #[test]
