@@ -2,16 +2,41 @@ use alloc::vec;
 
 use ragu_circuits::polynomials::{TestRank, sparse};
 use ragu_core::{
-    Cycle,
+    Cycle, Error, Result,
     drivers::Driver,
+    gadgets::{Bound, Gadget, Kind},
     maybe::Maybe as _,
     pasta::{EpAffine, Fp, Pasta},
 };
-use ragu_primitives::{Element, Point, Simulator, poseidon::Sponge};
+use ragu_primitives::{Element, Point, Simulator, io::{Buffer, Write}, poseidon::Sponge};
 use udon::{curve::Affine as _, field::Field};
 
 use super::{super::hooks::FrameworkHooks, assert_invalid_witness, test_params};
 use crate::StepCtx;
+
+#[derive(Gadget, Write)]
+struct Pair<'dr, D: Driver<'dr>> {
+    #[ragu(gadget)]
+    first: Element<'dr, D>,
+    #[ragu(gadget)]
+    second: Element<'dr, D>,
+}
+
+#[derive(Gadget)]
+struct RejectingWrite<'dr, D: Driver<'dr>> {
+    #[ragu(gadget)]
+    element: Element<'dr, D>,
+}
+
+impl Write<Fp> for Kind![Fp; @RejectingWrite<'_, _>] {
+    fn write_gadget<'dr, D: Driver<'dr, F = Fp>, B: Buffer<'dr, D>>(
+        _: &Bound<'dr, D, Self>,
+        _: &mut D,
+        _: &mut B,
+    ) -> Result<()> {
+        Err(Error::InvalidWitness("test write rejected".into()))
+    }
+}
 
 /// Independent sponge computation used to check the public challenge hook.
 fn expected_challenge(inputs: &[Fp]) -> Fp {
@@ -43,17 +68,36 @@ fn derive_challenge_absorbs_real_gadgets() {
     let mut hooks = FrameworkHooks::new(test_params());
     let mut ctx = StepCtx::new(&mut dr, &mut hooks);
 
-    let scalar = Element::constant(ctx.dr, Fp::from(7u64));
+    let scalar_value = Fp::from(7u64);
+    let scalar = Element::alloc(
+        ctx.dr,
+        &mut (),
+        Simulator::<Fp>::just(|| scalar_value),
+    )
+    .expect("the scalar input should be allocated");
+    let gates_before = ctx.dr.num_gates();
+    let constraints_before = ctx.dr.num_constraints();
     let scalar_challenge = ctx
         .derive_challenge(&scalar)
         .expect("a field element gadget should be accepted");
+    assert!(
+        ctx.dr.num_gates() > gates_before + 1,
+        "challenge derivation should synthesize the sponge on the caller driver"
+    );
+    assert!(
+        ctx.dr.num_constraints() > constraints_before,
+        "challenge derivation should emit caller-driver constraints"
+    );
     assert_eq!(
         *scalar_challenge.value().take(),
-        expected_challenge(&[Fp::from(7u64)])
+        expected_challenge(&[scalar_value])
     );
 
-    let point = Point::<'_, _, EpAffine>::constant(ctx.dr, EpAffine::generator())
-        .expect("the generator should be a valid point gadget");
+    let point = Point::<'_, _, EpAffine>::alloc(
+        ctx.dr,
+        Simulator::<Fp>::just(EpAffine::generator),
+    )
+    .expect("the generator should be a valid point gadget");
     let (x, y) = point
         .value()
         .take()
@@ -63,6 +107,80 @@ fn derive_challenge_absorbs_real_gadgets() {
         .derive_challenge(&point)
         .expect("a point gadget should be accepted");
     assert_eq!(*point_challenge.value().take(), expected_challenge(&[x, y]));
+}
+
+#[test]
+fn derive_challenge_accepts_composite_and_empty_inputs() {
+    let mut dr = Simulator::<Fp>::new();
+    let mut hooks = FrameworkHooks::new(test_params());
+    let mut ctx = StepCtx::new(&mut dr, &mut hooks);
+    let first_value = Fp::from(3u64);
+    let second_value = Fp::from(11u64);
+    let first = Element::alloc(
+        ctx.dr,
+        &mut (),
+        Simulator::<Fp>::just(|| first_value),
+    )
+    .expect("the first composite input should be allocated");
+    let second = Element::alloc(
+        ctx.dr,
+        &mut (),
+        Simulator::<Fp>::just(|| second_value),
+    )
+    .expect("the second composite input should be allocated");
+    let pair = Pair {
+        first: first.clone(),
+        second: second.clone(),
+    };
+    let pair_challenge = ctx
+        .derive_challenge(&pair)
+        .expect("a writable composite should be accepted");
+    assert_eq!(
+        *pair_challenge.value().take(),
+        expected_challenge(&[first_value, second_value])
+    );
+
+    let reversed = Pair {
+        first: second,
+        second: first,
+    };
+    let reversed_challenge = ctx
+        .derive_challenge(&reversed)
+        .expect("a reversed writable composite should be accepted");
+    assert_eq!(
+        *reversed_challenge.value().take(),
+        expected_challenge(&[second_value, first_value])
+    );
+    assert_ne!(
+        *pair_challenge.value().take(),
+        *reversed_challenge.value().take(),
+        "reversing distinct absorbed inputs should change the challenge"
+    );
+
+    let empty_challenge = ctx
+        .derive_challenge(&())
+        .expect("empty input should still derive a domain-separated challenge");
+    assert_eq!(
+        *empty_challenge.value().take(),
+        expected_challenge(&[]),
+        "empty input should absorb the domain tag and squeeze once"
+    );
+}
+
+#[test]
+fn derive_challenge_propagates_write_errors() {
+    let mut dr = Simulator::<Fp>::new();
+    let mut hooks = FrameworkHooks::new(test_params());
+    let mut ctx = StepCtx::new(&mut dr, &mut hooks);
+    let input = RejectingWrite {
+        element: Element::constant(ctx.dr, Fp::ZERO),
+    };
+
+    let error = match ctx.derive_challenge(&input) {
+        Ok(_) => panic!("a rejected gadget write should fail challenge derivation"),
+        Err(error) => error,
+    };
+    assert_invalid_witness(error, "test write rejected");
 }
 
 #[test]

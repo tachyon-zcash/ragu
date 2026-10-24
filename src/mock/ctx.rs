@@ -89,6 +89,12 @@ where
     ///
     /// This accepts any writable gadget, including field elements, points,
     /// polynomial commitment handles, and compositions of those gadgets.
+    ///
+    /// Callers must pin the complete input sequence. Unlike real ragu's
+    /// fixed-width recursive transcript, the mock absorbs only the supplied
+    /// elements; exact outputs agree only when the complete absorbed sequences
+    /// (including any reference padding) and parameters are identical. Local
+    /// sponge gate cost is not a guarantee about real recursive-step cost.
     pub fn derive_challenge<G>(&mut self, input: &G) -> Result<Element<'dr, D>>
     where
         G: Gadget<'dr, D>,

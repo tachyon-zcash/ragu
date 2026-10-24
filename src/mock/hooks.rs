@@ -3,11 +3,11 @@ use alloc::vec::Vec;
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{
     Cycle, Error, Result,
-    drivers::{Driver, DriverValue, emulator::Emulator},
+    drivers::{Driver, DriverValue},
     maybe::Maybe,
     pasta::{Eq, EqAffine, Fp, Pasta, PastaParams},
 };
-use ragu_primitives::{Element, GadgetExt as _, allocator::Standard, poseidon::Sponge};
+use ragu_primitives::{Element, poseidon::Sponge};
 use udon::{curve::Affine as _, field::Field};
 
 use super::poly_commitment::PolyHandle;
@@ -101,11 +101,13 @@ impl<'dr, D: Driver<'dr, F = Fp>> FrameworkHooks<'dr, D> {
         dr: &mut D,
         inputs: &[Element<'dr, D>],
     ) -> Result<Element<'dr, D>> {
-        let derived = D::try_just(|| {
-            let absorbed: Vec<_> = inputs.iter().map(|input| *input.value().take()).collect();
-            challenge_of(self.params, &absorbed)
-        })?;
-        Element::alloc(dr, &mut Standard::new(), derived)
+        let mut sponge = Sponge::new(dr, Pasta::circuit_poseidon(self.params));
+        let domain = Element::constant(dr, Fp::from_u128(DOMAIN_TAG));
+        sponge.absorb(dr, &domain)?;
+        for input in inputs {
+            sponge.absorb(dr, input)?;
+        }
+        sponge.squeeze(dr)
     }
 
     /// Finds the commitment and coefficients named by `handle`.
@@ -161,15 +163,3 @@ fn eval(coefficients: &[Fp], x: Fp) -> Fp {
 
 /// Absorbed before every challenge input so an empty input still has a domain.
 const DOMAIN_TAG: u128 = u64::from_le_bytes(*b"raguchal") as u128;
-
-/// Computes the same domain-separated Poseidon challenge as the step hooks.
-fn challenge_of(params: &PastaParams, inputs: &[Fp]) -> Result<Fp> {
-    let mut dr = Emulator::execute();
-    let mut sponge = Sponge::new(&mut dr, Pasta::circuit_poseidon(params));
-    Element::constant(&mut dr, Fp::from_u128(DOMAIN_TAG)).write(&mut dr, &mut sponge)?;
-    for &input in inputs {
-        Element::constant(&mut dr, input).write(&mut dr, &mut sponge)?;
-    }
-    let challenge = sponge.squeeze(&mut dr)?;
-    Ok(*challenge.value().take())
-}
