@@ -10,6 +10,11 @@
 #![allow(dead_code)]
 
 pub(crate) mod builder;
+// Stage regressions recommit edited application polynomials to bypass the
+// honest proving API.
+#[cfg(test)]
+#[path = "../../tests/app_stage.rs"]
+mod stage_tests;
 // These regression suites edit proof fields directly. Keep their sources
 // grouped by subject in tests/ and their access confined to the test build.
 // Their properties prove tens of production-rank proofs each, so they are
@@ -168,6 +173,9 @@ pub struct Proof<C: Cycle, R: Rank> {
 
     // Native rx polynomials (CircuitField, HostCurve commitment)
     pub(crate) native_application_rx: sparse::Polynomial<C::CircuitField, R>,
+    /// The application stage, which the application claim adds to the step's
+    /// own polynomial, sized from the registered steps' shared gadgets.
+    pub(crate) native_application_stage_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_preamble_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_inner_error_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_outer_error_rx: sparse::Polynomial<C::CircuitField, R>,
@@ -278,6 +286,7 @@ pub struct Proof<C: Cycle, R: Rank> {
 
     // Native commitment caches
     native_application_commitment: Cached<C::HostCurve>,
+    native_application_stage_commitment: Cached<C::HostCurve>,
     native_preamble_commitment: Cached<C::HostCurve>,
     native_inner_error_commitment: Cached<C::HostCurve>,
     native_outer_error_commitment: Cached<C::HostCurve>,
@@ -327,6 +336,7 @@ impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
             Query => &self.native_query_rx,
             Eval => &self.native_eval_rx,
             Application => &self.native_application_rx,
+            ApplicationStage => &self.native_application_stage_rx,
             Hashes1 => &self.native_hashes_1_rx,
             Hashes2 => &self.native_hashes_2_rx,
             InnerCollapse => &self.native_inner_collapse_rx,
@@ -593,6 +603,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             Query => self.native_query_commitment.0,
             Eval => self.native_eval_commitment.0,
             Application => self.native_application_commitment.0,
+            ApplicationStage => self.native_application_stage_commitment.0,
             Hashes1 => self.native_hashes_1_commitment.0,
             Hashes2 => self.native_hashes_2_commitment.0,
             InnerCollapse => self.native_inner_collapse_commitment.0,
@@ -1038,6 +1049,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 
         // Native rx polynomials (all trivial ones)
         builder.set_native_application_rx(ones_host.clone());
+        builder.set_native_application_stage_rx(ones_host.clone());
         builder.set_native_preamble_rx(ones_host.clone());
         builder.set_native_inner_error_rx(ones_host.clone());
         builder.set_native_outer_error_rx(ones_host.clone());
@@ -1297,6 +1309,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             let registry_xy_commitment = builder.native_registry_xy_commitment();
             let trivial_child_witness = nested::stages::preamble::ChildWitness {
                 application: host_commitment,
+                application_stage: host_commitment,
                 hashes_1: host_commitment,
                 hashes_2: host_commitment,
                 inner_collapse: host_commitment,

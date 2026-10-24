@@ -239,11 +239,12 @@ impl<'m, 'rx, F: Field, R: Rank, B: ragu_backend::Backend>
         self.b.push(Cow::Borrowed(b.poly));
     }
 
-    fn circuit_claim(&mut self, circuit_id: CircuitIndex, rx: Atom<'rx, FoldKey, F, R>) {
-        self.circuit_impl(
-            circuit_id,
-            TrackedPoly::single(Cow::Borrowed(rx.poly), rx.key),
-        );
+    fn circuit_claim(
+        &mut self,
+        circuit_id: CircuitIndex,
+        rxs: impl Iterator<Item = Atom<'rx, FoldKey, F, R>>,
+    ) {
+        self.circuit_impl(circuit_id, TrackedPoly::sum(rxs));
     }
 
     fn internal_circuit_claim(

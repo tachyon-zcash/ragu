@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added runtime-sized stages: `staging::stage_gates`, `stage_rx`, `stage_mask`
+  and `final_stage_mask` lay out and mask a stage whose size is fixed when the
+  registry is built rather than in the type, with the rank's bounds checked.
 - Added iteration over the stored coefficients of sparse polynomials.
 - Added `Tag::from_beacon` and `RegistryBuilder::with_tag` for caller-supplied
   tags chosen after the circuits are fixed. Finalization requires a tag;
