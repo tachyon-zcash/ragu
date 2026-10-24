@@ -40,11 +40,11 @@ pub(crate) struct Evaluated<F> {
 /// component's commitment and `public` each kind of claim's public parts
 /// of $a$ and $b$ at a point. Returns the opening claims the batch must
 /// prove, or `None` if the reduction does not hold.
-fn verify<C: Affine, R: Rank, B: Backend, Id: Copy>(
+fn verify<C: Affine, R: Rank, B: Backend, Id: Copy + Sync>(
     shapes: &[Shape<Id, C::Scalar>],
     targets: impl Iterator<Item = C::Scalar>,
     commitment: impl Fn(Id) -> C,
-    public: impl Fn(Kind, C::Scalar) -> (C::Scalar, C::Scalar),
+    public: impl Fn(Kind, C::Scalar) -> (C::Scalar, C::Scalar) + Sync,
     reduction: &Reduction<C>,
     z: C::Scalar,
     transcript: &mut impl IpaTranscript<C>,
@@ -88,8 +88,13 @@ fn verify<C: Affine, R: Rank, B: Backend, Id: Copy>(
     }
     let (mut a_public, mut b_public, mut target) =
         (C::Scalar::ZERO, C::Scalar::ZERO, C::Scalar::ZERO);
-    for (i, shape) in shapes.iter().enumerate() {
-        let (a, b) = public(shape.kind, r);
+    // Registry evaluations are independent once r is fixed. Combine their
+    // results in claim order after all jobs finish, leaving the transcript
+    // and weighted targets on the canonical serial path.
+    for (i, (a, b)) in public_parts::<_, B, _>(shapes, r, public)
+        .into_iter()
+        .enumerate()
+    {
         a_public += weights.a(i) * a;
         b_public += weights.b(i) * b;
         target += weights.a(i) * weights.b(i) * targets[i];
@@ -135,6 +140,19 @@ fn verify<C: Affine, R: Rank, B: Backend, Id: Copy>(
         inverse_r,
         target,
     )))
+}
+
+/// Evaluates the independent public parts into their original claim slots.
+fn public_parts<F: Field, B: Backend, Id: Sync>(
+    shapes: &[Shape<Id, F>],
+    r: F,
+    public: impl Fn(Kind, F) -> (F, F) + Sync,
+) -> Vec<(F, F)> {
+    let mut values = alloc::vec![(F::ZERO, F::ZERO); shapes.len()];
+    B::for_each_mut(&mut values, |index, value| {
+        *value = public(shapes[index].kind, r);
+    });
+    values
 }
 
 /// A claim's public parts of $a$ and $b$ at `r`, by kind: a wire binding
@@ -206,3 +224,11 @@ pub(crate) fn verify_nested<C: Cycle, R: Rank, B: Backend>(
         transcript,
     )
 }
+
+#[cfg(test)]
+#[path = "../../../tests/compress_revdot_verifier.rs"]
+mod tests;
+
+#[cfg(test)]
+#[path = "../../../tests/backend_equivalence/compress_verifier.rs"]
+mod backend_equivalence;

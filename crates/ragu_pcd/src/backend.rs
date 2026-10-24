@@ -16,14 +16,17 @@ mod sealed {
         type Verifier: SelectableBackend;
     }
 
+    // Reference kernels for both proving and verification.
     impl Sealed for ReferenceBackend {
         type Verifier = ReferenceBackend;
     }
 
+    // Accelerated kernels for both proving and verification.
     impl Sealed for AcceleratedBackend {
         type Verifier = AcceleratedBackend;
     }
 
+    // Accelerated proving, with verification routed directly to the reference backend.
     impl Sealed for AcceleratedProver {
         type Verifier = ReferenceBackend;
     }

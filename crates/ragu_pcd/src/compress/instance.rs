@@ -21,7 +21,7 @@ use ragu_circuits::{
     registry::{CircuitIndex, Registry},
     staging::{StageExt, StageReader, stage_wire_indices, wire_degree, wires_of},
 };
-use ragu_core::{Cycle, Error, Result};
+use ragu_core::{Cycle, Error, FixedGenerators, Result};
 use ragu_primitives::extract_endoscalar;
 use udon::{curve::Affine, fft::bit_reverse, field::Field};
 
@@ -493,10 +493,23 @@ impl<C: Cycle> Instance<C> {
                     .native_commitment(native::RxComponent::Rx(native::RxIndex::PointsAb)),
             },
         )?;
-        Ok(B::sparse_commit_to_affine(&challenge_stage, generators)
-            == self.bridge(nested::RxIndex::ChallengeStage)
-            && B::sparse_commit_to_affine(&ab_bridge, generators)
-                == self.bridge(nested::RxIndex::BridgeAB))
+        // Both stage polynomials are fixed before either commitment is
+        // checked. Batch their MSMs, keeping the two equality checks separate.
+        let bases = generators.g();
+        assert!(bases.len() >= R::num_coeffs());
+        let [challenge_commitment, ab_commitment] =
+            B::msm_batch([&challenge_stage, &ab_bridge].map(|poly| {
+                (
+                    poly.iter_stored_coeffs()
+                        .map(|(_, coefficient)| coefficient),
+                    poly.iter_stored_coeffs().map(|(index, _)| &bases[index]),
+                )
+            }))
+            .map(C::NestedCurve::from);
+        Ok(
+            challenge_commitment == self.bridge(nested::RxIndex::ChallengeStage)
+                && ab_commitment == self.bridge(nested::RxIndex::BridgeAB),
+        )
     }
 
     /// The native wire claims under `sigma`: the preamble stage holds the

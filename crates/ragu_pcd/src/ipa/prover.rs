@@ -12,7 +12,7 @@ use udon::{
     polynomial::evaluate_iter,
 };
 
-use super::{IpaProof, IpaTranscript, Params, msm::multiexp};
+use super::{IpaProof, IpaTranscript, Params, msm::multiexp_batch};
 use crate::{SelectableBackend, multicore::parallelize};
 
 /// Creates an unblinded opening of `p_poly` at `x_3`.
@@ -103,8 +103,12 @@ pub fn create_proof<B: SelectableBackend, C: Affine>(
         //
         // TODO: If we modify multiexp to take "extra" bases, we could speed
         // this piece up a bit by combining the multiexps.
-        let l_j = multiexp::<C, B>(&p_prime[half..], &g_prime[0..half]);
-        let r_j = multiexp::<C, B>(&p_prime[0..half], &g_prime[half..]);
+        // L and R are independent within this round. Schedule their MSMs
+        // together, keeping both results and the transcript order unchanged.
+        let [l_j, r_j] = multiexp_batch::<C, B, 2>([
+            (&p_prime[half..], &g_prime[0..half]),
+            (&p_prime[0..half], &g_prime[half..]),
+        ]);
         let value_l_j = C::Scalar::sum_of_products_slice(&p_prime[half..], &b[0..half]);
         let value_r_j = C::Scalar::sum_of_products_slice(&p_prime[0..half], &b[half..]);
         let l_j = l_j + &(params.u * (value_l_j * &z));

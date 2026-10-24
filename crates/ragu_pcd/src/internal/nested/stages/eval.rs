@@ -34,7 +34,7 @@ use ragu_core::{
 use ragu_primitives::{
     Element, Point,
     io::Write,
-    vec::{FixedVec, Len},
+    vec::{CollectFixed, FixedVec, Len},
 };
 use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
@@ -68,7 +68,11 @@ impl<F: Field> ChildEvaluationsWitness<F> {
         u: F,
     ) -> Self {
         ChildEvaluationsWitness {
-            rx: FixedVec::from_fn(|i| B::sparse_eval(&proof[RxIndex::ALL[i]], u)),
+            rx: B::map(RxIndex::ALL.into_iter().map(|id| &proof[id]), |poly| {
+                B::sparse_eval(poly, u)
+            })
+            .collect_fixed()
+            .expect("one evaluation per rx"),
             a_poly: B::sparse_eval(&proof[RxComponent::AbA], u),
             b_poly: B::sparse_eval(&proof[RxComponent::AbB], u),
             registry_xy_poly: B::sparse_eval(proof.nested_registry_xy_poly(), u),

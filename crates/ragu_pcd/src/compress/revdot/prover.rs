@@ -178,12 +178,20 @@ fn fold_powers<'a, F: Field, R: Rank>(
 
 /// The products `pairs` index into `a` and `b`, as the low coefficients of
 /// one polynomial.
-fn errors<'a, F: Field, R: Rank, B: Backend>(
+pub(super) fn errors<'a, F: Field, R: Rank, B: Backend>(
     a: impl Fn(usize) -> &'a sparse::Polynomial<F, R>,
     b: impl Fn(usize) -> &'a sparse::Polynomial<F, R>,
     pairs: impl Iterator<Item = (usize, usize)>,
 ) -> sparse::Polynomial<F, R> {
-    sparse::Polynomial::from_coeffs(pairs.map(|(i, j)| B::sparse_revdot(a(i), b(j))).collect())
+    let pairs: Vec<_> = pairs.map(|(i, j)| (a(i), b(j))).collect();
+    let mut coefficients = vec![F::ZERO; pairs.len()];
+    // Each off-diagonal product is independent. Keep its coefficient slot
+    // fixed so scheduling cannot change either layer's committed polynomial.
+    B::for_each_mut(&mut coefficients, |index, coefficient| {
+        let (a, b) = pairs[index];
+        *coefficient = B::sparse_revdot(a, b);
+    });
+    sparse::Polynomial::from_coeffs(coefficients)
 }
 
 /// What the fold leaves the split: its messages, the three folded claims,
@@ -327,14 +335,19 @@ fn reduce<C: Affine, R: Rank, B: Backend, Id: Copy>(
 
     let (p, mut q) = decomp_poly(t, n);
     q.resize(n, C::Scalar::ZERO);
-    let commit = |coeffs: &[C::Scalar]| {
-        B::sparse_commit_to_affine(
-            &sparse::Polynomial::<_, R>::from_coeffs(coeffs.to_vec()),
-            generators,
+    // Retain the sparse commitment's operands, but schedule the independent
+    // P/Q MSMs together before writing either point to the transcript.
+    assert!(generators.g().len() >= n);
+    let polys = [&p, &q].map(|coeffs| sparse::Polynomial::<_, R>::from_coeffs(coeffs.to_vec()));
+    let [p_commitment, q_commitment] = B::msm_batch(polys.each_ref().map(|poly| {
+        (
+            poly.iter_stored_coeffs()
+                .map(|(_, coefficient)| coefficient),
+            poly.iter_stored_coeffs()
+                .map(|(index, _)| &generators.g()[index]),
         )
-    };
-    let p_commitment = commit(&p);
-    let q_commitment = commit(&q);
+    }))
+    .map(Into::into);
     transcript.write_point(p_commitment)?;
     transcript.write_point(q_commitment)?;
 

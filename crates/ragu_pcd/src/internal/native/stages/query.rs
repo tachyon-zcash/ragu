@@ -67,8 +67,11 @@ impl<F: Field> ChildEvaluationsWitness<F> {
         registry_xy: &sparse::Polynomial<F, R>,
         registry_wy: &sparse::Polynomial<F, R>,
     ) -> Self {
+        let mut rx = B::map(RxIndex::ALL.into_iter().map(|id| &proof[id]), |poly| {
+            B::sparse_eval(poly, xz)
+        });
         ChildEvaluationsWitness {
-            rx: RxValues::from_fn(|id| B::sparse_eval(&proof[id], xz)),
+            rx: RxValues::from_fn(|_| rx.next().expect("one evaluation per rx")),
             a_poly_at_xz: B::sparse_eval(&proof[RxComponent::AbA], xz),
             b_poly_at_x: B::sparse_eval(&proof[RxComponent::AbB], x),
             child_registry_xy_at_current_w: B::sparse_eval(proof.native_registry_xy_poly(), w),

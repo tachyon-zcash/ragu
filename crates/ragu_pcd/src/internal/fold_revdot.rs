@@ -154,18 +154,19 @@ fn compute_errors_impl<B: ragu_backend::Backend, F: Field, R: Rank, Outer: Len, 
         .zip(b.chunks(Inner::len()))
         // For each chunk, compute off-diagonal revdot products.
         .map(|(a_chunk, b_chunk)| {
-            // Computed using the cartesian product of indices, filtering out
-            // diagonal entries.
-            off_diagonal_pairs(Inner::len())
+            // Borrow before scheduling so callers need not make their wrappers Sync.
+            let pairs = off_diagonal_pairs(Inner::len()).map(|(i, j)| {
+                a_chunk
+                    .get(i)
+                    .zip(b_chunk.get(j))
+                    .map(|(l, r)| (l.borrow(), r.borrow()))
+            });
+            B::map(pairs, |pair| {
                 // Missing entries are zero polynomials, producing zero revdot products.
-                .map(|(i, j)| {
-                    a_chunk
-                        .get(i)
-                        .zip(b_chunk.get(j))
-                        .map_or(F::ZERO, |(l, r)| B::sparse_revdot(l.borrow(), r.borrow()))
-                })
-                .collect_fixed()
-                .expect("lengths are correct")
+                pair.map_or(F::ZERO, |(l, r)| B::sparse_revdot(l, r))
+            })
+            .collect_fixed()
+            .expect("lengths are correct")
         })
         // ... and missing pairs produce zeroed error term groups.
         .chain(iter::repeat_with(|| FixedVec::from_fn(|_| F::ZERO)))
@@ -1059,3 +1060,7 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/backend_equivalence/fold_revdot.rs"]
+mod backend_equivalence;

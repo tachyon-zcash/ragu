@@ -23,6 +23,20 @@ pub(super) fn multiexp<C: Affine, B: Backend>(scalars: &[C::Scalar], bases: &[C]
     B::msm(scalars, bases)
 }
 
+/// Schedules independent IPA MSMs, requiring equal operand lengths for each.
+pub(super) fn multiexp_batch<C: Affine, B: Backend, const N: usize>(
+    inputs: [(&[C::Scalar], &[C]); N],
+) -> [C::Projective; N] {
+    for (scalars, bases) in &inputs {
+        assert_eq!(
+            scalars.len(),
+            bases.len(),
+            "msm operands must have equal length"
+        );
+    }
+    B::msm_batch(inputs)
+}
+
 /// A multiscalar multiplication in the polynomial commitment scheme
 #[derive(Debug, Clone)]
 pub struct MSM<'a, C: Affine> {
