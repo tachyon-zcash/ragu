@@ -421,7 +421,7 @@ fn real_point_identity_allocation_is_rejected() {
     let mut dr = Simulator::<Fp>::new();
     let error = match Point::<'_, _, EpAffine>::alloc(
         &mut dr,
-        Simulator::<Fp>::just(|| EpAffine::identity()),
+        Simulator::<Fp>::just(EpAffine::identity),
     ) {
         Ok(_) => panic!("a real point allocation at identity must be rejected"),
         Err(error) => error,
