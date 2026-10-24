@@ -40,8 +40,8 @@ where
     ///
     /// # Errors
     ///
-    /// Returns an error if the commitment is the identity. Real ragu cannot
-    /// carry an identity commitment as a non-identity point.
+    /// Identity polynomial commitments are valid and are represented by their
+    /// compressed encoding in the handle.
     pub fn witness_polynomial<R: Rank>(
         &mut self,
         polynomial: DriverValue<D, sparse::Polynomial<Fp, R>>,

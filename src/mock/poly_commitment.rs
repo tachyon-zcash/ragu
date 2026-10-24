@@ -17,12 +17,6 @@ const HANDLE_WIRES: usize = 2;
 
 /// Encodes a host-curve commitment as two circuit-field elements.
 fn commitment_limbs<C: Cycle>(commitment: C::HostCurve) -> Result<[C::CircuitField; HANDLE_WIRES]> {
-    if commitment.coordinates().is_none() {
-        return Err(Error::InvalidWitness(
-            "point at infinity cannot be witnessed".into(),
-        ));
-    }
-
     let repr = commitment.to_bytes();
     let Ok(repr) = <[u8; 32]>::try_from(repr.as_ref()) else {
         return Err(Error::InvalidWitness(

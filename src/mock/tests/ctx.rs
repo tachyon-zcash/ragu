@@ -131,14 +131,55 @@ fn poly_query_checks_the_committed_polynomial() {
 }
 
 #[test]
-fn identity_polynomial_commitment_is_rejected() {
+fn identity_polynomial_commitment_is_accepted() {
     let mut dr = Simulator::<Fp>::new();
     let mut hooks = FrameworkHooks::new(test_params());
     let mut ctx = StepCtx::new(&mut dr, &mut hooks);
     let zero_polynomial = sparse::Polynomial::<Fp, TestRank>::new();
 
-    let error = match ctx.witness_polynomial(Simulator::<Fp>::just(|| zero_polynomial)) {
-        Ok(_) => panic!("the zero polynomial's identity commitment must be rejected"),
+    let handle = ctx
+        .witness_polynomial(Simulator::<Fp>::just(|| zero_polynomial))
+        .expect("the zero polynomial's identity commitment should be witnessed");
+    let challenge = ctx
+        .derive_challenge(&handle)
+        .expect("an identity commitment handle should be challenge input");
+    let identity_limbs = handle.value().take();
+    assert_eq!(
+        *challenge.value().take(),
+        expected_challenge(&identity_limbs),
+        "the identity commitment handle should contribute its compressed encoding"
+    );
+
+    let x = Fp::from(19u64);
+    let evaluation = ctx
+        .evaluate(&handle, Simulator::<Fp>::just(|| x))
+        .expect("the zero polynomial should be evaluable");
+    assert_eq!(evaluation.take(), Fp::ZERO, "zero evaluates independently to zero");
+
+    let x_gadget = Element::constant(ctx.dr, x);
+    let zero_gadget = Element::constant(ctx.dr, Fp::ZERO);
+    ctx.enforce_poly_query(&handle, x_gadget, zero_gadget)
+        .expect("a zero opening for the identity commitment should be accepted");
+}
+
+#[test]
+fn real_point_identity_constant_is_rejected() {
+    let mut dr = Simulator::<Fp>::new();
+    let error = match Point::<'_, _, EpAffine>::constant(&mut dr, EpAffine::identity()) {
+        Ok(_) => panic!("a real point constant at identity must be rejected"),
+        Err(error) => error,
+    };
+    assert_invalid_witness(error, "point at infinity cannot be witnessed");
+}
+
+#[test]
+fn real_point_identity_allocation_is_rejected() {
+    let mut dr = Simulator::<Fp>::new();
+    let error = match Point::<'_, _, EpAffine>::alloc(
+        &mut dr,
+        Simulator::<Fp>::just(|| EpAffine::identity()),
+    ) {
+        Ok(_) => panic!("a real point allocation at identity must be rejected"),
         Err(error) => error,
     };
     assert_invalid_witness(error, "point at infinity cannot be witnessed");
